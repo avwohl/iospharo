@@ -1665,6 +1665,39 @@ void Interpreter::interpret() {
 
     op_jumpFalse: {
         Oop val = pop();
+        // PHARO_T1_TRACE_HIT diagnostic: log non-Boolean TOS at jumpFalse
+        // for sortStructs:into: with extra context (the failing send was
+        // just before, so log fp-relative stack to identify the bug).
+        if (__builtin_expect(g_debug.t1TraceHit, 0)) {
+            bool isBool = (val.rawBits() == memory_.trueObject().rawBits()
+                        || val.rawBits() == memory_.falseObject().rawBits());
+            if (!isBool) {
+                static size_t hits = 0;
+                hits++;
+                std::string sel = memory_.selectorOf(method_);
+                if (hits <= 5) {
+                    fprintf(stderr,
+                        "[JF-NOTBOOL #%zu] method=#%s val=0x%llx fp=%p sp=%p\n",
+                        hits, sel.c_str(),
+                        (unsigned long long)val.rawBits(),
+                        (void*)framePointer_, (void*)stackPointer_);
+                    // Dump stack slots fp..sp
+                    Oop* p = framePointer_;
+                    int slotIdx = 0;
+                    while (p < stackPointer_ && slotIdx < 20) {
+                        Oop sv = *p;
+                        std::string svCls = sv.isSmallInteger() ? "SmI"
+                            : sv.isObject() && sv.rawBits() >= 0x10000
+                                ? memory_.classNameOf(sv) : "imm";
+                        fprintf(stderr, "  fp+%d: 0x%llx (%s)\n",
+                                slotIdx, (unsigned long long)sv.rawBits(),
+                                svCls.c_str());
+                        p++;
+                        slotIdx++;
+                    }
+                }
+            }
+        }
         if (__builtin_expect(val.rawBits() == memory_.falseObject().rawBits(), 1)) {
             instructionPointer_ += (bytecode & 0x07) + 1;
         } else if (__builtin_expect(val.rawBits() != memory_.trueObject().rawBits(), 0)) {
@@ -5272,6 +5305,25 @@ terminate_process:
 
 void Interpreter::returnFromMethod() {
     Oop value = pop();
+
+    // PHARO_T1_TRACE_HIT diagnostic: trace sortStructs:into: activation
+    // + each return until first MUSTBOOL.
+    if (__builtin_expect(g_debug.t1TraceHit, 0)) {
+        std::string sel = memory_.selectorOf(method_);
+        if (sel == "sortStructs:into:") {
+            static size_t cnt = 0;
+            cnt++;
+            if (cnt <= 30) {
+                std::string vCls = value.isSmallInteger() ? "SmI"
+                    : value.isObject() && value.rawBits() >= 0x10000
+                        ? memory_.classNameOf(value) : "imm";
+                fprintf(stderr,
+                    "[SORTSTR-RET #%zu] returned=0x%llx(%s) fd=%zu\n",
+                    cnt, (unsigned long long)value.rawBits(),
+                    vCls.c_str(), frameDepth_);
+            }
+        }
+    }
 
     if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_RETURN") != nullptr, 0)) {
         static size_t retCount = 0;
@@ -19184,12 +19236,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             // PHARO_T1_TRACE_HIT diagnostic: log if state.sp
                             // at callee-return differs from the savedSP
                             // (would indicate the callee leaked SP).
+                            // ALSO flag suspect returns: predicate selectors
+                            // returning non-Boolean.
                             if (__builtin_expect(g_debug.t1TraceHit, 0)) {
                                 ptrdiff_t spDelta = state.sp - savedSP;
-                                // Negative or zero is unusual.  For a normal
-                                // callee, state.sp should equal savedSP
-                                // because the callee's returnTop pops the
-                                // return value (which was the last push).
                                 if (spDelta != 0) {
                                     static size_t deltaCount = 0;
                                     deltaCount++;
@@ -19198,11 +19248,43 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                         std::string targetSel = memory_.selectorOf(chainTarget);
                                         fprintf(stderr,
                                             "[HIT-SP-DELTA #%zu] caller=#%s target=#%s "
-                                            "spDelta=%+ld slots (state.sp=%p savedSP=%p)\n",
+                                            "spDelta=%+ld slots\n",
                                             deltaCount, callerSel.c_str(),
                                             targetSel.c_str(),
-                                            (long)spDelta,
-                                            (void*)state.sp, (void*)savedSP);
+                                            (long)spDelta);
+                                    }
+                                }
+                                std::string targetSel = memory_.selectorOf(chainTarget);
+                                bool predicateSel = (targetSel == "isEmpty"
+                                    || targetSel == "isNil"
+                                    || targetSel == "notNil"
+                                    || targetSel == "notEmpty"
+                                    || targetSel == "==" || targetSel == "~="
+                                    || targetSel == "~~"
+                                    || targetSel == "<" || targetSel == ">"
+                                    || targetSel == "<=" || targetSel == ">="
+                                    || targetSel == "=" || targetSel == "ifTrue:"
+                                    || targetSel == "ifFalse:");
+                                if (predicateSel) {
+                                    bool isBool = (retVal.rawBits() == memory_.trueObject().rawBits()
+                                                || retVal.rawBits() == memory_.falseObject().rawBits());
+                                    if (!isBool) {
+                                        static size_t pcount = 0;
+                                        pcount++;
+                                        if (pcount <= 20) {
+                                            std::string callerSel = memory_.selectorOf(state.method);
+                                            std::string rvCls = retVal.isSmallInteger() ? "SmI"
+                                                : retVal.isObject() && retVal.rawBits() >= 0x10000
+                                                    ? memory_.classNameOf(retVal)
+                                                    : "imm";
+                                            fprintf(stderr,
+                                                "[JIT-PRED-NOTBOOL #%zu] caller=#%s "
+                                                "target=#%s returned=0x%llx(%s)\n",
+                                                pcount, callerSel.c_str(),
+                                                targetSel.c_str(),
+                                                (unsigned long long)retVal.rawBits(),
+                                                rvCls.c_str());
+                                        }
                                     }
                                 }
                             }
@@ -19618,6 +19700,34 @@ jit_loop_exit:
             // Callee returned — pop one frame, push return value.
             // Remaining inline frames (if any) are left for the interpreter.
             popFrame();
+            // PHARO_T1_TRACE_HIT: log if a JIT method whose top-level
+            // selector is a predicate returns non-Boolean.
+            if (__builtin_expect(g_debug.t1TraceHit, 0)) {
+                Oop retVal = state.returnValue;
+                std::string sel = memory_.selectorOf(method);
+                bool predSel = (sel == "isEmpty" || sel == "isNil"
+                    || sel == "notNil" || sel == "notEmpty"
+                    || sel == "==" || sel == "~=" || sel == "~~"
+                    || sel == "<" || sel == ">" || sel == "<="
+                    || sel == ">=" || sel == "=");
+                bool isBool = (retVal.rawBits() == memory_.trueObject().rawBits()
+                            || retVal.rawBits() == memory_.falseObject().rawBits());
+                if (predSel && !isBool) {
+                    static size_t tjc = 0;
+                    tjc++;
+                    if (tjc <= 20) {
+                        std::string mcls = classNameOfMethod(method);
+                        std::string rvCls = retVal.isSmallInteger() ? "SmI"
+                            : retVal.isObject() && retVal.rawBits() >= 0x10000
+                                ? memory_.classNameOf(retVal) : "imm";
+                        fprintf(stderr,
+                          "[TJA-PRED-NOTBOOL #%zu] method=%s>>#%s "
+                          "returned=0x%llx(%s)\n",
+                          tjc, mcls.c_str(), sel.c_str(),
+                          (unsigned long long)retVal.rawBits(), rvCls.c_str());
+                    }
+                }
+            }
             push(state.returnValue);
         } else {
             // Non-return exit — sync callee's state so interpreter can continue.

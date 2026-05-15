@@ -214,4 +214,69 @@ verifier + hit ring buffer) is in place. Next session can pick up by:
   PHARO_T1_HIT_AS_MISS=1                 HIT exits via ExitSend
   PHARO_T1_IC_HIT_VERIFY=1               runtime sel/class verify on each HIT
   PHARO_T1_TRACE_HIT=1                   ring buffer of last 30 IC hits,
-                                         dumped at first sendMustBeBoolean
+                                         dumped at first sendMustBeBoolean.
+                                         Also: SP-delta check after inline-
+                                         activate; JIT-PRED-NOTBOOL flags
+                                         JIT-dispatched predicate methods
+                                         returning non-Boolean; TJA-PRED-
+                                         NOTBOOL flags predicate JIT
+                                         method returns via tryJITActivation;
+                                         JF-NOTBOOL dumps fp..sp at the
+                                         first non-Boolean jumpFalse.
+
+## Second debug pass (2026-05-15)
+
+After landing the diagnostic ring buffer + spec emits + verifier, I
+went hunting for the actual root cause.  Concrete findings:
+
+- IC_HIT_VERIFY pass for all 9144 IC hits — the cached method oop is
+  the right method for the right receiver class, every time.  No
+  ambient corruption of icData[].
+- HIT-SP-DELTA check (state.sp after callee return vs savedSP):
+  **zero deltas** across all 9144 IC hits.  The inline-activate fast
+  path is sp-clean; the callee's returnTop leaves sp == savedSP as
+  expected.
+- JIT-PRED-NOTBOOL (callee returns non-Boolean for predicate-named
+  selectors via inline-activate fast path): **zero events**.
+- TJA-PRED-NOTBOOL (same check on tryJITActivation's final push):
+  **zero events**.
+- The first MUSTBOOL fires at `#sortStructs:into:` ipOff=8 (the
+  conditional jump at byte 7 after a `send #isEmpty`).  The stack
+  dump at MUSTBOOL shows:
+
+      fp+0: receiver (ExternalStructure class)  ✓
+      fp+1: arg 0 OrderedCollection             ✓
+      fp+2: arg 1 OrderedCollection             ✓
+      fp+3: Array (the empty 2-array)           ✓ (PopStoreTemp 2)
+      fp+4: nil                                 ✗ (should be receiver from PopStoreTemp 3)
+      sp:   fp+5
+      TOS (about to pop): SmI 160
+
+  The 2-slot layout matches numTemps=4 for sortStructs:into:
+  (= 2 args + 2 locals).  But temp 3 (= fp+4) is nil, when it should
+  be the receiver written by `PopStoreTemp 3` at byte 4.  And TOS at
+  the jumpFalse is SmI 160, when it should be Boolean from
+  `send #isEmpty` at byte 6.
+
+  The send AT byte 6 was supposed to dispatch `#isEmpty` to TOS
+  (which by that point should be temp 0 = aStructs from the
+  `PushTemp 0` at byte 5).  All JIT-dispatched returns from
+  predicate selectors via this path were Boolean (per
+  TJA-PRED-NOTBOOL trace).  So the SmI 160 isn't from a JIT
+  predicate dispatch.
+
+  Where does the SmI 160 come from?  And what nil'd fp+4?  Two
+  observations point at the same thing:  something between byte 4
+  and byte 7 wrote nil to fp+4 AND wrote SmI 160 to fp+5.  The only
+  code that runs in this window is the dispatched `#isEmpty` and
+  whatever it transitively calls.  Hypothesis: a dispatched method
+  somewhere down the chain has buggy frame setup or stack
+  manipulation that writes into the caller's frame area.
+
+  This wasn't reachable in the time I had.  The next session's
+  starting point: use lldb against `test_load_image` (already
+  codesigned for it), set a breakpoint at the JF-NOTBOOL trace
+  point, walk the SavedFrames backwards to find the dispatched
+  method that mutated the caller's frame.
+
+For now: probe stays default-OFF.  Fuzzer still 39/39.
