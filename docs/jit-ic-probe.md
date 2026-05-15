@@ -180,14 +180,38 @@ yet known; possibilities:
   conflict with T1-compiled callees.
 
 The infrastructure (probe + spec emits + bisect knobs + hit
-verifier) is in place. Next session can pick up by:
+verifier + hit ring buffer) is in place. Next session can pick up by:
 
-1. Re-running with `PHARO_T1_IC_PROBE=1 PHARO_T1_IC_HIT_VERIFY=1`
-   and adding a stderr trace at the chain-loop's `ExitSendCached`
-   handler logging the cached method, receiver, expected selector,
-   and the value on the stack after dispatch.
+1. Re-running with `PHARO_T1_IC_PROBE=1 PHARO_T1_TRACE_HIT=1`
+   already prints the last 30 IC hits before the first
+   sendMustBeBoolean — but the trace shows only #hash → #class
+   and #stringHash:initialHash: → #stringHash:initialHash:, none of
+   which obviously implicate the failing sortStructs:into:>>isEmpty
+   call. So the link from "IC hit somewhere" to "wrong SmI on the
+   interp's stack" is non-obvious; need to instrument further down
+   the chain.
 2. Comparing T1 and stencil JIT's state-at-exit byte-for-byte.
-3. Looking at `state.j2jSaveCursor / j2jSaveLimit / j2jDepth` —
-   these are set by the inline-activate path but not by our send
+   Specifically check `state.j2jSaveCursor / j2jSaveLimit / j2jDepth`
+   — these are set by the inline-activate path but not by our send
    emit. If T1's callee uses them differently, that could cause
    stack confusion.
+3. Try gating the probe to fire only for SmI receivers (the
+   simplest case). If THAT works, narrow further.
+4. Print the post-dispatch TOS at every IC hit. If a hit returns
+   an unexpected type (SmI from a method that should return
+   Boolean), that's the smoking gun.
+
+## Knobs reference
+
+  PHARO_T1_IC_PROBE=1                    enable probe
+  PHARO_T1_NO_IC_PROBE=1                 disable (default if not opted in)
+  PHARO_T1_IC_PROBE_MIN=N                only probe opcodes >= N
+  PHARO_T1_IC_PROBE_MAX=N                only probe opcodes <= N
+  PHARO_T1_NO_INLINE_GETTER=1            skip bit-63 inline emit
+  PHARO_T1_NO_INLINE_SETTER=1            skip bit-62 inline emit
+  PHARO_T1_NO_INLINE_RETURNS_SELF=1      skip bit-61 inline emit
+  PHARO_T1_PROBE_ALWAYS_MISS=1           probe runs but never HIT exit
+  PHARO_T1_HIT_AS_MISS=1                 HIT exits via ExitSend
+  PHARO_T1_IC_HIT_VERIFY=1               runtime sel/class verify on each HIT
+  PHARO_T1_TRACE_HIT=1                   ring buffer of last 30 IC hits,
+                                         dumped at first sendMustBeBoolean
