@@ -128,24 +128,61 @@ uint64_t g_sortstrWatchExpected = 0;
 bool g_sortstrWatchActive = false;
 size_t g_sortstrWatchFD = 0;
 size_t g_sortstrWatchEventNum = 0;
+
+// Second watcher slot: temp 0 (= arg 0) of sortStructs:into:.  Installed
+// from pushFrame the moment the method is activated; fp+1 is the first
+// arg slot in this VM's frame layout.  Watches whether anything
+// corrupts that slot during the method's execution.
+Oop* g_sortstrWatchT0Slot = nullptr;
+uint64_t g_sortstrWatchT0Expected = 0;
+bool g_sortstrWatchT0Active = false;
+size_t g_sortstrWatchT0FD = 0;
+size_t g_sortstrWatchT0EventNum = 0;
 }  // namespace pharo
 
 // Forward decl; defined as Interpreter method below.
 static inline void checkSortstrWatch(const char* where, size_t fd) {
     using namespace pharo;
-    if (!g_sortstrWatchActive || !g_sortstrWatchSlot) return;
-    uint64_t cur = g_sortstrWatchSlot->rawBits();
-    if (cur != g_sortstrWatchExpected) {
-        g_sortstrWatchEventNum++;
-        fprintf(stderr,
-            "[SORTSTR-WATCH-FIRE #%zu] %s fd=%zu addr=%p "
-            "was=0x%llx now=0x%llx\n",
-            g_sortstrWatchEventNum, where, fd,
-            (void*)g_sortstrWatchSlot,
-            (unsigned long long)g_sortstrWatchExpected,
-            (unsigned long long)cur);
-        // Caller is responsible for dumping savedFrames_ + active method
-        // (since this helper doesn't have Interpreter access).
+    if (g_sortstrWatchActive && g_sortstrWatchSlot) {
+        uint64_t cur = g_sortstrWatchSlot->rawBits();
+        if (cur != g_sortstrWatchExpected) {
+            g_sortstrWatchEventNum++;
+            fprintf(stderr,
+                "[SORTSTR-WATCH-FIRE #%zu] %s fd=%zu addr=%p "
+                "was=0x%llx now=0x%llx\n",
+                g_sortstrWatchEventNum, where, fd,
+                (void*)g_sortstrWatchSlot,
+                (unsigned long long)g_sortstrWatchExpected,
+                (unsigned long long)cur);
+        }
+    }
+    if (g_sortstrWatchT0Active && g_sortstrWatchT0Slot) {
+        // Auto-disarm: if frame depth has dropped below the install depth,
+        // sortStructs:into:'s frame is gone (popped through some path that
+        // bypassed our explicit disarm — e.g., JIT exit).  Don't keep
+        // reporting on a slot that's been reused.
+        if (fd < g_sortstrWatchT0FD) {
+            fprintf(stderr,
+                "[SORTSTR-T0-AUTODISARM] %s fd=%zu < installFD=%zu "
+                "(sortStructs:into: frame gone via non-interp pop)\n",
+                where, fd, g_sortstrWatchT0FD);
+            g_sortstrWatchT0Active = false;
+            g_sortstrWatchT0Slot = nullptr;
+        } else {
+            uint64_t cur = g_sortstrWatchT0Slot->rawBits();
+            if (cur != g_sortstrWatchT0Expected) {
+                g_sortstrWatchT0EventNum++;
+                fprintf(stderr,
+                    "[SORTSTR-T0-FIRE #%zu] %s fd=%zu addr=%p "
+                    "was=0x%llx now=0x%llx\n",
+                    g_sortstrWatchT0EventNum, where, fd,
+                    (void*)g_sortstrWatchT0Slot,
+                    (unsigned long long)g_sortstrWatchT0Expected,
+                    (unsigned long long)cur);
+                // Latch new expected so we capture every distinct write.
+                g_sortstrWatchT0Expected = cur;
+            }
+        }
     }
 }
 
@@ -1980,10 +2017,49 @@ void Interpreter::interpret() {
     }
 
     // --- Literal sends: bypass dispatchBytecode overhead ---
-    op_send0:
+    op_send0: {
+        // PHARO_SORTSTR_WATCH: log every 0-arg send out of sortStructs:into:
+        // — capture receiver class, selector, TOS-before, TOS-after.  This
+        // tells us exactly what Send #isEmpty returns when sortStructs:into:
+        // hits its first send.
+        if (__builtin_expect(g_debug.sortstrWatch, 0)
+                && pharo::g_sortstrWatchT0Active) {
+            Oop sel = literal(bytecode & 0x0F);
+            Oop rcvr = stackValue(0);
+            std::string mSel = memory_.selectorOf(method_);
+            if (mSel == "sortStructs:into:") {
+                std::string selStr = memory_.oopToString(sel);
+                std::string rCls = memory_.classNameOf(rcvr);
+                size_t numLits = memory_.numLiteralsOf(method_);
+                ObjectHeader* mObj = method_.asObjectPtr();
+                uint8_t* bcStart = mObj->bytes() + (1 + numLits) * 8;
+                long ipOff = instructionPointer_ - bcStart;
+                fprintf(stderr,
+                    "[SORTSTR-SEND0 PRE] sel=#%s recv=0x%llx(%s) "
+                    "ipOff=%ld fd=%zu sp=%p\n",
+                    selStr.c_str(), (unsigned long long)rcvr.rawBits(),
+                    rCls.c_str(), ipOff, frameDepth_,
+                    (void*)stackPointer_);
+                sendSelector(sel, 0);
+                Oop tosAfter = stackValue(0);
+                std::string tCls = tosAfter.isSmallInteger() ? "SmI"
+                    : (tosAfter.isObject() && tosAfter.rawBits() >= 0x10000)
+                        ? memory_.classNameOf(tosAfter) : "imm";
+                fprintf(stderr,
+                    "[SORTSTR-SEND0 POST] sel=#%s tos=0x%llx(%s) fd=%zu "
+                    "method_now=#%s\n",
+                    selStr.c_str(),
+                    (unsigned long long)tosAfter.rawBits(), tCls.c_str(),
+                    frameDepth_,
+                    memory_.selectorOf(method_).c_str());
+                if (__builtin_expect(!running_, 0)) goto cg_exit;
+                DISPATCH_NEXT();
+            }
+        }
         sendSelector(literal(bytecode & 0x0F), 0);
         if (__builtin_expect(!running_, 0)) goto cg_exit;
         DISPATCH_NEXT();
+    }
 
     op_send1:
         sendSelector(literal(bytecode & 0x0F), 1);
@@ -9952,6 +10028,42 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         push(memory_.nil());
     }
 
+    // PHARO_SORTSTR_WATCH: at activation of sortStructs:into:, install a
+    // watcher on temp 0 (= arg 0 = fp+1).  If something corrupts arg 0
+    // during the method's run, the watcher fires + logs caller context.
+    if (__builtin_expect(g_debug.sortstrWatch, 0)) {
+        std::string sel = memory_.selectorOf(method);
+        if (sel == "sortStructs:into:") {
+            Oop* slot = newFP + 1;
+            Oop val = *slot;
+            g_sortstrWatchT0Slot = slot;
+            g_sortstrWatchT0Expected = val.rawBits();
+            g_sortstrWatchT0Active = true;
+            g_sortstrWatchT0FD = frameDepth_;
+            std::string vcls = val.isSmallInteger() ? "SmI"
+                : (val.isObject() && val.rawBits() >= 0x10000)
+                    ? memory_.classNameOf(val) : "imm";
+            std::string callerSel = memory_.selectorOf(frame.savedMethod);
+            fprintf(stderr,
+                "[SORTSTR-T0-INSTALL] activate sortStructs:into: at fd=%zu "
+                "fp=%p temp0_addr=%p temp0=0x%llx class=%s "
+                "argCount=%d numTemps=%d caller=#%s\n",
+                frameDepth_, (void*)newFP, (void*)slot,
+                (unsigned long long)val.rawBits(), vcls.c_str(),
+                argCount, numTemps, callerSel.c_str());
+            // Also dump the second arg + receiver for context.
+            Oop arg1 = (argCount >= 2) ? newFP[2] : Oop::nil();
+            std::string a1cls = arg1.isSmallInteger() ? "SmI"
+                : (arg1.isObject() && arg1.rawBits() >= 0x10000)
+                    ? memory_.classNameOf(arg1) : "imm";
+            std::string rcls = memory_.classNameOf(newFP[0]);
+            fprintf(stderr,
+                "  recv=0x%llx(%s) arg1=0x%llx(%s)\n",
+                (unsigned long long)newFP[0].rawBits(), rcls.c_str(),
+                (unsigned long long)arg1.rawBits(), a1cls.c_str());
+        }
+    }
+
     // Note: primFailCode_ error objects are stored by the callPrimitive/storeTemp skip
     // code in activateMethod, NOT here. The error temp is identified by bytecode analysis
     // (0xF5 storeTemp after 0xF8 callPrimitive), matching the reference VM's behavior.
@@ -9995,6 +10107,20 @@ Oop Interpreter::getErrorObjectFromPrimFailCode() {
 
 bool Interpreter::popFrame() {
     checkSortstrWatch("popFrame", frameDepth_);
+    // Disarm temp 0 watcher when sortStructs:into: itself returns —
+    // the slot becomes invalid once the frame is gone.
+    if (__builtin_expect(pharo::g_sortstrWatchT0Active, 0)
+            && frameDepth_ == pharo::g_sortstrWatchT0FD
+            && method_.isObject()) {
+        std::string sel = memory_.selectorOf(method_);
+        if (sel == "sortStructs:into:") {
+            pharo::g_sortstrWatchT0Active = false;
+            pharo::g_sortstrWatchT0Slot = nullptr;
+            fprintf(stderr,
+                "[SORTSTR-T0-DISARM] popFrame sortStructs:into: fd=%zu\n",
+                frameDepth_);
+        }
+    }
     // 2026-05-07 A1 hunt: log popFrame for pollEvent:
     static const bool a1Trace =
         std::getenv("PHARO_A1_TRACE") != nullptr;
@@ -10282,6 +10408,20 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     // Lightweight frame pop for J2J direct calls.
     if (frameDepth_ == 0) return;
     (void)state;
+
+    // Disarm temp 0 watcher if this is sortStructs:into: popping.
+    if (__builtin_expect(pharo::g_sortstrWatchT0Active, 0)
+            && frameDepth_ == pharo::g_sortstrWatchT0FD
+            && method_.isObject()) {
+        std::string sel = memory_.selectorOf(method_);
+        if (sel == "sortStructs:into:") {
+            pharo::g_sortstrWatchT0Active = false;
+            pharo::g_sortstrWatchT0Slot = nullptr;
+            fprintf(stderr,
+                "[SORTSTR-T0-DISARM-JIT] popFrameForJIT sortStructs:into: "
+                "fd=%zu\n", frameDepth_);
+        }
+    }
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
