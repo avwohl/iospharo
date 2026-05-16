@@ -123,6 +123,18 @@ inline bool isPhase3ArithOp(uint8_t op) {
     return op >= 0x60 && op <= 0x67;
 }
 
+// bitAnd: (0x6E) / bitOr: (0x6F): SmI tag bits 0..2 are 001 for both
+// operands, so direct bitwise op of the tagged values produces a valid
+// tagged SmI result.  No untag/retag needed.
+inline bool isPhase3BitOp(uint8_t op) {
+    return op == 0x6E || op == 0x6F;
+}
+
+// * (0x68): SmI mul with overflow check.
+inline bool isPhase3MulOp(uint8_t op) {
+    return op == 0x68;
+}
+
 // Compute the live bytecode length: walk forward decoding bytecodes
 // using SistaV1::bytecodeLength().  Tracks max forward branch target
 // so a `return` only terminates decoding when no jump points past it.
@@ -220,6 +232,8 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (op >= SistaV1::ReturnReceiver
                 && op <= SistaV1::ReturnTop) continue; // 0x58..0x5C
         if (isPhase3ArithOp(op)) continue;            // 0x60..0x67
+        if (isPhase3BitOp(op)) continue;              // 0x6E, 0x6F bitAnd:/bitOr:
+        if (isPhase3MulOp(op)) continue;              // 0x68 *
         if (isPhase4SendOp(op)) {
             if (noSendsBisect) return false;
             if (sendNArgs(op) > maxSendNArgs) return false;
@@ -772,6 +786,87 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         // r8 = state.method.rawBits + bcOffsetFromMethObj
         // (state.method is GC-tracked Oop; this is the post-GC-safe
         // address of the failing bytecode.)
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT),
+              asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.ret();
+
+        a.bind(end);
+        return true;
+    }
+    // Phase 3 bitwise: 0x6E bitAnd:, 0x6F bitOr:.  SmI tag bits (low 3
+    // = 001) commute with bitwise AND/OR — a & b and a | b on tagged
+    // SmIs produce a valid tagged SmI result without untag/retag.
+    if (isPhase3BitOp(op)) {
+        asmjit::Label bail = a.new_label();
+        asmjit::Label end  = a.new_label();
+        a.mov(rax, ptr(rdi, OFF_SP));
+        a.mov(rcx, ptr(rax, -16));   // a
+        a.mov(rdx, ptr(rax, -8));    // b
+        a.mov(r8,  rcx);
+        a.xor_(r8, asmjit::Imm(1));
+        a.mov(r9,  rdx);
+        a.xor_(r9, asmjit::Imm(1));
+        a.or_(r8, r9);
+        a.test(r8.r8(), asmjit::Imm(7));
+        a.jne(bail);
+        if (op == 0x6E) {
+            a.and_(rcx, rdx);    // bitAnd: tag bits stay 001
+        } else {
+            a.or_(rcx, rdx);     // bitOr: tag bits stay 001
+        }
+        a.mov(ptr(rax, -16), rcx);
+        a.sub(rax, 8);
+        a.mov(ptr(rdi, OFF_SP), rax);
+        a.jmp(end);
+
+        a.bind(bail);
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT),
+              asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.ret();
+
+        a.bind(end);
+        return true;
+    }
+    // Phase 3 multiplication: 0x68 *.
+    if (isPhase3MulOp(op)) {
+        asmjit::Label bail = a.new_label();
+        asmjit::Label end  = a.new_label();
+        a.mov(rax, ptr(rdi, OFF_SP));
+        a.mov(rcx, ptr(rax, -16));   // a
+        a.mov(rdx, ptr(rax, -8));    // b
+        a.mov(r8,  rcx);
+        a.xor_(r8, asmjit::Imm(1));
+        a.mov(r9,  rdx);
+        a.xor_(r9, asmjit::Imm(1));
+        a.or_(r8, r9);
+        a.test(r8.r8(), asmjit::Imm(7));
+        a.jne(bail);
+
+        // Untag both (arithmetic shift to preserve sign).
+        a.sar(rcx, asmjit::Imm(3));
+        a.sar(rdx, asmjit::Imm(3));
+        // imul rcx, rdx — signed multiply, sets OF on overflow.
+        a.imul(rcx, rdx);
+        a.jo(bail);
+        // Retag: shift left 3 + or 1.  Three add+jo to catch the
+        // case where the result fits in 64-bit signed (no jo on imul)
+        // but not in 61-bit signed (would overflow on retag).
+        a.add(rcx, rcx); a.jo(bail);
+        a.add(rcx, rcx); a.jo(bail);
+        a.add(rcx, rcx); a.jo(bail);
+        a.or_(rcx, asmjit::Imm(SMI_TAG));
+        a.mov(ptr(rax, -16), rcx);
+        a.sub(rax, 8);
+        a.mov(ptr(rdi, OFF_SP), rax);
+        a.jmp(end);
+
+        a.bind(bail);
         a.mov(r8, ptr(rdi, OFF_METHOD));
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
