@@ -438,16 +438,36 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         return;
     }
 
-    // Arith path: untag, do op, overflow check, retag.
-    a.sar(rcx, asmjit::Imm(3));
-    a.sar(rdx, asmjit::Imm(3));
+    // Arith path: tagged-arith for + and - (saves untag+retag).
+    // For + : a_bits + b_bits = (a+b)*8 + 2 → sub 1 to tag.
+    // For - : a_bits - b_bits = (a-b)*8     → add 1 to tag.
+    // jo on the tagged op catches SmI-range overflow because tagged
+    // form pre-shifts by 8 (matches the bytecode arith emit).
     if (primIndex == 1) {
         a.add(rcx, rdx);
         a.jo(fail);
-    } else if (primIndex == 2) {
+        a.sub(rcx, asmjit::Imm(1));
+        a.mov(ptr(rdi, OFF_RETVAL), rcx);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();
+        a.bind(fail);
+        return;
+    }
+    if (primIndex == 2) {
         a.sub(rcx, rdx);
         a.jo(fail);
-    } else if (primIndex == 9) {
+        a.add(rcx, asmjit::Imm(1));
+        a.mov(ptr(rdi, OFF_RETVAL), rcx);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();
+        a.bind(fail);
+        return;
+    }
+
+    // prim 9 (*): need to untag, multiply, check overflow, retag.
+    a.sar(rcx, asmjit::Imm(3));
+    a.sar(rdx, asmjit::Imm(3));
+    if (primIndex == 9) {
         // a * b: imul sets OF on 64-bit signed overflow.  After that
         // we also need to confirm the result fits in 61-bit SmI range:
         // ((result << 3) >> 3) must equal result.
