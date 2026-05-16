@@ -415,9 +415,8 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
         a.mov(rdx, ptr(rdx));
         a.mov(rax, ptr(rdi, OFF_FALSEOOP));
-        a.mov(r8,  ptr(rdi, OFF_TRUEOOP));
         a.cmp(rcx, rdx);
-        a.cmove(rax, r8);
+        a.cmove(rax, ptr(rdi, OFF_TRUEOOP));
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
         a.ret();
