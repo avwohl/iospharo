@@ -20025,9 +20025,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     // bailing.  Opt-out PHARO_INLINE_ACTIVATE_NO_BAIL_MID=1.
                     static const bool gateBailMid =
                         std::getenv("PHARO_INLINE_ACTIVATE_NO_BAIL_MID") != nullptr;
+                    // isStubOnEntry: still gate by default — stubs bail
+                    // immediately on entry with stale icDataPtr, which
+                    // breaks the chain code's IC patch path.  Opt-in
+                    // PHARO_INLINE_ACTIVATE_STUBS=1 for experimentation.
+                    static const bool inlineStubs =
+                        std::getenv("PHARO_INLINE_ACTIVATE_STUBS") != nullptr;
                     if ((!chainHasPrim || chainJM->hasPrimPrologue)
                             && (!gateBailMid || !chainJM->canBailMidMethod)
-                            && !chainJM->isStubOnEntry) {
+                            && (inlineStubs || !chainJM->isStubOnEntry)) {
                         // --- Save caller state + precompute resume ---
                         Oop* savedSP = state.sp;
                         Oop savedRecv = state.receiver;
