@@ -18437,8 +18437,71 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // Save entry SP so we can restore it on ExitDeopt/ExitPrimFail.
     Oop* entrySP = stackPointer_;
 
+    // PHARO_SORTSTR_WATCH: log JIT entry+exit for Collection>>#isEmpty
+    // (called from sortStructs:into:).  Captures whether the JIT ran the
+    // body to completion (ExitReturn with the right value) or bailed.
+    bool sortstrIsemptyTrace =
+        __builtin_expect(g_debug.sortstrWatch, 0)
+            && pharo::g_sortstrWatchT0Active
+            && method.isObject() && method.rawBits() > 0x10000;
+    if (sortstrIsemptyTrace) {
+        std::string sel = memory_.selectorOf(method);
+        sortstrIsemptyTrace = (sel == "isEmpty");
+        if (sortstrIsemptyTrace) {
+            static size_t entN = 0;
+            entN++;
+            std::string callerSel = memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod);
+            std::string mCls = classNameOfMethod(method);
+            Oop rcvr = receiver_;
+            std::string rCls = memory_.classNameOf(rcvr);
+            fprintf(stderr,
+                "[JIT-ISEMPTY-ENTRY #%zu] cls=%s rcvr=%s caller=#%s "
+                "method=0x%llx jm=%p numBC=%u fd=%zu sp=%p\n",
+                entN, mCls.c_str(), rCls.c_str(), callerSel.c_str(),
+                (unsigned long long)method.rawBits(), jm,
+                jm ? jm->numBytecodes : 0,
+                frameDepth_, (void*)stackPointer_);
+        }
+    }
+
     if (!jitRuntime_.tryExecute(method, state, jm)) {
         return false;  // Should not happen — jm was already validated
+    }
+    if (sortstrIsemptyTrace) {
+        static size_t exitN = 0;
+        exitN++;
+        Oop rv = state.returnValue;
+        std::string rvCls = rv.isSmallInteger() ? "SmI"
+            : (rv.isObject() && rv.rawBits() >= 0x10000)
+                ? memory_.classNameOf(rv) : "imm";
+        long long ipOff = -1;
+        if (state.method.isObject() && state.ip) {
+            ObjectHeader* mo = state.method.asObjectPtr();
+            size_t nL = memory_.numLiteralsOf(state.method);
+            uint8_t* bcS = mo->bytes() + (1 + nL) * 8;
+            ipOff = state.ip - bcS;
+        }
+        const char* exitName = "?";
+        switch (state.exitReason) {
+        case jit::ExitNone:        exitName = "None"; break;
+        case jit::ExitReturn:      exitName = "Return"; break;
+        case jit::ExitSend:        exitName = "Send"; break;
+        case jit::ExitSendCached:  exitName = "SendCached"; break;
+        case jit::ExitJ2JCall:     exitName = "J2JCall"; break;
+        case jit::ExitMustBool:    exitName = "MustBool"; break;
+        case jit::ExitYield:       exitName = "Yield"; break;
+        case jit::ExitBlockCreate: exitName = "BlockCreate"; break;
+        case jit::ExitArithOverflow: exitName = "ArithOverflow"; break;
+        case jit::ExitDeopt:       exitName = "Deopt"; break;
+        case jit::ExitPrimFail:    exitName = "PrimFail"; break;
+        default:                   exitName = "Other"; break;
+        }
+        fprintf(stderr,
+            "[JIT-ISEMPTY-EXIT #%zu] exit=%s retVal=0x%llx(%s) "
+            "ipOff=%lld fd=%zu sp=%p j2jDepth=%d\n",
+            exitN, exitName,
+            (unsigned long long)rv.rawBits(), rvCls.c_str(),
+            ipOff, frameDepth_, (void*)state.sp, state.j2jDepth);
     }
     jitActivationHits_++;
 
