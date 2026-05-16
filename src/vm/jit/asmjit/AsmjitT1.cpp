@@ -438,17 +438,16 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     a.jne(fail);
 
     if (primIndex >= 3 && primIndex <= 8) {
-        // Comparison: cmp + cmov pattern.
+        // Comparison: cmp + cmov with memory source (saves trueOop load).
         a.mov(rax, ptr(rdi, OFF_FALSEOOP));
-        a.mov(r8,  ptr(rdi, OFF_TRUEOOP));
         a.cmp(rcx, rdx);
         switch (primIndex) {
-            case 3: a.cmovl (rax, r8); break;  // <
-            case 4: a.cmovg (rax, r8); break;  // >
-            case 5: a.cmovle(rax, r8); break;  // <=
-            case 6: a.cmovge(rax, r8); break;  // >=
-            case 7: a.cmove (rax, r8); break;  // =
-            case 8: a.cmovne(rax, r8); break;  // ~=
+            case 3: a.cmovl (rax, ptr(rdi, OFF_TRUEOOP)); break;  // <
+            case 4: a.cmovg (rax, ptr(rdi, OFF_TRUEOOP)); break;  // >
+            case 5: a.cmovle(rax, ptr(rdi, OFF_TRUEOOP)); break;  // <=
+            case 6: a.cmovge(rax, ptr(rdi, OFF_TRUEOOP)); break;  // >=
+            case 7: a.cmove (rax, ptr(rdi, OFF_TRUEOOP)); break;  // =
+            case 8: a.cmovne(rax, ptr(rdi, OFF_TRUEOOP)); break;  // ~=
         }
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
