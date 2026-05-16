@@ -82,9 +82,15 @@ DebugSettings::DebugSettings() {
     t1NoBlockResume     = t1ForceSimple || envPresent("PHARO_T1_NO_BLOCK_RESUME");
     t1NoPostPrimResume  = t1ForceSimple || envPresent("PHARO_T1_NO_POST_PRIM_RESUME");
     {
+        // Default ON since 2026-05-16 — chain-loop's J2J trampoline
+        // conversion (which corrupted the receiver-slot retVal for
+        // send-containing callers) is now bypassed when probe is on
+        // (see Interpreter.cpp's noJ2JTramp).  39/39 fuzzer PASS,
+        // tinyBenchmarks sends +25%, no MUSTBOOL regressions.
         const bool optIn = envPresent("PHARO_T1_IC_PROBE");
         const bool optOut = envPresent("PHARO_T1_NO_IC_PROBE");
-        t1ICProbe = optIn && !optOut;
+        t1ICProbe = optOut ? false : true;
+        (void)optIn;  // legacy — was required to opt in; now ignored
     }
     t1ICProbeMin        = envInt("PHARO_T1_IC_PROBE_MIN", -1);
     t1ICProbeMax        = envInt("PHARO_T1_IC_PROBE_MAX", -1);

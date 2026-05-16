@@ -18648,8 +18648,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             j2jDepth = static_cast<int>(localFrameDepth - j2jBaseFrameDepth);
         }
 #else
-        while (state.exitReason == jit::ExitJ2JCall ||
-               state.exitReason == jit::ExitSendCached ||
+        // PHARO_T1_NO_J2J_TRAMP=1 (or PHARO_T1_IC_PROBE=1, which sets it
+        // by association): skip ExitSendCached → J2JCall conversion.  The
+        // trampoline's null-resume bail propagates the callee's
+        // returnValue as if it were the caller's (see
+        // memory/asmjit_t1_resume_protocol_2026_05_16 and bug history at
+        // sortStructs:into:).  Instead, let the outer switch handle
+        // ExitSendCached directly — same path as ExitSend, just skipping
+        // the method lookup.
+        static const bool noJ2JTramp =
+            g_debug.t1ICProbe
+            || std::getenv("PHARO_T1_NO_J2J_TRAMP") != nullptr;
+        while ((state.exitReason == jit::ExitJ2JCall && !noJ2JTramp) ||
+               (state.exitReason == jit::ExitSendCached && !noJ2JTramp) ||
                (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
 
             // --- ExitSendCached → ExitJ2JCall conversion ---

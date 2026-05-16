@@ -67,7 +67,7 @@ struct DebugSettings {
     // icData[2]==0 guard, downstream DNUs).  See docs/jit-ic-probe.md
     // for the full investigation.  PHARO_T1_IC_PROBE=1 enables for
     // experimentation.
-    bool t1ICProbe = false;           // PHARO_T1_IC_PROBE / opt-out PHARO_T1_NO_IC_PROBE
+    bool t1ICProbe = true;            // default-on since 2026-05-16 (opt-out PHARO_T1_NO_IC_PROBE)
     int  t1ICProbeMin = -1;           // PHARO_T1_IC_PROBE_MIN — only probe opcodes >= this
     int  t1ICProbeMax = -1;           // PHARO_T1_IC_PROBE_MAX — only probe opcodes <= this
     // Per-specialization opt-outs (default-on when probe enabled).
