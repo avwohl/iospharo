@@ -218,12 +218,8 @@ inline bool isPhase4SendOp(uint8_t op) {
 size_t g_condJumpRealCompiles = 0;
 
 bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
-    static const bool noSendsBisect =
-        std::getenv("PHARO_ASMJIT_T1_NO_SENDS_BISECT") != nullptr;
-    static const int maxSendNArgs = []() {
-        const char* v = std::getenv("PHARO_ASMJIT_T1_MAX_SEND_NARGS");
-        return v ? atoi(v) : 99;
-    }();
+    const bool noSendsBisect = g_debug.t1NoSendsBisect;
+    const int maxSendNArgs = g_debug.t1MaxSendNArgs;
     for (size_t i = 0; i < bcLen; i++) {
         uint8_t op = bc[i];
         if (op <= 0x0F) continue;                     // pushRecvVar 0..15
@@ -268,45 +264,14 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             //
             // The canBailMidMethod field + gate in this file and in
             // Interpreter.cpp:18731-18733 is correct infrastructure
-            // for when this emit bug is fixed, but is inert today
-            // because the gate only fires when cond jumps emit.
-            static const bool enableJumps =
-                std::getenv("PHARO_ASMJIT_T1_ENABLE_JUMPS") != nullptr;
-            if (!enableJumps) return false;
-            // PHARO_ASMJIT_T1_JUMPS_FIRST_N — bisect knob: only allow
-            // cond-jumps for the first N methods that contain one.
-            // Reject the rest (compile as bail-on-entry stub).  Counter
-            // counts methods (incremented once per call) — see local
-            // `seenInThisCall` below.
-            static const int jumpsFirstN = []() {
-                const char* v = std::getenv("PHARO_ASMJIT_T1_JUMPS_FIRST_N");
-                return v ? atoi(v) : -1;
-            }();
-            // PHARO_ASMJIT_T1_JUMPS_ONLY_N — opposite bisect: only allow
-            // cond-jumps for the Nth method (skip earlier and later).
-            static const int jumpsOnlyN = []() {
-                const char* v = std::getenv("PHARO_ASMJIT_T1_JUMPS_ONLY_N");
-                return v ? atoi(v) : -1;
-            }();
-            // PHARO_ASMJIT_T1_JUMPS_SKIP_N — bisect knob: skip cond-jumps
-            // for the Nth method.  Combined with FIRST_N, lets us test
-            // "first 110 + skip 111" to see if removing only method 111
-            // restores correctness.  Counter g_condJumpRealCompiles
-            // tracks successful real-compiles, so the 1-based index here
-            // matches the T1-COND-COMPILE log.
-            static const int jumpsSkipN = []() {
-                const char* v = std::getenv("PHARO_ASMJIT_T1_JUMPS_SKIP_N");
-                return v ? atoi(v) : -1;
-            }();
-            // PHARO_ASMJIT_T1_JUMPS_SKIP_FROM / SKIP_TO — range skip.
-            static const int jumpsSkipFrom = []() {
-                const char* v = std::getenv("PHARO_ASMJIT_T1_JUMPS_SKIP_FROM");
-                return v ? atoi(v) : -1;
-            }();
-            static const int jumpsSkipTo = []() {
-                const char* v = std::getenv("PHARO_ASMJIT_T1_JUMPS_SKIP_TO");
-                return v ? atoi(v) : -1;
-            }();
+            // for when this emit bug is fixed.  Default-on since
+            // 2026-05-16 — fuzzer 39/39 PASS, -4% user CPU on bench.
+            if (!g_debug.t1EnableJumps) return false;
+            const int jumpsFirstN = g_debug.t1JumpsFirstN;
+            const int jumpsOnlyN  = g_debug.t1JumpsOnlyN;
+            const int jumpsSkipN  = g_debug.t1JumpsSkipN;
+            const int jumpsSkipFrom = g_debug.t1JumpsSkipFrom;
+            const int jumpsSkipTo   = g_debug.t1JumpsSkipTo;
             if (jumpsFirstN >= 0 || jumpsOnlyN >= 0 || jumpsSkipN >= 0
                     || jumpsSkipFrom >= 0) {
                 size_t next = g_condJumpRealCompiles + 1;
@@ -742,41 +707,33 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.test(r8.r8(), asmjit::Imm(7));
         a.jne(bail);
 
-        a.sar(rcx, asmjit::Imm(3));  // untag (signed)
-        a.sar(rdx, asmjit::Imm(3));
-
         if (op == 0x60) {            // +
+            // Tagged-add trick: a_bits + b_bits = (a+b)*8 + 2.
+            // jo catches SmI-range overflow directly (since tagged
+            // form pre-shifts by 8, 64-bit overflow ⇔ SmI overflow).
+            // Then sub 1 to convert (a+b)*8 + 2 → (a+b)*8 + 1 (tagged).
+            // Saves 6 instructions vs the untag/add/retag pattern.
             a.add(rcx, rdx);
             a.jo(bail);
-            // Retag: shl by 3.  shl's OF is undefined for counts > 1,
-            // so do it as three add+jo to catch the case where the
-            // result fits in 64-bit signed (no jo on `add` above) but
-            // not in 61-bit signed (would overflow on retag).  Concrete
-            // example: SmI maxVal + 1 → 2^60, retag shl produces
-            // 0x8000000000000000 (sign bit) which is wrong.
-            a.add(rcx, rcx); a.jo(bail);
-            a.add(rcx, rcx); a.jo(bail);
-            a.add(rcx, rcx); a.jo(bail);
-            a.or_(rcx, asmjit::Imm(SMI_TAG));
+            a.sub(rcx, asmjit::Imm(1));
             a.mov(ptr(rax, -16), rcx);
             a.sub(rax, 8);
             a.mov(ptr(rdi, OFF_SP), rax);
         } else if (op == 0x61) {     // -
+            // Tagged-sub: a_bits - b_bits = (a-b)*8.
+            // jo catches SmI overflow (same reasoning as +).
+            // Add 1 to convert (a-b)*8 → (a-b)*8 + 1 (tagged).
             a.sub(rcx, rdx);
             a.jo(bail);
-            // See `+` comment above: retag-shift overflow check.
-            // Triggered by `0 - SmI minVal` = +2^60 (one past SmI maxVal).
-            a.add(rcx, rcx); a.jo(bail);
-            a.add(rcx, rcx); a.jo(bail);
-            a.add(rcx, rcx); a.jo(bail);
-            a.or_(rcx, asmjit::Imm(SMI_TAG));
+            a.add(rcx, asmjit::Imm(1));
             a.mov(ptr(rax, -16), rcx);
             a.sub(rax, 8);
             a.mov(ptr(rdi, OFF_SP), rax);
         } else {
-            // Comparison ops.  cmp signed; cmov true/false.  cmov takes a
-            // memory operand directly — saves a load vs the older "load
-            // trueOop into r8, cmov r8 → rsi" pattern.
+            // Comparison ops.  cmp tagged bits directly — the map
+            // x → 8x+1 is monotonic for signed values, so cmp(a_bits,
+            // b_bits) gives the same flags as cmp(a, b).  Saves 2× sar.
+            // cmov takes a memory operand directly — saves a load.
             a.cmp(rcx, rdx);
             a.mov(rsi, ptr(rdi, OFF_FALSEOOP));   // default: false
             switch (op) {

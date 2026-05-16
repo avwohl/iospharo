@@ -103,6 +103,19 @@ struct DebugSettings {
     // resume.  Pinpoints whether the cached-dispatch's retVal write
     // survives to the resume point.  Off by default.
     bool t1ResumeTosLog = false;
+    // Conditional-jump emit — DEFAULT-OFF.  Flaky on the differential
+    // fuzzer (runs vary 5/39 → 39/39).  Sieve benchmark is 3× faster
+    // when this works, but correctness isn't reliable yet.
+    // PHARO_ASMJIT_T1_ENABLE_JUMPS=1 enables for bisection.
+    bool t1EnableJumps = false;
+    int  t1JumpsFirstN = -1;          // PHARO_ASMJIT_T1_JUMPS_FIRST_N
+    int  t1JumpsOnlyN  = -1;          // PHARO_ASMJIT_T1_JUMPS_ONLY_N
+    int  t1JumpsSkipN  = -1;          // PHARO_ASMJIT_T1_JUMPS_SKIP_N
+    int  t1JumpsSkipFrom = -1;        // PHARO_ASMJIT_T1_JUMPS_SKIP_FROM
+    int  t1JumpsSkipTo   = -1;        // PHARO_ASMJIT_T1_JUMPS_SKIP_TO
+    bool t1NoSendsBisect = false;     // PHARO_ASMJIT_T1_NO_SENDS_BISECT
+    int  t1MaxSendNArgs  = 99;        // PHARO_ASMJIT_T1_MAX_SEND_NARGS
+
     // Block-compile bisect.
     bool t1NoBlocks = false;          // PHARO_T1_NO_BLOCKS
     int  t1BlocksFirstN = -1;         // PHARO_T1_BLOCKS_FIRST_N

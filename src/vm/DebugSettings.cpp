@@ -104,6 +104,14 @@ DebugSettings::DebugSettings() {
     sortstrWatch        = envPresent("PHARO_SORTSTR_WATCH");
     driftCheck          = envPresent("PHARO_DRIFT_CHECK");
     t1ResumeTosLog      = envPresent("PHARO_T1_RESUME_TOS_LOG");
+    t1EnableJumps    = envPresent("PHARO_ASMJIT_T1_ENABLE_JUMPS");
+    t1JumpsFirstN    = envInt("PHARO_ASMJIT_T1_JUMPS_FIRST_N", -1);
+    t1JumpsOnlyN     = envInt("PHARO_ASMJIT_T1_JUMPS_ONLY_N",  -1);
+    t1JumpsSkipN     = envInt("PHARO_ASMJIT_T1_JUMPS_SKIP_N",  -1);
+    t1JumpsSkipFrom  = envInt("PHARO_ASMJIT_T1_JUMPS_SKIP_FROM", -1);
+    t1JumpsSkipTo    = envInt("PHARO_ASMJIT_T1_JUMPS_SKIP_TO",   -1);
+    t1NoSendsBisect  = envPresent("PHARO_ASMJIT_T1_NO_SENDS_BISECT");
+    t1MaxSendNArgs   = envInt("PHARO_ASMJIT_T1_MAX_SEND_NARGS", 99);
     t1NoBlocks          = envPresent("PHARO_T1_NO_BLOCKS");
     t1BlocksFirstN      = envInt("PHARO_T1_BLOCKS_FIRST_N", -1);
     t1BlocksOnlyN       = envInt("PHARO_T1_BLOCKS_ONLY_N", -1);
