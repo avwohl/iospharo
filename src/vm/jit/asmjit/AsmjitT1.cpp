@@ -135,6 +135,11 @@ inline bool isPhase3MulOp(uint8_t op) {
     return op == 0x68;
 }
 
+// bitShift: (0x6C): SmI shift with bounds + overflow check.
+inline bool isPhase3ShiftOp(uint8_t op) {
+    return op == 0x6C;
+}
+
 // Compute the live bytecode length: walk forward decoding bytecodes
 // using SistaV1::bytecodeLength().  Tracks max forward branch target
 // so a `return` only terminates decoding when no jump points past it.
@@ -234,6 +239,7 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (isPhase3ArithOp(op)) continue;            // 0x60..0x67
         if (isPhase3BitOp(op)) continue;              // 0x6E, 0x6F bitAnd:/bitOr:
         if (isPhase3MulOp(op)) continue;              // 0x68 *
+        if (isPhase3ShiftOp(op)) continue;            // 0x6C bitShift:
         if (isPhase4SendOp(op)) {
             if (noSendsBisect) return false;
             if (sendNArgs(op) > maxSendNArgs) return false;
@@ -860,6 +866,86 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.add(rcx, rcx); a.jo(bail);
         a.add(rcx, rcx); a.jo(bail);
         a.add(rcx, rcx); a.jo(bail);
+        a.or_(rcx, asmjit::Imm(SMI_TAG));
+        a.mov(ptr(rax, -16), rcx);
+        a.sub(rax, 8);
+        a.mov(ptr(rdi, OFF_SP), rax);
+        a.jmp(end);
+
+        a.bind(bail);
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT),
+              asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.ret();
+
+        a.bind(end);
+        return true;
+    }
+    // Phase 3 bitShift: (0x6C).  Positive b → left shift with overflow
+    // check; negative b → arithmetic right shift.  Matches interp's
+    // bounds: b in [0,62] for left, b in [-63,-1] for right; else bail.
+    if (isPhase3ShiftOp(op)) {
+        asmjit::Label bail = a.new_label();
+        asmjit::Label end  = a.new_label();
+        asmjit::Label rightShift = a.new_label();
+        a.mov(rax, ptr(rdi, OFF_SP));
+        a.mov(rcx, ptr(rax, -16));   // a
+        a.mov(rdx, ptr(rax, -8));    // b
+        a.mov(r8,  rcx);
+        a.xor_(r8, asmjit::Imm(1));
+        a.mov(r9,  rdx);
+        a.xor_(r9, asmjit::Imm(1));
+        a.or_(r8, r9);
+        a.test(r8.r8(), asmjit::Imm(7));
+        a.jne(bail);
+
+        a.sar(rcx, asmjit::Imm(3));  // untag a
+        a.sar(rdx, asmjit::Imm(3));  // untag b
+        a.cmp(rdx, asmjit::Imm(0));
+        a.jl(rightShift);            // b < 0 → right shift
+
+        // Left shift: b in [0, 62].
+        a.cmp(rdx, asmjit::Imm(63));
+        a.jge(bail);
+        // shl rcx, cl — but cl is rdx's low byte.  We need to move
+        // shift count to cl.  rdx's low byte = dl (not cl).  Use the
+        // movzx + use cl pattern instead.
+        a.mov(r8, rcx);              // save original a in r8
+        // x86 SHL with reg operand requires CL.  Temporarily save rcx
+        // (= a, after untag), move shift count to cl via xchg with rdx.
+        // Simpler: move rcx to r9 (untagged a), move dl to cl.
+        a.mov(r9, rcx);              // r9 = a untagged
+        a.mov(rcx, rdx);             // rcx = b untagged (now cl = b mod 256)
+        a.shl(r9, asmjit::x86::cl);  // r9 = a << b
+        // Overflow check: (r9 >> b) == a?
+        a.mov(r10, r9);
+        a.sar(r10, asmjit::x86::cl);
+        a.cmp(r10, r8);
+        a.jne(bail);
+        a.mov(rcx, r9);              // result back to rcx
+        // Retag with overflow checks.
+        a.add(rcx, rcx); a.jo(bail);
+        a.add(rcx, rcx); a.jo(bail);
+        a.add(rcx, rcx); a.jo(bail);
+        a.or_(rcx, asmjit::Imm(SMI_TAG));
+        a.mov(ptr(rax, -16), rcx);
+        a.sub(rax, 8);
+        a.mov(ptr(rdi, OFF_SP), rax);
+        a.jmp(end);
+
+        a.bind(rightShift);
+        // b in [-63, -1].  Negate to get shift count.
+        a.neg(rdx);
+        a.cmp(rdx, asmjit::Imm(63));
+        a.jg(bail);
+        a.mov(r9, rcx);              // r9 = a untagged
+        a.mov(rcx, rdx);             // rcx = shift count (cl = -b)
+        a.sar(r9, asmjit::x86::cl);  // arithmetic right shift
+        a.mov(rcx, r9);
+        // Retag: result is smaller than input, no overflow possible.
+        a.shl(rcx, asmjit::Imm(3));
         a.or_(rcx, asmjit::Imm(SMI_TAG));
         a.mov(ptr(rax, -16), rcx);
         a.sub(rax, 8);
