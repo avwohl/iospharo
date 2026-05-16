@@ -18773,10 +18773,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     state.literals = methObj->slots() + 1;
                     state.argCount = nArgs;
                     state.jitMethod = calleeJM;
+                    // Sync state.method to the callee's compiledMethodOop.
+                    // asmjit-T1 send/bail emits read state.method when
+                    // computing state.ip = state.method + bcOffsetFromMethObj
+                    // (see AsmjitT1.cpp:853 etc.).  If state.method is stale
+                    // the IP write produces a bogus address, downstream
+                    // MUSTBOOL cascades.
+                    state.method = Oop::fromRawBits(calleeJM->compiledMethodOop);
                 }
-                // Note: state.method is NOT updated here. Stencils don't read it,
-                // and we reconstruct from state.jitMethod->compiledMethodOop
-                // after the trampoline loop exits.
+                // For self-recursive calls, state.method is already correct
+                // (same oop on both sides of the call).
 
                 // IP = bytecodeStart of callee. For self-recursive calls this
                 // equals the caller's bcStart we just computed, so reuse it.
@@ -18809,8 +18815,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 Oop retVal = state.returnValue;
                 J2JSave& save = j2jStack[j2jDepth];
 
-                // Restore caller JITState (state.method is NOT stored in J2JSave
-                // — stencils don't read it; reconstructed on bailout from jitMethod).
+                // Restore caller JITState.  state.method must be synced
+                // alongside state.jitMethod — see comment at J2J call setup
+                // above; asmjit-T1 send/bail emits depend on it.
                 state.sp = save.sp;
                 state.receiver = save.receiver;
                 state.tempBase = save.tempBase;
@@ -18823,6 +18830,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     state.literals = reinterpret_cast<Oop*>(savedJM->literals());
                     state.argCount = savedJM->argCount;
                     state.ip = savedJM->bcStart();
+                    state.method = Oop::fromRawBits(savedJM->compiledMethodOop);
                 }
 
                 // Pop receiver+args, push return value

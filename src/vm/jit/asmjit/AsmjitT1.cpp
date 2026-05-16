@@ -1952,13 +1952,18 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // §"Phase 4b.2 resume protocol gap").  Send-free methods are safe
     // to resume because there's no inline activation in their flow.
     //
+    // 2026-05-15: tried turning this on (PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1)
+    // plus syncing state.method at J2J call/return.  Still breaks the
+    // differential fuzzer (every test JIT_DIFF, MUSTBOOL cascade in
+    // #encoderClass, eventual stack overflow).  More than state.method
+    // is desync'd at the trampoline — investigation deferred.
+    //
     // Bisect knobs (default = off):
     //   PHARO_ASMJIT_T1_NO_BCTOCODE=1   — never advertise bcToCode
     //   PHARO_ASMJIT_T1_NO_NUMBC=1      — never advertise numBytecodes
     //   PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1
     //                                   — advertise resume even for
-    //                                     send-containing methods
-    //                                     (KNOWN BROKEN; for debug)
+    //                                     send-containing methods (BROKEN)
     static const bool noBcToCode =
         std::getenv("PHARO_ASMJIT_T1_NO_BCTOCODE") != nullptr;
     static const bool noNumBc =
