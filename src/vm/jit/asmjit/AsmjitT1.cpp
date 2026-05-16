@@ -990,15 +990,11 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(rsi, ptr(rdx, (int)offsetof(JITMethod, icBuffer)));
         a.add(rsi, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
 
-        // Common state setup (same fields for hit and miss).
-        a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
-        a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
-        a.mov(rax, ptr(rdi, OFF_METHOD));
-        // state.ip = AT the send opcode.  The chain loop reads
-        // *instructionPointer_ (Interpreter.cpp:18702-18711) to
-        // determine send length, then advances itself.
-        a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
-        a.mov(ptr(rdi, OFF_IP), rax);
+        // Deferred state setup: inline-spec paths (getter/setter/
+        // returnsSelf) continue inline and don't need state.icDataPtr,
+        // sendArgCount, or ip.  Only dispatchCached + miss paths return
+        // to the chain loop; they emit the state stores at the end.
+        // Saves 5 instructions per inline-spec HIT (the common case).
 
         // Selector-range bisect knob: PHARO_T1_IC_PROBE_MIN/MAX limit
         // which opcodes get the probe.  Default: all sends (0x70..0xAF).
@@ -1129,7 +1125,13 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.jmp(endOfSend);
 
             // === Plain cached dispatch (no inline opt) ===
+            // Emit deferred state setup here (chain loop reads it).
             a.bind(dispatchCached);
+            a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
+            a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
+            a.mov(rax, ptr(rdi, OFF_METHOD));
+            a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
+            a.mov(ptr(rdi, OFF_IP), rax);
             if (g_debug.t1HitAsMiss) {
                 a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
                 a.ret();
@@ -1142,7 +1144,13 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             }
 
             // === Miss — chain loop does the IC fill ===
+            // Emit deferred state setup here too.
             a.bind(miss);
+            a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
+            a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
+            a.mov(rax, ptr(rdi, OFF_METHOD));
+            a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
+            a.mov(ptr(rdi, OFF_IP), rax);
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
             a.ret();
 
@@ -1150,6 +1158,13 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             return true;  // inline paths fall through to next bytecode
         }
 
+        // Non-probe fallback: emit state setup + bail (chain loop will
+        // do the full lookup).
+        a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
+        a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
+        a.mov(rax, ptr(rdi, OFF_METHOD));
+        a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
         a.ret();
         return true;
