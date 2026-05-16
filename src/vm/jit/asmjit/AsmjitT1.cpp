@@ -1102,11 +1102,14 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // val = receiver->slots[slotIdx]; sp[-1-nArgs] = val; sp -= nArgs.
             // For 0-arg getters (the common case) nArgs=0 → sp unchanged,
             // val replaces receiver at sp[-1].
+            //
+            // Note: rcx still holds SP from the probe entry (no clobber
+            // through the probe path).  Use rdx for slotIdx so rcx stays
+            // SP — saves 1 mov per inline-spec HIT.
             a.bind(tryGetter);
-            a.mov(rcx, r8);
-            a.and_(rcx, asmjit::Imm(0xFFFF));    // slotIdx
-            a.mov(rdx, ptr(rax, rcx, 3, 8));     // [rax + slotIdx*8 + 8]
-            a.mov(rcx, ptr(rdi, OFF_SP));
+            a.mov(rdx, r8);
+            a.and_(rdx, asmjit::Imm(0xFFFF));    // slotIdx in rdx
+            a.mov(rdx, ptr(rax, rdx, 3, 8));     // load slot value into rdx
             a.mov(ptr(rcx, rcvrOffsetBytes), rdx);
             if (nArgs > 0) {
                 a.sub(rcx, asmjit::Imm(8 * nArgs));
@@ -1119,26 +1122,23 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // sp[-1-nArgs] = receiver (already true); sp -= nArgs.
             // No write barrier — the YG scavenge does a full old-space scan
             // (ObjectMemory.cpp:1538) so missed remembered-set updates are
-            // tolerated.  The stencil JIT's inline setter relies on this
-            // same property.
+            // tolerated.
             a.bind(trySetter);
-            a.mov(rcx, r8);
-            a.and_(rcx, asmjit::Imm(0xFFFF));
-            a.mov(rdx, ptr(rdi, OFF_SP));
-            a.mov(r9, ptr(rdx, -8));             // arg = sp[-1]
-            a.mov(ptr(rax, rcx, 3, 8), r9);      // recv->slot[slotIdx] = arg
+            a.mov(rdx, r8);
+            a.and_(rdx, asmjit::Imm(0xFFFF));    // slotIdx in rdx
+            a.mov(r9, ptr(rcx, -8));             // arg = sp[-1] (rcx is SP)
+            a.mov(ptr(rax, rdx, 3, 8), r9);      // recv->slot[slotIdx] = arg
             if (nArgs > 0) {
-                a.sub(rdx, asmjit::Imm(8 * nArgs));
-                a.mov(ptr(rdi, OFF_SP), rdx);
+                a.sub(rcx, asmjit::Imm(8 * nArgs));
+                a.mov(ptr(rdi, OFF_SP), rcx);
             }
             a.jmp(endOfSend);
 
             // === returnsSelf ===
             // Receiver is already at sp[-1-nArgs]; just pop nArgs and
-            // it becomes TOS.
+            // it becomes TOS.  rcx still has SP from probe.
             a.bind(tryReturnsSelf);
             if (nArgs > 0) {
-                a.mov(rcx, ptr(rdi, OFF_SP));
                 a.sub(rcx, asmjit::Imm(8 * nArgs));
                 a.mov(ptr(rdi, OFF_SP), rcx);
             }
