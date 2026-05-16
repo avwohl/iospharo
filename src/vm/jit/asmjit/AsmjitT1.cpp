@@ -776,17 +776,18 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.sub(rax, 8);
             a.mov(ptr(rdi, OFF_SP), rax);
         } else {
-            // Comparison ops.  cmp signed; cmov true/false.
+            // Comparison ops.  cmp signed; cmov true/false.  cmov takes a
+            // memory operand directly — saves a load vs the older "load
+            // trueOop into r8, cmov r8 → rsi" pattern.
             a.cmp(rcx, rdx);
             a.mov(rsi, ptr(rdi, OFF_FALSEOOP));   // default: false
-            a.mov(r8,  ptr(rdi, OFF_TRUEOOP));
             switch (op) {
-                case 0x62: a.cmovl(rsi, r8); break;   // <
-                case 0x63: a.cmovg(rsi, r8); break;   // >
-                case 0x64: a.cmovle(rsi, r8); break;  // <=
-                case 0x65: a.cmovge(rsi, r8); break;  // >=
-                case 0x66: a.cmove(rsi, r8); break;   // =
-                case 0x67: a.cmovne(rsi, r8); break;  // ~=
+                case 0x62: a.cmovl(rsi, ptr(rdi, OFF_TRUEOOP)); break;   // <
+                case 0x63: a.cmovg(rsi, ptr(rdi, OFF_TRUEOOP)); break;   // >
+                case 0x64: a.cmovle(rsi, ptr(rdi, OFF_TRUEOOP)); break;  // <=
+                case 0x65: a.cmovge(rsi, ptr(rdi, OFF_TRUEOOP)); break;  // >=
+                case 0x66: a.cmove(rsi, ptr(rdi, OFF_TRUEOOP)); break;   // =
+                case 0x67: a.cmovne(rsi, ptr(rdi, OFF_TRUEOOP)); break;  // ~=
             }
             a.mov(ptr(rax, -16), rsi);
             a.sub(rax, 8);
