@@ -20018,8 +20018,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     // stub bail with EXIT_SEND would be misread as a real
                     // send by the chain loop with stale icDataPtr (the
                     // cull:-bug pattern, fix in phase4b.31).
+                    // canBailMidMethod (cond-jump methods): allowed in
+                    // inline-activate now — the FALLBACK at the end of
+                    // this block correctly handles non-ExitReturn exits
+                    // by pushing a SavedFrame for the caller and
+                    // bailing.  Opt-out PHARO_INLINE_ACTIVATE_NO_BAIL_MID=1.
+                    static const bool gateBailMid =
+                        std::getenv("PHARO_INLINE_ACTIVATE_NO_BAIL_MID") != nullptr;
                     if ((!chainHasPrim || chainJM->hasPrimPrologue)
-                            && !chainJM->canBailMidMethod
+                            && (!gateBailMid || !chainJM->canBailMidMethod)
                             && !chainJM->isStubOnEntry) {
                         // --- Save caller state + precompute resume ---
                         Oop* savedSP = state.sp;
