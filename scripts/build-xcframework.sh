@@ -24,42 +24,12 @@ XCFRAMEWORK_TMP="$PROJECT_DIR/Frameworks/PharoVMCore-tmp.xcframework"
 
 echo "=== Building PharoVMCore.xcframework (iOS Device + Mac Catalyst + iOS Simulator) ==="
 
-# Workaround: vendored asmjit's virtmem.cpp guards
-# <libkern/OSCacheControl.h> behind TARGET_OS_OSX but then calls
-# sys_icache_invalidate() unconditionally on __APPLE__.  Mac Catalyst
-# (TARGET_OS_OSX=0) fails with "undeclared identifier" at the call site.
-# Patch in place (idempotent: skips if already applied).  Upstream PR
-# should fix this properly in asmjit.
-ASMJIT_VM="$PROJECT_DIR/third_party/asmjit/asmjit/core/virtmem.cpp"
-if [ -f "$ASMJIT_VM" ]; then
-    if ! grep -q 'sys_icache_invalidate() is available on all Apple' "$ASMJIT_VM"; then
-        echo "=== Patching asmjit virtmem.cpp for Mac Catalyst ==="
-        # Move the OSCacheControl include outside the TARGET_OS_OSX guard.
-        # Use a python inline for precise edits.
-        python3 - "$ASMJIT_VM" <<'PY'
-import sys, re
-path = sys.argv[1]
-with open(path) as f: src = f.read()
-old = '''    #if TARGET_OS_OSX
-      #include <sys/utsname.h>
-      #include <libkern/OSCacheControl.h> // sys_icache_invalidate().
-    #endif'''
-new = '''    #if TARGET_OS_OSX
-      #include <sys/utsname.h>
-    #endif
-    // sys_icache_invalidate() is available on all Apple platforms
-    // (iOS, Mac Catalyst, macOS).  Without this include, Catalyst
-    // builds fail with "undeclared identifier" at the call site.
-    #include <libkern/OSCacheControl.h>'''
-if old in src:
-    src = src.replace(old, new)
-    with open(path, 'w') as f: f.write(src)
-    print("Patched")
-else:
-    print("Pattern not found — may need manual update for newer asmjit")
-PY
-    fi
-fi
+# asmjit Mac Catalyst fix is now baked into the submodule pin
+# (avwohl/asmjit:iospharo-catalyst, commit 1ce3ea65 — moves
+# <libkern/OSCacheControl.h> out of the TARGET_OS_OSX guard).
+# `git submodule update --init` checks out the patched commit, so
+# no in-place patching needed.  The Workaround block that used to
+# live here was removed 2026-05-17.
 
 # Clean previous build intermediates (but keep existing xcframework until new one is ready)
 rm -rf "$BUILD_BASE"
