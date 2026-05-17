@@ -754,6 +754,40 @@ branch and run lldb with proper step-instruction loop.
 
 Reverted, tree clean.
 
+**lldb brk confirmation 2026-05-17 session 2+:**
+
+Re-applied option (c) with `a.brk(asmjit::Imm(0xBEEF))` as first
+instruction of `tryInlineJ2J`.  lldb attach catches the brk:
+  - PC = brk site (in JIT method)
+  - x0 = 0x16fdfc7a8 (valid state ptr)
+  - x7 = 0x100000010800 95a0 (extras with bit 60 set)
+
+So control DOES reach tryInlineJ2J with valid state.  Continuation
+past the brk hits another brk (another inline-J2J site, also with
+valid state).  After many continues, eventually crashes in
+unrelated dyld code (process exited).
+
+So the corruption must happen AFTER the emit's tryInlineJ2J body
+runs.  Either:
+1. The emit's `mov x9, helperAddr` mis-encodes (asmjit bug for
+   certain 64-bit values), so `blr x9` jumps to garbage
+2. The helper executes but corrupts state in a way that downstream
+   bytecodes hit
+3. The emit's `ldr x0, [sp, 0]` after blr doesn't restore the
+   right x0 (asmjit sp-relative addressing quirk?)
+4. Buffer overflow: cap = bcLen*128+128 may not fit inline-J2J
+   per-send overhead.  Many methods fail compile with warnings
+   `[asmjit-t1] code.code_size=X out of [1, M]` — but those bail
+   to interp, no corruption.
+
+Genuine next steps (need interactive lldb session):
+- Set conditional breakpoint at `mov x9` site, single-step through
+  the mov-imm64 sequence (movz + 3 movk), verify x9 is helper addr
+- Set breakpoint at the `blr x9` itself; verify we enter
+  `jit_rt_inline_j2j_call` at the C function's prologue
+- If blr doesn't reach helper, disassemble the emitted bytes to
+  see what mov-imm64 actually encoded
+
 **Option (b) (blr/ret normal-call semantics, C-stack save) — TRIED
 AND ROOT-CAUSED, 2026-05-17.**  Implementation drafted: sub sp #64;
 store 7 caller-state fields; setup callee state; blr x_entry; load
