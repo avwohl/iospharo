@@ -513,41 +513,79 @@ codegen path.  When the bench-suite IS completing, the numbers are
 in line with the x86 documented post-session figures
 (`docs/jit-bench-2026-05-16.md`), so JIT correctness is fine.
 
-### A6. arm64 perf gap vs x86 documented numbers — 2026-05-17
+### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
-First arm64 measurement after the x86 sessions shows arm64 running
-substantially slower than the post-session x86 numbers documented
-in `docs/jit-bench-2026-05-16.md`:
+**Critical finding from this session's bench-suite work.**
 
-    bench               arm64 (this)   x86 doc post-session   Cog (arm64)
-    fib(28)             231 ms         111-114 ms             2 ms
-    sort 100K           352 ms         421-507 ms             15 ms
-    sieve x100          7 ms           183-219 ms             8 ms
-    sum 1M              91 ms          101-137 ms             5 ms
-    floatSum 1M         108 ms         122-147 ms             5 ms
-    1M getter+yourself  0 ms           135-200 ms             2 ms
+Running every non-splice benchmark with `PHARO_NO_JIT=1` produces
+*faster* numbers than the default JIT path on arm64:
 
-arm64 is genuinely faster than the x86 docs on splice-driven
-benches (sieve, 1M getter+yourself), and faster on sort + sum +
-floatSum.  But fib(28) is ~2× slower than the x86 number — a
-recursive-send-heavy bench that should benefit from the J2J
-optimizations.  None of the arm64 mirror commits target the
-recursive-J2J path directly, so this is most likely a missing
-piece in arm64 J2J that x86 has.
+    bench (10x100K)      default JIT   PHARO_NO_JIT=1   delta
+    fib(28)              245 ms        113 ms           -54% (2.2× faster)
+    5000 factorial       177 ms        24 ms            -86% (7.4× faster)
+    dict 50K             332 ms        218 ms           -34%
+    sort 100K            354 ms        283 ms           -20%
+    stringHash 100K      97 ms         80 ms            -18%
+    floatSum 1M          108 ms        94 ms            -13%
+    sum 1M               92 ms         81 ms            -12%
+    sieve x100           8 ms          7 ms             same (Sista splice)
+    1M blocks            0 ms          0 ms             same (Sista splice)
+    1M getter+yourself   0 ms          0 ms             same (Sista splice)
 
-The bigger picture: we are NOT "as fast as Cog" on standard
-benches.  Cog wins ~50-130× on every arith- or send-heavy
-benchmark.  Our wins are only where Sista splices replace the
-inner loop entirely (sieve, blocks, getter+yourself).  Reaching
-parity with Cog on general code is in the multi-week E-series
-work (T1/T2 §1.3, multi-bc §1.2e, megamorphic dispatch).
+JIT only wins where the Sista splice replaces the inner loop entirely
+(sieve, blocks, getter+yourself).  Everywhere else, asmjit-T1's
+emitted code is slower than the interpreter on arm64.  PHARO_NO_ASMJIT_T1=1
+(falls back to the legacy stencil JIT) hangs at fib, so the only
+way to dodge T1 today is to disable JIT entirely.
 
-**Status:** investigation deferred.  Run-to-run variance is large
-on this bench harness; before chasing the fib(28) 2× gap, re-run
-on `PharoBenchPanel.image` (best-of-N filter) to confirm it's not
-single-run noise.  The panel image is not currently in
-`/tmp/harness/`; needs to be generated (search `PharoBenchPanel`
-in tree for its setup).
+Per-tier isolation:
+
+    config                  fib(28)
+    default (T1 + Sista)    250 ms
+    PHARO_NO_SISTA=1        235 ms   (T1 only — tiny win)
+    PHARO_NO_ASMJIT_T1=1    HANGS    (legacy stencil JIT broken?)
+    PHARO_NO_JIT=1          121 ms   (pure interp — baseline)
+
+**Cog (arm64) reference:** fib 2-3 ms, factorial 4 ms, sort 17 ms,
+sum 2-5 ms.  We are 25-50× behind Cog even with NO_JIT.  T1 then
+makes us worse, not better.
+
+**Why is T1 slower than interp?** Likely candidates:
+
+1. **arm64-specific codegen quality.**  The x86 sessions optimized
+   T1 heavily for x86 (cmov-mem, tagged-arith, defer-send-state,
+   etc.).  Only the arith/bit/mul/shift bytecode emit + prim
+   prologue tagged-arith got mirrored to arm64 (today's three
+   commits `ada9f919` / `eeb69514` / `410a9930`).  The cmov-mem
+   trio (`218e7547` / `43ab82a1` / `3ee4dc0d`) is x86-only by
+   nature (csel on arm needs both operands in registers).
+2. **IC probe / J2J trampoline interaction on arm64.**  The probe
+   architecture is mirrored, but the inline-spec dispatch may
+   bottleneck differently than on x86.
+3. **Recursive J2J calls** (fib's hot path) — each call goes
+   through the stencil_sendJ2J path (~523 instr per call per the
+   jit-todo.md P2 estimate).  Interp's bytecode dispatch is much
+   tighter.
+
+**Workarounds tested:**
+
+- `PHARO_JIT_THRESHOLD=99999999` (effectively no compile) gets fib
+  back to 117 ms.  All non-splice benches improve.  Splice-driven
+  benches unaffected (they go through the Sista path, not T1).
+- Per-method `PHARO_JIT_EXCLUDE=benchFib,factorial,...` could exclude
+  the worst regressions selectively but doesn't help the steady
+  long-tail regressions.
+
+**Status:** the right fix is a focused arm64 asmjit-T1 codegen audit
+— look at the emitted asm for benchFib / factorial and find where
+the slow primitive dispatch / J2J trampoline is dominating.  Until
+then, defining `PHARO_NO_JIT=1` is a defensible default for arm
+production runs (the Sista splice infrastructure still fires
+without T1, so the splice-driven wins survive).
+
+Cog reference is still 25-50× ahead even with NO_JIT — closing
+that is the E-series multi-week work, separate from this T1
+regression issue.
 
 ---
 
