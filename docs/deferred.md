@@ -680,6 +680,35 @@ Net: option (a) is half-shipped (return prelude is in tree, benign).
 The send-side push is blocked on a chain-break-protocol decision
 that's bigger than a single emit-site change.
 
+**Option (c) (C helper owning chain-loop processing) — ATTEMPTED
+AND CRASHES, 2026-05-17.**
+
+Wrote `jit_rt_inline_j2j_call(state, entry, calleeJM, methodBits, nArgs)`
+in JITRuntime.cpp.  Helper saves caller state, sets up callee
+state in JITState, calls `entry(state)` directly via C call, returns
+the retval on EXIT_RETURN or 0 on any other exit (signaling bail).
+Caller's emit calls the helper via blr.
+
+First helper call goes through correctly (printf trace confirms
+args sane: state=valid, entry=valid JIT code, methodBits=valid heap
+oop, nArgs=1).  But entry's compiled code crashes a few levels deep
+in the recursion (fib of 5 is enough to trigger).  PC at crash is
+in the JIT code zone but BEFORE the called entry's codeStart —
+execution branched to garbage.  Register state at crash: x0 =
+0x680008 (looks like a method-header word, not a state ptr); state
+ptr survived in x6 and x10.
+
+Hypothesis: helper recurses via `entry(state)` → JIT code → inline-
+J2J emit calls helper again → another entry call → fib(5) ~10
+helper frames deep.  Something corrupts state in the recursion —
+possibly the nested entry call's state setup uses values the
+recursive context left in registers.
+
+Reverted; tree back to clean (return prelude only, opt-in send path
+always bails).  BOTH option (a) AND option (c) need lldb attach
+through the recursive chain — beyond what this session can deliver
+via static reasoning + printf.
+
 **Option (b) (blr/ret normal-call semantics, C-stack save) — TRIED
 AND ROOT-CAUSED, 2026-05-17.**  Implementation drafted: sub sp #64;
 store 7 caller-state fields; setup callee state; blr x_entry; load
