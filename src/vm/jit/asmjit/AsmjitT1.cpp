@@ -70,6 +70,8 @@ extern "C" uint64_t g_inlineJ2J_bail_self = 0;  // calleeJM != callerJM
 extern "C" uint64_t g_inlineJ2J_dbg_caller_method = 0;
 extern "C" uint64_t g_inlineJ2J_dbg_callee_method = 0;
 extern "C" uint64_t g_inlineJ2J_dbg_extra         = 0;
+extern "C" uint64_t g_inlineJ2J_dbg_ic_hits       = 0;  // count IC HIT events
+extern "C" uint64_t g_inlineJ2J_dbg_extra_no_bit60 = 0; // IC HIT with extra but no bit 60
 
 namespace {
 
@@ -1876,7 +1878,32 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
             // x7 = extras
             a.ldr(x7, ptr(x5, 16));
+            // Debug: count every IC HIT (PHARO_T1_INLINE_J2J=1 telemetry)
+            {
+                static const bool inlineJ2JDbg =
+                    std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+                if (inlineJ2JDbg) {
+                    a.mov(x4, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_ic_hits));
+                    a.ldr(x6, ptr(x4));
+                    a.add(x6, x6, asmjit::Imm(1));
+                    a.str(x6, ptr(x4));
+                }
+            }
             a.cbz(x7, dispatchCached);
+            // Debug: count IC HITs where extra is set but bit 60 isn't
+            {
+                static const bool inlineJ2JDbg =
+                    std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+                if (inlineJ2JDbg) {
+                    asmjit::Label haveBit60 = a.new_label();
+                    a.tbnz(x7, asmjit::Imm(60), haveBit60);
+                    a.mov(x4, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_extra_no_bit60));
+                    a.ldr(x6, ptr(x4));
+                    a.add(x6, x6, asmjit::Imm(1));
+                    a.str(x6, ptr(x4));
+                    a.bind(haveBit60);
+                }
+            }
 
             // ===== INLINE J2J (PHARO_T1_INLINE_J2J=1, opt-in 2026-05-17) =====
             // Bit 60 (J2J_ENTRY_BIT): callee is JIT-compiled; tail-call its

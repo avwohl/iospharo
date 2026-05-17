@@ -86,6 +86,8 @@ extern "C" uint64_t g_inlineJ2J_bail_self;
 extern "C" uint64_t g_inlineJ2J_dbg_caller_method;
 extern "C" uint64_t g_inlineJ2J_dbg_callee_method;
 extern "C" uint64_t g_inlineJ2J_dbg_extra;
+extern "C" uint64_t g_inlineJ2J_dbg_ic_hits;
+extern "C" uint64_t g_inlineJ2J_dbg_extra_no_bit60;
 
 // Display Form readiness flag — exposed to Swift via vm_isDisplayFormReady().
 // Set true when the image calls primitiveBeDisplay (prim 102) or
@@ -1366,7 +1368,8 @@ void Interpreter::dumpJITStats() {
                 "  inline-J2J: hits=%llu bail_zero=%llu bail_full=%llu "
                 "bail_self=%llu (catch rate %.1f%%)\n"
                 "  inline-J2J dbg: last_caller_method=0x%llx "
-                "last_callee_method=0x%llx last_extra=0x%llx\n",
+                "last_callee_method=0x%llx last_extra=0x%llx\n"
+                "  inline-J2J dbg: ic_hits=%llu extra_no_bit60=%llu\n",
                 (unsigned long long)g_inlineJ2J_hits,
                 (unsigned long long)g_inlineJ2J_bail_zero,
                 (unsigned long long)g_inlineJ2J_bail_full,
@@ -1374,7 +1377,9 @@ void Interpreter::dumpJITStats() {
                 100.0 * g_inlineJ2J_hits / total,
                 (unsigned long long)g_inlineJ2J_dbg_caller_method,
                 (unsigned long long)g_inlineJ2J_dbg_callee_method,
-                (unsigned long long)g_inlineJ2J_dbg_extra);
+                (unsigned long long)g_inlineJ2J_dbg_extra,
+                (unsigned long long)g_inlineJ2J_dbg_ic_hits,
+                (unsigned long long)g_inlineJ2J_dbg_extra_no_bit60);
         }
     }
     fprintf(stderr, "=================\n");
@@ -16715,6 +16720,15 @@ void Interpreter::tryJITResumeInCaller() {
 
                 // --- ExitSendCached → ExitJ2JCall conversion ---
                 if (state.exitReason == jit::ExitSendCached) {
+                    // Inline-J2J support (PHARO_T1_INLINE_J2J=1):
+                    // upgrade the IC so subsequent calls fire bit 60.
+                    // Without this, the fast chain loop processes sends
+                    // entirely in C++ and bit 60 never gets set on hot
+                    // recursive ICs (defeats inline-J2J for benchFib).
+                    if (state.icDataPtr) {
+                        upgradeICToJ2J(state.icDataPtr, state.cachedTarget,
+                                       state.sendArgCount, state.method);
+                    }
                     if (!pharo_jit_convert_send(&state)) break;
                 }
 
@@ -18695,6 +18709,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
             // --- ExitSendCached → ExitJ2JCall conversion ---
             if (state.exitReason == jit::ExitSendCached) {
+                // Inline-J2J support (PHARO_T1_INLINE_J2J=1): see note
+                // in the other fast chain loop at Interpreter.cpp:~16717.
+                if (state.icDataPtr) {
+                    upgradeICToJ2J(state.icDataPtr, state.cachedTarget,
+                                   state.sendArgCount, state.method);
+                }
                 if (!pharo_jit_convert_send(&state)) break;
                 // Fall through to J2JCall handler
             }
