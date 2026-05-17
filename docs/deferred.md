@@ -637,6 +637,41 @@ regression battery + `PHARO_RESUME_J2J=1` exercise + fuzzer.
 defensible default for arm64 production runs of arith/send-heavy
 code (Sista splice still fires, so splice-driven wins survive).
 
+**Scaffold landed 2026-05-17 (`f81d61a0`):** arm64 self-recursive
+case wired up, opt-in via `PHARO_T1_INLINE_J2J=1`.  Functional
+(`28 benchFib = 1028457` correct) but doesn't win yet —
+benchFib goes from 251-260 ms to 266-270 ms with the knob on.
+
+**Catch-rate observation (2026-05-17 experiment):** with the knob
+on, `J2J stencil calls` counter drops 294K → 236K for `28 benchFib`.
+fib(28) has ~514K recursive sends, so the inline path catches at
+most ~58K of them (~11%).  Remaining 89% still go through the
+C++ chain loop (likely bailing on the self-recursive check —
+calleeJM = entry-96 vs callerJM = state.jitMethod — for some
+reason).
+
+**Next debug step:** add a per-bail-reason counter in the inline
+emit (or use `spliceSpill0/1` as scratch counters) to see which
+bail dominates:
+  - entryAddr == 0 (shouldn't happen if bit 60 is set)
+  - save stack full (unlikely at depth 28)
+  - calleeJM != callerJM (the suspected dominant case)
+
+If the calleeJM mismatch is dominant during steady-state
+recursion, possible causes: (a) IC entry's J2J_ADDR points to an
+OLD entry after the callee recompiled (rewriteIcEntriesAfterRecompile
+should fix this but maybe timing window); (b) state.jitMethod is
+the OUTERMOST JIT method in the J2J chain, not the immediate
+caller (would need to walk the chain or save+restore around the
+nested call).
+
+The chain-protocol contract per the legacy stencil
+(`stencils.cpp:1733-1877`) DOES NOT update state.method or
+state.jitMethod for self-recursive — they stay at the values
+set by tryJITActivation.  So self-recursive should match by
+construction.  Bears closer reading on what
+state.jitMethod actually points to during nested J2J chain entry.
+
 Cog reference is still 25-50× ahead even with NO_JIT — closing
 that is the E-series multi-week work, separate from this T1
 regression issue.
