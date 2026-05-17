@@ -31,6 +31,7 @@
 #include <csetjmp>
 #include <csignal>
 #include <execinfo.h>
+#include <cxxabi.h>
 #include <iostream>
 #include <iomanip>
 #include <thread>
@@ -2112,11 +2113,15 @@ void Interpreter::interpret() {
                     frameDepth_,
                     memory_.selectorOf(method_).c_str());
                 if (__builtin_expect(!running_, 0)) goto cg_exit;
-                DISPATCH_NEXT();
+                // Direct goto out of the std::string scope so destructors
+                // run.  Indirect goto (DISPATCH_NEXT()) is forbidden from
+                // here because it can't be analyzed for destructor cleanup.
+                goto after_send0_diag;
             }
         }
         sendSelector(literal(bytecode & 0x0F), 0);
         if (__builtin_expect(!running_, 0)) goto cg_exit;
+    after_send0_diag:
         DISPATCH_NEXT();
     }
 
@@ -11134,9 +11139,8 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
 }
 
 // Dump C++ backtrace via glibc's backtrace() + addr2line + nm.
-// Used by SORTSTR diagnostic.
-#include <execinfo.h>
-#include <cxxabi.h>
+// Used by SORTSTR diagnostic.  (System headers included at top of file —
+// including them mid-file inside namespace pharo {} pollutes lookup.)
 void dumpCxxBacktrace(const char* tag) {
     void* buf[40];
     int n = backtrace(buf, 40);

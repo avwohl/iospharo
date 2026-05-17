@@ -1399,7 +1399,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // Dup: read sp[-1], push it.
     if (op == SistaV1::Dup) {
         a.ldr(x2, ptr(x0, OFF_SP));
-        a.ldur(x1, a64::ptr(x2, -8));
+        a.ldur(x1, ptr(x2, -8));
         emitPushReg(a, x1);
         return true;
     }
