@@ -550,22 +550,46 @@ Per-tier isolation:
 sum 2-5 ms.  We are 25-50× behind Cog even with NO_JIT.  T1 then
 makes us worse, not better.
 
-**Why is T1 slower than interp?** Likely candidates:
+**Why is T1 slower than interp?** Investigated 2026-05-17 by reading
+the asmjit-T1 send emit + the C stencil_sendJ2J definition:
 
-1. **arm64-specific codegen quality.**  The x86 sessions optimized
-   T1 heavily for x86 (cmov-mem, tagged-arith, defer-send-state,
-   etc.).  Only the arith/bit/mul/shift bytecode emit + prim
-   prologue tagged-arith got mirrored to arm64 (today's three
-   commits `ada9f919` / `eeb69514` / `410a9930`).  The cmov-mem
-   trio (`218e7547` / `43ab82a1` / `3ee4dc0d`) is x86-only by
-   nature (csel on arm needs both operands in registers).
-2. **IC probe / J2J trampoline interaction on arm64.**  The probe
-   architecture is mirrored, but the inline-spec dispatch may
-   bottleneck differently than on x86.
-3. **Recursive J2J calls** (fib's hot path) — each call goes
-   through the stencil_sendJ2J path (~523 instr per call per the
-   jit-todo.md P2 estimate).  Interp's bytecode dispatch is much
-   tighter.
+**Root cause: asmjit-T1 does not emit inline J2J direct calls.**
+`src/vm/jit/asmjit/AsmjitT1.cpp:1071-1075` (both x86 and arm64
+arms) say literally `inline yet (bit 60 J2J, ...)` — i.e., when
+the IC HIT path sees `extra & J2J_ENTRY_BIT` (the bit that says
+"target is JIT-compiled — call it directly"), asmjit-T1 just
+falls through to `dispatchCached` and `ret`s back to the C++
+chain loop.  The chain loop then re-enters JIT for the callee via
+`activateMethod` → `tryJITActivation`.  Every recursive fib call
+takes that JIT → C++ → JIT round trip (~500-1000 cycles of pure
+overhead per call).
+
+The legacy stencil JIT (replaced as default in `b5a7c837` on
+2026-05-15) HAD inline-J2J: `stencils.cpp:1733-1877`
+(`j2j_direct_call:` block) — saves caller state, sets up callee
+state, tail-calls into the callee's compiled entry, all without
+returning to C++.  asmjit-T1's send emit hasn't ported this code
+path yet.
+
+For benchFib (514K recursive calls, 0-arg, mono-IC on SmI), the
+round-trip is the entire perf gap.  500 cycles × 514K calls = 256M
+cycles = ~80 ms on a 3.2 GHz arm core — matches the observed 137 ms
+gap close enough for rounding.
+
+**Why x86 is "only" 2× faster than arm here:** x86 ABI saves ~5
+callee-saved regs across each chain-loop call; arm64 ABI saves ~11.
+The extra saves per round-trip cost arm proportionally more, but
+both archs pay the round-trip.
+
+**Other contributing factors (smaller):**
+
+- The cmov-mem trio (`218e7547` / `43ab82a1` / `3ee4dc0d`) is
+  x86-only by nature (arm csel needs both operands in registers).
+  Maybe 5-10% loss on comparison-heavy code.
+- Per-method bookkeeping in stencil_sendJ2J's J2J path (tier
+  check + callee/caller bump for safe-point recompile drain) —
+  ~8 memory accesses per J2J call.  Negligible compared to the
+  round-trip cost.
 
 **Workarounds tested:**
 
@@ -576,12 +600,42 @@ makes us worse, not better.
   the worst regressions selectively but doesn't help the steady
   long-tail regressions.
 
-**Status:** the right fix is a focused arm64 asmjit-T1 codegen audit
-— look at the emitted asm for benchFib / factorial and find where
-the slow primitive dispatch / J2J trampoline is dominating.  Until
-then, defining `PHARO_NO_JIT=1` is a defensible default for arm
-production runs (the Sista splice infrastructure still fires
-without T1, so the splice-driven wins survive).
+**The fix is well-defined:** port the `j2j_direct_call:` block from
+`src/vm/jit/stencils/stencils.cpp:1733-1877` into both arms of
+`AsmjitT1.cpp:emitOne_x86` / `emitOne_arm64`'s send-emit, fired
+when `extras & J2J_ENTRY_BIT` after IC HIT.  The save struct
+layout is fixed (`J2JSave`) and the save protocol is locked-in
+by the chain loop's expectations.  Skeleton:
+
+    after IC HIT:
+      r8 = extras (icData[2])
+      if (r8 & J2J_ENTRY_BIT) goto inline_j2j_call;
+      ... existing inline-spec dispatch ...
+
+    inline_j2j_call:
+      check j2jSaveCursor < j2jSaveLimit (bail if full)
+      compute calleeJM = (extras & J2J_ADDR_MASK) - JM_SIZE
+      save = j2jSaveCursor
+      save->sp / receiver / tempBase / ip / sendArgCount /
+           resumeAddr / jitMethod  (7 stores)
+      j2jSaveCursor += sizeof(J2JSave)
+      j2jDepth++ ; j2jTotalCalls++
+      set s->receiver, s->tempBase, s->jitMethod, s->ip
+      (and s->literals, s->argCount if not self-recursive)
+      tail-call entryAddr
+
+That replaces the JIT→C++→JIT round trip with a single inline
+call, saving ~500 cycles per send.  Validate against the chain
+loop's J2J return path (`J2J_INLINE_RETURN`) — the resumeAddr
++ stencil-style return is what closes the loop.
+
+Risk: getting the save protocol wrong corrupts the sender chain
+(class of bug we already know painfully).  Test plan: per-bench
+regression battery + `PHARO_RESUME_J2J=1` exercise + fuzzer.
+
+**Status:** until inline-J2J is ported, `PHARO_NO_JIT=1` is a
+defensible default for arm64 production runs of arith/send-heavy
+code (Sista splice still fires, so splice-driven wins survive).
 
 Cog reference is still 25-50× ahead even with NO_JIT — closing
 that is the E-series multi-week work, separate from this T1
