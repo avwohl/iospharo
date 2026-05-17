@@ -3,4 +3,5 @@
 	url = https://github.com/avwohl/pharo-headless-test.git
 [submodule "third_party/asmjit"]
 	path = third_party/asmjit
-	url = https://github.com/asmjit/asmjit.git
+	url = https://github.com/avwohl/asmjit.git
+	branch = iospharo-catalyst
