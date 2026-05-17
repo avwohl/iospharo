@@ -642,6 +642,44 @@ arm64 inline-J2J path wired up with per-bail counters, opt-in via
 `PHARO_T1_INLINE_J2J=1`.  Currently always bails (counts as
 `bail_self`); baseline perf unchanged with knob off.
 
+**Option (a) progress (2026-05-17, `21b6dfaa`):** return prelude
+landed in tree.  All arm64 return emit sites (returnTop, returnReceiver,
+returnTrue, returnFalse, returnNil) now check `j2jDepth` first and
+pop+tail-call-to-resumeAddr when > 0; fall through to normal
+exit-to-C++ ret when 0.  No-op when no inline-J2J emit pushes
+saves (default).
+
+Tried the matching send-side push.  Worked for pure-recursive
+fib (59K inline hits at 100% catch rate; chain stays in JIT) but
+corrupts when ANY callee inner-send misses J2J and falls through to
+dispatchCached.  The dispatchCached path exits to the C++ chain
+loop, which calls activateMethod (pushing an interp frame) and
+re-enters via tryJITActivation.  The newly-entered method's
+returnTop sees the still-present save and pops/tail-calls back
+to A's resumeAddr — bypassing the interp frame.  Cross-chain
+confusion produces SettingTree>>pragmasDo: error traces.
+
+**The chain-break case has no obvious local fix:**
+- Range-checking the popped save's resumeAddr against the save's
+  own jitMethod code zone DOESN'T help — the check passes because
+  the save's resumeAddr IS within its (correct) caller's code.
+  The wrong-pop happens because j2jDepth doesn't distinguish how
+  the current frame was entered.
+- Per-frame "entry-depth" tracking would work but needs a new
+  JITState field + each method prologue records its entry j2jDepth
+  + returnTop pops only when current j2jDepth > entry-depth.
+  Requires asmjit-T1 to gain a per-method prologue and the
+  invariant maintenance.
+- Have dispatchCached pop the pending save before exiting.  But
+  then A's resumeAddr is lost; chain loop re-entry would have to
+  recreate the continuation, which requires re-entering A's
+  compiled code at post-send IP via tryJITActivation.  This is
+  essentially "make dispatchCached imply a chain-loop activation."
+
+Net: option (a) is half-shipped (return prelude is in tree, benign).
+The send-side push is blocked on a chain-break-protocol decision
+that's bigger than a single emit-site change.
+
 **Option (b) (blr/ret normal-call semantics, C-stack save) — TRIED
 AND ROOT-CAUSED, 2026-05-17.**  Implementation drafted: sub sp #64;
 store 7 caller-state fields; setup callee state; blr x_entry; load
