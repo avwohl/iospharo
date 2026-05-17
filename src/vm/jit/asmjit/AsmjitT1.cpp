@@ -1228,8 +1228,10 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.ldr(x1, ptr(x0, OFF_RECEIVER));
         a.ldr(x2, ptr(x0, OFF_TEMPBASE));
         a.ldr(x2, ptr(x2));
-        a.ldr(x6, ptr(x0, OFF_TRUEOOP));
-        a.ldr(x7, ptr(x0, OFF_FALSEOOP));
+        // ldp loads two adjacent 8-byte slots in one instruction; TRUEOOP
+        // (offset 128) and FALSEOOP (offset 136) are intentionally
+        // adjacent in JITState.  Saves 1 ldr per #== prim.
+        a.ldp(x6, x7, ptr(x0, OFF_TRUEOOP));
         a.cmp(x1, x2);
         a.csel(x1, x6, x7, CondCode::kEQ);
         a.str(x1, ptr(x0, OFF_RETVAL));
@@ -1257,8 +1259,8 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         // Compare tagged bits directly — x → 8x+1 is monotonic for
         // signed values, so cmp(a_bits, b_bits) matches cmp(a, b).
         // (Mirrors emitPrimProlog_x86 — skips the untag step.)
-        a.ldr(x6, ptr(x0, OFF_TRUEOOP));
-        a.ldr(x7, ptr(x0, OFF_FALSEOOP));
+        // ldp loads both adjacent oop slots in one instruction.
+        a.ldp(x6, x7, ptr(x0, OFF_TRUEOOP));
         a.cmp(x1, x2);
         CondCode cc = CondCode::kEQ;  // default; overridden below
         switch (primIndex) {
@@ -1523,8 +1525,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // tagged bits directly — monotonic transform preserves
             // ordering (mirrors x86 skip-untag-for-compare opt).
             a.cmp(x1, x4);
-            a.ldr(x5, ptr(x0, OFF_FALSEOOP));
-            a.ldr(x6, ptr(x0, OFF_TRUEOOP));
+            // ldp loads both oops in one instruction (x6=TRUEOOP at +128,
+            // x5=FALSEOOP at +136).  Saves 1 ldr per inline comparison
+            // bytecode (0x62-0x67).
+            a.ldp(x6, x5, ptr(x0, OFF_TRUEOOP));
             switch (op) {
                 case 0x62: a.csel(x5, x6, x5, CondCode::kLT); break;
                 case 0x63: a.csel(x5, x6, x5, CondCode::kGT); break;
