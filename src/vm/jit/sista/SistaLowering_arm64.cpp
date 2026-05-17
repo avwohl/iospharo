@@ -4456,18 +4456,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 //   v4 = kReturn(v3)
                 // Non-commutative form `[:e | const OP e]` has v0/v1 swapped
                 // and is handled by the generic block-IR path.
-                // 2026-05-17: default OFF on arm64.  The canonical
-                // collect-resume path hangs the bench-suite at runCollect
-                // when invoked from SessionManager startUp:-forked
-                // PharoBenchmarkRunner runBenchmarks (high-priority
-                // context).  Repro is reliable with default-on, fix with
-                // PHARO_NO_SISTA_COLLECT_RESUME=1 was clean.  Same code
-                // path runs fine when called from eval-mode, so the bug
-                // is in some scheduler / forked-process interaction rather
-                // than the emitted code itself.  See deferred.md A5.
-                // Opt back in with PHARO_SISTA_COLLECT_RESUME=1.
                 static const bool collectResume =
-                    std::getenv("PHARO_SISTA_COLLECT_RESUME") != nullptr;
+                    std::getenv("PHARO_NO_SISTA_COLLECT_RESUME") == nullptr;
                 bool isCanonicalCollect = false;
                 uint32_t collectArithCode = 0;
                 uint64_t collectConstBits = 0;
