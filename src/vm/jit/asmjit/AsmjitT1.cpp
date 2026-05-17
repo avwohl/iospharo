@@ -1720,13 +1720,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldr(x5, ptr(x5, (int)offsetof(JITMethod, icBuffer)));
         a.add(x5, x5, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
 
-        // Common state setup.
-        a.str(x5, ptr(x0, OFF_ICDATAPTR));
-        a.mov(w3, asmjit::Imm(nArgs));
-        a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
-        a.ldr(x6, ptr(x0, OFF_METHOD));
-        a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
-        a.str(x6, ptr(x0, OFF_IP));
+        // Deferred state setup: inline-spec paths skip the state
+        // store entirely.  dispatchCached / miss / non-probe paths
+        // emit it inline.  Mirrors x86 commit c4d325eb.
 
         bool probeThis = g_debug.t1ICProbe;
         if (probeThis) {
@@ -1788,13 +1784,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.b(dispatchCached);
 
             // === Inline getter: val = recv->slots[slotIdx] ===
+            // x2 still holds SP from probe entry (mirrors x86 rcx-keep).
             a.bind(tryGetter);
             a.and_(x6, x7, asmjit::Imm(0xFFFF));   // slotIdx
-            // val = *(recv + 8 + slotIdx*8)
             a.add(x3, x1, x6, asmjit::a64::lsl(3));
-            a.ldr(x6, ptr(x3, 8));
-            a.ldr(x2, ptr(x0, OFF_SP));
-            a.stur(x6, ptr(x2, rcvrOffsetBytes));
+            a.ldr(x6, ptr(x3, 8));                // val = *(recv+slot*8+8)
+            a.stur(x6, ptr(x2, rcvrOffsetBytes));  // replace receiver
             if (nArgs > 0) {
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
@@ -1802,10 +1797,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.b(endOfSend);
 
             // === Inline setter: recv->slots[slotIdx] = arg ===
+            // x2 still holds SP from probe entry.
             a.bind(trySetter);
             a.and_(x6, x7, asmjit::Imm(0xFFFF));
-            a.ldr(x2, ptr(x0, OFF_SP));
-            a.ldur(x3, ptr(x2, -8));            // arg = sp[-1]
+            a.ldur(x3, ptr(x2, -8));               // arg = sp[-1]
             a.add(x4, x1, x6, asmjit::a64::lsl(3));
             a.str(x3, ptr(x4, 8));
             if (nArgs > 0) {
@@ -1817,22 +1812,33 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // === returnsSelf ===
             a.bind(tryReturnsSelf);
             if (nArgs > 0) {
-                a.ldr(x2, ptr(x0, OFF_SP));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
             }
             a.b(endOfSend);
 
-            // === Plain cached dispatch ===
+            // === Plain cached dispatch === (emits deferred state setup)
             a.bind(dispatchCached);
+            a.str(x5, ptr(x0, OFF_ICDATAPTR));
+            a.mov(w3, asmjit::Imm(nArgs));
+            a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
+            a.ldr(x6, ptr(x0, OFF_METHOD));
+            a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
+            a.str(x6, ptr(x0, OFF_IP));
             a.ldr(x6, ptr(x5, 8));            // icData[1] = method Oop
             a.str(x6, ptr(x0, OFF_CACHED_TARGET));
             a.mov(w3, asmjit::Imm(EXIT_SEND_CACHED));
             a.str(w3, ptr(x0, OFF_EXIT));
             a.ret(x30);
 
-            // === Miss ===
+            // === Miss === (emits deferred state setup)
             a.bind(miss);
+            a.str(x5, ptr(x0, OFF_ICDATAPTR));
+            a.mov(w3, asmjit::Imm(nArgs));
+            a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
+            a.ldr(x6, ptr(x0, OFF_METHOD));
+            a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
+            a.str(x6, ptr(x0, OFF_IP));
             a.mov(w3, asmjit::Imm(EXIT_SEND));
             a.str(w3, ptr(x0, OFF_EXIT));
             a.ret(x30);
@@ -1841,6 +1847,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             return true;
         }
 
+        // Non-probe fallback: emit state setup + bail.
+        a.str(x5, ptr(x0, OFF_ICDATAPTR));
+        a.mov(w3, asmjit::Imm(nArgs));
+        a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
+        a.ldr(x6, ptr(x0, OFF_METHOD));
+        a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x6, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_SEND));
         a.str(w3, ptr(x0, OFF_EXIT));
         a.ret(x30);
