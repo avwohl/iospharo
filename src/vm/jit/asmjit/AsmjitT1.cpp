@@ -1698,11 +1698,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldr(x2, ptr(x0, OFF_SP));
         a.ldur(x1, asmjit::a64::ptr(x2, -8));   // x1 = TOS (not popped)
 
-        a.ldr(x4, ptr(x0, OFF_TRUEOOP));
+        // ldp loads TRUEOOP+FALSEOOP in one instruction.  Both adjacent
+        // at offsets 128 and 136 in JITState.  Slightly wasted load on
+        // the fast-true case (we branch before reaching the falseOop
+        // cmp), but ldp is typically L1-cycle-equivalent to a single ldr
+        // and saves 1 instruction worth of i-cache.
+        a.ldp(x4, x5, ptr(x0, OFF_TRUEOOP));
         a.cmp(x1, x4);
         a.b_eq(jumpOnTrue ? takeBranch : fallThrough);
-        a.ldr(x4, ptr(x0, OFF_FALSEOOP));
-        a.cmp(x1, x4);
+        a.cmp(x1, x5);
         a.b_ne(mustBoolBail);
         a.b(jumpOnTrue ? fallThrough : takeBranch);
 
