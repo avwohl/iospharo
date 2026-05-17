@@ -58,6 +58,14 @@
 namespace pharo {
 namespace jit {
 
+// Inline-J2J bail-reason counters (PHARO_T1_INLINE_J2J=1 instrumentation).
+// Incremented from JIT-emitted code via address-load + atomic-ish increment;
+// printed by JITRuntime stats.  Process-global (single VM per process).
+extern "C" uint64_t g_inlineJ2J_hits      = 0;  // path taken (br to entry)
+extern "C" uint64_t g_inlineJ2J_bail_zero = 0;  // entryAddr == 0
+extern "C" uint64_t g_inlineJ2J_bail_full = 0;  // save stack at limit
+extern "C" uint64_t g_inlineJ2J_bail_self = 0;  // calleeJM != callerJM
+
 namespace {
 
 // JITState field offsets — guarded by static_assert in JITState.hpp.
@@ -68,6 +76,7 @@ constexpr int OFF_TEMPBASE       = 24;
 constexpr int OFF_IP             = 48;
 constexpr int OFF_JITMETHOD      = 56;
 constexpr int OFF_METHOD         = 64;
+constexpr int OFF_ARGCOUNT       = 72;
 constexpr int OFF_EXIT           = 76;
 constexpr int OFF_RETVAL         = 80;
 constexpr int OFF_CACHED_TARGET  = 88;
@@ -1822,69 +1831,57 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 a.b(dispatchCached);
 
+                // Per-bail-reason counters (PHARO_T1_INLINE_J2J=1
+                // instrumentation, 2026-05-17).  Each bail point increments
+                // its own global counter so we can see which bail dominates
+                // when the inline path catches only ~11% of recursive calls
+                // (deferred.md A6).  Costs ~6 instr per increment site;
+                // worth it for the data.
+                asmjit::Label j2jBailZero = a.new_label();
+                asmjit::Label j2jBailFull = a.new_label();
+                asmjit::Label j2jBailSelf = a.new_label();
+                auto emitIncCounter = [&](uint64_t addr) {
+                    a.mov(x15, asmjit::Imm(addr));
+                    a.ldr(x14, ptr(x15));
+                    a.add(x14, x14, asmjit::Imm(1));
+                    a.str(x14, ptr(x15));
+                };
+
                 a.bind(tryInlineJ2J);
-                // x8 = entryAddr (low 48 bits of extras)
-                a.ubfx(x8, x7, asmjit::Imm(0), asmjit::Imm(48));
-                a.cbz(x8, j2jBail);
-                // x9 = j2jSaveCursor, x10 = j2jSaveLimit (ldp two adjacent)
-                a.ldp(x9, x10, ptr(x0, OFF_J2J_SAVE_CURSOR));
-                a.cmp(x9, x10);
-                a.b_hs(j2jBail);  // save stack full → bail
-                // x11 = calleeJM (entry - JM_SIZE)
-                a.sub(x11, x8, asmjit::Imm(96));  // JM_SIZE
-                // x12 = callerJM (state.jitMethod)
-                a.ldr(x12, ptr(x0, OFF_JITMETHOD));
-                a.cmp(x11, x12);
-                a.b_ne(j2jBail);  // not self-recursive → bail (MVP)
-                // Now save caller state.  J2JSave layout (stencils.cpp:113):
-                // [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
-                // [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount.
-                a.str(x2, ptr(x9, 0));  // sp (x2 still holds SP from probe)
-                a.ldr(x13, ptr(x0, OFF_RECEIVER));
-                a.str(x13, ptr(x9, 8));
-                a.ldr(x13, ptr(x0, OFF_TEMPBASE));
-                a.str(x13, ptr(x9, 16));
-                // save->ip = state.method + bcOffsetFromMethObj + 1
-                // (sendBcLen for phase4 sends 0x70-0xAF is always 1)
-                a.ldr(x13, ptr(x0, OFF_METHOD));
-                a.add(x13, x13, asmjit::Imm(bcOffsetFromMethObj + 1));
-                a.str(x13, ptr(x9, 24));
-                a.str(x12, ptr(x9, 32));  // jitMethod = callerJM
-                // save->resumeAddr = address of endOfSend (where J2J chain
-                // tail-calls back to via J2J_INLINE_RETURN's _resume(s))
-                a.adr(x13, endOfSend);
-                a.str(x13, ptr(x9, 40));
-                a.mov(w13, asmjit::Imm(nArgs));
-                a.str(w13, ptr(x9, 48));
-                // Advance cursor by sizeof(J2JSave) == 56
-                a.add(x9, x9, asmjit::Imm(56));
-                a.str(x9, ptr(x0, OFF_J2J_SAVE_CURSOR));
-                // j2jDepth++
-                a.ldr(w13, ptr(x0, OFF_J2J_DEPTH));
-                a.add(w13, w13, asmjit::Imm(1));
-                a.str(w13, ptr(x0, OFF_J2J_DEPTH));
-                // j2jTotalCalls++
-                a.ldr(w13, ptr(x0, OFF_J2J_TOTAL_CALLS));
-                a.add(w13, w13, asmjit::Imm(1));
-                a.str(w13, ptr(x0, OFF_J2J_TOTAL_CALLS));
-                // Setup callee state (self-recursive: only receiver,
-                // tempBase, ip change; literals/argCount/jitMethod stay).
-                // x2 still holds caller's SP.
-                a.ldur(x13, ptr(x2, -(nArgs + 1) * 8));
-                a.str(x13, ptr(x0, OFF_RECEIVER));
-                a.sub(x13, x2, asmjit::Imm(nArgs * 8));
-                a.str(x13, ptr(x0, OFF_TEMPBASE));
-                // ip = compiledMethod oop + (numLits + 2) * 8
-                // callerJM[JM_COMPILED_METHOD=0] = method oop
-                // callerJM[JM_METHOD_HEADER=16].lowbits & 0x7FFF = numLits
-                a.ldr(x13, ptr(x12, 0));       // method oop
-                a.ldr(x14, ptr(x12, 16));      // method header
-                a.and_(x14, x14, asmjit::Imm(0x7FFF));
-                a.add(x14, x14, asmjit::Imm(2));
-                a.add(x13, x13, x14, asmjit::a64::lsl(3));
-                a.str(x13, ptr(x0, OFF_IP));
-                // Tail-call entry — LR unchanged; callee inherits.
-                a.br(x8);
+                // ARCHITECTURAL BLOCKER (discovered 2026-05-17):
+                // The legacy stencil JIT used a J2J chain protocol where
+                // the CALLEE'S return code (J2J_INLINE_RETURN) checks
+                // j2jDepth, pops the save struct, and tail-calls to the
+                // saved resumeAddr.  asmjit-T1-compiled methods DON'T
+                // use this protocol — their return bytecodes just do
+                // `ret x30` with EXIT_RETURN.  So if we push a J2J save
+                // before tail-call (br), the callee never pops it; saves
+                // accumulate, depth grows without bound, instrumentation
+                // shows 9.7M inline calls / 46 returns (infinite recursion
+                // symptom).
+                //
+                // Per-bail-reason instrumentation 2026-05-17 also showed:
+                // when WE used the original self-recursive bail, it fired
+                // ~99.96% of the time on fib — state.jitMethod tracks the
+                // LATEST recompile while the IC J2J_ADDR can point to an
+                // OLDER compilation.  So self-recursive-only catches
+                // basically nothing in steady state.
+                //
+                // The fix needs either: (a) make asmjit-T1 return paths
+                // use the J2J chain protocol; (b) use blr/ret (normal
+                // call) and save/restore caller state on the C stack.
+                // Both are out of MVP scope.
+                //
+                // For now: ALWAYS bail (count as "self" reason for stats).
+                // The path is reached, instrumentation confirms it; baseline
+                // perf is unchanged because we just inc-and-fall-through.
+                emitIncCounter((uint64_t)&g_inlineJ2J_bail_self);
+                a.b(j2jBail);
+                // Bind unreached labels to satisfy asmjit (any branch to
+                // them would land here, then fall through to j2jBail).
+                a.bind(j2jBailZero);
+                a.bind(j2jBailFull);
+                a.bind(j2jBailSelf);
 
                 a.bind(j2jBail);
                 // Fall through to inline-spec dispatch (same as non-J2J path).

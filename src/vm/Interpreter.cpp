@@ -79,6 +79,10 @@ volatile uint8_t g_watchdogLastBytecode = 0;
 
 // Forward declaration for SDL rendering active check (defined in FFI.cpp)
 extern "C" bool ffi_isSDLRenderingActive();
+extern "C" uint64_t g_inlineJ2J_hits;
+extern "C" uint64_t g_inlineJ2J_bail_zero;
+extern "C" uint64_t g_inlineJ2J_bail_full;
+extern "C" uint64_t g_inlineJ2J_bail_self;
 
 // Display Form readiness flag — exposed to Swift via vm_isDisplayFormReady().
 // Set true when the image calls primitiveBeDisplay (prim 102) or
@@ -1351,6 +1355,20 @@ void Interpreter::dumpJITStats() {
                 t2ICTotal > 0 ? 100.0 * jit::g_t2ICHits / t2ICTotal : 0.0);
     }
     jit::Tier2Compiler::dumpBailStats();
+    {
+        uint64_t total = g_inlineJ2J_hits + g_inlineJ2J_bail_zero
+                       + g_inlineJ2J_bail_full + g_inlineJ2J_bail_self;
+        if (total > 0) {
+            fprintf(stderr,
+                "  inline-J2J: hits=%llu bail_zero=%llu bail_full=%llu "
+                "bail_self=%llu (catch rate %.1f%%)\n",
+                (unsigned long long)g_inlineJ2J_hits,
+                (unsigned long long)g_inlineJ2J_bail_zero,
+                (unsigned long long)g_inlineJ2J_bail_full,
+                (unsigned long long)g_inlineJ2J_bail_self,
+                100.0 * g_inlineJ2J_hits / total);
+        }
+    }
     fprintf(stderr, "=================\n");
 #endif
 }
