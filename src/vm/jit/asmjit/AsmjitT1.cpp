@@ -1074,6 +1074,17 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // 57 multi-slot, 48..52 primKind).  Unhandled extras →
             // dispatch the cached method and let the chain loop +
             // activated method do the work.
+            //
+            // ===== PERF TODO (deferred.md A6, 2026-05-17) =====
+            // Bit 60 (J2J_ENTRY_BIT) inline-call is the largest unrealized
+            // perf win — current arm64 fib(28) is 2× slower than interp
+            // because every J2J hit round-trips JIT→C++→JIT via
+            // activateMethod (~500 cycles per send overhead, ~80 ms over
+            // fib's 514K recursive calls).  The legacy stencil JIT had this
+            // inline at stencils.cpp:1733-1877 (`j2j_direct_call:` block);
+            // see deferred.md A6 for the port plan and J2JSave protocol.
+            // Same fix needed on both x86 and arm64 arms.
+            // ====================================================
             a.mov(r8, qword_ptr(rsi, 16));
             a.test(r8, r8);
             a.jz(dispatchCached);
@@ -1771,6 +1782,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Inline specializations need heap receiver (tag==0)
             a.tst(x1, asmjit::Imm(0x7));
             a.b_ne(dispatchCached);
+
+            // ===== PERF TODO (deferred.md A6, 2026-05-17) =====
+            // Bit 60 (J2J_ENTRY_BIT) inline-call is the largest unrealized
+            // arm64 perf win.  Currently every J2J HIT (e.g., every
+            // recursive benchFib call) falls through to dispatchCached
+            // and round-trips through the C++ chain loop's activateMethod
+            // path — ~500 cycles overhead/send.  Legacy stencil's
+            // `j2j_direct_call:` block (stencils.cpp:1733-1877) had this
+            // inline; need to port to asmjit emit.  The J2JSave protocol
+            // is fixed (JITState.hpp:91-94 + stencils.cpp:113).  Mirror
+            // the x86 comment at line 1068 — same fix needed on both
+            // archs.
+            // ====================================================
 
             if (g_debug.t1InlineGetter) {
                 a.tbnz(x7, asmjit::Imm(63), tryGetter);
