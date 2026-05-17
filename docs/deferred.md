@@ -637,10 +637,33 @@ regression battery + `PHARO_RESUME_J2J=1` exercise + fuzzer.
 defensible default for arm64 production runs of arith/send-heavy
 code (Sista splice still fires, so splice-driven wins survive).
 
-**Scaffold landed 2026-05-17 (`f81d61a0`):** arm64 self-recursive
-case wired up, opt-in via `PHARO_T1_INLINE_J2J=1`.  Functional
-(`28 benchFib = 1028457` correct) but doesn't win yet —
-benchFib goes from 251-260 ms to 266-270 ms with the knob on.
+**Scaffold landed 2026-05-17 (`f81d61a0`, `078105ce`):**
+arm64 inline-J2J path wired up with per-bail counters, opt-in via
+`PHARO_T1_INLINE_J2J=1`.  Currently always bails (counts as
+`bail_self`); baseline perf unchanged with knob off.
+
+**Option (b) (blr/ret normal-call semantics, C-stack save) — TRIED
+AND CRASHES, 2026-05-17.**  Implementation drafted: sub sp #64;
+store 7 caller-state fields; setup callee state; blr x_entry; load
+retval; restore caller state; add sp #64; push retval; b endOfSend.
+Compiles clean.  But under `PHARO_T1_INLINE_J2J=1` the eval
+crashes with sigsegv on the post-restore `stur x13, [x2, #-16]`
+in a 1-arg send context — x2 (the restored caller's JIT.sp) is
+invalid at restore time.
+
+Theories not yet investigated:
+- Asmjit's SP-relative ldr/str may have an addressing quirk
+  causing the wrong byte offset
+- Callee corrupting our C-stack save (despite arm64 ABI saying
+  callee can't write above sp) — maybe via some nested call
+  pattern that does NOT respect sp at the right point
+- My emit has a typo I'm not spotting
+
+Needs lldb attach with breakpoint right after `add sp, sp, #64`
+to verify x2 holds the correct caller-sp before the stur.
+
+The instrumentation confirms ~556K J2J-eligible sends per
+`fib(28)` run.  At ~500 cycles each, full inline would save ~85ms.
 
 **Catch-rate observation (2026-05-17 experiment):** with the knob
 on, `J2J stencil calls` counter drops 294K → 236K for `28 benchFib`.
