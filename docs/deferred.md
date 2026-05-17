@@ -710,28 +710,40 @@ different method oops.  No self-recursive matches observed.
 tryInlineJ2J at all.  Only ~9.8K bit-60 entries observed in fib(30)
 run (without Sista); a 30-deep benchFib has ~514K recursive sends.
 
-Hypothesis: benchFib's recursive call exits with `ExitSend` (IC
-miss) rather than `ExitSendCached` (IC hit).  This means the IC
-probe at entry 0 doesn't match SmI receiver — either entry 0 is
-empty (cold) or has a different class.
+**Iter 3 instrumentation 2026-05-17:** Added two counters to
+asmjit-T1 IC HIT path (gated on PHARO_T1_INLINE_J2J=1):
+- `g_inlineJ2J_dbg_ic_hits` — every IC HIT entry
+- `g_inlineJ2J_dbg_extra_no_bit60` — HIT with extra but no bit 60
 
-Added `upgradeICToJ2J(state.icDataPtr, ...)` to both fast chain
-loops (Interpreter.cpp:16650 + 18713) to set bit 60 on
-`ExitSendCached`.  Debug trace showed: **fast chain loop never
-enters the `ExitSendCached` branch during fib's recursion** (no
-FAST-UPGRADE prints fired).  Reverted.
+For `30 benchFib NO_SISTA`:
+- ic_hits = 48,164 total
+- extra_no_bit60 = 31,929 (66% — extras set but bit 60 missing)
+- tryInlineJ2J entries (bit 60 set) = 7,142
+- Self-recursive matches = 0
 
-This suggests fib's recursive send takes the IC-MISS path
-(ExitSend), not IC-HIT-via-dispatchCached (ExitSendCached).  The
-asmjit-T1 IC probe only checks entry 0 (`ldr x6, [x5]; cmp x4, x6;
-b.ne miss`).  If entry 0 isn't SmI for benchFib's recursive send
-site, every recursive call misses.
+Also added upgradeICToJ2J calls to BOTH fast chain loops
+(Interpreter.cpp:16650 + 18713) on the ExitSendCached path —
+before pharo_jit_convert_send.  Bit 60 should now get set on any
+IC that takes the fast J2J-conversion path.
 
-Next iteration should investigate:
-1. Why is asmjit-T1's IC probe entry-0 missing for benchFib?
-2. Does benchFib's IC ever get patched via patchJITICAfterSend
-   (Interpreter.cpp:17514) — the slow path?
-3. Would extending the IC probe to entries 0..5 fix the miss?
+**Iter 3 conclusion 2026-05-17:** Logged upgradeICToJ2J's callee
+selectors.  ALL early upgrades are for `#new:` (from
+`initialize:`) or `#at:put:` (from `atNewIndex:put:`) — same IC
+sites being repeatedly invoked.  Filtered for "fib" in the
+selector — NO entries.  benchFib's IC is NEVER reaching
+upgradeICToJ2J.  Filter for "fib" in patchJITICAfterSend selector
+— also NO entries.
+
+This means benchFib's IC is never being updated to add bit 60.
+asmjit-T1's IC probe stays cold on benchFib's recursive site,
+so every recursive call falls through to the chain loop's
+J2JCall handling without ever upgrading the IC.
+
+Next iteration:
+1. Verify benchFib is being JIT-compiled at all (or stays interp).
+2. If JIT'd, trace what exitReason fib's recursive call produces.
+3. Either patch the J2JCall path to also upgrade IC, OR fix
+   asmjit-T1's emit to upgrade IC on miss.
 
 **Scaffold landed 2026-05-17 (`f81d61a0`, `078105ce`):**
 arm64 inline-J2J path wired up with per-bail counters, opt-in via
