@@ -643,24 +643,54 @@ arm64 inline-J2J path wired up with per-bail counters, opt-in via
 `bail_self`); baseline perf unchanged with knob off.
 
 **Option (b) (blr/ret normal-call semantics, C-stack save) — TRIED
-AND CRASHES, 2026-05-17.**  Implementation drafted: sub sp #64;
+AND ROOT-CAUSED, 2026-05-17.**  Implementation drafted: sub sp #64;
 store 7 caller-state fields; setup callee state; blr x_entry; load
 retval; restore caller state; add sp #64; push retval; b endOfSend.
-Compiles clean.  But under `PHARO_T1_INLINE_J2J=1` the eval
-crashes with sigsegv on the post-restore `stur x13, [x2, #-16]`
-in a 1-arg send context — x2 (the restored caller's JIT.sp) is
-invalid at restore time.
 
-Theories not yet investigated:
-- Asmjit's SP-relative ldr/str may have an addressing quirk
-  causing the wrong byte offset
-- Callee corrupting our C-stack save (despite arm64 ABI saying
-  callee can't write above sp) — maybe via some nested call
-  pattern that does NOT respect sp at the right point
-- My emit has a typo I'm not spotting
+Initially appeared to crash with bad x2 in `stur x13, [x2, #-16]`,
+but lldb attach with `brk #0` right before the stur revealed the
+ACTUAL bug:
+- x2 = 0x0d2f68e178 (correct — caller's JIT.sp restored cleanly)
+- x13 = 0x0000000000000000 (RETVAL IS ZERO!)
 
-Needs lldb attach with breakpoint right after `add sp, sp, #64`
-to verify x2 holds the correct caller-sp before the stur.
+The callee's `ret x30` ran, but state.returnValue was unchanged
+from caller's (zero/nil).  The callee exited via `dispatchCached`
+(its OWN nested send) with EXIT_SEND_CACHED, NOT via `returnTop`
+with EXIT_RETURN.  asmjit-T1 callees DON'T run-to-completion — they
+exit JIT whenever they hit a nested send they can't inline, and
+expect the C++ chain loop to drive subsequent ExitSendCached → C++
+trampoline → re-enter JIT cycles.
+
+This is the same root-cause class as option (a):
+**the asmjit-T1 callee contract requires the C++ chain loop.**
+You cannot blr into a callee and expect a single ret to mean
+"completion" — it could mean "exited mid-execution for a send".
+
+The two real-fix paths now:
+
+1. **Option (a) revisited:** make asmjit-T1's return bytecodes
+   (returnTop, returnReceiver, returnTrue, etc.) follow the J2J
+   chain protocol — check j2jDepth and tail-call to saved
+   resumeAddr when nonzero.  Big change touching every return
+   emit + the dispatchCached path.
+
+2. **Option (c) (new): drive a mini chain-loop after our blr.**
+   After blr returns, check state.exitReason:
+   - EXIT_RETURN → completion, push retval, continue (option b's
+     happy path)
+   - EXIT_SEND_CACHED → process the cached send ourselves (call
+     activateMethod + tryJITActivation in C++ helper, loop back)
+   - Other → exit JIT entirely
+   Essentially re-implements the chain loop inline.  Saves the
+   blr→ret round trip for terminal-leaf-call cases only.
+
+Neither option is small.  Option (a) is the cleaner long-term
+choice but a substantial refactor.  Option (c) is a half-measure
+that probably doesn't win.
+
+The instrumentation confirms ~556K J2J-eligible sends per
+`fib(28)` run.  Full inline would save ~85ms.  But the win is
+gated on one of options (a)/(c) — not just emit polishing.
 
 The instrumentation confirms ~556K J2J-eligible sends per
 `fib(28)` run.  At ~500 cycles each, full inline would save ~85ms.
