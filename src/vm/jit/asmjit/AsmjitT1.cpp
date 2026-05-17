@@ -1234,14 +1234,18 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
     a.ldr(x2, ptr(x0, OFF_TEMPBASE));
     a.ldr(x2, ptr(x2));
 
-    // SmI check.
-    a.eor(x5, x1, asmjit::Imm(1));
-    a.eor(x6, x2, asmjit::Imm(1));
+    // SmI check (5 ops instead of 7): (a^b) | (a-1), low 3 bits = 0
+    // iff same tag AND a is SmI.  Mirrors emitPrimProlog_x86.
+    a.eor(x5, x1, x2);
+    a.sub(x6, x1, asmjit::Imm(1));
     a.orr(x5, x5, x6);
     a.tst(x5, asmjit::Imm(7));
     a.b_ne(fail);
 
     if (primIndex >= 3 && primIndex <= 8) {
+        // Compare tagged bits directly — x → 8x+1 is monotonic for
+        // signed values, so cmp(a_bits, b_bits) matches cmp(a, b).
+        // (Mirrors emitPrimProlog_x86 — skips the untag step.)
         a.ldr(x6, ptr(x0, OFF_TRUEOOP));
         a.ldr(x7, ptr(x0, OFF_FALSEOOP));
         a.cmp(x1, x2);
@@ -1279,15 +1283,38 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         return;
     }
 
-    a.asr(x1, x1, asmjit::Imm(3));
-    a.asr(x2, x2, asmjit::Imm(3));
+    // Tagged-arith for + and - : skip untag/retag.  See x86 prim
+    // prologue for derivation.  jo on the tagged add/sub catches
+    // SmI-range overflow because the tagged form is (val<<3)|1.
     if (primIndex == 1) {
+        // a_bits + b_bits = (a+b)*8 + 2 → sub 1 to retag.
         a.adds(x1, x1, x2);
         a.b_vs(fail);
-    } else if (primIndex == 2) {
+        a.sub(x1, x1, asmjit::Imm(1));
+        a.str(x1, ptr(x0, OFF_RETVAL));
+        a.mov(w3, asmjit::Imm(EXIT_RETURN));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        a.bind(fail);
+        return;
+    }
+    if (primIndex == 2) {
+        // a_bits - b_bits = (a-b)*8 → add 1 to retag.
         a.subs(x1, x1, x2);
         a.b_vs(fail);
-    } else if (primIndex == 9) {
+        a.add(x1, x1, asmjit::Imm(1));
+        a.str(x1, ptr(x0, OFF_RETVAL));
+        a.mov(w3, asmjit::Imm(EXIT_RETURN));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        a.bind(fail);
+        return;
+    }
+
+    // prim 9 (*): untag, multiply, check overflow, retag.
+    a.asr(x1, x1, asmjit::Imm(3));
+    a.asr(x2, x2, asmjit::Imm(3));
+    if (primIndex == 9) {
         // mul: detect 64-bit overflow via smulh (high 64 bits of 128-bit
         // signed product) — must equal sign-extension of low 64 bits.
         a.mul(x6, x1, x2);
