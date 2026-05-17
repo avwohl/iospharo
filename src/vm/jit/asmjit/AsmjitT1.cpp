@@ -1470,13 +1470,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ret(x30);
         return true;
     }
-    // Phase 3 arithmetic on ARM64 (mirror of x86).
+    // Phase 3 arithmetic on ARM64 (mirror of x86, with tagged-arith).
     //   x2 = sp;  x1 = a (sp[-2]);  x4 = b (sp[-1])
-    //   eor x5, x1, #1;  eor x6, x4, #1;  orr x5, x5, x6
-    //   tst x5, #7;  b.ne bail
-    //   asr x1, x1, #3;  asr x4, x4, #3
-    //   then op-specific
-    //   write at sp[-2];  sp -= 8
+    //   5-op SmI check: (a^b) | (a-1)
+    //   + / - : tagged-add/sub directly (b_vs catches SmI overflow
+    //           since tagged form pre-shifts by 8); then sub/add 1.
+    //   compares: cmp tagged bits directly (monotonic transform).
     if (isPhase3ArithOp(op)) {
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
@@ -1484,33 +1483,34 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldr(x2, ptr(x0, OFF_SP));
         a.ldr(x1, ptr(x2, -16));
         a.ldr(x4, ptr(x2, -8));
-        a.eor(x5, x1, asmjit::Imm(1));
-        a.eor(x6, x4, asmjit::Imm(1));
+        // SmI tag check (5 ops): (a^b) | (a-1) low 3 bits = 0 iff
+        // both SmI AND same tag.
+        a.eor(x5, x1, x4);
+        a.sub(x6, x1, asmjit::Imm(1));
         a.orr(x5, x5, x6);
         a.tst(x5, asmjit::Imm(7));
         a.b_ne(bail);
 
-        a.asr(x1, x1, asmjit::Imm(3));
-        a.asr(x4, x4, asmjit::Imm(3));
-
         if (op == 0x60) {        // +
+            // a_bits + b_bits = (a+b)*8 + 2 → sub 1 to retag.
             a.adds(x1, x1, x4);
             a.b_vs(bail);
-            a.lsl(x1, x1, asmjit::Imm(3));
-            a.orr(x1, x1, asmjit::Imm(SMI_TAG));
+            a.sub(x1, x1, asmjit::Imm(1));
             a.str(x1, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             a.str(x2, ptr(x0, OFF_SP));
         } else if (op == 0x61) { // -
+            // a_bits - b_bits = (a-b)*8 → add 1 to retag.
             a.subs(x1, x1, x4);
             a.b_vs(bail);
-            a.lsl(x1, x1, asmjit::Imm(3));
-            a.orr(x1, x1, asmjit::Imm(SMI_TAG));
+            a.add(x1, x1, asmjit::Imm(1));
             a.str(x1, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             a.str(x2, ptr(x0, OFF_SP));
         } else {
-            // Comparisons: csel false/true based on signed flags.
+            // Comparisons: csel false/true on signed flags.  Compare
+            // tagged bits directly — monotonic transform preserves
+            // ordering (mirrors x86 skip-untag-for-compare opt).
             a.cmp(x1, x4);
             a.ldr(x5, ptr(x0, OFF_FALSEOOP));
             a.ldr(x6, ptr(x0, OFF_TRUEOOP));
@@ -1537,6 +1537,133 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(w3, ptr(x0, OFF_EXIT));
         a.ret(x30);
 
+        a.bind(end);
+        return true;
+    }
+    // Phase 3 bitwise on ARM64: 0x6E bitAnd:, 0x6F bitOr:.  Tag bits
+    // commute with AND/OR — no untag/retag needed.  Mirror of x86.
+    if (isPhase3BitOp(op)) {
+        asmjit::Label bail = a.new_label();
+        asmjit::Label end  = a.new_label();
+        a.ldr(x2, ptr(x0, OFF_SP));
+        a.ldr(x1, ptr(x2, -16));
+        a.ldr(x4, ptr(x2, -8));
+        a.eor(x5, x1, x4);
+        a.sub(x6, x1, asmjit::Imm(1));
+        a.orr(x5, x5, x6);
+        a.tst(x5, asmjit::Imm(7));
+        a.b_ne(bail);
+        if (op == 0x6E) a.and_(x1, x1, x4);   // bitAnd:
+        else            a.orr (x1, x1, x4);   // bitOr:
+        a.str(x1, ptr(x2, -16));
+        a.sub(x2, x2, asmjit::Imm(8));
+        a.str(x2, ptr(x0, OFF_SP));
+        a.b(end);
+        a.bind(bail);
+        a.ldr(x5, ptr(x0, OFF_METHOD));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        a.bind(end);
+        return true;
+    }
+    // Phase 3 multiplication on ARM64: 0x68 *.  Use smulh to detect
+    // 64-bit overflow, then verify the result fits in 61-bit SmI.
+    if (isPhase3MulOp(op)) {
+        asmjit::Label bail = a.new_label();
+        asmjit::Label end  = a.new_label();
+        a.ldr(x2, ptr(x0, OFF_SP));
+        a.ldr(x1, ptr(x2, -16));
+        a.ldr(x4, ptr(x2, -8));
+        a.eor(x5, x1, x4);
+        a.sub(x6, x1, asmjit::Imm(1));
+        a.orr(x5, x5, x6);
+        a.tst(x5, asmjit::Imm(7));
+        a.b_ne(bail);
+        a.asr(x1, x1, asmjit::Imm(3));
+        a.asr(x4, x4, asmjit::Imm(3));
+        a.mul (x6, x1, x4);
+        a.smulh(x7, x1, x4);
+        a.cmp(x7, x6, asmjit::a64::asr(63));
+        a.b_ne(bail);
+        // Verify result fits in 61-bit SmI range.
+        a.lsl(x7, x6, asmjit::Imm(3));
+        a.asr(x7, x7, asmjit::Imm(3));
+        a.cmp(x7, x6);
+        a.b_ne(bail);
+        a.lsl(x1, x6, asmjit::Imm(3));
+        a.orr(x1, x1, asmjit::Imm(SMI_TAG));
+        a.str(x1, ptr(x2, -16));
+        a.sub(x2, x2, asmjit::Imm(8));
+        a.str(x2, ptr(x0, OFF_SP));
+        a.b(end);
+        a.bind(bail);
+        a.ldr(x5, ptr(x0, OFF_METHOD));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        a.bind(end);
+        return true;
+    }
+    // Phase 3 bitShift: on ARM64: 0x6C.  Positive b → left shift with
+    // overflow check; negative b → arithmetic right shift.
+    if (isPhase3ShiftOp(op)) {
+        asmjit::Label bail = a.new_label();
+        asmjit::Label end  = a.new_label();
+        asmjit::Label rightShift = a.new_label();
+        a.ldr(x2, ptr(x0, OFF_SP));
+        a.ldr(x1, ptr(x2, -16));
+        a.ldr(x4, ptr(x2, -8));
+        a.eor(x5, x1, x4);
+        a.sub(x6, x1, asmjit::Imm(1));
+        a.orr(x5, x5, x6);
+        a.tst(x5, asmjit::Imm(7));
+        a.b_ne(bail);
+        a.asr(x1, x1, asmjit::Imm(3));  // untag a
+        a.asr(x4, x4, asmjit::Imm(3));  // untag b
+        a.cmp(x4, asmjit::Imm(0));
+        a.b_lt(rightShift);
+        // Left shift: b in [0, 62].  Bail if >= 63.
+        a.cmp(x4, asmjit::Imm(63));
+        a.b_ge(bail);
+        a.lsl(x6, x1, x4);              // result = a << b
+        a.asr(x7, x6, x4);              // sanity: shifted-back equals a?
+        a.cmp(x7, x1);
+        a.b_ne(bail);
+        // Retag: lsl-3 may overflow; verify with sar.
+        a.lsl(x1, x6, asmjit::Imm(3));
+        a.asr(x7, x1, asmjit::Imm(3));
+        a.cmp(x7, x6);
+        a.b_ne(bail);
+        a.orr(x1, x1, asmjit::Imm(SMI_TAG));
+        a.str(x1, ptr(x2, -16));
+        a.sub(x2, x2, asmjit::Imm(8));
+        a.str(x2, ptr(x0, OFF_SP));
+        a.b(end);
+        a.bind(rightShift);
+        // b in [-62, -1].  Negate.
+        a.neg(x4, x4);
+        a.cmp(x4, asmjit::Imm(63));
+        a.b_gt(bail);
+        a.asr(x1, x1, x4);              // signed right shift
+        // Retag — result is smaller than input, no overflow possible.
+        a.lsl(x1, x1, asmjit::Imm(3));
+        a.orr(x1, x1, asmjit::Imm(SMI_TAG));
+        a.str(x1, ptr(x2, -16));
+        a.sub(x2, x2, asmjit::Imm(8));
+        a.str(x2, ptr(x0, OFF_SP));
+        a.b(end);
+        a.bind(bail);
+        a.ldr(x5, ptr(x0, OFF_METHOD));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
         a.bind(end);
         return true;
     }
