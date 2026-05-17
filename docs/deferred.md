@@ -691,6 +691,48 @@ will scan benchFib's bytecode to confirm all sends qualify, then
 emit the unconditional inline for the qualifying-self-recursive
 subset.
 
+**Iter 2 finding 2026-05-17:** Wrote self-recursive inline-J2J
+emit (calleeJM via x7 mask, compare callerMethod oop vs
+calleeJM->compiledMethodOop, push J2J save, br entry).  Code is
+correct per asmjit log (`and x9, x7, 281474976710655; sub x10,
+x9, 96; ldr x11, [x0, 56]; cmp x10, x11; b.ne L19`).
+
+Runtime check: with knob on, `30 benchFib NO_SISTA`:
+`inline-J2J: hits=0 bail_zero=0 bail_full=0 bail_self=9869`.
+
+Switching the check to `state.jitMethod->compiledMethodOop` vs
+`calleeJM->compiledMethodOop` (stable across recompile) didn't
+help — still 0 hits.  Debug dump shows the last-seen comparison
+had `last_caller=0x30046d180 last_callee=0x30037c950` — TWO
+different method oops.  No self-recursive matches observed.
+
+**Surprising finding:** benchFib's recursive send is NOT hitting
+tryInlineJ2J at all.  Only ~9.8K bit-60 entries observed in fib(30)
+run (without Sista); a 30-deep benchFib has ~514K recursive sends.
+
+Hypothesis: benchFib's recursive call exits with `ExitSend` (IC
+miss) rather than `ExitSendCached` (IC hit).  This means the IC
+probe at entry 0 doesn't match SmI receiver — either entry 0 is
+empty (cold) or has a different class.
+
+Added `upgradeICToJ2J(state.icDataPtr, ...)` to both fast chain
+loops (Interpreter.cpp:16650 + 18713) to set bit 60 on
+`ExitSendCached`.  Debug trace showed: **fast chain loop never
+enters the `ExitSendCached` branch during fib's recursion** (no
+FAST-UPGRADE prints fired).  Reverted.
+
+This suggests fib's recursive send takes the IC-MISS path
+(ExitSend), not IC-HIT-via-dispatchCached (ExitSendCached).  The
+asmjit-T1 IC probe only checks entry 0 (`ldr x6, [x5]; cmp x4, x6;
+b.ne miss`).  If entry 0 isn't SmI for benchFib's recursive send
+site, every recursive call misses.
+
+Next iteration should investigate:
+1. Why is asmjit-T1's IC probe entry-0 missing for benchFib?
+2. Does benchFib's IC ever get patched via patchJITICAfterSend
+   (Interpreter.cpp:17514) — the slow path?
+3. Would extending the IC probe to entries 0..5 fix the miss?
+
 **Scaffold landed 2026-05-17 (`f81d61a0`, `078105ce`):**
 arm64 inline-J2J path wired up with per-bail counters, opt-in via
 `PHARO_T1_INLINE_J2J=1`.  Currently always bails (counts as

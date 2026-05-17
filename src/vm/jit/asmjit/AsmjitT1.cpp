@@ -65,6 +65,11 @@ extern "C" uint64_t g_inlineJ2J_hits      = 0;  // path taken (br to entry)
 extern "C" uint64_t g_inlineJ2J_bail_zero = 0;  // entryAddr == 0
 extern "C" uint64_t g_inlineJ2J_bail_full = 0;  // save stack at limit
 extern "C" uint64_t g_inlineJ2J_bail_self = 0;  // calleeJM != callerJM
+// Debug: last-seen values at the self-recursive check.  Overwritten each
+// entry so post-run we can see what the comparison was checking.
+extern "C" uint64_t g_inlineJ2J_dbg_caller_method = 0;
+extern "C" uint64_t g_inlineJ2J_dbg_callee_method = 0;
+extern "C" uint64_t g_inlineJ2J_dbg_extra         = 0;
 
 namespace {
 
@@ -1921,34 +1926,147 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 };
 
                 a.bind(tryInlineJ2J);
-                // 2026-05-17 option (a) ATTEMPT: full inline-J2J +
-                // return-prelude was implemented but execution corrupts
-                // when chain breaks via dispatchCached.  When callee's
-                // own inner send misses J2J (no bit 60 in its IC), it
-                // exits to C++ chain loop, which activates a new method
-                // via activateMethod (pushing an interp frame).  That
-                // new method's returnTop then pops OUR save and
-                // tail-calls to OUR resumeAddr — but the interp frame
-                // from activateMethod is still pushed.  Cross-chain
-                // confusion corrupts state; eval fails with
-                // SettingTree>>pragmasDo: type errors.
+                // 2026-05-17 loop iter 2: self-recursive inline-J2J.
+                // Implements the simplest viable subset: callee == caller
+                // (same JITMethod).  For benchFib-style recursion, all
+                // inner sends are either prims (no chain-break) or
+                // self-recursive (also inlined), so no chain-break risk.
+                // For non-self-recursive case, bail (chain-break protocol
+                // unresolved — see deferred.md A6).
                 //
-                // To make option (a) work, EITHER:
-                // - dispatchCached must also push/pop a J2J save (so
-                //   any return pops the correct one), OR
-                // - returnTop must check that the popped save's
-                //   resumeAddr corresponds to its actual caller (some
-                //   identity tag), OR
-                // - inline-J2J is restricted to methods where ALL sends
-                //   are statically known to be J2J-eligible.
+                // Register state at entry:
+                //   x0  = state ptr
+                //   x1  = receiver (from IC HIT setup)
+                //   x5  = icDataPtr
+                //   x7  = ic.extra (bit 60 set, entryAddr in low 48 bits)
+                // nArgs is known at JIT compile time.
                 //
-                // For now: bail always.  Return prelude above is a
-                // no-op when no saves are pushed, so default behavior
-                // is unchanged.
+                // Resume label (after_send) goes into save.resumeAddr.
+                // Return prelude tail-calls there when callee returns.
+                asmjit::Label afterSend = a.new_label();
+                asmjit::Label j2jBailSelf2 = a.new_label();
+
+                // Compute entryAddr (x9) and calleeJM (x10)
+                // entryAddr = x7 & J2J_ADDR_MASK (low 48 bits)
+                a.and_(x9, x7, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
+                a.sub(x10, x9, asmjit::Imm(96));  // calleeJM = entry - JM_SIZE
+
+                // Self-recursive check by COMPILED METHOD OOP, not JM
+                // pointer.  callerJM and calleeJM can differ if the method
+                // has been recompiled mid-recursion (rewriteIcEntries
+                // updates IC entry to NEW JM, but state.jitMethod is OLD
+                // JM for in-flight invocation).  Both JMs share the
+                // same compiledMethodOop (stable Smalltalk-level identity).
+                //
+                // Use state.jitMethod->compiledMethodOop (not state.method).
+                // state.method tracks the OUTERMOST method in the J2J chain
+                // (only updated by tryJITActivation), so it doesn't reflect
+                // the currently-executing inner method.  state.jitMethod IS
+                // updated by stencils.cpp's j2j_direct_call so it's the
+                // right indicator of the current method.
+                a.ldr(x11, ptr(x0, OFF_JITMETHOD));   // x11 = callerJM
+                a.ldr(x12, ptr(x11, 0));               // x12 = caller's CM oop
+                a.ldr(x13, ptr(x10, 0));               // x13 = callee's CM oop (JM[0])
+
+                // Debug: stash last-seen values for post-run dump
+                a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_caller_method));
+                a.str(x12, ptr(x14));
+                a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_callee_method));
+                a.str(x13, ptr(x14));
+                a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_extra));
+                a.str(x7, ptr(x14));
+
+                a.cmp(x12, x13);
+                a.b_ne(j2jBailSelf2);
+
+                // Check save stack space.  Uses x6 as cursor; x14 free.
+                a.ldr(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                a.ldr(x14, ptr(x0, OFF_J2J_SAVE_LIMIT));
+                a.cmp(x6, x14);
+                a.b_hs(j2jBailFull);
+
+                // Load resumeAddr (label adr after the send completes)
+                a.adr(x14, afterSend);
+
+                // Push J2J save (56 bytes).  We push CALLER's jitMethod
+                // (the OLD one if recompile happened mid-recursion); the
+                // return prelude restores to that JM so resumeAddr (in
+                // OLD code zone) is consistent with state.jitMethod.
+                //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
+                //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
+                a.ldr(x15, ptr(x0, OFF_SP));
+                a.str(x15, ptr(x6, 0));
+                a.ldr(x15, ptr(x0, OFF_RECEIVER));
+                a.str(x15, ptr(x6, 8));
+                a.ldr(x15, ptr(x0, OFF_TEMPBASE));
+                a.str(x15, ptr(x6, 16));
+                a.ldr(x15, ptr(x0, OFF_IP));
+                a.str(x15, ptr(x6, 24));
+                a.str(x11, ptr(x6, 32));  // callerJM (x11 from earlier ldr)
+                a.str(x14, ptr(x6, 40));  // resumeAddr
+                a.mov(w15, asmjit::Imm(nArgs));
+                a.str(w15, ptr(x6, 48));
+
+                // Bump cursor + depth + totalCalls
+                a.add(x6, x6, asmjit::Imm(56));
+                a.str(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                a.ldr(w13, ptr(x0, OFF_J2J_DEPTH));
+                a.add(w13, w13, asmjit::Imm(1));
+                a.str(w13, ptr(x0, OFF_J2J_DEPTH));
+                a.ldr(w13, ptr(x0, OFF_J2J_TOTAL_CALLS));
+                a.add(w13, w13, asmjit::Imm(1));
+                a.str(w13, ptr(x0, OFF_J2J_TOTAL_CALLS));
+
+                // Set up callee state for self-recursion:
+                //   receiver = sp[-(nArgs+1)*8]
+                //   tempBase = sp - nArgs*8
+                //   ip       = method bytecode start
+                //   sp       = tempBase + tempCount*8
+                a.ldr(x12, ptr(x0, OFF_SP));            // x12 = caller sp
+                a.sub(x13, x12, asmjit::Imm((nArgs + 1) * 8));
+                a.ldr(x14, ptr(x13));                    // x14 = new recv
+                a.str(x14, ptr(x0, OFF_RECEIVER));
+                a.sub(x13, x12, asmjit::Imm(nArgs * 8)); // x13 = new tempBase
+                a.str(x13, ptr(x0, OFF_TEMPBASE));
+
+                // Compute method bytecode start address
+                //   methodObj = jitMethod->compiledMethodOop (at offset 0)
+                //   methodHeader = jitMethod->methodHeader (at offset 16)
+                //   numLits = methodHeader & 0x7FFF
+                //   bcStart = methodObj + 8 + (1+numLits)*8
+                a.ldr(x14, ptr(x10, 0));         // methodObj
+                a.ldr(x15, ptr(x10, 16));        // methodHeader
+                a.and_(x15, x15, asmjit::Imm(0x7FFF));  // numLits
+                a.add(x15, x15, asmjit::Imm(1));
+                a.lsl(x15, x15, asmjit::Imm(3));
+                a.add(x14, x14, asmjit::Imm(8));
+                a.add(x14, x14, x15);            // bcStart
+                a.str(x14, ptr(x0, OFF_IP));
+
+                // sp = tempBase + tempCount*8 (tempCount from JM offset 35)
+                a.ldrb(w15, ptr(x10, 35));       // tempCount
+                a.lsl(w15, w15, asmjit::Imm(3));
+                a.add(x13, x13, x15);            // new sp
+                a.str(x13, ptr(x0, OFF_SP));
+
+                // Bump hits counter
+                emitIncCounter((uint64_t)&g_inlineJ2J_hits);
+
+                // Tail-call (br) to entry. x9 = entryAddr.
+                a.br(x9);
+
+                // afterSend: return prelude tail-calls here.  Caller state
+                // restored; retval already on top of caller sp.
+                a.bind(afterSend);
+                a.b(endOfSend);
+
+                a.bind(j2jBailSelf2);
                 emitIncCounter((uint64_t)&g_inlineJ2J_bail_self);
                 a.b(j2jBail);
                 a.bind(j2jBailZero);
                 a.bind(j2jBailFull);
+                emitIncCounter((uint64_t)&g_inlineJ2J_bail_full);
+                a.b(j2jBail);
                 a.bind(j2jBailSelf);
 
                 a.bind(j2jBail);

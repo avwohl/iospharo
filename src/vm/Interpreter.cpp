@@ -83,6 +83,9 @@ extern "C" uint64_t g_inlineJ2J_hits;
 extern "C" uint64_t g_inlineJ2J_bail_zero;
 extern "C" uint64_t g_inlineJ2J_bail_full;
 extern "C" uint64_t g_inlineJ2J_bail_self;
+extern "C" uint64_t g_inlineJ2J_dbg_caller_method;
+extern "C" uint64_t g_inlineJ2J_dbg_callee_method;
+extern "C" uint64_t g_inlineJ2J_dbg_extra;
 
 // Display Form readiness flag — exposed to Swift via vm_isDisplayFormReady().
 // Set true when the image calls primitiveBeDisplay (prim 102) or
@@ -1361,12 +1364,17 @@ void Interpreter::dumpJITStats() {
         if (total > 0) {
             fprintf(stderr,
                 "  inline-J2J: hits=%llu bail_zero=%llu bail_full=%llu "
-                "bail_self=%llu (catch rate %.1f%%)\n",
+                "bail_self=%llu (catch rate %.1f%%)\n"
+                "  inline-J2J dbg: last_caller_method=0x%llx "
+                "last_callee_method=0x%llx last_extra=0x%llx\n",
                 (unsigned long long)g_inlineJ2J_hits,
                 (unsigned long long)g_inlineJ2J_bail_zero,
                 (unsigned long long)g_inlineJ2J_bail_full,
                 (unsigned long long)g_inlineJ2J_bail_self,
-                100.0 * g_inlineJ2J_hits / total);
+                100.0 * g_inlineJ2J_hits / total,
+                (unsigned long long)g_inlineJ2J_dbg_caller_method,
+                (unsigned long long)g_inlineJ2J_dbg_callee_method,
+                (unsigned long long)g_inlineJ2J_dbg_extra);
         }
     }
     fprintf(stderr, "=================\n");
