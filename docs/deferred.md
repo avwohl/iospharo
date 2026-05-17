@@ -462,6 +462,77 @@ Diagnostic tooling (`_HOLE_RT_J2J_TRACE`, 512-slot ring buffer,
 auto-trigger on SmallInt return) is still in tree from
 `f70ad55/cf6ffaf/b94c0a8` if the cascade ever re-emerges.
 
+### A5. arm64 Sista DO_SPLICE hang on `collect:` — 2026-05-17
+
+Bench-suite returning to arm64 after months on Linux x86 surfaces a
+hang in `Array>>collect:` once Sista's `DO_SPLICE` is active (which
+is the production default since `ccf5a90f`).
+
+**Repro:** `run_benchmarks.sh` with `PHARO_JIT_DEFER=15` (default
+bench setting), our VM hangs forever in `runCollect`:
+
+    --- collect(100K) ---
+        (no result; main thread blocked in
+         primitiveRelinquishProcessor → usleep)
+
+**Workaround:** `PHARO_NO_SISTA_DO_SPLICE=1` makes collect run at
+~248 ms (10×100K), and the full bench-suite reaches DONE.
+
+**Bisect:** NOT caused by the 2026-05-17 arm64 mirror commits
+(`ada9f919`, `eeb69514`, `410a9930`) — reverting all three still
+hangs.  This is a pre-existing arm64 Sista bug that surfaces under
+DO_SPLICE; the x86 sessions never re-ran the arm64 path.
+
+**Likely scope:** `runSum` had a similar `relinquishSlept_` /
+helper-send interaction fixed on x86 in `31f1c640` (2026-05-02).
+`runCollect`'s splice path probably hits the same class of
+scheduler-yield race but on the arm64 helper.  See
+`memory/project_sum1m_relinquish_fix_2026_05_02.md` for the x86
+template.
+
+Other splice paths on arm64 work in the same bench-suite run:
+`sieve x100 = 7 ms`, `1M blocks = 0 ms`, `1M getter+yourself = 0 ms`.
+So `DO_SPLICE` is mostly working — `collect:` specifically is bad.
+
+**Status:** debugging deferred.  Bench panel runs cleanly with the
+workaround flag.
+
+### A6. arm64 perf gap vs x86 documented numbers — 2026-05-17
+
+First arm64 measurement after the x86 sessions shows arm64 running
+substantially slower than the post-session x86 numbers documented
+in `docs/jit-bench-2026-05-16.md`:
+
+    bench               arm64 (this)   x86 doc post-session   Cog (arm64)
+    fib(28)             231 ms         111-114 ms             2 ms
+    sort 100K           352 ms         421-507 ms             15 ms
+    sieve x100          7 ms           183-219 ms             8 ms
+    sum 1M              91 ms          101-137 ms             5 ms
+    floatSum 1M         108 ms         122-147 ms             5 ms
+    1M getter+yourself  0 ms           135-200 ms             2 ms
+
+arm64 is genuinely faster than the x86 docs on splice-driven
+benches (sieve, 1M getter+yourself), and faster on sort + sum +
+floatSum.  But fib(28) is ~2× slower than the x86 number — a
+recursive-send-heavy bench that should benefit from the J2J
+optimizations.  None of the arm64 mirror commits target the
+recursive-J2J path directly, so this is most likely a missing
+piece in arm64 J2J that x86 has.
+
+The bigger picture: we are NOT "as fast as Cog" on standard
+benches.  Cog wins ~50-130× on every arith- or send-heavy
+benchmark.  Our wins are only where Sista splices replace the
+inner loop entirely (sieve, blocks, getter+yourself).  Reaching
+parity with Cog on general code is in the multi-week E-series
+work (T1/T2 §1.3, multi-bc §1.2e, megamorphic dispatch).
+
+**Status:** investigation deferred.  Run-to-run variance is large
+on this bench harness; before chasing the fib(28) 2× gap, re-run
+on `PharoBenchPanel.image` (best-of-N filter) to confirm it's not
+single-run noise.  The panel image is not currently in
+`/tmp/harness/`; needs to be generated (search `PharoBenchPanel`
+in tree for its setup).
+
 ---
 
 ## B. Code state in-tree — experimental / opt-in
@@ -1218,6 +1289,56 @@ changes; image-side issues to propose upstream.
 - Touch event primitives on the standard input path.
 - Startup preferences path that survives
   `Smalltalk snapshot:andQuit:` round-trips cleanly.
+
+### D1. asmjit Catalyst include — decide PR vs permanent fork
+
+Submodule `third_party/asmjit` currently points at
+`avwohl/asmjit:iospharo-catalyst` (commit `1ce3ea65`), a one-commit
+fork that moves `<libkern/OSCacheControl.h>` out of the
+`TARGET_OS_OSX` guard so `sys_icache_invalidate()` is declared on
+Mac Catalyst builds.  History:
+
+- 2026-05-08: change started life as a `third_party/patches/
+  asmjit-catalyst-virtmem.patch` applied by the cmake configure
+  loop.  Worked on one machine, broke on every fresh clone
+  because the patch file was committed but the in-place edit
+  wasn't.
+- 2026-05-17 `b9dfefa1`: forked asmjit to `avwohl/asmjit`,
+  committed the include move as `1ce3ea65` on branch
+  `iospharo-catalyst`, updated `.gitmodules` to point there.
+- 2026-05-17 `3ce977cd`: removed the now-redundant in-place
+  patch from `build-xcframework.sh`.  The patch file in
+  `third_party/patches/` is also redundant but retained as a
+  fallback for anyone reverting the submodule URL.
+
+**Decide one of:**
+
+1. **Submit upstream PR.**  The change is one line; rationale is
+   that `sys_icache_invalidate` is available on every Apple
+   target, not just OSX.  If accepted, bump the submodule back
+   to `asmjit/asmjit` master and delete the patch file + fork.
+   This is the right long-term outcome.
+
+2. **Keep the fork permanently.**  No external dependency, no
+   waiting on upstream.  Cost: have to periodically rebase the
+   fork onto upstream when bumping asmjit, and document that we
+   carry a one-commit fork.  Delete the patch file (dead code).
+
+3. **Drop the fork, restore in-tree patch.**  Submodule goes back
+   to upstream `asmjit/asmjit`; cmake re-applies the patch on
+   configure.  This was the pre-2026-05-17 setup.  Less clean
+   than the fork (mutation of submodule worktree, fresh clones
+   needed `cmake -B build` to apply) but no fork to maintain.
+
+Inputs needed to decide: does the asmjit maintainer accept simple
+platform-portability PRs?  If `#include <libkern/OSCacheControl.h>`
+on all Apple platforms is uncontroversial, option 1 is best.
+
+Note: the patch file `third_party/patches/asmjit-catalyst-
+virtmem.patch` is currently a no-op (cmake's
+`git apply --reverse --check` succeeds because the fork has the
+patch baked in, so apply is skipped — see CMakeLists.txt:127-151).
+It's only used when the submodule URL points at vanilla upstream.
 
 ---
 
