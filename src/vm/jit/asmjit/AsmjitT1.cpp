@@ -1467,8 +1467,79 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.bind(end);
         return true;
     }
+    // J2J chain return prelude — emitted before each return path.
+    // If state.j2jDepth > 0: pop the most recent save, restore caller
+    // state, push retval to caller's sp, tail-call to save->resumeAddr.
+    // Otherwise: fall through to normal exit-to-C++ return.
+    //
+    // Mirrors stencils.cpp:491-531 J2J_INLINE_RETURN_IMPL protocol.
+    // Retval is in x1 by convention; x2-x15 free to clobber.
+    //
+    // Default OFF (PHARO_T1_INLINE_J2J=1 to enable).  When off, the
+    // ldr+cbz is still emitted but j2jDepth is always 0 so we fall
+    // through to normal-return — tiny overhead, zero semantic change.
+    static const bool inlineJ2J =
+        std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+    auto emitJ2JReturnPreludeIfEnabled = [&]() {
+        if (!inlineJ2J) return;
+        asmjit::Label normalReturn = a.new_label();
+        // Check j2jDepth
+        a.ldr(w3, ptr(x0, OFF_J2J_DEPTH));
+        a.cbz(w3, normalReturn);
+
+        // Pop save: cursor -= sizeof(J2JSave) = 56; depth--
+        a.ldr(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
+        a.sub(x4, x4, asmjit::Imm(56));
+        a.str(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
+        a.sub(w3, w3, asmjit::Imm(1));
+        a.str(w3, ptr(x0, OFF_J2J_DEPTH));
+
+        // Load save fields.  Layout (stencils.cpp:113):
+        //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
+        //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
+        a.ldr(x5, ptr(x4,  0));   // x5  = caller's JIT.sp
+        a.ldr(x6, ptr(x4,  8));   // x6  = caller's receiver
+        a.str(x6, ptr(x0, OFF_RECEIVER));
+        a.ldr(x6, ptr(x4, 16));   // tempBase
+        a.str(x6, ptr(x0, OFF_TEMPBASE));
+        a.ldr(x6, ptr(x4, 24));   // ip (= caller's resume bytecode addr)
+        a.str(x6, ptr(x0, OFF_IP));
+        a.ldr(x7, ptr(x4, 32));   // x7  = caller's jitMethod
+        a.str(x7, ptr(x0, OFF_JITMETHOD));
+        a.ldr(x8, ptr(x4, 40));   // x8  = resumeAddr (tail-call target)
+        a.ldr(w9, ptr(x4, 48));   // w9  = sendArgCount
+
+        // Derive method/literals/argCount from callerJM
+        // (matches J2J_INLINE_RETURN_IMPL).
+        a.ldr(x6, ptr(x7, 0));    // method = callerJM[0]
+        a.str(x6, ptr(x0, OFF_METHOD));
+        a.add(x10, x6, asmjit::Imm(16));
+        a.str(x10, ptr(x0, OFF_LITERALS));
+        a.ldrb(w11, ptr(x7, 34)); // callerJM.argCount byte
+        a.str(w11, ptr(x0, OFF_ARGCOUNT));
+
+        // Pop callee's args from caller's sp, push retval (in x1).
+        // semantics: *(sp - (nArgs+1)*8) = retval; sp -= nArgs*8
+        a.lsl(x12, x9, asmjit::Imm(3));            // x12 = nArgs*8
+        a.add(x13, x12, asmjit::Imm(8));           // x13 = (nArgs+1)*8
+        a.sub(x14, x5, x13);                        // x14 = sp - (nArgs+1)*8
+        a.str(x1, ptr(x14));                        // write retval
+        a.sub(x5, x5, x12);                         // sp_new = sp - nArgs*8
+        a.str(x5, ptr(x0, OFF_SP));
+
+        // Clear exitReason so callers don't see stale EXIT_RETURN.
+        a.mov(w15, asmjit::Imm(0));
+        a.str(w15, ptr(x0, OFF_EXIT));
+
+        // Tail-call to caller's resumeAddr.
+        a.br(x8);
+
+        a.bind(normalReturn);
+    };
+
     auto emitReturnPtr = [&](int srcOff) {
         a.ldr(x1, ptr(x0, srcOff));
+        emitJ2JReturnPreludeIfEnabled();
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -1476,6 +1547,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     };
     auto emitReturnImm = [&](uint64_t imm) {
         a.mov(x1, asmjit::Imm(imm));
+        emitJ2JReturnPreludeIfEnabled();
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -1489,7 +1561,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldr(x2, ptr(x0, OFF_SP));
         a.sub(x2, x2, asmjit::Imm(8));
         a.str(x2, ptr(x0, OFF_SP));
-        a.ldr(x1, ptr(x2));
+        a.ldr(x1, ptr(x2));      // x1 = retval (TOS)
+        emitJ2JReturnPreludeIfEnabled();
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -1848,37 +1921,32 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 };
 
                 a.bind(tryInlineJ2J);
-                // ARCHITECTURAL BLOCKER (discovered 2026-05-17):
-                // The legacy stencil JIT used a J2J chain protocol where
-                // the CALLEE'S return code (J2J_INLINE_RETURN) checks
-                // j2jDepth, pops the save struct, and tail-calls to the
-                // saved resumeAddr.  asmjit-T1-compiled methods DON'T
-                // use this protocol — their return bytecodes just do
-                // `ret x30` with EXIT_RETURN.  So if we push a J2J save
-                // before tail-call (br), the callee never pops it; saves
-                // accumulate, depth grows without bound, instrumentation
-                // shows 9.7M inline calls / 46 returns (infinite recursion
-                // symptom).
+                // 2026-05-17 option (a) ATTEMPT: full inline-J2J +
+                // return-prelude was implemented but execution corrupts
+                // when chain breaks via dispatchCached.  When callee's
+                // own inner send misses J2J (no bit 60 in its IC), it
+                // exits to C++ chain loop, which activates a new method
+                // via activateMethod (pushing an interp frame).  That
+                // new method's returnTop then pops OUR save and
+                // tail-calls to OUR resumeAddr — but the interp frame
+                // from activateMethod is still pushed.  Cross-chain
+                // confusion corrupts state; eval fails with
+                // SettingTree>>pragmasDo: type errors.
                 //
-                // Per-bail-reason instrumentation 2026-05-17 also showed:
-                // when WE used the original self-recursive bail, it fired
-                // ~99.96% of the time on fib — state.jitMethod tracks the
-                // LATEST recompile while the IC J2J_ADDR can point to an
-                // OLDER compilation.  So self-recursive-only catches
-                // basically nothing in steady state.
+                // To make option (a) work, EITHER:
+                // - dispatchCached must also push/pop a J2J save (so
+                //   any return pops the correct one), OR
+                // - returnTop must check that the popped save's
+                //   resumeAddr corresponds to its actual caller (some
+                //   identity tag), OR
+                // - inline-J2J is restricted to methods where ALL sends
+                //   are statically known to be J2J-eligible.
                 //
-                // The fix needs either: (a) make asmjit-T1 return paths
-                // use the J2J chain protocol; (b) use blr/ret (normal
-                // call) and save/restore caller state on the C stack.
-                // Both are out of MVP scope.
-                //
-                // For now: ALWAYS bail (count as "self" reason for stats).
-                // The path is reached, instrumentation confirms it; baseline
-                // perf is unchanged because we just inc-and-fall-through.
+                // For now: bail always.  Return prelude above is a
+                // no-op when no saves are pushed, so default behavior
+                // is unchanged.
                 emitIncCounter((uint64_t)&g_inlineJ2J_bail_self);
                 a.b(j2jBail);
-                // Bind unreached labels to satisfy asmjit (any branch to
-                // them would land here, then fall through to j2jBail).
                 a.bind(j2jBailZero);
                 a.bind(j2jBailFull);
                 a.bind(j2jBailSelf);
