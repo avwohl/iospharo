@@ -637,6 +637,60 @@ regression battery + `PHARO_RESUME_J2J=1` exercise + fuzzer.
 defensible default for arm64 production runs of arith/send-heavy
 code (Sista splice still fires, so splice-driven wins survive).
 
+**Data point 2026-05-17 (loop iter 1):** `30 benchFib` run with
+`PHARO_T1_INLINE_J2J=1 PHARO_DUMP_JIT_STATS=1` reports
+`inline-J2J: hits=0 bail_zero=0 bail_full=0 bail_self=468886
+(catch rate 0.0%)`.  Confirms 468K sends arrive at tryInlineJ2J
+with bit 60 set (eligible) in a single fib(30).  Currently 100%
+bail.  At ~500cy savings/hit, full capture = ~78ms on M1 — i.e.
+the inline path alone closes ~30% of the fib(30) Cog gap.
+
+The catch rate is artificial: bail path is unconditional
+(`a.b(j2jBail)` after counter increment).  Real capture potential
+once the chain-break protocol is solved is the full 468K.
+
+**Chain-break protocol options (consolidated 2026-05-17 iter 1):**
+
+The fundamental problem: when an inline-J2J'd callee's inner send
+misses J2J (no bit 60 on the inner IC), it falls through to
+dispatchCached.  The C++ chain loop then activates a target T via
+activateMethod (pushing an interp frame).  When T eventually
+returns via its prelude, j2jDepth > 0 → it pops OUR save → tail-
+calls OUR resumeAddr.  But T wasn't entered via J2J; the interp
+frame is orphaned.
+
+Three plausible fixes:
+
+1. **j2jEntryFlag in JITState + priorFlag in J2JSave.**  Each
+   inline-J2J emit saves prior flag into save struct, sets flag=1
+   before br.  Return prelude only pops when flag==1.  Restores
+   prior flag on pop.  Chain-loop activateMethod always clears
+   flag=0 before re-entering JIT.  Requires: JITState field add,
+   J2JSave field add, activateMethod path update, all return
+   prelude sites updated to check flag (not depth).  ~5 files.
+
+2. **Pure-J2J callee gate.**  Only inline-J2J when callee's
+   bytecode contains no sends that could miss J2J.  Implement as
+   lazy `isPureJ2J` bool on JITMethod, computed by scanning bytecode
+   for any send whose IC's extras lack J2J_ENTRY_BIT.  Cheaper than
+   #1 but catches less.  For benchFib it works (all inner sends are
+   to prims or recursive benchFib).
+
+3. **blr-based with state restore.**  Don't use J2J save mechanism
+   at all.  Emit: save caller state in callee-saved regs
+   (x19-x28); set up callee state; blr entry; check exitReason; if
+   EXIT_RETURN, restore caller state + push retval; otherwise bail.
+   Doesn't handle inner chain-bounce cleanly (callee's exit via
+   dispatchCached needs activateMethod handling).  Per option (b)
+   investigation, this is the path that hit "callee doesn't run
+   to completion" wall.
+
+Iter 1 conclusion: option #2 (pure-J2J gate) is the cheapest
+viable shipping path for fib-like workloads.  Next iteration
+will scan benchFib's bytecode to confirm all sends qualify, then
+emit the unconditional inline for the qualifying-self-recursive
+subset.
+
 **Scaffold landed 2026-05-17 (`f81d61a0`, `078105ce`):**
 arm64 inline-J2J path wired up with per-bail counters, opt-in via
 `PHARO_T1_INLINE_J2J=1`.  Currently always bails (counts as
