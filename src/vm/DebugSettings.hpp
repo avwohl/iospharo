@@ -103,10 +103,26 @@ struct DebugSettings {
     // resume.  Pinpoints whether the cached-dispatch's retVal write
     // survives to the resume point.  Off by default.
     bool t1ResumeTosLog = false;
-    // Conditional-jump emit — DEFAULT-OFF.  Flaky on the differential
-    // fuzzer (runs vary 5/39 → 39/39).  Sieve benchmark is 3× faster
-    // when this works, but correctness isn't reliable yet.
-    // PHARO_ASMJIT_T1_ENABLE_JUMPS=1 enables for bisection.
+    // Conditional-jump emit — DEFAULT-OFF.  Two reasons:
+    //
+    // 1. Correctness flake: in-place real-emit of cond-jump methods
+    //    intermittently corrupts downstream callers (cull: is the
+    //    canonical case).  Reproduced 2026-05-16: with
+    //    PHARO_ASMJIT_T1_ENABLE_JUMPS=1 + PHARO_RECOMPILE_AT=999999
+    //    (recompile disabled), fuzzer is 39/39 PASS x3, but with
+    //    recompile on (default), fuzzer flakes 5/39 → 39/39.
+    //    Disabling recompile globally for T1 is a small perf
+    //    regression (sieve doesn't recompile so doesn't matter for
+    //    sieve, but other methods regress 15-20% via lost JIT entries).
+    //
+    // 2. Sieve perf regression: even when fuzzer-stable, real-emit
+    //    of cond-jump methods is SLOWER than bail-to-interp on
+    //    practical benchmarks — sieve 194ms (stub-on-cond-jump) →
+    //    820ms (real emit).  The cond-jump emit works correctly
+    //    but doesn't pay off vs the optimized interp path.
+    //
+    // Kept as opt-in: PHARO_ASMJIT_T1_ENABLE_JUMPS=1 for bisection /
+    // future investigation.
     bool t1EnableJumps = false;
     int  t1JumpsFirstN = -1;          // PHARO_ASMJIT_T1_JUMPS_FIRST_N
     int  t1JumpsOnlyN  = -1;          // PHARO_ASMJIT_T1_JUMPS_ONLY_N
