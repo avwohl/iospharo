@@ -709,6 +709,51 @@ always bails).  BOTH option (a) AND option (c) need lldb attach
 through the recursive chain — beyond what this session can deliver
 via static reasoning + printf.
 
+**Option (c) retry with lldb (2026-05-17 session 2):**
+
+Re-applied option (c) with two additions:
+1. Helper validates calleeJM (state==Compiled, codeSize sane,
+   entryAddr in code range) — bails on stale IC entries.
+2. lldb attached to fib(5) run with breakpoint on helper.
+
+**Surprising finding:** crash happens BEFORE the helper is even
+called (breakpoint never fires).  At crash:
+  - PC = 0x107f4e4a4 in some JIT method's code at offset 452
+  - x0 = 0x0000000000680008 (junk — being dereferenced, sigsegv)
+  - x2 = 0x107f4e600 (calleeJM was being set up)
+  - x6 = 0x30033ae08 (methodBits)
+  - x7 = 0x1000000107f4e660 (extras, bit 60 set + entryAddr)
+  - x10/x23 = 0x16fdfc7a8 (state ptr survived in those regs)
+  - bt shows only tryJITActivation → JIT (1 frame, no helper)
+
+The inline-J2J emit was MID-SETUP (x2/x6/x7 all populated) when
+the crash hit.  The crashing instruction is `ldr x2, [x0]` —
+a typical first-instruction-of-some-bytecode pattern (Pop, ReturnTop,
+etc.).  So execution jumped to that location with bad x0 BEFORE
+the helper was called.
+
+Theories I couldn't validate from static + single-shot lldb:
+- asmjit's `mov(x9, Imm64)` mis-encoded → blr to garbage (but
+  we'd see a frame in bt then)
+- The b → endOfSend after helper return jumps to wrong address
+  (but bail path never reached helper — should fall through to
+  dispatchCached normally)
+- The inline-J2J emit corrupts adjacent emit somehow
+- Asmjit's sub/add sp manipulation around the blr corrupts SP
+  beyond the helper's prologue
+
+All paths require **interactive lldb stepping** through the emit
+instruction-by-instruction starting from when we know x0 is good
+(at IC HIT) to when x0 becomes 0x680008.  Not deliverable in a
+batch session.
+
+**Permanent bookmark:** the option (c) implementation in
+`f81d61a0` history shows the helper signature, args, and emit
+structure.  Next session can cherry-pick that diff onto a fresh
+branch and run lldb with proper step-instruction loop.
+
+Reverted, tree clean.
+
 **Option (b) (blr/ret normal-call semantics, C-stack save) — TRIED
 AND ROOT-CAUSED, 2026-05-17.**  Implementation drafted: sub sp #64;
 store 7 caller-state fields; setup callee state; blr x_entry; load
