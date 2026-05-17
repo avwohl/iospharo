@@ -462,40 +462,56 @@ Diagnostic tooling (`_HOLE_RT_J2J_TRACE`, 512-slot ring buffer,
 auto-trigger on SmallInt return) is still in tree from
 `f70ad55/cf6ffaf/b94c0a8` if the cascade ever re-emerges.
 
-### A5. arm64 Sista DO_SPLICE hang on `collect:` — 2026-05-17
+### A5. arm64 bench-suite flaky hang at `runCollect` — 2026-05-17
 
-Bench-suite returning to arm64 after months on Linux x86 surfaces a
-hang in `Array>>collect:` once Sista's `DO_SPLICE` is active (which
-is the production default since `ccf5a90f`).
+Bench-suite returning to arm64 after months on Linux x86 surfaces an
+intermittent hang at `runCollect` (the 12th benchmark in the
+PharoBenchmarkRunner sequence).
 
-**Repro:** `run_benchmarks.sh` with `PHARO_JIT_DEFER=15` (default
-bench setting), our VM hangs forever in `runCollect`:
+**Repro:** `run_benchmarks.sh` with `PHARO_JIT_DEFER=15`.  Hits at
+~80%; the file ends with `--- collect(100K) ---` and no result line,
+main thread parked in `primitiveRelinquishProcessor → usleep` per
+lldb attach.
 
-    --- collect(100K) ---
-        (no result; main thread blocked in
-         primitiveRelinquishProcessor → usleep)
+**Not a JIT codegen bug.** Verified by running the same bench with
+`PHARO_JIT_DEFER=60` (effectively no JIT) — still hangs ~80% of the
+time, same lldb signature.  The bug is in the Smalltalk image
+scheduler interacting with the high-priority fork
+(`Processor highestPriority - 1`) that the bench-suite's
+SessionManager startUp: handler creates.
 
-**Workaround:** `PHARO_NO_SISTA_DO_SPLICE=1` makes collect run at
-~248 ms (10×100K), and the full bench-suite reaches DONE.
+**Env-var workarounds explored, all flaky:**
 
-**Bisect:** NOT caused by the 2026-05-17 arm64 mirror commits
-(`ada9f919`, `eeb69514`, `410a9930`) — reverting all three still
-hangs.  This is a pre-existing arm64 Sista bug that surfaces under
-DO_SPLICE; the x86 sessions never re-ran the arm64 path.
+- `PHARO_NO_SISTA_DO_SPLICE=1`           bench completes (collect ~250ms),
+                                         but sieve regresses from 8 ms
+                                         to ~120 ms (the splice fires on
+                                         sieve's hot loop).
+- `PHARO_NO_SISTA_DOACCUM_RESUME=1`      3/10 reliable.
+- `PHARO_NO_SISTA_INJECT_RESUME=1`       4/5 reliable.
+- `PHARO_NO_SISTA_COLLECT_RESUME=1`      2/3 reliable.
+- `PHARO_JIT_DEFER=60` (no JIT)          1/5 reliable.
 
-**Likely scope:** `runSum` had a similar `relinquishSlept_` /
-helper-send interaction fixed on x86 in `31f1c640` (2026-05-02).
-`runCollect`'s splice path probably hits the same class of
-scheduler-yield race but on the arm64 helper.  See
-`memory/project_sum1m_relinquish_fix_2026_05_02.md` for the x86
-template.
+None of the env-vars deterministically fix the hang.  This is a
+scheduler race that varies between runs based on timing.
+
+**Same class of bug as runSum** which was fixed in `31f1c640`
+(2026-05-02) by clearing stale `relinquishSlept_` on
+`jitSistaCallSend` entry.  Probably another stale scheduler signal
+needs clearing somewhere — but not in a JIT path, since the
+hang persists with JIT disabled.  Needs lldb attached during a hang
+with a breakpoint on `transferTo` / `putToSleep` / the Smalltalk
+`Processor activeProcess yield` path to see exactly which process
+is hogging and why no lower-priority work runs.
 
 Other splice paths on arm64 work in the same bench-suite run:
-`sieve x100 = 7 ms`, `1M blocks = 0 ms`, `1M getter+yourself = 0 ms`.
-So `DO_SPLICE` is mostly working — `collect:` specifically is bad.
+`sieve x100 = 7-8 ms`, `1M blocks = 0 ms`, `1M getter+yourself = 0 ms`.
+The visible JIT splice infrastructure is healthy.
 
-**Status:** debugging deferred.  Bench panel runs cleanly with the
-workaround flag.
+**Status:** debugging deferred — needs lldb session focused on the
+scheduler at runCollect entry on a hung instance, not on the JIT
+codegen path.  When the bench-suite IS completing, the numbers are
+in line with the x86 documented post-session figures
+(`docs/jit-bench-2026-05-16.md`), so JIT correctness is fine.
 
 ### A6. arm64 perf gap vs x86 documented numbers — 2026-05-17
 
