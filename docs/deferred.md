@@ -1539,35 +1539,20 @@ Mac Catalyst builds.  History:
   `iospharo-catalyst` branch (commit `1ce3ea65`, sits one commit
   past upstream HEAD `0bd5787`).
 
-**Recommended: Option 1 (upstream PR).**  Maintainer is responsive,
-fix is one line, no existing PR to collide with.  Ready-to-fire
-command:
+**Submitted as upstream PR — 2026-05-17:**
+**https://github.com/asmjit/asmjit/pull/521** (OPEN, waiting on
+maintainer review).
 
-    gh pr create \
-      --repo asmjit/asmjit \
-      --head avwohl:iospharo-catalyst \
-      --base master \
-      --title "virtmem: include OSCacheControl.h on all Apple platforms" \
-      --body "$(cat <<'EOF'
-sys_icache_invalidate() is called by VirtMem::flushInstructionCache
-on every Apple SDK (iOS, Mac Catalyst, tvOS, watchOS, macOS), but
-the #include <libkern/OSCacheControl.h> is currently guarded by
-TARGET_OS_OSX. On Mac Catalyst (TARGET_OS_OSX=0, TARGET_OS_MACCATALYST=1)
-this fails to compile with "undeclared identifier 'sys_icache_invalidate'".
+Check status:
+    gh pr view asmjit/asmjit#521 --json state,mergeable,reviewDecision
 
-This patch moves the include out of the TARGET_OS_OSX guard. The
-header is available on every Apple SDK so the unconditional include
-is safe.
-
-Verified on Mac Catalyst arm64 (Xcode 26 / macOS 26.5 SDK) — fixes
-the build break.
-EOF
-)"
-
-If accepted: bump submodule back to `asmjit/asmjit` master, drop
+If merged: bump submodule back to `asmjit/asmjit` master, drop
 `.gitmodules` branch override, delete `third_party/patches/
 asmjit-catalyst-virtmem.patch`, delete the `iospharo-catalyst`
 branch on avwohl/asmjit.
+
+If rejected: fall back to keeping the fork (option 2) or restoring
+the in-tree patch (option 3).
 
 Note: the patch file `third_party/patches/asmjit-catalyst-
 virtmem.patch` is currently a no-op (cmake's
