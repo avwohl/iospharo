@@ -133,19 +133,15 @@ if $RUN_OURS; then
     # makes the bench reliably complete (5/5) without measurably
     # changing the JIT speed of post-tinyBenchmarks benches.
     #
-    # PHARO_NO_SISTA_DO_SPLICE=1 (arm64 only, 2026-05-17): bench-suite
-    # otherwise hangs ~80% at runCollect from a scheduler race in the
-    # SessionManager-startUp:-forked-at-high-priority context.  Same
-    # class of bug as runSum's relinquishSlept fix (31f1c640) — see
-    # deferred.md A5.  Sieve regresses 8 ms → ~120 ms with the flag
-    # set (sieve uses the do-accum splice); everything else parity.
-    # Override with PHARO_KEEP_SISTA_DO_SPLICE=1 to test the splice
-    # path (will hang ~80% of the time on arm64).
-    EXTRA_ENV=""
-    if [ "$(uname -m)" = "arm64" ] && [ -z "${PHARO_KEEP_SISTA_DO_SPLICE:-}" ]; then
-        EXTRA_ENV="PHARO_NO_SISTA_DO_SPLICE=1"
-    fi
-    timeout 600 env PHARO_JIT_DEFER="${PHARO_JIT_DEFER:-15}" $EXTRA_ENV \
+    # 2026-05-17: arm64 used to need PHARO_NO_SISTA_DO_SPLICE=1 to
+    # avoid an ~80% hang at runCollect (deferred.md A5 — scheduler
+    # race in SessionManager-startUp:-forked-at-high-priority).
+    # After the 2026-05-18 inline-J2J + bytecode-coverage shipping,
+    # 8/8 runs complete cleanly without the workaround.  Removing.
+    # PHARO_KEEP_SISTA_DO_SPLICE=1 (the historic opt-out flag) still
+    # works as a no-op; setting PHARO_NO_SISTA_DO_SPLICE=1 reinstates
+    # the workaround if anyone hits the hang again.
+    timeout 600 env PHARO_JIT_DEFER="${PHARO_JIT_DEFER:-15}" \
         "$OUR_VM" Pharo-ours.image > /dev/null 2>&1 || true
     if [ -f /tmp/pharo_benchmarks.txt ]; then
         cp /tmp/pharo_benchmarks.txt "$OUR_RESULTS"

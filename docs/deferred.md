@@ -462,7 +462,18 @@ Diagnostic tooling (`_HOLE_RT_J2J_TRACE`, 512-slot ring buffer,
 auto-trigger on SmallInt return) is still in tree from
 `f70ad55/cf6ffaf/b94c0a8` if the cascade ever re-emerges.
 
-### A5. arm64 bench-suite flaky hang at `runCollect` — 2026-05-17
+### A5. arm64 bench-suite flaky hang at `runCollect` — RESOLVED 2026-05-18 (bench-suite stable)
+
+After the 2026-05-18 inline-J2J shipping + bytecode-coverage
+work, 8/8 bench-suite runs complete cleanly without the
+`PHARO_NO_SISTA_DO_SPLICE=1` workaround.  `collect 10x100K`
+runs in 248-250 ms consistently, `sieve x100` in 7-8 ms (no
+splice regression).  Workaround removed from
+`scripts/run_benchmarks.sh`; the env var still works if anyone
+needs to re-enable it.  No further investigation needed unless
+the hang reappears.
+
+(Below is the original investigation — kept for archeology.)
 
 Bench-suite returning to arm64 after months on Linux x86 surfaces an
 intermittent hang at `runCollect` (the 12th benchmark in the
