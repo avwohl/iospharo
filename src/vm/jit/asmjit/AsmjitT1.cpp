@@ -334,6 +334,17 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             }
             continue;
         }
+        // PushInteger 0xE8: opcode + signed 8-bit immediate.  Pushes
+        // SmI(N) where N = (int8_t)operand byte.  Common; e.g. methods
+        // with literal integers outside [-1, 2] range.
+        if (op == SistaV1::PushInteger) {
+            if (i + 1 >= bcLen) {
+                traceFail(i, op, "push-integer-truncated");
+                return false;
+            }
+            i += 1;  // skip operand byte
+            continue;
+        }
         // Long jumps 0xED/0xEE/0xEF: opcode + 1-byte signed offset.
         // Target = (i + 2) + offset.  No ExtA/ExtB prefix support yet.
         // Gated on the same t1EnableJumps knob as short jumps.
@@ -2419,6 +2430,21 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             uint8_t op = bcReal[i];
             a.bind(bcLabels[globalIdx]);
 
+            // PushInteger 0xE8: push SmI((int8_t)operand) onto sp.
+            if (op == SistaV1::PushInteger) {
+                int8_t imm = static_cast<int8_t>(bcReal[i + 1]);
+                // SmI bits: (val << 3) | 1
+                uint64_t smiBits = (static_cast<uint64_t>(
+                    static_cast<int64_t>(imm)) << 3) | 1ULL;
+                a.mov(a64::x1, asmjit::Imm(smiBits));
+                a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                a.str(a64::x1, a64::ptr(a64::x2));
+                a.add(a64::x2, a64::x2, asmjit::Imm(8));
+                a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                a.bind(bcLabels[globalIdx + 1]);  // operand byte's label
+                i++;
+                continue;
+            }
             // Long jumps 0xED/0xEE/0xEF: 2-byte opcode + signed 8-bit
             // offset.  Handled in the main loop so we can read the
             // operand byte without changing emitOne_arm64's signature.
