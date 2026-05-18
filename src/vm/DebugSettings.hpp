@@ -121,9 +121,10 @@ struct DebugSettings {
     //    820ms (real emit).  The cond-jump emit works correctly
     //    but doesn't pay off vs the optimized interp path.
     //
-    // Kept as opt-in: PHARO_ASMJIT_T1_ENABLE_JUMPS=1 for bisection /
-    // future investigation.
-    bool t1EnableJumps = false;
+    // Default-on 2026-05-17 — short cond jumps + 0xED/0xEE/0xEF long jumps.
+    // PHARO_ASMJIT_T1_NO_JUMPS=1 to opt out.  Original opt-in flag
+    // PHARO_ASMJIT_T1_ENABLE_JUMPS=1 stays as a no-op alias.
+    bool t1EnableJumps = true;
     int  t1JumpsFirstN = -1;          // PHARO_ASMJIT_T1_JUMPS_FIRST_N
     int  t1JumpsOnlyN  = -1;          // PHARO_ASMJIT_T1_JUMPS_ONLY_N
     int  t1JumpsSkipN  = -1;          // PHARO_ASMJIT_T1_JUMPS_SKIP_N

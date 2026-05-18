@@ -1586,6 +1586,19 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     if (g_debug.useAsmjitT1) {
         JITMethod* jm = compileViaAsmjit(zone_, methodMap_, memory_,
                                           interp_, compiledMethod);
+        // PHARO_T1_INLINE_J2J=1 debug: log fib compile result
+        {
+            static const bool inlineJ2JDbg =
+                std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+            if (inlineJ2JDbg) {
+                std::string sel = interp_.memory().selectorOf(compiledMethod);
+                if (sel.find("fib") != std::string::npos
+                    || sel.find("Fib") != std::string::npos) {
+                    fprintf(stderr, "[FIB-COMPILE-RESULT] sel=#%s jm=%p (NULL=failed)\n",
+                        sel.c_str(), (void*)jm);
+                }
+            }
+        }
         if (jm) {
             methodsCompiled_++;
             // PHARO_T1_INLINE_J2J=1 debug: dump fib IC layout + bytecode post-compile

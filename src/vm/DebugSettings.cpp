@@ -104,7 +104,10 @@ DebugSettings::DebugSettings() {
     sortstrWatch        = envPresent("PHARO_SORTSTR_WATCH");
     driftCheck          = envPresent("PHARO_DRIFT_CHECK");
     t1ResumeTosLog      = envPresent("PHARO_T1_RESUME_TOS_LOG");
-    t1EnableJumps    = envPresent("PHARO_ASMJIT_T1_ENABLE_JUMPS");
+    // Default-on since 2026-05-17: short conditional jumps + 0xED/0xEE/0xEF
+    // long jumps.  Unblocks benchFib + most other methods with control flow
+    // from compiling as stubs.  PHARO_ASMJIT_T1_NO_JUMPS=1 to opt out.
+    t1EnableJumps    = !envPresent("PHARO_ASMJIT_T1_NO_JUMPS");
     t1JumpsFirstN    = envInt("PHARO_ASMJIT_T1_JUMPS_FIRST_N", -1);
     t1JumpsOnlyN     = envInt("PHARO_ASMJIT_T1_JUMPS_ONLY_N",  -1);
     t1JumpsSkipN     = envInt("PHARO_ASMJIT_T1_JUMPS_SKIP_N",  -1);

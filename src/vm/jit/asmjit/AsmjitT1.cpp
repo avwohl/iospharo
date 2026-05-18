@@ -322,10 +322,36 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
                     return false;
             }
             int target = SistaV1::shortJumpTarget(op, (int)i);
-            if (target < 0 || (size_t)target >= bcLen) return false;
+            // Out-of-range targets are typically unreachable trailer bytes
+            // (Pharo CompiledMethod trailer encoding looks like bytecodes
+            // but execution never reaches them).  Allow; the emit will
+            // produce a bail for the offending instruction.  Required to
+            // JIT benchFib (whose trailer ends with 0xb0 → target past
+            // bcLen) and most other methods with trailers.
+            (void)target;
             if (op > SistaV1::ShortJumpLast && (size_t)(i + 1) >= bcLen) {
                 return false;
             }
+            continue;
+        }
+        // Long jumps 0xED/0xEE/0xEF: opcode + 1-byte signed offset.
+        // Target = (i + 2) + offset.  No ExtA/ExtB prefix support yet.
+        // Gated on the same t1EnableJumps knob as short jumps.
+        if (op == SistaV1::ExtJump || op == SistaV1::ExtJumpTrue
+                || op == SistaV1::ExtJumpFalse) {
+            if (!g_debug.t1EnableJumps) {
+                traceFail(i, op, "long-jump-knob-off");
+                return false;
+            }
+            if (i + 1 >= bcLen) {
+                traceFail(i, op, "long-jump-truncated");
+                return false;
+            }
+            int8_t offset = static_cast<int8_t>(bc[i + 1]);
+            int target = static_cast<int>(i) + 2 + offset;
+            // Allow out-of-range targets (unreachable trailer bytes).
+            (void)target;
+            i += 1;  // skip offset byte (loop will increment by 1 more)
             continue;
         }
         // Anything else (jumps, ext-prefixes, pushLitVar,
@@ -1794,6 +1820,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // Short forward jumps (0xB0..0xC7) — see x86 version for protocol.
     if (op >= SistaV1::ShortJumpBase && op <= SistaV1::ShortJumpFalseLast) {
         int targetIdx = SistaV1::shortJumpTarget(op, globalIdx);
+        // Out-of-range target = unreachable trailer byte; emit a bail.
+        // (Pharo's CompiledMethod trailer follows the bytecodes and can
+        // include short jumps with bogus offsets.)
+        if (targetIdx < 0 || targetIdx >= (int)bcLabels.size()) {
+            a.ldr(x5, ptr(x0, OFF_METHOD));
+            a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+            a.str(x5, ptr(x0, OFF_IP));
+            a.mov(w3, asmjit::Imm(EXIT_SEND));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            return true;
+        }
         if (op <= SistaV1::ShortJumpLast) {
             a.b(bcLabels[targetIdx]);
             return true;
@@ -2379,16 +2417,83 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         int siteIdx = 0;
         for (size_t i = 0; i < bcRealLen; i++) {
             int globalIdx = (int)i + emitSkip;
+            uint8_t op = bcReal[i];
             a.bind(bcLabels[globalIdx]);
-            if (!emitOne_arm64(a, bcReal[i], nilBits,
+
+            // Long jumps 0xED/0xEE/0xEF: 2-byte opcode + signed 8-bit
+            // offset.  Handled in the main loop so we can read the
+            // operand byte without changing emitOne_arm64's signature.
+            // Target = (globalIdx + 2) + offset.
+            if (op == SistaV1::ExtJump
+                    || op == SistaV1::ExtJumpTrue
+                    || op == SistaV1::ExtJumpFalse) {
+                int8_t offset = static_cast<int8_t>(bcReal[i + 1]);
+                int target = globalIdx + 2 + offset;
+                // Out-of-range target = unreachable trailer byte; emit a bail.
+                if (target < 0 || target >= (int)bcLabels.size()) {
+                    a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
+                    a.add(a64::x5, a64::x5,
+                          asmjit::Imm(bcOffsetBase + globalIdx));
+                    a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+                    a.mov(a64::w3, Imm(EXIT_SEND));
+                    a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                    a.ret(a64::x30);
+                    a.bind(bcLabels[globalIdx + 1]);
+                    i++;
+                    continue;
+                }
+                if (op == SistaV1::ExtJump) {
+                    a.b(bcLabels[target]);
+                } else {
+                    // Conditional long jump: same structure as the
+                    // short conditional jump emit (~line 1777) but
+                    // with target from the operand byte.
+                    bool jumpOnTrue = (op == SistaV1::ExtJumpTrue);
+                    asmjit::Label mustBoolBail = a.new_label();
+                    asmjit::Label takeBranch   = a.new_label();
+                    asmjit::Label fallThrough  = a.new_label();
+                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
+                    a.ldp(a64::x4, a64::x5,
+                          a64::ptr(a64::x0, OFF_TRUEOOP));
+                    a.cmp(a64::x1, a64::x4);
+                    a.b_eq(jumpOnTrue ? takeBranch : fallThrough);
+                    a.cmp(a64::x1, a64::x5);
+                    a.b_ne(mustBoolBail);
+                    a.b(jumpOnTrue ? fallThrough : takeBranch);
+                    a.bind(takeBranch);
+                    a.sub(a64::x2, a64::x2, asmjit::Imm(8));
+                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.b(bcLabels[target]);
+                    a.bind(fallThrough);
+                    a.sub(a64::x2, a64::x2, asmjit::Imm(8));
+                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.b(bcLabels[globalIdx + 2]);  // next bytecode
+                    a.bind(mustBoolBail);
+                    a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
+                    a.add(a64::x5, a64::x5,
+                          asmjit::Imm(bcOffsetBase + globalIdx));
+                    a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+                    a.mov(a64::w3, Imm(EXIT_MUST_BOOL));
+                    a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                    a.ret(a64::x30);
+                }
+                // Bind operand byte's label to current PC so any
+                // jump targeting it doesn't dangle at finalize.
+                a.bind(bcLabels[globalIdx + 1]);
+                i++;  // skip operand byte (loop's i++ advances past it)
+                continue;
+            }
+
+            if (!emitOne_arm64(a, op, nilBits,
                                 bcOffsetBase + globalIdx, siteIdx,
                                 bcLabels, globalIdx)) {
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
-                    globalIdx, bcReal[i]);
+                    globalIdx, op);
                 return false;
             }
-            if (isPhase4SendOp(bcReal[i])) siteIdx++;
+            if (isPhase4SendOp(op)) siteIdx++;
         }
         if (bcRealLen == 0
                 || bcReal[bcRealLen-1] < SistaV1::ReturnReceiver
@@ -2592,10 +2697,12 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
 
     // Buffer for emitted bytes.  Send emit (1-slot IC probe + miss path)
     // takes ~25 instructions ≈ 100 bytes; arith ≈ 70 bytes; pushes ≈ 30
-    // bytes.  128 bytes/bytecode is a comfortable upper bound.
-    size_t cap = bcLen * 128 + 128;
-    if (cap > 16384) cap = 16384;
-    if (bcLen * 128 + 128 > cap) {
+    // bytes.  Inline-J2J emit (PHARO_T1_INLINE_J2J=1) adds ~200 bytes per
+    // send site.  Raised from 128 to 512 bytes/bytecode (2026-05-17) to
+    // accommodate inline-J2J + per-bail counters + return prelude.
+    size_t cap = bcLen * 512 + 512;
+    if (cap > 65536) cap = 65536;
+    if (bcLen * 512 + 512 > cap) {
         g_failed++;
         return nullptr;
     }
