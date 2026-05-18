@@ -159,6 +159,7 @@ constexpr int EXIT_MUST_BOOL       = 12;
 constexpr uint8_t kSpecialNArgs[16] =
     {1,2,0,0,1,0,1,0,1,0,1,1,0,1,0,0};
 inline int sendNArgs(uint8_t op) {
+    if (op >= 0x60 && op <= 0x6F) return 1;  // binary special selectors
     if (op <= 0x7F) return kSpecialNArgs[op - 0x70];
     if (op <= 0x8F) return 0;   // literal send 0 args
     if (op <= 0x9F) return 1;   // literal send 1 arg
@@ -275,7 +276,15 @@ size_t computeLiveLength(const uint8_t* bc, size_t bcLen) {
 // Same GC-safe state.ip computation as arith bail (state.method +
 // bcOffsetFromMethObj).  See emitOne_x86 / emitOne_arm64 below.
 inline bool isPhase4SendOp(uint8_t op) {
-    // Skip arith range (0x60..0x6F) — those have their own fast path.
+    // Binary special selectors with no inline arith fast path:
+    //   0x69 /, 0x6A \\, 0x6B @, 0x6D //
+    // (0x60-0x67 + comparisons go through Phase 3 inline emit;
+    //  0x68 *, 0x6C bitShift:, 0x6E bitAnd:, 0x6F bitOr: also
+    //  inline.)  These four bail to interp via the standard IC
+    //  miss path — common in math-heavy code.
+    if (op == 0x69 || op == 0x6A || op == 0x6B || op == 0x6D) {
+        return true;
+    }
     // 0x70..0x7F: special selectors 16..31
     // 0x80..0x8F: literal send 0 args
     // 0x90..0x9F: literal send 1 arg
@@ -329,7 +338,7 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (isPhase4SendOp(op)) {
             if (noSendsBisect) return false;
             if (sendNArgs(op) > maxSendNArgs) return false;
-            continue;                                  // 0x70..0xAF
+            continue;                  // 0x69/0x6A/0x6B/0x6D + 0x70..0xAF
         }
         if (op >= SistaV1::PopStoreRecvBase
                 && op <= SistaV1::PopStoreRecvLast) continue;  // 0xC8..0xCF
@@ -3319,7 +3328,17 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             uint8_t op = bc[i];
             if (!isPhase4SendOp(op)) continue;
             uint64_t selBits = 0;
-            if (op >= 0x70 && op <= 0x7F) {
+            if (op >= 0x60 && op <= 0x6F) {
+                // Binary special selectors: ssArray[(op - 0x60) * 2].
+                // Only 0x69 /, 0x6A \\, 0x6B @, 0x6D // reach here —
+                // the others have Phase 3 inline emits.
+                if (ssHdr) {
+                    size_t slot = (size_t)(op - 0x60) * 2;
+                    if (slot < ssHdr->slotCount()) {
+                        selBits = ssHdr->slotAt(slot).rawBits();
+                    }
+                }
+            } else if (op >= 0x70 && op <= 0x7F) {
                 // Special selector: ssArray[(op - 0x70 + 16) * 2].
                 // Slot 0 = selector, slot 1 = nArgs (we don't need
                 // nArgs here — the runtime gets it from the bytecode).
