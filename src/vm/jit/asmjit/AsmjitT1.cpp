@@ -2057,16 +2057,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 a.b(dispatchCached);
 
-                // Per-bail-reason counters (PHARO_T1_INLINE_J2J=1
-                // instrumentation, 2026-05-17).  Each bail point increments
-                // its own global counter so we can see which bail dominates
-                // when the inline path catches only ~11% of recursive calls
-                // (deferred.md A6).  Costs ~6 instr per increment site;
-                // worth it for the data.
+                // Per-bail-reason counters — gated on PHARO_T1_INLINE_J2J
+                // env var (debug-only).  When env var off (production
+                // default), counters NOT emitted — saves ~24 bytes per
+                // inline-J2J emit site = ~100+ bytes for typical fib-like
+                // methods.  When env var on, the per-bail counter writes
+                // are emitted for diagnostic visibility.
+                static const bool inlineJ2JCounters =
+                    std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
                 asmjit::Label j2jBailZero = a.new_label();
                 asmjit::Label j2jBailFull = a.new_label();
                 asmjit::Label j2jBailSelf = a.new_label();
                 auto emitIncCounter = [&](uint64_t addr) {
+                    if (!inlineJ2JCounters) return;
                     a.mov(x15, asmjit::Imm(addr));
                     a.ldr(x14, ptr(x15));
                     a.add(x14, x14, asmjit::Imm(1));
@@ -2116,13 +2119,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x12, ptr(x11, 0));               // x12 = caller's CM oop
                 a.ldr(x13, ptr(x10, 0));               // x13 = callee's CM oop (JM[0])
 
-                // Debug: stash last-seen values for post-run dump
-                a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_caller_method));
-                a.str(x12, ptr(x14));
-                a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_callee_method));
-                a.str(x13, ptr(x14));
-                a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_extra));
-                a.str(x7, ptr(x14));
+                // Debug: stash last-seen values — gated on env var so
+                // production emit doesn't carry the 6-instruction
+                // overhead per inline-J2J site.
+                if (inlineJ2JCounters) {
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_caller_method));
+                    a.str(x12, ptr(x14));
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_callee_method));
+                    a.str(x13, ptr(x14));
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_extra));
+                    a.str(x7, ptr(x14));
+                }
 
                 // CROSS-METHOD ATTEMPT (PHARO_T1_INLINE_J2J_XMETHOD=1 opt-in).
                 // Default OFF — known to corrupt state.  Opt-in for lldb
