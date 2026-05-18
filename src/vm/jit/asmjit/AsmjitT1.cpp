@@ -72,6 +72,8 @@ extern "C" uint64_t g_inlineJ2J_dbg_callee_method = 0;
 extern "C" uint64_t g_inlineJ2J_dbg_extra         = 0;
 extern "C" uint64_t g_inlineJ2J_dbg_ic_hits       = 0;  // count IC HIT events
 extern "C" uint64_t g_inlineJ2J_dbg_extra_no_bit60 = 0; // IC HIT with extra but no bit 60
+extern "C" uint64_t g_inlineJ2J_dbg_miss          = 0;  // count IC MISS events
+extern "C" uint64_t g_inlineJ2J_dbg_dispatch      = 0;  // count dispatchCached events
 
 namespace {
 

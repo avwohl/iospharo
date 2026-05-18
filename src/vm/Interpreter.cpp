@@ -88,6 +88,8 @@ extern "C" uint64_t g_inlineJ2J_dbg_callee_method;
 extern "C" uint64_t g_inlineJ2J_dbg_extra;
 extern "C" uint64_t g_inlineJ2J_dbg_ic_hits;
 extern "C" uint64_t g_inlineJ2J_dbg_extra_no_bit60;
+extern "C" uint64_t g_inlineJ2J_dbg_miss;
+extern "C" uint64_t g_inlineJ2J_dbg_dispatch;
 
 // Display Form readiness flag — exposed to Swift via vm_isDisplayFormReady().
 // Set true when the image calls primitiveBeDisplay (prim 102) or
@@ -1369,7 +1371,7 @@ void Interpreter::dumpJITStats() {
                 "bail_self=%llu (catch rate %.1f%%)\n"
                 "  inline-J2J dbg: last_caller_method=0x%llx "
                 "last_callee_method=0x%llx last_extra=0x%llx\n"
-                "  inline-J2J dbg: ic_hits=%llu extra_no_bit60=%llu\n",
+                "  inline-J2J dbg: ic_hits=%llu extra_no_bit60=%llu miss=%llu dispatch=%llu\n",
                 (unsigned long long)g_inlineJ2J_hits,
                 (unsigned long long)g_inlineJ2J_bail_zero,
                 (unsigned long long)g_inlineJ2J_bail_full,
@@ -1379,7 +1381,9 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_inlineJ2J_dbg_callee_method,
                 (unsigned long long)g_inlineJ2J_dbg_extra,
                 (unsigned long long)g_inlineJ2J_dbg_ic_hits,
-                (unsigned long long)g_inlineJ2J_dbg_extra_no_bit60);
+                (unsigned long long)g_inlineJ2J_dbg_extra_no_bit60,
+                (unsigned long long)g_inlineJ2J_dbg_miss,
+                (unsigned long long)g_inlineJ2J_dbg_dispatch);
         }
     }
     fprintf(stderr, "=================\n");
@@ -16722,9 +16726,14 @@ void Interpreter::tryJITResumeInCaller() {
                 if (state.exitReason == jit::ExitSendCached) {
                     // Inline-J2J support (PHARO_T1_INLINE_J2J=1):
                     // upgrade the IC so subsequent calls fire bit 60.
-                    // Without this, the fast chain loop processes sends
-                    // entirely in C++ and bit 60 never gets set on hot
-                    // recursive ICs (defeats inline-J2J for benchFib).
+                    static size_t fastChainSC = 0;
+                    if (fastChainSC < 10) {
+                        fastChainSC++;
+                        fprintf(stderr, "[FAST-CHAIN1-SC #%zu] cached=#%s icDataPtr=%p\n",
+                            fastChainSC,
+                            memory_.selectorOf(state.cachedTarget).c_str(),
+                            (void*)state.icDataPtr);
+                    }
                     if (state.icDataPtr) {
                         upgradeICToJ2J(state.icDataPtr, state.cachedTarget,
                                        state.sendArgCount, state.method);
@@ -17505,6 +17514,27 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
 }
 
 void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {
+    // PHARO_T1_INLINE_J2J=1 debug: log first 30 patches (any selector)
+    {
+        static const bool inlineJ2JDbg =
+            std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+        if (inlineJ2JDbg) {
+            static size_t patchN = 0;
+            if (patchN < 30) {
+                patchN++;
+                std::string sel = "<bad>";
+                if (selector.isObject() && selector.rawBits() > 0x10000) {
+                    ObjectHeader* sh = selector.asObjectPtr();
+                    if (sh->isBytesObject() && sh->byteSize() < 80) {
+                        sel = std::string((char*)sh->bytes(), sh->byteSize());
+                    }
+                }
+                std::string resSel = memory_.selectorOf(resolvedMethod);
+                fprintf(stderr, "[IC-PATCH #%zu] sel=#%s resolvedSel=#%s pending=%p\n",
+                    patchN, sel.c_str(), resSel.c_str(), (void*)pendingICPatch_);
+            }
+        }
+    }
     static bool patchDbg = g_debug.icPatchDebug;
     static size_t dbgCalled = 0, dbgNoPending = 0, dbgSelMismatch = 0,
                   dbgDup = 0, dbgPatched = 0, dbgFullNoSlot = 0;
@@ -18225,6 +18255,26 @@ extern "C" int pharo_jit_convert_send(jit::JITState* state) {
 }
 
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
+    // PHARO_T1_INLINE_J2J=1 debug: log first 10 fib-related activations.
+    {
+        static const bool inlineJ2JDbg =
+            std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+        if (inlineJ2JDbg && method.isObject() && method.rawBits() > 0x10000) {
+            std::string sel = memory_.selectorOf(method);
+            if (sel.find("fib") != std::string::npos
+                || sel.find("Fib") != std::string::npos) {
+                static size_t fibAct = 0;
+                fibAct++;
+                if (fibAct < 10) {
+                    auto* jm = jitRuntime_.methodMap().lookup(method.rawBits());
+                    fprintf(stderr, "[FIB-ACTIVATE #%zu] sel=#%s jm=%p tier=%d state=%d\n",
+                        fibAct, sel.c_str(), (void*)jm,
+                        jm ? (int)jm->tier : -1,
+                        jm ? (int)jm->state : -1);
+                }
+            }
+        }
+    }
     checkSortstrWatch("tryJITActivation:entry", frameDepth_);
     if (__builtin_expect(traceSpCorrupt_, 0)) {
         uint64_t spB = (uint64_t)stackPointer_;
@@ -18711,6 +18761,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             if (state.exitReason == jit::ExitSendCached) {
                 // Inline-J2J support (PHARO_T1_INLINE_J2J=1): see note
                 // in the other fast chain loop at Interpreter.cpp:~16717.
+                static size_t fastChain2SC = 0;
+                if (fastChain2SC < 10) {
+                    fastChain2SC++;
+                    fprintf(stderr, "[FAST-CHAIN2-SC #%zu] cached=#%s icDataPtr=%p method=#%s\n",
+                        fastChain2SC,
+                        memory_.selectorOf(state.cachedTarget).c_str(),
+                        (void*)state.icDataPtr,
+                        memory_.selectorOf(state.method).c_str());
+                }
                 if (state.icDataPtr) {
                     upgradeICToJ2J(state.icDataPtr, state.cachedTarget,
                                    state.sendArgCount, state.method);
@@ -19439,6 +19498,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitSend: {
             // IC miss: do method lookup, patch IC, and chain into callee
             // instead of bailing to interpreter (which loses JIT continuity).
+            {
+                static size_t slowSendN = 0;
+                if (slowSendN < 10) {
+                    slowSendN++;
+                    fprintf(stderr, "[SLOW-EXIT-SEND #%zu] method=#%s ic=%p\n",
+                        slowSendN,
+                        memory_.selectorOf(state.method).c_str(),
+                        (void*)state.icDataPtr);
+                }
+            }
             if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_BAIL") != nullptr, 0)) {
                 static size_t cullTraceCount = 0;
                 std::string activeSel = memory_.selectorOf(state.method);

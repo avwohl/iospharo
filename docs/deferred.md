@@ -745,6 +745,37 @@ Next iteration:
 3. Either patch the J2JCall path to also upgrade IC, OR fix
    asmjit-T1's emit to upgrade IC on miss.
 
+**Iter 5 finding 2026-05-17:** Added compile + activation + chain
+loop traces (all gated on PHARO_T1_INLINE_J2J=1):
+
+- `[JIT-COMPILE-FIB]` confirms benchFib IS compiled (oop=0x3008a33f8,
+  jm=0x108469840, tier=1, state=Compiled).
+- `[FIB-ACTIVATE]` fires multiple times — benchFib's JIT method is
+  activated through tryJITActivation millions of times (matches 4M
+  total activations from JIT stats).
+- `[FAST-CHAIN1-SC]` and `[FAST-CHAIN2-SC]` (added to both fast
+  chain loops' ExitSendCached path) NEVER fire — neither fast chain
+  loop sees ExitSendCached for benchFib's calls.
+- `[SLOW-EXIT-SEND]` fires for findElementOrNil:/scanFor:/name/= but
+  ALL with `ic=0x0` (no IC data).  NONE for benchFib.
+- `[IC-PATCH]` for first 30 patches all show `pending=0x0` —
+  interpreter-level paths that don't set pendingICPatch_.  No
+  benchFib in the first 30.
+
+So benchFib's recursive call:
+- Doesn't exit JIT with ExitSendCached (no fast chain loop fires)
+- Doesn't exit JIT with ExitSend (slow path's IC pointer is null)
+- Doesn't trigger upgradeICToJ2J or patchJITICAfterSend for fib
+- Yet tryJITActivation activates benchFib 4M times
+
+Mystery: how does benchFib re-enter tryJITActivation if not via
+chain-loop's send-exit handlers?  Possible: an inline JIT-to-interp
+path (stencil/legacy) that doesn't go through ExitSendCached;
+or an activateMethod path from a non-instrumented entry.
+
+Next iteration: instrument tryJITActivation entry path to see what
+WHO is calling it for benchFib (caller selector + call site).
+
 **Scaffold landed 2026-05-17 (`f81d61a0`, `078105ce`):**
 arm64 inline-J2J path wired up with per-bail counters, opt-in via
 `PHARO_T1_INLINE_J2J=1`.  Currently always bails (counts as

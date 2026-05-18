@@ -1514,6 +1514,22 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
 // ===== MAIN COMPILATION =====
 
 JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
+    // PHARO_T1_INLINE_J2J=1 debug: log fib-related compilations
+    {
+        static const bool inlineJ2JDbg =
+            std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+        if (inlineJ2JDbg && compiledMethod.isObject()
+            && compiledMethod.rawBits() > 0x10000) {
+            std::string sel = interp_.memory().selectorOf(compiledMethod);
+            if (sel.find("fib") != std::string::npos
+                || sel.find("Fib") != std::string::npos) {
+                fprintf(stderr, "[JIT-COMPILE-FIB] sel=#%s oop=0x%llx oldVersion=%p\n",
+                    sel.c_str(),
+                    (unsigned long long)compiledMethod.rawBits(),
+                    (void*)oldVersion);
+            }
+        }
+    }
     // JIT_MAX_COMPILE: hard limit on total compilations + recompilations.
     // The noteMethodEntry path also has this check but it doesn't catch
     // the recompile path (maybeRecompileForOSR → recompile → compile).
