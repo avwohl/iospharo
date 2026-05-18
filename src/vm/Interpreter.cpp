@@ -18514,6 +18514,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // per-call stack allocation (was 18KB at depth 256, now zero stack cost).
     int j2jPoolBase = j2jPoolCursor_;
     int j2jPoolEnd = std::min(j2jPoolBase + J2JSlotPerEntry, MaxJ2JPoolSize);
+    int j2jStateBase = j2jPoolBase;        // alias for slot-rename consistency
+    int j2jStateEnd  = j2jPoolEnd;
     J2JSave* j2jStack = &j2jPool_[j2jPoolBase];
     j2jPoolCursor_ = j2jPoolEnd;  // Reserve our slice; recursive entries continue after
     struct J2JPoolGuard {
@@ -18521,8 +18523,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         ~J2JPoolGuard() { cursor = base; }
     } j2jPoolGuard{j2jPoolCursor_, j2jPoolBase};
 
-    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
-    state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
+    state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
     state.j2jDepth = 0;
     state.j2jTotalCalls = 0;
     state.methodMapPtr = &jitRuntime_.methodMap();
@@ -19159,7 +19161,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // Helper: set J2J state for a chain loop resume.
     auto enableJ2J = [&]() {
         state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
-        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
         state.j2jDepth = 0;
         state.j2jTotalCalls = 0;
         state.yieldCountdown = 1000;
@@ -19368,8 +19370,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     state.exitReason = jit::ExitNone;
                     state.j2jDepth = 0;
                     state.j2jTotalCalls = 0;
-                    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
-                    state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+                    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
+                    state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
                     state.yieldCountdown = 1000;
                     // No flips — W^X audit 2026-04-26.
                     JIT_CALL(callerJM->codeStart() + codeOff, &state);
@@ -20037,8 +20039,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.exitReason = jit::ExitNone;
             state.j2jDepth = 0;
             state.j2jTotalCalls = 0;
-            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
-            state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
+            state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
             {
                 uint32_t bcOffset = computeCurrentBCOffset();
                 if (bcOffset == UINT32_MAX) return true;
@@ -20283,8 +20285,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                         // Enable stencil J2J for callee — lets it chain
                         // sends directly instead of falling back to C++.
-                        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
-                        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+                        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
+                        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
                         state.j2jDepth = 0;
                         state.j2jTotalCalls = 0;
                         state.yieldCountdown = 1000;
@@ -20481,8 +20483,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 state.exitReason = jit::ExitNone;
                                 state.j2jDepth = 0;
                                 state.j2jTotalCalls = 0;
-                                state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
-                                state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+                                state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
+                                state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
                                 state.yieldCountdown = 1000;
                                 // Direct resume — no hash lookup or codeOffsetForBC.
                                 // Stay in X — W^X audit 2026-04-26.
