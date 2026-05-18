@@ -19396,9 +19396,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 // Materialize J2J frames from the resumed caller
                 if (state.j2jDepth > 0) {
                     Oop nil = memory_.nil();
+                    J2JSave* _stateSaves = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                     for (int i = 0; i < state.j2jDepth; i++) {
                         if (frameDepth_ >= StackOverflowLimit) break;
-                        J2JSave& save = j2jStack[i];
+                        J2JSave& save = _stateSaves[i];
                         jit::JITMethod* saveJM = save.jitMethod;
                         if (!saveJM) {
                             static int warns = 0;
@@ -20080,8 +20081,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             if (state.j2jDepth > 0) {
                 Oop nil = memory_.nil();
                 size_t baseDepth = frameDepth_;
+                J2JSave* _stateSaves2 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                 for (int i = 0; i < state.j2jDepth; i++) {
-                    J2JSave& save = j2jStack[i];
+                    J2JSave& save = _stateSaves2[i];
                     jit::JITMethod* saveJM = save.jitMethod;
                     if (!saveJM) {
                         static int warns = 0;
@@ -20538,9 +20540,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 // Materialize any J2J frames from the resumed caller
                                 if (state.j2jDepth > 0) {
                                     Oop nil = memory_.nil();
+                                    J2JSave* _stateSaves3 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                                     for (int i = 0; i < state.j2jDepth; i++) {
                                         if (frameDepth_ >= StackOverflowLimit) break;
-                                        J2JSave& save = j2jStack[i];
+                                        J2JSave& save = _stateSaves3[i];
                                         jit::JITMethod* saveJM = save.jitMethod;
                                         if (!saveJM) {
                                             static int warns = 0;
@@ -20694,9 +20697,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // Materialize any J2J frames the callee accumulated
                         if (state.j2jDepth > 0) {
                             Oop nil = memory_.nil();
+                            J2JSave* _stateSaves4 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                             for (int i = 0; i < state.j2jDepth; i++) {
                                 if (frameDepth_ >= StackOverflowLimit) break;
-                                J2JSave& save = j2jStack[i];
+                                J2JSave& save = _stateSaves4[i];
                                 jit::JITMethod* saveJM = save.jitMethod;
                                 if (!saveJM) {
                                     static int warns = 0;
