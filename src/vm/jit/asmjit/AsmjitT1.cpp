@@ -2124,8 +2124,26 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_extra));
                 a.str(x7, ptr(x14));
 
-                a.cmp(x12, x13);
-                a.b_ne(j2jBailSelf2);
+                // CROSS-METHOD ATTEMPT (PHARO_T1_INLINE_J2J_XMETHOD=1 opt-in).
+                // Default OFF — known to corrupt state.  Opt-in for lldb
+                // debugging only.
+                static const bool xmethod =
+                    std::getenv("PHARO_T1_INLINE_J2J_XMETHOD") != nullptr;
+                asmjit::Label sameMethodSkipUpdate = a.new_label();
+                if (xmethod) {
+                    a.cmp(x12, x13);
+                    a.b_eq(sameMethodSkipUpdate);
+                    // Cross-method update:
+                    a.str(x10, ptr(x0, OFF_JITMETHOD));
+                    a.add(x14, x13, asmjit::Imm(16));
+                    a.str(x14, ptr(x0, OFF_LITERALS));
+                    a.mov(w14, asmjit::Imm(nArgs));
+                    a.str(w14, ptr(x0, OFF_ARGCOUNT));
+                    a.bind(sameMethodSkipUpdate);
+                } else {
+                    a.cmp(x12, x13);
+                    a.b_ne(j2jBailSelf2);
+                }
 
                 // Check save stack space.  Uses x6 as cursor; x14 free.
                 a.ldr(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
