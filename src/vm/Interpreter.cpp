@@ -19170,7 +19170,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
     // Helper: set J2J state for a chain loop resume.
     auto enableJ2J = [&]() {
-        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+        // With splitPool, JIT state slice is at j2jStateBase (not
+        // j2jStack/j2jPoolBase); without split, they're the same.
+        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
         state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
         state.j2jDepth = 0;
         state.j2jTotalCalls = 0;
