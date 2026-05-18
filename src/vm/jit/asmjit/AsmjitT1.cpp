@@ -2190,19 +2190,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 (void)xmethodMaxInit;
                 asmjit::Label sameMethodSkipUpdate = a.new_label();
                 if (xmethod) {
-                    // Cross-method inline-J2J — gated by counter for
+                    // Cross-method inline-J2J — counter-gated for
                     // bisection.  PHARO_T1_INLINE_J2J_XMETHOD_MAX=N
                     // limits the number of cross-method fires.
-                    // Above the limit, bail.  Helps narrow down which
-                    // specific cross-method call corrupts state.
                     a.cmp(x12, x13);
                     a.b_eq(sameMethodSkipUpdate);
-                    // Read counter, increment, check limit
                     a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_count));
                     a.ldr(x15, ptr(x14));
                     a.add(x15, x15, asmjit::Imm(1));
                     a.str(x15, ptr(x14));
-                    // Bail if count > xmethodMax (loaded as immediate)
                     a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_max));
                     a.ldr(x14, ptr(x14));
                     a.cmp(x15, x14);
