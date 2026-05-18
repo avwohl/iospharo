@@ -103,6 +103,7 @@ constexpr int EXIT_RETURN          = 1;
 constexpr int EXIT_SEND            = 2;
 constexpr int EXIT_ARITH_OVERFLOW  = 6;
 constexpr int EXIT_SEND_CACHED     = 7;
+constexpr int EXIT_BLOCK_CREATE    = 8;
 constexpr int EXIT_MUST_BOOL       = 12;
 
 // nArgs per special selector 0x70..0x7F (index = op - 0x70).
@@ -353,6 +354,17 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
                 return false;
             }
             i += 1;
+            continue;
+        }
+        // PushFullBlock 0xF9: 3-byte (opcode + 2 operand bytes).  Emit
+        // bails to ExitBlockCreate so the chain loop creates the
+        // FullBlockClosure (memory allocation + outer-context capture).
+        if (op == SistaV1::PushFullBlock) {
+            if (i + 2 >= bcLen) {
+                traceFail(i, op, "push-full-block-truncated");
+                return false;
+            }
+            i += 2;  // skip 2 operand bytes
             continue;
         }
         // Extended push/store variants — all 2-byte: opcode + 1-byte index.
@@ -2484,6 +2496,29 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
                 a.bind(bcLabels[globalIdx + 1]);
                 i++;
+                continue;
+            }
+            // PushFullBlock 0xF9: 3-byte (opcode + LL + HH).  Bail to
+            // ExitBlockCreate so the chain loop allocates the
+            // FullBlockClosure.  state.cachedTarget = (LL | HH << 32)
+            // matches JITState.hpp:160's packed format.
+            if (op == SistaV1::PushFullBlock) {
+                uint8_t litIdx = bcReal[i + 1];
+                uint8_t flags  = bcReal[i + 2];
+                uint64_t packed = static_cast<uint64_t>(litIdx)
+                                | (static_cast<uint64_t>(flags) << 32);
+                a.mov(a64::x1, asmjit::Imm(packed));
+                a.str(a64::x1, a64::ptr(a64::x0, OFF_CACHED_TARGET));
+                a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
+                a.add(a64::x5, a64::x5,
+                      asmjit::Imm(bcOffsetBase + globalIdx));
+                a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+                a.mov(a64::w3, Imm(EXIT_BLOCK_CREATE));
+                a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                a.ret(a64::x30);
+                a.bind(bcLabels[globalIdx + 1]);
+                a.bind(bcLabels[globalIdx + 2]);
+                i += 2;
                 continue;
             }
             // Extended push/store with 1-byte index operand.
