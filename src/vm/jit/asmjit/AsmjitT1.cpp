@@ -2176,22 +2176,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // Load resumeAddr (label adr after the send completes)
                 a.adr(x14, afterSend);
 
-                // Push J2J save (56 bytes).  We push CALLER's jitMethod
-                // (the OLD one if recompile happened mid-recursion); the
-                // return prelude restores to that JM so resumeAddr (in
-                // OLD code zone) is consistent with state.jitMethod.
+                // Push J2J save (56 bytes).  Uses ldp/stp for adjacent
+                // state fields: sp+receiver (offsets 0/8) loaded with
+                // one ldp; jitMethod+resumeAddr stored with one stp.
+                // Saves 3 instructions per inline-J2J site.
                 //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
                 //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
-                a.ldr(x15, ptr(x0, OFF_SP));
-                a.str(x15, ptr(x6, 0));
-                a.ldr(x15, ptr(x0, OFF_RECEIVER));
-                a.str(x15, ptr(x6, 8));
+                a.ldp(x15, x4, ptr(x0, OFF_SP));   // sp + receiver
+                a.stp(x15, x4, ptr(x6, 0));
                 a.ldr(x15, ptr(x0, OFF_TEMPBASE));
                 a.str(x15, ptr(x6, 16));
                 a.ldr(x15, ptr(x0, OFF_IP));
                 a.str(x15, ptr(x6, 24));
-                a.str(x11, ptr(x6, 32));  // callerJM (x11 from earlier ldr)
-                a.str(x14, ptr(x6, 40));  // resumeAddr
+                a.stp(x11, x14, ptr(x6, 32));      // callerJM + resumeAddr
                 a.mov(w15, asmjit::Imm(nArgs));
                 a.str(w15, ptr(x6, 48));
 
