@@ -515,15 +515,21 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         // Store-with-immutable-check (recv): ExtPopStoreRecv 0xF0,
         //                                    ExtStoreRecv 0xF3.
         // Store-no-check (temp): ExtPopStoreTemp 0xF2, ExtStoreTemp 0xF5.
-        // (ExtPopStoreLitVar 0xF1 / ExtStoreLitVar 0xF4 still deferred —
-        // need association-write handling.)
+        // Association store (litvar): ExtPopStoreLitVar 0xF1,
+        //                             ExtStoreLitVar 0xF4.
+        //   Stores to literals[idx].slot[1] — no write barrier
+        //   because YG scavenge does a full old-space scan.  Naked
+        //   only (the ExtA prefix-rejection first-pass guarantees no
+        //   prefix extension on idx).
         if (op == SistaV1::ExtPushRecvVar || op == SistaV1::ExtPushLitVar
                 || op == SistaV1::ExtPushLitConst
                 || op == SistaV1::ExtPushTemp
                 || op == SistaV1::ExtPopStoreTemp
                 || op == SistaV1::ExtStoreTemp
                 || op == SistaV1::ExtPopStoreRecv
-                || op == SistaV1::ExtStoreRecv) {
+                || op == SistaV1::ExtStoreRecv
+                || op == SistaV1::ExtPopStoreLitVar
+                || op == SistaV1::ExtStoreLitVar) {
             if (i + 1 >= bcLen) {
                 traceFail(i, op, "ext-bytecode-truncated");
                 return false;
@@ -2948,6 +2954,24 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
                     a.ldr(a64::x4, a64::ptr(a64::x0, OFF_TEMPBASE));
                     a.str(a64::x1, a64::ptr(a64::x4, idx * 8));
+                } else if (op == SistaV1::ExtPopStoreLitVar
+                        || op == SistaV1::ExtStoreLitVar) {
+                    // Literal var (Association) store.  literals[idx]
+                    // is an Association; its slot 1 is the .value
+                    // slot.  No write barrier — YG scavenge scans
+                    // all of old space.
+                    if (op == SistaV1::ExtPopStoreLitVar) {
+                        a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        a.sub(a64::x2, a64::x2, asmjit::Imm(8));
+                        a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        a.ldr(a64::x1, a64::ptr(a64::x2));
+                    } else /* ExtStoreLitVar */ {
+                        a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
+                    }
+                    a.ldr(a64::x4, a64::ptr(a64::x0, OFF_LITERALS));
+                    a.ldr(a64::x4, a64::ptr(a64::x4, idx * 8));
+                    a.str(a64::x1, a64::ptr(a64::x4, OBJ_SLOT_0 + 8));
                 } else if (op == SistaV1::ExtPopStoreRecv
                         || op == SistaV1::ExtStoreRecv) {
                     // Receiver store with immutable-bit check (mirror
