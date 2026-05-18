@@ -427,6 +427,18 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             i += 2;  // skip 2 operand bytes
             continue;
         }
+        // PushArray 0xE7: 2-byte (opcode + desc).  Emit bails to
+        // ExitArrayCreate so the chain loop allocates the Array and
+        // optionally pops `size` elements into it.  desc = arraySize:7,
+        // popIntoArray:1.
+        if (op == SistaV1::PushArray) {
+            if (i + 1 >= bcLen) {
+                traceFail(i, op, "push-array-truncated");
+                return false;
+            }
+            i += 1;
+            continue;
+        }
         // Extended push/store variants — all 2-byte: opcode + 1-byte index.
         // Push: ExtPushRecvVar 0xE2, ExtPushLitVar 0xE3,
         //       ExtPushLitConst 0xE4, ExtPushTemp 0xE5.
@@ -2639,6 +2651,33 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
                 a.bind(bcLabels[globalIdx + 1]);
                 i++;
+                continue;
+            }
+            // PushArray 0xE7: 2-byte (opcode + desc).  Bail to
+            // ExitArrayCreate so the chain loop allocates the Array
+            // (and optionally pops `arraySize` elements into it).
+            //
+            // desc layout (per Sista V1):
+            //   bits 0-6: arraySize (0..127)
+            //   bit 7:    popIntoArray (if set, pop size elements)
+            //
+            // Chain loop's ExitArrayCreate handler reads desc from
+            // state.cachedTarget and instructionPointer_ from state.ip,
+            // then `instructionPointer_ += 2` advances past the
+            // PushArray bytecode.
+            if (op == SistaV1::PushArray) {
+                uint8_t desc = bcReal[i + 1];
+                a.mov(a64::x1, asmjit::Imm(static_cast<uint64_t>(desc)));
+                a.str(a64::x1, a64::ptr(a64::x0, OFF_CACHED_TARGET));
+                a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
+                a.add(a64::x5, a64::x5,
+                      asmjit::Imm(bcOffsetBase + globalIdx));
+                a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+                a.mov(a64::w3, Imm(EXIT_ARRAY_CREATE));
+                a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                a.ret(a64::x30);
+                a.bind(bcLabels[globalIdx + 1]);
+                i += 1;
                 continue;
             }
             // PushFullBlock 0xF9: 3-byte (opcode + LL + HH).  Bail to
