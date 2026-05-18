@@ -15245,6 +15245,9 @@ void Interpreter::initializeNamedPrimitives() {
 
     // High-resolution clock (used by Time class>>primNanoClock)
     registerNamedPrimitive("", "primitiveHighResClock", &Interpreter::primitiveHighResClock);
+    // Process CPU time (user + system) in microseconds — for benchmarks
+    // that want noise-free perf measurements alongside wall clock.
+    registerNamedPrimitive("", "primitiveProcessCpuMicroseconds", &Interpreter::primitiveProcessCpuMicroseconds);
 
     // SecurityPlugin primitives
     registerNamedPrimitive("SecurityPlugin", "primitiveCanWriteImage", &Interpreter::primitiveCanWriteImage);

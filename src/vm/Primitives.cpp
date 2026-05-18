@@ -46,6 +46,7 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #include <thread>
 #include <fstream>
 #include <iostream>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/socket.h>
@@ -4682,6 +4683,31 @@ PrimitiveResult Interpreter::primitiveHighResClock(int argCount) {
 
     // Too large for SmallInteger — create LargePositiveInteger
     Oop result = int64ToOop(memory_, nanos);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveProcessCpuMicroseconds(int argCount) {
+    // Named primitive: returns total process CPU time (user + system)
+    // in microseconds since process start.  Useful for benchmarking
+    // when wall-clock measurements are noisy due to other CPU load.
+    if (argCount != 0) return PrimitiveResult::Failure;
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage) != 0) {
+        return PrimitiveResult::Failure;
+    }
+    int64_t userUsec = static_cast<int64_t>(usage.ru_utime.tv_sec) * 1000000
+                     + static_cast<int64_t>(usage.ru_utime.tv_usec);
+    int64_t sysUsec  = static_cast<int64_t>(usage.ru_stime.tv_sec) * 1000000
+                     + static_cast<int64_t>(usage.ru_stime.tv_usec);
+    int64_t totalUsec = userUsec + sysUsec;
+
+    if (Oop::canBeSmallInteger(totalUsec)) {
+        primitiveSuccess(Oop::fromSmallInteger(totalUsec));
+        return PrimitiveResult::Success;
+    }
+    Oop result = int64ToOop(memory_, totalUsec);
     if (result.isNil()) return PrimitiveResult::Failure;
     primitiveSuccess(result);
     return PrimitiveResult::Success;

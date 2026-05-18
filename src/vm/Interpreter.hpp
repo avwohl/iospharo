@@ -2047,6 +2047,7 @@ private:
     PrimitiveResult primitiveMicrosecondClock(int argCount);
     PrimitiveResult primitiveLocalMicrosecondClock(int argCount);
     PrimitiveResult primitiveHighResClock(int argCount);
+    PrimitiveResult primitiveProcessCpuMicroseconds(int argCount);
     PrimitiveResult primitiveUtcWithOffset(int argCount);
     PrimitiveResult primitiveSignalAtMilliseconds(int argCount);
 

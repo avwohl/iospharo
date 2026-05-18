@@ -158,34 +158,76 @@ if $RUN_OURS; then
     echo ""
 fi
 
-# Side-by-side comparison
+# Side-by-side comparison.  The .st bench output is:
+#   '<bench> = <wall> ms (cpu=<cpu> ms)'
+# We use CPU time for the ratio (noise-free) and show wall too.  When
+# CPU is absent (Cog reference VM, which doesn't have our primitive),
+# we fall back to wall time.
 if $RUN_REF && $RUN_OURS && [ -f "$REF_RESULTS" ] && [ -f "$OUR_RESULTS" ]; then
     echo "=== Comparison ==="
     echo ""
-    echo "  Benchmark          Reference     Ours          Ratio"
-    echo "  ---------          ---------     ----          -----"
+    echo "  Benchmark            Reference(cpu/wall)  Ours(cpu/wall)       Ratio(cpu)"
+    echo "  ---------            -------------------  --------------       ----------"
 
-    # Extract timings and compare
-    for bench in "fib(28)" "sieve x100" "sort 100K" "dict 50K" "sum 1M" "5000 factorial" "1M blocks" "1M getter" "100K alloc"; do
-        ref_ms=$(grep -o "$bench = [0-9]*" "$REF_RESULTS" 2>/dev/null | grep -o '[0-9]*$' || echo "?")
-        our_ms=$(grep -o "$bench = [0-9]*" "$OUR_RESULTS" 2>/dev/null | grep -o '[0-9]*$' || echo "?")
-        if [ "$ref_ms" != "?" ] && [ "$our_ms" != "?" ] && [ "$ref_ms" -gt 0 ] 2>/dev/null; then
-            ratio=$(echo "scale=1; $our_ms / $ref_ms" | bc 2>/dev/null || echo "?")
-            printf "  %-20s %6s ms     %6s ms      %sx\n" "$bench" "$ref_ms" "$our_ms" "$ratio"
-        elif [ "$ref_ms" != "?" ] || [ "$our_ms" != "?" ]; then
-            printf "  %-20s %6s ms     %6s ms\n" "$bench" "$ref_ms" "$our_ms"
+    # Helper: extract "X ms (cpu=Y ms)" — returns "Y/X" (cpu/wall).
+    # If no cpu marker, returns "X/X" (treat wall as cpu fallback).
+    parse_bench() {
+        local file="$1" bench="$2"
+        # Use grep -F (fixed string) so parens / `+` in the bench label
+        # don't get interpreted as regex metachars (`fib(28)` etc).
+        local line
+        line=$(grep -F "${bench} = " "$file" 2>/dev/null | head -1)
+        [ -z "$line" ] && { echo "?/?"; return; }
+        local wall cpu
+        wall=$(echo "$line" | sed -nE 's/.* = ([0-9]+) ms.*/\1/p')
+        cpu=$(echo "$line" | sed -nE 's/.*\(cpu=([0-9]+) ms\).*/\1/p')
+        [ -z "$cpu" ] && cpu="$wall"
+        echo "$cpu/$wall"
+    }
+
+    for bench in "fib(28)" "sieve x100" "sort 100K" "dict 50K put+get" \
+                 "sum 1M" "5000 factorial" "1M blocks" "1M getter+yourself" \
+                 "100K allocations" "floatSum 1M" "stringHash 100K" \
+                 "collect 10x100K" "select 10x100K"; do
+        ref_pair=$(parse_bench "$REF_RESULTS" "$bench")
+        our_pair=$(parse_bench "$OUR_RESULTS" "$bench")
+        ref_cpu="${ref_pair%/*}"; ref_wall="${ref_pair#*/}"
+        our_cpu="${our_pair%/*}"; our_wall="${our_pair#*/}"
+        if [ "$ref_cpu" != "?" ] && [ "$our_cpu" != "?" ] && [ "$ref_cpu" -gt 0 ] 2>/dev/null; then
+            ratio=$(echo "scale=1; $our_cpu / $ref_cpu" | bc 2>/dev/null || echo "?")
+            printf "  %-20s %5s/%-5s ms        %5s/%-5s ms        %sx\n" \
+                "$bench" "$ref_cpu" "$ref_wall" "$our_cpu" "$our_wall" "$ratio"
+        elif [ "$ref_cpu" != "?" ] || [ "$our_cpu" != "?" ]; then
+            printf "  %-20s %5s/%-5s ms        %5s/%-5s ms\n" \
+                "$bench" "$ref_cpu" "$ref_wall" "$our_cpu" "$our_wall"
         fi
     done
 
-    # tinyBenchmarks
-    ref_bps=$(grep "bytecodes/sec" "$REF_RESULTS" 2>/dev/null | grep -o '^[0-9]*' || echo "?")
-    our_bps=$(grep "bytecodes/sec" "$OUR_RESULTS" 2>/dev/null | grep -o '^[0-9]*' || echo "?")
-    ref_sps=$(grep "sends/sec" "$REF_RESULTS" 2>/dev/null | grep -o '[0-9]* sends' | grep -o '^[0-9]*' || echo "?")
-    our_sps=$(grep "sends/sec" "$OUR_RESULTS" 2>/dev/null | grep -o '[0-9]* sends' | grep -o '^[0-9]*' || echo "?")
+    # tinyBenchmarks — wall + cpu (when present).
+    ref_line=$(grep "bytecodes/sec" "$REF_RESULTS" 2>/dev/null | head -1)
+    our_line=$(grep "bytecodes/sec" "$OUR_RESULTS" 2>/dev/null | head -1)
+    parse_tiny_wall() {
+        local line="$1" what="$2"
+        echo "$line" | sed -nE "s/^([0-9]+) bytecodes\/sec; ([0-9]+) sends\/sec.*/\1 \2/p" \
+            | awk -v w="$what" '{ if (w=="bps") print $1; else print $2 }'
+    }
+    parse_tiny_cpu() {
+        local line="$1" what="$2"
+        echo "$line" | sed -nE "s/.*\(cpu=([0-9]+) bytecodes\/sec, ([0-9]+) sends\/sec\).*/\1 \2/p" \
+            | awk -v w="$what" '{ if (w=="bps") print $1; else print $2 }'
+    }
+    ref_bps=$(parse_tiny_wall "$ref_line" bps); ref_bps=${ref_bps:-?}
+    our_bps=$(parse_tiny_wall "$our_line" bps); our_bps=${our_bps:-?}
+    ref_sps=$(parse_tiny_wall "$ref_line" sps); ref_sps=${ref_sps:-?}
+    our_sps=$(parse_tiny_wall "$our_line" sps); our_sps=${our_sps:-?}
+    ref_bps_c=$(parse_tiny_cpu "$ref_line" bps); ref_bps_c=${ref_bps_c:-?}
+    our_bps_c=$(parse_tiny_cpu "$our_line" bps); our_bps_c=${our_bps_c:-?}
+    ref_sps_c=$(parse_tiny_cpu "$ref_line" sps); ref_sps_c=${ref_sps_c:-?}
+    our_sps_c=$(parse_tiny_cpu "$our_line" sps); our_sps_c=${our_sps_c:-?}
     echo ""
-    echo "  tinyBenchmarks:"
-    echo "    Reference: $ref_bps bytecodes/sec, $ref_sps sends/sec"
-    echo "    Ours:      $our_bps bytecodes/sec, $our_sps sends/sec"
+    echo "  tinyBenchmarks (wall / cpu):"
+    echo "    Reference: $ref_bps / $ref_bps_c bytecodes/sec, $ref_sps / $ref_sps_c sends/sec"
+    echo "    Ours:      $our_bps / $our_bps_c bytecodes/sec, $our_sps / $our_sps_c sends/sec"
     echo ""
 fi
 
