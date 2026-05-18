@@ -368,15 +368,20 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             continue;
         }
         // Extended push/store variants — all 2-byte: opcode + 1-byte index.
-        // ExtPushRecvVar 0xE2, ExtPushLitVar 0xE3, ExtPushLitConst 0xE4,
-        // ExtPushTemp 0xE5, ExtPopStoreTemp 0xF2, ExtStoreTemp 0xF5.
-        // (ExtPopStoreRecv/LitVar/StoreRecv/LitVar deferred — need
-        // immutable-bit + association handling like the short forms.)
+        // Push: ExtPushRecvVar 0xE2, ExtPushLitVar 0xE3,
+        //       ExtPushLitConst 0xE4, ExtPushTemp 0xE5.
+        // Store-with-immutable-check (recv): ExtPopStoreRecv 0xF0,
+        //                                    ExtStoreRecv 0xF3.
+        // Store-no-check (temp): ExtPopStoreTemp 0xF2, ExtStoreTemp 0xF5.
+        // (ExtPopStoreLitVar 0xF1 / ExtStoreLitVar 0xF4 still deferred —
+        // need association-write handling.)
         if (op == SistaV1::ExtPushRecvVar || op == SistaV1::ExtPushLitVar
                 || op == SistaV1::ExtPushLitConst
                 || op == SistaV1::ExtPushTemp
                 || op == SistaV1::ExtPopStoreTemp
-                || op == SistaV1::ExtStoreTemp) {
+                || op == SistaV1::ExtStoreTemp
+                || op == SistaV1::ExtPopStoreRecv
+                || op == SistaV1::ExtStoreRecv) {
             if (i + 1 >= bcLen) {
                 traceFail(i, op, "ext-bytecode-truncated");
                 return false;
@@ -2575,11 +2580,42 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.ldr(a64::x1, a64::ptr(a64::x2));
                     a.ldr(a64::x4, a64::ptr(a64::x0, OFF_TEMPBASE));
                     a.str(a64::x1, a64::ptr(a64::x4, idx * 8));
-                } else /* ExtStoreTemp */ {
+                } else if (op == SistaV1::ExtStoreTemp) {
                     a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
                     a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
                     a.ldr(a64::x4, a64::ptr(a64::x0, OFF_TEMPBASE));
                     a.str(a64::x1, a64::ptr(a64::x4, idx * 8));
+                } else if (op == SistaV1::ExtPopStoreRecv
+                        || op == SistaV1::ExtStoreRecv) {
+                    // Receiver store with immutable-bit check (mirror
+                    // popStoreRecv 0xC8-CF emit at line 1545).  If the
+                    // receiver's header bit 23 is set, bail to interp.
+                    asmjit::Label bail = a.new_label();
+                    asmjit::Label end  = a.new_label();
+                    a.ldr(a64::x4, a64::ptr(a64::x0, OFF_RECEIVER));
+                    a.ldr(a64::w5, a64::ptr(a64::x4));
+                    a.tst(a64::w5, asmjit::Imm(0x800000));
+                    a.b_ne(bail);
+                    if (op == SistaV1::ExtPopStoreRecv) {
+                        a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        a.sub(a64::x2, a64::x2, asmjit::Imm(8));
+                        a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        a.ldr(a64::x1, a64::ptr(a64::x2));
+                    } else /* ExtStoreRecv */ {
+                        a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
+                    }
+                    a.str(a64::x1, a64::ptr(a64::x4, OBJ_SLOT_0 + idx * 8));
+                    a.b(end);
+                    a.bind(bail);
+                    a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
+                    a.add(a64::x5, a64::x5,
+                          asmjit::Imm(bcOffsetBase + globalIdx));
+                    a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+                    a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
+                    a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                    a.ret(a64::x30);
+                    a.bind(end);
                 }
                 a.bind(bcLabels[globalIdx + 1]);
                 i++;
