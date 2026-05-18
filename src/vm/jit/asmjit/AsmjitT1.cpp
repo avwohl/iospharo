@@ -212,6 +212,12 @@ inline bool isPhase3ShiftOp(uint8_t op) {
     return op == 0x6C;
 }
 
+// \\ (0x6A) modulo, // (0x6D) integer divide: SmI floor-div + mod
+// with sign-mismatch adjustment.
+inline bool isPhase3ModOp(uint8_t op) {
+    return op == 0x6A || op == 0x6D;
+}
+
 // Compute the live bytecode length: walk forward decoding bytecodes
 // using SistaV1::bytecodeLength().  Tracks max forward branch target
 // so a `return` only terminates decoding when no jump points past it.
@@ -277,12 +283,12 @@ size_t computeLiveLength(const uint8_t* bc, size_t bcLen) {
 // bcOffsetFromMethObj).  See emitOne_x86 / emitOne_arm64 below.
 inline bool isPhase4SendOp(uint8_t op) {
     // Binary special selectors with no inline arith fast path:
-    //   0x69 /, 0x6A \\, 0x6B @, 0x6D //
+    //   0x69 /, 0x6B @
     // (0x60-0x67 + comparisons go through Phase 3 inline emit;
-    //  0x68 *, 0x6C bitShift:, 0x6E bitAnd:, 0x6F bitOr: also
-    //  inline.)  These four bail to interp via the standard IC
-    //  miss path — common in math-heavy code.
-    if (op == 0x69 || op == 0x6A || op == 0x6B || op == 0x6D) {
+    //  0x68 *, 0x6A \\, 0x6C bitShift:, 0x6D //, 0x6E bitAnd:,
+    //  0x6F bitOr: also inline.)  These two bail to interp via
+    //  the standard IC miss path.
+    if (op == 0x69 || op == 0x6B) {
         return true;
     }
     // 0x70..0x7F: special selectors 16..31
@@ -349,6 +355,7 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (isPhase3BitOp(op)) continue;              // 0x6E, 0x6F bitAnd:/bitOr:
         if (isPhase3MulOp(op)) continue;              // 0x68 *
         if (isPhase3ShiftOp(op)) continue;            // 0x6C bitShift:
+        if (isPhase3ModOp(op)) continue;              // 0x6A \\, 0x6D //
         if (isPhase4SendOp(op)) {
             if (noSendsBisect) return false;
             if (sendNArgs(op) > maxSendNArgs) return false;
@@ -2004,6 +2011,70 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.asr(x1, x1, x4);              // signed right shift
         // Retag — result is smaller than input, no overflow possible.
         a.lsl(x1, x1, asmjit::Imm(3));
+        a.orr(x1, x1, asmjit::Imm(SMI_TAG));
+        a.str(x1, ptr(x2, -16));
+        a.sub(x2, x2, asmjit::Imm(8));
+        a.str(x2, ptr(x0, OFF_SP));
+        a.b(end);
+        a.bind(bail);
+        a.ldr(x5, ptr(x0, OFF_METHOD));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        a.bind(end);
+        return true;
+    }
+    // Phase 3 \\ (0x6A) and // (0x6D) — SmI floor-div / floor-mod on
+    // ARM64 with sign-mismatch adjustment.  Pharo uses floor semantics
+    // (a // b = floor(a/b); a \\ b = a - (a // b) * b), while ARM64
+    // sdiv is trunc semantics.  Adjust by adding b to the remainder
+    // when (a XOR b) is negative AND the remainder is non-zero.
+    //   //: result = trunc quotient + adjustment (-1 if rem!=0 && signs differ)
+    //   \\: result = trunc remainder + b      (if rem!=0 && signs differ)
+    // Bails on non-SmI, divisor==0, or SmI overflow (impossible for
+    // mod; possible for // only on a=INT_MIN/b=-1 — out of SmI range).
+    if (isPhase3ModOp(op)) {
+        asmjit::Label bail = a.new_label();
+        asmjit::Label end  = a.new_label();
+        asmjit::Label noAdjust = a.new_label();
+        a.ldr(x2, ptr(x0, OFF_SP));
+        a.ldr(x1, ptr(x2, -16));
+        a.ldr(x4, ptr(x2, -8));
+        // SmI tag check
+        a.eor(x5, x1, x4);
+        a.sub(x6, x1, asmjit::Imm(1));
+        a.orr(x5, x5, x6);
+        a.tst(x5, asmjit::Imm(7));
+        a.b_ne(bail);
+        // Untag both
+        a.asr(x1, x1, asmjit::Imm(3));
+        a.asr(x4, x4, asmjit::Imm(3));
+        // Divisor == 0 → bail
+        a.cbz(x4, bail);
+        // sdiv x6 = a/b (trunc), msub x7 = a - q*b (trunc rem)
+        a.sdiv(x6, x1, x4);
+        a.msub(x7, x6, x4, x1);
+        // Floor adjustment: if rem != 0 AND (a XOR b) < 0
+        a.cbz(x7, noAdjust);
+        a.eor(x5, x1, x4);
+        a.tbz(x5, asmjit::Imm(63), noAdjust);
+        if (op == 0x6A) {
+            // \\: rem += b
+            a.add(x7, x7, x4);
+        } else {
+            // //: q -= 1
+            a.sub(x6, x6, asmjit::Imm(1));
+        }
+        a.bind(noAdjust);
+        // Result is in x7 (rem) for \\ or x6 (quot) for //.  Retag.
+        asmjit::a64::Gp result = (op == 0x6A) ? x7 : x6;
+        a.lsl(x1, result, asmjit::Imm(3));
+        // Verify retag didn't overflow SmI (61 bits signed).
+        a.asr(x5, x1, asmjit::Imm(3));
+        a.cmp(x5, result);
+        a.b_ne(bail);
         a.orr(x1, x1, asmjit::Imm(SMI_TAG));
         a.str(x1, ptr(x2, -16));
         a.sub(x2, x2, asmjit::Imm(8));
