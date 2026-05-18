@@ -81,7 +81,7 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
                                        uint64_t callerJM, uint64_t calleeCM,
                                        uint64_t callerCM) {
     static size_t logN = 0;
-    if (logN < 30) {
+    if (logN < 5) {
         logN++;
         uint64_t* s = (uint64_t*)state;
         // Decode method header to get numLits/argCount/tempCount.
@@ -114,7 +114,6 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
                 (unsigned long long)s[2], (unsigned long long)s[3],
                 (unsigned long long)s[6], (unsigned long long)s[7],
                 (unsigned long long)s[8], (unsigned long long)s[9]);
-        fflush(stderr);
     }
     return 1;
 }
