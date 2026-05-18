@@ -904,6 +904,27 @@ mishandles callee's state.  Needs lldb single-step through
 `createFullBlockWithLiteral` + `tryResume` to find which field
 becomes wrong and where.
 
+**Iter N (2026-05-18) lldb diagnostic:** SEL-CORRUPT trace reveals
+**IP/method_ inconsistency** at the DNU point:
+
+    [SEL-CORRUPT #1] selector fmt=28 cls=3117 raw=0x300350ce8
+        bc=0x5C litIdx=-1 method=0x30033ae08 (#addAllLast:) fd=16
+    [SEL-CORRUPT]   IP=0x30033a96b method bytes=0x30033ae10
+
+method_ = callee's CM (#addAllLast:) at 0x30033ae08.
+method.bytes() = 0x30033ae10.
+But IP = 0x30033a96b which is at CALLER's bytecode position 3
+(caller CM = 0x30033a940, bytecode start = 0x30033a968, +3 = 0x30033a96b).
+
+So instructionPointer_ is in CALLER's bytecode area but method_ is
+CALLEE's CM.  These should be consistent.
+
+Lead for next iter: find where IP/method_ get out of sync.  Likely:
+either chain-loop prefix updates method_ from state.jitMethod
+without checking IP consistency, OR my xmethod return prelude
+correctly restores state but C++ method_ gets stale-updated
+afterwards.
+
 **Diagnostic flags:**
 - PHARO_T1_INLINE_J2J_XMETHOD=1: enable cross-method (broken)
 - PHARO_T1_INLINE_J2J_XMETHOD_MAX=N: bisect-limit fires
