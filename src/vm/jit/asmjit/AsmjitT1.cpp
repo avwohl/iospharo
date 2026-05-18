@@ -319,27 +319,53 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             }
         }
     };
-    // First pass: reject methods that have ExtA/ExtB prefixes
-    // followed by something OTHER than ExtSend/ExtSuperSend/ExtJump*.
-    // Our emit for prefix-modifiable push/store bytecodes uses the
-    // 8-bit operand directly, so a preceding prefix would silently
-    // lose the extension.  Accepted bundles bail to interp (or emit
-    // a direct branch for the ExtB+ExtJump unconditional case).
+    // First pass: ExtA/ExtB prefix bytes.  We accept the bundle iff
+    // the next bytecode is one that CONSUMES the prefix value
+    // (sends, jumps, prefix-modifiable push/store variants).
+    // Bytecodes that don't consume the prefix would leak extA_/extB_
+    // into the bytecode AFTER them — unsafe for our bail-to-interp
+    // model since the rest of the method then runs in interp with
+    // stale extA_/extB_ from our perspective.
+    //
+    // Allowed next ops:
+    //   0xE2-0xE5: ExtPush{RecvVar,LitVar,LitConst,Temp}  (consume extA)
+    //   0xEA-0xEB: ExtSend/ExtSuperSend  (consume extA/extB)
+    //   0xED-0xEF: ExtJump variants  (consume extB)
+    //   0xF0-0xF5: ExtPop/Store{Recv,LitVar,Temp}  (consume extA)
+    //   0x80-0xAF: Phase 4 literal sends  (consume extA — index = extA*16+i)
+    //   0x70-0x7F: special selectors  (consume extB for nArgs)
     for (size_t i = 0; i < bcLen; i++) {
         if (bc[i] == SistaV1::ExtendA || bc[i] == SistaV1::ExtendB) {
-            // Prefix at i — check what's at i+2 (next bytecode).
             if (i + 2 >= bcLen) {
                 traceFail(i, bc[i], "ext-prefix-truncated");
                 return false;
             }
             uint8_t nextOp = bc[i + 2];
-            bool acceptable = (nextOp == SistaV1::ExtSend
-                            || nextOp == SistaV1::ExtSuperSend);
-            if (bc[i] == SistaV1::ExtendB
+            bool acceptable = false;
+            // Bytecodes that consume the prefix:
+            if (nextOp == SistaV1::ExtSend
+                    || nextOp == SistaV1::ExtSuperSend) {
+                acceptable = true;
+            } else if (bc[i] == SistaV1::ExtendB
                     && (nextOp == SistaV1::ExtJump
                         || nextOp == SistaV1::ExtJumpTrue
                         || nextOp == SistaV1::ExtJumpFalse)
                     && g_debug.t1EnableJumps) {
+                acceptable = true;
+            } else if (nextOp >= 0x70 && nextOp <= 0xAF) {
+                // Phase 4 sends (single-byte) — extA/extB extend the
+                // selector index or numArgs respectively.
+                acceptable = true;
+            } else if (nextOp == SistaV1::ExtPushRecvVar
+                    || nextOp == SistaV1::ExtPushLitVar
+                    || nextOp == SistaV1::ExtPushLitConst
+                    || nextOp == SistaV1::ExtPushTemp
+                    || nextOp == SistaV1::ExtPopStoreRecv
+                    || nextOp == SistaV1::ExtPopStoreLitVar
+                    || nextOp == SistaV1::ExtPopStoreTemp
+                    || nextOp == SistaV1::ExtStoreRecv
+                    || nextOp == SistaV1::ExtStoreLitVar
+                    || nextOp == SistaV1::ExtStoreTemp) {
                 acceptable = true;
             }
             if (!acceptable) {
@@ -510,14 +536,16 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         // with the first-pass ExtA/ExtB rejection, ExtSend
         // acceptance breaks some methods (DNU cascade in snapshot
         // error path).  Investigation pending — for now stay opt-in.
-        // ExtA/ExtB + ExtSend/ExtSuperSend OR ExtB + ExtJump bundle:
-        // first-pass guard verified the next bytecode kind.
+        // ExtA/ExtB prefix bundle.  First-pass guard verified the
+        // next bytecode consumes the prefix.  Skip the prefix data
+        // byte + nextOp's full length (1, 2, or 3 bytes).
         if (op == SistaV1::ExtendA || op == SistaV1::ExtendB) {
-            if (i + 3 >= bcLen) {
+            uint8_t nextOp = bc[i + 2];
+            int nextLen = SistaV1::bytecodeLength(nextOp);
+            if (i + 1 + nextLen >= bcLen) {
                 traceFail(i, op, "ext-prefix-bundle-truncated");
                 return false;
             }
-            uint8_t nextOp = bc[i + 2];
             if (nextOp == SistaV1::ExtSuperSend) {
                 static const bool acceptExtSuper =
                     std::getenv("PHARO_T1_ACCEPT_EXTSUPERSEND") != nullptr;
@@ -526,7 +554,7 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
                     return false;
                 }
             }
-            i += 3;
+            i += 1 + nextLen;
             continue;
         }
         if (op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend) {
@@ -2878,10 +2906,14 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 i += 1;
                 continue;
             }
-            // ExtA/ExtB + ExtSend (or ExtSuperSend) bundle: 4-byte.
-            // Bail at the prefix; interp executes the prefix +
-            // the prefixed send + the rest of the method.
+            // ExtA/ExtB prefix bundle.  Bail at the prefix; interp
+            // executes the prefix + the prefixed bytecode (which
+            // consumes extA_/extB_), then continues the rest of the
+            // method in interp.  Bytes consumed = 2 + nextLen
+            // (prefix opcode + data + next bytecode's full length).
             if (op == SistaV1::ExtendA || op == SistaV1::ExtendB) {
+                uint8_t nextOp = bcReal[i + 2];
+                int nextLen = SistaV1::bytecodeLength(nextOp);
                 a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
                 a.add(a64::x5, a64::x5,
                       asmjit::Imm(bcOffsetBase + globalIdx));
@@ -2889,14 +2921,14 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
                 a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
                 a.ret(a64::x30);
-                // Bind labels for prefix data + ExtSend opcode +
-                // ExtSend operand (4 bytes total starting at
-                // globalIdx).  Loop's ++ skips the prefix opcode at
-                // globalIdx; we skip the remaining 3 here.
-                a.bind(bcLabels[globalIdx + 1]);
-                a.bind(bcLabels[globalIdx + 2]);
-                a.bind(bcLabels[globalIdx + 3]);
-                i += 3;
+                // Bind labels for all bytes consumed.  Loop's ++ skips
+                // the prefix opcode; we explicitly skip the rest.
+                for (int k = 1; k <= 1 + nextLen; k++) {
+                    if ((size_t)(globalIdx + k) < bcLabels.size()) {
+                        a.bind(bcLabels[globalIdx + k]);
+                    }
+                }
+                i += 1 + nextLen;
                 continue;
             }
             // ExtSend 0xEA / ExtSuperSend 0xEB: 2-byte send.  Naked
