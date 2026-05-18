@@ -81,7 +81,7 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
                                        uint64_t callerJM, uint64_t calleeCM,
                                        uint64_t callerCM) {
     static size_t logN = 0;
-    if (logN < 5) {
+    if (logN < 30) {
         logN++;
         uint64_t* s = (uint64_t*)state;
         // Decode method header to get numLits/argCount/tempCount.
@@ -114,6 +114,7 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
                 (unsigned long long)s[2], (unsigned long long)s[3],
                 (unsigned long long)s[6], (unsigned long long)s[7],
                 (unsigned long long)s[8], (unsigned long long)s[9]);
+        fflush(stderr);
     }
     return 1;
 }
@@ -2480,17 +2481,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_hi(j2jBailSelf2);
                     // Cross-method update:
                     a.str(x10, ptr(x0, OFF_JITMETHOD));
+                    // Also update state.method — previously left as
+                    // the outermost (per the AsmjitT1.cpp:2395 doc
+                    // comment) but the chain loop's bail handlers
+                    // and downstream interp lookup methodClassOf use
+                    // state.method, which then points at the wrong
+                    // class for the callee.  x13 = callee's compiled
+                    // method oop (from JM[0]).
+                    a.str(x13, ptr(x0, OFF_METHOD));
                     a.add(x14, x13, asmjit::Imm(16));
                     a.str(x14, ptr(x0, OFF_LITERALS));
                     a.mov(w14, asmjit::Imm(nArgs));
                     a.str(w14, ptr(x0, OFF_ARGCOUNT));
-                    static const bool xlog = false;  // diagnostic stub
-                    // (PHARO_T1_INLINE_J2J_XMETHOD_LOG removed; the
-                    // log helper jit_rt_xmethod_log was used to identify
-                    // that the first xmethod-fired call corrupts state.
-                    // Cross-method shipping still blocked on root-cause
-                    // of how callee inner-bail + chain-loop ExitBlockCreate
-                    // resume interact wrongly.)
+                    static const bool xlog =
+                        std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_LOG") != nullptr;
                     (void)xlog;
                     a.bind(sameMethodSkipUpdate);
                 } else {
