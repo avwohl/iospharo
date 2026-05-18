@@ -161,6 +161,23 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
         t.stateArgCount  = *(int32_t*)((uint8_t*)state + 72);
         logN++;
         g_xmethod_trace_count = logN;
+        // Look up selector names for both methods.
+        // state.interp is at offset 40 from state.
+        Interpreter* interp = *(Interpreter**)((uint8_t*)state + 40);
+        ObjectMemory* mem = *(ObjectMemory**)((uint8_t*)state + 32);
+        std::string calleeSel = "?";
+        std::string callerSel = "?";
+        if (interp) {
+            calleeSel = interp->memory().selectorOf(
+                Oop::fromRawBits(calleeCM));
+            callerSel = interp->memory().selectorOf(
+                Oop::fromRawBits(callerCM));
+        }
+        (void)mem;
+        fprintf(stderr, "[XLOG #%zu] callee=#%s (cm=0x%llx) caller=#%s (cm=0x%llx)\n",
+                logN, calleeSel.c_str(), (unsigned long long)calleeCM,
+                callerSel.c_str(), (unsigned long long)callerCM);
+        fflush(stderr);
         // Optional per-fire dump (PHARO_T1_INLINE_J2J_XMETHOD_LIVE=1).
         // Default off — the trace buffer is the primary capture.
         static const bool liveDump =
