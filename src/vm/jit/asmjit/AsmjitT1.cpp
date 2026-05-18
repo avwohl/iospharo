@@ -320,12 +320,11 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         }
     };
     // First pass: reject methods that have ExtA/ExtB prefixes
-    // followed by something OTHER than ExtSend/ExtSuperSend.  Our
-    // emit for prefix-modifiable push/store bytecodes uses the 8-bit
-    // operand directly, so a preceding prefix would silently lose
-    // the extension.  ExtA/B + ExtSend/ExtSuperSend bundles are
-    // accepted: the per-byte loop below treats them as a bail
-    // bundle (interp handles prefix + send with correct extA_/extB_).
+    // followed by something OTHER than ExtSend/ExtSuperSend/ExtJump*.
+    // Our emit for prefix-modifiable push/store bytecodes uses the
+    // 8-bit operand directly, so a preceding prefix would silently
+    // lose the extension.  Accepted bundles bail to interp (or emit
+    // a direct branch for the ExtB+ExtJump unconditional case).
     for (size_t i = 0; i < bcLen; i++) {
         if (bc[i] == SistaV1::ExtendA || bc[i] == SistaV1::ExtendB) {
             // Prefix at i — check what's at i+2 (next bytecode).
@@ -334,9 +333,17 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
                 return false;
             }
             uint8_t nextOp = bc[i + 2];
-            if (nextOp != SistaV1::ExtSend
-                    && nextOp != SistaV1::ExtSuperSend) {
-                traceFail(i, bc[i], "ext-prefix-not-followed-by-extsend");
+            bool acceptable = (nextOp == SistaV1::ExtSend
+                            || nextOp == SistaV1::ExtSuperSend);
+            if (bc[i] == SistaV1::ExtendB
+                    && (nextOp == SistaV1::ExtJump
+                        || nextOp == SistaV1::ExtJumpTrue
+                        || nextOp == SistaV1::ExtJumpFalse)
+                    && g_debug.t1EnableJumps) {
+                acceptable = true;
+            }
+            if (!acceptable) {
+                traceFail(i, bc[i], "ext-prefix-not-handled-pattern");
                 return false;
             }
         }
@@ -503,20 +510,14 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         // with the first-pass ExtA/ExtB rejection, ExtSend
         // acceptance breaks some methods (DNU cascade in snapshot
         // error path).  Investigation pending — for now stay opt-in.
-        // ExtA/ExtB + ExtSend bundle: first-pass guard verified the
-        // next bytecode is ExtSend/ExtSuperSend, so we accept the
-        // 4-byte bundle.  Bail emit at the prefix; interp runs both
-        // (prefix sets extA_/extB_, ExtSend uses it).
+        // ExtA/ExtB + ExtSend/ExtSuperSend OR ExtB + ExtJump bundle:
+        // first-pass guard verified the next bytecode kind.
         if (op == SistaV1::ExtendA || op == SistaV1::ExtendB) {
-            // i+2 is ExtSend/ExtSuperSend opcode (guard), i+3 is its
-            // operand byte.  Skip 3 bytes here; loop ++ skips prefix.
             if (i + 3 >= bcLen) {
                 traceFail(i, op, "ext-prefix-bundle-truncated");
                 return false;
             }
             uint8_t nextOp = bc[i + 2];
-            // ExtSuperSend bundle still broken (same as naked) —
-            // disable unless opted in.
             if (nextOp == SistaV1::ExtSuperSend) {
                 static const bool acceptExtSuper =
                     std::getenv("PHARO_T1_ACCEPT_EXTSUPERSEND") != nullptr;
