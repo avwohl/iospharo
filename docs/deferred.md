@@ -870,6 +870,30 @@ state.literals update corrupted callee execution (PRIM-AT-BADIDX
 needs lldb to trace what state field is being mishandled.  The
 36% bail_self rate remains unaddressed.
 
+**Iter 11 (2026-05-18): added InlinedPrimitive 0xEC + ext-recv
+store family (`2f5823ff`, `888168c4`).**  Removed last common
+unsupported simple bytecodes.
+
+**PushArray 0xE7 attempted but reverted** (twice in this session).
+First attempt emit set state.ip + cachedTarget then bailed with
+EXIT_ARRAY_CREATE.  Result: state-corruption-style DNUs during
+image init (`#do: was sent to nil`, `#extent` DNU).  After
+revert, fib still 12ms.  The chain loop's resume protocol after
+ExitArrayCreate is subtle (case handler doesn't reset
+instructionPointer_ from state.ip — relies on it being set
+earlier).  Needs lldb to trace the resume after PushArray bail.
+
+**Remaining unsupported (rare or complex):**
+- 0xE0/0xE1 ExtA/ExtB prefixes (modifies next bytecode operand)
+- 0xEA/0xEB ExtSend/ExtSuperSend (needs IC slot allocation +
+  ExtA/B support; bail-to-chain attempt corrupted state)
+- 0xE7 PushArray (resume protocol mismatch — see above)
+- 0x6A `\\`, 0x6B `@`, 0x6D `//` (need send-style bail with IC site)
+- 0xF1/0xF4 ExtPopStoreLitVar / ExtStoreLitVar (need association
+  write barrier)
+- 0xFA-0xFD 3-byte bytecodes (PushClosure / RemoteTemp variants)
+- 0x52 PushThisContext (needs context materialization)
+
 **Scaffold landed 2026-05-17 (`f81d61a0`, `078105ce`):**
 arm64 inline-J2J path wired up with per-bail counters, opt-in via
 `PHARO_T1_INLINE_J2J=1`.  Currently always bails (counts as
