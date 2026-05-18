@@ -454,6 +454,22 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             i += 1;
             continue;
         }
+        // PushTempAtInVec 0xFB / StoreTempAtInVec 0xFC /
+        // PopStoreTempAtInVec 0xFD: 3-byte (opcode + tempIdx + vecIdx).
+        // Remote temp access (read/write a slot in a temp vector held
+        // by an enclosing closure).  Bail to interp at the opcode;
+        // interp executes the 3-byte op (no extA_/extB_ dependency).
+        // Rest of method runs in interp.
+        if (op == SistaV1::PushTempAtInVec
+                || op == SistaV1::StoreTempAtInVec
+                || op == SistaV1::PopStoreTempAtInVec) {
+            if (i + 2 >= bcLen) {
+                traceFail(i, op, "remote-temp-truncated");
+                return false;
+            }
+            i += 2;
+            continue;
+        }
         // Extended push/store variants — all 2-byte: opcode + 1-byte index.
         // Push: ExtPushRecvVar 0xE2, ExtPushLitVar 0xE3,
         //       ExtPushLitConst 0xE4, ExtPushTemp 0xE5.
@@ -2708,6 +2724,24 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.ret(a64::x30);
                 a.bind(bcLabels[globalIdx + 1]);
                 i += 1;
+                continue;
+            }
+            // Remote temp access 0xFB/0xFC/0xFD: 3-byte ops, bail to
+            // interp at the opcode.  Interp handles the read/write of
+            // a slot in a temp vector held by an enclosing closure.
+            if (op == SistaV1::PushTempAtInVec
+                    || op == SistaV1::StoreTempAtInVec
+                    || op == SistaV1::PopStoreTempAtInVec) {
+                a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
+                a.add(a64::x5, a64::x5,
+                      asmjit::Imm(bcOffsetBase + globalIdx));
+                a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+                a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
+                a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                a.ret(a64::x30);
+                a.bind(bcLabels[globalIdx + 1]);
+                a.bind(bcLabels[globalIdx + 2]);
+                i += 2;
                 continue;
             }
             // PushFullBlock 0xF9: 3-byte (opcode + LL + HH).  Bail to
