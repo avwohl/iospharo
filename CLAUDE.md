@@ -53,6 +53,15 @@ Key paths:
   `/loop until <goal>` invocations, just keep iterating; an idle 20-30 min
   sleep burns the user's time for no benefit. The /loop skill calls these
   "fallback heartbeats" but they're only useful when a real signal exists.
+- In `/loop` dynamic mode: **KEEP WORKING in the current turn**. Don't
+  preemptively wrap up with "stopping here, re-invoke /loop." That defeats
+  the whole point of /loop — the user wants continuous iteration without
+  having to keep re-typing the command. Only stop when (a) the goal is
+  genuinely achieved, (b) a real blocker requires user input, or (c) you
+  hit a destructive action that needs confirmation. Picking the next
+  sub-task from `docs/deferred.md` and continuing is always preferable to
+  ending the turn. If you genuinely run out of context, the turn will end
+  on its own — don't help it along.
 
 ## No workarounds — fix root causes
 
