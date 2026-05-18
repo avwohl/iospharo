@@ -1524,11 +1524,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // Mirrors stencils.cpp:491-531 J2J_INLINE_RETURN_IMPL protocol.
     // Retval is in x1 by convention; x2-x15 free to clobber.
     //
-    // Default OFF (PHARO_T1_INLINE_J2J=1 to enable).  When off, the
-    // ldr+cbz is still emitted but j2jDepth is always 0 so we fall
-    // through to normal-return — tiny overhead, zero semantic change.
-    static const bool inlineJ2J =
-        std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+    // Default ON since 2026-05-17 (PHARO_T1_NO_INLINE_J2J=1 opt-out).
+    // When off, the ldr+cbz is still emitted but j2jDepth is always 0
+    // so we fall through to normal-return — tiny overhead, zero
+    // semantic change.
+    const bool inlineJ2J = g_debug.t1InlineJ2J;
     auto emitJ2JReturnPreludeIfEnabled = [&]() {
         if (!inlineJ2J) return;
         asmjit::Label normalReturn = a.new_label();
@@ -1966,8 +1966,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // recursive sends.  MVP: self-recursive only (caller == callee).
             // Mirrors stencils.cpp:1733-1877's `j2j_direct_call:` block.
             // See deferred.md A6 for full design.
-            static const bool inlineJ2J =
-                std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+            const bool inlineJ2J = g_debug.t1InlineJ2J;
             if (inlineJ2J) {
                 asmjit::Label tryInlineJ2J = a.new_label();
                 asmjit::Label j2jBail      = a.new_label();

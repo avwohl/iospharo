@@ -76,6 +76,12 @@ struct DebugSettings {
     bool t1InlineGetter = true;       // PHARO_T1_NO_INLINE_GETTER inverts
     bool t1InlineSetter = true;       // PHARO_T1_NO_INLINE_SETTER inverts
     bool t1InlineReturnsSelf = true;  // PHARO_T1_NO_INLINE_RETURNS_SELF inverts
+    // Inline-J2J emit (self-recursive case): tail-call callee's JIT entry
+    // directly instead of round-tripping through the chain loop.  12× win
+    // on benchFib.  Default-on 2026-05-17.  PHARO_T1_NO_INLINE_J2J=1 opt-out.
+    // (PHARO_T1_INLINE_J2J=1 also enables per-bail debug counters + traces;
+    // those stay opt-in for production.)
+    bool t1InlineJ2J = true;
     // Diagnostic: force probe to always-miss so the probe COMPUTATION runs
     // but exits via ExitSend regardless of icData[0] match.  Isolates
     // whether bugs are in the probe arithmetic or in the HIT path.

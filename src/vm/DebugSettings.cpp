@@ -97,6 +97,7 @@ DebugSettings::DebugSettings() {
     t1InlineGetter      = !envPresent("PHARO_T1_NO_INLINE_GETTER");
     t1InlineSetter      = !envPresent("PHARO_T1_NO_INLINE_SETTER");
     t1InlineReturnsSelf = !envPresent("PHARO_T1_NO_INLINE_RETURNS_SELF");
+    t1InlineJ2J         = !envPresent("PHARO_T1_NO_INLINE_J2J");
     t1ProbeAlwaysMiss   = envPresent("PHARO_T1_PROBE_ALWAYS_MISS");
     t1HitAsMiss         = envPresent("PHARO_T1_HIT_AS_MISS");
     t1ICHitVerify       = envPresent("PHARO_T1_IC_HIT_VERIFY");

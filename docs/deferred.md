@@ -820,6 +820,29 @@ The deferred A6 "ship inline-J2J on arm64" goal therefore
 in tree (opt-in PHARO_T1_INLINE_J2J=1) is ready and will fire
 correctly once methods like benchFib actually compile.
 
+**A6 SHIPPED 2026-05-17 iter 7 (commit `57cc0d91` + default-on flip):**
+Long-jump support + buffer-cap raise + jumps default-on +
+inline-J2J default-on.
+
+Bench results on `[N benchFib] timeToRun`:
+
+  config                                fib(28)  fib(30)
+  baseline (NO_INLINE_J2J + NO_JUMPS)    ~684     ~684 ms
+  jumps-on + INLINE-J2J (new default)     13       31 ms
+
+12× faster on fib than baseline.  fib(28) Cog gap closed from
+115× to 6.5×.  No regression on factorial 5000 (24ms) or sieve
+x100 (7ms; Sista-spliced).
+
+The catch rate of inline-J2J on fib(30): 64.1% (2.69M of 4.2M
+sends hit the self-recursive inline path).  bail_self (cross-
+method bit-60 sends) accounts for the rest — those'd need the
+non-self-recursive emit (still TODO).
+
+Opt-out: PHARO_T1_NO_INLINE_J2J=1 (also PHARO_ASMJIT_T1_NO_JUMPS=1).
+Opt-in PHARO_T1_INLINE_J2J=1 still enables per-bail debug counters
++ traces for further investigation.
+
 **Scaffold landed 2026-05-17 (`f81d61a0`, `078105ce`):**
 arm64 inline-J2J path wired up with per-bail counters, opt-in via
 `PHARO_T1_INLINE_J2J=1`.  Currently always bails (counts as
