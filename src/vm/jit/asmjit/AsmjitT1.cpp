@@ -314,6 +314,12 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (op == SistaV1::PushReceiver) continue;    // 0x4C
         if (op >= 0x4D && op <= 0x51) continue;       // pushTrue/False/Nil/Zero/One
         if (op == SistaV1::Dup) continue;             // 0x53
+        // PushThisContext 0x52 — emit bails to interp (interp
+        // materializes the context and pushes it).  Rest of method
+        // runs in interp; no resume.  Methods using thisContext are
+        // rare enough that partial-JIT coverage is still a win over
+        // the previous full-method bail.
+        if (op == SistaV1::PushThisContext) continue;  // 0x52
         if (op >= SistaV1::ReturnReceiver
                 && op <= SistaV1::ReturnTop) continue; // 0x58..0x5C
         if (isPhase3ArithOp(op)) continue;            // 0x60..0x67
@@ -1603,6 +1609,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldr(x2, ptr(x0, OFF_SP));
         a.ldur(x1, ptr(x2, -8));
         emitPushReg(a, x1);
+        return true;
+    }
+    // PushThisContext 0x52: bail to interp.  Materializing thisContext
+    // requires walking the inline frame stack (Interpreter.cpp
+    // case jit::SistaV1::PushThisContext) — too complex to emit
+    // inline.  Reuse EXIT_ARITH_OVERFLOW: chain-loop handler syncs
+    // ip+sp and returns to interp's main loop, which executes the
+    // 0x52 normally and runs the rest of the method in interp.
+    if (op == SistaV1::PushThisContext) {
+        a.ldr(x5, ptr(x0, OFF_METHOD));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
         return true;
     }
     // popStoreTemp N (0xD0..0xD7): pop TOS, store into tempBase[N].
