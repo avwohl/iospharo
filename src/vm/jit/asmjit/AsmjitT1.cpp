@@ -345,6 +345,16 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             i += 1;  // skip operand byte
             continue;
         }
+        // PushCharacter 0xE9: opcode + unsigned 8-bit codepoint.  Pushes
+        // Character(N).  Common in string-processing methods.
+        if (op == SistaV1::PushCharacter) {
+            if (i + 1 >= bcLen) {
+                traceFail(i, op, "push-character-truncated");
+                return false;
+            }
+            i += 1;
+            continue;
+        }
         // Long jumps 0xED/0xEE/0xEF: opcode + 1-byte signed offset.
         // Target = (i + 2) + offset.  No ExtA/ExtB prefix support yet.
         // Gated on the same t1EnableJumps knob as short jumps.
@@ -2442,6 +2452,20 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.add(a64::x2, a64::x2, asmjit::Imm(8));
                 a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
                 a.bind(bcLabels[globalIdx + 1]);  // operand byte's label
+                i++;
+                continue;
+            }
+            // PushCharacter 0xE9: push Character((uint8_t)operand) onto sp.
+            // Character bits: (codepoint << 3) | 3 (CharacterTag).
+            if (op == SistaV1::PushCharacter) {
+                uint8_t cp = bcReal[i + 1];
+                uint64_t charBits = (static_cast<uint64_t>(cp) << 3) | 3ULL;
+                a.mov(a64::x1, asmjit::Imm(charBits));
+                a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                a.str(a64::x1, a64::ptr(a64::x2));
+                a.add(a64::x2, a64::x2, asmjit::Imm(8));
+                a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                a.bind(bcLabels[globalIdx + 1]);
                 i++;
                 continue;
             }
