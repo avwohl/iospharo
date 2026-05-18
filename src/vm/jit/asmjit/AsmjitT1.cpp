@@ -76,10 +76,116 @@ extern "C" uint64_t g_inlineJ2J_dbg_extra         = 0;
 extern "C" uint64_t g_xmethod_count = 0;
 extern "C" uint64_t g_xmethod_max   = UINT64_MAX;
 
+// Compact xmethod trace.  Stores per-fire data in a buffer, prints
+// at process exit via atexit registration.  Avoids in-loop fprintf
+// (which perturbs timing such that subsequent fires don't happen).
+struct XMethodTrace {
+    uint64_t calleeCM;
+    uint64_t callerCM;
+    uint64_t stateMethod;
+    uint64_t stateJitMethod;
+    uint64_t stateReceiver;
+    uint64_t stateSp;
+    uint64_t stateTempBase;
+    uint64_t stateIp;
+    int32_t  stateJ2JDepth;
+    int32_t  stateArgCount;
+};
+static constexpr size_t kXMethodTraceMax = 64;
+extern "C" XMethodTrace g_xmethod_trace[kXMethodTraceMax];
+XMethodTrace g_xmethod_trace[kXMethodTraceMax] = {};
+extern "C" size_t g_xmethod_trace_count;
+size_t g_xmethod_trace_count = 0;
+
+static const int xmethod_atexit_install = []() {
+    if (std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_LOG")) {
+        std::atexit([]() {
+            extern void jit_rt_xmethod_dump_trace_extern();
+            jit_rt_xmethod_dump_trace_extern();
+        });
+    }
+    return 0;
+}();
+
+extern "C" void jit_rt_xmethod_dump_trace();
+
+void jit_rt_xmethod_dump_trace_extern() {
+    fprintf(stderr, "[XMETHOD-ATEXIT] called, trace_count=%zu\n",
+            g_xmethod_trace_count);
+    fflush(stderr);
+    jit_rt_xmethod_dump_trace();
+}
+
+extern "C" void jit_rt_xmethod_dump_trace() {
+    fprintf(stderr, "[XMETHOD-TRACE] %zu fires captured\n",
+            std::min(g_xmethod_trace_count, kXMethodTraceMax));
+    fflush(stderr);
+    size_t n = std::min(g_xmethod_trace_count, kXMethodTraceMax);
+    for (size_t i = 0; i < n; i++) {
+        XMethodTrace& t = g_xmethod_trace[i];
+        fprintf(stderr,
+            "  #%zu calleeCM=0x%llx callerCM=0x%llx\n"
+            "      state.method=0x%llx state.jitMethod=0x%llx\n"
+            "      state.receiver=0x%llx state.sp=0x%llx state.tempBase=0x%llx\n"
+            "      state.ip=0x%llx state.j2jDepth=%d state.argCount=%d\n",
+            i + 1,
+            (unsigned long long)t.calleeCM, (unsigned long long)t.callerCM,
+            (unsigned long long)t.stateMethod, (unsigned long long)t.stateJitMethod,
+            (unsigned long long)t.stateReceiver, (unsigned long long)t.stateSp,
+            (unsigned long long)t.stateTempBase, (unsigned long long)t.stateIp,
+            t.stateJ2JDepth, t.stateArgCount);
+    }
+    fflush(stderr);
+}
+
 // Helper called from cross-method emit (PHARO_T1_INLINE_J2J_XMETHOD_LOG=1).
+// Updated 2026-05-18: writes to in-memory trace buffer instead of
+// fprintf, so subsequent fires aren't suppressed by timing
+// perturbation.  Call jit_rt_xmethod_dump_trace() to print.
 extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
                                        uint64_t callerJM, uint64_t calleeCM,
                                        uint64_t callerCM) {
+    static size_t logN = 0;
+    if (logN < kXMethodTraceMax) {
+        XMethodTrace& t = g_xmethod_trace[logN];
+        uint64_t* s = (uint64_t*)state;
+        t.calleeCM = calleeCM;
+        t.callerCM = callerCM;
+        t.stateMethod    = s[64/8];  // state.method @ 64
+        t.stateJitMethod = s[56/8];  // state.jitMethod @ 56
+        t.stateReceiver  = s[8/8];   // state.receiver @ 8
+        t.stateSp        = s[0];     // state.sp @ 0
+        t.stateTempBase  = s[24/8];  // state.tempBase @ 24
+        t.stateIp        = s[48/8];  // state.ip @ 48
+        t.stateJ2JDepth  = *(int32_t*)((uint8_t*)state + 160);
+        t.stateArgCount  = *(int32_t*)((uint8_t*)state + 72);
+        logN++;
+        g_xmethod_trace_count = logN;
+        // Optional per-fire dump (PHARO_T1_INLINE_J2J_XMETHOD_LIVE=1).
+        // Default off — the trace buffer is the primary capture.
+        static const bool liveDump =
+            std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_LIVE") != nullptr;
+        if (liveDump) {
+            fprintf(stderr,
+                "[XLOG #%zu] calleeCM=0x%llx callerCM=0x%llx "
+                "method=0x%llx jm=0x%llx rcv=0x%llx sp=0x%llx tb=0x%llx "
+                "ip=0x%llx j2jDepth=%d argCount=%d\n",
+                logN, (unsigned long long)calleeCM,
+                (unsigned long long)callerCM,
+                (unsigned long long)t.stateMethod, (unsigned long long)t.stateJitMethod,
+                (unsigned long long)t.stateReceiver, (unsigned long long)t.stateSp,
+                (unsigned long long)t.stateTempBase, (unsigned long long)t.stateIp,
+                t.stateJ2JDepth, t.stateArgCount);
+            fflush(stderr);
+        }
+    }
+    return 1;
+}
+
+// Old verbose log helper (kept for reference; unused).
+static uint64_t jit_rt_xmethod_log_old(uint64_t state, uint64_t calleeJM,
+                                        uint64_t callerJM, uint64_t calleeCM,
+                                        uint64_t callerCM) {
     static size_t logN = 0;
     if (logN < 5) {
         logN++;
@@ -2494,7 +2600,28 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(w14, ptr(x0, OFF_ARGCOUNT));
                     static const bool xlog =
                         std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_LOG") != nullptr;
-                    (void)xlog;
+                    if (xlog) {
+                        using namespace asmjit::a64;
+                        // Save x0 (state) + x9..x13, x7, x30 (LR).
+                        // Helper's return value clobbers x0 — must
+                        // restore it for the rest of the emit.
+                        a.sub(sp, sp, asmjit::Imm(80));
+                        a.stp(x0, x7,   ptr(sp, 0));
+                        a.stp(x9, x10,  ptr(sp, 16));
+                        a.stp(x11, x12, ptr(sp, 32));
+                        a.stp(x13, x30, ptr(sp, 48));
+                        a.mov(x1, x10);
+                        a.mov(x2, x11);
+                        a.mov(x3, x13);
+                        a.mov(x4, x12);
+                        a.mov(x5, asmjit::Imm((uint64_t)&jit_rt_xmethod_log));
+                        a.blr(x5);
+                        a.ldp(x0, x7,   ptr(sp, 0));
+                        a.ldp(x9, x10,  ptr(sp, 16));
+                        a.ldp(x11, x12, ptr(sp, 32));
+                        a.ldp(x13, x30, ptr(sp, 48));
+                        a.add(sp, sp, asmjit::Imm(80));
+                    }
                     a.bind(sameMethodSkipUpdate);
                 } else {
                     a.cmp(x12, x13);
