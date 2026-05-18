@@ -256,7 +256,18 @@ size_t computeLiveLength(const uint8_t* bc, size_t bcLen) {
         } else if (op == SistaV1::ExtJump
                 || op == SistaV1::ExtJumpTrue
                 || op == SistaV1::ExtJumpFalse) {
-            maxBranchTarget = (int)bcLen;  // unknown forward, conservative
+            // Long jump operand is a signed 8-bit byte at bc[i+1].
+            // Target = (i + 2) + offset.  We don't track ExtB
+            // prefix state here so prefixed long jumps may have a
+            // larger effective offset; for those rare cases, fall
+            // back to the pessimistic "could jump past bcLen".
+            if (i + 1 < bcLen) {
+                int8_t offset = static_cast<int8_t>(bc[i + 1]);
+                int tgt = static_cast<int>(i) + 2 + offset;
+                if (tgt > maxBranchTarget) maxBranchTarget = tgt;
+            } else {
+                maxBranchTarget = (int)bcLen;
+            }
         }
         i += (size_t)len;
         // Stop at first unconditional return if no branches point past us.
