@@ -853,16 +853,33 @@ coverage.**
     0xE5 ExtPushTemp (index 0-255 via operand byte)
   - 0xF2 ExtPopStoreTemp, 0xF5 ExtStoreTemp
 - `33c8acb7` PushFullBlock 0xF9 (bail to ExitBlockCreate; 3-byte)
+- `dfd4b454` PushArray 0xE7 (bail to ExitArrayCreate; chain
+  loop ExitArrayCreate handlers sync state.ip → instructionPointer_
+  when tier=1)
+- `2031d98a` PushThisContext 0x52 (bail to interp via
+  EXIT_ARITH_OVERFLOW; partial JIT — interp runs the rest of
+  the method)
+- `13c5ce48` 4 binary special selectors (0x69 /, 0x6A \\, 0x6B @,
+  0x6D //) routed through Phase 4 IC
+- `f3bd48ab` Remote temps 0xFB/0xFC/0xFD as bail-to-interp
+- `bc25a1d0` ExtA/ExtB prefix bytes — explicit first-pass
+  rejection (until prefix-state plumbing lands).  Removes the
+  per-byte fallthrough noise; one trace per rejected method.
+- `99f3ee62` Inline \\ (0x6A) and // (0x6D) — moved from Phase
+  4 IC to inline arith with floor-div sign-adjustment.
+- `bae7797d` Inline ExtPopStoreLitVar 0xF1 + ExtStoreLitVar 0xF4
+  (Association slot store, no write barrier — YG scavenge scans
+  all of old space).
+- `0xEC InlinedPrimitive` shipped earlier as a 2-byte no-op.
 
-Remaining unsupported (from sort 100K trace):
-- 0xE0/0xE1 ExtA/ExtB prefix bytes (modifies next bytecode's operand)
-- 0xEA/0xEB ExtSend/ExtSuperSend (needs IC site count change + ExtA/B
-  for full correctness; bail-to-chain attempt corrupts state without)
-- 0xF0/0xF1/0xF3/0xF4 ExtPopStoreRecv/LitVar/StoreRecv/LitVar
-  (need immutable-bit + association handling)
-- 0x6A `\\\\`, 0x6D `//` (floored integer div; needs sign-handling)
-- 0xEC InlinedPrimitive
-- 0x52 PushThisContext (needs context materialization)
+Remaining unsupported (eval-startup trace, 2026-05-18):
+- 0xE1 ExtendB / 0xE0 ExtendA prefix bytes (15 hits — methods
+  bailed by the first-pass guard).  Need full prefix-state
+  plumbing across pre-scan + emit.
+- 0xEA/0xEB ExtSend/ExtSuperSend (10 + 5 hits).  Naive
+  acceptance breaks snapshot startup with #do: DNU on
+  UndefinedObject class.  Behind opt-in flag
+  PHARO_T1_ACCEPT_EXTSEND=1 pending investigation.
 
 **Non-self-recursive inline-J2J still TODO** — iter attempted but
 state.literals update corrupted callee execution (PRIM-AT-BADIDX
