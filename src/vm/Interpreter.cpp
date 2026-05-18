@@ -17315,14 +17315,20 @@ void Interpreter::tryJITResumeInCaller() {
         case jit::ExitArithOverflow:
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
-            // Sync method_ from state.method when tier=1 — see comment
-            // at the matching ExitArithOverflow handler in
-            // tryJITActivation (~line 19977).  Both chain-loop sites
-            // need the sync because inline-J2J can leave method_ stale.
-            if (state.jitMethod && state.jitMethod->tier == 1
-                    && state.method.isObject()
-                    && state.method.rawBits() >= 0x10000) {
-                method_ = state.method;
+            // Sync method_ from state.jitMethod->compiledMethodOop on
+            // tier=1 bail.  state.method tracks the OUTERMOST method
+            // in the J2J chain (AsmjitT1.cpp ~2395) and doesn't
+            // reflect the currently-executing inner inline-J2J
+            // callee — state.jitMethod does.  Without this sync,
+            // bytecodes that read method_ (ExtSuperSend's
+            // methodClassOf, PushThisContext's frame walk) get the
+            // outer method's class and produce wrong dispatch.
+            if (state.jitMethod && state.jitMethod->tier == 1) {
+                Oop callee = Oop::fromRawBits(
+                    state.jitMethod->compiledMethodOop);
+                if (callee.isObject() && callee.rawBits() >= 0x10000) {
+                    method_ = callee;
+                }
             }
             inJITResume_ = false;
             return;
