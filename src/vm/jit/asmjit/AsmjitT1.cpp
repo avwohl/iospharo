@@ -260,7 +260,11 @@ size_t computeLiveLength(const uint8_t* bc, size_t bcLen) {
         }
         i += (size_t)len;
         // Stop at first unconditional return if no branches point past us.
-        if (SistaV1::isReturn(op) && (int)i > maxBranchTarget) {
+        // Includes block returns (0x5D BlockReturnNil, 0x5E BlockReturnTop)
+        // — block bodies typically end with one and the bytes past it are
+        // packed temp-name / decoration data, not real bytecodes.
+        if ((SistaV1::isReturn(op) || SistaV1::isBlockReturn(op))
+                && (int)i > maxBranchTarget) {
             return i;
         }
     }
@@ -392,6 +396,12 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (op == SistaV1::PushThisContext) continue;  // 0x52
         if (op >= SistaV1::ReturnReceiver
                 && op <= SistaV1::ReturnTop) continue; // 0x58..0x5C
+        // BlockReturnNil/BlockReturnTop 0x5D/0x5E — bail to interp
+        // (block returns involve frame walking + enclosingLevels
+        // semantics not worth inlining).  Methods/blocks that
+        // contain a block return get partial JIT coverage.
+        if (op == SistaV1::BlockReturnNil
+                || op == SistaV1::BlockReturnTop) continue;
         if (isPhase3ArithOp(op)) continue;            // 0x60..0x67
         if (isPhase3BitOp(op)) continue;              // 0x6E, 0x6F bitAnd:/bitOr:
         if (isPhase3MulOp(op)) continue;              // 0x68 *
@@ -1759,6 +1769,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // ip+sp and returns to interp's main loop, which executes the
     // 0x52 normally and runs the rest of the method in interp.
     if (op == SistaV1::PushThisContext) {
+        a.ldr(x5, ptr(x0, OFF_METHOD));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        return true;
+    }
+    // BlockReturnNil 0x5D / BlockReturnTop 0x5E: bail to interp.
+    // Block return involves frame walking, enclosingLevels (extA_),
+    // and jumpDist (extB_) — too complex to emit inline.  Interp
+    // handles it correctly; subsequent JIT code is unreachable
+    // anyway since block returns terminate the block body.
+    if (op == SistaV1::BlockReturnNil || op == SistaV1::BlockReturnTop) {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
         a.str(x5, ptr(x0, OFF_IP));
