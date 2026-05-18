@@ -776,6 +776,50 @@ or an activateMethod path from a non-instrumented entry.
 Next iteration: instrument tryJITActivation entry path to see what
 WHO is calling it for benchFib (caller selector + call site).
 
+**Iter 6 ROOT CAUSE 2026-05-17:** Found via post-compile IC dump.
+benchFib's JIT method compiles as **STUB** (isStubOnEntry=1,
+numICEntries=0, icBuffer=NULL).  Every call hits the stub's
+bail-on-entry, returns ExitSend with NO icDataPtr, interpreter
+handles via activateMethod, repeat.
+
+Bytecode of benchFib: `4c 20 62 c2 51 ed 0b 4c 51 61 81 4c 20 61
+81 60 51 60 5c ...`
+
+Opcode `0xed` at offset 5 is the SistaV1 long-conditional-jump
+(jumpIfFalse with 2-byte offset).  asmjit-T1's
+`allBytecodesSupported` only handles SHORT jumps (0xB0-0xC7) —
+long jumps (0xE8-0xEF range) fall through to `return false`.
+
+The opt-in `PHARO_ASMJIT_T1_ENABLE_JUMPS=1` (default OFF, despite
+comment claiming "default-on since 2026-05-16") enables short
+conditional jumps but NOT long jumps.  benchFib needs both.
+
+**The inline-J2J emit + chain-loop IC upgrade code is correct
+but unreachable** until asmjit-T1 supports more bytecodes.
+benchFib (and likely most methods with non-trivial control flow)
+compile as stubs.  The 0% catch rate isn't an inline-J2J bug;
+it's a JIT-coverage gap.
+
+**Path forward to ship inline-J2J on arm64:**
+
+Option A: Add 0xE8-0xEF long-jump support to asmjit-T1's
+`allBytecodesSupported` + `emitOne_arm64`.  Unblocks benchFib +
+many other methods.  Then inline-J2J's self-recursive path can
+finally fire.  Estimated: ~200 LoC for the jump emit + label
+fixup.
+
+Option B: Detect "method compiled as stub" path and skip inline-
+J2J optimization entirely (no benefit anyway).  Easy but doesn't
+ship the win.
+
+Option C: Make `PHARO_ASMJIT_T1_ENABLE_JUMPS=1` default-on AND
+extend it to handle 0xED long jumps.
+
+The deferred A6 "ship inline-J2J on arm64" goal therefore
+**depends on Option A** as a prerequisite.  The inline-J2J emit
+in tree (opt-in PHARO_T1_INLINE_J2J=1) is ready and will fire
+correctly once methods like benchFib actually compile.
+
 **Scaffold landed 2026-05-17 (`f81d61a0`, `078105ce`):**
 arm64 inline-J2J path wired up with per-bail counters, opt-in via
 `PHARO_T1_INLINE_J2J=1`.  Currently always bails (counts as

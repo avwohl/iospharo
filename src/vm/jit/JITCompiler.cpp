@@ -1588,6 +1588,48 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                                           interp_, compiledMethod);
         if (jm) {
             methodsCompiled_++;
+            // PHARO_T1_INLINE_J2J=1 debug: dump fib IC layout + bytecode post-compile
+            {
+                static const bool inlineJ2JDbg =
+                    std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+                if (inlineJ2JDbg) {
+                    std::string sel = interp_.memory().selectorOf(compiledMethod);
+                    if (sel.find("fib") != std::string::npos
+                        || sel.find("Fib") != std::string::npos) {
+                        fprintf(stderr, "[FIB-COMPILED-ASMJIT] sel=#%s jm=%p numIC=%u icBuf=%p stubOnEntry=%d\n",
+                            sel.c_str(), (void*)jm, jm->numICEntries,
+                            (void*)jm->icBuffer, (int)jm->isStubOnEntry);
+                        // Dump bytecode
+                        ObjectHeader* mh = compiledMethod.asObjectPtr();
+                        size_t nLits = interp_.memory().numLiteralsOf(compiledMethod);
+                        size_t litsBytes = (1 + nLits) * 8;
+                        size_t totalBytes = mh->byteSize();
+                        size_t bcLen = totalBytes > litsBytes ? totalBytes - litsBytes : 0;
+                        uint8_t* bcS = mh->bytes() + litsBytes;
+                        if (bcLen < 80) {
+                            std::string bcstr;
+                            for (size_t i = 0; i < bcLen; i++) {
+                                char buf[8];
+                                snprintf(buf, sizeof(buf), " %02x", bcS[i]);
+                                bcstr += buf;
+                            }
+                            fprintf(stderr, "  bc[%zu]:%s\n", bcLen, bcstr.c_str());
+                        }
+                        if (jm->icBuffer && jm->numICEntries > 0) {
+                            for (uint32_t s = 0; s < jm->numICEntries; s++) {
+                                uint64_t* site = reinterpret_cast<uint64_t*>(
+                                    reinterpret_cast<uint8_t*>(jm->icBuffer)
+                                    + s * jit::IC_BYTES_PER_SITE);
+                                fprintf(stderr, "  IC[%u] key=0x%llx meth=0x%llx extra=0x%llx\n",
+                                    s,
+                                    (unsigned long long)site[0],
+                                    (unsigned long long)site[1],
+                                    (unsigned long long)site[2]);
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             compilationsFailed_++;
         }
@@ -2794,6 +2836,35 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     // Register in method map
     methodMap_.insert(compiledMethod.rawBits(), jitMethod);
+
+    // PHARO_T1_INLINE_J2J=1 debug: dump benchFib's IC layout after compile
+    {
+        static const bool inlineJ2JDbg =
+            std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+        if (inlineJ2JDbg) {
+            std::string sel = interp_.memory().selectorOf(compiledMethod);
+            if (sel.find("fib") != std::string::npos
+                || sel.find("Fib") != std::string::npos) {
+                fprintf(stderr, "[JIT-FIB-COMPILED] sel=#%s jm=%p numICEntries=%u icBuffer=%p\n",
+                    sel.c_str(), (void*)jitMethod,
+                    jitMethod->numICEntries, (void*)jitMethod->icBuffer);
+                if (jitMethod->icBuffer && jitMethod->numICEntries > 0) {
+                    for (uint32_t s = 0; s < jitMethod->numICEntries; s++) {
+                        uint64_t* site = reinterpret_cast<uint64_t*>(
+                            reinterpret_cast<uint8_t*>(jitMethod->icBuffer)
+                            + s * jit::IC_BYTES_PER_SITE);
+                        if (site[0] || site[1] || site[2]) {
+                            fprintf(stderr, "  IC[%u] key=0x%llx meth=0x%llx extra=0x%llx\n",
+                                s,
+                                (unsigned long long)site[0],
+                                (unsigned long long)site[1],
+                                (unsigned long long)site[2]);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Ship per-bcOffset entry-state vector to runtime so tryResume can reject
     // register-reading (_N) entry offsets. Keyed by JITMethod* (GC-stable).

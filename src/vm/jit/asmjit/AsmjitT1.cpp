@@ -242,6 +242,19 @@ size_t g_condJumpRealCompiles = 0;
 bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
     const bool noSendsBisect = g_debug.t1NoSendsBisect;
     const int maxSendNArgs = g_debug.t1MaxSendNArgs;
+    // PHARO_T1_INLINE_J2J_TRACE_UNSUPPORTED: log unsupported byte for first
+    // N calls.  Helps identify why benchFib falls through to STUB compile.
+    static const bool traceUnsupp =
+        std::getenv("PHARO_T1_INLINE_J2J_TRACE_UNSUPP") != nullptr;
+    auto traceFail = [&](size_t at, uint8_t op, const char* why) {
+        if (traceUnsupp) {
+            static size_t n = 0;
+            if (n++ < 30) {
+                fprintf(stderr, "[T1-UNSUPPORTED #%zu] at=%zu op=0x%02x why=%s bcLen=%zu\n",
+                    n, at, op, why, bcLen);
+            }
+        }
+    };
     for (size_t i = 0; i < bcLen; i++) {
         uint8_t op = bc[i];
         if (op <= 0x0F) continue;                     // pushRecvVar 0..15
@@ -318,6 +331,7 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         // Anything else (jumps, ext-prefixes, pushLitVar,
         // pushThisContext, dup, blockReturn, popStoreRecv/Temp,
         // mul/div/bit ops, ext bytecodes E0+, etc.) → unsupported.
+        traceFail(i, op, "fallthrough-unsupported");
         return false;
     }
     return true;
@@ -2259,6 +2273,21 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     const uint8_t* bcReal = bc + emitSkip;
     size_t bcRealLen = (bcLen >= (size_t)emitSkip) ? (bcLen - emitSkip) : 0;
     bool real = (bcRealLen > 0) && allBytecodesSupported(bcReal, bcRealLen);
+    // PHARO_T1_INLINE_J2J_DUMP_BC=1: dump bytecode for failed compiles
+    if (!real && std::getenv("PHARO_T1_INLINE_J2J_DUMP_BC")) {
+        static size_t dumpN = 0;
+        if (dumpN < 30 && bcRealLen < 80) {
+            dumpN++;
+            std::string bcstr;
+            for (size_t i = 0; i < bcRealLen; i++) {
+                char buf[8];
+                snprintf(buf, sizeof(buf), " %02x", bcReal[i]);
+                bcstr += buf;
+            }
+            fprintf(stderr, "[T1-BC-DUMP #%zu] bcLen=%zu bc=%s\n",
+                dumpN, bcRealLen, bcstr.c_str());
+        }
+    }
     // PHARO_ASMJIT_T1_STUB_ONLY=1: kill switch — force every method to
     // the bail-on-entry stub regardless of bytecode support.  Used to
     // bisect Phase 2 emit bugs against the known-good Phase 1 behavior.
