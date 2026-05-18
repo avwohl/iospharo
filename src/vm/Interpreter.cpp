@@ -19188,9 +19188,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         jitJ2JStencilCalls_ += state.j2jTotalCalls;
         checkCountdown_ -= state.j2jTotalCalls * 10;
         Oop nil = memory_.nil();
+        // With splitPool, JIT saves are in the state slice; otherwise
+        // they're in j2jStack (same slice as chain loop's).
+        J2JSave* stateSaves = splitPool
+            ? &j2jPool_[j2jStateBase]
+            : j2jStack;
         for (int i = 0; i < state.j2jDepth; i++) {
             if (frameDepth_ >= StackOverflowLimit) break;
-            J2JSave& save = j2jStack[i];
+            J2JSave& save = stateSaves[i];
             jit::JITMethod* saveJM = save.jitMethod;
             if (!saveJM) {
                 // Half-materialized state — frameDepth_ has been
