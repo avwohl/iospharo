@@ -1611,20 +1611,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.sub(w3, w3, asmjit::Imm(1));
         a.str(w3, ptr(x0, OFF_J2J_DEPTH));
 
-        // Load save fields.  Layout (stencils.cpp:113):
+        // Load save fields with ldp pairs.  Layout (stencils.cpp:113):
         //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
         //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
-        a.ldr(x5, ptr(x4,  0));   // x5  = caller's JIT.sp
-        a.ldr(x6, ptr(x4,  8));   // x6  = caller's receiver
+        a.ldp(x5, x6, ptr(x4,  0));   // sp + receiver
         a.str(x6, ptr(x0, OFF_RECEIVER));
-        a.ldr(x6, ptr(x4, 16));   // tempBase
+        a.ldp(x6, x10, ptr(x4, 16));  // tempBase + ip
         a.str(x6, ptr(x0, OFF_TEMPBASE));
-        a.ldr(x6, ptr(x4, 24));   // ip (= caller's resume bytecode addr)
-        a.str(x6, ptr(x0, OFF_IP));
-        a.ldr(x7, ptr(x4, 32));   // x7  = caller's jitMethod
+        a.str(x10, ptr(x0, OFF_IP));
+        a.ldp(x7, x8, ptr(x4, 32));   // jitMethod + resumeAddr
         a.str(x7, ptr(x0, OFF_JITMETHOD));
-        a.ldr(x8, ptr(x4, 40));   // x8  = resumeAddr (tail-call target)
-        a.ldr(w9, ptr(x4, 48));   // w9  = sendArgCount
+        a.ldr(w9, ptr(x4, 48));       // sendArgCount
 
         // Derive method/literals/argCount from callerJM
         // (matches J2J_INLINE_RETURN_IMPL).
