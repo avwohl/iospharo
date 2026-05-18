@@ -70,6 +70,53 @@ extern "C" uint64_t g_inlineJ2J_bail_self = 0;  // calleeJM != callerJM
 extern "C" uint64_t g_inlineJ2J_dbg_caller_method = 0;
 extern "C" uint64_t g_inlineJ2J_dbg_callee_method = 0;
 extern "C" uint64_t g_inlineJ2J_dbg_extra         = 0;
+// Cross-method bisection counter + limit.  At runtime, bail when
+// g_xmethod_count > g_xmethod_max.  Limit set from
+// PHARO_T1_INLINE_J2J_XMETHOD_MAX env var (default UINT64_MAX = no limit).
+extern "C" uint64_t g_xmethod_count = 0;
+extern "C" uint64_t g_xmethod_max   = UINT64_MAX;
+
+// Helper called from cross-method emit (PHARO_T1_INLINE_J2J_XMETHOD_LOG=1).
+extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
+                                       uint64_t callerJM, uint64_t calleeCM,
+                                       uint64_t callerCM) {
+    static size_t logN = 0;
+    if (logN < 5) {
+        logN++;
+        uint64_t* s = (uint64_t*)state;
+        // Decode method header to get numLits/argCount/tempCount.
+        // methodHeader = SmI bits at methodObj.slot[0] (heap offset 8).
+        uint64_t calleeMH = *(uint64_t*)(calleeCM + 8);
+        uint64_t callerMH = *(uint64_t*)(callerCM + 8);
+        int calleeNumLits = (int)((calleeMH >> 3) & 0x7FFF);  // SmI: shift 3
+        int callerNumLits = (int)((callerMH >> 3) & 0x7FFF);
+        int calleeArgCount = (int)((calleeMH >> (3+15)) & 0x1F);
+        int callerArgCount = (int)((callerMH >> (3+15)) & 0x1F);
+        int calleeTempCount = (int)((calleeMH >> (3+15+5)) & 0x3F);
+        int callerTempCount = (int)((callerMH >> (3+15+5)) & 0x3F);
+        // First bytecode of callee
+        uint8_t* calleeBC = (uint8_t*)(calleeCM + 8 + (1 + calleeNumLits) * 8);
+        fprintf(stderr, "[XMETHOD #%zu] state=%p\n"
+                        "  callee CM=0x%llx JM=0x%llx numLits=%d argCount=%d tempCount=%d\n"
+                        "    bc[0..7]: %02x %02x %02x %02x %02x %02x %02x %02x\n"
+                        "  caller CM=0x%llx JM=0x%llx numLits=%d argCount=%d tempCount=%d\n"
+                        "  state.sp=0x%llx state.receiver=0x%llx state.literals=0x%llx\n"
+                        "  state.tempBase=0x%llx state.ip=0x%llx state.jitMethod=0x%llx\n"
+                        "  state.method=0x%llx state.argCount=%llu\n",
+                logN, (void*)state,
+                (unsigned long long)calleeCM, (unsigned long long)calleeJM,
+                calleeNumLits, calleeArgCount, calleeTempCount,
+                calleeBC[0], calleeBC[1], calleeBC[2], calleeBC[3],
+                calleeBC[4], calleeBC[5], calleeBC[6], calleeBC[7],
+                (unsigned long long)callerCM, (unsigned long long)callerJM,
+                callerNumLits, callerArgCount, callerTempCount,
+                (unsigned long long)s[0], (unsigned long long)s[1],
+                (unsigned long long)s[2], (unsigned long long)s[3],
+                (unsigned long long)s[6], (unsigned long long)s[7],
+                (unsigned long long)s[8], (unsigned long long)s[9]);
+    }
+    return 1;
+}
 extern "C" uint64_t g_inlineJ2J_dbg_ic_hits       = 0;  // count IC HIT events
 extern "C" uint64_t g_inlineJ2J_dbg_extra_no_bit60 = 0; // IC HIT with extra but no bit 60
 extern "C" uint64_t g_inlineJ2J_dbg_miss          = 0;  // count IC MISS events
@@ -2130,34 +2177,50 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
                 // CROSS-METHOD ATTEMPT (PHARO_T1_INLINE_J2J_XMETHOD=1 opt-in).
                 // Default OFF — known to corrupt state.  Opt-in for lldb
-                // debugging only.
+                // debugging only.  PHARO_T1_INLINE_J2J_XMETHOD_MAX=N
+                // bisection-limits the number of cross-method fires.
                 static const bool xmethod =
                     std::getenv("PHARO_T1_INLINE_J2J_XMETHOD") != nullptr;
+                static const int xmethodMaxInit = [](){
+                    if (auto v = std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_MAX")) {
+                        g_xmethod_max = (uint64_t)std::atoll(v);
+                    }
+                    return 0;
+                }();
+                (void)xmethodMaxInit;
                 asmjit::Label sameMethodSkipUpdate = a.new_label();
                 if (xmethod) {
-                    // Cross-method inline-J2J: state.jitMethod = calleeJM,
-                    // state.literals = calleeCM + 16, state.argCount = nArgs.
-                    // For self-recursive (callerCM == calleeCM), skip the
-                    // update (no-op).
-                    //
-                    // **KNOWN-BROKEN, 2026-05-18**: corrupts state in a way
-                    // not fixed by no-sends gate, nil-init temps, or other
-                    // narrowing.  Even with calleeJM.numICEntries == 0
-                    // gate, image-init code DNUs with PRIM-AT-BADIDX
-                    // (Dictionary used as Array index) or
-                    // CompiledMethod-as-selector.  Per-call state setup
-                    // is correct per lldb (state.jitMethod / .literals /
-                    // .argCount match callee values); the issue is in
-                    // some cross-call protocol interaction.  Needs
-                    // interactive lldb session to single-step through
-                    // the corruption.
+                    // Cross-method inline-J2J — gated by counter for
+                    // bisection.  PHARO_T1_INLINE_J2J_XMETHOD_MAX=N
+                    // limits the number of cross-method fires.
+                    // Above the limit, bail.  Helps narrow down which
+                    // specific cross-method call corrupts state.
                     a.cmp(x12, x13);
                     a.b_eq(sameMethodSkipUpdate);
+                    // Read counter, increment, check limit
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_count));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                    // Bail if count > xmethodMax (loaded as immediate)
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_max));
+                    a.ldr(x14, ptr(x14));
+                    a.cmp(x15, x14);
+                    a.b_hi(j2jBailSelf2);
+                    // Cross-method update:
                     a.str(x10, ptr(x0, OFF_JITMETHOD));
                     a.add(x14, x13, asmjit::Imm(16));
                     a.str(x14, ptr(x0, OFF_LITERALS));
                     a.mov(w14, asmjit::Imm(nArgs));
                     a.str(w14, ptr(x0, OFF_ARGCOUNT));
+                    static const bool xlog = false;  // diagnostic stub
+                    // (PHARO_T1_INLINE_J2J_XMETHOD_LOG removed; the
+                    // log helper jit_rt_xmethod_log was used to identify
+                    // that the first xmethod-fired call corrupts state.
+                    // Cross-method shipping still blocked on root-cause
+                    // of how callee inner-bail + chain-loop ExitBlockCreate
+                    // resume interact wrongly.)
+                    (void)xlog;
                     a.bind(sameMethodSkipUpdate);
                 } else {
                     a.cmp(x12, x13);
