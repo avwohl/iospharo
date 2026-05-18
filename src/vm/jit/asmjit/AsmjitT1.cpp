@@ -355,6 +355,23 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             i += 1;
             continue;
         }
+        // Extended push/store variants — all 2-byte: opcode + 1-byte index.
+        // ExtPushRecvVar 0xE2, ExtPushLitVar 0xE3, ExtPushLitConst 0xE4,
+        // ExtPushTemp 0xE5, ExtPopStoreTemp 0xF2, ExtStoreTemp 0xF5.
+        // (ExtPopStoreRecv/LitVar/StoreRecv/LitVar deferred — need
+        // immutable-bit + association handling like the short forms.)
+        if (op == SistaV1::ExtPushRecvVar || op == SistaV1::ExtPushLitVar
+                || op == SistaV1::ExtPushLitConst
+                || op == SistaV1::ExtPushTemp
+                || op == SistaV1::ExtPopStoreTemp
+                || op == SistaV1::ExtStoreTemp) {
+            if (i + 1 >= bcLen) {
+                traceFail(i, op, "ext-bytecode-truncated");
+                return false;
+            }
+            i += 1;
+            continue;
+        }
         // Long jumps 0xED/0xEE/0xEF: opcode + 1-byte signed offset.
         // Target = (i + 2) + offset.  No ExtA/ExtB prefix support yet.
         // Gated on the same t1EnableJumps knob as short jumps.
@@ -2465,6 +2482,70 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.str(a64::x1, a64::ptr(a64::x2));
                 a.add(a64::x2, a64::x2, asmjit::Imm(8));
                 a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                a.bind(bcLabels[globalIdx + 1]);
+                i++;
+                continue;
+            }
+            // Extended push/store with 1-byte index operand.
+            //   ExtPushRecvVar 0xE2:   push recv.slot[index]
+            //   ExtPushLitVar 0xE3:    push literals[index].slot[1] (assoc val)
+            //   ExtPushLitConst 0xE4:  push literals[index]
+            //   ExtPushTemp 0xE5:      push tempBase[index]
+            //   ExtPopStoreTemp 0xF2:  pop, store tempBase[index]
+            //   ExtStoreTemp 0xF5:     store TOS (no pop) to tempBase[index]
+            // ExtA/ExtB prefixes not yet supported — index is just the
+            // single operand byte, so this covers index 0-255.  For
+            // ExtPopStoreRecv/LitVar/StoreRecv/LitVar (which need the
+            // immutable-bit check + association handling) — deferred.
+            if (op == SistaV1::ExtPushRecvVar
+                    || op == SistaV1::ExtPushLitVar
+                    || op == SistaV1::ExtPushLitConst
+                    || op == SistaV1::ExtPushTemp
+                    || op == SistaV1::ExtPopStoreTemp
+                    || op == SistaV1::ExtStoreTemp) {
+                int idx = bcReal[i + 1];
+                if (op == SistaV1::ExtPushRecvVar) {
+                    a.ldr(a64::x1, a64::ptr(a64::x0, OFF_RECEIVER));
+                    a.ldr(a64::x1, a64::ptr(a64::x1, OBJ_SLOT_0 + idx * 8));
+                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.str(a64::x1, a64::ptr(a64::x2));
+                    a.add(a64::x2, a64::x2, asmjit::Imm(8));
+                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                } else if (op == SistaV1::ExtPushLitConst) {
+                    a.ldr(a64::x1, a64::ptr(a64::x0, OFF_LITERALS));
+                    a.ldr(a64::x1, a64::ptr(a64::x1, idx * 8));
+                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.str(a64::x1, a64::ptr(a64::x2));
+                    a.add(a64::x2, a64::x2, asmjit::Imm(8));
+                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                } else if (op == SistaV1::ExtPushLitVar) {
+                    a.ldr(a64::x1, a64::ptr(a64::x0, OFF_LITERALS));
+                    a.ldr(a64::x1, a64::ptr(a64::x1, idx * 8));
+                    a.ldr(a64::x1, a64::ptr(a64::x1, OBJ_SLOT_0 + 8));
+                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.str(a64::x1, a64::ptr(a64::x2));
+                    a.add(a64::x2, a64::x2, asmjit::Imm(8));
+                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                } else if (op == SistaV1::ExtPushTemp) {
+                    a.ldr(a64::x1, a64::ptr(a64::x0, OFF_TEMPBASE));
+                    a.ldr(a64::x1, a64::ptr(a64::x1, idx * 8));
+                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.str(a64::x1, a64::ptr(a64::x2));
+                    a.add(a64::x2, a64::x2, asmjit::Imm(8));
+                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                } else if (op == SistaV1::ExtPopStoreTemp) {
+                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.sub(a64::x2, a64::x2, asmjit::Imm(8));
+                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.ldr(a64::x1, a64::ptr(a64::x2));
+                    a.ldr(a64::x4, a64::ptr(a64::x0, OFF_TEMPBASE));
+                    a.str(a64::x1, a64::ptr(a64::x4, idx * 8));
+                } else /* ExtStoreTemp */ {
+                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
+                    a.ldr(a64::x4, a64::ptr(a64::x0, OFF_TEMPBASE));
+                    a.str(a64::x1, a64::ptr(a64::x4, idx * 8));
+                }
                 a.bind(bcLabels[globalIdx + 1]);
                 i++;
                 continue;
