@@ -950,6 +950,47 @@ bcOffset (or skip the assignment) to keep IP consistent with
 tryResume's actual entry point.  ExitArrayCreate has the same
 pattern (line 19926 area).
 
+Tested 2026-05-18: `state.ip = methObj->bytes() + (1+numLits)*8
++ bcOffset` — doesn't fix corruption.  Default still works.
+So state.ip is not (alone) the bug.
+
+**Iter N+2 (2026-05-18) found j2jPool_ COLLISION:**
+
+Interpreter.cpp:16574 + 18712 + 18517: `rj2jSaves` and `j2jStack`
+both point to `&j2jPool_[base]` where `base = j2jPoolCursor_`.
+The JIT's `state.j2jSaveCursor` is initialized to the same base
+(Interpreter.cpp:18452).
+
+So JIT inline-J2J pushes saves to `j2jPool_[base + 0]`, advancing
+`state.j2jSaveCursor`.  Chain loop pushes `rj2jSaves[rj2jDepth=0]`
+to `j2jPool_[base + 0]` — **SAME MEMORY ADDRESS**.  Collision.
+
+When asmjit-T1 cross-method inline pushes save_A, then callee
+chain-breaks (e.g., PushFullBlock → ExitBlockCreate), and then
+callee's inner send fires that chain loop handles via J2JCall
+path — the chain loop writes its save to the same slot as save_A.
+When callee returns via prelude, prelude pops the OVERWRITTEN
+save (= chain loop's data, not save_A).  Wrong state restored.
+
+Tested fix: `int j2jDepth = state.j2jDepth;` (chain loop starts
+its index after JIT's pushed entries).  BROKE DEFAULT.  Reason
+TBD — likely state.j2jDepth has non-zero values from prior JIT
+calls that aren't quite right for this entry, OR materialize
+needs to be adjusted to only iterate chain-loop's range
+(state.j2jDepth..rj2jDepth-1), not all 0..rj2jDepth-1.
+
+The proper fix is one of:
+1. Separate pool slices for rj2jSaves and state.j2jSaveCursor
+   (memory layout change in Interpreter::tryJITActivation init)
+2. Make chain loop track state.j2jDepth as offset for index
+   (more pervasive change to push/pop/materialize)
+3. Disable cross-method inline-J2J when chain-loop activity is
+   expected (heuristic)
+
+Option 1 is cleanest.  Requires j2jPool_ layout change:
+asmjit-T1 cross-method gets first M slots; chain loop gets
+slots M+.
+
 **Diagnostic flags:**
 - PHARO_T1_INLINE_J2J_XMETHOD=1: enable cross-method (broken)
 - PHARO_T1_INLINE_J2J_XMETHOD_MAX=N: bisect-limit fires
