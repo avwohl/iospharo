@@ -2192,10 +2192,33 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x14, ptr(x0, OFF_IP));
 
                 // sp = tempBase + tempCount*8 (tempCount from JM offset 35)
+                // Initialize extra temps (beyond args) to nil — mirrors
+                // stencils.cpp:1867-1873 (otherwise garbage from caller's
+                // stack leaks into callee's temp slots).
                 a.ldrb(w15, ptr(x10, 35));       // tempCount
-                a.lsl(w15, w15, asmjit::Imm(3));
-                a.add(x13, x13, x15);            // new sp
-                a.str(x13, ptr(x0, OFF_SP));
+                // For self-recursive case, nArgs (compile-time) usually
+                // equals callee.argCount (= callee.tempCount for arg-only
+                // methods).  But for cross-method case, callee.tempCount
+                // may exceed nArgs.  Initialize slots [nArgs..tempCount).
+                {
+                    asmjit::Label initLoop = a.new_label();
+                    asmjit::Label initDone = a.new_label();
+                    // x14 = tempBase + nArgs*8 (= first uninit slot)
+                    a.add(x14, x13, asmjit::Imm(nArgs * 8));
+                    // x15 was tempCount, shift to bytes
+                    a.lsl(w15, w15, asmjit::Imm(3));
+                    a.add(x15, x13, x15);  // x15 = end of temps
+                    a.mov(x4, asmjit::Imm(nilBits));
+                    a.bind(initLoop);
+                    a.cmp(x14, x15);
+                    a.b_hs(initDone);
+                    a.str(x4, ptr(x14));
+                    a.add(x14, x14, asmjit::Imm(8));
+                    a.b(initLoop);
+                    a.bind(initDone);
+                    // x15 now holds new sp (= tempBase + tempCount*8)
+                    a.str(x15, ptr(x0, OFF_SP));
+                }
 
                 // Bump hits counter
                 emitIncCounter((uint64_t)&g_inlineJ2J_hits);
