@@ -18512,12 +18512,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
     // J2J stencil-to-stencil save stack — carved from shared j2jPool_ to avoid
     // per-call stack allocation (was 18KB at depth 256, now zero stack cost).
+    //
+    // SPLIT POOL (PHARO_T1_J2J_SPLIT_POOL=1, default OFF until
+    // stencil + materialize coordination complete): chain loop's
+    // j2jStack at [j2jPoolBase..j2jPoolEnd); JIT's
+    // state.j2jSaveCursor at [j2jStateBase..j2jStateEnd).  When off,
+    // both share same base (current behavior).
+    static const bool splitPool =
+        std::getenv("PHARO_T1_J2J_SPLIT_POOL") != nullptr;
     int j2jPoolBase = j2jPoolCursor_;
     int j2jPoolEnd = std::min(j2jPoolBase + J2JSlotPerEntry, MaxJ2JPoolSize);
-    int j2jStateBase = j2jPoolBase;        // alias for slot-rename consistency
-    int j2jStateEnd  = j2jPoolEnd;
+    int j2jStateBase = splitPool ? j2jPoolEnd : j2jPoolBase;
+    int j2jStateEnd  = splitPool
+        ? std::min(j2jStateBase + J2JSlotPerEntry, MaxJ2JPoolSize)
+        : j2jPoolEnd;
     J2JSave* j2jStack = &j2jPool_[j2jPoolBase];
-    j2jPoolCursor_ = j2jPoolEnd;  // Reserve our slice; recursive entries continue after
+    j2jPoolCursor_ = j2jStateEnd;  // Reserve our slice; recursive entries continue after
     struct J2JPoolGuard {
         int& cursor; int base;
         ~J2JPoolGuard() { cursor = base; }
