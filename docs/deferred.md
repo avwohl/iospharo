@@ -843,6 +843,33 @@ Opt-out: PHARO_T1_NO_INLINE_J2J=1 (also PHARO_ASMJIT_T1_NO_JUMPS=1).
 Opt-in PHARO_T1_INLINE_J2J=1 still enables per-bail debug counters
 + traces for further investigation.
 
+**Iter 8+ (2026-05-18): more bytecodes shipped to broaden compile
+coverage.**
+
+- `c63c8f72` PushInteger 0xE8 (literal SmI push, NN < -1 or > 2)
+- `e6aaa96f` PushCharacter 0xE9 (literal Character push)
+- `c251d485` Extended push/store family:
+  - 0xE2 ExtPushRecvVar, 0xE3 ExtPushLitVar, 0xE4 ExtPushLitConst,
+    0xE5 ExtPushTemp (index 0-255 via operand byte)
+  - 0xF2 ExtPopStoreTemp, 0xF5 ExtStoreTemp
+- `33c8acb7` PushFullBlock 0xF9 (bail to ExitBlockCreate; 3-byte)
+
+Remaining unsupported (from sort 100K trace):
+- 0xE0/0xE1 ExtA/ExtB prefix bytes (modifies next bytecode's operand)
+- 0xEA/0xEB ExtSend/ExtSuperSend (needs IC site count change + ExtA/B
+  for full correctness; bail-to-chain attempt corrupts state without)
+- 0xF0/0xF1/0xF3/0xF4 ExtPopStoreRecv/LitVar/StoreRecv/LitVar
+  (need immutable-bit + association handling)
+- 0x6A `\\\\`, 0x6D `//` (floored integer div; needs sign-handling)
+- 0xEC InlinedPrimitive
+- 0x52 PushThisContext (needs context materialization)
+
+**Non-self-recursive inline-J2J still TODO** — iter attempted but
+state.literals update corrupted callee execution (PRIM-AT-BADIDX
++ `#do: was sent to nil` after a few inline-J2J levels deep);
+needs lldb to trace what state field is being mishandled.  The
+36% bail_self rate remains unaddressed.
+
 **Scaffold landed 2026-05-17 (`f81d61a0`, `078105ce`):**
 arm64 inline-J2J path wired up with per-bail counters, opt-in via
 `PHARO_T1_INLINE_J2J=1`.  Currently always bails (counts as
