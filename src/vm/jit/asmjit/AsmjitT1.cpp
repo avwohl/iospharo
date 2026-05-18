@@ -104,6 +104,7 @@ constexpr int EXIT_SEND            = 2;
 constexpr int EXIT_ARITH_OVERFLOW  = 6;
 constexpr int EXIT_SEND_CACHED     = 7;
 constexpr int EXIT_BLOCK_CREATE    = 8;
+constexpr int EXIT_ARRAY_CREATE    = 9;
 constexpr int EXIT_MUST_BOOL       = 12;
 
 // nArgs per special selector 0x70..0x7F (index = op - 0x70).
@@ -333,6 +334,18 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             if (op > SistaV1::ShortJumpLast && (size_t)(i + 1) >= bcLen) {
                 return false;
             }
+            continue;
+        }
+        // InlinedPrimitive 0xEC: 2-byte no-op for the interpreter
+        // (per JITCompiler.cpp:395+).  Sista marks an inlined prim;
+        // bytecodes that the inlined version replaced execute normally
+        // around it.  Just skip the operand byte.
+        if (op == SistaV1::InlinedPrimitive) {
+            if (i + 1 >= bcLen) {
+                traceFail(i, op, "inlined-prim-truncated");
+                return false;
+            }
+            i += 1;
             continue;
         }
         // PushInteger 0xE8: opcode + signed 8-bit immediate.  Pushes
@@ -2474,6 +2487,13 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             uint8_t op = bcReal[i];
             a.bind(bcLabels[globalIdx]);
 
+            // InlinedPrimitive 0xEC: 2-byte no-op.  Bind operand label
+            // and skip.
+            if (op == SistaV1::InlinedPrimitive) {
+                a.bind(bcLabels[globalIdx + 1]);
+                i++;
+                continue;
+            }
             // PushInteger 0xE8: push SmI((int8_t)operand) onto sp.
             if (op == SistaV1::PushInteger) {
                 int8_t imm = static_cast<int8_t>(bcReal[i + 1]);
