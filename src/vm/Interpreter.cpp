@@ -19817,6 +19817,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
+            // Sync C++ globals from state when J2J chain active (asmjit-T1
+            // cross-method inline doesn't update C++ globals; chain loop
+            // helpers like createFullBlockWithLiteral read them).
+            if (state.j2jDepth > 0) {
+                receiver_ = state.receiver;
+                framePointer_ = state.tempBase - 1;
+                method_ = state.method;
+                homeMethod_ = state.method;
+            }
+
             // Extract block parameters from cachedTarget
             uint64_t packed = state.cachedTarget.rawBits();
             int litIndex = static_cast<int>(packed & 0xFFFF);
@@ -19836,19 +19846,30 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             uint32_t bcOffset = computeCurrentBCOffset();
             if (bcOffset == UINT32_MAX) return true;
 
-            // Re-setup JIT state from current interpreter state
-            state.sp = stackPointer_;
-            state.receiver = receiver_;
+            // Re-setup JIT state for resume.  IMPORTANT for cross-method
+            // inline-J2J (asmjit-T1 xmethod, 2026-05-18): C++ globals
+            // (receiver_, framePointer_) are NOT updated when JIT
+            // directly transitions to a non-caller method via inline-J2J.
+            // Use state.* directly when J2J chain is active; otherwise
+            // refresh from C++ globals as before.
             methObj = method.asObjectPtr();
             state.literals = methObj->slots() + 1;
-            state.tempBase = framePointer_ + 1;
+            if (state.j2jDepth > 0) {
+                // J2J chain active — state.sp/receiver/tempBase/method/
+                // argCount already correctly callee's from JIT cross-
+                // method emit.  Don't overwrite with caller's C++ globals.
+            } else {
+                state.sp = stackPointer_;
+                state.receiver = receiver_;
+                state.tempBase = framePointer_ + 1;
+                state.method = method;
+                state.argCount = argCount;
+            }
             {
                 Oop hdr = methObj->slots()[0];
                 int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
                 state.ip = methObj->bytes() + (1 + numLits) * 8;
             }
-            state.method = method;
-            state.argCount = argCount;
             state.icDataPtr = nullptr;
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
@@ -19894,19 +19915,30 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             uint32_t bcOffset = computeCurrentBCOffset();
             if (bcOffset == UINT32_MAX) return true;
 
-            // Re-setup JIT state from current interpreter state
-            state.sp = stackPointer_;
-            state.receiver = receiver_;
+            // Re-setup JIT state for resume.  IMPORTANT for cross-method
+            // inline-J2J (asmjit-T1 xmethod, 2026-05-18): C++ globals
+            // (receiver_, framePointer_) are NOT updated when JIT
+            // directly transitions to a non-caller method via inline-J2J.
+            // Use state.* directly when J2J chain is active; otherwise
+            // refresh from C++ globals as before.
             methObj = method.asObjectPtr();
             state.literals = methObj->slots() + 1;
-            state.tempBase = framePointer_ + 1;
+            if (state.j2jDepth > 0) {
+                // J2J chain active — state.sp/receiver/tempBase/method/
+                // argCount already correctly callee's from JIT cross-
+                // method emit.  Don't overwrite with caller's C++ globals.
+            } else {
+                state.sp = stackPointer_;
+                state.receiver = receiver_;
+                state.tempBase = framePointer_ + 1;
+                state.method = method;
+                state.argCount = argCount;
+            }
             {
                 Oop hdr = methObj->slots()[0];
                 int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
                 state.ip = methObj->bytes() + (1 + numLits) * 8;
             }
-            state.method = method;
-            state.argCount = argCount;
             state.icDataPtr = nullptr;
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
