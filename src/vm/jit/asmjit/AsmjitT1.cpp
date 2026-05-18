@@ -313,6 +313,20 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             }
         }
     };
+    // First pass: reject the whole method if it contains an ExtA/ExtB
+    // prefix byte.  Our emit for prefix-modifiable bytecodes
+    // (ExtPushLitConst, ExtPushLitVar, ExtPushTemp, ExtPopStoreRecv,
+    // etc.) uses the 8-bit operand directly; a preceding ExtA/B would
+    // extend the index but we don't honor the extension.  Result is
+    // a wrong literal/temp/var index -> wrong method/value accessed.
+    // Until prefix support lands, methods with ExtA/B fall back to
+    // stub compile.
+    for (size_t i = 0; i < bcLen; i++) {
+        if (bc[i] == SistaV1::ExtendA || bc[i] == SistaV1::ExtendB) {
+            traceFail(i, bc[i], "ext-prefix-not-yet-supported");
+            return false;
+        }
+    }
     for (size_t i = 0; i < bcLen; i++) {
         uint8_t op = bc[i];
         if (op <= 0x0F) continue;                     // pushRecvVar 0..15
@@ -468,6 +482,24 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
                 return false;
             }
             i += 2;
+            continue;
+        }
+        // ExtSend 0xEA / ExtSuperSend 0xEB: 2-byte sends.  Even
+        // with the first-pass ExtA/ExtB rejection, ExtSend
+        // acceptance breaks some methods (DNU cascade in snapshot
+        // error path).  Investigation pending — for now stay opt-in.
+        if (op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend) {
+            static const bool acceptExtSend =
+                std::getenv("PHARO_T1_ACCEPT_EXTSEND") != nullptr;
+            if (!acceptExtSend) {
+                traceFail(i, op, "ext-send-disabled-pending-investigation");
+                return false;
+            }
+            if (i + 1 >= bcLen) {
+                traceFail(i, op, "ext-send-truncated");
+                return false;
+            }
+            i += 1;
             continue;
         }
         // Extended push/store variants — all 2-byte: opcode + 1-byte index.
@@ -2720,6 +2752,23 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                       asmjit::Imm(bcOffsetBase + globalIdx));
                 a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
                 a.mov(a64::w3, Imm(EXIT_ARRAY_CREATE));
+                a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                a.ret(a64::x30);
+                a.bind(bcLabels[globalIdx + 1]);
+                i += 1;
+                continue;
+            }
+            // ExtSend 0xEA / ExtSuperSend 0xEB: 2-byte send.  Pre-scan
+            // first pass rejected any method with ExtA/ExtB, so we
+            // know this is naked (interp will use extA_=extB_=0).
+            // Bail to interp; chain loop returns, interp dispatches
+            // the send normally and continues the rest of the method.
+            if (op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend) {
+                a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
+                a.add(a64::x5, a64::x5,
+                      asmjit::Imm(bcOffsetBase + globalIdx));
+                a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+                a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
                 a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
                 a.ret(a64::x30);
                 a.bind(bcLabels[globalIdx + 1]);
