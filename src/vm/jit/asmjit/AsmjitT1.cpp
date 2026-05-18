@@ -2131,21 +2131,29 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     std::getenv("PHARO_T1_INLINE_J2J_XMETHOD") != nullptr;
                 asmjit::Label sameMethodSkipUpdate = a.new_label();
                 if (xmethod) {
+                    // Cross-method inline-J2J: state.jitMethod = calleeJM,
+                    // state.literals = calleeCM + 16, state.argCount = nArgs.
+                    // For self-recursive (callerCM == calleeCM), skip the
+                    // update (no-op).
+                    //
+                    // **KNOWN-BROKEN, 2026-05-18**: corrupts state in a way
+                    // not fixed by no-sends gate, nil-init temps, or other
+                    // narrowing.  Even with calleeJM.numICEntries == 0
+                    // gate, image-init code DNUs with PRIM-AT-BADIDX
+                    // (Dictionary used as Array index) or
+                    // CompiledMethod-as-selector.  Per-call state setup
+                    // is correct per lldb (state.jitMethod / .literals /
+                    // .argCount match callee values); the issue is in
+                    // some cross-call protocol interaction.  Needs
+                    // interactive lldb session to single-step through
+                    // the corruption.
                     a.cmp(x12, x13);
                     a.b_eq(sameMethodSkipUpdate);
-                    // Cross-method update:
                     a.str(x10, ptr(x0, OFF_JITMETHOD));
                     a.add(x14, x13, asmjit::Imm(16));
                     a.str(x14, ptr(x0, OFF_LITERALS));
                     a.mov(w14, asmjit::Imm(nArgs));
                     a.str(w14, ptr(x0, OFF_ARGCOUNT));
-                    // PHARO_T1_INLINE_J2J_XMETHOD_BRK=1: brk right after
-                    // the update so lldb can inspect state.
-                    static const bool xbrk =
-                        std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_BRK") != nullptr;
-                    if (xbrk) {
-                        a.brk(asmjit::Imm(0xCAFE));
-                    }
                     a.bind(sameMethodSkipUpdate);
                 } else {
                     a.cmp(x12, x13);
