@@ -496,17 +496,21 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         // acceptance breaks some methods (DNU cascade in snapshot
         // error path).  Investigation pending — for now stay opt-in.
         if (op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend) {
-            // ExtSend 0xEA is safe; ExtSuperSend 0xEB breaks the
-            // snapshot startup with a #do: DNU on UndefinedObject
-            // class (root cause unknown, probably super-send needing
-            // methodClass that the bail doesn't restore).
+            // ExtSend 0xEA is safe; ExtSuperSend 0xEB needs further
+            // investigation (super-send needs methodClass and the
+            // bail may need extra state restore).  Opt-in flag
+            // PHARO_T1_ACCEPT_EXTSUPERSEND=1 to test.
             //
             // Naked-only (pre-scan first pass rejects methods with
             // ExtA/ExtB prefix bytes, so selectorIndex fits in 5 bits
             // and numArgs in 3 bits — both within unprefixed range).
             if (op == SistaV1::ExtSuperSend) {
-                traceFail(i, op, "ext-super-send-disabled-pending-investigation");
-                return false;
+                static const bool acceptExtSuper =
+                    std::getenv("PHARO_T1_ACCEPT_EXTSUPERSEND") != nullptr;
+                if (!acceptExtSuper) {
+                    traceFail(i, op, "ext-super-send-disabled");
+                    return false;
+                }
             }
             if (i + 1 >= bcLen) {
                 traceFail(i, op, "ext-send-truncated");
