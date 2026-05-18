@@ -870,6 +870,46 @@ state.literals update corrupted callee execution (PRIM-AT-BADIDX
 needs lldb to trace what state field is being mishandled.  The
 36% bail_self rate remains unaddressed.
 
+**Cross-method investigation 2026-05-18 (commits 848be634,
+b9730279, 06837bdb, d2475452):**
+
+Found partial root cause via bisection.  PHARO_T1_INLINE_J2J_XMETHOD=1
+opt-in gate enables cross-method emit; bisection helper
+PHARO_T1_INLINE_J2J_XMETHOD_MAX=N counter-limits fires.
+
+Even MAX=1 (single cross-method fire) corrupts state during
+image init.  Logged that fire's state values via C helper
+(jit_rt_xmethod_log):
+- callee CM=0x30033ae08 JM=... numLits=3 argCount=8 tempCount=16
+- caller CM=0x30033a940 JM=... (same shape!)
+- callee bc[0..7]: 40 f9 00 00 7b d8 40 5c
+  = PushTemp 0, PushFullBlock <block>, special-send sel-11,
+    Pop, PushTemp 0, ReturnTop
+- state.literals correctly set to calleeCM+16 by xmethod emit
+
+Partial fix shipped (commit `b9730279`): chain loop's
+ExitBlockCreate / ExitArrayCreate handlers now sync C++ globals
+(receiver_, framePointer_, method_) from state when J2J chain
+active (state.j2jDepth > 0), AND skip the state-overwrite-from-
+globals in the resume re-setup.  Correct in principle but doesn't
+fully fix corruption.
+
+Tried gates that didn't help:
+- callee.numICEntries == 0 (no inner sends): still corrupts
+- callee.argCount == nArgs (correct arity): still corrupts
+
+Remaining bug: when callee bails to chain loop via PushFullBlock
+(ExitBlockCreate), something in the resume protocol still
+mishandles callee's state.  Needs lldb single-step through
+`createFullBlockWithLiteral` + `tryResume` to find which field
+becomes wrong and where.
+
+**Diagnostic flags:**
+- PHARO_T1_INLINE_J2J_XMETHOD=1: enable cross-method (broken)
+- PHARO_T1_INLINE_J2J_XMETHOD_MAX=N: bisect-limit fires
+- PHARO_T1_INLINE_J2J_XMETHOD_BRK=1: brk at xmethod for lldb
+- PHARO_T1_INLINE_J2J_XMETHOD_LOG=1: printf state at xmethod
+
 **Iter 11 (2026-05-18): added InlinedPrimitive 0xEC + ext-recv
 store family (`2f5823ff`, `888168c4`).**  Removed last common
 unsupported simple bytecodes.
