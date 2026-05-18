@@ -925,6 +925,31 @@ without checking IP consistency, OR my xmethod return prelude
 correctly restores state but C++ method_ gets stale-updated
 afterwards.
 
+**Iter N+1 (2026-05-18) suspect: `state.ip` set to method-START
+in ExitBlockCreate resume path:**
+
+Interpreter.cpp:19871 (ExitBlockCreate handler):
+```
+state.ip = methObj->bytes() + (1 + numLits) * 8;
+```
+
+This sets state.ip to method START, not the resume offset
+(post-PushFullBlock = bcOffset).  tryResume runs JIT at
+codeOffset corresponding to bcOffset, but state.ip says method
+start.  Inconsistency.
+
+JIT code mostly doesn't read state.ip mid-execution (only on
+bail-out), so this might be benign in the JIT phase.  But if
+the callee subsequently bails to chain loop, state.ip = method
+start, and chain loop's prefix sets `instructionPointer_ = state.ip
+= method start`.  Then bytecode dispatch at "method start" with
+method_ = callee's CM reads bytecode at the wrong offset.
+
+Worth testing: change ExitBlockCreate to set state.ip from
+bcOffset (or skip the assignment) to keep IP consistent with
+tryResume's actual entry point.  ExitArrayCreate has the same
+pattern (line 19926 area).
+
 **Diagnostic flags:**
 - PHARO_T1_INLINE_J2J_XMETHOD=1: enable cross-method (broken)
 - PHARO_T1_INLINE_J2J_XMETHOD_MAX=N: bisect-limit fires
