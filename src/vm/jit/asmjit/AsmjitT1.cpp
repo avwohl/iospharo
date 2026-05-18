@@ -2191,8 +2191,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 asmjit::Label sameMethodSkipUpdate = a.new_label();
                 if (xmethod) {
                     // Cross-method inline-J2J — counter-gated for
-                    // bisection.  PHARO_T1_INLINE_J2J_XMETHOD_MAX=N
-                    // limits the number of cross-method fires.
+                    // bisection (PHARO_T1_INLINE_J2J_XMETHOD_MAX=N).
+                    // Multiple narrowing gates tried (no-sends, argCount-
+                    // match) — none fix the underlying state-corruption
+                    // bug.  Root cause likely in chain-loop resume path
+                    // for ExitBlockCreate / ExitArrayCreate (which my
+                    // earlier `b9730279` partial fix addresses) plus
+                    // something else still unidentified.  Needs lldb.
                     a.cmp(x12, x13);
                     a.b_eq(sameMethodSkipUpdate);
                     a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_count));
