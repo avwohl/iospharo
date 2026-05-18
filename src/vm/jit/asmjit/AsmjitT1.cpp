@@ -2139,6 +2139,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(x14, ptr(x0, OFF_LITERALS));
                     a.mov(w14, asmjit::Imm(nArgs));
                     a.str(w14, ptr(x0, OFF_ARGCOUNT));
+                    // PHARO_T1_INLINE_J2J_XMETHOD_BRK=1: brk right after
+                    // the update so lldb can inspect state.
+                    static const bool xbrk =
+                        std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_BRK") != nullptr;
+                    if (xbrk) {
+                        a.brk(asmjit::Imm(0xCAFE));
+                    }
                     a.bind(sameMethodSkipUpdate);
                 } else {
                     a.cmp(x12, x13);
@@ -2592,18 +2599,20 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             //   ExtPushLitVar 0xE3:    push literals[index].slot[1] (assoc val)
             //   ExtPushLitConst 0xE4:  push literals[index]
             //   ExtPushTemp 0xE5:      push tempBase[index]
+            //   ExtPopStoreRecv 0xF0:  pop, store recv.slot[index] (immut check)
             //   ExtPopStoreTemp 0xF2:  pop, store tempBase[index]
+            //   ExtStoreRecv 0xF3:     store TOS to recv.slot[index] (immut check)
             //   ExtStoreTemp 0xF5:     store TOS (no pop) to tempBase[index]
             // ExtA/ExtB prefixes not yet supported — index is just the
-            // single operand byte, so this covers index 0-255.  For
-            // ExtPopStoreRecv/LitVar/StoreRecv/LitVar (which need the
-            // immutable-bit check + association handling) — deferred.
+            // single operand byte, so this covers index 0-255.
             if (op == SistaV1::ExtPushRecvVar
                     || op == SistaV1::ExtPushLitVar
                     || op == SistaV1::ExtPushLitConst
                     || op == SistaV1::ExtPushTemp
                     || op == SistaV1::ExtPopStoreTemp
-                    || op == SistaV1::ExtStoreTemp) {
+                    || op == SistaV1::ExtStoreTemp
+                    || op == SistaV1::ExtPopStoreRecv
+                    || op == SistaV1::ExtStoreRecv) {
                 int idx = bcReal[i + 1];
                 if (op == SistaV1::ExtPushRecvVar) {
                     a.ldr(a64::x1, a64::ptr(a64::x0, OFF_RECEIVER));
