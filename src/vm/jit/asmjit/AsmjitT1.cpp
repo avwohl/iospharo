@@ -2667,13 +2667,39 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 (void)xmethodMaxInit;
                 asmjit::Label sameMethodSkipUpdate = a.new_label();
                 if (xmethod) {
-                    // Cross-method inline-J2J — counter-gated only.
-                    // Numerous narrowing gates (no-sends, argCount-match,
-                    // tempCount-match) all left corruption present.
-                    // Bug is in chain-loop resume protocol after callee
-                    // bail; needs lldb to root-cause.
+                    // Cross-method inline-J2J — gated on callee.hasPrimPrologue.
+                    //
+                    // Root cause of historical crash (2026-05-19 lldb session):
+                    // callee like FullBlockClosure>>value: declares
+                    // `<primitive: 207>` but our asmjit-T1 prim-prologue emit
+                    // (supportedPrimIndex in this file) only handles a small
+                    // set of prims (1-16, 60, 61, 62, 70, 71, 110).  Prim 207
+                    // isn't in that set → callee compiles with
+                    // hasPrimPrologue=false, so the JIT body skips the prim
+                    // and runs the Smalltalk fallback (`^ self primitiveFailed`).
+                    // Cross-method to such a callee bypasses the prim and
+                    // raises primitiveFailed mid-execution — corrupts state
+                    // via exception machinery (Symbol bytes show up in
+                    // Interpreter::receiver_, crashing in interpret + 956).
+                    //
+                    // Gate: only inline-J2J when callee.hasPrimPrologue is
+                    // true OR callee has no primitive (pure Smalltalk).
+                    // JITMethod::hasPrimPrologue is at offset 41 (bool byte).
+                    // Method header "hasPrimitive" flag is at bit 16 of the
+                    // smallInteger-tagged header word.  For simplicity, require
+                    // hasPrimPrologue==true OR hasSends==true (i.e., not a
+                    // bare-prim method with no prim prologue).  Actually the
+                    // strongest gate is: skip when callee has prim but no
+                    // prologue.  Read methodHeader at JM[16] (low 16 bits =
+                    // numLits, bit 16 = hasPrim).
                     a.cmp(x12, x13);
                     a.b_eq(sameMethodSkipUpdate);
+                    // STRICTEST GATE: bail xmethod for ANY callee with a
+                    // declared primitive.  This excludes value: (prim 207)
+                    // and other unsupported prims that would skip the prim
+                    // call entirely.  hasPrim is at bit 16 of decoded header.
+                    a.ldr(x4, ptr(x10, 16));            // methodHeader (decoded)
+                    a.tbnz(x4, asmjit::Imm(16), j2jBailSelf2);  // has prim → bail
                     a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_count));
                     a.ldr(x15, ptr(x14));
                     a.add(x15, x15, asmjit::Imm(1));

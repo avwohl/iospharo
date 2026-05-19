@@ -1405,6 +1405,26 @@ void Interpreter::dumpJITStats() {
         }
     }
     fprintf(stderr, "=================\n");
+    // One-off diagnostic: print offsets of key Interpreter fields to
+    // disambiguate what x28 holds in the cross-method crash.
+    if (std::getenv("PHARO_DUMP_INTERP_OFFSETS")) {
+        fprintf(stderr, "Interpreter offsets:\n");
+        #define O(f) fprintf(stderr, "  +0x%03zx (%4zu): %s\n", offsetof(Interpreter, f), offsetof(Interpreter, f), #f)
+        O(method_);
+        O(newMethod_);
+        O(homeMethod_);
+        O(receiver_);
+        O(activeContext_);
+        O(framePointer_);
+        O(stackPointer_);
+        O(instructionPointer_);
+        O(frameDepth_);
+        O(bytecodeEnd_);
+        O(currentJITState_);
+        O(argCount_);
+        #undef O
+        fprintf(stderr, "sizeof(Interpreter) = %zu\n", sizeof(Interpreter));
+    }
 #endif
 }
 
