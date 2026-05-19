@@ -1025,6 +1025,84 @@ slots M+.
 - PHARO_T1_INLINE_J2J_XMETHOD_BRK=1: brk at xmethod for lldb
 - PHARO_T1_INLINE_J2J_XMETHOD_LOG=1: printf state at xmethod
 
+**Iter N+3 (2026-05-18, commit `44d93188`) split-pool stability fix.**
+
+Pre-fix: with `PHARO_T1_J2J_SPLIT_POOL=1` (option 1 from N+2 above),
+the materialize site at Interpreter.cpp:19068-19094 read
+`j2jStack[i]` directly without the split-pool ternary.  In
+split-pool mode, JIT pushes inline-J2J saves to `stateSaves`
+(`&j2jPool_[j2jStateBase]`), not `j2jStack` (`&j2jPool_[j2jPoolBase]`).
+So the loop read zeroed memory at j2jStack[i], fired the null-saveJM
+warning, and aborted materialization.  Net effect: split-pool alone
+broke the image startup ("logDuring:/logError:inContext:" trace).
+
+Post-fix: introduced `matSrc` ternary at the materialize site (mirrors
+the 4 other sites already updated at lines 19211, 19417, 20114, 20573).
+With split-pool ON, the full bench suite completes (fib28=13ms,
+fact5k=29ms, sieve=10ms, sort=461ms, dict=389ms, sum=127ms,
+floatSum=169ms, stringHash=125ms, collect=1ms-spliced, select=478ms).
+Numbers within ±5% of default — no win on its own (purpose is to
+enable cross-method inline-J2J without the j2jPool collision).
+
+**Cross-method crash bisection (2026-05-18 post-fix):**
+
+With `PHARO_T1_J2J_SPLIT_POOL=1 PHARO_T1_INLINE_J2J_XMETHOD=1` on
+`runSum` (sum 1M):
+
+  MAX     crashes (3/3)   median ms
+  0       0/3              115
+  100     0/3              137
+  1000    0/3              123
+  5000    0/3              ~120
+  10000   3/3              CRASH
+  100000  3/3              CRASH
+  inf     5/5              CRASH
+
+Crash signature: PC in JIT code zone at consistent offset 0xec4 in
+some method, with LR 0x...bc8 nearby.  symbolicates to
+`Interpreter::interpret + 956`.  Instruction is `ldr x9, [x8]`
+preceded by `ldr x8, [x28, #0xa0]` — offset 160 of x28 (= JITState
+j2jDepth field if x28 = state ptr).  Suggests stale-save pop in
+return prelude, but precise root cause needs lldb step-through.
+
+Tried `chain-loop isolation` (save+clear+restore state.j2jDepth
+around the chain-loop's `JIT_CALL(entryAddr, &state)` sites at
+Interpreter.cpp:16870 + 18955).  Hypothesis: outer's inline-J2J
+push leaves state.j2jDepth=1; chain-loop activates inner method T
+which doesn't push but its return prelude pops outer's save with
+wrong resumeAddr.  Build clean.  No regression on default config.
+Did NOT fix the cross-method crash — fires at same MAX threshold.
+Reverted.
+
+Conclusion: cross-method has additional state corruption beyond
+the j2jPool collision (which split-pool fixed).  Next investigation
+needs interactive lldb step-through of one xmethod fire's full
+lifecycle.  Until then: cross-method opt-in remains broken;
+self-recursive inline-J2J (default ON, 64% catch rate on fib(30))
+is the only inline-J2J in production.
+
+**Bench gap vs Cog (2026-05-18, default config):**
+
+  Bench              Cog   Ours  Ratio  Notes
+  fib(28)              3     13    4×   self-rec J2J wins
+  sieve x100          10     10    1×   Sista splice
+  sort 100K           17    461   27×
+  dict 50K            13    389   30×
+  sum 1M               3    131   43×
+  factorial 5K         2     29   14×
+  1M blocks            3      0    -    Sista splice wins
+  1M getter+yourself   2      0    -    Sista splice wins
+  100K alloc           3      7    2×
+  floatSum 1M          8    159   20×
+  stringHash 100K      2    122   61×
+  collect 10x100K     41      1    -    Sista splice wins
+  select 10x100K       8    490   61×
+
+The 14–61× gaps are all in iter-heavy methods with small-callee
+sends in the inner loop (do:/select:/collect:/at:put: + block.value:
++ prim arith).  Cross-method inline-J2J would close ~5–10× of each
+gap; method inlining (Sista Phase 4, queued) closes the rest.
+
 **Iter 11 (2026-05-18): added InlinedPrimitive 0xEC + ext-recv
 store family (`2f5823ff`, `888168c4`).**  Removed last common
 unsupported simple bytecodes.
