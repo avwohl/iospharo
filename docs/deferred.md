@@ -526,6 +526,31 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+19 (2026-05-19 PM) — send-site prim 60/61/62 inline shipped (`8b6d0495`).**
+
+Root-caused why g_primAt_hits/atPut_hits/size_hits were always 0:
+- supportedPrimIndex didn't recognize prims 60/61/62 → target->hasPrimPrologue=false → IC patch never set primKind=14/15/16 in extras → send-site tryPrimAt/AtPut/Size emit was unreachable.
+- Even after enabling, the send-site emit had a latent bug: it clobbered x5 (which holds icDataPtr) with slotCount during header decode, then bailed to dispatchCached which expected x5 = icDataPtr → ldr x6,[x5,8] faulted.
+
+Fix: introduced `dispatchCachedRestoreX5` label that reloads x5 from OFF_ICDATAPTR (pre-stashed at the top of each tryPrim* block) before falling through to dispatchCached.
+
+Bench-suite primitive call counts (top primitives):
+
+    prim       before     after    inline catch
+    60 (at:)   8.0M       65K      99.2%
+    61 (at:put:) 7.0M     16K      99.8%
+    62 (size)  1.4M       4K       99.7%
+
+Bench numbers are within noise — sort 326ms, dict 290ms, select went 322→303ms, collect went 253→244ms.  The C++ prim dispatch was already cheap (~50ns/call), so killing 16M C++ calls saves ~800ms total but spread across many benches.  The bigger gains require closing the JIT→C++→JIT round-trip on every send, not just dodging the C++ primitive impl.
+
+**Chain-break protocol re-verification (2026-05-19):** with all gates ON (`PHARO_T1_INLINE_J2J_XMETHOD=1`, `MAX=-1`, `RECEIVER_SYNC=1`, `POST_SEND_IP=1`, `SPLIT_POOL=1`), the bench-suite completes cleanly 5/5 runs at 122-127K xmethod fires.  Previous documentation indicated 32-50K thresholds for various corruption modes — those are gone for the bench-suite workload.  Sunit broader workloads still vulnerable (SEGV at unlimited cap), so production default stays at MAX=30000.
+
+Diagnostic infra added:
+- `PHARO_PRIM_PROFILE=1` — dump top-30 primitives by C++ call count at exit
+- `PHARO_T1_XMETHOD_LOG=1` — dump xmethod ring buffer at terminateCurrentProcess
+- `PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1` — opt-in for non-leaf block-value inline (re-test the iter N+16 leaf-only gate)
+- `g_xmethod_count` exposed in JIT stats dump
+
 **Critical finding from this session's bench-suite work.**
 
 Running every non-splice benchmark with `PHARO_NO_JIT=1` produces
