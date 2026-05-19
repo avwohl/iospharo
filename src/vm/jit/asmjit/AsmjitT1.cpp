@@ -2713,6 +2713,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // subsequent activations.  isStubOnEntry at JM[47].
                     a.ldrb(w4, ptr(x10, 47));
                     a.cbnz(w4, j2jBailSelf2);
+                    // Skip callees that can bail mid-method (ExitMustBool
+                    // and similar).  Mid-method bails through the
+                    // inline-activate path corrupt the caller frame (see
+                    // JITMethod.hpp:194 doc).  canBailMidMethod at JM[46].
+                    a.ldrb(w4, ptr(x10, 46));
+                    a.cbnz(w4, j2jBailSelf2);
                     a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_count));
                     a.ldr(x15, ptr(x14));
                     a.add(x15, x15, asmjit::Imm(1));
