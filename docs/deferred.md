@@ -1081,6 +1081,35 @@ lifecycle.  Until then: cross-method opt-in remains broken;
 self-recursive inline-J2J (default ON, 64% catch rate on fib(30))
 is the only inline-J2J in production.
 
+**Iter N+4 (2026-05-18, commits `4de3eeb8` + `c069c192`) inline-prim-bitops.**
+
+Adds inline SmI bitAnd:/bitOr:/bitXor: dispatch at the IC HIT site
+in asmjit-T1's send emit.  primKind bits 52:48 distinguish prim
+type; when SmI receiver + matching primKind, emit the bitwise op
+inline (tagged-op semantics) + retag for bitXor:, skipping the
+chain-loop round-trip.
+
+Also added `case 16: return 19;` to `inlinePrimKind()` so the IC
+patch sets primKind for bitXor: (prim 16) IC entries.
+
+Fires from both paths:
+- After tryInlineJ2J self-recursive bail (bit 60 set, cross-method)
+- Direct fall-through (bit 60 unset, callee not JIT-compiled)
+
+Bench impact: ~stringHash 100K runs 95-97ms (was 97-99ms baseline).
+Within noise — the stringHash inner-loop bottleneck is `k hash`
+(String>>hash primitive) + closure dispatch + Array>>do: iteration,
+not the bitXor: send.
+
+Default-on; PHARO_T1_NO_INLINE_PRIM_BITOPS=1 opt-out.  Infrastructure
+ready for primKind expansion to:
+- primKind 14 (at:) — would benefit sort/dict/sum (Array indexing)
+- primKind 7 (=)    — SmI equality via named-send (common in collections)
+- primKind 10 (==)  — identity via named-send
+
+The above need more emit (bounds check for at:, true/false oop loads
+for =) — left for next iteration.
+
 **Bench gap vs Cog (2026-05-18, default config):**
 
   Bench              Cog   Ours  Ratio  Notes
