@@ -3197,6 +3197,17 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         visitor(currentJITState_->returnValue);
         visitor(currentJITState_->cachedTarget);
         // trueOop/falseOop are visited via specialObjects_ already.
+
+        // J2J pool: pending save structs hold caller-side Oops (receiver)
+        // that the GC must update.  Without this scan, xmethod-pushed
+        // saves accumulate stale receiver refs across GC; pop later
+        // restores a stale oop, leading to nil-receiver DNUs.  Root-
+        // caused 2026-05-19 (deferred A6 iter N+15): the sharp 32K
+        // xmethod corruption threshold corresponded to the cumulative
+        // GC frequency × bench's xmethod fire rate.
+        for (int i = 0; i < j2jPoolCursor_; i++) {
+            visitor(j2jPool_[i].receiver);
+        }
         // sp/tempBase/literals are recomputed in afterGC from updated method.
     }
 #endif
