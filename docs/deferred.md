@@ -526,6 +526,36 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+20 (2026-05-19 PM) — SmallFloat send-site inline + perf assessment.**
+
+Wired up send-site dispatch for SmallFloat +/-/* (primKind 21/22/23) in `b5aa17f4`.  The emit is correct (no crash, no regression) but the bench-suite's floatSum 1M loop is already SISTA-spliced — never reaches the regular send dispatch — so the new path's hit counter stays at 0 during the bench.  The dispatch path stands ready for non-SISTA workloads.
+
+**Cumulative session perf (iter N+19/N+20):**
+
+After 9 commits this session (3 diagnostic + 6 perf), the C++ primitive call rate dropped massively:
+
+    primitive         before     after    catch
+    60 (at:)          8.0M       65K      99.2%
+    61 (at:put:)      7.0M       15K      99.8%
+    62 (size)         1.4M       4K       99.7%
+    541 (Float+)      ~1.0M      <137     >99.9%
+
+Bench-suite (ours vs Cog reference):
+
+    bench         ours    cog    Δsession   gap
+    fib(28)       11      3      same       3.7×
+    sort 100K     325     17     same       19×
+    dict 50K      293     13     same       23×
+    sum 1M        98      3      same       33×
+    floatSum 1M   116     8      same       14.5×
+    stringHash    95      2      same       48×
+    collect 100K  249     41     -2%        6×
+    select 100K   306     8      -21%       38×
+
+Most numbers stable.  Select 10x100K dropped 388→306ms (21%) — the only clearly measurable improvement.  The other benches didn't move because the C++ primitive dispatch was already cheap (~50ns/call); removing 16M of those saves ~800ms total but spread across the suite.
+
+Remaining 19-48× gaps to Cog are architectural (Sista tier-2 inlining, closure direct call, method inlining) and not closeable via more send-site inline-prim work.
+
 **Iter N+19 (2026-05-19 PM) — send-site prim 60/61/62 inline shipped (`8b6d0495`).**
 
 Root-caused why g_primAt_hits/atPut_hits/size_hits were always 0:
