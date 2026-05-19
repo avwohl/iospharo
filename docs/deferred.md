@@ -1221,6 +1221,32 @@ inspect each write to identify the bad write site.
 **Next iteration queued (after focused lldb step-through of
 receiver_ corruption): inline block-value (BLOCK_VALUE_BIT bit 59).**
 
+**Iter N+7 (2026-05-19, commit `2c1370f2`) partial fix shipped.**
+
+Added `PHARO_T1_J2J_RECEIVER_SYNC=1` opt-in that syncs Interpreter::
+receiver_ and method_ at the chain-loop J2JReturn handler.  With
+this opt-in:
+
+- xmethod no longer SIGSEGVs (chain-loop bail/resume no longer
+  leaves stale callee-receiver in interp->receiver_).
+- BUT the crash signature shifts to caught
+  `SmallInteger>>errorNotIndexable` — a second state-corruption
+  source surfaces where SmI is incorrectly used as an indexable
+  receiver.  The bench's Error-handler catches it; bench
+  doesn't produce output but VM doesn't die.
+
+Suspect second corruption: state.argCount or state.activeContext
+isn't being restored properly somewhere in the chain-break flow,
+causing a downstream send to use stale receiver.  Or my
+cross-method emit's receiver computation (`sp[-(nArgs+1)*8]`) is
+sometimes off — maybe sp gets bumped between IC HIT entry and the
+xmethod state setup.
+
+Next iteration: set hardware watchpoint on `interp->receiver_` (or
+`state.receiver`) and find the bad write site that introduces SmI.
+Or scan all chain-loop sync sites for missing `_ = state.*`
+restores on J2J return paths.
+
 The stencil version at `stencils.cpp:1642-1731` inlines
 FullBlockClosure>>value/value: by extracting compiledBlock from
 slot 1, looking up its JM via methodMap, then doing a J2J save +
