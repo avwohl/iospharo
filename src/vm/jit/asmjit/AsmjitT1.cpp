@@ -2457,6 +2457,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryGetter = a.new_label();
             asmjit::Label trySetter = a.new_label();
             asmjit::Label tryReturnsSelf = a.new_label();
+            asmjit::Label tryPrimBitAnd = a.new_label();
+            asmjit::Label tryPrimBitOr = a.new_label();
+            asmjit::Label tryPrimBitXor = a.new_label();
+            asmjit::Label j2jBailHeap = a.new_label();
+            asmjit::Label j2jBailHeap2 = a.new_label();
             asmjit::Label endOfSend = a.new_label();
 
             a.ldr(x2, ptr(x0, OFF_SP));
@@ -2798,8 +2803,27 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
                 a.bind(j2jBail);
                 // Fall through to inline-spec dispatch (same as non-J2J path).
-                a.tst(x1, asmjit::Imm(0x7));
-                a.b_ne(dispatchCached);
+                // For nArgs == 1, check primKind bits 52:48 for inline SmI
+                // bitwise ops (bitAnd/bitOr/bitXor) — these skip the chain-
+                // loop round-trip on SmI sends, mirroring stencils.cpp:1609-1614.
+                if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
+                    a.tst(x1, asmjit::Imm(0x7));     // SmI? tag != 0
+                    a.b_eq(j2jBailHeap);              // tag==0 → heap path
+                    // SmI receiver — check primKind bits 52:48.
+                    a.lsr(x6, x7, asmjit::Imm(48));
+                    a.and_(x6, x6, asmjit::Imm(0x1F));
+                    a.cmp(x6, asmjit::Imm(11));
+                    a.b_eq(tryPrimBitAnd);
+                    a.cmp(x6, asmjit::Imm(12));
+                    a.b_eq(tryPrimBitOr);
+                    a.cmp(x6, asmjit::Imm(19));
+                    a.b_eq(tryPrimBitXor);
+                    a.b(dispatchCached);
+                    a.bind(j2jBailHeap);
+                } else {
+                    a.tst(x1, asmjit::Imm(0x7));
+                    a.b_ne(dispatchCached);
+                }
                 if (g_debug.t1InlineGetter) {
                     a.tbnz(x7, asmjit::Imm(63), tryGetter);
                 }
@@ -2811,9 +2835,26 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 a.b(dispatchCached);
             } else {
-                // Inline specializations need heap receiver (tag==0)
-                a.tst(x1, asmjit::Imm(0x7));
-                a.b_ne(dispatchCached);
+                // Inline specializations need heap receiver (tag==0).
+                // Also check primKind for SmI receivers with bitwise prim
+                // dispatch (skips chain-loop for nArgs==1 bitAnd/bitOr/bitXor).
+                if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
+                    a.tst(x1, asmjit::Imm(0x7));     // SmI? tag != 0
+                    a.b_eq(j2jBailHeap2);             // tag==0 → heap path
+                    a.lsr(x6, x7, asmjit::Imm(48));
+                    a.and_(x6, x6, asmjit::Imm(0x1F));
+                    a.cmp(x6, asmjit::Imm(11));
+                    a.b_eq(tryPrimBitAnd);
+                    a.cmp(x6, asmjit::Imm(12));
+                    a.b_eq(tryPrimBitOr);
+                    a.cmp(x6, asmjit::Imm(19));
+                    a.b_eq(tryPrimBitXor);
+                    a.b(dispatchCached);
+                    a.bind(j2jBailHeap2);
+                } else {
+                    a.tst(x1, asmjit::Imm(0x7));
+                    a.b_ne(dispatchCached);
+                }
 
                 if (g_debug.t1InlineGetter) {
                     a.tbnz(x7, asmjit::Imm(63), tryGetter);
@@ -2860,6 +2901,57 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x2, ptr(x0, OFF_SP));
             }
             a.b(endOfSend);
+
+            // === Inline SmI bitwise prims (primKind 11/12/19) ===
+            // Receiver was confirmed SmI in the dispatch (tst x1, 0x7 → ne).
+            // Arg must also be SmI; bail to dispatchCached if not.
+            // bitAnd/bitOr preserve the tag (both operands have low 3 = 001,
+            // AND/OR keeps it 001).  bitXor produces low 3 = 000, re-OR
+            // SMI_TAG to retag.  Mirrors stencils.cpp:1609-1614.
+            // x2 holds SP; rcvrOffsetBytes = -8 * (nArgs+1) = -16 for nArgs=1.
+            // x1 = receiver (tagged), arg at sp[-8].
+            if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
+                a.bind(tryPrimBitAnd);
+                a.ldur(x3, ptr(x2, -8));               // arg
+                a.and_(x6, x3, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                a.and_(x4, x1, x3);                    // bitAnd tagged
+                a.stur(x4, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
+
+                a.bind(tryPrimBitOr);
+                a.ldur(x3, ptr(x2, -8));
+                a.and_(x6, x3, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                a.orr(x4, x1, x3);                     // bitOr tagged
+                a.stur(x4, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
+
+                a.bind(tryPrimBitXor);
+                a.ldur(x3, ptr(x2, -8));
+                a.and_(x6, x3, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                a.eor(x4, x1, x3);                     // bitXor (clears tag)
+                a.orr(x4, x4, asmjit::Imm(0x1));       // restore SMI_TAG
+                a.stur(x4, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
+            } else {
+                // Labels still need to be bound somewhere even if unused —
+                // bind them as aliases for dispatchCached.
+                a.bind(tryPrimBitAnd);
+                a.bind(tryPrimBitOr);
+                a.bind(tryPrimBitXor);
+                a.b(dispatchCached);
+            }
 
             // === Plain cached dispatch === (emits deferred state setup)
             a.bind(dispatchCached);

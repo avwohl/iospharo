@@ -82,6 +82,12 @@ struct DebugSettings {
     // (PHARO_T1_INLINE_J2J=1 also enables per-bail debug counters + traces;
     // those stay opt-in for production.)
     bool t1InlineJ2J = true;
+    // Inline SmI bitwise prims (bitAnd:/bitOr:/bitXor:) at the IC HIT site
+    // for nArgs==1 sends.  Saves the chain-loop round-trip for SmI bitwise
+    // sends via named-send (bitXor: is not a special-selector bytecode so
+    // every send goes through IC).  primKind dispatch added 2026-05-18 for
+    // stringHash/dict benches.  PHARO_T1_NO_INLINE_PRIM_BITOPS=1 opt-out.
+    bool t1InlinePrimBitOps = true;
     // Diagnostic: force probe to always-miss so the probe COMPUTATION runs
     // but exits via ExitSend regardless of icData[0] match.  Isolates
     // whether bugs are in the probe arithmetic or in the HIT path.

@@ -17468,6 +17468,7 @@ static uint8_t inlinePrimKind(int primIndex) {
     case 62: return 16;  // size
     case 70: return 17;  // new (basicNew)
     case 71: return 18;  // new: (basicNew:)
+    case 16: return 19;  // bitXor (added 2026-05-18 for asmjit-T1 inline)
     default: return 0;
     }
 }
