@@ -2205,6 +2205,12 @@ void Interpreter::interpret() {
 
     // --- FullBlockClosure >> value: fast path ---
     op_value1: {
+        if (std::getenv("PHARO_TRACE_OP_VALUE1")) {
+            static uint64_t n = 0;
+            n++;
+            if (n <= 5 || (n & 0xFFFFF) == 0)
+                fprintf(stderr, "[OP-VALUE1 #%llu]\n", (unsigned long long)n);
+        }
         Oop rcvr = stackValue(1);
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
             rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
