@@ -2480,6 +2480,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimBitAnd = a.new_label();
             asmjit::Label tryPrimBitOr = a.new_label();
             asmjit::Label tryPrimBitXor = a.new_label();
+            asmjit::Label tryPrimBitShift = a.new_label();
             asmjit::Label tryPrimAt = a.new_label();
             asmjit::Label tryPrimAtPut = a.new_label();
             asmjit::Label tryPrimSize = a.new_label();
@@ -2590,6 +2591,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.b_eq(tryPrimBitOr);
                         a.cmp(x6, asmjit::Imm(19));
                         a.b_eq(tryPrimBitXor);
+                        a.cmp(x6, asmjit::Imm(13));
+                        a.b_eq(tryPrimBitShift);
                         a.b(dispatchCached);
                     }
                 }
@@ -3009,6 +3012,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_eq(tryPrimBitOr);
                     a.cmp(x6, asmjit::Imm(19));
                     a.b_eq(tryPrimBitXor);
+                    a.cmp(x6, asmjit::Imm(13));
+                    a.b_eq(tryPrimBitShift);
                     a.b(dispatchCached);
                     a.bind(j2jBailHeap);
                 } else {
@@ -3057,6 +3062,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_eq(tryPrimBitOr);
                     a.cmp(x6, asmjit::Imm(19));
                     a.b_eq(tryPrimBitXor);
+                    a.cmp(x6, asmjit::Imm(13));
+                    a.b_eq(tryPrimBitShift);
                     a.b(dispatchCached);
                     a.bind(j2jBailHeap2);
                 } else {
@@ -3183,12 +3190,58 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
                 a.b(endOfSend);
+
+                // === Inline SmI bitShift: (primKind 13) ===
+                // Mirrors stencils.cpp:1615-1626.  Positive count = shift
+                // left with overflow check; negative count = shift right.
+                // x1 = tagged receiver, arg at sp[-8].
+                a.bind(tryPrimBitShift);
+                emitIncPrimCounter((uint64_t)&g_primBitOp_hits);
+                {
+                    asmjit::Label shiftRight = a.new_label();
+                    asmjit::Label shiftDone = a.new_label();
+                    a.ldur(x3, ptr(x2, -8));           // x3 = tagged shift count
+                    a.and_(x6, x3, asmjit::Imm(0x7));
+                    a.cmp(x6, asmjit::Imm(1));
+                    a.b_ne(dispatchCached);           // not SmI
+                    a.asr(x3, x3, asmjit::Imm(3));    // untag shift (signed)
+                    a.asr(x4, x1, asmjit::Imm(3));    // untag receiver (signed)
+                    a.cmp(x3, asmjit::Imm(0));
+                    a.b_lt(shiftRight);
+                    // positive: shift left with overflow check.
+                    // Bail if shift >= 61 (would overflow SmI for any
+                    // non-zero a) — stencils.cpp's `b < 61` gate.
+                    a.cmp(x3, asmjit::Imm(61));
+                    a.b_ge(dispatchCached);
+                    a.lsl(x6, x4, x3);                // r = a << b
+                    // Overflow check: (r >> b) == a iff no overflow.
+                    a.asr(x5, x6, x3);
+                    a.cmp(x5, x4);
+                    a.b_ne(dispatchCached);
+                    a.b(shiftDone);
+                    a.bind(shiftRight);
+                    // count < 0: shift right by -count.  Stencils uses
+                    // `b > -64`, so |count| < 64.
+                    a.neg(x3, x3);
+                    a.cmp(x3, asmjit::Imm(64));
+                    a.b_ge(dispatchCached);
+                    a.asr(x6, x4, x3);                // r = a >> -b (signed)
+                    a.bind(shiftDone);
+                    // Retag: (r << 3) | 1.
+                    a.lsl(x6, x6, asmjit::Imm(3));
+                    a.orr(x6, x6, asmjit::Imm(0x1));
+                    a.stur(x6, ptr(x2, rcvrOffsetBytes));
+                    a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                    a.str(x2, ptr(x0, OFF_SP));
+                    a.b(endOfSend);
+                }
             } else {
                 // Labels still need to be bound somewhere even if unused —
                 // bind them as aliases for dispatchCached.
                 a.bind(tryPrimBitAnd);
                 a.bind(tryPrimBitOr);
                 a.bind(tryPrimBitXor);
+                a.bind(tryPrimBitShift);
                 a.b(dispatchCached);
             }
 
