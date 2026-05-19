@@ -1668,6 +1668,25 @@ Cog reference is still 25-50× ahead even with NO_JIT — closing
 that is the E-series multi-week work, separate from this T1
 regression issue.
 
+**Iter N+15-17 (2026-05-19) — additional fixes + cumulative status.**
+
+- `9e3e44ac` — block-value helper was nil-initializing extra temp
+  slots with raw 0 instead of the actual nil oop (which has
+  rawBits == 0x300000000).  Pharo image code that compares against
+  the special nil oop saw raw-0 slots as some OTHER invalid value.
+  Real bug, fixed; doesn't address the iter N+16 leaf-gate
+  resurfacing but is correctness work on its own merits.
+- `d7334d90` (originally `3e3c3b62`, reverted then reinstated) —
+  `Interpreter::forEachRoot` now scans the J2J pool's
+  `save.receiver` Oops.  Previously these were GC-invisible: pending
+  xmethod-pushed saves accumulated stale receiver refs across GC,
+  causing nil-receiver corruption when popped later.
+
+Threshold movement on `42 printString` eval bisection:
+  Pre-session:                    MAX=33000 (sharp)
+  Post-send-IP fix (N+14):        MAX=100000 (sharp → non-deterministic past)
+  Plus GC scan + nil-oop (N+17):  MAX=50000 (consistent) → fails at 100K
+
 **Iter N+14 (2026-05-19) — FIRST CHAIN-BREAK BUG ROOT-CAUSED + FIXED (`8c319249`).**
 
 CLI-based lldb investigation pinpointed the first concrete corruption
