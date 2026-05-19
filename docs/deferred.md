@@ -1668,6 +1668,29 @@ Cog reference is still 25-50× ahead even with NO_JIT — closing
 that is the E-series multi-week work, separate from this T1
 regression issue.
 
+**Iter N+18 (2026-05-19) — materialize both slices fix (`88487bb3`).**
+
+`Interpreter::tryJITActivation` materialize block had a bug when
+split-pool is on AND BOTH state.j2jDepth and the local chain-loop
+j2jDepth are positive: pre-fix code only materialized frames from
+ONE slice (stateSaves if state.j2jDepth > 0, else j2jStack), losing
+saves in the other slice and producing nil-receiver / wrong-method
+corruption downstream.
+
+Fix iterates state.j2jDepth frames from stateSaves first (older
+xmethod-pushed), then `local - state.j2jDepth` frames from j2jStack.
+Total frames = sum.  Bench-suite at MAX=-1 now completes (the
+previous "FloatPrintPolicy >> #nil:" cascade is gone).
+
+`42 printString` eval reliability at MAX=-1:
+  Pre-fix:  fails ~100% past the threshold
+  Post-fix: 1/10 PASS (the 9 fails first-DNU at xmethod_count ~32K)
+
+So a third corruption source remains past ~32K fires.  The
+materialize fix unlocked the bench-suite (which fires ~50K
+xmethods total) but not the eval-startup workload (which fires
+more rapidly and hits the next threshold).
+
 **Iter N+15-17 (2026-05-19) — additional fixes + cumulative status.**
 
 - `9e3e44ac` — block-value helper was nil-initializing extra temp
