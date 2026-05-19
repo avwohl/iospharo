@@ -1668,6 +1668,31 @@ Cog reference is still 25-50× ahead even with NO_JIT — closing
 that is the E-series multi-week work, separate from this T1
 regression issue.
 
+**Iter N+13 (2026-05-19) — workload-dependent corruption.**
+
+Discovery: the 32K threshold is `42 printString` eval-specific.  The
+full bench-suite at MAX=100000 completes cleanly, but at unlimited
+(`MAX=-1`) deterministically fails during floatSum with `Message not
+understood: FloatPrintPolicy >> #nil:` — a receiver-type corruption.
+
+This is NOT a global fire-count threshold; it's a workload-specific
+pattern.  Different workloads hit different corruption points
+depending on which methods get xmethod'd and in what sequence.
+
+Also discovered fib(28) regresses 12ms → 135ms in bench-suite context
+when xmethod is ON at the safe default (MAX=30000) — but fib(30) in
+ISOLATION runs cleanly at 30ms.  So xmethod-ON disturbs bench-suite
+state in a way that hurts fib's measured timing.  Could be process-
+switch interaction with the xmethod check overhead, or cumulative
+near-corruption state from earlier benches (tinyBenchmarks fires
+many xmethods before fib runs).
+
+**Production recommendation: keep xmethod OFF by default** (which
+is the case).  The PHARO_T1_INLINE_J2J_XMETHOD=1 opt-in is safe in
+the sense of "no observed crashes on tested workloads up to MAX=
+30000" but is not a net perf win without the chain-break protocol
+fix.
+
 **Iter N+12 (2026-05-19) — sharp threshold at ~32K fires.**
 
 Re-bisection on `42 printString` eval under all four xmethod flags
