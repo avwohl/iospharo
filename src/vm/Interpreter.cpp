@@ -19244,15 +19244,39 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         if (j2jDepth > 0) {
             j2jMaterialized = true;
             Oop nil = memory_.nil();
-            J2JSave* matSrc = (splitPool && state.j2jDepth > 0)
-                ? &j2jPool_[j2jStateBase] : j2jStack;
-            for (int i = 0; i < j2jDepth; i++) {
-                J2JSave& save = matSrc[i];
+            // 2026-05-19 iter N+18: when splitPool is on AND both state
+            // and local j2jDepth are positive, we have saves in TWO
+            // slices.  Materialize must push BOTH or downstream interp
+            // operates on incomplete frames.  Push stateSaves first
+            // (older — xmethod-pushed), then j2jStack (chain-loop
+            // pushes, more recent in this activation slice).
+            //
+            // The pre-N+18 code only iterated `j2jDepth` (which was
+            // max(state.j2jDepth, local) per the merge above) from
+            // ONE slice — losing the saves in the other slice.  Was
+            // a likely contributor to the residual non-leaf chain-
+            // break corruption.
+            int stateDepth = state.j2jDepth;
+            int chainDepth = j2jDepth - stateDepth;  // saves only in j2jStack
+            if (chainDepth < 0) chainDepth = 0;
+            if (!splitPool) {
+                // Pre-split layout: state and chain share the same slice.
+                // Iterate once.
+                stateDepth = j2jDepth;
+                chainDepth = 0;
+            }
+            int totalFrames = stateDepth + chainDepth;
+            J2JSave* stateSlice = &j2jPool_[j2jStateBase];
+            for (int i = 0; i < totalFrames; i++) {
+                J2JSave& save =
+                    (i < stateDepth)
+                        ? stateSlice[i]
+                        : j2jStack[i - stateDepth];
                 jit::JITMethod* saveJM = save.jitMethod;
                 if (!saveJM) {
                     static int warns = 0;
                     if (++warns <= 5)
-                        fprintf(stderr, "[JIT] WARN: null save.jitMethod at j2jBase materialize (warn #%d)\n", warns);
+                        fprintf(stderr, "[JIT] WARN: null save.jitMethod at j2jBase materialize (warn #%d) i=%d stateDepth=%d chainDepth=%d\n", warns, i, stateDepth, chainDepth);
                     j2jMaterialized = false;
                     break;
                 }
@@ -19271,6 +19295,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 frame.savedArgCount = saveJM->argCount;
                 frame.homeFrameDepth = SIZE_MAX;
             }
+            // Adjust frameDepth_ tracking — j2jDepth merged value is
+            // wrong when both slices have saves.  Use totalFrames.
+            j2jDepth = totalFrames;
+            localFrameDepth = j2jBaseFrameDepth + totalFrames;
+            frameDepth_ = localFrameDepth;
             // Sync interpreter from current JITState (innermost frame)
             method_ = state.method;
             homeMethod_ = state.method;
