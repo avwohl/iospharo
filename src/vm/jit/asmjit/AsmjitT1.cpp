@@ -2413,6 +2413,52 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.b(end);
 
         a.bind(bail);
+        // Inline SmallFloat + / - at the bytecode level (op 0x60 / 0x61).
+        // Reached when the SmI fast-path fails.  Both operands must have
+        // tag 5 and non-zero shifted bits (i.e. not ±0).
+        if (op == 0x60 || op == 0x61) {
+            using namespace asmjit::a64;
+            asmjit::Label notFloat = a.new_label();
+            a.and_(x5, x1, asmjit::Imm(0x7));
+            a.cmp(x5, asmjit::Imm(5));
+            a.b_ne(notFloat);
+            a.and_(x5, x4, asmjit::Imm(0x7));
+            a.cmp(x5, asmjit::Imm(5));
+            a.b_ne(notFloat);
+            // Decode rcv to d0.
+            a.lsr(x5, x1, asmjit::Imm(3));
+            a.cmp(x5, asmjit::Imm(1));
+            a.b_ls(notFloat);                 // ±0 → bail
+            a.mov(x6, asmjit::Imm(0x7000000000000000ULL));
+            a.add(x5, x5, x6);
+            a.ror(x5, x5, asmjit::Imm(1));
+            a.fmov(d0, x5);
+            // Decode arg to d1 (x6 still has the offset).
+            a.lsr(x5, x4, asmjit::Imm(3));
+            a.cmp(x5, asmjit::Imm(1));
+            a.b_ls(notFloat);
+            a.add(x5, x5, x6);
+            a.ror(x5, x5, asmjit::Imm(1));
+            a.fmov(d1, x5);
+            if (op == 0x60) a.fadd(d0, d0, d1);
+            else            a.fsub(d0, d0, d1);
+            // Encode.
+            a.fmov(x5, d0);
+            a.ror(x5, x5, asmjit::Imm(63));
+            a.cmp(x5, x6);
+            a.b_lo(notFloat);
+            a.sub(x5, x5, x6);
+            a.mov(x7, asmjit::Imm(0x1FFFFFFFFFFFFFFFULL));
+            a.cmp(x5, x7);
+            a.b_hi(notFloat);
+            a.lsl(x5, x5, asmjit::Imm(3));
+            a.orr(x5, x5, asmjit::Imm(5));
+            a.str(x5, ptr(x2, -16));
+            a.sub(x2, x2, asmjit::Imm(8));
+            a.str(x2, ptr(x0, OFF_SP));
+            a.b(end);
+            a.bind(notFloat);
+        }
         // Inline ByteString = (op 0x66 only).  Mirrors stencils.cpp:880-926.
         // After SmI tag check fails, try byte-equality for two byte
         // objects (fmt 16-23).  Helps Dictionary>>scanFor:'s key=arg
