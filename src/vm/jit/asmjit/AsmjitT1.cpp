@@ -160,9 +160,16 @@ extern "C" void jit_rt_xmethod_dump_trace() {
 extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
                                        uint64_t callerJM, uint64_t calleeCM,
                                        uint64_t callerCM) {
+    // Circular buffer: ring of size kXMethodTraceMax, captures the
+    // most recent fires (most useful for post-corruption diagnosis).
     static size_t logN = 0;
-    if (logN < kXMethodTraceMax) {
-        XMethodTrace& t = g_xmethod_trace[logN];
+    size_t slot = logN % kXMethodTraceMax;
+    logN++;
+    g_xmethod_trace_count = logN;
+    // Skip fprintf for fires past the first buffer fill — only buffer.
+    // Fast-path-friendly.
+    {
+        XMethodTrace& t = g_xmethod_trace[slot];
         uint64_t* s = (uint64_t*)state;
         t.calleeCM = calleeCM;
         t.callerCM = callerCM;
@@ -174,8 +181,6 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
         t.stateIp        = s[48/8];  // state.ip @ 48
         t.stateJ2JDepth  = *(int32_t*)((uint8_t*)state + 160);
         t.stateArgCount  = *(int32_t*)((uint8_t*)state + 72);
-        logN++;
-        g_xmethod_trace_count = logN;
         // Look up selector names for both methods.
         // state.interp is at offset 40 from state.
         Interpreter* interp = *(Interpreter**)((uint8_t*)state + 40);
@@ -227,13 +232,17 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
             calleeJMArgCount = jmBytes[34];
             calleeJMTempCount = jmBytes[35];
         }
-        fprintf(stderr, "[XLOG #%zu] callee=#%s (cm=0x%llx prim=%d hasPrim=%d numLits=%d) caller=#%s (cm=0x%llx) bc[0..11]: %s jmMH=0x%llx jmArgC=%d jmTempC=%d\n",
+        // Per-fire fprintf only for the first 8 fires (diagnostic);
+        // subsequent fires only update the ring buffer.
+        if (logN <= 8) {
+            fprintf(stderr, "[XLOG #%zu] callee=#%s (cm=0x%llx prim=%d hasPrim=%d numLits=%d) caller=#%s (cm=0x%llx) bc[0..11]: %s jmMH=0x%llx jmArgC=%d jmTempC=%d\n",
                 logN, calleeSel.c_str(), (unsigned long long)calleeCM,
                 calleePrim, (int)calleeHasPrim, calleeNumLits,
                 callerSel.c_str(), (unsigned long long)callerCM, bcStr,
                 (unsigned long long)calleeJMMethodHeader,
                 calleeJMArgCount, calleeJMTempCount);
-        fflush(stderr);
+            fflush(stderr);
+        }
         // Optional per-fire dump (PHARO_T1_INLINE_J2J_XMETHOD_LIVE=1).
         // Default off — the trace buffer is the primary capture.
         static const bool liveDump =
