@@ -1259,8 +1259,38 @@ actually see the win — needs the third issue fixed first.
 
 Default config (no xmethod) unaffected by either fix.
 
-**Next iteration queued (after focused lldb step-through of
-receiver_ corruption): inline block-value (BLOCK_VALUE_BIT bit 59).**
+**Iter N+9 (2026-05-19, commit `cce90145`) leaf+nonstub safety gates.**
+
+Bisection on `42 printString` eval-mode workload found the corruption
+threshold collapses to MAX=~20 fires (not the MAX=5000+ originally
+documented — that was for `sum 1M` which exercises a narrower set of
+methods).  Adding two safety gates raised the threshold from MAX=20
+to MAX=~30,000 — a ~1500x improvement:
+
+1. **Leaf-only gate**: reject callees with `numICEntries > 0`.  When
+   the callee has inner sends, those sends can take chain-break exits
+   (ExitSendCached, ExitArrayCreate, …) that the inline-J2J return
+   prelude can't restore correctly.  Pure leaf callees always exit
+   via the return bytecodes through the prelude → balanced push/pop.
+2. **Non-stub gate**: reject callees with `isStubOnEntry == true`.
+   A stub method's JIT body is just `mov [s+OFF_EXIT], ExitSend; ret`,
+   which BYPASSES the return prelude entirely.  The xmethod push
+   happens but the pop never does → state.j2jDepth permanently +1.
+
+Bench-suite (full PharoOursBench, MAX=20000, xmethod+SP+RS+PI ON):
+no observable crashes, modest perf changes in noise (±10%).  Default
+config (xmethod OFF) unchanged.
+
+**Residual corruption past MAX=30K not yet root-caused.**  Both
+prior cases (`xmethod into leaf-with-sends` and `xmethod into stub`)
+were structural — the fix is identical (refuse to xmethod) rather
+than restoring state correctly.  The remaining slow drift past
+MAX=30K is likely a different class of bug — possibly accumulated
+delta in state.j2jSaveCursor or save-slot reuse across recompile
+boundaries.  Needs lldb watchpoint instrumentation to find.
+
+**Next iteration queued: relax leaf gate (allow callees that don't
+self-bail via dispatchCached) and/or fix the >30K residual.**
 
 **Iter N+7 (2026-05-19, commit `2c1370f2`) partial fix shipped.**
 
