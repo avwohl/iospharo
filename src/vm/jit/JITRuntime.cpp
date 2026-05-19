@@ -1512,15 +1512,12 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     // above the args, then nil-fill any remaining temps.
     uint64_t closureSlots = closureObj->slotCount();
     int numCopied = (closureSlots > 4) ? (int)(closureSlots - 4) : 0;
-    pharo::Oop nilOop = pharo::Oop::fromRawBits(0);  // s_nilBits placeholder
-    // The actual nil oop is stored in the closure if not explicitly here;
-    // we read state.tempBase-adjacent slots, which the caller's emit
-    // already initialized.  For safety, fall back to whatever nil-shaped
-    // value is in slot 3 (block receiver) — but that's not quite right.
-    // Use compiledBlockBits' header's nil pattern — actually just read
-    // state's slot map.  Simplest: trust JITState has a reachable nil.
-    // Memory layout note: callers initialize new temps to nil already
-    // via the chain loop path; here we replicate that to be safe.
+    // Get the REAL nil oop from ObjectMemory (rawBits is typically
+    // 0x300000000, NOT 0).  Bug discovered 2026-05-19 iter N+16:
+    // writing raw 0 as nil left temp slots with bits=0 which Pharo
+    // image code reads as a different invalid value than nil.
+    auto* mem = reinterpret_cast<pharo::ObjectMemory*>(s->memory);
+    pharo::Oop nilOop = mem ? mem->nil() : pharo::Oop::fromRawBits(0);
     uint8_t totalTemps = blockJM->tempCount;
     Oop* spOut = s->sp;
     for (int t = nArgs; t < (int)totalTemps; t++) {
