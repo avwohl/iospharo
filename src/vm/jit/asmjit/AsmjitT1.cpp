@@ -872,6 +872,9 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 60: return primIndex;   // Array>>at:
     case 61: return primIndex;   // Array>>at:put:
     case 62: return primIndex;   // Array>>size
+    case 541: return primIndex;  // SmallFloat>>+
+    case 542: return primIndex;  // SmallFloat>>-
+    case 549: return primIndex;  // SmallFloat>>*
     case 110: return primIndex;  // ProtoObject>>==
     default: return -1;
     }
@@ -1950,6 +1953,64 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
 
     a.ldr(x2, ptr(x0, OFF_TEMPBASE));
     a.ldr(x2, ptr(x2));
+
+    // === SmallFloat binary arith (prim 541/542/549) ===
+    // Both operands must be SmallFloat (tag = 5).  Decode, op, encode.
+    // Bail on ±0 receiver/arg (uncommon, complex encoding) and on
+    // exponent under/overflow of the result.
+    if (primIndex == 541 || primIndex == 542 || primIndex == 549) {
+        // Tag-check both operands == 5.
+        a.and_(x4, x1, asmjit::Imm(0x7));
+        a.cmp(x4, asmjit::Imm(5));
+        a.b_ne(fail);
+        a.and_(x4, x2, asmjit::Imm(0x7));
+        a.cmp(x4, asmjit::Imm(5));
+        a.b_ne(fail);
+
+        // Decode receiver.
+        a.lsr(x4, x1, asmjit::Imm(3));
+        a.cmp(x4, asmjit::Imm(1));
+        a.b_ls(fail);                        // ±0 → bail
+        a.mov(x5, asmjit::Imm(0x7000000000000000ULL));
+        a.add(x4, x4, x5);
+        a.ror(x4, x4, asmjit::Imm(1));       // doubleBits
+        a.fmov(d0, x4);
+
+        // Decode arg (x5 still holds offset).
+        a.lsr(x4, x2, asmjit::Imm(3));
+        a.cmp(x4, asmjit::Imm(1));
+        a.b_ls(fail);
+        a.add(x4, x4, x5);
+        a.ror(x4, x4, asmjit::Imm(1));
+        a.fmov(d1, x4);
+
+        switch (primIndex) {
+            case 541: a.fadd(d0, d0, d1); break;
+            case 542: a.fsub(d0, d0, d1); break;
+            case 549: a.fmul(d0, d0, d1); break;
+        }
+
+        // Encode result.
+        a.fmov(x4, d0);
+        // Special NaN/inf: exponent bits all 1 → high 11 bits after sign-LSB
+        // rotation form a value ≥ 0xFFE0_0000_0000_0000 in the rotated form.
+        // Range check after subtract catches these.
+        a.ror(x4, x4, asmjit::Imm(63));      // ROL by 1 (sign bit → LSB)
+        a.cmp(x4, x5);
+        a.b_lo(fail);                         // exp underflow
+        a.sub(x4, x4, x5);
+        a.mov(x6, asmjit::Imm(0x1FFFFFFFFFFFFFFFULL));
+        a.cmp(x4, x6);
+        a.b_hi(fail);                         // exp overflow
+        a.lsl(x4, x4, asmjit::Imm(3));
+        a.orr(x4, x4, asmjit::Imm(5));        // SmallFloatTag
+        a.str(x4, ptr(x0, OFF_RETVAL));
+        a.mov(w3, asmjit::Imm(EXIT_RETURN));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        a.bind(fail);
+        return;
+    }
 
     // SmI check (5 ops instead of 7): (a^b) | (a-1), low 3 bits = 0
     // iff same tag AND a is SmI.  Mirrors emitPrimProlog_x86.
