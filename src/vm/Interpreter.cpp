@@ -107,6 +107,9 @@ extern "C" uint64_t g_primAtPut_hits;
 extern "C" uint64_t g_primSize_hits;
 extern "C" uint64_t g_primBitOp_hits;
 extern "C" uint64_t g_primFloatOp_hits;
+extern "C" uint64_t g_bcFloatArith_hits;
+extern "C" uint64_t g_bcArithBail_hits;
+extern "C" uint64_t g_bcRemoteTemp_hits;
 
 // Per-primitive call counter — populated at primitive dispatch site,
 // dumped at exit (PHARO_PRIM_PROFILE=1).  Used to identify high-frequency
@@ -1442,12 +1445,15 @@ void Interpreter::dumpJITStats() {
         if (primTotal > 0) {
             fprintf(stderr,
                 "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu "
-                "floatOp=%llu\n",
+                "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu\n",
                 (unsigned long long)g_primAt_hits,
                 (unsigned long long)g_primAtPut_hits,
                 (unsigned long long)g_primSize_hits,
                 (unsigned long long)g_primBitOp_hits,
-                (unsigned long long)g_primFloatOp_hits);
+                (unsigned long long)g_primFloatOp_hits,
+                (unsigned long long)g_bcFloatArith_hits,
+                (unsigned long long)g_bcArithBail_hits,
+                (unsigned long long)g_bcRemoteTemp_hits);
         }
     }
     if (g_xmethod_count > 0) {

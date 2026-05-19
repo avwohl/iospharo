@@ -81,6 +81,9 @@ extern "C" uint64_t g_primAtPut_hits      = 0;  // tryPrimAtPut inline fired
 extern "C" uint64_t g_primSize_hits       = 0;  // tryPrimSize inline fired
 extern "C" uint64_t g_primBitOp_hits      = 0;  // bitAnd/bitOr/bitXor fired
 extern "C" uint64_t g_primFloatOp_hits    = 0;  // SmallFloat send-site fired
+extern "C" uint64_t g_bcFloatArith_hits   = 0;  // 0x60/0x61 SmallFloat bytecode fired
+extern "C" uint64_t g_bcArithBail_hits    = 0;  // 0x60/0x61 SmI fast-path bailed
+extern "C" uint64_t g_bcRemoteTemp_hits   = 0;  // 0xFB/0xFC/0xFD inline fired
 // Debug: last-seen values at the self-recursive check.  Overwritten each
 // entry so post-run we can see what the comparison was checking.
 extern "C" uint64_t g_inlineJ2J_dbg_caller_method = 0;
@@ -2413,6 +2416,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.b(end);
 
         a.bind(bail);
+        // Counter: how often the SmI fast path bails (for any reason).
+        if (op == 0x60 || op == 0x61) {
+            a.mov(x14, asmjit::Imm((uint64_t)&g_bcArithBail_hits));
+            a.ldr(x15, ptr(x14));
+            a.add(x15, x15, asmjit::Imm(1));
+            a.str(x15, ptr(x14));
+        }
         // Inline SmallFloat + / - at the bytecode level (op 0x60 / 0x61).
         // Reached when the SmI fast-path fails.  Both operands must have
         // tag 5 and non-zero shifted bits (i.e. not ±0).
@@ -2425,6 +2435,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.and_(x5, x4, asmjit::Imm(0x7));
             a.cmp(x5, asmjit::Imm(5));
             a.b_ne(notFloat);
+            // Counter increment (every successful tag check).
+            {
+                a.mov(x14, asmjit::Imm((uint64_t)&g_bcFloatArith_hits));
+                a.ldr(x15, ptr(x14));
+                a.add(x15, x15, asmjit::Imm(1));
+                a.str(x15, ptr(x14));
+            }
             // Decode rcv to d0.
             a.lsr(x5, x1, asmjit::Imm(3));
             a.cmp(x5, asmjit::Imm(1));
@@ -4236,19 +4253,62 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 i += 1;
                 continue;
             }
-            // Remote temp access 0xFB/0xFC/0xFD: 3-byte ops, bail to
-            // interp at the opcode.  Interp handles the read/write of
-            // a slot in a temp vector held by an enclosing closure.
+            // Remote temp access 0xFB/0xFC/0xFD: 3-byte ops.
+            // Inline: vec = temps[vecIdx]; if vec is an Object,
+            //   PushTempAtInVec:      push vec[tempIdx]
+            //   StoreTempAtInVec:     vec[tempIdx] = stackTop (no pop)
+            //   PopStoreTempAtInVec:  vec[tempIdx] = pop()
+            // If vec is not an Object (nil), PushTempAtInVec pushes nil
+            // and the stores are no-ops.  No GC write barrier yet —
+            // stores from inside a closure body to a captured vector
+            // typically hit eden; if surfacing as a leak, add the bit
+            // 21 store barrier on the target object.
             if (op == SistaV1::PushTempAtInVec
                     || op == SistaV1::StoreTempAtInVec
                     || op == SistaV1::PopStoreTempAtInVec) {
-                a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
-                a.add(a64::x5, a64::x5,
-                      asmjit::Imm(bcOffsetBase + globalIdx));
-                a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
-                a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
-                a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
-                a.ret(a64::x30);
+                uint8_t tempIdx = bcReal[i + 1];
+                uint8_t vecIdx  = bcReal[i + 2];
+                // Counter increment.
+                {
+                    a.mov(a64::x14, asmjit::Imm((uint64_t)&g_bcRemoteTemp_hits));
+                    a.ldr(a64::x15, a64::ptr(a64::x14));
+                    a.add(a64::x15, a64::x15, asmjit::Imm(1));
+                    a.str(a64::x15, a64::ptr(a64::x14));
+                }
+                if (op == SistaV1::PushTempAtInVec) {
+                    asmjit::Label vecObj = a.new_label();
+                    asmjit::Label pushDone = a.new_label();
+                    a.ldr(a64::x4, a64::ptr(a64::x0, OFF_TEMPBASE));
+                    a.ldr(a64::x5, a64::ptr(a64::x4, vecIdx * 8));
+                    a.tst(a64::x5, asmjit::Imm(0x7));
+                    a.b_eq(vecObj);                   // tag==0 → real obj
+                    // Not an object — push nil.
+                    a.mov(a64::x6, asmjit::Imm(nilBits));
+                    a.b(pushDone);
+                    a.bind(vecObj);
+                    // x5 = TempVector; slot tempIdx at offset 8 + tempIdx*8.
+                    a.ldr(a64::x6, a64::ptr(a64::x5, 8 + tempIdx * 8));
+                    a.bind(pushDone);
+                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.str(a64::x6, a64::ptr(a64::x2));
+                    a.add(a64::x2, a64::x2, asmjit::Imm(8));
+                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                } else {
+                    // 0xFC (store, no pop) / 0xFD (pop+store)
+                    asmjit::Label vecNotObj = a.new_label();
+                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    a.ldr(a64::x6, a64::ptr(a64::x2, -8));  // x6 = stackTop
+                    if (op == SistaV1::PopStoreTempAtInVec) {
+                        a.sub(a64::x2, a64::x2, asmjit::Imm(8));
+                        a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    }
+                    a.ldr(a64::x4, a64::ptr(a64::x0, OFF_TEMPBASE));
+                    a.ldr(a64::x5, a64::ptr(a64::x4, vecIdx * 8));
+                    a.tst(a64::x5, asmjit::Imm(0x7));
+                    a.b_ne(vecNotObj);                // not Object → skip store
+                    a.str(a64::x6, a64::ptr(a64::x5, 8 + tempIdx * 8));
+                    a.bind(vecNotObj);
+                }
                 a.bind(bcLabels[globalIdx + 1]);
                 a.bind(bcLabels[globalIdx + 2]);
                 i += 2;
