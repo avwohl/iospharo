@@ -1415,40 +1415,57 @@ extern "C" uint64_t jit_rt_new_prim(JITState* s, uint64_t info) {
 // Mirrors stencils.cpp:1642-1722 inline-block-value path, but uses
 // the asmjit BR-prelude protocol instead of the stencil's C-call
 // recursion model.
+// Per-gate bail counters for debugging.
+extern "C" uint64_t g_bvBail_rcv  = 0;
+extern "C" uint64_t g_bvBail_slot = 0;
+extern "C" uint64_t g_bvBail_cb   = 0;
+extern "C" uint64_t g_bvBail_args = 0;
+extern "C" uint64_t g_bvBail_lookup = 0;
+extern "C" uint64_t g_bvBail_stub = 0;
+extern "C" uint64_t g_bvBail_canBail = 0;
+extern "C" uint64_t g_bvBail_prim = 0;
+extern "C" uint64_t g_bvBail_savefull = 0;
+
 extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
                                                  void* resumeAddr) {
     void* callerJM = s->jitMethod;
     // Receiver is at sp[-(nArgs+1)] — same as a regular send.
     uint64_t rcvBits = s->sp[-(nArgs + 1)].rawBits();
-    if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return nullptr;
+    if ((rcvBits & 7) != 0 || rcvBits < 0x10000) { g_bvBail_rcv++; return nullptr; }
 
     auto* closureObj = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
-    if (closureObj->slotCount() < 4) return nullptr;
+    if (closureObj->slotCount() < 4) { g_bvBail_slot++; return nullptr; }
 
     uint64_t compiledBlockBits = closureObj->slotAt(1).rawBits();
     if ((compiledBlockBits & 7) != 0 || compiledBlockBits < 0x10000)
-        return nullptr;
+        { g_bvBail_cb++; return nullptr; }
 
     uint64_t numArgsBits = closureObj->slotAt(2).rawBits();
-    if ((numArgsBits & 7) != 1) return nullptr;
+    if ((numArgsBits & 7) != 1) { g_bvBail_args++; return nullptr; }
     int64_t closureNumArgs = (int64_t)numArgsBits >> 3;
-    if (closureNumArgs != nArgs) return nullptr;
+    if (closureNumArgs != nArgs) { g_bvBail_args++; return nullptr; }
 
     auto* mm = reinterpret_cast<MethodMap*>(s->methodMapPtr);
-    if (!mm) return nullptr;
+    if (!mm) { g_bvBail_lookup++; return nullptr; }
     JITMethod* blockJM = mm->lookup(compiledBlockBits);
-    if (!blockJM) return nullptr;
-    // MethodMap::lookup already verifies isExecutable + matching oop.
-    // Apply additional safety gates that the asmjit-T1 J2J protocol
-    // requires.  See deferred.md A6 iter N+9 for rationale.
-    if (blockJM->numICEntries != 0) return nullptr;
-    if (blockJM->isStubOnEntry)    return nullptr;
-    if (blockJM->canBailMidMethod) return nullptr;
-    if ((blockJM->methodHeader >> 16) & 1) return nullptr;
+    if (!blockJM) {
+        // Block not JIT-compiled yet.  Eager-compile from inside a JIT
+        // send tried 2026-05-19 and SIGSEGV'd — the compiler isn't
+        // safe to invoke mid-send (GC + stack manipulation conflicts).
+        // Bail; the block will eventually be compiled via the normal
+        // noteMethodEntry threshold and inline-J2J fires on subsequent
+        // calls.  TODO: schedule a recompile queue insert instead of
+        // synchronous compile.
+        g_bvBail_lookup++;
+        return nullptr;
+    }
+    if (blockJM->isStubOnEntry)    { g_bvBail_stub++; return nullptr; }
+    if (blockJM->canBailMidMethod) { g_bvBail_canBail++; return nullptr; }
+    if ((blockJM->methodHeader >> 16) & 1) { g_bvBail_prim++; return nullptr; }
 
     // Save stack space check.
     if ((uintptr_t)s->j2jSaveCursor >= (uintptr_t)s->j2jSaveLimit)
-        return nullptr;
+        { g_bvBail_savefull++; return nullptr; }
 
     // Push J2J save.  Layout per Interpreter::J2JSave (56 bytes):
     //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
@@ -1807,10 +1824,15 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
 
 // ===== JITRuntime =====
 
+// Global accessor for jit_rt_inline_block_value_prep — set in the
+// JITRuntime ctor.  Singleton model: only one JITRuntime per process.
+JITRuntime* g_jitRuntimeForBlockValue = nullptr;
+
 JITRuntime::JITRuntime()
     : nilOopBits(0), trueOopBits(0), falseOopBits(0)
 {
     std::memset(countMap_, 0, sizeof(countMap_));
+    g_jitRuntimeForBlockValue = this;
 }
 
 JITRuntime::~JITRuntime() {

@@ -90,6 +90,15 @@ extern "C" uint64_t g_inlineJ2J_dbg_ic_hits;
 extern "C" uint64_t g_blockValue_tries;
 extern "C" uint64_t g_blockValue_hits;
 extern "C" uint64_t g_blockValue_bails;
+extern "C" uint64_t g_bvBail_rcv;
+extern "C" uint64_t g_bvBail_slot;
+extern "C" uint64_t g_bvBail_cb;
+extern "C" uint64_t g_bvBail_args;
+extern "C" uint64_t g_bvBail_lookup;
+extern "C" uint64_t g_bvBail_stub;
+extern "C" uint64_t g_bvBail_canBail;
+extern "C" uint64_t g_bvBail_prim;
+extern "C" uint64_t g_bvBail_savefull;
 extern "C" uint64_t g_inlineJ2J_dbg_extra_no_bit60;
 extern "C" uint64_t g_inlineJ2J_dbg_miss;
 extern "C" uint64_t g_inlineJ2J_dbg_dispatch;
@@ -1397,11 +1406,22 @@ void Interpreter::dumpJITStats() {
     if (g_blockValue_tries > 0) {
         fprintf(stderr,
             "  block-value inline: tries=%llu hits=%llu bails=%llu "
-            "(catch rate %.1f%%)\n",
+            "(catch rate %.1f%%)\n"
+            "    bail: rcv=%llu slot=%llu cb=%llu args=%llu lookup=%llu "
+            "stub=%llu canBail=%llu prim=%llu savefull=%llu\n",
             (unsigned long long)g_blockValue_tries,
             (unsigned long long)g_blockValue_hits,
             (unsigned long long)g_blockValue_bails,
-            100.0 * g_blockValue_hits / g_blockValue_tries);
+            100.0 * g_blockValue_hits / g_blockValue_tries,
+            (unsigned long long)g_bvBail_rcv,
+            (unsigned long long)g_bvBail_slot,
+            (unsigned long long)g_bvBail_cb,
+            (unsigned long long)g_bvBail_args,
+            (unsigned long long)g_bvBail_lookup,
+            (unsigned long long)g_bvBail_stub,
+            (unsigned long long)g_bvBail_canBail,
+            (unsigned long long)g_bvBail_prim,
+            (unsigned long long)g_bvBail_savefull);
     }
     // Inline-prim counters (PHARO_T1_INLINE_PRIM_COUNTERS=1) — see top of file
     // for extern "C" declarations.
@@ -18101,7 +18121,49 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                     && (primIdx == 207 || primIdx == 209));
             if (eagerCompileTarget) {
                 target = jitRuntime_.compiler()->compile(cachedMethod);
-                if (target && !target->hasPrimPrologue) target = nullptr;
+                if (target && !target->hasPrimPrologue) {
+                    // For block-value prims (207/209), asmjit-T1 has no
+                    // prim prologue but we still want BLOCK_VALUE_BIT set
+                    // on the IC so the inline block-value emit can fire
+                    // (PHARO_T1_INLINE_BLOCK_VALUE).  The bit is a marker;
+                    // the IC's entryAddr isn't used by that path (the
+                    // helper looks up the user block's JM dynamically).
+                    // Set the bit directly and return — bypassing the
+                    // rest of the J2J fill logic that would otherwise
+                    // null `target` and exit without touching the IC.
+                    if (primIdx == 207 || primIdx == 209) {
+                        // Pick the first empty slot; refuse if all full.
+                        // Mirrors the fill loop below but writes only the
+                        // classKey + extras (no method, no J2J entryAddr).
+                        // Receiver classKey: derive from receiver_'s class
+                        // — same as the regular IC fill would store.
+                        // For block-value sends, classKey is always
+                        // FullBlockClosure-equivalent (the IC HIT already
+                        // matched the receiver class).
+                        for (int e = 0; e < jit::IC_ENTRIES_PER_SITE; ++e) {
+                            if (icData[e * 3] != 0) continue;  // occupied
+                            // Reconstruct lookupKey from receiver_.
+                            uint64_t rb = receiver_.rawBits();
+                            uint32_t key;
+                            if ((rb & 7) == 0 && rb >= 0x10000) {
+                                uint32_t classBits =
+                                    *reinterpret_cast<uint32_t*>(rb) & 0x3FFFFF;
+                                key = classBits;
+                            } else {
+                                // Immediate receiver — use the immediate
+                                // marker form (high bit set).  Block-value
+                                // sites always have heap receivers, so this
+                                // is a defensive fallback.
+                                key = 0x80000000u | (uint32_t)(rb & 0x7);
+                            }
+                            icData[e * 3 + 0] = key;
+                            icData[e * 3 + 1] = cachedMethod.rawBits();
+                            icData[e * 3 + 2] = (1ULL << 59);  // BLOCK_VALUE_BIT only
+                            break;
+                        }
+                    }
+                    target = nullptr;
+                }
                 // 2026-05-03: IC moved to heap, no W^X flip needed
                 // around icData[] writes below.
             }

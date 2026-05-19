@@ -2547,6 +2547,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             if (inlineJ2J) {
                 asmjit::Label tryInlineJ2J = a.new_label();
                 asmjit::Label j2jBail      = a.new_label();
+                // Bit 59 (BLOCK_VALUE_BIT) takes precedence over bit 60.
+                // Block-value IC entries may have bit 59 alone (when the
+                // value: method is not safe to J2J-call) — check 59 first.
+                if (g_debug.t1InlineBlockValue) {
+                    a.tbnz(x7, asmjit::Imm(59), tryInlineJ2J);
+                }
                 // Bit 60 set → try inline J2J; works for any receiver tag
                 // (SmI receivers benefit too, unlike inline-getter/setter).
                 a.tbnz(x7, asmjit::Imm(60), tryInlineJ2J);
