@@ -3430,13 +3430,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // flag (bit 23 of header).
             // sp layout before send: [..., recv, idx, val]  (val at sp[-1])
             if (nArgs == 2 && g_debug.t1InlinePrimAt) {
+                asmjit::Label tryByteAtPut = a.new_label();
                 a.bind(tryPrimAtPut);
                 emitIncPrimCounter((uint64_t)&g_primAtPut_hits);
                 a.ldr(x4, ptr(x1));                  // x4 = header word
                 a.lsr(x6, x4, asmjit::Imm(24));
                 a.and_(x6, x6, asmjit::Imm(0x1F));
-                a.cmp(x6, asmjit::Imm(2));           // fmt 2
-                a.b_ne(dispatchCached);
+                a.cmp(x6, asmjit::Imm(2));           // fmt 2 Array path
+                a.b_ne(tryByteAtPut);
                 // Immutability check (bit 23)
                 a.tbnz(x4, asmjit::Imm(23), dispatchCached);  // immutable → bail
                 a.lsr(x5, x4, asmjit::Imm(56));
@@ -3459,6 +3460,46 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.add(x6, x1, x4);
                 a.str(x3, ptr(x6));                  // recv[idx*8] = val
                 // at:put: returns the value (sp[-3]=recv slot becomes val)
+                a.stur(x3, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
+
+                // Byte at:put: for fmt 16-23.  Val must be SmI in 0..255.
+                a.bind(tryByteAtPut);
+                a.sub(x8, x6, asmjit::Imm(16));
+                a.cmp(x8, asmjit::Imm(8));
+                a.b_hs(dispatchCached);
+                a.tbnz(x4, asmjit::Imm(23), dispatchCached);  // immutable
+                a.lsr(x5, x4, asmjit::Imm(56));
+                a.and_(x5, x5, asmjit::Imm(0xFF));
+                a.cmp(x5, asmjit::Imm(255));
+                a.b_eq(dispatchCached);
+                a.lsl(x5, x5, asmjit::Imm(3));      // sc*8
+                a.and_(x6, x6, asmjit::Imm(0x7));    // extra bytes (fmt-16)
+                a.sub(x5, x5, x6);                   // byteSize
+                a.ldur(x3, ptr(x2, -16));            // idx (tagged SmI)
+                a.and_(x6, x3, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                a.asr(x4, x3, asmjit::Imm(3));       // idx
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_lt(dispatchCached);
+                a.cmp(x4, x5);
+                a.b_gt(dispatchCached);
+                a.ldur(x3, ptr(x2, -8));             // val (tagged SmI)
+                a.and_(x6, x3, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_ne(dispatchCached);              // val not SmI
+                a.asr(x6, x3, asmjit::Imm(3));       // val untagged
+                a.cmp(x6, asmjit::Imm(255));
+                a.b_hi(dispatchCached);              // val > 255
+                // Store byte at recvAddr + 8 + (idx-1) = recv + 7 + idx.
+                // x6 holds the untagged value; use x7 for the address.
+                a.add(x4, x4, asmjit::Imm(7));
+                a.add(x7, x1, x4);
+                a.strb(w6, ptr(x7));
+                // at:put: returns the value (tagged SmI), write at recv slot
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
