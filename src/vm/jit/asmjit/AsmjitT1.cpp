@@ -2771,7 +2771,22 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stp(x15, x4, ptr(x6, 0));
                 a.ldr(x15, ptr(x0, OFF_TEMPBASE));
                 a.str(x15, ptr(x6, 16));
-                a.ldr(x15, ptr(x0, OFF_IP));
+                // save.ip: PHARO_T1_J2J_POST_SEND_IP=1 stores method +
+                // bcOffsetFromMethObj + 1 (mirroring chain-loop's J2JCall
+                // which advances ip past send before saving — see
+                // Interpreter.cpp:18829-18833 + 18892).  Default OFF
+                // preserves pre-existing behavior; opt-in for correctness
+                // experiments.  Found via lldb investigation that pre-send
+                // ip in materialize sites leads to double-send on interp
+                // resume.  When fix bisects clean, flip default-on.
+                static const bool postSendIp =
+                    std::getenv("PHARO_T1_J2J_POST_SEND_IP") != nullptr;
+                if (postSendIp) {
+                    a.ldr(x15, ptr(x0, OFF_METHOD));
+                    a.add(x15, x15, asmjit::Imm(bcOffsetFromMethObj + 1));
+                } else {
+                    a.ldr(x15, ptr(x0, OFF_IP));
+                }
                 a.str(x15, ptr(x6, 24));
                 a.stp(x11, x14, ptr(x6, 32));      // callerJM + resumeAddr
                 a.mov(w15, asmjit::Imm(nArgs));
