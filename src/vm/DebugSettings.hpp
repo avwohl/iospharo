@@ -116,6 +116,8 @@ struct DebugSettings {
     // gate was added 2026-05-19 (iter N+16) to suppress chain-break
     // corruption.  Re-attempt after the later fixes.
     bool t1InlineBlockValueNonLeaf = false;
+    // Per-primitive call counter dumped at exit.  PHARO_PRIM_PROFILE=1.
+    bool primProfile = false;
     // Sync interp->receiver_ and method_ on chain-loop J2J Return path.
     // Without this, a stale callee-receiver lingers in interp->receiver_
     // after chain-loop bail/resume and can corrupt later interp dispatch.

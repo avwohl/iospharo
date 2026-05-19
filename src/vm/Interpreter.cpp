@@ -107,6 +107,12 @@ extern "C" uint64_t g_primAtPut_hits;
 extern "C" uint64_t g_primSize_hits;
 extern "C" uint64_t g_primBitOp_hits;
 
+// Per-primitive call counter — populated at primitive dispatch site,
+// dumped at exit (PHARO_PRIM_PROFILE=1).  Used to identify high-frequency
+// primitives that warrant JIT prologue / send-site inline emit.
+extern "C" uint64_t g_primCallCount[700];
+uint64_t g_primCallCount[700] = {};
+
 // Display Form readiness flag — exposed to Swift via vm_isDisplayFormReady().
 // Set true when the image calls primitiveBeDisplay (prim 102) or
 // primitiveForceDisplayUpdate (prim 127), indicating the Display Form has
@@ -1443,6 +1449,20 @@ void Interpreter::dumpJITStats() {
     if (g_xmethod_count > 0) {
         fprintf(stderr, "  xmethod inline-J2J fires=%llu\n",
                 (unsigned long long)g_xmethod_count);
+    }
+    if (g_debug.primProfile) {
+        // Sort primitive call counts descending and print top 30.
+        std::vector<std::pair<uint64_t, int>> v;
+        for (int i = 0; i < 700; i++) {
+            if (g_primCallCount[i] > 0) v.emplace_back(g_primCallCount[i], i);
+        }
+        std::sort(v.rbegin(), v.rend());
+        fprintf(stderr, "  primCallCount top-30 (PHARO_PRIM_PROFILE=1):\n");
+        size_t limit = std::min((size_t)30, v.size());
+        for (size_t i = 0; i < limit; i++) {
+            fprintf(stderr, "    prim%-4d %llu\n", v[i].second,
+                    (unsigned long long)v[i].first);
+        }
     }
     fprintf(stderr, "=================\n");
     // One-off diagnostic: print offsets of key Interpreter fields to
@@ -15507,6 +15527,9 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     {
         PrimitiveFunc prim = primitiveTable_[primitiveIndex];
         if (prim) {
+            if (g_debug.primProfile && primitiveIndex < 700) {
+                g_primCallCount[primitiveIndex]++;
+            }
             uint64_t spBefore = (uint64_t)stackPointer_;
             PrimitiveResult result = (this->*prim)(argCount);
             if (__builtin_expect(traceSpCorrupt_, 0)) {

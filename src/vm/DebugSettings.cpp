@@ -105,6 +105,7 @@ DebugSettings::DebugSettings() {
     t1XmethodLog        = envPresent("PHARO_T1_XMETHOD_LOG");
     t1InlineBlockValueNonLeaf =
         envPresent("PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF");
+    primProfile         = envPresent("PHARO_PRIM_PROFILE");
     t1J2JReceiverSync   = envPresent("PHARO_T1_J2J_RECEIVER_SYNC");
     t1J2JPostSendIp     = envPresent("PHARO_T1_J2J_POST_SEND_IP");
     t1J2JSplitPool      = envPresent("PHARO_T1_J2J_SPLIT_POOL");

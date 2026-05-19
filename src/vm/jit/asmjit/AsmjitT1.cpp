@@ -869,6 +869,14 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 14: return primIndex;   // SmallInteger>>bitAnd:
     case 15: return primIndex;   // SmallInteger>>bitOr:
     case 16: return primIndex;   // SmallInteger>>bitXor:
+    // Prims 60/61/62 disabled pending send-site icDataPtr fix.
+    // The send-site inline-prim emit (tryPrimAt / tryPrimAtPut / tryPrimSize)
+    // clobbers x5 — which holds the icDataPtr — and bails to dispatchCached
+    // which expects x5 == icDataPtr.  Latent because primKind=14/15/16
+    // extras only get set when supportedPrimIndex recognizes the callee
+    // primitive, which currently doesn't include 60/61/62.  Enabling here
+    // exposes the bug.  Fix: have inline-prim bail to a restoring stub
+    // that reloads x5 from OFF_ICDATAPTR before dispatchCached.
     case 110: return primIndex;  // ProtoObject>>==
     default: return -1;
     }
@@ -1790,6 +1798,161 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
     asmjit::Label fail = a.new_label();
 
     a.ldr(x1, ptr(x0, OFF_RECEIVER));
+
+    // === Heap-receiver primitives (no SmI check) — at: / at:put: / size ===
+    if (primIndex == 60 || primIndex == 61 || primIndex == 62) {
+        // x1 = receiver (must be heap pointer).
+        a.tst(x1, asmjit::Imm(7));
+        a.b_ne(fail);
+        // Load header word.
+        a.ldr(x4, ptr(x1));
+        // fmt = (hdr >> 24) & 0x1F
+        a.lsr(x6, x4, asmjit::Imm(24));
+        a.and_(x6, x6, asmjit::Imm(0x1F));
+        // slotCount = (hdr >> 56) & 0xFF, bail on overflow (255).
+        a.lsr(x5, x4, asmjit::Imm(56));
+        a.and_(x5, x5, asmjit::Imm(0xFF));
+        a.cmp(x5, asmjit::Imm(255));
+        a.b_eq(fail);
+
+        if (primIndex == 62) {
+            // size — fmt 2 (Array) or 16-23 (byte).
+            asmjit::Label tryBytes = a.new_label();
+            a.cmp(x6, asmjit::Imm(2));
+            a.b_ne(tryBytes);
+            // Array: result = slotCount tagged.
+            a.lsl(x5, x5, asmjit::Imm(3));
+            a.orr(x5, x5, asmjit::Imm(1));
+            a.str(x5, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            a.bind(tryBytes);
+            // fmt - 16 in [0..7] → byte indexable.
+            a.sub(x8, x6, asmjit::Imm(16));
+            a.cmp(x8, asmjit::Imm(8));
+            a.b_hs(fail);
+            // byteSize = slotCount*8 - (fmt & 7)
+            a.lsl(x5, x5, asmjit::Imm(3));
+            a.and_(x6, x6, asmjit::Imm(0x7));
+            a.sub(x5, x5, x6);
+            // Tag as SmI.
+            a.lsl(x5, x5, asmjit::Imm(3));
+            a.orr(x5, x5, asmjit::Imm(1));
+            a.str(x5, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            a.bind(fail);
+            return;
+        }
+
+        // prim 60 / 61: load idx (tagged) from first temp.
+        a.ldr(x2, ptr(x0, OFF_TEMPBASE));
+        a.ldr(x3, ptr(x2));                  // x3 = idx
+        a.and_(x7, x3, asmjit::Imm(0x7));
+        a.cmp(x7, asmjit::Imm(1));
+        a.b_ne(fail);                         // idx not SmI
+
+        if (primIndex == 60) {
+            // at: — fmt 2 (Array) or 16-23 (byte indexable).
+            asmjit::Label tryBytesAt = a.new_label();
+            a.cmp(x6, asmjit::Imm(2));
+            a.b_ne(tryBytesAt);
+            a.asr(x4, x3, asmjit::Imm(3));   // idx untagged
+            a.cmp(x4, asmjit::Imm(1));
+            a.b_lt(fail);
+            a.cmp(x4, x5);
+            a.b_gt(fail);
+            // recv[idx*8] = slot at index idx-1 (offset 8 + (idx-1)*8 = idx*8).
+            a.lsl(x4, x4, asmjit::Imm(3));
+            a.add(x6, x1, x4);
+            a.ldr(x4, ptr(x6));
+            a.str(x4, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            a.bind(tryBytesAt);
+            a.sub(x8, x6, asmjit::Imm(16));
+            a.cmp(x8, asmjit::Imm(8));
+            a.b_hs(fail);
+            // byteSize = slotCount*8 - (fmt & 7)
+            a.lsl(x5, x5, asmjit::Imm(3));
+            a.and_(x9, x6, asmjit::Imm(0x7));
+            a.sub(x5, x5, x9);
+            a.asr(x4, x3, asmjit::Imm(3));
+            a.cmp(x4, asmjit::Imm(1));
+            a.b_lt(fail);
+            a.cmp(x4, x5);
+            a.b_gt(fail);
+            // load byte at recv + 7 + idx (because slot[0] at +8, idx 1 = +8 = recv+7+1).
+            a.add(x4, x4, asmjit::Imm(7));
+            a.add(x6, x1, x4);
+            a.ldrb(w7, ptr(x6));
+            // Tag as SmI.
+            a.lsl(x7, x7, asmjit::Imm(3));
+            a.orr(x7, x7, asmjit::Imm(1));
+            a.str(x7, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            a.bind(fail);
+            return;
+        }
+
+        // primIndex == 61: at:put:.  Two args: idx (x3), val (load from temp+8).
+        if (primIndex == 61) {
+            // Immutability check (bit 23).
+            a.tbnz(x4, asmjit::Imm(23), fail);
+            a.ldr(x9, ptr(x2, 8));            // x9 = val (tagged)
+            asmjit::Label tryBytesAtPut = a.new_label();
+            a.cmp(x6, asmjit::Imm(2));
+            a.b_ne(tryBytesAtPut);
+            // Array path.
+            a.asr(x4, x3, asmjit::Imm(3));
+            a.cmp(x4, asmjit::Imm(1));
+            a.b_lt(fail);
+            a.cmp(x4, x5);
+            a.b_gt(fail);
+            a.lsl(x4, x4, asmjit::Imm(3));
+            a.add(x6, x1, x4);
+            a.str(x9, ptr(x6));               // store value at slot
+            a.str(x9, ptr(x0, OFF_RETVAL));   // return value
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            a.bind(tryBytesAtPut);
+            a.sub(x8, x6, asmjit::Imm(16));
+            a.cmp(x8, asmjit::Imm(8));
+            a.b_hs(fail);
+            // val must be SmI in 0..255.
+            a.and_(x7, x9, asmjit::Imm(0x7));
+            a.cmp(x7, asmjit::Imm(1));
+            a.b_ne(fail);
+            a.asr(x7, x9, asmjit::Imm(3));
+            a.cmp(x7, asmjit::Imm(255));
+            a.b_hi(fail);
+            // byteSize = slotCount*8 - (fmt & 7)
+            a.lsl(x5, x5, asmjit::Imm(3));
+            a.and_(x10, x6, asmjit::Imm(0x7));
+            a.sub(x5, x5, x10);
+            a.asr(x4, x3, asmjit::Imm(3));
+            a.cmp(x4, asmjit::Imm(1));
+            a.b_lt(fail);
+            a.cmp(x4, x5);
+            a.b_gt(fail);
+            a.add(x4, x4, asmjit::Imm(7));
+            a.add(x6, x1, x4);
+            a.strb(w7, ptr(x6));
+            a.str(x9, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            a.bind(fail);
+            return;
+        }
+    }
+
     a.ldr(x2, ptr(x0, OFF_TEMPBASE));
     a.ldr(x2, ptr(x2));
 
