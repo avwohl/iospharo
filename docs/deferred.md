@@ -1668,6 +1668,59 @@ Cog reference is still 25-50× ahead even with NO_JIT — closing
 that is the E-series multi-week work, separate from this T1
 regression issue.
 
+**Iter N+14 (2026-05-19) — FIRST CHAIN-BREAK BUG ROOT-CAUSED + FIXED (`8c319249`).**
+
+CLI-based lldb investigation pinpointed the first concrete corruption
+bug: in the xmethod inline-J2J emit, when PHARO_T1_J2J_POST_SEND_IP=1
+is set, save.ip was computed as `state.method + bcOffsetFromMethObj +
+1`.  But state.method had already been overwritten with the callee's
+compiled-method oop at the cross-method state-update block ~50 lines
+earlier.  Result: save.ip = calleeCM + caller_bcOffset + 1, a bogus
+address into the callee's memory.
+
+When interp later materialized this save into a SavedFrame and
+resumed, `instructionPointer_` landed past the (typically short)
+callee's bytecode end — for `findString:` (42-byte method), IP was
+1621 bytes past start.  Interp dispatched garbage as Send opcodes,
+reading nil from out-of-bounds literal slots → nil selectors → DNU
+cascade.
+
+**Diagnostic that found it:** added a temporary printf at the
+existing DNU site that dumps `state.method`, `state.literals`,
+`instructionPointer_` offset, and `xmethod_count` when selector is
+nil.  Output `method=findString: ip off 1621 (of 42)` showed the IP
+was wildly out of range — confirming corrupted state.ip.
+
+**Fix:** use x12 (caller's CM oop, loaded at line 2722 and not
+overwritten before the save push) directly, instead of reading the
+already-mutated `OFF_METHOD`.
+
+**Threshold movement:** `42 printString` eval-mode bisection
+  Pre-fix:  fails at MAX=33000 (the long-standing sharp threshold)
+  Post-fix: fails at MAX=100000 (different corruption mode)
+
+**Residual: nil-receiver DNUs past MAX=100K.**
+
+A different corruption mode surfaces past MAX=100K: instead of nil
+selectors (fixed above), the receiver is nil when the bytecode
+expects a heap object.  Trace shows stack-address-shaped values
+(e.g. 0x4fa87b8f8) leaking into frame slots — looks like a
+`tempBase` or `sp` value being written where an Oop should be.
+
+Possible causes (untested):
+- Save struct field mis-stored: save.tempBase being read as
+  save.receiver on materialize (offsets are correct on push but
+  drift may happen via some other path)
+- A J2JSave ring-buffer wrap-around once state.j2jDepth exceeds
+  J2JSlotPerEntry=32 within a single tryJITActivation
+- xmethod fires DURING a chain-loop activation overwriting the
+  chain-loop's rj2jSaves slice (despite splitPool — perhaps an
+  off-by-one in the slice boundaries)
+
+Next iteration: diff state at fire N=31000 (just under threshold)
+vs fire N=33000 (just past) — what's special about the next
+specific call?
+
 **Iter N+13 (2026-05-19) — workload-dependent corruption.**
 
 Discovery: the 32K threshold is `42 printString` eval-specific.  The
