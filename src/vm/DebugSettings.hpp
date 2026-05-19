@@ -88,6 +88,12 @@ struct DebugSettings {
     // every send goes through IC).  primKind dispatch added 2026-05-18 for
     // stringHash/dict benches.  PHARO_T1_NO_INLINE_PRIM_BITOPS=1 opt-out.
     bool t1InlinePrimBitOps = true;
+    // Inline at: (primKind 14) at IC HIT site for heap receivers with
+    // fmt-2 (Array).  Skips chain-loop round-trip for `arr at: i`-style
+    // sends.  Mirrors stencils.cpp:1538-1545.  ~30 cycle inline emit
+    // vs ~500 cycle chain-loop round-trip.  Could benefit sort/dict/sum.
+    // Default-on; PHARO_T1_NO_INLINE_PRIM_AT=1 opt-out.
+    bool t1InlinePrimAt = true;
     // Diagnostic: force probe to always-miss so the probe COMPUTATION runs
     // but exits via ExitSend regardless of icData[0] match.  Isolates
     // whether bugs are in the probe arithmetic or in the HIT path.

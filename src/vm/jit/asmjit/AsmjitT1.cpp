@@ -2460,6 +2460,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimBitAnd = a.new_label();
             asmjit::Label tryPrimBitOr = a.new_label();
             asmjit::Label tryPrimBitXor = a.new_label();
+            asmjit::Label tryPrimAt = a.new_label();
+            asmjit::Label tryPrimAtPut = a.new_label();
             asmjit::Label j2jBailHeap = a.new_label();
             asmjit::Label j2jBailHeap2 = a.new_label();
             asmjit::Label endOfSend = a.new_label();
@@ -2855,6 +2857,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 if (g_debug.t1InlineReturnsSelf) {
                     a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
                 }
+                // Inline at: / at:put: for heap receivers (primKind 14/15).
+                // Mirrors stencils.cpp:1538-1554.  Bails to dispatchCached
+                // for non-Array fmt, OOB, non-SmI idx — same as stencil's
+                // bail path.
+                if ((nArgs == 1 || nArgs == 2) && g_debug.t1InlinePrimAt) {
+                    a.lsr(x6, x7, asmjit::Imm(48));
+                    a.and_(x6, x6, asmjit::Imm(0x1F));
+                    if (nArgs == 1) {
+                        a.cmp(x6, asmjit::Imm(14));
+                        a.b_eq(tryPrimAt);
+                    } else {  // nArgs == 2
+                        a.cmp(x6, asmjit::Imm(15));
+                        a.b_eq(tryPrimAtPut);
+                    }
+                }
                 a.b(dispatchCached);
             } else {
                 // Inline specializations need heap receiver (tag==0).
@@ -2886,6 +2903,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 if (g_debug.t1InlineReturnsSelf) {
                     a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
+                }
+                // Inline at: / at:put: for heap receivers (primKind 14/15).
+                // Mirrors stencils.cpp:1538-1554.  Bails to dispatchCached
+                // for non-Array fmt, OOB, non-SmI idx — same as stencil's
+                // bail path.
+                if ((nArgs == 1 || nArgs == 2) && g_debug.t1InlinePrimAt) {
+                    a.lsr(x6, x7, asmjit::Imm(48));
+                    a.and_(x6, x6, asmjit::Imm(0x1F));
+                    if (nArgs == 1) {
+                        a.cmp(x6, asmjit::Imm(14));
+                        a.b_eq(tryPrimAt);
+                    } else {  // nArgs == 2
+                        a.cmp(x6, asmjit::Imm(15));
+                        a.b_eq(tryPrimAtPut);
+                    }
                 }
                 a.b(dispatchCached);
             }
@@ -2972,6 +3004,88 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(tryPrimBitAnd);
                 a.bind(tryPrimBitOr);
                 a.bind(tryPrimBitXor);
+                a.b(dispatchCached);
+            }
+
+            // === Inline at: (primKind 14, nArgs=1, heap receiver) ===
+            // Receiver class is whatever IC matched; runtime check fmt==2
+            // (variable pointer / Array) and decode header slot count.
+            // Mirrors stencils.cpp:1538-1545.
+            // x1 = recv (heap), x2 = sp, x7 = extras.
+            if (nArgs == 1 && g_debug.t1InlinePrimAt) {
+                a.bind(tryPrimAt);
+                a.ldr(x4, ptr(x1));                  // x4 = header word
+                a.lsr(x6, x4, asmjit::Imm(24));      // shift fmt to low
+                a.and_(x6, x6, asmjit::Imm(0x1F));
+                a.cmp(x6, asmjit::Imm(2));           // fmt 2 = pure ptr (Array)
+                a.b_ne(dispatchCached);
+                // Slot count in header bits 56:63 (1 byte). If 255 = overflow.
+                a.lsr(x5, x4, asmjit::Imm(56));
+                a.and_(x5, x5, asmjit::Imm(0xFF));
+                a.cmp(x5, asmjit::Imm(255));
+                a.b_eq(dispatchCached);              // overflow → slow
+                // Load idx (arg)
+                a.ldur(x3, ptr(x2, -8));
+                a.and_(x6, x3, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_ne(dispatchCached);              // arg not SmI
+                a.asr(x4, x3, asmjit::Imm(3));       // x4 = idx (signed untag)
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_lt(dispatchCached);              // idx < 1
+                a.cmp(x4, x5);
+                a.b_gt(dispatchCached);              // idx > sc
+                // Slot offset = idx * 8 (slot[idx-1] at offset 8 + (idx-1)*8)
+                a.lsl(x4, x4, asmjit::Imm(3));
+                a.add(x6, x1, x4);
+                a.ldr(x4, ptr(x6));                  // val = recv[idx*8]
+                a.stur(x4, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
+            } else if (!(nArgs == 2 && g_debug.t1InlinePrimAt)) {
+                a.bind(tryPrimAt);
+                a.b(dispatchCached);
+            }
+
+            // === Inline at:put: (primKind 15, nArgs=2, heap receiver) ===
+            // Mirrors stencils.cpp:1546-1554.  Also gates on immutable
+            // flag (bit 23 of header).
+            // sp layout before send: [..., recv, idx, val]  (val at sp[-1])
+            if (nArgs == 2 && g_debug.t1InlinePrimAt) {
+                a.bind(tryPrimAtPut);
+                a.ldr(x4, ptr(x1));                  // x4 = header word
+                a.lsr(x6, x4, asmjit::Imm(24));
+                a.and_(x6, x6, asmjit::Imm(0x1F));
+                a.cmp(x6, asmjit::Imm(2));           // fmt 2
+                a.b_ne(dispatchCached);
+                // Immutability check (bit 23)
+                a.tbnz(x4, asmjit::Imm(23), dispatchCached);  // immutable → bail
+                a.lsr(x5, x4, asmjit::Imm(56));
+                a.and_(x5, x5, asmjit::Imm(0xFF));
+                a.cmp(x5, asmjit::Imm(255));
+                a.b_eq(dispatchCached);
+                // sp[-1] = val, sp[-2] = idx (after pushes for nArgs=2)
+                a.ldur(x3, ptr(x2, -16));            // idx
+                a.and_(x6, x3, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                a.asr(x4, x3, asmjit::Imm(3));       // idx untagged
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_lt(dispatchCached);
+                a.cmp(x4, x5);
+                a.b_gt(dispatchCached);
+                // Load val + store at recv[idx*8]
+                a.ldur(x3, ptr(x2, -8));             // x3 = val
+                a.lsl(x4, x4, asmjit::Imm(3));
+                a.add(x6, x1, x4);
+                a.str(x3, ptr(x6));                  // recv[idx*8] = val
+                // at:put: returns the value (sp[-3]=recv slot becomes val)
+                a.stur(x3, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
+            } else if (!(nArgs == 1 && g_debug.t1InlinePrimAt)) {
+                a.bind(tryPrimAtPut);
                 a.b(dispatchCached);
             }
 
