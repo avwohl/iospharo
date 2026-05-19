@@ -1449,18 +1449,23 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     if (!mm) { g_bvBail_lookup++; return nullptr; }
     JITMethod* blockJM = mm->lookup(compiledBlockBits);
     if (!blockJM) {
-        // Block not JIT-compiled yet.  Could queue an initial compile
-        // via JITRuntime::queueInitialCompile here, but doing so made
-        // the block-value inline path fire ~800x per bench run and
-        // corrupted state ("withAllSuperclassesDo: is nil") — same
-        // chain-break protocol issue as xmethod inline-J2J with
-        // non-leaf callees.  Bail without queueing so the existing
-        // chain-loop path runs the value: dispatch normally.  When
-        // the chain-break protocol is fixed (deferred A6), this can
-        // safely be re-enabled.
+        // Block not JIT-compiled yet.  Queue for initial compile at
+        // the next safe-point drain.  Subsequent calls hit the cache.
+        // The strict leaf-only gate below protects against chain-
+        // break corruption that affected the earlier non-leaf attempts.
+        extern JITRuntime* g_jitRuntimeForBlockValue;
+        if (g_jitRuntimeForBlockValue) {
+            pharo::Oop blockOop = pharo::Oop::fromRawBits(compiledBlockBits);
+            g_jitRuntimeForBlockValue->queueInitialCompile(blockOop);
+        }
         g_bvBail_lookup++;
         return nullptr;
     }
+    // Strict leaf-only gate: block must have zero inner sends.  Same
+    // structural protection as xmethod (deferred A6 iter N+9):
+    // non-leaf callees can take chain-break exits that the J2J save/
+    // return protocol can't restore correctly.
+    if (blockJM->numICEntries != 0) { g_bvBail_lookup++; return nullptr; }
     if (blockJM->isStubOnEntry)    { g_bvBail_stub++; return nullptr; }
     if (blockJM->canBailMidMethod) { g_bvBail_canBail++; return nullptr; }
     if ((blockJM->methodHeader >> 16) & 1) { g_bvBail_prim++; return nullptr; }
