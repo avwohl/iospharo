@@ -118,6 +118,14 @@ struct DebugSettings {
     // Activation call.  PHARO_T1_J2J_SPLIT_POOL=1.  See deferred.md A6
     // iter N+2/N+3.
     bool t1J2JSplitPool = false;
+    // Inline FullBlockClosure>>value/value:/value:value:... at the IC HIT
+    // path when BLOCK_VALUE_BIT (bit 59 of extras) is set.  Looks up the
+    // compiledBlock's JM via jit_rt_inline_block_value_lookup, then
+    // pushes a J2J save + br to the block's entry.  Saves the ~500-cycle
+    // chain-loop round-trip per block invocation.  Opt-in (same risk
+    // profile as cross-method inline-J2J — uses the same save/return
+    // protocol).  PHARO_T1_INLINE_BLOCK_VALUE=1.
+    bool t1InlineBlockValue = false;
     // Diagnostic: force probe to always-miss so the probe COMPUTATION runs
     // but exits via ExitSend regardless of icData[0] match.  Isolates
     // whether bugs are in the probe arithmetic or in the HIT path.

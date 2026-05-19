@@ -87,6 +87,9 @@ extern "C" uint64_t g_inlineJ2J_dbg_caller_method;
 extern "C" uint64_t g_inlineJ2J_dbg_callee_method;
 extern "C" uint64_t g_inlineJ2J_dbg_extra;
 extern "C" uint64_t g_inlineJ2J_dbg_ic_hits;
+extern "C" uint64_t g_blockValue_tries;
+extern "C" uint64_t g_blockValue_hits;
+extern "C" uint64_t g_blockValue_bails;
 extern "C" uint64_t g_inlineJ2J_dbg_extra_no_bit60;
 extern "C" uint64_t g_inlineJ2J_dbg_miss;
 extern "C" uint64_t g_inlineJ2J_dbg_dispatch;
@@ -1389,6 +1392,16 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_inlineJ2J_dbg_miss,
                 (unsigned long long)g_inlineJ2J_dbg_dispatch);
         }
+    }
+    // Block-value inline counters (PHARO_T1_INLINE_BLOCK_VALUE=1).
+    if (g_blockValue_tries > 0) {
+        fprintf(stderr,
+            "  block-value inline: tries=%llu hits=%llu bails=%llu "
+            "(catch rate %.1f%%)\n",
+            (unsigned long long)g_blockValue_tries,
+            (unsigned long long)g_blockValue_hits,
+            (unsigned long long)g_blockValue_bails,
+            100.0 * g_blockValue_hits / g_blockValue_tries);
     }
     // Inline-prim counters (PHARO_T1_INLINE_PRIM_COUNTERS=1) — see top of file
     // for extern "C" declarations.

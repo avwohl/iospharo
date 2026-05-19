@@ -58,6 +58,16 @@
 namespace pharo {
 namespace jit {
 
+// Forward decl: inline block-value prep helper lives in JITRuntime.cpp.
+// Called from the asmjit-T1 IC HIT emit when BLOCK_VALUE_BIT is set.
+extern "C" void* jit_rt_inline_block_value_prep(
+    void* state, int nArgs, void* resumeAddr);
+
+// Block-value inline counters (PHARO_T1_INLINE_BLOCK_VALUE=1 telemetry).
+extern "C" uint64_t g_blockValue_tries = 0;  // BLOCK_VALUE_BIT detected
+extern "C" uint64_t g_blockValue_hits  = 0;  // helper returned entry
+extern "C" uint64_t g_blockValue_bails = 0;  // helper returned NULL
+
 // Inline-J2J bail-reason counters (PHARO_T1_INLINE_J2J=1 instrumentation).
 // Incremented from JIT-emitted code via address-load + atomic-ish increment;
 // printed by JITRuntime stats.  Process-global (single VM per process).
@@ -2598,6 +2608,72 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 };
 
                 a.bind(tryInlineJ2J);
+                // Resume label used by both block-value inline and xmethod
+                // self-recursive paths.  Declared early so block-value emit
+                // can adr into it.
+                asmjit::Label afterSend = a.new_label();
+                // Block-value inline (PHARO_T1_INLINE_BLOCK_VALUE=1).
+                // When BLOCK_VALUE_BIT (bit 59) is set, the IC site is a
+                // value/value:/value:... send to a FullBlockClosure.  The
+                // IC's entryAddr (low 48 of x7) points at the value:
+                // method's JIT entry (or stub), NOT the user-block's
+                // compiled code.  We delegate validation + J2J save +
+                // state setup + capture copy to a C helper, then `br x0`
+                // to enter the block's JIT entry.
+                if (g_debug.t1InlineBlockValue) {
+                    asmjit::Label tryBlockValue = a.new_label();
+                    asmjit::Label blockValueDone = a.new_label();
+                    a.tbnz(x7, asmjit::Imm(59), tryBlockValue);
+                    a.b(blockValueDone);
+                    a.bind(tryBlockValue);
+                    // Counter: try (helper about to be called).
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_blockValue_tries));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                    // Helper signature: (state, nArgs, resumeAddr)
+                    //   x0 in: state ptr; x0 out: blockEntry or NULL
+                    //   x1: nArgs (compile-time constant)
+                    //   x2: resumeAddr (= afterSend label)
+                    // Save state ptr + LR across the blr; blr clobbers x0.
+                    a.sub(sp, sp, asmjit::Imm(16));
+                    a.str(x0,  ptr(sp, 0));
+                    a.str(x30, ptr(sp, 8));
+                    a.mov(w1, asmjit::Imm(nArgs));
+                    a.adr(x2, afterSend);
+                    a.mov(x9, asmjit::Imm((uint64_t)
+                        &jit_rt_inline_block_value_prep));
+                    a.blr(x9);
+                    // x0 = blockEntry or NULL; move to x9 before
+                    // restoring x0 = state.
+                    a.mov(x9, x0);
+                    a.ldr(x0,  ptr(sp, 0));
+                    a.ldr(x30, ptr(sp, 8));
+                    a.add(sp, sp, asmjit::Imm(16));
+                    {
+                        asmjit::Label bailBV = a.new_label();
+                        asmjit::Label hitBV  = a.new_label();
+                        a.cbz(x9, bailBV);
+                        a.mov(x14, asmjit::Imm((uint64_t)&g_blockValue_hits));
+                        a.ldr(x15, ptr(x14));
+                        a.add(x15, x15, asmjit::Imm(1));
+                        a.str(x15, ptr(x14));
+                        a.b(hitBV);
+                        a.bind(bailBV);
+                        a.mov(x14, asmjit::Imm((uint64_t)&g_blockValue_bails));
+                        a.ldr(x15, ptr(x14));
+                        a.add(x15, x15, asmjit::Imm(1));
+                        a.str(x15, ptr(x14));
+                        a.b(j2jBail);
+                        a.bind(hitBV);
+                    }
+                    // Block entry expects x0 = state; we already restored.
+                    // The helper pushed the J2J save with resumeAddr =
+                    // afterSend, so the block's return prelude tail-calls
+                    // back to afterSend → endOfSend.
+                    a.br(x9);
+                    a.bind(blockValueDone);
+                }
                 // 2026-05-17 loop iter 2: self-recursive inline-J2J.
                 // Implements the simplest viable subset: callee == caller
                 // (same JITMethod).  For benchFib-style recursion, all
@@ -2615,7 +2691,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 //
                 // Resume label (after_send) goes into save.resumeAddr.
                 // Return prelude tail-calls there when callee returns.
-                asmjit::Label afterSend = a.new_label();
+                // (afterSend declared above so block-value inline can use it.)
                 asmjit::Label j2jBailSelf2 = a.new_label();
 
                 // Compute entryAddr (x9) and calleeJM (x10)
