@@ -1240,10 +1240,22 @@ Bisection proof:
   xmethod + receiver-sync + post-ip: 0 errors across 5 runs
 
 So combining both fixes eliminates the in-image errorNotIndexable
-corruption.  However image startup still hangs at ~212 compiled
-methods with full xmethod (compared to ~3000+ normal), suggesting
-a third issue (likely chain-loop materialize resume flow has
-another mismatch).
+corruption.  Cross-method now WORKS for limited fires:
+  MAX=0:    sum 1M = 110ms (xmethod effectively off)
+  MAX=1000: sum 1M = 114ms (some xmethod fires, slight check overhead)
+  MAX=5000: hangs (process timeout)
+  MAX=10000+: CRASH (x0 = 0x6, garbage in state pointer)
+
+So a third issue surfaces around MAX=5000+ fires.  Suspect:
+something accumulates in J2J save pool or chain-loop state across
+many xmethod fires, eventually causing infinite loop or branching
+to garbage.
+
+Performance note: xmethod with limited MAX is slightly SLOWER than
+default (110ms vs 93ms baseline) because xmethod's check overhead
+applies to every send while the cross-method gain only fires for
+some.  Need to ship cross-method default-on with high MAX to
+actually see the win — needs the third issue fixed first.
 
 Default config (no xmethod) unaffected by either fix.
 
