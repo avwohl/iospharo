@@ -2184,6 +2184,87 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.b(end);
 
         a.bind(bail);
+        // Inline ByteString = (op 0x66 only).  Mirrors stencils.cpp:880-926.
+        // After SmI tag check fails, try byte-equality for two byte
+        // objects (fmt 16-23).  Helps Dictionary>>scanFor:'s key=arg
+        // (dict bench) and other String comparisons.
+        if (op == 0x66) {
+            using namespace asmjit::a64;
+            asmjit::Label bsBail = a.new_label();
+            asmjit::Label resultFalse = a.new_label();
+            asmjit::Label resultTrue = a.new_label();
+            // Both must be heap objects (tag == 0, addr >= 0x10000).
+            a.and_(x5, x1, asmjit::Imm(0x7));
+            a.cbnz(x5, bsBail);
+            a.cmp(x1, asmjit::Imm(0x10000));
+            a.b_lo(bsBail);
+            a.and_(x5, x4, asmjit::Imm(0x7));
+            a.cbnz(x5, bsBail);
+            a.cmp(x4, asmjit::Imm(0x10000));
+            a.b_lo(bsBail);
+            // Headers.
+            a.ldr(x5, ptr(x1));                // header_a
+            a.ldr(x6, ptr(x4));                // header_b
+            // fmt_a / fmt_b in 16-23
+            a.lsr(x7, x5, asmjit::Imm(24));
+            a.and_(x7, x7, asmjit::Imm(0x1F));
+            a.sub(x8, x7, asmjit::Imm(16));
+            a.cmp(x8, asmjit::Imm(8));
+            a.b_hs(bsBail);
+            a.lsr(x9, x6, asmjit::Imm(24));
+            a.and_(x9, x9, asmjit::Imm(0x1F));
+            a.sub(x10, x9, asmjit::Imm(16));
+            a.cmp(x10, asmjit::Imm(8));
+            a.b_hs(bsBail);
+            // Slot counts (reject 255 overflow encoding).
+            a.lsr(x11, x5, asmjit::Imm(56));
+            a.and_(x11, x11, asmjit::Imm(0xFF));
+            a.cmp(x11, asmjit::Imm(255));
+            a.b_eq(bsBail);
+            a.lsr(x12, x6, asmjit::Imm(56));
+            a.and_(x12, x12, asmjit::Imm(0xFF));
+            a.cmp(x12, asmjit::Imm(255));
+            a.b_eq(bsBail);
+            // byteSize = slots*8 - (fmt - 16) (same as fmt & 7 for fmt in [16,23]).
+            a.lsl(x11, x11, asmjit::Imm(3));
+            a.and_(x7, x7, asmjit::Imm(0x7));
+            a.sub(x11, x11, x7);                // bytes_a
+            a.lsl(x12, x12, asmjit::Imm(3));
+            a.and_(x9, x9, asmjit::Imm(0x7));
+            a.sub(x12, x12, x9);                // bytes_b
+            a.cmp(x11, x12);
+            a.b_ne(resultFalse);                // size mismatch → false
+            // Compare bytes [0..bytes_a).
+            a.add(x13, x1, asmjit::Imm(8));   // ba
+            a.add(x14, x4, asmjit::Imm(8));   // bb
+            a.mov(x15, asmjit::Imm(0));
+            {
+                asmjit::Label cmpLoop = a.new_label();
+                a.bind(cmpLoop);
+                a.cmp(x15, x11);
+                a.b_hs(resultTrue);
+                a.ldrb(w5, ptr(x13, x15));
+                a.ldrb(w6, ptr(x14, x15));
+                a.cmp(w5, w6);
+                a.b_ne(resultFalse);
+                a.add(x15, x15, asmjit::Imm(1));
+                a.b(cmpLoop);
+            }
+            // true / false result.
+            a.bind(resultTrue);
+            a.ldr(x6, ptr(x0, OFF_TRUEOOP));
+            a.str(x6, ptr(x2, -16));
+            a.sub(x2, x2, asmjit::Imm(8));
+            a.str(x2, ptr(x0, OFF_SP));
+            a.b(end);
+            a.bind(resultFalse);
+            a.ldr(x6, ptr(x0, OFF_FALSEOOP));
+            a.str(x6, ptr(x2, -16));
+            a.sub(x2, x2, asmjit::Imm(8));
+            a.str(x2, ptr(x0, OFF_SP));
+            a.b(end);
+            a.bind(bsBail);
+        }
         // x5 = state.method.rawBits + bcOffsetFromMethObj  (post-GC safe)
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
