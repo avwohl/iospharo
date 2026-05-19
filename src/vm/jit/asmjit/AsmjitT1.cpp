@@ -2462,6 +2462,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimBitXor = a.new_label();
             asmjit::Label tryPrimAt = a.new_label();
             asmjit::Label tryPrimAtPut = a.new_label();
+            asmjit::Label tryPrimSize = a.new_label();
             asmjit::Label j2jBailHeap = a.new_label();
             asmjit::Label j2jBailHeap2 = a.new_label();
             asmjit::Label endOfSend = a.new_label();
@@ -2857,19 +2858,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 if (g_debug.t1InlineReturnsSelf) {
                     a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
                 }
-                // Inline at: / at:put: for heap receivers (primKind 14/15).
-                // Mirrors stencils.cpp:1538-1554.  Bails to dispatchCached
-                // for non-Array fmt, OOB, non-SmI idx — same as stencil's
-                // bail path.
-                if ((nArgs == 1 || nArgs == 2) && g_debug.t1InlinePrimAt) {
+                // Inline at: / at:put: / size for heap receivers
+                // (primKind 14/15/16).  Mirrors stencils.cpp:1538-1554.
+                if ((nArgs == 0 || nArgs == 1 || nArgs == 2)
+                        && g_debug.t1InlinePrimAt) {
                     a.lsr(x6, x7, asmjit::Imm(48));
                     a.and_(x6, x6, asmjit::Imm(0x1F));
                     if (nArgs == 1) {
                         a.cmp(x6, asmjit::Imm(14));
                         a.b_eq(tryPrimAt);
-                    } else {  // nArgs == 2
+                    } else if (nArgs == 2) {
                         a.cmp(x6, asmjit::Imm(15));
                         a.b_eq(tryPrimAtPut);
+                    } else {  // nArgs == 0
+                        a.cmp(x6, asmjit::Imm(16));
+                        a.b_eq(tryPrimSize);
                     }
                 }
                 a.b(dispatchCached);
@@ -2904,19 +2907,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 if (g_debug.t1InlineReturnsSelf) {
                     a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
                 }
-                // Inline at: / at:put: for heap receivers (primKind 14/15).
-                // Mirrors stencils.cpp:1538-1554.  Bails to dispatchCached
-                // for non-Array fmt, OOB, non-SmI idx — same as stencil's
-                // bail path.
-                if ((nArgs == 1 || nArgs == 2) && g_debug.t1InlinePrimAt) {
+                // Inline at: / at:put: / size for heap receivers
+                // (primKind 14/15/16).  Mirrors stencils.cpp:1538-1554.
+                if ((nArgs == 0 || nArgs == 1 || nArgs == 2)
+                        && g_debug.t1InlinePrimAt) {
                     a.lsr(x6, x7, asmjit::Imm(48));
                     a.and_(x6, x6, asmjit::Imm(0x1F));
                     if (nArgs == 1) {
                         a.cmp(x6, asmjit::Imm(14));
                         a.b_eq(tryPrimAt);
-                    } else {  // nArgs == 2
+                    } else if (nArgs == 2) {
                         a.cmp(x6, asmjit::Imm(15));
                         a.b_eq(tryPrimAtPut);
+                    } else {  // nArgs == 0
+                        a.cmp(x6, asmjit::Imm(16));
+                        a.b_eq(tryPrimSize);
                     }
                 }
                 a.b(dispatchCached);
@@ -3084,8 +3089,35 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
                 a.b(endOfSend);
-            } else if (!(nArgs == 1 && g_debug.t1InlinePrimAt)) {
+            } else if (!(nArgs == 1 && g_debug.t1InlinePrimAt)
+                       && !(nArgs == 0 && g_debug.t1InlinePrimAt)) {
                 a.bind(tryPrimAtPut);
+                a.b(dispatchCached);
+            }
+
+            // === Inline size (primKind 16, nArgs=0, heap receiver) ===
+            // For fmt-2 Array, slot count is in header bits 56:63 (1-byte;
+            // 255 indicates overflow header).  Result is SmI(sc).
+            if (nArgs == 0 && g_debug.t1InlinePrimAt) {
+                a.bind(tryPrimSize);
+                a.ldr(x4, ptr(x1));                  // header
+                a.lsr(x6, x4, asmjit::Imm(24));
+                a.and_(x6, x6, asmjit::Imm(0x1F));
+                a.cmp(x6, asmjit::Imm(2));           // fmt 2
+                a.b_ne(dispatchCached);
+                a.lsr(x5, x4, asmjit::Imm(56));
+                a.and_(x5, x5, asmjit::Imm(0xFF));
+                a.cmp(x5, asmjit::Imm(255));
+                a.b_eq(dispatchCached);              // overflow → slow
+                // Tag SmI: result = (sc << 3) | 1
+                a.lsl(x5, x5, asmjit::Imm(3));
+                a.orr(x5, x5, asmjit::Imm(0x1));
+                a.stur(x5, ptr(x2, rcvrOffsetBytes));  // write at recv slot
+                // sp unchanged (nArgs=0)
+                a.b(endOfSend);
+            } else if (!(nArgs == 1 && g_debug.t1InlinePrimAt)
+                       && !(nArgs == 2 && g_debug.t1InlinePrimAt)) {
+                a.bind(tryPrimSize);
                 a.b(dispatchCached);
             }
 
