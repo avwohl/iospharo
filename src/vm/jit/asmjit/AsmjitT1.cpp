@@ -3188,7 +3188,9 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     || op == SistaV1::ExtPopStoreTemp
                     || op == SistaV1::ExtStoreTemp
                     || op == SistaV1::ExtPopStoreRecv
-                    || op == SistaV1::ExtStoreRecv) {
+                    || op == SistaV1::ExtStoreRecv
+                    || op == SistaV1::ExtPopStoreLitVar
+                    || op == SistaV1::ExtStoreLitVar) {
                 int idx = bcReal[i + 1];
                 if (op == SistaV1::ExtPushRecvVar) {
                     a.ldr(a64::x1, a64::ptr(a64::x0, OFF_RECEIVER));
