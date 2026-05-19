@@ -19065,11 +19065,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // so the interpreter can see them.  literals/argCount/bcStart
         // are derived from save.jitMethod; the old self-recursive
         // marker bit is gone.
+        //
+        // Split-pool aware: when state.j2jDepth contributed to the merged
+        // j2jDepth (JIT pushed inline-J2J saves), materialize from the
+        // JIT slice (stateSaves at j2jStateBase) instead of the chain-loop
+        // slice (j2jStack at j2jPoolBase).  Without this fix, split-pool
+        // mode reads zeroed memory and fires the null-saveJM warning.
         if (j2jDepth > 0) {
             j2jMaterialized = true;
             Oop nil = memory_.nil();
+            J2JSave* matSrc = (splitPool && state.j2jDepth > 0)
+                ? &j2jPool_[j2jStateBase] : j2jStack;
             for (int i = 0; i < j2jDepth; i++) {
-                J2JSave& save = j2jStack[i];
+                J2JSave& save = matSrc[i];
                 jit::JITMethod* saveJM = save.jitMethod;
                 if (!saveJM) {
                     static int warns = 0;
