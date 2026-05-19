@@ -2571,6 +2571,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimBitOr = a.new_label();
             asmjit::Label tryPrimBitXor = a.new_label();
             asmjit::Label tryPrimBitShift = a.new_label();
+            asmjit::Label tryPrimIdentityHash = a.new_label();
             asmjit::Label tryPrimAt = a.new_label();
             asmjit::Label tryPrimAtPut = a.new_label();
             asmjit::Label tryPrimSize = a.new_label();
@@ -3134,6 +3135,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     } else {  // nArgs == 0
                         a.cmp(x6, asmjit::Imm(16));
                         a.b_eq(tryPrimSize);
+                        a.cmp(x6, asmjit::Imm(20));
+                        a.b_eq(tryPrimIdentityHash);
                     }
                 }
                 a.b(dispatchCached);
@@ -3185,6 +3188,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     } else {  // nArgs == 0
                         a.cmp(x6, asmjit::Imm(16));
                         a.b_eq(tryPrimSize);
+                        a.cmp(x6, asmjit::Imm(20));
+                        a.b_eq(tryPrimIdentityHash);
                     }
                 }
                 a.b(dispatchCached);
@@ -3504,6 +3509,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             } else if (!(nArgs == 1 && g_debug.t1InlinePrimAt)
                        && !(nArgs == 2 && g_debug.t1InlinePrimAt)) {
                 a.bind(tryPrimSize);
+                a.b(dispatchCached);
+            }
+
+            // === Inline identityHash (primKind 20, nArgs=0, heap receiver) ===
+            // identityHash = (header >> 8) & 0x3FFFFF (22-bit hash field).
+            // Tag as SmI and store.
+            if (nArgs == 0 && g_debug.t1InlinePrimAt) {
+                a.bind(tryPrimIdentityHash);
+                a.ldr(x4, ptr(x1));                  // header
+                a.lsr(x4, x4, asmjit::Imm(8));
+                a.and_(x4, x4, asmjit::Imm(0x3FFFFF));
+                a.lsl(x4, x4, asmjit::Imm(3));
+                a.orr(x4, x4, asmjit::Imm(0x1));
+                a.stur(x4, ptr(x2, rcvrOffsetBytes));
+                a.b(endOfSend);
+            } else {
+                a.bind(tryPrimIdentityHash);
                 a.b(dispatchCached);
             }
 
