@@ -1449,13 +1449,15 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     if (!mm) { g_bvBail_lookup++; return nullptr; }
     JITMethod* blockJM = mm->lookup(compiledBlockBits);
     if (!blockJM) {
-        // Block not JIT-compiled yet.  Eager-compile from inside a JIT
-        // send tried 2026-05-19 and SIGSEGV'd — the compiler isn't
-        // safe to invoke mid-send (GC + stack manipulation conflicts).
-        // Bail; the block will eventually be compiled via the normal
-        // noteMethodEntry threshold and inline-J2J fires on subsequent
-        // calls.  TODO: schedule a recompile queue insert instead of
-        // synchronous compile.
+        // Block not JIT-compiled yet.  Could queue an initial compile
+        // via JITRuntime::queueInitialCompile here, but doing so made
+        // the block-value inline path fire ~800x per bench run and
+        // corrupted state ("withAllSuperclassesDo: is nil") — same
+        // chain-break protocol issue as xmethod inline-J2J with
+        // non-leaf callees.  Bail without queueing so the existing
+        // chain-loop path runs the value: dispatch normally.  When
+        // the chain-break protocol is fixed (deferred A6), this can
+        // safely be re-enabled.
         g_bvBail_lookup++;
         return nullptr;
     }
