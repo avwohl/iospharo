@@ -1132,6 +1132,31 @@ Changes shipped on 2026-05-18 → 2026-05-19:
 - `4de3eeb8` + `c069c192` inline SmI bitwise prims (bitAnd/bitOr/bitXor)
 - `eef15c62` inline at:/at:put: for fmt-2 Array
 - `ea3656ea` inline size for fmt-2 Array
+- `54c03c92` tryPrimEq attempted + reverted (primKind 10 dispatch overhead
+  added ~4 instr/send to every send and didn't pay off in benchmarks)
+
+**Next iteration queued: inline block-value (BLOCK_VALUE_BIT bit 59).**
+
+The stencil version at `stencils.cpp:1642-1731` inlines
+FullBlockClosure>>value/value: by extracting compiledBlock from
+slot 1, looking up its JM via methodMap, then doing a J2J save +
+direct entry call.  Skips the chain-loop activation of value: +
+prim 207 dispatch.  For sort/select/collect-style benches with
+100K+ block invocations, full inline would save ~40ms per bench.
+
+asmjit-T1 implementation challenges:
+- methodMap lookup needs a C helper (~6-probe linear scan)
+- Tempbase setup + captured-value copy requires a per-call loop
+  (closure slot 4..N → callee temp slots)
+- Chain-break recovery: if block bails mid-execution to chain loop
+  (inner send the block can't inline), the helper-driven path can't
+  cleanly resume — would need to drive a mini chain loop in the
+  helper or emit full inline with proper bail-protocol.
+
+Helper-only approach (call C helper that does everything) is the
+simpler implementation but loses much of the win to the C-call cost
+and bail-recovery complexity.  Full inline emit (mirroring the
+stencil) is the right shipping path but ~80 lines of arm64 emit.
 
 5-15% gains across most benches.  Larger improvements (e.g.
 floatSum -26%, getter+yourself -100%) include Sista splice
