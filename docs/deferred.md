@@ -1289,8 +1289,64 @@ MAX=30K is likely a different class of bug — possibly accumulated
 delta in state.j2jSaveCursor or save-slot reuse across recompile
 boundaries.  Needs lldb watchpoint instrumentation to find.
 
-**Next iteration queued: relax leaf gate (allow callees that don't
-self-bail via dispatchCached) and/or fix the >30K residual.**
+**Iter N+10 (2026-05-19) block-value inline infrastructure shipped
+(`b351afbd`, `14576331`, `2c013c15`).**
+
+Mirrors the xmethod path but targets BLOCK_VALUE_BIT (bit 59) IC
+entries — invocations of FullBlockClosure>>value:/value:/...  The
+asmjit-T1 emit checks bit 59 BEFORE bit 60 (when t1InlineBlockValue
+is on); when bit 59 set, blr's into `jit_rt_inline_block_value_prep`
+(JITRuntime.cpp).  The helper validates the closure layout, looks up
+the block's JM via methodMap, applies leaf+nonstub+canBailMid+noprim
+gates, pushes a J2J save with resumeAddr=afterSend, sets up callee
+state from closure slots (receiver from slot 3, captures from
+slots 4..N copied to temp area), and returns the block JIT entry
+address.  asmjit emit then `br x0` to enter the block.
+
+`Interpreter::upgradeICToJ2J` was also patched (when eager-compiling
+prim 207/209 targets that have no prim prologue, we now write a
+minimal IC entry with BLOCK_VALUE_BIT alone instead of bailing without
+touching the IC).  This is what makes the asmjit-T1 emit's bit-59
+check fire at all.
+
+**Bench impact: net zero.**  Two failure modes:
+
+1. **Lookup-miss dominant**: 20K tries / 0 hits when run with the
+   helper's "bail on lookup miss" gate.  User blocks aren't JIT-
+   compiled at the time of the value: invocation, so methodMap.lookup
+   returns null.  Tried synchronous compile from helper → SIGSEGV
+   (compiler not safe mid-send).  Tried queueing via
+   `JITRuntime::queueInitialCompile` (drain at safe points) → blocks
+   eventually compile and helper starts firing.  But:
+
+2. **State corruption when helper fires**: 826 hits at 79.3% catch
+   rate → bench fails with "withAllSuperclassesDo: is nil".  Same
+   chain-break protocol issue as xmethod inline-J2J.  Inner sends in
+   the block bail to chain loop; chain loop activates inner method;
+   inner method's return path can't restore the right state.
+
+Both paths are blocked on the same chain-break protocol fix as
+xmethod cross-method.  Infrastructure is in tree behind opt-in
+PHARO_T1_INLINE_BLOCK_VALUE=1 (default OFF) — ready to enable when
+the protocol is corrected.
+
+**Files / new flags:**
+- `JITRuntime.cpp`: `jit_rt_inline_block_value_prep` helper (validate
+  + lookup + J2J save + callee setup + capture copy).
+- `JITRuntime.cpp`: `g_jitRuntimeForBlockValue` singleton (set in
+  ctor) for future eager-compile use.
+- `AsmjitT1.cpp`: bit-59 check before bit-60, emit blr to helper, br
+  to returned entry.  Counters g_blockValue_tries/hits/bails +
+  per-gate bail breakdown printed by dumpJITStats.
+- `Interpreter.cpp`: write minimal IC entry with BLOCK_VALUE_BIT in
+  upgradeICToJ2J when target has no prim prologue (prim 207/209).
+- `DebugSettings.{hpp,cpp}`: `t1InlineBlockValue` flag (PHARO_T1_
+  INLINE_BLOCK_VALUE=1 opt-in).
+
+**Next iteration: chain-break protocol fix.**  Until this is solved
+(needs lldb step-through), both xmethod and block-value inline are
+opt-in / dormant.  Once fixed, both unlock simultaneously and
+should each contribute 15-50% gains on send-heavy benchmarks.
 
 **Iter N+7 (2026-05-19, commit `2c1370f2`) partial fix shipped.**
 
