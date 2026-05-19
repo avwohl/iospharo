@@ -9657,6 +9657,14 @@ void Interpreter::activateBlock(Oop block, int argCount) {
             return;
         }
 
+#if PHARO_JIT_ENABLED
+        // Bump JIT hot-count for the block — without this, FullBlockClosure
+        // invocations via primitiveFullClosureValue never trigger T1
+        // compilation.  Sista may already own this method via splice; if
+        // so, noteMethodEntry returns early.
+        jitRuntime_.noteMethodEntry(compiledBlock);
+#endif
+
         methodToExecute = compiledBlock;
         // compiledBlock validated above (isCompiledMethod check)
         Oop header = memory_.fetchPointerUnchecked(0, compiledBlock);
