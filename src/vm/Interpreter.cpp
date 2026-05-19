@@ -16468,6 +16468,7 @@ void Interpreter::tryJITResumeInCaller() {
         state.j2jSaveLimit = nullptr;
         state.j2jDepth = 0;
         state.j2jTotalCalls = 0;
+        state.j2jEntryDepth = 0;
         state.methodMapPtr = &jitRuntime_.methodMap();
         state.yieldCountdown = 1000;
 
@@ -16867,7 +16868,11 @@ void Interpreter::tryJITResumeInCaller() {
                     spAtLastJ2JCall = state.sp;
                     spLastNArgs = nArgs;
                     spLastSite = "J2JCall";
+                    // Set per-entry baseline (option (a) per deferred A6).
+                    int32_t saved_entryDepth_r = state.j2jEntryDepth;
+                    state.j2jEntryDepth = state.j2jDepth;
                     JIT_CALL(entryAddr, &state);
+                    state.j2jEntryDepth = saved_entryDepth_r;
                     validateState("post-J2JCall", nullptr);
 
                 } else {
@@ -18554,6 +18559,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
     state.j2jDepth = 0;
     state.j2jTotalCalls = 0;
+    state.j2jEntryDepth = 0;
     state.methodMapPtr = &jitRuntime_.methodMap();
     state.yieldCountdown = 1000;
 
@@ -18952,8 +18958,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                 }
 
+                // Set per-entry baseline so callee's return prelude doesn't
+                // pop OUTER inline-J2J saves (option (a) per deferred A6).
+                int32_t saved_entryDepth = state.j2jEntryDepth;
+                state.j2jEntryDepth = state.j2jDepth;
+
                 // Enter callee JIT code (already executable from loop start)
                 JIT_CALL(entryAddr, &state);
+
+                state.j2jEntryDepth = saved_entryDepth;
 
             } else {
                 // --- J2J Return: pop frame, resume caller ---

@@ -308,6 +308,7 @@ constexpr int OFF_J2J_SAVE_CURSOR = 144;
 constexpr int OFF_J2J_SAVE_LIMIT  = 152;
 constexpr int OFF_J2J_DEPTH       = 160;
 constexpr int OFF_J2J_TOTAL_CALLS = 164;
+constexpr int OFF_J2J_ENTRY_DEPTH = 200;
 
 // ExitReason values (JITState.hpp).
 constexpr int EXIT_RETURN          = 1;
@@ -2020,9 +2021,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     auto emitJ2JReturnPreludeIfEnabled = [&]() {
         if (!inlineJ2J) return;
         asmjit::Label normalReturn = a.new_label();
-        // Check j2jDepth
+        // Check current j2jDepth > j2jEntryDepth (this method pushed a save).
+        // Without entry-depth gate, chain-loop-activated methods would
+        // incorrectly pop OUTER inline-J2J saves.  See deferred A6 option (a).
         a.ldr(w3, ptr(x0, OFF_J2J_DEPTH));
-        a.cbz(w3, normalReturn);
+        a.ldr(w4, ptr(x0, OFF_J2J_ENTRY_DEPTH));
+        a.cmp(w3, w4);
+        a.b_le(normalReturn);   // current <= entry → no save pushed by this method
 
         // Pop save: cursor -= sizeof(J2JSave) = 56; depth--
         a.ldr(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));

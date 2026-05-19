@@ -118,6 +118,17 @@ struct JITState {
     // memory/project_arraydo_helper_gate_2026_05_06.md.
     uint64_t spliceSpill0;   // offset 184: spill slot 0 (rcv)
     uint64_t spliceSpill1;   // offset 192: spill slot 1 (vec / accum)
+
+    // --- Per-entry J2J depth (option (a) per deferred A6) ---
+    // Records state.j2jDepth at the moment JIT code was entered (either
+    // via tryJITActivation init, or via chain-loop JIT_CALL_WITH_ENTRY_DEPTH
+    // around inner activations).  The return prelude pops a save ONLY
+    // when current j2jDepth > j2jEntryDepth — i.e., this method pushed
+    // a save itself.  Without this, chain-loop-activated methods would
+    // see state.j2jDepth from OUTER inline-J2J pushes and incorrectly
+    // pop the outer's save.
+    int32_t j2jEntryDepth;   // offset 200: per-entry baseline depth
+    int32_t _pad_j2j_204;    // padding to 8-byte alignment
 };
 
 // Verify expected offsets (stencils depend on these)
@@ -142,6 +153,7 @@ static_assert(offsetof(JITState, methodMapPtr)  == 168, "methodMapPtr offset");
 static_assert(offsetof(JITState, yieldCountdown) == 176, "yieldCountdown offset");
 static_assert(offsetof(JITState, spliceSpill0)   == 184, "spliceSpill0 offset");
 static_assert(offsetof(JITState, spliceSpill1)   == 192, "spliceSpill1 offset");
+static_assert(offsetof(JITState, j2jEntryDepth)  == 200, "j2jEntryDepth offset");
 
 // ===== EXIT REASONS =====
 //
