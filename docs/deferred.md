@@ -1668,6 +1668,22 @@ Cog reference is still 25-50× ahead even with NO_JIT — closing
 that is the E-series multi-week work, separate from this T1
 regression issue.
 
+**Iter N+12 (2026-05-19) — sharp threshold at ~32K fires.**
+
+Re-bisection on `42 printString` eval under all four xmethod flags
+ON (XMETHOD + SPLIT_POOL + RECEIVER_SYNC + POST_SEND_IP):
+
+  MAX=32000  PASS (4/4)
+  MAX=32500  FAIL (4/4)
+  MAX=33000  FAIL (4/4)
+
+The threshold is deterministic and sharp.  32768 = 2^15 suggests a
+16-bit signed counter overflow somewhere in the xmethod pipeline,
+but the obvious candidates (state.j2jDepth = int32, JITMethodStats
+fields, MaxJ2JPoolSize = 1024) don't fit.  The default safe cap is
+set to 30000 in DebugSettings (`19f2b320`) — well below the 32K
+deterministic threshold.
+
 **Iter N+11 (2026-05-19) — lldb investigation plan for chain-break protocol.**
 
 Both xmethod default-on (deferred A6 above) AND block-value inline
