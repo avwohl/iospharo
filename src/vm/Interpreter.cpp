@@ -106,6 +106,7 @@ extern "C" uint64_t g_primAt_hits;
 extern "C" uint64_t g_primAtPut_hits;
 extern "C" uint64_t g_primSize_hits;
 extern "C" uint64_t g_primBitOp_hits;
+extern "C" uint64_t g_primFloatOp_hits;
 
 // Per-primitive call counter — populated at primitive dispatch site,
 // dumped at exit (PHARO_PRIM_PROFILE=1).  Used to identify high-frequency
@@ -1436,14 +1437,17 @@ void Interpreter::dumpJITStats() {
     // for extern "C" declarations.
     {
         uint64_t primTotal = g_primAt_hits + g_primAtPut_hits
-                           + g_primSize_hits + g_primBitOp_hits;
+                           + g_primSize_hits + g_primBitOp_hits
+                           + g_primFloatOp_hits;
         if (primTotal > 0) {
             fprintf(stderr,
-                "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu\n",
+                "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu "
+                "floatOp=%llu\n",
                 (unsigned long long)g_primAt_hits,
                 (unsigned long long)g_primAtPut_hits,
                 (unsigned long long)g_primSize_hits,
-                (unsigned long long)g_primBitOp_hits);
+                (unsigned long long)g_primBitOp_hits,
+                (unsigned long long)g_primFloatOp_hits);
         }
     }
     if (g_xmethod_count > 0) {
@@ -17609,6 +17613,9 @@ static uint8_t inlinePrimKind(int primIndex) {
     case 71: return 18;  // new: (basicNew:)
     case 16: return 19;  // bitXor (added 2026-05-18 for asmjit-T1 inline)
     case 75: return 20;  // identityHash (header bits 8-29 → SmI)
+    case 541: return 21; // SmallFloat>>+
+    case 542: return 22; // SmallFloat>>-
+    case 549: return 23; // SmallFloat>>*
     default: return 0;
     }
 }

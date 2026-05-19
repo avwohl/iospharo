@@ -80,6 +80,7 @@ extern "C" uint64_t g_primAt_hits         = 0;  // tryPrimAt inline fired
 extern "C" uint64_t g_primAtPut_hits      = 0;  // tryPrimAtPut inline fired
 extern "C" uint64_t g_primSize_hits       = 0;  // tryPrimSize inline fired
 extern "C" uint64_t g_primBitOp_hits      = 0;  // bitAnd/bitOr/bitXor fired
+extern "C" uint64_t g_primFloatOp_hits    = 0;  // SmallFloat send-site fired
 // Debug: last-seen values at the self-recursive check.  Overwritten each
 // entry so post-run we can see what the comparison was checking.
 extern "C" uint64_t g_inlineJ2J_dbg_caller_method = 0;
@@ -2794,6 +2795,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimAt = a.new_label();
             asmjit::Label tryPrimAtPut = a.new_label();
             asmjit::Label tryPrimSize = a.new_label();
+            asmjit::Label tryPrimSmallFloatOp = a.new_label();
             // dispatchCachedRestoreX5: inline-prim bail target that
             // reloads x5 from OFF_ICDATAPTR (where the original icDataPtr
             // was stashed before the inline-prim code clobbered x5 with
@@ -3318,7 +3320,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
                     a.tst(x1, asmjit::Imm(0x7));     // SmI? tag != 0
                     a.b_eq(j2jBailHeap);              // tag==0 → heap path
-                    // SmI receiver — check primKind bits 52:48.
+                    // Immediate receiver (SmI or SmallFloat).  Check primKind.
                     a.lsr(x6, x7, asmjit::Imm(48));
                     a.and_(x6, x6, asmjit::Imm(0x1F));
                     a.cmp(x6, asmjit::Imm(11));
@@ -3329,6 +3331,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_eq(tryPrimBitXor);
                     a.cmp(x6, asmjit::Imm(13));
                     a.b_eq(tryPrimBitShift);
+                    // SmallFloat ops — primKind 21/22/23.
+                    a.sub(x6, x6, asmjit::Imm(21));
+                    a.cmp(x6, asmjit::Imm(3));
+                    a.b_lo(tryPrimSmallFloatOp);
                     a.b(dispatchCached);
                     a.bind(j2jBailHeap);
                 } else {
@@ -3798,6 +3804,72 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b(endOfSend);
             } else {
                 a.bind(tryPrimIdentityHash);
+                a.b(dispatchCached);
+            }
+
+            // === Inline SmallFloat +/-/* at send site (primKind 21/22/23) ===
+            // Receiver is SmallFloat (tag=5), arg is also SmallFloat.
+            // Decode, op, encode.  Bails on ±0 or exponent over/underflow.
+            if (nArgs == 1) {
+                a.bind(tryPrimSmallFloatOp);
+                emitIncPrimCounter((uint64_t)&g_primFloatOp_hits);
+                // Stash icDataPtr — about to clobber x5.
+                a.str(x5, ptr(x0, OFF_ICDATAPTR));
+                // Arg at sp[-8].  Must be SmallFloat (tag 5).
+                a.ldur(x3, ptr(x2, -8));
+                a.and_(x4, x3, asmjit::Imm(0x7));
+                a.cmp(x4, asmjit::Imm(5));
+                a.b_ne(dispatchCachedRestoreX5);
+                // Decode rcv.
+                a.lsr(x4, x1, asmjit::Imm(3));
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_ls(dispatchCachedRestoreX5);     // ±0 → bail
+                a.mov(x5, asmjit::Imm(0x7000000000000000ULL));
+                a.add(x4, x4, x5);
+                a.ror(x4, x4, asmjit::Imm(1));
+                a.fmov(d0, x4);
+                // Decode arg.
+                a.lsr(x4, x3, asmjit::Imm(3));
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_ls(dispatchCachedRestoreX5);
+                a.add(x4, x4, x5);
+                a.ror(x4, x4, asmjit::Imm(1));
+                a.fmov(d1, x4);
+                // primKind already in x6 in lower bits 0..2 form (x6 = pk-21)
+                // when we branched here (we did `sub x6, x6, #21`).
+                // pk-21 = 0 → add, 1 → sub, 2 → mul.
+                asmjit::Label opSub = a.new_label();
+                asmjit::Label opMul = a.new_label();
+                asmjit::Label opDone = a.new_label();
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_eq(opSub);
+                a.cmp(x6, asmjit::Imm(2));
+                a.b_eq(opMul);
+                a.fadd(d0, d0, d1);
+                a.b(opDone);
+                a.bind(opSub);
+                a.fsub(d0, d0, d1);
+                a.b(opDone);
+                a.bind(opMul);
+                a.fmul(d0, d0, d1);
+                a.bind(opDone);
+                // Encode result.
+                a.fmov(x4, d0);
+                a.ror(x4, x4, asmjit::Imm(63));      // ROL 1
+                a.cmp(x4, x5);
+                a.b_lo(dispatchCachedRestoreX5);     // underflow
+                a.sub(x4, x4, x5);
+                a.mov(x6, asmjit::Imm(0x1FFFFFFFFFFFFFFFULL));
+                a.cmp(x4, x6);
+                a.b_hi(dispatchCachedRestoreX5);     // overflow
+                a.lsl(x4, x4, asmjit::Imm(3));
+                a.orr(x4, x4, asmjit::Imm(5));        // SmallFloatTag
+                a.stur(x4, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
+            } else {
+                a.bind(tryPrimSmallFloatOp);
                 a.b(dispatchCached);
             }
 
