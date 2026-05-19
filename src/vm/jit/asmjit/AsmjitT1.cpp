@@ -2695,6 +2695,24 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // call entirely.  hasPrim is at bit 16 of decoded header.
                     a.ldr(x4, ptr(x10, 16));            // methodHeader (decoded)
                     a.tbnz(x4, asmjit::Imm(16), j2jBailSelf2);  // has prim → bail
+                    // Additional gate: callee must have zero IC entries
+                    // (no inner sends).  When callee has sends, its return
+                    // path can take chain-break exits we can't restore
+                    // correctly through the inline-J2J save protocol —
+                    // see the deferred A6 corruption investigation.  Pure
+                    // arith/leaf callees are safe because their return is
+                    // always EXIT_RETURN, not ExitSendCached.
+                    //
+                    // JITMethod::numICEntries lives at offset 28 (uint16).
+                    a.ldrh(w4, ptr(x10, 28));
+                    a.cbnz(w4, j2jBailSelf2);
+                    // Skip stub callees — a stub method's body is just
+                    // `mov [s+OFF_EXIT], ExitSend; ret`, which never
+                    // triggers the J2J return prelude.  Without a pop,
+                    // the inline-J2J save persists forever and corrupts
+                    // subsequent activations.  isStubOnEntry at JM[47].
+                    a.ldrb(w4, ptr(x10, 47));
+                    a.cbnz(w4, j2jBailSelf2);
                     a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_count));
                     a.ldr(x15, ptr(x14));
                     a.add(x15, x15, asmjit::Imm(1));
