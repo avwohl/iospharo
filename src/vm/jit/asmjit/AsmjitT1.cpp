@@ -2529,19 +2529,41 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.tbnz(x7, asmjit::Imm(60), tryInlineJ2J);
 
                 // (fall through to existing inline-spec dispatch)
-                // Inline specializations need heap receiver (tag==0)
-                a.tst(x1, asmjit::Imm(0x7));
-                a.b_ne(dispatchCached);
-                if (g_debug.t1InlineGetter) {
-                    a.tbnz(x7, asmjit::Imm(63), tryGetter);
+                // Inline specializations need heap receiver for getter/setter,
+                // SmI receiver for primKind bitwise dispatch.
+                {
+                    asmjit::Label fallSmIBranch = a.new_label();
+                    a.tst(x1, asmjit::Imm(0x7));
+                    if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
+                        a.b_ne(fallSmIBranch);
+                    } else {
+                        a.b_ne(dispatchCached);
+                    }
+                    // Heap receiver path
+                    if (g_debug.t1InlineGetter) {
+                        a.tbnz(x7, asmjit::Imm(63), tryGetter);
+                    }
+                    if (g_debug.t1InlineSetter) {
+                        a.tbnz(x7, asmjit::Imm(62), trySetter);
+                    }
+                    if (g_debug.t1InlineReturnsSelf) {
+                        a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
+                    }
+                    a.b(dispatchCached);
+                    // SmI receiver path: check primKind for inline bitwise.
+                    if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
+                        a.bind(fallSmIBranch);
+                        a.lsr(x6, x7, asmjit::Imm(48));
+                        a.and_(x6, x6, asmjit::Imm(0x1F));
+                        a.cmp(x6, asmjit::Imm(11));
+                        a.b_eq(tryPrimBitAnd);
+                        a.cmp(x6, asmjit::Imm(12));
+                        a.b_eq(tryPrimBitOr);
+                        a.cmp(x6, asmjit::Imm(19));
+                        a.b_eq(tryPrimBitXor);
+                        a.b(dispatchCached);
+                    }
                 }
-                if (g_debug.t1InlineSetter) {
-                    a.tbnz(x7, asmjit::Imm(62), trySetter);
-                }
-                if (g_debug.t1InlineReturnsSelf) {
-                    a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
-                }
-                a.b(dispatchCached);
 
                 // Per-bail-reason counters — gated on PHARO_T1_INLINE_J2J
                 // env var (debug-only).  When env var off (production
