@@ -1218,6 +1218,35 @@ This needs interactive lldb step-through to confirm — set hardware
 watchpoint on `&interp->receiver_`, run xmethod-enabled bench,
 inspect each write to identify the bad write site.
 
+**Iter N+8 (2026-05-19, commit `80dc9dd4`) second corruption fixed.**
+
+Found via XLOG bisection (errorNotIndexable count vs MAX): the
+error count goes from 0 at MAX=100 to 4 at MAX=300 to 19 at MAX=5000,
+indicating cumulative state corruption from xmethod fires.
+
+Root cause: inline-J2J save.ip was set to state.ip = current send
+position (pre-send).  The chain-loop's J2JCall handler at
+Interpreter.cpp:18829-18833 advances state.ip past the send BEFORE
+saving, so its save.ip = post-send.  Materialize sites read save.ip
+into frame.savedIP; when interp pops that frame, instructionPointer_
+= savedIP.  With pre-send savedIP, interp re-executes the send.
+
+Fix: PHARO_T1_J2J_POST_SEND_IP=1 stores `state.method +
+bcOffsetFromMethObj + 1` (post-send IP for single-byte Phase 4
+sends) into save.ip instead of raw state.ip.
+
+Bisection proof:
+  xmethod + receiver-sync alone:     ~550-1031 errorNotIndexable/run
+  xmethod + receiver-sync + post-ip: 0 errors across 5 runs
+
+So combining both fixes eliminates the in-image errorNotIndexable
+corruption.  However image startup still hangs at ~212 compiled
+methods with full xmethod (compared to ~3000+ normal), suggesting
+a third issue (likely chain-loop materialize resume flow has
+another mismatch).
+
+Default config (no xmethod) unaffected by either fix.
+
 **Next iteration queued (after focused lldb step-through of
 receiver_ corruption): inline block-value (BLOCK_VALUE_BIT bit 59).**
 
