@@ -4615,6 +4615,13 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     }
     case 0x7A: {
         // value: (1 arg) — fast path for FullBlockClosure
+        if (std::getenv("PHARO_TRACE_BC_7A")) {
+            static uint64_t n = 0;
+            n++;
+            if (n <= 10 || (n & 0xFFFFF) == 0) {
+                fprintf(stderr, "[BC-0x7A #%llu]\n", (unsigned long long)n);
+            }
+        }
         Oop rcvr = stackValue(1);
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
             rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
@@ -8287,6 +8294,29 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // Diagnostic: count activations of `value:` and CompiledBlock targets.
+    if (std::getenv("PHARO_TRACE_VALUE_ACT") && method.isObject()
+            && method.rawBits() > 0x10000) {
+        static uint64_t valueCount = 0;
+        static uint64_t blockCount = 0;
+        ObjectHeader* mh = method.asObjectPtr();
+        uint32_t cls = mh->classIndex();
+        if (cls == compiledBlockClassIndex_) {
+            blockCount++;
+            if (blockCount <= 10 || (blockCount & 0xFFFFF) == 0)
+                fprintf(stderr, "[ACT-BLOCK #%llu] argCount=%d cb=0x%llx\n",
+                        (unsigned long long)blockCount, argCount,
+                        (unsigned long long)method.rawBits());
+        } else {
+            std::string sel = memory_.selectorOf(method);
+            if (sel == "value:" || sel == "value") {
+                valueCount++;
+                if (valueCount <= 10 || (valueCount & 0xFFFFF) == 0)
+                    fprintf(stderr, "[ACT-VALUE #%llu] sel=#%s argCount=%d\n",
+                            (unsigned long long)valueCount, sel.c_str(), argCount);
+            }
+        }
+    }
     // PHARO_SORTSTR_WATCH: log activations from sortStructs:into: with the
     // dispatched method's identity + first bytecodes.  Captures what method
     // is actually being run when sendSelector(#isEmpty, 0) fires.
@@ -9612,6 +9642,14 @@ past_sista_block:
 }
 
 void Interpreter::activateBlock(Oop block, int argCount) {
+    if (std::getenv("PHARO_TRACE_ACTIVATE_BLOCK")) {
+        static uint64_t n = 0;
+        n++;
+        if (n <= 5 || (n & 0xFFFFF) == 0)
+            fprintf(stderr, "[ACT-BLOCK-DIRECT #%llu] argc=%d block=0x%llx\n",
+                    (unsigned long long)n, argCount,
+                    (unsigned long long)block.rawBits());
+    }
 #if PHARO_JIT_ENABLED
     // Clear stale IC patch pointer — block activation means sends inside the
     // block are unrelated to the JIT send that set pendingICPatch_.
@@ -15470,6 +15508,15 @@ void Interpreter::initializeNamedPrimitives() {
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
+    if (std::getenv("PHARO_TRACE_EXEC_PRIM")) {
+        if (primitiveIndex == 207) {
+            static uint64_t n = 0;
+            n++;
+            if (n <= 5 || (n & 0xFFFFF) == 0)
+                fprintf(stderr, "[EXEC-PRIM207 #%llu] argc=%d\n",
+                        (unsigned long long)n, argCount);
+        }
+    }
     if (__builtin_expect(traceSpCorrupt_, 0)) {
         uint64_t spB = (uint64_t)stackPointer_;
         if ((spB & 7) == 1) {
