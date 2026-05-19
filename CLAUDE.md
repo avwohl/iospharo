@@ -62,6 +62,18 @@ Key paths:
   sub-task from `docs/deferred.md` and continuing is always preferable to
   ending the turn. If you genuinely run out of context, the turn will end
   on its own — don't help it along.
+- **Two separate numbers govern /loop — do NOT conflate them:**
+  1. **How long to WORK in a single turn:** very long. Keep doing tasks
+     back-to-back until a natural stopping point (real blocker, needed
+     confirmation, or context exhaustion). The wake-up interval does NOT
+     bound the turn's work duration.
+  2. **How long to SLEEP between turns:** short. Default ~60 s for
+     fixed-interval `/loop Nm` and ~60–120 s for dynamic-mode fallback
+     wake-ups unless there's a concrete reason to sleep longer (waiting
+     on a CI run, deploy, etc.). Never auto-pick 1200–1800 s "because
+     the loop is idle" — that's misreading the cache-window guidance.
+  If `/loop 1m` was set, that means "wake every 1 min if I'm not already
+  running"; it does NOT mean "work for at most 1 min per wake-up."
 
 ## No workarounds — fix root causes
 
