@@ -2881,13 +2881,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // bcOffsetFromMethObj + 1 (mirroring chain-loop's J2JCall
                 // which advances ip past send before saving — see
                 // Interpreter.cpp:18829-18833 + 18892).  Default OFF
-                // preserves pre-existing behavior; opt-in for correctness
-                // experiments.  Found via lldb investigation that pre-send
-                // ip in materialize sites leads to double-send on interp
-                // resume.  When fix bisects clean, flip default-on.
+                // preserves pre-existing behavior.  Found via lldb 2026-
+                // 05-19 (deferred A6 iter N+8) that pre-send ip in
+                // materialize sites leads to double-send on interp resume.
+                //
+                // BUG FOUND 2026-05-19 lldb session (iter N+14):
+                // previously this read OFF_METHOD which had ALREADY been
+                // overwritten with callee's CM by the xmethod update at
+                // line 2829.  Result: save.ip = calleeCM +
+                // bcOffsetFromMethObj + 1 — a bogus address in callee's
+                // memory.  When interp later materializes and resumes,
+                // instructionPointer_ is way past callee's bytecode end,
+                // dispatching garbage bytecodes as sends → nil selector
+                // DNUs.  Fix: use x12 (caller's CM, loaded at line 2722
+                // and not overwritten before this site) for both cross-
+                // method AND self-recursive paths.
                 if (g_debug.t1J2JPostSendIp) {
-                    a.ldr(x15, ptr(x0, OFF_METHOD));
-                    a.add(x15, x15, asmjit::Imm(bcOffsetFromMethObj + 1));
+                    a.add(x15, x12, asmjit::Imm(bcOffsetFromMethObj + 1));
                 } else {
                     a.ldr(x15, ptr(x0, OFF_IP));
                 }
