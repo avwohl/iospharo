@@ -1110,27 +1110,39 @@ ready for primKind expansion to:
 The above need more emit (bounds check for at:, true/false oop loads
 for =) — left for next iteration.
 
-**Bench gap vs Cog (2026-05-18, default config):**
+**Bench gap vs Cog — progression 2026-05-18 → 2026-05-19 (default config):**
 
-  Bench              Cog   Ours  Ratio  Notes
-  fib(28)              3     13    4×   self-rec J2J wins
-  sieve x100          10     10    1×   Sista splice
-  sort 100K           17    461   27×
-  dict 50K            13    389   30×
-  sum 1M               3    131   43×
-  factorial 5K         2     29   14×
-  1M blocks            3      0    -    Sista splice wins
-  1M getter+yourself   2      0    -    Sista splice wins
-  100K alloc           3      7    2×
-  floatSum 1M          8    159   20×
-  stringHash 100K      2    122   61×
-  collect 10x100K     41      1    -    Sista splice wins
-  select 10x100K       8    490   61×
+  Bench              Cog   2026-05-18  Today  Δ      Ratio
+  fib(28)              3     13         11   -15%   3.7×
+  sieve x100          10      9          8   -11%   0.8× (wins)
+  sort 100K           17    399        326   -18%   19×
+  dict 50K            13    354        290   -18%   22×
+  sum 1M               3    121         94   -22%   31×
+  factorial 5K         2     26         24    -8%   12×
+  1M blocks            3      2          0     -    (splice wins)
+  1M getter+yourself   2    124          0    -    (splice wins)
+  100K alloc           3      7          5   -29%   1.7×
+  floatSum 1M          8    151        111   -26%   14×
+  stringHash 100K      2    113         96   -15%   48×
+  collect 10x100K     41    301          1     -    (splice wins)
+  select 10x100K       8    490        383   -22%   48×
 
-The 14–61× gaps are all in iter-heavy methods with small-callee
-sends in the inner loop (do:/select:/collect:/at:put: + block.value:
-+ prim arith).  Cross-method inline-J2J would close ~5–10× of each
-gap; method inlining (Sista Phase 4, queued) closes the rest.
+Changes shipped on 2026-05-18 → 2026-05-19:
+- `44d93188` split-pool materialize fix (enables future cross-method)
+- `4de3eeb8` + `c069c192` inline SmI bitwise prims (bitAnd/bitOr/bitXor)
+- `eef15c62` inline at:/at:put: for fmt-2 Array
+- `ea3656ea` inline size for fmt-2 Array
+
+5-15% gains across most benches.  Larger improvements (e.g.
+floatSum -26%, getter+yourself -100%) include Sista splice
+trigger variance.
+
+The 14–48× remaining gaps are all in iter-heavy methods with
+small-callee sends in the inner loop.  Closing them needs:
+- Cross-method inline-J2J (blocked by chain-break protocol —
+  needs interactive lldb investigation)
+- Block.value: inline (asmjit-T1 doesn't yet handle BLOCK_VALUE_BIT)
+- Method inlining (Sista Phase 4, queued)
 
 **Iter 11 (2026-05-18): added InlinedPrimitive 0xEC + ext-recv
 store family (`2f5823ff`, `888168c4`).**  Removed last common
