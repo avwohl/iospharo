@@ -19023,6 +19023,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.sp = save.sp;
                 state.receiver = save.receiver;
                 state.tempBase = save.tempBase;
+                // Sync Interpreter::receiver_ + method_ — chain loop syncs
+                // them ON BAIL (to callee's values) but didn't sync them
+                // BACK when resuming caller via J2J return.  Without this,
+                // a stale callee-receiver lingers in interp->receiver_ and
+                // can corrupt later interp-bytecode dispatch.  Gated on
+                // PHARO_T1_J2J_RECEIVER_SYNC=1 for bisection until we
+                // verify it doesn't regress default.
+                static const bool j2jReceiverSync =
+                    std::getenv("PHARO_T1_J2J_RECEIVER_SYNC") != nullptr;
+                if (j2jReceiverSync) {
+                    receiver_ = save.receiver;
+                }
                 // Derive literals/argCount/ip from save.jitMethod — see
                 // docs/jit-j2j-reduction-plan.md.  The old self-recursive
                 // marker bit is gone.
@@ -19033,6 +19045,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     state.argCount = savedJM->argCount;
                     state.ip = savedJM->bcStart();
                     state.method = Oop::fromRawBits(savedJM->compiledMethodOop);
+                    if (j2jReceiverSync) {
+                        method_ = state.method;
+                    }
                 }
 
                 // Pop receiver+args, push return value
