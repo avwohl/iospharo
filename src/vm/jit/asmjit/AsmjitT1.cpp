@@ -3375,26 +3375,42 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
 
             // === Inline size (primKind 16, nArgs=0, heap receiver) ===
-            // For fmt-2 Array, slot count is in header bits 56:63 (1-byte;
-            // 255 indicates overflow header).  Result is SmI(sc).
+            // Three paths by header fmt:
+            //   fmt 2:     Array — size = slotCount
+            //   fmt 16-23: byte indexable — size = slotCount*8 - (fmt&7)
+            //   fmt 9:     Indexable64 — size = slotCount
+            // Result is SmI(byteSize-or-slotCount).
             if (nArgs == 0 && g_debug.t1InlinePrimAt) {
+                asmjit::Label sizeBytes = a.new_label();
+                asmjit::Label sizeDone = a.new_label();
                 a.bind(tryPrimSize);
                 emitIncPrimCounter((uint64_t)&g_primSize_hits);
                 a.ldr(x4, ptr(x1));                  // header
                 a.lsr(x6, x4, asmjit::Imm(24));
                 a.and_(x6, x6, asmjit::Imm(0x1F));
-                a.cmp(x6, asmjit::Imm(2));           // fmt 2
-                a.b_ne(dispatchCached);
                 a.lsr(x5, x4, asmjit::Imm(56));
                 a.and_(x5, x5, asmjit::Imm(0xFF));
                 a.cmp(x5, asmjit::Imm(255));
-                a.b_eq(dispatchCached);              // overflow → slow
-                // Tag SmI: result = (sc << 3) | 1
+                a.b_eq(dispatchCached);              // overflow header → slow
+                // fmt 2 or 9: result = slotCount (no adjust)
+                a.cmp(x6, asmjit::Imm(2));
+                a.b_eq(sizeDone);
+                a.cmp(x6, asmjit::Imm(9));
+                a.b_eq(sizeDone);
+                // fmt 16-23: byte path
+                a.sub(x8, x6, asmjit::Imm(16));
+                a.cmp(x8, asmjit::Imm(8));
+                a.b_hs(dispatchCached);              // not byte fmt
+                a.lsl(x5, x5, asmjit::Imm(3));       // sc*8
+                a.and_(x6, x6, asmjit::Imm(0x7));    // extra bytes
+                a.sub(x5, x5, x6);                   // byteSize
+                a.bind(sizeDone);
+                // Tag SmI: result = (size << 3) | 1
                 a.lsl(x5, x5, asmjit::Imm(3));
                 a.orr(x5, x5, asmjit::Imm(0x1));
-                a.stur(x5, ptr(x2, rcvrOffsetBytes));  // write at recv slot
-                // sp unchanged (nArgs=0)
+                a.stur(x5, ptr(x2, rcvrOffsetBytes));
                 a.b(endOfSend);
+                (void)sizeBytes;
             } else if (!(nArgs == 1 && g_debug.t1InlinePrimAt)
                        && !(nArgs == 2 && g_debug.t1InlinePrimAt)) {
                 a.bind(tryPrimSize);
