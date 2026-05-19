@@ -869,14 +869,9 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 14: return primIndex;   // SmallInteger>>bitAnd:
     case 15: return primIndex;   // SmallInteger>>bitOr:
     case 16: return primIndex;   // SmallInteger>>bitXor:
-    // Prims 60/61/62 disabled pending send-site icDataPtr fix.
-    // The send-site inline-prim emit (tryPrimAt / tryPrimAtPut / tryPrimSize)
-    // clobbers x5 — which holds the icDataPtr — and bails to dispatchCached
-    // which expects x5 == icDataPtr.  Latent because primKind=14/15/16
-    // extras only get set when supportedPrimIndex recognizes the callee
-    // primitive, which currently doesn't include 60/61/62.  Enabling here
-    // exposes the bug.  Fix: have inline-prim bail to a restoring stub
-    // that reloads x5 from OFF_ICDATAPTR before dispatchCached.
+    case 60: return primIndex;   // Array>>at:
+    case 61: return primIndex;   // Array>>at:put:
+    case 62: return primIndex;   // Array>>size
     case 110: return primIndex;  // ProtoObject>>==
     default: return -1;
     }
@@ -2738,6 +2733,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimAt = a.new_label();
             asmjit::Label tryPrimAtPut = a.new_label();
             asmjit::Label tryPrimSize = a.new_label();
+            // dispatchCachedRestoreX5: inline-prim bail target that
+            // reloads x5 from OFF_ICDATAPTR (where the original icDataPtr
+            // was stashed before the inline-prim code clobbered x5 with
+            // slotCount).  Falls through to dispatchCached.
+            asmjit::Label dispatchCachedRestoreX5 = a.new_label();
             asmjit::Label j2jBailHeap = a.new_label();
             asmjit::Label j2jBailHeap2 = a.new_label();
             asmjit::Label endOfSend = a.new_label();
@@ -3521,6 +3521,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 asmjit::Label tryByteAt = a.new_label();
                 a.bind(tryPrimAt);
                 emitIncPrimCounter((uint64_t)&g_primAt_hits);
+                // Stash icDataPtr to memory so bails restore it via
+                // dispatchCachedRestoreX5 (x5 gets clobbered with slotCount).
+                a.str(x5, ptr(x0, OFF_ICDATAPTR));
                 a.ldr(x4, ptr(x1));                  // x4 = header word
                 a.lsr(x6, x4, asmjit::Imm(24));      // shift fmt to low
                 a.and_(x6, x6, asmjit::Imm(0x1F));
@@ -3530,17 +3533,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.lsr(x5, x4, asmjit::Imm(56));
                 a.and_(x5, x5, asmjit::Imm(0xFF));
                 a.cmp(x5, asmjit::Imm(255));
-                a.b_eq(dispatchCached);              // overflow → slow
+                a.b_eq(dispatchCachedRestoreX5);     // overflow → slow
                 // Load idx (arg)
                 a.ldur(x3, ptr(x2, -8));
                 a.and_(x6, x3, asmjit::Imm(0x7));
                 a.cmp(x6, asmjit::Imm(1));
-                a.b_ne(dispatchCached);              // arg not SmI
+                a.b_ne(dispatchCachedRestoreX5);     // arg not SmI
                 a.asr(x4, x3, asmjit::Imm(3));       // x4 = idx (signed untag)
                 a.cmp(x4, asmjit::Imm(1));
-                a.b_lt(dispatchCached);              // idx < 1
+                a.b_lt(dispatchCachedRestoreX5);     // idx < 1
                 a.cmp(x4, x5);
-                a.b_gt(dispatchCached);              // idx > sc
+                a.b_gt(dispatchCachedRestoreX5);     // idx > sc
                 // Slot offset = idx * 8 (slot[idx-1] at offset 8 + (idx-1)*8)
                 a.lsl(x4, x4, asmjit::Imm(3));
                 a.add(x6, x1, x4);
@@ -3556,23 +3559,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(tryByteAt);
                 a.sub(x8, x6, asmjit::Imm(16));      // x8 = fmt - 16
                 a.cmp(x8, asmjit::Imm(8));
-                a.b_hs(dispatchCached);              // fmt not in 16..23
+                a.b_hs(dispatchCachedRestoreX5);     // fmt not in 16..23
                 a.lsr(x5, x4, asmjit::Imm(56));
                 a.and_(x5, x5, asmjit::Imm(0xFF));
                 a.cmp(x5, asmjit::Imm(255));
-                a.b_eq(dispatchCached);              // slotCount==255 → ovf
+                a.b_eq(dispatchCachedRestoreX5);     // slotCount==255 → ovf
                 a.lsl(x5, x5, asmjit::Imm(3));       // sc*8 = max byte capacity
                 a.and_(x6, x6, asmjit::Imm(0x7));    // extra bytes (= fmt&7)
                 a.sub(x5, x5, x6);                   // byteSize
                 a.ldur(x3, ptr(x2, -8));
                 a.and_(x6, x3, asmjit::Imm(0x7));
                 a.cmp(x6, asmjit::Imm(1));
-                a.b_ne(dispatchCached);              // idx not SmI
+                a.b_ne(dispatchCachedRestoreX5);     // idx not SmI
                 a.asr(x4, x3, asmjit::Imm(3));       // x4 = idx
                 a.cmp(x4, asmjit::Imm(1));
-                a.b_lt(dispatchCached);
+                a.b_lt(dispatchCachedRestoreX5);
                 a.cmp(x4, x5);
-                a.b_gt(dispatchCached);              // idx > byteSize
+                a.b_gt(dispatchCachedRestoreX5);     // idx > byteSize
                 // byte at recvAddr + 8 + (idx-1) = recvAddr + 7 + idx
                 a.add(x4, x4, asmjit::Imm(7));
                 a.add(x6, x1, x4);
@@ -3596,27 +3599,29 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 asmjit::Label tryByteAtPut = a.new_label();
                 a.bind(tryPrimAtPut);
                 emitIncPrimCounter((uint64_t)&g_primAtPut_hits);
+                // Stash icDataPtr — bails route through dispatchCachedRestoreX5.
+                a.str(x5, ptr(x0, OFF_ICDATAPTR));
                 a.ldr(x4, ptr(x1));                  // x4 = header word
                 a.lsr(x6, x4, asmjit::Imm(24));
                 a.and_(x6, x6, asmjit::Imm(0x1F));
                 a.cmp(x6, asmjit::Imm(2));           // fmt 2 Array path
                 a.b_ne(tryByteAtPut);
                 // Immutability check (bit 23)
-                a.tbnz(x4, asmjit::Imm(23), dispatchCached);  // immutable → bail
+                a.tbnz(x4, asmjit::Imm(23), dispatchCachedRestoreX5);
                 a.lsr(x5, x4, asmjit::Imm(56));
                 a.and_(x5, x5, asmjit::Imm(0xFF));
                 a.cmp(x5, asmjit::Imm(255));
-                a.b_eq(dispatchCached);
+                a.b_eq(dispatchCachedRestoreX5);
                 // sp[-1] = val, sp[-2] = idx (after pushes for nArgs=2)
                 a.ldur(x3, ptr(x2, -16));            // idx
                 a.and_(x6, x3, asmjit::Imm(0x7));
                 a.cmp(x6, asmjit::Imm(1));
-                a.b_ne(dispatchCached);
+                a.b_ne(dispatchCachedRestoreX5);
                 a.asr(x4, x3, asmjit::Imm(3));       // idx untagged
                 a.cmp(x4, asmjit::Imm(1));
-                a.b_lt(dispatchCached);
+                a.b_lt(dispatchCachedRestoreX5);
                 a.cmp(x4, x5);
-                a.b_gt(dispatchCached);
+                a.b_gt(dispatchCachedRestoreX5);
                 // Load val + store at recv[idx*8]
                 a.ldur(x3, ptr(x2, -8));             // x3 = val
                 a.lsl(x4, x4, asmjit::Imm(3));
@@ -3632,31 +3637,31 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(tryByteAtPut);
                 a.sub(x8, x6, asmjit::Imm(16));
                 a.cmp(x8, asmjit::Imm(8));
-                a.b_hs(dispatchCached);
-                a.tbnz(x4, asmjit::Imm(23), dispatchCached);  // immutable
+                a.b_hs(dispatchCachedRestoreX5);
+                a.tbnz(x4, asmjit::Imm(23), dispatchCachedRestoreX5);
                 a.lsr(x5, x4, asmjit::Imm(56));
                 a.and_(x5, x5, asmjit::Imm(0xFF));
                 a.cmp(x5, asmjit::Imm(255));
-                a.b_eq(dispatchCached);
+                a.b_eq(dispatchCachedRestoreX5);
                 a.lsl(x5, x5, asmjit::Imm(3));      // sc*8
                 a.and_(x6, x6, asmjit::Imm(0x7));    // extra bytes (fmt-16)
                 a.sub(x5, x5, x6);                   // byteSize
                 a.ldur(x3, ptr(x2, -16));            // idx (tagged SmI)
                 a.and_(x6, x3, asmjit::Imm(0x7));
                 a.cmp(x6, asmjit::Imm(1));
-                a.b_ne(dispatchCached);
+                a.b_ne(dispatchCachedRestoreX5);
                 a.asr(x4, x3, asmjit::Imm(3));       // idx
                 a.cmp(x4, asmjit::Imm(1));
-                a.b_lt(dispatchCached);
+                a.b_lt(dispatchCachedRestoreX5);
                 a.cmp(x4, x5);
-                a.b_gt(dispatchCached);
+                a.b_gt(dispatchCachedRestoreX5);
                 a.ldur(x3, ptr(x2, -8));             // val (tagged SmI)
                 a.and_(x6, x3, asmjit::Imm(0x7));
                 a.cmp(x6, asmjit::Imm(1));
-                a.b_ne(dispatchCached);              // val not SmI
+                a.b_ne(dispatchCachedRestoreX5);     // val not SmI
                 a.asr(x6, x3, asmjit::Imm(3));       // val untagged
                 a.cmp(x6, asmjit::Imm(255));
-                a.b_hi(dispatchCached);              // val > 255
+                a.b_hi(dispatchCachedRestoreX5);     // val > 255
                 // Store byte at recvAddr + 8 + (idx-1) = recv + 7 + idx.
                 // x6 holds the untagged value; use x7 for the address.
                 a.add(x4, x4, asmjit::Imm(7));
@@ -3684,13 +3689,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 asmjit::Label sizeDone = a.new_label();
                 a.bind(tryPrimSize);
                 emitIncPrimCounter((uint64_t)&g_primSize_hits);
+                // Stash icDataPtr — bails route through dispatchCachedRestoreX5.
+                a.str(x5, ptr(x0, OFF_ICDATAPTR));
                 a.ldr(x4, ptr(x1));                  // header
                 a.lsr(x6, x4, asmjit::Imm(24));
                 a.and_(x6, x6, asmjit::Imm(0x1F));
                 a.lsr(x5, x4, asmjit::Imm(56));
                 a.and_(x5, x5, asmjit::Imm(0xFF));
                 a.cmp(x5, asmjit::Imm(255));
-                a.b_eq(dispatchCached);              // overflow header → slow
+                a.b_eq(dispatchCachedRestoreX5);     // overflow header → slow
                 // fmt 2 or 9: result = slotCount (no adjust)
                 a.cmp(x6, asmjit::Imm(2));
                 a.b_eq(sizeDone);
@@ -3699,7 +3706,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // fmt 16-23: byte path
                 a.sub(x8, x6, asmjit::Imm(16));
                 a.cmp(x8, asmjit::Imm(8));
-                a.b_hs(dispatchCached);              // not byte fmt
+                a.b_hs(dispatchCachedRestoreX5);     // not byte fmt
                 a.lsl(x5, x5, asmjit::Imm(3));       // sc*8
                 a.and_(x6, x6, asmjit::Imm(0x7));    // extra bytes
                 a.sub(x5, x5, x6);                   // byteSize
@@ -3732,6 +3739,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(tryPrimIdentityHash);
                 a.b(dispatchCached);
             }
+
+            // === Inline-prim bail restore stub ===
+            // tryPrim* blocks clobber x5 (slotCount) but dispatchCached
+            // needs x5 = icDataPtr.  They stash icDataPtr to OFF_ICDATAPTR
+            // at the top of each block and route bails through this label.
+            a.bind(dispatchCachedRestoreX5);
+            a.ldr(x5, ptr(x0, OFF_ICDATAPTR));
+            // Fall through.
 
             // === Plain cached dispatch === (emits deferred state setup)
             a.bind(dispatchCached);
