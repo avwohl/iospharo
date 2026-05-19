@@ -2782,13 +2782,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // call entirely.  hasPrim is at bit 16 of decoded header.
                     a.ldr(x4, ptr(x10, 16));            // methodHeader (decoded)
                     a.tbnz(x4, asmjit::Imm(16), j2jBailSelf2);  // has prim → bail
-                    // Additional gate: callee must have zero IC entries
-                    // (no inner sends).  When callee has sends, its return
-                    // path can take chain-break exits we can't restore
-                    // correctly through the inline-J2J save protocol —
-                    // see the deferred A6 corruption investigation.  Pure
-                    // arith/leaf callees are safe because their return is
-                    // always EXIT_RETURN, not ExitSendCached.
+                    // Leaf-only gate (numICEntries==0).  Even after the
+                    // iter N+14 post-send-IP fix, non-leaf callees still
+                    // corrupt state at low fire counts (verified by
+                    // re-bisection 2026-05-19 with this gate disabled —
+                    // FAIL at MAX=1000).  So there's at least one more
+                    // chain-break protocol bug for callees that exit via
+                    // dispatchCached.  Until that's root-caused, keep the
+                    // leaf gate as belt-and-suspenders.
                     //
                     // JITMethod::numICEntries lives at offset 28 (uint16).
                     a.ldrh(w4, ptr(x10, 28));
