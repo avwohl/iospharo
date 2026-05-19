@@ -1668,6 +1668,64 @@ Cog reference is still 25-50× ahead even with NO_JIT — closing
 that is the E-series multi-week work, separate from this T1
 regression issue.
 
+**Iter N+11 (2026-05-19) — lldb investigation plan for chain-break protocol.**
+
+Both xmethod default-on (deferred A6 above) AND block-value inline
+default-on (iter N+10) are blocked on the same root cause: when a
+non-leaf callee bails mid-execution to the chain loop (e.g., on an
+ExitSendCached for an unsupported send), and the chain loop then
+activates an inner method, the inline-J2J save protocol corrupts
+state.  The fix unlocks both paths simultaneously and is the largest
+remaining lever for closing the Cog gap on send-heavy benchmarks
+(sort, dict, sum, stringHash, select — each 15-50× slower than Cog).
+
+Specific bug-hunt steps for a future lldb session:
+
+1. **Reproduce minimal:** under `PHARO_T1_INLINE_J2J_XMETHOD=1
+   PHARO_T1_INLINE_J2J_XMETHOD_MAX=300`, run `eval "42 printString"` —
+   this consistently fails around MAX=30 fires with corruption.
+   Should give a focused repro with O(30) xmethod fires.
+
+2. **Set watchpoint** on `interp->receiver_` (offset 0xa0 from
+   `interp->stackPointer_` per `PHARO_DUMP_INTERP_OFFSETS=1`).
+   At the moment the watchpoint fires with a non-Oop value (e.g.
+   Symbol bytes), `bt` shows the bad write site.
+
+3. **Likely candidates** (from prior static reading):
+   - Chain loop's `J2JCall` handler at Interpreter.cpp:18971 sets
+     `state.receiver = calleeRecv` but doesn't sync `interp->
+     receiver_`.  If a bail from the callee returns to interp
+     before materialize fires, `interp->receiver_` is stale.
+   - `state.j2jSaveCursor` may be off across the J2J Call/Return
+     boundary when xmethod fires during the JIT_CALL.
+   - `state.j2jEntryDepth` restoration at line 19009 happens
+     AFTER `JIT_CALL` returns — if a longjmp-style exit fires
+     mid-call, the restoration is skipped.
+
+4. **Hypothesis to verify:** the chain loop's activate-inner-method
+   path needs to TEMPORARILY MATERIALIZE the in-flight xmethod saves
+   to `savedFrames_` before pushing its own save, then re-push them
+   on return.  Or alternatively, the inline-J2J emit should never
+   fire when there are pending chain-loop saves (state.j2jEntryDepth
+   tracks this).
+
+5. **Validation:** once a fix candidate lands, run with
+   `PHARO_T1_INLINE_J2J_XMETHOD=1` (no MAX) on full bench-suite +
+   `42 printString` eval + `1 to: 100000 do: [:i | i printString]`.
+   All three should complete cleanly.  Then flip to default-on and
+   re-run the standard A/B bench.  Expected gains: sort -25%, dict
+   -20%, stringHash -15% (block-value path).  xmethod default-on
+   would also help fib(28) recursion gap modestly.
+
+Infrastructure already in tree (no-ops until protocol is fixed):
+- `g_debug.t1InlineJ2JXmethod` + safety gates (leaf/stub/canBail)
+- `g_debug.t1InlineBlockValue` + helper + IC fill + bit-59-first
+- `g_debug.t1J2JReceiverSync` + `t1J2JPostSendIp` + `t1J2JSplitPool`
+- Per-bail counters dumped by `dumpJITStats`
+- `g_jitRuntimeForBlockValue` singleton for future eager-compile
+- `Interpreter::queueInitialCompile` drain at safe points (used by
+  block-value helper for async block compile)
+
 ---
 
 ## B. Code state in-tree — experimental / opt-in
