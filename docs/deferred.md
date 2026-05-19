@@ -1164,8 +1164,62 @@ source.  Also try: cross-method with state-validate asserts at
 every iteration boundary to find the corruption-introducing
 fire.
 
-**Next iteration queued (after lldb on xmethod): inline block-value
-(BLOCK_VALUE_BIT bit 59).**
+**Iter N+6 (2026-05-19, lldb investigation, commit `5b728347`):**
+
+Reproduced cross-method crash under lldb.  Key findings:
+
+- Crash PC: `Interpreter::interpret + 956`, instruction
+  `ldr x9, [x8]` after `ldr x8, [x28, #0xa0]`.
+- x28 = address of `interp->stackPointer_` (compiler base-of-hot-fields
+  trick).  So `x28 + 0xa0` = address of `interp->receiver_`
+  (offset confirmed via `PHARO_DUMP_INTERP_OFFSETS=1`).
+- Fault address `0x656c646e61487265` decodes to ASCII "erHandle"
+  (low byte first) — likely Symbol content like #...erHandle...
+- So `interp->receiver_` was overwritten with a Symbol's CONTENT
+  bytes (not its header oop).
+- Dereferenced as object header → SIGSEGV.
+
+Added prim-only gate (commit `5b728347`): cross-method bails when
+callee has a declared primitive (bit 16 of methodHeader).  This
+excludes `FullBlockClosure>>value:` (prim 207) where asmjit-T1
+has no prim prologue, so cross-method would skip the prim and
+run `^ self primitiveFailed` fallback.  Verified XLOG output:
+only no-prim Smalltalk callees pass the gate now.
+
+**Crash persists with prim-only gate.**  Even pure-Smalltalk
+callees (#max:, #copyFrom:to:, #header, etc.) trigger the
+corruption after ~10K xmethod fires.  So the bug isn't
+value:-specific — it's a chain-break protocol issue with
+Smalltalk callees whose inner sends bail.
+
+Analysis of the flow:
+- M_A pushes save_A (caller state).
+- Branches to M_B's JIT entry.
+- M_B runs, hits inner send that bails to chain loop.
+- Chain loop syncs `interp->receiver_ = state.receiver = M_B.receiver`.
+- Chain loop processes bail, activates inner T.
+- T runs, returns.
+- Chain loop resumes M_B via JIT_CALL of save.resumeAddr.
+- BUT: does it sync `interp->receiver_` back?  Looking at J2JReturn
+  handler at Interpreter.cpp:18957+, it sets state.receiver from
+  save.receiver but does NOT update `interp->receiver_`.
+
+When materialize fires (j2jDepth > 0 → synthesize savedFrames_),
+receiver_ DOES get set to state.receiver per line 19097-19099.
+So that path is covered.
+
+Suspect: a code path where chain loop returns to JIT (resuming
+caller) without going through materialize, leaving `interp->
+receiver_` set to the inner method's receiver.  When that JIT
+eventually returns to interp via tryJITActivation completing,
+interp dispatches next bytecode reading the stale receiver_.
+
+This needs interactive lldb step-through to confirm — set hardware
+watchpoint on `&interp->receiver_`, run xmethod-enabled bench,
+inspect each write to identify the bad write site.
+
+**Next iteration queued (after focused lldb step-through of
+receiver_ corruption): inline block-value (BLOCK_VALUE_BIT bit 59).**
 
 The stencil version at `stencils.cpp:1642-1731` inlines
 FullBlockClosure>>value/value: by extracting compiledBlock from
