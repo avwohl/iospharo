@@ -1461,14 +1461,12 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
         g_bvBail_lookup++;
         return nullptr;
     }
-    // Strict leaf-only gate: block must have zero inner sends.
-    // Verified 2026-05-19 (iter N+16): relaxing the gate even with
-    // the post-send-IP fix (iter N+14) and J2J pool GC scan (iter
-    // N+15) still triggers "withAllSuperclassesDo: is nil"
-    // corruption after ~820 fires.  So at least one more chain-break
-    // protocol bug exists for non-leaf callees — needs another lldb
-    // session to find.
-    if (blockJM->numICEntries != 0) { g_bvBail_lookup++; return nullptr; }
+    // Leaf-only gate: opt-in via PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1.
+    // Relaxed gate previously crashed after ~820 fires (iter N+16,
+    // 2026-05-19 morning); the post-send-IP + splitPool + receiver-
+    // sync + GC-J2J landings later that day may have resolved it.
+    if (!g_debug.t1InlineBlockValueNonLeaf
+        && blockJM->numICEntries != 0) { g_bvBail_lookup++; return nullptr; }
     if (blockJM->isStubOnEntry)    { g_bvBail_stub++; return nullptr; }
     if (blockJM->canBailMidMethod) { g_bvBail_canBail++; return nullptr; }
     if ((blockJM->methodHeader >> 16) & 1) { g_bvBail_prim++; return nullptr; }

@@ -105,6 +105,17 @@ struct DebugSettings {
     // overrides; set very high for default-on attempts after the
     // chain-break protocol fix lands.
     int  t1InlineJ2JXmethodMax = 30000;
+    // Dump xmethod trace ring buffer at terminateCurrentProcess.
+    // PHARO_T1_XMETHOD_LOG=1 enables.  Useful when chain-break corruption
+    // surfaces as a P process termination — the last 64 fires are
+    // captured in g_xmethod_trace.
+    bool t1XmethodLog = false;
+    // Opt-in: allow block-value inline for non-leaf blocks (those with
+    // inner sends).  PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1 enables.
+    // See JITRuntime.cpp jit_rt_inline_block_value_prep — leaf-only
+    // gate was added 2026-05-19 (iter N+16) to suppress chain-break
+    // corruption.  Re-attempt after the later fixes.
+    bool t1InlineBlockValueNonLeaf = false;
     // Sync interp->receiver_ and method_ on chain-loop J2J Return path.
     // Without this, a stale callee-receiver lingers in interp->receiver_
     // after chain-loop bail/resume and can corrupt later interp dispatch.

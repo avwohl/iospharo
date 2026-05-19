@@ -142,6 +142,9 @@ static inline void pharo_jit_b5_dump_ring(const char* tag) {
 static inline void pharo_jit_b5_dump_ring(const char*) {}
 #endif
 
+extern "C" void jit_rt_xmethod_dump_trace();
+extern "C" uint64_t g_xmethod_count;
+
 namespace pharo {
 
 // Set to false to disable all debug file logging for performance
@@ -1436,6 +1439,10 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_primSize_hits,
                 (unsigned long long)g_primBitOp_hits);
         }
+    }
+    if (g_xmethod_count > 0) {
+        fprintf(stderr, "  xmethod inline-J2J fires=%llu\n",
+                (unsigned long long)g_xmethod_count);
     }
     fprintf(stderr, "=================\n");
     // One-off diagnostic: print offsets of key Interpreter fields to
@@ -12734,6 +12741,12 @@ void Interpreter::terminateCurrentProcess() {
         if (dladdr(callsite, &info) && info.dli_sname) {
             fprintf(stderr, "[TERM]   C++ caller: %s+%ld\n", info.dli_sname,
                     (long)((char*)callsite - (char*)info.dli_saddr));
+        }
+        // PHARO_T1_XMETHOD_LOG=1: dump the JIT xmethod ring buffer
+        // (last 64 cross-method inline-J2J fires).  Useful for
+        // correlating a TERM with the just-prior xmethod sequence.
+        if (g_debug.t1XmethodLog) {
+            jit_rt_xmethod_dump_trace();
         }
         // 2026-05-09 A4 diag: PHARO_TERM_BT=1 walks additional frames
         // for finding the C++ origin of the terminate call.  Used in
