@@ -2656,15 +2656,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // Default OFF — known to corrupt state.  Opt-in for lldb
                 // debugging only.  PHARO_T1_INLINE_J2J_XMETHOD_MAX=N
                 // bisection-limits the number of cross-method fires.
-                static const bool xmethod =
-                    std::getenv("PHARO_T1_INLINE_J2J_XMETHOD") != nullptr;
-                static const int xmethodMaxInit = [](){
-                    if (auto v = std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_MAX")) {
-                        g_xmethod_max = (uint64_t)std::atoll(v);
-                    }
-                    return 0;
-                }();
-                (void)xmethodMaxInit;
+                const bool xmethod = g_debug.t1InlineJ2JXmethod;
+                if (g_debug.t1InlineJ2JXmethodMax >= 0) {
+                    g_xmethod_max = (uint64_t)g_debug.t1InlineJ2JXmethodMax;
+                }
                 asmjit::Label sameMethodSkipUpdate = a.new_label();
                 if (xmethod) {
                     // Cross-method inline-J2J — gated on callee.hasPrimPrologue.
@@ -2779,9 +2774,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // experiments.  Found via lldb investigation that pre-send
                 // ip in materialize sites leads to double-send on interp
                 // resume.  When fix bisects clean, flip default-on.
-                static const bool postSendIp =
-                    std::getenv("PHARO_T1_J2J_POST_SEND_IP") != nullptr;
-                if (postSendIp) {
+                if (g_debug.t1J2JPostSendIp) {
                     a.ldr(x15, ptr(x0, OFF_METHOD));
                     a.add(x15, x15, asmjit::Imm(bcOffsetFromMethObj + 1));
                 } else {

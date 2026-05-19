@@ -100,6 +100,11 @@ DebugSettings::DebugSettings() {
     t1InlineJ2J         = !envPresent("PHARO_T1_NO_INLINE_J2J");
     t1InlinePrimBitOps  = !envPresent("PHARO_T1_NO_INLINE_PRIM_BITOPS");
     t1InlinePrimAt      = !envPresent("PHARO_T1_NO_INLINE_PRIM_AT");
+    t1InlineJ2JXmethod  = envPresent("PHARO_T1_INLINE_J2J_XMETHOD");
+    t1InlineJ2JXmethodMax = envInt("PHARO_T1_INLINE_J2J_XMETHOD_MAX", -1);
+    t1J2JReceiverSync   = envPresent("PHARO_T1_J2J_RECEIVER_SYNC");
+    t1J2JPostSendIp     = envPresent("PHARO_T1_J2J_POST_SEND_IP");
+    t1J2JSplitPool      = envPresent("PHARO_T1_J2J_SPLIT_POOL");
     t1ProbeAlwaysMiss   = envPresent("PHARO_T1_PROBE_ALWAYS_MISS");
     t1HitAsMiss         = envPresent("PHARO_T1_HIT_AS_MISS");
     t1ICHitVerify       = envPresent("PHARO_T1_IC_HIT_VERIFY");

@@ -94,6 +94,30 @@ struct DebugSettings {
     // vs ~500 cycle chain-loop round-trip.  Could benefit sort/dict/sum.
     // Default-on; PHARO_T1_NO_INLINE_PRIM_AT=1 opt-out.
     bool t1InlinePrimAt = true;
+    // Cross-method inline-J2J emit (callee != caller).  Default OFF —
+    // currently corrupts state at MAX>5000 fires; opt-in for lldb work.
+    // PHARO_T1_INLINE_J2J_XMETHOD=1 enables.
+    bool t1InlineJ2JXmethod = false;
+    // Bisect cap on number of cross-method fires.  -1 = unlimited.
+    // PHARO_T1_INLINE_J2J_XMETHOD_MAX=N.
+    int  t1InlineJ2JXmethodMax = -1;
+    // Sync interp->receiver_ and method_ on chain-loop J2J Return path.
+    // Without this, a stale callee-receiver lingers in interp->receiver_
+    // after chain-loop bail/resume and can corrupt later interp dispatch.
+    // PHARO_T1_J2J_RECEIVER_SYNC=1 enables.  See deferred.md A6 iter N+7.
+    bool t1J2JReceiverSync = false;
+    // Store post-send IP (state.method + bcOffsetFromMethObj + 1) in
+    // inline-J2J save.ip instead of raw state.ip.  Mirrors chain-loop's
+    // J2JCall handler which advances state.ip past the send before
+    // saving.  Found via lldb that pre-send save.ip causes interp to
+    // re-execute the send when materialized.  See deferred.md A6 iter N+8.
+    bool t1J2JPostSendIp = false;
+    // Split-pool layout: JIT inline-J2J pushes saves to a separate slice
+    // of j2jPool_, distinct from the chain-loop's rj2jSaves slice.  Avoids
+    // collision when both chain loop and JIT push during a single tryJIT-
+    // Activation call.  PHARO_T1_J2J_SPLIT_POOL=1.  See deferred.md A6
+    // iter N+2/N+3.
+    bool t1J2JSplitPool = false;
     // Diagnostic: force probe to always-miss so the probe COMPUTATION runs
     // but exits via ExitSend regardless of icData[0] match.  Isolates
     // whether bugs are in the probe arithmetic or in the HIT path.

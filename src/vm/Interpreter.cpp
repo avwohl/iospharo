@@ -16872,6 +16872,15 @@ void Interpreter::tryJITResumeInCaller() {
                         state.literals = methObj->slots() + 1;
                         state.argCount = nArgs;
                         state.jitMethod = calleeJM;
+                        // Sync state.method to the callee's compiledMethodOop.
+                        // asmjit-T1 emit's xmethod path (when enabled) and
+                        // bail emits read state.method when computing
+                        // state.ip = state.method + bcOffsetFromMethObj.
+                        // If state.method is stale (left at outermost) the IP
+                        // write produces a bogus address, downstream
+                        // MUSTBOOL cascades.  Mirrors the slow chain loop's
+                        // sync at line ~18987.
+                        state.method = Oop::fromRawBits(calleeJM->compiledMethodOop);
                     }
 
                     if (__builtin_expect(selfRecursive, 1)) {
@@ -16880,6 +16889,10 @@ void Interpreter::tryJITResumeInCaller() {
                         int numLits = static_cast<int>(
                             calleeJM->methodHeader & 0x7FFF);
                         state.ip = methObj->bytes() + (1 + numLits) * 8;
+                    }
+                    if (g_debug.t1J2JReceiverSync) {
+                        receiver_ = state.receiver;
+                        method_ = state.method;
                     }
 
                     // Allocate temps if needed
@@ -16936,6 +16949,18 @@ void Interpreter::tryJITResumeInCaller() {
                         state.literals = reinterpret_cast<Oop*>(savedJM->literals());
                         state.argCount = savedJM->argCount;
                         state.ip = savedJM->bcStart();
+                        // Restore state.method symmetric with J2JCall's update.
+                        state.method = Oop::fromRawBits(savedJM->compiledMethodOop);
+                    }
+                    // Sync Interpreter::receiver_/method_ on J2J Return —
+                    // mirrors the slow-chain-loop sync at line ~19033.
+                    // Without this, interp->receiver_ stays at the callee's
+                    // receiver after JIT bails to interp without going
+                    // through materialize (e.g., for a primitive failure
+                    // whose retry runs in interp).  See deferred A6 N+7.
+                    if (g_debug.t1J2JReceiverSync) {
+                        receiver_ = save.receiver;
+                        method_ = state.method;
                     }
 
                     // Pop receiver+args, push return value
@@ -18580,8 +18605,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // j2jStack at [j2jPoolBase..j2jPoolEnd); JIT's
     // state.j2jSaveCursor at [j2jStateBase..j2jStateEnd).  When off,
     // both share same base (current behavior).
-    static const bool splitPool =
-        std::getenv("PHARO_T1_J2J_SPLIT_POOL") != nullptr;
+    const bool splitPool = g_debug.t1J2JSplitPool;
     int j2jPoolBase = j2jPoolCursor_;
     int j2jPoolEnd = std::min(j2jPoolBase + J2JSlotPerEntry, MaxJ2JPoolSize);
     int j2jStateBase = splitPool ? j2jPoolEnd : j2jPoolBase;
@@ -18978,6 +19002,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
                 // For self-recursive calls, state.method is already correct
                 // (same oop on both sides of the call).
+                if (g_debug.t1J2JReceiverSync) {
+                    receiver_ = state.receiver;
+                    method_ = state.method;
+                }
 
                 // IP = bytecodeStart of callee. For self-recursive calls this
                 // equals the caller's bcStart we just computed, so reuse it.
@@ -19030,9 +19058,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 // can corrupt later interp-bytecode dispatch.  Gated on
                 // PHARO_T1_J2J_RECEIVER_SYNC=1 for bisection until we
                 // verify it doesn't regress default.
-                static const bool j2jReceiverSync =
-                    std::getenv("PHARO_T1_J2J_RECEIVER_SYNC") != nullptr;
-                if (j2jReceiverSync) {
+                if (g_debug.t1J2JReceiverSync) {
                     receiver_ = save.receiver;
                 }
                 // Derive literals/argCount/ip from save.jitMethod — see
@@ -19045,7 +19071,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     state.argCount = savedJM->argCount;
                     state.ip = savedJM->bcStart();
                     state.method = Oop::fromRawBits(savedJM->compiledMethodOop);
-                    if (j2jReceiverSync) {
+                    if (g_debug.t1J2JReceiverSync) {
                         method_ = state.method;
                     }
                 }
