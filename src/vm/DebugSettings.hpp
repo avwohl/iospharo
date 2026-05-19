@@ -118,6 +118,9 @@ struct DebugSettings {
     bool t1InlineBlockValueNonLeaf = false;
     // Per-primitive call counter dumped at exit.  PHARO_PRIM_PROFILE=1.
     bool primProfile = false;
+    // Compile every block on first invocation (instead of waiting for
+    // hot-count threshold).  PHARO_T1_EAGER_BLOCK_COMPILE=1 — diagnostic.
+    bool t1EagerBlockCompile = false;
     // Sync interp->receiver_ and method_ on chain-loop J2J Return path.
     // Without this, a stale callee-receiver lingers in interp->receiver_
     // after chain-loop bail/resume and can corrupt later interp dispatch.

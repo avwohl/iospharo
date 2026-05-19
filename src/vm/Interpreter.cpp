@@ -9663,6 +9663,17 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         // compilation.  Sista may already own this method via splice; if
         // so, noteMethodEntry returns early.
         jitRuntime_.noteMethodEntry(compiledBlock);
+        // Eager block compile: PHARO_T1_EAGER_BLOCK_COMPILE=1 triggers
+        // compile on FIRST invocation (instead of after threshold).
+        // Use to test whether the standard hot-count path misses
+        // certain block invocation sites.
+        if (g_debug.t1EagerBlockCompile && jitRuntime_.compiler()) {
+            jit::JITMethod* existing = jitRuntime_.methodMap().lookup(
+                compiledBlock.rawBits());
+            if (!existing || !existing->isExecutable()) {
+                jitRuntime_.compiler()->compile(compiledBlock);
+            }
+        }
 #endif
 
         methodToExecute = compiledBlock;
