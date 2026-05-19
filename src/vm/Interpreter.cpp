@@ -2655,6 +2655,10 @@ void Interpreter::interpret() {
     } // periodic_checks
 
     cg_exit:
+    if (std::getenv("PHARO_TRACE_TOTAL_STEPS")) {
+        fprintf(stderr, "[INTERP-EXIT] totalSteps=%llu\n",
+                (unsigned long long)totalSteps);
+    }
 #if PROFILE_BYTECODE_PAIRS
     {
         // Dump top 50 bytecode pairs by frequency
