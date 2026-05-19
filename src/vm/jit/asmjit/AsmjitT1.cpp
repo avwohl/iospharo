@@ -2463,6 +2463,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimAt = a.new_label();
             asmjit::Label tryPrimAtPut = a.new_label();
             asmjit::Label tryPrimSize = a.new_label();
+            asmjit::Label tryPrimEq = a.new_label();
             asmjit::Label j2jBailHeap = a.new_label();
             asmjit::Label j2jBailHeap2 = a.new_label();
             asmjit::Label endOfSend = a.new_label();
@@ -3011,6 +3012,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(tryPrimBitXor);
                 a.b(dispatchCached);
             }
+
+            // === Inline == (primKind 10, nArgs=1, any tag) — DECLARED
+            // but not currently dispatched.  Tried adding primKind 10 check
+            // to both SmI/heap branches but the extra dispatch overhead
+            // (4 instr/send) didn't pay off in benchmarks (~no movement,
+            // some variance noise).  Kept the label declaration to avoid
+            // breaking unused-label errors; bind it as a dispatchCached
+            // alias.  Could revisit if a workload shows lots of named-send
+            // == invocations.
+            a.bind(tryPrimEq);
+            a.b(dispatchCached);
 
             // === Inline at: (primKind 14, nArgs=1, heap receiver) ===
             // Receiver class is whatever IC matched; runtime check fmt==2
