@@ -65,6 +65,11 @@ extern "C" uint64_t g_inlineJ2J_hits      = 0;  // path taken (br to entry)
 extern "C" uint64_t g_inlineJ2J_bail_zero = 0;  // entryAddr == 0
 extern "C" uint64_t g_inlineJ2J_bail_full = 0;  // save stack at limit
 extern "C" uint64_t g_inlineJ2J_bail_self = 0;  // calleeJM != callerJM
+// Counters for inline-prim path firings (PHARO_T1_INLINE_PRIM_COUNTERS=1).
+extern "C" uint64_t g_primAt_hits         = 0;  // tryPrimAt inline fired
+extern "C" uint64_t g_primAtPut_hits      = 0;  // tryPrimAtPut inline fired
+extern "C" uint64_t g_primSize_hits       = 0;  // tryPrimSize inline fired
+extern "C" uint64_t g_primBitOp_hits      = 0;  // bitAnd/bitOr/bitXor fired
 // Debug: last-seen values at the self-recursive check.  Overwritten each
 // entry so post-run we can see what the comparison was checking.
 extern "C" uint64_t g_inlineJ2J_dbg_caller_method = 0;
@@ -2966,6 +2971,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             a.b(endOfSend);
 
+            // Counter helper for inline-prim diagnostics (PHARO_T1_INLINE_PRIM_COUNTERS=1).
+            static const bool primCountersEnabled =
+                std::getenv("PHARO_T1_INLINE_PRIM_COUNTERS") != nullptr;
+            auto emitIncPrimCounter = [&](uint64_t addr) {
+                if (!primCountersEnabled) return;
+                a.mov(x14, asmjit::Imm(addr));
+                a.ldr(x15, ptr(x14));
+                a.add(x15, x15, asmjit::Imm(1));
+                a.str(x15, ptr(x14));
+            };
+
             // === Inline SmI bitwise prims (primKind 11/12/19) ===
             // Receiver was confirmed SmI in the dispatch (tst x1, 0x7 → ne).
             // Arg must also be SmI; bail to dispatchCached if not.
@@ -2976,6 +2992,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // x1 = receiver (tagged), arg at sp[-8].
             if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
                 a.bind(tryPrimBitAnd);
+                emitIncPrimCounter((uint64_t)&g_primBitOp_hits);
                 a.ldur(x3, ptr(x2, -8));               // arg
                 a.and_(x6, x3, asmjit::Imm(0x7));
                 a.cmp(x6, asmjit::Imm(1));
@@ -2987,6 +3004,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b(endOfSend);
 
                 a.bind(tryPrimBitOr);
+                emitIncPrimCounter((uint64_t)&g_primBitOp_hits);
                 a.ldur(x3, ptr(x2, -8));
                 a.and_(x6, x3, asmjit::Imm(0x7));
                 a.cmp(x6, asmjit::Imm(1));
@@ -2998,6 +3016,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b(endOfSend);
 
                 a.bind(tryPrimBitXor);
+                emitIncPrimCounter((uint64_t)&g_primBitOp_hits);
                 a.ldur(x3, ptr(x2, -8));
                 a.and_(x6, x3, asmjit::Imm(0x7));
                 a.cmp(x6, asmjit::Imm(1));
@@ -3030,6 +3049,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // x1 = recv (heap), x2 = sp, x7 = extras.
             if (nArgs == 1 && g_debug.t1InlinePrimAt) {
                 a.bind(tryPrimAt);
+                emitIncPrimCounter((uint64_t)&g_primAt_hits);
                 a.ldr(x4, ptr(x1));                  // x4 = header word
                 a.lsr(x6, x4, asmjit::Imm(24));      // shift fmt to low
                 a.and_(x6, x6, asmjit::Imm(0x1F));
@@ -3069,6 +3089,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // sp layout before send: [..., recv, idx, val]  (val at sp[-1])
             if (nArgs == 2 && g_debug.t1InlinePrimAt) {
                 a.bind(tryPrimAtPut);
+                emitIncPrimCounter((uint64_t)&g_primAtPut_hits);
                 a.ldr(x4, ptr(x1));                  // x4 = header word
                 a.lsr(x6, x4, asmjit::Imm(24));
                 a.and_(x6, x6, asmjit::Imm(0x1F));
@@ -3111,6 +3132,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // 255 indicates overflow header).  Result is SmI(sc).
             if (nArgs == 0 && g_debug.t1InlinePrimAt) {
                 a.bind(tryPrimSize);
+                emitIncPrimCounter((uint64_t)&g_primSize_hits);
                 a.ldr(x4, ptr(x1));                  // header
                 a.lsr(x6, x4, asmjit::Imm(24));
                 a.and_(x6, x6, asmjit::Imm(0x1F));

@@ -90,6 +90,10 @@ extern "C" uint64_t g_inlineJ2J_dbg_ic_hits;
 extern "C" uint64_t g_inlineJ2J_dbg_extra_no_bit60;
 extern "C" uint64_t g_inlineJ2J_dbg_miss;
 extern "C" uint64_t g_inlineJ2J_dbg_dispatch;
+extern "C" uint64_t g_primAt_hits;
+extern "C" uint64_t g_primAtPut_hits;
+extern "C" uint64_t g_primSize_hits;
+extern "C" uint64_t g_primBitOp_hits;
 
 // Display Form readiness flag — exposed to Swift via vm_isDisplayFormReady().
 // Set true when the image calls primitiveBeDisplay (prim 102) or
@@ -1384,6 +1388,20 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_inlineJ2J_dbg_extra_no_bit60,
                 (unsigned long long)g_inlineJ2J_dbg_miss,
                 (unsigned long long)g_inlineJ2J_dbg_dispatch);
+        }
+    }
+    // Inline-prim counters (PHARO_T1_INLINE_PRIM_COUNTERS=1) — see top of file
+    // for extern "C" declarations.
+    {
+        uint64_t primTotal = g_primAt_hits + g_primAtPut_hits
+                           + g_primSize_hits + g_primBitOp_hits;
+        if (primTotal > 0) {
+            fprintf(stderr,
+                "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu\n",
+                (unsigned long long)g_primAt_hits,
+                (unsigned long long)g_primAtPut_hits,
+                (unsigned long long)g_primSize_hits,
+                (unsigned long long)g_primBitOp_hits);
         }
     }
     fprintf(stderr, "=================\n");
