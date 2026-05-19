@@ -1461,10 +1461,13 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
         g_bvBail_lookup++;
         return nullptr;
     }
-    // Strict leaf-only gate: block must have zero inner sends.  Same
-    // structural protection as xmethod (deferred A6 iter N+9):
-    // non-leaf callees can take chain-break exits that the J2J save/
-    // return protocol can't restore correctly.
+    // Strict leaf-only gate: block must have zero inner sends.
+    // Verified 2026-05-19 (iter N+16): relaxing the gate even with
+    // the post-send-IP fix (iter N+14) and J2J pool GC scan (iter
+    // N+15) still triggers "withAllSuperclassesDo: is nil"
+    // corruption after ~820 fires.  So at least one more chain-break
+    // protocol bug exists for non-leaf callees — needs another lldb
+    // session to find.
     if (blockJM->numICEntries != 0) { g_bvBail_lookup++; return nullptr; }
     if (blockJM->isStubOnEntry)    { g_bvBail_stub++; return nullptr; }
     if (blockJM->canBailMidMethod) { g_bvBail_canBail++; return nullptr; }
