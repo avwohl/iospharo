@@ -98,9 +98,13 @@ struct DebugSettings {
     // currently corrupts state at MAX>5000 fires; opt-in for lldb work.
     // PHARO_T1_INLINE_J2J_XMETHOD=1 enables.
     bool t1InlineJ2JXmethod = false;
-    // Bisect cap on number of cross-method fires.  -1 = unlimited.
-    // PHARO_T1_INLINE_J2J_XMETHOD_MAX=N.
-    int  t1InlineJ2JXmethodMax = -1;
+    // Bisect cap on number of cross-method fires.  Default 30000 —
+    // empirically the safe boundary on `42 printString` corruption
+    // bisection (deferred A6 iter N+9/N+10).  Above this, state
+    // corruption resurfaces.  PHARO_T1_INLINE_J2J_XMETHOD_MAX=N
+    // overrides; set very high for default-on attempts after the
+    // chain-break protocol fix lands.
+    int  t1InlineJ2JXmethodMax = 30000;
     // Sync interp->receiver_ and method_ on chain-loop J2J Return path.
     // Without this, a stale callee-receiver lingers in interp->receiver_
     // after chain-loop bail/resume and can corrupt later interp dispatch.

@@ -2739,6 +2739,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // debugging only.  PHARO_T1_INLINE_J2J_XMETHOD_MAX=N
                 // bisection-limits the number of cross-method fires.
                 const bool xmethod = g_debug.t1InlineJ2JXmethod;
+                // Always apply the cap (default 30000) when xmethod is
+                // on — empirically corruption surfaces above this and
+                // there's no benefit to UINT64_MAX without the protocol
+                // fix.  Negative values are treated as "no cap" for
+                // opt-in experiments.
                 if (g_debug.t1InlineJ2JXmethodMax >= 0) {
                     g_xmethod_max = (uint64_t)g_debug.t1InlineJ2JXmethodMax;
                 }
