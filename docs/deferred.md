@@ -1668,6 +1668,23 @@ Cog reference is still 25-50× ahead even with NO_JIT — closing
 that is the E-series multi-week work, separate from this T1
 regression issue.
 
+**Iter N+19 (2026-05-19) — ring-buffer trace + investigation status.**
+
+`asmjit-T1` xmethod-log ring buffer (`fed752d8`): the buffer now
+captures the LAST 64 fires rather than the first 64.  Per-fire fprintf
+gated to fires 1-8 only.  Useful for post-corruption diagnosis.
+
+Captured fires near MAX=31000 (works) and MAX=31900 (fails):
+- Both show `state.receiver=0xcedb18710` or `0x7387aea90` — high-address
+  values that look stack-like but are actually valid eden heap oops
+  (Pharo allocates new objects in high address ranges, e.g. 0xc000...).
+- The "stack-address receiver" hypothesis is wrong.
+
+So the actual corruption signature in state at fire ~31853 is more
+subtle.  Investigation paused — needs interactive lldb step-through
+to identify the specific state field that becomes wrong, rather than
+post-hoc trace inspection.
+
 **Iter N+18 (2026-05-19) — materialize both slices fix (`88487bb3`).**
 
 `Interpreter::tryJITActivation` materialize block had a bug when
