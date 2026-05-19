@@ -3252,18 +3252,22 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // shows hot named-send == invocations.
 
             // === Inline at: (primKind 14, nArgs=1, heap receiver) ===
-            // Receiver class is whatever IC matched; runtime check fmt==2
-            // (variable pointer / Array) and decode header slot count.
-            // Mirrors stencils.cpp:1538-1545.
+            // Receiver class is whatever IC matched; runtime check fmt
+            // and decode header slot count.  Two paths:
+            //   fmt == 2  (variable pointer / Array): return slot[idx]
+            //   fmt 16-23 (indexable bytes / ByteArray, String):
+            //              return SmI of byte at idx
+            // Mirrors stencils.cpp:1538-1545 (Array path).
             // x1 = recv (heap), x2 = sp, x7 = extras.
             if (nArgs == 1 && g_debug.t1InlinePrimAt) {
+                asmjit::Label tryByteAt = a.new_label();
                 a.bind(tryPrimAt);
                 emitIncPrimCounter((uint64_t)&g_primAt_hits);
                 a.ldr(x4, ptr(x1));                  // x4 = header word
                 a.lsr(x6, x4, asmjit::Imm(24));      // shift fmt to low
                 a.and_(x6, x6, asmjit::Imm(0x1F));
-                a.cmp(x6, asmjit::Imm(2));           // fmt 2 = pure ptr (Array)
-                a.b_ne(dispatchCached);
+                a.cmp(x6, asmjit::Imm(2));           // fmt 2 = Array path
+                a.b_ne(tryByteAt);                   // else try byte path
                 // Slot count in header bits 56:63 (1 byte). If 255 = overflow.
                 a.lsr(x5, x4, asmjit::Imm(56));
                 a.and_(x5, x5, asmjit::Imm(0xFF));
@@ -3283,6 +3287,40 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.lsl(x4, x4, asmjit::Imm(3));
                 a.add(x6, x1, x4);
                 a.ldr(x4, ptr(x6));                  // val = recv[idx*8]
+                a.stur(x4, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
+
+                // Byte-indexed at:: fmt 16-23 (ByteArray, String, Symbol).
+                // byteSize = slotCount*8 - (fmt & 7).  byte[idx] at
+                // recvAddr + 8 + (idx-1).  Returns SmI of byte value.
+                a.bind(tryByteAt);
+                a.sub(x8, x6, asmjit::Imm(16));      // x8 = fmt - 16
+                a.cmp(x8, asmjit::Imm(8));
+                a.b_hs(dispatchCached);              // fmt not in 16..23
+                a.lsr(x5, x4, asmjit::Imm(56));
+                a.and_(x5, x5, asmjit::Imm(0xFF));
+                a.cmp(x5, asmjit::Imm(255));
+                a.b_eq(dispatchCached);              // slotCount==255 → ovf
+                a.lsl(x5, x5, asmjit::Imm(3));       // sc*8 = max byte capacity
+                a.and_(x6, x6, asmjit::Imm(0x7));    // extra bytes (= fmt&7)
+                a.sub(x5, x5, x6);                   // byteSize
+                a.ldur(x3, ptr(x2, -8));
+                a.and_(x6, x3, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_ne(dispatchCached);              // idx not SmI
+                a.asr(x4, x3, asmjit::Imm(3));       // x4 = idx
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_lt(dispatchCached);
+                a.cmp(x4, x5);
+                a.b_gt(dispatchCached);              // idx > byteSize
+                // byte at recvAddr + 8 + (idx-1) = recvAddr + 7 + idx
+                a.add(x4, x4, asmjit::Imm(7));
+                a.add(x6, x1, x4);
+                a.ldrb(w4, ptr(x6));                 // zero-extended byte
+                a.lsl(x4, x4, asmjit::Imm(3));       // retag SmI
+                a.orr(x4, x4, asmjit::Imm(0x1));
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
