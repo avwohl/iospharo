@@ -167,16 +167,57 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
         ObjectMemory* mem = *(ObjectMemory**)((uint8_t*)state + 32);
         std::string calleeSel = "?";
         std::string callerSel = "?";
+        int calleePrim = -1;
+        int calleeNumLits = -1;
+        bool calleeHasPrim = false;
         if (interp) {
-            calleeSel = interp->memory().selectorOf(
-                Oop::fromRawBits(calleeCM));
-            callerSel = interp->memory().selectorOf(
-                Oop::fromRawBits(callerCM));
+            Oop calleeOop = Oop::fromRawBits(calleeCM);
+            Oop callerOop = Oop::fromRawBits(callerCM);
+            calleeSel = interp->memory().selectorOf(calleeOop);
+            callerSel = interp->memory().selectorOf(callerOop);
+            if (calleeOop.isObject()) {
+                ObjectHeader* mo = calleeOop.asObjectPtr();
+                Oop hdr = mo->slotAt(0);
+                if (hdr.isSmallInteger()) {
+                    int64_t hb = hdr.asSmallInteger();
+                    calleeNumLits = (int)(hb & 0x7FFF);
+                    calleeHasPrim = ((hb >> 16) & 1) != 0;
+                    if (calleeHasPrim) {
+                        const uint8_t* bc = mo->bytes()
+                            + (1 + calleeNumLits) * 8;
+                        if (bc[0] == 0xF8) {
+                            calleePrim = bc[1] | ((bc[2] & 0x1F) << 8);
+                        }
+                    }
+                }
+            }
         }
         (void)mem;
-        fprintf(stderr, "[XLOG #%zu] callee=#%s (cm=0x%llx) caller=#%s (cm=0x%llx)\n",
+        // Dump first 16 bytes of callee bytecodes
+        char bcStr[80] = "";
+        uint64_t calleeJMMethodHeader = 0;
+        uint8_t calleeJMArgCount = 0;
+        uint8_t calleeJMTempCount = 0;
+        if (interp && calleeNumLits >= 0) {
+            Oop calleeOop = Oop::fromRawBits(calleeCM);
+            ObjectHeader* mo = calleeOop.asObjectPtr();
+            const uint8_t* bc = mo->bytes() + (1 + calleeNumLits) * 8;
+            for (int k = 0; k < 12; k++) {
+                snprintf(bcStr + k*3, sizeof(bcStr) - k*3, "%02x ", bc[k]);
+            }
+            // Inspect JM struct (offset 16 = methodHeader,
+            //                    offset 34 = argCount, offset 35 = tempCount)
+            const uint8_t* jmBytes = (const uint8_t*)calleeJM;
+            calleeJMMethodHeader = *(const uint64_t*)(jmBytes + 16);
+            calleeJMArgCount = jmBytes[34];
+            calleeJMTempCount = jmBytes[35];
+        }
+        fprintf(stderr, "[XLOG #%zu] callee=#%s (cm=0x%llx prim=%d hasPrim=%d numLits=%d) caller=#%s (cm=0x%llx) bc[0..11]: %s jmMH=0x%llx jmArgC=%d jmTempC=%d\n",
                 logN, calleeSel.c_str(), (unsigned long long)calleeCM,
-                callerSel.c_str(), (unsigned long long)callerCM);
+                calleePrim, (int)calleeHasPrim, calleeNumLits,
+                callerSel.c_str(), (unsigned long long)callerCM, bcStr,
+                (unsigned long long)calleeJMMethodHeader,
+                calleeJMArgCount, calleeJMTempCount);
         fflush(stderr);
         // Optional per-fire dump (PHARO_T1_INLINE_J2J_XMETHOD_LIVE=1).
         // Default off — the trace buffer is the primary capture.
