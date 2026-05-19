@@ -1135,7 +1135,37 @@ Changes shipped on 2026-05-18 → 2026-05-19:
 - `54c03c92` tryPrimEq attempted + reverted (primKind 10 dispatch overhead
   added ~4 instr/send to every send and didn't pay off in benchmarks)
 
-**Next iteration queued: inline block-value (BLOCK_VALUE_BIT bit 59).**
+**Iter N+5 (2026-05-19, commit `605a5f7b`) j2jEntryDepth infra.**
+
+Implements option (a) per-entry depth snapshot.  Adds
+`j2jEntryDepth` field to JITState (offset 200), initialized in
+`tryJITActivation` and updated at the two chain-loop J2JCall
+sites (Interpreter.cpp:16870 + 18955).  asmjit-T1's return
+prelude now checks `current j2jDepth > entry depth` instead of
+just `> 0`, so a chain-loop-activated method can't accidentally
+pop an OUTER method's save.
+
+No regression on default (entryDepth stays 0 in non-xmethod
+configs, prelude pop behavior unchanged for that case).
+
+**Cross-method still crashes** at MAX>5000 fires.  Crash PC shifted
+by 44 bytes (0xec4 → 0xef0) due to code-growth from the new
+field check, but the crash is at the same RELATIVE location in
+`Interpreter::interpret` — `ldr x8, [x28+0xa0]; ldr x9, [x8]`.
+Offset 0xa0 = 160 corresponds to JITState.j2jDepth (8-byte load
+gets j2jDepth + j2jTotalCalls).  x28 might be holding a JITState
+pointer somewhere in interp's main loop; the dereferenced value
+looks like garbage.
+
+Next iteration investigation: lldb single-step from the
+chain-loop's J2JCall through the crash, observe register
+evolution.  Without lldb, can't isolate the second corruption
+source.  Also try: cross-method with state-validate asserts at
+every iteration boundary to find the corruption-introducing
+fire.
+
+**Next iteration queued (after lldb on xmethod): inline block-value
+(BLOCK_VALUE_BIT bit 59).**
 
 The stencil version at `stencils.cpp:1642-1731` inlines
 FullBlockClosure>>value/value: by extracting compiledBlock from
