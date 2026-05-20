@@ -502,6 +502,49 @@ int main() {
         std::cout << "--- pattern: 5-value implicit-returnSelf setter\n";
     }
     {
+        // 5-value arith-on-ivar `^ ivar + 1` shape — Phase 4
+        // monomorphic inliner's tryInlineConstReturn recognizes this
+        // (added 2026-05-20).  Bytecode: pushRecvVar N, pushOne,
+        // send + (specialSend ArithBase), returnTop.
+        //
+        // buildFromBytes() does NOT set typeCheckArith, so the lift
+        // produces a 5-value shape without kPrimTagCheckInt:
+        //   v0 = kLoadReceiver
+        //   v1 = kLoadInstVar(v0, ivarIdx)
+        //   v2 = kConstantOop(smi 1, kOopSmallInt)
+        //   v3 = kPrimAddInt(v1, v2)
+        //   v4 = kReturn(v3)
+        //
+        // Production lift (Builder::build with INLINE_ARITH default on)
+        // adds a kPrimTagCheckInt(v1, ...) between v2 and v3, giving
+        // a 6-value shape.  The inliner has separate 5- and 6-value
+        // recognizers; both are exercised in real runs.
+        Method m;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushRecvVarBase + 0),  // 0x00: pushRecvVar 0
+            SistaV1::PushOne,                          // 0x51
+            (uint8_t)(SistaV1::ArithBase + 0),         // 0x60: send +
+            SistaV1::ReturnTop,                        // 0x5C
+        };
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 1, m);
+        check(r == LiftResult::kOk, "arith-on-ivar lifts");
+        check(m.values.size() == 5, "arith-on-ivar (no tag check) has 5 IR ops");
+        check(m.values[0].op == Op::kLoadReceiver,    "v0 = kLoadReceiver");
+        check(m.values[1].op == Op::kLoadInstVar,      "v1 = kLoadInstVar");
+        check(m.values[2].op == Op::kConstantOop,      "v2 = kConstantOop");
+        check((m.values[2].literal & 0x7) == 1,       "v2 const is SmI-tagged");
+        check(m.values[3].op == Op::kPrimAddInt,       "v3 = kPrimAddInt");
+        check(m.values[3].operands.size() >= 2
+              && m.values[3].operands[0] == m.values[1].id
+              && m.values[3].operands[1] == m.values[2].id,
+              "v3 uses v1 (ivar) and v2 (const)");
+        check(m.values[4].op == Op::kReturn
+              && m.values[4].operands.size() == 1
+              && m.values[4].operands[0] == m.values[3].id,
+              "v4 returns the arith result");
+        std::cout << "--- pattern: 5-value arith-on-ivar `^ ivar + 1`\n";
+    }
+    {
         // 4-value return-value setter `^ foo := x`:
         //   pushTemp 0; ExtStoreRecv 1 (no-pop); returnTop
         Method m;

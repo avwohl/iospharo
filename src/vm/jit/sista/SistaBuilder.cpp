@@ -5678,6 +5678,206 @@ private:
             g_inlinesEmitted++;
             g_totalHintsConsumed++;
             return true;
+        } else if (calleeIR.values.size() == 5) {
+            // 5-value `^ ivar OP const` shape — same as the 6-value
+            // branch below but WITHOUT the kPrimTagCheckInt (emitted
+            // only under typeCheckArith_ a.k.a. INLINE_ARITH).
+            // Reaches us when PHARO_SISTA_NO_INLINE_ARITH=1 OR when
+            // the lifter happened to know the ivar was already SmI
+            // (rare).  Shape:
+            //   v0 = kLoadReceiver
+            //   v1 = kLoadInstVar(v0, lit=ivarIdx)
+            //   v2 = kConstantOop(lit=K)             [kOopSmallInt]
+            //   v3 = kPrim{Add,Sub,Mul}Int(v1, v2)
+            //   v4 = kReturn(v3)
+            //
+            // Same gate as 6-value branch.
+            static const bool inlineArithIvar5 =
+                std::getenv("PHARO_NO_SISTA_INLINE_ARITHIVAR") == nullptr;
+            if (!inlineArithIvar5) {
+                recordUnrecognizedShape(calleeIR);
+                return false;
+            }
+            const Value& cv0 = calleeIR.values[0];
+            const Value& cv1 = calleeIR.values[1];
+            const Value& cv2 = calleeIR.values[2];
+            const Value& cv3 = calleeIR.values[3];
+            const Value& cv4 = calleeIR.values[4];
+            if (cv0.op != Op::kLoadReceiver) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv1.op != Op::kLoadInstVar
+                || cv1.operands.size() != 1
+                || cv1.operands[0] != cv0.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv2.op != Op::kConstantOop) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if ((cv2.literal & 0x7) != 1) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if ((cv3.op != Op::kPrimAddInt
+              && cv3.op != Op::kPrimSubInt
+              && cv3.op != Op::kPrimMulInt)
+                || cv3.operands.size() < 2
+                || cv3.operands[0] != cv1.id
+                || cv3.operands[1] != cv2.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv4.op != Op::kReturn
+                || cv4.operands.size() != 1
+                || cv4.operands[0] != cv3.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            // Shape OK — emit guard, load ivar, tag check (we add one
+            // because the inlined arith op needs the deopt protection
+            // that the callee skipped), arith.
+            std::vector<uint32_t> ai5GuardOps;
+            ai5GuardOps.reserve(stack_.size() + 1);
+            ai5GuardOps.push_back(recvId);
+            for (uint32_t s : stack_) ai5GuardOps.push_back(s);
+            uint64_t ai5GuardLit = (hit->classOop & 0x3FFFFFu)
+                                 | (static_cast<uint64_t>(bcOffset) << 32);
+            out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                          std::move(ai5GuardOps), ai5GuardLit);
+            uint32_t ai5Ivar = out_.newValue(currentBlock_,
+                                              Op::kLoadInstVar, Type::kOop,
+                                              {recvId},
+                                              cv1.literal);
+            std::vector<uint32_t> ai5CheckOps{ai5Ivar};
+            for (uint32_t s : stack_) ai5CheckOps.push_back(s);
+            uint32_t ai5Tagged = out_.newValue(currentBlock_,
+                                                Op::kPrimTagCheckInt,
+                                                Type::kOopSmallInt,
+                                                std::move(ai5CheckOps),
+                                                /*literal=*/bcOffset);
+            uint32_t ai5Const = out_.newValue(currentBlock_,
+                                               Op::kConstantOop,
+                                               Type::kOopSmallInt,
+                                               {}, cv2.literal);
+            uint32_t ai5Result = out_.newValue(currentBlock_, cv3.op,
+                                                Type::kOopSmallInt,
+                                                {ai5Tagged, ai5Const},
+                                                /*literal=*/0);
+            for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+            stack_.push_back(ai5Result);
+            g_inlinesEmitted++;
+            g_totalHintsConsumed++;
+            return true;
+        } else if (calleeIR.values.size() == 6) {
+            // 6-value `^ ivar OP const` shape — common arith-on-ivar
+            // getter (e.g., `Counter>>next ^ count + 1`).  Simpler than
+            // the 10-value `^ ivarA OP ivarB OP const` chain below.
+            //
+            // Under INLINE_ARITH (default on), the lifter emits:
+            //   v0 = kLoadReceiver
+            //   v1 = kLoadInstVar(v0, lit=ivarIdx)
+            //   v2 = kConstantOop(lit=K)             [kOopSmallInt]
+            //   v3 = kPrimTagCheckInt(v1, ...deopt)  [side-effect only]
+            //   v4 = kPrim{Add,Sub,Mul}Int(v1, v2, ...deopt)  [uses v1]
+            //   v5 = kReturn(v4)
+            //
+            // Constants skip the tag check (kOopSmallInt type), so only
+            // the ivar gets a check.  The arith op uses the raw v1, NOT
+            // the tag-check result (per the typeCheckArith_ pattern).
+            //
+            // Inline as: kGuardClass + LoadInstVar(callerRecv, ivarIdx)
+            // + PrimTagCheckInt(ivar) + Constant + PrimOp(ivar, const).
+            // Result is primOp's id.
+            //
+            // Default-on; opt out with PHARO_NO_SISTA_INLINE_ARITHIVAR=1
+            // (same flag as the 10-value branch).
+            static const bool inlineArithIvar6 =
+                std::getenv("PHARO_NO_SISTA_INLINE_ARITHIVAR") == nullptr;
+            if (!inlineArithIvar6) {
+                recordUnrecognizedShape(calleeIR);
+                return false;
+            }
+            const Value& cv0 = calleeIR.values[0];
+            const Value& cv1 = calleeIR.values[1];
+            const Value& cv2 = calleeIR.values[2];
+            const Value& cv3 = calleeIR.values[3];
+            const Value& cv4 = calleeIR.values[4];
+            const Value& cv5 = calleeIR.values[5];
+            if (cv0.op != Op::kLoadReceiver) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv1.op != Op::kLoadInstVar
+                || cv1.operands.size() != 1
+                || cv1.operands[0] != cv0.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv2.op != Op::kConstantOop) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            // Constant must be a SmI (tag bit 0 set in raw bits).
+            if ((cv2.literal & 0x7) != 1) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv3.op != Op::kPrimTagCheckInt
+                || cv3.operands.empty() || cv3.operands[0] != cv1.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if ((cv4.op != Op::kPrimAddInt
+              && cv4.op != Op::kPrimSubInt
+              && cv4.op != Op::kPrimMulInt)
+                || cv4.operands.size() < 2
+                || cv4.operands[0] != cv1.id
+                || cv4.operands[1] != cv2.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv5.op != Op::kReturn
+                || cv5.operands.size() != 1
+                || cv5.operands[0] != cv4.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            // Shape OK — emit guard, load ivar, tag check, arith.
+            std::vector<uint32_t> ai6GuardOps;
+            ai6GuardOps.reserve(stack_.size() + 1);
+            ai6GuardOps.push_back(recvId);
+            for (uint32_t s : stack_) ai6GuardOps.push_back(s);
+            uint64_t ai6GuardLit = (hit->classOop & 0x3FFFFFu)
+                                 | (static_cast<uint64_t>(bcOffset) << 32);
+            out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                          std::move(ai6GuardOps), ai6GuardLit);
+            uint32_t ai6Ivar = out_.newValue(currentBlock_,
+                                              Op::kLoadInstVar, Type::kOop,
+                                              {recvId},
+                                              cv1.literal);
+            std::vector<uint32_t> ai6CheckOps{ai6Ivar};
+            for (uint32_t s : stack_) ai6CheckOps.push_back(s);
+            uint32_t ai6Tagged = out_.newValue(currentBlock_,
+                                                Op::kPrimTagCheckInt,
+                                                Type::kOopSmallInt,
+                                                std::move(ai6CheckOps),
+                                                /*literal=*/bcOffset);
+            uint32_t ai6Const = out_.newValue(currentBlock_,
+                                               Op::kConstantOop,
+                                               Type::kOopSmallInt,
+                                               {}, cv2.literal);
+            uint32_t ai6Result = out_.newValue(currentBlock_, cv4.op,
+                                                Type::kOopSmallInt,
+                                                {ai6Tagged, ai6Const},
+                                                /*literal=*/0);
+            for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+            stack_.push_back(ai6Result);
+            g_inlinesEmitted++;
+            g_totalHintsConsumed++;
+            static int ai6Count = 0;
+            if (++ai6Count <= 10
+                && std::getenv("PHARO_SISTA_INLINE_DUMP")) {
+                std::fprintf(stderr,
+                    "[ARITHIVAR6-EMIT] callee=0x%llx op=%s "
+                    "ivar=%llu const=0x%llx bcOff=%u\n",
+                    (unsigned long long)hit->targetMethod,
+                    cv4.op == Op::kPrimAddInt ? "+" :
+                    cv4.op == Op::kPrimSubInt ? "-" : "*",
+                    (unsigned long long)cv1.literal,
+                    (unsigned long long)cv2.literal,
+                    bcOffset);
+            }
+            return true;
         } else if (calleeIR.values.size() == 10) {
             // 10-value `^ ivar OP1 ivar OP2 const` arith chain.
             // Canonical case: `OrderedCollection>>size` is
