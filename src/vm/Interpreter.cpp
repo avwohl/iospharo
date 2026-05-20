@@ -16310,6 +16310,14 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         // deltas point to a buggy bail path.
         Oop* spBefore = stackPointer_;  // = sstate.sp at entry (set above)
 
+        if (std::getenv("PHARO_TRACE_SISTA_PERBC")) {
+            static uint64_t n = 0;
+            n++;
+            if (n <= 5 || (n & 0xFFFFF) == 0)
+                fprintf(stderr, "[SISTA-PERBC #%llu] method=#%s\n",
+                        (unsigned long long)n,
+                        memory_.selectorOf(method_).c_str());
+        }
         fn(&sstate);
         jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                             jitRuntime_.codeZone().totalBytes());
