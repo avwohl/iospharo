@@ -26,6 +26,31 @@ J2J save protocol iteration adds (newest first):
 Per-send instr count: ~42 (pre-session) → ~22 (now).
 Per-return instr count: ~22 (pre-session) → ~16 (now).
 
+## Phase 4 inlining recognizers added this session
+
+- `1c311666` 5-value `^ ivar OP const` (no tag-check variant)
+- `1c311666` 6-value `^ ivar OP const` (with tag-check)
+- `8a6be6b2` 7-value `^ ivar OP arg`
+
+These extend the existing inliner shapes (const-return, getter,
+setter, chain) but don't impact fib because **Sista's `activateMethod`
+hook is bypassed by T1's inline-J2J for hot paths**.  Per
+`[SISTA] hits=0/1` in bench output, Sista runs on only 1 method.
+
+To make Phase 4 reduce fib time, one of these architectural changes
+is needed (each multi-week per `docs/sista-inlining-plan.md`):
+
+1. **Route hot methods through Sista** — currently T1's IC and
+   inline-J2J handle them.  Would require Sista compile + dispatch
+   to supersede T1's IC for monomorphic sites.
+2. **Generalized callee splicing** — replace tryInlineConstReturn's
+   shape-based recognizers with a full IR-level splice that handles
+   ANY callee body (sends, branches, multi-block) using kInlineSend
+   + framepoint deopt.  Needs Phase 3 deopt infrastructure first.
+3. **Recursive self-inlining** — depth-limited inline of N levels
+   of self-recursive sends.  For fib at depth N, eliminates K-of-N
+   J2J machinery cycles.  Code grows 2^K but saves ~25 instr/level.
+
 Shipped (in order):
 - `84dfad61` shrink inline-J2J self-recursive callee setup (skip
   redundant recv load + static tempCount + unrolled temp-init)
