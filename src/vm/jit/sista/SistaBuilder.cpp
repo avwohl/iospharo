@@ -5678,6 +5678,116 @@ private:
             g_inlinesEmitted++;
             g_totalHintsConsumed++;
             return true;
+        } else if (calleeIR.values.size() == 7) {
+            // 7-value `^ ivar OP arg` shape — binary op between a
+            // receiver ivar and a temp arg.  Common in real code:
+            //   `Counter>>incBy: n  ^ count + n`
+            //
+            // Under INLINE_ARITH (default on) the lifter emits:
+            //   v0 = kLoadReceiver
+            //   v1 = kLoadInstVar(v0, lit=ivarIdx)
+            //   v2 = kLoadTemp(0)                       [arg]
+            //   v3 = kPrimTagCheckInt(v1, ...deopt)
+            //   v4 = kPrimTagCheckInt(v2, ...deopt)
+            //   v5 = kPrim{Add,Sub,Mul}Int(v1, v2, ...deopt)
+            //   v6 = kReturn(v5)
+            //
+            // Inline: kGuardClass on caller's recv + kLoadInstVar from
+            // caller's recv + kPrimTagCheckInt on ivar AND on caller-arg
+            // + arith using the checked values.  Result is the arith.
+            //
+            // Same gate as ivar-OP-const branches.
+            static const bool inlineArithIvar7 =
+                std::getenv("PHARO_NO_SISTA_INLINE_ARITHIVAR") == nullptr;
+            if (!inlineArithIvar7) {
+                recordUnrecognizedShape(calleeIR);
+                return false;
+            }
+            const Value& cv0 = calleeIR.values[0];
+            const Value& cv1 = calleeIR.values[1];
+            const Value& cv2 = calleeIR.values[2];
+            const Value& cv3 = calleeIR.values[3];
+            const Value& cv4 = calleeIR.values[4];
+            const Value& cv5 = calleeIR.values[5];
+            const Value& cv6 = calleeIR.values[6];
+            if (cv0.op != Op::kLoadReceiver) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv1.op != Op::kLoadInstVar
+                || cv1.operands.size() != 1
+                || cv1.operands[0] != cv0.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv2.op != Op::kLoadTemp) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            // Callee arg index must be in [0, nArgs).
+            uint32_t calleeArgIdx = static_cast<uint32_t>(cv2.literal);
+            if (calleeArgIdx >= nArgs) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv3.op != Op::kPrimTagCheckInt
+                || cv3.operands.empty() || cv3.operands[0] != cv1.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv4.op != Op::kPrimTagCheckInt
+                || cv4.operands.empty() || cv4.operands[0] != cv2.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if ((cv5.op != Op::kPrimAddInt
+              && cv5.op != Op::kPrimSubInt
+              && cv5.op != Op::kPrimMulInt)
+                || cv5.operands.size() < 2
+                || cv5.operands[0] != cv1.id
+                || cv5.operands[1] != cv2.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv6.op != Op::kReturn
+                || cv6.operands.size() != 1
+                || cv6.operands[0] != cv5.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            // Caller's arg value at simulated stack[size - nArgs + idx].
+            if (stack_.size() < nArgs + 1) return false;
+            uint32_t callerArgId =
+                stack_[stack_.size() - nArgs + calleeArgIdx];
+
+            // Emit guard + ivar load + 2 tag checks + arith.
+            std::vector<uint32_t> ai7GuardOps;
+            ai7GuardOps.reserve(stack_.size() + 1);
+            ai7GuardOps.push_back(recvId);
+            for (uint32_t s : stack_) ai7GuardOps.push_back(s);
+            uint64_t ai7GuardLit = (hit->classOop & 0x3FFFFFu)
+                                 | (static_cast<uint64_t>(bcOffset) << 32);
+            out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                          std::move(ai7GuardOps), ai7GuardLit);
+            uint32_t ai7Ivar = out_.newValue(currentBlock_,
+                                              Op::kLoadInstVar, Type::kOop,
+                                              {recvId},
+                                              cv1.literal);
+            std::vector<uint32_t> ai7CheckIvar{ai7Ivar};
+            for (uint32_t s : stack_) ai7CheckIvar.push_back(s);
+            uint32_t ai7TaggedIvar = out_.newValue(currentBlock_,
+                                                    Op::kPrimTagCheckInt,
+                                                    Type::kOopSmallInt,
+                                                    std::move(ai7CheckIvar),
+                                                    /*literal=*/bcOffset);
+            std::vector<uint32_t> ai7CheckArg{callerArgId};
+            for (uint32_t s : stack_) ai7CheckArg.push_back(s);
+            uint32_t ai7TaggedArg = out_.newValue(currentBlock_,
+                                                   Op::kPrimTagCheckInt,
+                                                   Type::kOopSmallInt,
+                                                   std::move(ai7CheckArg),
+                                                   /*literal=*/bcOffset);
+            uint32_t ai7Result = out_.newValue(currentBlock_, cv5.op,
+                                                Type::kOopSmallInt,
+                                                {ai7TaggedIvar, ai7TaggedArg},
+                                                /*literal=*/0);
+            for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+            stack_.push_back(ai7Result);
+            g_inlinesEmitted++;
+            g_totalHintsConsumed++;
+            return true;
         } else if (calleeIR.values.size() == 5) {
             // 5-value `^ ivar OP const` shape — same as the 6-value
             // branch below but WITHOUT the kPrimTagCheckInt (emitted
