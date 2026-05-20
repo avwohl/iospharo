@@ -129,6 +129,13 @@ struct JITState {
     // pop the outer's save.
     int32_t j2jEntryDepth;   // offset 200: per-entry baseline depth
     int32_t _pad_j2j_204;    // padding to 8-byte alignment
+
+    // Constant 0x00000001_00000001 used by the inline-J2J emit to
+    // bump j2jDepth (low 32) and j2jTotalCalls (high 32) in a single
+    // 64-bit add.  Materializing the immediate inline takes 2 instr
+    // (movz + movk); loading from this slot is 1 instr.  Set once in
+    // tryJITActivation and never modified.
+    uint64_t j2jDepthInc;    // offset 208: always 0x100000001
 };
 
 // Verify expected offsets (stencils depend on these)
@@ -154,6 +161,7 @@ static_assert(offsetof(JITState, yieldCountdown) == 176, "yieldCountdown offset"
 static_assert(offsetof(JITState, spliceSpill0)   == 184, "spliceSpill0 offset");
 static_assert(offsetof(JITState, spliceSpill1)   == 192, "spliceSpill1 offset");
 static_assert(offsetof(JITState, j2jEntryDepth)  == 200, "j2jEntryDepth offset");
+static_assert(offsetof(JITState, j2jDepthInc)    == 208, "j2jDepthInc offset");
 
 // ===== EXIT REASONS =====
 //

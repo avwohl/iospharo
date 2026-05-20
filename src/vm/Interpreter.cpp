@@ -9033,6 +9033,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             sstate.j2jTotalCalls = 0;
             sstate.methodMapPtr = nullptr;
             sstate.yieldCountdown = 0;
+            sstate.j2jEntryDepth = 0;
+            sstate.j2jDepthInc = 0x0000000100000001ULL;
 
             // Direct call — Sista's asmjit-generated code emits a
             // standard AArch64 prologue/epilogue via asmjit's
@@ -16292,6 +16294,8 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         sstate.j2jTotalCalls = 0;
         sstate.methodMapPtr = nullptr;
         sstate.yieldCountdown = 0;
+        sstate.j2jEntryDepth = 0;
+        sstate.j2jDepthInc = 0x0000000100000001ULL;
 
         // Diagnostic: PHARO_SISTA_PER_BC_DISPATCH_TRACE=1 dumps a
         // counter every 1K dispatches with the exit-reason split.
@@ -16680,6 +16684,7 @@ void Interpreter::tryJITResumeInCaller() {
         state.j2jDepth = 0;
         state.j2jTotalCalls = 0;
         state.j2jEntryDepth = 0;
+        state.j2jDepthInc = 0x0000000100000001ULL;
         state.methodMapPtr = &jitRuntime_.methodMap();
         state.yieldCountdown = 1000;
 
@@ -18867,6 +18872,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.j2jDepth = 0;
     state.j2jTotalCalls = 0;
     state.j2jEntryDepth = 0;
+    state.j2jDepthInc = 0x0000000100000001ULL;
     state.methodMapPtr = &jitRuntime_.methodMap();
     state.yieldCountdown = 1000;
 

@@ -337,6 +337,7 @@ constexpr int OFF_J2J_SAVE_LIMIT  = 152;
 constexpr int OFF_J2J_DEPTH       = 160;
 constexpr int OFF_J2J_TOTAL_CALLS = 164;
 constexpr int OFF_J2J_ENTRY_DEPTH = 200;
+constexpr int OFF_J2J_DEPTH_INC   = 208;
 
 // ExitReason values (JITState.hpp).
 constexpr int EXIT_RETURN          = 1;
@@ -3371,8 +3372,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
                 static_assert(OFF_J2J_TOTAL_CALLS == OFF_J2J_DEPTH + 4,
                               "depth/totalCalls adjacency required for 64-bit batched increment");
-                a.movz(x14, asmjit::Imm(0x1));
-                a.movk(x14, asmjit::Imm(0x1), 32);   // x14 = (1<<32) | 1
+                // Load the precomputed 0x100000001 from JITState
+                // (initialized once in tryJITActivation).  Replaces the
+                // inline movz+movk pair (2 instr → 1 instr).
+                a.ldr(x14, ptr(x0, OFF_J2J_DEPTH_INC));
                 a.ldr(x13, ptr(x0, OFF_J2J_DEPTH));
                 a.add(x13, x13, x14);
                 a.str(x13, ptr(x0, OFF_J2J_DEPTH));
