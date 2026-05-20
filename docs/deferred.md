@@ -526,6 +526,32 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+22 (2026-05-19 evening) — prim 60/61/62 prologue with fmt 10-11 (`1d8ee8a7`).**
+
+Restored the prim 60/61/62 prologue gate after adding fmt 10-11 (32-bit
+WordArray / IntegerArray / WideString) handling alongside the existing
+fmt 2 (Array) and fmt 16-23 (byte indexable) paths.  Per Spur:
+
+  - fmt 10-11: numElements = slotCount*2 - (fmt - 10)
+  - 32-bit slot at recv + 4 + idx*4 (slot[0] at byte offset 8)
+  - prim 61 val gate: SmI in [0, 0xFFFFFFFF]
+
+This recovers the 16M C primitive call savings (prim 60: 8.0M → ~65K,
+prim 61: 7.0M → ~16K) that the N+21 revert removed, while keeping the
+Improper Store correctness fix.
+
+Remaining gaps (next fix target if/when they show up in hot workloads):
+
+  - fmt 9 (Indexable64) — FloatArray, LargePositiveInteger, DoubleArray
+    (size = slotCount; at:/at:put: requires 64-bit element handling)
+  - fmt 12-15 (16-bit indexable) — DoubleByteArray, Utf32String
+    (numElements = slotCount*4 - (fmt - 12))
+  - fmt 3-5 (variable + fixed) — Context, etc.
+    (needs fixedFieldCountOf adjustment via runtime helper)
+
+Verified: eval "42 printString" + WordArray/ByteArray/String/Array
+at:put: no longer raise Improper Store under default JIT.
+
 **Iter N+21 (2026-05-19 evening) — revert prim 60/61/62 prologue (`9bd381a6`).**
 
 The prologue added in `8b6d0495` only handles fmt 2 (Array) and fmt 16-23
