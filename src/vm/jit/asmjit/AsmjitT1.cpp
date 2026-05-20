@@ -3447,8 +3447,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 if (!xmethodMayDiffer && callerTempCount >= nArgs) {
                     int extras = callerTempCount - nArgs;
                     if (extras == 0) {
-                        // New sp = caller's sp (no temp init).
-                        a.str(x12, ptr(x0, OFF_SP));
+                        // New sp = caller's sp.  state.sp was already
+                        // caller's sp before this push (we never wrote
+                        // it), so the str is a no-op semantically.
+                        // Skip it — saves 1 instr per push for methods
+                        // where nArgs == tempCount (e.g., benchFib).
                     } else {
                         // Unroll nil-stores for the (small) extra temp
                         // count and compute new sp statically.  Methods
