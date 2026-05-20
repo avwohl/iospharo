@@ -3324,9 +3324,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_ne(j2jBailSelf2);
                 }
 
-                // Check save stack space.  Uses x6 as cursor; x14 free.
-                a.ldr(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
-                a.ldr(x14, ptr(x0, OFF_J2J_SAVE_LIMIT));
+                // Check save stack space.  cursor (offset 144) and limit
+                // (offset 152) are adjacent — load both with one ldp.
+                static_assert(OFF_J2J_SAVE_LIMIT == OFF_J2J_SAVE_CURSOR + 8,
+                              "cursor/limit adjacency required for ldp fold");
+                a.ldp(x6, x14, ptr(x0, OFF_J2J_SAVE_CURSOR));  // x6=cursor, x14=limit
                 a.cmp(x6, x14);
                 a.b_hs(j2jBailFull);
 
