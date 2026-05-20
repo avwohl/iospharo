@@ -97,7 +97,14 @@ DebugSettings::DebugSettings() {
     t1InlineGetter      = !envPresent("PHARO_T1_NO_INLINE_GETTER");
     t1InlineSetter      = !envPresent("PHARO_T1_NO_INLINE_SETTER");
     t1InlineReturnsSelf = !envPresent("PHARO_T1_NO_INLINE_RETURNS_SELF");
-    t1InlineJ2J         = !envPresent("PHARO_T1_NO_INLINE_J2J");
+    // 2026-05-20 (A6 iter N+30): default-OFF until chain-break
+    // correctness is fixed.  inline-J2J produces wrong results for
+    // benchFib(N>=17) when a callee bails via ExitSend mid-recursion
+    // with unpopped J2J saves on the stack.  See deferred.md A6.
+    // PHARO_T1_INLINE_J2J=1 re-enables for perf experiments — but
+    // results may be silently wrong, validate against PHARO_NO_J2J=1
+    // before trusting any number from a benchmark.
+    t1InlineJ2J         = envPresent("PHARO_T1_INLINE_J2J");
     t1InlinePrimBitOps  = !envPresent("PHARO_T1_NO_INLINE_PRIM_BITOPS");
     t1InlinePrimAt      = !envPresent("PHARO_T1_NO_INLINE_PRIM_AT");
     t1InlineJ2JXmethod  = envPresent("PHARO_T1_INLINE_J2J_XMETHOD");

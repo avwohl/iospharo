@@ -78,10 +78,12 @@ struct DebugSettings {
     bool t1InlineReturnsSelf = true;  // PHARO_T1_NO_INLINE_RETURNS_SELF inverts
     // Inline-J2J emit (self-recursive case): tail-call callee's JIT entry
     // directly instead of round-tripping through the chain loop.  12× win
-    // on benchFib.  Default-on 2026-05-17.  PHARO_T1_NO_INLINE_J2J=1 opt-out.
-    // (PHARO_T1_INLINE_J2J=1 also enables per-bail debug counters + traces;
-    // those stay opt-in for production.)
-    bool t1InlineJ2J = true;
+    // on benchFib.  Default-on 2026-05-17, default-OFF 2026-05-20 after
+    // discovering wrong-result bug — benchFib(N>=17) returns wrong value
+    // when a callee bails via ExitSend mid-recursion (see deferred.md A6
+    // iter N+30).  PHARO_T1_INLINE_J2J=1 to re-enable for perf experiments
+    // (results may be silently wrong — validate against PHARO_NO_J2J=1).
+    bool t1InlineJ2J = false;
     // Inline SmI bitwise prims (bitAnd:/bitOr:/bitXor:) at the IC HIT site
     // for nArgs==1 sends.  Saves the chain-loop round-trip for SmI bitwise
     // sends via named-send (bitXor: is not a special-selector bytecode so

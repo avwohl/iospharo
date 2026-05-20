@@ -566,16 +566,52 @@ assumes self-rec preserves x19, etc.).  Bug only manifests at
 N≥17 because lower N never warms the IC to bit-60+bit-56 state
 within a single bench(20) tree.
 
-**Open question:** which specific shrink commit (between
-`e77a518f` and HEAD) actually broke correctness vs. which one
-exposed an already-broken state by removing a redundant write that
-was masking the bug.  Bisect across the 28-commit session is the
-next step — needs a clean test_load_image at each commit (older
-commits fail to link due to symbol changes).  Likely candidates:
-- `ad6a34a7` (skip save.jitMethod write in xmethod-off)
-- `82fa2d58` (skip sp write for self-rec nArgs==tempCount)
-- `11bd7003` (skip method/literals/jitMethod restore in return prelude)
-- `8bca7b15` (reuse x2 — sp from IC HIT — in callee setup)
+**Update 2026-05-20 evening — bug pre-dates all session shrinks.**
+Bisected back to `850dcb04^` (PHARO_T1_INLINE_J2J as opt-in, BEFORE
+default-on) — with `PHARO_T1_INLINE_J2J=1` the bug fires identically
+(fib(20) returns 13548).  So the bug is INHERENT to inline-J2J's
+chain-break handling, NOT introduced by any of the 28 session
+shrinks.  Original chain-break options doc (A6 iter 1, three options)
+flagged exactly this risk.
+
+**Root-cause trace** (added at chain-loop's inline-activate JIT_CALL
+return at Interpreter.cpp:20748):
+
+    [CHAIN-RET] sel=benchFib calleeRecv=18 retval=-999
+                depth=16 exit=2
+
+The OUTER benchFib(20)'s second send chain-loop-activates benchFib(18).
+benchFib(18) takes inline-J2J for its inner sends, recurses deep, and
+BAILS via ExitSend (exit=2) at j2jDepth=16 — with 16 unpopped
+inline-J2J saves still on the stack.
+
+The chain-loop then handles the bailed send and eventually unwinds,
+but during that unwind the 16 stale saves get popped at wrong moments
+(their `resumeAddr` points into benchFib(18)'s code at positions that
+assume the OUTER's `state.sp` is unchanged — but the chain-loop's
+continuation has moved `state.sp` around).  The final computation
+reads the wrong value.
+
+Critical detail: chain-loop's inline-activate at line 20741-20742
+RESETS `state.j2jSaveCursor = base` and `state.j2jDepth = 0` BEFORE
+JIT_CALL, but does NOT save/restore the prior values.  When the
+callee bails with saves outstanding, the chain-loop's continuation
+sees a corrupted save stack relative to whatever it pushed/popped.
+
+**Architectural fix options** (per A6 iter 1, still valid):
+1. Pure-J2J gate: only inline-J2J when callee's bytecode contains no
+   sends that could miss J2J.  For benchFib all inner sends are
+   self-recursive J2J or prims — qualifies.  Cheapest correct fix.
+2. j2jEntryFlag protocol: per-call flag in J2JSave + JITState, set on
+   inline-J2J push, checked by return prelude before pop.  Heavier.
+3. Materialize-on-bail: when a send bails to chain-loop with unpopped
+   saves, materialize the saves into proper interp frames first.
+   Heaviest — full deopt path.
+
+The CURRENT scheme (j2jEntryDepth gate at the return prelude) works
+for cleanly-nested chains but fails when a chain-break (callee bails
+via ExitSend with saves outstanding) lets the chain-loop's
+`state.j2jDepth = 0` reset stomp the entry tracking.
 
 Current state: bit 56 setters in Interpreter.cpp remain in place
 (they're correct logic); the asmjit-T1 SELF_REC fast path is the
