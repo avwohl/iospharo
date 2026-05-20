@@ -3204,10 +3204,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // (afterSend declared above so block-value inline can use it.)
                 asmjit::Label j2jBailSelf2 = a.new_label();
 
-                // Compute entryAddr (x9) and calleeJM (x10)
-                // entryAddr = x7 & J2J_ADDR_MASK (low 48 bits)
+                // Compute entryAddr (x9).  calleeJM (x10) only needed
+                // in the xmethod-on / debug-counter paths (xmethod-off
+                // emits use x11 = callerJM == calleeJM for self-rec).
+                // Skip the `sub x10, ...` when xmethod is off and the
+                // debug-counters aren't enabled — saves 1 instr per push.
                 a.and_(x9, x7, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
-                a.sub(x10, x9, asmjit::Imm((int)sizeof(JITMethod)));  // calleeJM = entry - JM_SIZE
+                const bool needCalleeJM =
+                    g_debug.t1InlineJ2JXmethod || inlineJ2JCounters;
+                if (needCalleeJM) {
+                    a.sub(x10, x9, asmjit::Imm((int)sizeof(JITMethod)));
+                }
 
                 // Self-recursive check via SELF_REC_BIT (bit 56) in the
                 // IC extra word.  The IC patcher sets this bit when
@@ -3422,12 +3429,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(x13, x12, asmjit::Imm(nArgs * 8)); // x13 = new tempBase
                 a.str(x13, ptr(x0, OFF_TEMPBASE));
 
-                // Load cached bcStart from JITMethod (offset 96).  Pre-
-                // computed in compileViaAsmjit from compiledMethodOop +
-                // methodHeader — both immutable post-construct.  Saves
-                // 6 instructions per inline-J2J emit site (was a 7-instr
-                // numLits-shift-add chain).
-                a.ldr(x14, ptr(x10, (int)offsetof(JITMethod, bcStartCache)));
+                // Load cached bcStart from JITMethod (offset 96).
+                // For self-rec, callerJM (x11) == calleeJM (x10), so
+                // either works.  Prefer x11 when x10 wasn't computed
+                // (xmethod-off path skips the sub x10).
+                a.ldr(x14, ptr(needCalleeJM ? x10 : x11,
+                              (int)offsetof(JITMethod, bcStartCache)));
                 a.str(x14, ptr(x0, OFF_IP));
 
                 // sp = tempBase + tempCount*8.  For the SELF-RECURSIVE
