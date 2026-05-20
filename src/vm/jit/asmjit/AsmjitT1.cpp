@@ -3328,25 +3328,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
                 // Push J2J save (56 bytes).  Uses ldp/stp for adjacent
                 // state fields: sp+receiver (offsets 0/8) loaded with
-                // one ldp; jitMethod+resumeAddr stored with one stp.
-                // Saves 3 instructions per inline-J2J site.
+                // one ldp.
                 //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
                 //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
+                //
+                // First stp uses POST-INDEX (ptr_post) to advance x6 by
+                // 56 (the save size) atomically with the store.  Saves
+                // the explicit `add x6, x6, 56` after the save —
+                // 1 instr per push.  Subsequent stps use negative
+                // offsets relative to the post-advance x6:
+                //   original [x6, 0]   -> post-index advance to x6+56
+                //   original [x6, 16]  -> ptr(x6, -40)  (x6+56-40 = x6+16)
+                //   original [x6, 40]  -> ptr(x6, -16)  (x6+56-16 = x6+40)
                 a.ldp(x15, x4, ptr(x0, OFF_SP));   // sp + receiver
-                a.stp(x15, x4, ptr(x6, 0));
-                // tempBase (offset 16) + ip (offset 24) are adjacent; load
-                // both into two regs and stp.  Saves 1 instruction vs the
-                // prior two ldr-str pairs.
-                //
-                // save.ip: PHARO_T1_J2J_POST_SEND_IP=1 stores method +
-                // bcOffsetFromMethObj + 1 (mirroring chain-loop's J2JCall
-                // which advances ip past send before saving — see
-                // Interpreter.cpp:18829-18833 + 18892).  Default OFF
-                // preserves pre-existing behavior.
-                //
-                // For postSendIp we need callerCM; in the bit-56-gated
-                // emit it isn't loaded by default, so fetch it on demand
-                // from callerJM[0].
+                a.stp(x15, x4, ptr_post(x6, 56));  // [old x6, 0]; x6 += 56
                 a.ldr(x15, ptr(x0, OFF_TEMPBASE));
                 if (g_debug.t1J2JPostSendIp) {
                     if (!inlineJ2JCounters) {
@@ -3356,15 +3351,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 } else {
                     a.ldr(x4, ptr(x0, OFF_IP));
                 }
-                a.stp(x15, x4, ptr(x6, 16));       // tempBase + ip
+                a.stp(x15, x4, ptr(x6, -40));      // tempBase + ip
                 if (xmethod) {
                     // xmethod-on path: writes save.jitMethod = callerJM.
-                    a.stp(x11, x14, ptr(x6, 32));
+                    a.stp(x11, x14, ptr(x6, -24)); // callerJM + resumeAddr
                     if (nArgs == 0) {
-                        a.str(wzr, ptr(x6, 48));
+                        a.str(wzr, ptr(x6, -8));   // argCount
                     } else {
                         a.mov(w15, asmjit::Imm(nArgs));
-                        a.str(w15, ptr(x6, 48));
+                        a.str(w15, ptr(x6, -8));
                     }
                 } else {
                     // xmethod-off (default): skip save.jitMethod write —
@@ -3382,12 +3377,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // j2jBase) all fall back to state.jitMethod when
                     // save.jitMethod is null.
                     if (nArgs == 0) {
-                        // stp resumeAddr + xzr writes 16 bytes at [40..55].
-                        // argCount slot (low 32 of xzr) = 0; pad = 0.
-                        a.stp(x14, xzr, ptr(x6, 40));
+                        // resumeAddr + xzr at [x6-16, x6-8] (orig [40, 48]).
+                        a.stp(x14, xzr, ptr(x6, -16));
                     } else {
                         a.mov(w15, asmjit::Imm(nArgs));
-                        a.stp(x14, x15, ptr(x6, 40));
+                        a.stp(x14, x15, ptr(x6, -16));
                     }
                 }
 
@@ -3398,7 +3392,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // depth caps at recursion depth (way below 2^31) so
                 // adding 1 to the low 32 bits never carries into the
                 // high 32 bits where totalCalls lives.
-                a.add(x6, x6, asmjit::Imm(56));
+                //
+                // Cursor was advanced by 56 via the first stp's post-
+                // index — just write x6 to state.j2jSaveCursor.
                 a.str(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
                 static_assert(OFF_J2J_TOTAL_CALLS == OFF_J2J_DEPTH + 4,
                               "depth/totalCalls adjacency required for 64-bit batched increment");
