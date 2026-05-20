@@ -1,16 +1,18 @@
 # WIP — JIT perf session (2026-05-20, post-reboot iter)
 
-## Session progress 2026-05-20 post-reboot (16 commits added)
+## Session progress 2026-05-20 post-reboot (19+ commits added)
 
 Cumulative measured perf gains (M1, PHARO_BENCH=fib, best-of-5):
 
     bench    pre-session    post     cog    gap     delta
-    fib(28)  13.0 ms        11.2 ms  3 ms   3.7×    -14%
-    fib(30)  35.7 ms        28.7 ms  ~8 ms  3.6×    -20%
+    fib(28)  13.0 ms        11.0 ms  3 ms   3.7×    -15%
+    fib(30)  35.7 ms        28.4 ms  ~8 ms  3.5×    -20%
     fib(32)  86 ms          72 ms    —      —       -16%
     sieve    2.3 ms         2.3 ms   ~1 ms  2.3×    flat
 
 J2J save protocol iteration adds (newest first):
+- `67ced5c6` skip add x5 for siteIdx==0 IC probes
+- `91868c5e` hoist j2jDepthInc to x20 callee-saved reg
 - `8bca7b15` reuse x2 (sp from IC HIT) in callee setup
 - `951b1f10` hoist JM load to IC probe, share with J2J path
 - `c7b4cf22` skip sub x10 calleeJM compute when not needed
@@ -21,8 +23,8 @@ J2J save protocol iteration adds (newest first):
 - `04f8e5fc` point J2J resumeAddr directly at endOfSend
 - `48c75e09` cache j2jDepth/totalCalls inc constant in JITState
 
-Per-send instr count: ~42 (pre-session) → ~26 (now).
-Per-return instr count: ~22 (pre-session) → ~17 (now).
+Per-send instr count: ~42 (pre-session) → ~22 (now).
+Per-return instr count: ~22 (pre-session) → ~16 (now).
 
 Shipped (in order):
 - `84dfad61` shrink inline-J2J self-recursive callee setup (skip
