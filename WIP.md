@@ -1,14 +1,18 @@
 # WIP — JIT perf session (2026-05-20, post-reboot iter)
 
-## Session progress 2026-05-20 post-reboot (7 commits added)
+## Session progress 2026-05-20 post-reboot (8 commits added)
 
 Cumulative measured perf gains (M1, PHARO_BENCH=fib, best-of-5):
 
     bench    pre-session    post     cog    gap     delta
     fib(28)  13.0 ms        11.7 ms  3 ms   3.9×    -10%
-    fib(30)  35.7 ms        31.5 ms  ~8 ms  3.9×    -12%
-    fib(32)  86 ms          82 ms    —      —       -5%
+    fib(30)  35.7 ms        30.7 ms  ~8 ms  3.8×    -14%
+    fib(32)  86 ms          81 ms    —      —       -6%
     sieve    2.3 ms         2.3 ms   ~1 ms  2.3×    flat
+
+Additional commit: `48c75e09` cache j2jDepth/totalCalls inc constant
+(0x100000001) in JITState — replaces movz+movk pair with single ldr,
+saves 1 instr per inline-J2J site.
 
 Shipped (in order):
 - `84dfad61` shrink inline-J2J self-recursive callee setup (skip
