@@ -701,6 +701,52 @@ benchFib activations to track value/SP/FP across the unwind.
 ~170 ms / fib(28).  PHARO_T1_INLINE_J2J=1 opt-in for experiments
 but produces silently wrong fib results for N>=17.
 
+**Iter N+30d (2026-05-20 night) — instrumented unwind, narrowed bug.**
+
+Direct instrumentation of `Interpreter::returnFromMethod` for
+benchFib→benchFib returns shows:
+
+- WARMUP completes correctly through interpreter unwind.  All
+  benchFib(N) values returned correctly through `returnFromMethod`:
+  benchFib(0..18) all match the expected sequence.  benchFib(19)
+  returns 13529, benchFib(20) returns 21891.
+- RUNS show ONLY benchFib(19) → benchFib(20) returns through
+  interpreter; deeper benchFib(N) returns happen via JIT path
+  (inline-J2J prelude pop), bypassing `returnFromMethod`.
+- In runs, benchFib(19) → benchFib(20) consistently returns 5186
+  (= 18 + 5167 + 1).  This decomposes as:
+  benchFib(19) first send (benchFib(18)) = 18 (= receiver), second
+  send (benchFib(17)) = 5167 (correct).
+- So the bug: benchFib(18) called from benchFib(19) returns its
+  RECEIVER (18) instead of computed (8361).  This return happens
+  via JIT, not via interp returnFromMethod (no `benchFib(18)⇒X`
+  trace in runs).
+
+Trace at `Interpreter.cpp:21135` materialize-fallback shows the
+chain-loop-activated callee was `benchFib(18)`, not benchFib(19) —
+save[0].recv=18, save[15].recv=3.  So a SEPARATE chain-loop iteration
+inside OUTER's first-send path activated benchFib(18) directly.  The
+materialize+unwind produces benchFib(18)=18 instead of 8361, and that
+propagates up through benchFib(19)'s body computation.
+
+The "returns receiver" bug pattern points to JIT's inline-J2J prelude
+popping the wrong value (= receiver instead of computed) at the
+OUTERMOST level of the materialize-bail callee.  The materialize
+correctly fills SavedFrames for the 16 inner levels (interp unwind
+of those is correct), but the chain-loop callee itself
+(`benchFib(18)`) — which doesn't have a materialized SavedFrame —
+returns wrong.
+
+NEXT STEP: trace benchFib(18)'s JIT_CALL return inside the chain-loop
+fallback path (Interpreter.cpp:21135) — specifically what
+state.returnValue is when benchFib(18) eventually completes after
+the interp unwind, and whether it's pushed correctly to benchFib(19)'s
+stack.  The "OUTER" SavedFrame in materialize is for benchFib(19),
+not benchFib(18) — so when interp finishes unwinding the inline-J2J
+saves, popping the OUTER frame puts the wrong value (18 = receiver
+of OUTER's send-of-benchFib(18)) onto benchFib(19)'s stack instead
+of benchFib(18)'s computed return.
+
 Current state: bit 56 setters in Interpreter.cpp remain in place
 (they're correct logic); the asmjit-T1 SELF_REC fast path is the
 buggy consumer.  Until root-caused, treat the perf numbers in iter
