@@ -19448,11 +19448,24 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         : j2jStack[i - stateDepth];
                 jit::JITMethod* saveJM = save.jitMethod;
                 if (!saveJM) {
-                    static int warns = 0;
-                    if (++warns <= 5)
-                        fprintf(stderr, "[JIT] WARN: null save.jitMethod at j2jBase materialize (warn #%d) i=%d stateDepth=%d chainDepth=%d\n", warns, i, stateDepth, chainDepth);
-                    j2jMaterialized = false;
-                    break;
+                    // asmjit-T1's J2J self-recursive push skips writing
+                    // save.jitMethod (xmethod-off only — see
+                    // AsmjitT1.cpp inline-J2J emit).  All self-recursive
+                    // saves in this chain reference the same method
+                    // (state.jitMethod), so fall back to it.  For
+                    // xmethod-on this null wouldn't appear (push always
+                    // writes jitMethod), so the previous WARN+bail path
+                    // still applies — but state.jitMethod is also the
+                    // correct fallback there (any xmethod cross-method
+                    // updates already wrote save.jitMethod).
+                    saveJM = state.jitMethod;
+                    if (!saveJM) {
+                        static int warns = 0;
+                        if (++warns <= 5)
+                            fprintf(stderr, "[JIT] WARN: null save.jitMethod AND null state.jitMethod at j2jBase materialize (warn #%d) i=%d stateDepth=%d chainDepth=%d\n", warns, i, stateDepth, chainDepth);
+                        j2jMaterialized = false;
+                        break;
+                    }
                 }
                 SavedFrame& frame = savedFrames_[j2jBaseFrameDepth + i];
                 Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
@@ -19597,19 +19610,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             J2JSave& save = stateSaves[i];
             jit::JITMethod* saveJM = save.jitMethod;
             if (!saveJM) {
-                // Half-materialized state — frameDepth_ has been
-                // incremented for prior iterations, but we can't trust
-                // any of them now (they may also have been corrupted).
-                // The post-loop code reads state.method->bytes() which
-                // SIGSEGVs if state.method is nil.  Roll back the
-                // pushed frames and bail entirely.
-                static int warns = 0;
-                if (++warns <= 5)
-                    fprintf(stderr, "[JIT] WARN: null save.jitMethod in materializeJ2J lambda (warn #%d) — bailing\n", warns);
-                for (int j = 0; j < i; j++) {
-                    if (frameDepth_ > 0) frameDepth_--;
+                // asmjit-T1 J2J self-recursive push skips writing
+                // save.jitMethod (xmethod-off only) — same fallback
+                // as the j2jBase materialize site.  All self-recursive
+                // saves in this chain reference state.jitMethod.
+                saveJM = state.jitMethod;
+                if (!saveJM) {
+                    static int warns = 0;
+                    if (++warns <= 5)
+                        fprintf(stderr, "[JIT] WARN: null save.jitMethod AND null state.jitMethod in materializeJ2J lambda (warn #%d) — bailing\n", warns);
+                    for (int j = 0; j < i; j++) {
+                        if (frameDepth_ > 0) frameDepth_--;
+                    }
+                    return;
                 }
-                return;
             }
             SavedFrame& frame = savedFrames_[frameDepth_++];
             Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
@@ -19801,10 +19815,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         J2JSave& save = _stateSaves[i];
                         jit::JITMethod* saveJM = save.jitMethod;
                         if (!saveJM) {
-                            static int warns = 0;
-                            if (++warns <= 5)
-                                fprintf(stderr, "[JIT] WARN: null save.jitMethod at site4 (warn #%d)\n", warns);
-                            break;
+                            // asmjit-T1 self-recursive J2J push skips
+                            // save.jitMethod write (xmethod-off only).
+                            // Fall back to state.jitMethod.
+                            saveJM = state.jitMethod;
+                            if (!saveJM) {
+                                static int warns = 0;
+                                if (++warns <= 5)
+                                    fprintf(stderr, "[JIT] WARN: null save.jitMethod AND state.jitMethod at site4 (warn #%d)\n", warns);
+                                break;
+                            }
                         }
                         SavedFrame& frame = savedFrames_[frameDepth_++];
                         Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
@@ -20497,10 +20517,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     J2JSave& save = _stateSaves2[i];
                     jit::JITMethod* saveJM = save.jitMethod;
                     if (!saveJM) {
-                        static int warns = 0;
-                        if (++warns <= 5)
-                            fprintf(stderr, "[JIT] WARN: null save.jitMethod at site5 (warn #%d)\n", warns);
-                        break;
+                        // asmjit-T1 self-rec push skip — fall back to state.jitMethod.
+                        saveJM = state.jitMethod;
+                        if (!saveJM) {
+                            static int warns = 0;
+                            if (++warns <= 5)
+                                fprintf(stderr, "[JIT] WARN: null save.jitMethod AND state.jitMethod at site5 (warn #%d)\n", warns);
+                            break;
+                        }
                     }
                     SavedFrame& frame = savedFrames_[baseDepth + i];
                     Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
@@ -20957,10 +20981,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                         J2JSave& save = _stateSaves3[i];
                                         jit::JITMethod* saveJM = save.jitMethod;
                                         if (!saveJM) {
-                                            static int warns = 0;
-                                            if (++warns <= 5)
-                                                fprintf(stderr, "[JIT] WARN: null save.jitMethod at site6 (warn #%d)\n", warns);
-                                            break;
+                                            // asmjit-T1 self-rec push skip.
+                                            saveJM = state.jitMethod;
+                                            if (!saveJM) {
+                                                static int warns = 0;
+                                                if (++warns <= 5)
+                                                    fprintf(stderr, "[JIT] WARN: null save.jitMethod AND state.jitMethod at site6 (warn #%d)\n", warns);
+                                                break;
+                                            }
                                         }
                                         SavedFrame& frame = savedFrames_[frameDepth_++];
                                         Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
@@ -21114,10 +21142,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 J2JSave& save = _stateSaves4[i];
                                 jit::JITMethod* saveJM = save.jitMethod;
                                 if (!saveJM) {
-                                    static int warns = 0;
-                                    if (++warns <= 5)
-                                        fprintf(stderr, "[JIT] WARN: null save.jitMethod at site7 (warn #%d)\n", warns);
-                                    break;
+                                    // asmjit-T1 self-rec push skip.
+                                    saveJM = state.jitMethod;
+                                    if (!saveJM) {
+                                        static int warns = 0;
+                                        if (++warns <= 5)
+                                            fprintf(stderr, "[JIT] WARN: null save.jitMethod AND state.jitMethod at site7 (warn #%d)\n", warns);
+                                        break;
+                                    }
                                 }
                                 SavedFrame& frame = savedFrames_[frameDepth_++];
                                 Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);

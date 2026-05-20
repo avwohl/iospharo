@@ -3357,13 +3357,38 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x4, ptr(x0, OFF_IP));
                 }
                 a.stp(x15, x4, ptr(x6, 16));       // tempBase + ip
-                a.stp(x11, x14, ptr(x6, 32));      // callerJM + resumeAddr
-                if (nArgs == 0) {
-                    // wzr writes 32 zero bits directly — skip the mov.
-                    a.str(wzr, ptr(x6, 48));
+                if (xmethod) {
+                    // xmethod-on path: writes save.jitMethod = callerJM.
+                    a.stp(x11, x14, ptr(x6, 32));
+                    if (nArgs == 0) {
+                        a.str(wzr, ptr(x6, 48));
+                    } else {
+                        a.mov(w15, asmjit::Imm(nArgs));
+                        a.str(w15, ptr(x6, 48));
+                    }
                 } else {
-                    a.mov(w15, asmjit::Imm(nArgs));
-                    a.str(w15, ptr(x6, 48));
+                    // xmethod-off (default): skip save.jitMethod write —
+                    // it's redundant in self-recursive-only chains
+                    // (state.jitMethod is the correct fallback).  Combine
+                    // resumeAddr + argCount into one stp.
+                    //
+                    // The j2jPool_ slot's jitMethod field stays 0 because:
+                    //   - std::array zero-inits at process start
+                    //   - asmjit-T1 (this code) never writes jitMethod in
+                    //     this branch
+                    //   - chain loop uses a separate slice (split-pool)
+                    //
+                    // Materialize sites (Interpreter.cpp site4/5/6/7 and
+                    // j2jBase) all fall back to state.jitMethod when
+                    // save.jitMethod is null.
+                    if (nArgs == 0) {
+                        // stp resumeAddr + xzr writes 16 bytes at [40..55].
+                        // argCount slot (low 32 of xzr) = 0; pad = 0.
+                        a.stp(x14, xzr, ptr(x6, 40));
+                    } else {
+                        a.mov(w15, asmjit::Imm(nArgs));
+                        a.stp(x14, x15, ptr(x6, 40));
+                    }
                 }
 
                 // Bump cursor + depth + totalCalls.  depth and totalCalls
