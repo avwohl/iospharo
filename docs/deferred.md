@@ -752,6 +752,49 @@ Current state: bit 56 setters in Interpreter.cpp remain in place
 buggy consumer.  Until root-caused, treat the perf numbers in iter
 N+22..N+29 as void.
 
+**Iter N+30e (2026-05-20 late night) — instrumented activateMethod +
+tryJITActivation returns, RULED OUT both the obvious bugs.**
+
+With `PHARO_T1_INLINE_J2J=1 PHARO_T1_J2J_POST_SEND_IP=1` and traces
+at `activateMethod` entry, `returnFromMethod` entry, and
+`tryJITActivation`'s `push(state.returnValue)` (line 19962):
+
+ALL VALUES ARE CORRECT EXCEPT THE FINAL benchFib(19) RETURN:
+- WARMUP: every benchFib(N) returns expected value through
+  returnFromMethod.
+- RUN 0: every JIT-returned benchFib(N) value is correct.
+  benchFib(13) JIT⇒ 753, benchFib(14)⇒1219, benchFib(15)⇒1973,
+  benchFib(16)⇒3193, benchFib(17)⇒5167, benchFib(18)⇒8361.
+- RUN 0 ACTIVATIONS: every benchFib activation has the right
+  callerRecv/newRecv and callerIPOff=15 (POST-SECOND-SEND-bytecode).
+- BUT: benchFib(19)⇒5186 via interp returnFromMethod (= 18 + 5167 + 1).
+- benchFib(19)'s second send (benchFib(17)) returned 5167 correctly.
+- So benchFib(19)'s FIRST send result was 18 instead of 8361.
+
+There is NO observable place where benchFib(18) returns 18 — every
+traced benchFib(18) JIT-RET shows 8361.  So the 18 doesn't come from
+benchFib(18)'s body computation.
+
+Strongest remaining hypothesis: the materialize-bail's "OUTER frame"
+(pushed at Interpreter.cpp:21147 for the chain-loop callee benchFib(19))
+captures `savedSP` = benchFib(19)'s sp at JIT_CALL time = ABOVE the
+"18" slot (= the receiver of benchFib(19)'s send to benchFib(18) which
+was just pushed before chain-loop fired).  When the OUTER frame pops
+later, popFrame sets `stackPointer_ = framePointer_` = benchFib(19)'s
+FP.  Then the next `push(value)` from the LAST returnFromMethod
+pushes benchFib(18)'s computed value at FP+1 = a slot that's NOT
+benchFib(19)'s first-send-result-slot.  The first-send-result slot
+(= the 18 slot) retains its original value of 18.  When benchFib(19)
+resumes at past-first-send and accesses `sp[-1]` for the first-send
+result, it gets 18 — the unchanged self-1 value.
+
+NEXT STEP: trace stackPointer_ before/after each popFrame in the
+unwind chain — confirm whether the value pushed by returnFromMethod
+lands at the correct sp slot for benchFib(19)'s first-send result.
+If the slot offset is wrong by one, the fix is either to record SP
+in SavedFrame or to fix the SP restoration logic in popFrame for
+materialized-J2J frames.
+
 **Iter N+29 (2026-05-20) — J2J save protocol exhausted; routing-to-Sista
 investigation.**
 
