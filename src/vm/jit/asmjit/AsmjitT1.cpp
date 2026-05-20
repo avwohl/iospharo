@@ -3237,14 +3237,22 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // IC extra word.  The IC patcher sets this bit when
                 // callerCM == calleeCM at IC-fill time (see
                 // Interpreter::upgradeICToJ2J + patchJITICAfterSend).
-                // x11 = callerJM was loaded at IC-probe entry (saved 1
-                // ldr per J2J site).  Re-loading here would be redundant.
+                //
+                // Register source for callerJM: x11 is only loaded at the
+                // IC-probe entry when xmethod is on (see line ~2950).  In
+                // xmethod-off mode (default) callerJM is hoisted to x19
+                // by the trampoline.  Pick the right one — the old code
+                // assumed x11 always held callerJM, but after the x19
+                // hoist commit that's only true in xmethod-on.
+                asmjit::a64::Gp callerJMReg2 = g_debug.t1InlineJ2JXmethod
+                    ? asmjit::a64::x11
+                    : asmjit::a64::x19;
 
                 // Debug counters: stash last-seen values — gated on env
                 // var so production emit doesn't carry the overhead.
                 // CM loads only happen in the debug branch.
                 if (inlineJ2JCounters) {
-                    a.ldr(x12, ptr(x11, 0));    // caller's CM oop
+                    a.ldr(x12, ptr(callerJMReg2, 0));    // caller's CM oop
                     a.ldr(x13, ptr(x10, 0));    // callee's CM oop
                     a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_caller_method));
                     a.str(x12, ptr(x14));
@@ -3365,8 +3373,25 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stp(x15, x4, ptr_post(x6, 56));  // [old x6, 0]; x6 += 56
                 a.ldr(x15, ptr(x0, OFF_TEMPBASE));
                 if (g_debug.t1J2JPostSendIp) {
+                    // Compute past-send IP = callerCM + bcOffsetFromMethObj
+                    // + 1 (1-byte SEND opcode — true for SpecialSendBase
+                    // 0x70-0x7F and Send0/1/2Base 0x80-0xAF, which covers
+                    // the common case incl. benchFib's recursive send).
+                    //
+                    // Register source for callerJM: x11 is only loaded
+                    // when xmethod is on (see IC-probe at line ~2950); in
+                    // xmethod-off (default) callerJM is hoisted to x19.
+                    // The old code unconditionally used x11 — which is
+                    // uninitialized in xmethod-off, → SEGV inside the
+                    // interpreter when the save was materialized.
+                    asmjit::a64::Gp callerJMReg = g_debug.t1InlineJ2JXmethod
+                        ? asmjit::a64::x11
+                        : asmjit::a64::x19;
+                    // x12 may already hold callerCM if the inline-J2J
+                    // counters branch loaded it (see line ~3247).  When
+                    // counters off, load it now from callerJM[0].
                     if (!inlineJ2JCounters) {
-                        a.ldr(x12, ptr(x11, 0));   // callerCM
+                        a.ldr(x12, ptr(callerJMReg, 0));   // callerCM
                     }
                     a.add(x4, x12, asmjit::Imm(bcOffsetFromMethObj + 1));
                 } else {
