@@ -623,17 +623,40 @@ inline-J2J push at AsmjitT1.cpp:3373 writes `save.ip = state.ip`,
 but `state.ip` is only flushed at exits — it's still at bcStart
 from the JIT activation entry.
 
-`PHARO_T1_J2J_POST_SEND_IP=1` attempts to fix this by writing
-`save.ip = callerCM + bcOffsetFromMethObj + 1`.  It crashes the
-interpreter on the FIRST materialize during the warmup pass —
-likely because either (a) `bcOffsetFromMethObj + 1` isn't the right
-past-send offset (multi-byte extended sends?), or (b) the
-`callerCM` load via `x12` clobbers a register the subsequent
-chain-loop path needs.
+**Iter N+30b (2026-05-20 late) — root cause of the crash + partial fix.**
 
-NEXT STEP: investigate why post-send-IP crashes, then ship it as the
-correctness fix.  This is option 3 (materialize-on-bail) made
-correct, which is the path the code already invested in.
+PHARO_T1_J2J_POST_SEND_IP crashed because the asmjit-T1 SELF_REC
+emit assumed `x11 = callerJM`.  After the x19 hoist commit
+`e88c1b63`, x11 is only loaded when xmethod is ON; in xmethod-off
+mode (default) x11 is uninitialized garbage.  The post-send-IP
+path's `ldr x12, [x11, 0]` read from garbage → SEGV in interpret
+when the materialized save.ip pointed at a bogus address.  Same
+issue affected the `inlineJ2JCounters` debug branch silently.
+
+Fix (commit `5e235815`): pick `callerJMReg = xmethod ? x11 : x19`
+in both branches.  After this:
+- PHARO_T1_J2J_POST_SEND_IP=1 no longer crashes.  Materialize trace
+  shows save.ip pointing at bcOff=11 (= benchFib's past-first-send,
+  opcode 0x4c pushReceiver — the start of the second-send setup).
+- But fib(20) still returns 13548 (wrong).  The wrong-result
+  mechanism is somewhere ELSE in the materialize/unwind path.
+
+**Remaining bug** (still unfixed):
+After materialize correctly produces 16 SavedFrames with proper
+past-first-send IPs, the interpreter unwind still produces wrong
+result.  Hypothesis: SavedFrame.savedFP = save.tempBase - 1 points
+to the caller's receiver slot — but after the second send completes
+that slot holds the return value, not the caller's `self`.  If
+interpreter convention is FP[0] = receiver, the popped frame's
+"receiver" effectively becomes the just-returned value.  For
+benchFib(20)'s second send specifically, that slot would hold the
+integer `18` (the call's receiver before send), making OUTER think
+its `self` = 18.
+
+NEXT STEP: investigate the materialize → SavedFrame → interpreter
+unwind to confirm the FP-aliasing hypothesis, then either (a) make
+inline-J2J push capture a separate "caller_fp" field, or (b) shift
+to option 1 (pure-J2J gate) to avoid the materialize path entirely.
 
 Current state: bit 56 setters in Interpreter.cpp remain in place
 (they're correct logic); the asmjit-T1 SELF_REC fast path is the
