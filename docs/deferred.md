@@ -551,12 +551,23 @@ activateMethod.
 To make Phase 4 inlining help fib (multi-session work):
 1. Sista lookup in T1's IC HIT emit — when IC patcher sees a method
    has a Sista fn, set a SISTA_BIT in extras; emit blr to Sista's fn.
+   **Investigated 2026-05-20:** Sista's compile of benchFib FAILS
+   correctness when forced via `PHARO_SISTA_COMPILE_BAIL_ONLY=1` —
+   bench result is 1020114 vs expected 635648.  The `hasSend &&
+   !hasSplice` gate in SistaRuntime.cpp:226 rejects send-bearing
+   methods because the bail-to-interp protocol has correctness bugs
+   on methods like benchFib.  Option 1 is blocked until that's fixed.
 2. Or Sista lookup in chain-loop's J2JCall handler — adds per-call
-   overhead but covers the J2J-off path.
+   overhead but covers the J2J-off path.  Same correctness blocker
+   as option 1 (Sista's bail protocol).
 3. Or generalize Sista's recognizer to handle method bodies with
    sends + branches (currently shape-recognizers only handle
    trivial getter/setter/arith-on-ivar patterns).  Requires
    Phase 3 deopt infrastructure to ship first.
+
+Bottom line: closing the remaining ~3.5× gap to Cog needs Sista
+correctness fixes for bail-bearing methods AND/OR Phase 3 deopt
+infrastructure for recursive inlining.  Both multi-week.
 
 The remaining ~3.5× gap to Cog (fib(28) 10.5ms vs 3ms) requires one
 of the above architectural changes.  Per `docs/sista-inlining-plan.md`,
