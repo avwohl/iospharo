@@ -3341,33 +3341,26 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
                 a.ldp(x15, x4, ptr(x0, OFF_SP));   // sp + receiver
                 a.stp(x15, x4, ptr(x6, 0));
-                a.ldr(x15, ptr(x0, OFF_TEMPBASE));
-                a.str(x15, ptr(x6, 16));
+                // tempBase (offset 16) + ip (offset 24) are adjacent; load
+                // both into two regs and stp.  Saves 1 instruction vs the
+                // prior two ldr-str pairs.
+                //
                 // save.ip: PHARO_T1_J2J_POST_SEND_IP=1 stores method +
                 // bcOffsetFromMethObj + 1 (mirroring chain-loop's J2JCall
                 // which advances ip past send before saving — see
                 // Interpreter.cpp:18829-18833 + 18892).  Default OFF
-                // preserves pre-existing behavior.  Found via lldb 2026-
-                // 05-19 (deferred A6 iter N+8) that pre-send ip in
-                // materialize sites leads to double-send on interp resume.
+                // preserves pre-existing behavior.
                 //
-                // BUG FOUND 2026-05-19 lldb session (iter N+14):
-                // previously this read OFF_METHOD which had ALREADY been
-                // overwritten with callee's CM by the xmethod update at
-                // line 2829.  Result: save.ip = calleeCM +
-                // bcOffsetFromMethObj + 1 — a bogus address in callee's
-                // memory.  When interp later materializes and resumes,
-                // instructionPointer_ is way past callee's bytecode end,
-                // dispatching garbage bytecodes as sends → nil selector
-                // DNUs.  Fix: use x12 (caller's CM, loaded at line 2722
-                // and not overwritten before this site) for both cross-
-                // method AND self-recursive paths.
+                // Uses x12 (caller's CM, loaded earlier) for the postSendIp
+                // path so the value isn't sourced from OFF_METHOD which the
+                // xmethod update may have overwritten with the callee's CM.
+                a.ldr(x15, ptr(x0, OFF_TEMPBASE));
                 if (g_debug.t1J2JPostSendIp) {
-                    a.add(x15, x12, asmjit::Imm(bcOffsetFromMethObj + 1));
+                    a.add(x4, x12, asmjit::Imm(bcOffsetFromMethObj + 1));
                 } else {
-                    a.ldr(x15, ptr(x0, OFF_IP));
+                    a.ldr(x4, ptr(x0, OFF_IP));
                 }
-                a.str(x15, ptr(x6, 24));
+                a.stp(x15, x4, ptr(x6, 16));       // tempBase + ip
                 a.stp(x11, x14, ptr(x6, 32));      // callerJM + resumeAddr
                 a.mov(w15, asmjit::Imm(nArgs));
                 a.str(w15, ptr(x6, 48));
