@@ -526,6 +526,34 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+21 (2026-05-19 evening) — revert prim 60/61/62 prologue (`9bd381a6`).**
+
+The prologue added in `8b6d0495` only handles fmt 2 (Array) and fmt 16-23
+(byte indexable).  For fmt 9 (Indexable64), fmt 10-15 (32-bit + 16-bit
+indexable: WordArray, IntegerArray, DoubleByteArray), and fmt 24-31, the
+prologue falls through to the Smalltalk fallback at the bytecode body.
+For `Object>>basicAtPut:`, that fallback is `^ self errorImproperStore:
+aValue` — raising spuriously for WordArray-like receivers where the C
+primitive would have stored cleanly.
+
+Reproducer: `./build/test_load_image /tmp/harness/Pharo.image eval "42
+printString"` — startup hit `ExternalStructure class>>recompileStructures`
+which stores into a WordArray via Object>>basicAtPut:, fires the spurious
+errorImproperStore, cascades into the bench script's saved-image resume
+producing `ERROR: Improper store into indexable object` in the bench file
+before any benchmark ran.
+
+Fix: revert just the `supportedPrimIndex` enablement for 60/61/62.  The
+icDataPtr stash + `dispatchCachedRestoreX5` stub from `8b6d0495` are
+independent correctness and stay in place.  The send-site catch via
+primKind 14/15/16 still fires — per iter N+19's own numbers, the
+prologue contributed <5% on top of the send-site path.
+
+Proper fix when revisiting: handle fmt 9, 10-15, 24-31 in the prologue
+following `Primitives.cpp:2240-2290`, OR change the prologue `fail` path
+to call the actual C primitive instead of falling through to the
+bytecode body (the second approach generalizes to other primitives).
+
 **Iter N+20 (2026-05-19 PM) — SmallFloat send-site inline + perf assessment.**
 
 Wired up send-site dispatch for SmallFloat +/-/* (primKind 21/22/23) in `b5aa17f4`.  The emit is correct (no crash, no regression) but the bench-suite's floatSum 1M loop is already SISTA-spliced — never reaches the regular send dispatch — so the new path's hit counter stays at 0 during the bench.  The dispatch path stands ready for non-SISTA workloads.
