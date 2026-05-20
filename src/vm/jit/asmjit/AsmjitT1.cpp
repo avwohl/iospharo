@@ -2368,16 +2368,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.b_le(normalReturn);   // current <= entry → no save pushed by this method
 
         // Pop save: cursor -= sizeof(J2JSave) = 56; depth--
+        // Pre-index ldp folds the cursor decrement into the first load.
         a.ldr(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
-        a.sub(x4, x4, asmjit::Imm(56));
+        a.ldp(x5, x6, ptr_pre(x4, -56));  // x4 -= 56, then load sp + recv
         a.str(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
         a.sub(w3, w3, asmjit::Imm(1));
         a.str(w3, ptr(x0, OFF_J2J_DEPTH));
 
-        // Load save fields with ldp pairs.  Layout (stencils.cpp:113):
+        // Load remaining save fields with ldp pairs.  Layout:
         //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
         //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
-        a.ldp(x5, x6, ptr(x4,  0));   // sp + receiver
+        // (sp + recv already loaded above via pre-index)
         a.str(x6, ptr(x0, OFF_RECEIVER));
         a.ldp(x6, x10, ptr(x4, 16));  // tempBase + ip
         a.str(x6, ptr(x0, OFF_TEMPBASE));
