@@ -842,6 +842,47 @@ inside the wrong frame.
 This is the ACTUAL bug.  Fix is to ensure save.tempBase captures
 caller's tempBase before the inline-J2J update overwrites state.tempBase.
 
+**Iter N+30g (2026-05-21 morning) — save.tempBase capture is CORRECT,
+real bug is in tryResume re-JIT path.**
+
+Read AsmjitT1.cpp:3372-3400 carefully: the inline-J2J push captures
+state.tempBase at line 3374 BEFORE the state.tempBase update at
+line 3481.  save.tempBase = CALLER's tempBase.  ✓ Correct.
+
+So my previous "save.tempBase captures wrong order" hypothesis was
+WRONG.  The save's metadata is right.
+
+Added PHARO_TRACE_BFIB_PR=1 to trace PushReceiver bytecode in interp.
+Result: ZERO PushReceiver events for benchFib in any run.  But there
+must be PushReceiver dispatches if benchFib(N) body executes — offsets
+0, 7, 11 are all PushReceiver.
+
+CONCLUSION: benchFib(N) body NEVER executes interpretively in the
+materialize-unwind chain.  Instead, popFrame → returnValue → dispatch
+loop → tryResume re-enters JIT at past-first-send.
+
+Interpreter.cpp:16744 `jitRuntime_.tryResume(method_, bcOffset, state)`
+restores JITState from current interp state and re-enters JIT.  The
+JIT then runs benchFib body from past-first-send.
+
+If tryResume re-enters JIT with WRONG state (sp/tempBase/receiver
+off by some slots), the JIT body computes with stale stack values,
+producing benchFib(N-2)'s expected value instead of benchFib(N)'s.
+
+THE TRUE BUG: tryResume's state restoration from materialize-unwound
+SavedFrames doesn't faithfully reconstruct the state that
+inline-J2J push originally captured.  Specifically, the SP that
+tryResume's JIT body sees is off by 2 stack slots, causing every
+sub-send to read its arguments from the wrong slot.
+
+NEXT STEP: read jitRuntime.tryResume; check how state.sp/tempBase
+get reconstructed from the popFrame'd interp state.  Likely the
+fix is to make tryResume's JIT entry expect "sp = framePointer_ + 1
++ tempCount + N stack values" but the actual sp has N+2 values
+(extras leftover from materialize push sequencing).
+
+Default-off inline-J2J STILL HOLDS as correctness workaround.
+
 **Iter N+29 (2026-05-20) — J2J save protocol exhausted; routing-to-Sista
 investigation.**
 
