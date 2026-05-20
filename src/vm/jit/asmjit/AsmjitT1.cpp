@@ -2951,7 +2951,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // for the duration of a send).
         a.ldr(x11, ptr(x0, OFF_JITMETHOD));
         a.ldr(x5, ptr(x11, (int)offsetof(JITMethod, icBuffer)));
-        a.add(x5, x5, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
+        // Skip the add when siteIdx == 0 (the first send in the method
+        // — x5 already points at the right place).  Saves 1 instr at
+        // the first send site of every JIT-compiled method.
+        if (siteIdx != 0) {
+            a.add(x5, x5, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
+        }
 
         // Deferred state setup: inline-spec paths skip the state
         // store entirely.  dispatchCached / miss / non-probe paths
