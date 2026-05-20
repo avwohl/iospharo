@@ -883,6 +883,16 @@ extern "C" void jit_rt_fill_ic(JITState* s, uint64_t* icData,
             }
         }
     }
+    // SELF_REC_BIT (bit 56): callee CM == caller CM (self-recursive).
+    // asmjit-T1's inline-J2J uses this to skip the runtime CM-oop compare.
+    // Caller CM is at state.jitMethod->compiledMethodOop.
+    constexpr uint64_t SELF_REC_BIT = 1ULL << 56;
+    if (s->jitMethod) {
+        JITMethod* callerJM = reinterpret_cast<JITMethod*>(s->jitMethod);
+        if (callerJM->compiledMethodOop == methodBits) {
+            extra |= SELF_REC_BIT;
+        }
+    }
 
     // 2026-05-03: IC entries are heap-allocated (RW always); no W^X
     // flip needed.

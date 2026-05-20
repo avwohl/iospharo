@@ -526,6 +526,62 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+30 (2026-05-20) — CORRECTNESS BUG in asmjit-T1 inline-J2J
+SELF_REC path.**
+
+ALL session perf numbers below (and the "fib(28) 11.5 ms" headline)
+were measured on WRONG RESULTS.  Setup:
+
+    PHARO_BENCH=fib PHARO_FIB_N=20 ./build/test_load_image \
+        /tmp/harness/Pharo.image
+
+- warmup (runCount=-1): 21891 (correct)
+- run 0+ (post-warmup): 13548 (wrong)
+
+The wrong pattern: `wrong(N) = correct(N-1) + (N-2) + 1`, i.e. the
+SECOND send of the OUTER `benchFib(N)` returns receiver (= N-2)
+instead of `benchFib(N-2)`.  The inner recursion is computed correctly
+(we observe correct values inside e.g. benchFib(18) per RET trace).
+
+**Bisect:** The bug is gated by `SELF_REC_BIT` (bit 56 of IC extras),
+introduced in commit `e77a518f` ("asmjit-T1-arm64: encode self-
+recursive in IC extra bit 56").  Reverting `Interpreter.cpp`'s bit 56
+setters in `patchJITICAfterSend` + `upgradeICToJ2J` (alone — leaving
+the asmjit-T1 tbz check intact) restores correctness, because the
+tbz then always bails to chain-loop.
+
+Workarounds today:
+- `PHARO_T1_NO_INLINE_J2J=1` → correct, ~170 ms / fib(28) (15× slower)
+- `PHARO_NO_J2J=1` → correct, no IC J2J upgrade at all
+- `PHARO_J2J_SKIP_SELECTORS=benchFib` → correct for fib only
+
+**Where the bug lives** (likely): the asmjit-T1 inline-J2J SELF_REC
+emit path (default xmethod-off branch at AsmjitT1.cpp ~3343).  Trace
+shows the J2J return prelude IS popping correctly with the right
+retval for inner calls — the wrong-value path is in the OUTER send
+chain.  Hypothesis: the inline-J2J SELF_REC path leaves something in
+state stale across the OUTERMOST chain-loop→inline-J2J transition
+(state.jitMethod isn't restored on xmethod-off pop, x19 hoist
+assumes self-rec preserves x19, etc.).  Bug only manifests at
+N≥17 because lower N never warms the IC to bit-60+bit-56 state
+within a single bench(20) tree.
+
+**Open question:** which specific shrink commit (between
+`e77a518f` and HEAD) actually broke correctness vs. which one
+exposed an already-broken state by removing a redundant write that
+was masking the bug.  Bisect across the 28-commit session is the
+next step — needs a clean test_load_image at each commit (older
+commits fail to link due to symbol changes).  Likely candidates:
+- `ad6a34a7` (skip save.jitMethod write in xmethod-off)
+- `82fa2d58` (skip sp write for self-rec nArgs==tempCount)
+- `11bd7003` (skip method/literals/jitMethod restore in return prelude)
+- `8bca7b15` (reuse x2 — sp from IC HIT — in callee setup)
+
+Current state: bit 56 setters in Interpreter.cpp remain in place
+(they're correct logic); the asmjit-T1 SELF_REC fast path is the
+buggy consumer.  Until root-caused, treat the perf numbers in iter
+N+22..N+29 as void.
+
 **Iter N+29 (2026-05-20) — J2J save protocol exhausted; routing-to-Sista
 investigation.**
 
