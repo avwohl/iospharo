@@ -526,6 +526,43 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+29 (2026-05-20) — J2J save protocol exhausted; routing-to-Sista
+investigation.**
+
+Many shrinks shipped — fib(28) 13.0 → 10.5-11.2 ms (-15-20%), fib(30)
+35.7 → 28.4 ms (-20%).  Per-send instr count ~42 → ~22; per-return
+~22 → ~16.  Highlights: post-index stp folds cursor bump into save
+push; pre-index ldp folds cursor decrement into return prelude; skip
+save.jitMethod in xmethod-off (materialize falls back to state.jm);
+hoist JM load to IC probe; reuse x2 (sp from IC HIT); hoist
+j2jDepthInc constant to callee-saved x20 via trampoline + JIT_CALL.
+
+**Architectural block for further wins:** Sista's `activateMethod`
+hook is BYPASSED by both T1's inline-J2J AND chain-loop's J2JCall
+handler.  For fib's 317K recursive activations, only the OUTER call
+reaches activateMethod — Sista compiles benchFib but never dispatches
+during the hot path.  `[SISTA] hits=0/1` in bench output confirms.
+
+Verified by forcing `PHARO_T1_NO_INLINE_J2J=1`: chain-loop fallback
+takes 170ms (15× slower), but still `[SISTA] attempts=1` because
+chain-loop's J2JCall directly invokes JIT_CALL without going through
+activateMethod.
+
+To make Phase 4 inlining help fib (multi-session work):
+1. Sista lookup in T1's IC HIT emit — when IC patcher sees a method
+   has a Sista fn, set a SISTA_BIT in extras; emit blr to Sista's fn.
+2. Or Sista lookup in chain-loop's J2JCall handler — adds per-call
+   overhead but covers the J2J-off path.
+3. Or generalize Sista's recognizer to handle method bodies with
+   sends + branches (currently shape-recognizers only handle
+   trivial getter/setter/arith-on-ivar patterns).  Requires
+   Phase 3 deopt infrastructure to ship first.
+
+The remaining ~3.5× gap to Cog (fib(28) 10.5ms vs 3ms) requires one
+of the above architectural changes.  Per `docs/sista-inlining-plan.md`,
+the full path is Phase 3 deopt (4-6 wk) + Phase 4 generalized inlining
+(4-5 wk) for proper convergence.
+
 **Iter N+28 (2026-05-20) — wzr + uniform-argCount return prelude.**
 
 Two more shrinks:
