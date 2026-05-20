@@ -526,6 +526,35 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+28 (2026-05-20) — wzr + uniform-argCount return prelude.**
+
+Two more shrinks:
+
+1. `wzr` fold for nArgs=0 J2J save argCount write (commit
+   `59aa301a`).  Send0 sites (0x80-0x8F, no explicit args)
+   write the constant 0 to save.argCount; replace `mov w15, 0;
+   str w15` with `str wzr`.  Saves 1 instr per Send0 site.
+   benchFib's recursive call is Send0 so this fires for fib.
+
+2. Pre-scan method bytecodes for uniform J2J argCount; pass
+   `staticJ2JArgCount` through emitMethodBytes → emitOne_arm64
+   (commit `44e30412`).  When all Phase4 send sites in a method
+   have the same nArgs:
+   - staticJ2JArgCount == 0: skip ldr save.argCount + lsl + sub
+     in return prelude (sp unchanged).  Save 3 instr.
+   - staticJ2JArgCount > 0: emit sub immediate instead of
+     dynamic lsl+sub.  Save 2 instr.
+   - Mixed: fall back to dynamic load (no change).
+
+Measured marginally better on fib (within noise); cumulative
+session: fib(28) 13.0 → ~11.7 ms (-10%), fib(30) 35.7 → ~31.5 ms
+(-12%).  Catch rate unchanged at 100%.
+
+**Session conclusion (2026-05-20):** further single-session
+gains are bounded by send-machinery overhead at 100% catch rate.
+Closing the remaining ~4× Cog gap requires Sista Phase 4 method
+inlining (multi-session — see B9 and `docs/sista-inlining-plan.md`).
+
 **Iter N+27 (2026-05-20) — return prelude skip method/literals/jitMethod
 restore in xmethod-off path.**
 

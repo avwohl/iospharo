@@ -1,12 +1,12 @@
 # WIP — JIT perf session (2026-05-20, post-reboot iter)
 
-## Session progress 2026-05-20 post-reboot (4 commits added)
+## Session progress 2026-05-20 post-reboot (7 commits added)
 
-Cumulative measured perf gains (M1, PHARO_BENCH=fib):
+Cumulative measured perf gains (M1, PHARO_BENCH=fib, best-of-5):
 
     bench    pre-session    post     cog    gap     delta
-    fib(28)  13.0 ms        11.5 ms  3 ms   3.8×    -12%
-    fib(30)  35.7 ms        31.7 ms  ~8 ms  4.0×    -11%
+    fib(28)  13.0 ms        11.7 ms  3 ms   3.9×    -10%
+    fib(30)  35.7 ms        31.5 ms  ~8 ms  3.9×    -12%
     fib(32)  86 ms          82 ms    —      —       -5%
     sieve    2.3 ms         2.3 ms   ~1 ms  2.3×    flat
 
@@ -16,8 +16,25 @@ Shipped (in order):
 - `e77a518f` SELF_REC_BIT in IC extra bit 56 (replaces CM-oop
   compare with single tbz/tbnz; perf flat but smaller emit)
 - `11bd7003` skip method/literals/jitMethod restore in J2J return
-  prelude (xmethod-off path — biggest win this session, ~8-9%)
+  prelude (xmethod-off path — biggest single win this session, ~8-9%)
 - `ce4bcf4b` stur/wzr fold in return prelude (3 instr saved/site)
+- `59aa301a` wzr fold for nArgs=0 J2J save argCount write
+- `44e30412` specialize return prelude for uniform J2J argCount
+  (pre-scan method bytecodes; if all sends have same nArgs, use
+  the value as immediate and skip ldr+lsl+sub in return prelude)
+
+## Architectural conclusion
+
+Closing the remaining ~4× fib gap to Cog requires Sista Phase 4
+method inlining (multi-session per `docs/sista-inlining-plan.md`).
+Each micro-shrink ships 2-10% but is bounded by the inherent
+send-machinery overhead.  At 100% catch rate, fib(28)'s ~11.7 ms
+is essentially the floor for the current inline-J2J architecture.
+
+Cog's 3 ms comes from inlining the recursive call body directly
+into the caller, eliminating the entire push-save / restore /
+tail-call sequence.  No instruction-level shrink in the current
+emit can replicate that without changing the IR/lowering strategy.
 
 ## Original session goals (preserved below)
 
