@@ -883,6 +883,55 @@ fix is to make tryResume's JIT entry expect "sp = framePointer_ + 1
 
 Default-off inline-J2J STILL HOLDS as correctness workaround.
 
+**Iter N+30h (2026-05-21) — popFrame SP semantics analysis.**
+
+Read popFrame at Interpreter.cpp:10746: `stackPointer_ = framePointer_;`
+followed by `framePointer_ = frame.savedFP;`.
+
+Traced through the materialize-unwind chain carefully:
+- Before save i pop: framePointer_ = benchFib(N-i+1)'s FP (set by
+  previous pop).
+- During pop: stackPointer_ = framePointer_ = benchFib(N-i+1)'s FP
+  = benchFib(N-i)'s FP + 1 = benchFib(N-i)'s tempBase.
+- After framePointer_ restore: framePointer_ = save i.savedFP =
+  benchFib(N-i)'s FP.
+- After push(value): value lands at benchFib(N-i)'s tempBase
+  (= FP+1 = stack[0]), sp = FP+2.
+
+This IS the correct semantics — value goes to caller's stack[0]
+which is where first-send-result belongs.
+
+For tryResume re-entering JIT at benchFib(N-i)'s past-first-send:
+- state.sp = stackPointer_ = FP+2 ✓
+- state.receiver = receiver_ = save i.savedReceiver = correct ✓
+- state.tempBase = framePointer_ + 1 = FP+1 ✓
+
+So my "off-by-one SP" hypothesis is also DISPROVED — the SP
+semantics ARE correct in theory.
+
+Yet trace #19 still shows benchFib(18) returning 3193 (benchFib(16)
+value) to benchFib(19), via path that should leave benchFib(18)'s
+FP+1 = 5167 (benchFib(17)'s correct value).
+
+Some OTHER factor causes benchFib(17) to return 17 (= its receiver),
+breaking the chain.  Possibilities:
+- JIT body of benchFib(17) reads stale state.sp / state.tempBase
+  from a stale JITState (not the one set up by tryResume's caller).
+- state.receiver doesn't reach the JIT at tryResume entry because
+  the JIT method's prologue overwrites it from some other source.
+- The inline-J2J INSIDE benchFib(17)'s tryResume'd body bails again
+  (recursive materialize), producing a wrong value for its first
+  send chain.
+
+NEXT STEP: trace state.receiver / state.sp / state.tempBase AT
+tryResume entry for benchFib(17) specifically — verify whether the
+state passed to the JIT matches what the JIT body expects.  If
+state matches but JIT computes wrong, look at JIT's PushReceiver /
+inline-J2J handling for a stale-state bug.
+
+Investigation continues across iterations.  Default-off inline-J2J
+stays as correctness workaround.
+
 **Iter N+29 (2026-05-20) — J2J save protocol exhausted; routing-to-Sista
 investigation.**
 
