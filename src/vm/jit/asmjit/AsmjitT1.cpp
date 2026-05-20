@@ -873,9 +873,14 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 14: return primIndex;   // SmallInteger>>bitAnd:
     case 15: return primIndex;   // SmallInteger>>bitOr:
     case 16: return primIndex;   // SmallInteger>>bitXor:
-    case 60: return primIndex;   // Array>>at:
-    case 61: return primIndex;   // Array>>at:put:
-    case 62: return primIndex;   // Array>>size
+    // Prims 60/61/62 prologue handles fmt 2 (Array) and fmt 16-23 (byte
+    // indexable) only.  WordArray (fmt 10-11) and friends fall through
+    // to the Smalltalk fallback at the bytecode level — which for
+    // Object>>basicAtPut: is `^ self errorImproperStore: aValue`,
+    // raising spuriously for cases the C primitive would have handled.
+    // Inline prologue stays gated until fmt 9-15 + 24-31 land.
+    // (The send-site catch via primKind 14/15/16 still fires; the
+    // prologue saved <5% over that on the bench suite per docs.)
     case 541: return primIndex;  // SmallFloat>>+
     case 542: return primIndex;  // SmallFloat>>-
     case 549: return primIndex;  // SmallFloat>>*
