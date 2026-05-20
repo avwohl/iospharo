@@ -43,6 +43,9 @@ bool producesOop(Op op) {
     case Op::kPrimAddInt:
     case Op::kPrimSubInt:
     case Op::kPrimMulInt:
+    case Op::kPrimAddFloat:
+    case Op::kPrimSubFloat:
+    case Op::kPrimMulFloat:
     case Op::kPrimLtInt:
     case Op::kPrimLeInt:
     case Op::kPrimGtInt:
@@ -146,6 +149,9 @@ const char* name(Op op) {
     case Op::kPrimAddInt:       return "prim_add_int";
     case Op::kPrimSubInt:       return "prim_sub_int";
     case Op::kPrimMulInt:       return "prim_mul_int";
+    case Op::kPrimAddFloat:     return "prim_add_float";
+    case Op::kPrimSubFloat:     return "prim_sub_float";
+    case Op::kPrimMulFloat:     return "prim_mul_float";
     case Op::kPrimLtInt:        return "prim_lt_int";
     case Op::kPrimLeInt:        return "prim_le_int";
     case Op::kPrimGtInt:        return "prim_gt_int";

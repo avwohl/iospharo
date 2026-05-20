@@ -1007,6 +1007,136 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 regFor[v.id] = dst;
                 break;
             }
+
+            case Op::kPrimAddFloat:
+            case Op::kPrimSubFloat:
+            case Op::kPrimMulFloat: {
+                // SmallFloat binary arith with deopt fallback.
+                // operands[0] = a, operands[1] = b,
+                // operands[2..] = deopt stack snapshot,
+                // literal = source bcOffset.
+                //
+                // Sequence:
+                //   1. Tag-check both ops have low3 == 5 (SmallFloat).
+                //   2. Decode each oop to a double in FPR.
+                //   3. FADD/FSUB/FMUL in FPR.
+                //   4. Encode result back to SmallFloat-tagged oop.
+                //   5. Deopt on tag miss OR encode underflow/overflow OR ±0.
+                if (v.operands.size() < 2) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto ita = regFor.find(v.operands[0]);
+                auto itb = regFor.find(v.operands[1]);
+                if (ita == regFor.end() || itb == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp regA = ita->second;
+                Gp regB = itb->second;
+
+                asmjit::Label deopt = cc.new_label();
+                asmjit::Label cont  = cc.new_label();
+
+                // Tag check: low3 must be 5.
+                Gp tag = cc.new_gp64("fp_tag");
+                cc.and_(tag, regA, Imm(0x7));
+                cc.cmp(tag, Imm(5));
+                cc.b_ne(deopt);
+                cc.and_(tag, regB, Imm(0x7));
+                cc.cmp(tag, Imm(5));
+                cc.b_ne(deopt);
+
+                // Spur SmallFloat decode: shifted = bits >> 3;
+                //   ±0 sentinel: shifted <= 1 → deopt (uncommon).
+                //   else withOffset = shifted + 0x7000000000000000;
+                //        doubleBits = ROR(withOffset, 1);
+                Gp offset = cc.new_gp64("fp_off");
+                cc.mov(offset, Imm(0x7000000000000000ULL));
+
+                Gp shA = cc.new_gp64("fp_shA");
+                cc.lsr(shA, regA, Imm(3));
+                cc.cmp(shA, Imm(1));
+                cc.b_ls(deopt);                  // ±0 → deopt
+                cc.add(shA, shA, offset);
+                cc.ror(shA, shA, Imm(1));
+                Vec dA = cc.new_vec_d("fp_dA");
+                cc.fmov(dA, shA);
+
+                Gp shB = cc.new_gp64("fp_shB");
+                cc.lsr(shB, regB, Imm(3));
+                cc.cmp(shB, Imm(1));
+                cc.b_ls(deopt);
+                cc.add(shB, shB, offset);
+                cc.ror(shB, shB, Imm(1));
+                Vec dB = cc.new_vec_d("fp_dB");
+                cc.fmov(dB, shB);
+
+                Vec dR = cc.new_vec_d("fp_dR");
+                switch (v.op) {
+                    case Op::kPrimAddFloat: cc.fadd(dR, dA, dB); break;
+                    case Op::kPrimSubFloat: cc.fsub(dR, dA, dB); break;
+                    case Op::kPrimMulFloat: cc.fmul(dR, dA, dB); break;
+                    default: break;
+                }
+
+                // Encode: bits = ROL(double_bits, 1) - offset;
+                //   if bits < 0 → underflow → deopt
+                //   if bits > 0x1FFFFFFFFFFFFFFF → overflow → deopt
+                //   result = (bits << 3) | 5
+                Gp result = cc.new_gp64("fp_res");
+                cc.fmov(result, dR);
+                cc.ror(result, result, Imm(63));   // ROL by 1
+                cc.cmp(result, offset);
+                cc.b_lo(deopt);                    // exp underflow
+                cc.sub(result, result, offset);
+                Gp limit = cc.new_gp64("fp_lim");
+                cc.mov(limit, Imm(0x1FFFFFFFFFFFFFFFULL));
+                cc.cmp(result, limit);
+                cc.b_hi(deopt);                    // exp overflow
+                cc.lsl(result, result, Imm(3));
+                cc.orr(result, result, Imm(5));    // SmallFloatTag
+
+                cc.b(cont);
+                cc.bind(deopt);
+                // Push all deopt operands onto stack, set ip, exit Send.
+                Gp dsp = cc.new_gp64("fp_dsp");
+                cc.ldr(dsp, ptr(state, OFF_SP));
+                size_t numDeopt = v.operands.size() > 2 ? v.operands.size() - 2 : 0;
+                for (size_t opIdx = 2; opIdx < v.operands.size(); opIdx++) {
+                    auto dIt = regFor.find(v.operands[opIdx]);
+                    if (dIt == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    cc.str(dIt->second,
+                           ptr(dsp, static_cast<int>(opIdx - 2) * 8));
+                }
+                cc.add(dsp, dsp, Imm((int)(numDeopt * 8)));
+                cc.str(dsp, ptr(state, OFF_SP));
+                uint32_t bcOffset = (uint32_t)v.literal;
+                Gp ipReg = cc.new_gp64("fp_ip");
+                if (bytecodeBase) {
+                    uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
+                                   + bcOffset;
+                    cc.mov(ipReg, Imm((uint64_t)addr));
+                } else {
+                    cc.mov(ipReg, Imm(bcOffset));
+                }
+                cc.str(ipReg, ptr(state, OFF_IP));
+                Gp zero = cc.new_gp64("fp_zero");
+                cc.mov(zero, Imm(0));
+                cc.str(zero, ptr(state, OFF_ICDATAPTR));
+                Gp exitR = cc.new_gp32("fp_exit");
+                cc.mov(exitR, Imm(EXIT_SEND));
+                cc.str(exitR, ptr(state, OFF_EXIT));
+                cc.ret();
+
+                cc.bind(cont);
+                regFor[v.id] = result;
+                break;
+            }
+
             case Op::kSendCallHelper: {
                 // B-1: invoke jit_rt_sista_call_send via cc.invoke.
                 // Helper does the send synchronously and returns the
@@ -1967,6 +2097,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     case Op::kPrimAddInt:
                     case Op::kPrimSubInt:
                     case Op::kPrimMulInt:
+                    case Op::kPrimAddFloat:
+                    case Op::kPrimSubFloat:
+                    case Op::kPrimMulFloat:
                         blockHasArith = true;
                         break;
                     case Op::kLoadTempInVec:

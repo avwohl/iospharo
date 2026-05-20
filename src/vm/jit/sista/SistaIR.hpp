@@ -115,6 +115,14 @@ enum class Op : uint8_t {
     kPrimAddInt,          // operands: a, b (SmallInt Oops)          -> OopSmallInt
     kPrimSubInt,          // operands: a, b                          -> OopSmallInt
     kPrimMulInt,          // operands: a, b                          -> OopSmallInt
+    // SmallFloat binary arith.  Both operands must have tag 5
+    // (SmallFloat) AND be non-zero shifted (i.e. not ±0); on miss,
+    // deopt to the source bcOffset and let interp run the regular
+    // send.  Bench-relevant: floatSum / arith-heavy block bodies
+    // inside `arr do:` patterns.  Phase 6 (2026-05-19).
+    kPrimAddFloat,        // operands: a, b (SmallFloat Oops)        -> OopSmallFloat
+    kPrimSubFloat,        // operands: a, b                          -> OopSmallFloat
+    kPrimMulFloat,        // operands: a, b                          -> OopSmallFloat
     kPrimLtInt,           // operands: a, b                          -> OopBool
     kPrimLeInt,           // operands: a, b                          -> OopBool
     kPrimGtInt,           // operands: a, b                          -> OopBool
