@@ -4129,6 +4129,31 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     const uint8_t* bcReal = bc + emitSkip;
     size_t bcRealLen = (bcLen >= (size_t)emitSkip) ? (bcLen - emitSkip) : 0;
     bool real = (bcRealLen > 0) && allBytecodesSupported(bcReal, bcRealLen);
+    // Sieve correctness gate (2026-05-19): methods with prim 60/61/62
+    // declared at method entry AND conditional jumps in the body trigger
+    // a still-unexplained interaction that returns wrong results for
+    // `Integer>>benchmark` (sieve x3 returns 1 instead of 1028).
+    // Bisection isolated the bug to the cond-jump emit in Array>>at:put:
+    // (3rd cond-jump compile in sieve's compile order); skipping any one
+    // of {1,2,3} cures the symptom.  Stubbing methods with these prims
+    // is harmless: the send-site catch via primKind 14/15/16 in IC extras
+    // still fires for the common case, and the prim prologue is the only
+    // thing lost — <5% perf delta on bench per docs/deferred.md A6 iter
+    // N+19.  Detect by scanning the BODY for conditional jumps; the
+    // prologue has already consumed the CallPrimitive header at bc[0..2].
+    if (real && (primIndex == 60 || primIndex == 61 || primIndex == 62)) {
+        bool hasCJ = false;
+        for (size_t bi = 0; bi < bcRealLen; bi++) {
+            uint8_t op = bcReal[bi];
+            if ((op >= SistaV1::ShortJumpTrueBase
+                    && op <= SistaV1::ShortJumpFalseLast)
+                || op == SistaV1::ExtJumpTrue
+                || op == SistaV1::ExtJumpFalse) {
+                hasCJ = true; break;
+            }
+        }
+        if (hasCJ) real = false;  // fall through to stub-compile
+    }
     // PHARO_T1_INLINE_J2J_DUMP_BC=1: dump bytecode for failed compiles
     if (!real && std::getenv("PHARO_T1_INLINE_J2J_DUMP_BC")) {
         static size_t dumpN = 0;
