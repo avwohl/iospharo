@@ -932,6 +932,63 @@ inline-J2J handling for a stale-state bug.
 Investigation continues across iterations.  Default-off inline-J2J
 stays as correctness workaround.
 
+**Iter N+30i (2026-05-21 mid-morning) — SMOKING GUN: TOS at JIT
+resume entry is (self-1), NOT benchFib(self-1)'s computed value.**
+
+PHARO_TRACE_BFIB_RESUME=1 trace at `tryJITResumeInCaller` for benchFib
+re-entries shows the EXACT corruption:
+
+WARMUP (correct):
+- benchFib(14) re-entry at ipOff=11 TOS=753  (= benchFib(13) correct)
+- benchFib(15) re-entry at ipOff=11 TOS=1219 (= benchFib(14) correct)
+- benchFib(16) re-entry at ipOff=11 TOS=1973 (= benchFib(15) correct)
+- ...
+- benchFib(19) re-entry at ipOff=11 TOS=8361 (= benchFib(18) correct)
+- benchFib(20) re-entry at ipOff=11 TOS=13529 (= benchFib(19) correct)
+
+RUN 0 (BUGGY):
+- benchFib(14) re-entry at ipOff=11 TOS=13   (= 14-1, the receiver
+                                              of benchFib(13) push
+                                              that was made before
+                                              the send)
+- benchFib(15) re-entry at ipOff=11 TOS=14
+- benchFib(16) re-entry at ipOff=11 TOS=15
+- benchFib(17) re-entry at ipOff=11 TOS=16
+- benchFib(18) re-entry at ipOff=11 TOS=17
+- benchFib(19) re-entry at ipOff=11 TOS=18
+
+In RUN 0, the FIRST SEND RESULT slot retains its ORIGINAL pushed
+value (= self-1, the receiver of the first send pushed by caller)
+instead of getting OVERWRITTEN with benchFib(self-1)'s computed
+return.
+
+**Root cause is now precise**: when chain-loop activates a callee that
+bails via materialize, the chain-loop's success-path "write retVal
+to receiver slot" (line 20889 `state.sp[-(nArgs+1)] = retVal`) NEVER
+RUNS because the callee exited via ExitSend, not ExitReturn.  The
+fallback (line 21135+) just bails to interp without writing retVal
+to the caller's receiver slot.
+
+When the materialize-unwind eventually completes and benchFib(N)
+re-enters JIT, the receiver slot at sp[-1] still holds the integer
+(N-1) — the value caller pushed as receiver of the failed send,
+which was never overwritten.
+
+**THE FIX**: in the materialize-bail FALLBACK at Interpreter.cpp:21135
+(or equivalent), when the unwind eventually returns the callee's
+computed value to its caller, that value MUST be written to the
+caller's receiver slot.  Currently the chain only handles the
+return-VALUE-PUSH for the LAST level (OUTER), not the intermediate
+materialized levels.
+
+Equivalently: the inline-J2J save's `state.sp` at PUSH time points
+ABOVE the receiver slot.  After unwind, the value should land at
+save.sp - 8.  The materialize-unwind isn't doing this write for
+the chain-loop callee's "implicit return slot".
+
+NEXT TURN: implement the missing slot-write in the materialize-bail
+fallback path.
+
 **Iter N+29 (2026-05-20) — J2J save protocol exhausted; routing-to-Sista
 investigation.**
 
