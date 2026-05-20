@@ -244,6 +244,14 @@ struct JITMethod {
     // GC).  See `jit_rt_fill_ic` re-enablement notes.
     uint64_t* icBuffer;
 
+    // Cached bytecode start address (= compiledMethodOop + (2 + numLits) * 8).
+    // Populated in compileViaAsmjit after construction.  Lets the inline-J2J
+    // emit skip the 7-instruction computation per send site (load methodObj
+    // + load methodHeader + mask numLits + add 1 + lsl 3 + add 8 + add).
+    // Sourced from immutable fields (compiledMethodOop + methodHeader) so
+    // no invalidation needed.
+    uint64_t  bcStartCache;
+
     // --- Accessors ---
 
     // Pointer to the start of machine code (immediately after header)

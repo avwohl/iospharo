@@ -73,7 +73,9 @@
 // heap-side JITMethodStats struct.
 // Bumped to 96 (2026-05-03) when icBuffer was added — IC entries
 // moved out of MAP_JIT into a heap-allocated side-buffer.
-#define JM_SIZE           96
+// Bumped to 104 (2026-05-20) when bcStartCache was added so the
+// inline-J2J emit can read pre-computed bytecode-start in one load.
+#define JM_SIZE           104
 
 // -------- ExitReason values --------
 #define EXIT_RETURN       1

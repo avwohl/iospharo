@@ -3168,7 +3168,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // Compute entryAddr (x9) and calleeJM (x10)
                 // entryAddr = x7 & J2J_ADDR_MASK (low 48 bits)
                 a.and_(x9, x7, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
-                a.sub(x10, x9, asmjit::Imm(96));  // calleeJM = entry - JM_SIZE
+                a.sub(x10, x9, asmjit::Imm((int)sizeof(JITMethod)));  // calleeJM = entry - JM_SIZE
 
                 // Self-recursive check by COMPILED METHOD OOP, not JM
                 // pointer.  callerJM and calleeJM can differ if the method
@@ -3394,18 +3394,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(x13, x12, asmjit::Imm(nArgs * 8)); // x13 = new tempBase
                 a.str(x13, ptr(x0, OFF_TEMPBASE));
 
-                // Compute method bytecode start address
-                //   methodObj = jitMethod->compiledMethodOop (at offset 0)
-                //   methodHeader = jitMethod->methodHeader (at offset 16)
-                //   numLits = methodHeader & 0x7FFF
-                //   bcStart = methodObj + 8 + (1+numLits)*8
-                a.ldr(x14, ptr(x10, 0));         // methodObj
-                a.ldr(x15, ptr(x10, 16));        // methodHeader
-                a.and_(x15, x15, asmjit::Imm(0x7FFF));  // numLits
-                a.add(x15, x15, asmjit::Imm(1));
-                a.lsl(x15, x15, asmjit::Imm(3));
-                a.add(x14, x14, asmjit::Imm(8));
-                a.add(x14, x14, x15);            // bcStart
+                // Load cached bcStart from JITMethod (offset 96).  Pre-
+                // computed in compileViaAsmjit from compiledMethodOop +
+                // methodHeader — both immutable post-construct.  Saves
+                // 6 instructions per inline-J2J emit site (was a 7-instr
+                // numLits-shift-add chain).
+                a.ldr(x14, ptr(x10, (int)offsetof(JITMethod, bcStartCache)));
                 a.str(x14, ptr(x0, OFF_IP));
 
                 // sp = tempBase + tempCount*8 (tempCount from JM offset 35)
@@ -4906,6 +4900,13 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
 
     jm->compiledMethodOop = compiledMethod.rawBits();
     jm->methodHeader      = static_cast<uint64_t>(headerBits);
+    // Pre-compute bcStart so the inline-J2J emit can read it in one load
+    // instead of recomputing per send.  Mirrors JITMethod::bcStart() —
+    // depends only on the now-set compiledMethodOop + methodHeader.
+    {
+        uint64_t numLits = jm->methodHeader & 0x7FFFu;
+        jm->bcStartCache = jm->compiledMethodOop + (2 + numLits) * 8;
+    }
     jm->argCount          = static_cast<uint8_t>((headerBits >> 24) & 0x0F);
     jm->tempCount         = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
     // numBytecodes is the source-bytecode count for the live region.
