@@ -873,14 +873,17 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 14: return primIndex;   // SmallInteger>>bitAnd:
     case 15: return primIndex;   // SmallInteger>>bitOr:
     case 16: return primIndex;   // SmallInteger>>bitXor:
-    // Prims 60/61/62 prologue handles fmt 2 (Array) and fmt 16-23 (byte
-    // indexable) only.  WordArray (fmt 10-11) and friends fall through
-    // to the Smalltalk fallback at the bytecode level — which for
-    // Object>>basicAtPut: is `^ self errorImproperStore: aValue`,
-    // raising spuriously for cases the C primitive would have handled.
-    // Inline prologue stays gated until fmt 9-15 + 24-31 land.
-    // (The send-site catch via primKind 14/15/16 still fires; the
-    // prologue saved <5% over that on the bench suite per docs.)
+    // Prims 60/61/62 prologue handles fmt 2 (Array), fmt 10-11 (32-bit
+    // WordArray/IntegerArray), and fmt 16-23 (byte indexable: ByteArray,
+    // String, Symbol).  Other formats (fmt 9 Indexable64, fmt 12-15
+    // 16-bit, fmt 3-5 variable+fixed) still fall through to the
+    // Smalltalk fallback — for `Object>>basicAtPut:` that's
+    // errorImproperStore, which is correct for cases the C primitive
+    // would also fail on (e.g., wrong type) but raises spuriously for
+    // legal receivers in those formats.  Re-enable when those land.
+    case 60: return primIndex;   // Array/ByteArray/WordArray >> at:
+    case 61: return primIndex;   // Array/ByteArray/WordArray >> at:put:
+    case 62: return primIndex;   // Array/ByteArray/WordArray >> size
     case 541: return primIndex;  // SmallFloat>>+
     case 542: return primIndex;  // SmallFloat>>-
     case 549: return primIndex;  // SmallFloat>>*
@@ -1823,11 +1826,26 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.b_eq(fail);
 
         if (primIndex == 62) {
-            // size — fmt 2 (Array) or 16-23 (byte).
+            // size — fmt 2 (Array), fmt 10-11 (32-bit WordArray), or 16-23 (byte).
+            asmjit::Label tryWords = a.new_label();
             asmjit::Label tryBytes = a.new_label();
             a.cmp(x6, asmjit::Imm(2));
-            a.b_ne(tryBytes);
+            a.b_ne(tryWords);
             // Array: result = slotCount tagged.
+            a.lsl(x5, x5, asmjit::Imm(3));
+            a.orr(x5, x5, asmjit::Imm(1));
+            a.str(x5, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            a.bind(tryWords);
+            // fmt 10-11: 32-bit indexable (WordArray, IntegerArray).
+            // numElements = slotCount*2 - (fmt - 10).
+            a.sub(x8, x6, asmjit::Imm(10));
+            a.cmp(x8, asmjit::Imm(2));
+            a.b_hs(tryBytes);
+            a.lsl(x5, x5, asmjit::Imm(1));         // sc*2
+            a.sub(x5, x5, x8);                       // numElements
             a.lsl(x5, x5, asmjit::Imm(3));
             a.orr(x5, x5, asmjit::Imm(1));
             a.str(x5, ptr(x0, OFF_RETVAL));
@@ -1862,10 +1880,11 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.b_ne(fail);                         // idx not SmI
 
         if (primIndex == 60) {
-            // at: — fmt 2 (Array) or 16-23 (byte indexable).
+            // at: — fmt 2 (Array), fmt 10-11 (32-bit WordArray), or 16-23 (byte).
+            asmjit::Label tryWordsAt = a.new_label();
             asmjit::Label tryBytesAt = a.new_label();
             a.cmp(x6, asmjit::Imm(2));
-            a.b_ne(tryBytesAt);
+            a.b_ne(tryWordsAt);
             a.asr(x4, x3, asmjit::Imm(3));   // idx untagged
             a.cmp(x4, asmjit::Imm(1));
             a.b_lt(fail);
@@ -1876,6 +1895,30 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.add(x6, x1, x4);
             a.ldr(x4, ptr(x6));
             a.str(x4, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            a.bind(tryWordsAt);
+            // fmt 10-11: 32-bit indexable (WordArray, IntegerArray).
+            // numElements = slotCount*2 - (fmt - 10).  Load uint32, tag SmI.
+            a.sub(x8, x6, asmjit::Imm(10));
+            a.cmp(x8, asmjit::Imm(2));
+            a.b_hs(tryBytesAt);
+            a.lsl(x9, x5, asmjit::Imm(1));         // sc*2
+            a.sub(x9, x9, x8);                      // numElements
+            a.asr(x4, x3, asmjit::Imm(3));          // idx
+            a.cmp(x4, asmjit::Imm(1));
+            a.b_lt(fail);
+            a.cmp(x4, x9);
+            a.b_gt(fail);
+            // 32-bit slot at recv + 4 + idx*4 (slot[0]=offset 8, slot[idx-1]=offset 8+(idx-1)*4).
+            a.lsl(x4, x4, asmjit::Imm(2));
+            a.add(x6, x1, x4);
+            a.ldur(w7, ptr(x6, 4));
+            // Tag as SmI: ((uint64)w7 << 3) | 1.
+            a.lsl(x7, x7, asmjit::Imm(3));
+            a.orr(x7, x7, asmjit::Imm(1));
+            a.str(x7, ptr(x0, OFF_RETVAL));
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             a.ret(x30);
@@ -1912,9 +1955,10 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             // Immutability check (bit 23).
             a.tbnz(x4, asmjit::Imm(23), fail);
             a.ldr(x9, ptr(x2, 8));            // x9 = val (tagged)
+            asmjit::Label tryWordsAtPut = a.new_label();
             asmjit::Label tryBytesAtPut = a.new_label();
             a.cmp(x6, asmjit::Imm(2));
-            a.b_ne(tryBytesAtPut);
+            a.b_ne(tryWordsAtPut);
             // Array path.
             a.asr(x4, x3, asmjit::Imm(3));
             a.cmp(x4, asmjit::Imm(1));
@@ -1924,6 +1968,39 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.lsl(x4, x4, asmjit::Imm(3));
             a.add(x6, x1, x4);
             a.str(x9, ptr(x6));               // store value at slot
+            a.str(x9, ptr(x0, OFF_RETVAL));   // return value
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            a.bind(tryWordsAtPut);
+            // fmt 10-11: 32-bit indexable (WordArray, IntegerArray).
+            // val must be SmI in [0, 0xFFFFFFFF].
+            a.sub(x8, x6, asmjit::Imm(10));
+            a.cmp(x8, asmjit::Imm(2));
+            a.b_hs(tryBytesAtPut);
+            // val SmI tag check.
+            a.and_(x7, x9, asmjit::Imm(0x7));
+            a.cmp(x7, asmjit::Imm(1));
+            a.b_ne(fail);
+            a.asr(x7, x9, asmjit::Imm(3));    // val untagged (signed)
+            // val < 0 → fail; val > 0xFFFFFFFF → fail.
+            a.cmp(x7, asmjit::Imm(0));
+            a.b_lt(fail);
+            a.mov(x10, asmjit::Imm(0xFFFFFFFFULL));
+            a.cmp(x7, x10);
+            a.b_hi(fail);
+            // numElements = slotCount*2 - (fmt - 10).
+            a.lsl(x10, x5, asmjit::Imm(1));   // sc*2
+            a.sub(x10, x10, x8);              // numElements
+            a.asr(x4, x3, asmjit::Imm(3));    // idx
+            a.cmp(x4, asmjit::Imm(1));
+            a.b_lt(fail);
+            a.cmp(x4, x10);
+            a.b_gt(fail);
+            // Store uint32 at recv + 4 + idx*4.
+            a.lsl(x4, x4, asmjit::Imm(2));
+            a.add(x6, x1, x4);
+            a.stur(w7, ptr(x6, 4));
             a.str(x9, ptr(x0, OFF_RETVAL));   // return value
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
