@@ -1,18 +1,28 @@
 # WIP — JIT perf session (2026-05-20, post-reboot iter)
 
-## Session progress 2026-05-20 post-reboot (8 commits added)
+## Session progress 2026-05-20 post-reboot (16 commits added)
 
 Cumulative measured perf gains (M1, PHARO_BENCH=fib, best-of-5):
 
     bench    pre-session    post     cog    gap     delta
-    fib(28)  13.0 ms        11.7 ms  3 ms   3.9×    -10%
-    fib(30)  35.7 ms        30.7 ms  ~8 ms  3.8×    -14%
-    fib(32)  86 ms          81 ms    —      —       -6%
+    fib(28)  13.0 ms        11.2 ms  3 ms   3.7×    -14%
+    fib(30)  35.7 ms        28.7 ms  ~8 ms  3.6×    -20%
+    fib(32)  86 ms          72 ms    —      —       -16%
     sieve    2.3 ms         2.3 ms   ~1 ms  2.3×    flat
 
-Additional commit: `48c75e09` cache j2jDepth/totalCalls inc constant
-(0x100000001) in JITState — replaces movz+movk pair with single ldr,
-saves 1 instr per inline-J2J site.
+J2J save protocol iteration adds (newest first):
+- `8bca7b15` reuse x2 (sp from IC HIT) in callee setup
+- `951b1f10` hoist JM load to IC probe, share with J2J path
+- `c7b4cf22` skip sub x10 calleeJM compute when not needed
+- `82fa2d58` skip redundant sp write for nArgs==tempCount
+- `97001c13` pre-index ldp folds cursor decrement in return prelude
+- `397a09f2` post-index stp folds cursor bump into save push
+- `ad6a34a7` skip save.jitMethod write in xmethod-off J2J push
+- `04f8e5fc` point J2J resumeAddr directly at endOfSend
+- `48c75e09` cache j2jDepth/totalCalls inc constant in JITState
+
+Per-send instr count: ~42 (pre-session) → ~26 (now).
+Per-return instr count: ~22 (pre-session) → ~17 (now).
 
 Shipped (in order):
 - `84dfad61` shrink inline-J2J self-recursive callee setup (skip
