@@ -3334,8 +3334,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 a.stp(x15, x4, ptr(x6, 16));       // tempBase + ip
                 a.stp(x11, x14, ptr(x6, 32));      // callerJM + resumeAddr
-                a.mov(w15, asmjit::Imm(nArgs));
-                a.str(w15, ptr(x6, 48));
+                if (nArgs == 0) {
+                    // wzr writes 32 zero bits directly — skip the mov.
+                    a.str(wzr, ptr(x6, 48));
+                } else {
+                    a.mov(w15, asmjit::Imm(nArgs));
+                    a.str(w15, ptr(x6, 48));
+                }
 
                 // Bump cursor + depth + totalCalls.  depth and totalCalls
                 // are adjacent int32 fields (offsets 160/164); fold the
