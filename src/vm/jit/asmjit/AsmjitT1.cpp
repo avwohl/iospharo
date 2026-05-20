@@ -2946,10 +2946,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
         // Per-site IC address into x5.  Load JITMethod into x11 first
         // so the inline-J2J emit can reuse it as callerJM without a
-        // second OFF_JITMETHOD load — saves 1 instr per J2J-hit site.
-        // x11 is callee-saved-clobberable here (asmjit-T1 emit owns it
-        // for the duration of a send).
-        a.ldr(x11, ptr(x0, OFF_JITMETHOD));
+        // second OFF_JITMETHOD load.
+        //
+        // For xmethod-off (default), state.jitMethod is hoisted to x19
+        // at trampoline entry + JIT_CALL, so we can skip the per-send
+        // load entirely (saves 1 ldr per send).  Just mov x11, x19.
+        // For xmethod-on, state.jitMethod can change mid-execution
+        // (cross-method update), so we must reload each time.
+        if (g_debug.t1InlineJ2JXmethod) {
+            a.ldr(x11, ptr(x0, OFF_JITMETHOD));
+        } else {
+            a.mov(x11, asmjit::a64::x19);
+        }
         a.ldr(x5, ptr(x11, (int)offsetof(JITMethod, icBuffer)));
         // Skip the add when siteIdx == 0 (the first send in the method
         // — x5 already points at the right place).  Saves 1 instr at

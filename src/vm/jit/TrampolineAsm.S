@@ -154,6 +154,11 @@ SYMBOL(pharo_jit_j2j_trampoline):
     // push.  x20 is callee-saved per AAPCS, so blr/ret preserves it
     // through stencil/C calls.
     ldr     x20, [x21, #JS_J2J_DEPTH_INC]
+    // x19 = state.jitMethod cached for asmjit-T1 IC HIT path.
+    // For xmethod-off (default) state.jitMethod doesn't change
+    // mid-execution, so this stays valid across J2J self-rec calls.
+    // Saves 1 ldr per IC HIT (vs `ldr x11, [OFF_JITMETHOD]` per send).
+    ldr     x19, [x21, #JS_JITMETHOD]
 
 // ======== Dispatch loop ========
 // Align loop head to a 16-byte fetch block boundary so the 4 decode slots

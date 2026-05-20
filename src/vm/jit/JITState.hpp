@@ -235,6 +235,9 @@ typedef void (*StencilFunc)(JITState*);
         /* asmjit-T1 inline-J2J emit can use it directly instead of */ \
         /* an extra ldr per push.  Offset 208 = OFF_J2J_DEPTH_INC. */ \
         "ldr x20, [x0, #208]\n\t" \
+        /* x19 = state.jitMethod (offset 56) — pre-loaded for IC HIT */ \
+        /* path.  Saves 1 ldr per send for xmethod-off (default). */ \
+        "ldr x19, [x0, #56]\n\t" \
         "blr %[e]" \
         : \
         : [s] "r"(_jit_s), [e] "r"(_jit_e) \
