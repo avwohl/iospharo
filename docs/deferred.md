@@ -989,6 +989,39 @@ the chain-loop callee's "implicit return slot".
 NEXT TURN: implement the missing slot-write in the materialize-bail
 fallback path.
 
+**Iter N+30j (2026-05-21) — attempted fixes don't immediately work.**
+
+Tested `PHARO_NO_JIT_RESUME_AFTER_RETURN=1` (disables
+tryJITResumeInCaller globally for benchFib): fib(20) still returns
+13548.  So the bug isn't fixed by disabling JIT-resume alone.
+
+Re-examination suggests the chain is recursively triggered: each
+level's JIT-resumed body invokes ANOTHER materialize-bail when it
+does its second send (via tryJITActivation → JIT → inline-J2J →
+benchFib(2)'s empty IC bails again).  Each nested bail compounds
+the value-slot corruption.
+
+True architectural fix likely requires one of:
+1. **Pure-J2J gate**: prevent inline-J2J from firing when callee
+   might bail.  For benchFib all sends are J2J or inline-prim, but
+   the second-send IC is COLD for the deeper invocations.
+2. **Recursive-safe materialize**: ensure materialize+unwind is
+   idempotent under nested bails (currently it's not — each nested
+   bail loses one slot's worth of value tracking).
+3. **No-bail design**: change inline-J2J to NEVER bail — fall back
+   to chain-loop only at well-defined points where state is clean.
+
+Estimated effort: multi-turn architectural rework.
+
+For now, default-off `t1InlineJ2J` remains the SHIPPED workaround
+(commit `b77311c9`).  All investigation traces have been removed;
+working tree at clean state.
+
+The bug investigation has been extensive (iter N+30 through N+30j),
+isolating the SYMPTOM precisely but the root cause spans the
+chain-loop ↔ inline-J2J ↔ materialize-bail interaction in a way
+that requires architectural change to fix correctly.
+
 **Iter N+29 (2026-05-20) — J2J save protocol exhausted; routing-to-Sista
 investigation.**
 
