@@ -1,6 +1,6 @@
 # WIP — JIT perf session (2026-05-20, post-reboot iter)
 
-## Session progress 2026-05-20 post-reboot (19+ commits added)
+## Session progress 2026-05-20 post-reboot (28+ commits added)
 
 Cumulative measured perf gains (M1, PHARO_BENCH=fib, best-of-5):
 
@@ -22,8 +22,10 @@ J2J save protocol iteration adds (newest first):
 - `ad6a34a7` skip save.jitMethod write in xmethod-off J2J push
 - `04f8e5fc` point J2J resumeAddr directly at endOfSend
 - `48c75e09` cache j2jDepth/totalCalls inc constant in JITState
+- `e88c1b63` hoist state.jitMethod to x19 callee-saved reg
+- `bb4e40e0` use x19 directly for IC/bcStart loads (skip mov x11, x19)
 
-Per-send instr count: ~42 (pre-session) → ~22 (now).
+Per-send instr count: ~42 (pre-session) → ~21 (now).
 Per-return instr count: ~22 (pre-session) → ~16 (now).
 
 ## Phase 4 inlining recognizers added this session
