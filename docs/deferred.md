@@ -526,6 +526,35 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+24 (2026-05-20) — bcStart cache + inline-J2J stp-fold
+(`9240027f` + `4da43536`).**
+
+Two further emit shrinks at the inline-J2J self-recursive site:
+
+1. **bcStart cache (`9240027f`).**  Added `bcStartCache` field to
+   JITMethod, pre-computed in `compileViaAsmjit` from `compiledMethodOop
+   + (2 + numLits) * 8`.  The inline-J2J emit was previously recomputing
+   bcStart per send via a 7-instruction chain (load methodObj, load
+   methodHeader, mask numLits, add 1, lsl 3, add 8, add).  Replaced with
+   a single `ldr` from the cache.  Saves 6 instructions per inline-J2J
+   site.  JITMethod grew 96→104 bytes; `TrampolineAsm.S` JM_SIZE bumped
+   to match (runtime sentinel asserts agreement).
+
+2. **tempBase + ip stp-fold (`4da43536`).**  Folded the separate ldr-str
+   pairs for save.tempBase (offset 16) and save.ip (offset 24) into a
+   single stp.  Saves 1 instruction per inline-J2J site.
+
+**Measured (PHARO_BENCH=fib):**
+
+    bench         pre-N+24    post-N+24   cog       gap-to-cog
+    fib(28)       13 ms       13 ms       3 ms      4.3×
+    fib(30)       36-39 ms    35 ms       ~8 ms     4.4×
+
+fib(28) is within bench noise — M1's wide pipeline + memory-level
+parallelism mask single-instruction savings on short methods.  fib(30)
+shows a measurable 5-10% reduction; the deeper recursion makes the
+cumulative saving visible.
+
 **Iter N+23 (2026-05-19 late evening) — sieve correctness + inline-J2J
 emit shrink (`de84c68e` + `8d983dff`).**
 
