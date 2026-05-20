@@ -1076,12 +1076,14 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                   int siteIdx,
                   const std::vector<asmjit::Label>& bcLabels,
                   int globalIdx,
-                  int callerArgCount, int callerTempCount) {
+                  int callerArgCount, int callerTempCount,
+                  int staticJ2JArgCount) {
     using namespace asmjit::x86;
     (void)bcOffsetFromMethObj;
     (void)siteIdx;
     (void)callerArgCount;
     (void)callerTempCount;
+    (void)staticJ2JArgCount;
 
     // pushRecvVar N: push receiver.slot[N].
     if (op <= 0x0F) {
@@ -2213,7 +2215,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     int siteIdx,
                     const std::vector<asmjit::Label>& bcLabels,
                     int globalIdx,
-                    int callerArgCount, int callerTempCount) {
+                    int callerArgCount, int callerTempCount,
+                    int staticJ2JArgCount) {
     using namespace asmjit::a64;
     (void)bcOffsetFromMethObj;
     (void)siteIdx;
@@ -2379,7 +2382,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x6, ptr(x0, OFF_TEMPBASE));
         a.str(x10, ptr(x0, OFF_IP));
         a.ldr(x8, ptr(x4, 40));       // resumeAddr (always needed)
-        a.ldr(w9, ptr(x4, 48));       // sendArgCount
+        // sendArgCount: if all J2J sends in this method have the same
+        // nArgs (compile-time uniform), the return prelude can use the
+        // value as an immediate, skipping the load + lsl/sub in the
+        // sp-adjust below.  Otherwise load from save.
+        if (staticJ2JArgCount < 0) {
+            a.ldr(w9, ptr(x4, 48));       // sendArgCount
+        }
 
         // Derive method/literals/argCount/jitMethod from callerJM.
         // When xmethod is OFF (default), the J2J push path is strictly
@@ -2405,10 +2414,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         //
         // Fold via: new_sp = sp - nArgs*8; recv_slot = new_sp - 8
         // (the recv slot was at sp-(nArgs+1)*8 = new_sp - 8 after the
-        // subtraction).  `stur` supports the -8 displacement directly,
-        // saving the explicit (nArgs+1)*8 compute.
-        a.lsl(x12, x9, asmjit::Imm(3));            // x12 = nArgs*8
-        a.sub(x5, x5, x12);                         // x5 = new sp
+        // subtraction).  `stur` supports the -8 displacement directly.
+        //
+        // When staticJ2JArgCount is known (all J2J sends in this method
+        // have the same nArgs), substitute the immediate for the dynamic
+        // lsl+sub.  nArgs=0 skips the sub entirely.
+        if (staticJ2JArgCount == 0) {
+            // sp unchanged; just write retval below current sp.
+        } else if (staticJ2JArgCount > 0) {
+            a.sub(x5, x5, asmjit::Imm(staticJ2JArgCount * 8));
+        } else {
+            a.lsl(x12, x9, asmjit::Imm(3));
+            a.sub(x5, x5, x12);
+        }
         a.stur(x1, ptr(x5, -8));                    // write retval @ new_sp-8
         a.str(x5, ptr(x0, OFF_SP));
 
@@ -4115,6 +4133,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                      int bcOffsetBase, int primIndex,
                      int callerArgCount, int callerTempCount,
+                     int staticJ2JArgCount,
                      uint8_t* out, size_t outCap,
                      size_t* outSize, bool* isReal,
                      uint32_t* bcToCodeOut) {
@@ -4242,7 +4261,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             if (!emitOne_x86(a, bcReal[i], nilBits,
                              bcOffsetBase + globalIdx, siteIdx,
                              bcLabels, globalIdx,
-                             callerArgCount, callerTempCount)) {
+                             callerArgCount, callerTempCount,
+                             staticJ2JArgCount)) {
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
                     globalIdx, bcReal[i]);
@@ -4649,7 +4669,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             if (!emitOne_arm64(a, op, nilBits,
                                 bcOffsetBase + globalIdx, siteIdx,
                                 bcLabels, globalIdx,
-                                callerArgCount, callerTempCount)) {
+                                callerArgCount, callerTempCount,
+                                staticJ2JArgCount)) {
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
                     globalIdx, op);
@@ -4889,8 +4910,28 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // compile time.
     int callerArgCount  = (int)((headerBits >> 24) & 0x0F);
     int callerTempCount = (int)((headerBits >> 18) & 0x3F);
+    // Pre-scan bytecodes to find a common nArgs for ALL Phase4 send
+    // sites in this method.  If uniform, the return prelude can use
+    // the value as an immediate (saving the load+lsl+sub).  If
+    // mixed (or no Phase4 sends), pass -1 to fall back to the
+    // dynamic load-from-save path.
+    int staticJ2JArgCount = -1;
+    int emitSkip = (primIdx > 0) ? 3 : 0;
+    for (size_t i = (size_t)emitSkip; i < bcLen; i++) {
+        uint8_t op = bc[i];
+        if (isPhase4SendOp(op)) {
+            int n = sendNArgs(op);
+            if (staticJ2JArgCount < 0) {
+                staticJ2JArgCount = n;
+            } else if (staticJ2JArgCount != n) {
+                staticJ2JArgCount = -1;  // mixed
+                break;
+            }
+        }
+    }
     if (!emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
                          callerArgCount, callerTempCount,
+                         staticJ2JArgCount,
                          buf.data(), cap, &emitted, &isReal,
                          bcToCode.data())) {
         g_failed++;
