@@ -231,6 +231,10 @@ typedef void (*StencilFunc)(JITState*);
     void* _jit_s = reinterpret_cast<void*>(state_ptr); \
     asm volatile( \
         "mov x0, %[s]\n\t" \
+        /* x20 = j2jDepthInc constant (0x100000001) — pre-loaded so */ \
+        /* asmjit-T1 inline-J2J emit can use it directly instead of */ \
+        /* an extra ldr per push.  Offset 208 = OFF_J2J_DEPTH_INC. */ \
+        "ldr x20, [x0, #208]\n\t" \
         "blr %[e]" \
         : \
         : [s] "r"(_jit_s), [e] "r"(_jit_e) \

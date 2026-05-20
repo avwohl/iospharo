@@ -40,6 +40,7 @@
 #define JS_RETURNVALUE    80
 #define JS_CACHEDTARGET   88
 #define JS_SENDARGCOUNT   104
+#define JS_J2J_DEPTH_INC  208
 
 // -------- J2JSave field offsets (see Interpreter.hpp struct J2JSave) --------
 // 56 bytes after dropping literals/argCount/bcStart — those are derived from
@@ -147,6 +148,12 @@ SYMBOL(pharo_jit_j2j_trampoline):
     mov     x27, #MAX_J2J_BYTES       // 18432 fits in movz (16-bit immediate)
     add     x27, x1, x27
     mov     x28, x5                   // nil Oop bits
+    // x20 = j2jDepthInc constant (0x100000001).  Loaded here AND
+    // in the JIT_CALL macro so asmjit-T1's inline-J2J emit can use
+    // x20 directly instead of an `ldr x14, [OFF_J2J_DEPTH_INC]` per
+    // push.  x20 is callee-saved per AAPCS, so blr/ret preserves it
+    // through stencil/C calls.
+    ldr     x20, [x21, #JS_J2J_DEPTH_INC]
 
 // ======== Dispatch loop ========
 // Align loop head to a 16-byte fetch block boundary so the 4 decode slots

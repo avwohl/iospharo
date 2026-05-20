@@ -3408,12 +3408,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
                 static_assert(OFF_J2J_TOTAL_CALLS == OFF_J2J_DEPTH + 4,
                               "depth/totalCalls adjacency required for 64-bit batched increment");
-                // Load the precomputed 0x100000001 from JITState
-                // (initialized once in tryJITActivation).  Replaces the
-                // inline movz+movk pair (2 instr → 1 instr).
-                a.ldr(x14, ptr(x0, OFF_J2J_DEPTH_INC));
+                // x20 = j2jDepthInc (0x100000001), pre-loaded at JIT
+                // entry by the trampoline AND by JIT_CALL macro.
+                // x20 is callee-saved per AAPCS — preserved across all
+                // br/blr/ret in the J2J chain.  Saves 1 ldr per push
+                // vs loading from OFF_J2J_DEPTH_INC each time.
                 a.ldr(x13, ptr(x0, OFF_J2J_DEPTH));
-                a.add(x13, x13, x14);
+                a.add(x13, x13, asmjit::a64::x20);
                 a.str(x13, ptr(x0, OFF_J2J_DEPTH));
 
                 // Set up callee state for self-recursion:
