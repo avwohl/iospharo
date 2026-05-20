@@ -795,6 +795,53 @@ If the slot offset is wrong by one, the fix is either to record SP
 in SavedFrame or to fix the SP restoration logic in popFrame for
 materialized-J2J frames.
 
+**Iter N+30f (2026-05-21 early am) — SP trace CONFIRMS "off-by-2"
+shift pattern.**
+
+popFrame SP trace (PHARO_TRACE_BFIB_POP_SP=1) for benchFib(N)→
+benchFib(N+1) pops:
+
+- WARMUP (correct): `spVsFp=1`, `sp[0]=8361` (= just-popped value
+  for benchFib(18)→benchFib(19), correct), `savFP[2]=8361` (the
+  slot receiving the value matches popped value).
+- RUN 0 (buggy): `spVsFp=3` (TWO EXTRA stack slots above FP),
+  `sp[0]=3193` (= just-popped value for benchFib(18)→benchFib(19),
+  WRONG — should be 8361), `savFP[2]=17` (random stale value).
+
+Pattern confirmed for the WHOLE chain:
+- benchFib(15) returns 753 (= benchFib(13))
+- benchFib(16) returns 1219 (= benchFib(14))
+- benchFib(17) returns 1973 (= benchFib(15))
+- benchFib(18) returns 3193 (= benchFib(16))
+- benchFib(19) returns 5186 (= benchFib(18)'s_wrong + correct(17) + 1)
+
+Every benchFib(N) returns benchFib(N-2)'s VALUE — consistent
+"off-by-2" shift.
+
+What's happening: when the materialize-unwind pops a frame for
+benchFib(N), the SavedFrame's `savedFP` points 2 slots WRONG —
+benchFib(N)'s body resumes with a stale stack such that what it
+SEES as its first-send-result is actually benchFib(N-3)'s value
+(from a deeper frame), and the body proceeds normally producing
+benchFib(N-2)'s expected output.
+
+The "off by 2" specifically arises because each save corresponds
+to a level in the chain (benchFib(18)→17 push = save 0,
+benchFib(17)→16 = save 1, ...), and savedFP of save i points to
+level i+2's stack area (off by one OR two due to inline-J2J's
+nArgs/tempCount layout assumption).
+
+NEXT STEP: examine asmjit-T1's inline-J2J push at AsmjitT1.cpp:3500
+where `state.tempBase = sp - nArgs*8` is set (= callee's tempBase).
+For nArgs=0 (benchFib), tempBase = sp (= just after receiver pushed).
+For the SAVE, save.tempBase captures state.tempBase BEFORE this
+update — should be CALLER's tempBase.  If the order is wrong (save
+captures CALLEE's tempBase), savedFP = callee.tempBase - 1 = a slot
+inside the wrong frame.
+
+This is the ACTUAL bug.  Fix is to ensure save.tempBase captures
+caller's tempBase before the inline-J2J update overwrites state.tempBase.
+
 **Iter N+29 (2026-05-20) — J2J save protocol exhausted; routing-to-Sista
 investigation.**
 
