@@ -9110,6 +9110,14 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     }
                 }
             }
+            if (std::getenv("PHARO_TRACE_SISTA_DISPATCH")) {
+                static uint64_t n = 0;
+                n++;
+                if (n <= 5 || (n & 0xFFFFF) == 0)
+                    fprintf(stderr, "[SISTA-DISP #%llu] method=#%s\n",
+                            (unsigned long long)n,
+                            memory_.selectorOf(method).c_str());
+            }
             fn(&sstate);
             jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                                 jitRuntime_.codeZone().totalBytes());
