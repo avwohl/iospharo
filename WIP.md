@@ -27,6 +27,48 @@ Shipped (in order):
   (pre-scan method bytecodes; if all sends have same nArgs, use
   the value as immediate and skip ldr+lsl+sub in return prelude)
 
+## Sista Phase 4 — starting work
+
+Commit `1c311666` ships the first Phase 4 step for this session:
+extend `tryInlineConstReturn` with 5- and 6-value recognizers for
+`^ ivar OP const` (the single-ivar simpler cousin of the existing
+10-value `^ ivarA OP ivarB OP const` chain).
+
+**State of Phase 4 (in tree):**
+- `tryInlineConstReturn` handles shape-based monomorphic inlining
+  for: 2-value const-return / param-passthrough / self-send chain;
+  3-value getter / chain; 4-value setter; 5-value setter w/ return
+  (multi-shape); 5/6-value ivar+const (NEW this session); 10-value
+  ivar+ivar+const chain.
+
+**What stops Phase 4 from helping fib (and most benchmarks):**
+
+1. Sista's hook fires in `activateMethod` which is BYPASSED by T1's
+   inline-J2J path.  For fib/benchFib (100% catch rate inline-J2J),
+   Sista never runs.  Bench output confirms: `[SISTA] hits=0/1`.
+2. Recognizer-based inlining only handles trivial methods (≤10
+   values, fixed shapes).  benchFib has multi-block control flow +
+   recursive sends — outside any recognizer's scope.
+3. Even if Sista ran on benchFib, recursive self-inlining isn't
+   implemented (depth limit 2 in `tryInlineConstReturn`).  And
+   recursive inlining is exponential in code size — practically
+   limited to 1-2 levels deep.
+
+**Path to actually closing the fib gap (multi-session):**
+
+- General callee-splicing IR transform (not shape recognizers):
+  lift callee, substitute kLoadReceiver/kLoadArg with caller values,
+  splice all blocks into caller IR, map kReturn to caller flow.
+- Recursive-self handling: detect SELF_REC_BIT at compile time
+  (via T1 IC hints) and inline N levels with the Nth level still
+  going through J2J.
+- Wire Sista into T1's dispatch path so monomorphic-inlined
+  versions can supersede T1's J2J emit.
+
+Per `docs/sista-inlining-plan.md`, the full Phase 4 estimate is
+4-5 weeks of focused work, and prerequisite Phase 3 (deopt
+infrastructure) is 4-6 weeks.
+
 ## Architectural conclusion
 
 Closing the remaining ~4× fib gap to Cog requires Sista Phase 4
