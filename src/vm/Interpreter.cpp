@@ -18107,6 +18107,14 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                 // Preserve primKind bits (52:48) already set above
                 extra |= (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+                // SELF_REC_BIT (bit 56): pendingICOwnerMethod_ holds the
+                // caller's CM oop at this point.  See upgradeICToJ2J for
+                // the asmjit-T1 inline-J2J use.
+                if (pendingICOwnerMethod_.isObject()
+                        && pendingICOwnerMethod_.rawBits()
+                            == resolvedMethod.rawBits()) {
+                    extra |= (1ULL << 56);
+                }
                 jitJ2JDirectPatches_++;
             }
         }
@@ -18386,6 +18394,17 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                     if (!noBlockBit4 && (primIdx == 207 || primIdx == 209)) {
                         newExtra |= (1ULL << 59);  // BLOCK_VALUE_BIT
                     }
+                    // SELF_REC_BIT (bit 56): callee CM oop equals caller CM
+                    // oop, i.e. this send is self-recursive.  asmjit-T1's
+                    // inline-J2J emit tests this bit to skip the 2-ldr+cmp
+                    // CM-oop comparison.  Both callerMethod and cachedMethod
+                    // are CM oops at patch time; equality is stable across
+                    // recompile (rewriteIcEntriesAfterRecompile only rewrites
+                    // entryAddr, preserves upper bits).
+                    if (callerMethod.isObject()
+                            && callerMethod.rawBits() == cachedMethod.rawBits()) {
+                        newExtra |= (1ULL << 56);  // SELF_REC_BIT
+                    }
                 }
                 icData[e * 3 + 2] = newExtra;
                 jitJ2JDirectPatches_++;
@@ -18444,6 +18463,13 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 if (target->hasPrimPrologue) {
                     uint8_t pk = inlinePrimKind(primIdx);
                     if (pk) newExtra |= (uint64_t)pk << 48;
+                }
+                // SELF_REC_BIT (bit 56): asmjit-T1 inline-J2J uses this
+                // to skip the runtime CM-oop comparison.  See matching-
+                // entry path above for invariant.
+                if (callerMethod.isObject()
+                        && callerMethod.rawBits() == cachedMethod.rawBits()) {
+                    newExtra |= (1ULL << 56);
                 }
                 // BLOCK_VALUE_BIT (bit 59): block-value primitives 207/209.
                 // 2026-05-02 PM fix: previously only patchJITICAfterSend's

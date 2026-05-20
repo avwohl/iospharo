@@ -3175,27 +3175,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.and_(x9, x7, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
                 a.sub(x10, x9, asmjit::Imm((int)sizeof(JITMethod)));  // calleeJM = entry - JM_SIZE
 
-                // Self-recursive check by COMPILED METHOD OOP, not JM
-                // pointer.  callerJM and calleeJM can differ if the method
-                // has been recompiled mid-recursion (rewriteIcEntries
-                // updates IC entry to NEW JM, but state.jitMethod is OLD
-                // JM for in-flight invocation).  Both JMs share the
-                // same compiledMethodOop (stable Smalltalk-level identity).
-                //
-                // Use state.jitMethod->compiledMethodOop (not state.method).
-                // state.method tracks the OUTERMOST method in the J2J chain
-                // (only updated by tryJITActivation), so it doesn't reflect
-                // the currently-executing inner method.  state.jitMethod IS
-                // updated by stencils.cpp's j2j_direct_call so it's the
-                // right indicator of the current method.
-                a.ldr(x11, ptr(x0, OFF_JITMETHOD));   // x11 = callerJM
-                a.ldr(x12, ptr(x11, 0));               // x12 = caller's CM oop
-                a.ldr(x13, ptr(x10, 0));               // x13 = callee's CM oop (JM[0])
+                // Self-recursive check via SELF_REC_BIT (bit 56) in the
+                // IC extra word.  The IC patcher sets this bit when
+                // callerCM == calleeCM at IC-fill time (see
+                // Interpreter::upgradeICToJ2J + patchJITICAfterSend).
+                // Bit preserved across recompile by
+                // rewriteIcEntriesAfterRecompile (only entryAddr in
+                // bits 47:0 is rewritten).  Replaces the prior
+                // 2-ldr + cmp + branch CM-oop comparison (saves
+                // 3 instr per inline-J2J site).
+                a.ldr(x11, ptr(x0, OFF_JITMETHOD));   // x11 = callerJM (save-push)
 
-                // Debug: stash last-seen values — gated on env var so
-                // production emit doesn't carry the 6-instruction
-                // overhead per inline-J2J site.
+                // Debug counters: stash last-seen values — gated on env
+                // var so production emit doesn't carry the overhead.
+                // CM loads only happen in the debug branch.
                 if (inlineJ2JCounters) {
+                    a.ldr(x12, ptr(x11, 0));    // caller's CM oop
+                    a.ldr(x13, ptr(x10, 0));    // callee's CM oop
                     a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_caller_method));
                     a.str(x12, ptr(x14));
                     a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_callee_method));
@@ -3209,72 +3205,31 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // debugging only.  PHARO_T1_INLINE_J2J_XMETHOD_MAX=N
                 // bisection-limits the number of cross-method fires.
                 const bool xmethod = g_debug.t1InlineJ2JXmethod;
-                // Always apply the cap (default 30000) when xmethod is
-                // on — empirically corruption surfaces above this and
-                // there's no benefit to UINT64_MAX without the protocol
-                // fix.  Negative values are treated as "no cap" for
-                // opt-in experiments.
                 if (g_debug.t1InlineJ2JXmethodMax >= 0) {
                     g_xmethod_max = (uint64_t)g_debug.t1InlineJ2JXmethodMax;
                 }
                 asmjit::Label sameMethodSkipUpdate = a.new_label();
                 if (xmethod) {
-                    // Cross-method inline-J2J — gated on callee.hasPrimPrologue.
-                    //
-                    // Root cause of historical crash (2026-05-19 lldb session):
-                    // callee like FullBlockClosure>>value: declares
-                    // `<primitive: 207>` but our asmjit-T1 prim-prologue emit
-                    // (supportedPrimIndex in this file) only handles a small
-                    // set of prims (1-16, 60, 61, 62, 70, 71, 110).  Prim 207
-                    // isn't in that set → callee compiles with
-                    // hasPrimPrologue=false, so the JIT body skips the prim
-                    // and runs the Smalltalk fallback (`^ self primitiveFailed`).
-                    // Cross-method to such a callee bypasses the prim and
-                    // raises primitiveFailed mid-execution — corrupts state
-                    // via exception machinery (Symbol bytes show up in
-                    // Interpreter::receiver_, crashing in interpret + 956).
-                    //
-                    // Gate: only inline-J2J when callee.hasPrimPrologue is
-                    // true OR callee has no primitive (pure Smalltalk).
-                    // JITMethod::hasPrimPrologue is at offset 41 (bool byte).
-                    // Method header "hasPrimitive" flag is at bit 16 of the
-                    // smallInteger-tagged header word.  For simplicity, require
-                    // hasPrimPrologue==true OR hasSends==true (i.e., not a
-                    // bare-prim method with no prim prologue).  Actually the
-                    // strongest gate is: skip when callee has prim but no
-                    // prologue.  Read methodHeader at JM[16] (low 16 bits =
-                    // numLits, bit 16 = hasPrim).
-                    a.cmp(x12, x13);
-                    a.b_eq(sameMethodSkipUpdate);
-                    // STRICTEST GATE: bail xmethod for ANY callee with a
-                    // declared primitive.  This excludes value: (prim 207)
-                    // and other unsupported prims that would skip the prim
-                    // call entirely.  hasPrim is at bit 16 of decoded header.
+                    // Bit 56 set → self-recursive, skip the cross-method
+                    // update.  Bit 56 not set → fall through to the
+                    // cross-method gates and update.
+                    a.tbnz(x7, asmjit::Imm(56), sameMethodSkipUpdate);
+                    // Cross-method gates use callee's methodHeader,
+                    // numICEntries, isStubOnEntry, canBailMidMethod.
+                    if (!inlineJ2JCounters) {
+                        a.ldr(x13, ptr(x10, 0));   // callee CM (for state.method)
+                    }
                     a.ldr(x4, ptr(x10, 16));            // methodHeader (decoded)
                     a.tbnz(x4, asmjit::Imm(16), j2jBailSelf2);  // has prim → bail
-                    // Leaf-only gate (numICEntries==0).  Even after the
-                    // iter N+14 post-send-IP fix, non-leaf callees still
-                    // corrupt state at low fire counts (verified by
-                    // re-bisection 2026-05-19 with this gate disabled —
-                    // FAIL at MAX=1000).  So there's at least one more
-                    // chain-break protocol bug for callees that exit via
-                    // dispatchCached.  Until that's root-caused, keep the
-                    // leaf gate as belt-and-suspenders.
-                    //
-                    // JITMethod::numICEntries lives at offset 28 (uint16).
+                    // JITMethod::numICEntries at offset 28 (uint16).
                     a.ldrh(w4, ptr(x10, 28));
                     a.cbnz(w4, j2jBailSelf2);
-                    // Skip stub callees — a stub method's body is just
-                    // `mov [s+OFF_EXIT], ExitSend; ret`, which never
-                    // triggers the J2J return prelude.  Without a pop,
-                    // the inline-J2J save persists forever and corrupts
-                    // subsequent activations.  isStubOnEntry at JM[47].
+                    // isStubOnEntry at JM[47] — stubs never invoke return
+                    // prelude → save would leak.
                     a.ldrb(w4, ptr(x10, 47));
                     a.cbnz(w4, j2jBailSelf2);
-                    // Skip callees that can bail mid-method (ExitMustBool
-                    // and similar).  Mid-method bails through the
-                    // inline-activate path corrupt the caller frame (see
-                    // JITMethod.hpp:194 doc).  canBailMidMethod at JM[46].
+                    // canBailMidMethod at JM[46] — mid-method bails
+                    // corrupt caller frame via inline-activate path.
                     a.ldrb(w4, ptr(x10, 46));
                     a.cbnz(w4, j2jBailSelf2);
                     a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_count));
@@ -3287,13 +3242,6 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_hi(j2jBailSelf2);
                     // Cross-method update:
                     a.str(x10, ptr(x0, OFF_JITMETHOD));
-                    // Also update state.method — previously left as
-                    // the outermost (per the AsmjitT1.cpp:2395 doc
-                    // comment) but the chain loop's bail handlers
-                    // and downstream interp lookup methodClassOf use
-                    // state.method, which then points at the wrong
-                    // class for the callee.  x13 = callee's compiled
-                    // method oop (from JM[0]).
                     a.str(x13, ptr(x0, OFF_METHOD));
                     a.add(x14, x13, asmjit::Imm(16));
                     a.str(x14, ptr(x0, OFF_LITERALS));
@@ -3303,9 +3251,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_LOG") != nullptr;
                     if (xlog) {
                         using namespace asmjit::a64;
-                        // Save x0 (state) + x9..x13, x7, x30 (LR).
-                        // Helper's return value clobbers x0 — must
-                        // restore it for the rest of the emit.
+                        if (!inlineJ2JCounters) {
+                            // xlog helper signature uses x12 = callerCM.
+                            a.ldr(x12, ptr(x11, 0));
+                        }
                         a.sub(sp, sp, asmjit::Imm(80));
                         a.stp(x0, x7,   ptr(sp, 0));
                         a.stp(x9, x10,  ptr(sp, 16));
@@ -3325,8 +3274,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     }
                     a.bind(sameMethodSkipUpdate);
                 } else {
-                    a.cmp(x12, x13);
-                    a.b_ne(j2jBailSelf2);
+                    // Default (xmethod off): bit 56 not set → cross-method,
+                    // which we can't handle here.  Bail to dispatchCached.
+                    a.tbz(x7, asmjit::Imm(56), j2jBailSelf2);
                 }
 
                 // Check save stack space.  cursor (offset 144) and limit
@@ -3358,11 +3308,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // Interpreter.cpp:18829-18833 + 18892).  Default OFF
                 // preserves pre-existing behavior.
                 //
-                // Uses x12 (caller's CM, loaded earlier) for the postSendIp
-                // path so the value isn't sourced from OFF_METHOD which the
-                // xmethod update may have overwritten with the callee's CM.
+                // For postSendIp we need callerCM; in the bit-56-gated
+                // emit it isn't loaded by default, so fetch it on demand
+                // from callerJM[0].
                 a.ldr(x15, ptr(x0, OFF_TEMPBASE));
                 if (g_debug.t1J2JPostSendIp) {
+                    if (!inlineJ2JCounters) {
+                        a.ldr(x12, ptr(x11, 0));   // callerCM
+                    }
                     a.add(x4, x12, asmjit::Imm(bcOffsetFromMethObj + 1));
                 } else {
                     a.ldr(x4, ptr(x0, OFF_IP));

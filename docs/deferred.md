@@ -526,6 +526,27 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+26 (2026-05-20) — SELF_REC_BIT in IC extra.**
+
+Self-recursive sends now encoded in IC extra bit 56 at patch time:
+`Interpreter::upgradeICToJ2J` and `patchJITICAfterSend` set bit 56
+when `callerMethod.rawBits() == cachedMethod.rawBits()` along with
+the existing bit 60 J2J entry encoding.  `rewriteIcEntriesAfterRecompile`
+preserves bits 48-63 (only rewrites entryAddr bits 47:0) so the bit
+stays valid across method recompile.
+
+asmjit-T1's inline-J2J emit replaces the runtime CM-oop comparison
+(2 ldr + cmp + branch = 4 instr) with a single `tbz x7, 56`
+(default xmethod-off path) or `tbnz x7, 56` (xmethod-on path).  In
+the xmethod path the calleeCM load is deferred to the cross-method
+branch where it's actually used for state.method/literals updates.
+
+**Measured:** essentially flat — fib(28) 12.8 → 12.8 ms, fib(30)
+34.7 → 34.6 ms.  Saved instructions are not on the critical path
+(L1-hot JM[0] loads + cmp are absorbed by M1's OoO window).
+Catch rate unchanged at 100%.  Smaller emit is still a long-term
+i-cache win for hotter workloads with many sends per method.
+
 **Iter N+25 (2026-05-20) — self-recursive callee setup shrink.**
 
 Two further inline-J2J emit shrinks specialized for the SELF-RECURSIVE
