@@ -2378,7 +2378,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // Load remaining save fields with ldp pairs.  Layout:
         //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
         //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
-        // (sp + recv already loaded above via pre-index)
+        // (sp + recv already loaded above via pre-index — x5=sp, x6=recv)
         a.str(x6, ptr(x0, OFF_RECEIVER));
         a.ldp(x6, x10, ptr(x4, 16));  // tempBase + ip
         a.str(x6, ptr(x0, OFF_TEMPBASE));
@@ -2399,7 +2399,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // state.jitMethod were never modified during the J2J call —
         // skip the 5 redundant stores.  When xmethod is ON, the
         // cross-method update path may have changed those fields, so
-        // restore from save.
+        // restore from save.  We use x12 (not x6) for the loaded
+        // method so x6 (recv) stays live for the deferred stp at
+        // OFF_SP at the end of this prelude.
         if (g_debug.t1InlineJ2JXmethod) {
             a.ldr(x7, ptr(x4, 32));   // jitMethod
             a.str(x7, ptr(x0, OFF_JITMETHOD));
@@ -3424,9 +3426,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // setup at `ldur x1, [x2, rcvrOffsetBytes]` and preserved
                 // through the inline-J2J emit) — skip the redundant
                 // sub + ldr that re-reads it from the stack.
+                //
+                // x2 = sp from the IC HIT (`ldr x2, [OFF_SP]` ~10 instr
+                // back) is also still live in default config (block-value
+                // and xmethod-log are opt-in; neither touches x2).
+                // Reuse x2 instead of reloading sp.
                 a.str(x1, ptr(x0, OFF_RECEIVER));        // recv from x1
-                a.ldr(x12, ptr(x0, OFF_SP));             // x12 = caller sp
-                a.sub(x13, x12, asmjit::Imm(nArgs * 8)); // x13 = new tempBase
+                const bool spLiveInX2 = !g_debug.t1InlineBlockValue
+                    && std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_LOG") == nullptr;
+                asmjit::a64::Gp spReg = x12;
+                if (spLiveInX2) {
+                    spReg = x2;   // skip the ldr; x2 still has caller sp
+                } else {
+                    a.ldr(x12, ptr(x0, OFF_SP));
+                }
+                a.sub(x13, spReg, asmjit::Imm(nArgs * 8)); // new tempBase
                 a.str(x13, ptr(x0, OFF_TEMPBASE));
 
                 // Load cached bcStart from JITMethod (offset 96).
@@ -3472,7 +3486,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             }
                             // New sp = tempBase + tempCount*8
                             //        = caller_sp + (tempCount-nArgs)*8
-                            a.add(x15, x12, asmjit::Imm(extras * 8));
+                            a.add(x15, spReg, asmjit::Imm(extras * 8));
                             a.str(x15, ptr(x0, OFF_SP));
                         } else {
                             // Large extras: fall back to dynamic loop
