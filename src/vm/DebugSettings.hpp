@@ -79,11 +79,11 @@ struct DebugSettings {
     // Inline-J2J emit (self-recursive case): tail-call callee's JIT entry
     // directly instead of round-tripping through the chain loop.  12× win
     // on benchFib.  Default-on 2026-05-17, default-OFF 2026-05-20 after
-    // discovering wrong-result bug — benchFib(N>=17) returns wrong value
-    // when a callee bails via ExitSend mid-recursion (see deferred.md A6
-    // iter N+30).  PHARO_T1_INLINE_J2J=1 to re-enable for perf experiments
-    // (results may be silently wrong — validate against PHARO_NO_J2J=1).
-    bool t1InlineJ2J = false;
+    // discovering wrong-result bug, default-ON again 2026-05-21 with
+    // pure-J2J gate (AsmjitT1.cpp ~3343) that runtime-checks ALL of
+    // caller's IC sites have bit 60 before allowing inline-J2J to fire.
+    // PHARO_T1_NO_INLINE_J2J=1 to disable.  See deferred.md A6 N+30k.
+    bool t1InlineJ2J = true;
     // Inline SmI bitwise prims (bitAnd:/bitOr:/bitXor:) at the IC HIT site
     // for nArgs==1 sends.  Saves the chain-loop round-trip for SmI bitwise
     // sends via named-send (bitXor: is not a special-selector bytecode so

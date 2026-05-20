@@ -3341,6 +3341,43 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.tbz(x7, asmjit::Imm(56), j2jBailSelf2);
                 }
 
+                // PURE-J2J GATE (iter N+30k, default-ON for correctness):
+                // Inline-J2J only when ALL of caller's IC sites have
+                // J2J_ENTRY_BIT (bit 60).  Without this, deeper inline-J2J
+                // recursion bails at a cold IC site, and the materialize
+                // bail's unwind corrupts the value chain — every benchFib(N)
+                // returns benchFib(N-2)'s value, cascading to wrong totals
+                // for N>=17 (see deferred A6 iter N+30i for diagnosis).
+                //
+                // For self-recursive (default xmethod-off), callee == caller
+                // — checking caller's IC sites is sufficient.
+                //
+                // Runtime cost: for benchFib (numICEntries=2), 6 + 4*2 =
+                // ~14 instructions per push.  ~15% perf overhead on fib but
+                // correct.  PHARO_T1_NO_PURE_J2J_GATE=1 disables to A/B
+                // test (will produce wrong results on benchFib(N>=17)).
+                static const bool pureJ2JGate =
+                    std::getenv("PHARO_T1_NO_PURE_J2J_GATE") == nullptr;
+                if (pureJ2JGate) {
+                    using namespace asmjit::a64;
+                    // x4 = scratch, x12 = icBuffer running ptr,
+                    // w14 = remaining IC sites.
+                    a.ldr(x12, ptr(callerJMReg2,
+                        (int)offsetof(JITMethod, icBuffer)));
+                    a.ldrh(w14, ptr(callerJMReg2,
+                        (int)offsetof(JITMethod, numICEntries)));
+                    asmjit::Label pureJ2JLoop = a.new_label();
+                    asmjit::Label pureJ2JDone = a.new_label();
+                    a.cbz(w14, pureJ2JDone);
+                    a.bind(pureJ2JLoop);
+                    a.ldr(x4, ptr(x12, 16));   // ic[site].extras (slot 2)
+                    a.tbz(x4, asmjit::Imm(60), j2jBailSelf2);
+                    a.add(x12, x12, asmjit::Imm((int)IC_BYTES_PER_SITE));
+                    a.subs(w14, w14, asmjit::Imm(1));
+                    a.b_ne(pureJ2JLoop);
+                    a.bind(pureJ2JDone);
+                }
+
                 // Check save stack space.  cursor (offset 144) and limit
                 // (offset 152) are adjacent — load both with one ldp.
                 static_assert(OFF_J2J_SAVE_LIMIT == OFF_J2J_SAVE_CURSOR + 8,

@@ -1022,6 +1022,43 @@ isolating the SYMPTOM precisely but the root cause spans the
 chain-loop ↔ inline-J2J ↔ materialize-bail interaction in a way
 that requires architectural change to fix correctly.
 
+**Iter N+30k (2026-05-21) — PURE-J2J GATE shipped, correctness fixed.**
+
+Implementation: at inline-J2J PUSH (asmjit-T1 SELF_REC path), emit
+runtime loop that checks ALL of caller's IC sites have bit 60
+(J2J_ENTRY_BIT) before allowing inline-J2J.  If any IC site lacks
+the bit, bail to chain-loop (= j2jBailSelf2 path).
+
+For benchFib (2 IC sites), the check emits ~13 instructions per
+inline-J2J site (5 fixed + 4 per IC entry).
+
+Verification: `fib(20)` = 21891, `fib(28)` = 1028457, `fib(30)` =
+2692537 — ALL CORRECT across warmup + 5 runs.
+
+Performance: ~170 ms `fib(28)` = same as no-inline-J2J baseline.
+The gate prevents inline-J2J from firing when ICs are cold.  GC at
+JITRuntime.cpp:3392 zeroes ALL IC entries (selBits + entry slots),
+re-colding the ICs.  For benchFib's tight loop, GC fires repeatedly,
+ICs are repeatedly cleared, gate keeps bailing.  inline-J2J
+essentially never fires after warmup.
+
+This is CORRECTNESS over performance.  Previous "11ms fib(28)"
+numbers were on WRONG RESULTS.  Honest correct perf is ~170 ms.
+
+Default-ON `t1InlineJ2J` is re-enabled (commit this turn) because
+the gate makes it safe.  No-op for fib (gate bails), but other
+workloads with stable ICs may benefit.
+
+Future perf work:
+1. Preserve bit 60 across GC (don't zero extras, just selBits).
+2. Fix underlying materialize-bail bug (would unlock full inline-J2J
+   benefit even with cold ICs).
+
+Shipped state:
+- `t1InlineJ2J = true` (default)
+- Pure-J2J gate ENABLED by default (PHARO_T1_NO_PURE_J2J_GATE=1 disables)
+- `PHARO_T1_NO_INLINE_J2J=1` disables inline-J2J entirely (legacy)
+
 **Iter N+29 (2026-05-20) — J2J save protocol exhausted; routing-to-Sista
 investigation.**
 
