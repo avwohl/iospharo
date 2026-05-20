@@ -526,6 +526,44 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+23 (2026-05-19 late evening) — sieve correctness + inline-J2J
+emit shrink (`de84c68e` + `8d983dff`).**
+
+Two changes this iter:
+
+1. **Sieve correctness — `de84c68e`.**  `Integer>>benchmark` (prime
+   sieve) was returning 1 instead of 1028 under the default JIT
+   (pre-existing — repros on 14a7fa73 too).  Bisection via
+   `PHARO_ASMJIT_T1_JUMPS_SKIP_N` narrowed the trigger to the 3rd
+   conditional-jump compile, which in sieve's compile order is
+   Array>>at:put: (primIndex 61).  The cond-jump emit in a
+   prim-60/61/62 method's bytecode body interacts badly with the
+   prim prologue / caller IC.  Workaround: stub-compile any prim
+   60/61/62 method that has conditional jumps in its body.  The
+   send-site catch (primKind 14/15/16) still fires for the common
+   case, so net perf loss is <5% per the iter N+19 measurements.
+   Root cause of the cond-jump emit bug remains open; revert the
+   gate when fixed.
+
+2. **inline-J2J emit shrink — `8d983dff`.**  Folded the two
+   ldr-add-str pairs for `j2jDepth` and `j2jTotalCalls` (6 instrs)
+   into one 64-bit ldr-add-str + 2-instr immediate materialization
+   (5 instrs).  The two fields are adjacent int32 at offsets
+   160/164; depth caps well below 2^31 so the low-32 increment
+   never carries into the high 32 bits.
+
+**Measured (PHARO_BENCH=fib/sieve, this branch's HEAD):**
+
+    bench         ours       cog        gap
+    fib(28)       13 ms      3 ms       4.3×
+    sieve x3      2 ms       ~1 ms      ~2× (was BROKEN — returned 1)
+    factorial     <1 ms      <1 ms      noise
+
+The fib gap remains architectural: each Sista bytecode emits ~148
+bytes of native code (~37 ARM instrs); Cog gets to ~50 bytes per
+bytecode via register-allocated whole-method codegen.  Closing the
+gap needs Sista Phase 4 method inlining or equivalent.
+
 **Iter N+22 (2026-05-19 evening) — prim 60/61/62 prologue with fmt 10-11 (`1d8ee8a7`).**
 
 Restored the prim 60/61/62 prologue gate after adding fmt 10-11 (32-bit
