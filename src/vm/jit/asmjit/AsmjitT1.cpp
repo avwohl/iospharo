@@ -2944,21 +2944,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         using namespace asmjit::a64;
         int nArgs = sendNArgs(op);
 
-        // Per-site IC address into x5.  Load JITMethod into x11 first
-        // so the inline-J2J emit can reuse it as callerJM without a
-        // second OFF_JITMETHOD load.
-        //
-        // For xmethod-off (default), state.jitMethod is hoisted to x19
-        // at trampoline entry + JIT_CALL, so we can skip the per-send
-        // load entirely (saves 1 ldr per send).  Just mov x11, x19.
-        // For xmethod-on, state.jitMethod can change mid-execution
-        // (cross-method update), so we must reload each time.
+        // Per-site IC address into x5.  For xmethod-off (default),
+        // x19 already holds state.jitMethod (hoisted at trampoline +
+        // JIT_CALL); use it directly without the intermediate mov.
+        // x11 is initialized to x19 only when the J2J emit needs it
+        // separately (e.g., for save.jitMethod under xmethod-on, or
+        // the bcStartCache load which is done lazily there).
+        // For xmethod-on, state.jitMethod can change so reload.
+        asmjit::a64::Gp jmReg = asmjit::a64::x19;
         if (g_debug.t1InlineJ2JXmethod) {
             a.ldr(x11, ptr(x0, OFF_JITMETHOD));
-        } else {
-            a.mov(x11, asmjit::a64::x19);
+            jmReg = x11;
         }
-        a.ldr(x5, ptr(x11, (int)offsetof(JITMethod, icBuffer)));
+        a.ldr(x5, ptr(jmReg, (int)offsetof(JITMethod, icBuffer)));
         // Skip the add when siteIdx == 0 (the first send in the method
         // — x5 already points at the right place).  Saves 1 instr at
         // the first send site of every JIT-compiled method.
@@ -3458,10 +3456,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x13, ptr(x0, OFF_TEMPBASE));
 
                 // Load cached bcStart from JITMethod (offset 96).
-                // For self-rec, callerJM (x11) == calleeJM (x10), so
-                // either works.  Prefer x11 when x10 wasn't computed
-                // (xmethod-off path skips the sub x10).
-                a.ldr(x14, ptr(needCalleeJM ? x10 : x11,
+                // For self-rec, callerJM == calleeJM.  In xmethod-off
+                // (default) x19 holds state.jitMethod; in xmethod-on
+                // x10 is calleeJM (set above) and x11 is callerJM.
+                a.ldr(x14, ptr(needCalleeJM
+                                  ? x10
+                                  : (g_debug.t1InlineJ2JXmethod
+                                      ? x11 : asmjit::a64::x19),
                               (int)offsetof(JITMethod, bcStartCache)));
                 a.str(x14, ptr(x0, OFF_IP));
 
