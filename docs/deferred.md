@@ -658,6 +658,49 @@ unwind to confirm the FP-aliasing hypothesis, then either (a) make
 inline-J2J push capture a separate "caller_fp" field, or (b) shift
 to option 1 (pure-J2J gate) to avoid the materialize path entirely.
 
+**Iter N+30c (2026-05-20 evening++): FP-aliasing hypothesis disproved,
+real cause identified.**
+
+Trace at the materialize site shows:
+
+    [MAT-BAIL] recv=2 depth=16 ipOff=14 op=0x81 exit=2
+               sendSel=#? ic[0]=0x0 ic[2]=0x0
+
+The bail fires when benchFib(2)'s SECOND send hits an EMPTY IC slot
+(`ic[0]=0`, `ic[2]=0`).  Each run sees the IC empty even though
+warmup patches it — likely GC between runs clears the IC entries.
+With ic[0]=0, asmjit-T1's IC HIT probe misses, falls through to
+miss path, exits ExitSend.  At that point j2jDepth=16 from the
+benchFib(18)→17→...→3 chain of inline-J2J pushes.
+
+The chain-loop fallback at Interpreter.cpp:21135 materializes the
+16 saves as SavedFrames and bails to interpreter.  Tracing
+SavedFrame fields:
+- savedIP = past-first-send (offset 11, opcode 0x4c pushReceiver)
+  — correct with post-send-IP fix
+- savedFP = save.tempBase - 1 = caller's FP — correct
+- savedReceiver = save.receiver = caller's recv — correct
+- savedArgCount = saveJM->argCount (= 0 for benchFib) — correct
+
+All fields look right per Pharo convention.  But result is still
+13548.  FP-aliasing hypothesis was wrong — save.tempBase captures
+CALLER's tempBase, not callee's, so FP[0] is caller's receiver, not
+the send's return-value slot.
+
+The wrong-value mechanism must be elsewhere in the unwind path —
+possibly `savedActiveContext` being shared across all materialized
+frames (= OUTER's context), or the post-bail interpreter dispatch
+producing wrong stack state across the 16-frame unwind chain.
+
+Deeper investigation needs an lldb session attached to a
+PHARO_T1_INLINE_J2J=1 run, with breakpoints on popFrame for
+benchFib activations to track value/SP/FP across the unwind.
+
+**Current shipping state:** inline-J2J default-OFF (commit
+`b77311c9`).  Correctness verified.  Perf reverts to pre-session
+~170 ms / fib(28).  PHARO_T1_INLINE_J2J=1 opt-in for experiments
+but produces silently wrong fib results for N>=17.
+
 Current state: bit 56 setters in Interpreter.cpp remain in place
 (they're correct logic); the asmjit-T1 SELF_REC fast path is the
 buggy consumer.  Until root-caused, treat the perf numbers in iter
