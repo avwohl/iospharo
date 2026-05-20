@@ -2402,16 +2402,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
         // Pop callee's args from caller's sp, push retval (in x1).
         // semantics: *(sp - (nArgs+1)*8) = retval; sp -= nArgs*8
+        //
+        // Fold via: new_sp = sp - nArgs*8; recv_slot = new_sp - 8
+        // (the recv slot was at sp-(nArgs+1)*8 = new_sp - 8 after the
+        // subtraction).  `stur` supports the -8 displacement directly,
+        // saving the explicit (nArgs+1)*8 compute.
         a.lsl(x12, x9, asmjit::Imm(3));            // x12 = nArgs*8
-        a.add(x13, x12, asmjit::Imm(8));           // x13 = (nArgs+1)*8
-        a.sub(x14, x5, x13);                        // x14 = sp - (nArgs+1)*8
-        a.str(x1, ptr(x14));                        // write retval
-        a.sub(x5, x5, x12);                         // sp_new = sp - nArgs*8
+        a.sub(x5, x5, x12);                         // x5 = new sp
+        a.stur(x1, ptr(x5, -8));                    // write retval @ new_sp-8
         a.str(x5, ptr(x0, OFF_SP));
 
         // Clear exitReason so callers don't see stale EXIT_RETURN.
-        a.mov(w15, asmjit::Imm(0));
-        a.str(w15, ptr(x0, OFF_EXIT));
+        // Use wzr directly to skip the mov+str pair.
+        a.str(wzr, ptr(x0, OFF_EXIT));
 
         // Tail-call to caller's resumeAddr.
         a.br(x8);
