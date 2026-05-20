@@ -2378,18 +2378,27 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldp(x6, x10, ptr(x4, 16));  // tempBase + ip
         a.str(x6, ptr(x0, OFF_TEMPBASE));
         a.str(x10, ptr(x0, OFF_IP));
-        a.ldp(x7, x8, ptr(x4, 32));   // jitMethod + resumeAddr
-        a.str(x7, ptr(x0, OFF_JITMETHOD));
+        a.ldr(x8, ptr(x4, 40));       // resumeAddr (always needed)
         a.ldr(w9, ptr(x4, 48));       // sendArgCount
 
-        // Derive method/literals/argCount from callerJM
-        // (matches J2J_INLINE_RETURN_IMPL).
-        a.ldr(x6, ptr(x7, 0));    // method = callerJM[0]
-        a.str(x6, ptr(x0, OFF_METHOD));
-        a.add(x10, x6, asmjit::Imm(16));
-        a.str(x10, ptr(x0, OFF_LITERALS));
-        a.ldrb(w11, ptr(x7, 34)); // callerJM.argCount byte
-        a.str(w11, ptr(x0, OFF_ARGCOUNT));
+        // Derive method/literals/argCount/jitMethod from callerJM.
+        // When xmethod is OFF (default), the J2J push path is strictly
+        // self-recursive (callee == caller — gated by SELF_REC_BIT
+        // tbz), so state.method, state.literals, state.argCount, and
+        // state.jitMethod were never modified during the J2J call —
+        // skip the 5 redundant stores.  When xmethod is ON, the
+        // cross-method update path may have changed those fields, so
+        // restore from save.
+        if (g_debug.t1InlineJ2JXmethod) {
+            a.ldr(x7, ptr(x4, 32));   // jitMethod
+            a.str(x7, ptr(x0, OFF_JITMETHOD));
+            a.ldr(x6, ptr(x7, 0));    // method = callerJM[0]
+            a.str(x6, ptr(x0, OFF_METHOD));
+            a.add(x10, x6, asmjit::Imm(16));
+            a.str(x10, ptr(x0, OFF_LITERALS));
+            a.ldrb(w11, ptr(x7, 34)); // callerJM.argCount byte
+            a.str(w11, ptr(x0, OFF_ARGCOUNT));
+        }
 
         // Pop callee's args from caller's sp, push retval (in x1).
         // semantics: *(sp - (nArgs+1)*8) = retval; sp -= nArgs*8

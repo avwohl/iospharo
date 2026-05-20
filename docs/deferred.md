@@ -526,6 +526,39 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+27 (2026-05-20) — return prelude skip method/literals/jitMethod
+restore in xmethod-off path.**
+
+When `t1InlineJ2JXmethod` is off (default), the J2J push path is
+strictly self-recursive (gated by SELF_REC_BIT bit 56 from iter
+N+26), so `state.method`, `state.literals`, `state.argCount`, and
+`state.jitMethod` are NEVER modified during the J2J call.  The
+return prelude was doing 5 redundant stores + 2 derivations on
+every return to restore those fields.
+
+Skipped in default path:
+- `ldr x7, [x4, 32]; str x7, [x0, OFF_JITMETHOD]` (jitMethod)
+- `ldr x6, [x7, 0]; str x6, [x0, OFF_METHOD]` (method)
+- `add x10, x6, 16; str x10, [x0, OFF_LITERALS]` (literals)
+- `ldrb w11, [x7, 34]; str w11, [x0, OFF_ARGCOUNT]` (argCount)
+
+Saves 7 instructions per return prelude in default path.  Still
+emits the full restore in xmethod-on (cross-method update may have
+changed those fields).
+
+**Measured (PHARO_BENCH=fib, M1):**
+
+    bench         pre-N+27    post-N+27   cog       gap     delta
+    fib(28)       12.8 ms     11.8 ms     3 ms      3.9×    -8%
+    fib(30)       34.6 ms     31.7 ms     ~8 ms     4.0×    -9%
+    fib(32)       86 ms       82 ms       —         —       -5%
+    sieve x3      2.3 ms      2.3 ms      ~1 ms     2.3×    flat
+
+Cumulative gap-to-Cog this session: fib(28) 4.3× → 3.9×;
+fib(30) 4.4× → 4.0×.  No regression on sieve (unchanged
+because sieve doesn't hit the J2J path heavily).  Catch rate
+remains 100%.
+
 **Iter N+26 (2026-05-20) — SELF_REC_BIT in IC extra.**
 
 Self-recursive sends now encoded in IC extra bit 56 at patch time:
