@@ -2942,9 +2942,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         using namespace asmjit::a64;
         int nArgs = sendNArgs(op);
 
-        // Per-site IC address into x5.
-        a.ldr(x5, ptr(x0, OFF_JITMETHOD));
-        a.ldr(x5, ptr(x5, (int)offsetof(JITMethod, icBuffer)));
+        // Per-site IC address into x5.  Load JITMethod into x11 first
+        // so the inline-J2J emit can reuse it as callerJM without a
+        // second OFF_JITMETHOD load — saves 1 instr per J2J-hit site.
+        // x11 is callee-saved-clobberable here (asmjit-T1 emit owns it
+        // for the duration of a send).
+        a.ldr(x11, ptr(x0, OFF_JITMETHOD));
+        a.ldr(x5, ptr(x11, (int)offsetof(JITMethod, icBuffer)));
         a.add(x5, x5, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
 
         // Deferred state setup: inline-spec paths skip the state
@@ -3220,12 +3224,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // IC extra word.  The IC patcher sets this bit when
                 // callerCM == calleeCM at IC-fill time (see
                 // Interpreter::upgradeICToJ2J + patchJITICAfterSend).
-                // Bit preserved across recompile by
-                // rewriteIcEntriesAfterRecompile (only entryAddr in
-                // bits 47:0 is rewritten).  Replaces the prior
-                // 2-ldr + cmp + branch CM-oop comparison (saves
-                // 3 instr per inline-J2J site).
-                a.ldr(x11, ptr(x0, OFF_JITMETHOD));   // x11 = callerJM (save-push)
+                // x11 = callerJM was loaded at IC-probe entry (saved 1
+                // ldr per J2J site).  Re-loading here would be redundant.
 
                 // Debug counters: stash last-seen values — gated on env
                 // var so production emit doesn't carry the overhead.
