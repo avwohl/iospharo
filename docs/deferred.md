@@ -526,6 +526,43 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+25 (2026-05-20) — self-recursive callee setup shrink.**
+
+Two further inline-J2J emit shrinks specialized for the SELF-RECURSIVE
+path (the only path when `t1InlineJ2JXmethod` is OFF — the default):
+
+1. **Skip redundant receiver load.**  The IC HIT setup already loaded
+   the new receiver into `x1` via `ldur x1, [x2, rcvrOffsetBytes]`,
+   and `x1` is preserved through the inline-J2J emit until the
+   callee tail-call.  The old emit re-read it from the stack with
+   `sub x13, x12, (nArgs+1)*8; ldr x14, [x13]` — 2 wasted instrs.
+   Replaced with `str x1, [x0, OFF_RECEIVER]` directly.  Saves 2
+   instr per inline-J2J site.
+
+2. **Skip dynamic tempCount load + init loop when statically
+   known.**  For the self-recursive path, `callee.tempCount ==
+   caller.tempCount` and `nArgs == caller.argCount`, both compile-
+   time constants for the method being JIT'd.  Plumbed
+   `callerArgCount` / `callerTempCount` through `emitMethodBytes`
+   to `emitOne_arm64`.  When `nArgs == callerTempCount` (no extra
+   temps to init — e.g., `benchFib` with 1 arg / 1 temp), the
+   entire init loop (`ldrb`, 3 arith, `mov nilBits`, `cmp`,
+   `b_hs`, `str sp`) collapses to a single `str x12, [x0, OFF_SP]`.
+   When `extras = callerTempCount - nArgs > 0` (up to 8), the loop
+   is unrolled to N nil-stores + static sp computation.  Saves
+   ~8-10 instr per inline-J2J site for typical recursive methods.
+   The xmethod path (when enabled) still uses the dynamic loop
+   because callee tempCount can differ.
+
+**Measured (PHARO_BENCH=fib, M1):**
+
+    bench         pre-N+25    post-N+25   cog       gap-to-cog
+    fib(28)       13.3 ms     12.8 ms     3 ms      4.0×  (-3.8%)
+    fib(30)       35.7 ms     34.7 ms     ~8 ms     4.3×  (-2.6%)
+
+Catch rate unchanged at 100% (7.4M of 7.4M sends inline-J2J on
+fib(28)).  Sieve and other benches unchanged.
+
 **Iter N+24 (2026-05-20) — bcStart cache + inline-J2J stp-fold
 (`9240027f` + `4da43536`).**
 

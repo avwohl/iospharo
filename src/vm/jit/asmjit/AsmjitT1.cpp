@@ -1075,10 +1075,13 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                   uint64_t nilBits, int bcOffsetFromMethObj,
                   int siteIdx,
                   const std::vector<asmjit::Label>& bcLabels,
-                  int globalIdx) {
+                  int globalIdx,
+                  int callerArgCount, int callerTempCount) {
     using namespace asmjit::x86;
     (void)bcOffsetFromMethObj;
     (void)siteIdx;
+    (void)callerArgCount;
+    (void)callerTempCount;
 
     // pushRecvVar N: push receiver.slot[N].
     if (op <= 0x0F) {
@@ -2209,10 +2212,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     uint64_t nilBits, int bcOffsetFromMethObj,
                     int siteIdx,
                     const std::vector<asmjit::Label>& bcLabels,
-                    int globalIdx) {
+                    int globalIdx,
+                    int callerArgCount, int callerTempCount) {
     using namespace asmjit::a64;
     (void)bcOffsetFromMethObj;
     (void)siteIdx;
+    (void)callerArgCount;
 
     if (op <= 0x0F) {
         int n = op & 0x0F;
@@ -3389,10 +3394,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 //   tempBase = sp - nArgs*8
                 //   ip       = method bytecode start
                 //   sp       = tempBase + tempCount*8
-                a.ldr(x12, ptr(x0, OFF_SP));            // x12 = caller sp
-                a.sub(x13, x12, asmjit::Imm((nArgs + 1) * 8));
-                a.ldr(x14, ptr(x13));                    // x14 = new recv
-                a.str(x14, ptr(x0, OFF_RECEIVER));
+                //
+                // x1 already holds the new receiver (loaded by the IC HIT
+                // setup at `ldur x1, [x2, rcvrOffsetBytes]` and preserved
+                // through the inline-J2J emit) — skip the redundant
+                // sub + ldr that re-reads it from the stack.
+                a.str(x1, ptr(x0, OFF_RECEIVER));        // recv from x1
+                a.ldr(x12, ptr(x0, OFF_SP));             // x12 = caller sp
                 a.sub(x13, x12, asmjit::Imm(nArgs * 8)); // x13 = new tempBase
                 a.str(x13, ptr(x0, OFF_TEMPBASE));
 
@@ -3404,23 +3412,68 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x14, ptr(x10, (int)offsetof(JITMethod, bcStartCache)));
                 a.str(x14, ptr(x0, OFF_IP));
 
-                // sp = tempBase + tempCount*8 (tempCount from JM offset 35)
-                // Initialize extra temps (beyond args) to nil — mirrors
-                // stencils.cpp:1867-1873 (otherwise garbage from caller's
-                // stack leaks into callee's temp slots).
-                a.ldrb(w15, ptr(x10, 35));       // tempCount
-                // For self-recursive case, nArgs (compile-time) usually
-                // equals callee.argCount (= callee.tempCount for arg-only
-                // methods).  But for cross-method case, callee.tempCount
-                // may exceed nArgs.  Initialize slots [nArgs..tempCount).
-                {
+                // sp = tempBase + tempCount*8.  For the SELF-RECURSIVE
+                // path (the only path when xmethod is off), callee ==
+                // caller so callee.tempCount == compile-time-known
+                // callerTempCount.  Skip the dynamic tempCount load +
+                // init loop entirely when we know the layout statically.
+                //
+                // Three static cases (callerTempCount known here):
+                //   1. nArgs == callerTempCount: no extra temps.  New sp
+                //      equals caller's pre-send sp (still in x12).
+                //   2. nArgs < callerTempCount: unroll N nil-stores +
+                //      compute static sp offset.
+                //   3. xmethod ON: callee.tempCount can differ from
+                //      caller's; fall back to the dynamic loop.
+                const bool xmethodMayDiffer = xmethod;
+                if (!xmethodMayDiffer && callerTempCount >= nArgs) {
+                    int extras = callerTempCount - nArgs;
+                    if (extras == 0) {
+                        // New sp = caller's sp (no temp init).
+                        a.str(x12, ptr(x0, OFF_SP));
+                    } else {
+                        // Unroll nil-stores for the (small) extra temp
+                        // count and compute new sp statically.  Methods
+                        // with very large extras-counts are rare; cap
+                        // unroll at 8 and fall back to dynamic loop
+                        // beyond that to avoid blowing emit size.
+                        if (extras <= 8) {
+                            a.mov(x4, asmjit::Imm(nilBits));
+                            for (int k = 0; k < extras; k++) {
+                                a.str(x4, ptr(x13, (nArgs + k) * 8));
+                            }
+                            // New sp = tempBase + tempCount*8
+                            //        = caller_sp + (tempCount-nArgs)*8
+                            a.add(x15, x12, asmjit::Imm(extras * 8));
+                            a.str(x15, ptr(x0, OFF_SP));
+                        } else {
+                            // Large extras: fall back to dynamic loop
+                            // (same as xmethod path).
+                            asmjit::Label initLoop = a.new_label();
+                            asmjit::Label initDone = a.new_label();
+                            a.add(x14, x13, asmjit::Imm(nArgs * 8));
+                            a.add(x15, x13, asmjit::Imm(callerTempCount * 8));
+                            a.mov(x4, asmjit::Imm(nilBits));
+                            a.bind(initLoop);
+                            a.cmp(x14, x15);
+                            a.b_hs(initDone);
+                            a.str(x4, ptr(x14));
+                            a.add(x14, x14, asmjit::Imm(8));
+                            a.b(initLoop);
+                            a.bind(initDone);
+                            a.str(x15, ptr(x0, OFF_SP));
+                        }
+                    }
+                } else {
+                    // xmethod path: callee tempCount is dynamic (read
+                    // from callee JM[35]).  Initialize slots
+                    // [nArgs..tempCount) to nil and compute new sp.
+                    a.ldrb(w15, ptr(x10, 35));       // tempCount
                     asmjit::Label initLoop = a.new_label();
                     asmjit::Label initDone = a.new_label();
-                    // x14 = tempBase + nArgs*8 (= first uninit slot)
                     a.add(x14, x13, asmjit::Imm(nArgs * 8));
-                    // x15 was tempCount, shift to bytes
                     a.lsl(w15, w15, asmjit::Imm(3));
-                    a.add(x15, x13, x15);  // x15 = end of temps
+                    a.add(x15, x13, x15);
                     a.mov(x4, asmjit::Imm(nilBits));
                     a.bind(initLoop);
                     a.cmp(x14, x15);
@@ -3429,7 +3482,6 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.add(x14, x14, asmjit::Imm(8));
                     a.b(initLoop);
                     a.bind(initDone);
-                    // x15 now holds new sp (= tempBase + tempCount*8)
                     a.str(x15, ptr(x0, OFF_SP));
                 }
 
@@ -4092,6 +4144,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 // the fallback-emit pass.  bcToCode[0..2] stay 0 (not valid re-entry).
 bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                      int bcOffsetBase, int primIndex,
+                     int callerArgCount, int callerTempCount,
                      uint8_t* out, size_t outCap,
                      size_t* outSize, bool* isReal,
                      uint32_t* bcToCodeOut) {
@@ -4218,7 +4271,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             }
             if (!emitOne_x86(a, bcReal[i], nilBits,
                              bcOffsetBase + globalIdx, siteIdx,
-                             bcLabels, globalIdx)) {
+                             bcLabels, globalIdx,
+                             callerArgCount, callerTempCount)) {
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
                     globalIdx, bcReal[i]);
@@ -4624,7 +4678,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
 
             if (!emitOne_arm64(a, op, nilBits,
                                 bcOffsetBase + globalIdx, siteIdx,
-                                bcLabels, globalIdx)) {
+                                bcLabels, globalIdx,
+                                callerArgCount, callerTempCount)) {
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
                     globalIdx, op);
@@ -4858,7 +4913,14 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // by emitMethodBytes from per-bytecode labels.  Slot [bcLen] gets
     // the end-of-machine-code offset after emit.
     std::vector<uint32_t> bcToCode(bcLen + 1, 0);
+    // Caller method's argCount/tempCount — needed by the inline-J2J
+    // emit's self-recursive callee-setup so it can skip the dynamic
+    // tempCount load + init-loop overhead when tempCount is known at
+    // compile time.
+    int callerArgCount  = (int)((headerBits >> 24) & 0x0F);
+    int callerTempCount = (int)((headerBits >> 18) & 0x3F);
     if (!emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
+                         callerArgCount, callerTempCount,
                          buf.data(), cap, &emitted, &isReal,
                          bcToCode.data())) {
         g_failed++;
