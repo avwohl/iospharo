@@ -3372,15 +3372,22 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.mov(w15, asmjit::Imm(nArgs));
                 a.str(w15, ptr(x6, 48));
 
-                // Bump cursor + depth + totalCalls
+                // Bump cursor + depth + totalCalls.  depth and totalCalls
+                // are adjacent int32 fields (offsets 160/164); fold the
+                // two ldr-add-str pairs (6 instrs) into one 64-bit
+                // ldr-add-str + movz/movk materialization (5 instrs).
+                // depth caps at recursion depth (way below 2^31) so
+                // adding 1 to the low 32 bits never carries into the
+                // high 32 bits where totalCalls lives.
                 a.add(x6, x6, asmjit::Imm(56));
                 a.str(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
-                a.ldr(w13, ptr(x0, OFF_J2J_DEPTH));
-                a.add(w13, w13, asmjit::Imm(1));
-                a.str(w13, ptr(x0, OFF_J2J_DEPTH));
-                a.ldr(w13, ptr(x0, OFF_J2J_TOTAL_CALLS));
-                a.add(w13, w13, asmjit::Imm(1));
-                a.str(w13, ptr(x0, OFF_J2J_TOTAL_CALLS));
+                static_assert(OFF_J2J_TOTAL_CALLS == OFF_J2J_DEPTH + 4,
+                              "depth/totalCalls adjacency required for 64-bit batched increment");
+                a.movz(x14, asmjit::Imm(0x1));
+                a.movk(x14, asmjit::Imm(0x1), 32);   // x14 = (1<<32) | 1
+                a.ldr(x13, ptr(x0, OFF_J2J_DEPTH));
+                a.add(x13, x13, x14);
+                a.str(x13, ptr(x0, OFF_J2J_DEPTH));
 
                 // Set up callee state for self-recursion:
                 //   receiver = sp[-(nArgs+1)*8]
