@@ -613,6 +613,28 @@ for cleanly-nested chains but fails when a chain-break (callee bails
 via ExitSend with saves outstanding) lets the chain-loop's
 `state.j2jDepth = 0` reset stomp the entry tracking.
 
+**Additional finding 2026-05-20 evening — save.ip is wrong.**
+The Interpreter.cpp:21162 materialize path IS implemented (option 3),
+but materialize trace shows `save.ip` points to bcStart (offset 0)
+of the caller method, not past-send.  Materializing this into a
+SavedFrame.savedIP makes the interpreter resume at the START of the
+caller, re-executing the whole body.  Root cause: asmjit-T1's
+inline-J2J push at AsmjitT1.cpp:3373 writes `save.ip = state.ip`,
+but `state.ip` is only flushed at exits — it's still at bcStart
+from the JIT activation entry.
+
+`PHARO_T1_J2J_POST_SEND_IP=1` attempts to fix this by writing
+`save.ip = callerCM + bcOffsetFromMethObj + 1`.  It crashes the
+interpreter on the FIRST materialize during the warmup pass —
+likely because either (a) `bcOffsetFromMethObj + 1` isn't the right
+past-send offset (multi-byte extended sends?), or (b) the
+`callerCM` load via `x12` clobbers a register the subsequent
+chain-loop path needs.
+
+NEXT STEP: investigate why post-send-IP crashes, then ship it as the
+correctness fix.  This is option 3 (materialize-on-bail) made
+correct, which is the path the code already invested in.
+
 Current state: bit 56 setters in Interpreter.cpp remain in place
 (they're correct logic); the asmjit-T1 SELF_REC fast path is the
 buggy consumer.  Until root-caused, treat the perf numbers in iter
