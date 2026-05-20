@@ -3147,7 +3147,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(x0,  ptr(sp, 0));
                     a.str(x30, ptr(sp, 8));
                     a.mov(w1, asmjit::Imm(nArgs));
-                    a.adr(x2, afterSend);
+                    // resumeAddr points directly at endOfSend (skip the
+                    // afterSend `b endOfSend` indirection).
+                    a.adr(x2, endOfSend);
                     a.mov(x9, asmjit::Imm((uint64_t)
                         &jit_rt_inline_block_value_prep));
                     a.blr(x9);
@@ -3319,7 +3321,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b_hs(j2jBailFull);
 
                 // Load resumeAddr (label adr after the send completes)
-                a.adr(x14, afterSend);
+                // resumeAddr points DIRECTLY at endOfSend (skipping the
+                // prior afterSend bind which just did `b endOfSend`).
+                // Saves 1 branch per J2J return — 7.4M returns on fib(28).
+                a.adr(x14, endOfSend);
 
                 // Push J2J save (56 bytes).  Uses ldp/stp for adjacent
                 // state fields: sp+receiver (offsets 0/8) loaded with
@@ -3482,10 +3487,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // Tail-call (br) to entry. x9 = entryAddr.
                 a.br(x9);
 
-                // afterSend: return prelude tail-calls here.  Caller state
-                // restored; retval already on top of caller sp.
-                a.bind(afterSend);
-                a.b(endOfSend);
+                // afterSend was previously bound here with `b endOfSend`,
+                // costing 1 branch per return.  Instead, the J2J save's
+                // resumeAddr now points directly at endOfSend (see the
+                // adr above), eliminating the indirection.  afterSend
+                // label is unbound — kept for code-clarity comments only.
 
                 a.bind(j2jBailSelf2);
                 emitIncCounter((uint64_t)&g_inlineJ2J_bail_self);
