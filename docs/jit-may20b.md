@@ -436,6 +436,24 @@ Smallest concrete win for instVar would be inline-getter spec for
 non-prim methods that just return a SmI expression — but identifying
 those at JIT compile is non-trivial.
 
+### 10.1 — asmjit-T1 inline multi-slot landed (partial)
+
+Wired up bit-57 (multi-slot pattern `^ self[A] op1 self[B] op2 cst`)
+inline emit in asmjit-T1's IC HIT path (commit `df8af600`).  Checks
+bit 57 BEFORE bit 60 (J2J) so multi-slot wins when both are present;
+heap-receiver gate; ~30-instruction inline arithmetic with overflow
+checks; bails to dispatchCached on non-SmI or overflow.
+
+Status: fires only 128× on the instVar 1M bench — the bench's outer
+method (`runOnce`, called ONCE by SessionManager startUp) never
+crosses the 500-activation JIT threshold, so its `obj size` sends
+stay in interp.  My multi-slot inline applies only to JIT-compiled
+callers.  Real-world workloads with hot methods will exercise it.
+
+Followup: either lower the JIT threshold for measurement, or rewrite
+the bench so the loop body is a separate hot method (forced via
+PHARO_RECOMPILE_AT=1 or equivalent).
+
 Once the suite runs reliably:
 
 - Profile each bench with `PHARO_PRIM_PROFILE=1` + JIT stats.
