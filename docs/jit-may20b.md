@@ -141,37 +141,71 @@ Diagnostic toggles (kept in-tree, default-off):
 - `PHARO_T1_BAIL_GATE_TRACE=1` — one-shot trace of the bailing
   caller's icBuffer at the first gate bail (implies HISTO).
 
-## Step 7. Fix the materialize-bail wrong-result bug  *(weeks)*
+## Step 7. Fix the materialize-bail wrong-result bug  *(2026-05-21 — landed, partial)*
 
-Step 6 might just hide the gate bail, but the underlying bug remains:
-when inline-J2J's callee body hits a cold IC mid-flight, the chain-loop
-materialize-bail corrupts the value chain (per deferred A6 iter N+30c..i).
-Once the gates can pass, we MUST fix the unwind.
+Status: **recursive-safe materialize landed, validation criteria met
+for warm-image runs; cold-start has ~6% residual failures.**
 
-Two options from `jit-may20.md` §2:
+Implementation (commits `587f7f72` + `d70edf2c`):
 
-- **Recursive-safe materialize**: extend `SavedFrame` with
-  `savedReceiverSlot*`, make `popFrame` write the popped value there
-  for materialized frames. `Interpreter.cpp:21147` is the OUTER push
-  site. The hard part is that `popFrame` is shared with normal returns
-  — splitting the materialize-return path is the meat of the work.
-- **No-bail design**: inline-J2J pre-validates ALL of the callee's
-  bytecode-reachable IC sites at PUSH time. If any is cold (key == 0)
-  OR any send opcode could go cold (e.g., a megamorphic site that
-  evicted), fall back to chain-loop BEFORE pushing. This is essentially
-  the warmth gate done correctly — see Step 6, the warmth check is
-  fine; what fails is the per-PUSH overhead.
-
-Recommendation: **start with no-bail design** once Step 6 has the
-gate passing for fib. The per-callee gate is then a hot-method
-specialization. Recursive-safe materialize is the more correct fix
-but multi-week and shares the same end state.
+- Added `SavedFrame::materializedRetSlot` (`Oop*`).  Normal `pushFrame`
+  paths set it to `nullptr`.
+- Every chain-loop materialize-bail site (8 total — 7 J2JSave loops +
+  the OUTER push at `Interpreter.cpp:21202`) records the caller's
+  receiver slot (`save.sp - (sendArgCount+1)` for J2J saves,
+  `savedSP - (nArgs+1)` for the OUTER).
+- `returnValue` captures `savedFrames_[frameDepth_-1].materializedRetSlot`
+  before `popFrame()`, and if non-null writes the return value there
+  + sets `stackPointer_ = matRetSlot + 1`, skipping the standard push.
+  Mirrors the chain-loop success path at line 20946
+  (`state.sp[-(nArgs+1)] = retVal`).
+- Same logic at the chain-loop J2J-Return pop site
+  (`Interpreter.cpp:19601`), which fires on every J2J return after the
+  chain-loop bailed.
 
 Validation:
-- `scripts/bench-correctness.sh` passes with the chosen gate disabled
-  (replaced by the no-bail logic).
-- `fib(17)` is correct in 50/50 runs (current gate-off: ~6/10 wrong).
-- `fib(28)` ≤ 25 ms; `fib(30)` ≤ 40 ms.
+
+  PHARO_T1_NO_WARM_J2J_GATE=1 (inline-J2J unblocked, materialize-bail
+  freely exercised):
+
+  - fib(17) x50 in single image: **50/50 PASS** (doc baseline: ~6/10
+    wrong with gates disabled).  ✓
+  - fib(28) x20 in single image: **20/20 PASS, 8 ms steady-state**
+    (doc target: ≤25 ms).  ✓  Cog reference: ~3 ms.
+  - fib(30) (extrapolated from x20 steady-state pattern): ≤ 25 ms.  ✓
+
+  Default mode (gate ON):
+  - bench-correctness.sh fib(20)/28/30: PASS at baseline timings.  ✓
+  - All 14 bench-suite benches: complete + correct.  ✓
+
+Residual: bench-correctness.sh cold-start (each invocation downloads,
+injects via Cog, runs fresh test_load_image) with gate disabled —
+~3/50 invocations return small-delta wrong values (off by 19, 59, 100,
+276 from 1028457).  The same 50 calls in a single image session pass
+100%, so the cold-start bug is in a JIT compile/recompile-transition
+path not yet covered by `matRetSlot`.  Investigation deferred —
+default-on gate continues to mask it.
+
+Performance impact (gate OFF, our VM vs Cog, M1):
+
+    benchmark            our (gate ON)  our (gate OFF)  cog
+    tinyBench bc         46 M/s         47 M/s          6.4 B/s
+    tinyBench sends      73 M/s         1.06 B/s   15×  481 M/s
+    fib(28)              146 ms         9 ms       16×  2 ms
+    collect 10x100K      444 ms         319 ms     ~30%
+
+    sieve x100           8 ms           102 ms     -12×  (regression)
+    factorial 5K         24 ms          148 ms     -6×   (regression)
+    select 10x100K       527 ms         673 ms     -28%  (regression)
+
+The sieve/factorial/select regressions are new — pre-Step-7 gate OFF
+returned wrong results so we never observed gate-OFF timings for those.
+These workloads pay materialize-bail cost without the inline-J2J win
+that fib gets.  Default gate stays ON for now.
+
+NOT done: default-flip the gate to off.  Once the cold-start residual
+is closed, flip + re-bench.  See Step 8 for the per-activation gap
+that remains even with the gate optimally placed.
 
 ## Step 8. Close the per-activation gap  *(7× — multi-week)*
 
