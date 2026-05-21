@@ -255,7 +255,28 @@ for SELF_REC_BIT".  jitMethod is already skipped for xmethod-off
 (benchFib's bc 59 vs bc 63 have different save.tempBase offsets from
 save.sp), so the prelude can't reconstruct it cheaply.
 
-### 8.3 / 8.4 — deferred (multi-week)
+### 8.3 — assessed, deferred
+
+Profiled the IC-miss → C++ round-trip rate on cold-start bench-correctness.
+Of ~209K patch calls:
+- ~197K have no `pendingICPatch_` (interp sends — not JIT IC misses).
+- **~12K are `DUP`** (entry already present at slot 1-5; the asmjit-T1
+  probe only checks slot 0 so polymorphic hits leak to C++).
+- ~501 are real new patches.
+- ~158 are FULL (all 6 slots used, megamorphic).
+
+The bigger win would be **extending the asmjit-T1 IC probe to walk
+slots 0-2 (matching Cog)** rather than the doc's stated "inline the
+fill via mega-cache".  12K wasteful round-trips per cold-start fib(28)
+run vs ~501 actual fills.  Estimated savings: ~50 cycles × 12K =
+~0.6M cycles = ~0.2 ms.  Small but real.
+
+Deferred — the inline mega-cache probe + IC fill requires baking the
+megaCache base address into every JIT method (4 movz/movk per emit
+plus ~20 probe instructions per send site).  ~3 days of work for a
+small fib win; better leverage on bench-suite cold-start.
+
+### 8.4 — deferred (multi-week, depends on Step 4)
 
 After Steps 6+7, we're ~22 ms / fib(28) vs Cog's 3 ms. That's the
 per-activation cost gap. Breakdown:
