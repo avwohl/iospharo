@@ -390,6 +390,31 @@ In gap order (smaller = more achievable):
 7. **sum 1M (81×)**, factorial, instVar, select — large gaps,
    harder to close.
 
+### Important caveat: cold-start vs steady-state
+
+Per-invocation bench-suite numbers include JIT compile time.  Warmed
+steady-state numbers tell a different story:
+
+- **sieve x100 steady-state (with 3× warmup): ours 7-9 ms.**
+  Bench-suite cold: 100 ms.  So ~90 ms of the gap is JIT compile.
+  Cog's bench-suite cold: 10 ms.  Cog likely has either much faster
+  compile or already-cached compiles within a session.
+
+So many of the "small gap" benches (sieve, etc.) are mostly **JIT
+compile speed** in cold-start, not steady-state execution.  Closing
+the cold-start gap requires faster JIT compilation, not bytecode
+optimization.
+
+Per-bench attack plan, refined:
+
+- **Cold-start dominated (sieve, ...)**: optimize JIT compile speed.
+  Profile via `scripts/run_benchmarks.sh` cold timing minus a
+  warmed-image measurement.
+- **Steady-state dominated (fib)**: per-activation cost (Step 8).
+- **Both (sort, dict, collect)**: workload-specific — block-value
+  spec, polymorphic IC walk (Step 8.3-shaped), trivial-method
+  inlining (Step 8.4 territory).
+
 Once the suite runs reliably:
 
 - Profile each bench with `PHARO_PRIM_PROFILE=1` + JIT stats.
