@@ -141,7 +141,7 @@ Diagnostic toggles (kept in-tree, default-off):
 - `PHARO_T1_BAIL_GATE_TRACE=1` — one-shot trace of the bailing
   caller's icBuffer at the first gate bail (implies HISTO).
 
-## Step 7. Fix the materialize-bail wrong-result bug  *(2026-05-21 — landed, partial)*
+## Step 7. Fix the materialize-bail wrong-result bug  *(2026-05-21 — landed, ~10% cold-start residual)*
 
 Status: **recursive-safe materialize landed, validation criteria met
 for warm-image runs; cold-start has ~6% residual failures.**
@@ -180,11 +180,28 @@ Validation:
 
 Residual: bench-correctness.sh cold-start (each invocation downloads,
 injects via Cog, runs fresh test_load_image) with gate disabled —
-~3/50 invocations return small-delta wrong values (off by 19, 59, 100,
-276 from 1028457).  The same 50 calls in a single image session pass
-100%, so the cold-start bug is in a JIT compile/recompile-transition
-path not yet covered by `matRetSlot`.  Investigation deferred —
-default-on gate continues to mask it.
+~3/30 invocations return small-delta wrong values (off by 19, 59, 100,
+167, 276 from 1028457).  The delta exactly matches `fib(K-1) + 1 - K`
+for various K, indicating that at some level K, bc 59's recursive
+return value didn't land in the receiver slot (the receiver `K-1`
+stayed there) at exactly one level per failure.
+
+The same 50 calls in a single image session pass 100% (fib(17) x50,
+fib(28) x10/x20).  pop sites with `matRetSlot` honoring:
+
+- `returnValue` (Interpreter.cpp:5645)
+- chain-loop ExitReturn (line 19643)
+- tryResume JIT-completed (line 17350)
+- Sista safe-loop ExitReturn (line 9391)
+- Sista outer-dispatch ExitReturn (line 16517)
+
+NLR paths not yet covered (fib doesn't NLR), but the cold-start delta
+pattern suggests a path involving JIT compile/recompile *during* the
+recursion — process switches, GC, or a specific compile-threshold
+crossing.
+
+Investigation deferred — default-on gate continues to mask it for
+production runs.  See task #8 for follow-up.
 
 Performance impact (gate OFF, our VM vs Cog, M1):
 
