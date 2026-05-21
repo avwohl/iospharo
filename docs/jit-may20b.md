@@ -224,7 +224,38 @@ NOT done: default-flip the gate to off.  Once the cold-start residual
 is closed, flip + re-bench.  See Step 8 for the per-activation gap
 that remains even with the gate optimally placed.
 
-## Step 8. Close the per-activation gap  *(7× — multi-week)*
+## Step 8. Close the per-activation gap  *(8.1 micro-opt landed; 8.2-8.4 deferred)*
+
+Status 2026-05-21:
+
+- **Current warm fib(28)**: 8 ms (gate OFF, Step 7 fix in place).
+- **Doc target**: 5 ms.
+- **Cog reference**: 3 ms.
+
+### 8.1 IC HIT path — partial
+
+Two micro-optimizations landed (commit `8df37be2`):
+
+1. Removed the `cbz x4, miss` safety check after IC HIT probe.  No
+   real receiver has classKey 0, so the check was pure cost.
+2. Elided the `sub x13, spReg, 0` no-op when nArgs == 0 in the
+   inline-J2J tempBase setup.
+
+Neither shows up at 1 ms timer resolution.  Combined estimated win:
+2 cycles × 3M sends ≈ 2 ms — below the noise floor of our timing.
+
+Remaining IC-HIT-path work requires per-site class-immediate baking
+(Cog's pattern) which is multi-day.
+
+### 8.2 J2J save shrinkage — deferred
+
+The doc proposed "skip jitMethod and tempBase save (they're invariant)
+for SELF_REC_BIT".  jitMethod is already skipped for xmethod-off
+(`AsmjitT1.cpp:3469`).  tempBase IS variable across send sites
+(benchFib's bc 59 vs bc 63 have different save.tempBase offsets from
+save.sp), so the prelude can't reconstruct it cheaply.
+
+### 8.3 / 8.4 — deferred (multi-week)
 
 After Steps 6+7, we're ~22 ms / fib(28) vs Cog's 3 ms. That's the
 per-activation cost gap. Breakdown:
