@@ -5634,6 +5634,17 @@ terminate_process:
     }
 
 
+    // Step 7 (jit-may20b): capture materializedRetSlot before popFrame
+    // shifts the saved-frame slot.  Non-null only when the frame about
+    // to be popped was pushed by the chain-loop materialize-bail
+    // fallback from a JIT J2JSave — in which case the return value must
+    // land at the caller's receiver slot (= save.sp - (nArgs+1)*8) and
+    // sp must end at save.sp - nArgs*8.  Normal pushFrame leaves this
+    // nullptr.  See SavedFrame::materializedRetSlot.
+    Oop* matRetSlot = (frameDepth_ > 0)
+        ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+        : nullptr;
+
     // Debug: track method_ changes through popFrame
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* methodChangeLog = nullptr;
@@ -5673,7 +5684,17 @@ terminate_process:
 
     // After popping, if execution is still running, push the result
     if (running_) {
-        push(value);
+        if (matRetSlot) {
+            // Step 7: write value to caller's receiver slot, set sp past
+            // it.  Skips the standard push(value) — popFrame's
+            // stackPointer_ = framePointer_ landed sp at the callee's FP
+            // which is NOT the slot the chain-loop's success path would
+            // have written to.
+            *matRetSlot = value;
+            stackPointer_ = matRetSlot + 1;
+        } else {
+            push(value);
+        }
 
         if (__builtin_expect(dispatchTraceLeakOn_, 0) && framePointer_) {
             long long spAboveFP = (long long)(stackPointer_ - framePointer_);
@@ -10330,6 +10351,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedReceiver = receiver_;
     frame.savedActiveContext = activeContext_;  // Save active context for proper return chain
     frame.savedFP = framePointer_;
+    frame.materializedRetSlot = nullptr;  // Step 7: normal pushFrame, not materialize-bail
     frame.savedArgCount = argCount_;
     frame.savedClosure = closure_;  // Save current frame's closure (nil for methods, block for block activations)
     frame.homeFrameDepth = SIZE_MAX;  // Default: not a block (will be set by activateBlock if needed)
@@ -17245,6 +17267,12 @@ void Interpreter::tryJITResumeInCaller() {
                     frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                     frame.materializedContext = nil;
                     frame.savedFP = save.tempBase - 1;
+                    // Step 7: receiver slot in the caller's stack.  When this
+                    // SavedFrame is popped, the return value is written here
+                    // (mirrors the chain-loop success-path's
+                    // `state.sp[-(nArgs+1)] = retVal`).
+                    frame.materializedRetSlot =
+                        save.sp - (save.sendArgCount + 1);
                     frame.savedArgCount = saveJM->argCount;
                     frame.homeFrameDepth = SIZE_MAX;
                 }
@@ -19497,6 +19525,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                 frame.materializedContext = nil;
                 frame.savedFP = save.tempBase - 1;
+                // Step 7: receiver slot for retVal on unwind.
+                frame.materializedRetSlot =
+                    save.sp - (save.sendArgCount + 1);
                 frame.savedArgCount = saveJM->argCount;
                 frame.homeFrameDepth = SIZE_MAX;
             }
@@ -19655,6 +19686,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
             frame.materializedContext = nil;
             frame.savedFP = save.tempBase - 1;
+            // Step 7: receiver slot for retVal on unwind.
+            frame.materializedRetSlot = save.sp - (save.sendArgCount + 1);
             frame.savedArgCount = saveJM->argCount;
             frame.homeFrameDepth = SIZE_MAX;
         }
@@ -19856,6 +19889,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                         frame.materializedContext = nil;
                         frame.savedFP = save.tempBase - 1;
+                        // Step 7: receiver slot for retVal on unwind.
+                        frame.materializedRetSlot =
+                            save.sp - (save.sendArgCount + 1);
                         frame.savedArgCount = saveJM->argCount;
                         frame.homeFrameDepth = SIZE_MAX;
                     }
@@ -20556,6 +20592,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                     frame.materializedContext = nil;
                     frame.savedFP = save.tempBase - 1;
+                    // Step 7: receiver slot for retVal on unwind.
+                    frame.materializedRetSlot =
+                        save.sp - (save.sendArgCount + 1);
                     frame.savedArgCount = saveJM->argCount;
                     frame.homeFrameDepth = SIZE_MAX;
                 }
@@ -21020,6 +21059,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                         frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                                         frame.materializedContext = nil;
                                         frame.savedFP = save.tempBase - 1;
+                                        // Step 7: receiver slot for retVal.
+                                        frame.materializedRetSlot =
+                                            save.sp - (save.sendArgCount + 1);
                                         frame.savedArgCount = saveJM->argCount;
                                         frame.homeFrameDepth = SIZE_MAX;
                                     }
@@ -21147,6 +21189,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                             frame.materializedContext = memory_.nil();
                             frame.savedFP = savedTempBase - 1;
+                            // Step 7: OUTER frame's send-receiver slot.
+                            // savedSP = OUTER caller's sp at send time;
+                            // nArgs = OUTER caller's send arg count.  Mirrors
+                            // the chain-loop success path at line 20946
+                            // (state.sp[-(nArgs+1)] = retVal).
+                            frame.materializedRetSlot =
+                                savedSP - (nArgs + 1);
                             frame.savedArgCount = savedArgCount;
                             frame.homeFrameDepth = SIZE_MAX;
                         }
@@ -21181,6 +21230,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                                 frame.materializedContext = nil;
                                 frame.savedFP = save.tempBase - 1;
+                                // Step 7: receiver slot for retVal on unwind.
+                                frame.materializedRetSlot =
+                                    save.sp - (save.sendArgCount + 1);
                                 frame.savedArgCount = saveJM->argCount;
                                 frame.homeFrameDepth = SIZE_MAX;
                             }

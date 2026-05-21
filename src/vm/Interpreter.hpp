@@ -587,6 +587,16 @@ private:
         Oop savedActiveContext;  // Active context at time of call (for proper return chain)
         Oop materializedContext;  // Cached context from materializeFrameStack (nil if not yet materialized)
         Oop* savedFP;
+        // jit-may20b Step 7 (recursive-safe materialize): when this SavedFrame
+        // was pushed from a J2JSave by the chain-loop materialize-bail
+        // fallback, materializedRetSlot points at the caller's "receiver slot"
+        // (= J2JSave.sp - (nArgs+1)*8) where the eventual return value must
+        // land.  Normal pushFrame paths leave this NULL.  returnValue (after
+        // popFrame) writes the value to *materializedRetSlot when non-null,
+        // sets stackPointer_ to materializedRetSlot+1, and skips the standard
+        // push.  Deferred A6 iter N+30i root cause; bug presented as fib(N)
+        // returning fib(N-2) for ~20% of runs with the inline-J2J gate off.
+        Oop* materializedRetSlot;
         int savedArgCount;
         size_t homeFrameDepth;  // For non-local block returns: the frame to return to (SIZE_MAX = not a block)
         // GC: IP offsets (set by prepareForGC, read by afterGC)
