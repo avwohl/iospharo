@@ -1601,6 +1601,36 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         }
         if (jm) {
             methodsCompiled_++;
+            // jit-may20b Step 6.2: dump bcToCode + IC layout for benchFib so
+            // we can see whether bc 60..63 has a JIT resume point.  If
+            // bcToCode[60]==0 the trampoline can't resume into JIT after
+            // a chain-loop call from bc 59 — execution falls back to interp,
+            // and site 1's IC probe never fires.  Gated on
+            // PHARO_T1_BAIL_GATE_HISTO=1 to keep the production path quiet.
+            if (g_debug.t1BailGateHisto) {
+                std::string sel = interp_.memory().selectorOf(compiledMethod);
+                if (sel == "benchFib") {
+                    fprintf(stderr,
+                        "[JIT-FIB-COMPILED] sel=#%s jm=%p tier=%u "
+                        "numICEntries=%u icBuffer=%p numBytecodes=%u "
+                        "canBailMid=%u\n",
+                        sel.c_str(), (void*)jm, (unsigned)jm->tier,
+                        jm->numICEntries, (void*)jm->icBuffer,
+                        (unsigned)jm->numBytecodes,
+                        (unsigned)jm->canBailMidMethod);
+                    const uint32_t* bcMap = jm->bcToCodeTable();
+                    if (bcMap) {
+                        for (uint32_t i = 0; i <= jm->numBytecodes; i++) {
+                            fprintf(stderr,
+                                "    bc[%u] = 0x%x%s\n",
+                                i, bcMap[i],
+                                (i > 0 && i < jm->numBytecodes
+                                    && bcMap[i] == 0)
+                                ? "  <not-a-resume-point>" : "");
+                        }
+                    }
+                }
+            }
             // PHARO_T1_INLINE_J2J=1 debug: dump fib IC layout + bytecode post-compile
             {
                 static const bool inlineJ2JDbg =

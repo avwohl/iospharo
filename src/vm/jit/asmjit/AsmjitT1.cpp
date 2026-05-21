@@ -43,6 +43,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
+#include <algorithm>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #if defined(__x86_64__) || defined(_M_X64)
 #include <asmjit/x86.h>
@@ -314,6 +319,185 @@ extern "C" uint64_t g_inlineJ2J_dbg_ic_hits       = 0;  // count IC HIT events
 extern "C" uint64_t g_inlineJ2J_dbg_extra_no_bit60 = 0; // IC HIT with extra but no bit 60
 extern "C" uint64_t g_inlineJ2J_dbg_miss          = 0;  // count IC MISS events
 extern "C" uint64_t g_inlineJ2J_dbg_dispatch      = 0;  // count dispatchCached events
+
+// jit-may20b Step 6: per-caller histogram of inline-J2J gate pass/bail.
+// JIT-emit calls jit_rt_bail_gate_log(callerJM, kind) when
+// PHARO_T1_BAIL_GATE_HISTO=1 (or implicitly under PHARO_T1_BAIL_GATE_TRACE=1).
+// The helper updates two maps keyed on JITMethod*; jit_rt_bail_gate_dump
+// prints top-20 by count for each side at VM exit.  Kind: 0=bail, 1=pass.
+struct BailGateStats {
+    std::unordered_map<JITMethod*, uint64_t> bailCount;
+    std::unordered_map<JITMethod*, uint64_t> passCount;
+    std::unordered_set<JITMethod*> traced;
+};
+static BailGateStats g_bailGateStats;
+
+extern "C" void jit_rt_bail_gate_log(JITMethod* callerJM, uint64_t kind) {
+    if (kind == 0) {
+        g_bailGateStats.bailCount[callerJM]++;
+        if (g_debug.t1BailGateTrace
+                && g_bailGateStats.traced.insert(callerJM).second) {
+            uint64_t selBits = callerJM->selectorOop;
+            fprintf(stderr,
+                "[BAIL-GATE-TRACE] jm=%p selOop=0x%llx numICEntries=%u "
+                "icBuffer=%p\n",
+                (void*)callerJM, (unsigned long long)selBits,
+                callerJM->numICEntries, (void*)callerJM->icBuffer);
+            if (callerJM->icBuffer && callerJM->numICEntries > 0) {
+                for (uint32_t s = 0; s < callerJM->numICEntries; s++) {
+                    uint8_t* siteBase =
+                        reinterpret_cast<uint8_t*>(callerJM->icBuffer)
+                        + s * IC_BYTES_PER_SITE;
+                    for (uint32_t e = 0; e < IC_ENTRIES_PER_SITE; e++) {
+                        uint64_t* slots =
+                            reinterpret_cast<uint64_t*>(siteBase) + e * 3;
+                        fprintf(stderr,
+                            "  site=%u entry=%u key=0x%llx method=0x%llx "
+                            "extras=0x%llx\n",
+                            s, e,
+                            (unsigned long long)slots[0],
+                            (unsigned long long)slots[1],
+                            (unsigned long long)slots[2]);
+                    }
+                }
+            }
+            fflush(stderr);
+        }
+    } else {
+        g_bailGateStats.passCount[callerJM]++;
+    }
+}
+
+// Helper: dump the icBuffer state of a single JITMethod.  Empty sites
+// are summarized with a one-line `<empty>` entry.
+static void dumpJMICBuffer(JITMethod* jm, ObjectMemory& mem,
+                           const char* tag, uint64_t count) {
+    Oop cmOop = Oop::fromRawBits(jm->compiledMethodOop);
+    std::string sel = mem.selectorOf(cmOop);
+    fprintf(stderr,
+        "[BAIL-GATE-%s] #%s jm=%p tier=%u numICEntries=%u count=%llu\n",
+        tag, sel.c_str(), (void*)jm, (unsigned)jm->tier,
+        (unsigned)jm->numICEntries, (unsigned long long)count);
+    if (!jm->icBuffer) return;
+    for (uint32_t s = 0; s < jm->numICEntries; s++) {
+        uint8_t* siteBase = reinterpret_cast<uint8_t*>(jm->icBuffer)
+            + s * IC_BYTES_PER_SITE;
+        bool anyEntry = false;
+        for (uint32_t e = 0; e < IC_ENTRIES_PER_SITE; e++) {
+            uint64_t* slots =
+                reinterpret_cast<uint64_t*>(siteBase) + e * 3;
+            if (slots[0] == 0 && slots[1] == 0 && slots[2] == 0) continue;
+            anyEntry = true;
+            fprintf(stderr,
+                "  site=%u entry=%u key=0x%llx method=0x%llx extras=0x%llx\n",
+                s, e,
+                (unsigned long long)slots[0],
+                (unsigned long long)slots[1],
+                (unsigned long long)slots[2]);
+        }
+        if (!anyEntry) {
+            uint64_t* slots = reinterpret_cast<uint64_t*>(siteBase);
+            fprintf(stderr,
+                "  site=%u <empty> selBits=0x%llx hitCount=%llu\n",
+                s,
+                (unsigned long long)slots[IC_SELBITS_SLOT],
+                (unsigned long long)slots[IC_HITCOUNT_SLOT]);
+        }
+    }
+}
+
+// Walk the code-zone method list and dump the icBuffer for every method
+// whose selector matches one of `names`.  Used when the gate is disabled
+// (no bail counters fire) so we can still see whether each method's IC
+// sites ever warmed up.  Public so Interpreter can call it.
+void dumpBailGateNamedICs(ObjectMemory& mem, JITRuntime& rt,
+                          std::initializer_list<const char*> names) {
+    CodeZone& zone = rt.codeZone();
+    for (JITMethod* m = zone.firstMethod(); m; m = m->nextInZone) {
+        Oop cmOop = Oop::fromRawBits(m->compiledMethodOop);
+        std::string sel = mem.selectorOf(cmOop);
+        for (const char* n : names) {
+            if (sel == n) {
+                dumpJMICBuffer(m, mem, "NAMED", 0);
+                break;
+            }
+        }
+    }
+}
+
+// Print top-20 bail / pass callers.  Called from Interpreter::dumpJITStats.
+void dumpBailGateHisto(ObjectMemory& mem) {
+    // First: dump the final icBuffer state of the top-5 bail callers so we
+    // can see whether their cold sites ever warmed up after warmup phase.
+    {
+        std::vector<std::pair<uint64_t, JITMethod*>> bail;
+        bail.reserve(g_bailGateStats.bailCount.size());
+        for (auto& p : g_bailGateStats.bailCount)
+            bail.emplace_back(p.second, p.first);
+        std::sort(bail.rbegin(), bail.rend());
+        size_t n = std::min<size_t>(5, bail.size());
+        for (size_t i = 0; i < n; i++) {
+            dumpJMICBuffer(bail[i].second, mem, "EXIT", bail[i].first);
+        }
+    }
+    auto top = [&](const std::unordered_map<JITMethod*, uint64_t>& m,
+                   const char* tag) {
+        if (m.empty()) return;
+        std::vector<std::pair<uint64_t, JITMethod*>> v;
+        v.reserve(m.size());
+        for (auto& p : m) v.emplace_back(p.second, p.first);
+        std::sort(v.rbegin(), v.rend());
+        uint64_t total = 0;
+        for (auto& e : v) total += e.first;
+        fprintf(stderr,
+            "  bail-gate %s histogram (%zu callers, %llu total events):\n",
+            tag, v.size(), (unsigned long long)total);
+        size_t limit = std::min<size_t>(20, v.size());
+        for (size_t i = 0; i < limit; i++) {
+            JITMethod* jm = v[i].second;
+            Oop cmOop = Oop::fromRawBits(jm->compiledMethodOop);
+            std::string sel = mem.selectorOf(cmOop);
+            fprintf(stderr,
+                "    %p #%-32s tier=%u nIC=%u count=%llu\n",
+                (void*)jm, sel.c_str(), (unsigned)jm->tier,
+                (unsigned)jm->numICEntries,
+                (unsigned long long)v[i].first);
+        }
+    };
+    top(g_bailGateStats.bailCount, "BAIL");
+    top(g_bailGateStats.passCount, "PASS");
+    // Pretty-print combined for each method that appears in either map.
+    if (!g_bailGateStats.bailCount.empty()
+            && !g_bailGateStats.passCount.empty()) {
+        std::unordered_map<JITMethod*, std::pair<uint64_t,uint64_t>> combo;
+        for (auto& p : g_bailGateStats.bailCount) combo[p.first].first = p.second;
+        for (auto& p : g_bailGateStats.passCount) combo[p.first].second = p.second;
+        std::vector<std::tuple<uint64_t, uint64_t, JITMethod*>> v;
+        v.reserve(combo.size());
+        for (auto& p : combo)
+            v.emplace_back(p.second.first + p.second.second,
+                           p.second.first, p.first);
+        std::sort(v.rbegin(), v.rend());
+        fprintf(stderr, "  bail-gate combined top-20 (by bail+pass total):\n");
+        size_t limit = std::min<size_t>(20, v.size());
+        for (size_t i = 0; i < limit; i++) {
+            JITMethod* jm = std::get<2>(v[i]);
+            uint64_t b = combo[jm].first;
+            uint64_t p = combo[jm].second;
+            uint64_t t = b + p;
+            Oop cmOop = Oop::fromRawBits(jm->compiledMethodOop);
+            std::string sel = mem.selectorOf(cmOop);
+            double bailPct = t > 0 ? 100.0 * b / t : 0.0;
+            fprintf(stderr,
+                "    %p #%-32s nIC=%u bail=%llu pass=%llu "
+                "(bail %.1f%%)\n",
+                (void*)jm, sel.c_str(),
+                (unsigned)jm->numICEntries,
+                (unsigned long long)b, (unsigned long long)p, bailPct);
+        }
+    }
+    fflush(stderr);
+}
 
 namespace {
 
@@ -3395,8 +3579,45 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b(gateDone);
                     a.bind(gateBail);
                     emitIncCounter((uint64_t)&g_inlineJ2J_bail_gate);
+                    // jit-may20b Step 6.1: per-caller histogram.  When the
+                    // env var is on, call jit_rt_bail_gate_log(callerJM, kind)
+                    // around the gate exits.  callerJMReg2 == x19 in
+                    // xmethod-off (default), so it's callee-saved across the
+                    // bl per AAPCS.  Saving x0..x15 + x30 covers everything
+                    // the bail target (`j2jBailSelf2` → `j2jBail` →
+                    // inline-prim / dispatchCached) and the pass path use.
+                    auto emitBailGateLog = [&](uint64_t kind) {
+                        if (!g_debug.t1BailGateHisto) return;
+                        a.sub(sp, sp, asmjit::Imm(144));
+                        a.stp(x0, x1,   ptr(sp, 0));
+                        a.stp(x2, x3,   ptr(sp, 16));
+                        a.stp(x4, x5,   ptr(sp, 32));
+                        a.stp(x6, x7,   ptr(sp, 48));
+                        a.stp(x8, x9,   ptr(sp, 64));
+                        a.stp(x10, x11, ptr(sp, 80));
+                        a.stp(x12, x13, ptr(sp, 96));
+                        a.stp(x14, x15, ptr(sp, 112));
+                        a.str(x30,      ptr(sp, 128));
+                        a.mov(x0, callerJMReg2);
+                        a.mov(x1, asmjit::Imm(kind));
+                        a.mov(x16,
+                            asmjit::Imm((uint64_t)&jit_rt_bail_gate_log));
+                        a.blr(x16);
+                        a.ldp(x0, x1,   ptr(sp, 0));
+                        a.ldp(x2, x3,   ptr(sp, 16));
+                        a.ldp(x4, x5,   ptr(sp, 32));
+                        a.ldp(x6, x7,   ptr(sp, 48));
+                        a.ldp(x8, x9,   ptr(sp, 64));
+                        a.ldp(x10, x11, ptr(sp, 80));
+                        a.ldp(x12, x13, ptr(sp, 96));
+                        a.ldp(x14, x15, ptr(sp, 112));
+                        a.ldr(x30,      ptr(sp, 128));
+                        a.add(sp, sp, asmjit::Imm(144));
+                    };
+                    emitBailGateLog(0);
                     a.b(j2jBailSelf2);
                     a.bind(gateDone);
+                    emitBailGateLog(1);
                 }
 
                 // Check save stack space.  cursor (offset 144) and limit

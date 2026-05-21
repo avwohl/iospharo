@@ -114,6 +114,9 @@ DebugSettings::DebugSettings() {
     // PHARO_T1_NO_WARM_J2J_GATE=1.
     t1PureJ2JGate       = envPresent("PHARO_T1_PURE_J2J_GATE");
     t1WarmJ2JGate       = !envPresent("PHARO_T1_NO_WARM_J2J_GATE");
+    t1BailGateTrace     = envPresent("PHARO_T1_BAIL_GATE_TRACE");
+    t1BailGateHisto     = t1BailGateTrace
+                         || envPresent("PHARO_T1_BAIL_GATE_HISTO");
     t1InlinePrimBitOps  = !envPresent("PHARO_T1_NO_INLINE_PRIM_BITOPS");
     t1InlinePrimAt      = !envPresent("PHARO_T1_NO_INLINE_PRIM_AT");
     t1InlineJ2JXmethod  = envPresent("PHARO_T1_INLINE_J2J_XMETHOD");

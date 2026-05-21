@@ -101,6 +101,19 @@ struct DebugSettings {
     // would bail on for lacking bit 60.  Default-ON.
     // PHARO_T1_NO_WARM_J2J_GATE=1 disables for A-B testing.
     bool t1WarmJ2JGate = true;
+    // jit-may20b Step 6.1: per-caller histogram of inline-J2J gate pass/bail.
+    // When set, the gate bail and gate pass sites emit a `bl` into
+    // jit_rt_bail_gate_log(callerJM, kind).  The helper maintains
+    // unordered_maps keyed on JITMethod*, dumped at VM exit alongside the
+    // existing inline-J2J counters.  Default OFF (adds save/restore around
+    // the gate exit paths — diagnostic only).
+    // PHARO_T1_BAIL_GATE_HISTO=1.
+    bool t1BailGateHisto = false;
+    // jit-may20b Step 6.2: one-shot per-method dump of icBuffer state at
+    // the first gate bail.  Implies t1BailGateHisto.  Prints all
+    // numICEntries × IC_ENTRIES_PER_SITE entries of the bailing caller
+    // method.  PHARO_T1_BAIL_GATE_TRACE=1.
+    bool t1BailGateTrace = false;
     // Inline SmI bitwise prims (bitAnd:/bitOr:/bitXor:) at the IC HIT site
     // for nArgs==1 sends.  Saves the chain-loop round-trip for SmI bitwise
     // sends via named-send (bitXor: is not a special-selector bytecode so

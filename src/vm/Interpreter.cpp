@@ -112,6 +112,15 @@ extern "C" uint64_t g_bcFloatArith_hits;
 extern "C" uint64_t g_bcArithBail_hits;
 extern "C" uint64_t g_bcRemoteTemp_hits;
 
+// jit-may20b Step 6: per-caller bail-gate histogram dump (defined in
+// AsmjitT1.cpp).  Called from dumpJITStats when PHARO_T1_BAIL_GATE_HISTO=1.
+namespace pharo { namespace jit {
+class JITRuntime;
+void dumpBailGateHisto(ObjectMemory& mem);
+void dumpBailGateNamedICs(ObjectMemory& mem, JITRuntime& rt,
+                          std::initializer_list<const char*> names);
+} }
+
 // Per-primitive call counter — populated at primitive dispatch site,
 // dumped at exit (PHARO_PRIM_PROFILE=1).  Used to identify high-frequency
 // primitives that warrant JIT prologue / send-site inline emit.
@@ -1416,6 +1425,13 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_inlineJ2J_dbg_miss,
                 (unsigned long long)g_inlineJ2J_dbg_dispatch);
         }
+    }
+    // jit-may20b Step 6.1/6.2: per-caller bail-gate histogram + trace.
+    // Gated on PHARO_T1_BAIL_GATE_HISTO=1 / PHARO_T1_BAIL_GATE_TRACE=1.
+    if (g_debug.t1BailGateHisto) {
+        pharo::jit::dumpBailGateHisto(memory_);
+        pharo::jit::dumpBailGateNamedICs(memory_, jitRuntime_,
+            {"benchFib", "allVisibleSlots"});
     }
     // Block-value inline counters (PHARO_T1_INLINE_BLOCK_VALUE=1).
     if (g_blockValue_tries > 0) {

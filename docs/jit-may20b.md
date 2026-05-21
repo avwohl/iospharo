@@ -1,10 +1,7 @@
 # JIT plan B — closing the gap to Cog (2026-05-21)
 
-Companion to `jit-may20.md`. That doc covered Step 1 (bit-60 preservation),
-Step 2 (warmth gate), Step 3 (correctness harness) — all shipped; Step 4
-(Sista bail) + Step 5 (other hot loops) deferred. None of those touched
-the dominant cost. This doc sequences what's actually left between us
-and Cog parity.
+Below are proposed fixes for JIT performance.
+If one of the fixes when implemented doesnt help, leave code in but disabled.
 
 ## Where we are (2026-05-21, jit branch)
 
@@ -33,38 +30,116 @@ So two gaps to close:
 - **Post-gate gap** (~7×): even with no gate we're 22 ms vs Cog's 3 ms.
   That's the per-activation cost gap.
 
-## Step 6. Diagnose the 96% gate bail mystery  *(days — start here)*
+## Step 6. Diagnose the 96% gate bail mystery  *(2026-05-21 — diagnosed)*
 
 Both gate variants (pure bit-60 and warmth) bail ~96% of inline-J2J
 attempts on fib. For benchFib (numICEntries = 2, self-recursive) this
 shouldn't happen — after warmup, both IC sites have entry-0 filled
 with bit 60 set, so both gates should pass.
 
-The mystery is data, not theory. Steps to land:
+### 6.1 (done) — per-caller histogram
 
-- **6.1** Add per-method counters keyed on `callerJM` to `g_inlineJ2J_bail_gate`:
-  when the gate fires, increment a hash map keyed on `state.jitMethod`.
-  Print a top-20-callers histogram at VM exit. Is benchFib in the bail
-  cohort or the pass cohort?
-- **6.2** If benchFib is bailing: emit a one-shot trace at gate bail
-  for benchFib's `JITMethod*` — print `icBuffer[site].{key, method, extras}`
-  for all `numICEntries` sites. Look for which site fails the check
-  and why.
-- **6.3** Likely candidates (from least to most invasive):
-  - `callerJMReg2` (= `x19` in xmethod-off) is stale or clobbered
-    between the trampoline hoist and the gate eval. Re-load
-    `state.jitMethod` into a fresh reg right before the gate.
-  - Recompilation: benchFib gets re-JIT'd mid-run; the new `JITMethod`
-    starts cold-IC, runs hot for one iteration, then the next gate eval
-    sees the just-allocated cold state. `JITRuntime` recompile log
-    will say.
-  - IC fill ordering: polymorphic refill writes to a slot other than
-    entry 0; the just-hit site keeps entry-0 stale. (Unlikely for
-    benchFib's monomorphic shape, but check.)
+Added `PHARO_T1_BAIL_GATE_HISTO=1` (and the implied
+`PHARO_T1_BAIL_GATE_TRACE=1`) in `src/vm/jit/asmjit/AsmjitT1.cpp`.
+Emits a `bl jit_rt_bail_gate_log(callerJM, kind)` call around the gate
+exits; `dumpJITStats` prints a top-20 histogram at VM exit. On
+`fib(28)`:
 
-Validation: after the fix, `bail_gate` drops from 5.5M to <100K on the
-`big_fib` workload, and `inline-J2J: hits` rises from 0 to ≥10M. fib(28)
-should drop from 155 ms to ~22 ms with correctness intact.
+    bail-gate BAIL histogram (3 callers, 513208 total events):
+      0x… #benchFib                tier=2 nIC=2 count=512552
+      0x… #benchFib                tier=1 nIC=2 count=364
+      0x… #allVisibleSlots         tier=1 nIC=2 count=292
+    bail-gate PASS histogram: (empty)
+
+Answer: benchFib is **100% in the bail cohort**. The gate never passes.
+
+### 6.2 (done) — IC site dump
+
+Per-site dump (`PHARO_T1_BAIL_GATE_TRACE=1`) at first bail AND at exit
+shows benchFib's two IC sites:
+
+    site=0 entry=0 key=0x80000001 method=#benchFib extras=bit60|bit56|J2Jaddr
+    site=1 <empty> selBits=#benchFib hitCount=0
+
+Site 0 is monomorphic-warm (SmI receiver, J2J entry bit set, self-rec
+bit set). Site 1 is *completely cold for the entire run of fib(28)*,
+across both tier=1 and tier=2 JITMethods. Even with `PHARO_RECOMPILE_AT=99999999`
+(no recompile), site 1 stays empty.
+
+### 6.3 — root cause: bcToCode=0 gap, not the listed candidates
+
+None of the three candidates fit. The actual root cause is the
+**asmjit-T1 resume protocol gap for sends-containing methods**
+(`src/vm/jit/asmjit/AsmjitT1.cpp:5391`):
+
+    bool advertiseResume = isReal && !noNumBc && !noBcToCode && bcLen > 0;
+    if (numSendSites > 0 && !forceResumeForSends) advertiseResume = false;
+    jm->numBytecodes = advertiseResume ? (uint16_t)bcLen : 0;
+
+Every benchFib JM has `numBytecodes=0` and `bcToCodeTableOffset=0`. The
+trampoline's `Ltramp_call` resume-address computation reads
+`bcToCodeTable[bcOffset]`, gets zero, and falls through to `Lresume_null`,
+which exits the trampoline. Concretely:
+
+1. bc 59 (first `benchFib` send): IC HIT site 0, gate iterates both
+   sites, site 1 cold → bail to `dispatchCached` → exit via
+   `EXIT_SEND_CACHED`.
+2. Trampoline converts to `EXIT_J2JCALL`, sets up callee, BLRs to
+   tier=2 entry (callee = self).
+3. Callee runs bc 0..bc 59 in JIT. At bc 59 it bails again (same
+   path), recursing deeper. Eventually the base case returns
+   `EXIT_RETURN`.
+4. Trampoline pops the save, but the save's `resumeAddr` was computed
+   from `bcToCode[bc 60] = 0` → null. `Lret_null_resume` sets
+   `state.ip = bc 60`, exits the trampoline with `EXIT_RETURN`.
+5. Interp resumes at bc 60 *in interp mode*. Runs bc 60..67 (including
+   the second `benchFib` send at bc 63) entirely in interp.
+6. Interp's send-resolution path does call `patchJITICAfterSend`, BUT
+   `pendingICPatch_` was never armed for a JIT IC site at bc 63
+   (because the JIT IC probe at bc 63 was never executed).
+
+So tier=2 benchFib's icBuffer site 1 cannot fill. The gate iterates
+all `numICEntries` sites and finds site 1 cold → bails. **Forever.**
+
+`PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1` (toggle the
+`numSendSites > 0` guard off) crashes immediately — confirmed; the
+post-resume protocol mismatch noted in the AsmjitT1.cpp comment is
+real. Fixing it is multi-week (out of scope for this step).
+
+### What this means for Steps 7+
+
+The gate is doing exactly what it's supposed to (block inline-J2J
+when any callee IC site is cold to avoid the materialize-bail
+wrong-result bug). The "cold site" precondition is *unreachable* under
+the current resume protocol for any method with ≥2 sends — so the gate
+never lets fib through.
+
+Options to unblock the gate:
+- **Fix the bcToCode resume protocol for sends-containing methods**
+  (multi-week, but unlocks much more than just fib parity).
+- **Implement Step 7's "no-bail design"**: inline-J2J pre-validates ALL
+  callee IC sites and refuses to push the save if any might bail. Same
+  semantics as the current gate, but correct unwind on the corner cases
+  the gate currently fails to catch. (Doesn't help the cold-IC scenario
+  by itself.)
+- **Implement Step 7's "recursive-safe materialize"**: extend
+  `SavedFrame` with `savedReceiverSlot*` so the unwind writes the
+  return value to the right caller slot even under nested bails. Then
+  the gate is no longer needed — gate-disabled fib runs correctly and
+  fast.
+
+Recommendation per the doc: do Step 7's recursive-safe materialize.
+The gate-bail isn't a separate bug to fix in Step 6; it's a symptom of
+the same root cause as the wrong-result bug, just on a different
+codepath.
+
+Diagnostic toggles (kept in-tree, default-off):
+
+- `PHARO_T1_BAIL_GATE_HISTO=1` — per-caller bail/pass histogram dumped
+  in `dumpJITStats`, plus an icBuffer dump of every #benchFib /
+  #allVisibleSlots JM and the top-5 bail callers.
+- `PHARO_T1_BAIL_GATE_TRACE=1` — one-shot trace of the bailing
+  caller's icBuffer at the first gate bail (implies HISTO).
 
 ## Step 7. Fix the materialize-bail wrong-result bug  *(weeks)*
 
