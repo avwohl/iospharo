@@ -135,7 +135,7 @@ Solutions to use:
   verify correctness, record perf. Drop commits that no longer pull
   weight; keep the ones that do.
 
-### 4. Sista phase 4 monomorphic inlining  *(multi-week)*
+### 4. Sista phase 4 monomorphic inlining  *(multi-week — deferred 2026-05-21)*
 
 From iter N+29: Sista's `activateMethod` hook is bypassed by both T1's
 inline-J2J and chain-loop's J2JCall. For fib's 317K activations, only
@@ -155,7 +155,18 @@ the outer call reaches activateMethod. To make Phase 4 inlining help:
 Recommendation: **fix Sista bail correctness first** (single issue at
 `SistaRuntime.cpp:226` gate), then option 1.
 
-### 5. Identify and optimize other hot loops  *(open-ended)*
+**2026-05-21 status:** confirmed the bug is severe — running with
+`PHARO_SISTA_COMPILE_BAIL_ONLY=1` hangs even on `fib(5..12)` (no
+result file produced after 30 s timeout). The "wrong result"
+described in the deferred notes (`1020114` vs `635648`) is the
+luckier case; the typical case is an infinite-loop hang in the
+benchFib recursion when bail-protocol corrupts the receiver. Fix
+requires diving into `Lowering::lower` and the bail-to-interp slow
+path — multi-week per the plan's own estimate. Deferred until the
+inline-J2J 96% bail mystery (Step 2 follow-up) is understood, since
+the two share the same underlying materialize/unwind code paths.
+
+### 5. Identify and optimize other hot loops  *(open-ended — survey 2026-05-21)*
 
 Beyond fib, the bench-suite has other benchmarks (sieve, sort, dict,
 sum, factorial, etc.). Once correctness is solid:
@@ -169,6 +180,13 @@ Solutions to use:
   from block-value specialization). Dict uses hash sends.
 - **Target the bottom of the gap**. fib's 57× gap is the most dramatic.
   Other benches may have 1.5–3× gaps that are easier wins.
+
+**2026-05-21 status:** survey only. Step 1+2+3 absorbed the session.
+The bench-suite still hangs reliably on the headless image generated
+by this session's harness (10-minute timeout exceeded with no result
+emitted), which blocks profiling. Step 5 needs either (a) the
+bench-suite reliability fix or (b) bench-correctness.sh extended to
+cover sieve/sort/dict/sum/factorial individually — both deferred.
 
 ## Dependencies and ordering
 
