@@ -328,7 +328,67 @@ bytecode-coverage shipping (see the comment in
 `scripts/run_benchmarks.sh:106`).  No further action needed; Step 10
 is unblocked.
 
-## Step 10. Per-bench profiling  *(open-ended, after Step 9)*
+## Step 10. Per-bench profiling  *(2026-05-21 — initial sweep)*
+
+Bench-suite numbers (gate ON default), Cog vs ours, M1:
+
+    benchmark            cog    ours    ratio
+    fib(28)                3    144      48×
+    sieve x100            10    100      10×
+    sort 100K             17    632      37×
+    dict 50K              13    387      30×
+    sum 1M                 3    244      81×
+    factorial 5K           2    148      74×
+    block 1M               3      1     0.3×  (we're FASTER)
+    instVar 1M             2    215     108×
+    allocations 100K       3      8     2.6×  ← smallest gap
+    floatSum 1M            8    300      38×
+    stringHash 100K        2    131      66×
+    collect 10x100K       41    307     7.4×
+    select 10x100K         8    645      81×
+
+Per doc's recommendation, smallest gaps first.  The 100K-allocations
+bench (2.6×) is the most achievable.
+
+**Hot path of 100K allocations**: `100000 timesRepeat: [Array new: 10]`.
+The compiler inlines `timesRepeat:` to a bytecode-level loop, so the
+hot path per iter is:
+
+1. `Array new: 10` → `Behavior>>new:` (trivial wrapper).
+2. `Behavior>>new:` → `self basicNew: anInteger` (= prim 71).
+3. Prim 71 (`primitiveNewWithArg`) allocates the Array.
+
+`PHARO_PRIM_PROFILE=1` confirms prim 71 dominates at 1.32M calls
+(13 × 100K iters).
+
+The asmjit-T1 inline-prim infrastructure exists for primKind 14
+(at:), 15 (at:put:), 16 (size), 20 (identityHash), but NOT for
+primKind 18 (basicNew:).  Adding it requires emitting an inline
+allocator: header check + format validation + bump-allocate + slot
+init + sp adjust.  ~50 instructions in the fast path + slow-path bail.
+
+Sista's "trivial method inlining" (Behavior>>new: → basicNew:) would
+collapse the 2-send chain into 1.  That's Step 8.4 / Step 4 territory.
+
+**Smallest concrete change to close 100K-allocations**: inline-prim
+primKind 18 in asmjit-T1's nArgs=1 IC HIT branch (mirrors the
+existing primKind 14 emit).  Estimated 1-2 days of work to land
+correctly with all the format-validation edge cases.  Deferred —
+documented as the next concrete leverage point.
+
+### Followup leverage list
+
+In gap order (smaller = more achievable):
+
+1. **100K allocations (2.6×)** — inline-prim 18 (basicNew:).  ~1-2 days.
+2. **collect 10x100K (7.4×)** — inline `Array>>do:` + block-value spec?
+3. **sieve x100 (10×)** — primCallCount on its inner loop.
+4. **dict 50K (30×)** — likely `at:put:` polymorphic IC + hashtable
+   rehash path.
+5. **sort 100K (37×)** — block-comparator dispatch (Step 8.4 territory).
+6. **fib (48×)** — Step 7 cold-start fix + Step 8 hot-path.
+7. **sum 1M (81×)**, factorial, instVar, select — large gaps,
+   harder to close.
 
 Once the suite runs reliably:
 
