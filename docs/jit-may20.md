@@ -1,5 +1,8 @@
 # JIT plan — post pure-J2J gate (2026-05-21)
 
+Below are proposed fixes for JIT performance.
+If one of the fixes when implemented doesnt help, leave code in but disabled.
+
 ## Where we are
 
 **Correctness restored** (commit `ca2c54c3`). Pure-J2J gate prevents
@@ -30,23 +33,40 @@ same as `PHARO_T1_NO_INLINE_J2J=1`.
 
 ## Sequenced plan
 
-### 1. Preserve bit 60 across GC  *(quick win, days)*
+### 1. Preserve bit 60 across GC  *(quick win, days — SHIPPED 2026-05-20)*
 
-`recoverAfterGC` only zeroes IC entries for stale-Oop safety. Bit 60
-isn't an Oop — it's a static marker. Preserve it.
+**Status: shipped, semantically correct, but does NOT unlock the fib
+fast path. Investigation revealed the original diagnosis was incomplete.**
 
-Solutions to use:
+Implementation (`JITRuntime.cpp:recoverAfterGC`): per-entry loop that
+zeroes key/method/selectorBits/hitCount but preserves the upper 16
+bits of `extras` (bits 48–63: J2J_ENTRY_BIT, BLOCK_VALUE_BIT,
+RETURNS_LITERAL, MULTI_SLOT, SELF_REC_BIT, primKind).
+`static_assert((1ULL << 60) & 0xFFFF000000000000ULL)` keeps the
+mask honest.
 
-- **Selective memset**. Instead of `memset(icStart, 0, 144)`, write a
-  per-entry loop that clears `key/method` slots but keeps the
-  *non-Oop* parts of `extras` (bits 48–63 are pure flags + primKind).
-  Mask: `extras &= 0xFFFF_0000_0000_0000ULL` to keep flags only.
-- **Compile-time invariant assert**. Static-assert that bit 60 lives
-  above bit 48 so the mask is safe.
+**Measured impact on fib (default settings, 3-run median):**
 
-This unlocks inline-J2J on fib without touching the deeper bug. Expected
-benefit: fib(28) ~ 11 ms (per earlier wrong-result trace which was
-otherwise honest about catch-rate timing).
+    bench         baseline (no fix)    with Step-1 fix
+    fib(28)         161 ms              161 ms     (no change)
+    fib(30)         346 ms              347 ms     (no change)
+
+Why no benefit, despite preserving bit 60: the AsmjitT1 pure-J2J gate
+already wasn't bailing because of GC. With the *gate disabled*
+(`PHARO_T1_NO_PURE_J2J_GATE=1`), single-shot fib(20/28/30) measures
+30/30/36 ms with CORRECT results — a 5× speedup with no observed
+correctness regression. So the gate is the bottleneck, not GC clearing
+of bit 60.
+
+Step 1 ships anyway: the selective memset is the right hygiene
+regardless (preserves static markers that survive the recompile cycle
+correctly), and removes a class of post-GC false-negative on the gate.
+
+The "fib(28) ~ 11 ms" prediction was based on the deferred A6 N+30k
+note conflating "gate always bails" with "GC clears bit 60." The real
+story: even with bit 60 preserved, the gate may be bailing for
+other reasons (e.g., interaction with prim-call IC sites, runtime
+caller/callee asymmetry). Diagnosed root cause moves to Step 2.
 
 ### 2. Fix the underlying materialize-bail wrong-result bug  *(weeks)*
 
@@ -142,8 +162,15 @@ new perf claim. Step 4 is multi-week. Step 5 is the long tail.
 The session's lesson: any inline-J2J change can silently produce wrong
 results that look fast. Before claiming a perf win, run the harness:
 
-    scripts/bench-correctness.sh fib 20    # asserts 21891
-    scripts/bench-correctness.sh fib 28    # asserts 1028457
-    scripts/bench-correctness.sh fib 30    # asserts 2692537
+    scripts/bench-correctness.sh            # default: fib 20 28 30, asserts each
+    scripts/bench-correctness.sh fib 28     # one bench
+    scripts/bench-correctness.sh --ab fib 20  # also re-run with NO_INLINE_J2J=1
+
+Default mode asserts against a known-good table (21891/1028457/2692537
+for fib 20/28/30) and prints timing. `--ab` runs the second mode and
+also asserts the two values agree. Be aware: `PHARO_T1_NO_INLINE_J2J=1`
+currently runs pathologically slow on fib (even fib 20 doesn't complete
+in 180 s) — separate from this plan, but documented here so reviewers
+don't spend time on it.
 
 A perf claim that doesn't include the assert is void.

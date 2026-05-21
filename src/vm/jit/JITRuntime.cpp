@@ -3389,7 +3389,39 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
                         std::memset(icStart + i * IC_BYTES_PER_SITE, 0, entriesBytes);
                     }
                 } else {
-                    std::memset(icStart, 0, m->numICEntries * IC_BYTES_PER_SITE);
+                    // Selective per-entry clear: zero key/method (stale Oops
+                    // and stale call addresses), but preserve the upper-16
+                    // flag bits in `extras`.  Bits 48-63 are static markers
+                    // (J2J_ENTRY_BIT at 60, BLOCK_VALUE_BIT at 59,
+                    // RETURNS_LITERAL at 58, MULTI_SLOT at 57, SELF_REC_BIT
+                    // at 56, primKind at 48-52) that the pure-J2J gate in
+                    // AsmjitT1.cpp reads to decide whether to inline.  The
+                    // old full memset cleared bit 60 every GC, so the gate
+                    // bailed for the rest of any hot loop touched by GC —
+                    // making the inline-J2J fast path a no-op on fib.
+                    // selectorBits (slot 18) and hitCount (slot 19) are
+                    // cleared too, matching the previous semantics:
+                    //   - selectorBits is an Oop; jit_rt_ic_miss recovers
+                    //     it from selBitsArray on demand.
+                    //   - hitCount is a recompile counter, fine to reset.
+                    // Lower 47 bits of `extras` (J2J_ADDR_MASK) hold a
+                    // JIT code-zone address that may have changed across
+                    // recompile — clear them so the IC re-fill writes a
+                    // fresh address.  See docs/jit-may20.md Step 1.
+                    static_assert((1ULL << 60) & 0xFFFF000000000000ULL,
+                                  "bit 60 must lie within FLAGS_MASK");
+                    constexpr uint64_t FLAGS_MASK = 0xFFFF000000000000ULL;
+                    for (uint32_t i = 0; i < m->numICEntries; i++) {
+                        uint64_t* slots = reinterpret_cast<uint64_t*>(
+                            icStart + i * IC_BYTES_PER_SITE);
+                        for (uint32_t e = 0; e < IC_ENTRIES_PER_SITE; e++) {
+                            slots[e * 3]     = 0;                 // key
+                            slots[e * 3 + 1] = 0;                 // method
+                            slots[e * 3 + 2] &= FLAGS_MASK;       // extras: flags only
+                        }
+                        slots[IC_SELBITS_SLOT]  = 0;              // selectorBits
+                        slots[IC_HITCOUNT_SLOT] = 0;              // hitCount
+                    }
                 }
             }
             m = m->nextInZone;
