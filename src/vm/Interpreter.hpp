@@ -1350,6 +1350,10 @@ public:
         frame.savedActiveContext = nil;
         frame.materializedContext = nil;
         frame.savedFP = framePointer_;
+        // Step 7: not a materialize-bail frame; standard popFrame applies.
+        // Without this, stale materializedRetSlot from a prior occupant of
+        // this slot can leak into returnValue and corrupt fib results.
+        frame.materializedRetSlot = nullptr;
         frame.savedArgCount = argCount_;
         frame.homeFrameDepth = SIZE_MAX;
 
@@ -1495,6 +1499,7 @@ public:
         frame.savedActiveContext = nil;
         frame.materializedContext = nil;
         frame.savedFP = tempBase - 1;
+        frame.materializedRetSlot = nullptr;  // Step 7: no callers — clear for safety
         frame.savedArgCount = argCount;
         frame.homeFrameDepth = SIZE_MAX;
     }

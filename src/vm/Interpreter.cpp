@@ -19597,14 +19597,30 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             mcls.c_str(), msel.c_str());
                 }
             }
-            // Innermost J2J frame returned — pop one materialized frame
-            if (!popFrame()) {
-                if (benchMode_) { handleBenchComplete(state.returnValue); return true; }
-                terminateCurrentProcess();
-                tryReschedule();
-                return true;
+            // Innermost J2J frame returned — pop one materialized frame.
+            // Step 7: honor materializedRetSlot.  This pop site reaches a
+            // materialize-bail-created SavedFrame on every J2J return after
+            // the chain-loop bailed; without the matRetSlot path the value
+            // lands wherever popFrame's stackPointer_ = framePointer_
+            // happened to settle (sometimes the receiver slot, sometimes
+            // not — sourcing the small-delta fib failures).
+            {
+                Oop* matRetSlot = (frameDepth_ > 0)
+                    ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                    : nullptr;
+                if (!popFrame()) {
+                    if (benchMode_) { handleBenchComplete(state.returnValue); return true; }
+                    terminateCurrentProcess();
+                    tryReschedule();
+                    return true;
+                }
+                if (matRetSlot) {
+                    *matRetSlot = state.returnValue;
+                    stackPointer_ = matRetSlot + 1;
+                } else {
+                    push(state.returnValue);
+                }
             }
-            push(state.returnValue);
             return true;
         default:
             // ExitSend, ExitSendCached, ExitBlockCreate, etc. —
