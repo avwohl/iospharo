@@ -2565,9 +2565,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
         // (sp + recv already loaded above via pre-index — x5=sp, x6=recv)
         a.str(x6, ptr(x0, OFF_RECEIVER));
-        a.ldp(x6, x10, ptr(x4, 16));  // tempBase + ip
+        // jit-may20b Step 8.2: load tempBase only (skip save.ip restore).
+        // The JIT body never READS state.ip during execution — every
+        // bytecode op writes state.ip itself before any exit to interp,
+        // so the restored ip value is always overwritten before being
+        // used.  save.ip stays in the j2jPool for the trampoline's
+        // Lret_null_resume bail (which reads it directly).  Saves 1
+        // instr per J2J return; ~1M returns on fib(28) ≈ ~0.3 ms.
+        //
+        // For xmethod-off (default, self-rec only): x10 is unused after
+        // this point; using ldr instead of ldp drops the redundant load.
+        // For xmethod-on: x10 is reassigned at line ~2602 (literals=
+        // method+16) before any read, so dropping the original load is
+        // also safe.
+        a.ldr(x6, ptr(x4, 16));       // tempBase (skip ip @ +24)
         a.str(x6, ptr(x0, OFF_TEMPBASE));
-        a.str(x10, ptr(x0, OFF_IP));
         a.ldr(x8, ptr(x4, 40));       // resumeAddr (always needed)
         // sendArgCount: if all J2J sends in this method have the same
         // nArgs (compile-time uniform), the return prelude can use the
