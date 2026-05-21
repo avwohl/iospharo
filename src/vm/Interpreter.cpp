@@ -9384,16 +9384,28 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // alone can't tell whether a stale entry exists.
                 sistaBailCounter_.erase(gateKey);
                 // Pop Sista's frame, push return value — caller resumes.
-                if (!popFrame()) {
-                    if (benchMode_) {
-                        handleBenchComplete(sstate.returnValue);
+                // Step 7: honor materializedRetSlot if frame was pushed by
+                // chain-loop materialize-bail (rare but possible).
+                {
+                    Oop* matRet = (frameDepth_ > 0)
+                        ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                        : nullptr;
+                    if (!popFrame()) {
+                        if (benchMode_) {
+                            handleBenchComplete(sstate.returnValue);
+                            return;
+                        }
+                        terminateCurrentProcess();
+                        tryReschedule();
                         return;
                     }
-                    terminateCurrentProcess();
-                    tryReschedule();
-                    return;
+                    if (matRet) {
+                        *matRet = sstate.returnValue;
+                        stackPointer_ = matRet + 1;
+                    } else {
+                        push(sstate.returnValue);
+                    }
                 }
-                push(sstate.returnValue);
                 return;
             }
             case jit::ExitSend: {
@@ -16500,6 +16512,10 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         case jit::ExitReturn: {
             // Sista ran past the loop and returned.  Pop frame, push
             // return value, let the interp's caller-side resume.
+            // Step 7: honor materializedRetSlot.
+            Oop* matRet = (frameDepth_ > 0)
+                ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                : nullptr;
             if (!popFrame()) {
                 if (benchMode_) {
                     handleBenchComplete(sstate.returnValue);
@@ -16509,7 +16525,12 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
                 tryReschedule();
                 return;
             }
-            push(sstate.returnValue);
+            if (matRet) {
+                *matRet = sstate.returnValue;
+                stackPointer_ = matRet + 1;
+            } else {
+                push(sstate.returnValue);
+            }
             return;
         }
         case jit::ExitSend:
@@ -17322,6 +17343,12 @@ void Interpreter::tryJITResumeInCaller() {
                 }
             }
             // JIT completed the rest of the method and returned.
+            // Step 7: capture materializedRetSlot before popFrame in case
+            // the frame being popped was pushed by a materialize-bail path.
+            {
+            Oop* matRetSlot17325 = (frameDepth_ > 0)
+                ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                : nullptr;
             if (!popFrame()) {
                 // fd=0: no C++ frames left. Follow context sender chain.
                 if (activeContext_.isObject() && !activeContext_.isNil()) {
@@ -17363,8 +17390,15 @@ void Interpreter::tryJITResumeInCaller() {
                 lastJitReturn_.returnBits = state.returnValue.rawBits();
                 lastJitReturn_.frameDepth = frameDepth_;
                 lastJitReturn_.wasResume = true;
-                push(state.returnValue);
+                // Step 7: honor materializedRetSlot from before-popFrame.
+                if (matRetSlot17325) {
+                    *matRetSlot17325 = state.returnValue;
+                    stackPointer_ = matRetSlot17325 + 1;
+                } else {
+                    push(state.returnValue);
+                }
             }
+            }  // end Step 7 scope
             continue;  // Try to resume in the next caller
 
         case jit::ExitSend: {
