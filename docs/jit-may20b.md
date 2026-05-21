@@ -289,7 +289,7 @@ Deeper save shrinkage (skipping save.tempBase entirely) requires
 per-method bytecode analysis to detect "no tempBase reads" — left
 as future work.
 
-### 8.3 — assessed, deferred
+### 8.3 — assessed, deferred (small win for cost)
 
 Profiled the IC-miss → C++ round-trip rate on cold-start bench-correctness.
 Of ~209K patch calls:
@@ -309,6 +309,13 @@ Deferred — the inline mega-cache probe + IC fill requires baking the
 megaCache base address into every JIT method (4 movz/movk per emit
 plus ~20 probe instructions per send site).  ~3 days of work for a
 small fib win; better leverage on bench-suite cold-start.
+
+Re-evaluated 2026-05-21: the probe itself adds ~15 instructions per
+miss site (4-5 to materialize megaCache base + ~10 for the probe).
+For 12K DUP misses on cold-start bench-correctness, that's 180K
+cycles ≈ 0.06 ms saved.  Plus inline IC fill (3 stores) saves
+~0.01 ms.  Total < 0.1 ms — below noise floor.  Not worth the
+implementation cost in this turn.
 
 ### 8.4 — deferred (multi-week, depends on Step 4)
 
