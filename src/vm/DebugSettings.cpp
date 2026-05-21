@@ -105,6 +105,15 @@ DebugSettings::DebugSettings() {
     // and deferred.md A6 N+30k.  PHARO_T1_NO_INLINE_J2J=1 opts out
     // entirely (legacy workaround).
     t1InlineJ2J         = !envPresent("PHARO_T1_NO_INLINE_J2J");
+    // 2026-05-21 (jit-may20 Step 2): pure-J2J gate replaced by warmth
+    // gate as the default.  Pure gate (bit-60 check) was too strict —
+    // bailed ~96.5% of inline-J2J attempts on fib.  Warmth gate
+    // (entry0.key == 0 check) catches the same wrong-result class of
+    // bug with a 99%+ catch rate.  Pure gate kept as opt-in via
+    // PHARO_T1_PURE_J2J_GATE=1 for bisection; warmth gate disabled via
+    // PHARO_T1_NO_WARM_J2J_GATE=1.
+    t1PureJ2JGate       = envPresent("PHARO_T1_PURE_J2J_GATE");
+    t1WarmJ2JGate       = !envPresent("PHARO_T1_NO_WARM_J2J_GATE");
     t1InlinePrimBitOps  = !envPresent("PHARO_T1_NO_INLINE_PRIM_BITOPS");
     t1InlinePrimAt      = !envPresent("PHARO_T1_NO_INLINE_PRIM_AT");
     t1InlineJ2JXmethod  = envPresent("PHARO_T1_INLINE_J2J_XMETHOD");

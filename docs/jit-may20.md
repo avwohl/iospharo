@@ -68,11 +68,37 @@ story: even with bit 60 preserved, the gate may be bailing for
 other reasons (e.g., interaction with prim-call IC sites, runtime
 caller/callee asymmetry). Diagnosed root cause moves to Step 2.
 
-### 2. Fix the underlying materialize-bail wrong-result bug  *(weeks)*
+### 2. Fix the underlying materialize-bail wrong-result bug  *(weeks, partial 2026-05-21)*
 
 Pure-J2J gate is a safety net. Even with it, any future workload that
 hits cold ICs mid-flight will bail through the broken materialize path.
-Three options (recap from iter N+30j):
+
+**Partial progress (2026-05-21):** added a warmth-based gate variant
+(`t1WarmJ2JGate`, default-ON) alongside the legacy pure-J2J gate
+(`t1PureJ2JGate`, opt-in via PHARO_T1_PURE_J2J_GATE=1). Warmth gate
+checks `entry0.key != 0` (cold site) instead of `entry0.extras &
+J2J_ENTRY_BIT` (no J2J target). It's more permissive in theory — a
+warm prim-only site passes warmth but fails the pure gate — but
+empirically catches the same fib(17)=5167 correctness bug:
+
+    bench                  pure gate    warmth gate    no gate
+    fib(17) bad / 10            0/10          0/10        4/10
+    fib(28) cpu                 130 ms        130 ms       22 ms
+    fib(30) cpu                 349 ms        349 ms       35 ms
+
+Both gates ship with similar bail rates (~96% on fib's inline-J2J
+attempts per the new `g_inlineJ2J_bail_gate` counter), so the warmth
+variant doesn't unlock perf. The 96% bail rate is itself the next
+mystery — for self-recursive benchFib (2 IC sites), entry0.key on
+both sites should be non-zero after a single iteration, yet most
+gate evaluations see a cold site. Hypotheses:
+- Recompile cycles fresh-allocate JITMethod with cold IC.
+- `callerJMReg2` (= `x19` in xmethod-off mode) somehow doesn't point
+  at the just-firing method during the gate check.
+- Polymorphic IC fill order: entry 0 holds an older, never-J2J
+  classification while the just-hit entry is at index >0.
+
+Three architectural options remain (recap from iter N+30j):
 
 - **Pure-J2J static gate** — at compile time, scan callee bytecode and
   refuse to emit inline-J2J if any send opcode can target a cold IC.

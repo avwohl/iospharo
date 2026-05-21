@@ -84,6 +84,23 @@ struct DebugSettings {
     // caller's IC sites have bit 60 before allowing inline-J2J to fire.
     // PHARO_T1_NO_INLINE_J2J=1 to disable.  See deferred.md A6 N+30k.
     bool t1InlineJ2J = true;
+    // Pure-J2J gate (AsmjitT1 inline-J2J self-rec emit): runtime-loop
+    // that bails inline-J2J unless ALL of caller's IC sites have
+    // J2J_ENTRY_BIT.  Shipped default-ON in A6 N+30k as a safety net
+    // for a materialize-bail wrong-result bug — without it ~20% of
+    // benchFib(17) calls return 5133/5067 instead of 5167 (jit-may20
+    // Step 2 investigation, 2026-05-21).  Now superseded by t1WarmJ2JGate
+    // (warmth check) — kept as a strict fallback under PHARO_T1_PURE_J2J_GATE=1.
+    bool t1PureJ2JGate = false;
+    // Warm-J2J gate (jit-may20 Step 2, 2026-05-21): cheaper, more
+    // permissive runtime gate.  Iterates caller's IC sites and bails
+    // only if any site's entry0 *key* is zero (= site cold).  Catches
+    // the same materialize-bail wrong-result bug that t1PureJ2JGate
+    // guards (the bug needs a cold IC mid-flight in the inlined chain),
+    // but stays passable for warm prim-only sites that t1PureJ2JGate
+    // would bail on for lacking bit 60.  Default-ON.
+    // PHARO_T1_NO_WARM_J2J_GATE=1 disables for A-B testing.
+    bool t1WarmJ2JGate = true;
     // Inline SmI bitwise prims (bitAnd:/bitOr:/bitXor:) at the IC HIT site
     // for nArgs==1 sends.  Saves the chain-loop round-trip for SmI bitwise
     // sends via named-send (bitXor: is not a special-selector bytecode so

@@ -74,7 +74,8 @@ extern "C" uint64_t g_blockValue_bails = 0;  // helper returned NULL
 extern "C" uint64_t g_inlineJ2J_hits      = 0;  // path taken (br to entry)
 extern "C" uint64_t g_inlineJ2J_bail_zero = 0;  // entryAddr == 0
 extern "C" uint64_t g_inlineJ2J_bail_full = 0;  // save stack at limit
-extern "C" uint64_t g_inlineJ2J_bail_self = 0;  // calleeJM != callerJM
+extern "C" uint64_t g_inlineJ2J_bail_self = 0;  // calleeJM != callerJM (or other bail2 routes)
+extern "C" uint64_t g_inlineJ2J_bail_gate = 0;  // pure-J2J gate failed (a caller IC site lacks bit 60)
 // Counters for inline-prim path firings (PHARO_T1_INLINE_PRIM_COUNTERS=1).
 extern "C" uint64_t g_primAt_hits         = 0;  // tryPrimAt inline fired
 extern "C" uint64_t g_primAtPut_hits      = 0;  // tryPrimAtPut inline fired
@@ -3341,41 +3342,61 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.tbz(x7, asmjit::Imm(56), j2jBailSelf2);
                 }
 
-                // PURE-J2J GATE (iter N+30k, default-ON for correctness):
-                // Inline-J2J only when ALL of caller's IC sites have
-                // J2J_ENTRY_BIT (bit 60).  Without this, deeper inline-J2J
-                // recursion bails at a cold IC site, and the materialize
-                // bail's unwind corrupts the value chain — every benchFib(N)
-                // returns benchFib(N-2)'s value, cascading to wrong totals
-                // for N>=17 (see deferred A6 iter N+30i for diagnosis).
+                // PURE-J2J GATE (default-OFF as of 2026-05-21 jit-may20 Step 2):
+                // Originally shipped default-ON in A6 N+30k as a safety net
+                // for a materialize-bail wrong-result bug — every benchFib(N)
+                // returned benchFib(N-2)'s value for N>=17 (see deferred A6
+                // N+30i).  The gate iterates ALL of caller's IC sites and
+                // bails inline-J2J if any site lacks J2J_ENTRY_BIT (bit 60).
                 //
-                // For self-recursive (default xmethod-off), callee == caller
-                // — checking caller's IC sites is sufficient.
+                // Empirically (jit-may20.md Step 2): the gate bails ~100% of
+                // fib's IC hits (catch-rate 0% across 2.88M attempts on a
+                // fib-loop bench) while gate-OFF runs the same fib(20..32)
+                // 5×–15× faster with CORRECT results.  Default flipped to
+                // OFF.  PHARO_T1_PURE_J2J_GATE=1 re-enables the gate for
+                // safety / bisection if a wrong-result regression appears.
                 //
-                // Runtime cost: for benchFib (numICEntries=2), 6 + 4*2 =
-                // ~14 instructions per push.  ~15% perf overhead on fib but
-                // correct.  PHARO_T1_NO_PURE_J2J_GATE=1 disables to A/B
-                // test (will produce wrong results on benchFib(N>=17)).
-                static const bool pureJ2JGate =
-                    std::getenv("PHARO_T1_NO_PURE_J2J_GATE") == nullptr;
-                if (pureJ2JGate) {
+                // Self-recursive only (the bit 56 check at line ~3341 has
+                // already ensured caller == callee for this push), so the
+                // "callee has cold IC" risk is bounded by what the caller
+                // has actually observed.
+                if (g_debug.t1PureJ2JGate || g_debug.t1WarmJ2JGate) {
                     using namespace asmjit::a64;
-                    // x4 = scratch, x12 = icBuffer running ptr,
-                    // w14 = remaining IC sites.
+                    // Gate variant: PureJ2J checks entry0.extras bit 60
+                    // (= "site has J2J target"); WarmJ2J checks entry0.key
+                    // != 0 (= "site has any filled entry").  Warmth is the
+                    // more permissive check — passes for warm prim-only
+                    // sites that the pure gate would bail on for lacking
+                    // bit 60, while still catching cold ICs that would
+                    // trigger the materialize-bail wrong-result bug.
+                    // PureJ2J takes precedence when both flags are on
+                    // (deliberate: bisection knob preserves the older
+                    // stricter behavior).
+                    const bool usePureGate = g_debug.t1PureJ2JGate;
                     a.ldr(x12, ptr(callerJMReg2,
                         (int)offsetof(JITMethod, icBuffer)));
                     a.ldrh(w14, ptr(callerJMReg2,
                         (int)offsetof(JITMethod, numICEntries)));
-                    asmjit::Label pureJ2JLoop = a.new_label();
-                    asmjit::Label pureJ2JDone = a.new_label();
-                    a.cbz(w14, pureJ2JDone);
-                    a.bind(pureJ2JLoop);
-                    a.ldr(x4, ptr(x12, 16));   // ic[site].extras (slot 2)
-                    a.tbz(x4, asmjit::Imm(60), j2jBailSelf2);
+                    asmjit::Label gateLoop = a.new_label();
+                    asmjit::Label gateDone = a.new_label();
+                    asmjit::Label gateBail = a.new_label();
+                    a.cbz(w14, gateDone);
+                    a.bind(gateLoop);
+                    if (usePureGate) {
+                        a.ldr(x4, ptr(x12, 16));   // ic[site].extras (slot 2)
+                        a.tbz(x4, asmjit::Imm(60), gateBail);
+                    } else {
+                        a.ldr(x4, ptr(x12, 0));    // ic[site].key (slot 0)
+                        a.cbz(x4, gateBail);
+                    }
                     a.add(x12, x12, asmjit::Imm((int)IC_BYTES_PER_SITE));
                     a.subs(w14, w14, asmjit::Imm(1));
-                    a.b_ne(pureJ2JLoop);
-                    a.bind(pureJ2JDone);
+                    a.b_ne(gateLoop);
+                    a.b(gateDone);
+                    a.bind(gateBail);
+                    emitIncCounter((uint64_t)&g_inlineJ2J_bail_gate);
+                    a.b(j2jBailSelf2);
+                    a.bind(gateDone);
                 }
 
                 // Check save stack space.  cursor (offset 144) and limit
