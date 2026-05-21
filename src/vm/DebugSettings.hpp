@@ -126,6 +126,14 @@ struct DebugSettings {
     // vs ~500 cycle chain-loop round-trip.  Could benefit sort/dict/sum.
     // Default-on; PHARO_T1_NO_INLINE_PRIM_AT=1 opt-out.
     bool t1InlinePrimAt = true;
+    // jit-may20b Step 10: inline multi-slot getter (IC extras bit 57) at the
+    // IC HIT site for nArgs == 0 sends.  Recognizes the
+    // `^ self[A] op1 self[B] op2 const` pattern emitted by
+    // detectTrivialMethod for OrderedCollection>>size and similar.
+    // ~30-instruction inline emit vs ~100ns chain-loop round-trip;
+    // dominates the instVar benchmark.  Default-on;
+    // PHARO_T1_NO_INLINE_MULTISLOT=1 opt-out.
+    bool t1InlineMultiSlot = true;
     // Cross-method inline-J2J emit (callee != caller).  Default OFF —
     // currently corrupts state at MAX>5000 fires; opt-in for lldb work.
     // PHARO_T1_INLINE_J2J_XMETHOD=1 enables.

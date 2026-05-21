@@ -85,6 +85,7 @@ extern "C" uint64_t g_inlineJ2J_bail_gate = 0;  // pure-J2J gate failed (a calle
 extern "C" uint64_t g_primAt_hits         = 0;  // tryPrimAt inline fired
 extern "C" uint64_t g_primAtPut_hits      = 0;  // tryPrimAtPut inline fired
 extern "C" uint64_t g_primSize_hits       = 0;  // tryPrimSize inline fired
+extern "C" uint64_t g_multiSlot_hits      = 0;  // tryMultiSlot inline fired
 extern "C" uint64_t g_primBitOp_hits      = 0;  // bitAnd/bitOr/bitXor fired
 extern "C" uint64_t g_primFloatOp_hits    = 0;  // SmallFloat send-site fired
 extern "C" uint64_t g_bcFloatArith_hits   = 0;  // 0x60/0x61 SmallFloat bytecode fired
@@ -3180,6 +3181,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimAtPut = a.new_label();
             asmjit::Label tryPrimSize = a.new_label();
             asmjit::Label tryPrimSmallFloatOp = a.new_label();
+            asmjit::Label tryMultiSlot = a.new_label();
             // dispatchCachedRestoreX5: inline-prim bail target that
             // reloads x5 from OFF_ICDATAPTR (where the original icDataPtr
             // was stashed before the inline-prim code clobbered x5 with
@@ -3261,6 +3263,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // value: method is not safe to J2J-call) — check 59 first.
                 if (g_debug.t1InlineBlockValue) {
                     a.tbnz(x7, asmjit::Imm(59), tryInlineJ2J);
+                }
+                // jit-may20b Step 10: multi-slot (bit 57) takes precedence
+                // over bit 60 (J2J).  For methods that match the multi-slot
+                // pattern (`^ self[A] op1 self[B] op2 cst`), inlining the
+                // arithmetic is much cheaper than the full save+call+return.
+                // Heap-receiver only (multi-slot reads inst vars).
+                if (nArgs == 0 && g_debug.t1InlineMultiSlot) {
+                    a.tst(x1, asmjit::Imm(0x7));     // heap?
+                    asmjit::Label noMultiSlot = a.new_label();
+                    a.b_ne(noMultiSlot);
+                    a.tbnz(x7, asmjit::Imm(57), tryMultiSlot);
+                    a.bind(noMultiSlot);
                 }
                 // Bit 60 set → try inline J2J; works for any receiver tag
                 // (SmI receivers benefit too, unlike inline-getter/setter).
@@ -3920,6 +3934,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 if (g_debug.t1InlineReturnsSelf) {
                     a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
                 }
+                // jit-may20b Step 10: multi-slot getter (bit 57).
+                // Pattern: `^ self[A] op1 self[B] op2 const`.
+                // Heap receiver already gated above.
+                if (nArgs == 0 && g_debug.t1InlineMultiSlot) {
+                    a.tbnz(x7, asmjit::Imm(57), tryMultiSlot);
+                }
                 // Inline at: / at:put: / size for heap receivers
                 // (primKind 14/15/16).  Mirrors stencils.cpp:1538-1554.
                 if ((nArgs == 0 || nArgs == 1 || nArgs == 2)
@@ -3972,6 +3992,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 if (g_debug.t1InlineReturnsSelf) {
                     a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
+                }
+                // jit-may20b Step 10: multi-slot getter (bit 57).
+                if (nArgs == 0 && g_debug.t1InlineMultiSlot) {
+                    a.tbnz(x7, asmjit::Imm(57), tryMultiSlot);
                 }
                 // Inline at: / at:put: / size for heap receivers
                 // (primKind 14/15/16).  Mirrors stencils.cpp:1538-1554.
@@ -4028,6 +4052,89 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x2, ptr(x0, OFF_SP));
             }
             a.b(endOfSend);
+
+            // === Multi-slot getter (bit 57) ===
+            // Pattern: `^ self[mA] op1 self[mB] op2 cst`
+            // Extras encoding:
+            //   bits 7:0   = mA (slot index)
+            //   bits 15:8  = mB (slot index)
+            //   bits 23:16 = cst (signed int8)
+            //   bit 24     = op1: 0=add, 1=sub
+            //   bit 25     = op2: 0=add, 1=sub
+            //
+            // Result computed via tagged SmI arithmetic.  Bail to
+            // dispatchCached on:
+            //   - either inst-var is non-SmI;
+            //   - any add/sub overflows (VS set after subs/adds).
+            //
+            // nArgs == 0 only (multi-slot is a getter shape).
+            // x1 = receiver, x7 = extras (still live from probe).
+            if (nArgs == 0 && g_debug.t1InlineMultiSlot) {
+                a.bind(tryMultiSlot);
+                static const bool primCountersEnabled =
+                    std::getenv("PHARO_T1_INLINE_PRIM_COUNTERS") != nullptr;
+                if (primCountersEnabled) {
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_multiSlot_hits));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                }
+                // Slots base = receiver + 8 (skip header).
+                a.add(x3, x1, asmjit::Imm(8));
+                // self[mA]
+                a.and_(x4, x7, asmjit::Imm(0xFF));
+                a.lsl(x4, x4, asmjit::Imm(3));
+                a.ldr(x4, ptr(x3, x4));
+                // SmI check on x4
+                a.and_(x6, x4, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                // self[mB]
+                a.lsr(x5, x7, asmjit::Imm(8));
+                a.and_(x5, x5, asmjit::Imm(0xFF));
+                a.lsl(x5, x5, asmjit::Imm(3));
+                a.ldr(x5, ptr(x3, x5));
+                a.and_(x6, x5, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                // op1: x4 = a op1 b (tagged)
+                asmjit::Label msOp1Sub = a.new_label();
+                asmjit::Label msAfterOp1 = a.new_label();
+                a.tbnz(x7, asmjit::Imm(24), msOp1Sub);
+                // op1 = add: result = a + b - 1 (remove duplicate tag)
+                a.adds(x4, x4, x5);
+                a.b_vs(dispatchCached);
+                a.sub(x4, x4, asmjit::Imm(1));
+                a.b(msAfterOp1);
+                a.bind(msOp1Sub);
+                // op1 = sub: result = a - b + 1 (re-add tag)
+                a.subs(x4, x4, x5);
+                a.b_vs(dispatchCached);
+                a.add(x4, x4, asmjit::Imm(1));
+                a.bind(msAfterOp1);
+                // Build tagged const from bits 23:16 (signed int8):
+                //   x5 = (sxtb (extras >> 16)) << 3 | 1
+                a.lsr(x5, x7, asmjit::Imm(16));
+                a.sxtb(x5, x5);
+                a.lsl(x5, x5, asmjit::Imm(3));
+                a.orr(x5, x5, asmjit::Imm(1));
+                // op2: x4 = result op2 cst (tagged)
+                asmjit::Label msOp2Sub = a.new_label();
+                asmjit::Label msDone = a.new_label();
+                a.tbnz(x7, asmjit::Imm(25), msOp2Sub);
+                a.adds(x4, x4, x5);
+                a.b_vs(dispatchCached);
+                a.sub(x4, x4, asmjit::Imm(1));
+                a.b(msDone);
+                a.bind(msOp2Sub);
+                a.subs(x4, x4, x5);
+                a.b_vs(dispatchCached);
+                a.add(x4, x4, asmjit::Imm(1));
+                a.bind(msDone);
+                // Write result to receiver slot (sp[-1] for nArgs==0).
+                a.stur(x4, ptr(x2, rcvrOffsetBytes));
+                a.b(endOfSend);
+            }
 
             // Counter helper for inline-prim diagnostics (PHARO_T1_INLINE_PRIM_COUNTERS=1).
             static const bool primCountersEnabled =

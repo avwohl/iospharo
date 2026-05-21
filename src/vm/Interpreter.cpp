@@ -104,6 +104,7 @@ extern "C" uint64_t g_inlineJ2J_dbg_extra_no_bit60;
 extern "C" uint64_t g_inlineJ2J_dbg_miss;
 extern "C" uint64_t g_inlineJ2J_dbg_dispatch;
 extern "C" uint64_t g_primAt_hits;
+extern "C" uint64_t g_multiSlot_hits;
 extern "C" uint64_t g_primAtPut_hits;
 extern "C" uint64_t g_primSize_hits;
 extern "C" uint64_t g_primBitOp_hits;
@@ -1459,11 +1460,12 @@ void Interpreter::dumpJITStats() {
     {
         uint64_t primTotal = g_primAt_hits + g_primAtPut_hits
                            + g_primSize_hits + g_primBitOp_hits
-                           + g_primFloatOp_hits;
+                           + g_primFloatOp_hits + g_multiSlot_hits;
         if (primTotal > 0) {
             fprintf(stderr,
                 "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu "
-                "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu\n",
+                "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu "
+                "multiSlot=%llu\n",
                 (unsigned long long)g_primAt_hits,
                 (unsigned long long)g_primAtPut_hits,
                 (unsigned long long)g_primSize_hits,
@@ -1471,7 +1473,8 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_primFloatOp_hits,
                 (unsigned long long)g_bcFloatArith_hits,
                 (unsigned long long)g_bcArithBail_hits,
-                (unsigned long long)g_bcRemoteTemp_hits);
+                (unsigned long long)g_bcRemoteTemp_hits,
+                (unsigned long long)g_multiSlot_hits);
         }
     }
     if (g_xmethod_count > 0) {
