@@ -212,24 +212,18 @@ save + tail-call + return. Subsystems likely to move the needle:
 Validation: at each substep, measure fib(28) + bench-correctness.sh.
 Target: ≤ 5 ms fib(28) total.
 
-## Step 9. Bench-suite reliability  *(days, blocker for Step 10)*
+## Step 9. Bench-suite reliability  *(resolved 2026-05-21)*
 
-`scripts/run_benchmarks.sh` on our VM currently hangs (≥10 min, no
-output) on the headless image produced by `scripts/pharo-headless-test`.
-Step 5 from the original plan needs this fixed to make per-benchmark
-profiling possible.
+Status: **does not hang**.  Tested 3/3 runs of
+`PHARO_VM=/tmp/harness/pharo scripts/run_benchmarks.sh --ours-only`
+on the jit branch — every run completes through all 14 benchmarks
+and writes the full `/tmp/pharo_benchmarks_ours.txt`.
 
-Likely cause: a scheduler/SessionManager race between the bench's
-`forkAt: highestPriority` and our VM's startup handler. The
-`jit_loop` test in this session reproduced the hang trivially via a
-file-IO-using startup handler.
-
-Diagnosis path:
-- Run the bench-suite under `lldb` attach, interrupt after 30 s,
-  inspect which process is on-CPU.
-- Check whether `[PROGRESS] Ns: ~K steps` continues after the apparent
-  hang point. If yes, it's a deadlock not an infinite loop.
-- Patch suspect priorities; consider isolating one bench at a time.
+The hang Step 9 described was the historical `PHARO_NO_SISTA_DO_SPLICE`
+scheduler race already fixed by the 2026-05-18 inline-J2J +
+bytecode-coverage shipping (see the comment in
+`scripts/run_benchmarks.sh:106`).  No further action needed; Step 10
+is unblocked.
 
 ## Step 10. Per-bench profiling  *(open-ended, after Step 9)*
 
