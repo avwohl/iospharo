@@ -255,26 +255,39 @@ Status 2026-05-21:
 
 ### 8.1 IC HIT path — partial
 
-Two micro-optimizations landed (commit `8df37be2`):
+Two micro-optimizations attempted (commit `8df37be2`).  After
+post-mortem on the gate-OFF crash:
 
-1. Removed the `cbz x4, miss` safety check after IC HIT probe.  No
-   real receiver has classKey 0, so the check was pure cost.
-2. Elided the `sub x13, spReg, 0` no-op when nArgs == 0 in the
-   inline-J2J tempBase setup.
-
-Neither shows up at 1 ms timer resolution.  Combined estimated win:
-2 cycles × 3M sends ≈ 2 ms — below the noise floor of our timing.
+1. **`cbz x4, miss` removal — KEPT.**  No real receiver has classKey 0;
+   the check was pure cost.  Verified safe.
+2. **`sub x13, spReg, 0` elision for nArgs==0 — REVERTED.**  Skipping
+   the sub left x13 stale (still holding state.j2jDepth+totalCalls),
+   which downstream nil-init unroll code at AsmjitT1.cpp:3833 then
+   used as a memory base → SEGV.  Reverted in commit `697df6dc`.
 
 Remaining IC-HIT-path work requires per-site class-immediate baking
 (Cog's pattern) which is multi-day.
 
-### 8.2 J2J save shrinkage — deferred
+### 8.2 J2J save shrinkage — partial micro-opt landed
 
 The doc proposed "skip jitMethod and tempBase save (they're invariant)
 for SELF_REC_BIT".  jitMethod is already skipped for xmethod-off
 (`AsmjitT1.cpp:3469`).  tempBase IS variable across send sites
 (benchFib's bc 59 vs bc 63 have different save.tempBase offsets from
 save.sp), so the prelude can't reconstruct it cheaply.
+
+**Micro-opt landed** (commit `779f0716`): skip `str x10, state.ip`
+in the J2J return prelude.  JIT body never READS state.ip during
+execution (every bytecode op writes state.ip itself before any exit
+to interp), so the restored value is always overwritten before use.
+save.ip stays written by the inline-J2J push for the trampoline's
+Lret_null_resume bail.  Saves 1 instr per J2J return; ~1M returns on
+fib(28) ≈ ~0.3 ms.  Confirmed safe with 5/5 gate-OFF cold-start
+fib(28) PASS.
+
+Deeper save shrinkage (skipping save.tempBase entirely) requires
+per-method bytecode analysis to detect "no tempBase reads" — left
+as future work.
 
 ### 8.3 — assessed, deferred
 
