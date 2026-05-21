@@ -410,10 +410,31 @@ Per-bench attack plan, refined:
 - **Cold-start dominated (sieve, ...)**: optimize JIT compile speed.
   Profile via `scripts/run_benchmarks.sh` cold timing minus a
   warmed-image measurement.
-- **Steady-state dominated (fib)**: per-activation cost (Step 8).
+- **Steady-state dominated (fib, instVar)**: per-activation cost
+  (Step 8).
 - **Both (sort, dict, collect)**: workload-specific — block-value
   spec, polymorphic IC walk (Step 8.3-shaped), trivial-method
   inlining (Step 8.4 territory).
+
+Steady-state measurements (3× warmup, 5× measure, single image):
+
+    benchmark            steady   cold(bench)   cold-overhead
+    sieve x100            7-9 ms     100 ms       ~91 ms (compile)
+    instVar 1M             192 ms     215 ms       ~23 ms  ← steady
+                                                           dominated
+    fib(28)                  8 ms     144 ms      ~136 ms  ← compile
+                                                           heavy
+
+instVar at 192 ms steady-state is 96× Cog's bench-suite cold (2 ms).
+Hot path: 1M × `obj size; obj yourself` = 2M sends.  Per-send ~96 ns,
+vs fib's 2.7 ns/send with inline-J2J.  The difference: OrderedCollection>>size
+is NOT a primitive (it computes `lastIndex - firstIndex + 1`); each
+call goes through normal send + activate + bytecode body + return.
+Cog likely inlines via Sista's MIR.
+
+Smallest concrete win for instVar would be inline-getter spec for
+non-prim methods that just return a SmI expression — but identifying
+those at JIT compile is non-trivial.
 
 Once the suite runs reliably:
 
