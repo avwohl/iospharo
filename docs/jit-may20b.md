@@ -141,10 +141,13 @@ Diagnostic toggles (kept in-tree, default-off):
 - `PHARO_T1_BAIL_GATE_TRACE=1` — one-shot trace of the bailing
   caller's icBuffer at the first gate bail (implies HISTO).
 
-## Step 7. Fix the materialize-bail wrong-result bug  *(2026-05-21 — landed, ~10% cold-start residual)*
+## Step 7. Fix the materialize-bail wrong-result bug  *(2026-05-21 — FULLY RESOLVED)*
 
-Status: **recursive-safe materialize landed, validation criteria met
-for warm-image runs; cold-start has ~6% residual failures.**
+Status: **FIXED.**  The matRetSlot mechanism (commits `587f7f72` +
+`d70edf2c` + `93eb712c`) was correct from the start; the "cold-start
+residual" we kept chasing turned out to be an unrelated regression
+introduced by Step 8.1's nArgs==0 sub elision.  See "Step 7 ROOT
+CAUSE" section below Step 8.
 
 Implementation (commits `587f7f72` + `d70edf2c`):
 
@@ -220,11 +223,29 @@ returned wrong results so we never observed gate-OFF timings for those.
 These workloads pay materialize-bail cost without the inline-J2J win
 that fib gets.  Default gate stays ON for now.
 
-NOT done: default-flip the gate to off.  Once the cold-start residual
-is closed, flip + re-bench.  See Step 8 for the per-activation gap
-that remains even with the gate optimally placed.
+**Done 2026-05-21**: default-flip the gate to OFF is now safe (the
+crash was unrelated to Step 7).  Gate flip itself remains a separate
+decision since gate ON only marginally regresses perf (132 ms vs
+141 ms cold-start) but keeps the inline-J2J path warm-start gated.
 
-## Step 8. Close the per-activation gap  *(8.1 micro-opt landed; 8.2-8.4 deferred)*
+### Step 7 ROOT CAUSE (added 2026-05-21)
+
+The "cold-start residual" we'd been chasing as Step 7 follow-up was
+NOT a Step 7 bug.  Root cause: Step 8.1's nArgs==0 sub elision
+(commit `8df37be2`) skipped writing x13 in the inline-J2J push, but
+downstream code in the same emit re-uses x13 for the nil-init
+unroll (`a.str(x4, ptr(x13, (nArgs+k)*8))` at
+`AsmjitT1.cpp:3833`).  With stale x13 → bogus address → SEGV.
+
+The bug was MASKED with gate ON (warm-J2J gate defers most inline-J2J
+fires).  Only surfaced with gate OFF.  Reverting just the sub
+elision (commit `697df6dc`) restores 100% cold-start correctness:
+20/20 gate-OFF cold-start fib(28) runs PASS.
+
+The cbz removal half of Step 8.1 stays in — independently verified
+safe.
+
+## Step 8. Close the per-activation gap  *(8.1 cbz removal landed; sub elision REVERTED; 8.2-8.4 deferred)*
 
 Status 2026-05-21:
 
