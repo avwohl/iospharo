@@ -3205,13 +3205,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.cmp(x4, x6);
             a.b_ne(miss);
             // jit-may20b Step 8.1: removed `cbz x4, miss` safety check.
-            // The check guarded against icData[0]==0 (cold IC entry) matching
-            // a receiver with classKey==0.  In practice no receiver has
-            // classKey 0: SmI/SmallFloat take the imm path and OR with
-            // 0x80000000 (always non-zero); heap objects extract classIndex
-            // from header — classIndex 0 is reserved for "no class" and
-            // never appears on real receivers.  Removing saves 1 cycle per
-            // IC HIT site; ~3M sends on fib(28) → ~1 ms.
+            // Verified safe — no receiver computes classKey=0.
+            // (Original Step 8.1 included an unrelated nArgs==0 sub elision
+            // that broke gate-OFF; that one rolled back below.  This cbz
+            // removal stays.)
             if (g_debug.t1ProbeAlwaysMiss) {
                 a.b(miss);                     // diagnostic: never take HIT
             }
@@ -3763,16 +3760,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 } else {
                     a.ldr(x12, ptr(x0, OFF_SP));
                 }
-                // jit-may20b Step 8.1: skip the sub when nArgs == 0 — `sub x,
-                // y, 0` is a no-op move.  Store spReg directly as the new
-                // tempBase.  For nArgs > 0, keep the sub.  Saves 1 instr per
-                // 0-arg inline-J2J push (benchFib is the canonical case).
-                if (nArgs == 0) {
-                    a.str(spReg, ptr(x0, OFF_TEMPBASE));
-                } else {
-                    a.sub(x13, spReg, asmjit::Imm(nArgs * 8)); // new tempBase
-                    a.str(x13, ptr(x0, OFF_TEMPBASE));
-                }
+                // jit-may20b Step 8.1 ROLLBACK 2026-05-21: keep the sub.
+                // Skipping for nArgs==0 caused gate-OFF SEGV in inline-J2J
+                // hot path — x13 wasn't initialized to a usable value, so a
+                // downstream code path that depended on x13 holding the new
+                // tempBase wrote to a bogus address.  The sub for nArgs==0
+                // is `sub x13, spReg, 0` = `mov x13, spReg` (one cycle),
+                // negligible perf cost vs the correctness need.
+                a.sub(x13, spReg, asmjit::Imm(nArgs * 8)); // new tempBase
+                a.str(x13, ptr(x0, OFF_TEMPBASE));
 
                 // Load cached bcStart from JITMethod (offset 96).
                 // For self-rec, callerJM == calleeJM.  In xmethod-off
