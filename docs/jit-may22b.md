@@ -226,27 +226,40 @@ writes `state.ip = stale_addr + bcOffset`.  Subsequent
 error.  Manifests as "Message not understood: ByteString >>
 #encodeString:" — selector dispatch on a corrupted method oop.
 
-**The bytecodeBase fix LANDED then REVERTED 2026-05-22**
-(`d7750fba` then `deededc5`).  Initial 13+ sites converted to
-dynamic loads from `state.method` — passed bench-correctness
-fib 5/5 but broke `tinyBenchmarks` with "SmallInteger are not
-indexable" runtime error.
+**The bytecodeBase fix LANDED PROPERLY 2026-05-22** (`7f2c55ce`)
+after a debug iteration:
 
-Root cause of regression: my dynamic computation assumes
-`state.method + 16 + numLits*8` equals bytecodes start.  For
-CompiledMethods that's true.  For some Sista-compiled fns
-(possibly block compiles, possibly some other format),
-`state.method` at runtime doesn't point to a method whose
-layout matches my arithmetic — the computed "bytecodes" pointer
-lands in the wrong region.
+1. First attempt (`d7750fba`): converted all 13+ baked
+   `bytecodeBase + bcOffset` sites to use dynamic load from
+   `state.method`.  Passed bench-correctness fib 5/5 but broke
+   tinyBenchmarks with "SmallInteger are not indexable" (`deededc5`
+   reverted it).
 
-The proper fix needs:
-- Verify what `state.method` points to in EACH Sista-fn invocation
-  path (outer CompiledMethod? block? activation context?).
-- Either: handle each case separately, OR introduce a JITState
-  field `bytecodes_start` updated wherever state.method is set.
+2. lldb-driven debug iteration (`21623999`): re-applied the fix
+   with a compile-time `cc.invoke` debug helper that compared
+   the dynamic computation with the baked `bytecodeBase` at
+   runtime.  SISTA-BC-MISMATCH trace fired with diffs of
+   3/6/0x29 etc. — exactly the `startBcOffset` values for
+   per-bc compiles.
 
-For now: REVERTED.  Original baked-bytecodeBase code is back.
+3. Final fix (`7f2c55ce`): added `startBcOffset` parameter to
+   `Lowering::lower()`.  SistaRuntime::compile passes it for
+   the per-bc cache path.  Computation:
+   `bytecodesHoisted = methObj + (16 + startBcOffset) + numLits*8`
+   (the `+ startBcOffset` baked as compile-time immediate).
+   Each deopt site uses `add ipReg, bytecodesHoisted, Imm(bcOffset)`
+   exactly as before — just with a now-correct base.
+
+Validation (`7f2c55ce`):
+- bench-correctness fib: 5/5 PASS.
+- bench-suite tinyBenchmarks (the regression): PASS.
+- All 13 bench-suite benchmarks: numbers within noise.
+- Bail-only no-rekey: PASS (no regression).
+- Bail-only + rekey: STILL fails the original encodeString:
+  error — but that's a separate issue from bytecodeBase.
+
+The Sista deopt path is now properly GC-safe.  The remaining
+rekey issue can be investigated independently.
 
   A `bytecodesHoisted` register is computed once
 at fn entry:
