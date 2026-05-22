@@ -29,16 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q1 — Measure block-value send overhead
-
-WHAT: quantify how much time is spent in primitive 207 (full
-closure value) vs the actual block body.
-HOW: add a timed counter around `primitiveFullClosureValue` —
-record TSC delta from entry to exit, accumulate total.  Run
-bench-suite, dump total ms.
-DONE WHEN: a number is printed.  Commit the instrumentation
-(it can stay for future use, gated by env var).
-
 ### Q2 — Measure activateBlock overhead
 
 WHAT: how much time goes into `activateBlock` setup (pushFrame,
@@ -210,3 +200,7 @@ DONE WHEN: bench-correctness PASS, counter fires.
 - ✅ T17: hot-block detection proposal documented.
 - ✅ T19: no remaining Sista baked pointers.
 - ✅ T20-partial: SmI mul 0x68 inline.
+- ✅ **Q1**: primitiveFullClosureValue fires 5.2M+ times per bench-suite
+  run, avg 94 cycles per call (~3.9µs).  Block invocation is the
+  dominant bench-suite overhead.
+

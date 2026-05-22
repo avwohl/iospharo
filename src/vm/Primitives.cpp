@@ -3458,7 +3458,35 @@ PrimitiveResult Interpreter::primitiveClosureCopyWithCopiedValues(int argCount) 
 
 // Primitive 207: Full closure value (for closures with many arguments)
 // This handles FullBlockClosures which may have more complex activation
+// jit-may23 Q1: timed counter for block-value overhead.
+static uint64_t s_p207Cycles = 0;
+static uint64_t s_p207Count = 0;
+
 PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
+    static const bool timeIt = std::getenv("PHARO_TIME_PRIM207") != nullptr;
+    uint64_t startTSC = 0;
+    if (timeIt) {
+        asm volatile("mrs %0, cntvct_el0" : "=r"(startTSC));
+    }
+    struct EndCounter {
+        bool active;
+        uint64_t start;
+        ~EndCounter() {
+            if (active) {
+                uint64_t endTSC;
+                asm volatile("mrs %0, cntvct_el0" : "=r"(endTSC));
+                s_p207Cycles += (endTSC - start);
+                s_p207Count++;
+                if ((s_p207Count & 0xFFFFF) == 0) {
+                    std::fprintf(stderr,
+                        "[Q1-PRIM207] count=%llu cycles=%llu avg=%llu\n",
+                        (unsigned long long)s_p207Count,
+                        (unsigned long long)s_p207Cycles,
+                        (unsigned long long)(s_p207Cycles / s_p207Count));
+                }
+            }
+        }
+    } endCounter{timeIt, startTSC};
     if (std::getenv("PHARO_TRACE_PRIM207")) {
         static uint64_t n = 0;
         n++;
