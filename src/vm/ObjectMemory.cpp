@@ -1440,28 +1440,6 @@ uint32_t ObjectMemory::generateHash() {
 // ===== GARBAGE COLLECTION =====
 
 GCResult ObjectMemory::scavenge() {
-    // jit-may23 Q11/Q12: time scavenge.
-    static uint64_t s_scavCycles = 0;
-    static uint64_t s_scavCount = 0;
-    static const bool timeIt = std::getenv("PHARO_TIME_GC") != nullptr;
-    uint64_t startTSC = 0;
-    if (timeIt) asm volatile("mrs %0, cntvct_el0" : "=r"(startTSC));
-    struct EndC {
-        bool active; uint64_t start;
-        ~EndC() {
-            if (active) {
-                uint64_t endTSC;
-                asm volatile("mrs %0, cntvct_el0" : "=r"(endTSC));
-                s_scavCycles += (endTSC - start);
-                s_scavCount++;
-                std::fprintf(stderr,
-                    "[Q11-SCAV] #%llu in %llu cycles (total %llu)\n",
-                    (unsigned long long)s_scavCount,
-                    (unsigned long long)(endTSC - start),
-                    (unsigned long long)s_scavCycles);
-            }
-        }
-    } endC{timeIt, startTSC};
     // Copying scavenge: tenure all reachable young objects to old
     // space, reset eden.  Unreachable young objects vanish when
     // eden is reset.
@@ -1783,40 +1761,6 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     auto start = std::chrono::steady_clock::now();
     GCResult result{0, 0, 0};
 
-    // jit-may23 Q23: log fullGC caller (backtrace).
-    if (std::getenv("PHARO_TRACE_FULLGC_CALLER")) {
-        void* ra0 = __builtin_return_address(0);
-        void* ra1 = __builtin_return_address(1);
-        void* ra2 = __builtin_return_address(2);
-        Dl_info i0{}, i1{}, i2{};
-        dladdr(ra0, &i0); dladdr(ra1, &i1); dladdr(ra2, &i2);
-        std::fprintf(stderr, "[Q23-FULLGC] %s / %s / %s\n",
-            i0.dli_sname ? i0.dli_sname : "?",
-            i1.dli_sname ? i1.dli_sname : "?",
-            i2.dli_sname ? i2.dli_sname : "?");
-    }
-    // jit-may23 Q12: time fullGC.
-    static uint64_t s_fullGCCycles = 0;
-    static uint64_t s_fullGCCount = 0;
-    static const bool timeGC = std::getenv("PHARO_TIME_GC") != nullptr;
-    uint64_t startTSC = 0;
-    if (timeGC) asm volatile("mrs %0, cntvct_el0" : "=r"(startTSC));
-    struct EndC {
-        bool active; uint64_t start;
-        ~EndC() {
-            if (active) {
-                uint64_t endTSC;
-                asm volatile("mrs %0, cntvct_el0" : "=r"(endTSC));
-                s_fullGCCycles += (endTSC - start);
-                s_fullGCCount++;
-                std::fprintf(stderr,
-                    "[Q12-FULLGC] #%llu in %llu cycles (total %llu)\n",
-                    (unsigned long long)s_fullGCCount,
-                    (unsigned long long)(endTSC - start),
-                    (unsigned long long)s_fullGCCycles);
-            }
-        }
-    } endC{timeGC, startTSC};
 
     size_t usedBefore = oldSpaceFree_ - oldSpaceStart_;
 

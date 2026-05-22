@@ -48,6 +48,33 @@ events.  Each takes ~12-15M cycles.  Try to coalesce.
 HOW: increase scavenge threshold.
 DONE WHEN: total GC cycles measured before/after.
 
+### Q36 — Cache home method per CompiledBlock
+
+WHAT: activateBlock walks up to 20 enclosing-code chain
+iterations to find the home method (lines 9980-10026).  The
+home method is constant per CompiledBlock — cache it in a
+side-channel map.
+HOW: add an `unordered_map<uint64_t, Oop>` keyed by
+compiledBlock.rawBits().  On first hit, walk + store.  On
+subsequent hits, return cached value.
+DONE WHEN: bench-correctness 5/5 PASS AND activateBlock avg
+cycles drops below 57.
+
+### Q37 — Verify Q36 win and commit
+
+WHAT: measure activateBlock cycles after Q36.
+HOW: PHARO_TIME_ACTIVATE_BLOCK=1.  Compare avg before/after.
+DONE WHEN: number recorded.
+
+### Q38 — Try noteMethodEntry skip for already-compiled blocks
+
+WHAT: activateBlock calls noteMethodEntry on every invocation.
+For blocks already compiled (no further hot-count work), this
+is wasted.
+HOW: add a hot-path check: `if jm exists for this block, skip
+noteMethodEntry`.
+DONE WHEN: activateBlock counter drops further.
+
 ## Closed
 
 (Move tasks here as you finish them.)

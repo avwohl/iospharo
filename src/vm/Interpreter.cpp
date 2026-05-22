@@ -9862,33 +9862,7 @@ past_sista_block:
     }
 }
 
-static uint64_t s_actBlockCycles = 0;
-static uint64_t s_actBlockCount = 0;
-
 void Interpreter::activateBlock(Oop block, int argCount) {
-    static const bool timeIt = std::getenv("PHARO_TIME_ACTIVATE_BLOCK") != nullptr;
-    uint64_t startTSC = 0;
-    if (timeIt) {
-        asm volatile("mrs %0, cntvct_el0" : "=r"(startTSC));
-    }
-    struct EndC {
-        bool active; uint64_t start;
-        ~EndC() {
-            if (active) {
-                uint64_t endTSC;
-                asm volatile("mrs %0, cntvct_el0" : "=r"(endTSC));
-                s_actBlockCycles += (endTSC - start);
-                s_actBlockCount++;
-                if ((s_actBlockCount & 0xFFFFF) == 0) {
-                    std::fprintf(stderr,
-                        "[Q2-ACT-BLOCK] count=%llu cycles=%llu avg=%llu\n",
-                        (unsigned long long)s_actBlockCount,
-                        (unsigned long long)s_actBlockCycles,
-                        (unsigned long long)(s_actBlockCycles / s_actBlockCount));
-                }
-            }
-        }
-    } endC{timeIt, startTSC};
     if (std::getenv("PHARO_TRACE_ACTIVATE_BLOCK")) {
         static uint64_t n = 0;
         n++;
