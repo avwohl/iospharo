@@ -1075,6 +1075,10 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 7:  return primIndex;   // SmallInteger>>=
     case 8:  return primIndex;   // SmallInteger>>~=
     case 9:  return primIndex;   // SmallInteger>>*
+    case 10: return primIndex;   // SmallInteger>>\\ (jit-may23 T7)
+    case 11: return primIndex;   // SmallInteger>>// (T7)
+    case 12: return primIndex;   // SmallInteger>>bitShift: (T7)
+    case 13: return primIndex;   // SmallInteger>>/ (T7)
     case 14: return primIndex;   // SmallInteger>>bitAnd:
     case 15: return primIndex;   // SmallInteger>>bitOr:
     case 16: return primIndex;   // SmallInteger>>bitXor:
