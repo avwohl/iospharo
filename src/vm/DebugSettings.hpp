@@ -126,6 +126,14 @@ struct DebugSettings {
     // vs ~500 cycle chain-loop round-trip.  Could benefit sort/dict/sum.
     // Default-on; PHARO_T1_NO_INLINE_PRIM_AT=1 opt-out.
     bool t1InlinePrimAt = true;
+    // jit-may20b Step 8.4: dispatch to Sista's compiled fn from asmjit-T1
+    // IC HIT path when the IC patcher set SISTA_BIT (bit 55) + fn ptr in
+    // bits 47:0.  Currently dormant — Sista's bail-protocol bug (Step 4)
+    // means Sista doesn't compile send-having methods like benchFib, so
+    // SISTA_BIT is never set in practice.  Infrastructure in place for
+    // future Step 4 follow-up.  Default-off (until Step 4 lands).
+    // PHARO_T1_INLINE_SISTA_CALL=1 opt-in.
+    bool t1InlineSistaCall = false;
     // Cross-method inline-J2J emit (callee != caller).  Default OFF —
     // currently corrupts state at MAX>5000 fires; opt-in for lldb work.
     // PHARO_T1_INLINE_J2J_XMETHOD=1 enables.

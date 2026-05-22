@@ -117,6 +117,15 @@ public:
         return inner->second;
     }
 
+    // jit-may20b Step 8.4: const lookup into the method→fn cache.
+    // Used by patchJITICAfterSend to decide whether to set SISTA_BIT.
+    // Returns nullptr on miss; does NOT trigger compilation.
+    Lowering::CompiledFn lookupCompiled(Oop method) const {
+        auto it = cache_.find(method.rawBits());
+        if (it == cache_.end()) return nullptr;
+        return it->second;
+    }
+
     // Increment the per-(method, bcOffset) backward-jump counter.
     // Returns the new count.  Used by the backward-jump hook to
     // decide when to trigger a per-bytecode Sista compile.

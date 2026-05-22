@@ -3183,6 +3183,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryGetter = a.new_label();
             asmjit::Label trySetter = a.new_label();
             asmjit::Label tryReturnsSelf = a.new_label();
+            asmjit::Label trySistaCall = a.new_label();
             asmjit::Label tryPrimBitAnd = a.new_label();
             asmjit::Label tryPrimBitOr = a.new_label();
             asmjit::Label tryPrimBitXor = a.new_label();
@@ -3270,6 +3271,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // value: method is not safe to J2J-call) — check 59 first.
                 if (g_debug.t1InlineBlockValue) {
                     a.tbnz(x7, asmjit::Imm(59), tryInlineJ2J);
+                }
+                // jit-may20b Step 8.4: bit 55 (SISTA_BIT) takes precedence
+                // over bit 60.  Sista's monomorphic inlining is strictly
+                // more powerful than J2J's straight-call.  Bit-55 stays
+                // unset until the Sista bail-protocol bug (Step 4) lands,
+                // so this branch is dead in current builds.
+                if (g_debug.t1InlineSistaCall) {
+                    a.tbnz(x7, asmjit::Imm(55), trySistaCall);
                 }
                 // Bit 60 set → try inline J2J; works for any receiver tag
                 // (SmI receivers benefit too, unlike inline-getter/setter).
@@ -4028,6 +4037,24 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x2, ptr(x0, OFF_SP));
             }
             a.b(endOfSend);
+
+            // === trySistaCall (jit-may20b Step 8.4) ===
+            // Dispatch to a Sista-compiled fn (ptr in x7's bits 47:0).
+            // Currently a stub: bails to dispatchCached so the chain-loop
+            // handles via the existing Sista dispatch path.  When Step 4
+            // (Sista bail-protocol fix) lands, replace this stub with an
+            // inline BLR to the fn:
+            //
+            //     a.mov(x6, x7);
+            //     a.and_(x6, x6, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
+            //     a.mov(x0, x_state);  // = x0 already
+            //     a.blr(x6);
+            //     ... handle state.exitReason ...
+            //
+            // SISTA_BIT is currently never set (Step 4 deferred); this
+            // emit is dead code in current builds.
+            a.bind(trySistaCall);
+            a.b(dispatchCached);
 
             // === returnsSelf ===
             a.bind(tryReturnsSelf);

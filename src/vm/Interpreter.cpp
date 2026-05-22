@@ -18168,7 +18168,29 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // specialization the bit-60 J2J path takes over.
     constexpr uint64_t TRIVIAL_BITS =
         (1ULL << 63) | (1ULL << 62) | (1ULL << 61) | (1ULL << 57);
+
+    // jit-may20b Step 8.4: if Sista has compiled a fn for this method,
+    // set SISTA_BIT (bit 55) + fn pointer in bits 47:0.  asmjit-T1's IC
+    // HIT path dispatches Sista BEFORE the bit-60 J2J path so Sista's
+    // monomorphic inlining wins when applicable.  This takes priority
+    // over J2J because Sista's lowering is strictly more powerful.
+    //
+    // BLOCKED 2026-05-21: Sista's bail-protocol bug means it doesn't
+    // currently compile send-having methods (Step 4 deferred multi-
+    // week).  The infrastructure is here for future use; bit 55 stays
+    // unset until Step 4 lands.
+    constexpr uint64_t SISTA_BIT = (1ULL << 55);
+    extern sista::Runtime* sistaRuntimeForGCHook_;
+    if ((extra & TRIVIAL_BITS) == 0 && sistaRuntimeForGCHook_) {
+        auto fn = sistaRuntimeForGCHook_->lookupCompiled(resolvedMethod);
+        if (fn) {
+            extra |= SISTA_BIT
+                  | (reinterpret_cast<uint64_t>(fn) & 0x0000FFFFFFFFFFFFULL);
+        }
+    }
+
     if ((extra & TRIVIAL_BITS) == 0 &&
+        (extra & SISTA_BIT) == 0 &&
         (extra & (1ULL << 60)) == 0 && j2jEnabled) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
         if (target && target->isExecutable()) {
