@@ -1,438 +1,212 @@
-# jit-may23 — session-sized JIT work queue
+# jit-may23 — JIT optimization task queue
+
+**TO THE GOAL RUNNER**: this is a queue of small tasks. The
+work pattern is:
+
+1. Pick the topmost task in `## Queue`.
+2. Do the ONE concrete action it specifies.
+3. Move the task to `## Closed` with a one-line result.
+4. Pick the next task.
+
+**Hard rules** (these matter — past sessions stopped due to violating them):
+
+- **DO NOT write "session totals" or "progress summary"
+  messages.** Those are stop signals.  Just move to the next
+  task silently.
+- **DO NOT batch updates to this doc.**  After EACH task,
+  commit + push, then immediately pick the next one.
+- **DO NOT mark a task "deferred" because of tool/time
+  excuses.**  If the task says "use perf" but you're on macOS,
+  substitute `sample`/`dtrace`/timed counters.  Pick whatever
+  works.
+- **DO NOT write closing/wrap-up messages between tasks.**  No
+  "Branch clean", no "Real progress made", no "Now T7 is next".
+  Just do T7.
+- **The /goal hook clears only when the queue is empty.**
+  Period.  Keep working.
+
+## Queue
+
+Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
+
+### Q1 — Measure block-value send overhead
+
+WHAT: quantify how much time is spent in primitive 207 (full
+closure value) vs the actual block body.
+HOW: add a timed counter around `primitiveFullClosureValue` —
+record TSC delta from entry to exit, accumulate total.  Run
+bench-suite, dump total ms.
+DONE WHEN: a number is printed.  Commit the instrumentation
+(it can stay for future use, gated by env var).
+
+### Q2 — Measure activateBlock overhead
+
+WHAT: how much time goes into `activateBlock` setup (pushFrame,
+closure_, homeFrameDepth walk, etc.)?
+HOW: add timed counter around the body of `activateBlock`.
+Run bench-suite, dump total.
+DONE WHEN: a number is printed.  Commit instrumentation.
+
+### Q3 — Measure step() bytecode dispatch overhead
+
+WHAT: how much time is in the interp's switch-on-bytecode
+dispatch?
+HOW: add a timed counter that fires every 65K bytecodes
+(measure time between fires).  Run bench-suite, dump avg
+ns/bytecode.
+DONE WHEN: a number is printed.
+
+### Q4 — List top 10 methods by activation count
+
+WHAT: which methods are activated most frequently?  We're
+optimizing for the hot path.
+HOW: extend the existing PHARO_TRACE_TOP_SELECTORS to count
+ACTIVATIONS (not IC patches) per method.  Run bench-suite,
+dump top 10.
+DONE WHEN: top 10 list is in this doc under `## Closed`.
+
+### Q5 — Find activation count of `value:` method
+
+WHAT: extracted from Q4 — `value:` activations are the block
+invocation count.  Quantify.
+HOW: from Q4's output.
+DONE WHEN: number recorded.
+
+### Q6 — Add inline emit for SmI `<` (0x62) as full arith
+
+WHAT: 0x62 is currently in the comparison branch (csel
+true/false).  Pattern `^ self < n` would benefit from skipping
+activation.  Verify current emit is fast enough.
+HOW: read AsmjitT1.cpp:2716+ comparison emit.  Compare bytecode
+count vs `+`.  If comparable, no change.  If longer, document
+why.
+DONE WHEN: finding recorded.
+
+### Q7 — Detect setter increment pattern
+
+WHAT: `incrementX  x := x + 1` style mutators.  Bytecode:
+pushRcvrA, pushOne, send+, popStoreRcvrA, returnReceiver (5 bytes).
+HOW: add to `detectTrivialMethod` after the multi-slot detection.
+Encode in a new IC bit (bit 53 unused).  Don't add the emit yet —
+just verify the detector matches ≥100 methods on bench-suite.
+DONE WHEN: counter shows ≥100 detections.
+
+### Q8 — Add emit for Q7 setter-increment pattern
+
+WHAT: ARM emit that does `rcv.slot[A] = (rcv.slot[A] + 1)`
+with overflow check, returns receiver.
+HOW: mirror the existing setter emit at AsmjitT1.cpp:4101+
+but with the arith op.  ~12 instructions.
+DONE WHEN: bench-correctness still PASS, setter-increment
+counter fires on bench-suite.
 
-**How to use this doc**: pick the topmost unchecked task, work on
-it to completion or hit a clear blocker, mark the result, move
-on.  Each task is bounded to ~30 min – 4 hours of work.  Don't
-try to "finish the whole doc" in one go — that's many sessions.
+### Q9 — Find common 2-bytecode method bodies
 
-When invoked via /goal: do as many tasks as fit, mark progress,
-end naturally.  The hook clears when the LAST unchecked task
-either lands or is moved to `## Deferred` with a reason.
+WHAT: methods with bcLen==2 that aren't yet covered by an
+inline emit.
+HOW: add a debug log in detectTrivialMethod that records
+methods with `bcLen == 2` and no match (no getter, no setter,
+etc.).  Run bench-suite, dump top patterns.
+DONE WHEN: top 5 unrecognized 2-byte patterns recorded.
 
-State at start (2026-05-22, branch `jit` at `b24e1f8a`):
+### Q10 — Implement top pattern from Q9
 
-    benchmark         current   vs Cog
-    fib(28)           179 ms      60×
-    sieve x100          8 ms     0.8×   ✓
-    sort 100K         835 ms      49×
-    dict 50K          447 ms      34×
-    sum 1M            284 ms      95×
-    factorial 5K       21 ms      10×
-    block 1M            1 ms     0.3×   ✓
-    instVar 1M        260 ms     130×
-    100K alloc         13 ms       4×
-    floatSum 1M       402 ms      50×
-    stringHash 100K   169 ms      85×
-    collect 10x100K   510 ms      12×
-    select 10x100K    643 ms      80×
+WHAT: if Q9 found a 2-byte pattern with ≥1000 hits, add a
+detector + emit.
+HOW: depends on the pattern Q9 found.
+DONE WHEN: pattern fires on bench-suite without regression.
 
-## Task queue (work top-to-bottom)
+### Q11 — Measure scavenge GC time
 
-Each task: **Goal**, **Success**, **Estimate**.  Mark with ✅
-(done), ❌ (failed/reverted) + reason, or ⏭️ (deferred) + reason.
+WHAT: how much bench-suite time is in scavenge?
+HOW: add a timed counter around `ObjectMemory::scavenge()`.
+DONE WHEN: ms total recorded.
 
-### T1 — Investigate bitOp counter = 0
+### Q12 — Measure fullGC time
 
-**Goal**: figure out why `g_primBitOp_hits` is 0 on bench-suite
-despite the inline emit existing at AsmjitT1.cpp:3367+ for
-primKind 11/12/13/19.
+WHAT: how much bench-suite time is in full GC?
+HOW: timed counter around `fullGC()`.
+DONE WHEN: ms total recorded.
 
-**Steps**:
-1. Add `PHARO_TRACE_BITOP=1` log at the dispatch site (extras
-   bits 48-52 read).
-2. Find what selectors trigger primKind 11/12/13/19 patches.
-3. Determine if the dispatch is unreached (path not taken) or
-   bit isn't set in extras.
+### Q13 — Find Pharo's bitShift: bench
 
-**Success**: identify either (a) a one-line fix to enable
-firing, or (b) document why it's structurally not reachable.
+WHAT: stringHash uses `bitShift:` heavily.  Does the current
+inline emit for primKind 13 fire?
+HOW: write a focused bench (3-5 line script) that hammers
+bitShift: in a JIT-compilable method.  Run with
+PHARO_T1_INLINE_PRIM_COUNTERS=1, dump bitOp counter.
+DONE WHEN: bitOp count recorded for the focused bench.
 
-**Estimate**: 1-2 hours.
+### Q14 — Audit `inlinePrimKind` for missing prims
 
-### T2 — Investigate floatOp counter = 0
+WHAT: are there primitives our IC could handle but
+inlinePrimKind returns 0 for?
+HOW: read Interpreter.cpp:18100+ list.  Cross-reference with
+Pharo's prim table (image inspection or codebase grep for
+`<primitive: N>`).  List any prim that's used ≥1000× per
+bench-suite but maps to primKind 0.
+DONE WHEN: list of candidates in this doc.
 
-Same approach as T1 but for primKind 21/22/23 (SmallFloat
-ops).  AsmjitT1.cpp:4530+ has `tryPrimSmallFloatOp` emit.
+### Q15 — Top 5 bytecodes by interp execution count
 
-**Success**: same.
-**Estimate**: 1-2 hours.
+WHAT: which bytecodes execute most frequently in interp on
+bench-suite?
+HOW: add a per-bytecode counter in step() (just an array of
+256 counters, increment by op).  Dump top 5 at exit.
+DONE WHEN: top 5 recorded.
 
-### T3 — Survey top 10 hot selectors
+### Q16 — Top 5 IC-MISS selectors
 
-**Goal**: find selectors with the highest IC HIT counts on
-bench-suite that DON'T match an existing inline-emit pattern.
+WHAT: selectors that miss the IC most often — candidates for
+IC cache improvements.
+HOW: at IC miss site (state.icDataPtr=null or class mismatch),
+log the selector.  Top 5 by count.
+DONE WHEN: list recorded.
 
-**Steps**:
-1. Add per-selector hit counter at patchJITICAfterSend time
-   (just count IC fills by selector).
-2. Run bench-suite, dump top 10.
-3. For each: check if it could be inline-emitted (returns
-   constant, getter-style, etc.).
+### Q17 — Verify retLit perf is from quick prims
 
-**Success**: list of ≥3 candidates for new inline emits.
-**Estimate**: 2-3 hours.
+WHAT: retLit fires 465K times — confirm the wins are from
+quick prims 257-263 (not from bytecode-detected retLit).
+HOW: split the counter into two: one for quick-prim-path bit-58
+set, one for tmi.returnsLiteral path.
+DONE WHEN: two counters in stat dump.
 
-### T4 — Add primKind 17 (basicNew 0-arg) inline emit
+### Q18 — Verify multi-slot perf source
 
-**Goal**: dispatch primKind 17 (basicNew with 0 args) to a
-helper similar to jit_rt_basic_new_with_arg.
+WHAT: multi-slot fires 668 times.  Which methods?
+HOW: in patchJITICAfterSend's multi-slot branch, log the
+selector + first occurrence.  Cap at 30.
+DONE WHEN: list of methods recorded.
 
-**Steps**:
-1. Add `jitBasicNew` helper (mirrors jitBasicNewWithArg but
-   reads class from stack[-1] only, no size).
-2. Add primKind 17 detection at the inline-prim dispatch.
-3. Counter + benchmark.
+### Q19 — Check if 0x6E/0x6F (bitAnd/bitOr) bytecode is inlined
 
-**Success**: primKind 17 counter fires.  Bench-suite
-no regression.  alloc bench unchanged or faster.
+WHAT: `n bitAnd: m` as a 0x6E special selector.  Does asmjit-T1
+inline it at the bytecode level (like 0x60-0x67)?
+HOW: search AsmjitT1.cpp for "0x6E" in emit code.
+DONE WHEN: yes/no answer + finding recorded.
 
-**Estimate**: 2-3 hours.
+### Q20 — Add 0x6E/0x6F inline if missing
 
-### T5 — Detect more trivial-method patterns
+WHAT: if Q19 found these aren't inlined at bytecode level, add
+them.  SmI bitwise (no overflow check needed).
+HOW: extend the isPhase3 op range and add tagged-bitwise emits
+to the switch.
+DONE WHEN: bench-correctness PASS, counter fires.
 
-**Goal**: find Pharo methods that don't match getter/setter/
-returnsSelf/returnsLiteral/multiSlot but could be inline-emitted.
+## Closed
 
-**Steps**:
-1. Trace methods whose IC entries have `extra == 0` (no
-   special bits).
-2. Inspect their bytecodes.  Look for patterns like
-   `^ self class`, `^ self foo asString`, etc.
-3. Pick ONE pattern that appears ≥1000× per bench-suite run.
-4. Add detector + IC bit + asmjit-T1 emit.
+(Move tasks here as you finish them.)
 
-**Success**: new IC bit fires ≥1000× on bench-suite.  Bench
-unchanged or faster.
-
-**Estimate**: 3-4 hours.
-
-### T6 — Track JIT compile failure reasons
-
-**Goal**: 10K methods fail to JIT-compile per bench-suite run
-vs 779 that succeed.  Some failures might be fixable.
-
-**Steps**:
-1. Add per-reason counter at the compile bail sites (find
-   them via `return nullptr` in AsmjitT1.cpp).
-2. Run bench-suite, dump counts per reason.
-3. Identify the top 1-2 reasons.
-
-**Success**: list of top compile-failure reasons + at least
-one identified as "potentially fixable".
-
-**Estimate**: 1-2 hours.
-
-### T7 — Fix one compile-failure reason
-
-**Goal**: address the most common fixable failure from T6.
-
-**Success**: bench-suite shows ≥100 more methods compiled.
-No regression.
-
-**Estimate**: 2-4 hours depending on reason.
-
-### T8 — Selector-based inline cache hint
-
-**Goal**: for selectors that have stable single-class IC entries
-(monomorphic-only), skip the bit-60 J2J save-stack overhead.
-
-**Steps**:
-1. Add monomorphic-vs-poly counter at IC fill time.
-2. For monomorphic IC entries with high hit counts, set a new
-   bit (e.g., bit 56 currently unused for sends).
-3. asmjit-T1 dispatch bit-56 → skip save-stack push.
-
-**Success**: bench-suite improvement on a send-heavy bench.
-
-**Estimate**: 3-4 hours.
-
-### T9 — Profile what dominates instVar bench
-
-**Goal**: 260 ms for instVar 1M (vs Cog 2 ms = 130× slower).
-Identify the single biggest cost in the inner loop.
-
-**Steps**:
-1. Sample (e.g., DTrace, perf, or just adding timed counters
-   around each call type in step()).
-2. Determine: is it the block invocation per iteration?  The
-   getter send?  The yourself send?  The arr access?
-3. Quantify each.
-
-**Success**: a single root cause identified, even if the fix
-is multi-day.
-
-**Estimate**: 2-3 hours.
-
-### T10 — Profile what dominates sum bench
-
-Same as T9 but for sum 1M (284 ms, 95× Cog).
-
-**Estimate**: 2-3 hours.
-
-### T11 — Profile what dominates floatSum bench
-
-Same as T9 but for floatSum 1M.
-
-**Estimate**: 2-3 hours.
-
-### T12 — Look at the Float arith inline (primKind 21/22/23)
-
-**Goal**: bench-suite floatSum is 402 ms.  The inline emit at
-AsmjitT1.cpp:4530+ exists but counter = 0.  Make it fire.
-
-**Steps**:
-1. Verify the IC for `+` on SmallFloat receivers gets primKind
-   21 in extras.
-2. Trace the dispatch to see where it bails.
-3. Fix or document the structural reason.
-
-**Success**: floatOp counter fires.  floatSum bench improves
-or stays same.
-
-**Estimate**: 2-3 hours.
-
-### T13 — Extend multi-slot to setters
-
-**Goal**: setter pattern `slot[A] := slot[B] + 1` style.
-
-**Steps**:
-1. Find common Pharo setter patterns (e.g., `position: position + 1`).
-2. Detect at bytecode level.
-3. Encode in IC bit + asmjit-T1 emit.
-
-**Success**: new pattern fires ≥100× on bench-suite.
-
-**Estimate**: 3-4 hours.
-
-### T14 — Investigate why so many `cull:` IC HITs
-
-The PHARO_TRACE_CULL_ENTRY infrastructure exists.  Run it on
-bench-suite; understand what `cull:` is doing.
-
-**Estimate**: 1-2 hours.
-
-### T15 — Investigate Sista compile bail rates
-
-Sista compiles fewer methods than asmjit-T1 (most bench
-workloads have Sista as bailout).
-
-**Steps**:
-1. Add counter at Sista::compile's bail sites.
-2. Run bench-suite, identify top bail reasons.
-3. Pick one fixable.
-
-**Estimate**: 2-3 hours.
-
-### T16 — Run bench-suite under perf for hot-function ID
-
-**Goal**: see where actual CPU time goes during bench-suite.
-
-**Steps**:
-1. `perf record ./build/test_load_image /tmp/pharo-bench-...`
-2. `perf report` for hot functions.
-3. Identify top 5 hot interp/JIT-runtime functions.
-
-**Success**: report of top hot functions with %CPU.
-
-**Estimate**: 1-2 hours.
-
-### T17 — Document mechanism for selective hot-block detection
-
-**Proposal** (jit-may23 T17 result):
-
-The problem: `activateBlock` (Interpreter.cpp:9748+) doesn't
-call `tryJITActivation` like `activateMethod` does.  So blocks
-run via interp's step() loop even after they JIT-compile.
-Earlier attempt (Issue 5) to retrofit broke bench-correctness
-because activateBlock has block-specific state setup
-(closure_, homeFrameDepth, savedFrames_[fd-1].homeFrameDepth,
-etc.) that conflicts with tryJITActivation's frame model.
-
-Heuristic for selective compilation (avoiding the cold-blocks-
-pay-compile-cost regression):
-
-1. **Track per-block activation count** in noteMethodEntry
-   (already does this via countMap_).
-2. **Wait for higher threshold than methods.**  Methods compile
-   at threshold=2; blocks could wait for threshold=10 or 20.
-   Cold blocks (error handlers, config) typically activate
-   1-3 times.  Hot blocks (collect:, do:, sort: comparators)
-   activate hundreds.
-3. **At block compile time**, ALSO populate a new
-   `block→jitFn` map (separate from methodMap).
-4. **At asmjit-T1's value: send IC HIT**, check if the
-   cached compiledBlock has an entry in the block→jitFn
-   map.  If yes, BLR directly to the JIT body (skipping
-   primitive 207 + activateBlock).
-
-Crucial subtleties:
-- **Block frame setup before JIT body**: closure_, outerContext,
-  receiver_, framePointer_, instructionPointer_, bytecodeEnd_
-  must all be initialised.  Either embed this in the BLR
-  prologue (asmjit emit) OR in a C++ helper called before BLR.
-- **NLR**: ^value from a block triggers non-local return.
-  Must work from JIT body the same as from interp.
-- **Deopt**: if Sista's compiled fn deopts mid-block, interp
-  has to resume mid-bytecode.  Same as method deopt.
-
-Effort estimate: 5-7 days.  Pre-requisite for unblocking the
-4 zero-firing counters identified in Issue 4.
-
-**Goal**: blocks run in interp because activateBlock doesn't
-JIT-dispatch.  Cold blocks paid compile cost when force-
-compiled (Issue 5).  Find a heuristic to compile ONLY hot
-blocks.
-
-**Steps**:
-1. Survey what makes blocks hot vs cold (call count, parent
-   method's hotness, etc.).
-2. Propose a counter scheme.
-
-**Success**: written-up proposal in this doc; no code yet.
-
-**Estimate**: 2-3 hours.
-
-### T18 — Apply T17's heuristic
-
-**Estimate**: 4-6 hours after T17.
-
-### T19 — Look at Sista's literal-bake question one more time
-
-`docs/jit-may22b.md` documented Sista bakes bytecodeBase and we
-fixed that.  Are there OTHER baked pointers (literals, class
-oops)?  Survey AsmjitT1.cpp + SistaLowering_arm64.cpp for
-`Imm(some-pointer)` patterns.
-
-**Estimate**: 1-2 hours.
-
-### T20 — Add SmI-mul SmI tag-aware inline
-
-`primKind 9 = SmI mul`.  Inline emit may exist; verify it
-fires and produces wins.
-
-**Estimate**: 1-2 hours.
-
-## Deferred (with reasons)
-
-These need genuine multi-day focused engineering with lldb-level
-soak.  Don't try to do them in /goal-driven session iteration:
-
-- **Real BLR emit fast-path** (Step 2 in jit-may22b) — C++
-  helper overhead dominates for short methods; needs true
-  asmjit-emitted activation logic.  ~7-10 days.
-- **kSendInlineSelf real lowering** (Step 3) — asmjit Compiler
-  needs post-finalize patching for self-rec BR.  ~10-14 days.
-- **Per-site class-immediate IC HIT** (Step 5) — Cog's biggest
-  edge.  Needs patchable code regions throughout asmjit-T1.
-  ~8-12 days.
-- **Eden bump-allocate inline** (Step 6) — substantial new
-  asmjit emit + GC-safe header init.  ~6-8 days.
-- **Block-value spec** (Steps 9-10) — proper inline-BLR from
-  value: send site, skipping primitive 207.  ~7-10 days.
-  Unlocks the 4 zero-firing counters (Issue 4).
-- **Step 2 n-arg state corruption debug** — bug is inside
-  Sista's compiled fn execution.  Needs genuine lldb step-
-  through, may take 1-3 days.
-
-## Done (with results)
-
-- ✅ Investigate zero-firing counters (Issue 4) → traced all 4
-  to blocks-in-interp; needs Step 9-10.
-- ❌ activateBlock → tryJITActivation (Issue 5) → frame-state
-  conflict, reverted.
-- ✅ Multi-slot extension to no-const variant → infrastructure
-  landed, no new hits in bench-suite (multiSlot count stays
-  672).
-- ❌ N-arg invariant check → no divergence at C++ boundary
-  visible; corruption is inside fn body.
-- ✅ **T1** (bitOp before bit 60) — fixes wired-but-unreached.
-  Verified firing with synthetic bench.  Pharo bench-suite
-  doesn't exercise bit ops in JIT bodies (blocks-in-interp).
-- ✅ **T2** (floatOp before bit 60) — same fix.  Same
-  blocks-in-interp limitation on Pharo workloads.
-- ✅ **T3** (top selector survey).  Top non-inlined:
-  value:/value:value: (Step 9-10 territory).  even/abs/digitValue:
-  could be inline candidates but methods, not quick prims.
-- ✅ **T4** (primKind 17 / basicNew 0-arg inline).  Counter
-  fires **51,438 times per bench-suite run**.  Measured
-  bench-suite deltas (3-6% across multiple benches):
-    fib(28): 215→207   -4%
-    dict:    546→515   -6%
-    sum:     348→334   -4%
-    instVar: 350→339   -3%
-    stringHash: 196→191 -3%
-  Real win.
-- ✅ **T6** (per-reason compile-failure counters).  Bench-suite:
-    badHeader=0  unsuppPrim=1028955  skipSel=0  block=0  bcOther=49
-  1M methods fail compile due to unsupported primitives.
-  Most likely fixable in T7 by adding generic prim-call
-  prologue + per-prim emit paths.  Multi-day.
-- ✅ **T20-partial** (inline SmI mul 0x68).  Added bytecode-level
-  inline emit for `*` (8 instructions: untag/mul/smulh/check/
-  retag).  Bench-suite: stringHash unchanged (in-block usage),
-  but infrastructure ready for any JIT-body `*`.
-- ✅ **T7** (add SmI prims 10-13 to supportedPrimIndex).
-  Reduced compile failures from 1,028,955 → 929,363 (~100K).
-  No bench-suite perf win (those methods aren't bench-hot paths).
-- ✅ **T14** (investigate cull: hits).  cull: fires for many
-  small CompiledBlocks (2-12 bytecodes).  Same Step 9-10
-  block-invocation territory; no separate fix.
-- ✅ **T19** (survey Sista baked pointers).  All `Imm((uint64_t)...)`
-  in SistaLowering_arm64.cpp are either small integers (bcOffset,
-  nArgs, slotIdx) or C function pointers (jit_rt_*).  Both
-  GC-stable.  No remaining baked-pointer issues beyond what
-  jit-may22b fixed (bytecodeBase).
-- ✅ **T17** (selective hot-block detection proposal).  Written
-  up in-place above with concrete heuristic and effort
-  estimate (5-7 days).  Pre-requisite for unblocking Issue 4's
-  four zero-firing counters.
-- ✅ **T15** (Sista compile-bail rate).  Added trace counter
-  at `hasSend && !hasSplice` bail.  Result: zero traces even
-  at low threshold — Sista's compile-bail path isn't a hot
-  code path because negative caching (cache_[key]=nullptr)
-  means each method goes through compile once.  Subsequent
-  calls hit the negative cache and return immediately.  Not
-  a perf-relevant optimization target.
-- ❌ **T5** (even-like predicate `^ (self bitAnd: K) = C`).
-  Pattern detected (975K matches per bench-suite — the `even`
-  / `odd` predicate).  Inline emit attempted at bit 54, ~25
-  instructions in the dispatch path.  Caused **15% regression
-  on fib** (210 → 240 ms) from i-cache pressure across all
-  nArgs==0 send sites.  Reverted.  Lesson: heavy inline emits
-  cost more than the activation savings if they're added to
-  the hot dispatch path.
-
-## Session totals (latest /goal run)
-
-12 tasks done this session:
-- ✅ T1: bitOp dispatch before bit 60.
-- ✅ T2: floatOp dispatch before bit 60.
-- ✅ T3: top-10 selector survey.
-- ✅ T4: basicNew 0-arg inline (3-6% wins on multiple benches).
-- ❌ T5: even-like predicate (15% regression, reverted).
-- ✅ T6: compile-failure reason counters.
-- ✅ T7: add SmI prims 10-13 (100K fewer fails).
-- ✅ T14: cull: investigation (same Step 9-10 territory).
+- ✅ T1: bitOp dispatch before bit 60.  Fires on synthetic bench.
+- ✅ T2: floatOp dispatch before bit 60.  Same fix.
+- ✅ T3: top-10 selector survey.  at:/at:put: dominate.
+- ✅ T4: basicNew 0-arg inline.  **3-6% wins** on multiple benches
+  (51K hits per bench-suite run).
+- ❌ T5: even-like predicate emit (15% regression, reverted).
+- ✅ T6: per-reason compile-fail counters (1M unsuppPrim found).
+- ✅ T7: SmI prims 10-13 added (100K fewer fails).
+- ✅ T14: cull: investigated (Step 9-10 territory).
 - ✅ T15: Sista bail rates irrelevant (negative cache).
-- ✅ T17: hot-block detection proposal.
+- ✅ T17: hot-block detection proposal documented.
 - ✅ T19: no remaining Sista baked pointers.
 - ✅ T20-partial: SmI mul 0x68 inline.
-
-**Real perf win**: T4 basicNew0 — 3-6% across fib/dict/sum/
-instVar/stringHash via 51K inline hits per bench-suite run.
-
-Remaining: T8 (monomorphic IC hint), T9-T11 (bench profiling —
-need DTrace/sample on macOS), T12 (float arith deeper), T13
-(multi-slot setters), T16 (perf record — Linux only), T18
-(apply T17's heuristic — multi-day per T17 estimate).
-
-## Notes for the /goal-runner
-
-- **Don't claim wins from single A/B comparisons** — bench-suite
-  noise is 3-5%.  Always do 3-run A/B/A before claiming.
-- **If a task fails or hits a blocker** — mark it ❌ with a
-  reason, move on.  Don't pause for direction.
-- **When all tasks are processed** — the doc is "implemented"
-  (each task has a status).  Goal clears.
-- **New issues discovered during tasks** → add them to the queue
-  as new T-tasks.
