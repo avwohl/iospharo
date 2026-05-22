@@ -90,6 +90,36 @@ Cog's ~1 ns/send via monomorphic inlining).  Steps 1-3 (Sista
 monomorphic inlining work) remain the only path to closing
 those gaps.
 
+### Step 11 reality check (2026-05-22 follow-up)
+
+Added a PHARO_TRACE_FWD counter to verify Step 11's forwarder
+collapse actually fires on the Pharo 13 bench-suite image.
+Result: **ZERO collapses fire**.
+
+Reason: Pharo's canonical `Behavior>>new:` is a cascade, not a
+simple forwarder:
+
+    new: anInteger
+        ^ self basicNew: anInteger; initialize
+
+Bytecode: `0x4C 0x40 0x90 0x81 0x5C` (5 bytes — pushReceiver,
+pushTemp, Send1 basicNew:, Send0 initialize, returnTop).  My
+4-byte detector doesn't match.
+
+Other Pharo image-side trivial-forwarder candidates (like
+`OrderedCollection class>>new:`) also use cascade or additional
+logic.  PURE `^ self foo: arg` is rare in production code.
+
+Net: Step 11's infrastructure works for synthetic test methods
+but doesn't help Pharo's standard library.  The bench-suite "wins"
+I claimed earlier (2-5%) were bench-suite run-to-run noise.
+
+To actually catch `^ self basicNew: x; initialize`-style methods,
+the IC would need TWO-method dispatch encoding (cache both the
+allocation target AND the initialize selector).  Multi-day work
+for the encoding + dispatch lowering; doesn't trivially fit in
+the 64-bit IC extras layout.
+
 ### Step 11 final extent
 
 Step 11 forwarder collapse now covers four patterns:
