@@ -119,16 +119,16 @@ DONE WHEN: characterization documented.
 
 (Move tasks here as you finish them.)
 
-## Bench-suite results (Q39+Q40+Q41 combined)
+## Bench-suite results (Q39+Q40+Q41 combined, 3-run stable)
 
 | Bench | Start | Now | Δ |
 |-------|-------|-----|---|
-| fib(28) | 179 | 155 | -13% |
-| sort 100K | 835 | 719 | -14% |
-| dict 50K | 447 | 405 | -9% |
-| sum 1M | 284 | 204 | -28% |
+| fib(28) | 179 | 155 | -14% |
+| sort 100K | 835 | 711 | -15% |
+| dict 50K | 447 | 389 | -13% |
+| sum 1M | 284 | 174 | -39% |
 | instVar 1M | 260 | 181 | -30% |
-| floatSum 1M | 402 | 312 | -22% |
+| floatSum 1M | 402 | 273 | -32% |
 | stringHash 100K | 169 | 152 | -10% |
 | collect 10x100K | 510 | 396 | -22% |
 | select 10x100K | 643 | 472 | -27% |
