@@ -590,7 +590,7 @@ size_t g_failed         = 0;
 // dedicated emit + bail logic.  Methods using them fall through to
 // the bail stub.
 inline bool isPhase3ArithOp(uint8_t op) {
-    return op >= 0x60 && op <= 0x67;
+    return (op >= 0x60 && op <= 0x67) || op == 0x68;  // 0x68 = `*`
 }
 
 // bitAnd: (0x6E) / bitOr: (0x6F): SmI tag bits 0..2 are 001 for both
@@ -2726,6 +2726,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.subs(x1, x1, x4);
             a.b_vs(bail);
             a.add(x1, x1, asmjit::Imm(1));
+            a.str(x1, ptr(x2, -16));
+            a.sub(x2, x2, asmjit::Imm(8));
+            a.str(x2, ptr(x0, OFF_SP));
+        } else if (op == 0x68) { // *
+            // Untag both: a = (a_bits >> 3), b = (b_bits >> 3) using ASR.
+            // smulh + mul; overflow if hi != asr(lo, 63).
+            // Retag: result_bits = (result << 3) | 1.
+            a.asr(x5, x1, asmjit::Imm(3));   // x5 = a (untagged)
+            a.asr(x6, x4, asmjit::Imm(3));   // x6 = b (untagged)
+            a.mul(x1, x5, x6);               // x1 = lo half of a*b
+            a.smulh(x9, x5, x6);             // x9 = hi half
+            a.asr(x10, x1, asmjit::Imm(63));  // x10 = sign-extend(lo)
+            a.cmp(x9, x10);
+            a.b_ne(bail);
+            // Retag.
+            a.lsl(x1, x1, asmjit::Imm(3));
+            a.orr(x1, x1, asmjit::Imm(1));
             a.str(x1, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             a.str(x2, ptr(x0, OFF_SP));
