@@ -12359,22 +12359,15 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     Oop hdrOop = methodObj->slots()[0];
     if (!hdrOop.isSmallInteger()) return 0;
 
-    // jit-may22b Step 2 prototype gate:
-    //   PHARO_T1_SISTA_DISPATCH_ALLOW=1 enables the fast-path.
-    //
-    // BISECTED 2026-05-22: the fast-path works correctly for
-    //   nArgs == 0 methods (PHARO_T1_SISTA_ZERO_ARG_ONLY=1 PASSES).
-    // It breaks for nArgs > 0 methods (PHARO_T1_SISTA_NO_LOCAL_TEMPS=1
-    //   which allows args but no local temps still FAILS).
-    // Even simple #max: (1-arg, 0 local temps) corrupts state
-    //   after ~64K successful calls.  The crash is at a downstream
-    //   JIT method's `ldr w4, [x1]` where x1 is a stale receiver
-    //   pointer — state.sp is somehow wrong.
-    //
-    // Conservative default-on subset: 0-arg methods only.
-    // Opt-in (testing) via PHARO_T1_SISTA_DISPATCH_ALLOW=1.
+    // ALWAYS BAIL for now.  The frame-push fast-path (below) compiles
+    // and passes the simple cases, but full validation shows JIT
+    // method crashes when complex methods deopt.  Keeping the code
+    // in tree as documentation; opt-in via
+    // PHARO_T1_SISTA_DISPATCH_ALLOW=1 for testing only.
+    return 0;
+    (void)methodObj;
+    (void)hdrOop;
     if (!std::getenv("PHARO_T1_SISTA_DISPATCH_ALLOW")) return 0;
-    if (nArgs != 0) return 0;  // n-arg path has the bisected bug
 
     using Fn = void (*)(jit::JITState*);
     Fn fn = reinterpret_cast<Fn>(fnPtr);
