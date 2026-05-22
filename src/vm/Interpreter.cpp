@@ -18238,6 +18238,30 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
 }
 
 void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {
+    // jit-may23 T3: per-selector IC fill counter, dumped at exit.
+    if (std::getenv("PHARO_TRACE_TOP_SELECTORS")
+            && selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject() && selHdr->byteSize() < 80) {
+            static std::unordered_map<std::string, uint64_t> selCounts;
+            std::string s((const char*)selHdr->bytes(), selHdr->byteSize());
+            selCounts[s]++;
+            static std::atomic<int> dumpTimer{0};
+            int n = ++dumpTimer;
+            if ((n & 0x7FFFF) == 0) {  // dump every 524288 patches
+                std::vector<std::pair<std::string, uint64_t>> vec(
+                    selCounts.begin(), selCounts.end());
+                std::sort(vec.begin(), vec.end(),
+                    [](auto& a, auto& b){ return a.second > b.second; });
+                std::fprintf(stderr, "[TOP-SELECTORS] @patch=%d\n", n);
+                for (size_t i = 0; i < vec.size() && i < 15; i++) {
+                    std::fprintf(stderr, "  %s = %llu\n",
+                        vec[i].first.c_str(),
+                        (unsigned long long)vec[i].second);
+                }
+            }
+        }
+    }
     // PHARO_T1_INLINE_J2J=1 debug: log first 30 patches (any selector)
     {
         static const bool inlineJ2JDbg =
