@@ -331,6 +331,14 @@ soak.  Don't try to do them in /goal-driven session iteration:
   inline emit for `*` (8 instructions: untag/mul/smulh/check/
   retag).  Bench-suite: stringHash unchanged (in-block usage),
   but infrastructure ready for any JIT-body `*`.
+- ❌ **T5** (even-like predicate `^ (self bitAnd: K) = C`).
+  Pattern detected (975K matches per bench-suite — the `even`
+  / `odd` predicate).  Inline emit attempted at bit 54, ~25
+  instructions in the dispatch path.  Caused **15% regression
+  on fib** (210 → 240 ms) from i-cache pressure across all
+  nArgs==0 send sites.  Reverted.  Lesson: heavy inline emits
+  cost more than the activation savings if they're added to
+  the hot dispatch path.
 
 ## Session totals (latest /goal run)
 
