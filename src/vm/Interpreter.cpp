@@ -12047,12 +12047,23 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
                                          uint64_t nArgs) {
     // Recursion-depth guard.  Sista helper-sends nest on the C stack:
     // step() inside the helper may activate another Sista method whose
-    // helper-send re-enters here.  fib(28) has 514229 recursive calls
-    // — that blows the C stack instantly.  Cap depth at 1: an outer
-    // helper-send is fine, but any nested helper-send returns 0 to
-    // signal deopt; the lowering's deopt-on-zero fallback hands the
-    // send back to the bail-to-interpreter path.
-    static constexpr int kMaxSistaHelperDepth = 1;
+    // helper-send re-enters here.  fib(28)'s 514229 calls is total
+    // calls, not recursion depth — max depth = 28.  Even at depth 28,
+    // each jitSistaCallSend frame is ~few hundred bytes of local Oops
+    // → ~10KB of C stack, well within the 8MB limit.
+    //
+    // jit-84 B1: raised from 1 to a configurable cap.  Set to 64 by
+    // default — covers fib(28)'s 28-deep recursion plus the
+    // exitSuccess multi-send chain that previously hung with cap=1
+    // (now mostly fixed by B3's selector blacklist).
+    // Override via PHARO_SISTA_HELPER_MAX_DEPTH=N.
+    static const int kMaxSistaHelperDepth = []() {
+        if (const char* v = std::getenv("PHARO_SISTA_HELPER_MAX_DEPTH")) {
+            int n = atoi(v);
+            return n > 0 ? n : 64;
+        }
+        return 64;
+    }();
     if (sistaHelperDepth_ >= kMaxSistaHelperDepth) {
         return 0;
     }
