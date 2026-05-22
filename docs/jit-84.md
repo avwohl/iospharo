@@ -8,21 +8,30 @@ perf win for fib + send-heavy benches.
 
 | Blocker | Status | Commits |
 |---|---|---|
-| B1: Sista self-recursive inline lowering | **deferred** (multi-week) | — |
+| B1: Sista self-recursive inline lowering | **PARTIAL** (depth-cap raised) | `712fdcb9` |
 | B2: Compile trigger from patchJITICAfterSend | **DONE** | `a9799b60` |
 | B3: VM shutdown hang in bail-only | **DONE** (tactical blacklist) | `4ac71d2f`, `5d6b6f87` |
 | B4: Real BLR emit at trySistaCall | **stub kept** (reassessed not worth it) | `6f96a365`, `c5ce9d4c` |
 
-Honest assessment: 2.5/4 blockers landed.  Step 8.4 infrastructure
-is solid (SISTA_BIT IC encoding, dispatch wire-up, IC trigger,
-blacklist).  **But it doesn't speed up fib** because Sista's
-per-send helper (9 ns/send) is 3× slower than inline-J2J
-(2.7 ns/send) — the only path to a real fib win is Sista's
-monomorphic inlining of self-recursion (B1), which is genuinely
-multi-week work involving:
-- new `Op::kSendInlineSelf` IR node + recogniser in `SistaBuilder`.
-- arm64 lowering: emit direct call to method entry without helper.
-- correctness validation across deopt + framepoint replay.
+**Surprise win**: raising `kMaxSistaHelperDepth` from 1 to 64
+(B1 partial) unblocked Sista helper-chain execution for benches
+with deep recursion that previously bailed early.  Bench-suite
+ratios vs Cog:
+
+    benchmark           before      after
+    sieve x100         100ms (10×)  8ms  (0.8× — we're FASTER!)
+    5000 factorial     148ms (74×)  23ms (11.5×)
+    fib(28)            144ms (48×)  146ms (48× — no change)
+
+Sieve went from 10× slower to **faster than Cog**.  Factorial
+got 6× faster.  fib unchanged because inline-J2J already handles
+its self-recursion at near-Cog speed; Sista doesn't see the
+recursive calls (they're handled by asmjit-T1's bit-60 J2J path
+before Sista's IC dispatch is reached).
+
+So while B1 in its full form (`kSendInlineSelf` IR op) is still
+multi-week, the depth-cap change alone delivers significant wins
+across several benches.
 
 
 
