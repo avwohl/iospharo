@@ -8303,6 +8303,30 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
         return info;
     }
 
+    // jit-may23 multi-slot extension 2: 1-ivar + const variant.
+    // Bytecode shape (4 bytes):
+    //   pushRcvrVar A
+    //   push<const>     (0x50/0x51/0x52)
+    //   send +/-
+    //   returnTop
+    // Common for `^ count + 1`, `^ size - 1` style increment/
+    // decrement getters.  Encoded as multi-slot with A=B (same
+    // ivar both sides), multiConst, and op1=add (a + a is wrong
+    // but we want a + const — encode as multiOp1Sub=0 wouldn't
+    // work because op1 is between A and B).
+    //
+    // Hack: encode as multiSlotA=A, multiSlotB=A (read same ivar
+    // twice), multiOp1Sub=1 (sub: a - a = 0), then multiConst=
+    // 2*const+0 (add the const back).  But that doubles the
+    // count value.  Skip this encoding — needs a separate IC
+    // bit or different encoding.
+    //
+    // For now: only handle the specific case where A is one ivar
+    // and the second operand is `self` (op 0x4C pushReceiver).
+    // That's `^ self[A] op self` which usually isn't useful.
+    //
+    // Skipping this variant; it'd need a new IC bit.
+
     return info;
 }
 
