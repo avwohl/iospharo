@@ -123,7 +123,17 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // Track methods compiled without hints so invalidateIfHintless()
     // can re-compile them once their IC populates.
     bool hadHints = (hints != nullptr && !hints->empty());
-    if (!hadHints) compiledHintless_.insert(key);
+    if (!hadHints) {
+        compiledHintless_.insert(key);
+    } else {
+        // jit-may22a: once we have hints, REMOVE the key from
+        // compiledHintless_ so invalidateIfHintless doesn't churn
+        // the cache on every subsequent IC patch.  Without this,
+        // benchFib's hints-bearing compile gets invalidated as soon
+        // as the next IC fill fires, returning to a hintless
+        // compile and losing kSendInlineSelf emit.
+        compiledHintless_.erase(key);
+    }
 
     // Lift bytecode → IR.  Use buildWithHints when hints are present
     // so Sista can identify monomorphic sites for Phase 4 inlining.

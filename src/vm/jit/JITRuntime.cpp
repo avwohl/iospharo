@@ -497,6 +497,22 @@ extern "C" uint64_t jit_rt_basic_new_with_arg(JITState* state) {
     return state->interp->jitBasicNewWithArg(state);
 }
 
+// jit-may22a B1: Sista self-recursive call helper.  Called from
+// kSendInlineSelf lowering instead of jit_rt_sista_call_send.
+// Skips sendSelector + step() machinery; directly recurses into
+// the cached Sista fn for state.method.
+extern "C" uint64_t g_sistaSelfRec_attempts = 0;
+extern "C" uint64_t g_sistaSelfRec_hits     = 0;
+extern "C" uint64_t jit_rt_sista_self_rec_call(JITState* state,
+                                                 uint64_t nArgs,
+                                                 uint64_t bcOffset) {
+    g_sistaSelfRec_attempts++;
+    if (!state || !state->interp) return 0;
+    uint64_t r = state->interp->jitSistaSelfRecCall(state, nArgs, bcOffset);
+    if (r) g_sistaSelfRec_hits++;
+    return r;
+}
+
 // Safe-point recompile queue.  stencil_sendJ2J's inline path bumps
 // callee count; when threshold crossed, calls this helper to enqueue
 // the callee for recompile.  Drained by Interpreter::drainRecompileQueue

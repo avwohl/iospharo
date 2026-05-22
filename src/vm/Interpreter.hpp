@@ -1591,6 +1591,17 @@ public:
     /// returns 0 (caller bails to chain-loop dispatch).
     uint64_t jitBasicNewWithArg(jit::JITState* state);
 
+    /// jit-may22a B1: Sista self-recursive send helper.  Bypasses
+    /// jit_rt_sista_call_send's sendSelector + step() machinery and
+    /// directly invokes the cached Sista fn for state.method on
+    /// itself.  Caller pushed [rcvr, args...] onto state.sp.  On
+    /// success: writes the result at the receiver slot (state.sp
+    /// adjusted to past the result), returns non-zero.  On failure
+    /// (save pool full, no cached fn, or callee deopted): returns
+    /// zero so the caller falls back to the standard helper path.
+    uint64_t jitSistaSelfRecCall(jit::JITState* state, uint64_t nArgs,
+                                   uint64_t bcOffset);
+
     /// Sista deopt-with-resume helper for kCountedLoopArrayDoAccum.
     /// Called from compiled code when an inlined SmI-fast-path iter
     /// hits a non-SmI element.  Continues the iteration in C++ from

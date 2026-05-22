@@ -39,6 +39,10 @@ extern "C" uint64_t jit_rt_sista_call_send(void* state,
 extern "C" uint64_t jit_rt_sista_special_call_send(void* state,
                                                     uint64_t ssIdx,
                                                     uint64_t nArgs);
+// jit-may22a B1: Sista self-recursive send helper.
+extern "C" uint64_t jit_rt_sista_self_rec_call(void* state,
+                                                 uint64_t nArgs,
+                                                 uint64_t bcOffset);
 extern "C" uint64_t jit_rt_store_inst_var(void* state,
                                             uint64_t recvBits,
                                             uint64_t ivarIdx,
@@ -1185,27 +1189,54 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Gp nArgsReg = cc.new_gp64("sendNArgs");
                 cc.mov(nArgsReg, Imm((uint64_t)nArgs));
 
-                // cc.invoke pattern: load helper addr to Gp, call.
+                // jit-may22a B1: for kSendInlineSelf, route through
+                // jit_rt_sista_self_rec_call which bypasses sendSelector
+                // and directly invokes the cached Sista fn.  For
+                // kSendCallHelper, route through jit_rt_sista_call_send
+                // as before.
                 Gp fnReg = cc.new_gp64("sendHelper");
-                cc.mov(fnReg,
-                       Imm((uint64_t)&jit_rt_sista_call_send));
-                asmjit::InvokeNode* invokeNode = nullptr;
-                asmjit::Error invErr = cc.invoke(
-                    asmjit::Out(invokeNode), fnReg,
-                    asmjit::FuncSignature::build<
-                        uint64_t, void*, uint64_t, uint64_t>());
-                if (invErr != asmjit::kErrorOk || !invokeNode) {
-                    std::fprintf(stderr,
-                        "[SISTA-INVOKE-ERR] kSendCallHelper err=%u\n",
-                        (unsigned)invErr);
-                    if (failedAtValue) *failedAtValue = v.id;
-                    return nullptr;
-                }
-                invokeNode->set_arg(0, state);
-                invokeNode->set_arg(1, selReg);
-                invokeNode->set_arg(2, nArgsReg);
                 Gp dst = cc.new_gp64("sendResult");
-                invokeNode->set_ret(0, dst);
+                if (v.op == Op::kSendInlineSelf) {
+                    cc.mov(fnReg,
+                           Imm((uint64_t)&jit_rt_sista_self_rec_call));
+                    asmjit::InvokeNode* invokeNode = nullptr;
+                    asmjit::Error invErr = cc.invoke(
+                        asmjit::Out(invokeNode), fnReg,
+                        asmjit::FuncSignature::build<
+                            uint64_t, void*, uint64_t, uint64_t>());
+                    if (invErr != asmjit::kErrorOk || !invokeNode) {
+                        std::fprintf(stderr,
+                            "[SISTA-INVOKE-ERR] kSendInlineSelf err=%u\n",
+                            (unsigned)invErr);
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    Gp bcOffReg = cc.new_gp64("bcOff");
+                    cc.mov(bcOffReg, Imm((uint64_t)bcOffset));
+                    invokeNode->set_arg(0, state);
+                    invokeNode->set_arg(1, nArgsReg);
+                    invokeNode->set_arg(2, bcOffReg);
+                    invokeNode->set_ret(0, dst);
+                } else {
+                    cc.mov(fnReg,
+                           Imm((uint64_t)&jit_rt_sista_call_send));
+                    asmjit::InvokeNode* invokeNode = nullptr;
+                    asmjit::Error invErr = cc.invoke(
+                        asmjit::Out(invokeNode), fnReg,
+                        asmjit::FuncSignature::build<
+                            uint64_t, void*, uint64_t, uint64_t>());
+                    if (invErr != asmjit::kErrorOk || !invokeNode) {
+                        std::fprintf(stderr,
+                            "[SISTA-INVOKE-ERR] kSendCallHelper err=%u\n",
+                            (unsigned)invErr);
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    invokeNode->set_arg(0, state);
+                    invokeNode->set_arg(1, selReg);
+                    invokeNode->set_arg(2, nArgsReg);
+                    invokeNode->set_ret(0, dst);
+                }
 
                 // Deopt-on-zero: helper returns 0 on NLR / abnormal.
                 // Flush the FULL framepoint stack to interp.sp so the

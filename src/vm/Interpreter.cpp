@@ -110,6 +110,8 @@ extern "C" uint64_t g_primBitOp_hits;
 extern "C" uint64_t g_primFloatOp_hits;
 extern "C" uint64_t g_primBasicNew_hits;
 extern "C" uint64_t g_primBasicNew_bails;
+extern "C" uint64_t g_sistaSelfRec_attempts;
+extern "C" uint64_t g_sistaSelfRec_hits;
 extern "C" uint64_t g_bcFloatArith_hits;
 extern "C" uint64_t g_bcArithBail_hits;
 extern "C" uint64_t g_bcRemoteTemp_hits;
@@ -1467,7 +1469,7 @@ void Interpreter::dumpJITStats() {
             fprintf(stderr,
                 "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu "
                 "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu "
-                "basicNew=%llu/%llu\n",
+                "basicNew=%llu/%llu sistaSelfRec=%llu/%llu\n",
                 (unsigned long long)g_primAt_hits,
                 (unsigned long long)g_primAtPut_hits,
                 (unsigned long long)g_primSize_hits,
@@ -1477,7 +1479,9 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_bcArithBail_hits,
                 (unsigned long long)g_bcRemoteTemp_hits,
                 (unsigned long long)g_primBasicNew_hits,
-                (unsigned long long)g_primBasicNew_bails);
+                (unsigned long long)g_primBasicNew_bails,
+                (unsigned long long)g_sistaSelfRec_hits,
+                (unsigned long long)g_sistaSelfRec_attempts);
         }
     }
     if (g_xmethod_count > 0) {
@@ -12218,6 +12222,102 @@ uint64_t Interpreter::jitStoreInstVar(Oop recv, uint64_t ivarIdx, Oop val) {
     if (ivarIdx >= hdr->slotCount()) return 0;
     memory_.storePointerUnchecked(static_cast<size_t>(ivarIdx), recv, val);
     return 1;
+}
+
+uint64_t Interpreter::jitSistaSelfRecCall(jit::JITState* state,
+                                            uint64_t nArgs,
+                                            uint64_t bcOffset) {
+    (void)nArgs;
+    (void)bcOffset;
+    // jit-may22a B1: bypass jit_rt_sista_call_send for self-recursive
+    // sends.  Skip sendSelector + step() machinery entirely; directly
+    // invoke the cached Sista fn for state.method.
+    //
+    // SAFETY CUT 2026-05-22: always return 0 to force the caller to
+    // fall back to standard helper path.  The body below is the
+    // intended logic; enabling it requires fixing the lowering so the
+    // CALLER properly passes nArgs+bcOffset and handles the deopt
+    // path (kSendCallHelper's framepoint replay assumes operands were
+    // pushed onto state.sp).  Without that handshake, the recursive
+    // call sees a misaligned state and benchFib loops/crashes.
+    if (std::getenv("PHARO_SISTA_INLINE_SELF") == nullptr) {
+        return 0;
+    }
+    // Save-pool overflow → fall back to standard helper.
+    if (!state->sistaSaveCursor || !state->sistaSaveLimit
+        || state->sistaSaveCursor >= state->sistaSaveLimit) {
+        return 0;
+    }
+    // Look up the Sista fn for the current method.  If not cached,
+    // fall back so the standard helper path triggers compile.
+    if (!sistaRuntimeForGCHook_) return 0;
+    auto fn = sistaRuntimeForGCHook_->lookupCompiled(state->method);
+    if (!fn) return 0;
+
+    // Push save: capture caller's state into SistaSave at cursor.
+    jit::SistaSave* save =
+        reinterpret_cast<jit::SistaSave*>(state->sistaSaveCursor);
+    save->sp        = state->sp;
+    save->receiver  = state->receiver;
+    save->tempBase  = state->tempBase;
+    save->ip        = state->ip;
+    save->bcOffset  = static_cast<uint32_t>(bcOffset);
+    save->_pad      = 0;
+    save->resumeAddr = nullptr;  // not used in this helper path
+    save->_pad2     = 0;
+    state->sistaSaveCursor += sizeof(jit::SistaSave);
+    state->sistaSaveDepth++;
+
+    // Set up callee state.  For self-rec, state.method/literals/
+    // jitMethod/argCount are unchanged.  We update receiver/tempBase/sp.
+    // The callee expects [args...] above its tempBase and the
+    // receiver in state.receiver.
+    Oop* callerSP = state->sp;
+    Oop newReceiver = callerSP[-(static_cast<int>(nArgs) + 1)];
+    state->receiver = newReceiver;
+    state->tempBase = callerSP - nArgs;
+    // state.sp stays past the args; the callee body reads args from
+    // tempBase[0..nArgs-1].
+
+    // Call the cached Sista fn.  C stack grows by one frame per
+    // recursion level.  At fib(28) depth 28 this is ~10 KB total.
+    fn(state);
+
+    // After return: state.exitReason indicates outcome.  ExitReturn
+    // means the callee returned a value (in state.returnValue).
+    // Anything else (deopt) → fall back.
+    uint64_t ok = 0;
+    if (state->exitReason == jit::ExitReturn) {
+        state->exitReason = jit::ExitNone;
+        // Pop save: restore caller's state.
+        state->sp        = save->sp;
+        state->receiver  = save->receiver;
+        state->tempBase  = save->tempBase;
+        state->ip        = save->ip;
+        state->sistaSaveCursor -= sizeof(jit::SistaSave);
+        state->sistaSaveDepth--;
+        // Write the result at the receiver slot of caller's stack.
+        // sp[-(nArgs+1)] is the slot where rcvr was; result goes
+        // there.  sp shrinks by nArgs (popping args, leaving result
+        // in place of receiver).
+        Oop* base = state->sp;
+        base[-(static_cast<int>(nArgs) + 1)] = state->returnValue;
+        state->sp = base - nArgs;
+        ok = 1;
+    } else {
+        // Deopt or abnormal — leave save in place (caller will see
+        // exitReason and walk the framepoint replay path).
+        // We DON'T pop the save here — the deopt walker handles it.
+        // BUT for the current minimal-correctness cut, just unwind.
+        state->sistaSaveCursor -= sizeof(jit::SistaSave);
+        state->sistaSaveDepth--;
+        // Restore caller state so the helper's caller can fall back.
+        state->sp        = save->sp;
+        state->receiver  = save->receiver;
+        state->tempBase  = save->tempBase;
+        state->ip        = save->ip;
+    }
+    return ok;
 }
 
 uint64_t Interpreter::jitBasicNewWithArg(jit::JITState* state) {
