@@ -305,6 +305,23 @@ soak.  Don't try to do them in /goal-driven session iteration:
   672).
 - ❌ N-arg invariant check → no divergence at C++ boundary
   visible; corruption is inside fn body.
+- ✅ **T1** (bitOp before bit 60) — fixes wired-but-unreached.
+  Verified firing with synthetic bench.  Pharo bench-suite
+  doesn't exercise bit ops in JIT bodies (blocks-in-interp).
+- ✅ **T2** (floatOp before bit 60) — same fix.  Same
+  blocks-in-interp limitation on Pharo workloads.
+- ✅ **T3** (top selector survey).  Top non-inlined:
+  value:/value:value: (Step 9-10 territory).  even/abs/digitValue:
+  could be inline candidates but methods, not quick prims.
+- ✅ **T4** (primKind 17 / basicNew 0-arg inline).  Counter
+  fires **51,438 times per bench-suite run**.  Measured
+  bench-suite deltas (3-6% across multiple benches):
+    fib(28): 215→207   -4%
+    dict:    546→515   -6%
+    sum:     348→334   -4%
+    instVar: 350→339   -3%
+    stringHash: 196→191 -3%
+  Real win.
 
 ## Notes for the /goal-runner
 
