@@ -29,16 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q14 — Audit `inlinePrimKind` for missing prims
-
-WHAT: are there primitives our IC could handle but
-inlinePrimKind returns 0 for?
-HOW: read Interpreter.cpp:18100+ list.  Cross-reference with
-Pharo's prim table (image inspection or codebase grep for
-`<primitive: N>`).  List any prim that's used ≥1000× per
-bench-suite but maps to primKind 0.
-DONE WHEN: list of candidates in this doc.
-
 ### Q15 — Top 5 bytecodes by interp execution count
 
 WHAT: which bytecodes execute most frequently in interp on
@@ -109,6 +99,15 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q14**: audited inlinePrimKind list (Interpreter.cpp:18271+).
+  Covers SmI arith (1-9), bitOps (14/15/16/17 = primKind 11-13/19),
+  identityHash (75), Array at/atPut/size (60-62), basicNew(:) (70/71),
+  SmallFloat +/-/* (541/542/549).  Missing common ones:
+  - prim 10 (SmI `\\`), prim 11 (SmI `//`)  — not in Q4 top 10
+  - BoxedFloat prims 41-42  — different code path, complex
+  - FFI/system prims  — can't be JIT-inlined
+  None worth adding at session-scope (bench-suite doesn't
+  exercise them in hot paths).
 - ✅ **Q13**: focused bitShift bench shows bitOp=0 despite my
   T1 fix.  Cause: the outer method (`shiftLoop`) doesn't reach
   JIT compile.  Even with `1 to: do:` inlined to a backward
