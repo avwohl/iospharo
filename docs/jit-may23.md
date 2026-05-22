@@ -29,14 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q2 — Measure activateBlock overhead
-
-WHAT: how much time goes into `activateBlock` setup (pushFrame,
-closure_, homeFrameDepth walk, etc.)?
-HOW: add timed counter around the body of `activateBlock`.
-Run bench-suite, dump total.
-DONE WHEN: a number is printed.  Commit instrumentation.
-
 ### Q3 — Measure step() bytecode dispatch overhead
 
 WHAT: how much time is in the interp's switch-on-bytecode
@@ -203,4 +195,8 @@ DONE WHEN: bench-correctness PASS, counter fires.
 - ✅ **Q1**: primitiveFullClosureValue fires 5.2M+ times per bench-suite
   run, avg 94 cycles per call (~3.9µs).  Block invocation is the
   dominant bench-suite overhead.
+- ✅ **Q2**: activateBlock avg 57 cycles per call (5.2M+ calls).
+  60% of primFullClosureValue's time is in activateBlock itself
+  (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
+  receiver fetch, primitive dispatch).
 
