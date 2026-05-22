@@ -8283,6 +8283,26 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
         return info;
     }
 
+    // jit-may23 multi-slot extension: 2-op no-const variant.
+    // Bytecode shape (4 bytes):
+    //   pushRcvrVar A
+    //   pushRcvrVar B
+    //   send +/-
+    //   returnTop
+    // Common for `^ x + y` 2-ivar accumulator getters.  Encoded
+    // as multi-slot with multiConst=0 and multiOp2Sub=0 (add 0).
+    if (bcLen >= 4
+        && bc0 <= 0x0F && bc1 <= 0x0F
+        && (bytes[bcStart + 2] == 0x60 || bytes[bcStart + 2] == 0x61)
+        && bytes[bcStart + 3] == 0x5C) {
+        info.multiSlotA = (int8_t)bc0;
+        info.multiSlotB = (int8_t)bc1;
+        info.multiConst = 0;
+        info.multiOp1Sub = (bytes[bcStart + 2] == 0x61) ? 1 : 0;
+        info.multiOp2Sub = 0;  // add 0 = no-op
+        return info;
+    }
+
     return info;
 }
 
