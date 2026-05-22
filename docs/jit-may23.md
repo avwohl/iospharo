@@ -30,15 +30,31 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q30 — Reduce IC miss rate (currently 14%)
+### Q31 — Try reducing scavenge tenuring
 
-WHAT: IC hit rate is 86% — 14% miss.  Each miss costs ~100
-cycles in the chain-loop path.  At 9.5M sends, that's 1.3M
-misses × 100 = 130M cycles overhead.
-HOW: from Q16, top miss selectors are indexOf:/next:putAll:/
-objectAt: — polymorphic call sites.  Add a 2nd-class entry to
-the IC for polymorphic sites.
-DONE WHEN: miss rate drops, bench-correctness PASS.
+WHAT: Q23 found that bench-suite triggers 13 fullGCs because
+scavenge tenures everything to old space.  If young objects
+stayed in young space, fullGC wouldn't be needed as often.
+HOW: read ObjectMemory::scavenge() — find where copying decides
+tenure vs young-to-young.  Try a tenure threshold (only tenure
+on 2nd survival).
+DONE WHEN: fullGC count drops AND bench-correctness PASS AND no
+bench regression.
+
+### Q32 — Try reducing scavenge frequency
+
+WHAT: scavenge fires 8 times.  Combined with 13 fullGC = 21 GC
+events.  Each takes ~12-15M cycles.  Try to coalesce.
+HOW: increase scavenge threshold.
+DONE WHEN: total GC cycles measured before/after.
+
+### Q33 — IC hitCount usage
+
+WHAT: each IC site has a hitCount slot.  Is it used to reorder
+IC entries (MTF heuristic)?  If not, adding MTF could improve
+hit rate for the heavily skewed at: case.
+HOW: grep for IC_HITCOUNT_SLOT uses.
+DONE WHEN: yes/no answer + plan if no.
 
 ## Closed
 
@@ -64,6 +80,11 @@ DONE WHEN: miss rate drops, bench-correctness PASS.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q30**: IC miss rate 11% (~1M misses on 9.5M sends).  Top
+  selectors (Q16) have <10K misses each.  Most misses are cold
+  (first-time encounters of new class/selector combos).  These
+  are unavoidable without pre-population.  Not a tractable
+  session-scope optimization.
 - ✅ **Q29**: tryOSRAtBackwardJump fires 13.6M times but
   averages 1 cycle per call.  Most calls early-exit via
   osrCountdown_ > 0 (work only every 64 calls).  Actual OSR
