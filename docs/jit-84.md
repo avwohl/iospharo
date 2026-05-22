@@ -34,18 +34,31 @@ multi-week, the depth-cap change alone delivers significant wins
 across several benches.
 
 **2026-05-21 follow-up**: IR scaffolding for `kSendInlineSelf`
-landed (commit `ca6bfdfb`).  The op is declared in `SistaIR.hpp`,
-wired through `OpInfo`, and the builder recognises self-recursive
-sends via inline hints at the `kSendCallHelper` emit site.
-Lowering falls through to `kSendCallHelper` behaviour for now (no
-perf change yet); the IR op shows up in dumps as `send_inline_self`
-when the recogniser fires.  Future patches replace the lowering
-with a real inline tail-call.
+landed (commits `ca6bfdfb`, `e68aa61d`).  The op is declared in
+`SistaIR.hpp`, wired through `OpInfo`, and the builder recognises
+self-recursive sends via inline hints at BOTH the `kSendCallHelper`
+emit site AND the `kSendUnspeculated` (default Send0/1/2) emit
+site.  Lowering falls through to `kSendCallHelper` behaviour for
+now (no perf change yet); the IR op shows up in dumps as
+`send_inline_self` when the recogniser fires.
 
-Note: benchFib's recursive sends currently take the
-`kSendUnspeculated` (terminator/bail) path, not `kSendCallHelper`,
-because benchFib lacks a splice candidate.  Extending the recogniser
-to `kSendUnspeculated` is the next concrete sub-step.
+End-to-end verification with PHARO_TRACE_SELF_REC instrumentation:
+benchFib's recursive send at bcOff=10 fires `isSelfRec=1` with the
+inline hint correctly pointing back to benchFib's own oop bits.
+
+Also fixed `sendSiteMap_` population for asmjit-T1-compiled methods.
+`extractInlineHintsForMethod` requires `getSendSiteBCOffsets` to map
+sendIdx → bcOffset; previously only the stencil-based JITCompiler
+populated this map.  asmjit-T1 now calls
+`JITCompiler::setSendSiteBCOffsets` after the send-site loop in
+`compileViaAsmjit`.
+
+What remains for the full B1 win: replace the lowering of
+`kSendInlineSelf` from "fall through to kSendCallHelper" with a
+real inline tail-call (BR with save-stack protocol mirroring
+inline-J2J's J2JSave).  All builder + IC + IR wiring is in place;
+the patch surface is now isolated to `SistaLowering_arm64.cpp` (and
+its x86 counterpart).
 
 
 
