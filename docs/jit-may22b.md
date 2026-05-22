@@ -84,6 +84,21 @@ is rounding error vs the underlying gap.
 The remaining gap (40-100× for the hardest benches) waits on
 Steps 1-3 (Sista monomorphic inlining) per the original plan.
 
+### Step 11 final extent
+
+Step 11 forwarder collapse now covers four patterns:
+
+1. **1-arg via Send1**: `^ self foo: arg` (0x4C 0x40 <0x90-0x9F> 0x5C).
+2. **0-arg via Send0**: `^ self foo` (0x4C <0x80-0x8F> 0x5C).
+3. **2-arg via Send2 in-order**: `^ self foo: a bar: b`
+   (0x4C 0x40 0x41 <0xA0-0xAF> 0x5C).
+4. **0-arg via SpecialSend**: `^ self isNil` etc.
+   (0x4C <0x70-0x7F> 0x5C with SpecialSelectorsArray lookup).
+
+Most common patterns in Pharo's image covered.  Reordered 2-arg
+forwarders and literal-arg cases would need IC-extras encoding
+for arg-count adjustment at dispatch — multi-day, deferred.
+
 ### Block-hot extension attempted + reverted
 
 Tried treating ALL compiled blocks as hot-loop candidates in
