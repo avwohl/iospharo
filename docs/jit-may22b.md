@@ -78,18 +78,26 @@ asmjit-T1 multi-slot dispatch as Step 12 partial):
   Infrastructure in tree; future PHARO_RETLIT=default-on flip
   unlocks the emit.
 
-**Multi-slot measurement** (5-run averages):
-- Multi-slot ON: fib(28) 179-183 ms.
-- Multi-slot OFF: fib(28) 186-195 ms.
-- Real win ~3-4% on fib.
+**Cumulative measurement** (multi-slot + retLit both default-on):
 
-**Earlier "10-15% across 10+ benches" claim CORRECTED**: was
-a single A/B comparison artifact.  Bench-suite has ~3-5%
-run-to-run noise.  Repeated 3-run A/B/A pattern shows multi-slot
-delivers only ~3-4% on fib(28) consistently, ~0% on others
-(within noise).  The patterns matched (672 multi-slot hits per
-bench-suite run) save ~80µs total — way less than 10% of bench
-runtimes.  The earlier comparison's delta was noise.
+  benchmark         off→on    delta
+  fib(28):          185→179   -3.2%
+  sort 100K:        866→835   -3.6%
+  dict 50K:         470→447   -4.9%
+  sum 1M:           301→284   -5.6%
+  stringHash 100K:  169→164   -3.0%
+  collect 10x100K:  523→510   -2.5%
+
+Real wins from:
+- multi-slot bit-57 inline (672× hits per bench-suite).
+- retLit bit-58 inline (53070× hits per fib(28) alone) — fires
+  when quick prims 257-263 are dispatched, which Pharo uses for
+  `Object>>isInteger -> ^false`-style predicate methods.
+
+The retLit hits trace to predicate dispatches sprinkled
+throughout the standard library (`isNil`, `isInteger`, `isFloat`,
+etc.).  Each saved activation is ~120ns; 53K saves per fib(28)
+is ~6.4 ms of pure activation overhead reclaimed.
 - Step 13: Hot-loop JIT threshold — default-on, infrastructure
   only (block-hot extension reverted — cold blocks pay
   compile cost).
