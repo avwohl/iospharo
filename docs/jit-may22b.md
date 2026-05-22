@@ -75,8 +75,27 @@ correct and ready; the win waits on either:
 + Step 13 (hot-loop threshold).  Cog-relative ratios drop by
 the same percentage.
 
+**Caveat on the wins**: bench-suite run-to-run noise is ~3%.
+The Step 11 wins are real (consistent across multiple runs)
+but smaller benches like factorial sit within the noise floor.
+For the hardest benches (sum/instVar at 95×/123× Cog) a 3% win
+is rounding error vs the underlying gap.
+
 The remaining gap (40-100× for the hardest benches) waits on
 Steps 1-3 (Sista monomorphic inlining) per the original plan.
+
+### Block-hot extension attempted + reverted
+
+Tried treating ALL compiled blocks as hot-loop candidates in
+`methodHasBackwardJump` so the threshold=1 path triggers for them.
+Result: slight slowdown across most benches.  Cold blocks (error
+handlers, config callbacks, etc.) pay compile cost without
+recouping via hot use.
+
+The default threshold-of-2 is right for blocks.  Selective
+detection (e.g., only blocks invoked from `do:`-style methods)
+would need static analysis at compile time — multi-day work for
+small expected wins.  Deferred.
 
 **Realistic assessment**: each remaining step requires multi-day
 focused work with lldb-level soak.  The plan estimated ~10-14
