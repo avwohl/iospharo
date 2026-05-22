@@ -4246,23 +4246,6 @@ bool Interpreter::step() {
 
     // Track step count
     g_stepNum++;
-    // jit-may23 Q3: time bytecode dispatch.  Sample every 64K steps.
-    {
-        static const bool timeIt = std::getenv("PHARO_TIME_STEP") != nullptr;
-        static uint64_t lastTSC = 0;
-        if (timeIt && (g_stepNum & 0x3FF) == 0) {
-            uint64_t nowTSC;
-            asm volatile("mrs %0, cntvct_el0" : "=r"(nowTSC));
-            if (lastTSC != 0) {
-                uint64_t delta = nowTSC - lastTSC;
-                std::fprintf(stderr,
-                    "[Q3-STEP] +1024 bytecodes in %llu cycles (avg %llu/bc)\n",
-                    (unsigned long long)delta,
-                    (unsigned long long)(delta >> 10));
-            }
-            lastTSC = nowTSC;
-        }
-    }
     // Update watchdog steps (used by heartbeat thread to detect stuck processes).
     // Must be updated here because test_load_image calls step() directly,
     // not interpret() which has its own loopCount.
@@ -8468,27 +8451,6 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
-    // jit-may23 Q4: per-method activation counter.
-    if (std::getenv("PHARO_TRACE_TOP_ACTIVATIONS")
-            && method.isObject() && method.rawBits() > 0x10000) {
-        static std::unordered_map<std::string, uint64_t> actCounts;
-        static std::atomic<int> n{0};
-        std::string sel = memory_.selectorOf(method);
-        actCounts[sel]++;
-        int nn = ++n;
-        if ((nn & 0x3FFFFF) == 0) {  // every 4M
-            std::vector<std::pair<std::string, uint64_t>> vec(
-                actCounts.begin(), actCounts.end());
-            std::sort(vec.begin(), vec.end(),
-                [](auto& a, auto& b){ return a.second > b.second; });
-            std::fprintf(stderr, "[Q4-TOP-ACTIVATIONS]\n");
-            for (size_t i = 0; i < vec.size() && i < 10; i++) {
-                std::fprintf(stderr, "  %s = %llu\n",
-                    vec[i].first.c_str(),
-                    (unsigned long long)vec[i].second);
-            }
-        }
-    }
     // Diagnostic: count activations of `value:` and CompiledBlock targets.
     if (std::getenv("PHARO_TRACE_VALUE_ACT") && method.isObject()
             && method.rawBits() > 0x10000) {
@@ -18327,30 +18289,6 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
 }
 
 void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {
-    // jit-may23 T3: per-selector IC fill counter, dumped at exit.
-    if (std::getenv("PHARO_TRACE_TOP_SELECTORS")
-            && selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (selHdr->isBytesObject() && selHdr->byteSize() < 80) {
-            static std::unordered_map<std::string, uint64_t> selCounts;
-            std::string s((const char*)selHdr->bytes(), selHdr->byteSize());
-            selCounts[s]++;
-            static std::atomic<int> dumpTimer{0};
-            int n = ++dumpTimer;
-            if ((n & 0x7FFFF) == 0) {  // dump every 524288 patches
-                std::vector<std::pair<std::string, uint64_t>> vec(
-                    selCounts.begin(), selCounts.end());
-                std::sort(vec.begin(), vec.end(),
-                    [](auto& a, auto& b){ return a.second > b.second; });
-                std::fprintf(stderr, "[TOP-SELECTORS] @patch=%d\n", n);
-                for (size_t i = 0; i < vec.size() && i < 15; i++) {
-                    std::fprintf(stderr, "  %s = %llu\n",
-                        vec[i].first.c_str(),
-                        (unsigned long long)vec[i].second);
-                }
-            }
-        }
-    }
     // PHARO_T1_INLINE_J2J=1 debug: log first 30 patches (any selector)
     {
         static const bool inlineJ2JDbg =
@@ -20764,37 +20702,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             jitICMisses_++;
-
-            // jit-may23 Q16: top IC-miss selectors.
-            if (std::getenv("PHARO_TRACE_IC_MISS_SEL")) {
-                static std::unordered_map<std::string, uint64_t> missCounts;
-                static std::atomic<uint64_t> n{0};
-                uint64_t selBitsForLog = state.icDataPtr
-                    ? state.icDataPtr[18] : 0;
-                if (selBitsForLog != 0) {
-                    Oop selOop = Oop::fromRawBits(selBitsForLog);
-                    if (selOop.isObject() && selOop.rawBits() > 0x10000) {
-                        ObjectHeader* sh = selOop.asObjectPtr();
-                        if (sh->isBytesObject() && sh->byteSize() < 80) {
-                            std::string s((char*)sh->bytes(), sh->byteSize());
-                            missCounts[s]++;
-                        }
-                    }
-                }
-                uint64_t nn = ++n;
-                if ((nn & 0x3FFFF) == 0) {
-                    std::vector<std::pair<std::string, uint64_t>> v(
-                        missCounts.begin(), missCounts.end());
-                    std::sort(v.begin(), v.end(),
-                        [](auto& a, auto& b){ return a.second > b.second; });
-                    std::fprintf(stderr, "[Q16-IC-MISS-TOP5]\n");
-                    for (size_t i = 0; i < v.size() && i < 5; i++) {
-                        std::fprintf(stderr, "  %s = %llu\n",
-                            v[i].first.c_str(),
-                            (unsigned long long)v[i].second);
-                    }
-                }
-            }
 
             // DIAGNOSTIC: distinguish "IC had room" vs "IC full" vs
             // "icData[18] was 0 (megacache skip)" to pin down why IC
