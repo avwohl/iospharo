@@ -334,6 +334,16 @@ Session-scope ceiling reached for this session; the remaining
 plan items need focused multi-day engineering with lldb-level
 debugging.
 
+3. ✅ **Multi-slot detector extended** (`43432b38` + `6b62f609`) —
+   added 4-byte no-const variant (`^ x + y`).  Default 5/5 PASS,
+   doesn't match any methods in fib or bench-suite (count
+   unchanged at 668/672).  Infrastructure for future workloads.
+4. ✅ **N-arg state debug attempt** — added invariant check
+   around fn() call.  Reproduced crash but no state divergence
+   logged before fault.  The corruption manifests within Sista's
+   compiled fn execution (not at the boundary).  Genuine lldb
+   step-through needed.  Deferred.
+
 ## Recommended priority order for next session
 
 1. **Investigate the zero counters** (Issue 4) — short
