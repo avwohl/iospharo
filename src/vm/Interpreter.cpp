@@ -9083,6 +9083,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             sstate.yieldCountdown = 0;
             sstate.j2jEntryDepth = 0;
             sstate.j2jDepthInc = 0x0000000100000001ULL;
+            sstate.sistaSaveCursor = nullptr;
+            sstate.sistaSaveLimit = nullptr;
+            sstate.sistaSaveDepth = 0;
+            sstate.sistaEntryDepth = 0;
 
             // Direct call — Sista's asmjit-generated code emits a
             // standard AArch64 prologue/epilogue via asmjit's
@@ -16398,6 +16402,10 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         sstate.yieldCountdown = 0;
         sstate.j2jEntryDepth = 0;
         sstate.j2jDepthInc = 0x0000000100000001ULL;
+        sstate.sistaSaveCursor = nullptr;
+        sstate.sistaSaveLimit = nullptr;
+        sstate.sistaSaveDepth = 0;
+        sstate.sistaEntryDepth = 0;
 
         // Diagnostic: PHARO_SISTA_PER_BC_DISPATCH_TRACE=1 dumps a
         // counter every 1K dispatches with the exit-reason split.
@@ -19037,6 +19045,17 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.j2jDepthInc = 0x0000000100000001ULL;
     state.methodMapPtr = &jitRuntime_.methodMap();
     state.yieldCountdown = 1000;
+
+    // jit-may22a B1: Sista inline-self save stack.  Stack-local pool
+    // (~14 KB at 256 entries × 56 B); lives for the duration of this
+    // tryJITActivation call.  Sista's inline-self lowering pushes/
+    // pops in lockstep, so the cursor never escapes the C frame.
+    jit::SistaSave sistaSavePool[jit::MaxSistaSavePoolSize];
+    state.sistaSaveCursor = reinterpret_cast<uint8_t*>(&sistaSavePool[0]);
+    state.sistaSaveLimit  = reinterpret_cast<uint8_t*>(
+        &sistaSavePool[jit::MaxSistaSavePoolSize]);
+    state.sistaSaveDepth = 0;
+    state.sistaEntryDepth = 0;
 
     // Save entry SP so we can restore it on ExitDeopt/ExitPrimFail.
     Oop* entrySP = stackPointer_;

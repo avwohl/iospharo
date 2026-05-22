@@ -136,6 +136,19 @@ struct JITState {
     // (movz + movk); loading from this slot is 1 instr.  Set once in
     // tryJITActivation and never modified.
     uint64_t j2jDepthInc;    // offset 208: always 0x100000001
+
+    // jit-may22a B1: Sista inline-self save stack.  Mirrors the
+    // J2JSave protocol but used by Sista's kSendInlineSelf lowering
+    // when the recursive self-rec call is emitted as an inline BR
+    // rather than via jit_rt_sista_call_send.
+    //
+    // sistaSaveCursor advances on push, retreats on return-prelude pop.
+    // sistaSaveLimit is one-past-end of the per-thread pool, set by
+    // tryJITActivation before entering Sista.
+    uint8_t* sistaSaveCursor; // offset 216: current pos in save pool
+    uint8_t* sistaSaveLimit;  // offset 224: end-of-pool sentinel
+    int32_t  sistaSaveDepth;  // offset 232: current nesting depth
+    int32_t  sistaEntryDepth; // offset 236: per-entry baseline depth
 };
 
 // Verify expected offsets (stencils depend on these)
@@ -162,6 +175,34 @@ static_assert(offsetof(JITState, spliceSpill0)   == 184, "spliceSpill0 offset");
 static_assert(offsetof(JITState, spliceSpill1)   == 192, "spliceSpill1 offset");
 static_assert(offsetof(JITState, j2jEntryDepth)  == 200, "j2jEntryDepth offset");
 static_assert(offsetof(JITState, j2jDepthInc)    == 208, "j2jDepthInc offset");
+// jit-may22a B1
+static_assert(offsetof(JITState, sistaSaveCursor) == 216, "sistaSaveCursor offset");
+static_assert(offsetof(JITState, sistaSaveLimit)  == 224, "sistaSaveLimit offset");
+static_assert(offsetof(JITState, sistaSaveDepth)  == 232, "sistaSaveDepth offset");
+static_assert(offsetof(JITState, sistaEntryDepth) == 236, "sistaEntryDepth offset");
+
+// SistaSave: 56 bytes per entry (8-byte aligned).  Mirrors J2JSave's
+// layout but sized for Sista's needs.  See docs/jit-may22a.md for
+// the full design.
+struct SistaSave {
+    Oop*     sp;          // offset 0: caller's state.sp at push time
+    Oop      receiver;    // offset 8: caller's state.receiver
+    Oop*     tempBase;    // offset 16: caller's state.tempBase
+    uint8_t* ip;          // offset 24: caller's state.ip
+    uint32_t bcOffset;    // offset 32: source bcOffset (for deopt replay)
+    uint32_t _pad;        // offset 36: alignment padding
+    uint8_t* resumeAddr;  // offset 40: arm64 BR-target on return
+    uint64_t _pad2;       // offset 48: round size to 56 bytes
+};
+static_assert(sizeof(SistaSave) == 56, "SistaSave must be 56 bytes");
+static_assert(offsetof(SistaSave, sp) == 0, "SistaSave.sp");
+static_assert(offsetof(SistaSave, receiver) == 8, "SistaSave.receiver");
+static_assert(offsetof(SistaSave, tempBase) == 16, "SistaSave.tempBase");
+static_assert(offsetof(SistaSave, ip) == 24, "SistaSave.ip");
+static_assert(offsetof(SistaSave, bcOffset) == 32, "SistaSave.bcOffset");
+static_assert(offsetof(SistaSave, resumeAddr) == 40, "SistaSave.resumeAddr");
+
+constexpr size_t MaxSistaSavePoolSize = 256;
 
 // ===== EXIT REASONS =====
 //
