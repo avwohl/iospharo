@@ -8195,6 +8195,7 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
     uint8_t bc0 = bytes[bcStart];
     uint8_t bc1 = bytes[bcStart + 1];
 
+
     // Getter: pushRecvVar N (0x00-0x0F) + returnTop (0x5C)
     if (bc0 <= 0x0F && bc1 == 0x5C) {
         info.getterIndex = (int16_t)bc0;

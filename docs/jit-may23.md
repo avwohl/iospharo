@@ -29,22 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q9 — Find common 2-bytecode method bodies
-
-WHAT: methods with bcLen==2 that aren't yet covered by an
-inline emit.
-HOW: add a debug log in detectTrivialMethod that records
-methods with `bcLen == 2` and no match (no getter, no setter,
-etc.).  Run bench-suite, dump top patterns.
-DONE WHEN: top 5 unrecognized 2-byte patterns recorded.
-
-### Q10 — Implement top pattern from Q9
-
-WHAT: if Q9 found a 2-byte pattern with ≥1000 hits, add a
-detector + emit.
-HOW: depends on the pattern Q9 found.
-DONE WHEN: pattern fires on bench-suite without regression.
-
 ### Q11 — Measure scavenge GC time
 
 WHAT: how much bench-suite time is in scavenge?
@@ -146,6 +130,10 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q9/Q10**: 2-byte unrecognized patterns survey.
+  Result: bench-suite has NO unrecognized 2-byte methods.
+  Existing detectors (getter/setter/returnsSelf/retLit) catch
+  all 2-byte patterns.  No follow-up emit needed.
 - ✅ **Q7**: setter-increment pattern detector added.  Only 1
   method matches on bench-suite — far below the 100-method
   threshold for justifying an emit.  Q8 (the emit) skipped.
