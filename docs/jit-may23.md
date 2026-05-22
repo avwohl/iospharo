@@ -29,13 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q18 — Verify multi-slot perf source
-
-WHAT: multi-slot fires 668 times.  Which methods?
-HOW: in patchJITICAfterSend's multi-slot branch, log the
-selector + first occurrence.  Cap at 30.
-DONE WHEN: list of methods recorded.
-
 ### Q19 — Check if 0x6E/0x6F (bitAnd/bitOr) bytecode is inlined
 
 WHAT: `n bitAnd: m` as a 0x6E special selector.  Does asmjit-T1
@@ -75,6 +68,10 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q18**: multi-slot fires ONLY on `size` selector.
+  Pattern `^ slot2 - slot1 + 1` = Interval>>size (last-first+1).
+  All 668 multi-slot bench-suite hits are interval size
+  computations.  Narrow but real.
 - ✅ **Q17**: retLit's 465K bench-suite hits come ENTIRELY from
   quick-prim path (primIdx 257-263).  Bytecode-detected
   `^ true/false/nil/0/1` (tmi.returnsLiteral) never fires —
