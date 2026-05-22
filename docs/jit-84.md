@@ -109,7 +109,57 @@ Acceptance: `PHARO_SISTA_COMPILE_BAIL_ONLY=1 ./build/test_load_image
 
 **Effort revised: 3-7 days** with lldb-level deopt-path debugging.
 
-### B4 — `trySistaCall` stub needs a real emit
+### B4 — `trySistaCall` stub needs a real emit (2026-05-21 attempted)
+
+**Attempted commit `6f96a365`**, then reverted to stub:
+
+Tried the naive emit:
+```
+a.and_(x6, x7, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
+a.blr(x6);
+```
+
+Result: SIGSEGV at fault addr 0x331 inside Sista's emitted code on
+the second instruction.
+
+Root cause: Sista's `CompiledFn` expects state to be the CALLEE's
+frame (receiver = new rcvr, tempBase = sp - nArgs*8, literals =
+method+16, method = callee, argCount = nArgs, ip = bcStart) — same
+contract `tryActivateSista` honours via `pushFrame` + state mutation.
+
+For asmjit-T1's IC HIT path to invoke Sista directly, we'd need to:
+1. Save caller's state.method, state.receiver, state.tempBase,
+   state.literals, state.argCount, state.ip somewhere (C stack via
+   push/pop?  Or a per-thread save area?).
+2. Set state fields to callee's values (receiver = sp[-(nArgs+1)*8],
+   tempBase = sp - nArgs*8, literals = methodOop+16, etc.).
+3. BLR to Sista's fn.
+4. On return, restore caller's state.
+5. Pop nArgs+1, push state.returnValue.
+
+That's ~30+ instructions per send site AND requires a save area
+Sista's deopt path also has to honour (currently it doesn't).
+
+Re-evaluated: this is essentially **replicating `activateMethod` in
+JIT-emitted code**, which is what `tryActivateSista` already does
+via the chain-loop bail.  The current stub (bail to dispatchCached
+→ chain-loop → tryActivateSista) is the same observable behaviour
+without the duplication risk.
+
+For Step 8.4 to provide a real perf win over the stub, you need a
+shared CALLEE-FRAME setup contract that asmjit-T1's send emit,
+inline-J2J, and Sista all use.  Inline-J2J's J2JSave fits 56 bytes
+on a per-thread stack — Sista could be made to use the same save
+on entry, but currently it just clobbers state directly.
+
+**Recommendation: skip B4 for fib.**  Inline-J2J already handles
+self-recursion at near-Cog speed (2.7 ns/send) — Sista's per-send
+helper (24-36 ms / 3M sends = 9 ns/send) is 3× slower for the same
+workload.  Step 8.4 only pays off if Sista's lowering can do
+something inline-J2J can't (monomorphic inlining of `benchFib(K-1)
++ benchFib(K-2) + 1` collapsed into one specialised expression).
+
+That's the B1 "kSendInlineSelf" work — multi-week.
 
 Current stub (`AsmjitT1.cpp:4068`):
 
