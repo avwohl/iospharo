@@ -10087,6 +10087,11 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // Set bytecode end based on method size
     ObjectHeader* methodHdr = methodToExecute.asObjectPtr();
     bytecodeEnd_ = methodHdr->bytes() + methodHdr->byteSize();
+
+    // jit-may23 Issue 4 fix ATTEMPTED: tryJITActivation here breaks
+    // bench-correctness (block frames already set up; tryJITActivation
+    // expects different state).  Reverted — needs deeper integration
+    // with activateBlock's frame setup.  See docs/jit-may23.md.
 }
 
 // ===== FRAME MANAGEMENT =====
