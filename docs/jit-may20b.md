@@ -512,6 +512,30 @@ Smallest concrete win for instVar would be inline-getter spec for
 non-prim methods that just return a SmI expression — but identifying
 those at JIT compile is non-trivial.
 
+### 10.2 — inline-prim 18 (basicNew:) wire-up landed
+
+Commit `621513ac`.  Added the IR/dispatch infrastructure for inlining
+basicNew: (prim 71 / primKind 18) at asmjit-T1's IC HIT path:
+
+- `jit_rt_basic_new_with_arg` helper invokes Interpreter::
+  `jitBasicNewWithArg`, which calls `executePrimitive(71, 1)` with
+  interp.stackPointer_ synced to state.sp.
+- New dispatch in `tryPrimBasicNew` (BLR pattern mirroring
+  `jit_rt_inline_block_value_prep` at AsmjitT1.cpp:3375).
+- Placed BEFORE bit-60 J2J check: for prim 71 methods, inline-J2J
+  would tail-call a JIT stub that immediately exits with EXIT_SEND
+  to run the prim in C++ — same work as dispatchCached via a
+  longer detour.  Direct helper call saves the round-trip.
+- Counter pair `g_primBasicNew_hits`/`g_primBasicNew_bails`.
+
+Status: dispatch fires (verified) but the 100K-allocations bench is
+unchanged at 12 ms because its outer method (`runOnce`) runs in
+interp.  Real-world workloads with hot JIT-compiled allocators
+benefit.  ~20-30 ns saved per call vs the chain-loop path.
+
+Same caveat as 10.1: bench-rewriting or JIT-threshold tweaks needed
+to exercise via the canonical bench.
+
 ### 10.1 — asmjit-T1 inline multi-slot landed (partial)
 
 Wired up bit-57 (multi-slot pattern `^ self[A] op1 self[B] op2 cst`)
