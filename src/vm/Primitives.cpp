@@ -3459,7 +3459,8 @@ PrimitiveResult Interpreter::primitiveClosureCopyWithCopiedValues(int argCount) 
 // Primitive 207: Full closure value (for closures with many arguments)
 // This handles FullBlockClosures which may have more complex activation
 PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
-    if (std::getenv("PHARO_TRACE_PRIM207")) {
+    static const bool tracePrim207 = std::getenv("PHARO_TRACE_PRIM207") != nullptr;
+    if (tracePrim207) {
         static uint64_t n = 0;
         n++;
         if (n <= 5 || (n & 0xFFFFF) == 0)

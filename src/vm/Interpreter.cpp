@@ -2257,7 +2257,8 @@ void Interpreter::interpret() {
 
     // --- FullBlockClosure >> value: fast path ---
     op_value1: {
-        if (std::getenv("PHARO_TRACE_OP_VALUE1")) {
+        static const bool traceOpValue1 = std::getenv("PHARO_TRACE_OP_VALUE1") != nullptr;
+        if (traceOpValue1) {
             static uint64_t n = 0;
             n++;
             if (n <= 5 || (n & 0xFFFFF) == 0)
@@ -9265,7 +9266,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     }
                 }
             }
-            if (std::getenv("PHARO_TRACE_SISTA_DISPATCH")) {
+            static const bool traceSistaDisp = std::getenv("PHARO_TRACE_SISTA_DISPATCH") != nullptr;
+            if (traceSistaDisp) {
                 static uint64_t n = 0;
                 n++;
                 if (n <= 5 || (n & 0xFFFFF) == 0)
@@ -9827,7 +9829,8 @@ past_sista_block:
 }
 
 void Interpreter::activateBlock(Oop block, int argCount) {
-    if (std::getenv("PHARO_TRACE_ACTIVATE_BLOCK")) {
+    static const bool traceActBlock = std::getenv("PHARO_TRACE_ACTIVATE_BLOCK") != nullptr;
+    if (traceActBlock) {
         static uint64_t n = 0;
         n++;
         if (n <= 5 || (n & 0xFFFFF) == 0)
