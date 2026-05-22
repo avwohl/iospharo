@@ -11,7 +11,7 @@ kSendCallHelper" to a real inline tail-call that bypasses
 |---|---|---|
 | 1: Save-stack data structures | **DONE** | `6e0177cc` |
 | 2: Helper lowering (gated) | **DONE** | `2be9875f` |
-| 3a: Sista cache rekey across GC | **DONE** | `3e57d675` |
+| 3a: Sista cache rekey across GC | **BROKEN** (forwarders gone post-compact) | `3e57d675` |
 | 3b: Full fib(28) perf measurement | **blocked** by asmjit-T1 + Sista path mismatch | — |
 | 4: Deopt walking | **implicit** (each save level self-pops) | — |
 | 5: GC visiting save receivers | **DONE** | `7f606a05` |

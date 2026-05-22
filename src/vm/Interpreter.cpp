@@ -352,28 +352,20 @@ static uint64_t sistaRingSeq_ = 0;
 
 void Interpreter::recoverSistaAfterGC() {
     if (sistaRuntimeForGCHook_) {
-        // jit-may22a B1 Sub-step 3: opt-in to rekeying the Sista cache
-        // by following oop forwarders rather than clearing it.
-        // Preserves benchFib's hints-bearing compile (and its
-        // kSendInlineSelf emit) across Spur compaction.
-        static const bool rekeyMode =
-            std::getenv("PHARO_SISTA_REKEY_AFTER_GC") != nullptr;
-        if (rekeyMode) {
-            sistaRuntimeForGCHook_->rekeyAfterGC(
-                [this](uint64_t oldBits) -> uint64_t {
-                    Oop oldOop = Oop::fromRawBits(oldBits);
-                    if (!oldOop.isObject() || oldOop.rawBits() <= 0x10000) {
-                        return 0;
-                    }
-                    Oop newOop = memory_.followForwarded(oldOop);
-                    if (!newOop.isObject() || newOop.rawBits() <= 0x10000) {
-                        return 0;
-                    }
-                    return newOop.rawBits();
-                });
-        } else {
-            sistaRuntimeForGCHook_->reset();
-        }
+        // jit-may22a B1 Sub-step 3a: tried opt-in rekeying via
+        // followForwarded, but by the time recoverSistaAfterGC fires,
+        // Spur compaction has already FREED the old oop locations and
+        // the forwarder info with them.  followForwarded returns
+        // garbage or stale pointers, corrupting the cache (manifested
+        // as "Message not understood: ByteString >> #encodeString:"
+        // on Sista bail-only + inline-self + rekey).
+        //
+        // The proper fix would hook into the GC's forwarding pass
+        // BEFORE compaction frees the old locations.  Substantial
+        // GC infrastructure work; deferred.  For now: always reset
+        // (Sub-step 3a's rekeyAfterGC is dead code — kept in tree
+        // for the future GC-pass-integrated version).
+        sistaRuntimeForGCHook_->reset();
     }
     sistaGateCache_.clear();
     sistaBailCounter_.clear();
