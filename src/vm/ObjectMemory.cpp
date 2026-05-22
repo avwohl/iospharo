@@ -1530,6 +1530,25 @@ GCResult ObjectMemory::scavenge() {
     // Roots: interpreter
     if (interpreter_) {
         interpreter_->forEachRoot(visitRoot);
+        // jit-may22b Step 1: rekey Sista's cache to follow tenure
+        // forwarding for the new→old transitions.  This must run
+        // here (during scavenge's root phase) so the local `forward`
+        // map is still alive — by the time we get to compact's
+        // updatePointersAfterCompact, the new-space oops are
+        // already gone.  Opt-in via PHARO_SISTA_REKEY_AFTER_GC=1.
+        static const bool rekeyEnabled =
+            std::getenv("PHARO_SISTA_REKEY_AFTER_GC") != nullptr;
+        if (rekeyEnabled) {
+            interpreter_->rekeySistaCacheViaForwarders(
+                [&forward](uint64_t oldBits) -> uint64_t {
+                    Oop o = Oop::fromRawBits(oldBits);
+                    if (!o.isObject() || o.rawBits() <= 0x10000) return 0;
+                    ObjectHeader* obj = o.asObjectPtr();
+                    auto it = forward.find(obj);
+                    if (it == forward.end()) return oldBits;  // not tenured
+                    return Oop::fromObject(it->second).rawBits();
+                });
+        }
     }
 
     // Roots: memory (class table, special objects, etc.)
