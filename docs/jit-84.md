@@ -4,6 +4,28 @@ Plan to take the SISTA_BIT dispatch infrastructure (landed
 2026-05-21, commit `753e9f9c`) from dormant scaffolding to a real
 perf win for fib + send-heavy benches.
 
+## Implementation progress (2026-05-21)
+
+| Blocker | Status | Commits |
+|---|---|---|
+| B1: Sista self-recursive inline lowering | **deferred** (multi-week) | — |
+| B2: Compile trigger from patchJITICAfterSend | **DONE** | `a9799b60` |
+| B3: VM shutdown hang in bail-only | **DONE** (tactical blacklist) | `4ac71d2f`, `5d6b6f87` |
+| B4: Real BLR emit at trySistaCall | **stub kept** (reassessed not worth it) | `6f96a365`, `c5ce9d4c` |
+
+Honest assessment: 2.5/4 blockers landed.  Step 8.4 infrastructure
+is solid (SISTA_BIT IC encoding, dispatch wire-up, IC trigger,
+blacklist).  **But it doesn't speed up fib** because Sista's
+per-send helper (9 ns/send) is 3× slower than inline-J2J
+(2.7 ns/send) — the only path to a real fib win is Sista's
+monomorphic inlining of self-recursion (B1), which is genuinely
+multi-week work involving:
+- new `Op::kSendInlineSelf` IR node + recogniser in `SistaBuilder`.
+- arm64 lowering: emit direct call to method entry without helper.
+- correctness validation across deopt + framepoint replay.
+
+
+
 Status when this plan was written:
 - `bench-correctness.sh fib 20/28/30` PASS in both default and
   `PHARO_T1_NO_WARM_J2J_GATE=1` modes.
