@@ -358,17 +358,14 @@ void Interpreter::rekeySistaCacheViaForwarders(
 }
 
 void Interpreter::recoverSistaAfterGC() {
-    // jit-may22b Step 1: the Sista cache rekey now happens during
-    // the compact's pointer-update phase (ObjectMemory::
-    // updatePointersAfterCompact calls rekeySistaCacheViaForwarders),
-    // so by the time we get here the cache keys are already valid
-    // for the new heap layout.  No reset needed.
-    //
-    // Opt-out via PHARO_SISTA_RESET_AFTER_GC=1 (reverts to the
-    // old behavior of clearing on every GC).
-    static const bool resetAfterGC =
-        std::getenv("PHARO_SISTA_RESET_AFTER_GC") != nullptr;
-    if (resetAfterGC && sistaRuntimeForGCHook_) {
+    // jit-may22b Step 1: Sista cache rekey runs during compact via
+    // ObjectMemory::updatePointersAfterCompact when
+    // PHARO_SISTA_REKEY_AFTER_GC=1 is set.  In that mode the cache
+    // keys are valid after compact, so we skip the reset.  Default:
+    // reset the cache (old behavior — keys go stale across compact).
+    static const bool rekeyEnabled =
+        std::getenv("PHARO_SISTA_REKEY_AFTER_GC") != nullptr;
+    if (!rekeyEnabled && sistaRuntimeForGCHook_) {
         sistaRuntimeForGCHook_->reset();
     }
     sistaGateCache_.clear();

@@ -3255,14 +3255,24 @@ void ObjectMemory::updatePointersAfterCompact() {
         // hints-bearing compiles survive compaction.  After this point
         // the old oop bits become invalid; doing the rekey AFTER
         // compact (in recoverSistaAfterGC) is too late.
-        interpreter_->rekeySistaCacheViaForwarders(
-            [&resolveForward](uint64_t oldBits) -> uint64_t {
-                Oop o = Oop::fromRawBits(oldBits);
-                if (!o.isObject() || o.rawBits() <= 0x10000) return 0;
-                Oop n = resolveForward(o);
-                if (!n.isObject() || n.rawBits() <= 0x10000) return 0;
-                return n.rawBits();
-            });
+        //
+        // OPT-IN ONLY via PHARO_SISTA_REKEY_AFTER_GC=1.  Empirical
+        // testing showed PHARO_SISTA_COMPILE_BAIL_ONLY=1 + rekey
+        // breaks with "Message not understood: ByteString >>
+        // #encodeString:" — investigation deferred.  The default
+        // path falls back to reset() in recoverSistaAfterGC below.
+        static const bool rekeyEnabled =
+            std::getenv("PHARO_SISTA_REKEY_AFTER_GC") != nullptr;
+        if (rekeyEnabled) {
+            interpreter_->rekeySistaCacheViaForwarders(
+                [&resolveForward](uint64_t oldBits) -> uint64_t {
+                    Oop o = Oop::fromRawBits(oldBits);
+                    if (!o.isObject() || o.rawBits() <= 0x10000) return 0;
+                    Oop n = resolveForward(o);
+                    if (!n.isObject() || n.rawBits() <= 0x10000) return 0;
+                    return n.rawBits();
+                });
+        }
     }
 
     // Note: hiddenRootsObj page pointer slots are NOT updated here.
