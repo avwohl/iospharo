@@ -2441,6 +2441,18 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 j2jSReturns, j2jSCalls,
                 tracked, hot);
 
+        // jit-may23 T6: dump per-reason compile failure counts.
+        // Opt-in via PHARO_JIT_FAIL_REASONS=1.
+        if (std::getenv("PHARO_JIT_FAIL_REASONS")) {
+            extern size_t g_failedBadHeader, g_failedUnsuppPrim,
+                          g_failedSkipSel, g_failedBlock, g_failedBcOther;
+            fprintf(stderr,
+                "  fail-reasons: badHeader=%zu unsuppPrim=%zu skipSel=%zu "
+                "block=%zu bcOther=%zu\n",
+                g_failedBadHeader, g_failedUnsuppPrim, g_failedSkipSel,
+                g_failedBlock, g_failedBcOther);
+        }
+
         // Dump top methods by executionCount (opt-in: PHARO_JIT_TOP=1)
         static int dumpTop = g_debug.jitTop ? atoi(g_debug.jitTop) : 0;
         if (dumpTop > 0 && interp_) {

@@ -5546,19 +5546,27 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
 
 }  // namespace
 
+// jit-may23 T6: per-reason compile-failure counters (external
+// linkage so JITRuntime can read them via extern decl).
+size_t g_failedBadHeader  = 0;
+size_t g_failedUnsuppPrim = 0;
+size_t g_failedSkipSel    = 0;
+size_t g_failedBlock      = 0;
+size_t g_failedBcOther    = 0;
+
 JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                              ObjectMemory& memory, Interpreter& interp,
                              Oop compiledMethod) {
     (void)interp;
 
     if (!compiledMethod.isObject() || compiledMethod.rawBits() < 0x10000) {
-        g_failed++;
+        g_failed++; g_failedBadHeader++;
         return nullptr;
     }
     ObjectHeader* methObj = compiledMethod.asObjectPtr();
     Oop headerOop = methObj->slotAt(0);
     if (!headerOop.isSmallInteger()) {
-        g_failed++;
+        g_failed++; g_failedBadHeader++;
         return nullptr;
     }
     int64_t headerBits = headerOop.asSmallInteger();
@@ -5571,7 +5579,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     uint8_t fmt = static_cast<uint8_t>(methObj->format());
     int unusedBytes = (fmt >= 24) ? (fmt - 24) : 0;
     if (bcStart + (size_t)unusedBytes >= totalBytes) {
-        g_failed++;
+        g_failed++; g_failedBadHeader++;
         return nullptr;
     }
     size_t bcLenRaw = totalBytes - bcStart - (size_t)unusedBytes;
@@ -5589,7 +5597,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         primIdx = supportedPrimIndex(bc, bcLenRaw);
         if (primIdx < 0) {
             // Unsupported prim: bail compile, let C++ handle it.
-            g_failed++;
+            g_failed++; g_failedUnsuppPrim++;
             return nullptr;
         }
     }
@@ -5606,7 +5614,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             const char* end = std::strchr(p, ',');
             size_t len = end ? (size_t)(end - p) : std::strlen(p);
             if (len == selLen && std::memcmp(p, sel.c_str(), len) == 0) {
-                g_failed++;
+                g_failed++; g_failedSkipSel++;
                 return nullptr;
             }
             p = end ? end + 1 : p + len;
@@ -5652,7 +5660,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 fprintf(stderr, "\n");
             }
             if (reject) {
-                g_failed++;
+                g_failed++; g_failedBlock++;
                 return nullptr;
             }
         }
@@ -5694,7 +5702,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     size_t cap = bcLen * 512 + 512;
     if (cap > 65536) cap = 65536;
     if (bcLen * 512 + 512 > cap) {
-        g_failed++;
+        g_failed++; g_failedBcOther++;
         return nullptr;
     }
     std::vector<uint8_t> buf(cap);
@@ -5742,7 +5750,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                          staticJ2JArgCount,
                          buf.data(), cap, &emitted, &isReal,
                          bcToCode.data())) {
-        g_failed++;
+        g_failed++; g_failedBcOther++;
         return nullptr;
     }
     bcToCode[bcLen] = (uint32_t)emitted;
@@ -5777,7 +5785,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // calloc()s a heap-side icBuffer of numSendSites*IC_BYTES_PER_SITE.
     JITMethod* jm = zone.allocate(payloadSize, numSendSites);
     if (!jm) {
-        g_failed++;
+        g_failed++; g_failedBcOther++;
         return nullptr;
     }
 
