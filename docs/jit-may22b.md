@@ -22,6 +22,30 @@ via monomorphic inlining.  Sista (Steps 1-3) is the only path to
 closing the per-send overhead gap; without it, no amount of
 asmjit-T1 tuning bridges the 95× sum or 123× instVar gaps.
 
+### Side investigation: floatSum's inline path
+
+asmjit-T1 already has the inline emit for SmallFloat 0x60/0x61
+(at line 2755+).  Counters `g_bcFloatArith_hits` and
+`g_bcArithBail_hits` should fire when the path is exercised.
+For the floatSum bench (`arr do: [:e | s := s + e]`), both
+counters were **zero** after a 5-iter warmup run.
+
+Conclusion: the bench's block (`[:e | s := s + e]`) isn't JIT-
+compiled.  Pharo's `Collection>>do:` is a regular method that
+calls `aBlock value: each` 1M times.  The block executes in
+interp, so the inline float arith never fires.
+
+This isn't an asmjit-T1 bug — it's the **block-isn't-compiled**
+issue that Step 13 (lower JIT threshold for hot loops) targets.
+For floatSum to use the existing inline emit, EITHER the outer
+`runFloatSum` method must be compiled (currently called once),
+OR the block must be compiled (currently activated 1M times but
+maybe below threshold for block-class JITting).
+
+The asmjit-T1 inline emit is correct and ready.  The win waits
+on JIT-threshold work or on Sista's monomorphic inlining of
+`do:` body.
+
 
 
 Current state (2026-05-22, bench-suite cold-start, gate ON default):
