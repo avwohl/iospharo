@@ -2474,6 +2474,11 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
             return false;
         }
         ObjectHeader* mh = compiledMethod.asObjectPtr();
+        // jit-may22b Step 13 extension attempted: treat ALL compiled
+        // blocks as hot-loop candidates.  Reverted — adds compile
+        // overhead for cold blocks (error handlers, config callbacks)
+        // that exceeds the savings from hot blocks compiling earlier.
+        // The default threshold-of-2 is the right balance.
         Oop hdrOop = mh->slotAt(0);
         if (!hdrOop.isSmallInteger()) return false;
         int64_t hb = hdrOop.asSmallInteger();
