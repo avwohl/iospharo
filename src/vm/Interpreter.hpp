@@ -3241,6 +3241,26 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         for (int i = 0; i < j2jPoolCursor_; i++) {
             visitor(j2jPool_[i].receiver);
         }
+
+        // jit-may22a B1 Sub-step 5: Sista inline-self save pool also
+        // holds caller-side receivers across recursive calls.  Live
+        // save-stack lives in stack-local memory of tryJITActivation
+        // — reachable via currentJITState_'s sistaSaveCursor.
+        if (currentJITState_
+                && currentJITState_->sistaSaveCursor
+                && currentJITState_->sistaSaveLimit) {
+            // The pool extends from base to sistaSaveCursor (one past
+            // last live entry).  We don't have the base pointer
+            // directly, but sistaSaveLimit - 256*56 gives it.
+            jit::SistaSave* poolEnd = reinterpret_cast<jit::SistaSave*>(
+                currentJITState_->sistaSaveLimit);
+            jit::SistaSave* poolBase = poolEnd - jit::MaxSistaSavePoolSize;
+            jit::SistaSave* poolTop = reinterpret_cast<jit::SistaSave*>(
+                currentJITState_->sistaSaveCursor);
+            for (jit::SistaSave* s = poolBase; s < poolTop; s++) {
+                visitor(s->receiver);
+            }
+        }
         // sp/tempBase/literals are recomputed in afterGC from updated method.
     }
 #endif
