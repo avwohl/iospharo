@@ -18731,9 +18731,10 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             // receivers, so lifting the heap gate is where the
             // real wins live.
             if (extra == 0 && retlitEnabled
-                && tmi.returnsLiteral != TrivialReturnKind::None)
+                && tmi.returnsLiteral != TrivialReturnKind::None) {
                 extra = (1ULL << 58)
                       | ((uint64_t)tmi.returnsLiteral << 48);
+            }
         }
     }
 

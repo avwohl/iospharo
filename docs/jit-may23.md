@@ -29,14 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q17 — Verify retLit perf is from quick prims
-
-WHAT: retLit fires 465K times — confirm the wins are from
-quick prims 257-263 (not from bytecode-detected retLit).
-HOW: split the counter into two: one for quick-prim-path bit-58
-set, one for tmi.returnsLiteral path.
-DONE WHEN: two counters in stat dump.
-
 ### Q18 — Verify multi-slot perf source
 
 WHAT: multi-slot fires 668 times.  Which methods?
@@ -83,6 +75,12 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q17**: retLit's 465K bench-suite hits come ENTIRELY from
+  quick-prim path (primIdx 257-263).  Bytecode-detected
+  `^ true/false/nil/0/1` (tmi.returnsLiteral) never fires —
+  Pharo's standard predicates use quick prims.
+  Counter at primIdx==257 fired ~16 times (IC fills).
+  Counter at tmi.returnsLiteral path: 0.
 - ✅ **Q16**: top 5 IC-miss selectors:
     indexOf: 9509  next:putAll: 4876  objectAt: 1894
     size 1629  signFlag 1138
