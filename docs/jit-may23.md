@@ -30,14 +30,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q23 — Identify why fullGC fires 13 times (Q12 finding)
-
-WHAT: bench-suite triggers fullGC 13 times.  Cog probably
-triggers it 0-2 times for the same workload.  Why?
-HOW: add a backtrace log when fullGC is called — show what
-triggered it (low memory? explicit call? compact threshold?).
-DONE WHEN: top trigger reason recorded.
-
 ### Q24 — Reduce fullGC trigger frequency
 
 WHAT: based on Q23 finding, try to reduce the trigger.
@@ -119,6 +111,12 @@ DONE WHEN: miss rate drops, bench-correctness PASS.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q23**: fullGC trigger source: 11 of 13 calls from
+  `interpret()` (step's needsCompactGC check at line 4074).
+  1 from primitiveIncrementalGC (explicit Smalltalk call).
+  needsCompactGC flag set when old-space growth > gcHeadroom_
+  (32MB).  Bench-suite allocates 13 × 32MB = 416MB of old
+  space.  Root: scavenge tenures everything to old space.
 - ✅ **Q22**: activateBlock top 3 expensive ops:
   1. **Home method chain walk** (lines 9980-10026, up to 20 iter
      with 2-3 fetchPointer + class check each).  Variable cost

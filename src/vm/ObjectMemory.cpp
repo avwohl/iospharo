@@ -1783,6 +1783,18 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     auto start = std::chrono::steady_clock::now();
     GCResult result{0, 0, 0};
 
+    // jit-may23 Q23: log fullGC caller (backtrace).
+    if (std::getenv("PHARO_TRACE_FULLGC_CALLER")) {
+        void* ra0 = __builtin_return_address(0);
+        void* ra1 = __builtin_return_address(1);
+        void* ra2 = __builtin_return_address(2);
+        Dl_info i0{}, i1{}, i2{};
+        dladdr(ra0, &i0); dladdr(ra1, &i1); dladdr(ra2, &i2);
+        std::fprintf(stderr, "[Q23-FULLGC] %s / %s / %s\n",
+            i0.dli_sname ? i0.dli_sname : "?",
+            i1.dli_sname ? i1.dli_sname : "?",
+            i2.dli_sname ? i2.dli_sname : "?");
+    }
     // jit-may23 Q12: time fullGC.
     static uint64_t s_fullGCCycles = 0;
     static uint64_t s_fullGCCount = 0;
