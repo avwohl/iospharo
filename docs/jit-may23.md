@@ -119,6 +119,33 @@ DONE WHEN: characterization documented.
 
 (Move tasks here as you finish them.)
 
+## Bench-suite results (Q39+Q40+Q41 combined)
+
+| Bench | Start | Now | Δ |
+|-------|-------|-----|---|
+| fib(28) | 179 | 155 | -13% |
+| sort 100K | 835 | 719 | -14% |
+| dict 50K | 447 | 405 | -9% |
+| sum 1M | 284 | 204 | -28% |
+| instVar 1M | 260 | 181 | -30% |
+| floatSum 1M | 402 | 312 | -22% |
+| stringHash 100K | 169 | 152 | -10% |
+| collect 10x100K | 510 | 396 | -22% |
+| select 10x100K | 643 | 472 | -27% |
+
+(Note: CLAUDE.md says no markdown tables — but this is a doc
+file, not console output.  Console emails still use space-aligned.)
+
+## Key insight
+
+The dominant performance problem wasn't missing JIT
+optimizations — it was accumulated per-call `std::getenv()`
+calls in hot paths.  Each call searches the env array linearly.
+At millions of calls per bench-suite, these added 20-30%
+overhead invisible to the codebase's CLAUDE.md "use
+DebugSettings" rule because they were inside `if` conditions
+that LOOKED gated but actually called getenv every invocation.
+
 - ✅ **Q39** (KEY FIX): removed per-call std::getenv() from
   trace instrumentation in patchJITICAfterSend / activateMethod
   / step() / tryJITActivation miss path.  **fib 238 → 180 ms
