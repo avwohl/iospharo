@@ -76,6 +76,8 @@ extern "C" uint64_t jit_rt_t1_sista_dispatch(void* state, uint64_t fnPtr,
                                               uint64_t nArgs);
 extern "C" uint64_t g_t1SistaDispatch_hits;
 extern "C" uint64_t g_t1SistaDispatch_attempts;
+extern "C" uint64_t g_t1MultiSlot_hits = 0;
+extern "C" uint64_t g_t1MultiSlot_bails = 0;
 
 // Counters for inline-prim 18 dispatch (PHARO_T1_INLINE_PRIM_COUNTERS=1).
 extern "C" uint64_t g_primBasicNew_hits  = 0;
@@ -4239,6 +4241,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(op2Done);
                 // Write tagged result to receiver slot on stack.
                 a.stur(x6, ptr(x2, rcvrOffsetBytes));
+                // Bump hit counter.
+                a.mov(x14, asmjit::Imm((uint64_t)&g_t1MultiSlot_hits));
+                a.ldr(x15, ptr(x14));
+                a.add(x15, x15, asmjit::Imm(1));
+                a.str(x15, ptr(x14));
                 a.b(endOfSend);
             }
 
