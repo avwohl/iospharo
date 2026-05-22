@@ -2462,53 +2462,47 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     }
 
     // jit-may22b Step 13: lower threshold to 1 for methods with
-    // backward jumps (= bytecode-level loops).  These are typically
-    // benchmark-harness `runOnce`-style methods that are called
-    // ONCE but execute their bodies for millions of iterations —
-    // never reach the default threshold of 2 but desperately need
-    // the JIT for the hot loop.  Detection: scan for ExtJump (0xED)
-    // or ExtJumpTrue (0xEE) or ExtJumpFalse (0xEF) with a negative
-    // 16-bit offset.  Default-on (zero added cost — one pass over
-    // bytecodes the first time the method is seen).
-    // PHARO_NO_HOT_LOOP_THRESHOLD=1 opt-out.
+    // backward jumps (bytecode-level loops).  Scan only on the path
+    // that creates a new countMap entry (count==0) so the per-method
+    // bytecode walk costs amortise to O(1) per method, not per call.
     static const bool hotLoopThresholdOff =
         std::getenv("PHARO_NO_HOT_LOOP_THRESHOLD") != nullptr;
-    uint32_t methodThreshold = threshold;
-    if (!hotLoopThresholdOff && interp_
-            && compiledMethod.isObject()
-            && compiledMethod.rawBits() > 0x10000) {
+    auto methodHasBackwardJump = [&]() -> bool {
+        if (hotLoopThresholdOff) return false;
+        if (!compiledMethod.isObject()
+                || compiledMethod.rawBits() <= 0x10000) {
+            return false;
+        }
         ObjectHeader* mh = compiledMethod.asObjectPtr();
         Oop hdrOop = mh->slotAt(0);
-        if (hdrOop.isSmallInteger()) {
-            int64_t hb = hdrOop.asSmallInteger();
-            int numLits = (int)(hb & 0x7FFF);
-            uint8_t* bytes = mh->bytes();
-            size_t bcStart = (1 + numLits) * 8;
-            size_t totalBytes = mh->byteSize();
-            if (totalBytes > bcStart && totalBytes - bcStart >= 3) {
-                size_t bcLen = totalBytes - bcStart;
-                const uint8_t* bc = bytes + bcStart;
-                for (size_t bi = 0; bi + 2 < bcLen; bi++) {
-                    if (bc[bi] >= 0xED && bc[bi] <= 0xEF) {
-                        int16_t offset =
-                            (int16_t)((bc[bi + 1] << 8) | bc[bi + 2]);
-                        if (offset < 0) {
-                            methodThreshold = 1;
-                            break;
-                        }
-                        bi += 2;  // skip operand bytes
-                    }
-                }
+        if (!hdrOop.isSmallInteger()) return false;
+        int64_t hb = hdrOop.asSmallInteger();
+        int numLits = (int)(hb & 0x7FFF);
+        uint8_t* bytes = mh->bytes();
+        size_t bcStart = (1 + numLits) * 8;
+        size_t totalBytes = mh->byteSize();
+        if (totalBytes <= bcStart || totalBytes - bcStart < 3) {
+            return false;
+        }
+        size_t bcLen = totalBytes - bcStart;
+        const uint8_t* bc = bytes + bcStart;
+        for (size_t bi = 0; bi + 2 < bcLen; bi++) {
+            if (bc[bi] >= 0xED && bc[bi] <= 0xEF) {
+                int16_t offset =
+                    (int16_t)((bc[bi + 1] << 8) | bc[bi + 2]);
+                if (offset < 0) return true;
+                bi += 2;
             }
         }
-    }
+        return false;
+    };
 
     // Simple linear probe
     for (size_t probe = 0; probe < 8; probe++) {
         size_t i = (idx + probe) % CountMapSize;
         if (countMap_[i].key == key) {
             countMap_[i].count++;
-            if (countMap_[i].count == methodThreshold) {
+            if (countMap_[i].count == threshold) {
             compile_check:
                 // Bisection: stop after N compilations
                 if (maxCompile >= 0 && (int)compiler_->methodsCompiled() >= maxCompile) {
@@ -2802,8 +2796,8 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         if (countMap_[i].key == 0) {
             countMap_[i].key = key;
             countMap_[i].count = 1;
-            if (methodThreshold <= 1) {
-                // Threshold=1 means compile on first sighting.
+            // jit-may22b Step 13: hot-loop methods compile immediately.
+            if (threshold <= 1 || methodHasBackwardJump()) {
                 goto compile_check;
             }
             return;
