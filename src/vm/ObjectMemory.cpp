@@ -1783,6 +1783,29 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     auto start = std::chrono::steady_clock::now();
     GCResult result{0, 0, 0};
 
+    // jit-may23 Q12: time fullGC.
+    static uint64_t s_fullGCCycles = 0;
+    static uint64_t s_fullGCCount = 0;
+    static const bool timeGC = std::getenv("PHARO_TIME_GC") != nullptr;
+    uint64_t startTSC = 0;
+    if (timeGC) asm volatile("mrs %0, cntvct_el0" : "=r"(startTSC));
+    struct EndC {
+        bool active; uint64_t start;
+        ~EndC() {
+            if (active) {
+                uint64_t endTSC;
+                asm volatile("mrs %0, cntvct_el0" : "=r"(endTSC));
+                s_fullGCCycles += (endTSC - start);
+                s_fullGCCount++;
+                std::fprintf(stderr,
+                    "[Q12-FULLGC] #%llu in %llu cycles (total %llu)\n",
+                    (unsigned long long)s_fullGCCount,
+                    (unsigned long long)(endTSC - start),
+                    (unsigned long long)s_fullGCCycles);
+            }
+        }
+    } endC{timeGC, startTSC};
+
     size_t usedBefore = oldSpaceFree_ - oldSpaceStart_;
 
     // Diagnostic: PHARO_GC_LOG=1 logs every fullGC call.  On Pi 5 perf

@@ -29,12 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q12 — Measure fullGC time
-
-WHAT: how much bench-suite time is in full GC?
-HOW: timed counter around `fullGC()`.
-DONE WHEN: ms total recorded.
-
 ### Q13 — Find Pharo's bitShift: bench
 
 WHAT: stringHash uses `bitShift:` heavily.  Does the current
@@ -124,6 +118,10 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q12**: fullGC fires 13 times, total 1.3 BILLION cntvct
+  cycles.  13× more expensive than scavenge.  GC is a significant
+  but not dominant overhead source.  Cog handles benches with
+  far less GC pressure — investigate why our GC fires so often.
 - ✅ **Q11**: scavenge fires ~8 times per bench-suite, 12-15M
   cntvct cycles each, total ~100M cycles.  At cntvct's 24MHz
   freq that's ~4 seconds — but cntfrq may be higher; needs
