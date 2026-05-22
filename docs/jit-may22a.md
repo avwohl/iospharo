@@ -41,9 +41,39 @@ chain looks like:
 For Sub-step 3b to land, we need to wire **asmjit-T1's bit-55
 (SISTA_BIT) dispatch** to actually invoke Sista's fn instead of
 bailing to dispatchCached (which is what the Step 8.4 B4 stub
-does today).  That's documented in docs/jit-84.md's B4 section
-as ~30 instructions of new emit (mirroring activateMethod's
-callee-frame setup).
+does today).
+
+**Deeper investigation 2026-05-22**: tryActivateSista creates a
+FRESH `jit::JITState sstate` and inits ~20 fields from interp
+state before calling Sista's fn.  Sista uses `sstate`, not the
+shared live state that asmjit-T1's IC HIT path operates on.
+
+This means B4's "real BLR emit" can't just BLR to Sista's fn with
+the shared state — it'd need to:
+
+1. Save asmjit-T1's live state somewhere (stack-local sstate?).
+2. Prepare a fresh JITState for Sista from current state.
+3. Call Sista's fn.
+4. Restore asmjit-T1's state from the saved version.
+
+Plus the same overhead as activateMethod for the state copy
+(~20 stores).  At that point asmjit-T1's inline-J2J (which is
+~10 instr + BR) is decisively faster than any Sista dispatch.
+
+Alternative paths to a fib win:
+
+**Option A**: Modify Sista's fn contract to accept the shared
+state directly (no fresh sstate allocation).  Big refactor;
+multi-week.
+
+**Option B**: For self-rec hot loops specifically, have Sista
+emit a self-call that uses the same state (since it's "itself"
+calling itself).  Requires more aggressive sub-step 4 work and
+an in-asm save protocol within the Sista fn itself.
+
+**Option C**: Accept that inline-J2J wins for self-rec.  Use
+the kSendInlineSelf infrastructure landed here for cross-method
+sends where inline-J2J doesn't apply (polymorphic IC sites, etc.).
 
 Until B4's real emit lands, the only paths that reach
 `kSendInlineSelf` in production are:
