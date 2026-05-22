@@ -30,14 +30,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q28 — Investigate `at:` IC misses
-
-WHAT: `at:` is the #1 selector by IC patches (8.5M).  Are these
-all hits, or are there many polymorphic misses?
-HOW: add a trace at at: IC patch site logging the receiver
-class.  Count distinct classes.
-DONE WHEN: list of classes + count.
-
 ### Q29 — Audit OSR (on-stack replacement) overhead
 
 WHAT: `[JIT] Stats: OSR=215195`.  OSR fires 215K times per
@@ -79,6 +71,16 @@ DONE WHEN: miss rate drops, bench-correctness PASS.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q28**: `at:` receiver class distribution: 24 distinct
+  classes, top:
+    cls 51 = 7M  (~70% — Array?)
+    cls 3141 = 1.3M
+    cls 3143 = 50K
+    cls 52 = 9K
+    cls 3101 = 8K
+  Highly polymorphic but dominated by 2-3 classes.  IC has 6
+  slots — should accommodate hot classes well.  Mega-cache fallback
+  triggers for the tail.
 - ✅ **Q27**: J2J-a (J2J activation chain) handles 6.4M
   recursive/non-recursive sends per bench-suite.  benchFib's
   3.5M activations mostly go through this path.  No separate
