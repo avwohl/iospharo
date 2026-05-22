@@ -4,6 +4,7 @@
 
 | Step | Status | Commit |
 |---|---|---|
+| 1: Sista cache GC integration | **partial** — key rekey works, baked-literal stale-ptr blocker | `8325762e` + `fe1fdae6` |
 | 4: IC probe walks slots 0-2 | infrastructure landed, default-off | `af79d497` |
 | 11: Trivial-forwarder IC collapse | DONE, default-on, **1-3% wins on 4 benches** | `5cb5566a` |
 | 13: Hot-loop JIT threshold | landed, default-on, no measurable bench impact | `74d37194` + `a9cad88d` |
@@ -196,6 +197,38 @@ specific benches; steps 11-15 are polish + soak.
 ---
 
 ## Step 1 — Sista cache GC integration
+
+**2026-05-22 partial-landing**: the cache-KEY rekey path landed
+end-to-end (`fe1fdae6`).  `ObjectMemory::updatePointersAfterCompact`
+now calls `Interpreter::rekeySistaCacheViaForwarders` while
+forwarders are still installed; `SistaRuntime::rekeyAfterGC` walks
+cache_/bcOffsetCache_/compiledHintless_/spliceMethods_ and
+translates each oop-bits key via the resolveForward callback.
+
+**Blocker for default-on**: Sista's compiled fns bake LITERAL OOPS
+(receiver classes, selector symbols, constant values) directly
+into the lowered native code via `out_.literals` references.
+After GC compacts and moves those literals, the baked immediate
+addresses point to stale locations.  Manifests as
+"Message not understood: ByteString >> #encodeString:" on the
+bench-correctness harness's `Smalltalk exitSuccess` path under
+bail-only mode.
+
+The proper fix needs:
+1. Sista's lowering records each emit site that bakes a literal
+   (file offset → literal-index pair).
+2. After the rekey (still during compact's pointer-update phase),
+   walk every fn's literal-emit table and re-patch immediates via
+   `resolveForward`.
+3. The patch must happen before the code zone is sealed read-only.
+
+Multi-day work (substantial lowering changes + W^X flip dance).
+
+For now: rekey gated behind `PHARO_SISTA_REKEY_AFTER_GC=1` opt-in.
+Default mode still resets the cache on every GC (loses the
+hints-bearing compiles per the original Step 1 motivation).
+
+### Original Step 1 plan
 
 **Bench wins enabled**: instVar, sort, dict, collect, select,
 floatSum, sum (everything that goes through Sista).
