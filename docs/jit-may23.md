@@ -30,16 +30,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q21 — Reduce primFullClosureValue overhead (Q1 finding)
-
-WHAT: prim207 is 94 cycles × 5.2M calls = dominant cost.  Look
-at the function body and identify any work that can be inlined
-or skipped for the common case.
-HOW: read primitiveFullClosureValue.  Identify the 3 most
-expensive sub-operations.  Document them in this doc.  Pick the
-cheapest-to-remove and remove it.
-DONE WHEN: a sub-op is removed AND bench-correctness 5/5 PASS.
-
 ### Q22 — Reduce activateBlock overhead (Q2 finding)
 
 WHAT: activateBlock is 57 cycles = 60% of prim207.  Identify
@@ -137,6 +127,12 @@ DONE WHEN: miss rate drops, bench-correctness PASS.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q21**: primFullClosureValue body audit.  60% of its 94
+  cycles is in activateBlock (already known from Q2).  The
+  remaining 40% is: stackValue, isObject check,
+  fetchPointerUnchecked(slot 2) for numArgs, SmI check, compare.
+  All are necessary correctness checks.  Cannot remove without
+  changing semantics.  The win is in activateBlock (Q22).
 - ✅ **Q19**: 0x6E/0x6F (bitAnd/bitOr) IS inlined for x86_64
   (AsmjitT1.cpp:1568) but NOT for ARM64 — ARM emit checks only
   isPhase3ArithOp at line 2705, not isPhase3BitOp.
