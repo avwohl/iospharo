@@ -4038,21 +4038,29 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             a.b(endOfSend);
 
-            // === trySistaCall (jit-may20b Step 8.4) ===
+            // === trySistaCall (jit-may20b Step 8.4 / jit-84 B4) ===
             // Dispatch to a Sista-compiled fn (ptr in x7's bits 47:0).
-            // Currently a stub: bails to dispatchCached so the chain-loop
-            // handles via the existing Sista dispatch path.  When Step 4
-            // (Sista bail-protocol fix) lands, replace this stub with an
-            // inline BLR to the fn:
+            // Sista's CompiledFn signature: void (*)(JITState* state).
             //
-            //     a.mov(x6, x7);
-            //     a.and_(x6, x6, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
-            //     a.mov(x0, x_state);  // = x0 already
-            //     a.blr(x6);
-            //     ... handle state.exitReason ...
+            // ATTEMPTED 2026-05-21: direct BLR with caller's state →
+            // SIGSEGV at fault addr 0x331 inside Sista's emitted code.
+            // Sista's fn expects state to be the CALLEE's frame
+            // (receiver, tempBase, sp, ip, method all set to the
+            // method being executed), not the caller's.  The IC HIT
+            // path has caller's state; we'd need to:
+            //   - Set up callee receiver, tempBase = sp - nArgs*8,
+            //     literals = method+16, method, argCount, ip = bcStart.
+            //   - Save caller's state somewhere (J2J save?  But Sista
+            //     doesn't use the J2J save protocol).
+            //   - BLR to fn.
+            //   - On return, restore caller's state, pop nArgs+1,
+            //     push state.returnValue.
             //
-            // SISTA_BIT is currently never set (Step 4 deferred); this
-            // emit is dead code in current builds.
+            // That's ~30+ instructions per send site and requires a
+            // new save protocol that Sista's deopt path also has to
+            // honour.  Deferred to a follow-up; stub bails to
+            // dispatchCached so the existing chain-loop Sista dispatch
+            // handles the call.
             a.bind(trySistaCall);
             a.b(dispatchCached);
 
