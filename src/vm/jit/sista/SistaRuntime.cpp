@@ -240,6 +240,24 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
                 return nullptr;
             }
         }
+        // Selector blacklist (B3 root fix #3 — hacky but tactical).
+        // Methods that forward to a prim quit via multi-send chains
+        // (exitSuccess → exitSuccess: → exit:) lose the chain to
+        // helper-depth=1 cap.  Force these through interp.
+        {
+            std::string sel = memory.selectorOf(method);
+            if (sel == "exit:" || sel == "exitSuccess"
+                || sel == "exitSuccess:" || sel == "exitFailure"
+                || sel == "exitFailure:" || sel == "quitPrimitive"
+                || sel == "runAsync" || sel == "runOnce"
+                || sel == "value" || sel == "fork"
+                || sel == "forkAt:" || sel == "schedule"
+                || sel == "terminate" || sel == "suspendActiveProcess"
+                || sel == "yield" || sel == "wait") {
+                cache_[key] = nullptr;
+                return nullptr;
+            }
+        }
     }
 
     // Lower IR → native.
