@@ -18493,11 +18493,13 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         // receivers so bit-60 J2J can take over cleanly below.
         bool receiverIsHeap = (receiver.rawBits() & 0x7) == 0
                               && receiver.rawBits() >= 0x10000;
-        // PHARO_RETLIT=1 enables bit 58 (returnsLiteral).  The
-        // 3-bit kind tag goes in bits 50:48 (above the 47-bit
-        // address range) so bits 47:0 stay free for J2J.
+        // jit-may22b: default-on returnsLiteral (bit 58).  Asmjit-T1
+        // now dispatches bit 58 for both heap and SmI receivers, so
+        // common methods like `Integer>>isInteger -> ^ true` etc.
+        // can fire the inline emit instead of activating the method.
+        // PHARO_NO_RETLIT=1 to disable.
         static const bool retlitEnabled =
-            std::getenv("PHARO_RETLIT") != nullptr;
+            std::getenv("PHARO_NO_RETLIT") == nullptr;
         if (!noGetterBit && (receiverIsHeap || retlitEnabled)) {
             TrivialMethodInfo tmi = detectTrivialMethod(resolvedMethod, memory_);
             bool skip63 = bisect && std::strcmp(bisect, "63") == 0;
@@ -19012,6 +19014,17 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                              | ((uint64_t)(uint8_t)tmi.multiConst << 16)
                              | ((uint64_t)tmi.multiOp1Sub << 24)
                              | ((uint64_t)tmi.multiOp2Sub << 25);
+                }
+                // jit-may22b: also handle returnsLiteral (bit 58)
+                // here — was previously skipped in this slot-fill
+                // patch path, so asmjit-T1's bit-58 dispatch never
+                // fired in practice.  Gated by PHARO_NO_RETLIT=1.
+                static const bool noRetlit2 =
+                    std::getenv("PHARO_NO_RETLIT") != nullptr;
+                if (newExtra == 0 && !noRetlit2
+                        && tmi.returnsLiteral != TrivialReturnKind::None) {
+                    newExtra = (1ULL << 58)
+                             | ((uint64_t)tmi.returnsLiteral << 48);
                 }
             }
             if (newExtra == 0) {
