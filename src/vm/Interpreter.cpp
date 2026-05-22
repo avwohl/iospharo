@@ -350,21 +350,25 @@ static SistaRingEntry sistaRing_[kSistaRingSize] = {};
 static size_t sistaRingHead_ = 0;
 static uint64_t sistaRingSeq_ = 0;
 
-void Interpreter::recoverSistaAfterGC() {
+void Interpreter::rekeySistaCacheViaForwarders(
+        const std::function<uint64_t(uint64_t)>& follow) {
     if (sistaRuntimeForGCHook_) {
-        // jit-may22a B1 Sub-step 3a: tried opt-in rekeying via
-        // followForwarded, but by the time recoverSistaAfterGC fires,
-        // Spur compaction has already FREED the old oop locations and
-        // the forwarder info with them.  followForwarded returns
-        // garbage or stale pointers, corrupting the cache (manifested
-        // as "Message not understood: ByteString >> #encodeString:"
-        // on Sista bail-only + inline-self + rekey).
-        //
-        // The proper fix would hook into the GC's forwarding pass
-        // BEFORE compaction frees the old locations.  Substantial
-        // GC infrastructure work; deferred.  For now: always reset
-        // (Sub-step 3a's rekeyAfterGC is dead code — kept in tree
-        // for the future GC-pass-integrated version).
+        sistaRuntimeForGCHook_->rekeyAfterGC(follow);
+    }
+}
+
+void Interpreter::recoverSistaAfterGC() {
+    // jit-may22b Step 1: the Sista cache rekey now happens during
+    // the compact's pointer-update phase (ObjectMemory::
+    // updatePointersAfterCompact calls rekeySistaCacheViaForwarders),
+    // so by the time we get here the cache keys are already valid
+    // for the new heap layout.  No reset needed.
+    //
+    // Opt-out via PHARO_SISTA_RESET_AFTER_GC=1 (reverts to the
+    // old behavior of clearing on every GC).
+    static const bool resetAfterGC =
+        std::getenv("PHARO_SISTA_RESET_AFTER_GC") != nullptr;
+    if (resetAfterGC && sistaRuntimeForGCHook_) {
         sistaRuntimeForGCHook_->reset();
     }
     sistaGateCache_.clear();

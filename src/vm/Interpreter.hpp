@@ -1070,6 +1070,19 @@ private:
     // Spur compaction.  Defined in Interpreter.cpp so it can see the
     // file-scope Sista runtime pointer.
     void recoverSistaAfterGC();
+
+#endif
+
+public:
+#if PHARO_JIT_ENABLED
+    // jit-may22b Step 1: rekey Sista's cache during the compact's
+    // pointer-update phase, while forwarders are still valid.
+    // Caller passes a follow callback: `uint64_t newBits = follow(oldBits)`
+    // (0 = drop entry).  Public because ObjectMemory calls it from
+    // updatePointersAfterCompact.  Uses std::function to avoid pulling
+    // SistaRuntime.hpp into ObjectMemory's translation unit.
+    void rekeySistaCacheViaForwarders(
+        const std::function<uint64_t(uint64_t)>& follow);
 #endif
 
     // ===== JIT COMPILER =====

@@ -3249,6 +3249,20 @@ void ObjectMemory::updatePointersAfterCompact() {
 
     if (interpreter_) {
         interpreter_->forEachRoot(updateOop);
+        // jit-may22b Step 1: Sista cache GC integration.
+        // While forwarders are still installed (we're between the plan
+        // phase and the move phase), rekey Sista's method→fn cache so
+        // hints-bearing compiles survive compaction.  After this point
+        // the old oop bits become invalid; doing the rekey AFTER
+        // compact (in recoverSistaAfterGC) is too late.
+        interpreter_->rekeySistaCacheViaForwarders(
+            [&resolveForward](uint64_t oldBits) -> uint64_t {
+                Oop o = Oop::fromRawBits(oldBits);
+                if (!o.isObject() || o.rawBits() <= 0x10000) return 0;
+                Oop n = resolveForward(o);
+                if (!n.isObject() || n.rawBits() <= 0x10000) return 0;
+                return n.rawBits();
+            });
     }
 
     // Note: hiddenRootsObj page pointer slots are NOT updated here.
