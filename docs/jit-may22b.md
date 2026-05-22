@@ -1,5 +1,29 @@
 # jit-may22b — 15-step plan to close the Cog gap
 
+## Implementation progress (2026-05-22)
+
+| Step | Status | Commit |
+|---|---|---|
+| 4: IC probe walks slots 0-2 | infrastructure landed, default-off | `af79d497` |
+
+**Why Step 4 didn't ship default-on**: empirical bench-suite shows
+1-3% slowdown across most benches when enabled.  The slot-0
+monomorphic hit path picks up an extra `b probeDone` branch, paid
+on every warm IC HIT.  The poly-walk savings (~12K cold-start DUPs)
+are rare enough to be invisible at bench-suite granularity.
+
+Infrastructure stays in tree (`PHARO_T1_IC_POLY_WALK=1` opt-in) for
+polymorphic-heavy workloads that may yet benefit.
+
+**Reality check on the wider plan**: Steps 4, 13 are isolated
+asmjit-T1-level wins.  Most benches are bottlenecked by per-send
+overhead (~120 ns/send for cross-method calls) which Cog avoids
+via monomorphic inlining.  Sista (Steps 1-3) is the only path to
+closing the per-send overhead gap; without it, no amount of
+asmjit-T1 tuning bridges the 95× sum or 123× instVar gaps.
+
+
+
 Current state (2026-05-22, bench-suite cold-start, gate ON default):
 
     benchmark         ours    cog    ratio
