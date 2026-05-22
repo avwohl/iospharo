@@ -205,28 +205,41 @@ forwarders are still installed; `SistaRuntime::rekeyAfterGC` walks
 cache_/bcOffsetCache_/compiledHintless_/spliceMethods_ and
 translates each oop-bits key via the resolveForward callback.
 
-**Blocker for default-on**: Sista's compiled fns bake LITERAL OOPS
-(receiver classes, selector symbols, constant values) directly
-into the lowered native code via `out_.literals` references.
-After GC compacts and moves those literals, the baked immediate
-addresses point to stale locations.  Manifests as
-"Message not understood: ByteString >> #encodeString:" on the
-bench-correctness harness's `Smalltalk exitSuccess` path under
-bail-only mode.
+**Blocker for default-on (ROOT CAUSE IDENTIFIED 2026-05-22)**:
 
-The proper fix needs:
-1. Sista's lowering records each emit site that bakes a literal
-   (file offset → literal-index pair).
-2. After the rekey (still during compact's pointer-update phase),
-   walk every fn's literal-emit table and re-patch immediates via
-   `resolveForward`.
-3. The patch must happen before the code zone is sealed read-only.
+It's NOT baked oop literals.  Sista's `kLoadLiteral` and
+`kConstantOop` use safe encodings (`state->literals[idx]` for
+heap oops; SmI/Char/nil for immediates).  `kGuardClass` uses
+22-bit classIndex which is GC-stable.
 
-Multi-day work (substantial lowering changes + W^X flip dance).
+The actual bug: Sista bakes **bytecodeBase + bcOffset** as
+immediate operands at deopt-resume sites and block-dispatch sites
+(`SistaLowering_arm64.cpp:273, 613, 713, 992` etc.):
 
-For now: rekey gated behind `PHARO_SISTA_REKEY_AFTER_GC=1` opt-in.
-Default mode still resets the cache on every GC (loses the
-hints-bearing compiles per the original Step 1 motivation).
+    cc.mov(ipReg, Imm((uint64_t)(bytecodeBase + bcOffset)));
+
+`bytecodeBase = method.bytes() + headerSkip` points INTO the
+Smalltalk heap.  When GC compacts and moves the CompiledMethod,
+this baked pointer becomes stale.  At next deopt fire, the fn
+writes `state.ip = stale_addr + bcOffset`.  Subsequent
+`prepareForGC` reads `*sstate.ip` from garbage and propagates the
+error.  Manifests as "Message not understood: ByteString >>
+#encodeString:" — selector dispatch on a corrupted method oop.
+
+**The proper fix** requires changing Sista lowering to compute
+the IP address from `state.method` dynamically at deopt time
+instead of baking it.  ~4 sites, each needs ~6 instructions in
+place of the current 1-instruction baked-Imm.  Acceptable cost
+since deopt is the slow path.  A JITState field cache for
+`bytecodes_start` would amortize this — but the runtime needs to
+keep that field updated when method changes.
+
+Multi-day refactor (~6 lowering sites, runtime field plumbing,
+testing matrix across deopt + block dispatch).  Deferred.
+
+For now: rekey gated behind `PHARO_SISTA_REKEY_AFTER_GC=1`
+opt-in.  Default mode still resets the cache on every GC (loses
+the hints-bearing compiles per the original Step 1 motivation).
 
 ### Original Step 1 plan
 
