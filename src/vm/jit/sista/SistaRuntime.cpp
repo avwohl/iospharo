@@ -221,6 +221,27 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         return nullptr;
     }
 
+    // jit-84 B3: in compileBailOnly mode (diagnostic), also skip methods
+    // with a primitive declaration.  Sista's lifter skips the
+    // CallPrimitive (0xF8) bytecode entirely (it assumes the prim was
+    // already tried in interp), so compiling a prim method produces an
+    // fn that runs ONLY the fallback bytecodes.  When dispatched from
+    // the activation path (which is supposed to be called only AFTER
+    // tryPrimitive failed), this is correct.  But in bail-only mode the
+    // forced dispatch can call the fn even when the prim would have
+    // succeeded, breaking primitives like 113 (quit) → infinite loop
+    // because the fallback `^ self primitiveFailed` never quits.
+    if (compileBailOnly) {
+        Oop hdrOop = memory.fetchPointer(0, method);
+        if (hdrOop.isSmallInteger()) {
+            int64_t hb = hdrOop.asSmallInteger();
+            if ((hb >> 16) & 1) {  // hasPrimitive
+                cache_[key] = nullptr;
+                return nullptr;
+            }
+        }
+    }
+
     // Lower IR → native.
     uint32_t failedVal = UINT32_MAX;
     Lowering::CompiledFn fn = lowering_.lower(m, &failedVal, bytecodes);

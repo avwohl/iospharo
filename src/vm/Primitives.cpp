@@ -3783,10 +3783,16 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // On iOS, std::exit() from a background thread causes SIGABRT.
     // Instead, stop the interpreter loop and let the app handle cleanup.
 
+    if (std::getenv("PHARO_TRACE_EXIT")) {
+        fprintf(stderr, "[EXIT-TRACE] primitiveQuit called argCount=%d\n", argCount);
+    }
     // Flush pending IMAGE output buffer before shutting down
     ::flushImageOutputBuffer();
 
     running_ = false;
+    if (std::getenv("PHARO_TRACE_EXIT")) {
+        fprintf(stderr, "[EXIT-TRACE] running_ = false\n");
+    }
     return PrimitiveResult::Success;
 }
 

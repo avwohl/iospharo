@@ -2780,6 +2780,9 @@ void Interpreter::interpret() {
     }
 #endif
     #undef DISPATCH_NEXT
+    if (std::getenv("PHARO_TRACE_EXIT")) {
+        fprintf(stderr, "[EXIT-TRACE] interpret() returning normally\n");
+    }
     return;
 }
 
@@ -15580,6 +15583,11 @@ void Interpreter::initializeNamedPrimitives() {
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
+    if (std::getenv("PHARO_TRACE_EXIT")
+            && (primitiveIndex == 113 || primitiveIndex == 114)) {
+        fprintf(stderr, "[EXIT-TRACE] executePrimitive(%d, %d) entering\n",
+                primitiveIndex, argCount);
+    }
     if (std::getenv("PHARO_TRACE_EXEC_PRIM")) {
         if (primitiveIndex == 207) {
             static uint64_t n = 0;
