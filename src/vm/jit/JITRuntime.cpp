@@ -488,6 +488,15 @@ extern "C" void jit_rt_pop_frame(JITState* state) {
     interp->popFrameForJIT(state);
 }
 
+// jit-may20b Step 10 followup: inline-prim 18 (basicNew:) — call
+// primitiveNewWithArg directly from asmjit-T1 IC HIT instead of
+// going through the chain-loop's prim path.  Skips IC dispatch +
+// activateMethod + tryPrimitive setup; just does the alloc.
+extern "C" uint64_t jit_rt_basic_new_with_arg(JITState* state) {
+    if (!state || !state->interp) return 0;
+    return state->interp->jitBasicNewWithArg(state);
+}
+
 // Safe-point recompile queue.  stencil_sendJ2J's inline path bumps
 // callee count; when threshold crossed, calls this helper to enqueue
 // the callee for recompile.  Drained by Interpreter::drainRecompileQueue

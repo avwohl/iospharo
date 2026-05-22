@@ -1584,6 +1584,13 @@ public:
     /// comment for safety guarantees.
     uint64_t jitStoreInstVar(Oop recv, uint64_t ivarIdx, Oop val);
 
+    /// jit-may20b Step 10: inline-prim 18 (basicNew:) helper for
+    /// asmjit-T1's IC HIT path.  state.sp points PAST [rcvr=class,
+    /// size].  On success: sets state.sp to post-op (rcvr slot now
+    /// holds the new oop, args popped) and returns 1.  On failure:
+    /// returns 0 (caller bails to chain-loop dispatch).
+    uint64_t jitBasicNewWithArg(jit::JITState* state);
+
     /// Sista deopt-with-resume helper for kCountedLoopArrayDoAccum.
     /// Called from compiled code when an inlined SmI-fast-path iter
     /// hits a non-SmI element.  Continues the iteration in C++ from

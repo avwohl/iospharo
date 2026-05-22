@@ -126,6 +126,13 @@ struct DebugSettings {
     // vs ~500 cycle chain-loop round-trip.  Could benefit sort/dict/sum.
     // Default-on; PHARO_T1_NO_INLINE_PRIM_AT=1 opt-out.
     bool t1InlinePrimAt = true;
+    // jit-may20b Step 10: inline-prim 18 (basicNew:) at the IC HIT site
+    // for nArgs == 1 sends.  Routes to a runtime helper that calls
+    // primitiveNewWithArg directly from the JIT, skipping the
+    // chain-loop's exit→re-entry round-trip.  Targets the 100K
+    // allocations bench gap (12 ms ours vs 3 ms Cog).
+    // Default-on; PHARO_T1_NO_INLINE_PRIM_BASIC_NEW=1 opt-out.
+    bool t1InlinePrimBasicNew = true;
     // jit-may20b Step 8.4: dispatch to Sista's compiled fn from asmjit-T1
     // IC HIT path when the IC patcher set SISTA_BIT (bit 55) + fn ptr in
     // bits 47:0.  Currently dormant — Sista's bail-protocol bug (Step 4)

@@ -108,6 +108,8 @@ extern "C" uint64_t g_primAtPut_hits;
 extern "C" uint64_t g_primSize_hits;
 extern "C" uint64_t g_primBitOp_hits;
 extern "C" uint64_t g_primFloatOp_hits;
+extern "C" uint64_t g_primBasicNew_hits;
+extern "C" uint64_t g_primBasicNew_bails;
 extern "C" uint64_t g_bcFloatArith_hits;
 extern "C" uint64_t g_bcArithBail_hits;
 extern "C" uint64_t g_bcRemoteTemp_hits;
@@ -1459,11 +1461,13 @@ void Interpreter::dumpJITStats() {
     {
         uint64_t primTotal = g_primAt_hits + g_primAtPut_hits
                            + g_primSize_hits + g_primBitOp_hits
-                           + g_primFloatOp_hits;
+                           + g_primFloatOp_hits + g_primBasicNew_hits
+                           + g_primBasicNew_bails;
         if (primTotal > 0) {
             fprintf(stderr,
                 "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu "
-                "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu\n",
+                "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu "
+                "basicNew=%llu/%llu\n",
                 (unsigned long long)g_primAt_hits,
                 (unsigned long long)g_primAtPut_hits,
                 (unsigned long long)g_primSize_hits,
@@ -1471,7 +1475,9 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_primFloatOp_hits,
                 (unsigned long long)g_bcFloatArith_hits,
                 (unsigned long long)g_bcArithBail_hits,
-                (unsigned long long)g_bcRemoteTemp_hits);
+                (unsigned long long)g_bcRemoteTemp_hits,
+                (unsigned long long)g_primBasicNew_hits,
+                (unsigned long long)g_primBasicNew_bails);
         }
     }
     if (g_xmethod_count > 0) {
@@ -12208,6 +12214,31 @@ uint64_t Interpreter::jitStoreInstVar(Oop recv, uint64_t ivarIdx, Oop val) {
     if (ivarIdx >= hdr->slotCount()) return 0;
     memory_.storePointerUnchecked(static_cast<size_t>(ivarIdx), recv, val);
     return 1;
+}
+
+uint64_t Interpreter::jitBasicNewWithArg(jit::JITState* state) {
+    // state.sp points PAST [rcvr=class, size].  Sync interp's stack
+    // pointer so executePrimitive sees the right values via
+    // stackValue(0/1).
+    Oop* savedSP = stackPointer_;
+    stackPointer_ = state->sp;
+    int savedArgCount = argCount_;
+    argCount_ = 1;
+    primitiveFailed_ = false;
+    primFailCode_ = 0;
+    PrimitiveResult result = executePrimitive(71, 1);
+    uint64_t ok = 0;
+    if (result == PrimitiveResult::Success) {
+        // primitiveSuccess popped (1+1) and pushed newObj.  Reflect
+        // the new sp back to JIT state.
+        state->sp = stackPointer_;
+        ok = 1;
+    } else {
+        // Restore caller's sp on failure so caller can bail cleanly.
+        stackPointer_ = savedSP;
+    }
+    argCount_ = savedArgCount;
+    return ok;
 }
 
 uint64_t Interpreter::jitSistaAllocArray(jit::JITState* state,

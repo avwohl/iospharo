@@ -119,6 +119,7 @@ DebugSettings::DebugSettings() {
                          || envPresent("PHARO_T1_BAIL_GATE_HISTO");
     t1InlinePrimBitOps  = !envPresent("PHARO_T1_NO_INLINE_PRIM_BITOPS");
     t1InlinePrimAt      = !envPresent("PHARO_T1_NO_INLINE_PRIM_AT");
+    t1InlinePrimBasicNew = !envPresent("PHARO_T1_NO_INLINE_PRIM_BASIC_NEW");
     t1InlineSistaCall   =  envPresent("PHARO_T1_INLINE_SISTA_CALL");
     t1InlineJ2JXmethod  = envPresent("PHARO_T1_INLINE_J2J_XMETHOD");
     t1InlineJ2JXmethodMax = envInt("PHARO_T1_INLINE_J2J_XMETHOD_MAX", 30000);

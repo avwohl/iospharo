@@ -68,6 +68,14 @@ namespace jit {
 extern "C" void* jit_rt_inline_block_value_prep(
     void* state, int nArgs, void* resumeAddr);
 
+// jit-may20b Step 10: inline-prim 18 (basicNew:) helper.  Returns 1
+// on success (state.sp updated), 0 on failure (caller bails).
+extern "C" uint64_t jit_rt_basic_new_with_arg(void* state);
+
+// Counters for inline-prim 18 dispatch (PHARO_T1_INLINE_PRIM_COUNTERS=1).
+extern "C" uint64_t g_primBasicNew_hits  = 0;
+extern "C" uint64_t g_primBasicNew_bails = 0;
+
 // Block-value inline counters (PHARO_T1_INLINE_BLOCK_VALUE=1 telemetry).
 extern "C" uint64_t g_blockValue_tries = 0;  // BLOCK_VALUE_BIT detected
 extern "C" uint64_t g_blockValue_hits  = 0;  // helper returned entry
@@ -3193,6 +3201,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimAtPut = a.new_label();
             asmjit::Label tryPrimSize = a.new_label();
             asmjit::Label tryPrimSmallFloatOp = a.new_label();
+            asmjit::Label tryPrimBasicNew = a.new_label();
             // dispatchCachedRestoreX5: inline-prim bail target that
             // reloads x5 from OFF_ICDATAPTR (where the original icDataPtr
             // was stashed before the inline-prim code clobbered x5 with
@@ -3279,6 +3288,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // so this branch is dead in current builds.
                 if (g_debug.t1InlineSistaCall) {
                     a.tbnz(x7, asmjit::Imm(55), trySistaCall);
+                }
+                // jit-may20b Step 10: primKind 18 (basicNew:) takes
+                // precedence over bit 60.  For prim 71 methods, inline-J2J
+                // tail-calls to a JIT stub that immediately exits with
+                // EXIT_SEND to run the prim in C++ — same work as
+                // dispatchCached but via a longer detour.  Going direct
+                // to our basicNew: helper saves the extra round-trip.
+                // Same applies if primKind matches at:/at:put:/size:
+                // those have proper inline emits that should win over
+                // J2J's stub-and-bail.
+                if (nArgs == 1 && g_debug.t1InlinePrimBasicNew) {
+                    a.lsr(x6, x7, asmjit::Imm(48));
+                    a.and_(x6, x6, asmjit::Imm(0x1F));
+                    a.cmp(x6, asmjit::Imm(18));
+                    a.b_eq(tryPrimBasicNew);
                 }
                 // Bit 60 set → try inline J2J; works for any receiver tag
                 // (SmI receivers benefit too, unlike inline-getter/setter).
@@ -3946,6 +3970,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     if (nArgs == 1) {
                         a.cmp(x6, asmjit::Imm(14));
                         a.b_eq(tryPrimAt);
+                        // jit-may20b Step 10: primKind 18 = basicNew:.
+                        // Routes to a runtime helper that calls
+                        // primitiveNewWithArg directly, bypassing the
+                        // chain-loop's IC-MISS-style dispatch.
+                        if (g_debug.t1InlinePrimBasicNew) {
+                            a.cmp(x6, asmjit::Imm(18));
+                            a.b_eq(tryPrimBasicNew);
+                        }
                     } else if (nArgs == 2) {
                         a.cmp(x6, asmjit::Imm(15));
                         a.b_eq(tryPrimAtPut);
@@ -3999,6 +4031,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     if (nArgs == 1) {
                         a.cmp(x6, asmjit::Imm(14));
                         a.b_eq(tryPrimAt);
+                        // jit-may20b Step 10: primKind 18 = basicNew:.
+                        if (g_debug.t1InlinePrimBasicNew) {
+                            a.cmp(x6, asmjit::Imm(18));
+                            a.b_eq(tryPrimBasicNew);
+                        }
                     } else if (nArgs == 2) {
                         a.cmp(x6, asmjit::Imm(15));
                         a.b_eq(tryPrimAtPut);
@@ -4071,6 +4108,47 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x2, ptr(x0, OFF_SP));
             }
             a.b(endOfSend);
+
+            // === inline-prim 18 (basicNew:) — jit-may20b Step 10 ===
+            // BLR to jit_rt_basic_new_with_arg.  Helper reads state.sp
+            // for [rcvr=class, size] and on success updates state.sp
+            // with the new oop at the receiver slot.  On failure
+            // (non-class, oversize, etc.) returns 0 → bail to chain-loop.
+            //
+            // Only emitted for nArgs == 1 paths.
+            if (nArgs == 1 && g_debug.t1InlinePrimBasicNew) {
+                a.bind(tryPrimBasicNew);
+                // Save x0 (state) + x30 (LR) across BLR.  Mirror the
+                // jit_rt_inline_block_value_prep pattern at line ~3375.
+                a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
+                a.str(x0,  ptr(asmjit::a64::sp, 0));
+                a.str(x30, ptr(asmjit::a64::sp, 8));
+                a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_basic_new_with_arg));
+                a.blr(x9);
+                // x0 = 1 on success, 0 on failure.  Move to x9 before
+                // restoring x0 = state.
+                a.mov(x9, x0);
+                a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+                a.ldr(x30, ptr(asmjit::a64::sp, 8));
+                a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
+                {
+                    asmjit::Label bailBN = a.new_label();
+                    a.cbz(x9, bailBN);
+                    // Hit path: bump counter, continue at endOfSend.
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNew_hits));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                    a.b(endOfSend);
+                    a.bind(bailBN);
+                    // Bail path: bump counter, route to dispatchCached.
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNew_bails));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                    a.b(dispatchCached);
+                }
+            }
 
             // Counter helper for inline-prim diagnostics (PHARO_T1_INLINE_PRIM_COUNTERS=1).
             static const bool primCountersEnabled =
