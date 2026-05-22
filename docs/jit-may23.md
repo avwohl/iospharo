@@ -263,6 +263,22 @@ specifically.  Next debug step: run under lldb with a
 breakpoint at the crashing instruction, single-step backward
 through the state setup to find the corruption.
 
+### Issue 5 (NEW 2026-05-22): activateBlock JIT dispatch attempt
+
+Tried adding `tryJITActivation` at the end of `activateBlock`
+(after `pushFrame` + closure_ + homeFrameDepth setup) to
+unblock Issue 4's counter family.  bench-correctness 0/5 PASS
+after the change — block-specific state (closure_, etc.)
+conflicts with JIT's frame expectations.
+
+Reverted (`20a3c149`).  Proper fix needs either:
+1. Reorder activateBlock to call tryJITActivation BEFORE the
+   block-specific setup, and have JIT handle that setup too.
+2. Inline-BLR from value: send site (the "real" Step 9-10
+   block-value spec).
+
+Path 2 is the canonical fix per the original plan.  Multi-day.
+
 ### Issue 4: counters that fire ZERO (INVESTIGATED 2026-05-22)
 
 Inline-prim stat dump shows several inline paths that never
