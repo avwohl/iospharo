@@ -29,16 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q6 — Add inline emit for SmI `<` (0x62) as full arith
-
-WHAT: 0x62 is currently in the comparison branch (csel
-true/false).  Pattern `^ self < n` would benefit from skipping
-activation.  Verify current emit is fast enough.
-HOW: read AsmjitT1.cpp:2716+ comparison emit.  Compare bytecode
-count vs `+`.  If comparable, no change.  If longer, document
-why.
-DONE WHEN: finding recorded.
-
 ### Q7 — Detect setter increment pattern
 
 WHAT: `incrementX  x := x + 1` style mutators.  Bytecode:
@@ -174,6 +164,10 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q6**: 0x62 (`<`) inline emit is at AsmjitT1.cpp:2763 —
+  csel-based, ~5 instructions in the comparison branch.  Already
+  optimal (the `+` arith path has more instructions for the
+  overflow check + retag).  No change needed.
 - ✅ **Q4/Q5**: Top 10 activations on bench-suite:
     benchFib 3.5M  at: 1.4M  between:and: 1.3M  size 1.0M
     value: 1.0M  digitValue: 728K  byteAt:put: 728K  new 603K
