@@ -98,6 +98,7 @@ DebugSettings::DebugSettings() {
     t1InlineSetter      = !envPresent("PHARO_T1_NO_INLINE_SETTER");
     t1InlineReturnsSelf = !envPresent("PHARO_T1_NO_INLINE_RETURNS_SELF");
     t1InlineMultiSlot   = !envPresent("PHARO_T1_NO_INLINE_MULTISLOT");
+    t1InlineReturnsLiteral = !envPresent("PHARO_T1_NO_INLINE_RETURNS_LITERAL");
     // 2026-05-21 (A6 iter N+30k): default-ON.  The pure-J2J gate
     // (PHARO_T1_NO_PURE_J2J_GATE=1 to disable) prevents inline-J2J
     // from firing when any IC site lacks bit 60 (J2J_ENTRY_BIT),

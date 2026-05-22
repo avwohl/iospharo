@@ -3198,6 +3198,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryGetter = a.new_label();
             asmjit::Label trySetter = a.new_label();
             asmjit::Label tryReturnsSelf = a.new_label();
+            asmjit::Label tryReturnsLiteral = a.new_label();
             asmjit::Label tryMultiSlot = a.new_label();
             asmjit::Label trySistaCall = a.new_label();
             asmjit::Label tryPrimBitAnd = a.new_label();
@@ -3365,6 +3366,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     }
                     if (g_debug.t1InlineReturnsSelf) {
                         a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
+                    }
+                    if (nArgs == 0 && g_debug.t1InlineReturnsLiteral) {
+                        a.tbnz(x7, asmjit::Imm(58), tryReturnsLiteral);
                     }
                     if (nArgs == 0 && g_debug.t1InlineMultiSlot) {
                         a.tbnz(x7, asmjit::Imm(57), tryMultiSlot);
@@ -4169,6 +4173,63 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x2, ptr(x0, OFF_SP));
             }
             a.b(endOfSend);
+
+            // === returnsLiteral (bit 58, nArgs==0 only) ===
+            // jit-may22b: pattern `^ <literal>` where literal is one
+            // of nil/true/false/0/1.  bits 48-50 of extras encode:
+            //   1=nil, 2=true, 3=false, 4=SmI 0, 5=SmI 1.
+            // For nArgs=0 only (the method takes no args, so we just
+            // need to replace the receiver on the stack with the
+            // literal value).
+            if (nArgs == 0) {
+                a.bind(tryReturnsLiteral);
+                // Extract kind from bits 48-50 → x6.
+                a.lsr(x6, x7, asmjit::Imm(48));
+                a.and_(x6, x6, asmjit::Imm(7));
+                // kind 1 → nil, 2 → true, 3 → false, 4 → SmI 0, 5 → SmI 1.
+                // SmI 0 bits = 1, SmI 1 bits = 9 (= (1<<3)|1).
+                // We'll dispatch via cmp+csel chain.
+                a.cmp(x6, asmjit::Imm(1));
+                {
+                    asmjit::Label notNil = a.new_label();
+                    a.b_ne(notNil);
+                    a.mov(x3, asmjit::Imm(nilBits));
+                    a.stur(x3, ptr(x2, rcvrOffsetBytes));
+                    a.b(endOfSend);
+                    a.bind(notNil);
+                }
+                a.cmp(x6, asmjit::Imm(2));
+                {
+                    asmjit::Label notTrue = a.new_label();
+                    a.b_ne(notTrue);
+                    a.ldr(x3, ptr(x0, OFF_TRUEOOP));
+                    a.stur(x3, ptr(x2, rcvrOffsetBytes));
+                    a.b(endOfSend);
+                    a.bind(notTrue);
+                }
+                a.cmp(x6, asmjit::Imm(3));
+                {
+                    asmjit::Label notFalse = a.new_label();
+                    a.b_ne(notFalse);
+                    a.ldr(x3, ptr(x0, OFF_FALSEOOP));
+                    a.stur(x3, ptr(x2, rcvrOffsetBytes));
+                    a.b(endOfSend);
+                    a.bind(notFalse);
+                }
+                a.cmp(x6, asmjit::Imm(4));
+                {
+                    asmjit::Label notZero = a.new_label();
+                    a.b_ne(notZero);
+                    a.mov(x3, asmjit::Imm(1));  // SmI 0 bits = 1
+                    a.stur(x3, ptr(x2, rcvrOffsetBytes));
+                    a.b(endOfSend);
+                    a.bind(notZero);
+                }
+                // kind 5 = SmI 1.
+                a.mov(x3, asmjit::Imm(9));      // SmI 1 bits = 9
+                a.stur(x3, ptr(x2, rcvrOffsetBytes));
+                a.b(endOfSend);
+            }
 
             // === Multi-slot inline (bit 57, nArgs==0 only) ===
             // jit-may22b: pattern `^ self[A] op1 self[B] op2 const`

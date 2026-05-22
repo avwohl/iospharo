@@ -80,6 +80,9 @@ struct DebugSettings {
     // (^ self[A] op1 self[B] op2 const).  Common for
     // OrderedCollection>>size.  PHARO_T1_NO_INLINE_MULTISLOT=1 opt-out.
     bool t1InlineMultiSlot = true;
+    // jit-may22b returnsLiteral: inline bit-58 pattern
+    // (^ nil/true/false/0/1).  Saves a method activation per IC HIT.
+    bool t1InlineReturnsLiteral = true;
     // Inline-J2J emit (self-recursive case): tail-call callee's JIT entry
     // directly instead of round-tripping through the chain loop.  12× win
     // on benchFib.  Default-on 2026-05-17, default-OFF 2026-05-20 after
