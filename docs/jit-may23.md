@@ -29,21 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q19 — Check if 0x6E/0x6F (bitAnd/bitOr) bytecode is inlined
-
-WHAT: `n bitAnd: m` as a 0x6E special selector.  Does asmjit-T1
-inline it at the bytecode level (like 0x60-0x67)?
-HOW: search AsmjitT1.cpp for "0x6E" in emit code.
-DONE WHEN: yes/no answer + finding recorded.
-
-### Q20 — Add 0x6E/0x6F inline if missing
-
-WHAT: if Q19 found these aren't inlined at bytecode level, add
-them.  SmI bitwise (no overflow check needed).
-HOW: extend the isPhase3 op range and add tagged-bitwise emits
-to the switch.
-DONE WHEN: bench-correctness PASS, counter fires.
-
 ## Closed
 
 (Move tasks here as you finish them.)
@@ -68,6 +53,14 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q19**: 0x6E/0x6F (bitAnd/bitOr) IS inlined for x86_64
+  (AsmjitT1.cpp:1568) but NOT for ARM64 — ARM emit checks only
+  isPhase3ArithOp at line 2705, not isPhase3BitOp.
+- ❌ **Q20**: attempted ARM inline emit for 0x6E/0x6F.  Default
+  5/5 PASS but the bail path used EXIT_RETURN incorrectly (would
+  cause early method exit on non-SmI operands, not chain-loop
+  fallback).  Reverted.  Needs careful study of the existing
+  isPhase3ArithOp bail-via-end pattern to implement correctly.
 - ✅ **Q18**: multi-slot fires ONLY on `size` selector.
   Pattern `^ slot2 - slot1 + 1` = Interval>>size (last-first+1).
   All 668 multi-slot bench-suite hits are interval size
