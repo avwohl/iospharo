@@ -65,17 +65,49 @@ number of distinct hot methods (not the number of activations).
 
 `PHARO_SISTA_COMPILE_BAIL_ONLY=1` `timeout 30` exits with code 124
 (timeout) even though `/tmp/bench_correctness_result.txt` contains
-the correct fib values.  Something in the shutdown path (image
-save? scheduler termination? Sista cache cleanup?) hangs.
+the correct fib values.
 
-Need: bisect via `PHARO_TRACE_EXIT=1` or similar to find which
-shutdown step holds.  Likely candidates:
-- Sista's asmjit runtime not freed cleanly.
-- A SessionManager handler that mutates state after `exitSuccess`.
-- A weak reference path that scans the Sista cache.
+**2026-05-21 investigation (commit `5d6b6f87`):**
+
+Added PHARO_TRACE_EXIT=1 tracing at primitiveQuit, executePrimitive,
+interpret() end, and main exit.  Default mode shows the full
+EXIT-TRACE chain.  Bail-only mode shows ZERO output — `interpret()`
+never returns; primitiveQuit (prim 113) is never reached.
+
+Root cause hypothesis: Sista bail-only compiles methods that the
+gate `(hasSend && !hasSplice && !compileBailOnly)` would otherwise
+reject — including `Smalltalk class>>exitSuccess` and similar
+multi-send wrappers.  Inside Sista's compiled fn, the helper-send
+chain (exitSuccess → exitSuccess: → exit:) hits
+`kMaxSistaHelperDepth=1` cap.  The 2-deep helper returns 0
+(deopt-on-zero), Sista's lowering bails to interp at the source
+bcOffset, but the deopt path apparently doesn't actually re-execute
+the prim that quits.
+
+Partial fix landed in `SistaRuntime.cpp`: in bail-only mode, also
+skip methods with the hasPrimitive flag.  Sista's lifter always
+skips the CallPrimitive (0xF8) bytecode (assuming the prim was
+already tried in interp); compiling a prim method produces an fn
+that runs ONLY the fallback bytecodes — disastrous for prims like
+113 (quit) whose fallback never quits.
+
+Prim-skip alone doesn't fix the hang.  The deeper issue is the
+helper-depth interaction: even non-prim methods on the exit chain
+(`Smalltalk exitSuccess`, etc.) fail to reach prim 113 because the
+deopt re-execution doesn't actually fire the prim.
+
+Root fix requires one of:
+1. Detect non-recursive helper chains and allow deeper nesting
+   (raises kMaxSistaHelperDepth selectively).
+2. Fix the deopt-to-interp re-execution to actually fire the prim
+   (likely a bug in Sista's deopt path post-helper-bail).
+3. Blacklist a fixed set of selectors (exit, exitSuccess, ...) from
+   Sista compile in bail-only mode (hack).
 
 Acceptance: `PHARO_SISTA_COMPILE_BAIL_ONLY=1 ./build/test_load_image
 /tmp/bench_correctness.image` exits with code 0 within 30s.
+
+**Effort revised: 3-7 days** with lldb-level deopt-path debugging.
 
 ### B4 — `trySistaCall` stub needs a real emit
 
