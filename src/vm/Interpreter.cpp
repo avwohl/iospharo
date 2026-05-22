@@ -18120,6 +18120,17 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                     fwdSel = memory_.fetchPointer(1 + litIdx, resolvedMethod);
                 }
             }
+            // 2-arg forwarder (args in order): 0x4C 0x40 0x41 <Send2 op> 0x5C
+            else if (numArgs == 2 && bcLen == 5
+                    && bc[0] == 0x4C && bc[1] == 0x40
+                    && bc[2] == 0x41
+                    && bc[3] >= 0xA0 && bc[3] <= 0xAF
+                    && bc[4] == 0x5C) {
+                int litIdx = bc[3] & 0x0F;
+                if (litIdx < numLits) {
+                    fwdSel = memory_.fetchPointer(1 + litIdx, resolvedMethod);
+                }
+            }
 
             if (fwdSel.isNil()
                     || !fwdSel.isObject()
