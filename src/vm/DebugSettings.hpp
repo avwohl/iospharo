@@ -76,6 +76,10 @@ struct DebugSettings {
     bool t1InlineGetter = true;       // PHARO_T1_NO_INLINE_GETTER inverts
     bool t1InlineSetter = true;       // PHARO_T1_NO_INLINE_SETTER inverts
     bool t1InlineReturnsSelf = true;  // PHARO_T1_NO_INLINE_RETURNS_SELF inverts
+    // jit-may22b multi-slot: inline bit-57 pattern
+    // (^ self[A] op1 self[B] op2 const).  Common for
+    // OrderedCollection>>size.  PHARO_T1_NO_INLINE_MULTISLOT=1 opt-out.
+    bool t1InlineMultiSlot = true;
     // Inline-J2J emit (self-recursive case): tail-call callee's JIT entry
     // directly instead of round-tripping through the chain loop.  12× win
     // on benchFib.  Default-on 2026-05-17, default-OFF 2026-05-20 after

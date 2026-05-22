@@ -3196,6 +3196,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryGetter = a.new_label();
             asmjit::Label trySetter = a.new_label();
             asmjit::Label tryReturnsSelf = a.new_label();
+            asmjit::Label tryMultiSlot = a.new_label();
             asmjit::Label trySistaCall = a.new_label();
             asmjit::Label tryPrimBitAnd = a.new_label();
             asmjit::Label tryPrimBitOr = a.new_label();
@@ -3362,6 +3363,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     }
                     if (g_debug.t1InlineReturnsSelf) {
                         a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
+                    }
+                    if (nArgs == 0 && g_debug.t1InlineMultiSlot) {
+                        a.tbnz(x7, asmjit::Imm(57), tryMultiSlot);
                     }
                     a.b(dispatchCached);
                     // SmI receiver path: check primKind for inline bitwise.
@@ -4163,6 +4167,80 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x2, ptr(x0, OFF_SP));
             }
             a.b(endOfSend);
+
+            // === Multi-slot inline (bit 57, nArgs==0 only) ===
+            // jit-may22b: pattern `^ self[A] op1 self[B] op2 const`
+            // commonly `OrderedCollection>>size = lastIndex - firstIndex + 1`.
+            // Extras encoding (see Interpreter.cpp:18521+):
+            //   bits 0-7 : multiSlotA (ivar index)
+            //   bits 8-15: multiSlotB (ivar index)
+            //   bits 16-23: multiConst (-1, 0, or +1; int8)
+            //   bit 24 : op1Sub (0=add, 1=sub between A and B)
+            //   bit 25 : op2Sub (0=add, 1=sub with const)
+            // x1 = receiver (heap), x7 = extras.  Reads two slots, computes
+            // tagged SmI arith with overflow check, writes result to
+            // receiver slot, bails to endOfSend.  On overflow or non-SmI
+            // slots, bails to dispatchCached.
+            if (nArgs == 0) {
+                a.bind(tryMultiSlot);
+                // Extract A (bits 0-7) → x3, B (bits 8-15) → x4.
+                a.and_(x3, x7, asmjit::Imm(0xFF));
+                a.lsr(x4, x7, asmjit::Imm(8));
+                a.and_(x4, x4, asmjit::Imm(0xFF));
+                // Load slots[A] → x6, slots[B] → x9 from receiver.
+                a.add(x5, x1, x3, asmjit::a64::lsl(3));
+                a.ldr(x6, ptr(x5, 8));                  // slot A
+                a.add(x5, x1, x4, asmjit::a64::lsl(3));
+                a.ldr(x9, ptr(x5, 8));                  // slot B
+                // Both must be SmI: low 3 bits == 1.
+                a.and_(x3, x6, asmjit::Imm(7));
+                a.sub(x3, x3, asmjit::Imm(1));
+                a.and_(x4, x9, asmjit::Imm(7));
+                a.sub(x4, x4, asmjit::Imm(1));
+                a.orr(x3, x3, x4);
+                a.cbnz(x3, dispatchCached);
+                // op1: tagged a op tagged b.  For SmI bits = (val << 3) | 1:
+                //   a_bits + b_bits = (a+b)*8 + 2 → sub 1 to retag.
+                //   a_bits - b_bits = (a-b)*8 → add 1 to retag.
+                asmjit::Label op1IsAdd = a.new_label();
+                asmjit::Label op1Done = a.new_label();
+                a.tbz(x7, asmjit::Imm(24), op1IsAdd);
+                // op1 = sub: result = a - b + 1 (retag).
+                a.subs(x6, x6, x9);
+                a.b_vs(dispatchCached);                 // overflow
+                a.add(x6, x6, asmjit::Imm(1));
+                a.b(op1Done);
+                a.bind(op1IsAdd);
+                // op1 = add: result = a + b - 1 (retag).
+                a.adds(x6, x6, x9);
+                a.b_vs(dispatchCached);
+                a.sub(x6, x6, asmjit::Imm(1));
+                a.bind(op1Done);
+                // x6 now has tagged op1-result.  Apply op2 with const.
+                // const is signed int8 in bits 16-23.  Encode as tagged:
+                //   const_tagged = (const << 3) | 1.
+                // For const ∈ {-1, 0, 1}: const_tagged ∈ {0xFFFFFFFFFFFFFFF9, 1, 9}.
+                a.lsr(x4, x7, asmjit::Imm(16));
+                a.sxtb(x4, x4.w());                    // sign-extend bits 0-7
+                a.lsl(x4, x4, asmjit::Imm(3));
+                a.orr(x4, x4, asmjit::Imm(1));
+                // op2: same retag math as op1.
+                asmjit::Label op2IsAdd = a.new_label();
+                asmjit::Label op2Done = a.new_label();
+                a.tbz(x7, asmjit::Imm(25), op2IsAdd);
+                a.subs(x6, x6, x4);
+                a.b_vs(dispatchCached);
+                a.add(x6, x6, asmjit::Imm(1));
+                a.b(op2Done);
+                a.bind(op2IsAdd);
+                a.adds(x6, x6, x4);
+                a.b_vs(dispatchCached);
+                a.sub(x6, x6, asmjit::Imm(1));
+                a.bind(op2Done);
+                // Write tagged result to receiver slot on stack.
+                a.stur(x6, ptr(x2, rcvrOffsetBytes));
+                a.b(endOfSend);
+            }
 
             // === inline-prim 18 (basicNew:) — jit-may20b Step 10 ===
             // BLR to jit_rt_basic_new_with_arg.  Helper reads state.sp
