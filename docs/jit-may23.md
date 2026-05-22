@@ -48,16 +48,6 @@ events.  Each takes ~12-15M cycles.  Try to coalesce.
 HOW: increase scavenge threshold.
 DONE WHEN: total GC cycles measured before/after.
 
-### Q34 — Implement IC entry MTF (move-to-front)
-
-WHAT: from Q33, IC entries aren't reordered.  For at:'s
-70%-dominant class, adding MTF would put it at entry 0 → most
-IC HITs win on first compare.
-HOW: at IC HIT site, if hit was at entry N>0, swap entries 0
-and N (in C++ helper, not asmjit emit).  Simple atomic-store
-sequence.
-DONE WHEN: bench-correctness PASS AND IC hit walk depth dropped.
-
 ## Closed
 
 (Move tasks here as you finish them.)
@@ -82,6 +72,14 @@ DONE WHEN: bench-correctness PASS AND IC hit walk depth dropped.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ❌ **Q34/Q35**: IC MTF attempt.  Implemented "fill at slot 0,
+  shift down" in patchJITICAfterSend.  Problem: existing
+  accounting (sistaRuntime->invalidateIfHintless) gates on
+  `e == 0` — with MTF every fill is e==0, so EVERY fill would
+  trigger Sista re-recompile.  Revert.  Real implementation
+  needs to preserve "first entry in IC" semantics for the
+  accounting.  IC miss breakdown shows only 25K polymorphic
+  misses on bench-suite — small lever.  Skipping for now.
 - ✅ **Q33**: IC hitCount slot is only used for diagnostic
   printing (AsmjitT1.cpp:420).  Not used for MTF reordering.
   This is a real missed opportunity for the at: case (cls 51
