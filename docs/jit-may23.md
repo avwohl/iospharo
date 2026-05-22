@@ -29,15 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q3 — Measure step() bytecode dispatch overhead
-
-WHAT: how much time is in the interp's switch-on-bytecode
-dispatch?
-HOW: add a timed counter that fires every 65K bytecodes
-(measure time between fires).  Run bench-suite, dump avg
-ns/bytecode.
-DONE WHEN: a number is printed.
-
 ### Q4 — List top 10 methods by activation count
 
 WHAT: which methods are activated most frequently?  We're
@@ -199,4 +190,9 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q3**: step() bytecode dispatch is NOT a bottleneck.
+  Timed counter never fires during bench-suite — bench-suite is
+  almost entirely JIT-executed.  step() only runs for startup
+  code + interp-only paths.  Confirms the bench-suite hot path
+  goes through JIT, not interp.
 

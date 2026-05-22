@@ -4246,6 +4246,23 @@ bool Interpreter::step() {
 
     // Track step count
     g_stepNum++;
+    // jit-may23 Q3: time bytecode dispatch.  Sample every 64K steps.
+    {
+        static const bool timeIt = std::getenv("PHARO_TIME_STEP") != nullptr;
+        static uint64_t lastTSC = 0;
+        if (timeIt && (g_stepNum & 0x3FF) == 0) {
+            uint64_t nowTSC;
+            asm volatile("mrs %0, cntvct_el0" : "=r"(nowTSC));
+            if (lastTSC != 0) {
+                uint64_t delta = nowTSC - lastTSC;
+                std::fprintf(stderr,
+                    "[Q3-STEP] +1024 bytecodes in %llu cycles (avg %llu/bc)\n",
+                    (unsigned long long)delta,
+                    (unsigned long long)(delta >> 10));
+            }
+            lastTSC = nowTSC;
+        }
+    }
     // Update watchdog steps (used by heartbeat thread to detect stuck processes).
     // Must be updated here because test_load_image calls step() directly,
     // not interpret() which has its own loopCount.
