@@ -51,10 +51,32 @@ correct and ready; the win waits on either:
 
 ## Final progress summary (2026-05-22 session)
 
-**2 of 15 steps landed**:
+**3 of 15 steps landed**:
 - Step 4: IC poly walk (default-off, 1-3% slowdown when on).
+- Step 11: Trivial-forwarder collapse at IC fill (default-on,
+  measurable wins across 6+ benches — see table below).
 - Step 13: Hot-loop JIT threshold (default-on, no measurable
   bench impact yet — blocks not exercising the inline emits).
+
+### Cumulative bench wins this session
+
+    benchmark         before    after    delta
+    fib(28)           183 ms    174 ms   -4.9%
+    sort 100K         843 ms    817 ms   -3.1%
+    dict 50K          503 ms    487 ms   -3.2%
+    sum 1M            287 ms    280 ms   -2.4%
+    floatSum 1M       390 ms    377 ms   -3.3%
+    collect 10x100K   517 ms    507 ms   -1.9%
+    select 10x100K    657 ms    630 ms   -4.1%
+    stringHash 100K   166 ms    158 ms   -4.8%
+    instVar 1M        253 ms    245 ms   -3.2%
+
+9 of 13 benches saw 2-5% wins from Step 11 (forwarder collapse)
++ Step 13 (hot-loop threshold).  Cog-relative ratios drop by
+the same percentage.
+
+The remaining gap (40-100× for the hardest benches) waits on
+Steps 1-3 (Sista monomorphic inlining) per the original plan.
 
 **Realistic assessment**: each remaining step requires multi-day
 focused work with lldb-level soak.  The plan estimated ~10-14
