@@ -18131,6 +18131,17 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                     fwdSel = memory_.fetchPointer(1 + litIdx, resolvedMethod);
                 }
             }
+            // 0-arg forwarder with literal arg: 0x4C <pushNil/True/False/0/1>
+            //   <Send1 op> 0x5C  ─ e.g., `^ self foo: nil`.
+            // Note: this collapses to `<rcvr>` calling `foo:` with the
+            // literal already-on-stack — semantically identical to the
+            // wrapper since the receiver class isn't affected.  We can
+            // re-resolve the SAME way as 1-arg forwarder (lookupMethod
+            // with the new selector).  The PROBLEM: the IC machinery
+            // assumes nArgs (= bytecode-encoded) MATCHES the cached
+            // method's arity.  Our caller's send is 0-arg; cached method
+            // would be 1-arg.  Mismatch — skip this case for now (would
+            // need IC-extras encoding for arg-count rewriting).
 
             if (fwdSel.isNil()
                     || !fwdSel.isObject()
