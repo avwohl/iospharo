@@ -18189,8 +18189,18 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // unset until Step 4 lands.
     constexpr uint64_t SISTA_BIT = (1ULL << 55);
     extern sista::Runtime* sistaRuntimeForGCHook_;
-    if ((extra & TRIVIAL_BITS) == 0 && sistaRuntimeForGCHook_) {
-        auto fn = sistaRuntimeForGCHook_->lookupCompiled(resolvedMethod);
+    // jit-84 B2: trigger Sista compile from the IC patcher.  Without
+    // this, the compile only happens via tryActivateSista on the next
+    // method ACTIVATION — by which time the IC entry is already
+    // written (with bit 60 J2J, not bit 55 SISTA).  Calling compile()
+    // here either returns a cached fn (no-op) or builds + lowers
+    // (paid once per method).  Opt-in via PHARO_T1_INLINE_SISTA_CALL=1
+    // so default builds don't pay the compile cost.
+    static const bool sistaCallEnabled =
+        std::getenv("PHARO_T1_INLINE_SISTA_CALL") != nullptr;
+    if ((extra & TRIVIAL_BITS) == 0 && sistaRuntimeForGCHook_
+            && sistaCallEnabled) {
+        auto fn = sistaRuntimeForGCHook_->compile(resolvedMethod, memory_);
         if (fn) {
             extra |= SISTA_BIT
                   | (reinterpret_cast<uint64_t>(fn) & 0x0000FFFFFFFFFFFFULL);
