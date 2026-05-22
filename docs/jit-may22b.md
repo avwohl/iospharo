@@ -382,7 +382,36 @@ with a "rekey via forwarder" hook, then call from SistaRuntime.
   regs, BLR helper.  On success: bump counter + endOfSend.
   On bail: fall through to dispatchCached.
 
-**What's NOT yet done (the actual fast-path):**
+**2026-05-22 update — 0-arg fast-path landed but perf-negative**:
+
+After bisection (`966f2f7b`), the fast-path works correctly for
+0-arg methods (`#isString`, `#isByteString`, `#current`, etc.).
+N-arg methods still corrupt state after ~64K successful calls
+(manifests as downstream JIT crash; specific arg-handling bug
+deferred to follow-up).
+
+Even with the 0-arg fast-path enabled, perf MEASURED WORSE:
+
+    benchmark         baseline   sista-on
+    fib(28)           192 ms     196 ms   +2%
+    sort 100K         849 ms     926 ms   +9%
+    dict 50K          504 ms     502 ms   ~same
+    sum 1M            291 ms     319 ms   +10%
+    100K alloc         12 ms   10422 ms   +HUGE
+    stringHash 100K   164 ms   12458 ms   +HUGE
+
+The C++ helper's ~20-store JITState init + frame push/pop costs
+more than the chain-loop's dispatchCached for these short
+methods.  For methods that genuinely benefit from Sista's
+monomorphic inlining, the savings would outweigh the helper
+overhead.  But the 0-arg simple methods don't benefit.
+
+For default builds: fast-path stays gated behind
+PHARO_T1_SISTA_DISPATCH_ALLOW=1 (default-off).  Real perf gains
+need (a) the n-arg path fixed, (b) Sista actually producing
+inline-worthy compiled fns for these methods.
+
+**What's NOT yet done (full fast-path completion):**
 
 The helper currently bails (returns 0) for ALL cases unless
 `PHARO_T1_SISTA_DISPATCH_ALLOW=1` is set.  Even with the flag,
