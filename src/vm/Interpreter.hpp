@@ -1603,6 +1603,9 @@ public:
     /// holds the new oop, args popped) and returns 1.  On failure:
     /// returns 0 (caller bails to chain-loop dispatch).
     uint64_t jitBasicNewWithArg(jit::JITState* state);
+    /// jit-may23 T4: basicNew (0-arg) helper.  Same shape but for
+    /// `Class basicNew` — receiver=class, no size arg.
+    uint64_t jitBasicNew(jit::JITState* state);
 
     /// jit-may22b Step 2: asmjit-T1 IC-HIT → Sista dispatch.
     /// Allocates fresh JITState for the callee, sets it up, calls

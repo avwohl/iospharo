@@ -71,6 +71,9 @@ extern "C" void* jit_rt_inline_block_value_prep(
 // jit-may20b Step 10: inline-prim 18 (basicNew:) helper.  Returns 1
 // on success (state.sp updated), 0 on failure (caller bails).
 extern "C" uint64_t jit_rt_basic_new_with_arg(void* state);
+extern "C" uint64_t jit_rt_basic_new(void* state);
+extern "C" uint64_t g_primBasicNewZero_hits;
+extern "C" uint64_t g_primBasicNewZero_bails;
 extern "C" uint64_t jit_rt_t1_sista_dispatch(void* state, uint64_t fnPtr,
                                               uint64_t methodBits,
                                               uint64_t nArgs);
@@ -3212,6 +3215,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimSize = a.new_label();
             asmjit::Label tryPrimSmallFloatOp = a.new_label();
             asmjit::Label tryPrimBasicNew = a.new_label();
+            asmjit::Label tryPrimBasicNewZero = a.new_label();  // 0-arg variant
             // dispatchCachedRestoreX5: inline-prim bail target that
             // reloads x5 from OFF_ICDATAPTR (where the original icDataPtr
             // was stashed before the inline-prim code clobbered x5 with
@@ -3342,6 +3346,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.and_(x6, x6, asmjit::Imm(0x1F));
                     a.cmp(x6, asmjit::Imm(18));
                     a.b_eq(tryPrimBasicNew);
+                }
+                // jit-may23 T4: primKind 17 (basicNew 0-arg) inline dispatch.
+                if (nArgs == 0 && g_debug.t1InlinePrimBasicNew) {
+                    a.lsr(x6, x7, asmjit::Imm(48));
+                    a.and_(x6, x6, asmjit::Imm(0x1F));
+                    a.cmp(x6, asmjit::Imm(17));
+                    a.b_eq(tryPrimBasicNewZero);
                 }
                 // jit-may23 T1+T2: primKind 11/12/13/19 (SmI bit ops)
                 // and 21/22/23 (SmallFloat ops) take precedence over bit
@@ -4381,6 +4392,38 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.bind(bailBN);
                     // Bail path: bump counter, route to dispatchCached.
                     a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNew_bails));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                    a.b(dispatchCached);
+                }
+            }
+
+            // === jit-may23 T4: inline-prim 17 (basicNew 0-arg) ===
+            // Mirror tryPrimBasicNew but calls jit_rt_basic_new.
+            if (nArgs == 0 && g_debug.t1InlinePrimBasicNew) {
+                a.bind(tryPrimBasicNewZero);
+                a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
+                a.str(x0,  ptr(asmjit::a64::sp, 0));
+                a.str(x30, ptr(asmjit::a64::sp, 8));
+                a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_basic_new));
+                a.blr(x9);
+                a.mov(x9, x0);
+                a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+                a.ldr(x30, ptr(asmjit::a64::sp, 8));
+                a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
+                {
+                    asmjit::Label bailBNZ = a.new_label();
+                    a.cbz(x9, bailBNZ);
+                    a.mov(x14, asmjit::Imm(
+                        (uint64_t)&g_primBasicNewZero_hits));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                    a.b(endOfSend);
+                    a.bind(bailBNZ);
+                    a.mov(x14, asmjit::Imm(
+                        (uint64_t)&g_primBasicNewZero_bails));
                     a.ldr(x15, ptr(x14));
                     a.add(x15, x15, asmjit::Imm(1));
                     a.str(x15, ptr(x14));

@@ -12539,6 +12539,28 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     return 1;
 }
 
+// jit-may23 T4: basicNew (0-arg) helper.  Mirrors
+// jitBasicNewWithArg but for `Class basicNew` — receiver=class,
+// no size arg.  Invokes primitive 70.
+uint64_t Interpreter::jitBasicNew(jit::JITState* state) {
+    Oop* savedSP = stackPointer_;
+    stackPointer_ = state->sp;
+    int savedArgCount = argCount_;
+    argCount_ = 0;
+    primitiveFailed_ = false;
+    primFailCode_ = 0;
+    PrimitiveResult result = executePrimitive(70, 0);
+    uint64_t ok = 0;
+    if (result == PrimitiveResult::Success) {
+        state->sp = stackPointer_;
+        ok = 1;
+    } else {
+        stackPointer_ = savedSP;
+    }
+    argCount_ = savedArgCount;
+    return ok;
+}
+
 uint64_t Interpreter::jitBasicNewWithArg(jit::JITState* state) {
     // state.sp points PAST [rcvr=class, size].  Sync interp's stack
     // pointer so executePrimitive sees the right values via

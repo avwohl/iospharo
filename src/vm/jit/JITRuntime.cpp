@@ -497,6 +497,15 @@ extern "C" uint64_t jit_rt_basic_new_with_arg(JITState* state) {
     return state->interp->jitBasicNewWithArg(state);
 }
 
+// jit-may23 T4: basicNew 0-arg helper for asmjit-T1's primKind 17
+// inline dispatch.
+extern "C" uint64_t g_primBasicNewZero_hits = 0;
+extern "C" uint64_t g_primBasicNewZero_bails = 0;
+extern "C" uint64_t jit_rt_basic_new(JITState* state) {
+    if (!state || !state->interp) return 0;
+    return state->interp->jitBasicNew(state);
+}
+
 // jit-may22b Step 2: asmjit-T1 IC-HIT → Sista dispatch.  Allocates
 // a fresh JITState on the C stack, sets it up for the callee
 // method, calls the Sista fn, and propagates the return value back
