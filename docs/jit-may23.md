@@ -30,14 +30,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q22 — Reduce activateBlock overhead (Q2 finding)
-
-WHAT: activateBlock is 57 cycles = 60% of prim207.  Identify
-the most expensive line in its body.
-HOW: read activateBlock.  Look for loops, slot iterations,
-ObjectMemory calls.
-DONE WHEN: top-3 expensive operations documented.
-
 ### Q23 — Identify why fullGC fires 13 times (Q12 finding)
 
 WHAT: bench-suite triggers fullGC 13 times.  Cog probably
@@ -127,6 +119,15 @@ DONE WHEN: miss rate drops, bench-correctness PASS.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q22**: activateBlock top 3 expensive ops:
+  1. **Home method chain walk** (lines 9980-10026, up to 20 iter
+     with 2-3 fetchPointer + class check each).  Variable cost
+     5-100 cycles.  Caching per-block could halve activateBlock
+     for nested blocks.
+  2. **Multiple fetchPointerUnchecked calls** (~5-7 of them, 25-35
+     cycles total).
+  3. **pushFrame** (~15-20 cycles for frame init).
+  Plus noteMethodEntry (~5 cycles) and isCompiledMethod check.
 - ✅ **Q21**: primFullClosureValue body audit.  60% of its 94
   cycles is in activateBlock (already known from Q2).  The
   remaining 40% is: stackValue, isObject check,
