@@ -60,6 +60,7 @@ bool producesOop(Op op) {
     case Op::kLoadStackSlot:
     case Op::kSendUnspeculated:
     case Op::kSendCallHelper:
+    case Op::kSendInlineSelf:
     case Op::kGuardClass:
     case Op::kInlineSend:
     case Op::kBlockCreate:
@@ -87,6 +88,7 @@ bool mayCallBack(Op op) {
     switch (op) {
     case Op::kSendUnspeculated:
     case Op::kSendCallHelper:    // helper drives sub-interp loop
+    case Op::kSendInlineSelf:    // self-rec; treated as helper for now
     case Op::kSendCallHelperSpecial:  // same, SpecialSelectorsArray variant
     case Op::kGuardClass:       // miss deopts
     case Op::kInlineSend:       // nested send
@@ -144,6 +146,7 @@ const char* name(Op op) {
     case Op::kNonLocalReturn:   return "nlr";
     case Op::kSendUnspeculated: return "send";
     case Op::kSendCallHelper:   return "send_helper";
+    case Op::kSendInlineSelf:   return "send_inline_self";
     case Op::kGuardClass:       return "guard_class";
     case Op::kInlineSend:       return "inline_send";
     case Op::kPrimAddInt:       return "prim_add_int";

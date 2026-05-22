@@ -655,6 +655,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // deopt-on-zero branches.  spillIds = the values to push
             // onto interp.sp; spIsAlreadyShifted = whether the helper
             // pre-pushed the operands and we need to roll sp back first.
+            // jit-84 B1: kSendInlineSelf routes through helper for now.
+            case Op::kSendInlineSelf:
             case Op::kSendCallHelper:
             case Op::kSendCallHelperSpecial: {
                 static bool noSends =
@@ -891,6 +893,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
               case Op::kPrimMulInt:
                 hasArith = true; break;
               case Op::kSendCallHelper:
+              case Op::kSendInlineSelf:
               case Op::kSendCallHelperSpecial:
               case Op::kSendUnspeculated:
                 hasSend = true; break;

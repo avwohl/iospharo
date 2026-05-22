@@ -1137,6 +1137,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
+            // jit-84 B1: kSendInlineSelf falls through to kSendCallHelper
+            // for now — the IR-level recogniser puts the op in place but
+            // the lowering still routes through the helper.  Future work
+            // replaces this with an inline tail-call (BR with save-stack
+            // protocol mirroring inline-J2J's J2JSave).
+            case Op::kSendInlineSelf:
             case Op::kSendCallHelper: {
                 // B-1: invoke jit_rt_sista_call_send via cc.invoke.
                 // Helper does the send synchronously and returns the

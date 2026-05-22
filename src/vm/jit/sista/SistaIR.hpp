@@ -101,6 +101,16 @@ enum class Op : uint8_t {
                           // If receiver.class != expected, call deopt.   -> Oop (same as rcvr, typed as inlined class)
     kInlineSend,          // operands: guard-id, callee-method, args...
                           // Inlined callee body follows via nested blocks. -> Oop (callee return)
+    kSendInlineSelf,      // operands: rcvr, args...
+                          // jit-84 B1: self-recursive send.  IC hint says
+                          // targetMethod == method being lifted.  Lowering
+                          // bypasses jit_rt_sista_call_send and emits a
+                          // direct call back to Sista's own entry (with a
+                          // save-stack protocol mirroring inline-J2J's
+                          // J2JSave).  Today (Step 1): emitted by builder
+                          // when hints match; lowering treats it the same
+                          // as kSendCallHelper.  Future work: real inline
+                          // tail-call.                                     -> Oop
 
     // --- Inline primitives ---
     // Narrow-fastpath arith/compare on tagged SmallInt operands.

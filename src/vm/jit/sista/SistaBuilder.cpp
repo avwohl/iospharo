@@ -279,6 +279,12 @@ public:
         inlineHints_ = hints;
     }
 
+    // jit-84 B1: tell the lifter what method oop it's lifting so it
+    // can recognise self-recursive send sites via inline hints.
+    void setSelfMethodBits(uint64_t bits) {
+        selfMethodBits_ = bits;
+    }
+
     LiftResult run(uint32_t* failedAtBytecode) {
         // --- Pre-pass: bytecode-level pattern detection -----------------
         //
@@ -4588,8 +4594,25 @@ private:
                         static_cast<uint64_t>(selIdx)
                       | (static_cast<uint64_t>(nArgs)    << 32)
                       | (static_cast<uint64_t>(bcOffset) << 48);
+                    // jit-84 B1: detect self-recursive send.  If the IC
+                    // hint at this bcOffset says the target method is the
+                    // SAME method being lifted, emit kSendInlineSelf
+                    // instead.  Today lowering treats it the same as
+                    // kSendCallHelper (no real perf win yet); the
+                    // recogniser puts the IR scaffolding in place for
+                    // future "inline tail-call" lowering.
+                    Op sendOp = Op::kSendCallHelper;
+                    if (selfMethodBits_ != 0 && inlineHints_) {
+                        for (const auto& h : *inlineHints_) {
+                            if (h.bcOffset == bcOffset
+                                    && h.targetMethod == selfMethodBits_) {
+                                sendOp = Op::kSendInlineSelf;
+                                break;
+                            }
+                        }
+                    }
                     uint32_t vid = out_.newValue(currentBlock_,
-                                                  Op::kSendCallHelper,
+                                                  sendOp,
                                                   Type::kOop,
                                                   std::move(sendOps),
                                                   lit);
@@ -6314,6 +6337,10 @@ private:
     bool                   blockReturnAsLocalReturn_ = false;
     // Phase 4 Step 1: profile-guided inline hints (or nullptr).
     const std::vector<InlineHint>* inlineHints_ = nullptr;
+    // jit-84 B1: oop bits of the method being lifted (for self-rec
+    // detection at send sites).  Set by Builder::build/buildWithHints
+    // before run().  Zero means "unknown" — skip self-rec recognition.
+    uint64_t selfMethodBits_ = 0;
     // B2 splice: ObjectMemory used by the peephole's block sub-lift.
     // Set by Builder::build so we don't have to use the global.
     ObjectMemory*          memory_ = nullptr;
@@ -6694,6 +6721,9 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     if (g_currentBuildHints) {
         l.setInlineHints(g_currentBuildHints);
     }
+    // jit-84 B1: pass methodOop bits so the send lifter can recognise
+    // self-recursive sites via inline hints.
+    l.setSelfMethodBits(compiledMethod.rawBits());
     LiftResult res = l.run(failedAtBytecode);
     if (res == LiftResult::kOk) narrowTempTypes(out);
     return res;
