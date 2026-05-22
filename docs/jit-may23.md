@@ -30,14 +30,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q27 — Inline self-send when receiver type is known
-
-WHAT: benchFib has 3.5M activations — most are recursive self-
-sends.  J2J handles some but not all.  Quantify the unhandled
-fraction.
-HOW: add counter at the recursive-self-send path in asmjit-T1.
-DONE WHEN: hit count recorded.
-
 ### Q28 — Investigate `at:` IC misses
 
 WHAT: `at:` is the #1 selector by IC patches (8.5M).  Are these
@@ -87,6 +79,12 @@ DONE WHEN: miss rate drops, bench-correctness PASS.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q27**: J2J-a (J2J activation chain) handles 6.4M
+  recursive/non-recursive sends per bench-suite.  benchFib's
+  3.5M activations mostly go through this path.  No separate
+  unhandled fraction to optimize — J2J already inlines recursive
+  sends.  sistaSelfRec counter is for Sista-tier-2's self-rec
+  path which doesn't apply to benchFib (Sista bails on it).
 - ✅ **Q25/Q26**: corrected Q13 finding.  shiftLoop IS
   JIT-compiled and the bitShift: 0x6C bytecode IS inlined for
   ARM at line 3000 (isPhase3ShiftOp).  bitOp=0 in the
