@@ -30,23 +30,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q25 — Verify outer method JIT compile (Q13 finding)
-
-WHAT: focused bitShift bench's outer method `shiftLoop`
-doesn't reach JIT.  Why?
-HOW: add trace at JIT compile decision (countMap_ threshold
-check).  Run the focused bench, see what threshold shiftLoop
-hits.
-DONE WHEN: threshold-hit count + decision recorded.
-
-### Q26 — Lower JIT compile threshold for non-block methods
-
-WHAT: if Q25 shows shiftLoop got close to threshold but didn't
-reach, lower the threshold for methods (not blocks).
-HOW: find compile-threshold constant.  Test lowered value.
-DONE WHEN: focused bitShift bench has bitOp > 0 AND
-bench-suite shows no regression.
-
 ### Q27 — Inline self-send when receiver type is known
 
 WHAT: benchFib has 3.5M activations — most are recursive self-
@@ -104,6 +87,13 @@ DONE WHEN: miss rate drops, bench-correctness PASS.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q25/Q26**: corrected Q13 finding.  shiftLoop IS
+  JIT-compiled and the bitShift: 0x6C bytecode IS inlined for
+  ARM at line 3000 (isPhase3ShiftOp).  bitOp=0 in the
+  inline-prim counter only means the IC HIT primKind 13 path
+  doesn't fire — bytecode inline is a different path.  Bench
+  runs at 4-5ms / 100K iterations = ~50ns/iter, consistent
+  with inline.  No threshold change needed.
 - ❌ **Q24**: bumped gcHeadroom_ from 32MB → 128MB.  fullGC
   dropped from 13 → 6 calls.  But **fib REGRESSED 14%**
   (210 → 240 ms) — larger heap = worse cache locality.
