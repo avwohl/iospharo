@@ -369,6 +369,46 @@ with a "rekey via forwarder" hook, then call from SistaRuntime.
 
 ## Step 2 — Real BLR emit at asmjit-T1's SISTA_BIT dispatch
 
+**Infrastructure landed 2026-05-22** (`0cbfc0e5`):
+
+- New `Interpreter::jitT1SistaDispatch` C++ helper: reads
+  receiver+args from caller's sp, initialises a fresh callee
+  JITState, calls Sista's fn, propagates return value.
+- New `jit_rt_t1_sista_dispatch` extern-C wrapper with
+  attempt/hit counters.
+- asmjit-T1's `trySistaCall` site replaces the bail-to-
+  dispatchCached stub with: save x0/x30, extract fn ptr from
+  extras bits 47:0, load methodBits from icData[1], set up arg
+  regs, BLR helper.  On success: bump counter + endOfSend.
+  On bail: fall through to dispatchCached.
+
+**What's NOT yet done (the actual fast-path):**
+
+The helper currently bails (returns 0) for ALL cases unless
+`PHARO_T1_SISTA_DISPATCH_ALLOW=1` is set.  Even with the flag,
+methods with local temps bail — Sista's compiled code writes
+to `state.tempBase[N]` for temps, and without a real
+activateMethod-style frame push, those writes land past the
+caller's sp on UNALLOCATED stack space.
+
+Initial attempt with zero-temp methods also crashed.  Likely
+reason: Sista's compiled code does internal sends that expect
+a real activation chain (deopt → step() → caller frame).
+Without a real frame, the deopt path has nowhere to go.
+
+To complete Step 2 the helper needs to:
+1. Push a real activation frame (mirroring `activateMethod`'s
+   prologue: saved IP, method, framePointer, push args/temps).
+2. Call fn.  Handle Sista return: success → unwind frame, push
+   return value to caller's sp.
+3. Handle Sista deopt: leave the frame intact, return a sentinel
+   that tells asmjit-T1's stencil to YIELD back to interp's loop
+   (interp's step() takes over from the new frame).
+
+Multi-day work per the plan estimate.
+
+
+
 **Bench wins enabled**: any monomorphic non-self-rec hot send.
 
 **Problem**: docs/jit-84.md B4 — the bit-55 dispatch stub bails to
