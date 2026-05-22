@@ -8,7 +8,7 @@ perf win for fib + send-heavy benches.
 
 | Blocker | Status | Commits |
 |---|---|---|
-| B1: Sista self-recursive inline lowering | **PARTIAL** (depth-cap raised) | `712fdcb9` |
+| B1: Sista self-recursive inline lowering | **PARTIAL** (depth-cap raised + IR op scaffolded) | `712fdcb9`, `ca6bfdfb` |
 | B2: Compile trigger from patchJITICAfterSend | **DONE** | `a9799b60` |
 | B3: VM shutdown hang in bail-only | **DONE** (tactical blacklist) | `4ac71d2f`, `5d6b6f87` |
 | B4: Real BLR emit at trySistaCall | **stub kept** (reassessed not worth it) | `6f96a365`, `c5ce9d4c` |
@@ -32,6 +32,20 @@ before Sista's IC dispatch is reached).
 So while B1 in its full form (`kSendInlineSelf` IR op) is still
 multi-week, the depth-cap change alone delivers significant wins
 across several benches.
+
+**2026-05-21 follow-up**: IR scaffolding for `kSendInlineSelf`
+landed (commit `ca6bfdfb`).  The op is declared in `SistaIR.hpp`,
+wired through `OpInfo`, and the builder recognises self-recursive
+sends via inline hints at the `kSendCallHelper` emit site.
+Lowering falls through to `kSendCallHelper` behaviour for now (no
+perf change yet); the IR op shows up in dumps as `send_inline_self`
+when the recogniser fires.  Future patches replace the lowering
+with a real inline tail-call.
+
+Note: benchFib's recursive sends currently take the
+`kSendUnspeculated` (terminator/bail) path, not `kSendCallHelper`,
+because benchFib lacks a splice candidate.  Extending the recogniser
+to `kSendUnspeculated` is the next concrete sub-step.
 
 
 
