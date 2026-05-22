@@ -30,13 +30,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q24 — Reduce fullGC trigger frequency
-
-WHAT: based on Q23 finding, try to reduce the trigger.
-HOW: adjust the threshold or eliminate spurious calls.
-DONE WHEN: fullGC count drops to ≤5 on bench-suite without
-losing bench-correctness.
-
 ### Q25 — Verify outer method JIT compile (Q13 finding)
 
 WHAT: focused bitShift bench's outer method `shiftLoop`
@@ -111,6 +104,13 @@ DONE WHEN: miss rate drops, bench-correctness PASS.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ❌ **Q24**: bumped gcHeadroom_ from 32MB → 128MB.  fullGC
+  dropped from 13 → 6 calls.  But **fib REGRESSED 14%**
+  (210 → 240 ms) — larger heap = worse cache locality.
+  Reverted.  fullGC frequency isn't the bottleneck; the GC
+  ITSELF is expensive but reducing its frequency by growing
+  the heap costs more in lost locality.  Real fix would be
+  generational GC keeping young objects in young space.
 - ✅ **Q23**: fullGC trigger source: 11 of 13 calls from
   `interpret()` (step's needsCompactGC check at line 4074).
   1 from primitiveIncrementalGC (explicit Smalltalk call).
