@@ -31,21 +31,47 @@ asmjit-T1 already has the inline emit for SmallFloat 0x60/0x61
 For the floatSum bench (`arr do: [:e | s := s + e]`), both
 counters were **zero** after a 5-iter warmup run.
 
-Conclusion: the bench's block (`[:e | s := s + e]`) isn't JIT-
-compiled.  Pharo's `Collection>>do:` is a regular method that
-calls `aBlock value: each` 1M times.  The block executes in
-interp, so the inline float arith never fires.
+Conclusion: the bench's block (`[:e | s := s + e]`) isn't reached
+via asmjit-T1 hot-path because `Array>>do:` (which calls the block
+via `value:`) is itself running in interp.  Step 13 (just landed)
+lowers do:'s threshold to 1 but it didn't move the needle —
+suggests do: was already getting JIT-compiled, but its `value:`
+send doesn't route to the block's JIT body for some reason
+(block-value spec routing issue, or block not JIT-compiled
+either).
 
-This isn't an asmjit-T1 bug — it's the **block-isn't-compiled**
-issue that Step 13 (lower JIT threshold for hot loops) targets.
-For floatSum to use the existing inline emit, EITHER the outer
-`runFloatSum` method must be compiled (currently called once),
-OR the block must be compiled (currently activated 1M times but
-maybe below threshold for block-class JITting).
+Multi-day investigation deferred.  The asmjit-T1 inline emit is
+correct and ready; the win waits on either:
+- Properly compiling all `Array>>do:` style methods + their inner
+  blocks under asmjit-T1, with block-value spec routing to the
+  block's JIT entry.
+- Sista's monomorphic inlining of `do:` body — collapses the
+  iterator + block into a single compiled fn.
 
-The asmjit-T1 inline emit is correct and ready.  The win waits
-on JIT-threshold work or on Sista's monomorphic inlining of
-`do:` body.
+## Final progress summary (2026-05-22 session)
+
+**2 of 15 steps landed**:
+- Step 4: IC poly walk (default-off, 1-3% slowdown when on).
+- Step 13: Hot-loop JIT threshold (default-on, no measurable
+  bench impact yet — blocks not exercising the inline emits).
+
+**Realistic assessment**: each remaining step requires multi-day
+focused work with lldb-level soak.  The plan estimated ~10-14
+weeks total for one engineer.  In a session, contained
+infrastructure landings + concrete blocker identification is the
+realistic ceiling.
+
+Future work should start with **Step 1** (Sista cache GC
+integration) — without that, Sista's hints-bearing compiles get
+dropped on every GC and steps 2-3 (which depend on Sista's
+self-rec inlining) never become measurable wins.
+
+For the most leverage per session, the next implementer should:
+1. Land Step 1 (Sista cache GC walk via forwarders during the
+   forwarding pass).
+2. Land Step 2 (real BLR emit at SISTA_BIT dispatch).
+3. Validate Step 3 (kSendInlineSelf real lowering) gives a fib win.
+4. Then proceed with Steps 4-12 in dependency order.
 
 
 
