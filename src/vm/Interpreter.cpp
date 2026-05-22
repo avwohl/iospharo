@@ -12374,7 +12374,7 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     // Conservative default-on subset: 0-arg methods only.
     // Opt-in (testing) via PHARO_T1_SISTA_DISPATCH_ALLOW=1.
     if (!std::getenv("PHARO_T1_SISTA_DISPATCH_ALLOW")) return 0;
-    if (nArgs != 0) return 0;  // n-arg path has the bisected bug
+    if (nArgs != 0) return 0;  // n-arg path bisected to have state-corruption bug
 
     using Fn = void (*)(jit::JITState*);
     Fn fn = reinterpret_cast<Fn>(fnPtr);
@@ -12463,45 +12463,24 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
 
     // Only handle the synchronous-return case.
     if (sstate.exitReason != jit::ExitReturn) {
-        // Bail: unwind the frame, restore caller state, return 0.
-        // dispatchCached on the asmjit-T1 side will redo the activation
-        // through the chain-loop path (which can handle deopts).
-        frameDepth_--;
-        framePointer_ = frame.savedFP;
-        method_ = frame.savedMethod;
-        homeMethod_ = frame.savedHomeMethod;
-        receiver_ = frame.savedReceiver;
-        activeContext_ = frame.savedActiveContext;
-        argCount_ = frame.savedArgCount;
-        closure_ = frame.savedClosure;
-        currentFrameMaterializedCtx_ = frame.materializedContext;
-        instructionPointer_ = frame.savedIP;
-        bytecodeEnd_ = frame.savedBytecodeEnd;
-        stackPointer_ = callerState->sp - numLocalTemps;
+        // Bail: pop the frame we pushed, restore caller state, return 0.
+        // Use popFrame() to match the canonical unwind path exactly.
+        if (!popFrame()) {
+            // Shouldn't happen — we just pushed a frame.
+            return 0;
+        }
         callerState->sp = stackPointer_;
         return 0;
     }
 
-    // Sista returned ExitReturn.  Pop frame; push return value.
+    // Sista returned ExitReturn.  Match activateMethod's ExitReturn
+    // path (Interpreter.cpp:9410+): popFrame + push(returnValue).
     Oop result = sstate.returnValue;
-    frameDepth_--;
-    framePointer_ = frame.savedFP;
-    method_ = frame.savedMethod;
-    homeMethod_ = frame.savedHomeMethod;
-    receiver_ = frame.savedReceiver;
-    activeContext_ = frame.savedActiveContext;
-    argCount_ = frame.savedArgCount;
-    closure_ = frame.savedClosure;
-    currentFrameMaterializedCtx_ = frame.materializedContext;
-    instructionPointer_ = frame.savedIP;
-    bytecodeEnd_ = frame.savedBytecodeEnd;
-    // Caller's sp loses [receiver, args, locals] and gains [result].
-    Oop* newCallerSP = callerState->sp
-                        - (int)nArgs - 1 - numLocalTemps;
-    *newCallerSP = result;
-    newCallerSP++;
-    callerState->sp = newCallerSP;
-    stackPointer_ = newCallerSP;
+    if (!popFrame()) {
+        return 0;
+    }
+    push(result);
+    callerState->sp = stackPointer_;
     return 1;
 }
 
