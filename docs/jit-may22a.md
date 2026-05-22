@@ -11,10 +11,11 @@ kSendCallHelper" to a real inline tail-call that bypasses
 |---|---|---|
 | 1: Save-stack data structures | **DONE** | `6e0177cc` |
 | 2: Helper lowering (gated) | **DONE** | `2be9875f` |
-| 3: Full fib(28) perf measurement | **blocked** by GC-hint loss | — |
+| 3a: Sista cache rekey across GC | **DONE** | `3e57d675` |
+| 3b: Full fib(28) perf measurement | **blocked** by asmjit-T1 + Sista path mismatch | — |
 | 4: Deopt walking | **implicit** (each save level self-pops) | — |
 | 5: GC visiting save receivers | **DONE** | `7f606a05` |
-| 6: Default-on flag flip | **deferred** until 3 works | — |
+| 6: Default-on flag flip | **deferred** until 3b works | — |
 
 What's done: full IR-to-emit-to-helper plumbing.
 `PHARO_SISTA_INLINE_SELF=1` enables the new helper; off (default)
@@ -22,12 +23,37 @@ falls back to `jit_rt_sista_call_send`.  Bench-correctness fib
 20/28/30 PASS in all 3 modes (default, bail-only without
 inline-self, bail-only with inline-self).
 
-What's blocking Sub-step 3 (the actual perf win):
-- Sista's cache is cleared on every GC (raw oop keys go stale
-  across Spur compaction).  After GC, benchFib's hints-bearing
-  compile gets re-compiled without hints (because the recompile
-  fires before T1 IC re-extracts hints), losing `kSendInlineSelf`
-  emit.  Net: my helper rarely gets routed even with the flag on.
+What's blocking Sub-step 3b (the actual perf measurement):
+
+After Sub-step 3a's rekey landed, the Sista cache survives GC.
+But fib(28) timing is unchanged.  Investigation shows the
+underlying issue: **asmjit-T1's inline-J2J (bit 60) takes over
+benchFib before any tryActivateSista hook fires.**  The send
+chain looks like:
+
+1. asmjit-T1's IC HIT for benchFib's recursive send.
+2. Bit 60 (J2J entry address) set in extras.
+3. inline-J2J BRs to benchFib's asmjit-T1 entry directly.
+4. asmjit-T1 body runs benchFib.
+5. Sista's compiled fn — even with `kSendInlineSelf` in IR — is
+   never invoked.
+
+For Sub-step 3b to land, we need to wire **asmjit-T1's bit-55
+(SISTA_BIT) dispatch** to actually invoke Sista's fn instead of
+bailing to dispatchCached (which is what the Step 8.4 B4 stub
+does today).  That's documented in docs/jit-84.md's B4 section
+as ~30 instructions of new emit (mirroring activateMethod's
+callee-frame setup).
+
+Until B4's real emit lands, the only paths that reach
+`kSendInlineSelf` in production are:
+- Cross-method sends where Sista is dispatched naturally
+  (e.g., from a polymorphic IC site that doesn't fit asmjit-T1's
+  inline-J2J pattern).
+- Hot loops in send-heavy benches NOT covered by inline-J2J.
+
+The fib(28) workload is **inline-J2J-dominant**, so it bypasses
+Sista entirely.
 
 Resolving Sub-step 3 requires either:
 1. Sista cache survival across GC (Phase 5-style oop-update
