@@ -337,6 +337,11 @@ soak.  Don't try to do them in /goal-driven session iteration:
 - ✅ **T14** (investigate cull: hits).  cull: fires for many
   small CompiledBlocks (2-12 bytecodes).  Same Step 9-10
   block-invocation territory; no separate fix.
+- ✅ **T19** (survey Sista baked pointers).  All `Imm((uint64_t)...)`
+  in SistaLowering_arm64.cpp are either small integers (bcOffset,
+  nArgs, slotIdx) or C function pointers (jit_rt_*).  Both
+  GC-stable.  No remaining baked-pointer issues beyond what
+  jit-may22b fixed (bytecodeBase).
 - ❌ **T5** (even-like predicate `^ (self bitAnd: K) = C`).
   Pattern detected (975K matches per bench-suite — the `even`
   / `odd` predicate).  Inline emit attempted at bit 54, ~25
