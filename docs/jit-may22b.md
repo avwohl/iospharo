@@ -226,10 +226,29 @@ writes `state.ip = stale_addr + bcOffset`.  Subsequent
 error.  Manifests as "Message not understood: ByteString >>
 #encodeString:" — selector dispatch on a corrupted method oop.
 
-**The bytecodeBase fix landed 2026-05-22** (`d7750fba`).  All
-13+ baked `bytecodeBase + bcOffset` sites in
-`SistaLowering_arm64.cpp` were converted to dynamic loads from
-`state.method`.  A `bytecodesHoisted` register is computed once
+**The bytecodeBase fix LANDED then REVERTED 2026-05-22**
+(`d7750fba` then `deededc5`).  Initial 13+ sites converted to
+dynamic loads from `state.method` — passed bench-correctness
+fib 5/5 but broke `tinyBenchmarks` with "SmallInteger are not
+indexable" runtime error.
+
+Root cause of regression: my dynamic computation assumes
+`state.method + 16 + numLits*8` equals bytecodes start.  For
+CompiledMethods that's true.  For some Sista-compiled fns
+(possibly block compiles, possibly some other format),
+`state.method` at runtime doesn't point to a method whose
+layout matches my arithmetic — the computed "bytecodes" pointer
+lands in the wrong region.
+
+The proper fix needs:
+- Verify what `state.method` points to in EACH Sista-fn invocation
+  path (outer CompiledMethod? block? activation context?).
+- Either: handle each case separately, OR introduce a JITState
+  field `bytecodes_start` updated wherever state.method is set.
+
+For now: REVERTED.  Original baked-bytecodeBase code is back.
+
+  A `bytecodesHoisted` register is computed once
 at fn entry:
 
     methodObj = state.method
