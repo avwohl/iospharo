@@ -1530,6 +1530,33 @@ GCResult ObjectMemory::scavenge() {
     // Roots: interpreter
     if (interpreter_) {
         interpreter_->forEachRoot(visitRoot);
+        // jit-may22b Step 1: rekey Sista's cache for new→old tenure
+        // forwarding too.  Without this, methods compiled while in
+        // new space have cache keys that go stale post-scavenge
+        // (their new-space oops are reclaimed when scavenge ends).
+        // Opt-in via PHARO_SISTA_REKEY_AFTER_GC=1.
+        static const bool rekeyEnabled =
+            std::getenv("PHARO_SISTA_REKEY_AFTER_GC") != nullptr;
+        if (rekeyEnabled) {
+            interpreter_->rekeySistaCacheViaForwarders(
+                [&forward, this](uint64_t oldBits) -> uint64_t {
+                    Oop o = Oop::fromRawBits(oldBits);
+                    if (!o.isObject() || o.rawBits() <= 0x10000) return 0;
+                    ObjectHeader* obj = o.asObjectPtr();
+                    auto it = forward.find(obj);
+                    if (it != forward.end()) {
+                        return Oop::fromObject(it->second).rawBits();
+                    }
+                    // Not in the forward map.  If it's still a
+                    // valid old-space pointer, keep it.  Otherwise
+                    // (new-space oop with no forward = unreachable,
+                    // or some weird state), keep it anyway — the
+                    // compact-time rekey will sort it out if needed.
+                    // Avoiding the drop here prevents losing entries
+                    // that are still reachable via other paths.
+                    return oldBits;
+                });
+        }
     }
 
     // Roots: memory (class table, special objects, etc.)
