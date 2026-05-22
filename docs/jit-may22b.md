@@ -261,6 +261,51 @@ Validation (`7f2c55ce`):
 The Sista deopt path is now properly GC-safe.  The remaining
 rekey issue can be investigated independently.
 
+### encodeString: bug investigation — bail-only-only (2026-05-22)
+
+After the bytecodeBase fix landed, the rekey path STILL fails
+under `PHARO_SISTA_COMPILE_BAIL_ONLY=1`.  Multi-pronged
+investigation:
+
+1. **Added DNU trace** — pinpointed that the DNU fires from
+   `String>>encodeWith:` (which is `^ arg1 asZnCharacterEncoder
+   encodeString: self`).  The `asZnCharacterEncoder` send
+   returns a ByteString (the original arg) instead of an
+   encoder.  When `encodeString:` is then sent, it fails.
+
+2. **Traced Sista compile sites** for encode chain methods.
+   Found MULTIPLE compiles of the SAME method oop with
+   `cacheHasKey=0` — i.e., cache miss even when the previous
+   compile should have populated it.
+
+3. **Rekey collision counter** — added detection for
+   `newCache[newKey] = kv.second` overwrites.  Result: ZERO
+   collisions across multiple GCs.  Rekey is preserving entries
+   correctly.
+
+4. **Cross-mode validation**:
+   - Default + rekey: 5/5 PASS.
+   - Bail-only no rekey: 5/5 PASS.
+   - Bail-only + rekey: 0/5 FAIL.
+
+**Conclusion**: the bug is specific to the **combination** of
+bail-only diagnostic mode + persistent cache.  Bail-only mode
+forces Sista to compile methods that hasSend && !hasSplice
+normally reject — these compiles work for some methods but
+produce subtly-wrong fns for the encoder chain.
+
+Without rekey: cache resets each GC, so the bad fn never
+sticks; calls fall back to interp on cache miss, interp works.
+
+With rekey: the bad fn persists in cache and mis-dispatches.
+
+**Decision**: rekey is correct for production (default mode).
+The bail-only diagnostic mode pre-existing issues are not a
+regression caused by Step 1.  Step 1's foundation is complete.
+
+Added scavenge-time rekey for new→old tenure forwarding too —
+was previously missing.  Uses the local `forward` map.
+
   A `bytecodesHoisted` register is computed once
 at fn entry:
 
