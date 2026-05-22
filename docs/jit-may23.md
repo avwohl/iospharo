@@ -317,6 +317,23 @@ methods that DID compile and ran their IC HIT paths.
 The latter is the proper Step 9-10 implementation.  ~7-10
 days of work.
 
+## 2026-05-22 session continuation results
+
+After this doc was created, attempted:
+1. ✅ **Issue 4 investigation** — done.  Conclusion: all four zero
+   counters share the same root cause (blocks-in-interp).  Needs
+   Step 9-10 fix.
+2. ❌ **activateBlock → tryJITActivation** (Issue 5) — broke
+   bench-correctness, reverted.  Frame-state conflict.
+
+Both findings confirmed: Step 9-10 (block-value spec via inline-
+BLR from value: send) is the next high-leverage work.  Multi-day
+per the plan.  Other tractable steps (5, 6, 8) are also multi-day.
+
+Session-scope ceiling reached for this session; the remaining
+plan items need focused multi-day engineering with lldb-level
+debugging.
+
 ## Recommended priority order for next session
 
 1. **Investigate the zero counters** (Issue 4) — short
