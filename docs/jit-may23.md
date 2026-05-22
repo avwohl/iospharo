@@ -75,6 +75,46 @@ HOW: add a hot-path check: `if jm exists for this block, skip
 noteMethodEntry`.
 DONE WHEN: activateBlock counter drops further.
 
+### Q40 — Audit other per-call std::getenv() patterns
+
+WHAT: Q39 found per-call getenv was costing ~24% on benches.
+Are there other places in hot paths that have the same
+anti-pattern?
+HOW: grep for `std::getenv(` in src/vm/.  Filter out
+patchJITICAfterSend/activateMethod (done).  Check each remaining
+hit — does it run per-call in a hot function?
+DONE WHEN: list of unsafe getenv calls + decision on each.
+
+### Q41 — Fix any per-call getenv found in Q40
+
+WHAT: convert each unsafe getenv to static-cached-bool pattern
+OR g_debug.fieldName per CLAUDE.md rules.
+DONE WHEN: bench-correctness PASS, no regression.
+
+### Q42 — Measure benchFib hot loop CPI
+
+WHAT: with fib at 180 ms / 1M activations = 180ns per call.
+Modern CPU should do this in 50ns.  Where's the 130ns going?
+HOW: lldb sample the test_load_image while it's running fib.
+Look at top symbols.
+DONE WHEN: top 5 hot symbols recorded.
+
+### Q43 — Cog comparison: what's Cog doing better?
+
+WHAT: Cog runs fib in ~3ms.  We're at 180ms.  60× gap.  What
+specific feature does Cog have that we don't?
+HOW: read Cog's source (smalltalksrc/VMMaker/CoInterpreter*).
+List the top 3 optimizations we don't replicate.
+DONE WHEN: 3 features listed.
+
+### Q44 — Examine bench-suite scenarios where we're CLOSE to Cog
+
+WHAT: block 1M (1 vs 3 ms, 0.3×) and sieve x100 (8 vs 10 ms,
+0.8×) are within 1× of Cog.  Why are these close while others
+aren't?
+HOW: look at the bench code.  What's structurally different?
+DONE WHEN: characterization documented.
+
 ## Closed
 
 (Move tasks here as you finish them.)

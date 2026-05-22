@@ -4680,7 +4680,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     }
     case 0x7A: {
         // value: (1 arg) — fast path for FullBlockClosure
-        if (std::getenv("PHARO_TRACE_BC_7A")) {
+        static const bool traceBC7A = std::getenv("PHARO_TRACE_BC_7A") != nullptr;
+        if (traceBC7A) {
             static uint64_t n = 0;
             n++;
             if (n <= 10 || (n & 0xFFFFF) == 0) {
@@ -8452,7 +8453,8 @@ void Interpreter::handleStackOverflow(int argCount) {
 
 void Interpreter::activateMethod(Oop method, int argCount) {
     // Diagnostic: count activations of `value:` and CompiledBlock targets.
-    if (std::getenv("PHARO_TRACE_VALUE_ACT") && method.isObject()
+    static const bool traceValueAct = std::getenv("PHARO_TRACE_VALUE_ACT") != nullptr;
+    if (traceValueAct && method.isObject()
             && method.rawBits() > 0x10000) {
         static uint64_t valueCount = 0;
         static uint64_t blockCount = 0;
