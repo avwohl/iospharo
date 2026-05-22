@@ -52,12 +52,23 @@ correct and ready; the win waits on either:
 
 ## Final progress summary (2026-05-22 session)
 
-**3 of 15 steps landed**:
-- Step 4: IC poly walk (default-off, 1-3% slowdown when on).
-- Step 11: Trivial-forwarder collapse at IC fill (default-on,
-  measurable wins across 6+ benches — see table below).
-- Step 13: Hot-loop JIT threshold (default-on, no measurable
-  bench impact yet — blocks not exercising the inline emits).
+**5 of 15 steps with infrastructure landed**:
+- Step 1: Sista cache GC integration — **production-complete**
+  (rekey wires + bytecodeBase dynamic-load fix + scavenge rekey).
+  Default-off via PHARO_SISTA_REKEY_AFTER_GC=1 until Steps 2-3
+  produce useful Sista compiles to preserve.
+- Step 2: BLR emit at SISTA_BIT dispatch — infrastructure
+  complete (BLR site, helper, counters).  0-arg fast-path
+  correct but perf-negative (C++ helper overhead > savings for
+  short methods).  N-arg path has bisected state-corruption
+  bug, deferred.
+- Step 4: IC poly walk — default-off (1-3% slowdown when on).
+- Step 11: Trivial-forwarder collapse — 4 patterns supported,
+  fires ZERO times on Pharo 13 image (canonical Behavior>>new:
+  uses cascade with initialize, not pure forwarder).
+- Step 13: Hot-loop JIT threshold — default-on, infrastructure
+  only (block-hot extension reverted — cold blocks pay
+  compile cost).
 
 ### Cumulative bench state (2026-05-22, end of session)
 
