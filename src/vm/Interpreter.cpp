@@ -109,6 +109,7 @@ extern "C" uint64_t g_primSize_hits;
 extern "C" uint64_t g_primBitOp_hits;
 extern "C" uint64_t g_primFloatOp_hits;
 extern "C" uint64_t g_primBasicNew_hits;
+extern "C" uint64_t g_primBasicNewZero_hits;
 extern "C" uint64_t g_primBasicNew_bails;
 extern "C" uint64_t g_sistaSelfRec_attempts;
 extern "C" uint64_t g_sistaSelfRec_hits;
@@ -1488,8 +1489,8 @@ void Interpreter::dumpJITStats() {
             fprintf(stderr,
                 "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu "
                 "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu "
-                "basicNew=%llu/%llu sistaSelfRec=%llu/%llu multiSlot=%llu "
-                "retLit=%llu\n",
+                "basicNew=%llu/%llu basicNew0=%llu sistaSelfRec=%llu/%llu "
+                "multiSlot=%llu retLit=%llu\n",
                 (unsigned long long)g_primAt_hits,
                 (unsigned long long)g_primAtPut_hits,
                 (unsigned long long)g_primSize_hits,
@@ -1500,6 +1501,7 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_bcRemoteTemp_hits,
                 (unsigned long long)g_primBasicNew_hits,
                 (unsigned long long)g_primBasicNew_bails,
+                (unsigned long long)g_primBasicNewZero_hits,
                 (unsigned long long)g_sistaSelfRec_hits,
                 (unsigned long long)g_sistaSelfRec_attempts,
                 (unsigned long long)g_t1MultiSlot_hits,
