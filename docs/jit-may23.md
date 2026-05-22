@@ -48,13 +48,15 @@ events.  Each takes ~12-15M cycles.  Try to coalesce.
 HOW: increase scavenge threshold.
 DONE WHEN: total GC cycles measured before/after.
 
-### Q33 — IC hitCount usage
+### Q34 — Implement IC entry MTF (move-to-front)
 
-WHAT: each IC site has a hitCount slot.  Is it used to reorder
-IC entries (MTF heuristic)?  If not, adding MTF could improve
-hit rate for the heavily skewed at: case.
-HOW: grep for IC_HITCOUNT_SLOT uses.
-DONE WHEN: yes/no answer + plan if no.
+WHAT: from Q33, IC entries aren't reordered.  For at:'s
+70%-dominant class, adding MTF would put it at entry 0 → most
+IC HITs win on first compare.
+HOW: at IC HIT site, if hit was at entry N>0, swap entries 0
+and N (in C++ helper, not asmjit emit).  Simple atomic-store
+sequence.
+DONE WHEN: bench-correctness PASS AND IC hit walk depth dropped.
 
 ## Closed
 
@@ -80,6 +82,10 @@ DONE WHEN: yes/no answer + plan if no.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q33**: IC hitCount slot is only used for diagnostic
+  printing (AsmjitT1.cpp:420).  Not used for MTF reordering.
+  This is a real missed opportunity for the at: case (cls 51
+  dominant).
 - ✅ **Q30**: IC miss rate 11% (~1M misses on 9.5M sends).  Top
   selectors (Q16) have <10K misses each.  Most misses are cold
   (first-time encounters of new class/selector combos).  These
