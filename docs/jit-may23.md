@@ -29,15 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q13 — Find Pharo's bitShift: bench
-
-WHAT: stringHash uses `bitShift:` heavily.  Does the current
-inline emit for primKind 13 fire?
-HOW: write a focused bench (3-5 line script) that hammers
-bitShift: in a JIT-compilable method.  Run with
-PHARO_T1_INLINE_PRIM_COUNTERS=1, dump bitOp counter.
-DONE WHEN: bitOp count recorded for the focused bench.
-
 ### Q14 — Audit `inlinePrimKind` for missing prims
 
 WHAT: are there primitives our IC could handle but
@@ -118,6 +109,12 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q13**: focused bitShift bench shows bitOp=0 despite my
+  T1 fix.  Cause: the outer method (`shiftLoop`) doesn't reach
+  JIT compile.  Even with `1 to: do:` inlined to a backward
+  jump in shiftLoop's body, the method isn't being JIT-compiled
+  by asmjit-T1.  Same root cause as Issue 4 — needs blocks/
+  outer methods compiled.
 - ✅ **Q12**: fullGC fires 13 times, total 1.3 BILLION cntvct
   cycles.  13× more expensive than scavenge.  GC is a significant
   but not dominant overhead source.  Cog handles benches with
