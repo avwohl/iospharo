@@ -51,10 +51,18 @@ public:
     // that send-bails set state.ip to `bytecodeBase + bcOffset` — the
     // absolute pointer the interpreter expects.  Pass nullptr for unit
     // tests that only verify the offset bits.
+    //
+    // `startBcOffset` (jit-may22b Step 1 literal-patch): when this
+    // lower-call is for a lifted bytecode region starting partway
+    // through the method, this is the offset of the region's start
+    // within the method's bytecodes.  Lowering uses it to compute
+    // deopt-resume IPs from `state.method` dynamically rather than
+    // baking the absolute address — survives GC compaction.
     using CompiledFn = void (*)(void* state);
     CompiledFn lower(const Method& method,
                       uint32_t* failedAtValue = nullptr,
-                      const uint8_t* bytecodeBase = nullptr);
+                      const uint8_t* bytecodeBase = nullptr,
+                      uint32_t startBcOffset = 0);
 
 private:
     asmjit::JitRuntime* runtime_ = nullptr;

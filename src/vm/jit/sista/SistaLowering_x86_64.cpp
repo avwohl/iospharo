@@ -139,7 +139,9 @@ Lowering::~Lowering() {
 
 Lowering::CompiledFn Lowering::lower(const Method& method,
                                        uint32_t* failedAtValue,
-                                       const uint8_t* bytecodeBase) {
+                                       const uint8_t* bytecodeBase,
+                                       uint32_t startBcOffset) {
+    (void)startBcOffset;  // jit-may22b Step 1: not yet supported on x86_64
     using namespace asmjit;
     using namespace asmjit::x86;
 

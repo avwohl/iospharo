@@ -107,7 +107,8 @@ Lowering::~Lowering() {
 
 Lowering::CompiledFn Lowering::lower(const Method& method,
                                        uint32_t* failedAtValue,
-                                       const uint8_t* bytecodeBase) {
+                                       const uint8_t* bytecodeBase,
+                                       uint32_t startBcOffset) {
     using namespace asmjit;
     using namespace asmjit::a64;
 
@@ -196,6 +197,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     //   methodObj + 8:  slot 0 = SmI method header (numLits etc)
     //   methodObj + 16: slot 1 = literal 0
     //   methodObj + 16 + numLits*8: bytecodes
+    // jit-may22b Step 1 literal-patch fix: hoist bytecodes_start
+    // dynamically from state.method at fn entry.  bytecodes_start
+    // = method.bytes + (1+numLits)*8 = method + 16 + numLits*8.
+    // For lifted regions (compile partway through a method),
+    // bake `startBcOffset` into the hoisted value so every deopt
+    // site can just `add ipReg, bytecodesHoisted, Imm(bcOffset)`.
+    // This makes bytecodesHoisted equivalent to the previously-
+    // baked bytecodeBase pointer but recomputed per-call from
+    // state.method — survives GC compaction.
     Gp bytecodesHoisted = cc.new_gp64("bcStart");
     if (bytecodeBase) {
         Gp methObjReg = cc.new_gp64("bcMeth");
@@ -205,7 +215,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         cc.ldr(hdrReg, ptr(methObjReg, 8));               // slot 0 = SmI header
         cc.lsr(numLitsReg, hdrReg, Imm(3));
         cc.and_(numLitsReg, numLitsReg, Imm(0x7FFF));
-        cc.add(bytecodesHoisted, methObjReg, Imm(16));    // skip ObjHeader + slot 0
+        cc.add(bytecodesHoisted, methObjReg, Imm(16 + (int)startBcOffset));
         cc.add(bytecodesHoisted, bytecodesHoisted,
                numLitsReg, asmjit::a64::lsl(3));          // + nLits*8
     }
@@ -5449,7 +5459,7 @@ Lowering::Lowering() {}
 Lowering::~Lowering() {}
 
 Lowering::CompiledFn Lowering::lower(const Method&, uint32_t* failedAtValue,
-                                       const uint8_t*) {
+                                       const uint8_t*, uint32_t) {
     if (failedAtValue) *failedAtValue = 0;
     return nullptr;
 }

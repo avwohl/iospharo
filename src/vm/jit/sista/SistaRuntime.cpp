@@ -86,7 +86,8 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         // bcOffset = correct ip for deopt resume.
         const uint8_t* lifedBase = bytecodes + startBcOffset;
         uint32_t failedVal = UINT32_MAX;
-        Lowering::CompiledFn fn = lowering_.lower(m, &failedVal, lifedBase);
+        Lowering::CompiledFn fn = lowering_.lower(m, &failedVal, lifedBase,
+                                                    startBcOffset);
         bcOffsetCache_[key][startBcOffset] = fn;
         // Multi-key cache: register the same fn at every dispatchable
         // bcOff in the lifted region.  Triggers at interior loop tops
