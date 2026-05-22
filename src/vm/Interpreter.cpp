@@ -20790,6 +20790,37 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             jitICMisses_++;
 
+            // jit-may23 Q16: top IC-miss selectors.
+            if (std::getenv("PHARO_TRACE_IC_MISS_SEL")) {
+                static std::unordered_map<std::string, uint64_t> missCounts;
+                static std::atomic<uint64_t> n{0};
+                uint64_t selBitsForLog = state.icDataPtr
+                    ? state.icDataPtr[18] : 0;
+                if (selBitsForLog != 0) {
+                    Oop selOop = Oop::fromRawBits(selBitsForLog);
+                    if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                        ObjectHeader* sh = selOop.asObjectPtr();
+                        if (sh->isBytesObject() && sh->byteSize() < 80) {
+                            std::string s((char*)sh->bytes(), sh->byteSize());
+                            missCounts[s]++;
+                        }
+                    }
+                }
+                uint64_t nn = ++n;
+                if ((nn & 0x3FFFF) == 0) {
+                    std::vector<std::pair<std::string, uint64_t>> v(
+                        missCounts.begin(), missCounts.end());
+                    std::sort(v.begin(), v.end(),
+                        [](auto& a, auto& b){ return a.second > b.second; });
+                    std::fprintf(stderr, "[Q16-IC-MISS-TOP5]\n");
+                    for (size_t i = 0; i < v.size() && i < 5; i++) {
+                        std::fprintf(stderr, "  %s = %llu\n",
+                            v[i].first.c_str(),
+                            (unsigned long long)v[i].second);
+                    }
+                }
+            }
+
             // DIAGNOSTIC: distinguish "IC had room" vs "IC full" vs
             // "icData[18] was 0 (megacache skip)" to pin down why IC
             // hit rate is only 50%.

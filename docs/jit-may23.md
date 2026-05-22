@@ -29,14 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q16 — Top 5 IC-MISS selectors
-
-WHAT: selectors that miss the IC most often — candidates for
-IC cache improvements.
-HOW: at IC miss site (state.icDataPtr=null or class mismatch),
-log the selector.  Top 5 by count.
-DONE WHEN: list recorded.
-
 ### Q17 — Verify retLit perf is from quick prims
 
 WHAT: retLit fires 465K times — confirm the wins are from
@@ -91,6 +83,11 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q16**: top 5 IC-miss selectors:
+    indexOf: 9509  next:putAll: 4876  objectAt: 1894
+    size 1629  signFlag 1138
+  Small absolute miss counts (vs 8M IC hits = <1% miss rate).
+  Not a major perf lever.
 - ✅ **Q15**: step() runs < 65536 times during bench-suite —
   same finding as Q3.  Interp-level bytecode dispatch isn't a
   bottleneck.  bench-suite runs almost entirely in JIT-compiled
