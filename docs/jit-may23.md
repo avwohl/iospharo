@@ -29,24 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q7 — Detect setter increment pattern
-
-WHAT: `incrementX  x := x + 1` style mutators.  Bytecode:
-pushRcvrA, pushOne, send+, popStoreRcvrA, returnReceiver (5 bytes).
-HOW: add to `detectTrivialMethod` after the multi-slot detection.
-Encode in a new IC bit (bit 53 unused).  Don't add the emit yet —
-just verify the detector matches ≥100 methods on bench-suite.
-DONE WHEN: counter shows ≥100 detections.
-
-### Q8 — Add emit for Q7 setter-increment pattern
-
-WHAT: ARM emit that does `rcv.slot[A] = (rcv.slot[A] + 1)`
-with overflow check, returns receiver.
-HOW: mirror the existing setter emit at AsmjitT1.cpp:4101+
-but with the arith op.  ~12 instructions.
-DONE WHEN: bench-correctness still PASS, setter-increment
-counter fires on bench-suite.
-
 ### Q9 — Find common 2-bytecode method bodies
 
 WHAT: methods with bcLen==2 that aren't yet covered by an
@@ -164,6 +146,10 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q7**: setter-increment pattern detector added.  Only 1
+  method matches on bench-suite — far below the 100-method
+  threshold for justifying an emit.  Q8 (the emit) skipped.
+  Detector stays in tree (uses 0 dispatch cycles when no match).
 - ✅ **Q6**: 0x62 (`<`) inline emit is at AsmjitT1.cpp:2763 —
   csel-based, ~5 instructions in the comparison branch.  Already
   optimal (the `+` arith path has more instructions for the

@@ -8168,6 +8168,11 @@ struct TrivialMethodInfo {
     int8_t  multiConst  = 0;      // -1, 0, or 1
     uint8_t multiOp1Sub = 0;      // 0 = add, 1 = sub (between A and B)
     uint8_t multiOp2Sub = 0;      // 0 = add, 1 = sub (with const)
+    // jit-may23 Q7: setter-increment `x := x + 1; ^ self`.
+    bool    setterIncMatch = false;
+    int8_t  setterIncSlot = -1;   // ivar index 0-15
+    int8_t  setterIncConst = 0;   // -1, 0, or 1
+    bool    setterIncSub = false;  // false=add, true=sub
 };
 
 static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
@@ -8319,6 +8324,27 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
         info.multiConst = 0;
         info.multiOp1Sub = (bytes[bcStart + 2] == 0x61) ? 1 : 0;
         info.multiOp2Sub = 0;  // add 0 = no-op
+        return info;
+    }
+
+    // jit-may23 Q7: setter-increment `x := x + 1; ^ self` pattern.
+    // Bytecode shape (5 bytes):
+    //   0x00-0x0F  pushRcvrVar A
+    //   0x50/0x51/0x52  push K (0/1/-1)
+    //   0x60/0x61  send +/-
+    //   0xC8-0xCF  popStoreRcvrVar A (same A)
+    //   0x58       returnReceiver
+    if (bcLen >= 5
+        && bc0 <= 0x0F
+        && (bc1 == 0x50 || bc1 == 0x51 || bc1 == 0x52)
+        && (bytes[bcStart + 2] == 0x60 || bytes[bcStart + 2] == 0x61)
+        && bytes[bcStart + 3] >= 0xC8 && bytes[bcStart + 3] <= 0xCF
+        && (bytes[bcStart + 3] - 0xC8) == bc0  // same ivar
+        && bytes[bcStart + 4] == 0x58) {
+        info.setterIncMatch = true;
+        info.setterIncSlot = (int8_t)bc0;
+        info.setterIncConst = (bc1 == 0x50) ? 0 : (bc1 == 0x51 ? 1 : -1);
+        info.setterIncSub = (bytes[bcStart + 2] == 0x61);
         return info;
     }
 
