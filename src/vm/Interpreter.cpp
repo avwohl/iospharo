@@ -18120,6 +18120,32 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                     fwdSel = memory_.fetchPointer(1 + litIdx, resolvedMethod);
                 }
             }
+            // 0-arg forwarder via SpecialSend: 0x4C 0x7? 0x5C
+            // (e.g., `^ self isNil`, `^ self class`).
+            else if (numArgs == 0 && bcLen == 3
+                    && bc[0] == 0x4C
+                    && bc[1] >= 0x70 && bc[1] <= 0x7F
+                    && bc[2] == 0x5C) {
+                int ssIdx = (bc[1] - 0x70) + 16;
+                Oop ssArray = memory_.specialObject(
+                    SpecialObjectIndex::SpecialSelectorsArray);
+                if (ssArray.isObject()
+                        && ssArray.rawBits() > 0x10000) {
+                    ObjectHeader* ssHdr = ssArray.asObjectPtr();
+                    size_t slot = (size_t)ssIdx * 2;
+                    if (slot < ssHdr->slotCount()) {
+                        // Only 0-arg SpecialSends are safe to collapse.
+                        size_t argSlot = slot + 1;
+                        if (argSlot < ssHdr->slotCount()) {
+                            Oop ac = ssHdr->slotAt(argSlot);
+                            if (ac.isSmallInteger()
+                                    && ac.asSmallInteger() == 0) {
+                                fwdSel = ssHdr->slotAt(slot);
+                            }
+                        }
+                    }
+                }
+            }
             // 2-arg forwarder (args in order): 0x4C 0x40 0x41 <Send2 op> 0x5C
             else if (numArgs == 2 && bcLen == 5
                     && bc[0] == 0x4C && bc[1] == 0x40
