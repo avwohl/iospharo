@@ -18556,6 +18556,21 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             extra = (1ULL << 63) | static_cast<uint16_t>(primIdx - 264);
         else if (primIdx == 256)
             extra = (1ULL << 61);
+        // jit-may22b: quick prims 257-263 are returnsLiteral patterns
+        // (return true/false/nil/-1/0/1/2 respectively).  Map to bit 58.
+        // kind encoding (matches detectTrivialMethod):
+        //   1=nil, 2=true, 3=false, 4=zero, 5=one.
+        // Quick prims 260 (-1), 263 (2) don't fit; skip those.
+        else if (primIdx == 257)  // return true
+            extra = (1ULL << 58) | ((uint64_t)2 << 48);
+        else if (primIdx == 258)  // return false
+            extra = (1ULL << 58) | ((uint64_t)3 << 48);
+        else if (primIdx == 259)  // return nil
+            extra = (1ULL << 58) | ((uint64_t)1 << 48);
+        else if (primIdx == 261)  // return 0
+            extra = (1ULL << 58) | ((uint64_t)4 << 48);
+        else if (primIdx == 262)  // return 1
+            extra = (1ULL << 58) | ((uint64_t)5 << 48);
 
         // Set inline primKind bits for methods with inlineable primitives,
         // regardless of JIT compilation status. This allows the stencil to
@@ -18900,6 +18915,12 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 // Quick returnSelf → inline returnsSelf (bit 61)
                 quickPrimExtra = (1ULL << 61);
             }
+            // jit-may22b: quick constant prims → returnsLiteral (bit 58).
+            else if (primIdx == 257) quickPrimExtra = (1ULL << 58) | ((uint64_t)2 << 48);
+            else if (primIdx == 258) quickPrimExtra = (1ULL << 58) | ((uint64_t)3 << 48);
+            else if (primIdx == 259) quickPrimExtra = (1ULL << 58) | ((uint64_t)1 << 48);
+            else if (primIdx == 261) quickPrimExtra = (1ULL << 58) | ((uint64_t)4 << 48);
+            else if (primIdx == 262) quickPrimExtra = (1ULL << 58) | ((uint64_t)5 << 48);
             if (quickPrimExtra == 0) {
                 // Quick constant prims (257-263) are safe for J2J:
                 // bytecodes produce the same result as the primitive.
