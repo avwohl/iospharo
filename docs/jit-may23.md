@@ -331,6 +331,12 @@ soak.  Don't try to do them in /goal-driven session iteration:
   inline emit for `*` (8 instructions: untag/mul/smulh/check/
   retag).  Bench-suite: stringHash unchanged (in-block usage),
   but infrastructure ready for any JIT-body `*`.
+- ✅ **T7** (add SmI prims 10-13 to supportedPrimIndex).
+  Reduced compile failures from 1,028,955 → 929,363 (~100K).
+  No bench-suite perf win (those methods aren't bench-hot paths).
+- ✅ **T14** (investigate cull: hits).  cull: fires for many
+  small CompiledBlocks (2-12 bytecodes).  Same Step 9-10
+  block-invocation territory; no separate fix.
 - ❌ **T5** (even-like predicate `^ (self bitAnd: K) = C`).
   Pattern detected (975K matches per bench-suite — the `even`
   / `odd` predicate).  Inline emit attempted at bit 54, ~25
