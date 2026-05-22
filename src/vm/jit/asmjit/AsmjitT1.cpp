@@ -3343,6 +3343,24 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.cmp(x6, asmjit::Imm(18));
                     a.b_eq(tryPrimBasicNew);
                 }
+                // jit-may23 T1: primKind 11/12/13/19 (SmI bit ops) take
+                // precedence over bit 60 (J2J).  Without this, bitAnd:/
+                // bitOr:/bitShift:/bitXor: get bit 60 set when JIT-compiled
+                // and the inline emit at line 4530+ is never reached
+                // (g_primBitOp_hits=0).  Same "wired but unreached" pattern
+                // as retLit's bit 58.
+                if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
+                    a.lsr(x6, x7, asmjit::Imm(48));
+                    a.and_(x6, x6, asmjit::Imm(0x1F));
+                    a.cmp(x6, asmjit::Imm(11));
+                    a.b_eq(tryPrimBitAnd);
+                    a.cmp(x6, asmjit::Imm(12));
+                    a.b_eq(tryPrimBitOr);
+                    a.cmp(x6, asmjit::Imm(19));
+                    a.b_eq(tryPrimBitXor);
+                    a.cmp(x6, asmjit::Imm(13));
+                    a.b_eq(tryPrimBitShift);
+                }
                 // Bit 60 set → try inline J2J; works for any receiver tag
                 // (SmI receivers benefit too, unlike inline-getter/setter).
                 a.tbnz(x7, asmjit::Imm(60), tryInlineJ2J);
