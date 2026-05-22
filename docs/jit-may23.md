@@ -30,13 +30,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q29 — Audit OSR (on-stack replacement) overhead
-
-WHAT: `[JIT] Stats: OSR=215195`.  OSR fires 215K times per
-bench-suite.  What's the per-OSR cost?
-HOW: add a timed counter around the OSR entry point.
-DONE WHEN: avg cycles recorded.
-
 ### Q30 — Reduce IC miss rate (currently 14%)
 
 WHAT: IC hit rate is 86% — 14% miss.  Each miss costs ~100
@@ -71,6 +64,10 @@ DONE WHEN: miss rate drops, bench-correctness PASS.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q29**: tryOSRAtBackwardJump fires 13.6M times but
+  averages 1 cycle per call.  Most calls early-exit via
+  osrCountdown_ > 0 (work only every 64 calls).  Actual OSR
+  work fires ~215K times (matches JIT stats).  Not a bottleneck.
 - ✅ **Q28**: `at:` receiver class distribution: 24 distinct
   classes, top:
     cls 51 = 7M  (~70% — Array?)
