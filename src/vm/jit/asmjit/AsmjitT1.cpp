@@ -3343,12 +3343,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.cmp(x6, asmjit::Imm(18));
                     a.b_eq(tryPrimBasicNew);
                 }
-                // jit-may23 T1: primKind 11/12/13/19 (SmI bit ops) take
-                // precedence over bit 60 (J2J).  Without this, bitAnd:/
-                // bitOr:/bitShift:/bitXor: get bit 60 set when JIT-compiled
-                // and the inline emit at line 4530+ is never reached
-                // (g_primBitOp_hits=0).  Same "wired but unreached" pattern
-                // as retLit's bit 58.
+                // jit-may23 T1+T2: primKind 11/12/13/19 (SmI bit ops)
+                // and 21/22/23 (SmallFloat ops) take precedence over bit
+                // 60 (J2J).  Without this, the bit/float prim methods
+                // get bit 60 set when JIT-compiled and the inline emits
+                // are never reached (g_primBitOp_hits / g_primFloatOp_hits
+                // both 0).  Same "wired but unreached" pattern as retLit.
                 if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
                     a.lsr(x6, x7, asmjit::Imm(48));
                     a.and_(x6, x6, asmjit::Imm(0x1F));
@@ -3360,6 +3360,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_eq(tryPrimBitXor);
                     a.cmp(x6, asmjit::Imm(13));
                     a.b_eq(tryPrimBitShift);
+                    // SmallFloat: primKinds 21/22/23 are contiguous.
+                    // sub 21 then cmp <3 catches all three.
+                    a.sub(x6, x6, asmjit::Imm(21));
+                    a.cmp(x6, asmjit::Imm(3));
+                    a.b_lo(tryPrimSmallFloatOp);
                 }
                 // Bit 60 set → try inline J2J; works for any receiver tag
                 // (SmI receivers benefit too, unlike inline-getter/setter).
