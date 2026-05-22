@@ -12336,6 +12336,136 @@ uint64_t Interpreter::jitSistaSelfRecCall(jit::JITState* state,
     return ok;
 }
 
+// jit-may22b Step 2: asmjit-T1 IC-HIT → Sista direct dispatch.
+// Allocates a fresh JITState, sets it up for the callee method,
+// calls the Sista fn, propagates result back to caller's sp.
+//
+// Strategy: rather than try to inline activation logic into a JIT
+// stencil, do it in C++ here.  Mirrors the activateMethod-side
+// Sista dispatch (Interpreter.cpp:9082+) but driven from an
+// asmjit-T1 stencil's BLR.  The caller's state is provided; we
+// just need to set up the callee state and call fn.
+//
+// Returns 1 on success (caller's sp updated with result),
+// 0 on bail (caller falls through to dispatchCached).
+uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
+                                          uint64_t fnPtr,
+                                          uint64_t methodBits,
+                                          uint64_t nArgs) {
+    Oop method = Oop::fromRawBits(methodBits);
+    if (!method.isObject() || method.rawBits() < 0x10000) return 0;
+    ObjectHeader* methodObj = method.asObjectPtr();
+    if (!methodObj->isCompiledMethod()) return 0;
+
+    // jit-may22b Step 2 prototype: only handle methods with 0
+    // temps for now.  Methods with temps need a real frame push
+    // (activateMethod sets temps to nil) before Sista's writes
+    // can land safely.  For non-zero-temp methods, bail to
+    // dispatchCached.
+    Oop hdrOop = methodObj->slots()[0];
+    if (!hdrOop.isSmallInteger()) return 0;
+    int64_t hb = hdrOop.asSmallInteger();
+    int hdrNumArgs = (int)((hb >> 24) & 0x0F);
+    int hdrNumTemps = (int)((hb >> 18) & 0x3F);
+    int numLocalTemps = hdrNumTemps - hdrNumArgs;
+    if (numLocalTemps > 0) return 0;  // bail until proper frame push
+
+    // For Step 2 prototype: also bail if the method has any sends.
+    // Sista's send paths need a real activation frame.
+    // (Disabled for now — too restrictive; revisit when frame
+    //  push lands.)  Keep as opt-in for testing.
+    if (!std::getenv("PHARO_T1_SISTA_DISPATCH_ALLOW")) return 0;
+
+    using Fn = void (*)(jit::JITState*);
+    Fn fn = reinterpret_cast<Fn>(fnPtr);
+
+    // Read receiver + args from caller's stack.  Layout:
+    //   callerState->sp[-(nArgs+1)] = receiver
+    //   callerState->sp[-nArgs ... -1] = args
+    Oop receiver = callerState->sp[-(int)nArgs - 1];
+
+    // Sync interp's stackPointer_ so executePrimitive / NLR /
+    // frame walks see the right values during the call.
+    Oop* savedSP = stackPointer_;
+    stackPointer_ = callerState->sp;
+    Oop savedMethod = method_;
+    Oop savedReceiver = receiver_;
+    Oop* savedFP = framePointer_;
+    method_ = method;
+    receiver_ = receiver;
+
+    // Init a callee JITState.  Mirrors activateMethod's tryActivateSista
+    // block in Interpreter.cpp:9082+ but without the frame push (we're
+    // in mid-bytecode in caller; Sista's fn manages its own frame state
+    // via state fields).
+    jit::JITState sstate;
+    sstate.sp = stackPointer_;
+    sstate.receiver = receiver;
+    sstate.literals = methodObj->slots() + 1;
+    sstate.tempBase = stackPointer_ - nArgs;  // args are at this base
+    sstate.memory = &memory_;
+    sstate.interp = this;
+    sstate.ip = methodObj->bytes() + (1 + (methodObj->slots()[0]
+                .asSmallInteger() & 0x7FFF)) * 8;
+    sstate.method = method;
+    sstate.argCount = (int)nArgs;
+    sstate.jitMethod = nullptr;
+    sstate.exitReason = jit::ExitNone;
+    sstate.icDataPtr = nullptr;
+    sstate.sendArgCount = 0;
+    sstate.trueOop = memory_.trueObject();
+    sstate.falseOop = memory_.falseObject();
+    sstate.j2jSaveCursor = nullptr;
+    sstate.j2jSaveLimit = nullptr;
+    sstate.j2jDepth = 0;
+    sstate.j2jTotalCalls = 0;
+    sstate.methodMapPtr = nullptr;
+    sstate.yieldCountdown = 0;
+    sstate.j2jEntryDepth = 0;
+    sstate.j2jDepthInc = 0x0000000100000001ULL;
+    sstate.sistaSaveCursor = nullptr;
+    sstate.sistaSaveLimit = nullptr;
+    sstate.sistaSaveDepth = 0;
+    sstate.sistaEntryDepth = 0;
+
+    // Track recursion guard.
+    static thread_local int s_t1SistaDispatchDepth = 0;
+    if (s_t1SistaDispatchDepth >= 4) {
+        // Too deep — bail.  Avoids C stack overflow on recursive sends.
+        method_ = savedMethod;
+        receiver_ = savedReceiver;
+        framePointer_ = savedFP;
+        stackPointer_ = savedSP;
+        return 0;
+    }
+    s_t1SistaDispatchDepth++;
+    fn(&sstate);
+    s_t1SistaDispatchDepth--;
+
+    // Only handle the simple synchronous-return case.  For anything
+    // else (deopt, exception, NLR), bail to dispatchCached.
+    if (sstate.exitReason != jit::ExitReturn) {
+        method_ = savedMethod;
+        receiver_ = savedReceiver;
+        framePointer_ = savedFP;
+        stackPointer_ = savedSP;
+        return 0;
+    }
+
+    // Method returned cleanly.  Pop [receiver, args] from caller's
+    // sp, push the return value.
+    callerState->sp = callerState->sp - (int)(nArgs + 1);
+    *callerState->sp = sstate.returnValue;
+    callerState->sp++;
+
+    // Restore interp state.
+    method_ = savedMethod;
+    receiver_ = savedReceiver;
+    framePointer_ = savedFP;
+    stackPointer_ = callerState->sp;
+    return 1;
+}
+
 uint64_t Interpreter::jitBasicNewWithArg(jit::JITState* state) {
     // state.sp points PAST [rcvr=class, size].  Sync interp's stack
     // pointer so executePrimitive sees the right values via

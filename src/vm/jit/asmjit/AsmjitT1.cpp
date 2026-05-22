@@ -71,6 +71,11 @@ extern "C" void* jit_rt_inline_block_value_prep(
 // jit-may20b Step 10: inline-prim 18 (basicNew:) helper.  Returns 1
 // on success (state.sp updated), 0 on failure (caller bails).
 extern "C" uint64_t jit_rt_basic_new_with_arg(void* state);
+extern "C" uint64_t jit_rt_t1_sista_dispatch(void* state, uint64_t fnPtr,
+                                              uint64_t methodBits,
+                                              uint64_t nArgs);
+extern "C" uint64_t g_t1SistaDispatch_hits;
+extern "C" uint64_t g_t1SistaDispatch_attempts;
 
 // Counters for inline-prim 18 dispatch (PHARO_T1_INLINE_PRIM_COUNTERS=1).
 extern "C" uint64_t g_primBasicNew_hits  = 0;
@@ -4104,31 +4109,52 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             a.b(endOfSend);
 
-            // === trySistaCall (jit-may20b Step 8.4 / jit-84 B4) ===
+            // === trySistaCall (jit-may22b Step 2 — real BLR via helper) ===
             // Dispatch to a Sista-compiled fn (ptr in x7's bits 47:0).
-            // Sista's CompiledFn signature: void (*)(JITState* state).
             //
-            // ATTEMPTED 2026-05-21: direct BLR with caller's state →
-            // SIGSEGV at fault addr 0x331 inside Sista's emitted code.
-            // Sista's fn expects state to be the CALLEE's frame
-            // (receiver, tempBase, sp, ip, method all set to the
-            // method being executed), not the caller's.  The IC HIT
-            // path has caller's state; we'd need to:
-            //   - Set up callee receiver, tempBase = sp - nArgs*8,
-            //     literals = method+16, method, argCount, ip = bcStart.
-            //   - Save caller's state somewhere (J2J save?  But Sista
-            //     doesn't use the J2J save protocol).
-            //   - BLR to fn.
-            //   - On return, restore caller's state, pop nArgs+1,
-            //     push state.returnValue.
+            // Strategy: a C++ helper (jit_rt_t1_sista_dispatch) sets
+            // up a fresh callee JITState, calls Sista's fn, and
+            // propagates the return value back to caller's sp.
+            // On bail (helper returns 0), fall through to
+            // dispatchCached so the chain-loop's full path handles it.
             //
-            // That's ~30+ instructions per send site and requires a
-            // new save protocol that Sista's deopt path also has to
-            // honour.  Deferred to a follow-up; stub bails to
-            // dispatchCached so the existing chain-loop Sista dispatch
-            // handles the call.
+            // x7 = extras (SISTA_BIT set + fn ptr in bits 47:0).
+            // x5 = icDataPtr (points to slot 0 of the matching IC entry).
+            //      icData[1] = cached method oop bits.
             a.bind(trySistaCall);
-            a.b(dispatchCached);
+            // Save x0 (state) + x30 (LR) across BLR.
+            a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
+            a.str(x0,  ptr(asmjit::a64::sp, 0));
+            a.str(x30, ptr(asmjit::a64::sp, 8));
+
+            // Arg 1 (x1) = fn ptr.  Extract bits 47:0 of x7.
+            a.mov(x1, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
+            a.and_(x1, x1, x7);
+            // Arg 2 (x2) = methodBits.  Read icData[1] at ptr(x5, 8).
+            a.ldr(x2, ptr(x5, 8));
+            // Arg 3 (x3) = nArgs.
+            a.mov(x3, asmjit::Imm((uint64_t)nArgs));
+
+            a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_t1_sista_dispatch));
+            a.blr(x9);
+            // x0 = 1 on success, 0 on bail.
+            a.mov(x9, x0);
+            a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+            a.ldr(x30, ptr(asmjit::a64::sp, 8));
+            a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
+            {
+                asmjit::Label bailSista = a.new_label();
+                a.cbz(x9, bailSista);
+                // Hit path: bump counter, continue at endOfSend.
+                a.mov(x14, asmjit::Imm(
+                    (uint64_t)&g_t1SistaDispatch_hits));
+                a.ldr(x15, ptr(x14));
+                a.add(x15, x15, asmjit::Imm(1));
+                a.str(x15, ptr(x14));
+                a.b(endOfSend);
+                a.bind(bailSista);
+                a.b(dispatchCached);
+            }
 
             // === returnsSelf ===
             a.bind(tryReturnsSelf);

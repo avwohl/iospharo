@@ -497,6 +497,26 @@ extern "C" uint64_t jit_rt_basic_new_with_arg(JITState* state) {
     return state->interp->jitBasicNewWithArg(state);
 }
 
+// jit-may22b Step 2: asmjit-T1 IC-HIT → Sista dispatch.  Allocates
+// a fresh JITState on the C stack, sets it up for the callee
+// method, calls the Sista fn, and propagates the return value back
+// to the caller's state.sp.  Returns 1 on success, 0 on bail.
+//
+// state    = asmjit-T1's caller JITState.
+// fnPtr    = Sista's compiled fn (bits 47:0 of caller's IC extras).
+// methodBits = the cached method oop bits (icData[1]).
+// nArgs    = number of args for the send.
+extern "C" uint64_t g_t1SistaDispatch_attempts = 0;
+extern "C" uint64_t g_t1SistaDispatch_hits     = 0;
+extern "C" uint64_t jit_rt_t1_sista_dispatch(JITState* state,
+                                              uint64_t fnPtr,
+                                              uint64_t methodBits,
+                                              uint64_t nArgs) {
+    g_t1SistaDispatch_attempts++;
+    if (!state || !state->interp || !fnPtr) return 0;
+    return state->interp->jitT1SistaDispatch(state, fnPtr, methodBits, nArgs);
+}
+
 // jit-may22a B1: Sista self-recursive call helper.  Called from
 // kSendInlineSelf lowering instead of jit_rt_sista_call_send.
 // Skips sendSelector + step() machinery; directly recurses into

@@ -1604,6 +1604,14 @@ public:
     /// returns 0 (caller bails to chain-loop dispatch).
     uint64_t jitBasicNewWithArg(jit::JITState* state);
 
+    /// jit-may22b Step 2: asmjit-T1 IC-HIT → Sista dispatch.
+    /// Allocates fresh JITState for the callee, sets it up, calls
+    /// the Sista fn, propagates return value.  Returns 1 on success
+    /// (caller's sp updated with result), 0 on bail.
+    uint64_t jitT1SistaDispatch(jit::JITState* callerState,
+                                  uint64_t fnPtr, uint64_t methodBits,
+                                  uint64_t nArgs);
+
     /// jit-may22a B1: Sista self-recursive send helper.  Bypasses
     /// jit_rt_sista_call_send's sendSelector + step() machinery and
     /// directly invokes the cached Sista fn for state.method on
