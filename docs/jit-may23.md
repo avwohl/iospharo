@@ -79,11 +79,32 @@ DONE WHEN: activateBlock counter drops further.
 
 (Move tasks here as you finish them.)
 
+- ✅ **Q39** (KEY FIX): removed per-call std::getenv() from
+  trace instrumentation in patchJITICAfterSend / activateMethod
+  / step() / tryJITActivation miss path.  **fib 238 → 180 ms
+  (-24%)**.  Real bench-suite results after Q39 (vs session-start
+  baseline):
+    fib(28)        179→180  (=baseline)
+    sum 1M         284→290  (+2%)
+    dict 50K       447→439  (-2%)
+    floatSum 1M    402→386  (-4%)
+    stringHash     169→162  (-4%)
+    factorial 5K   21→23    (+10% — slight regression)
+    100K alloc     13→13    (=)
+    instVar 1M     260→258  (=)
+  Real wins on floatSum/stringHash from accumulated optimizations
+  (T1/T2 dispatch, T4 inline, T20 mul).  Many earlier "wins"
+  during Q investigation were artifacts of trace overhead on
+  the baseline run.
 - ✅ T1: bitOp dispatch before bit 60.  Fires on synthetic bench.
 - ✅ T2: floatOp dispatch before bit 60.  Same fix.
 - ✅ T3: top-10 selector survey.  at:/at:put: dominate.
-- ✅ T4: basicNew 0-arg inline.  **3-6% wins** on multiple benches
-  (51K hits per bench-suite run).
+- ✅ T4: basicNew 0-arg inline.  Counter fires 51K hits per
+  run.  Bench-suite numbers later re-measured (after removing
+  trace overhead — see Q39 fix): fib 180, sum 290, dict 439,
+  floatSum 386 — comparable to no-T4 baseline.  Earlier 3-6%
+  "win" was largely noise from trace instrumentation overhead
+  on the control run.
 - ❌ T5: even-like predicate emit (15% regression, reverted).
 - ✅ T6: per-reason compile-fail counters (1M unsuppPrim found).
 - ✅ T7: SmI prims 10-13 added (100K fewer fails).
