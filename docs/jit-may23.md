@@ -263,7 +263,7 @@ specifically.  Next debug step: run under lldb with a
 breakpoint at the crashing instruction, single-step backward
 through the state setup to find the corruption.
 
-### Issue 4: counters that fire ZERO
+### Issue 4: counters that fire ZERO (INVESTIGATED 2026-05-22)
 
 Inline-prim stat dump shows several inline paths that never
 fire on Pharo bench workloads:
@@ -272,11 +272,34 @@ fire on Pharo bench workloads:
 - `bitOp` (bitwise prim ops 11/12/13/19)
 - `floatOp` (SmallFloat prim 21/22/23)
 
-The asmjit-T1 emits for these exist (lines 2705+ for 0x60/61
-arith, 4530+ for primFloatOp).  Inline emit is correct but
-not reached.  Each "zero counter" is potentially a multi-slot/
-retLit-style win waiting to be unlocked — investigate per
-case why the IC bit isn't being set.
+**Investigation conclusion**: all four counters share the SAME
+underlying cause, NOT separate wired-but-unreached patterns.
+They live in asmjit-T1 inline emits for specific bytecodes
+(0x60/0x61 SmI arith at line 2705+, primFloatOp at line 4530+).
+These emits fire only when the JIT-compiled method body
+**executes** the bytecode.
+
+For bench-suite workloads, the hot 0x60 / float-arith sends
+live in BLOCKS (e.g., floatSum's `[:e | s := s + e]`).  Blocks
+RUN VIA INTERP — `activateBlock` doesn't call
+`tryJITActivation`, so even when blocks compile via Step 13's
+threshold-of-2, the JIT body never executes.  interp's step()
+handles their bytecodes.
+
+This is **different** from the retLit unblock, which fired
+from JIT-compiled callers via the IC HIT machinery.  Those
+methods (`Object>>isInteger` etc.) were dispatched FROM JIT
+methods that DID compile and ran their IC HIT paths.
+
+**Fix**: Step 9-10 (block-value spec) — multi-day.  Either:
+- Add JIT entry to activateBlock (mirror activateMethod's
+  pattern), OR
+- Inline-BLR to block's JIT entry from the value: send site
+  in JIT-compiled callers, skipping primitive 207's
+  activateBlock entirely.
+
+The latter is the proper Step 9-10 implementation.  ~7-10
+days of work.
 
 ## Recommended priority order for next session
 
