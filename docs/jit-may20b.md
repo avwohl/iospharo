@@ -317,7 +317,42 @@ cycles ≈ 0.06 ms saved.  Plus inline IC fill (3 stores) saves
 ~0.01 ms.  Total < 0.1 ms — below noise floor.  Not worth the
 implementation cost in this turn.
 
-### 8.4 — deferred (multi-week, depends on Step 4)
+### 8.4 — dispatch infrastructure landed; Sista bail still blocks fib win
+
+**2026-05-21 update**: SISTA_BIT (bit 55) dispatch infrastructure
+landed (commit `753e9f9c`).  Bit-55 takes precedence over bit-60
+(J2J) in asmjit-T1's IC HIT path.  `patchJITICAfterSend` checks
+`sista::Runtime::lookupCompiled(method)` and sets the bit + fn ptr
+(bits 47:0) when Sista has compiled the resolved method.
+
+Currently DORMANT.  Status of Step 4 (Sista bail correctness):
+- Bench-correctness fib(20/28/30) with `PHARO_SISTA_COMPILE_BAIL_ONLY=1`
+  produces CORRECT results (the doc's claim of "hangs benchFib(5..12)"
+  is no longer accurate — Step 7's matRetSlot fix may have helped).
+- However, runs are UNRELIABLE: 0/5 PASS in a 30-second timeout
+  reproduction because the VM hangs at exit (shutdown path issue,
+  not bench logic).
+- Sista bail-only is also SLOWER than no-Sista for fib (24-36 ms
+  vs 8 ms steady-state) because Sista's send helper dispatch costs
+  more per-call than asmjit-T1's inline-J2J.
+
+**Conclusion**: To realize Step 8.4's potential win for fib, two
+issues still need fixing:
+1. Sista's per-send helper overhead (currently 3× slower than
+   inline-J2J for recursive sends).  Likely requires teaching Sista
+   to handle self-recursion inline rather than via the helper.
+2. Sista compile is currently triggered via `compile()` on every
+   method entry — a const-lookup-then-compile-once pattern would
+   reduce the overhead.
+
+The asmjit-T1 wire-up is ready for Step 4 follow-up — replace the
+`trySistaCall: a.b(dispatchCached)` stub with an inline BLR to the
+fn ptr when Step 4 makes Sista's lowering of recursive sends
+competitive.
+
+(Original Step 8.4 doc content follows.)
+
+
 
 After Steps 6+7, we're ~22 ms / fib(28) vs Cog's 3 ms. That's the
 per-activation cost gap. Breakdown:
