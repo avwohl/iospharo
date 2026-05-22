@@ -5,6 +5,7 @@
 | Step | Status | Commit |
 |---|---|---|
 | 4: IC probe walks slots 0-2 | infrastructure landed, default-off | `af79d497` |
+| 11: Trivial-forwarder IC collapse | DONE, default-on, **1-3% wins on 4 benches** | `5cb5566a` |
 | 13: Hot-loop JIT threshold | landed, default-on, no measurable bench impact | `74d37194` + `a9cad88d` |
 
 **Why Step 4 didn't ship default-on**: empirical bench-suite shows
