@@ -77,6 +77,54 @@ public:
         bcDispatchBailCounter_.clear();
     }
 
+    // jit-may22a B1 Sub-step 3: re-key the cache by translating old
+    // oop bits → new oop bits via a follow-forwarders callback.
+    // Called from Interpreter::recoverSistaAfterGC instead of reset()
+    // when PHARO_SISTA_REKEY_AFTER_GC=1.  Preserves benchFib's
+    // hints-bearing compile across compaction so kSendInlineSelf
+    // emits aren't lost.
+    template<typename FollowFn>
+    void rekeyAfterGC(FollowFn follow) {
+        std::unordered_map<uint64_t, Lowering::CompiledFn> newCache;
+        newCache.reserve(cache_.size());
+        for (auto& kv : cache_) {
+            uint64_t newKey = follow(kv.first);
+            if (newKey != 0) {
+                newCache[newKey] = kv.second;
+            }
+        }
+        cache_ = std::move(newCache);
+        // bcOffsetCache_: similar shape; rekey if non-empty.
+        if (!bcOffsetCache_.empty()) {
+            std::unordered_map<uint64_t,
+                std::unordered_map<uint32_t,
+                                    Lowering::CompiledFn>> newBcCache;
+            for (auto& kv : bcOffsetCache_) {
+                uint64_t newKey = follow(kv.first);
+                if (newKey != 0) {
+                    newBcCache[newKey] = std::move(kv.second);
+                }
+            }
+            bcOffsetCache_ = std::move(newBcCache);
+        }
+        // compiledHintless_ + spliceMethods_: re-translate sets too.
+        std::unordered_set<uint64_t> newHintless;
+        for (uint64_t k : compiledHintless_) {
+            uint64_t n = follow(k);
+            if (n != 0) newHintless.insert(n);
+        }
+        compiledHintless_ = std::move(newHintless);
+        std::unordered_set<uint64_t> newSplice;
+        for (uint64_t k : spliceMethods_) {
+            uint64_t n = follow(k);
+            if (n != 0) newSplice.insert(n);
+        }
+        spliceMethods_ = std::move(newSplice);
+        // The counter maps don't survive — they're rebuilt naturally.
+        backwardJumpCounters_.clear();
+        bcDispatchBailCounter_.clear();
+    }
+
     // Drop the cache entry for one method — but only if its compile
     // was done WITHOUT inline hints.  That way a method's first
     // (cold) Sista compile (which couldn't see the IC) is replaced

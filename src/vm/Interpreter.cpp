@@ -351,7 +351,30 @@ static size_t sistaRingHead_ = 0;
 static uint64_t sistaRingSeq_ = 0;
 
 void Interpreter::recoverSistaAfterGC() {
-    if (sistaRuntimeForGCHook_) sistaRuntimeForGCHook_->reset();
+    if (sistaRuntimeForGCHook_) {
+        // jit-may22a B1 Sub-step 3: opt-in to rekeying the Sista cache
+        // by following oop forwarders rather than clearing it.
+        // Preserves benchFib's hints-bearing compile (and its
+        // kSendInlineSelf emit) across Spur compaction.
+        static const bool rekeyMode =
+            std::getenv("PHARO_SISTA_REKEY_AFTER_GC") != nullptr;
+        if (rekeyMode) {
+            sistaRuntimeForGCHook_->rekeyAfterGC(
+                [this](uint64_t oldBits) -> uint64_t {
+                    Oop oldOop = Oop::fromRawBits(oldBits);
+                    if (!oldOop.isObject() || oldOop.rawBits() <= 0x10000) {
+                        return 0;
+                    }
+                    Oop newOop = memory_.followForwarded(oldOop);
+                    if (!newOop.isObject() || newOop.rawBits() <= 0x10000) {
+                        return 0;
+                    }
+                    return newOop.rawBits();
+                });
+        } else {
+            sistaRuntimeForGCHook_->reset();
+        }
+    }
     sistaGateCache_.clear();
     sistaBailCounter_.clear();
     for (size_t i = 0; i < kSistaRingSize; i++) sistaRing_[i] = {};
