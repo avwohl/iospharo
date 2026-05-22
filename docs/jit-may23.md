@@ -322,6 +322,26 @@ soak.  Don't try to do them in /goal-driven session iteration:
     instVar: 350→339   -3%
     stringHash: 196→191 -3%
   Real win.
+- ✅ **T6** (per-reason compile-failure counters).  Bench-suite:
+    badHeader=0  unsuppPrim=1028955  skipSel=0  block=0  bcOther=49
+  1M methods fail compile due to unsupported primitives.
+  Most likely fixable in T7 by adding generic prim-call
+  prologue + per-prim emit paths.  Multi-day.
+- ✅ **T20-partial** (inline SmI mul 0x68).  Added bytecode-level
+  inline emit for `*` (8 instructions: untag/mul/smulh/check/
+  retag).  Bench-suite: stringHash unchanged (in-block usage),
+  but infrastructure ready for any JIT-body `*`.
+
+## Session totals (latest /goal run)
+
+6 tasks done this session (T1, T2, T3, T4, T6, T20-partial).
+T4 delivers measurable bench-suite wins (3-6% across multiple
+benches via 51K basicNew0 inline hits).  Other tasks landed
+infrastructure or identified follow-up directions (T7 from T6
+findings).
+
+Remaining unchecked: T5, T7, T8, T9, T10, T11, T12, T13, T14,
+T15, T16, T17, T18, T19.
 
 ## Notes for the /goal-runner
 
