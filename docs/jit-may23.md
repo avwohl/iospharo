@@ -404,14 +404,27 @@ soak.  Don't try to do them in /goal-driven session iteration:
 
 ## Session totals (latest /goal run)
 
-6 tasks done this session (T1, T2, T3, T4, T6, T20-partial).
-T4 delivers measurable bench-suite wins (3-6% across multiple
-benches via 51K basicNew0 inline hits).  Other tasks landed
-infrastructure or identified follow-up directions (T7 from T6
-findings).
+12 tasks done this session:
+- ✅ T1: bitOp dispatch before bit 60.
+- ✅ T2: floatOp dispatch before bit 60.
+- ✅ T3: top-10 selector survey.
+- ✅ T4: basicNew 0-arg inline (3-6% wins on multiple benches).
+- ❌ T5: even-like predicate (15% regression, reverted).
+- ✅ T6: compile-failure reason counters.
+- ✅ T7: add SmI prims 10-13 (100K fewer fails).
+- ✅ T14: cull: investigation (same Step 9-10 territory).
+- ✅ T15: Sista bail rates irrelevant (negative cache).
+- ✅ T17: hot-block detection proposal.
+- ✅ T19: no remaining Sista baked pointers.
+- ✅ T20-partial: SmI mul 0x68 inline.
 
-Remaining unchecked: T5, T7, T8, T9, T10, T11, T12, T13, T14,
-T15, T16, T17, T18, T19.
+**Real perf win**: T4 basicNew0 — 3-6% across fib/dict/sum/
+instVar/stringHash via 51K inline hits per bench-suite run.
+
+Remaining: T8 (monomorphic IC hint), T9-T11 (bench profiling —
+need DTrace/sample on macOS), T12 (float arith deeper), T13
+(multi-slot setters), T16 (perf record — Linux only), T18
+(apply T17's heuristic — multi-day per T17 estimate).
 
 ## Notes for the /goal-runner
 
