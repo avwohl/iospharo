@@ -386,6 +386,13 @@ soak.  Don't try to do them in /goal-driven session iteration:
   up in-place above with concrete heuristic and effort
   estimate (5-7 days).  Pre-requisite for unblocking Issue 4's
   four zero-firing counters.
+- ✅ **T15** (Sista compile-bail rate).  Added trace counter
+  at `hasSend && !hasSplice` bail.  Result: zero traces even
+  at low threshold — Sista's compile-bail path isn't a hot
+  code path because negative caching (cache_[key]=nullptr)
+  means each method goes through compile once.  Subsequent
+  calls hit the negative cache and return immediately.  Not
+  a perf-relevant optimization target.
 - ❌ **T5** (even-like predicate `^ (self bitAnd: K) = C`).
   Pattern detected (975K matches per bench-suite — the `even`
   / `odd` predicate).  Inline emit attempted at bit 54, ~25
