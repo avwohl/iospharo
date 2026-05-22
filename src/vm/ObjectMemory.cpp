@@ -1440,6 +1440,28 @@ uint32_t ObjectMemory::generateHash() {
 // ===== GARBAGE COLLECTION =====
 
 GCResult ObjectMemory::scavenge() {
+    // jit-may23 Q11/Q12: time scavenge.
+    static uint64_t s_scavCycles = 0;
+    static uint64_t s_scavCount = 0;
+    static const bool timeIt = std::getenv("PHARO_TIME_GC") != nullptr;
+    uint64_t startTSC = 0;
+    if (timeIt) asm volatile("mrs %0, cntvct_el0" : "=r"(startTSC));
+    struct EndC {
+        bool active; uint64_t start;
+        ~EndC() {
+            if (active) {
+                uint64_t endTSC;
+                asm volatile("mrs %0, cntvct_el0" : "=r"(endTSC));
+                s_scavCycles += (endTSC - start);
+                s_scavCount++;
+                std::fprintf(stderr,
+                    "[Q11-SCAV] #%llu in %llu cycles (total %llu)\n",
+                    (unsigned long long)s_scavCount,
+                    (unsigned long long)(endTSC - start),
+                    (unsigned long long)s_scavCycles);
+            }
+        }
+    } endC{timeIt, startTSC};
     // Copying scavenge: tenure all reachable young objects to old
     // space, reset eden.  Unreachable young objects vanish when
     // eden is reset.

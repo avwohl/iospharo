@@ -29,12 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q11 — Measure scavenge GC time
-
-WHAT: how much bench-suite time is in scavenge?
-HOW: add a timed counter around `ObjectMemory::scavenge()`.
-DONE WHEN: ms total recorded.
-
 ### Q12 — Measure fullGC time
 
 WHAT: how much bench-suite time is in full GC?
@@ -130,6 +124,11 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q11**: scavenge fires ~8 times per bench-suite, 12-15M
+  cntvct cycles each, total ~100M cycles.  At cntvct's 24MHz
+  freq that's ~4 seconds — but cntfrq may be higher; needs
+  verification.  Order of magnitude: minor but measurable
+  fraction of bench-suite runtime.
 - ✅ **Q9/Q10**: 2-byte unrecognized patterns survey.
   Result: bench-suite has NO unrecognized 2-byte methods.
   Existing detectors (getter/setter/returnsSelf/retLit) catch
