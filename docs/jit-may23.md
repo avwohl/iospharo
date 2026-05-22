@@ -22,12 +22,96 @@ work pattern is:
 - **DO NOT write closing/wrap-up messages between tasks.**  No
   "Branch clean", no "Real progress made", no "Now T7 is next".
   Just do T7.
-- **The /goal hook clears only when the queue is empty.**
-  Period.  Keep working.
+- **The /goal hook NEVER clears.** The goal is to make the JIT
+  as fast as Cog.  If the queue empties, add more tasks based
+  on the latest findings and keep working.
 
 ## Queue
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
+
+### Q21 — Reduce primFullClosureValue overhead (Q1 finding)
+
+WHAT: prim207 is 94 cycles × 5.2M calls = dominant cost.  Look
+at the function body and identify any work that can be inlined
+or skipped for the common case.
+HOW: read primitiveFullClosureValue.  Identify the 3 most
+expensive sub-operations.  Document them in this doc.  Pick the
+cheapest-to-remove and remove it.
+DONE WHEN: a sub-op is removed AND bench-correctness 5/5 PASS.
+
+### Q22 — Reduce activateBlock overhead (Q2 finding)
+
+WHAT: activateBlock is 57 cycles = 60% of prim207.  Identify
+the most expensive line in its body.
+HOW: read activateBlock.  Look for loops, slot iterations,
+ObjectMemory calls.
+DONE WHEN: top-3 expensive operations documented.
+
+### Q23 — Identify why fullGC fires 13 times (Q12 finding)
+
+WHAT: bench-suite triggers fullGC 13 times.  Cog probably
+triggers it 0-2 times for the same workload.  Why?
+HOW: add a backtrace log when fullGC is called — show what
+triggered it (low memory? explicit call? compact threshold?).
+DONE WHEN: top trigger reason recorded.
+
+### Q24 — Reduce fullGC trigger frequency
+
+WHAT: based on Q23 finding, try to reduce the trigger.
+HOW: adjust the threshold or eliminate spurious calls.
+DONE WHEN: fullGC count drops to ≤5 on bench-suite without
+losing bench-correctness.
+
+### Q25 — Verify outer method JIT compile (Q13 finding)
+
+WHAT: focused bitShift bench's outer method `shiftLoop`
+doesn't reach JIT.  Why?
+HOW: add trace at JIT compile decision (countMap_ threshold
+check).  Run the focused bench, see what threshold shiftLoop
+hits.
+DONE WHEN: threshold-hit count + decision recorded.
+
+### Q26 — Lower JIT compile threshold for non-block methods
+
+WHAT: if Q25 shows shiftLoop got close to threshold but didn't
+reach, lower the threshold for methods (not blocks).
+HOW: find compile-threshold constant.  Test lowered value.
+DONE WHEN: focused bitShift bench has bitOp > 0 AND
+bench-suite shows no regression.
+
+### Q27 — Inline self-send when receiver type is known
+
+WHAT: benchFib has 3.5M activations — most are recursive self-
+sends.  J2J handles some but not all.  Quantify the unhandled
+fraction.
+HOW: add counter at the recursive-self-send path in asmjit-T1.
+DONE WHEN: hit count recorded.
+
+### Q28 — Investigate `at:` IC misses
+
+WHAT: `at:` is the #1 selector by IC patches (8.5M).  Are these
+all hits, or are there many polymorphic misses?
+HOW: add a trace at at: IC patch site logging the receiver
+class.  Count distinct classes.
+DONE WHEN: list of classes + count.
+
+### Q29 — Audit OSR (on-stack replacement) overhead
+
+WHAT: `[JIT] Stats: OSR=215195`.  OSR fires 215K times per
+bench-suite.  What's the per-OSR cost?
+HOW: add a timed counter around the OSR entry point.
+DONE WHEN: avg cycles recorded.
+
+### Q30 — Reduce IC miss rate (currently 14%)
+
+WHAT: IC hit rate is 86% — 14% miss.  Each miss costs ~100
+cycles in the chain-loop path.  At 9.5M sends, that's 1.3M
+misses × 100 = 130M cycles overhead.
+HOW: from Q16, top miss selectors are indexOf:/next:putAll:/
+objectAt: — polymorphic call sites.  Add a 2nd-class entry to
+the IC for polymorphic sites.
+DONE WHEN: miss rate drops, bench-correctness PASS.
 
 ## Closed
 
