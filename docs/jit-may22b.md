@@ -226,16 +226,42 @@ writes `state.ip = stale_addr + bcOffset`.  Subsequent
 error.  Manifests as "Message not understood: ByteString >>
 #encodeString:" — selector dispatch on a corrupted method oop.
 
-**The proper fix** requires changing Sista lowering to compute
-the IP address from `state.method` dynamically at deopt time
-instead of baking it.  ~4 sites, each needs ~6 instructions in
-place of the current 1-instruction baked-Imm.  Acceptable cost
-since deopt is the slow path.  A JITState field cache for
-`bytecodes_start` would amortize this — but the runtime needs to
-keep that field updated when method changes.
+**The bytecodeBase fix landed 2026-05-22** (`d7750fba`).  All
+13+ baked `bytecodeBase + bcOffset` sites in
+`SistaLowering_arm64.cpp` were converted to dynamic loads from
+`state.method`.  A `bytecodesHoisted` register is computed once
+at fn entry:
 
-Multi-day refactor (~6 lowering sites, runtime field plumbing,
-testing matrix across deopt + block dispatch).  Deferred.
+    methodObj = state.method
+    smiHdr    = *(methodObj + 8)
+    numLits   = (smiHdr >> 3) & 0x7FFF
+    bytecodes = methodObj + 16 + numLits*8
+
+Then each deopt site uses `add ipReg, bytecodesHoisted, Imm(bc)`.
+Cost: 5 instructions at fn entry vs 1-instr baked-Imm per site.
+Acceptable.
+
+**The rekey path STILL fails** with the same encodeString: bug
+even after the bytecodeBase fix.  So bytecodeBase wasn't the
+root cause.  Validation:
+
+- Default: 5/5 PASS.
+- Gate OFF: 5/5 PASS.
+- Bail-only no-rekey: 5/5 PASS.
+- Bail-only + rekey: still FAILS.
+
+The deeper root cause is not yet identified.  Possibilities:
+- Some other baked oop in lowering I haven't found.
+- Stale state in `compiledHintless_` or `spliceMethods_` after
+  rekey.
+- An asmjit-T1-side IC entry pointing to a Sista fn whose
+  baked metadata went stale.
+- Sista's compiled fn assumes some image-state invariant that
+  breaks across GC.
+
+Multi-day investigation deferred.  The bytecodeBase fix is
+preserved as correct infrastructure regardless of the rekey
+path's status.
 
 For now: rekey gated behind `PHARO_SISTA_REKEY_AFTER_GC=1`
 opt-in.  Default mode still resets the cache on every GC (loses
