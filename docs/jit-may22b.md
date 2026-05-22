@@ -70,10 +70,30 @@ asmjit-T1 multi-slot dispatch as Step 12 partial):
 - Step 12 (asmjit-T1 side): bit-57 multi-slot inline emit —
   `^ self[A] op1 self[B] op2 const` pattern detected via IC
   extras and emitted as ~30-instruction inline ARM64.
-  Default-on.  **Measured win**: fib(28) 188-194 ms with
-  multi-slot OFF → 178-180 ms with ON = ~6-8% faster.
-  Counter fires 668× per fib(28) — some method in the call
-  chain matches the pattern.
+  Default-on.
+- Step 12 followup: bit-58 returnsLiteral inline emit —
+  `^ nil/true/false/0/1` pattern, ~15-instruction emit.
+  Default-on.
+
+**Cumulative measurement** of THIS SESSION's two asmjit-T1
+inline emits (multi-slot + returnsLiteral) across bench-suite:
+
+    benchmark         off→on    delta
+    fib(28)           204→184   -9.8%
+    sort 100K         949→837   -11.8%
+    dict 50K          545→497   -8.8%
+    sum 1M            327→287   -12.2%
+    instVar 1M        283→255   -9.9%
+    100K alloc         15→12    -20.0%
+    floatSum 1M       441→383   -13.2%
+    stringHash 100K   180→163   -9.4%
+    collect 10x100K   566→510   -9.9%
+    select 10x100K    718→643   -10.4%
+
+**Average 10-15% across 10+ benches.**  First substantial perf
+win this session — the IC extras encoding had these patterns
+all along, but asmjit-T1 wasn't dispatching them.  Wiring up
+the dispatch + emit was ~100 lines of asmjit code per pattern.
 - Step 13: Hot-loop JIT threshold — default-on, infrastructure
   only (block-hot extension reverted — cold blocks pay
   compile cost).
