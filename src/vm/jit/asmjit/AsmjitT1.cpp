@@ -3223,9 +3223,38 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.orr(w4, w4, asmjit::Imm(0x80000000U));
             a.bind(haveKey);
 
-            a.ldr(x6, ptr(x5));               // icData[0]
+            a.ldr(x6, ptr(x5));               // icData[0] key
             a.cmp(x4, x6);
-            a.b_ne(miss);
+            // jit-may22b Step 4: walk IC slots 0-2 inline.  Slot-0
+            // monomorphic fast path stays minimal — branch on
+            // hit (predicted taken) to the existing probe-done
+            // continuation.  On slot-0 miss, walks slots 1-2 before
+            // bailing.  Catches ~12K cold-start polymorphic DUPs per
+            // bench-suite cold-start (jit-may20b Step 8.3 analysis)
+            // that previously paid a JIT→C++→JIT round-trip.
+            // Opt-out via PHARO_T1_NO_IC_POLY_WALK=1.
+            asmjit::Label probeDone = a.new_label();
+            if (g_debug.t1ICPolyWalk) {
+                asmjit::Label slot1Hit = a.new_label();
+                asmjit::Label checkSlot2 = a.new_label();
+                a.b_eq(probeDone);              // slot 0 hit (common)
+                // Slot 1
+                a.ldr(x6, ptr(x5, 24));
+                a.cmp(x4, x6);
+                a.b_eq(slot1Hit);
+                // Slot 2
+                a.ldr(x6, ptr(x5, 48));
+                a.cmp(x4, x6);
+                a.b_ne(miss);
+                a.add(x5, x5, asmjit::Imm(48));
+                a.b(probeDone);
+                a.bind(slot1Hit);
+                a.add(x5, x5, asmjit::Imm(24));
+                a.bind(probeDone);
+            } else {
+                a.b_ne(miss);
+                a.bind(probeDone);
+            }
             // jit-may20b Step 8.1: removed `cbz x4, miss` safety check.
             // Verified safe — no receiver computes classKey=0.
             // (Original Step 8.1 included an unrelated nArgs==0 sub elision

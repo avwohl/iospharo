@@ -126,6 +126,14 @@ struct DebugSettings {
     // vs ~500 cycle chain-loop round-trip.  Could benefit sort/dict/sum.
     // Default-on; PHARO_T1_NO_INLINE_PRIM_AT=1 opt-out.
     bool t1InlinePrimAt = true;
+    // jit-may22b Step 4: walk IC slots 0-2 in the inline probe instead
+    // of bailing on slot-0 miss.  In theory catches ~12K cold-start
+    // polymorphic DUPs.  In practice 1-3% slowdown across most benches
+    // because the extra 4 instructions on slot-0-hit's fall-through
+    // outweigh the rare polymorphic-hit savings.  Default-OFF until
+    // a workload that actually benefits is found.
+    // PHARO_T1_IC_POLY_WALK=1 opt-in.
+    bool t1ICPolyWalk = false;
     // jit-may20b Step 10: inline-prim 18 (basicNew:) at the IC HIT site
     // for nArgs == 1 sends.  Routes to a runtime helper that calls
     // primitiveNewWithArg directly from the JIT, skipping the
