@@ -83,6 +83,7 @@ constexpr int OFF_RECEIVER     = 8;
 constexpr int OFF_LITERALS     = 16;
 constexpr int OFF_TEMPBASE     = 24;
 constexpr int OFF_IP           = 48;
+constexpr int OFF_METHOD       = 64;
 constexpr int OFF_EXIT         = 76;
 constexpr int OFF_RETVAL       = 80;
 constexpr int OFF_ICDATAPTR    = 96;
@@ -187,6 +188,28 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     Gp litBaseHoisted = cc.new_gp64("litBaseH");
     cc.ldr(litBaseHoisted, ptr(state, OFF_LITERALS));
 
+    // jit-may22b Step 1 literal-patch fix: hoist bytecodes_start
+    // dynamically from state.method at fn entry, so deopt sites
+    // get the CURRENT method's bytecodes pointer (not a stale
+    // baked one).  Layout:
+    //   methodObj + 0:  ObjectHeader (8 bytes, classIndex/etc)
+    //   methodObj + 8:  slot 0 = SmI method header (numLits etc)
+    //   methodObj + 16: slot 1 = literal 0
+    //   methodObj + 16 + numLits*8: bytecodes
+    Gp bytecodesHoisted = cc.new_gp64("bcStart");
+    if (bytecodeBase) {
+        Gp methObjReg = cc.new_gp64("bcMeth");
+        Gp hdrReg = cc.new_gp64("bcHdr");
+        Gp numLitsReg = cc.new_gp64("bcNumLits");
+        cc.ldr(methObjReg, ptr(state, OFF_METHOD));
+        cc.ldr(hdrReg, ptr(methObjReg, 8));               // slot 0 = SmI header
+        cc.lsr(numLitsReg, hdrReg, Imm(3));
+        cc.and_(numLitsReg, numLitsReg, Imm(0x7FFF));
+        cc.add(bytecodesHoisted, methObjReg, Imm(16));    // skip ObjHeader + slot 0
+        cc.add(bytecodesHoisted, bytecodesHoisted,
+               numLitsReg, asmjit::a64::lsl(3));          // + nLits*8
+    }
+
     // Pre-load every literal that's actually referenced by a
     // kLoadLiteral.  Literals never change during a call, so caching
     // them in virtual regs lets asmjit keep hot ones (loop bounds,
@@ -269,10 +292,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         // Read sstate.ip into a register and compute bcOff.
         Gp ipReg = cc.new_gp64("dispIp");
         cc.ldr(ipReg, ptr(state, OFF_IP));
-        Gp baseReg = cc.new_gp64("dispBase");
-        cc.mov(baseReg, Imm((uint64_t)(uintptr_t)bytecodeBase));
         Gp bcOffReg = cc.new_gp64("dispBcOff");
-        cc.sub(bcOffReg, ipReg, baseReg);
+        cc.sub(bcOffReg, ipReg, bytecodesHoisted);
 
         for (const auto& entry : method.dispatchableBlocks) {
             uint32_t targetBcOff = entry.first;
@@ -611,9 +632,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // state.ip = bcOffset (or absolute pointer with base)
                 Gp ipReg = cc.new_gp64("ip");
                 if (bytecodeBase) {
-                    uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
-                                   + bcOffset;
-                    cc.mov(ipReg, Imm((uint64_t)addr));
+                    if (bcOffset == 0) {
+                        cc.mov(ipReg, bytecodesHoisted);
+                    } else {
+                        cc.add(ipReg, bytecodesHoisted, Imm((int)bcOffset));
+                    }
                 } else {
                     cc.mov(ipReg, Imm(bcOffset));
                 }
@@ -711,9 +734,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
                 Gp ipReg = cc.new_gp64("ip");
                 if (bytecodeBase) {
-                    uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
-                                   + bcOffset;
-                    cc.mov(ipReg, Imm((uint64_t)addr));
+                    if (bcOffset == 0) {
+                        cc.mov(ipReg, bytecodesHoisted);
+                    } else {
+                        cc.add(ipReg, bytecodesHoisted, Imm((int)bcOffset));
+                    }
                 } else {
                     cc.mov(ipReg, Imm(bcOffset));
                 }
@@ -990,9 +1015,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("ovip");
                     if (bytecodeBase) {
-                        uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
-                                       + bcOffset;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bcOffset == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bcOffset));
+                        }
                     } else {
                         cc.mov(ipReg, Imm(bcOffset));
                     }
@@ -1121,9 +1148,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 uint32_t bcOffset = (uint32_t)v.literal;
                 Gp ipReg = cc.new_gp64("fp_ip");
                 if (bytecodeBase) {
-                    uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
-                                   + bcOffset;
-                    cc.mov(ipReg, Imm((uint64_t)addr));
+                    if (bcOffset == 0) {
+                        cc.mov(ipReg, bytecodesHoisted);
+                    } else {
+                        cc.add(ipReg, bytecodesHoisted, Imm((int)bcOffset));
+                    }
                 } else {
                     cc.mov(ipReg, Imm(bcOffset));
                 }
@@ -1297,10 +1326,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
                     Gp ipReg = cc.new_gp64("send_ip_dz");
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase)
-                            + bcOffset;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bcOffset == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bcOffset));
+                        }
                     } else {
                         cc.mov(ipReg, Imm(bcOffset));
                     }
@@ -1407,10 +1437,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
                     Gp ipReg = cc.new_gp64("ssend_ip_dz");
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase)
-                            + bcOffset;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bcOffset == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bcOffset));
+                        }
                     } else {
                         cc.mov(ipReg, Imm(bcOffset));
                     }
@@ -1486,9 +1517,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // verify the encoding.
                 Gp ipReg = cc.new_gp64("ip");
                 if (bytecodeBase) {
-                    uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
-                                   + bcOffset;
-                    cc.mov(ipReg, Imm((uint64_t)addr));
+                    if (bcOffset == 0) {
+                        cc.mov(ipReg, bytecodesHoisted);
+                    } else {
+                        cc.add(ipReg, bytecodesHoisted, Imm((int)bcOffset));
+                    }
                 } else {
                     cc.mov(ipReg, Imm(bcOffset));
                 }
@@ -1564,10 +1597,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     Gp ipReg = cc.new_gp64("ip_dz");
                     uint64_t bcOff = v.literal;
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase)
-                            + bcOff;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bcOff == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bcOff));
+                        }
                     } else {
                         cc.mov(ipReg, Imm(bcOff));
                     }
@@ -1685,10 +1719,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     Gp ipReg = cc.new_gp64("ip_az");
                     uint64_t bcOff = v.literal;
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase)
-                            + bcOff;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bcOff == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bcOff));
+                        }
                     } else {
                         cc.mov(ipReg, Imm(bcOff));
                     }
@@ -1850,10 +1885,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     Gp ipReg = cc.new_gp64("ip_apz");
                     uint64_t bcOff = v.literal;
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase)
-                            + bcOff;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bcOff == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bcOff));
+                        }
                     } else {
                         cc.mov(ipReg, Imm(bcOff));
                     }
@@ -1989,10 +2025,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // Path 2 — bail-to-interpreter (default).
                 Gp ipReg = cc.new_gp64("ip");
                 if (bytecodeBase) {
-                    uintptr_t addr =
-                        reinterpret_cast<uintptr_t>(bytecodeBase)
-                        + bcOffset;
-                    cc.mov(ipReg, Imm((uint64_t)addr));
+                    if (bcOffset == 0) {
+                        cc.mov(ipReg, bytecodesHoisted);
+                    } else {
+                        cc.add(ipReg, bytecodesHoisted, Imm((int)bcOffset));
+                    }
                 } else {
                     cc.mov(ipReg, Imm(bcOffset));
                 }
@@ -2194,9 +2231,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("loop_dz_ip");
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bc == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bc));
+                        }
                     } else {
                         cc.mov(ipReg, Imm((uint64_t)bc));
                     }
@@ -2764,9 +2803,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("inj_dz_ip");
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bc == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bc));
+                        }
                     } else {
                         cc.mov(ipReg, Imm((uint64_t)bc));
                     }
@@ -3368,9 +3409,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("iv_dz_ip");
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bc == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bc));
+                        }
                     } else {
                         cc.mov(ipReg, Imm((uint64_t)bc));
                     }
@@ -3734,9 +3777,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("ivd_dz_ip");
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bc == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bc));
+                        }
                     } else {
                         cc.mov(ipReg, Imm((uint64_t)bc));
                     }
@@ -4014,9 +4059,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("acc_dz_ip");
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bc == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bc));
+                        }
                     } else {
                         cc.mov(ipReg, Imm((uint64_t)bc));
                     }
@@ -4277,9 +4324,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("ivacc_dz_ip");
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bc == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bc));
+                        }
                     } else {
                         cc.mov(ipReg, Imm((uint64_t)bc));
                     }
@@ -4406,9 +4455,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 auto emitDeopt = [&]() {
                     Gp ipReg = cc.new_gp64("wt_dz_ip");
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (deoptBC == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)deoptBC));
+                        }
                     } else {
                         cc.mov(ipReg, Imm((uint64_t)deoptBC));
                     }
@@ -4696,9 +4747,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("col_dz_ip");
                     if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
+                        if (bc == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted, Imm((int)bc));
+                        }
                     } else {
                         cc.mov(ipReg, Imm((uint64_t)bc));
                     }
