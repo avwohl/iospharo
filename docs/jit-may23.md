@@ -29,22 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q4 — List top 10 methods by activation count
-
-WHAT: which methods are activated most frequently?  We're
-optimizing for the hot path.
-HOW: extend the existing PHARO_TRACE_TOP_SELECTORS to count
-ACTIVATIONS (not IC patches) per method.  Run bench-suite,
-dump top 10.
-DONE WHEN: top 10 list is in this doc under `## Closed`.
-
-### Q5 — Find activation count of `value:` method
-
-WHAT: extracted from Q4 — `value:` activations are the block
-invocation count.  Quantify.
-HOW: from Q4's output.
-DONE WHEN: number recorded.
-
 ### Q6 — Add inline emit for SmI `<` (0x62) as full arith
 
 WHAT: 0x62 is currently in the comparison branch (csel
@@ -190,6 +174,12 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q4/Q5**: Top 10 activations on bench-suite:
+    benchFib 3.5M  at: 1.4M  between:and: 1.3M  size 1.0M
+    value: 1.0M  digitValue: 728K  byteAt:put: 728K  new 603K
+    abs 600K  hash 400K
+  value: is 1M — confirms Q1's 5.2M block invocations include
+  value:, value:value:, etc. across the suite.
 - ✅ **Q3**: step() bytecode dispatch is NOT a bottleneck.
   Timed counter never fires during bench-suite — bench-suite is
   almost entirely JIT-executed.  step() only runs for startup

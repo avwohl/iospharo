@@ -8441,6 +8441,27 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // jit-may23 Q4: per-method activation counter.
+    if (std::getenv("PHARO_TRACE_TOP_ACTIVATIONS")
+            && method.isObject() && method.rawBits() > 0x10000) {
+        static std::unordered_map<std::string, uint64_t> actCounts;
+        static std::atomic<int> n{0};
+        std::string sel = memory_.selectorOf(method);
+        actCounts[sel]++;
+        int nn = ++n;
+        if ((nn & 0x3FFFFF) == 0) {  // every 4M
+            std::vector<std::pair<std::string, uint64_t>> vec(
+                actCounts.begin(), actCounts.end());
+            std::sort(vec.begin(), vec.end(),
+                [](auto& a, auto& b){ return a.second > b.second; });
+            std::fprintf(stderr, "[Q4-TOP-ACTIVATIONS]\n");
+            for (size_t i = 0; i < vec.size() && i < 10; i++) {
+                std::fprintf(stderr, "  %s = %llu\n",
+                    vec[i].first.c_str(),
+                    (unsigned long long)vec[i].second);
+            }
+        }
+    }
     // Diagnostic: count activations of `value:` and CompiledBlock targets.
     if (std::getenv("PHARO_TRACE_VALUE_ACT") && method.isObject()
             && method.rawBits() > 0x10000) {
