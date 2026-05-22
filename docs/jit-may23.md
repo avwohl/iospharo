@@ -29,14 +29,6 @@ work pattern is:
 
 Each task has: `WHAT`, `HOW (one concrete action)`, `DONE WHEN`.
 
-### Q15 — Top 5 bytecodes by interp execution count
-
-WHAT: which bytecodes execute most frequently in interp on
-bench-suite?
-HOW: add a per-bytecode counter in step() (just an array of
-256 counters, increment by op).  Dump top 5 at exit.
-DONE WHEN: top 5 recorded.
-
 ### Q16 — Top 5 IC-MISS selectors
 
 WHAT: selectors that miss the IC most often — candidates for
@@ -99,6 +91,10 @@ DONE WHEN: bench-correctness PASS, counter fires.
   60% of primFullClosureValue's time is in activateBlock itself
   (the C++ frame setup); 40% in the rest of prim207 (numArgs check,
   receiver fetch, primitive dispatch).
+- ✅ **Q15**: step() runs < 65536 times during bench-suite —
+  same finding as Q3.  Interp-level bytecode dispatch isn't a
+  bottleneck.  bench-suite runs almost entirely in JIT-compiled
+  code.
 - ✅ **Q14**: audited inlinePrimKind list (Interpreter.cpp:18271+).
   Covers SmI arith (1-9), bitOps (14/15/16/17 = primKind 11-13/19),
   identityHash (75), Array at/atPut/size (60-62), basicNew(:) (70/71),
