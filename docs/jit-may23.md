@@ -238,6 +238,46 @@ workloads have Sista as bailout).
 
 ### T17 — Document mechanism for selective hot-block detection
 
+**Proposal** (jit-may23 T17 result):
+
+The problem: `activateBlock` (Interpreter.cpp:9748+) doesn't
+call `tryJITActivation` like `activateMethod` does.  So blocks
+run via interp's step() loop even after they JIT-compile.
+Earlier attempt (Issue 5) to retrofit broke bench-correctness
+because activateBlock has block-specific state setup
+(closure_, homeFrameDepth, savedFrames_[fd-1].homeFrameDepth,
+etc.) that conflicts with tryJITActivation's frame model.
+
+Heuristic for selective compilation (avoiding the cold-blocks-
+pay-compile-cost regression):
+
+1. **Track per-block activation count** in noteMethodEntry
+   (already does this via countMap_).
+2. **Wait for higher threshold than methods.**  Methods compile
+   at threshold=2; blocks could wait for threshold=10 or 20.
+   Cold blocks (error handlers, config) typically activate
+   1-3 times.  Hot blocks (collect:, do:, sort: comparators)
+   activate hundreds.
+3. **At block compile time**, ALSO populate a new
+   `block→jitFn` map (separate from methodMap).
+4. **At asmjit-T1's value: send IC HIT**, check if the
+   cached compiledBlock has an entry in the block→jitFn
+   map.  If yes, BLR directly to the JIT body (skipping
+   primitive 207 + activateBlock).
+
+Crucial subtleties:
+- **Block frame setup before JIT body**: closure_, outerContext,
+  receiver_, framePointer_, instructionPointer_, bytecodeEnd_
+  must all be initialised.  Either embed this in the BLR
+  prologue (asmjit emit) OR in a C++ helper called before BLR.
+- **NLR**: ^value from a block triggers non-local return.
+  Must work from JIT body the same as from interp.
+- **Deopt**: if Sista's compiled fn deopts mid-block, interp
+  has to resume mid-bytecode.  Same as method deopt.
+
+Effort estimate: 5-7 days.  Pre-requisite for unblocking the
+4 zero-firing counters identified in Issue 4.
+
 **Goal**: blocks run in interp because activateBlock doesn't
 JIT-dispatch.  Cold blocks paid compile cost when force-
 compiled (Issue 5).  Find a heuristic to compile ONLY hot
@@ -342,6 +382,10 @@ soak.  Don't try to do them in /goal-driven session iteration:
   nArgs, slotIdx) or C function pointers (jit_rt_*).  Both
   GC-stable.  No remaining baked-pointer issues beyond what
   jit-may22b fixed (bytecodeBase).
+- ✅ **T17** (selective hot-block detection proposal).  Written
+  up in-place above with concrete heuristic and effort
+  estimate (5-7 days).  Pre-requisite for unblocking Issue 4's
+  four zero-firing counters.
 - ❌ **T5** (even-like predicate `^ (self bitAnd: K) = C`).
   Pattern detected (975K matches per bench-suite — the `even`
   / `odd` predicate).  Inline emit attempted at bit 54, ~25
