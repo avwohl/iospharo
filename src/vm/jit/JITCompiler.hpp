@@ -116,6 +116,15 @@ public:
     // compaction via clearSendSiteMap().
     const std::vector<uint16_t>* getSendSiteBCOffsets(uint64_t compiledMethodBits) const;
 
+    // jit-84 B1: setter so asmjit-T1 can populate the map alongside
+    // the stencil-based path.  Without this, extractInlineHintsForMethod
+    // returns empty for asmjit-T1-compiled methods, blocking Sista's
+    // self-rec recognition.
+    void setSendSiteBCOffsets(uint64_t compiledMethodBits,
+                               std::vector<uint16_t> offsets) {
+        sendSiteMap_[compiledMethodBits] = std::move(offsets);
+    }
+
     // Drop every entry — called from JITRuntime::recoverAfterGC after
     // Oop bits change.  The map is an optimization only; T2 falls
     // back to private IC buffers when lookup returns nullptr.

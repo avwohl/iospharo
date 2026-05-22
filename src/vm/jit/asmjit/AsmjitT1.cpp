@@ -5606,6 +5606,23 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 siteSlots[IC_SELBITS_SLOT] = selBits;
             }
         }
+
+        // jit-84 B1: populate sendSiteMap_ in the shared JITCompiler so
+        // Interpreter::extractInlineHintsForMethod can map sendIdx →
+        // bcOffset for hint generation.  Without this, hints are empty
+        // for asmjit-T1-compiled methods, and Sista's self-rec
+        // recognition never fires.
+        if (interp.jitRuntime().compiler()) {
+            std::vector<uint16_t> bcOffsets;
+            bcOffsets.reserve(numSendSites);
+            for (size_t i = 0; i < bcLen; i++) {
+                if (isPhase4SendOp(bc[i])) {
+                    bcOffsets.push_back(static_cast<uint16_t>(i));
+                }
+            }
+            interp.jitRuntime().compiler()->setSendSiteBCOffsets(
+                compiledMethod.rawBits(), std::move(bcOffsets));
+        }
     }
     platform::flushICache(jm->codeStart(), emitted);
     jm->state = MethodState::Compiled;

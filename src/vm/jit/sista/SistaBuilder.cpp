@@ -4631,6 +4631,57 @@ private:
                     continue;
                 }
 
+                // jit-84 B1: self-recursive send recognition.  If the IC
+                // hint at this bcOffset says the target method is the
+                // SAME method being lifted, emit kSendInlineSelf and
+                // continue lifting (treating it like kSendCallHelper:
+                // value-producing, not a terminator).  The lowering
+                // currently falls through to kSendCallHelper behaviour,
+                // but the recognised op makes future inline-tail-call
+                // lowering a localized patch.
+                bool isSelfRec = false;
+                if (selfMethodBits_ != 0 && inlineHints_) {
+                    for (const auto& h : *inlineHints_) {
+                        if (h.bcOffset == bcOffset
+                                && h.targetMethod == selfMethodBits_) {
+                            isSelfRec = true;
+                            break;
+                        }
+                    }
+                }
+                if (isSelfRec) {
+                    // Mirror the kSendCallHelper emit path: pop only
+                    // rcvr+args, push result, continue lifting.
+                    std::vector<uint32_t> deoptStack = stack_;
+                    std::vector<uint32_t> sendOps;
+                    sendOps.reserve(nArgs + 1);
+                    for (uint32_t i = 0; i < nArgs + 1; i++) {
+                        sendOps.push_back(
+                            stack_[stack_.size() - nArgs - 1 + i]);
+                    }
+                    for (uint32_t i = 0; i < nArgs + 1; i++) {
+                        stack_.pop_back();
+                    }
+                    uint64_t lit =
+                        static_cast<uint64_t>(selIdx)
+                      | (static_cast<uint64_t>(nArgs)    << 32)
+                      | (static_cast<uint64_t>(bcOffset) << 48);
+                    uint32_t vid = out_.newValue(currentBlock_,
+                                                  Op::kSendInlineSelf,
+                                                  Type::kOop,
+                                                  std::move(sendOps),
+                                                  lit);
+                    out_.framepoints.push_back({
+                        vid,
+                        static_cast<uint16_t>(bcOffset),
+                        std::move(deoptStack),
+                    });
+                    g_totalSendsLifted++;
+                    stack_.push_back(vid);
+                    ip++;
+                    continue;
+                }
+
                 // Default path: bail flushes the ENTIRE IR stack to
                 // state.sp so the interpreter sees every value
                 // simulated-pushed by compiled code.  Compiled
