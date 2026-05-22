@@ -5,6 +5,47 @@ commits `ca6bfdfb` + `e68aa61d`) from "falls through to
 kSendCallHelper" to a real inline tail-call that bypasses
 `jit_rt_sista_call_send` entirely.
 
+## Implementation progress (2026-05-22)
+
+| Sub-step | Status | Commits |
+|---|---|---|
+| 1: Save-stack data structures | **DONE** | `6e0177cc` |
+| 2: Helper lowering (gated) | **DONE** | `2be9875f` |
+| 3: Full fib(28) perf measurement | **blocked** by GC-hint loss | — |
+| 4: Deopt walking | **implicit** (each save level self-pops) | — |
+| 5: GC visiting save receivers | **DONE** | `7f606a05` |
+| 6: Default-on flag flip | **deferred** until 3 works | — |
+
+What's done: full IR-to-emit-to-helper plumbing.
+`PHARO_SISTA_INLINE_SELF=1` enables the new helper; off (default)
+falls back to `jit_rt_sista_call_send`.  Bench-correctness fib
+20/28/30 PASS in all 3 modes (default, bail-only without
+inline-self, bail-only with inline-self).
+
+What's blocking Sub-step 3 (the actual perf win):
+- Sista's cache is cleared on every GC (raw oop keys go stale
+  across Spur compaction).  After GC, benchFib's hints-bearing
+  compile gets re-compiled without hints (because the recompile
+  fires before T1 IC re-extracts hints), losing `kSendInlineSelf`
+  emit.  Net: my helper rarely gets routed even with the flag on.
+
+Resolving Sub-step 3 requires either:
+1. Sista cache survival across GC (Phase 5-style oop-update
+   walking).
+2. Forcing immediate re-extract of hints after GC.
+3. Caching the per-method `kSendInlineSelf` site list
+   externally — re-applied on every compile regardless of hints.
+
+Each is multi-day Sista-side work.  Out of scope for this iteration.
+
+The hardest part of B1 — the save-stack contract that doesn't
+clobber Sista's existing deopt path — is solved by **using a
+runtime helper instead of a true inline BR**.  The helper's
+recursive `fn(state)` call grows the C stack by one frame per
+level (~10 KB max for fib(28) depth 28), but avoids the asmjit
+Compiler API complexity of self-recursive inline branches.
+
+
 ## Where we are
 
 Status when this plan was written:
