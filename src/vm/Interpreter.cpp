@@ -18068,6 +18068,56 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
 
+    // jit-may22b Step 11: trivial-forwarder collapse.
+    // If the resolved method's body is exactly `^ self foo: anInteger`
+    // (pushReceiver + pushTemp + Send1 + returnTop), bypass the
+    // wrapper and cache the forwardee directly.  Future IC HITs skip
+    // a method activation per allocation, getter chain, etc.
+    //
+    // Most common case: Behavior>>new: forwards to basicNew:.
+    // Array new: 10 → resolves Behavior>>new: → collapses to
+    // basicNew: → asmjit-T1's inline-prim 18 fires on the IC HIT.
+    static const bool fwdCollapseOff =
+        std::getenv("PHARO_NO_FWD_COLLAPSE") != nullptr;
+    if (!fwdCollapseOff) {
+        // Bounded re-resolve loop (cap depth at 3 in case of pathological
+        // multi-level wrappers).
+        for (int depth = 0; depth < 3; depth++) {
+            if (!resolvedMethod.isObject()
+                    || resolvedMethod.rawBits() < 0x10000) break;
+            ObjectHeader* mh = resolvedMethod.asObjectPtr();
+            if (!mh->isCompiledMethod()) break;
+            Oop hdrOop = memory_.fetchPointer(0, resolvedMethod);
+            if (!hdrOop.isSmallInteger()) break;
+            int64_t hb = hdrOop.asSmallInteger();
+            int numArgs = (int)((hb >> 24) & 0x0F);
+            int numLits = (int)(hb & 0x7FFF);
+            if (numArgs != 1) break;  // Forwarder takes exactly 1 arg.
+            uint8_t* bytes = mh->bytes();
+            size_t bcStart = (1 + numLits) * 8;
+            size_t totalBytes = mh->byteSize();
+            if (totalBytes < bcStart + 4) break;
+            size_t bcLen = totalBytes - bcStart;
+            if (bcLen != 4) break;
+            const uint8_t* bc = bytes + bcStart;
+            // Pattern: 0x4C 0x40 <Send1 op> 0x5C
+            if (bc[0] != 0x4C || bc[1] != 0x40
+                    || bc[2] < 0x90 || bc[2] > 0x9F
+                    || bc[3] != 0x5C) break;
+            int litIdx = bc[2] & 0x0F;
+            if (litIdx >= numLits) break;
+            Oop fwdSel = memory_.fetchPointer(1 + litIdx, resolvedMethod);
+            if (!fwdSel.isObject() || fwdSel.rawBits() < 0x10000) break;
+            Oop rcvrClass = memory_.classOf(receiver);
+            Oop fwdMethod = lookupMethod(fwdSel, rcvrClass);
+            if (!fwdMethod.isObject() || fwdMethod.rawBits() < 0x10000
+                    || fwdMethod.asObjectPtr()->classIndex()
+                            != compiledMethodClassIndex_) break;
+            resolvedMethod = fwdMethod;
+            selector = fwdSel;  // Update selector so downstream consistency.
+        }
+    }
+
     // 2026-05-03: IC data moved out of MAP_JIT into heap-side
     // icBuffer.  No W^X flip needed.
 
