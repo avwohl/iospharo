@@ -52,7 +52,8 @@ correct and ready; the win waits on either:
 
 ## Final progress summary (2026-05-22 session)
 
-**5 of 15 steps with infrastructure landed**:
+**6 of 15 steps with infrastructure landed** (counting the
+asmjit-T1 multi-slot dispatch as Step 12 partial):
 - Step 1: Sista cache GC integration — **production-complete**
   (rekey wires + bytecodeBase dynamic-load fix + scavenge rekey).
   Default-off via PHARO_SISTA_REKEY_AFTER_GC=1 until Steps 2-3
@@ -66,6 +67,12 @@ correct and ready; the win waits on either:
 - Step 11: Trivial-forwarder collapse — 4 patterns supported,
   fires ZERO times on Pharo 13 image (canonical Behavior>>new:
   uses cascade with initialize, not pure forwarder).
+- Step 12 (asmjit-T1 side): bit-57 multi-slot inline emit —
+  `^ self[A] op1 self[B] op2 const` pattern detected via IC
+  extras and emitted as ~30-instruction inline ARM64 (slot
+  reads + tagged SmI arith + overflow check).  Default-on.
+  No measurable bench impact (pattern not common in bench-suite
+  workloads); infrastructure ready for future workloads.
 - Step 13: Hot-loop JIT threshold — default-on, infrastructure
   only (block-hot extension reverted — cold blocks pay
   compile cost).
