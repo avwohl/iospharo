@@ -78,6 +78,7 @@ extern "C" uint64_t g_t1SistaDispatch_hits;
 extern "C" uint64_t g_t1SistaDispatch_attempts;
 extern "C" uint64_t g_t1MultiSlot_hits = 0;
 extern "C" uint64_t g_t1MultiSlot_bails = 0;
+extern "C" uint64_t g_t1ReturnsLiteral_hits = 0;
 
 // Counters for inline-prim 18 dispatch (PHARO_T1_INLINE_PRIM_COUNTERS=1).
 extern "C" uint64_t g_primBasicNew_hits  = 0;
@@ -3351,6 +3352,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // SmI receiver for primKind bitwise dispatch.
                 {
                     asmjit::Label fallSmIBranch = a.new_label();
+                    // jit-may22b: dispatch returnsLiteral (bit 58)
+                    // BEFORE the heap/SmI split so it works for both
+                    // (SmI Integer>>isInteger etc. is the common case).
+                    if (nArgs == 0 && g_debug.t1InlineReturnsLiteral) {
+                        a.tbnz(x7, asmjit::Imm(58), tryReturnsLiteral);
+                    }
                     a.tst(x1, asmjit::Imm(0x7));
                     if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
                         a.b_ne(fallSmIBranch);
@@ -3367,9 +3374,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     if (g_debug.t1InlineReturnsSelf) {
                         a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
                     }
-                    if (nArgs == 0 && g_debug.t1InlineReturnsLiteral) {
-                        a.tbnz(x7, asmjit::Imm(58), tryReturnsLiteral);
-                    }
+                    // returnsLiteral (bit 58) dispatched before
+                    // the heap/SmI split above.
                     if (nArgs == 0 && g_debug.t1InlineMultiSlot) {
                         a.tbnz(x7, asmjit::Imm(57), tryMultiSlot);
                     }
@@ -4174,6 +4180,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             a.b(endOfSend);
 
+            // === returnsLiteral helper (counter bump) ===
+            auto bumpRetLitCounter = [&]() {
+                a.mov(x14, asmjit::Imm((uint64_t)&g_t1ReturnsLiteral_hits));
+                a.ldr(x15, ptr(x14));
+                a.add(x15, x15, asmjit::Imm(1));
+                a.str(x15, ptr(x14));
+            };
             // === returnsLiteral (bit 58, nArgs==0 only) ===
             // jit-may22b: pattern `^ <literal>` where literal is one
             // of nil/true/false/0/1.  bits 48-50 of extras encode:
@@ -4183,6 +4196,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // literal value).
             if (nArgs == 0) {
                 a.bind(tryReturnsLiteral);
+                bumpRetLitCounter();
                 // Extract kind from bits 48-50 → x6.
                 a.lsr(x6, x7, asmjit::Imm(48));
                 a.and_(x6, x6, asmjit::Imm(7));

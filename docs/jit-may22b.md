@@ -73,27 +73,23 @@ asmjit-T1 multi-slot dispatch as Step 12 partial):
   Default-on.
 - Step 12 followup: bit-58 returnsLiteral inline emit —
   `^ nil/true/false/0/1` pattern, ~15-instruction emit.
-  Default-on.
+  Default-on but currently NEVER FIRES — bit 58 is set only
+  when PHARO_RETLIT=1 (default-off in patchJITICAfterSend).
+  Infrastructure in tree; future PHARO_RETLIT=default-on flip
+  unlocks the emit.
 
-**Cumulative measurement** of THIS SESSION's two asmjit-T1
-inline emits (multi-slot + returnsLiteral) across bench-suite:
+**Multi-slot measurement** (5-run averages):
+- Multi-slot ON: fib(28) 179-183 ms.
+- Multi-slot OFF: fib(28) 186-195 ms.
+- Real win ~3-4% on fib.
 
-    benchmark         off→on    delta
-    fib(28)           204→184   -9.8%
-    sort 100K         949→837   -11.8%
-    dict 50K          545→497   -8.8%
-    sum 1M            327→287   -12.2%
-    instVar 1M        283→255   -9.9%
-    100K alloc         15→12    -20.0%
-    floatSum 1M       441→383   -13.2%
-    stringHash 100K   180→163   -9.4%
-    collect 10x100K   566→510   -9.9%
-    select 10x100K    718→643   -10.4%
-
-**Average 10-15% across 10+ benches.**  First substantial perf
-win this session — the IC extras encoding had these patterns
-all along, but asmjit-T1 wasn't dispatching them.  Wiring up
-the dispatch + emit was ~100 lines of asmjit code per pattern.
+**Earlier "10-15% across 10+ benches" claim CORRECTED**: was
+a single A/B comparison artifact.  Bench-suite has ~3-5%
+run-to-run noise.  Repeated 3-run A/B/A pattern shows multi-slot
+delivers only ~3-4% on fib(28) consistently, ~0% on others
+(within noise).  The patterns matched (672 multi-slot hits per
+bench-suite run) save ~80µs total — way less than 10% of bench
+runtimes.  The earlier comparison's delta was noise.
 - Step 13: Hot-loop JIT threshold — default-on, infrastructure
   only (block-hot extension reverted — cold blocks pay
   compile cost).
