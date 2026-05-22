@@ -58,31 +58,37 @@ correct and ready; the win waits on either:
 - Step 13: Hot-loop JIT threshold (default-on, no measurable
   bench impact yet — blocks not exercising the inline emits).
 
-### Cumulative bench wins this session
+### Cumulative bench state (2026-05-22, end of session)
 
-    benchmark         before    after    delta
-    fib(28)           183 ms    174 ms   -4.9%
-    sort 100K         843 ms    817 ms   -3.1%
-    dict 50K          503 ms    487 ms   -3.2%
-    sum 1M            287 ms    280 ms   -2.4%
-    floatSum 1M       390 ms    377 ms   -3.3%
-    collect 10x100K   517 ms    507 ms   -1.9%
-    select 10x100K    657 ms    630 ms   -4.1%
-    stringHash 100K   166 ms    158 ms   -4.8%
-    instVar 1M        253 ms    245 ms   -3.2%
+3-run averages with all session work applied:
 
-9 of 13 benches saw 2-5% wins from Step 11 (forwarder collapse)
-+ Step 13 (hot-loop threshold).  Cog-relative ratios drop by
-the same percentage.
+    benchmark            ms (3-run avg)   vs Cog
+    fib(28)                  179             60×
+    sieve x100                 8            0.8×  ✓ faster
+    sort 100K                827             49×
+    dict 50K                 492             38×
+    sum 1M                   282             94×
+    factorial 5K              23             12×
+    block 1M                  1-2           0.5×  ✓ faster
+    instVar 1M               250            125×
+    100K alloc                12              4×
+    floatSum 1M              385             48×
+    stringHash 100K          161             81×
+    collect 10x100K          507             12×
+    select 10x100K           636             80×
 
-**Caveat on the wins**: bench-suite run-to-run noise is ~3%.
-The Step 11 wins are real (consistent across multiple runs)
-but smaller benches like factorial sit within the noise floor.
-For the hardest benches (sum/instVar at 95×/123× Cog) a 3% win
-is rounding error vs the underlying gap.
+**Honest accounting**: the per-step measurements during this
+session showed 2-5% deltas (Step 11), but the bench-suite
+baseline itself drifted ~5-10% between sessions due to other
+ongoing JIT changes.  Net effect at end of session vs the
+doc's original "today" column: within noise on most benches,
+no regression on any bench.
 
-The remaining gap (40-100× for the hardest benches) waits on
-Steps 1-3 (Sista monomorphic inlining) per the original plan.
+The 40-125× gaps on the hardest benches are dominated by
+per-send overhead at cross-method call sites (~120 ns/send vs
+Cog's ~1 ns/send via monomorphic inlining).  Steps 1-3 (Sista
+monomorphic inlining work) remain the only path to closing
+those gaps.
 
 ### Step 11 final extent
 
