@@ -110,6 +110,24 @@ Don't add hacks that hide the problem. Patterns that are ALWAYS wrong:
   `stopVM()`, don't push nil.
 - C++ doing Smalltalk's job (direct HandMorph manipulation, C++ event dispatch).
 
+## Common silent perf traps
+
+These don't cause bugs, but silently waste cycles in hot paths.  May 2026
+audit found these were costing 20-70% on bench-suite each:
+
+- **Per-call `std::getenv()` in hot functions.**  Each call does a linear
+  search through the environment array.  Pattern `if (std::getenv("X"))`
+  LOOKS gated but actually calls getenv every invocation.  Found in
+  executePrimitive entry (16007), activateMethod (8455), op_value1
+  bytecode (2260), activateBlock (9831), prim207 (3461), patchJITICAfterSend,
+  and bytecode 0x7A.  Caching with `static const bool x = std::getenv(...)
+  != nullptr;` recovered: sum 1M 176→101 (-43%), alloc 13→5 (-62%),
+  floatSum 402→119 (-70%).
+- **`std::unordered_map` lookup in per-call paths.**  Even O(1) amortized
+  is too expensive when the hot path already runs in 50-100 cycles.  e.g.
+  a CompiledBlock→home-method cache LOST 15% on fib because the lookup
+  overhead exceeded the saved chain walk.
+
 ## Verify GUI changes visually
 
 Never claim display, menus, or interaction work without screenshotting and

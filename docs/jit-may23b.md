@@ -67,19 +67,6 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
-### R52 — Document the R3 lesson in CLAUDE.md root-causes section
-
-ACTION: add a "Common silent perf traps" section listing the
-per-call getenv anti-pattern with line-number examples from
-R3's discovery.
-DONE: section added.
-
-### R53 — Look for similar patterns: `if (strcmp(...))` per call
-
-ACTION: like getenv, strcmp on a fixed string in a hot loop
-could be wasted.  Grep for hot-path strcmp.
-DONE: list of any hits.
-
 ### R54 — Audit IC dispatch for any per-call function calls
 
 ACTION: the IC HIT path in asmjit-T1 should be all inline asm.
@@ -123,6 +110,11 @@ DONE: table updated.
 - ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
   walk is a good balance per past A/B work.  Reordering
   dispatch checks would need careful measurement.  Skipping.
+- ✅ R53: only 2 `if (strcmp(` hits — 836 (bench helper, cold)
+  and 11835 (directory listing, cold).  No hot patterns.
+- ✅ R52: added "Common silent perf traps" section to CLAUDE.md
+  with concrete line-number examples from R3's getenv discovery
+  + the failed unordered_map cache (Q36).
 - ✅ R51: added `feedback_goal_workflow.md` + `MEMORY.md` so the
   /goal lesson and getenv anti-pattern persist across CLAUDE.md
   changes.
