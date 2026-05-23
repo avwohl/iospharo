@@ -252,6 +252,11 @@ public:
         collectSelectorMask_ = mask;
     }
 
+    // jit-may23d W5: bitmap of literals that hold #select:.
+    void setSelectSelectorBitmap(uint16_t mask) {
+        selectSelectorMask_ = mask;
+    }
+
     // Item #6 (class-based HELPER_SENDS gate): name of the defining
     // class for the method being lifted.  Used to skip UI/system
     // classes from HELPER_SENDS activation.  Empty string = unknown
@@ -6325,6 +6330,7 @@ private:
     // B2 splice: bitmap of literals[0..15] that hold #collect:.  Used
     // for the array-collect pattern.
     uint16_t               collectSelectorMask_ = 0;
+    uint16_t               selectSelectorMask_  = 0;  // W5
     // Phase 3: emit kPrimTagCheckInt before inlined arith ops.
     bool                   typeCheckArith_ = false;
     // B2 splice: when sub-lifting a block for splice, treat block-
@@ -6379,11 +6385,14 @@ private:
     // PushFullBlock + Send1#collect: with splice-simple block; lift's
     // PushFullBlock arm emits kCountedLoopArrayCollect.
     std::unordered_map<size_t, uint32_t> spliceCollectAtPushFullBlock_;
+    // jit-may23d W5: same machinery for select:.
+    std::unordered_map<size_t, uint32_t> spliceSelectAtPushFullBlock_;
     // Array-collect with numCopied=1 capture: pfbOff → outer's temp
     // index that holds the captured TempVector.  Used by the lifter
     // splice intercept to know the vec is on the simulator stack
     // and by the lowering to read captured slots via kLoadTempInVec.
     std::unordered_map<size_t, uint32_t> outerVecTempForCollect_;
+    std::unordered_map<size_t, uint32_t> outerVecTempForSelect_;  // W5
     // Same machinery for inject:into: + IV-inject when block has
     // numCopied=1.  Same map serves both Array and Interval inject
     // paths since the splice intercept is the same Send2 site.

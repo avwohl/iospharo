@@ -287,6 +287,20 @@ enum class Op : uint8_t {
     // literal:  block-IR slot (low 32 bits)
     kCountedLoopArrayCollect,
 
+    // jit-may23d W5: Pharo-inlined `Array>>select: [:each | ...]`.
+    // Filters elements where block returns true.  Result Array is
+    // dynamically-sized — pre-allocate at size = self.size, fill from
+    // index 1 with selected elements, then trim (or shrink via copy).
+    //
+    // Mid-loop deopt mirrors kCountedLoopArrayCollect.  Lowering uses
+    // the standard counted-loop scaffolding with an inner branch on
+    // the block result (jump-if-false past the write).
+    //
+    // operands: rcv (the Array) [, optional vec for capture]
+    //              -> Oop (the new Array, sized = numSelected)
+    // literal:  block-IR slot (low 32 bits)
+    kCountedLoopArraySelect,
+
     // Pharo-inlined `n timesRepeat: [outer := outer arith const]`
     // (and `(start to: stop) do:` with literal bounds).  Pharo's
     // bytecode compiler inlines these as counted whileTrue: loops with

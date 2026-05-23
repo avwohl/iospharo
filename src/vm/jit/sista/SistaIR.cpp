@@ -72,6 +72,7 @@ bool producesOop(Op op) {
     case Op::kCountedLoopArrayDoAccum:
     case Op::kCountedLoopIntervalDoAccum:
     case Op::kCountedLoopArrayCollect:
+    case Op::kCountedLoopArraySelect:
     case Op::kCountedLoopWhileTrueAccum:
     case Op::kCountedLoopBodyExec:
     case Op::kSendCallHelperSpecial:
@@ -100,6 +101,7 @@ bool mayCallBack(Op op) {
     case Op::kCountedLoopArrayDoAccum:  // same
     case Op::kCountedLoopIntervalDoAccum:  // same
     case Op::kCountedLoopArrayCollect:  // alloc + per-elem block calls
+    case Op::kCountedLoopArraySelect:   // alloc + filter; may shrink
     case Op::kCountedLoopWhileTrueAccum: // overflow-deopts to bail
     case Op::kCountedLoopBodyExec:      // tag-check / class-guard deopts
     case Op::kAllocArray:               // alloc may GC
@@ -177,6 +179,7 @@ const char* name(Op op) {
     case Op::kCountedLoopArrayDoAccum: return "counted_loop_arr_do_accum";
     case Op::kCountedLoopIntervalDoAccum: return "counted_loop_iv_do_accum";
     case Op::kCountedLoopArrayCollect: return "counted_loop_arr_collect";
+    case Op::kCountedLoopArraySelect: return "counted_loop_arr_select";
     case Op::kCountedLoopWhileTrueAccum: return "counted_loop_whiletrue_accum";
     case Op::kCountedLoopBodyExec:       return "counted_loop_body_exec";
     case Op::kSendCallHelperSpecial:     return "send_helper_special";
