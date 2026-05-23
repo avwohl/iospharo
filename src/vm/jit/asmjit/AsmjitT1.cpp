@@ -4823,6 +4823,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b_eq(sizeDone);
                 a.cmp(x6, asmjit::Imm(9));
                 a.b_eq(sizeDone);
+                // F5 R84: fmt 10 = Indexable32 (size = slotCount * 2)
+                // fmt 11 = Indexable32Odd (size = slotCount * 2 - 1)
+                {
+                    asmjit::Label notFmt10 = a.new_label();
+                    asmjit::Label notFmt11 = a.new_label();
+                    a.cmp(x6, asmjit::Imm(10));
+                    a.b_ne(notFmt10);
+                    a.lsl(x5, x5, asmjit::Imm(1));   // slotCount * 2
+                    a.b(sizeDone);
+                    a.bind(notFmt10);
+                    a.cmp(x6, asmjit::Imm(11));
+                    a.b_ne(notFmt11);
+                    a.lsl(x5, x5, asmjit::Imm(1));
+                    a.sub(x5, x5, asmjit::Imm(1));   // slotCount * 2 - 1
+                    a.b(sizeDone);
+                    a.bind(notFmt11);
+                }
                 // fmt 16-23: byte path
                 a.sub(x8, x6, asmjit::Imm(16));
                 a.cmp(x8, asmjit::Imm(8));
