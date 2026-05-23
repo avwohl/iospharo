@@ -88,6 +88,15 @@ primitiveFullClosureValue + activateBlock = 489ms total.  IC
 HIT BLR direct to block's JIT body would drop substantially.
 **Gain**: -300ms+.  **Effort**: 5-7 days.
 
+NOTE 2026-05-23: tried `PHARO_T1_INLINE_BLOCK_VALUE=1`
+(infrastructure already in tree).  Bench-correctness 5/5 PASS.
+3-run A/B shows: fib +2-3% slower (overhead), collect +/-
+within noise (single 111 ms outlier didn't replicate).  The
+chain-break protocol bug noted in deferred.md is real — the
+helper works for SOME workloads but the overall path adds
+overhead without unlocking the expected gains.  True F3 gain
+needs the protocol fix.
+
 ### F4 — Eden bump-allocate inline (jit-may22b Step 6)
 Save ~20 cycles per allocation.  ~500K allocs/bench-suite.
 **Gain**: -10-20ms.  **Effort**: 6-8 days.
