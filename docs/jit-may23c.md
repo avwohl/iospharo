@@ -565,6 +565,52 @@ Neither fits in a single /goal session.  Recommendation: ship
 W10's instrumentation (useful for future sessions), leave the doc
 as a roadmap for the multi-session work.
 
+## W14 — current gap to Cog (2026-05-23 in this session)
+
+End-of-session numbers (ours vs Cog est):
+
+    bench                  ours  cog   gap     %  leverage
+    -----------------     ----- ---- ------ ----  ----------
+    sort 100K               319   17   302  18×   F3 (multi-day)
+    select 10x100K          276    8   268  34×   F3 (multi-day)
+    dict 50K                231   13   218  18×   F3 (multi-day)
+    floatSum 1M             117    8   109  15×   F5/Sista
+    fib(28)                 111    3   108  37×   F1 / self-rec
+    1M getter+yourself      107    2   105  54×   throughput
+    sum 1M                  100    3    97  33×   already inlined
+    stringHash 100K          84    2    82  42×   already inlined
+    collect 10x100K         111   63    48   2×   F3 (mid-priority)
+    5000 factorial           23    2    21  12×   LargeInt prim
+    sieve x100                8   10    -2   --   already faster
+    100K alloc                5    3     2   1.7× W12 (~2ms)
+    1M blocks                 2    3    -1   --   already faster
+    -------------------    ----  ---  ----
+    SUM                    1494  136  1358  11×
+
+Top 3 (sort, select, dict) account for 788 ms of the 1358 ms
+gap.  All three are block-heavy / Sista-splice-bound — same
+leverage point as F3.
+
+The structural conclusion: a 10× speedup requires hitting at
+least one big-leverage item.  Per-bench polishing won't bridge
+the gap because most benches are stuck at 30-50× over Cog.
+
+Concrete characterization for `1M getter+yourself` (107 ms for
+1M calls = 107 ns/call):
+- Two methods per iteration (getter, yourself).
+- 50 ns per method call.
+- Cog ~1 ns per method call (direct inline call).
+- Gap = 49 ns per call.
+- Per-call overhead: IC HIT probe + J2J save push + chain loop +
+  trampoline.  Cog inlines methods past 1-2 IC misses; we never
+  fully inline past the call boundary.
+
+## W15 — not attempted
+
+W14's analysis confirms W13's premise (no easy gap remaining).
+Real W15 work is one of the multi-session items.  Defer.
+
+
 
 
 
