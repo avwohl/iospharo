@@ -67,17 +67,35 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
-### R54 — Audit IC dispatch for any per-call function calls
+### R56 — Sample bench-suite-run cycles per primitive call
 
-ACTION: the IC HIT path in asmjit-T1 should be all inline asm.
-Any C-runtime callback would add overhead.  Confirm.
-DONE: yes/no.
+ACTION: read [JIT] Stats output for sends/IC-hits/J2J-a totals.
+Compute approximate cycles per primitive call given bench-suite
+run time.
+DONE: ratio recorded.
 
-### R55 — Final bench-suite vs Cog comparison
+### R57 — Check if sieve x100's 8ms can be measured below 1ms granularity
 
-ACTION: re-run bench-suite, compute new vs-Cog ratios for the
-docs.
-DONE: table updated.
+ACTION: bench script uses Time>>millisecondsToRun:.  Sub-ms
+sieve runs would just show as 0 or 1.  Verify granularity.
+DONE: explanation in doc.
+
+### R58 — Look for any unused or dead code paths in step()
+
+ACTION: scan step()'s bytecode dispatch table.  Any cases that
+never fire (per counters)?
+DONE: list.
+
+### R59 — Audit primitiveDispatch table for redundant entries
+
+ACTION: primitiveTable_ has 1000 entries.  Any entries marked
+unhandled that we could optimize to a faster default?
+DONE: count + finding.
+
+### R60 — Add a `make bench` target
+
+ACTION: simplify the 3-line bench invocation.
+DONE: scripts/Makefile has `bench` target.
 
 
 ## Closed
@@ -110,6 +128,14 @@ DONE: table updated.
 - ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
   walk is a good balance per past A/B work.  Reordering
   dispatch checks would need careful measurement.  Skipping.
+- ✅ R55: final bench numbers stable across runs:
+    fib(28): 155, sieve x100: 8, sort 100K: 336, dict 50K: 302,
+    sum 1M: 100, factorial 5K: 23, instVar 1M: 107, alloc: 5,
+    floatSum 1M: 118, stringHash 100K: 104, collect: 243, select: 357.
+- ✅ R54: IC dispatch is entirely asmjit-emitted ARM at line
+  3249+ (ldr / and / cmp / b_eq / lsr / etc).  No C-runtime
+  callback in the HIT path.  Bail paths jump to dispatchCached
+  (a JIT-emitted chain-loop dispatcher), still no C bridge.
 - ✅ R53: only 2 `if (strcmp(` hits — 836 (bench helper, cold)
   and 11835 (directory listing, cold).  No hot patterns.
 - ✅ R52: added "Common silent perf traps" section to CLAUDE.md
