@@ -73,10 +73,34 @@ These represent the remaining perf gaps after May 2026 fixes.
 Listed so next session has clear next steps.
 
 ### F1 — Generational GC: keep young objects in young space
-Current scavenge tenures ALL young objects to old space → 13
-fullGCs per bench-suite at ~100ms each.  Real generational GC
-would cut to ~3 fullGCs.
-**Gain**: -800ms+ on bench-suite.  **Effort**: 1-2 weeks.
+
+CLARIFICATION (2026-05-23): "Generational GC" is PARTIALLY done.
+
+What's done:
+- Eden + survivor space LAYOUT (split newSpace).
+- Scavenge function exists; runs at edenFull.
+- `enableYoungGen_` flag defaults to true (R26 from this session).
+
+What's NOT done:
+- Survivor space is NEVER USED.  scavenge() at line 1481+
+  copies eden objects DIRECTLY to old space.
+- No tenuring age — every reachable young object gets tenured
+  on first scavenge.
+
+To make survivor work needs:
+- Two-half survivor management (S0/S1 flip), OR
+- 1-bit "survived once" tag per ObjectHeader (bit 22 might
+  be free; standard Spur reserves 23/29/30/31/55).
+- Modify tenureIfYoung to copy eden → survivor on first
+  cycle, survivor → old on second.
+
+Tried 1-half survivor approach 2026-05-23 — reverted.  Without
+two halves OR a survivor scratch buffer, can't properly handle
+survivor space getting "polluted" with already-tenured objects
+across cycles.
+
+**Gain**: -800ms+ on bench-suite (fewer fullGCs).
+**Effort**: 1-2 weeks (real impl + correctness validation).
 
 ### F2 — Parallel mark phase
 ~100K live objects × 600ns each = 60ms per mark.  Could be
