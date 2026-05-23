@@ -792,6 +792,108 @@ Reverted the failed materialize attempt.  Bisection knob
 (`PHARO_T1_INLINE_BLOCK_VALUE_MAX=N`) stays — useful tooling
 for future debugging.
 
+## F3-NL3 root cause + fix (2026-05-23, lldb session)
+
+User pushed back: "ok do the lldb debug".  Did it.
+
+### Diagnostic approach
+
+Added trace prints in `jit_rt_inline_block_value_prep`: at fires
+#7 and #8, dumped block IC slots, closure slots, j2j pool state,
+callerJM, and `g_stepNum`.  Compared #7 vs #8.
+
+State going INTO the prep at #7 and #8 is essentially identical:
+- Same `blockCM=0x300350cd8`, `blockJM` (modulo address random).
+- Same IC contents at the block's single send site.
+- Same callerJM, same closure shape (4 slots).
+- Same `j2jDepth=0`, `j2jTotalCalls=0`.
+- Only difference: receiver closure address (different closures).
+
+So entry state isn't the bug.
+
+### Dumped block bytecodes
+
+    [BV-NL #7] block bc (numLits=2, len=4): 4c 40 90 5e
+    [BV-NL #7] block lit[0]=0x30005c7b8  (a selector)
+    [BV-NL #7] block lit[1]=0x30033adf8
+
+Decoded:
+    0x4C = PushReceiver
+    0x40 = PushTemp 0 (first arg)
+    0x90 = Send lit[0] with 1 arg
+    0x5E = BlockReturnTop  ← non-local return!
+
+Source: `[:arg | ^ self <selector>: arg]`.  This is a classic NLR
+block — `^ expr` returns from the home method, not just the block.
+
+### Why this breaks BV inline
+
+`activateBlock` (the interpreter's block-activation path) pushes a
+`SavedFrame` for the block via `pushFrame`.  Interp's
+`BlockReturnTop` handler at `Interpreter.cpp:4640-4666` calls
+`returnValue(value)` which walks `savedFrames_` looking for the
+home method's frame.
+
+**`jit_rt_inline_block_value_prep` does NOT push a `SavedFrame`** —
+the BV save goes into `j2jPool_`, which `returnValue` doesn't
+consult.  So when the block's `BlockReturnTop` fires through interp
+(via the existing `EXIT_ARITH_OVERFLOW` bail in AsmjitT1.cpp:2499),
+the NLR chain walk can't find the right frame → cascading DNUs
+in unrelated code (`#to:do:` in `Array>>do:`).
+
+### Fix
+
+In `jit_rt_inline_block_value_prep`, scan the block's bytecodes
+for `0x5D` (BlockReturnNil) or `0x5E` (BlockReturnTop).  If found,
+bail before pushing the BV save.  Reuses `g_bvBail_canBail` counter.
+
+Bench-correctness `PHARO_T1_INLINE_BLOCK_VALUE=1
+PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1` fib 20/28/30: **5/5 PASS**.
+Counters: `tries=1798 hits=115 bails=1683 (catch rate 6.4%)` —
+up from 3.2% leaf-only.  Hang gone.
+
+### Why the perf gain still didn't materialize
+
+Bench-suite with non-leaf BV + NLR gate: 1623 ms (vs baseline
+1468 ms — **+155 ms regression**).  collect 10x100K alone goes
+from 110 → 241 ms.
+
+Bisected: with MAX=0 (force-bail all non-leaf), bench-suite stays
+at baseline 1482 ms.  So the 130ms collect regression is from the
+non-leaf BV HITS THEMSELVES — the inline path is slower than the
+chain-loop dispatch path for the typical iter blocks in collect.
+
+The inline path runs: helper (bytecode-scan + J2J save push + state
+setup + capture copy) → br to block → block runs → return prelude
+(pop save + restore + br to resume).  For short blocks called many
+times, the SAVE/RESTORE overhead exceeds what we save by not going
+through chain-loop dispatch.
+
+Default stays leaf-only opt-in.  The +300ms F3 estimate in the
+original doc was wrong — block-value inline isn't the right
+optimization for the bench-suite patterns; we'd need a different
+approach (e.g., method-level inlining or direct call without
+J2J save) to actually save block-invocation time.
+
+### Net session impact
+
+Shipped (correctness):
+- F3-NL2 (commit c9679589): state restore for leaf-only BV.
+- F3-NL3 (commit 655f5775): NLR-gate for non-leaf BV.
+- `PHARO_T1_INLINE_BLOCK_VALUE` (leaf or non-leaf) is now SAFE
+  to enable.  Bench-correctness passes both modes.
+
+Not shipped (perf):
+- Bench-suite SUM is unchanged (~1480 ms vs Cog ~136 ms = 11×
+  gap).  Block-value inline as implemented doesn't move the
+  metric; deeper investigation needed for the actual cost in
+  the inline path.
+
+**Goal "faster than Cog" still not achieved.**  But the F3
+correctness blocker that was multi-session is now resolved.
+Future sessions can build on the correct BV inline with a
+better inline strategy.
+
 ### Net session impact on the goal
 
 The actual bench-suite gap to Cog is unchanged.  F3-NL2 unblocks
