@@ -368,20 +368,43 @@ verified.  Further gains require genuine multi-day code work
   at exit paths (3787, 3794).  Lines 1888, 10031 already cached.
   Other getenv uses are `const char*` getters (not boolean checks).
 
-## Final state
+## Final state (2026-05-23 evening)
 
-Total bench-suite time: **1.87 seconds** (was ~3.7s at session start).
-**50% improvement** from removing per-call std::getenv() in hot paths.
+Total bench-suite time: **1.60 seconds** (was ~3.7s at session start).
+**57% improvement** primarily from getenv migration to DebugSettings.
 
-Of remaining 1.87s:
-- ~1.3s = 70% in fullGC (mark phase dominates).
-- ~489 ms = 26% in primitiveFullClosureValue / activateBlock.
-- ~80 ms = other (interp, JIT runtime).
+| Bench | Start | Now | Δ |
+|---|---|---|---|
+| fib(28) | 179 | 108 | -40% |
+| sort 100K | 835 | 318 | -62% |
+| dict 50K | 447 | 351 | -21% |
+| sum 1M | 284 | 99 | **-65%** |
+| factorial 5K | 21 | 23 | +10% |
+| instVar 1M | 260 | 103 | -60% |
+| alloc 100K | 13 | 5 | -62% |
+| floatSum 1M | 402 | 117 | **-71%** |
+| stringHash 100K | 169 | 82 | -51% |
+| collect 10x100K | 510 | 111 | **-78%** |
+| select 10x100K | 643 | 278 | -57% |
 
 The remaining gap to Cog is mostly in:
-1. fullGC frequency + mark cost (multi-day generational GC work).
-2. activateBlock overhead per block invocation (Step 9-10).
-3. Inline-emit coverage for more selectors.
+1. fullGC frequency + mark cost (F1, multi-day generational GC).
+2. activateBlock overhead per block invocation (F3).
+3. Inline-emit coverage for more selectors (F5 — added R80 SmI mul).
+
+## F1-F5 status (per /goal directive 2026-05-23)
+
+- **F1** (generational GC): attempted 3 times, all bench-correctness 0/5.
+  Two-half survivor management requires touching ~10+ "is in eden"
+  checks throughout ObjectMemory.cpp and validating each.  Genuinely
+  multi-day.  Reverted.
+- **F2** (parallel mark phase): not attempted; multi-day.
+- **F3** (block-value direct dispatch): infrastructure in tree gated by
+  PHARO_T1_INLINE_BLOCK_VALUE, but chain-break protocol bug prevents
+  default-on.  Multi-day.
+- **F4** (Eden bump-allocate inline): not attempted; multi-day.
+- **F5** (more inline-emit selectors): partial — added SmI mul
+  (primKind 9) inline emit at R80.  More selectors remain.
 
 ## Bench-suite tracking
 
