@@ -54,19 +54,6 @@ action.
 
 ## Queue
 
-### R8 — Audit ALL remaining `if (std::getenv(` in Interpreter.cpp
-
-ACTION: `grep -n "if (std::getenv(" src/vm/Interpreter.cpp` and
-list ALL hits NOT already converted. For each, determine: hot
-(in step/activateMethod/activateBlock/IC-dispatch/per-bytecode)
-or cold (init/exit/error). List in this doc.
-DONE: list pasted into `## Closed`.
-
-### R9 — Cache every hot getenv from R8
-
-ACTION: convert each one in R8's hot list.
-DONE: all hot ones cached, build passes, bench-correctness 5/5.
-
 ### R10 — Run full bench-suite, record new baseline
 
 ACTION: `PHARO_VM=/tmp/harness/pharo timeout 240 scripts/run_benchmarks.sh`
@@ -190,7 +177,38 @@ DONE: commit.
 - ✅ R5: already cached at line 16700 (static const lambda).
 - ✅ R6: cached at line 16803 (was uncached). Edited.
 - ✅ R7: line 3414 inside `if (!semTraceInit)` one-shot. Fine.
+- ✅ R8: full audit. Remaining `if (std::getenv(` hits are all cold:
+  - 463-470: in ctor.
+  - 1130: in JIT stats print.
+  - 1532: in startup.
+  - 2711, 2818: at exit paths.
+  - 3414: one-shot init.
+  - 11320: in DNU error.
+  - 12348: in jitSistaSelfRecCall (sista counter=0, never fires).
+  - 16644, 16701: already cached.
+- ✅ R9: nothing to do (R8 found no hot uncached).
 
 ## Bench-suite tracking
 
-(R10 will populate this.)
+R10 baseline (after R1-R9 caching of executePrimitive et al):
+
+| Bench | Session start | After R3 caching | Δ from start |
+|-------|---------------|------------------|--------------|
+| fib(28) | 179 | 154 | -14% |
+| sieve x100 | 8 | 8 | = |
+| sort 100K | 835 | 337 | **-60%** |
+| dict 50K | 447 | 301 | -33% |
+| sum 1M | 284 | 101 | **-64%** |
+| factorial 5K | 21 | 22 | +5% |
+| instVar 1M | 260 | 106 | **-59%** |
+| 100K alloc | 13 | 5 | **-62%** |
+| floatSum 1M | 402 | 119 | **-70%** |
+| stringHash 100K | 169 | 103 | -39% |
+| collect 10x100K | 510 | 243 | **-52%** |
+| select 10x100K | 643 | 354 | -45% |
+
+**TOTAL bench-suite time roughly halved** by caching 2 getenv
+calls in executePrimitive entry.  executePrimitive is the entry
+point for EVERY VM primitive call — millions per bench-suite —
+and the uncached getenvs at lines 16007/16012 cost ~50% on
+prim-heavy benches.
