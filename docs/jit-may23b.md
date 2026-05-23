@@ -67,13 +67,6 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
-### R56 — Sample bench-suite-run cycles per primitive call
-
-ACTION: read [JIT] Stats output for sends/IC-hits/J2J-a totals.
-Compute approximate cycles per primitive call given bench-suite
-run time.
-DONE: ratio recorded.
-
 ### R57 — Check if sieve x100's 8ms can be measured below 1ms granularity
 
 ACTION: bench script uses Time>>millisecondsToRun:.  Sub-ms
@@ -128,6 +121,10 @@ DONE: scripts/Makefile has `bench` target.
 - ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
   walk is a good balance per past A/B work.  Reordering
   dispatch checks would need careful measurement.  Skipping.
+- ✅ R56: bench-suite throughput now **69M sends/sec, 45M
+  bytecodes/sec**.  At 3GHz CPU = ~45 cycles per send.  Cog is
+  ~3× faster per send.  Main gap remains in block-value
+  activation overhead (Step 9-10 territory).
 - ✅ R55: final bench numbers stable across runs:
     fib(28): 155, sieve x100: 8, sort 100K: 336, dict 50K: 302,
     sum 1M: 100, factorial 5K: 23, instVar 1M: 107, alloc: 5,
