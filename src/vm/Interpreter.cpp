@@ -129,6 +129,7 @@ extern "C" uint64_t g_t1ReturnsLiteral_hits;
 extern "C" uint64_t g_t1TempReturn_hits;
 extern "C" uint64_t g_t1IntCmpReturn_hits;
 extern "C" uint64_t g_t1IntArithReturn_hits;
+extern "C" uint64_t g_t1EvenOdd_hits;
 
 // jit-may20b Step 6: per-caller bail-gate histogram dump (defined in
 // AsmjitT1.cpp).  Called from dumpJITStats when PHARO_T1_BAIL_GATE_HISTO=1.
@@ -1497,13 +1498,14 @@ void Interpreter::dumpJITStats() {
                 || g_t1ReturnsLiteral_hits > 0
                 || g_t1TempReturn_hits > 0
                 || g_t1IntCmpReturn_hits > 0
-                || g_t1IntArithReturn_hits > 0) {
+                || g_t1IntArithReturn_hits > 0
+                || g_t1EvenOdd_hits > 0) {
             fprintf(stderr,
                 "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu "
                 "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu "
                 "basicNew=%llu/%llu basicNew0=%llu sistaSelfRec=%llu/%llu "
                 "multiSlot=%llu retLit=%llu "
-                "tempRet=%llu intCmp=%llu intArith=%llu\n",
+                "tempRet=%llu intCmp=%llu intArith=%llu evenOdd=%llu\n",
                 (unsigned long long)g_primAt_hits,
                 (unsigned long long)g_primAtPut_hits,
                 (unsigned long long)g_primSize_hits,
@@ -1521,7 +1523,8 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_t1ReturnsLiteral_hits,
                 (unsigned long long)g_t1TempReturn_hits,
                 (unsigned long long)g_t1IntCmpReturn_hits,
-                (unsigned long long)g_t1IntArithReturn_hits);
+                (unsigned long long)g_t1IntArithReturn_hits,
+                (unsigned long long)g_t1EvenOdd_hits);
         }
     }
     if (g_xmethod_count > 0) {
@@ -8188,6 +8191,9 @@ struct TrivialMethodInfo {
     //   0=+ 1=- 2=*
     int8_t  intArithKind = -1;
     int8_t  intArithArgIdx = -1;
+    // jit-may23d W6: `^ (self bitAnd: 1) = 0` (Integer>>even pattern).
+    // Encoded as kind: 0=even (`= 0`), 1=odd (`~= 0` or `= 1`).
+    int8_t  evenOddKind = -1;
 };
 
 static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
@@ -8438,6 +8444,25 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
                 case 0x68: info.intArithKind = 2; break;
             }
             info.intArithArgIdx = 0;
+            return info;
+        }
+    }
+
+    // jit-may23d W6: Integer>>even pattern `^ (self bitAnd: 1) = 0`.
+    // Bytecode: PushReceiver PushOne send-bitAnd: PushZero send-= ReturnTop
+    //   = 0x4C 0x51 0x6E 0x50 0x66 0x5C
+    // Similarly Integer>>odd: `^ (self bitAnd: 1) = 1`
+    //   = 0x4C 0x51 0x6E 0x51 0x66 0x5C
+    {
+        if (bcLen >= 6
+            && bc0 == 0x4C
+            && bc1 == 0x51       // PushOne
+            && bytes[bcStart + 2] == 0x6E  // bitAnd:
+            && (bytes[bcStart + 3] == 0x50    // PushZero (even)
+                || bytes[bcStart + 3] == 0x51) // PushOne (odd)
+            && bytes[bcStart + 4] == 0x66  // =
+            && bytes[bcStart + 5] == 0x5C) {
+            info.evenOddKind = (bytes[bcStart + 3] == 0x50) ? 0 : 1;
             return info;
         }
     }
@@ -18675,6 +18700,12 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             if (extra == 0 && tmi.intArithKind >= 0) {
                 extra = (1ULL << 52)
                       | ((uint64_t)tmi.intArithKind << 48);
+            }
+            // jit-may23d W6: bit 51 = Integer>>even / >>odd shape.
+            // Kind in bit 48: 0=even, 1=odd.
+            if (extra == 0 && tmi.evenOddKind >= 0) {
+                extra = (1ULL << 51)
+                      | ((uint64_t)tmi.evenOddKind << 48);
             }
         }
     }

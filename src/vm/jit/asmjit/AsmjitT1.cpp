@@ -86,6 +86,7 @@ extern "C" uint64_t g_t1ReturnsLiteral_hits = 0;
 extern "C" uint64_t g_t1TempReturn_hits     = 0;  // W1: `^ arg0`
 extern "C" uint64_t g_t1IntCmpReturn_hits   = 0;  // W2: `^ self cmp arg`
 extern "C" uint64_t g_t1IntArithReturn_hits = 0;  // W3: `^ self op arg`
+extern "C" uint64_t g_t1EvenOdd_hits        = 0;  // W6: `^ (self bitAnd: 1) = 0`
 
 // Counters for inline-prim 18 dispatch (PHARO_T1_INLINE_PRIM_COUNTERS=1).
 extern "C" uint64_t g_primBasicNew_hits  = 0;
@@ -3229,6 +3230,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryTempReturn = a.new_label();      // W1
             asmjit::Label tryIntCmpReturn = a.new_label();    // W2
             asmjit::Label tryIntArithReturn = a.new_label();  // W3
+            asmjit::Label tryEvenOdd = a.new_label();         // W6
             asmjit::Label tryMultiSlot = a.new_label();
             asmjit::Label trySistaCall = a.new_label();
             asmjit::Label tryPrimBitAnd = a.new_label();
@@ -3440,6 +3442,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // W3: bit 52 = IntArithReturn `^ self op arg` (+/-/*).
                     if (nArgs == 1 && g_debug.t1InlineIntArithReturn) {
                         a.tbnz(x7, asmjit::Imm(52), tryIntArithReturn);
+                    }
+                    // W6: bit 51 = even/odd predicate (nArgs == 0).
+                    if (nArgs == 0 && g_debug.t1InlineEvenOdd) {
+                        a.tbnz(x7, asmjit::Imm(51), tryEvenOdd);
                     }
                     a.tst(x1, asmjit::Imm(0x7));
                     if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
@@ -4534,6 +4540,50 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8));
                 a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
+            }
+
+            // === W6: tryEvenOdd (bit 51, nArgs == 0) ===
+            // Pattern: `^ (self bitAnd: 1) = 0` (even) or `... = 1` (odd).
+            // Kind in bit 48: 0=even, 1=odd.
+            //
+            // For SmI receiver: bits = (val<<3)|1.  bits & 9 keeps tag bit
+            // + low bit of val:
+            //   = 1 → val low bit = 0 → even
+            //   = 9 → val low bit = 1 → odd
+            // For "even" predicate: result = (bits&9 == 1) ? trueOop : falseOop.
+            // For "odd"  predicate: result = (bits&9 == 9) ? trueOop : falseOop.
+            // Bail to dispatchCached on non-SmI receiver.
+            if (nArgs == 0 && g_debug.t1InlineEvenOdd) {
+                a.bind(tryEvenOdd);
+                a.mov(x14, asmjit::Imm((uint64_t)&g_t1EvenOdd_hits));
+                a.ldr(x15, ptr(x14));
+                a.add(x15, x15, asmjit::Imm(1));
+                a.str(x15, ptr(x14));
+                // SmI tag check: low 3 bits == 1.
+                a.and_(x4, x1, asmjit::Imm(0x7));
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                // x4 = bits & 9.
+                a.and_(x4, x1, asmjit::Imm(9));
+                // Extract kind from bit 48.
+                a.lsr(x6, x7, asmjit::Imm(48));
+                a.and_(x6, x6, asmjit::Imm(1));
+                // For even: cmp x4, 1 (true if eq).
+                // For odd:  cmp x4, 9 (true if eq).
+                // Use csel based on kind to pick the comparison value:
+                a.mov(x8, asmjit::Imm(1));
+                a.mov(x9, asmjit::Imm(9));
+                a.cmp(x6, asmjit::Imm(0));
+                a.csel(x8, x8, x9, asmjit::a64::CondCode::kEQ);
+                // x8 = expected (1 for even, 9 for odd).
+                a.cmp(x4, x8);
+                // Load trueOop / falseOop.
+                a.ldr(x10, ptr(x0, OFF_TRUEOOP));
+                a.ldr(x11, ptr(x0, OFF_FALSEOOP));
+                a.csel(x3, x10, x11, asmjit::a64::CondCode::kEQ);
+                // Store result at rcvr slot.  No args to drop (nArgs=0).
+                a.stur(x3, ptr(x2, rcvrOffsetBytes));
                 a.b(endOfSend);
             }
 

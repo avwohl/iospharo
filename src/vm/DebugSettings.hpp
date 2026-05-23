@@ -86,6 +86,10 @@ struct DebugSettings {
     // jit-may23d W3: inline `^ self op arg0` (IntArithReturn) at IC HIT.
     // PHARO_T1_NO_INLINE_INT_ARITH_RETURN=1 disables.  Uses IC bit 52.
     bool t1InlineIntArithReturn = true;
+    // jit-may23d W6: inline Integer>>even/odd at IC HIT.  Pattern is
+    // `^ (self bitAnd: 1) = 0` (even) or `... = 1` (odd).
+    // PHARO_T1_NO_INLINE_EVEN_ODD=1 disables.  Uses IC bit 51.
+    bool t1InlineEvenOdd = true;
     // jit-may22b multi-slot: inline bit-57 pattern
     // (^ self[A] op1 self[B] op2 const).  Common for
     // OrderedCollection>>size.  PHARO_T1_NO_INLINE_MULTISLOT=1 opt-out.
