@@ -2605,16 +2605,22 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         }
 
         // Derive method/literals/argCount/jitMethod from callerJM.
-        // When xmethod is OFF (default), the J2J push path is strictly
-        // self-recursive (callee == caller — gated by SELF_REC_BIT
-        // tbz), so state.method, state.literals, state.argCount, and
-        // state.jitMethod were never modified during the J2J call —
-        // skip the 5 redundant stores.  When xmethod is ON, the
-        // cross-method update path may have changed those fields, so
-        // restore from save.  We use x12 (not x6) for the loaded
-        // method so x6 (recv) stays live for the deferred stp at
-        // OFF_SP at the end of this prelude.
-        if (g_debug.t1InlineJ2JXmethod) {
+        // When xmethod is OFF and inline-block-value is OFF, the J2J
+        // push path is strictly self-recursive (callee == caller —
+        // gated by SELF_REC_BIT tbz), so state.method, state.literals,
+        // state.argCount, and state.jitMethod were never modified
+        // during the J2J call — skip the 5 redundant stores.  When
+        // either xmethod or inline-block-value is ON, callee may
+        // differ from caller (block-value path or cross-method
+        // dispatch), so restore from save.
+        //
+        // F3-NL2 (2026-05-23): root-caused fib(15) non-leaf hang to
+        // missing restore.  jit_rt_inline_block_value_prep sets
+        // state.{jitMethod,method,literals,argCount} to the BLOCK's
+        // values; without this restore the caller's continuation reads
+        // the block's literals, producing the cascading DNU on
+        // `nil findNextHandlerContext` we observed.
+        if (g_debug.t1InlineJ2JXmethod || g_debug.t1InlineBlockValue) {
             a.ldr(x7, ptr(x4, 32));   // jitMethod
             a.str(x7, ptr(x0, OFF_JITMETHOD));
             a.ldr(x6, ptr(x7, 0));    // method = callerJM[0]
