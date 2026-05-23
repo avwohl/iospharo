@@ -54,45 +54,6 @@ action.
 
 ## Queue
 
-### R1 — Cache PHARO_TRACE_TOTAL_STEPS at Interpreter.cpp:2711
-
-ACTION: convert `if (std::getenv("PHARO_TRACE_TOTAL_STEPS"))` to
-the `static const bool` pattern.
-DONE: 1 line edited, builds, default 5/5 PASS.
-
-### R2 — Cache PHARO_TRACE_OP_VALUE1 if not yet cached
-
-ACTION: grep `PHARO_TRACE_OP_VALUE1` to verify cached. If not,
-cache it.
-DONE: either confirmation that it's cached, or 1 line edited.
-
-### R3 — Cache PHARO_TRACE_EXEC_PRIM at Interpreter.cpp:16009
-
-ACTION: see if this is in a hot function. Cache if so. If cold,
-mark CLOSED with finding.
-DONE: edit + commit OR finding recorded.
-
-### R4 — Cache PHARO_NO_OSR_RECOMPILE at line 16640
-
-ACTION: this is checked per-IC-recompile decision. Cache the
-bool.
-DONE: 1 line edited.
-
-### R5 — Cache PHARO_NO_SISTA_PER_BC at line 16697
-
-ACTION: same pattern.
-DONE: 1 line edited.
-
-### R6 — Cache PHARO_TRACE_SISTA_PERBC at line 16799
-
-ACTION: same.
-DONE: 1 line edited.
-
-### R7 — Cache PHARO_SEM_SIGNAL_TRACE at line 3414
-
-ACTION: same.
-DONE: 1 line edited.
-
 ### R8 — Audit ALL remaining `if (std::getenv(` in Interpreter.cpp
 
 ACTION: `grep -n "if (std::getenv(" src/vm/Interpreter.cpp` and
@@ -222,7 +183,13 @@ DONE: commit.
 
 ## Closed
 
-(Moves go here. 1 line per task.)
+- ✅ R1: line 2711 is at interp()'s cg_exit — runs once. NOT hot. No edit.
+- ✅ R2: already cached at line 2260 (traceOpValue1).
+- ✅ R3: executePrimitive entry had 2 per-call getenvs (TRACE_EXIT, TRACE_EXEC_PRIM). Cached both. 5/5 PASS.
+- ✅ R4: already cached at line 16643 (static const lambda).
+- ✅ R5: already cached at line 16700 (static const lambda).
+- ✅ R6: cached at line 16803 (was uncached). Edited.
+- ✅ R7: line 3414 inside `if (!semTraceInit)` one-shot. Fine.
 
 ## Bench-suite tracking
 

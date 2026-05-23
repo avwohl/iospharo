@@ -16004,12 +16004,13 @@ void Interpreter::initializeNamedPrimitives() {
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
-    if (std::getenv("PHARO_TRACE_EXIT")
-            && (primitiveIndex == 113 || primitiveIndex == 114)) {
+    static const bool traceExit = std::getenv("PHARO_TRACE_EXIT") != nullptr;
+    static const bool traceExecPrim = std::getenv("PHARO_TRACE_EXEC_PRIM") != nullptr;
+    if (traceExit && (primitiveIndex == 113 || primitiveIndex == 114)) {
         fprintf(stderr, "[EXIT-TRACE] executePrimitive(%d, %d) entering\n",
                 primitiveIndex, argCount);
     }
-    if (std::getenv("PHARO_TRACE_EXEC_PRIM")) {
+    if (traceExecPrim) {
         if (primitiveIndex == 207) {
             static uint64_t n = 0;
             n++;
@@ -16799,7 +16800,8 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         // deltas point to a buggy bail path.
         Oop* spBefore = stackPointer_;  // = sstate.sp at entry (set above)
 
-        if (std::getenv("PHARO_TRACE_SISTA_PERBC")) {
+        static const bool traceSistaPerBC = std::getenv("PHARO_TRACE_SISTA_PERBC") != nullptr;
+        if (traceSistaPerBC) {
             static uint64_t n = 0;
             n++;
             if (n <= 5 || (n & 0xFFFFF) == 0)
