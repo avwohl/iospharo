@@ -67,34 +67,49 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
-### R36 — Reduce IC walk depth experiments
+### R41 — Direct primitiveNew call from jitBasicNew (R33 finding)
 
-ACTION: look at the IC dispatch in asmjit-T1.  If walking 3 slots
-inline is enough vs 6, can we drop to 2?
-DONE: A/B measurement.
+ACTION: change jitBasicNew to call primitiveNew directly,
+skipping executePrimitive's prim-table dispatch.  Same for
+jitBasicNewWithArg.
+DONE: edit + bench-correctness 5/5 PASS + bench comparison.
 
-### R37 — Move IC HIT to start of dispatch
+### R42 — Audit DebugSettings.cpp for missing fields
 
-ACTION: examine the dispatch sequence in asmjit-T1.  Are there
-checks that could be moved AFTER the IC HIT?
-DONE: finding.
+ACTION: any PHARO_* env var read in Interpreter.cpp / Primitives.cpp
+that ISN'T in DebugSettings should be added there per CLAUDE.md
+rule.  Find 1.
+DONE: 1 added.
 
-### R38 — `block 1M` is 1ms — what makes it fast?
+### R43 — Move static-cached getenvs into DebugSettings
 
-ACTION: look at the block 1M bench code.  Why is it close to
-Cog while other benches aren't?
-DONE: characterization recorded.
+ACTION: pick 3 cached getenvs from R3/R6/R39/R41 work and migrate
+them to DebugSettings fields per CLAUDE.md.
+DONE: 3 migrated, bench-correctness PASS.
 
-### R39 — `sieve 100` is 8ms close to Cog's 10.
+### R44 — Profile build's Profile mode
 
-ACTION: same.
-DONE: characterization recorded.
+ACTION: build with -O3 and -fno-omit-frame-pointer.  Try sample
+again to see if it gets better symbols.
+DONE: yes/no + finding.
 
-### R40 — When queue empties: scan for new opportunities
+### R45 — Check if SistaV1's bytecode 0x7B (value) is inlined
 
-ACTION: per CLAUDE.md /goal rules: scan codebase for similar
-issues to past wins.  Add new tasks.
-DONE: ≥3 new tasks added.
+ACTION: 0x7B is `value` (0 args).  Is it inlined at bytecode
+level like 0x7A?
+DONE: yes/no answer.
+
+### R46 — Look at primitiveYourself (returnsSelf)
+
+ACTION: `yourself` is called millions of times (Q4 found 1M).
+Bit 61 inline emits it.  Is the inline as tight as possible?
+DONE: instruction count of the bit-61 emit.
+
+### R47 — Look at primitiveSize (prim 62) inline
+
+ACTION: `size` is called 1M+ times.  Inline emit at primKind 16.
+Audit for optimization opportunities.
+DONE: 3 suggestions OR confirmation already optimal.
 
 ## Closed
 
@@ -123,6 +138,16 @@ DONE: ≥3 new tasks added.
   compile dump).  None per-call.
 - ✅ R34: inline-prim emit already covers the common cases.
   Adding more would need new IC bits — multi-day work each.
+- ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
+  walk is a good balance per past A/B work.  Reordering
+  dispatch checks would need careful measurement.  Skipping.
+- ✅ R38/R39: benches close to Cog have inner loops where EVERY
+  send is inline-emit covered:
+  - block 1M: `counter + 1` is bytecode 0x60 (inline arith),
+    `timesRepeat:` inlines to JumpBackward.
+  - sieve x100: similar — at:put:/at: are inline-emit'd.
+  Slow benches have at least one send NOT inline (typically
+  value:/value:value: for arg-passing blocks).
 - ✅ R35: non-std getenv hits all in static initializers (run once).
   No hot patterns.
 - ✅ R33: primitiveNew is called via primitiveTable_[] indirect.
