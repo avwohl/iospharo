@@ -1784,6 +1784,39 @@ extern "C" uint64_t jit_rt_sista_alloc_array(JITState* state,
     return state->interp->jitSistaAllocArray(state, size);
 }
 
+// jit-may23d W5.4: shrink an Array's slot count in place.
+// Used by the select: splice to trim the result Array down to the
+// actually-selected count after the filter loop.  Updates the Spur
+// header's slot-count field (or overflow word if size > 254).
+// Freed tail slots become GC-reclaimable at next compaction.
+// newSize must be <= current size.
+extern "C" void jit_rt_sista_array_shrink(JITState* state,
+                                            uint64_t arrBits,
+                                            uint64_t newSize) {
+    (void)state;
+    if (!arrBits || (arrBits & 7) != 0) return;
+    auto* hdr = reinterpret_cast<pharo::ObjectHeader*>(arrBits);
+    if (!hdr) return;
+    size_t curSize = hdr->slotCount();
+    if (newSize > curSize) return;  // can't grow
+    if (hdr->hasOverflowSlots()) {
+        // Overflow word holds the actual count (low 56 bits, top byte
+        // is class index per Spur).  Preserve top byte.
+        uint64_t* overflow =
+            reinterpret_cast<uint64_t*>(hdr) - 1;
+        uint64_t cur = *overflow;
+        // Standard Spur: actual count = (cur << 8) >> 8.
+        uint64_t topByte = cur & (0xFFULL << 56);
+        *overflow = topByte | (newSize & 0x00FFFFFFFFFFFFFFULL);
+    } else if (newSize <= 254) {
+        hdr->setSlotCount(static_cast<uint8_t>(newSize));
+    }
+    // else: newSize is between 255 and curSize, but no overflow word.
+    // Can't represent without conversion.  Leave size unchanged.
+    // (Caller will see extra nils at end; semantically wrong but
+    // safe.  In practice arrays > 254 always have overflow.)
+}
+
 extern "C" uint64_t jit_rt_sista_block_create(JITState* state,
                                                 uint64_t litIndex,
                                                 uint64_t numCopied,
