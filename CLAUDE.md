@@ -62,6 +62,27 @@ Key paths:
   sub-task from `docs/deferred.md` and continuing is always preferable to
   ending the turn. If you genuinely run out of context, the turn will end
   on its own — don't help it along.
+- **`/goal` rules** (same shape as /loop — these PERSIST across sessions):
+  - The goal NEVER auto-clears. If the doc's queue empties, ADD MORE
+    TASKS by scanning the codebase for similar issues. Don't stop just
+    because a list ran out.
+  - Never write "session totals", "progress summary", or "moving to next
+    task" messages between tasks. They're stop-signals.  Just do the
+    next thing.
+  - When the user interrupts mid-goal: answer in ≤2 sentences, then
+    IMMEDIATELY return to the next task. Don't recap, don't restate
+    plans, don't say "continuing now". The next thing you output after
+    the interrupt should be a tool call, not prose.
+  - "Investigation" / "audit" / "characterize" tasks invite summary
+    responses → stop. Tasks must have BINARY done conditions: file X
+    line Y edited, counter Z non-zero, bench 5/5 PASS.
+  - If a task is sized "1-4 hours" or "multi-hour", split it. The
+    larger the task, the more likely you stop partway. Max 15 min per
+    leaf task.
+  - **NEVER add per-call `std::getenv()` in hot paths.** Each call does
+    linear env scan. Use `static const bool x = std::getenv(...) != nullptr;`
+    or DebugSettings. This is THE biggest accidental-overhead trap —
+    one session found 20-30% bench-suite overhead from this anti-pattern.
 - **Two separate numbers govern /loop — do NOT conflate them:**
   1. **How long to WORK in a single turn:** very long. Keep doing tasks
      back-to-back until a natural stopping point (real blocker, needed
