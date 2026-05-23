@@ -610,6 +610,81 @@ Concrete characterization for `1M getter+yourself` (107 ms for
 W14's analysis confirms W13's premise (no easy gap remaining).
 Real W15 work is one of the multi-session items.  Defer.
 
+## F3-NL2 — root cause + partial fix (2026-05-23 in this session)
+
+After user pushback on the "goal not achieved" framing, actually
+dug into the F3 non-leaf hang.  Reproducer:
+`PHARO_T1_INLINE_BLOCK_VALUE=1 PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1
+bash scripts/bench-correctness.sh fib 15` hangs (>15s vs ~2ms).
+
+### Root cause (one of at least two)
+
+asmjit-T1 J2J return prelude at `AsmjitT1.cpp:2617` conditionally
+restores `state.{jitMethod,method,literals,argCount}` only when
+`g_debug.t1InlineJ2JXmethod` is on, with this comment:
+
+> When xmethod is OFF (default), the J2J push path is strictly
+> self-recursive (callee == caller — gated by SELF_REC_BIT
+> tbz), so state.method, state.literals, state.argCount, and
+> state.jitMethod were never modified during the J2J call —
+> skip the 5 redundant stores.
+
+But `jit_rt_inline_block_value_prep` (`JITRuntime.cpp:1550-1552`)
+sets `state.jitMethod = blockJM; state.method = compiledBlockBits;
+state.literals = blockMethObj->slots()+1; state.argCount =
+blockJM->argCount` — violating the "callee == caller" invariant.
+Without the restore, the caller's continuation reads the block's
+literals, producing the cascading DNU on `nil
+findNextHandlerContext` observed in the hang log.
+
+### Fix
+
+Commit `c9679589`: extend the gate to
+`if (g_debug.t1InlineJ2JXmethod || g_debug.t1InlineBlockValue)`.
+The 4-5 extra restore stores per J2J return are ~ns; default
+behavior (no env vars) unchanged because both gates are false.
+
+Verified:
+- `bench-correctness.sh fib 20 28 30`: 5/5 PASS at baseline.
+- `bench-correctness.sh fib 20 28 30 PHARO_T1_INLINE_BLOCK_VALUE=1`:
+  5/5 PASS (was previously regressing collect by +130ms).
+- bench-suite SUM with `BV=1` alone: 1477 ms (vs 1468 ms baseline,
+  +9 ms within noise — leaf-only catch rate is only 3.2%, so the
+  expected gain is tiny).
+
+### What this does NOT fix
+
+`PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1` still hangs fib(15) with
+~374 DNU events on `nil findNextHandlerContext`.  First DNU stack
+shows `#to:do:` not understood by `ReadOnlyUnixStore class` —
+state.receiver is being corrupted somewhere in the non-leaf path,
+but NOT in the basic state restore (that's now fixed).
+
+Likely additional bugs in:
+- Chain-break protocol when a block bails to interp mid-execution.
+- NLR (`^ expr` inside non-leaf block) — return prelude pops one
+  save but NLR should unwind multiple saves to the home method.
+- Exception-handler context-chain interaction during startup.
+
+These require lldb attach + careful protocol audit.  Multi-session
+work as the doc anticipated.
+
+### Net session impact on the goal
+
+The actual bench-suite gap to Cog is unchanged.  F3-NL2 unblocks
+leaf-only block-value (correctness) but the perf win is locked
+behind the remaining non-leaf bugs.  **Goal still not achieved.**
+The session shipped:
+- F3-NL2 fix (correctness for leaf-only).
+- W10 Sista bail-counter instrumentation.
+- W1 classification table.
+- This roadmap doc with verified findings on what doesn't move
+  the metric.
+
+To actually beat Cog requires committing 1-2 more sessions of
+focused lldb work on the F3 non-leaf protocol gap.
+
+
 
 
 
