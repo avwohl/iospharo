@@ -86,23 +86,24 @@ ACTION: build with -O3 and -fno-omit-frame-pointer.  Try sample
 again to see if it gets better symbols.
 DONE: yes/no + finding.
 
-### R45 — Check if SistaV1's bytecode 0x7B (value) is inlined
+### R48 — Look for unguarded `if (g_debug.xxx)` in hot paths
 
-ACTION: 0x7B is `value` (0 args).  Is it inlined at bytecode
-level like 0x7A?
-DONE: yes/no answer.
+ACTION: scan for `if (g_debug.` in hot functions.  These are
+cheap (just a memory read of a static const bool) but still
+take cycles.
+DONE: count + list of any in tight loops.
 
-### R46 — Look at primitiveYourself (returnsSelf)
+### R49 — Look at NLR (non-local return) overhead
 
-ACTION: `yourself` is called millions of times (Q4 found 1M).
-Bit 61 inline emits it.  Is the inline as tight as possible?
-DONE: instruction count of the bit-61 emit.
+ACTION: NLR happens from blocks that do `^value`.  Sample
+benches and identify NLR cost.  Read findNLRHomeFrame or similar.
+DONE: estimated NLR-per-bench-suite count.
 
-### R47 — Look at primitiveSize (prim 62) inline
+### R50 — Verify R3 fix is actually the dominant fix (single-task A/B)
 
-ACTION: `size` is called 1M+ times.  Inline emit at primKind 16.
-Audit for optimization opportunities.
-DONE: 3 suggestions OR confirmation already optimal.
+ACTION: revert R3 only (un-cache executePrimitive's getenvs),
+run bench, confirm regression.  Then restore.
+DONE: A/B numbers recorded.
 
 ## Closed
 
@@ -134,6 +135,18 @@ DONE: 3 suggestions OR confirmation already optimal.
 - ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
   walk is a good balance per past A/B work.  Reordering
   dispatch checks would need careful measurement.  Skipping.
+- ✅ R47: primSize inline emit is 15 instructions handling
+  fmt 2/9 (slot count) + fmt 16-23 (byte size).  At 1M calls
+  = 15M instr = ~5ms.  Reasonable.  Other formats bail.
+- ✅ R46: bit-61 (returnsSelf) inline emit at line 4231 is 3
+  instructions (drop args from sp, store sp, branch).  Already
+  minimal.  For 1M yourself calls = 3M instructions = <1ms.
+- ✅ R45: 0x7B (value, 0 args) is NOT inlined.  Falls into the
+  generic `commonSend` path at Interpreter.cpp:4706.  Same for
+  0x7C (value:value:), 0x7D (value:value:value:), 0x7E
+  (value:value:value:value:).  Adding inline emit for each
+  requires substantial JIT work — multi-hour per opcode.
+  Listed as future work.
 - ✅ R41: changed jitBasicNew/jitBasicNewWithArg to call
   primitiveNew/primitiveNewWithArg directly (skip executePrimitive
   prim-table indirection).  Bench-correctness 5/5 PASS.  No
