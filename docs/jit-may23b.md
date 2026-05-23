@@ -82,7 +82,7 @@ NET WIN MEASUREMENT (2026-05-23):
 So current scavenge IS helping a bit.  Proper generational
 with aging would unlock MUCH more (~800ms).
 
-ATTEMPT 2026-05-23 (R77 + R78): tried two approaches:
+ATTEMPT 2026-05-23 (R77 + R78 + R79): tried three approaches:
 1. 1-half survivor: copy eden → survivor, survivor → old.
    Bench-correctness 0/5 — survivor pollution from previous
    scavenges' bytes overlapping with new copies.
@@ -94,6 +94,30 @@ ATTEMPT 2026-05-23 (R77 + R78): tried two approaches:
 
 Real impl needs: split survivor into S0/S1 halves, flip per
 scavenge, with proper compaction.
+
+R79 (2026-05-23, /goal F1-F5 attempt): implemented two-half
+survivor management with from/to flip.  Added:
+- survivorMid_, survivorFromStart_/End_/Free_,
+  survivorToStart_/End_/Free_ in ObjectMemory.hpp.
+- Init split survivor into two halves.
+- tenureIfYoung: eden → "to" half, "from" → old, fallback to old
+  on "to" overflow.
+- End of scavenge: swap from/to.
+- Phase 1 (scanRegionForYoung) and Phase 2 (scanQueue drain):
+  extended to recognize survivor "from" half as "young".
+- fullGC pre-compact scavenge trigger: also checks survivor.
+- fullGC post-compact scan: scans "from" half only.
+- Added isCurrentlyYoung() helper.
+
+Still bench-correctness 0/5.  DNU on value:value: at startup —
+some object class index gets corrupted across scavenge.  Likely
+a place that still checks "is in eden" range explicitly without
+considering survivor "from".  ~10+ such sites in ObjectMemory.cpp
+(lines 1499, 1602, 1643, 2132, 2628, 3317, etc.) need updating.
+
+Genuinely multi-day work — proper impl requires touching every
+"is-young" check throughout the codebase, validating each.
+Reverted F1 attempt; stays multi-day.
 
 CLARIFICATION (2026-05-23): "Generational GC" is PARTIALLY done.
 
