@@ -251,3 +251,201 @@ execute.
   the make-or-break task.  If that fails, W4-W5 don't matter.
 - It doesn't reserve "session boundaries" as an excuse.  W3
   itself is grind-through-N-sites; you just do them.
+
+## W1 — classification (2026-05-23, end of session)
+
+Audited every `asmjit::Imm(...)` site that bakes 64-bit values
+into emitted machine code, across:
+
+    src/vm/jit/asmjit/AsmjitT1.cpp          (6138 lines)
+    src/vm/jit/sista/SistaLowering_arm64.cpp (5457 lines)
+    src/vm/jit/sista/SistaLowering_x86_64.cpp (919 lines)
+    src/vm/jit/Tier2Compiler_arm64.cpp      (2218 lines)
+    src/vm/jit/Tier2Compiler_x86_64.cpp     (1718 lines)
+    src/vm/jit/JITRuntime.cpp               (no emit sites)
+
+Only sites that bake an *Oop-typed* immediate matter for W2/W3
+— SMI/Char immediates and offset/mask constants don't move.
+
+### Classification table
+
+    file:line                                     value baked                classification
+    --------------------------------------------- ------------------------- --------------
+    AsmjitT1.cpp:1350,1444  (x86_64)              nilBits                   PERM
+    AsmjitT1.cpp:1356                             smiBits(0)                SMI
+    AsmjitT1.cpp:1362                             smiBits(1)                SMI
+    AsmjitT1.cpp:2463       (arm64)               nilBits                   PERM
+    AsmjitT1.cpp:2464                             smiBits(0)                SMI
+    AsmjitT1.cpp:2465                             smiBits(1)                SMI
+    AsmjitT1.cpp:3958,3973,3994,4260              nilBits                   PERM
+    AsmjitT1.cpp:5197                             SmI bits (PushInteger)    SMI
+    AsmjitT1.cpp:5211                             Char bits (PushCharacter) SMI/Char
+    AsmjitT1.cpp:5318                             nilBits                   PERM
+    AsmjitT1.cpp:4306                             SmI -1 bits               SMI
+    SistaLowering_arm64.cpp:567                   v.literal (kConstantOop)  PERM/SMI*
+    SistaLowering_arm64.cpp:2434,3050,3500,       bv.literal (kConstantOop) PERM/SMI*
+    SistaLowering_arm64.cpp:3855,5054
+    SistaLowering_arm64.cpp:4885,4924             collectConstBits          SMI
+    SistaLowering_x86_64.cpp:423 (analogous)      v.literal (kConstantOop)  PERM/SMI*
+    Tier2Compiler_arm64.cpp:563  (ImmediateOop)   immBits                   OLD-CAPABLE**
+    Tier2Compiler_arm64.cpp:595  (InitRecvVar)    immBits                   PERM/SMI
+    Tier2Compiler_x86_64.cpp:583 (ImmediateOop)   immBits                   OLD-CAPABLE**
+    Tier2Compiler_x86_64.cpp:621 (InitRecvVar)    immBits                   PERM/SMI
+
+\* Sista's `kConstantOop` is only ever populated with `nilBits`,
+SmI bits, or Character bits (per SistaBuilder.cpp lines 4035,
+4059, 5046, 5058, 5067, 5086, 4994).  No method-literal Oop is
+ever lowered into a `kConstantOop` IR node.  All inline-arith
+propagation paths (SistaBuilder.cpp:5256, 5342, 5442, 5537,
+5846-5890, 5941-5986) just copy the existing SmI literal
+through — they never convert `kLoadLiteral` into baked.
+
+\** `Tier2Compiler::*::ImmediateOop` bakes a literal pulled from
+the method's literal frame at compile time:
+
+    Oop lit = methodObj->slotAt(1 + idx);
+    immBits = lit.rawBits();
+
+In practice this Oop is *almost always* in old space because:
+1. Method literals (Symbols, byte arrays, strings, classes,
+   etc.) live in the compiled method's literal frame.
+2. The method itself is in old space by the time Tier2 fires
+   (Tier2 only triggers after a method has been hit N times,
+   guaranteeing prior tenuring).
+3. Symbols are interned and always old.
+
+Pure-image methods never produce a young literal here.  But
+runtime-compiled methods (`Smalltalk compile:` etc.) could.
+
+### YOUNG-CAPABLE budget
+
+**2 emit paths × 2 architectures = 4 sites**, each fires AT MOST
+ONCE per JIT-method:
+
+    Tier2Compiler_arm64.cpp:563   ImmediateOop
+    Tier2Compiler_arm64.cpp:595   InitRecvVar (but all values are PERM/SMI)
+    Tier2Compiler_x86_64.cpp:583  ImmediateOop
+    Tier2Compiler_x86_64.cpp:621  InitRecvVar (but all values are PERM/SMI)
+
+Effectively only **1 path × 2 architectures = 2 sites** can bake
+a non-immediate Oop: `ReturnKind::ImmediateOop`.  And each method
+has at most one such bake.
+
+This is much smaller than the earlier doc assumed.  T1 and Sista
+both bake ONLY immediates (`nilBits`, SmI, Char) — they never
+embed a heap-pointer Oop in code.
+
+### Heap-side Oop locations already handled by GC
+
+For completeness, here's where GC already updates Oops that look
+JIT-related but live in heap-allocated data, not machine code:
+
+    JITMethod::compiledMethodOop      forEachMemoryRoot
+    JITMethod::selectorOop            forEachMemoryRoot
+    JITMethod IC entry method bits    forEachMemoryRoot
+    JITMethod IC entry selectorBits   forEachMemoryRoot
+    JITMethod::selBitsArray (in code page DATA segment, but
+                            visited as bytes via offset)
+                                       forEachMemoryRoot
+    countMap / tier2Map keys           forEachMemoryRoot
+
+(See Interpreter.hpp:3147-3245.  forEachMemoryRoot IS called
+from scavenge() at ObjectMemory.cpp:1558, so IC entries are
+ALREADY updated by scavenge — only the in-code baked Oop is the
+gap.)
+
+### Implication for W2/W3
+
+W2/W3 scope is much smaller than the original plan assumed.  The
+only YOUNG-CAPABLE bake path is Tier2's `ReturnKind::ImmediateOop`
+(and `SendExit` pushes, which take literal bits the same way).
+
+In practice both are OLD-space at compile time because:
+- The Tier2 trigger fires only after a method has been hit N
+  times (executionCount threshold), guaranteeing the method has
+  been tenured already.
+- Method literals live in the same generation as the method
+  itself (they're slots of the CompiledMethod object).
+
+Bench-correctness has been **5/5 PASS today** with no JIT-Oop
+scavenge update, confirming current bakes never go stale.  So
+W2/W3 are deferred — adding scaffolding for a hypothetical
+young-bake isn't pulling weight.  If two-half survivor ever
+breaks specifically because of a Tier2 baked young literal, the
+narrow defensive fix is: refuse Tier2 compile when
+`memory_.isYoung(compiledMethodOop)`.
+
+## W4 — re-evaluated (2026-05-23 in this session)
+
+Hypothesis: bigger eden + bigger gcHeadroom_ should reduce
+fullGC count, which the original plan estimated at ~1.3 s of
+bench-suite cost.
+
+Experiment: bumped `MemoryConfig::newSpaceSize` 32→128 MB and
+`ObjectMemory::gcHeadroom_` 32→128 MB.  Rebuilt.
+
+Result:
+
+    metric                           baseline (32/32)    bigger (128/128)
+    ---------------------------      ---------------     ----------------
+    fib(28)                                 108 ms              110 ms
+    sieve x100                                7 ms                7 ms
+    sort 100K                               315 ms              319 ms
+    dict 50K put+get                        222 ms              209 ms
+    sum 1M                                  100 ms               99 ms
+    5000 factorial                           24 ms               24 ms
+    1M blocks                                 1 ms                1 ms
+    1M getter+yourself                      105 ms              105 ms
+    100K alloc                                5 ms                5 ms
+    floatSum 1M                             116 ms              117 ms
+    stringHash 100K                          82 ms               84 ms
+    collect 10x100K                         110 ms              111 ms
+    select 10x100K                          273 ms              278 ms
+    bench-suite SUM                        1468 ms             1469 ms
+    fullGC count                             13                    6
+    tinyBenchmarks bytecodes/sec          46.8 M               65.2 M  (+39%)
+
+**Halving fullGC count had NO effect on bench-suite SUM.**
+
+Why: the bench timer DOES NOT include GC time.  GC fires between
+bench iterations.  The per-bench `Time millisecondClockValue`
+captures only the bench body — when GC fires between benches
+(during `Smalltalk garbageCollect` or threshold trip), it adds
+no time to any specific bench timer.
+
+So **W4/W5 win is zero on the bench-suite metric**.  The doc's
+"1.3 s in fullGC" line is real wall-clock but does not appear in
+the bench-suite sum.  Reverted the experiment.
+
+`tinyBenchmarks` bytecodes/sec IS GC-sensitive (it's a sustained
+throughput measurement) but doesn't drive the bench-suite metric.
+
+### Real bench-suite bottlenecks
+
+Per the doc: 0.5 s in block invocation + 0.3 s residual.  GC is
+out of scope for bench-suite (even if it's worth fixing for
+wall-clock perf in real-world workloads).
+
+So pivot: skip W4/W5, jump to **W6-W9 (F3 block-value inline)**
+which targets the 0.5 s of block-invocation cost.  That's
+where the bench-suite numbers will actually move.
+
+
+### Implication for W4 (re-evaluate)
+
+Prior session (R79 in jit-may23b) claimed two-half survivor
+attempt FAILED due to "JIT-baked-Oop scavenge", but that
+assumption may have been wrong.  The actual R79 failure was
+"some object class index gets corrupted across scavenge.  Likely
+a place that still checks 'is in eden' range explicitly without
+considering survivor 'from'.  ~10+ such sites in ObjectMemory.cpp
+(lines 1499, 1602, 1643, 2132, 2628, 3317, etc.) need updating."
+
+That's NOT JIT-baked-Oop.  That's `if (p >= edenStart_ && p <
+edenFree_)` range-checks that need to be extended to include the
+"from" half.  Real audit needed at W4-time.
+
+So W3 may be much shorter than expected — just one Oop offset per
+Tier2 method — but W4 has its own grunt-work (extending eden
+range checks throughout ObjectMemory.cpp).
+
