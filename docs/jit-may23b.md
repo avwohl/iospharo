@@ -61,37 +61,6 @@ ACTION: `PHARO_VM=/tmp/harness/pharo timeout 240 scripts/run_benchmarks.sh`
 medians.
 DONE: numbers in this doc under `## Bench-suite tracking`.
 
-### R11 — Audit Primitives.cpp `if (std::getenv(` patterns
-
-ACTION: list all hits. Identify hot vs cold (Primitives is mostly
-called from IC HIT, so most are hot).
-DONE: list pasted.
-
-### R12 — Cache hot Primitives.cpp getenvs
-
-ACTION: convert each hot hit from R11.
-DONE: edits committed.
-
-### R13 — Audit ObjectMemory.cpp `if (std::getenv(` patterns
-
-ACTION: list and classify.
-DONE: list pasted.
-
-### R14 — Audit src/vm/jit/ for `if (std::getenv(` patterns
-
-ACTION: `grep -rn "if (std::getenv(" src/vm/jit/` and list.
-DONE: list pasted.
-
-### R15 — Cache hot JIT-runtime getenvs
-
-ACTION: convert any per-call ones.
-DONE: edits committed.
-
-### R16 — Run benchmark, check for regressions
-
-ACTION: 3 bench runs. Compare to R10 baseline.
-DONE: deltas recorded.
-
 ### R17 — Profile sum 1M with `sample` (macOS dtrace alt)
 
 ACTION: `sample test_load_image 5` while bench-suite is running
@@ -187,6 +156,14 @@ DONE: commit.
   - 12348: in jitSistaSelfRecCall (sista counter=0, never fires).
   - 16644, 16701: already cached.
 - ✅ R9: nothing to do (R8 found no hot uncached).
+- ✅ R11+R12: Primitives.cpp — no hot uncached getenvs.
+- ✅ R13: ObjectMemory.cpp — no uncached `if (std::getenv(` patterns.
+- ✅ R16: bench-suite stable across 3 runs.  Same numbers as R10.
+- ✅ R14+R15: src/vm/jit/ audit. All getenvs are in compile-time
+  paths (JIT stats print, T2 log, AsmjitT1 compile log, Sista
+  compile dump).  None per-call.  Two
+  at exit paths (3787, 3794).  Lines 1888, 10031 already cached.
+  Other getenv uses are `const char*` getters (not boolean checks).
 
 ## Bench-suite tracking
 
