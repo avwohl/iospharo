@@ -74,6 +74,38 @@ Listed so next session has clear next steps.
 
 ### F1 — Generational GC: keep young objects in young space
 
+**BLOCKER FOUND 2026-05-23**: bisected the F1 failure to a deeper
+dependency.  Step-by-step bisection:
+1. Just adding fields + init: PASS.
+2. Tenuring eden → survivor: FAIL (PASS=0/3).
+3. With survivor copy disabled, always tenure to old: PASS.
+
+Root cause: **JIT-compiled code has BAKED Oop pointers**.  When
+scavenge copies an eden object to a new address (survivor), the
+forward map updates other objects' pointer fields — but the JIT
+code's baked constants still point at the OLD eden address.
+Result: stale-pointer corruption manifesting as DNU on
+value:value: during startup.
+
+Currently scavenge ALWAYS tenures to old space.  Old objects DO
+move (during fullGC compact), but fullGC has a separate
+mechanism to update JIT-baked Oops (see updatePointersAfterCompact
++ JITMethod relocation logic).  Scavenge has no such mechanism.
+
+**Real F1 prerequisite**: extend scavenge to scan JIT code
+regions and update baked Oop constants via the forward map.
+That itself is multi-day:
+- AsmjitT1 emits Oop constants as `Imm((uint64_t)oop)`.
+- Sista lowering does the same.
+- Tier 2 (Tier2Compiler) the same.
+- Each baked Oop is in a code page mapped MAP_JIT (W^X).
+- Updating requires temporary write-enable.
+- Need to know which immediates are Oops vs SmI bits vs unrelated
+  data.
+
+Once those updates work, F1 itself is the relatively-small
+generational-GC patch (~13 sites listed earlier).
+
 NET WIN MEASUREMENT (2026-05-23):
 - yg on (current): 1850-1870 ms.
 - yg off (PHARO_NO_YG=1): 1895-1900 ms.
