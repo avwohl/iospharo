@@ -3222,6 +3222,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimBitOr = a.new_label();
             asmjit::Label tryPrimBitXor = a.new_label();
             asmjit::Label tryPrimBitShift = a.new_label();
+            asmjit::Label tryPrimMul = a.new_label();  // F5 R80: SmI mul via IC
             asmjit::Label tryPrimIdentityHash = a.new_label();
             asmjit::Label tryPrimAt = a.new_label();
             asmjit::Label tryPrimAtPut = a.new_label();
@@ -3380,6 +3381,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_eq(tryPrimBitXor);
                     a.cmp(x6, asmjit::Imm(13));
                     a.b_eq(tryPrimBitShift);
+                    // F5 R80: primKind 9 = SmI multiply.
+                    a.cmp(x6, asmjit::Imm(9));
+                    a.b_eq(tryPrimMul);
                     // SmallFloat: primKinds 21/22/23 are contiguous.
                     // sub 21 then cmp <3 catches all three.
                     a.sub(x6, x6, asmjit::Imm(21));
@@ -4536,6 +4540,29 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(x2, ptr(x0, OFF_SP));
                     a.b(endOfSend);
                 }
+
+                // === F5 R80: Inline SmI mul (primKind 9) ===
+                // Mirrors my 0x68 bytecode mul emit but at IC HIT level.
+                // x1 = tagged receiver (SmI confirmed earlier), arg at sp[-8].
+                a.bind(tryPrimMul);
+                emitIncPrimCounter((uint64_t)&g_primBitOp_hits);
+                a.ldur(x3, ptr(x2, -8));                 // tagged arg
+                a.and_(x6, x3, asmjit::Imm(0x7));
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_ne(dispatchCached);                  // arg not SmI
+                a.asr(x4, x1, asmjit::Imm(3));           // untag rcvr
+                a.asr(x6, x3, asmjit::Imm(3));           // untag arg
+                a.mul(x9, x4, x6);                       // lo
+                a.smulh(x10, x4, x6);                    // hi
+                a.asr(x11, x9, asmjit::Imm(63));         // sign-ext(lo)
+                a.cmp(x10, x11);
+                a.b_ne(dispatchCached);                  // overflow
+                a.lsl(x9, x9, asmjit::Imm(3));
+                a.orr(x9, x9, asmjit::Imm(1));           // retag
+                a.stur(x9, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
             } else {
                 // Labels still need to be bound somewhere even if unused —
                 // bind them as aliases for dispatchCached.
@@ -4543,6 +4570,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(tryPrimBitOr);
                 a.bind(tryPrimBitXor);
                 a.bind(tryPrimBitShift);
+                a.bind(tryPrimMul);
                 a.b(dispatchCached);
             }
 
