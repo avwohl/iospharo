@@ -77,6 +77,15 @@ struct DebugSettings {
     bool t1InlineGetter = true;       // PHARO_T1_NO_INLINE_GETTER inverts
     bool t1InlineSetter = true;       // PHARO_T1_NO_INLINE_SETTER inverts
     bool t1InlineReturnsSelf = true;  // PHARO_T1_NO_INLINE_RETURNS_SELF inverts
+    // jit-may23d W1: inline `^ arg0` (TempReturn) at IC HIT.
+    // PHARO_T1_NO_INLINE_TEMP_RETURN=1 disables.  Uses IC bit 54.
+    bool t1InlineTempReturn = true;
+    // jit-may23d W2: inline `^ self cmp arg0` (IntCmpReturn) at IC HIT.
+    // PHARO_T1_NO_INLINE_INT_CMP_RETURN=1 disables.  Uses IC bit 53.
+    bool t1InlineIntCmpReturn = true;
+    // jit-may23d W3: inline `^ self op arg0` (IntArithReturn) at IC HIT.
+    // PHARO_T1_NO_INLINE_INT_ARITH_RETURN=1 disables.  Uses IC bit 52.
+    bool t1InlineIntArithReturn = true;
     // jit-may22b multi-slot: inline bit-57 pattern
     // (^ self[A] op1 self[B] op2 const).  Common for
     // OrderedCollection>>size.  PHARO_T1_NO_INLINE_MULTISLOT=1 opt-out.

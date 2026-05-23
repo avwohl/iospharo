@@ -126,6 +126,9 @@ extern "C" uint64_t g_bcArithBail_hits;
 extern "C" uint64_t g_bcRemoteTemp_hits;
 extern "C" uint64_t g_t1MultiSlot_hits;
 extern "C" uint64_t g_t1ReturnsLiteral_hits;
+extern "C" uint64_t g_t1TempReturn_hits;
+extern "C" uint64_t g_t1IntCmpReturn_hits;
+extern "C" uint64_t g_t1IntArithReturn_hits;
 
 // jit-may20b Step 6: per-caller bail-gate histogram dump (defined in
 // AsmjitT1.cpp).  Called from dumpJITStats when PHARO_T1_BAIL_GATE_HISTO=1.
@@ -1491,12 +1494,16 @@ void Interpreter::dumpJITStats() {
                            + g_primFloatOp_hits + g_primBasicNew_hits
                            + g_primBasicNew_bails;
         if (primTotal > 0 || g_t1MultiSlot_hits > 0
-                || g_t1ReturnsLiteral_hits > 0) {
+                || g_t1ReturnsLiteral_hits > 0
+                || g_t1TempReturn_hits > 0
+                || g_t1IntCmpReturn_hits > 0
+                || g_t1IntArithReturn_hits > 0) {
             fprintf(stderr,
                 "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu "
                 "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu "
                 "basicNew=%llu/%llu basicNew0=%llu sistaSelfRec=%llu/%llu "
-                "multiSlot=%llu retLit=%llu\n",
+                "multiSlot=%llu retLit=%llu "
+                "tempRet=%llu intCmp=%llu intArith=%llu\n",
                 (unsigned long long)g_primAt_hits,
                 (unsigned long long)g_primAtPut_hits,
                 (unsigned long long)g_primSize_hits,
@@ -1511,7 +1518,10 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_sistaSelfRec_hits,
                 (unsigned long long)g_sistaSelfRec_attempts,
                 (unsigned long long)g_t1MultiSlot_hits,
-                (unsigned long long)g_t1ReturnsLiteral_hits);
+                (unsigned long long)g_t1ReturnsLiteral_hits,
+                (unsigned long long)g_t1TempReturn_hits,
+                (unsigned long long)g_t1IntCmpReturn_hits,
+                (unsigned long long)g_t1IntArithReturn_hits);
         }
     }
     if (g_xmethod_count > 0) {
@@ -8167,6 +8177,17 @@ struct TrivialMethodInfo {
     int8_t  setterIncSlot = -1;   // ivar index 0-15
     int8_t  setterIncConst = 0;   // -1, 0, or 1
     bool    setterIncSub = false;  // false=add, true=sub
+    // jit-may23d W1: `^ argN` pattern (PushTempN + ReturnTop).
+    // tempReturnIndex >= 0 means match.  N must be < argCount.
+    int8_t  tempReturnIndex = -1;
+    // jit-may23d W2: `^ self cmpOp argN` pattern.  cmpKind:
+    //   0=< 1=> 2=<= 3=>= 4=== 5=~=
+    int8_t  intCmpKind = -1;
+    int8_t  intCmpArgIdx = -1;
+    // jit-may23d W3: `^ self arithOp argN` pattern (+/-/*).
+    //   0=+ 1=- 2=*
+    int8_t  intArithKind = -1;
+    int8_t  intArithArgIdx = -1;
 };
 
 static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
@@ -8366,6 +8387,60 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
     // That's `^ self[A] op self` which usually isn't useful.
     //
     // Skipping this variant; it'd need a new IC bit.
+
+    // jit-may23d W1: `^ argN` (PushTempN + ReturnTop).  N must be an
+    // arg (< method.argCount) — local-temp returns aren't valid for
+    // this inline.  Method header argCount is in bits 16-19 of header.
+    {
+        int methArgCount = (headerBits >> 24) & 0x0F;
+        if (bcLen >= 2 && bc1 == 0x5C
+            && bc0 >= 0x40 && bc0 <= 0x47) {
+            int n = bc0 - 0x40;
+            if (n < methArgCount && n < 0x1F) {
+                info.tempReturnIndex = (int8_t)n;
+                return info;
+            }
+        }
+    }
+
+    // jit-may23d W2: `^ self cmpOp argN` for nArgs=1.
+    // Bytecode: pushReceiver pushTemp0 send<cmp> returnTop
+    //   = 0x4C 0x40 (0x62..0x67) 0x5C
+    // 0x62=< 0x63=> 0x64=<= 0x65=>= 0x66== 0x67=~=
+    // Cmpkind: 0=< 1=> 2=<= 3=>= 4=== 5=~=
+    {
+        if (bcLen >= 4
+            && bc0 == 0x4C
+            && bc1 == 0x40
+            && bytes[bcStart + 2] >= 0x62 && bytes[bcStart + 2] <= 0x67
+            && bytes[bcStart + 3] == 0x5C) {
+            info.intCmpKind = (int8_t)(bytes[bcStart + 2] - 0x62);
+            info.intCmpArgIdx = 0;
+            return info;
+        }
+    }
+
+    // jit-may23d W3: `^ self arithOp argN` for nArgs=1.
+    // Bytecode: pushReceiver pushTemp0 send<+|-|*> returnTop
+    //   = 0x4C 0x40 (0x60|0x61|0x68) 0x5C
+    // 0x60=+ 0x61=- 0x68=*
+    {
+        if (bcLen >= 4
+            && bc0 == 0x4C
+            && bc1 == 0x40
+            && (bytes[bcStart + 2] == 0x60
+                || bytes[bcStart + 2] == 0x61
+                || bytes[bcStart + 2] == 0x68)
+            && bytes[bcStart + 3] == 0x5C) {
+            switch (bytes[bcStart + 2]) {
+                case 0x60: info.intArithKind = 0; break;
+                case 0x61: info.intArithKind = 1; break;
+                case 0x68: info.intArithKind = 2; break;
+            }
+            info.intArithArgIdx = 0;
+            return info;
+        }
+    }
 
     return info;
 }
@@ -18582,6 +18657,24 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                 && tmi.returnsLiteral != TrivialReturnKind::None) {
                 extra = (1ULL << 58)
                       | ((uint64_t)tmi.returnsLiteral << 48);
+            }
+            // jit-may23d W1: bit 54 = TempReturn `^ argN`.
+            // tempReturnIndex in bits 48-50 (3 bits, idx 0..7).
+            if (extra == 0 && tmi.tempReturnIndex >= 0) {
+                extra = (1ULL << 54)
+                      | ((uint64_t)(tmi.tempReturnIndex & 7) << 48);
+            }
+            // jit-may23d W2: bit 53 = IntCmpReturn `^ self cmp arg`.
+            // intCmpKind in bits 48-50.
+            if (extra == 0 && tmi.intCmpKind >= 0) {
+                extra = (1ULL << 53)
+                      | ((uint64_t)tmi.intCmpKind << 48);
+            }
+            // jit-may23d W3: bit 52 = IntArithReturn `^ self op arg`.
+            // intArithKind in bits 48-50.
+            if (extra == 0 && tmi.intArithKind >= 0) {
+                extra = (1ULL << 52)
+                      | ((uint64_t)tmi.intArithKind << 48);
             }
         }
     }

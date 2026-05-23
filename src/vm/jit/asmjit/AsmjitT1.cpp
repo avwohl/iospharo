@@ -82,6 +82,10 @@ extern "C" uint64_t g_t1SistaDispatch_attempts;
 extern "C" uint64_t g_t1MultiSlot_hits = 0;
 extern "C" uint64_t g_t1MultiSlot_bails = 0;
 extern "C" uint64_t g_t1ReturnsLiteral_hits = 0;
+// jit-may23d W1/W2/W3 inline-tier2 IC HIT counters.
+extern "C" uint64_t g_t1TempReturn_hits     = 0;  // W1: `^ arg0`
+extern "C" uint64_t g_t1IntCmpReturn_hits   = 0;  // W2: `^ self cmp arg`
+extern "C" uint64_t g_t1IntArithReturn_hits = 0;  // W3: `^ self op arg`
 
 // Counters for inline-prim 18 dispatch (PHARO_T1_INLINE_PRIM_COUNTERS=1).
 extern "C" uint64_t g_primBasicNew_hits  = 0;
@@ -3222,6 +3226,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label trySetter = a.new_label();
             asmjit::Label tryReturnsSelf = a.new_label();
             asmjit::Label tryReturnsLiteral = a.new_label();
+            asmjit::Label tryTempReturn = a.new_label();      // W1
+            asmjit::Label tryIntCmpReturn = a.new_label();    // W2
+            asmjit::Label tryIntArithReturn = a.new_label();  // W3
             asmjit::Label tryMultiSlot = a.new_label();
             asmjit::Label trySistaCall = a.new_label();
             asmjit::Label tryPrimBitAnd = a.new_label();
@@ -3416,6 +3423,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // handles arg-dropping like returnsSelf does.
                     if (g_debug.t1InlineReturnsLiteral) {
                         a.tbnz(x7, asmjit::Imm(58), tryReturnsLiteral);
+                    }
+                    // W1: bit 54 = TempReturn `^ arg N` — works for any
+                    // receiver (no class-specific dispatch needed; the
+                    // target body just reads tempBase[N]).  Dispatched
+                    // BEFORE the heap/SmI split.
+                    if (nArgs >= 1 && g_debug.t1InlineTempReturn) {
+                        a.tbnz(x7, asmjit::Imm(54), tryTempReturn);
+                    }
+                    // W2: bit 53 = IntCmpReturn `^ self cmp arg`.  Needs
+                    // SmI receiver AND SmI arg.  Caller pre-checked
+                    // receiver class; arg checked in emit.
+                    if (nArgs == 1 && g_debug.t1InlineIntCmpReturn) {
+                        a.tbnz(x7, asmjit::Imm(53), tryIntCmpReturn);
+                    }
+                    // W3: bit 52 = IntArithReturn `^ self op arg` (+/-/*).
+                    if (nArgs == 1 && g_debug.t1InlineIntArithReturn) {
+                        a.tbnz(x7, asmjit::Imm(52), tryIntArithReturn);
                     }
                     a.tst(x1, asmjit::Imm(0x7));
                     if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
@@ -4325,6 +4349,191 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                     a.str(x2, ptr(x0, OFF_SP));
                 }
+                a.b(endOfSend);
+            }
+
+            // === W1: tryTempReturn (bit 54, nArgs >= 1) ===
+            // Pattern: callee = `^ tempN` where N < nArgs (so the value is
+            // an arg, not a local).  IC extras bits 48-52 encode the temp
+            // index N.  At call site: rcvr = caller's value, args at
+            // sp[-nArgs..sp-1].  After inline: result = sp[-(nArgs - N)]
+            // (the Nth arg, since temps[N] for N < argCount = args[N]).
+            // Then drop args, store result at rcvr slot.
+            if (nArgs >= 1 && g_debug.t1InlineTempReturn) {
+                a.bind(tryTempReturn);
+                a.mov(x14, asmjit::Imm((uint64_t)&g_t1TempReturn_hits));
+                a.ldr(x15, ptr(x14));
+                a.add(x15, x15, asmjit::Imm(1));
+                a.str(x15, ptr(x14));
+                // x6 = temp index N (bits 48-52, 5 bits = up to 31).
+                a.lsr(x6, x7, asmjit::Imm(48));
+                a.and_(x6, x6, asmjit::Imm(0x1F));
+                // The Nth arg lives at sp[-(nArgs - N)].  Stack layout:
+                //   sp[-1] = arg(nArgs-1)
+                //   sp[-2] = arg(nArgs-2)
+                //   ...
+                //   sp[-nArgs] = arg(0)
+                //   sp[-(nArgs+1)] = recv
+                // For temp N (0-indexed) = arg N, byte offset from sp =
+                //   -(nArgs - N) * 8 = (N - nArgs) * 8.
+                // Compute: argAddr = sp + (N - nArgs) * 8.
+                // x2 = sp (set above at top of emit).
+                a.sub(x6, x6, asmjit::Imm(nArgs));  // x6 = N - nArgs
+                a.lsl(x6, x6, asmjit::Imm(3));       // x6 = (N - nArgs) * 8
+                a.add(x6, x2, x6);                    // x6 = sp + that offset
+                a.ldr(x3, ptr(x6));   // x3 = the arg value
+                a.stur(x3, ptr(x2, rcvrOffsetBytes));  // store at recv slot
+                if (nArgs > 0) {
+                    a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                    a.str(x2, ptr(x0, OFF_SP));
+                }
+                a.b(endOfSend);
+            }
+
+            // === W2: tryIntCmpReturn (bit 53, nArgs == 1) ===
+            // Pattern: `^ self <cmpOp> arg0` for SmI receiver + SmI arg.
+            // Extras bits 48-50 encode cmpKind:
+            //   0=< 1=> 2=<= 3=>= 4=== 5=~=
+            // Result: true/false oop written to rcvr slot, args dropped.
+            // Bail to dispatchCached if arg isn't SmI (rare for hot
+            // comparators since IC HIT already filtered receiver by class
+            // but receiver class doesn't guarantee SmI arg type).
+            if (nArgs == 1 && g_debug.t1InlineIntCmpReturn) {
+                a.bind(tryIntCmpReturn);
+                a.mov(x14, asmjit::Imm((uint64_t)&g_t1IntCmpReturn_hits));
+                a.ldr(x15, ptr(x14));
+                a.add(x15, x15, asmjit::Imm(1));
+                a.str(x15, ptr(x14));
+                // Receiver in x1 (already loaded), arg in sp[-1].
+                // Verify both are SmI (low 3 bits = 001).
+                a.ldur(x3, ptr(x2, -8));     // x3 = arg0
+                // Tag check both: receiver might be heap (IC HIT class
+                // says receiver is the target's expected class, but if
+                // target's receiver-class is SmallInteger then x1 is SmI).
+                a.orr(x4, x1, x3);
+                a.and_(x4, x4, asmjit::Imm(0x7));
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                // Extract cmpKind from bits 48-50.
+                a.lsr(x6, x7, asmjit::Imm(48));
+                a.and_(x6, x6, asmjit::Imm(0x7));
+                // Compare tagged SmI values directly — order is preserved
+                // because both have same tag.
+                a.cmp(x1, x3);
+                // Build result by chain: load trueOop/falseOop based on
+                // condition + cmpKind.
+                a.ldr(x4, ptr(x0, OFF_TRUEOOP));
+                a.ldr(x5, ptr(x0, OFF_FALSEOOP));
+                // Dispatch on cmpKind.  Each kind: csel result based on
+                // condition flags.
+                asmjit::Label cmpLT = a.new_label();
+                asmjit::Label cmpGT = a.new_label();
+                asmjit::Label cmpLE = a.new_label();
+                asmjit::Label cmpGE = a.new_label();
+                asmjit::Label cmpEQ = a.new_label();
+                asmjit::Label cmpNE = a.new_label();
+                asmjit::Label cmpDone = a.new_label();
+                a.cbz(x6, cmpLT);
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_eq(cmpGT);
+                a.cmp(x6, asmjit::Imm(2));
+                a.b_eq(cmpLE);
+                a.cmp(x6, asmjit::Imm(3));
+                a.b_eq(cmpGE);
+                a.cmp(x6, asmjit::Imm(4));
+                a.b_eq(cmpEQ);
+                a.cmp(x6, asmjit::Imm(5));
+                a.b_eq(cmpNE);
+                a.b(dispatchCached);  // unknown kind
+                a.bind(cmpLT);
+                a.cmp(x1, x3);
+                a.csel(x3, x4, x5, asmjit::a64::CondCode::kLT);
+                a.b(cmpDone);
+                a.bind(cmpGT);
+                a.cmp(x1, x3);
+                a.csel(x3, x4, x5, asmjit::a64::CondCode::kGT);
+                a.b(cmpDone);
+                a.bind(cmpLE);
+                a.cmp(x1, x3);
+                a.csel(x3, x4, x5, asmjit::a64::CondCode::kLE);
+                a.b(cmpDone);
+                a.bind(cmpGE);
+                a.cmp(x1, x3);
+                a.csel(x3, x4, x5, asmjit::a64::CondCode::kGE);
+                a.b(cmpDone);
+                a.bind(cmpEQ);
+                a.cmp(x1, x3);
+                a.csel(x3, x4, x5, asmjit::a64::CondCode::kEQ);
+                a.b(cmpDone);
+                a.bind(cmpNE);
+                a.cmp(x1, x3);
+                a.csel(x3, x4, x5, asmjit::a64::CondCode::kNE);
+                a.bind(cmpDone);
+                a.stur(x3, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8));  // drop 1 arg
+                a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
+            }
+
+            // === W3: tryIntArithReturn (bit 52, nArgs == 1) ===
+            // Pattern: `^ self <op> arg0` for SmI receiver + SmI arg.
+            // op encoded in bits 48-50: 0=+ 1=- 2=*.
+            // Tagged add/sub: a + b = (a_val<<3|1) + (b_val<<3|1) =
+            // (a_val+b_val)<<3 + 2 → subtract 1 to fix tag.
+            // For mul: untag both, multiply, retag.
+            // Overflow → bail to dispatchCached.
+            if (nArgs == 1 && g_debug.t1InlineIntArithReturn) {
+                a.bind(tryIntArithReturn);
+                a.mov(x14, asmjit::Imm((uint64_t)&g_t1IntArithReturn_hits));
+                a.ldr(x15, ptr(x14));
+                a.add(x15, x15, asmjit::Imm(1));
+                a.str(x15, ptr(x14));
+                a.ldur(x3, ptr(x2, -8));     // x3 = arg0
+                a.orr(x4, x1, x3);
+                a.and_(x4, x4, asmjit::Imm(0x7));
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                a.lsr(x6, x7, asmjit::Imm(48));
+                a.and_(x6, x6, asmjit::Imm(0x7));
+                asmjit::Label arDone = a.new_label();
+                asmjit::Label arSub = a.new_label();
+                asmjit::Label arMul = a.new_label();
+                a.cmp(x6, asmjit::Imm(1));
+                a.b_eq(arSub);
+                a.cmp(x6, asmjit::Imm(2));
+                a.b_eq(arMul);
+                // Add: x4 = x1 + x3, untag tag-bit (subtract 1).
+                a.adds(x4, x1, x3);
+                a.b_vs(dispatchCached);  // overflow
+                a.sub(x4, x4, asmjit::Imm(1));
+                a.b(arDone);
+                a.bind(arSub);
+                a.subs(x4, x1, x3);
+                a.b_vs(dispatchCached);
+                a.add(x4, x4, asmjit::Imm(1));
+                a.b(arDone);
+                a.bind(arMul);
+                // Untag, multiply with overflow check, retag.
+                a.asr(x6, x1, asmjit::Imm(3));   // au = x1 >> 3
+                a.asr(x8, x3, asmjit::Imm(3));   // bu = x3 >> 3
+                a.mul(x4, x6, x8);
+                // Overflow if smul64(x6, x8) doesn't fit in 64 bits:
+                // smulh + asr 63 must equal mul-result's sign.
+                a.smulh(x9, x6, x8);
+                a.asr(x10, x4, asmjit::Imm(63));
+                a.cmp(x9, x10);
+                a.b_ne(dispatchCached);
+                // Retag: shift left 3, OR with 1.
+                // Check the tagged value also doesn't overflow 61 bits.
+                a.lsl(x9, x4, asmjit::Imm(3));
+                a.asr(x10, x9, asmjit::Imm(3));
+                a.cmp(x10, x4);
+                a.b_ne(dispatchCached);
+                a.orr(x4, x9, asmjit::Imm(1));
+                a.bind(arDone);
+                a.stur(x4, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8));
+                a.str(x2, ptr(x0, OFF_SP));
                 a.b(endOfSend);
             }
 
