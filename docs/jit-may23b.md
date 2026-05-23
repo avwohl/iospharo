@@ -82,6 +82,19 @@ NET WIN MEASUREMENT (2026-05-23):
 So current scavenge IS helping a bit.  Proper generational
 with aging would unlock MUCH more (~800ms).
 
+ATTEMPT 2026-05-23 (R77 + R78): tried two approaches:
+1. 1-half survivor: copy eden → survivor, survivor → old.
+   Bench-correctness 0/5 — survivor pollution from previous
+   scavenges' bytes overlapping with new copies.
+2. Aging bit (YoungSurvivedBit on header bit 22) + 1-half
+   survivor management.  Bench-correctness 0/5 — same
+   pollution issue.  The aging bit alone isn't enough;
+   need TWO survivor halves to flip between for safe
+   copying.
+
+Real impl needs: split survivor into S0/S1 halves, flip per
+scavenge, with proper compaction.
+
 CLARIFICATION (2026-05-23): "Generational GC" is PARTIALLY done.
 
 What's done:
