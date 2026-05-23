@@ -1513,8 +1513,27 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     // Relaxed gate previously crashed after ~820 fires (iter N+16,
     // 2026-05-19 morning); the post-send-IP + splitPool + receiver-
     // sync + GC-J2J landings later that day may have resolved it.
+    // F3-NL4: tighter non-leaf gate.  Allow blocks with up to N IC
+    // entries (PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1 currently means
+    // "up to 1 IC entry by default").  Larger blocks have IC churn
+    // and frequent chain-loop bails that make BV inline net-negative.
+    // PHARO_T1_BV_MAX_IC=N tunes the threshold.
     if (!g_debug.t1InlineBlockValueNonLeaf
         && blockJM->numICEntries != 0) { g_bvBail_lookup++; return nullptr; }
+    if (g_debug.t1InlineBlockValueNonLeaf
+        && g_debug.t1BvMaxIC >= 0
+        && blockJM->numICEntries > (uint16_t)g_debug.t1BvMaxIC) {
+        g_bvBail_lookup++; return nullptr;
+    }
+    // F3-NL5: cap j2jDepth for non-leaf BV.  Nested BV inlines compound
+    // save-push/restore overhead (~50ns × depth × calls).  For
+    // collect 10x100K = 1M iterations × 2 nested BVs = 2M extra ops.
+    // PHARO_T1_BV_MAX_DEPTH=N caps depth.  -1 = no cap.
+    if (g_debug.t1InlineBlockValueNonLeaf
+        && g_debug.t1BvMaxDepth >= 0
+        && s->j2jDepth > g_debug.t1BvMaxDepth) {
+        g_bvBail_savefull++; return nullptr;
+    }
     if (blockJM->isStubOnEntry)    { g_bvBail_stub++; return nullptr; }
     if (blockJM->canBailMidMethod) { g_bvBail_canBail++; return nullptr; }
     if ((blockJM->methodHeader >> 16) & 1) { g_bvBail_prim++; return nullptr; }

@@ -154,6 +154,8 @@ DebugSettings::DebugSettings() {
     t1InlineBlockValueNonLeaf =
         envPresent("PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF");
     t1InlineBlockValueMax = envInt("PHARO_T1_INLINE_BLOCK_VALUE_MAX", -1);
+    t1BvMaxIC = envInt("PHARO_T1_BV_MAX_IC", -1);
+    t1BvMaxDepth = envInt("PHARO_T1_BV_MAX_DEPTH", -1);
     primProfile         = envPresent("PHARO_PRIM_PROFILE");
     t1EagerBlockCompile = envPresent("PHARO_T1_EAGER_BLOCK_COMPILE");
     t1J2JReceiverSync   = envPresent("PHARO_T1_J2J_RECEIVER_SYNC");
