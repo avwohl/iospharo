@@ -99,11 +99,6 @@ ACTION: NLR happens from blocks that do `^value`.  Sample
 benches and identify NLR cost.  Read findNLRHomeFrame or similar.
 DONE: estimated NLR-per-bench-suite count.
 
-### R50 — Verify R3 fix is actually the dominant fix (single-task A/B)
-
-ACTION: revert R3 only (un-cache executePrimitive's getenvs),
-run bench, confirm regression.  Then restore.
-DONE: A/B numbers recorded.
 
 ## Closed
 
@@ -135,6 +130,15 @@ DONE: A/B numbers recorded.
 - ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
   walk is a good balance per past A/B work.  Reordering
   dispatch checks would need careful measurement.  Skipping.
+- ✅ **R50** (CONFIRMS R3 IS DOMINANT FIX): A/B revert of R3
+  alone:
+    Bench | Without R3 | With R3
+    fib(28) | 155 | 154 (=)
+    sum 1M | 176 | 101 (**-43%**)
+    alloc | 13 | 5 (-62%)
+  Caching just executePrimitive's 2 getenvs (R3) accounts for
+  almost all the bench-suite gain.  Other fixes (R6, R39, R41,
+  Q40-Q41) add marginal amounts.
 - ✅ R47: primSize inline emit is 15 instructions handling
   fmt 2/9 (slot count) + fmt 16-23 (byte size).  At 1M calls
   = 15M instr = ~5ms.  Reasonable.  Other formats bail.
