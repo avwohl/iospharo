@@ -67,37 +67,30 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
-### R42 — Audit DebugSettings.cpp for missing fields
+### R52 — Document the R3 lesson in CLAUDE.md root-causes section
 
-ACTION: any PHARO_* env var read in Interpreter.cpp / Primitives.cpp
-that ISN'T in DebugSettings should be added there per CLAUDE.md
-rule.  Find 1.
-DONE: 1 added.
+ACTION: add a "Common silent perf traps" section listing the
+per-call getenv anti-pattern with line-number examples from
+R3's discovery.
+DONE: section added.
 
-### R43 — Move static-cached getenvs into DebugSettings
+### R53 — Look for similar patterns: `if (strcmp(...))` per call
 
-ACTION: pick 3 cached getenvs from R3/R6/R39/R41 work and migrate
-them to DebugSettings fields per CLAUDE.md.
-DONE: 3 migrated, bench-correctness PASS.
+ACTION: like getenv, strcmp on a fixed string in a hot loop
+could be wasted.  Grep for hot-path strcmp.
+DONE: list of any hits.
 
-### R44 — Profile build's Profile mode
+### R54 — Audit IC dispatch for any per-call function calls
 
-ACTION: build with -O3 and -fno-omit-frame-pointer.  Try sample
-again to see if it gets better symbols.
-DONE: yes/no + finding.
+ACTION: the IC HIT path in asmjit-T1 should be all inline asm.
+Any C-runtime callback would add overhead.  Confirm.
+DONE: yes/no.
 
-### R48 — Look for unguarded `if (g_debug.xxx)` in hot paths
+### R55 — Final bench-suite vs Cog comparison
 
-ACTION: scan for `if (g_debug.` in hot functions.  These are
-cheap (just a memory read of a static const bool) but still
-take cycles.
-DONE: count + list of any in tight loops.
-
-### R49 — Look at NLR (non-local return) overhead
-
-ACTION: NLR happens from blocks that do `^value`.  Sample
-benches and identify NLR cost.  Read findNLRHomeFrame or similar.
-DONE: estimated NLR-per-bench-suite count.
+ACTION: re-run bench-suite, compute new vs-Cog ratios for the
+docs.
+DONE: table updated.
 
 
 ## Closed
@@ -130,6 +123,15 @@ DONE: estimated NLR-per-bench-suite count.
 - ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
   walk is a good balance per past A/B work.  Reordering
   dispatch checks would need careful measurement.  Skipping.
+- ✅ R51: added `feedback_goal_workflow.md` + `MEMORY.md` so the
+  /goal lesson and getenv anti-pattern persist across CLAUDE.md
+  changes.
+- ✅ R49: NLR happens via `^value` from blocks.  Bench-suite
+  blocks mostly do arg-passing (collect:/do:/timesRepeat:) not
+  block exits.  NLR isn't bench-suite hot.  Skipping.
+- ✅ R48: 58 `if (g_debug.xxx)` checks across Interpreter.cpp +
+  Primitives.cpp.  Each is a memory read + branch (~1 cycle).
+  Already as cheap as possible.  No optimization needed.
 - ✅ **R50** (CONFIRMS R3 IS DOMINANT FIX): A/B revert of R3
   alone:
     Bench | Without R3 | With R3
