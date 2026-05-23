@@ -102,6 +102,13 @@ DONE: commit OR finding documented.
   + comparison.  300 ms / 100K ops = 3 µs per op.  Most of that
   is String hash + comparison (Pharo's String>>hash iterates
   per character).  Inlining hash would be substantial work.
+- ❌ R68/R69: re-evaluated Q24 (gcHeadroom 128MB) and Step 4 (IC
+  poly walk) with clean post-getenv-fix baseline.  Both showed
+  no consistent benefit.  The Q24 "collect -54%" was a bench-
+  variance outlier (collect swings 110-250 ms run-to-run).
+  Most past reverts were correctness/real-overhead issues, not
+  getenv-distorted.  Lesson: collect/select benches need 3-run
+  median, not single A/B.
 - ❌ R62: hoisted primKind 14/15/16 dispatch before bit 60.
   No counter change (at=317K unchanged), no bench change.
   at: IC entries apparently don't have bit 60 set widely.  The
