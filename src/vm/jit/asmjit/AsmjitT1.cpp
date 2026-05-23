@@ -3406,7 +3406,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // jit-may22b: dispatch returnsLiteral (bit 58)
                     // BEFORE the heap/SmI split so it works for both
                     // (SmI Integer>>isInteger etc. is the common case).
-                    if (nArgs == 0 && g_debug.t1InlineReturnsLiteral) {
+                    // F5 R83: extended to all nArgs.  retLit emit now
+                    // handles arg-dropping like returnsSelf does.
+                    if (g_debug.t1InlineReturnsLiteral) {
                         a.tbnz(x7, asmjit::Imm(58), tryReturnsLiteral);
                     }
                     a.tst(x1, asmjit::Imm(0x7));
@@ -4239,10 +4241,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // jit-may22b: pattern `^ <literal>` where literal is one
             // of nil/true/false/0/1.  bits 48-50 of extras encode:
             //   1=nil, 2=true, 3=false, 4=SmI 0, 5=SmI 1.
-            // For nArgs=0 only (the method takes no args, so we just
-            // need to replace the receiver on the stack with the
-            // literal value).
-            if (nArgs == 0) {
+            // F5 R83: handles all nArgs.  Result goes at rcvr slot;
+            // for nArgs > 0, SP adjusts down by nArgs*8 to drop args.
+            asmjit::Label retLitDone = a.new_label();
+            {
                 a.bind(tryReturnsLiteral);
                 bumpRetLitCounter();
                 // Extract kind from bits 48-50 → x6.
@@ -4257,7 +4259,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_ne(notNil);
                     a.mov(x3, asmjit::Imm(nilBits));
                     a.stur(x3, ptr(x2, rcvrOffsetBytes));
-                    a.b(endOfSend);
+                    a.b(retLitDone);
                     a.bind(notNil);
                 }
                 a.cmp(x6, asmjit::Imm(2));
@@ -4266,7 +4268,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_ne(notTrue);
                     a.ldr(x3, ptr(x0, OFF_TRUEOOP));
                     a.stur(x3, ptr(x2, rcvrOffsetBytes));
-                    a.b(endOfSend);
+                    a.b(retLitDone);
                     a.bind(notTrue);
                 }
                 a.cmp(x6, asmjit::Imm(3));
@@ -4275,7 +4277,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_ne(notFalse);
                     a.ldr(x3, ptr(x0, OFF_FALSEOOP));
                     a.stur(x3, ptr(x2, rcvrOffsetBytes));
-                    a.b(endOfSend);
+                    a.b(retLitDone);
                     a.bind(notFalse);
                 }
                 a.cmp(x6, asmjit::Imm(4));
@@ -4284,7 +4286,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_ne(notZero);
                     a.mov(x3, asmjit::Imm(1));  // SmI 0 bits = 1
                     a.stur(x3, ptr(x2, rcvrOffsetBytes));
-                    a.b(endOfSend);
+                    a.b(retLitDone);
                     a.bind(notZero);
                 }
                 a.cmp(x6, asmjit::Imm(5));
@@ -4293,7 +4295,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_ne(notOne);
                     a.mov(x3, asmjit::Imm(9));      // SmI 1 bits = 9
                     a.stur(x3, ptr(x2, rcvrOffsetBytes));
-                    a.b(endOfSend);
+                    a.b(retLitDone);
                     a.bind(notOne);
                 }
                 a.cmp(x6, asmjit::Imm(6));
@@ -4303,12 +4305,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_ne(notMinusOne);
                     a.mov(x3, asmjit::Imm(uint64_t(-1) << 3 | 1));
                     a.stur(x3, ptr(x2, rcvrOffsetBytes));
-                    a.b(endOfSend);
+                    a.b(retLitDone);
                     a.bind(notMinusOne);
                 }
                 // F5 R82: kind 7 = SmI 2.  Bits = 0x11.
                 a.mov(x3, asmjit::Imm(0x11));   // SmI 2 bits = 17
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));
+                a.b(retLitDone);
+
+                // F5 R83: common store-done point.  Drop args if any.
+                a.bind(retLitDone);
+                if (nArgs > 0) {
+                    a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                    a.str(x2, ptr(x0, OFF_SP));
+                }
                 a.b(endOfSend);
             }
 
