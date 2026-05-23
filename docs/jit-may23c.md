@@ -754,6 +754,44 @@ Per `jit-may23b`'s doc estimate, ~300 ms savings.  But this
 session can't ship the fix — committed: bisection knob,
 detailed root cause, partial fix (F3-NL2) for leaf-only path.
 
+## F3-NL3 attempted fix didn't land
+
+Tried materializing j2j saves into savedFrames_ at ExitSend when
+`state.method != method_`.  Live trace showed the condition was
+**never true** at the ExitSend handler entry: at every observed
+ExitSend, `state.method == method_` and `state.j2jDepth == 0`.
+
+So the j2j-save-desync hypothesis is wrong, or at least not
+directly visible at this point.  By the time the chain-loop's
+ExitSend handler sees state, the return prelude has already
+restored state.method/etc. to the caller (whose method_ matches).
+
+What ACTUALLY corrupts state — happens BETWEEN BV invocations 7
+and 8 of the SAME compiled block (blockCM=0x300350cd8,
+blockJM=0x10a4be600, numIC=1, nArgs=1, all fires at j2jDepth=0).
+The 8th invocation succeeds but its consequences cause cascading
+DNUs on `#to:do:` in `Array>>do:` — receiver corruption in the
+outer interp context.
+
+Hypotheses for the actual bug (NOT YET verified):
+- The block's single IC entry holds a value: send.  At the 8th
+  invocation, the IC contents may have been corrupted (poly /
+  stale) by prior j2j interactions.  Could be IC-slot mutation
+  by the return prelude.
+- Some shared state (megacache, j2jPool index, framePointer
+  recovery) accumulates corruption across BV invocations and
+  trips on the 8th.
+
+Continuing requires either:
+- Single-step lldb through fire #8 with breakpoint at
+  `jit_rt_inline_block_value_prep` skipped to the 8th call.
+- Adding stateful tracing to log block IC contents + j2jPool
+  state before/after each non-leaf BV invocation.
+
+Reverted the failed materialize attempt.  Bisection knob
+(`PHARO_T1_INLINE_BLOCK_VALUE_MAX=N`) stays — useful tooling
+for future debugging.
+
 ### Net session impact on the goal
 
 The actual bench-suite gap to Cog is unchanged.  F3-NL2 unblocks
