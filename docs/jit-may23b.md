@@ -67,6 +67,34 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
+## Future work (multi-day, beyond session-scope)
+
+These represent the remaining perf gaps after May 2026 fixes.
+Listed so next session has clear next steps.
+
+### F1 — Generational GC: keep young objects in young space
+Current scavenge tenures ALL young objects to old space → 13
+fullGCs per bench-suite at ~100ms each.  Real generational GC
+would cut to ~3 fullGCs.
+**Gain**: -800ms+ on bench-suite.  **Effort**: 1-2 weeks.
+
+### F2 — Parallel mark phase
+~100K live objects × 600ns each = 60ms per mark.  Could be
+parallelized across cores.
+**Gain**: ~400ms.  **Effort**: 1-2 weeks.
+
+### F3 — Block-value direct dispatch (jit-may22b Step 9-10)
+primitiveFullClosureValue + activateBlock = 489ms total.  IC
+HIT BLR direct to block's JIT body would drop substantially.
+**Gain**: -300ms+.  **Effort**: 5-7 days.
+
+### F4 — Eden bump-allocate inline (jit-may22b Step 6)
+Save ~20 cycles per allocation.  ~500K allocs/bench-suite.
+**Gain**: -10-20ms.  **Effort**: 6-8 days.
+
+### F5 — More inline-emit selectors (between:and:, abs, hash, etc.)
+Each ~1 day to add + measure.
+**Gain**: 5-15ms per selector.  **Effort**: 5+ days total.
 
 ## Closed
 
