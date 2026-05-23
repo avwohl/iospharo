@@ -67,6 +67,36 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
+### R71 — Look at j2jDepth check in J2J return prelude
+
+ACTION: every J2J return loads w3, w4, compares.  Could we
+maintain a "needs unwind" flag instead?
+DONE: feasibility assessment.
+
+### R72 — Eliminate redundant SP load in arith bytecodes
+
+ACTION: 0x60 + emit at 2705+ does `ldr x2, [x0, OFF_SP]`.  If
+the previous bytecode left SP in x2, we could skip this.
+DONE: feasibility.
+
+### R73 — Audit OFF_TEMPBASE writes — are all needed?
+
+ACTION: J2J return prelude writes state.tempBase.  Does the
+caller's JIT body actually read it?
+DONE: yes/no.
+
+### R74 — Look at sieve x100 → see if we beat Cog
+
+ACTION: our sieve is 8 ms, Cog is 10 ms.  Verify run_benchmarks
+gives identical impl.
+DONE: confirmation.
+
+### R75 — Audit dispatchCached emit length
+
+ACTION: read the chain-loop dispatch emit at AsmjitT1.cpp:1938+.
+How many instructions in the fall-through path?
+DONE: count.
+
 ## Closed
 
 - ✅ R1: line 2711 is at interp()'s cg_exit — runs once. NOT hot. No edit.
@@ -102,6 +132,16 @@ DONE: commit OR finding documented.
   + comparison.  300 ms / 100K ops = 3 µs per op.  Most of that
   is String hash + comparison (Pharo's String>>hash iterates
   per character).  Inlining hash would be substantial work.
+- ✅ **R70 KEY FINDING**: cntfrq_el0 = 1 GHz on this M-series.
+  Cycle measurements are nanoseconds.  Re-interpreting past data:
+  - prim207: 94 cycles = **94 ns/call × 5.2M = 489 ms** in
+    bench-suite.
+  - activateBlock: 57 cycles = **57 ns/call × 5.2M = 296 ms**.
+  - fullGC total: 1.3 BILLION cycles = **1.3 SECONDS** of
+    bench-suite time (35% of ~3.7 s total).
+  - scavenge total: 100M cycles = 100 ms (3% of bench-suite).
+  fullGC is the SINGLE BIGGEST overhead source.  Cog presumably
+  doesn't fullGC bench-suite this much.
 - ❌ R68/R69: re-evaluated Q24 (gcHeadroom 128MB) and Step 4 (IC
   poly walk) with clean post-getenv-fix baseline.  Both showed
   no consistent benefit.  The Q24 "collect -54%" was a bench-
