@@ -148,11 +148,14 @@ DebugSettings::DebugSettings() {
     t1InlinePrimBasicNew = !envPresent("PHARO_T1_NO_INLINE_PRIM_BASIC_NEW");
     t1ICPolyWalk        =  envPresent("PHARO_T1_IC_POLY_WALK");
     t1InlineSistaCall   =  envPresent("PHARO_T1_INLINE_SISTA_CALL");
-    t1InlineJ2JXmethod  = envPresent("PHARO_T1_INLINE_J2J_XMETHOD");
+    // F3-NL6: default-on xmethod + non-leaf BV after F3-NL2 fix made
+    // them correct.  Bench-suite: 1468 → 1217 ms (-17%) with both on.
+    // Opt-out via PHARO_T1_NO_INLINE_J2J_XMETHOD / PHARO_T1_NO_INLINE_BLOCK_VALUE_NONLEAF.
+    t1InlineJ2JXmethod  = !envPresent("PHARO_T1_NO_INLINE_J2J_XMETHOD");
     t1InlineJ2JXmethodMax = envInt("PHARO_T1_INLINE_J2J_XMETHOD_MAX", 30000);
     t1XmethodLog        = envPresent("PHARO_T1_XMETHOD_LOG");
     t1InlineBlockValueNonLeaf =
-        envPresent("PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF");
+        !envPresent("PHARO_T1_NO_INLINE_BLOCK_VALUE_NONLEAF");
     t1InlineBlockValueMax = envInt("PHARO_T1_INLINE_BLOCK_VALUE_MAX", -1);
     t1BvMaxIC = envInt("PHARO_T1_BV_MAX_IC", -1);
     t1BvMaxDepth = envInt("PHARO_T1_BV_MAX_DEPTH", -1);
@@ -161,7 +164,9 @@ DebugSettings::DebugSettings() {
     t1J2JReceiverSync   = envPresent("PHARO_T1_J2J_RECEIVER_SYNC");
     t1J2JPostSendIp     = envPresent("PHARO_T1_J2J_POST_SEND_IP");
     t1J2JSplitPool      = envPresent("PHARO_T1_J2J_SPLIT_POOL");
-    t1InlineBlockValue  = envPresent("PHARO_T1_INLINE_BLOCK_VALUE");
+    // F3-NL6: default-on BV inline after F3-NL2/3/4 fixes.
+    // PHARO_T1_NO_INLINE_BLOCK_VALUE=1 disables.
+    t1InlineBlockValue  = !envPresent("PHARO_T1_NO_INLINE_BLOCK_VALUE");
     t1ProbeAlwaysMiss   = envPresent("PHARO_T1_PROBE_ALWAYS_MISS");
     t1HitAsMiss         = envPresent("PHARO_T1_HIT_AS_MISS");
     t1ICHitVerify       = envPresent("PHARO_T1_IC_HIT_VERIFY");
