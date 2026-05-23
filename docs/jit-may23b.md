@@ -67,7 +67,12 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
+### R62 — Investigate why at: inline fires only 316K times vs 8.5M IC patches
 
+ACTION: trace why most at: IC hits go through J2J-a (6.5M) not
+inline emit (316K).  Check if primKind 14 is set in all
+at:-method IC entries.
+DONE: ratio explained.
 
 ## Closed
 
@@ -99,6 +104,12 @@ DONE: commit OR finding documented.
 - ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
   walk is a good balance per past A/B work.  Reordering
   dispatch checks would need careful measurement.  Skipping.
+- ✅ R63: 0x69 (`/`) is NOT inlined — correctly so, Pharo's
+  SmI `/` returns Fraction if non-exact, which can't be simply
+  inlined.  Comment at AsmjitT1.cpp:704 documents.
+- ✅ R64: 0x6A (`\\`) IS inlined via isPhase3ModOp (line 615).
+- ✅ R65: 0x6D (`//`) IS inlined via isPhase3ModOp.  Both share
+  the same emit at line 3090+.
 - ✅ R58: step()'s bytecode dispatch is via computed-goto table
   (1668-1700+).  Filtering out cold cases isn't a perf lever —
   uncalled cases just don't run.
