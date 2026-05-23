@@ -3223,6 +3223,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimBitXor = a.new_label();
             asmjit::Label tryPrimBitShift = a.new_label();
             asmjit::Label tryPrimMul = a.new_label();  // F5 R80: SmI mul via IC
+            asmjit::Label tryPrimEq = a.new_label();   // F5 R81: == via IC
             asmjit::Label tryPrimIdentityHash = a.new_label();
             asmjit::Label tryPrimAt = a.new_label();
             asmjit::Label tryPrimAtPut = a.new_label();
@@ -3384,6 +3385,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // F5 R80: primKind 9 = SmI multiply.
                     a.cmp(x6, asmjit::Imm(9));
                     a.b_eq(tryPrimMul);
+                    // F5 R81: primKind 10 = == (identical).
+                    a.cmp(x6, asmjit::Imm(10));
+                    a.b_eq(tryPrimEq);
                     // SmallFloat: primKinds 21/22/23 are contiguous.
                     // sub 21 then cmp <3 catches all three.
                     a.sub(x6, x6, asmjit::Imm(21));
@@ -4563,6 +4567,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
                 a.b(endOfSend);
+
+                // === F5 R81: Inline == (primKind 10) ===
+                // ProtoObject>>== compares two Oops by raw bits.  Works
+                // for any receiver tag (SmI, immediate, heap).
+                // x1 = receiver, arg at sp[-8].
+                a.bind(tryPrimEq);
+                emitIncPrimCounter((uint64_t)&g_primBitOp_hits);
+                a.ldur(x3, ptr(x2, -8));                  // arg
+                a.ldp(x4, x5, ptr(x0, OFF_TRUEOOP));      // x4=true, x5=false
+                a.cmp(x1, x3);
+                a.csel(x6, x4, x5, asmjit::a64::CondCode::kEQ);
+                a.stur(x6, ptr(x2, rcvrOffsetBytes));
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+                a.b(endOfSend);
             } else {
                 // Labels still need to be bound somewhere even if unused —
                 // bind them as aliases for dispatchCached.
@@ -4571,6 +4590,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(tryPrimBitXor);
                 a.bind(tryPrimBitShift);
                 a.bind(tryPrimMul);
+                a.bind(tryPrimEq);
                 a.b(dispatchCached);
             }
 
