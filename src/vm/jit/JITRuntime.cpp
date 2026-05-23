@@ -1519,6 +1519,29 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     if (blockJM->canBailMidMethod) { g_bvBail_canBail++; return nullptr; }
     if ((blockJM->methodHeader >> 16) & 1) { g_bvBail_prim++; return nullptr; }
 
+    // F3-NL3: refuse BV inline when the block contains BlockReturnTop
+    // (0x5E) or BlockReturnNil (0x5D) — those are non-local returns,
+    // and the BV inline doesn't push a savedFrame for the block, so
+    // interp's NLR chain walk can't find the home method's frame.
+    // Bisected as the root cause of the fib(15) non-leaf hang
+    // (cascading DNUs on #to:do: in Array>>do:).
+    {
+        auto* blkObj =
+            reinterpret_cast<pharo::ObjectHeader*>(compiledBlockBits);
+        Oop blkHdr = blkObj->slotAt(0);
+        int blkNumLits = blkHdr.isSmallInteger()
+            ? (int)(blkHdr.asSmallInteger() & 0x7FFF) : 0;
+        uint8_t* bcStart = blkObj->bytes() + (1 + blkNumLits) * 8;
+        size_t bcLen = blkObj->byteSize() - (1 + blkNumLits) * 8;
+        for (size_t i = 0; i < bcLen; i++) {
+            uint8_t op = bcStart[i];
+            if (op == 0x5D || op == 0x5E) {  // BlockReturnNil/Top
+                g_bvBail_canBail++;  // reuse counter
+                return nullptr;
+            }
+        }
+    }
+
     // Save stack space check.
     if ((uintptr_t)s->j2jSaveCursor >= (uintptr_t)s->j2jSaveLimit)
         { g_bvBail_savefull++; return nullptr; }
@@ -1538,39 +1561,6 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
             return nullptr;
         }
         g_blockValue_nonleaf_fires++;
-        // Trace the suspect 8th fire (bisected as the first hang-trigger).
-        if (g_blockValue_nonleaf_fires <= 12) {
-            const char* selName = "?";
-            static thread_local std::string buf;
-            JITMethod* cJM = reinterpret_cast<JITMethod*>(callerJM);
-            Oop sel = Oop::fromRawBits(cJM ? cJM->selectorOop : 0);
-            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                auto* hdr = sel.asObjectPtr();
-                if (hdr->isBytesObject()) {
-                    buf.assign((const char*)hdr->bytes(), hdr->byteSize());
-                    selName = buf.c_str();
-                }
-            }
-            const char* blkSelName = "?";
-            Oop blkSel = Oop::fromRawBits(blockJM->selectorOop);
-            static thread_local std::string bbuf;
-            if (blkSel.isObject() && blkSel.rawBits() > 0x10000) {
-                auto* hdr = blkSel.asObjectPtr();
-                if (hdr->isBytesObject()) {
-                    bbuf.assign((const char*)hdr->bytes(), hdr->byteSize());
-                    blkSelName = bbuf.c_str();
-                }
-            }
-            fprintf(stderr,
-                "[BV-NL #%llu] caller=#%s blockSel=#%s "
-                "blockCM=0x%llx blockJM=%p numIC=%u nArgs=%d "
-                "rcvBits=0x%llx j2jDepth=%d\n",
-                (unsigned long long)g_blockValue_nonleaf_fires,
-                selName, blkSelName,
-                (unsigned long long)compiledBlockBits,
-                (void*)blockJM, blockJM->numICEntries, nArgs,
-                (unsigned long long)rcvBits, s->j2jDepth);
-        }
     }
 
     // Push J2J save.  Layout per Interpreter::J2JSave (56 bytes):
