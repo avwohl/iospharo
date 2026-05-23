@@ -4287,8 +4287,27 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b(endOfSend);
                     a.bind(notZero);
                 }
-                // kind 5 = SmI 1.
-                a.mov(x3, asmjit::Imm(9));      // SmI 1 bits = 9
+                a.cmp(x6, asmjit::Imm(5));
+                {
+                    asmjit::Label notOne = a.new_label();
+                    a.b_ne(notOne);
+                    a.mov(x3, asmjit::Imm(9));      // SmI 1 bits = 9
+                    a.stur(x3, ptr(x2, rcvrOffsetBytes));
+                    a.b(endOfSend);
+                    a.bind(notOne);
+                }
+                a.cmp(x6, asmjit::Imm(6));
+                {
+                    // F5 R82: kind 6 = SmI -1.  Bits = 0xFFFFFFFFFFFFFFF9.
+                    asmjit::Label notMinusOne = a.new_label();
+                    a.b_ne(notMinusOne);
+                    a.mov(x3, asmjit::Imm(uint64_t(-1) << 3 | 1));
+                    a.stur(x3, ptr(x2, rcvrOffsetBytes));
+                    a.b(endOfSend);
+                    a.bind(notMinusOne);
+                }
+                // F5 R82: kind 7 = SmI 2.  Bits = 0x11.
+                a.mov(x3, asmjit::Imm(0x11));   // SmI 2 bits = 17
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));
                 a.b(endOfSend);
             }

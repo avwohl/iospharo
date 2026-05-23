@@ -8111,6 +8111,8 @@ enum class TrivialReturnKind : uint8_t {
     False = 3,
     Zero  = 4,  // SmI 0
     One   = 5,  // SmI 1
+    MinusOne = 6,  // F5 R82: SmI -1 (quick prim 260)
+    Two   = 7,  // F5 R82: SmI 2  (quick prim 263)
 };
 
 struct TrivialMethodInfo {
@@ -18577,6 +18579,10 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             extra = (1ULL << 58) | ((uint64_t)4 << 48);
         else if (primIdx == 262)  // return 1
             extra = (1ULL << 58) | ((uint64_t)5 << 48);
+        else if (primIdx == 260)  // F5 R82: return -1
+            extra = (1ULL << 58) | ((uint64_t)6 << 48);
+        else if (primIdx == 263)  // F5 R82: return 2
+            extra = (1ULL << 58) | ((uint64_t)7 << 48);
 
         // Set inline primKind bits for methods with inlineable primitives,
         // regardless of JIT compilation status. This allows the stencil to
