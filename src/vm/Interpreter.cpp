@@ -366,9 +366,7 @@ void Interpreter::recoverSistaAfterGC() {
     // PHARO_SISTA_REKEY_AFTER_GC=1 is set.  In that mode the cache
     // keys are valid after compact, so we skip the reset.  Default:
     // reset the cache (old behavior — keys go stale across compact).
-    static const bool rekeyEnabled =
-        std::getenv("PHARO_SISTA_REKEY_AFTER_GC") != nullptr;
-    if (!rekeyEnabled && sistaRuntimeForGCHook_) {
+    if (!g_debug.sistaRekeyAfterGC && sistaRuntimeForGCHook_) {
         sistaRuntimeForGCHook_->reset();
     }
     sistaGateCache_.clear();
@@ -460,14 +458,14 @@ Interpreter::Interpreter(ObjectMemory& memory)
     initializePrimitives();
 
 #if PHARO_HOT_PATH_DIAG
-    if (std::getenv("PHARO_TRACE_SP_CORRUPT") != nullptr) {
+    if (g_debug.traceSpCorrupt) {
         traceSpCorrupt_ = true;
     }
-    if (std::getenv("PHARO_TRACE_PER_BC_SP") != nullptr) {
+    if (g_debug.tracePerBCSp) {
         tracePerBcSp_ = true;
     }
 #endif
-    if (std::getenv("PHARO_TRACE_STACK_ORIGIN") != nullptr) {
+    if (g_debug.traceStackOrigin) {
         stackOriginEnabled_ = true;
         stackOrigins_.resize(stack_.size(), 0);
         stackPushReturnAddr_.resize(stack_.size(), nullptr);
@@ -1127,7 +1125,7 @@ void Interpreter::handleBenchComplete(Oop returnValue) {
         // Gated on PHARO_IC_HISTOGRAM=1.  Reports what fraction of
         // compiled send sites are monomorphic (inlining candidates)
         // vs polymorphic vs megamorphic.
-        if (std::getenv("PHARO_IC_HISTOGRAM")) {
+        if (g_debug.icHistogram) {
             jitRuntime_.dumpICHistogram();
         }
 #endif
@@ -1529,7 +1527,7 @@ void Interpreter::dumpJITStats() {
     fprintf(stderr, "=================\n");
     // One-off diagnostic: print offsets of key Interpreter fields to
     // disambiguate what x28 holds in the cross-method crash.
-    if (std::getenv("PHARO_DUMP_INTERP_OFFSETS")) {
+    if (g_debug.dumpInterpOffsets) {
         fprintf(stderr, "Interpreter offsets:\n");
         #define O(f) fprintf(stderr, "  +0x%05zx (%4zu): %s\n", offsetof(Interpreter, f), offsetof(Interpreter, f), #f)
         O(method_);
@@ -1728,9 +1726,7 @@ void Interpreter::interpret() {
                         fprintf(stderr, "0x%02x ", (unsigned)recentBytecodes_[_idx]); \
                     } \
                     fprintf(stderr, "\n"); \
-                    static const bool corruptTrap = \
-                        std::getenv("PHARO_SP_CORRUPT_TRAP") != nullptr; \
-                    if (corruptTrap) PHARO_DEBUGTRAP(); \
+                    if (pharo::g_debug.spCorruptTrap) PHARO_DEBUGTRAP(); \
                 } \
             } \
         } \
@@ -2257,8 +2253,7 @@ void Interpreter::interpret() {
 
     // --- FullBlockClosure >> value: fast path ---
     op_value1: {
-        static const bool traceOpValue1 = std::getenv("PHARO_TRACE_OP_VALUE1") != nullptr;
-        if (traceOpValue1) {
+        if (g_debug.traceOpValue1) {
             static uint64_t n = 0;
             n++;
             if (n <= 5 || (n & 0xFFFFF) == 0)
@@ -2708,7 +2703,7 @@ void Interpreter::interpret() {
     } // periodic_checks
 
     cg_exit:
-    if (std::getenv("PHARO_TRACE_TOTAL_STEPS")) {
+    if (g_debug.traceTotalSteps) {
         fprintf(stderr, "[INTERP-EXIT] totalSteps=%llu\n",
                 (unsigned long long)totalSteps);
     }
@@ -2815,7 +2810,7 @@ void Interpreter::interpret() {
     }
 #endif
     #undef DISPATCH_NEXT
-    if (std::getenv("PHARO_TRACE_EXIT")) {
+    if (g_debug.traceExit) {
         fprintf(stderr, "[EXIT-TRACE] interpret() returning normally\n");
     }
     return;
@@ -2990,13 +2985,7 @@ void Interpreter::handleForceYield() {
             // Semaphores (invisible to the scheduler-queue walk above).
             // Needed to diagnose deadlocks where a higher-priority
             // process is blocked on a semaphore that nobody signals.
-            static bool procDumpInit = false;
-            static bool procDump = false;
-            if (!procDumpInit) {
-                procDumpInit = true;
-                procDump = std::getenv("PHARO_PROC_DUMP") != nullptr;
-            }
-            if (procDump) {
+            if (g_debug.procDump) {
                 try {
                     Oop active = getActiveProcess();
                     uint32_t processClsIdx = 0;
@@ -3411,7 +3400,7 @@ void Interpreter::synchronousSignal(Oop semaphore) {
     static int signalLogCap = 50;
     if (!semTraceInit) {
         semTraceInit = true;
-        if (std::getenv("PHARO_SEM_SIGNAL_TRACE")) signalLogCap = 5000;
+        if (g_debug.semSignalTrace) signalLogCap = 5000;
     }
     static int signalLog = 0;
     if (signalLog < signalLogCap) {
@@ -4481,8 +4470,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     // 2026-05-06 diagnostic: when PHARO_TRACE_SP_CORRUPT=1, check SP for
     // tag-encoded values at every bytecode boundary.  Catches the exact
     // bytecode that produced the corruption (vs catching only at push()).
-    static const bool trace_sp = std::getenv("PHARO_TRACE_SP_CORRUPT") != nullptr;
-    if (__builtin_expect(trace_sp, 0)) {
+    if (__builtin_expect(g_debug.traceSpCorrupt, 0)) {
         uint64_t spB = (uint64_t)stackPointer_;
         if ((spB & 7) == 1) {  // looks like SmI tag
             static int n = 0;
@@ -4681,8 +4669,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     }
     case 0x7A: {
         // value: (1 arg) — fast path for FullBlockClosure
-        static const bool traceBC7A = std::getenv("PHARO_TRACE_BC_7A") != nullptr;
-        if (traceBC7A) {
+        if (g_debug.traceBC7A) {
             static uint64_t n = 0;
             n++;
             if (n <= 10 || (n & 0xFFFFF) == 0) {
@@ -5844,7 +5831,7 @@ void Interpreter::returnFromMethod() {
         }
     }
 
-    if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_RETURN") != nullptr, 0)) {
+    if (__builtin_expect(g_debug.traceCullReturn, 0)) {
         static size_t retCount = 0;
         std::string sel = memory_.selectorOf(method_);
         if (sel == "cull:") {
@@ -7175,13 +7162,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // receiver + recent frame chain.  Pinpoints the JIT codegen
     // site that produced the bad value or out-of-bounds index.
     {
-        static bool detect = std::getenv("PHARO_DETECT_ERRORS") != nullptr;
         static int hits = 0;
-        static int hitLimit = []{
-            const char* v = std::getenv("PHARO_DETECT_ERRORS_LIMIT");
-            return v ? atoi(v) : 30;
-        }();
-        if (detect && hits < hitLimit && selector.isObject() &&
+        if (g_debug.detectErrors && hits < g_debug.detectErrorsLimit && selector.isObject() &&
             selector.rawBits() > 0x10000) {
             ObjectHeader* sh = selector.asObjectPtr();
             if (sh->isBytesObject() && sh->byteSize() < 64) {
@@ -7354,9 +7336,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Use to find which method calls nil shouldNotImplement (the trigger
     // that cascades into the privHandlerContext DNU loop under JIT).
     {
-        static const bool traceSni =
-            std::getenv("PHARO_TRACE_SHOULDNOTIMPL") != nullptr;
-        if (traceSni && argCount == 0 && selector.isObject() &&
+        if (g_debug.traceShouldNotImpl && argCount == 0 && selector.isObject() &&
             selector.rawBits() > 0x10000) {
             ObjectHeader* sh = selector.asObjectPtr();
             if (sh->isBytesObject() && sh->byteSize() == 18 &&
@@ -7533,9 +7513,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // frames.  Compare interp vs JIT runs to see whether JIT
     // dispatches a different method than interp would.
     {
-        static const bool traceExc =
-            std::getenv("PHARO_TRACE_EXCEPTION_SEL") != nullptr;
-        if (traceExc && argCount == 0 && selector.isObject() &&
+        if (g_debug.traceExceptionSel && argCount == 0 && selector.isObject() &&
             selector.rawBits() > 0x10000) {
             ObjectHeader* sh = selector.asObjectPtr();
             if (sh->isBytesObject() && sh->byteSize() == 9 &&
@@ -8454,8 +8432,7 @@ void Interpreter::handleStackOverflow(int argCount) {
 
 void Interpreter::activateMethod(Oop method, int argCount) {
     // Diagnostic: count activations of `value:` and CompiledBlock targets.
-    static const bool traceValueAct = std::getenv("PHARO_TRACE_VALUE_ACT") != nullptr;
-    if (traceValueAct && method.isObject()
+    if (g_debug.traceValueAct && method.isObject()
             && method.rawBits() > 0x10000) {
         static uint64_t valueCount = 0;
         static uint64_t blockCount = 0;
@@ -8804,12 +8781,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         // from the compiler's send-site map, indexed by send-site
         // ordinal.  classKey0 is a classIndex (GC-stable Spur key),
         // not an Oop — Phase 4 Step 2 will treat it as such.
-        static const bool sistaAfterT1 =
-            std::getenv("PHARO_SISTA_AFTER_T1") != nullptr;
         std::vector<sista::InlineHint> inlineHints =
             extractInlineHintsForMethod(method);
         auto* jm = jitRuntime_.methodMap().lookup(method.rawBits());
-        if (sistaAfterT1) {
+        if (g_debug.sistaAfterT1) {
             // No T1 entry yet — let T1 warm up first.  Skip Sista
             // for this activation; fall through to the regular T1
             // path below (must NOT return — that would skip
@@ -8821,13 +8796,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             // threshold.  Without it, Sista compiles the instant T1
             // finishes — IC table is still empty — and we cache a
             // useless no-hint result.
-            static const uint32_t t1Warmup = []() {
-                if (const char* v = std::getenv("PHARO_SISTA_T1_WARMUP")) {
-                    int n = atoi(v);
-                    return n > 0 ? (uint32_t)n : 100u;
-                }
-                return 100u;
-            }();
+            const uint32_t t1Warmup = (uint32_t)g_debug.sistaT1Warmup;
             if (!jm || !jm->stats || jm->stats->executionCount < t1Warmup) {
                 goto past_sista_block;
             }
@@ -8839,9 +8808,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         // dumps cumulative counters every 100 compile attempts to stderr.
         // Used to size Phase 4 work — if hints-consumed is tiny vs
         // sends-lifted, monomorphic inlining isn't worth the complexity.
-        static const bool dumpInlineStats =
-            std::getenv("PHARO_SISTA_INLINE_STATS") != nullptr;
-        if (dumpInlineStats && (attempts % 100) == 0) {
+        if (g_debug.sistaInlineStats && (attempts % 100) == 0) {
             sista::Builder::dumpInlineHintStats();
         }
         // Defensive: asmjit's compile internally uses RAII W^X scopes;
@@ -8917,9 +8884,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             // 0 (non-indexable receiver).  Method's bytecode still
             // contains 0x72 which would normally mark unsafe;
             // explicitly admit the recognized shape.
-            static const bool sizePeephole =
-                std::getenv("PHARO_SISTA_SIZE_PEEPHOLE") != nullptr;
-            if (sizePeephole && bcLen == 3
+            if (g_debug.sistaSizePeephole && bcLen == 3
                 && methodBytes[bytecodeStart + 0] == 0x4C
                 && methodBytes[bytecodeStart + 1] == 0x72
                 && methodBytes[bytecodeStart + 2] == 0x5C) {
@@ -8929,9 +8894,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             // PHARO_SISTA_AT_PEEPHOLE=1: same gate exception for
             // `^ self at: i` shape (4 bytes).  kPrimAt's lowering
             // deopts on miss too.
-            static const bool atPeephole =
-                std::getenv("PHARO_SISTA_AT_PEEPHOLE") != nullptr;
-            if (atPeephole && bcLen == 4
+            if (g_debug.sistaAtPeephole && bcLen == 4
                 && methodBytes[bytecodeStart + 0] == 0x4C  // PushReceiver
                 && methodBytes[bytecodeStart + 1] == 0x40  // PushTemp 0
                 && methodBytes[bytecodeStart + 2] == 0x70  // SpecialSend at:
@@ -8962,8 +8925,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // Best-of-3 1M getter under INLINE_ARITH=1 (103) is now
                 // BETTER than the opt-out (111) on the bench panel.
                 // Opt-out: PHARO_SISTA_NO_INLINE_ARITH=1.
-                static const bool inlineArith =
-                    std::getenv("PHARO_SISTA_NO_INLINE_ARITH") == nullptr;
+                const bool inlineArith = !g_debug.sistaNoInlineArith;
                 if (inlineArith || g_debug.sistaUnsafeArith) {
                     // + - * (inlined arith) and < <= > >= = ~=
                     // (inlined SmallInt comparison)
@@ -8981,9 +8943,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // unconditional getenv() costs ~200ns on glibc/libc
                 // and fires per-bytecode-per-method on the cold
                 // path; static-cached it's a single byte read.
-                static const bool noStores =
-                    std::getenv("PHARO_SISTA_NO_STORES") != nullptr;
-                if (noStores) {
+                if (g_debug.sistaNoStores) {
                     if ((op >= 0xC8 && op <= 0xD7)       // PopStoreRecv/Temp
                      || (op >= 0xF0 && op <= 0xF5)) {    // Ext store variants
                         hasUnsafeOp = true;
@@ -9028,9 +8988,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // DIAG gate (PHARO_SISTA_NO_FULLBLOCK=1): exclude
                 // methods with PushFullBlock to test whether those
                 // bails are the source of image-startup DNU cascades.
-                static const bool noFullBlock =
-                    std::getenv("PHARO_SISTA_NO_FULLBLOCK") != nullptr;
-                if (noFullBlock) {
+                if (g_debug.sistaNoFullblock) {
                     if (op == jit::SistaV1::PushFullBlock
                      || op == jit::SistaV1::PushClosure) {
                         hasUnsafeOp = true;
@@ -9040,9 +8998,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // DIAG gate (PHARO_SISTA_NO_REMOTE_TEMP=1): exclude
                 // methods that access closure-captured temp vectors
                 // (PushTempAtInVec / StoreTempInVec / PopStoreTempInVec).
-                static const bool noRemoteTemp =
-                    std::getenv("PHARO_SISTA_NO_REMOTE_TEMP") != nullptr;
-                if (noRemoteTemp) {
+                if (g_debug.sistaNoRemoteTemp) {
                     if (op == jit::SistaV1::PushTempAtInVec
                      || op == 0xFC
                      || op == 0xFD) {
@@ -9052,17 +9008,13 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 }
                 // Finer-grained: only block READS (no effect on state)
                 // versus only block WRITES (store side).
-                static const bool noRemoteTempRead =
-                    std::getenv("PHARO_SISTA_NO_REMOTE_TEMP_READ") != nullptr;
-                if (noRemoteTempRead) {
+                if (g_debug.sistaNoRemoteTempRead) {
                     if (op == jit::SistaV1::PushTempAtInVec) {
                         hasUnsafeOp = true;
                         break;
                     }
                 }
-                static const bool noRemoteTempWrite =
-                    std::getenv("PHARO_SISTA_NO_REMOTE_TEMP_WRITE") != nullptr;
-                if (noRemoteTempWrite) {
+                if (g_debug.sistaNoRemoteTempWrite) {
                     if (op == 0xFC || op == 0xFD) {
                         hasUnsafeOp = true;
                         break;
@@ -9071,9 +9023,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // By-selector exclusion — PHARO_SISTA_EXCLUDE_SELS
                 // is a comma-separated list of selector names;
                 // matching methods get rejected from dispatch.
-                // Cache the env lookup AND the parsed list once.
-                static const char* excludeEnv =
-                    std::getenv("PHARO_SISTA_EXCLUDE_SELS");
+                // Parse the cached list once.
+                const char* excludeEnv = g_debug.sistaExcludeSels;
                 if (excludeEnv != nullptr) {
                     static const std::string excludeList = excludeEnv;
                     std::string sel = memory_.selectorOf(method);
@@ -9221,8 +9172,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             // ~5M Sista activations that's ~50ms.  The check is
             // useful when bringing up a new lowering or chasing an
             // ABI bug; unnecessary in steady state.
-            static const bool invariantCheck =
-                std::getenv("PHARO_SISTA_INVARIANT_CHECK") != nullptr;
+            const bool invariantCheck = g_debug.sistaInvariantCheck;
             Oop savedReceiver{};
             Oop* savedFP = nullptr;
             Oop savedMethod{};
@@ -9235,12 +9185,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             }
             // Snapshot frame temp slots (args + locals) — log any
             // slot Sista writes.  Only active with PHARO_SISTA_TEMP_WATCH=1.
-            static const bool tempWatch =
-                getenv("PHARO_SISTA_TEMP_WATCH") != nullptr;
+            const bool tempWatch = g_debug.sistaTempWatch;
             // Snapshot stack slots BELOW current stackPointer — those
             // belong to the caller's frame.  Sista must not write there.
-            static const bool stackWatch =
-                getenv("PHARO_SISTA_STACK_WATCH") != nullptr;
+            const bool stackWatch = g_debug.sistaStackWatch;
             Oop savedBelowSp[16];
             if (stackWatch) {
                 for (int k = 0; k < 16; k++) {
@@ -9266,8 +9214,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     }
                 }
             }
-            static const bool traceSistaDisp = std::getenv("PHARO_TRACE_SISTA_DISPATCH") != nullptr;
-            if (traceSistaDisp) {
+            if (g_debug.traceSistaDispatch) {
                 static uint64_t n = 0;
                 n++;
                 if (n <= 5 || (n & 0xFFFFF) == 0)
@@ -9829,8 +9776,7 @@ past_sista_block:
 }
 
 void Interpreter::activateBlock(Oop block, int argCount) {
-    static const bool traceActBlock = std::getenv("PHARO_TRACE_ACTIVATE_BLOCK") != nullptr;
-    if (traceActBlock) {
+    if (g_debug.traceActivateBlock) {
         static uint64_t n = 0;
         n++;
         if (n <= 5 || (n & 0xFFFFF) == 0)
@@ -10313,9 +10259,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         }
     }
     // 2026-05-07 A1 hunt: count pushFrame calls per selector
-    static const bool a1Trace =
-        std::getenv("PHARO_A1_TRACE") != nullptr;
-    if (__builtin_expect(a1Trace, 0) && method.isObject()) {
+    if (__builtin_expect(g_debug.a1Trace, 0) && method.isObject()) {
         static std::unordered_map<std::string, size_t> perSelCnt;
         std::string sel = memory_.selectorOf(method);
         size_t& c = perSelCnt[sel];
@@ -10693,9 +10637,7 @@ bool Interpreter::popFrame() {
         }
     }
     // 2026-05-07 A1 hunt: log popFrame for pollEvent:
-    static const bool a1Trace =
-        std::getenv("PHARO_A1_TRACE") != nullptr;
-    if (__builtin_expect(a1Trace, 0) && method_.isObject()) {
+    if (__builtin_expect(g_debug.a1Trace, 0) && method_.isObject()) {
         std::string sel = memory_.selectorOf(method_);
         static size_t pollEventPopCnt = 0;
         if (sel == "pollEvent:") {
@@ -10910,9 +10852,7 @@ bool Interpreter::popFrame() {
             // PHARO_SP_CORRUPT_TRAP=1: trigger SIGTRAP when corruption
             // detected, so lldb (if attached) catches the exact moment
             // and can set a hardware watchpoint to find the writer.
-            static const bool corruptTrap =
-                std::getenv("PHARO_SP_CORRUPT_TRAP") != nullptr;
-            if (corruptTrap) {
+            if (g_debug.spCorruptTrap) {
                 PHARO_DEBUGTRAP();
             }
         }
@@ -11316,8 +11256,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     fprintf(stderr, "[DNU] 1MB-aligned check: rcvr=0x%llx classAtIdx(%u).isNil=%d trap_env=%d\n",
                             (unsigned long long)rcvr.rawBits(), cls,
                             memory_.classAtIndex(cls).isNil() ? 1 : 0,
-                            std::getenv("PHARO_TRAP_BAD_DNU") != nullptr ? 1 : 0);
-                    if (std::getenv("PHARO_TRAP_BAD_DNU") != nullptr) {
+                            g_debug.trapBadDnu ? 1 : 0);
+                    if (g_debug.trapBadDnu) {
                         fprintf(stderr, "[DNU] *** TRAP on suspect receiver ***\n");
                         fflush(stderr);
                         __builtin_trap();
@@ -12176,14 +12116,7 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
     // exitSuccess multi-send chain that previously hung with cap=1
     // (now mostly fixed by B3's selector blacklist).
     // Override via PHARO_SISTA_HELPER_MAX_DEPTH=N.
-    static const int kMaxSistaHelperDepth = []() {
-        if (const char* v = std::getenv("PHARO_SISTA_HELPER_MAX_DEPTH")) {
-            int n = atoi(v);
-            return n > 0 ? n : 64;
-        }
-        return 64;
-    }();
-    if (sistaHelperDepth_ >= kMaxSistaHelperDepth) {
+    if (sistaHelperDepth_ >= g_debug.sistaHelperMaxDepth) {
         return 0;
     }
     sistaHelperDepth_++;
@@ -12345,9 +12278,7 @@ uint64_t Interpreter::jitSistaSelfRecCall(jit::JITState* state,
     // path (kSendCallHelper's framepoint replay assumes operands were
     // pushed onto state.sp).  Without that handshake, the recursive
     // call sees a misaligned state and benchFib loops/crashes.
-    static const bool sistaInlineSelf =
-        std::getenv("PHARO_SISTA_INLINE_SELF") != nullptr;
-    if (!sistaInlineSelf) {
+    if (!g_debug.sistaInlineSelf) {
         return 0;
     }
     // Save-pool overflow → fall back to standard helper.
@@ -12464,7 +12395,7 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     //
     // Conservative default-on subset: 0-arg methods only.
     // Opt-in (testing) via PHARO_T1_SISTA_DISPATCH_ALLOW=1.
-    if (!std::getenv("PHARO_T1_SISTA_DISPATCH_ALLOW")) return 0;
+    if (!g_debug.t1SistaDispatchAllow) return 0;
     if (nArgs != 0) return 0;  // n-arg path bisected to have state-corruption bug
 
     using Fn = void (*)(jit::JITState*);
@@ -13340,8 +13271,7 @@ void Interpreter::terminateCurrentProcess() {
         // for finding the C++ origin of the terminate call.  Used in
         // the A4 deep-dive (commit 42422729) to identify the
         // dispatchBytecode → returnFromMethod → returnValue path.
-        static const bool termBt = std::getenv("PHARO_TERM_BT") != nullptr;
-        if (termBt) {
+        if (g_debug.termBT) {
             void* frames[20] = {0};
             int n = backtrace(frames, 20);
             for (int f = 1; f < n && f < 12; f++) {
@@ -13633,9 +13563,7 @@ Oop Interpreter::materializeFrameStack() {
     // cost called out in the original comment doesn't reproduce —
     // factorial 23 ms either way.  The 200-deep walk has an early
     // exit when no cycle exists, so the typical case is cheap.
-    static const bool helperSendsStatic =
-        std::getenv("PHARO_NO_SISTA_HELPER_SENDS") == nullptr;
-    const bool helperSends = helperSendsStatic;
+    const bool helperSends = !g_debug.noSistaHelperSends;
     auto setSenderSafe = [this, helperSends](Oop ctx, Oop sender) {
         if (helperSends && sender.isObject() && !sender.isNil()
             && sender.rawBits() != ctx.rawBits()) {
@@ -14135,8 +14063,7 @@ void Interpreter::transferTo(Oop newProcess) {
     static int xferLog = 0;
     xferLog++;
     // PHARO_XFER_TRACE=1 — log every process switch, for debugging bug 14
-    static bool xferTrace = getenv("PHARO_XFER_TRACE") != nullptr;
-    if (xferLog < 50 || xferTrace) {
+    if (xferLog < 50 || g_debug.xferTrace) {
         int oldPri = safeProcessPriority(oldProcess);
         int newPri = safeProcessPriority(newProcess);
         fprintf(stderr, "[XFER-%d] old=0x%llx pri=%d -> new=0x%llx pri=%d\n",
@@ -16009,13 +15936,11 @@ void Interpreter::initializeNamedPrimitives() {
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
-    static const bool traceExit = std::getenv("PHARO_TRACE_EXIT") != nullptr;
-    static const bool traceExecPrim = std::getenv("PHARO_TRACE_EXEC_PRIM") != nullptr;
-    if (traceExit && (primitiveIndex == 113 || primitiveIndex == 114)) {
+    if (g_debug.traceExit && (primitiveIndex == 113 || primitiveIndex == 114)) {
         fprintf(stderr, "[EXIT-TRACE] executePrimitive(%d, %d) entering\n",
                 primitiveIndex, argCount);
     }
-    if (traceExecPrim) {
+    if (g_debug.traceExecPrim) {
         if (primitiveIndex == 207) {
             static uint64_t n = 0;
             n++;
@@ -16038,8 +15963,7 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         }
     }
     // Legacy prim 63 (basicAt:put:) counter — gated on PHARO_P63_TRACE.
-    static const bool p63Trace = std::getenv("PHARO_P63_TRACE") != nullptr;
-    if (__builtin_expect(p63Trace, 0) && primitiveIndex == 63) {
+    if (__builtin_expect(g_debug.p63Trace, 0) && primitiveIndex == 63) {
         static int prim63count = 0;
         prim63count++;
         if (prim63count <= 5 || (prim63count % 10000 == 0)) {
@@ -16375,12 +16299,9 @@ void Interpreter::initializeJIT() {
     // behavior where "=0" meant "off" conceptually.  All other sites
     // check only presence, but this init path is the gate, so be
     // explicit here.
-    if (g_debug.noJit) {
-        const char* v = std::getenv("PHARO_NO_JIT");
-        if (!v || v[0] != '0') {
-            fprintf(stderr, "[JIT] Disabled via PHARO_NO_JIT env var\n");
-            return;
-        }
+    if (g_debug.noJitStrict) {
+        fprintf(stderr, "[JIT] Disabled via PHARO_NO_JIT env var\n");
+        return;
     }
 
     if (!jitRuntime_.initialize(memory_, *this)) {
@@ -16645,11 +16566,7 @@ void Interpreter::tryOSRAtBackwardJump() {
     // best-of-5: getter+yourself 94 vs 96 (slight win), 1M blocks
     // 13 vs 13 (parity), sum 1M 97 vs 98 (parity).  Bench panel
     // unchanged.  Set PHARO_NO_OSR_RECOMPILE=1 to opt out.
-    static const bool osrRecompile = []() {
-        if (std::getenv("PHARO_NO_OSR_RECOMPILE")) return false;
-        return true;  // default-on; legacy PHARO_OSR_RECOMPILE still works (no-op)
-    }();
-    if (osrRecompile && jitRuntime_.maybeRecompileForOSR(method_)) {
+    if (!g_debug.noOSRRecompile && jitRuntime_.maybeRecompileForOSR(method_)) {
         // Re-lookup — recompile() replaced the JITMethod entry.
         jm = jitRuntime_.methodMap().lookup(method_.rawBits());
         if (!jm || !jm->isExecutable()) return;
@@ -16702,11 +16619,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
             }
         }
     }
-    static const bool perBcEnabled = []() {
-        if (std::getenv("PHARO_NO_SISTA_PER_BC")) return false;
-        return true;  // default-on; legacy PHARO_SISTA_PER_BC still works (no-op)
-    }();
-    if (!perBcEnabled) return;
+    if (g_debug.noSistaPerBC) return;
 
     // Sampling: like tryOSRAtBackwardJump, only check every N
     // backward jumps to amortize the hook's per-call overhead.
@@ -16733,9 +16646,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
     // Diagnostic: PHARO_SISTA_PER_BC_NO_DISPATCH=1 — compile lifts
     // succeed but never dispatch.  Lets us see whether the dispatch
     // overhead alone is the regression source.
-    static const bool noDispatch =
-        std::getenv("PHARO_SISTA_PER_BC_NO_DISPATCH") != nullptr;
-    if (noDispatch) {
+    if (g_debug.sistaPerBCNoDispatch) {
         // Skip the dispatch hit path, but still let the trigger
         // path bump counters and trigger compiles.
     } else
@@ -16805,8 +16716,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         // deltas point to a buggy bail path.
         Oop* spBefore = stackPointer_;  // = sstate.sp at entry (set above)
 
-        static const bool traceSistaPerBC = std::getenv("PHARO_TRACE_SISTA_PERBC") != nullptr;
-        if (traceSistaPerBC) {
+        if (g_debug.traceSistaPerBC) {
             static uint64_t n = 0;
             n++;
             if (n <= 5 || (n & 0xFFFFF) == 0)
@@ -16905,9 +16815,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
             }
         }
 
-        static const bool dispTrace =
-            std::getenv("PHARO_SISTA_PER_BC_DISPATCH_TRACE") != nullptr;
-        if (dispTrace && (perBcDispCount & 0x3FF) == 0) {
+        if (g_debug.sistaPerBCDispatchTrace && (perBcDispCount & 0x3FF) == 0) {
             fprintf(stderr,
                 "[SISTA-PER-BC-DISPATCH] count=%zu return=%zu send=%zu\n",
                 perBcDispCount, perBcDispReturn, perBcDispSend);
@@ -16917,9 +16825,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         // ExitSend bails per (method, trigger).  Tells us WHERE in
         // the lifted region the dispatched fn bails — most likely
         // a kPrimTagCheckInt deopt or unrecognized op.
-        static const bool bailTrace =
-            std::getenv("PHARO_SISTA_PER_BC_BAIL_TRACE") != nullptr;
-        if (bailTrace && sstate.exitReason == jit::ExitSend
+        if (g_debug.sistaPerBCBailTrace && sstate.exitReason == jit::ExitSend
             && method_.isObject()) {
             ObjectHeader* mh = method_.asObjectPtr();
             Oop hdr = mh->slots()[0];
@@ -16998,9 +16904,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
             sistaRuntimeForGCHook_->compile(
                 method_, memory_, nullptr, bcOff);
 
-        static const bool trace =
-            std::getenv("PHARO_SISTA_PER_BC_TRACE") != nullptr;
-        if (trace) {
+        if (g_debug.sistaPerBCTrace) {
             static int logCount = 0;
             if (logCount++ < 32) {
                 fprintf(stderr,
@@ -17069,11 +16973,9 @@ void Interpreter::tryJITResumeInCaller() {
     }
 
     int resumeIter = 0;
-    static const bool a1Trace2 =
-        std::getenv("PHARO_A1_TRACE") != nullptr;
     while (running_ && jitRuntime_.isInitialized()) {
         if (++resumeIter > 10000) break;  // Safety limit
-        if (__builtin_expect(a1Trace2, 0)
+        if (__builtin_expect(g_debug.a1Trace, 0)
             && method_.isObject()
             && memory_.selectorOf(method_) == "pollEvent:") {
             static size_t cnt = 0;
@@ -17303,7 +17205,7 @@ void Interpreter::tryJITResumeInCaller() {
             // receiver/sp/ip become corrupt — required for tracking down
             // the chain-loop induced JIT-state corruption that crashes
             // SDL_Renderer / Transcript-related JIT calls.
-            static bool rj2jValidate = std::getenv("PHARO_RJ2J_VALIDATE") != nullptr;
+            const bool rj2jValidate = g_debug.rj2jValidate;
             // Track sp drift across chain iterations.  For a balanced
             // call/return cycle, sp should net-decrease by sendArgCount
             // per J2J pair.  If sp grows faster than expected, there's
@@ -18285,10 +18187,8 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
         // deopt cost per miss.  Real fix needs hit-count tracking
         // per IC entry to identify the *actual* dominant class.
         // Until then, leave opt-in.
-        static const bool inlinePoly =
-            std::getenv("PHARO_SISTA_INLINE_POLY") != nullptr;
         bool emit = (classKey0 != 0
-                     && (classKey1 == 0 || inlinePoly));
+                     && (classKey1 == 0 || g_debug.sistaInlinePoly));
         if (emit) {
             uint16_t bcOff = (sendBCs && sendIdx < sendBCs->size())
                 ? (*sendBCs)[sendIdx] : UINT16_MAX;
@@ -18303,9 +18203,7 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
 void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {
     // PHARO_T1_INLINE_J2J=1 debug: log first 30 patches (any selector)
     {
-        static const bool inlineJ2JDbg =
-            std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
-        if (inlineJ2JDbg) {
+        if (g_debug.t1InlineJ2J_Env) {
             static size_t patchN = 0;
             if (patchN < 30) {
                 patchN++;
@@ -18344,8 +18242,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // Most common case: Behavior>>new: forwards to basicNew:.
     // Array new: 10 → resolves Behavior>>new: → collapses to
     // basicNew: → asmjit-T1's inline-prim 18 fires on the IC HIT.
-    static const bool fwdCollapseOff =
-        std::getenv("PHARO_NO_FWD_COLLAPSE") != nullptr;
+    const bool fwdCollapseOff = g_debug.noFwdCollapse;
     if (!fwdCollapseOff) {
         // Bounded re-resolve loop (cap depth at 3 in case of pathological
         // multi-level wrappers).
@@ -18455,7 +18352,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // PHARO_NO_CULL_IC_FILL=1: bisect knob.  Skip patching the IC for any
     // send originating from cull:.  Lets us test whether the cull: bug
     // is triggered by IC accumulation.
-    if (__builtin_expect(std::getenv("PHARO_NO_CULL_IC_FILL") != nullptr, 0)) {
+    if (__builtin_expect(g_debug.noCullICFill, 0)) {
         Oop ownerMeth = pendingICOwnerMethod_;
         if (ownerMeth.isObject() && ownerMeth.rawBits() > 0x10000) {
             std::string ownerSel = memory_.selectorOf(ownerMeth);
@@ -18593,9 +18490,8 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         // bit-63/62/61 classification (diagnostic only since the cross-site
         // poisoning was fixed 2026-04-28; left as a kill-switch).
         // PHARO_NO_GETTER_BIT_BISECT=63|62|61 disables only one bit.
-        static const char* bisect = std::getenv("PHARO_NO_GETTER_BIT_BISECT");
-        static const bool noGetterBit =
-            std::getenv("PHARO_NO_GETTER_BIT") != nullptr;
+        const char* bisect = g_debug.noGetterBitBisect;
+        const bool noGetterBit = g_debug.noGetterBit;
         // Only set bit-63/62/61 trivial classifications for heap-class entries.
         // For immediate (SmI / Char / etc., tag != 0) receivers, the
         // stencil's `tag == 0` gate skips the inline-getter path, so the
@@ -18610,8 +18506,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         // common methods like `Integer>>isInteger -> ^ true` etc.
         // can fire the inline emit instead of activating the method.
         // PHARO_NO_RETLIT=1 to disable.
-        static const bool retlitEnabled =
-            std::getenv("PHARO_NO_RETLIT") == nullptr;
+        const bool retlitEnabled = !g_debug.noRetLit;
         if (!noGetterBit && (receiverIsHeap || retlitEnabled)) {
             TrivialMethodInfo tmi = detectTrivialMethod(resolvedMethod, memory_);
             bool skip63 = bisect && std::strcmp(bisect, "63") == 0;
@@ -18634,9 +18529,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             // recvObj->slotAt() reads, which aren't valid for
             // immediates.  Stencil's `tag == 0` gate enforces this.
             // Default-on; opt out via PHARO_NO_MULTISLOT_GETTER=1.
-            static const bool multiSlotDisabled =
-                std::getenv("PHARO_NO_MULTISLOT_GETTER") != nullptr;
-            if (extra == 0 && receiverIsHeap && !multiSlotDisabled
+            if (extra == 0 && receiverIsHeap && !g_debug.noMultislotGetter
                 && tmi.multiSlotA >= 0) {
                 extra = (1ULL << 57)
                       | ((uint64_t)(uint8_t)tmi.multiSlotA)
@@ -18700,9 +18593,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             // PHARO_NO_BLOCK_BIT=1: omit the BLOCK_VALUE_BIT to force
             // the stencil's slow path.  Used to A/B test whether the
             // fast path is actually taken in benchmarks.
-            static const bool noBlockBit =
-                std::getenv("PHARO_NO_BLOCK_BIT") != nullptr;
-            if (!noBlockBit) {
+            if (!g_debug.noBlockBit) {
                 extra |= (1ULL << 59);  // BLOCK_VALUE_BIT
             }
         }
@@ -18760,10 +18651,8 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // here either returns a cached fn (no-op) or builds + lowers
     // (paid once per method).  Opt-in via PHARO_T1_INLINE_SISTA_CALL=1
     // so default builds don't pay the compile cost.
-    static const bool sistaCallEnabled =
-        std::getenv("PHARO_T1_INLINE_SISTA_CALL") != nullptr;
     if ((extra & TRIVIAL_BITS) == 0 && sistaRuntimeForGCHook_
-            && sistaCallEnabled) {
+            && g_debug.t1InlineSistaCall) {
         auto fn = sistaRuntimeForGCHook_->compile(resolvedMethod, memory_);
         if (fn) {
             extra |= SISTA_BIT
@@ -18953,10 +18842,8 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             // BlockClosure>>value:value: lagged mergeFirst's OSR-recompile
             // and the resulting IC entries missed BLOCK_VALUE_BIT.
             // Gated by PHARO_NO_EAGER_BLOCK_VALUE for kill switch.
-            static const bool noEagerBlockValue =
-                std::getenv("PHARO_NO_EAGER_BLOCK_VALUE") != nullptr;
             bool eagerCompileTarget = (primIdx > 0 && primIdx < 200)
-                || (!noEagerBlockValue
+                || (!g_debug.noEagerBlockValue
                     && (primIdx == 207 || primIdx == 209));
             if (eagerCompileTarget) {
                 target = jitRuntime_.compiler()->compile(cachedMethod);
@@ -19084,9 +18971,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                     }
                     // BLOCK_VALUE_BIT for prim 207/209 — see fill-path below
                     // for full rationale.
-                    static const bool noBlockBit4 =
-                        std::getenv("PHARO_NO_BLOCK_BIT") != nullptr;
-                    if (!noBlockBit4 && (primIdx == 207 || primIdx == 209)) {
+                    if (!g_debug.noBlockBit && (primIdx == 207 || primIdx == 209)) {
                         newExtra |= (1ULL << 59);  // BLOCK_VALUE_BIT
                     }
                     // SELF_REC_BIT (bit 56): callee CM oop equals caller CM
@@ -19129,8 +19014,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             // Detect trivial getter/setter/returnsSelf — for these, set inline
             // bits 63/62/61 instead of the J2J direct call bit 60.
             // Also gated by PHARO_NO_GETTER_BIT for the same reason as above.
-            static const bool noGetterBit2 =
-                std::getenv("PHARO_NO_GETTER_BIT") != nullptr;
+            const bool noGetterBit2 = g_debug.noGetterBit;
             TrivialMethodInfo tmi = detectTrivialMethod(cachedMethod, memory_);
             if (!noGetterBit2 && tmi.getterIndex >= 0)
                 newExtra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
@@ -19139,9 +19023,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             else if (!noGetterBit2 && tmi.returnsSelf)
                 newExtra = (1ULL << 61);
             else {
-                static const bool multiSlotDisabled2 =
-                    std::getenv("PHARO_NO_MULTISLOT_GETTER") != nullptr;
-                if (!multiSlotDisabled2 && tmi.multiSlotA >= 0) {
+                if (!g_debug.noMultislotGetter && tmi.multiSlotA >= 0) {
                     newExtra = (1ULL << 57)
                              | ((uint64_t)(uint8_t)tmi.multiSlotA)
                              | ((uint64_t)(uint8_t)tmi.multiSlotB << 8)
@@ -19153,9 +19035,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 // here — was previously skipped in this slot-fill
                 // patch path, so asmjit-T1's bit-58 dispatch never
                 // fired in practice.  Gated by PHARO_NO_RETLIT=1.
-                static const bool noRetlit2 =
-                    std::getenv("PHARO_NO_RETLIT") != nullptr;
-                if (newExtra == 0 && !noRetlit2
+                if (newExtra == 0 && !g_debug.noRetLit
                         && tmi.returnsLiteral != TrivialReturnKind::None) {
                     newExtra = (1ULL << 58)
                              | ((uint64_t)tmi.returnsLiteral << 48);
@@ -19186,9 +19066,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 // fast-path stencil (sendBlockValue0/1/2Arg) at recompile.
                 // Sort 100K's value:value: site is the canonical case —
                 // hit by mega-cache, never gets BLOCK_VALUE_BIT.
-                static const bool noBlockBit3 =
-                    std::getenv("PHARO_NO_BLOCK_BIT") != nullptr;
-                if (!noBlockBit3 && (primIdx == 207 || primIdx == 209)) {
+                if (!g_debug.noBlockBit && (primIdx == 207 || primIdx == 209)) {
                     newExtra |= (1ULL << 59);  // BLOCK_VALUE_BIT
                 }
             }
@@ -19293,9 +19171,7 @@ extern "C" int pharo_jit_convert_send(jit::JITState* state) {
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // PHARO_T1_INLINE_J2J=1 debug: log first 10 fib-related activations.
     {
-        static const bool inlineJ2JDbg =
-            std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
-        if (inlineJ2JDbg && method.isObject() && method.rawBits() > 0x10000) {
+        if (g_debug.t1InlineJ2J_Env && method.isObject() && method.rawBits() > 0x10000) {
             std::string sel = memory_.selectorOf(method);
             if (sel.find("fib") != std::string::npos
                 || sel.find("Fib") != std::string::npos) {
@@ -19333,12 +19209,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // so noJit only blocks when the env var is set to a non-"0" value.
     // Without this, compiles happen but activations are silently disabled
     // when PHARO_NO_JIT=0 is set, which is confusing during bug-hunting.
-    static const bool noJit = []() {
-        if (!g_debug.noJit) return false;
-        const char* v = std::getenv("PHARO_NO_JIT");
-        return !(v && v[0] == '0');
-    }();
-    if (noJit) return false;
+    if (g_debug.noJitStrict) return false;
     jitActivations_++;
 
 
@@ -19347,9 +19218,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // bench's failing basicAt: call (which goes through interpreter
     // dispatch when JIT bails on IC miss / J2J chain bail).
     {
-        static bool basicAtTrace = std::getenv("PHARO_BASICAT_TRACE") != nullptr;
         static int batCount = 0;
-        if (basicAtTrace && batCount < 20) {
+        if (g_debug.basicAtTrace && batCount < 20) {
             std::string sel = memory_.selectorOf(method);
             if (sel == "basicAt:" && argCount == 1) {
                 bool callerIsScanFor = false;
@@ -19476,7 +19346,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.literals = methObj->slots() + 1;
     state.tempBase = framePointer_ + 1;
 
-    if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_ENTRY") != nullptr, 0)) {
+    if (__builtin_expect(g_debug.traceCullEntry, 0)) {
         static size_t entryCount = 0;
         std::string sel = memory_.selectorOf(method);
         if (sel == "cull:") {
@@ -19810,9 +19680,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // sortStructs:into:).  Instead, let the outer switch handle
         // ExitSendCached directly — same path as ExitSend, just skipping
         // the method lookup.
-        static const bool noJ2JTramp =
-            g_debug.t1ICProbe
-            || std::getenv("PHARO_T1_NO_J2J_TRAMP") != nullptr;
+        const bool noJ2JTramp = g_debug.t1ICProbe || g_debug.t1NoJ2JTramp;
         while ((state.exitReason == jit::ExitJ2JCall && !noJ2JTramp) ||
                (state.exitReason == jit::ExitSendCached && !noJ2JTramp) ||
                (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
@@ -20681,7 +20549,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         (void*)state.icDataPtr);
                 }
             }
-            if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_BAIL") != nullptr, 0)) {
+            if (__builtin_expect(g_debug.traceCullBail, 0)) {
                 static size_t cullTraceCount = 0;
                 std::string activeSel = memory_.selectorOf(state.method);
                 if (activeSel == "cull:" && cullTraceCount < 500) {
@@ -20807,7 +20675,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 // PHARO_NO_CULL_MEGA=1: bisect knob — skip mega-cache add
                 // when send originates from cull:.
                 bool skipMega = false;
-                if (__builtin_expect(std::getenv("PHARO_NO_CULL_MEGA") != nullptr, 0)) {
+                if (__builtin_expect(g_debug.noCullMega, 0)) {
                     if (state.method.isObject() && state.method.rawBits() > 0x10000) {
                         std::string s = memory_.selectorOf(state.method);
                         if (s == "cull:") skipMega = true;
@@ -21367,14 +21235,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     // this block correctly handles non-ExitReturn exits
                     // by pushing a SavedFrame for the caller and
                     // bailing.  Opt-out PHARO_INLINE_ACTIVATE_NO_BAIL_MID=1.
-                    static const bool gateBailMid =
-                        std::getenv("PHARO_INLINE_ACTIVATE_NO_BAIL_MID") != nullptr;
+                    const bool gateBailMid = g_debug.inlineActivateNoBailMid;
                     // isStubOnEntry: still gate by default — stubs bail
                     // immediately on entry with stale icDataPtr, which
                     // breaks the chain code's IC patch path.  Opt-in
                     // PHARO_INLINE_ACTIVATE_STUBS=1 for experimentation.
-                    static const bool inlineStubs =
-                        std::getenv("PHARO_INLINE_ACTIVATE_STUBS") != nullptr;
+                    const bool inlineStubs = g_debug.inlineActivateStubs;
                     if ((!chainHasPrim || chainJM->hasPrimPrologue)
                             && (!gateBailMid || !chainJM->canBailMidMethod)
                             && (inlineStubs || !chainJM->isStubOnEntry)) {

@@ -142,7 +142,7 @@ extern "C" size_t g_xmethod_trace_count;
 size_t g_xmethod_trace_count = 0;
 
 static const int xmethod_atexit_install = []() {
-    if (std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_LOG")) {
+    if (pharo::g_debug.t1InlineJ2JXmethodLog) {
         std::atexit([]() {
             extern void jit_rt_xmethod_dump_trace_extern();
             jit_rt_xmethod_dump_trace_extern();
@@ -274,9 +274,7 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
         }
         // Optional per-fire dump (PHARO_T1_INLINE_J2J_XMETHOD_LIVE=1).
         // Default off — the trace buffer is the primary capture.
-        static const bool liveDump =
-            std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_LIVE") != nullptr;
-        if (liveDump) {
+        if (pharo::g_debug.t1InlineJ2JXmethodLive) {
             fprintf(stderr,
                 "[XLOG #%zu] calleeCM=0x%llx callerCM=0x%llx "
                 "method=0x%llx jm=0x%llx rcv=0x%llx sp=0x%llx tb=0x%llx "
@@ -721,10 +719,8 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
     const int maxSendNArgs = g_debug.t1MaxSendNArgs;
     // PHARO_T1_INLINE_J2J_TRACE_UNSUPPORTED: log unsupported byte for first
     // N calls.  Helps identify why benchFib falls through to STUB compile.
-    static const bool traceUnsupp =
-        std::getenv("PHARO_T1_INLINE_J2J_TRACE_UNSUPP") != nullptr;
     auto traceFail = [&](size_t at, uint8_t op, const char* why) {
-        if (traceUnsupp) {
+        if (pharo::g_debug.t1InlineJ2JTraceUnsupp) {
             static size_t n = 0;
             if (n++ < 30) {
                 fprintf(stderr, "[T1-UNSUPPORTED #%zu] at=%zu op=0x%02x why=%s bcLen=%zu\n",
@@ -966,9 +962,7 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
                 return false;
             }
             if (nextOp == SistaV1::ExtSuperSend) {
-                static const bool acceptExtSuper =
-                    std::getenv("PHARO_T1_ACCEPT_EXTSUPERSEND") != nullptr;
-                if (!acceptExtSuper) {
+                if (!pharo::g_debug.t1AcceptExtSuperSend) {
                     traceFail(i, op, "ext-super-send-bundle-disabled");
                     return false;
                 }
@@ -985,9 +979,7 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             // Naked here means no preceding ExtA/B — the bundle case
             // is handled above when ExtA/B is at i.
             if (op == SistaV1::ExtSuperSend) {
-                static const bool acceptExtSuper =
-                    std::getenv("PHARO_T1_ACCEPT_EXTSUPERSEND") != nullptr;
-                if (!acceptExtSuper) {
+                if (!pharo::g_debug.t1AcceptExtSuperSend) {
                     traceFail(i, op, "ext-super-send-disabled");
                     return false;
                 }
@@ -3303,9 +3295,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.ldr(x7, ptr(x5, 16));
             // Debug: count every IC HIT (PHARO_T1_INLINE_J2J=1 telemetry)
             {
-                static const bool inlineJ2JDbg =
-                    std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
-                if (inlineJ2JDbg) {
+                if (pharo::g_debug.t1InlineJ2J_Env) {
                     a.mov(x4, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_ic_hits));
                     a.ldr(x6, ptr(x4));
                     a.add(x6, x6, asmjit::Imm(1));
@@ -3315,9 +3305,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.cbz(x7, dispatchCached);
             // Debug: count IC HITs where extra is set but bit 60 isn't
             {
-                static const bool inlineJ2JDbg =
-                    std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
-                if (inlineJ2JDbg) {
+                if (pharo::g_debug.t1InlineJ2J_Env) {
                     asmjit::Label haveBit60 = a.new_label();
                     a.tbnz(x7, asmjit::Imm(60), haveBit60);
                     a.mov(x4, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_extra_no_bit60));
@@ -3458,8 +3446,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // inline-J2J emit site = ~100+ bytes for typical fib-like
                 // methods.  When env var on, the per-bail counter writes
                 // are emitted for diagnostic visibility.
-                static const bool inlineJ2JCounters =
-                    std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
+                const bool inlineJ2JCounters = pharo::g_debug.t1InlineJ2J_Env;
                 asmjit::Label j2jBailZero = a.new_label();
                 asmjit::Label j2jBailFull = a.new_label();
                 asmjit::Label j2jBailSelf = a.new_label();
@@ -3648,9 +3635,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(x14, ptr(x0, OFF_LITERALS));
                     a.mov(w14, asmjit::Imm(nArgs));
                     a.str(w14, ptr(x0, OFF_ARGCOUNT));
-                    static const bool xlog =
-                        std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_LOG") != nullptr;
-                    if (xlog) {
+                    if (pharo::g_debug.t1InlineJ2JXmethodLog) {
                         using namespace asmjit::a64;
                         if (!inlineJ2JCounters) {
                             // xlog helper signature uses x12 = callerCM.
@@ -3903,7 +3888,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // Reuse x2 instead of reloading sp.
                 a.str(x1, ptr(x0, OFF_RECEIVER));        // recv from x1
                 const bool spLiveInX2 = !g_debug.t1InlineBlockValue
-                    && std::getenv("PHARO_T1_INLINE_J2J_XMETHOD_LOG") == nullptr;
+                    && !pharo::g_debug.t1InlineJ2JXmethodLog;
                 asmjit::a64::Gp spReg = x12;
                 if (spLiveInX2) {
                     spReg = x2;   // skip the ldr; x2 still has caller sp
@@ -4453,10 +4438,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
 
             // Counter helper for inline-prim diagnostics (PHARO_T1_INLINE_PRIM_COUNTERS=1).
-            static const bool primCountersEnabled =
-                std::getenv("PHARO_T1_INLINE_PRIM_COUNTERS") != nullptr;
             auto emitIncPrimCounter = [&](uint64_t addr) {
-                if (!primCountersEnabled) return;
+                if (!pharo::g_debug.t1InlinePrimCounters) return;
                 a.mov(x14, asmjit::Imm(addr));
                 a.ldr(x15, ptr(x14));
                 a.add(x15, x15, asmjit::Imm(1));
@@ -4959,7 +4942,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // PHARO_ASMJIT_T1_LOG=1 — dump asmjit asm to stderr per compile.
     // Heavy; only enable when actively debugging emit.
     static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
-        if (std::getenv("PHARO_ASMJIT_T1_LOG"))
+        if (pharo::g_debug.asmjitT1Log)
             return new asmjit::FileLogger(stderr);
         return nullptr;
     }();
@@ -4998,7 +4981,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         if (hasCJ) real = false;  // fall through to stub-compile
     }
     // PHARO_T1_INLINE_J2J_DUMP_BC=1: dump bytecode for failed compiles
-    if (!real && std::getenv("PHARO_T1_INLINE_J2J_DUMP_BC")) {
+    if (!real && pharo::g_debug.t1InlineJ2JDumpBC) {
         static size_t dumpN = 0;
         if (dumpN < 30 && bcRealLen < 80) {
             dumpN++;
@@ -5015,14 +4998,12 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // PHARO_ASMJIT_T1_STUB_ONLY=1: kill switch — force every method to
     // the bail-on-entry stub regardless of bytecode support.  Used to
     // bisect Phase 2 emit bugs against the known-good Phase 1 behavior.
-    static const bool stubOnly = std::getenv("PHARO_ASMJIT_T1_STUB_ONLY") != nullptr;
-    if (stubOnly) real = false;
+    if (pharo::g_debug.asmjitT1StubOnly) real = false;
     // PHARO_ASMJIT_T1_HARDCODE_STUB=1: emit the stub by hardcoding the
     // bytes (mov dword [rdi+76], 2; ret).  Bypasses asmjit emit/copy
     // entirely so we can isolate whether the bug is in the asmjit
     // codegen path or in the integration plumbing.
-    static const bool hardcodeStub = std::getenv("PHARO_ASMJIT_T1_HARDCODE_STUB") != nullptr;
-    if (hardcodeStub && !real) {
+    if (pharo::g_debug.asmjitT1HardcodeStub && !real) {
         static const uint8_t kStubBytes[8] = {
             0xC7, 0x47, 0x4C, 0x02, 0x00, 0x00, 0x00, 0xC3
         };
@@ -5061,9 +5042,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             a.bind(bcLabels[globalIdx]);
             // Diagnostic: track every emit's bcOffsetFromMethObj for the
             // sortStructs corruption hunt.
-            static const bool t1TraceEmit =
-                std::getenv("PHARO_T1_TRACE_EMIT") != nullptr;
-            if (__builtin_expect(t1TraceEmit, 0)) {
+            if (__builtin_expect(pharo::g_debug.t1TraceEmit, 0)) {
                 fprintf(stderr,
                     "[T1-EMIT] i=%zu globalIdx=%d op=0x%02x "
                     "bcOffsetFromMethObj=%d siteIdx=%d\n",
@@ -5518,10 +5497,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // `if (codeOff == 0 || codeOff >= codeSize) bail;` then always
     // bails to interp — effectively disabling JIT-side resume while
     // still advertising numBytecodes.  Bisect helper.
-    static const bool zeroBcToCode =
-        std::getenv("PHARO_ASMJIT_T1_BCTOCODE_ZERO") != nullptr;
     if (bcToCodeOut) {
-        if (real && !zeroBcToCode) {
+        if (real && !pharo::g_debug.asmjitT1BctocodeZero) {
             for (size_t i = 0; i < bcLen; i++) {
                 uint32_t off = (uint32_t)code.label_offset_from_base(bcLabels[i]);
                 // Per contract, slot 0 is conventionally 0 (initial entry
@@ -5676,8 +5653,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // them as bytecodes would pollute the pre-scan.
     //
     // Set PHARO_ASMJIT_T1_NO_TRIM=1 to disable for bisection.
-    static const bool noTrim =
-        std::getenv("PHARO_ASMJIT_T1_NO_TRIM") != nullptr;
+    const bool noTrim = pharo::g_debug.asmjitT1NoTrim;
     size_t bcLen = noTrim ? bcLenRaw : computeLiveLength(bc, bcLenRaw);
     // Diagnostic for the sortStructs:into: corruption hunt.
     if (__builtin_expect(g_debug.sortstrWatch, 0)) {
@@ -5828,12 +5804,9 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     //   PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1
     //                                   — advertise resume even for
     //                                     send-containing methods (BROKEN)
-    static const bool noBcToCode =
-        std::getenv("PHARO_ASMJIT_T1_NO_BCTOCODE") != nullptr;
-    static const bool noNumBc =
-        std::getenv("PHARO_ASMJIT_T1_NO_NUMBC") != nullptr;
-    static const bool forceResumeForSends =
-        std::getenv("PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS") != nullptr;
+    const bool noBcToCode = pharo::g_debug.asmjitT1NoBctocode;
+    const bool noNumBc = pharo::g_debug.asmjitT1NoNumbc;
+    const bool forceResumeForSends = pharo::g_debug.asmjitT1ForceResumeForSends;
     bool advertiseResume = isReal && !noNumBc && !noBcToCode && bcLen > 0;
     if (numSendSites > 0 && !forceResumeForSends) advertiseResume = false;
     jm->numBytecodes      = advertiseResume ? (uint16_t)bcLen : 0;
@@ -5886,7 +5859,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         }
         if (hasCondJump) {
             g_condJumpRealCompiles++;
-            if (std::getenv("PHARO_ASMJIT_T1_TRACE_COND")) {
+            if (pharo::g_debug.asmjitT1TraceCond) {
                 fprintf(stderr,
                         "[T1-COND-COMPILE] #%zu sel=#%s bcLen=%zu oop=0x%llx bc=",
                         g_condJumpRealCompiles,

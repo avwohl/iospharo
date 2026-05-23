@@ -464,8 +464,7 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
     // CPU in fullGC during block(500K) — surprising since the bench
     // shouldn't allocate, so something in the image is calling this
     // prim repeatedly.
-    static const bool gcLog = std::getenv("PHARO_GC_LOG") != nullptr;
-    if (gcLog) {
+    if (g_debug.gcLog) {
         static int count = 0;
         if (++count <= 100 || (count & 0x3FF) == 0) {
             fprintf(stderr, "[GC-LOG] primitiveIncrementalGC #%d\n", count);
@@ -1885,10 +1884,9 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     // PHARO_PRIMAT_DEBUG=1: log primitiveAt failures whose immediate
     // caller is JIT-compiled.  Filters out the noisy ReadStream>>next
     // EOF case (interpreter only).
-    static bool primAtDbg = std::getenv("PHARO_PRIMAT_DEBUG") != nullptr;
     static int primAtLog = 0;
     auto logPrimAt = [&](const char* tag, int64_t slotCount) {
-        if (!primAtDbg) return;
+        if (!g_debug.primAtDebug) return;
         // Filter: skip ReadStream>>next noise — that's normal EOF behavior.
         std::string mSel = memory_.selectorOf(method_);
         if (mSel == "next" || mSel == "atEnd") return;
@@ -2119,8 +2117,7 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         // down method-cache or IC routing bugs where prim 61 (SmallInt
         // at:put:) gets called with a Character value (which should
         // route to prim 64 / primitiveStringAtPut instead).
-        static const bool improperTrace = std::getenv("PHARO_IMPROPER_STORE_TRACE") != nullptr;
-        if (__builtin_expect(improperTrace, 0)) {
+        if (__builtin_expect(g_debug.improperStoreTrace, 0)) {
             if (!value.isSmallInteger() ||
                 value.asSmallInteger() < 0 || value.asSmallInteger() > 255 ||
                 static_cast<size_t>(idx - 1) >= header->byteSize()) {
@@ -3459,8 +3456,7 @@ PrimitiveResult Interpreter::primitiveClosureCopyWithCopiedValues(int argCount) 
 // Primitive 207: Full closure value (for closures with many arguments)
 // This handles FullBlockClosures which may have more complex activation
 PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
-    static const bool tracePrim207 = std::getenv("PHARO_TRACE_PRIM207") != nullptr;
-    if (tracePrim207) {
+    if (g_debug.tracePrim207) {
         static uint64_t n = 0;
         n++;
         if (n <= 5 || (n & 0xFFFFF) == 0)
@@ -3784,14 +3780,14 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // On iOS, std::exit() from a background thread causes SIGABRT.
     // Instead, stop the interpreter loop and let the app handle cleanup.
 
-    if (std::getenv("PHARO_TRACE_EXIT")) {
+    if (g_debug.traceExit) {
         fprintf(stderr, "[EXIT-TRACE] primitiveQuit called argCount=%d\n", argCount);
     }
     // Flush pending IMAGE output buffer before shutting down
     ::flushImageOutputBuffer();
 
     running_ = false;
-    if (std::getenv("PHARO_TRACE_EXIT")) {
+    if (g_debug.traceExit) {
         fprintf(stderr, "[EXIT-TRACE] running_ = false\n");
     }
     return PrimitiveResult::Success;
@@ -10028,8 +10024,7 @@ PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
     // `context exception` (tempAt: 1 on a signaling Context) returns
     // `Exception class` instead of the Exception instance.  When the
     // returned value is itself a class metaobject, that's the smoking gun.
-    static bool dbg = std::getenv("PHARO_CTX_TEMPAT_DBG") != nullptr;
-    if (dbg) {
+    if (g_debug.ctxTempAtDbg) {
         static int log = 0;
         // Quick is-class check: classOf(value)'s class name ends with " class"
         // (i.e., the returned value's class is a Metaclass).
@@ -21383,7 +21378,7 @@ PrimitiveResult Interpreter::primitiveGetSecureUserDirectory(int argCount) {
         dir = imgPath.substr(0, lastSlash);
     } else {
         // Fallback: HOME/Documents
-        const char* home = getenv("HOME");
+        const char* home = g_debug.envHome;
         dir = home ? std::string(home) + "/Documents" : "/tmp";
     }
 
@@ -21399,7 +21394,7 @@ PrimitiveResult Interpreter::primitiveGetSecureUserDirectory(int argCount) {
 PrimitiveResult Interpreter::primitiveGetUntrustedUserDirectory(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    const char* tmpdir = getenv("TMPDIR");
+    const char* tmpdir = g_debug.envTmpdir;
     std::string dir = tmpdir ? tmpdir : "/tmp";
 
     Oop result = createStringObject(memory_, dir);
@@ -22796,7 +22791,7 @@ PrimitiveResult Interpreter::primitiveGetEnvironment(int argCount) {
     }
 
     std::string varName = extractString(memory_, varNameOop);
-    const char* value = getenv(varName.c_str());
+    const char* value = DebugSettings::envRuntime(varName.c_str());
 
     Oop result;
     if (value) {
@@ -22985,9 +22980,9 @@ PrimitiveResult Interpreter::primitiveGetHostName(int argCount) {
 PrimitiveResult Interpreter::primitiveGetUserName(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    const char* username = getenv("USER");
+    const char* username = g_debug.envUser;
     if (!username) {
-        username = getenv("LOGNAME");
+        username = g_debug.envLogname;
     }
     if (!username) {
         username = "unknown";
@@ -23008,7 +23003,7 @@ PrimitiveResult Interpreter::primitiveGetUserName(int argCount) {
 PrimitiveResult Interpreter::primitiveGetHomeDirectory(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    const char* home = getenv("HOME");
+    const char* home = g_debug.envHome;
     if (!home) {
         home = "/";
     }
@@ -23028,7 +23023,7 @@ PrimitiveResult Interpreter::primitiveGetHomeDirectory(int argCount) {
 PrimitiveResult Interpreter::primitiveGetTempDirectory(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    const char* temp = getenv("TMPDIR");
+    const char* temp = g_debug.envTmpdir;
     if (!temp) {
         temp = "/tmp";
     }
@@ -23066,9 +23061,9 @@ PrimitiveResult Interpreter::primitiveGetVMVersion(int argCount) {
 PrimitiveResult Interpreter::primitiveGetSystemLocale(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    const char* locale = getenv("LANG");
+    const char* locale = g_debug.envLang;
     if (!locale) {
-        locale = getenv("LC_ALL");
+        locale = g_debug.envLcAll;
     }
     if (!locale) {
         locale = "en_US.UTF-8";
@@ -27274,7 +27269,7 @@ PrimitiveResult Interpreter::primitiveGetenv(int argCount) {
     size_t len = memory_.byteSizeOf(nameOop);
     std::string name(reinterpret_cast<const char*>(nameHdr->bytes()), len);
 
-    const char* value = getenv(name.c_str());
+    const char* value = DebugSettings::envRuntime(name.c_str());
 
     popN(2);  // pop arg + receiver
     if (value) {

@@ -1278,8 +1278,7 @@ public:
     /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.
     inline void pushFrameForJIT(jit::JITState* state) {
         // 2026-05-07 A1 hunt: log pushFrameForJIT for pollEvent:
-        static const bool a1TraceFJ =
-            std::getenv("PHARO_A1_TRACE") != nullptr;
+        const bool a1TraceFJ = g_debug.a1Trace;
         if (__builtin_expect(a1TraceFJ, 0)) {
             Oop targetMethodCheck = Oop::fromRawBits(state->cachedTarget.rawBits());
             if (targetMethodCheck.isObject()

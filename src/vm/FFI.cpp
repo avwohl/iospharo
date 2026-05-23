@@ -15,6 +15,7 @@
 #include "../platform/EventQueue.hpp"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/PlatformBridge.h"
+#include "DebugSettings.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -623,13 +624,8 @@ void stub_SDL_DestroyWindow(void* window) {
 void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
     // PHARO_SDL_TRACE=1 — count calls so we can tell whether a hang
     // path runs through here heavily in headless eval.
-    static bool traceInit = false;
-    static bool trace = false;
     static uint64_t callCount = 0;
-    if (!traceInit) {
-        traceInit = true;
-        trace = (std::getenv("PHARO_SDL_TRACE") != nullptr);
-    }
+    const bool trace = pharo::g_debug.sdlTrace;
     if (trace) {
         callCount++;
         if ((callCount & 0xFFF) == 0) {

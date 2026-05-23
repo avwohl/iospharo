@@ -1162,13 +1162,13 @@ int main(int argc, char* argv[]) {
 
         // Run the fast interpreter loop (blocks until VM stops)
         interpreter.interpret();
-        if (std::getenv("PHARO_TRACE_EXIT")) {
+        if (pharo::g_debug.traceExit) {
             fprintf(stderr, "[EXIT-TRACE] interpret() returned\n");
         }
 
         monitorDone.store(true, std::memory_order_relaxed);
         if (monitor.joinable()) monitor.join();
-        if (std::getenv("PHARO_TRACE_EXIT")) {
+        if (pharo::g_debug.traceExit) {
             fprintf(stderr, "[EXIT-TRACE] monitor joined\n");
         }
 
@@ -1177,7 +1177,7 @@ int main(int argc, char* argv[]) {
         std::cout << "\n=== Execution Summary ===" << std::endl;
         std::cout << "Active bytecode steps: " << activeSteps << std::endl;
         interpreter.dumpJITStats();
-        if (std::getenv("PHARO_TRACE_EXIT")) {
+        if (pharo::g_debug.traceExit) {
             fprintf(stderr, "[EXIT-TRACE] dumpJITStats done\n");
         }
 
@@ -1250,7 +1250,7 @@ int main(int argc, char* argv[]) {
         std::remove(startupStPath.c_str());
     }
 
-    if (std::getenv("PHARO_TRACE_EXIT")) {
+    if (pharo::g_debug.traceExit) {
         fprintf(stderr, "[EXIT-TRACE] main returning 0\n");
     }
     std::cout << "\n=== Test Complete ===" << std::endl;

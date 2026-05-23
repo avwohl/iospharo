@@ -33,6 +33,7 @@
  *   exit via state->returnValue + state->exitReason = EXIT_RETURN
  */
 #include "SistaLowering.hpp"
+#include "../../DebugSettings.hpp"
 
 #if PHARO_JIT_ENABLED
 
@@ -145,16 +146,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     using namespace asmjit;
     using namespace asmjit::x86;
 
-    static bool noLower = getenv("PHARO_SISTA_NO_LOWER") != nullptr;
-    if (noLower) {
+    if (pharo::g_debug.sistaNoLower) {
         if (failedAtValue) *failedAtValue = 0;
         return nullptr;
     }
-    static bool noArith = getenv("PHARO_SISTA_NO_LOWER_ARITH") != nullptr;
-    static bool noArithMath = getenv("PHARO_SISTA_NO_LOWER_ARITH_MATH") != nullptr;
-    static bool noArithCmp  = getenv("PHARO_SISTA_NO_LOWER_ARITH_CMP")  != nullptr;
-    static bool noBranch    = getenv("PHARO_SISTA_NO_LOWER_BRANCH")     != nullptr;
-    static bool noFuse      = getenv("PHARO_SISTA_NO_LOWER_FUSE")       != nullptr;
+    const bool noArith     = pharo::g_debug.sistaNoLowerArith;
+    const bool noArithMath = pharo::g_debug.sistaNoLowerArithMath;
+    const bool noArithCmp  = pharo::g_debug.sistaNoLowerArithCmp;
+    const bool noBranch    = pharo::g_debug.sistaNoLowerBranch;
+    const bool noFuse      = pharo::g_debug.sistaNoLowerFuse;
 
     CodeHolder code;
     code.init(runtime_->environment(), runtime_->cpu_features());
@@ -163,7 +163,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // and final machine code to stderr.  Useful to inspect codegen
     // when chasing miscompiles.
     static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
-        if (getenv("PHARO_SISTA_ASMJIT_LOG"))
+        if (pharo::g_debug.sistaAsmjitLog)
             return new asmjit::FileLogger(stderr);
         return nullptr;
     }();
@@ -661,9 +661,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             case Op::kSendInlineSelf:
             case Op::kSendCallHelper:
             case Op::kSendCallHelperSpecial: {
-                static bool noSends =
-                    getenv("PHARO_SISTA_NO_LOWER_SENDS") != nullptr;
-                if (noSends) return bail(v.id);
+                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
                 if (v.operands.empty()) return bail(v.id);
 
                 bool isSpecial = (v.op == Op::kSendCallHelperSpecial);
@@ -779,9 +777,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             }
 
             case Op::kSendUnspeculated: {
-                static bool noSends =
-                    getenv("PHARO_SISTA_NO_LOWER_SENDS") != nullptr;
-                if (noSends) return bail(v.id);
+                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
                 // Bail to the interpreter at the send bytecode.  Operands
                 // are [rcvr, arg0, ..., arg_{nArgs-1}] for sends, or the
                 // whole IR stack for generic mid-method bails.
@@ -878,7 +874,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     }
     g_lowerStats.ok.fetch_add(1, std::memory_order_relaxed);
     g_lowerStats.tick();
-    if (getenv("PHARO_SISTA_X86_TRACE_OK")) {
+    if (pharo::g_debug.sistaX86TraceOk) {
         // Dump op kinds present in the compiled method.
         bool hasCmp=false, hasBranch=false, hasArith=false;
         bool hasSend=false, hasAlloc=false;

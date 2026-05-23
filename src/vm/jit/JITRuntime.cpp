@@ -168,8 +168,7 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
     if (event == 103) {
         // J2J descent trace.  extra1 = (nArgs<<56) | (arg1.bits & ...),
         // extra2 = arg2.bits.  Only fires for nArgs>=2.
-        static bool dbg = std::getenv("PHARO_PRIMSIZE_STENCIL_DBG") != nullptr;
-        if (dbg) {
+        if (g_debug.primSizeStencilDbg) {
             static int log103 = 0;
             uint64_t nA = (extra1 >> 56) & 0xFF;
             // Only log 3- or 4-arg descents (likely translate:from:to:table:).
@@ -185,8 +184,7 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
     }
     if (event == 102) {
         // primSize stencil debug.  extra1 = retVal.bits, extra2 = (fmt<<48) | (slots<<32) | rcvBits&0xFFFFFFFF (low 32 of rcvBits).
-        static bool primSizeDbg = std::getenv("PHARO_PRIMSIZE_STENCIL_DBG") != nullptr;
-        if (primSizeDbg) {
+        if (g_debug.primSizeStencilDbg) {
             static int psLog = 0;
             // Print: first 30, then every 100th up to 200, then every 1000th.
             psLog++;
@@ -212,8 +210,7 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
         return;
     }
     if (event == 99 || event == 100) {
-        static bool primAtOob = std::getenv("PHARO_PRIMAT_OOB") != nullptr;
-        if (primAtOob) {
+        if (g_debug.primAtOob) {
             static int oobCount = 0;
             if (++oobCount <= 30) {
                 if (event == 99) {
@@ -454,11 +451,7 @@ extern "C" void jit_rt_arith_overflow(JITState* state) {
 
     // Diagnostic: count how often the fallback fires per method. Enabled by
     // JIT_ARITH_OFLOW_TRACE=1. Prints a periodic summary at 10k firings.
-    static const bool trace = []() {
-        const char* v = std::getenv("JIT_ARITH_OFLOW_TRACE");
-        return v && *v == '1';
-    }();
-    if (trace) {
+    if (g_debug.jitArithOflowTrace) {
         static size_t totalFirings = 0;
         totalFirings++;
         if (totalFirings <= 20 || (totalFirings % 100) == 0) {
@@ -560,9 +553,7 @@ extern "C" void jit_rt_recompile_queue(void* calleeJM) {
     // PHARO_NO_J2J_INLINE_BUMP=1: kill switch — if set, the helper is
     // a no-op so any latent regression caused by the inline-bump path
     // can be bisected away without re-extracting stencils.
-    static const bool disabled =
-        std::getenv("PHARO_NO_J2J_INLINE_BUMP") != nullptr;
-    if (disabled) return;
+    if (g_debug.noJ2JInlineBump) return;
     JITMethod* jm = reinterpret_cast<JITMethod*>(calleeJM);
     uint64_t methBits = jm->compiledMethodOop;
     if (methBits == 0) return;
@@ -596,9 +587,7 @@ void JITRuntime::noteLateSpecBit(JITMethod* callerJM, uint64_t newExtra) {
     // Default-on after bench-suite validation 2026-05-03 (parity with
     // and without across 5+ runs of sort/sieve/fib/dict/sum/factorial).
     // PHARO_NO_LATE_SPEC_RECOMPILE=1 to opt out.
-    static const bool disabled =
-        std::getenv("PHARO_NO_LATE_SPEC_RECOMPILE") != nullptr;
-    if (disabled) return;
+    if (g_debug.noLateSpecRecompile) return;
 
     // Weight by classification value.  High-value bits (block-value,
     // multi-slot, returnsLiteral) unlock dedicated specialized stencils
@@ -906,9 +895,7 @@ extern "C" void jit_rt_fill_ic(JITState* s, uint64_t* icData,
                                 uint64_t methodBits) {
     // PHARO_NO_MEGAHIT_IC_FILL=1: kill switch.  Set if the mega-cache
     // hit IC fill regresses a workload.
-    static const bool disabled =
-        std::getenv("PHARO_NO_MEGAHIT_IC_FILL") != nullptr;
-    if (disabled) return;
+    if (g_debug.noMegahitICFill) return;
     if (!icData || methodBits == 0) return;
     if (!s || !s->interp) return;
     JITRuntime* jr = &s->interp->jitRuntime();
@@ -1154,7 +1141,7 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
     // PHARO_INLINE_PRIM_DEBUG=1: log every inline at: failure with the
     // index and the receiver's slot count.  Needed because primitive 60
     // is called inline from JIT code, bypassing Interpreter::primitiveAt.
-    static bool inlineDbg = std::getenv("PHARO_INLINE_PRIM_DEBUG") != nullptr;
+    const bool inlineDbg = g_debug.inlinePrimDebug;
     static int inlineLog = 0;
 
     // Receiver must be an object pointer (tag == 0, not immediate)
@@ -1257,9 +1244,8 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
         } else if (fmt >= 16 && fmt <= 23) {
             size = slotCount * 8 - (fmt - 16);
         } else {
-            static bool sizeDbg = std::getenv("PHARO_PRIMSIZE_DEBUG") != nullptr;
             static int sizeFailLog = 0;
-            if (sizeDbg && ++sizeFailLog <= 20) {
+            if (g_debug.primSizeDebug && ++sizeFailLog <= 20) {
                 fprintf(stderr,
                     "[INLINE-SIZE-FAIL #%d] rcvBits=0x%llx fmt=%llu slots=%llu\n",
                     sizeFailLog, (unsigned long long)rcvBits,
@@ -1267,9 +1253,8 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
             }
             return 0;
         }
-        static bool sizeDbg = std::getenv("PHARO_PRIMSIZE_DEBUG") != nullptr;
         static int sizeLog = 0;
-        if (sizeDbg && ++sizeLog <= 30) {
+        if (g_debug.primSizeDebug && ++sizeLog <= 30) {
             fprintf(stderr,
                 "[INLINE-SIZE #%d] rcvBits=0x%llx fmt=%llu slots=%llu -> size=%llu sp[-1] was 0x%llx now=0x%llx\n",
                 sizeLog, (unsigned long long)rcvBits,
@@ -1428,8 +1413,7 @@ extern "C" uint64_t jit_rt_new_prim(JITState* s, uint64_t info) {
     Oop newObj = mem.oopFromPointer(obj);
 
     // PHARO_MNU_ALLOC_DBG=1: trace JIT-fast-path allocations of MNU.
-    static const bool dbgMnuJit = std::getenv("PHARO_MNU_ALLOC_DBG") != nullptr;
-    if (dbgMnuJit && classIndex == 4307) {
+    if (g_debug.mnuAllocDbg && classIndex == 4307) {
         static int n = 0;
         n++;
         if (n <= 200 || (n % 1000 == 0)) {
@@ -1653,9 +1637,7 @@ extern "C" uint64_t jit_rt_sista_call_send(JITState* state,
     // — under FORCE_BAIL=1 the eval smoke + larger eval succeed
     // cleanly.  The remaining B7 bug is in the helper SUCCESS path
     // (slow per-call frame leak, ~0.5 fd accumulation per call).
-    static const bool forceBail =
-        std::getenv("PHARO_SISTA_HELPER_FORCE_BAIL") != nullptr;
-    if (forceBail) return 0;
+    if (g_debug.sistaHelperForceBail) return 0;
     return state->interp->jitSistaCallSend(state, selBits, nArgs);
 }
 
@@ -1669,9 +1651,7 @@ extern "C" uint64_t jit_rt_sista_special_call_send(JITState* state,
                                                     uint64_t ssIdx,
                                                     uint64_t nArgs) {
     if (!state || !state->interp || !state->memory) return 0;
-    static const bool forceBail =
-        std::getenv("PHARO_SISTA_HELPER_FORCE_BAIL") != nullptr;
-    if (forceBail) return 0;
+    if (g_debug.sistaHelperForceBail) return 0;
     Oop ssArrayOop = state->memory->specialObject(
         SpecialObjectIndex::SpecialSelectorsArray);
     if (!ssArrayOop.isObject() || ssArrayOop.rawBits() < 0x10000) return 0;
@@ -1710,9 +1690,7 @@ extern "C" uint64_t jit_rt_sista_complete_array_do_accum(
     uint64_t accBits,
     uint64_t arithCode) {
     if (!state || !state->interp) return 0;
-    static const bool forceBail =
-        std::getenv("PHARO_SISTA_DOACCUM_FORCE_BAIL") != nullptr;
-    if (forceBail) return 0;
+    if (g_debug.sistaDoAccumForceBail) return 0;
     return state->interp->jitSistaCompleteArrayDoAccum(
         state, rcvBits, vecBits, slotByteOff, startIdx, accBits,
         arithCode);
@@ -1728,9 +1706,7 @@ extern "C" uint64_t jit_rt_sista_complete_array_inject_into(
     uint64_t accBits,
     uint64_t arithCode) {
     if (!state || !state->interp) return 0;
-    static const bool forceBail =
-        std::getenv("PHARO_SISTA_INJECT_RESUME_FORCE_BAIL") != nullptr;
-    if (forceBail) return 0;
+    if (g_debug.sistaInjectResumeForceBail) return 0;
     return state->interp->jitSistaCompleteArrayInjectInto(
         state, rcvBits, startIdx, accBits, arithCode);
 }
@@ -1745,9 +1721,7 @@ extern "C" uint64_t jit_rt_sista_complete_array_collect(
     uint64_t constBits,
     uint64_t arithCode) {
     if (!state || !state->interp) return 0;
-    static const bool forceBail =
-        std::getenv("PHARO_SISTA_COLLECT_RESUME_FORCE_BAIL") != nullptr;
-    if (forceBail) return 0;
+    if (g_debug.sistaCollectResumeForceBail) return 0;
     return state->interp->jitSistaCompleteArrayCollect(
         state, rcvBits, resultBits, startIdx, constBits, arithCode);
 }
@@ -1755,9 +1729,7 @@ extern "C" uint64_t jit_rt_sista_complete_array_collect(
 extern "C" uint64_t jit_rt_sista_alloc_array(JITState* state,
                                                uint64_t size) {
     if (!state || !state->interp) return 0;
-    static const bool dbg =
-        std::getenv("PHARO_SISTA_ALLOC_ARRAY_TRACE") != nullptr;
-    if (dbg) {
+    if (g_debug.sistaAllocArrayTrace) {
         static size_t calls = 0;
         if (++calls < 8 || (calls & 0xFFFF) == 0) {
             std::fprintf(stderr,
@@ -1773,11 +1745,9 @@ extern "C" uint64_t jit_rt_sista_block_create(JITState* state,
                                                 uint64_t numCopied,
                                                 uint64_t flags) {
     if (!state || !state->interp) return 0;
-    static const bool dbg =
-        std::getenv("PHARO_SISTA_BLOCK_HELPER_TRACE") != nullptr;
     static size_t calls = 0;
     calls++;
-    if (dbg && (calls < 8 || (calls & 0xFFF) == 0)) {
+    if (g_debug.sistaBlockHelperTrace && (calls < 8 || (calls & 0xFFF) == 0)) {
         std::fprintf(stderr,
             "[SISTA-BLOCK-HELPER] calls=%zu lit=%llu n=%llu fl=0x%llx\n",
             calls, (unsigned long long)litIndex,
@@ -1858,9 +1828,7 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
         // validation showed neutral-to-positive impact (fib -1ms,
         // sum -3ms, blocks -2ms; no regressions).  Opt out via
         // PHARO_NO_J2J_CALLEE_BUMP=1.
-        static const bool calleeBumpDisabled =
-            std::getenv("PHARO_NO_J2J_CALLEE_BUMP") != nullptr;
-        if (!calleeBumpDisabled) {
+        if (!g_debug.noJ2JCalleeBump) {
             // Note: this code path is rarely reached.  stencil_sendJ2J's
             // INLINE j2j_direct_call (stencils.cpp line 1569+) is the hot
             // path and does save/BLR/restore directly.  jit_rt_j2j_call
@@ -1972,8 +1940,8 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     // ~10ms on the hot path.  PHARO_B5_TRACE / PHARO_PRIMAT_OOB flip to
     // the real impl.
     bool needTrace = g_debug.b5Trace
-                   || std::getenv("PHARO_PRIMAT_OOB") != nullptr
-                   || std::getenv("PHARO_PRIMSIZE_STENCIL_DBG") != nullptr;
+                   || g_debug.primAtOob
+                   || g_debug.primSizeStencilDbg;
     helpers.j2jTrace = reinterpret_cast<void*>(needTrace
         ? &jit_rt_j2j_trace
         : &jit_rt_j2j_trace_noop);
@@ -2164,10 +2132,7 @@ size_t JITRuntime::drainInitialCompileQueue() {
         //                                 drain time stats->executionCount
         //                                 is 0 so warmup blocks otherwise
         if (tier2Compiler_) {
-            static bool noT2 = []() {
-                const char* v = std::getenv("PHARO_T2");
-                return !(v && v[0] == '1');
-            }();
+            const bool noT2 = !g_debug.t2Strict;
             static int t2Limit  = g_debug.t2Limit;
             static int t2Warmup = g_debug.t2Warmup;
             static bool t2ReplaceNote = g_debug.t2Replace;
@@ -2254,10 +2219,8 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
     }
     if (!anyData) return false;
 
-    static const bool traceRecompile =
-        std::getenv("PHARO_JIT_TRACE_RECOMPILE") != nullptr;
-    static const char* dumpICSel =
-        std::getenv("PHARO_DUMP_RECOMPILE_IC");
+    const bool traceRecompile = g_debug.jitTraceRecompile;
+    const char* dumpICSel = g_debug.dumpRecompileIC;
     std::string sel;
     if (traceRecompile || dumpICSel) {
         sel = interp_->memory().selectorOf(compiledMethod);
@@ -2314,8 +2277,7 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
     constexpr uint64_t kJ2JEntryBit  = 1ULL << 60;
     constexpr uint64_t kJ2JAddrMask  = 0x0000FFFFFFFFFFFFULL;
 
-    static const bool trace =
-        std::getenv("PHARO_TRACE_REWRITE_IC") != nullptr;
+    const bool trace = g_debug.traceRewriteIC;
     size_t methodsWalked = 0, slotsRewritten = 0, slotsWithJ2J = 0;
 
     // 2026-05-03: IC zone moved to heap; no W^X flip required.  Single
@@ -2443,9 +2405,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
 
         // jit-may23 T6: dump per-reason compile failure counts.
         // Opt-in via PHARO_JIT_FAIL_REASONS=1.
-        static const bool failReasonsDump =
-            std::getenv("PHARO_JIT_FAIL_REASONS") != nullptr;
-        if (failReasonsDump) {
+        if (g_debug.jitFailReasons) {
             extern size_t g_failedBadHeader, g_failedUnsuppPrim,
                           g_failedSkipSel, g_failedBlock, g_failedBcOther;
             fprintf(stderr,
@@ -2508,10 +2468,8 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // backward jumps (bytecode-level loops).  Scan only on the path
     // that creates a new countMap entry (count==0) so the per-method
     // bytecode walk costs amortise to O(1) per method, not per call.
-    static const bool hotLoopThresholdOff =
-        std::getenv("PHARO_NO_HOT_LOOP_THRESHOLD") != nullptr;
     auto methodHasBackwardJump = [&]() -> bool {
-        if (hotLoopThresholdOff) return false;
+        if (g_debug.noHotLoopThreshold) return false;
         if (!compiledMethod.isObject()
                 || compiledMethod.rawBits() <= 0x10000) {
             return false;
@@ -2731,9 +2689,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 //     in 43s vs 42s — within timing noise).
                 // PHARO_NO_QUEUE_COMPILE=1 to opt out (falls back to direct
                 // inline compile, the legacy mid-bytecode behavior).
-                static const bool queueCompileDisabled =
-                    std::getenv("PHARO_NO_QUEUE_COMPILE") != nullptr;
-                if (!queueCompileDisabled) {
+                if (!g_debug.noQueueCompile) {
                     queueInitialCompile(compiledMethod);
                     return;
                 }
@@ -2788,10 +2744,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     // preamble/postamble, skip unnecessary state flushes).
                     // PHARO_T2 is strict "=1" here (compile gate — don't
                     // enable accidentally).  Presence elsewhere is fine.
-                    static bool noT2 = []() {
-                        const char* v = std::getenv("PHARO_T2");
-                        return !(v && v[0] == '1');
-                    }();
+                    const bool noT2 = !g_debug.t2Strict;
                     static int t2Limit = g_debug.t2Limit;
                     // Warmup delay (todo.md §1.2f real fix option b):
                     // defer T2 compilation until T1 has run this method
@@ -2952,9 +2905,7 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     if (jm->stats && jm->stats->executionCount >= (uint32_t)g_debug.recompileAt &&
         jm->tier == 1 && jm->numICEntries > 0 && !isSplice) {
         if (compiler_) {
-            static const bool traceRecompile =
-                std::getenv("PHARO_JIT_TRACE_RECOMPILE") != nullptr;
-            if (traceRecompile) {
+            if (g_debug.jitTraceRecompile) {
                 std::string sel = interp_->memory().selectorOf(compiledMethod);
                 fprintf(stderr,
                         "[RECOMPILE] %s (icEntries=%u execCount=%u)\n",
@@ -3019,10 +2970,7 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // methods.  Opt out via PHARO_T2_REPLACE=1 to restore the old
     // "T2 replaces T1" behavior for bisection.
     // PHARO_T2 is strict "=1" (execute gate).
-    static bool noT2Exec = []() {
-        const char* v = std::getenv("PHARO_T2");
-        return !(v && v[0] == '1');
-    }();
+    const bool noT2Exec = !g_debug.t2Strict;
     static bool t2Replace = g_debug.t2Replace;
     void* t2code = noT2Exec ? nullptr : tier2Lookup(compiledMethod.rawBits());
     bool t1Executable = jm && jm->isExecutable();
@@ -3170,9 +3118,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // under PHARO_JIT_VALIDATE_ENTRY=1 for diagnosis when that bug
     // shape recurs, but skip on the hot path.  Removing it took
     // block(500K) on Pi 5 from 1980ms → expected 100-200ms.
-    static const bool validateEntry =
-        std::getenv("PHARO_JIT_VALIDATE_ENTRY") != nullptr;
-    if (validateEntry) {
+    if (g_debug.jitValidateEntry) {
         JITMethod* entryMethod = codeZone_.findMethodByPC(reinterpret_cast<uint64_t>(entry));
         if (entryMethod != jm) {
             fprintf(stderr, "[JIT] BUG: tryResume entry %p in wrong method (expected jm=%p, got %p) bc=%u code=%u\n",
@@ -3184,9 +3130,8 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // PHARO_BC5_DUMP=1: dump tryResume state at every resume site of
     // a *>>scanFor:.  Used to find which resume corrupts state.
     {
-        static bool bc5dump = std::getenv("PHARO_BC5_DUMP") != nullptr;
         static int bc5count = 0;
-        if (bc5dump && interp_ && bc5count < 80) {
+        if (g_debug.bc5Dump && interp_ && bc5count < 80) {
             std::string sel = interp_->memory().selectorOf(compiledMethod);
             if (sel == "scanFor:") {
                 bc5count++;
@@ -3259,13 +3204,11 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
 
     // 2026-05-07 A1: optional sp-delta trace across each tryResume.
     // PHARO_TRACE_RESUME_SP=1 enables; gated to keep zero overhead off.
-    static const bool traceResume =
-        std::getenv("PHARO_TRACE_RESUME_SP") != nullptr;
     Oop* spBefore = state.sp;
 
     entry(&state);
 
-    if (__builtin_expect(traceResume, 0)) {
+    if (__builtin_expect(g_debug.traceResumeSp, 0)) {
         ptrdiff_t delta = state.sp - spBefore;
         std::string sel = interp_ ? interp_->memory().selectorOf(compiledMethod) : "?";
         static size_t cnt = 0;
@@ -3432,10 +3375,7 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
         // Diagnostic: PHARO_JIT_STALE_LOG=1 logs each stale slot-18 oop
         // at GC-recovery time.  Helps identify which IC writes aren't
         // visited by forEachRoot (Task #41 staleness-source hunt).
-        static bool staleLog = []() {
-            const char* v = std::getenv("PHARO_JIT_STALE_LOG");
-            return v && v[0] == '1';
-        }();
+        const bool staleLog = g_debug.jitStaleLog;
         size_t totalSites = 0, staleSlot18 = 0, staleEntries = 0;
         while (m) {
             if (m->numICEntries > 0 && m->icBuffer) {
@@ -3488,11 +3428,7 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
                 // DIAGNOSTIC MODE PHARO_JIT_KEEP_ICS=1: preserve slot 18
                 // (selectorBits) to study the flaky crash symptom.
                 // Don't merge this in; it causes 1/3 crashes.
-                static bool keepICs = []() {
-                    const char* v = std::getenv("PHARO_JIT_KEEP_ICS");
-                    return v && v[0] == '1';
-                }();
-                if (keepICs) {
+                if (g_debug.jitKeepICs) {
                     constexpr size_t entriesBytes = IC_SELBITS_SLOT * sizeof(uint64_t);
                     for (uint32_t i = 0; i < m->numICEntries; i++) {
                         std::memset(icStart + i * IC_BYTES_PER_SITE, 0, entriesBytes);

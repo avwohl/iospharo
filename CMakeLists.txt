@@ -264,6 +264,22 @@ target_compile_options(PharoVMCore PRIVATE
     -Wall -Wextra -Wno-unused-parameter
 )
 
+# Poison bare std::getenv() in VM code.  Force-include no_getenv.hpp into
+# every VM .cpp except DebugSettings.cpp (which legitimately reads env
+# vars at startup, once each).  See no_getenv.hpp for the rationale —
+# bare getenv() in hot paths cost 20-30% of bench-suite in May 2026.
+#
+# Restricted to .cpp files only — third-party C plugins (libjpeg) are
+# read-once at init and don't go through DebugSettings.  Restricting to
+# .cpp also keeps the macro from interfering with C-language sources.
+set(_NO_GETENV_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/src/vm/no_getenv.hpp")
+foreach(_src ${VM_SOURCES})
+    if(NOT _src MATCHES "DebugSettings.cpp$" AND _src MATCHES "\\.cpp$")
+        set_source_files_properties("${_src}" PROPERTIES
+            COMPILE_OPTIONS "-include${_NO_GETENV_HEADER}")
+    endif()
+endforeach()
+
 # LTO for JIT performance — enables cross-TU inlining of pushFrameForJIT
 # into j2j_call (2ms improvement on fib(28): 19ms → 17ms).
 # Disabled for xcframework builds: xcodebuild -create-xcframework rejects

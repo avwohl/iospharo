@@ -1386,9 +1386,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded,
             // every call).  Catches the canonical sort 100K
             // bottleneck — see docs/jit-multiweek-work.md.
             // PHARO_NO_BLOCK_VALUE_SPEC=1 to opt out.
-            static const bool blockValueSpec =
-                std::getenv("PHARO_NO_BLOCK_VALUE_SPEC") == nullptr;
-            if (blockValueSpec) {
+            if (!g_debug.noBlockValueSpec) {
                 int argCount = (bc.operand >> 16) & 0xFF;
                 if (argCount <= 2 && methObj
                         && (bc.opcode >= 0x80 && bc.opcode <= 0xAF
@@ -1463,8 +1461,7 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
     if (!old || old->numICEntries == 0)
         return nullptr;
 
-    static const bool trace =
-        std::getenv("PHARO_TRACE_RECOMPILE_FLOW") != nullptr;
+    const bool trace = g_debug.traceRecompileFlow;
     std::string sel;
     int oldTier = old->tier;
     uint8_t* oldCode = old->codeStart();
@@ -1516,9 +1513,7 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
 JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // PHARO_T1_INLINE_J2J=1 debug: log fib-related compilations
     {
-        static const bool inlineJ2JDbg =
-            std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
-        if (inlineJ2JDbg && compiledMethod.isObject()
+        if (g_debug.t1InlineJ2J_Env && compiledMethod.isObject()
             && compiledMethod.rawBits() > 0x10000) {
             std::string sel = interp_.memory().selectorOf(compiledMethod);
             if (sel.find("fib") != std::string::npos
@@ -1588,9 +1583,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                                           interp_, compiledMethod);
         // PHARO_T1_INLINE_J2J=1 debug: log fib compile result
         {
-            static const bool inlineJ2JDbg =
-                std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
-            if (inlineJ2JDbg) {
+            if (g_debug.t1InlineJ2J_Env) {
                 std::string sel = interp_.memory().selectorOf(compiledMethod);
                 if (sel.find("fib") != std::string::npos
                     || sel.find("Fib") != std::string::npos) {
@@ -1633,9 +1626,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             }
             // PHARO_T1_INLINE_J2J=1 debug: dump fib IC layout + bytecode post-compile
             {
-                static const bool inlineJ2JDbg =
-                    std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
-                if (inlineJ2JDbg) {
+                if (g_debug.t1InlineJ2J_Env) {
                     std::string sel = interp_.memory().selectorOf(compiledMethod);
                     if (sel.find("fib") != std::string::npos
                         || sel.find("Fib") != std::string::npos) {
@@ -2035,14 +2026,11 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // benches where the IntegerTest accumulation doesn't apply.
         // `PHARO_JIT_NO_SIMSTACK=1` also disables (backwards compat).
         // Strict "=1" semantics: no plain presence here because setting to
-        // "0" explicitly should *not* toggle.  Keep the raw getenv.
-        static bool noSimStack = []() {
-            const char* noEnv = std::getenv("PHARO_JIT_NO_SIMSTACK");
-            if (noEnv && noEnv[0] == '1') return true;
-            const char* yesEnv = std::getenv("PHARO_JIT_SIMSTACK");
-            if (yesEnv && yesEnv[0] == '1') return false;
-            return true;  // default: SimStack OFF (correctness-first)
-        }();
+        // Strict "=1" semantics: "0" explicitly should *not* toggle (envEq1).
+        // Default: SimStack OFF (correctness-first).  Strict =1 semantics.
+        // YES_SIMSTACK only takes effect when NO_SIMSTACK is not set.
+        const bool noSimStack =
+            g_debug.jitNoSimStack || !g_debug.jitSimStack;
         // Per-selector SimStack disable for bisection:
         // PHARO_JIT_NO_SIMSTACK_SELECTORS=sel1,sel2,...
         bool skipSimStackHere = noSimStack;
@@ -2077,12 +2065,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // compile-time SimStack state disagrees with runtime register
         // contents.
         {
-            // Strict "=1" semantics preserved.
-            static const bool spillEnv = []() {
-                const char* v = std::getenv("PHARO_JIT_SPILL_WARN");
-                return v && *v == '1';
-            }();
-            if (spillEnv) {
+            if (g_debug.jitSpillWarn) {
                 int spillCount = 0;   // push_4/dup_4 → memory
                 int flushCount = 0;   // flush[1-4] → memory
                 for (auto& d : decoded) {
@@ -2882,9 +2865,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     // PHARO_T1_INLINE_J2J=1 debug: dump benchFib's IC layout after compile
     {
-        static const bool inlineJ2JDbg =
-            std::getenv("PHARO_T1_INLINE_J2J") != nullptr;
-        if (inlineJ2JDbg) {
+        if (g_debug.t1InlineJ2J_Env) {
             std::string sel = interp_.memory().selectorOf(compiledMethod);
             if (sel.find("fib") != std::string::npos
                 || sel.find("Fib") != std::string::npos) {

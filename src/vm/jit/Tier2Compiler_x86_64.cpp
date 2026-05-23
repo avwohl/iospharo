@@ -49,6 +49,7 @@
 #include "JITCompiler.hpp"
 #include "JITMethod.hpp"
 #include "SistaV1.hpp"
+#include "../DebugSettings.hpp"
 #include "../ObjectMemory.hpp"
 
 #include <cstdio>
@@ -118,8 +119,7 @@ size_t g_mbcBailed   = 0;
 // compilation.  Default-on (matches arm64 sibling 2026-04-18 flip after
 // SmallIntegerTest + whileTrue/ifTrue:ifFalse: stress validation).
 bool jumpsEnabledByEnv() {
-    const char* env = std::getenv("PHARO_T2_MBC_JUMPS");
-    return !(env && env[0] == '0');
+    return pharo::g_debug.t2MbcJumpsEnabled;
 }
 
 // Bytecodes the multi-bc walker knows how to emit inline.  Anything
@@ -224,8 +224,7 @@ void Tier2Compiler::flushAllICs() {
 
 void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     (void)oldVersion;
-    static bool trace = std::getenv("PHARO_T2_X86_TRACE") != nullptr;
-    if (trace) fprintf(stderr, "[T2-x86] compile entry: method=%p\n",
+    if (pharo::g_debug.t2X86Trace) fprintf(stderr, "[T2-x86] compile entry: method=%p\n",
                        (void*)compiledMethod.rawBits());
     if (!runtime_) {
         if (!initialize()) {
@@ -463,9 +462,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // which left it gated after measured perf regression on tier
         // interaction (see Tier2Compiler_arm64.cpp:412+).  Set
         // PHARO_T2_ZEROARG_IC=1 to opt in.
-        static bool t2ZeroargIC =
-            std::getenv("PHARO_T2_ZEROARG_IC") != nullptr;
-        if (t2ZeroargIC && bodyLen >= 3 && SistaV1::isSend0(b1)
+        if (pharo::g_debug.t2ZeroargIC && bodyLen >= 3 && SistaV1::isSend0(b1)
                         && b2 == SistaV1::ReturnTop
                         && decodePush(b0, pushes[0])) {
             kind = ReturnKind::ZeroArgSendInlineIC;
@@ -490,7 +487,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // PHARO_T2_X86_LOG=1 — dump asmjit IR + final machine code per
     // compile.  Heavy; only enable when actively debugging T2 emit.
     static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
-        if (std::getenv("PHARO_T2_X86_LOG"))
+        if (pharo::g_debug.t2X86Log)
             return new asmjit::FileLogger(stderr);
         return nullptr;
     }();
@@ -985,9 +982,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
         // 6-way IC probe.  PHARO_T2_FORCE_MISS=1 skips it (forces miss
         // path) — matches arm64 diagnostic flag.
-        static bool t2ForceMiss =
-            std::getenv("PHARO_T2_FORCE_MISS") != nullptr;
-        if (!t2ForceMiss) {
+        if (!pharo::g_debug.t2ForceMiss) {
             for (int i = 0; i < IC_ENTRIES; i++) {
                 Gp key = cc.new_gp64("key");
                 cc.mov(key, ptr(icData, IC_KEY_OFF(i)));
@@ -1164,11 +1159,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             // PHARO_T2_MBC_IC=1 → inline IC probe with hit/miss exit.
             // Default off — both regress IC hit rate when T1's warmup
             // is intercepted by T2 at this site.
-            static bool t2MbcSends =
-                std::getenv("PHARO_T2_MBC_SENDS") != nullptr;
-            static bool t2MbcIC =
-                std::getenv("PHARO_T2_MBC_IC") != nullptr;
-            if (!t2MbcSends && !t2MbcIC) {
+            if (!pharo::g_debug.t2MbcSends && !pharo::g_debug.t2MbcIC) {
                 g_mbcBailed++;
                 return nullptr;
             }
@@ -1209,7 +1200,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
     CodeHolder code;
     code.init(runtime_->environment(), runtime_->cpu_features());
     static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
-        if (std::getenv("PHARO_T2_X86_LOG"))
+        if (pharo::g_debug.t2X86Log)
             return new asmjit::FileLogger(stderr);
         return nullptr;
     }();
@@ -1270,9 +1261,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             cc.mov(wArgs, Imm(nArgs));
             cc.mov(ptr(state, OFF_SENDARGCOUNT), wArgs);
 
-            static bool t2MbcSends =
-                std::getenv("PHARO_T2_MBC_SENDS") != nullptr;
-            if (t2MbcSends) {
+            if (pharo::g_debug.t2MbcSends) {
                 Gp zero64 = cc.new_gp64("zero64");
                 cc.xor_(zero64, zero64);
                 cc.mov(ptr(state, OFF_ICDATAPTR), zero64);

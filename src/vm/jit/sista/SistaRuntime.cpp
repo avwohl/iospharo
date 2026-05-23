@@ -2,6 +2,7 @@
  * SistaRuntime.cpp - Implementation: lift + lower on demand, cache.
  */
 #include "SistaRuntime.hpp"
+#include "../../DebugSettings.hpp"
 #include "../../ObjectMemory.hpp"
 
 #include <cstdio>
@@ -33,9 +34,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
             Builder::buildFromOffset(method, memory, m, startBcOffset, &failedBc);
         if (r != LiftResult::kOk) {
             bcOffsetCache_[key][startBcOffset] = nullptr;  // negative cache
-            static const bool trace =
-                std::getenv("PHARO_SISTA_PER_BC_TRACE") != nullptr;
-            if (trace) {
+            if (g_debug.sistaPerBCTrace) {
                 static int liftFailLog = 0;
                 if (liftFailLog++ < 50) {
                     // Dump the failing byte to identify what shape
@@ -99,9 +98,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
             }
         }
         // PHARO_SISTA_PER_BC_TRACE=1: log the outcome.
-        static const bool trace =
-            std::getenv("PHARO_SISTA_PER_BC_TRACE") != nullptr;
-        if (trace) {
+        if (g_debug.sistaPerBCTrace) {
             static int logCount = 0;
             if (logCount++ < 200) {
                 fprintf(stderr,
@@ -209,9 +206,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // sum 1M perf cost.  Re-enable the gate by default; opt out via
     // PHARO_SISTA_ALLOW_ARRAYDO_HELPER=1 for diagnosis or workloads
     // that don't trigger the bench-suite-context corruption.
-    static const bool allowArrayDoHelper =
-        std::getenv("PHARO_SISTA_ALLOW_ARRAYDO_HELPER") != nullptr;
-    if (hasArrayDoSplice && hasSendCallHelper && !allowArrayDoHelper) {
+    if (hasArrayDoSplice && hasSendCallHelper && !g_debug.sistaAllowArrayDoHelper) {
         cache_[key] = nullptr;
         return nullptr;
     }
@@ -225,9 +220,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // returning nullptr; the dispatch hook checks `fn != nullptr`.
     //
     // Opt-out: PHARO_SISTA_COMPILE_BAIL_ONLY=1 (for diagnosis).
-    static const bool compileBailOnly =
-        std::getenv("PHARO_SISTA_COMPILE_BAIL_ONLY") != nullptr;
-    if (hasSend && !hasSplice && !compileBailOnly) {
+    if (hasSend && !hasSplice && !g_debug.sistaCompileBailOnly) {
         cache_[key] = nullptr;
         return nullptr;
     }
@@ -242,7 +235,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // forced dispatch can call the fn even when the prim would have
     // succeeded, breaking primitives like 113 (quit) → infinite loop
     // because the fallback `^ self primitiveFailed` never quits.
-    if (compileBailOnly) {
+    if (g_debug.sistaCompileBailOnly) {
         Oop hdrOop = memory.fetchPointer(0, method);
         if (hdrOop.isSmallInteger()) {
             int64_t hb = hdrOop.asSmallInteger();

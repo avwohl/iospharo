@@ -11,6 +11,7 @@
  */
 #include "SistaBuilder.hpp"
 #include "../SistaV1.hpp"
+#include "../../DebugSettings.hpp"
 #include "../../ObjectMemory.hpp"
 
 #include <algorithm>
@@ -301,9 +302,7 @@ public:
         // spliced inline, in place of the entire (or post-setup
         // portion of) method's IR.
         {
-            static const bool detect =
-                std::getenv("PHARO_SISTA_DO_DETECT") != nullptr;
-            if (detect) {
+            if (g_debug.sistaDoDetect) {
                 static int patternCount = 0;
                 // Find sequences `PushFullBlock(0xF9 _ _) + SpecialSend(do:=0x7B)`.
                 // Other selectors are ignored — `value:`/`value`/etc. ARE
@@ -548,9 +547,7 @@ public:
             // Default-on as of 2026-05-01.  Earlier opt-in gate was due
             // to a now-fixed FFI #oopForObject: crash.  Set
             // PHARO_NO_SISTA_DO_SPLICE=1 to opt out.
-            static const bool splice =
-                std::getenv("PHARO_NO_SISTA_DO_SPLICE") == nullptr;
-            if (splice && memory_ != nullptr) {
+            if (!g_debug.noSistaDoSplice && memory_ != nullptr) {
                 size_t i = 0;
                 int lastPushFullBlockEnd = -1;
                 int lastPushFullBlockStart = -1;
@@ -643,11 +640,7 @@ public:
                         // (sends to asArray / millisecondClockValue
                         // before the do:).
                         // Match the default-on flip in the main gate.
-                        static const bool helperSends = []() {
-                            return std::getenv("PHARO_NO_SISTA_HELPER_SENDS")
-                                   == nullptr;
-                        }();
-                        if (sawLiftTerminator && !helperSends) {
+                        if (sawLiftTerminator && g_debug.noSistaHelperSends) {
                             ok = false;
                             rejectReason = "lift-terminator before do:";
                         }
@@ -717,14 +710,9 @@ public:
                         // runtime class check + deopt-on-miss handle
                         // non-Array receivers.  When unset, require
                         // an IC hint that says Array.
-                        static const bool noHintMode = []() {
-                            const char* v = std::getenv(
-                                "PHARO_SISTA_DO_SPLICE_NO_HINT");
-                            return v && v[0] == '1';
-                        }();
                         const InlineHint* hit = nullptr;
                         uint32_t hintClassIdx = 0;
-                        if (!noHintMode) {
+                        if (!g_debug.sistaDoSpliceNoHint) {
                             if (ok && inlineHints_) {
                                 for (const auto& h : *inlineHints_) {
                                     if (h.bcOffset == (uint32_t)i) {
@@ -1007,9 +995,7 @@ public:
         // Records spliceAccumAtPushFullBlock_[pfbOff] = packed metadata
         // (slot 0-7 in low 8 bits, arithCode 0-2 in next 8 bits, outerTemp
         // 0-15 in next 8 bits).
-        static const bool accumSplice =
-            std::getenv("PHARO_NO_SISTA_DO_SPLICE") == nullptr;
-        if (accumSplice && memory_ != nullptr) {
+        if (!g_debug.noSistaDoSplice && memory_ != nullptr) {
             size_t i = 0;
             int extA = 0;
             while (i < len_) {
@@ -1148,9 +1134,7 @@ public:
         // No closure-store complications since inject:into:'s
         // accumulator is the block's RETURN value, not a captured
         // mutable temp.
-        static const bool injectSplice =
-            std::getenv("PHARO_NO_SISTA_DO_SPLICE") == nullptr;
-        if (injectSplice && memory_ != nullptr && injectIntoSelectorMask_) {
+        if (!g_debug.noSistaDoSplice && memory_ != nullptr && injectIntoSelectorMask_) {
             size_t i = 0;
             int lastPushFullBlockEnd = -1;
             int lastPushFullBlockStart = -1;
@@ -1408,10 +1392,8 @@ public:
         // (`(1 to: 100000) asArray collect: [:e | e + 1]` ×5) collapses
         // 53 ms → 0 ms.  Outer gate PHARO_NO_SISTA_DO_SPLICE still
         // applies (collect uses inject:into: infrastructure as well).
-        static const bool collectSplice =
-            std::getenv("PHARO_NO_SISTA_COLLECT") == nullptr;
-        if (collectSplice && injectSplice && memory_ != nullptr
-            && collectSelectorMask_) {
+        if (!g_debug.noSistaCollect && !g_debug.noSistaDoSplice
+            && memory_ != nullptr && collectSelectorMask_) {
             size_t i = 0;
             int lastPushFullBlockEnd = -1;
             int lastPushFullBlockStart = -1;
@@ -1666,7 +1648,7 @@ public:
         // a stray kInterval that doesn't get consumed by the
         // inject:into: intercept would have no lowering and yield
         // garbage downstream.
-        if (injectSplice && memory_ != nullptr
+        if (!g_debug.noSistaDoSplice && memory_ != nullptr
             && injectIntoSelectorMask_ && toSelectorMask_) {
             size_t i = 0;
             while (i < len_) {
@@ -1906,7 +1888,7 @@ public:
         // (spliceDoAtPushFullBlock_).
         //
         // Block must be 1-arg (each), numCopied=0, splice-simple.
-        if (injectSplice && memory_ != nullptr && toSelectorMask_) {
+        if (!g_debug.noSistaDoSplice && memory_ != nullptr && toSelectorMask_) {
             size_t i = 0;
             while (i < len_) {
                 uint8_t op = bc_[i];
@@ -2093,9 +2075,8 @@ public:
         // succeeds.  Either the original cause was fixed by intervening
         // splice/IC commits or it was bench-image-state-specific.
         // Outer gate PHARO_NO_SISTA_DO_SPLICE still applies.
-        static const bool ivDoAccumSplice =
-            std::getenv("PHARO_NO_SISTA_IV_DO_ACCUM") == nullptr;
-        if (ivDoAccumSplice && accumSplice && memory_ != nullptr && toSelectorMask_) {
+        if (!g_debug.noSistaIvDoAccum && !g_debug.noSistaDoSplice
+            && memory_ != nullptr && toSelectorMask_) {
             size_t i = 0;
             while (i < len_) {
                 uint8_t op = bc_[i];
@@ -2251,9 +2232,7 @@ public:
         // main lifter reaches preLoopStart (no setup-sends before).
         // Without HELPER_SENDS, methods with prior sends won't trigger
         // — safe.  Set PHARO_NO_SISTA_WHILETRUE=1 to opt out.
-        static const bool whileTrueSpliceEnabled =
-            std::getenv("PHARO_NO_SISTA_WHILETRUE") == nullptr;
-        if (whileTrueSpliceEnabled) {
+        if (!g_debug.noSistaWhileTrue) {
             size_t i = 0;
             while (i + 4 <= len_) {
                 // Look for ExtendB + ExtJump (4-byte long jump back).
@@ -2593,7 +2572,7 @@ public:
                                         constValue = 0;  // unused for series
                                     }
                                 }
-                                if (whileTrueSpliceEnabled
+                                if (!g_debug.noSistaWhileTrue
                                     && preLoopOk && endPopOk && bodyOk
                                     && constValue >= 0 && constValue <= 1
                                     && arithCode >= 0 && arithCode <= 1
@@ -2664,9 +2643,7 @@ public:
         // handles (Array, ByteArray, etc.); without that hint we
         // can't safely speculate.
         {
-            static const bool sizePeephole =
-                std::getenv("PHARO_SISTA_SIZE_PEEPHOLE") != nullptr;
-            if (sizePeephole && len_ >= 3
+            if (g_debug.sistaSizePeephole && len_ >= 3
                 && bc_[0] == jit::SistaV1::PushReceiver
                 && bc_[1] == 0x72  // SpecialSend size
                 && bc_[2] == jit::SistaV1::ReturnTop) {
@@ -2733,9 +2710,7 @@ public:
         // at 100% CPU (cause unknown).  See
         // memory/feedback_at_peephole_hangs.md.
         {
-            static const bool atPeephole =
-                std::getenv("PHARO_SISTA_AT_PEEPHOLE") != nullptr;
-            if (atPeephole && len_ >= 4
+            if (g_debug.sistaAtPeephole && len_ >= 4
                 && bc_[0] == jit::SistaV1::PushReceiver
                 && bc_[1] == 0x40  // PushTemp 0 (the index arg)
                 && bc_[2] == 0x70  // SpecialSend at:
@@ -3186,9 +3161,7 @@ private:
             // Diagnostic — track every opcode the lifter sees.
             // PHARO_SISTA_DO_DETECT=1 enables.
             {
-                static const bool detect =
-                    std::getenv("PHARO_SISTA_DO_DETECT") != nullptr;
-                if (detect) {
+                if (g_debug.sistaDoDetect) {
                     static uint64_t opcodeHist[256] = {0};
                     static uint64_t totalOps = 0;
                     opcodeHist[op]++;
@@ -3638,9 +3611,7 @@ private:
                                Op::kBlockCreate, Type::kOop,
                                std::move(ops), lit);
                 recordFramepoint(vid, static_cast<uint32_t>(bailOffset));
-                static const bool detect =
-                    std::getenv("PHARO_SISTA_DO_DETECT") != nullptr;
-                if (detect) {
+                if (g_debug.sistaDoDetect) {
                     static int blockCreates = 0;
                     if (blockCreates++ < 32) {
                         std::fprintf(stderr,
@@ -3658,9 +3629,7 @@ private:
 
             if (op == jit::SistaV1::PushClosure
              || op == jit::SistaV1::PushThisContext) {
-                static const bool detect =
-                    std::getenv("PHARO_SISTA_DO_DETECT") != nullptr;
-                if (detect) {
+                if (g_debug.sistaDoDetect) {
                     static int otherBails = 0;
                     if (otherBails++ < 32) {
                         std::fprintf(stderr,
@@ -4216,10 +4185,7 @@ private:
                 // Gated behind PHARO_NO_SISTA_PRIM_AT_PUT=1 (default
                 // on) since this is new and may flush out lowering
                 // bugs.  Kill switch lets us isolate regressions.
-                static const bool primAtPutEnabled = []() {
-                    return std::getenv("PHARO_NO_SISTA_PRIM_AT_PUT")
-                           == nullptr;
-                }();
+                const bool primAtPutEnabled = !g_debug.noSistaPrimAtPut;
                 // kPrimAt for SpecialSend at: — gated to per-bytecode
                 // lifts only (g_inPerBcBuild), same as kPrimAtPut.
                 // Method-entry Sista compiles continue to use the
@@ -4303,10 +4269,7 @@ private:
                 // kSendCallHelperSpecial (helper resolves the
                 // SpecialSelector at runtime) and keep lifting.
                 // Mirrors the Send0/1/2 helper-emit path below.
-                static const bool helperSends = []() {
-                    return std::getenv("PHARO_NO_SISTA_HELPER_SENDS")
-                           == nullptr;
-                }();
+                const bool helperSends = !g_debug.noSistaHelperSends;
                 bool hasSpliceCandidate =
                     !spliceAtPushFullBlock_.empty()
                  || !spliceAccumAtPushFullBlock_.empty()
@@ -4520,10 +4483,7 @@ private:
                 // simplification splice fires).  runSum-style methods
                 // (Array-do splice + kSendCallHelper) are now skipped
                 // by SistaRuntime so they run in interp without DNU.
-                static const bool helperSends = []() {
-                    return std::getenv("PHARO_NO_SISTA_HELPER_SENDS")
-                           == nullptr;
-                }();
+                const bool helperSends = !g_debug.noSistaHelperSends;
                 bool hasSpliceCandidate =
                     !spliceAtPushFullBlock_.empty()
                  || !spliceAccumAtPushFullBlock_.empty()
@@ -5195,9 +5155,7 @@ private:
     // PHARO_SISTA_DO_DETECT=1 enables the dump.  Pure observation —
     // does not change runtime behavior.
     void detectDoBlockPattern(uint32_t nArgs, uint32_t bcOffset) {
-        static const bool detect =
-            std::getenv("PHARO_SISTA_DO_DETECT") != nullptr;
-        if (!detect) return;
+        if (!g_debug.sistaDoDetect) return;
         if (nArgs != 1) return;
         if (stack_.size() < 2) return;
         uint32_t blockArgId = stack_[stack_.size() - 1];
@@ -5238,9 +5196,7 @@ private:
         // had blocked default-on.  Bench panel + setter bench at
         // parity with no-inline; accessor-heavy code wins.
         // Opt-out: PHARO_SISTA_NO_INLINE_CONST=1.
-        static const bool inlineConst =
-            std::getenv("PHARO_SISTA_NO_INLINE_CONST") == nullptr;
-        if (!inlineConst) return false;
+        if (g_debug.sistaNoInlineConst) return false;
         if (g_currentBuildMemory == nullptr) return false;
         if (g_calleeLiftDepth >= 2) return false;
         if (stack_.size() < nArgs + 1) return false;
@@ -5620,9 +5576,7 @@ private:
             // from 8 to 6 instructions in 90b0356e.  Per-store helper
             // cost is roughly the same as the send-bail it replaces;
             // win comes from skipping the IC dispatch + push frame.
-            static const bool inlineSetters =
-                std::getenv("PHARO_SISTA_NO_INLINE_SETTERS") == nullptr;
-            if (!inlineSetters) return false;
+            if (g_debug.sistaNoInlineSetters) return false;
             // 4-value return-value setter pattern.  Body `foo: x` with
             //   ^ foo := x
             // compiles to bytecodes (using no-pop ExtStoreRecv)
@@ -5679,9 +5633,7 @@ private:
         } else if (calleeIR.values.size() == 5) {
             // See PHARO_SISTA_NO_INLINE_SETTERS gate above (4-value
             // branch); same default-on rationale applies here.
-            static const bool inlineSetters5 =
-                std::getenv("PHARO_SISTA_NO_INLINE_SETTERS") == nullptr;
-            if (!inlineSetters5) return false;
+            if (g_debug.sistaNoInlineSetters) return false;
             // Two 5-value shapes share the prefix
             //   v0 = kLoadTemp(N0)
             //   v1 = kLoadReceiver
@@ -5771,9 +5723,7 @@ private:
             // + arith using the checked values.  Result is the arith.
             //
             // Same gate as ivar-OP-const branches.
-            static const bool inlineArithIvar7 =
-                std::getenv("PHARO_NO_SISTA_INLINE_ARITHIVAR") == nullptr;
-            if (!inlineArithIvar7) {
+            if (g_debug.noSistaInlineArithIVar) {
                 recordUnrecognizedShape(calleeIR);
                 return false;
             }
@@ -5876,9 +5826,7 @@ private:
             //   v4 = kReturn(v3)
             //
             // Same gate as 6-value branch.
-            static const bool inlineArithIvar5 =
-                std::getenv("PHARO_NO_SISTA_INLINE_ARITHIVAR") == nullptr;
-            if (!inlineArithIvar5) {
+            if (g_debug.noSistaInlineArithIVar) {
                 recordUnrecognizedShape(calleeIR);
                 return false;
             }
@@ -5972,9 +5920,7 @@ private:
             //
             // Default-on; opt out with PHARO_NO_SISTA_INLINE_ARITHIVAR=1
             // (same flag as the 10-value branch).
-            static const bool inlineArithIvar6 =
-                std::getenv("PHARO_NO_SISTA_INLINE_ARITHIVAR") == nullptr;
-            if (!inlineArithIvar6) {
+            if (g_debug.noSistaInlineArithIVar) {
                 recordUnrecognizedShape(calleeIR);
                 return false;
             }
@@ -6050,7 +5996,7 @@ private:
             g_totalHintsConsumed++;
             static int ai6Count = 0;
             if (++ai6Count <= 10
-                && std::getenv("PHARO_SISTA_INLINE_DUMP")) {
+                && g_debug.sistaInlineDump) {
                 std::fprintf(stderr,
                     "[ARITHIVAR6-EMIT] callee=0x%llx op=%s "
                     "ivar=%llu const=0x%llx bcOff=%u\n",
@@ -6089,9 +6035,7 @@ private:
             // benefits).  The inlined body has 2 deopt points (tag
             // checks) that each fall back to a normal send, matching
             // the callee's own deopt behavior.
-            static const bool inlineArithIvar =
-                std::getenv("PHARO_NO_SISTA_INLINE_ARITHIVAR") == nullptr;
-            if (!inlineArithIvar) {
+            if (g_debug.noSistaInlineArithIVar) {
                 recordUnrecognizedShape(calleeIR);
                 return false;
             }
@@ -6224,7 +6168,7 @@ private:
             g_totalHintsConsumed++;
             static int aivCount = 0;
             if (++aivCount <= 10
-                && std::getenv("PHARO_SISTA_INLINE_DUMP")) {
+                && g_debug.sistaInlineDump) {
                 std::fprintf(stderr,
                     "[ARITHIVAR-EMIT] callee=0x%llx op1=%s op2=%s "
                     "ivarA=%llu ivarB=%llu const=0x%llx bcOff=%u\n",
@@ -6313,7 +6257,7 @@ private:
             if (cr == LiftResult::kOk) {
                 g_calleeLiftSuccess++;
                 g_calleeBytecodesLifted += calleeIR.values.size();
-                if (std::getenv("PHARO_SISTA_INLINE_DUMP")) {
+                if (g_debug.sistaInlineDump) {
                     static int dumpCount = 0;
                     // Bumped from 8 → 64 (2026-04-30) to find non-trivial
                     // shapes (e.g. OC>>size which is 9-10 values).  The 8
@@ -6331,7 +6275,7 @@ private:
                         std::fprintf(stderr, "\n");
                     }
                 }
-            } else if (std::getenv("PHARO_SISTA_INLINE_DBG")) {
+            } else if (g_debug.sistaInlineDbg) {
                 static int dbgCount = 0;
                 if (dbgCount++ < 16) {
                     int fmt = -1;
@@ -6675,17 +6619,14 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     uint16_t inlineableMask = 0;
     uint16_t identityEqMask = 0;
     uint16_t identityNeqMask = 0;
-    static const bool inlineYourself =
-        std::getenv("PHARO_NO_SISTA_INLINE_YOURSELF") == nullptr;
+    const bool inlineYourself = !g_debug.noSistaInlineYourself;
     // INLINE_IDENTITY_EQ default-on (2026-05-01): #== / #~~ are universal
     // identity ops — never overridden in well-behaved code.  Best-of-3
     // bench A/B (with default flags + this on) showed parity-to-small-win
     // (sieve -2%, dict -1%, sum -1%, blocks -8%).  Set
     // PHARO_NO_SISTA_INLINE_IDENTITY_EQ=1 to opt out.
-    static const bool inlineIdentityEq =
-        std::getenv("PHARO_NO_SISTA_INLINE_IDENTITY_EQ") == nullptr;
-    static const bool injectIntoSplice =
-        std::getenv("PHARO_NO_SISTA_DO_SPLICE") == nullptr;
+    const bool inlineIdentityEq = !g_debug.noSistaInlineIdentityEq;
+    const bool injectIntoSplice = !g_debug.noSistaDoSplice;
     uint16_t injectIntoMask = 0;
     uint16_t toMask = 0;
     uint16_t collectMask = 0;
@@ -6731,8 +6672,7 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     // Default ON 2026-04-29 (re-flip after entry-path fixes —
     // see Interpreter.cpp gate site for rationale).  Opt-out:
     // PHARO_SISTA_NO_INLINE_ARITH=1.
-    static const bool typeCheckArith =
-        std::getenv("PHARO_SISTA_NO_INLINE_ARITH") == nullptr;
+    const bool typeCheckArith = !g_debug.sistaNoInlineArith;
 
     LinearLifter l(bytecodes, bytecodeSize, numArgs, numTemps, out);
     l.setMemory(&memory);

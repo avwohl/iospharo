@@ -33,6 +33,7 @@ struct DebugSettings {
 
     // --- JIT on/off switches ---
     bool noJit = false;               // PHARO_NO_JIT or PHARO_NOJIT
+    bool noJitStrict = false;         // PHARO_NO_JIT set to non-"0" value (true disable)
     bool noOSR = false;               // PHARO_NO_OSR
     bool noJ2J = false;               // PHARO_NO_J2J
     bool noICFill = false;            // PHARO_NO_IC_FILL
@@ -294,8 +295,8 @@ struct DebugSettings {
     bool jitMegaScan = false;         // PHARO_JIT_MEGA_SCAN
     bool jitArithOflowTrace = false;  // JIT_ARITH_OFLOW_TRACE (presence)
     bool b5Trace = false;             // PHARO_B5_TRACE
-    bool jitSimStack = false;         // PHARO_JIT_SIMSTACK (force on)
-    bool jitNoSimStack = false;       // PHARO_JIT_NO_SIMSTACK (force off)
+    bool jitSimStack = false;         // PHARO_JIT_SIMSTACK (force on, strict =1)
+    bool jitNoSimStack = false;       // PHARO_JIT_NO_SIMSTACK (force off, strict =1)
 
     // --- Tier 2 / asmjit ---
     bool t2Enabled = false;           // PHARO_T2 (any value)
@@ -303,7 +304,8 @@ struct DebugSettings {
     bool t2Replace = false;           // PHARO_T2_REPLACE
     bool t2ForceMiss = false;         // PHARO_T2_FORCE_MISS
     bool t2Verbose = false;           // PHARO_T2_VERBOSE
-    bool t2MbcJumps = false;          // PHARO_T2_MBC_JUMPS
+    bool t2MbcJumps = false;          // PHARO_T2_MBC_JUMPS (presence)
+    bool t2MbcJumpsEnabled = true;    // PHARO_T2_MBC_JUMPS=0 disables, else enables
     bool t2MbcSends = false;          // PHARO_T2_MBC_SENDS
     bool t2MbcIC = false;             // PHARO_T2_MBC_IC
     bool t2ZeroargIC = false;         // PHARO_T2_ZEROARG_IC
@@ -368,6 +370,178 @@ struct DebugSettings {
     // cadence from correctness.
     bool ygNoScavenge = false;                     // PHARO_YG_NO_SCAVENGE
 
+    // ---------------------------------------------------------------
+    // Trace / debug bools migrated from scattered std::getenv() calls.
+    // All envPresent semantics unless noted otherwise.
+    // ---------------------------------------------------------------
+    bool a1Trace = false;                          // PHARO_A1_TRACE
+    bool asmjitT1BctocodeZero = false;             // PHARO_ASMJIT_T1_BCTOCODE_ZERO
+    bool asmjitT1ForceResumeForSends = false;      // PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS
+    bool asmjitT1HardcodeStub = false;             // PHARO_ASMJIT_T1_HARDCODE_STUB
+    bool asmjitT1Log = false;                      // PHARO_ASMJIT_T1_LOG
+    bool asmjitT1NoBctocode = false;               // PHARO_ASMJIT_T1_NO_BCTOCODE
+    bool asmjitT1NoNumbc = false;                  // PHARO_ASMJIT_T1_NO_NUMBC
+    bool asmjitT1NoTrim = false;                   // PHARO_ASMJIT_T1_NO_TRIM
+    bool asmjitT1StubOnly = false;                 // PHARO_ASMJIT_T1_STUB_ONLY
+    bool asmjitT1TraceCond = false;                // PHARO_ASMJIT_T1_TRACE_COND
+    bool basicAtTrace = false;                     // PHARO_BASICAT_TRACE
+    bool bc5Dump = false;                          // PHARO_BC5_DUMP
+    bool ctxTempAtDbg = false;                     // PHARO_CTX_TEMPAT_DBG
+    bool detectErrors = false;                     // PHARO_DETECT_ERRORS
+    int  detectErrorsLimit = 30;                   // PHARO_DETECT_ERRORS_LIMIT
+    bool dumpInterpOffsets = false;                // PHARO_DUMP_INTERP_OFFSETS
+    const char* dumpRecompileIC = nullptr;         // PHARO_DUMP_RECOMPILE_IC (substring filter)
+    bool gcLog = false;                            // PHARO_GC_LOG
+    bool icHistogram = false;                      // PHARO_IC_HISTOGRAM
+    bool improperStoreTrace = false;               // PHARO_IMPROPER_STORE_TRACE
+    bool inlineActivateNoBailMid = false;          // PHARO_INLINE_ACTIVATE_NO_BAIL_MID
+    bool inlineActivateStubs = false;              // PHARO_INLINE_ACTIVATE_STUBS
+    bool inlinePrimDebug = false;                  // PHARO_INLINE_PRIM_DEBUG
+    bool jitFailReasons = false;                   // PHARO_JIT_FAIL_REASONS
+    bool jitKeepICs = false;                       // PHARO_JIT_KEEP_ICS (strict =1)
+    bool jitStaleLog = false;                      // PHARO_JIT_STALE_LOG (strict =1)
+    bool jitTraceRecompile = false;                // PHARO_JIT_TRACE_RECOMPILE
+    bool jitValidateEntry = false;                 // PHARO_JIT_VALIDATE_ENTRY
+    bool mnuAllocDbg = false;                      // PHARO_MNU_ALLOC_DBG
+    bool noBlockBit = false;                       // PHARO_NO_BLOCK_BIT
+    bool noBlockValueSpec = false;                 // PHARO_NO_BLOCK_VALUE_SPEC
+    bool noCullICFill = false;                     // PHARO_NO_CULL_IC_FILL
+    bool noCullMega = false;                       // PHARO_NO_CULL_MEGA
+    bool noEagerBlockValue = false;                // PHARO_NO_EAGER_BLOCK_VALUE
+    bool noFwdCollapse = false;                    // PHARO_NO_FWD_COLLAPSE
+    bool noGetterBit = false;                      // PHARO_NO_GETTER_BIT
+    const char* noGetterBitBisect = nullptr;       // PHARO_NO_GETTER_BIT_BISECT
+    bool noHotLoopThreshold = false;               // PHARO_NO_HOT_LOOP_THRESHOLD
+    bool noJ2JCalleeBump = false;                  // PHARO_NO_J2J_CALLEE_BUMP
+    bool noJ2JInlineBump = false;                  // PHARO_NO_J2J_INLINE_BUMP
+    bool noLateSpecRecompile = false;              // PHARO_NO_LATE_SPEC_RECOMPILE
+    bool noMegahitICFill = false;                  // PHARO_NO_MEGAHIT_IC_FILL
+    bool noMultislotGetter = false;                // PHARO_NO_MULTISLOT_GETTER
+    bool noOSRRecompile = false;                   // PHARO_NO_OSR_RECOMPILE
+    bool noQueueCompile = false;                   // PHARO_NO_QUEUE_COMPILE
+    bool noRetLit = false;                         // PHARO_NO_RETLIT
+    bool noSistaCollect = false;                   // PHARO_NO_SISTA_COLLECT
+    bool noSistaCollectResume = false;             // PHARO_NO_SISTA_COLLECT_RESUME
+    bool noSistaDoSplice = false;                  // PHARO_NO_SISTA_DO_SPLICE
+    bool sistaDoSpliceNoHint = false;              // PHARO_SISTA_DO_SPLICE_NO_HINT (strict =1)
+    bool noSistaDoAccumResume = false;             // PHARO_NO_SISTA_DOACCUM_RESUME
+    bool noSistaHelperSends = false;               // PHARO_NO_SISTA_HELPER_SENDS (presence)
+    bool noSistaHelperSendsStrict = false;         // PHARO_NO_SISTA_HELPER_SENDS (strict =1)
+    bool noSistaInjectResume = false;              // PHARO_NO_SISTA_INJECT_RESUME
+    bool noSistaInlineArithIVar = false;           // PHARO_NO_SISTA_INLINE_ARITHIVAR
+    bool noSistaInlineIdentityEq = false;          // PHARO_NO_SISTA_INLINE_IDENTITY_EQ
+    bool noSistaInlineYourself = false;            // PHARO_NO_SISTA_INLINE_YOURSELF
+    bool noSistaIvDoAccum = false;                 // PHARO_NO_SISTA_IV_DO_ACCUM
+    bool noSistaPerBC = false;                     // PHARO_NO_SISTA_PER_BC
+    bool noSistaPrimAtPut = false;                 // PHARO_NO_SISTA_PRIM_AT_PUT
+    bool noSistaWhileTrue = false;                 // PHARO_NO_SISTA_WHILETRUE
+    bool p63Trace = false;                         // PHARO_P63_TRACE
+    bool primAtDebug = false;                      // PHARO_PRIMAT_DEBUG
+    bool primAtOob = false;                        // PHARO_PRIMAT_OOB
+    bool primSizeDebug = false;                    // PHARO_PRIMSIZE_DEBUG
+    bool primSizeStencilDbg = false;               // PHARO_PRIMSIZE_STENCIL_DBG
+    bool procDump = false;                         // PHARO_PROC_DUMP
+    bool rj2jValidate = false;                     // PHARO_RJ2J_VALIDATE
+    bool sdlTrace = false;                         // PHARO_SDL_TRACE
+    bool semSignalTrace = false;                   // PHARO_SEM_SIGNAL_TRACE
+    bool senderTripwire = false;                   // PHARO_SENDER_TRIPWIRE
+    bool sistaAfterT1 = false;                     // PHARO_SISTA_AFTER_T1
+    bool sistaAllocArrayTrace = false;             // PHARO_SISTA_ALLOC_ARRAY_TRACE
+    bool sistaAllowArrayDoHelper = false;          // PHARO_SISTA_ALLOW_ARRAYDO_HELPER
+    bool sistaAsmjitLog = false;                   // PHARO_SISTA_ASMJIT_LOG
+    bool sistaAtPeephole = false;                  // PHARO_SISTA_AT_PEEPHOLE
+    bool sistaBlockBail = false;                   // PHARO_SISTA_BLOCK_BAIL
+    bool sistaBlockHelperTrace = false;            // PHARO_SISTA_BLOCK_HELPER_TRACE
+    bool sistaCollectResumeForceBail = false;      // PHARO_SISTA_COLLECT_RESUME_FORCE_BAIL
+    bool sistaCompileBailOnly = false;             // PHARO_SISTA_COMPILE_BAIL_ONLY
+    bool sistaDoDetect = false;                    // PHARO_SISTA_DO_DETECT
+    bool sistaDoAccumForceBail = false;            // PHARO_SISTA_DOACCUM_FORCE_BAIL
+    const char* sistaExcludeSels = nullptr;        // PHARO_SISTA_EXCLUDE_SELS
+    bool sistaHelperForceBail = false;             // PHARO_SISTA_HELPER_FORCE_BAIL
+    int  sistaHelperMaxDepth = 64;                 // PHARO_SISTA_HELPER_MAX_DEPTH
+    bool sistaInjectResumeForceBail = false;       // PHARO_SISTA_INJECT_RESUME_FORCE_BAIL
+    bool sistaInlineDbg = false;                   // PHARO_SISTA_INLINE_DBG
+    bool sistaInlineDump = false;                  // PHARO_SISTA_INLINE_DUMP
+    bool sistaInlinePoly = false;                  // PHARO_SISTA_INLINE_POLY
+    bool sistaInlineSelf = false;                  // PHARO_SISTA_INLINE_SELF
+    bool sistaInlineStats = false;                 // PHARO_SISTA_INLINE_STATS
+    bool sistaInvariantCheck = false;              // PHARO_SISTA_INVARIANT_CHECK
+    bool sistaNoFullblock = false;                 // PHARO_SISTA_NO_FULLBLOCK
+    bool sistaNoInlineArith = false;               // PHARO_SISTA_NO_INLINE_ARITH
+    bool sistaNoInlineConst = false;               // PHARO_SISTA_NO_INLINE_CONST
+    bool sistaNoInlineSetters = false;             // PHARO_SISTA_NO_INLINE_SETTERS
+    bool sistaNoLower = false;                     // PHARO_SISTA_NO_LOWER
+    bool sistaNoLowerAdd = false;                  // PHARO_SISTA_NO_LOWER_ADD
+    bool sistaNoLowerArith = false;                // PHARO_SISTA_NO_LOWER_ARITH
+    bool sistaNoLowerArithCmp = false;             // PHARO_SISTA_NO_LOWER_ARITH_CMP
+    bool sistaNoLowerArithMath = false;            // PHARO_SISTA_NO_LOWER_ARITH_MATH
+    bool sistaNoLowerBody = false;                 // PHARO_SISTA_NO_LOWER_BODY
+    bool sistaNoLowerBranch = false;               // PHARO_SISTA_NO_LOWER_BRANCH
+    bool sistaNoLowerFuse = false;                 // PHARO_SISTA_NO_LOWER_FUSE
+    bool sistaNoLowerSends = false;                // PHARO_SISTA_NO_LOWER_SENDS
+    bool sistaNoRemoteTemp = false;                // PHARO_SISTA_NO_REMOTE_TEMP
+    bool sistaNoRemoteTempRead = false;            // PHARO_SISTA_NO_REMOTE_TEMP_READ
+    bool sistaNoRemoteTempWrite = false;           // PHARO_SISTA_NO_REMOTE_TEMP_WRITE
+    bool sistaNoStores = false;                    // PHARO_SISTA_NO_STORES
+    bool sistaPerBCBailTrace = false;              // PHARO_SISTA_PER_BC_BAIL_TRACE
+    bool sistaPerBCDispatchTrace = false;          // PHARO_SISTA_PER_BC_DISPATCH_TRACE
+    bool sistaPerBCNoDispatch = false;             // PHARO_SISTA_PER_BC_NO_DISPATCH
+    bool sistaPerBCTrace = false;                  // PHARO_SISTA_PER_BC_TRACE
+    bool sistaRekeyAfterGC = false;                // PHARO_SISTA_REKEY_AFTER_GC
+    bool sistaSizePeephole = false;                // PHARO_SISTA_SIZE_PEEPHOLE
+    bool sistaStackWatch = false;                  // PHARO_SISTA_STACK_WATCH
+    int  sistaT1Warmup = 100;                      // PHARO_SISTA_T1_WARMUP
+    bool sistaTempWatch = false;                   // PHARO_SISTA_TEMP_WATCH
+    bool sistaTraceAdd = false;                    // PHARO_SISTA_TRACE_ADD
+    bool sistaX86TraceOk = false;                  // PHARO_SISTA_X86_TRACE_OK
+    bool slotTripwire = false;                     // PHARO_SLOT_TRIPWIRE
+    bool spCorruptTrap = false;                    // PHARO_SP_CORRUPT_TRAP
+    bool t1AcceptExtSuperSend = false;             // PHARO_T1_ACCEPT_EXTSUPERSEND
+    bool t1InlineJ2J_Env = false;                  // PHARO_T1_INLINE_J2J (raw env presence)
+    bool t1InlineJ2JDumpBC = false;                // PHARO_T1_INLINE_J2J_DUMP_BC
+    bool t1InlineJ2JTraceUnsupp = false;           // PHARO_T1_INLINE_J2J_TRACE_UNSUPP
+    bool t1InlineJ2JXmethodLive = false;           // PHARO_T1_INLINE_J2J_XMETHOD_LIVE
+    bool t1InlineJ2JXmethodLog = false;            // PHARO_T1_INLINE_J2J_XMETHOD_LOG
+    bool t1InlinePrimCounters = false;             // PHARO_T1_INLINE_PRIM_COUNTERS
+    bool t1NoJ2JTramp = false;                     // PHARO_T1_NO_J2J_TRAMP
+    bool t1SistaDispatchAllow = false;             // PHARO_T1_SISTA_DISPATCH_ALLOW
+    bool t1TraceEmit = false;                      // PHARO_T1_TRACE_EMIT
+    bool t2X86Log = false;                         // PHARO_T2_X86_LOG
+    bool t2X86Trace = false;                       // PHARO_T2_X86_TRACE
+    bool t2Strict = false;                         // PHARO_T2 strict =1 form (JITRuntime)
+    bool termBT = false;                           // PHARO_TERM_BT
+    bool timeGCPhases = false;                     // PHARO_TIME_GC_PHASES
+    bool traceActivateBlock = false;               // PHARO_TRACE_ACTIVATE_BLOCK
+    bool traceBC7A = false;                        // PHARO_TRACE_BC_7A
+    bool traceCullBail = false;                    // PHARO_TRACE_CULL_BAIL
+    bool traceCullEntry = false;                   // PHARO_TRACE_CULL_ENTRY
+    bool traceCullReturn = false;                  // PHARO_TRACE_CULL_RETURN
+    bool traceExceptionSel = false;                // PHARO_TRACE_EXCEPTION_SEL
+    bool traceExecPrim = false;                    // PHARO_TRACE_EXEC_PRIM
+    bool traceExit = false;                        // PHARO_TRACE_EXIT
+    bool traceOpValue1 = false;                    // PHARO_TRACE_OP_VALUE1
+    bool tracePerBCSp = false;                     // PHARO_TRACE_PER_BC_SP
+    bool tracePrim207 = false;                     // PHARO_TRACE_PRIM207
+    bool traceRecompileFlow = false;               // PHARO_TRACE_RECOMPILE_FLOW
+    bool traceResumeSp = false;                    // PHARO_TRACE_RESUME_SP
+    bool traceRewriteIC = false;                   // PHARO_TRACE_REWRITE_IC
+    bool traceShouldNotImpl = false;               // PHARO_TRACE_SHOULDNOTIMPL
+    bool traceSistaDispatch = false;               // PHARO_TRACE_SISTA_DISPATCH
+    bool traceSistaPerBC = false;                  // PHARO_TRACE_SISTA_PERBC
+    bool traceSpCorrupt = false;                   // PHARO_TRACE_SP_CORRUPT
+    bool traceStackOrigin = false;                 // PHARO_TRACE_STACK_ORIGIN
+    bool traceTotalSteps = false;                  // PHARO_TRACE_TOTAL_STEPS
+    bool traceValueAct = false;                    // PHARO_TRACE_VALUE_ACT
+    bool trapBadDnu = false;                       // PHARO_TRAP_BAD_DNU
+    bool xferTrace = false;                        // PHARO_XFER_TRACE
+    // String-valued env vars for OS introspection primitives.
+    const char* envHome = nullptr;                 // HOME
+    const char* envUser = nullptr;                 // USER
+    const char* envLogname = nullptr;              // LOGNAME
+    const char* envLang = nullptr;                 // LANG
+    const char* envLcAll = nullptr;                // LC_ALL
+    const char* envTmpdir = nullptr;               // TMPDIR
+
     // Cog-spec finalization signaling + native C++ mourn drain.
     // Drain fires at method activation (not primitive calls), which
     // matches Cog's stack-limit-trick triggering behavior: Cog's
@@ -393,6 +567,12 @@ struct DebugSettings {
     // via setenv(), e.g., test_load_image auto-setting PHARO_NO_JIT.
     // Equivalent to constructing a fresh DebugSettings and copying over.
     void reload();
+
+    // Runtime accessor for the SmallTalk-callable `OSEnvironment getenv:`
+    // primitive in Primitives.cpp.  Cannot be cached because the variable
+    // name is a runtime argument.  All other VM code MUST go through
+    // g_debug.<field> instead.
+    static const char* envRuntime(const char* name);
 };
 
 extern DebugSettings g_debug;

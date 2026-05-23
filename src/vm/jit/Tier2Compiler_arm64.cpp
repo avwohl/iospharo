@@ -118,9 +118,7 @@ size_t g_mbcBailed   = 0;
 // (correctness verified on SmallIntegerTest + whileTrue/
 // ifTrue:ifFalse: stress).
 static bool jumpsEnabledByEnv() {
-    // Custom "=0 disables, else enables" semantic — read raw.
-    const char* env = std::getenv("PHARO_T2_MBC_JUMPS");
-    return !(env && env[0] == '0');
+    return g_debug.t2MbcJumpsEnabled;
 }
 
 // Is this bytecode fully compilable by multi-bc?  True means we emit

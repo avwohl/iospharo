@@ -37,9 +37,23 @@ inline const char* envStr(const char* name) {
     return (v != nullptr && *v != '\0') ? v : nullptr;
 }
 
+// Returns raw pointer or nullptr — matches `const char* v = getenv("X")`
+// pattern that lets callers distinguish set-empty from unset.
+inline const char* envStrRaw(const char* name) {
+    return std::getenv(name);
+}
+
 inline int envInt(const char* name, int defaultVal) {
     const char* v = std::getenv(name);
     return (v != nullptr && *v != '\0') ? std::atoi(v) : defaultVal;
+}
+
+// Strict equality with "1" — matches `v && v[0] == '1'` pattern used at
+// a handful of call sites (PHARO_T2 compile/exec gates, PHARO_JIT_*_LOG
+// diagnostics).  Treats unset / empty / non-"1*" values as false.
+inline bool envEq1(const char* name) {
+    const char* v = std::getenv(name);
+    return v != nullptr && v[0] == '1';
 }
 
 }  // namespace
@@ -59,6 +73,16 @@ DebugSettings::DebugSettings() {
 
     // --- JIT on/off switches ---
     noJit            = envPresent("PHARO_NO_JIT") || envPresent("PHARO_NOJIT");
+    {
+        // PHARO_NO_JIT=0 historically does NOT disable JIT — it's treated as
+        // "explicitly enable".  Only non-"0" values count as a real disable.
+        const char* v = std::getenv("PHARO_NO_JIT");
+        const char* v2 = std::getenv("PHARO_NOJIT");
+        bool disable = false;
+        if (v && v[0] != '0') disable = true;
+        if (v2 && v2[0] != '0') disable = true;
+        noJitStrict = disable;
+    }
     noOSR            = envPresent("PHARO_NO_OSR");
     noJ2J            = envPresent("PHARO_NO_J2J");
     noICFill         = envPresent("PHARO_NO_IC_FILL");
@@ -167,16 +191,16 @@ DebugSettings::DebugSettings() {
 
     // --- JIT debug/trace ---
     jitDumpBC        = envPresent("JIT_DUMP_BC");
-    jitSpillWarn     = envPresent("PHARO_JIT_SPILL_WARN");
+    jitSpillWarn     = envEq1("PHARO_JIT_SPILL_WARN");
     icHitDbg         = envPresent("PHARO_IC_HIT_DBG");
     icPatchDebug     = envPresent("PHARO_IC_PATCH_DEBUG");
     resumeStateDebug = envPresent("PHARO_RESUME_STATE_DEBUG");
     jitRetvalDbg     = envPresent("PHARO_JIT_RETVAL_DBG");
     jitMegaScan      = envPresent("PHARO_JIT_MEGA_SCAN");
-    jitArithOflowTrace = envPresent("JIT_ARITH_OFLOW_TRACE");
+    jitArithOflowTrace = envEq1("JIT_ARITH_OFLOW_TRACE");
     b5Trace          = envPresent("PHARO_B5_TRACE");
-    jitSimStack      = envPresent("PHARO_JIT_SIMSTACK");
-    jitNoSimStack    = envPresent("PHARO_JIT_NO_SIMSTACK");
+    jitSimStack      = envEq1("PHARO_JIT_SIMSTACK");
+    jitNoSimStack    = envEq1("PHARO_JIT_NO_SIMSTACK");
 
     // --- Tier 2 ---
     t2Enabled        = envPresent("PHARO_T2");
@@ -185,6 +209,11 @@ DebugSettings::DebugSettings() {
     t2ForceMiss      = envPresent("PHARO_T2_FORCE_MISS");
     t2Verbose        = envPresent("PHARO_T2_VERBOSE");
     t2MbcJumps       = envPresent("PHARO_T2_MBC_JUMPS");
+    {
+        // PHARO_T2_MBC_JUMPS=0 disables, else (unset or any other val) enables.
+        const char* env = std::getenv("PHARO_T2_MBC_JUMPS");
+        t2MbcJumpsEnabled = !(env && env[0] == '0');
+    }
     t2MbcSends       = envPresent("PHARO_T2_MBC_SENDS");
     t2MbcIC          = envPresent("PHARO_T2_MBC_IC");
     t2ZeroargIC      = envPresent("PHARO_T2_ZEROARG_IC");
@@ -257,6 +286,181 @@ DebugSettings::DebugSettings() {
     }
     ygNoScavenge           = envPresent("PHARO_YG_NO_SCAVENGE");
     finalizeDeferred       = !envPresent("PHARO_INLINE_FINALIZE");
+
+    // --- Newly migrated trace / debug bools (mass conversion) ---
+    a1Trace                          = envPresent("PHARO_A1_TRACE");
+    asmjitT1BctocodeZero             = envPresent("PHARO_ASMJIT_T1_BCTOCODE_ZERO");
+    asmjitT1ForceResumeForSends      = envPresent("PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS");
+    asmjitT1HardcodeStub             = envPresent("PHARO_ASMJIT_T1_HARDCODE_STUB");
+    asmjitT1Log                      = envPresent("PHARO_ASMJIT_T1_LOG");
+    asmjitT1NoBctocode               = envPresent("PHARO_ASMJIT_T1_NO_BCTOCODE");
+    asmjitT1NoNumbc                  = envPresent("PHARO_ASMJIT_T1_NO_NUMBC");
+    asmjitT1NoTrim                   = envPresent("PHARO_ASMJIT_T1_NO_TRIM");
+    asmjitT1StubOnly                 = envPresent("PHARO_ASMJIT_T1_STUB_ONLY");
+    asmjitT1TraceCond                = envPresent("PHARO_ASMJIT_T1_TRACE_COND");
+    basicAtTrace                     = envPresent("PHARO_BASICAT_TRACE");
+    bc5Dump                          = envPresent("PHARO_BC5_DUMP");
+    ctxTempAtDbg                     = envPresent("PHARO_CTX_TEMPAT_DBG");
+    detectErrors                     = envPresent("PHARO_DETECT_ERRORS");
+    detectErrorsLimit                = envInt("PHARO_DETECT_ERRORS_LIMIT", 30);
+    dumpInterpOffsets                = envPresent("PHARO_DUMP_INTERP_OFFSETS");
+    dumpRecompileIC                  = envStrRaw("PHARO_DUMP_RECOMPILE_IC");
+    gcLog                            = envPresent("PHARO_GC_LOG");
+    icHistogram                      = envPresent("PHARO_IC_HISTOGRAM");
+    improperStoreTrace               = envPresent("PHARO_IMPROPER_STORE_TRACE");
+    inlineActivateNoBailMid          = envPresent("PHARO_INLINE_ACTIVATE_NO_BAIL_MID");
+    inlineActivateStubs              = envPresent("PHARO_INLINE_ACTIVATE_STUBS");
+    inlinePrimDebug                  = envPresent("PHARO_INLINE_PRIM_DEBUG");
+    jitFailReasons                   = envPresent("PHARO_JIT_FAIL_REASONS");
+    jitKeepICs                       = envEq1("PHARO_JIT_KEEP_ICS");
+    jitStaleLog                      = envEq1("PHARO_JIT_STALE_LOG");
+    jitTraceRecompile                = envPresent("PHARO_JIT_TRACE_RECOMPILE");
+    jitValidateEntry                 = envPresent("PHARO_JIT_VALIDATE_ENTRY");
+    mnuAllocDbg                      = envPresent("PHARO_MNU_ALLOC_DBG");
+    noBlockBit                       = envPresent("PHARO_NO_BLOCK_BIT");
+    noBlockValueSpec                 = envPresent("PHARO_NO_BLOCK_VALUE_SPEC");
+    noCullICFill                     = envPresent("PHARO_NO_CULL_IC_FILL");
+    noCullMega                       = envPresent("PHARO_NO_CULL_MEGA");
+    noEagerBlockValue                = envPresent("PHARO_NO_EAGER_BLOCK_VALUE");
+    noFwdCollapse                    = envPresent("PHARO_NO_FWD_COLLAPSE");
+    noGetterBit                      = envPresent("PHARO_NO_GETTER_BIT");
+    noGetterBitBisect                = envStrRaw("PHARO_NO_GETTER_BIT_BISECT");
+    noHotLoopThreshold               = envPresent("PHARO_NO_HOT_LOOP_THRESHOLD");
+    noJ2JCalleeBump                  = envPresent("PHARO_NO_J2J_CALLEE_BUMP");
+    noJ2JInlineBump                  = envPresent("PHARO_NO_J2J_INLINE_BUMP");
+    noLateSpecRecompile              = envPresent("PHARO_NO_LATE_SPEC_RECOMPILE");
+    noMegahitICFill                  = envPresent("PHARO_NO_MEGAHIT_IC_FILL");
+    noMultislotGetter                = envPresent("PHARO_NO_MULTISLOT_GETTER");
+    noOSRRecompile                   = envPresent("PHARO_NO_OSR_RECOMPILE");
+    noQueueCompile                   = envPresent("PHARO_NO_QUEUE_COMPILE");
+    noRetLit                         = envPresent("PHARO_NO_RETLIT");
+    noSistaCollect                   = envPresent("PHARO_NO_SISTA_COLLECT");
+    noSistaCollectResume             = envPresent("PHARO_NO_SISTA_COLLECT_RESUME");
+    noSistaDoSplice                  = envPresent("PHARO_NO_SISTA_DO_SPLICE");
+    sistaDoSpliceNoHint              = envEq1("PHARO_SISTA_DO_SPLICE_NO_HINT");
+    noSistaDoAccumResume             = envPresent("PHARO_NO_SISTA_DOACCUM_RESUME");
+    noSistaHelperSends               = envPresent("PHARO_NO_SISTA_HELPER_SENDS");
+    noSistaHelperSendsStrict         = envEq1("PHARO_NO_SISTA_HELPER_SENDS");
+    noSistaInjectResume              = envPresent("PHARO_NO_SISTA_INJECT_RESUME");
+    noSistaInlineArithIVar           = envPresent("PHARO_NO_SISTA_INLINE_ARITHIVAR");
+    noSistaInlineIdentityEq          = envPresent("PHARO_NO_SISTA_INLINE_IDENTITY_EQ");
+    noSistaInlineYourself            = envPresent("PHARO_NO_SISTA_INLINE_YOURSELF");
+    noSistaIvDoAccum                 = envPresent("PHARO_NO_SISTA_IV_DO_ACCUM");
+    noSistaPerBC                     = envPresent("PHARO_NO_SISTA_PER_BC");
+    noSistaPrimAtPut                 = envPresent("PHARO_NO_SISTA_PRIM_AT_PUT");
+    noSistaWhileTrue                 = envPresent("PHARO_NO_SISTA_WHILETRUE");
+    p63Trace                         = envPresent("PHARO_P63_TRACE");
+    primAtDebug                      = envPresent("PHARO_PRIMAT_DEBUG");
+    primAtOob                        = envPresent("PHARO_PRIMAT_OOB");
+    primSizeDebug                    = envPresent("PHARO_PRIMSIZE_DEBUG");
+    primSizeStencilDbg               = envPresent("PHARO_PRIMSIZE_STENCIL_DBG");
+    procDump                         = envPresent("PHARO_PROC_DUMP");
+    rj2jValidate                     = envPresent("PHARO_RJ2J_VALIDATE");
+    sdlTrace                         = envPresent("PHARO_SDL_TRACE");
+    semSignalTrace                   = envPresent("PHARO_SEM_SIGNAL_TRACE");
+    senderTripwire                   = envPresent("PHARO_SENDER_TRIPWIRE");
+    sistaAfterT1                     = envPresent("PHARO_SISTA_AFTER_T1");
+    sistaAllocArrayTrace             = envPresent("PHARO_SISTA_ALLOC_ARRAY_TRACE");
+    sistaAllowArrayDoHelper          = envPresent("PHARO_SISTA_ALLOW_ARRAYDO_HELPER");
+    sistaAsmjitLog                   = envPresent("PHARO_SISTA_ASMJIT_LOG");
+    sistaAtPeephole                  = envPresent("PHARO_SISTA_AT_PEEPHOLE");
+    sistaBlockBail                   = envPresent("PHARO_SISTA_BLOCK_BAIL");
+    sistaBlockHelperTrace            = envPresent("PHARO_SISTA_BLOCK_HELPER_TRACE");
+    sistaCollectResumeForceBail      = envPresent("PHARO_SISTA_COLLECT_RESUME_FORCE_BAIL");
+    sistaCompileBailOnly             = envPresent("PHARO_SISTA_COMPILE_BAIL_ONLY");
+    sistaDoDetect                    = envPresent("PHARO_SISTA_DO_DETECT");
+    sistaDoAccumForceBail            = envPresent("PHARO_SISTA_DOACCUM_FORCE_BAIL");
+    sistaExcludeSels                 = envStrRaw("PHARO_SISTA_EXCLUDE_SELS");
+    sistaHelperForceBail             = envPresent("PHARO_SISTA_HELPER_FORCE_BAIL");
+    sistaHelperMaxDepth              = envInt("PHARO_SISTA_HELPER_MAX_DEPTH", 64);
+    if (sistaHelperMaxDepth <= 0) sistaHelperMaxDepth = 64;  // preserve old guard
+    sistaInjectResumeForceBail       = envPresent("PHARO_SISTA_INJECT_RESUME_FORCE_BAIL");
+    sistaInlineDbg                   = envPresent("PHARO_SISTA_INLINE_DBG");
+    sistaInlineDump                  = envPresent("PHARO_SISTA_INLINE_DUMP");
+    sistaInlinePoly                  = envPresent("PHARO_SISTA_INLINE_POLY");
+    sistaInlineSelf                  = envPresent("PHARO_SISTA_INLINE_SELF");
+    sistaInlineStats                 = envPresent("PHARO_SISTA_INLINE_STATS");
+    sistaInvariantCheck              = envPresent("PHARO_SISTA_INVARIANT_CHECK");
+    sistaNoFullblock                 = envPresent("PHARO_SISTA_NO_FULLBLOCK");
+    sistaNoInlineArith               = envPresent("PHARO_SISTA_NO_INLINE_ARITH");
+    sistaNoInlineConst               = envPresent("PHARO_SISTA_NO_INLINE_CONST");
+    sistaNoInlineSetters             = envPresent("PHARO_SISTA_NO_INLINE_SETTERS");
+    sistaNoLower                     = envPresent("PHARO_SISTA_NO_LOWER");
+    sistaNoLowerAdd                  = envPresent("PHARO_SISTA_NO_LOWER_ADD");
+    sistaNoLowerArith                = envPresent("PHARO_SISTA_NO_LOWER_ARITH");
+    sistaNoLowerArithCmp             = envPresent("PHARO_SISTA_NO_LOWER_ARITH_CMP");
+    sistaNoLowerArithMath            = envPresent("PHARO_SISTA_NO_LOWER_ARITH_MATH");
+    sistaNoLowerBody                 = envPresent("PHARO_SISTA_NO_LOWER_BODY");
+    sistaNoLowerBranch               = envPresent("PHARO_SISTA_NO_LOWER_BRANCH");
+    sistaNoLowerFuse                 = envPresent("PHARO_SISTA_NO_LOWER_FUSE");
+    sistaNoLowerSends                = envPresent("PHARO_SISTA_NO_LOWER_SENDS");
+    sistaNoRemoteTemp                = envPresent("PHARO_SISTA_NO_REMOTE_TEMP");
+    sistaNoRemoteTempRead            = envPresent("PHARO_SISTA_NO_REMOTE_TEMP_READ");
+    sistaNoRemoteTempWrite           = envPresent("PHARO_SISTA_NO_REMOTE_TEMP_WRITE");
+    sistaNoStores                    = envPresent("PHARO_SISTA_NO_STORES");
+    sistaPerBCBailTrace              = envPresent("PHARO_SISTA_PER_BC_BAIL_TRACE");
+    sistaPerBCDispatchTrace          = envPresent("PHARO_SISTA_PER_BC_DISPATCH_TRACE");
+    sistaPerBCNoDispatch             = envPresent("PHARO_SISTA_PER_BC_NO_DISPATCH");
+    sistaPerBCTrace                  = envPresent("PHARO_SISTA_PER_BC_TRACE");
+    sistaRekeyAfterGC                = envPresent("PHARO_SISTA_REKEY_AFTER_GC");
+    sistaSizePeephole                = envPresent("PHARO_SISTA_SIZE_PEEPHOLE");
+    sistaStackWatch                  = envPresent("PHARO_SISTA_STACK_WATCH");
+    sistaT1Warmup                    = envInt("PHARO_SISTA_T1_WARMUP", 100);
+    if (sistaT1Warmup <= 0) sistaT1Warmup = 100;  // preserve old guard
+    sistaTempWatch                   = envPresent("PHARO_SISTA_TEMP_WATCH");
+    sistaTraceAdd                    = envPresent("PHARO_SISTA_TRACE_ADD");
+    sistaX86TraceOk                  = envPresent("PHARO_SISTA_X86_TRACE_OK");
+    slotTripwire                     = envPresent("PHARO_SLOT_TRIPWIRE");
+    spCorruptTrap                    = envPresent("PHARO_SP_CORRUPT_TRAP");
+    t1AcceptExtSuperSend             = envPresent("PHARO_T1_ACCEPT_EXTSUPERSEND");
+    t1InlineJ2J_Env                  = envPresent("PHARO_T1_INLINE_J2J");
+    t1InlineJ2JDumpBC                = envPresent("PHARO_T1_INLINE_J2J_DUMP_BC");
+    t1InlineJ2JTraceUnsupp           = envPresent("PHARO_T1_INLINE_J2J_TRACE_UNSUPP");
+    t1InlineJ2JXmethodLive           = envPresent("PHARO_T1_INLINE_J2J_XMETHOD_LIVE");
+    t1InlineJ2JXmethodLog            = envPresent("PHARO_T1_INLINE_J2J_XMETHOD_LOG");
+    t1InlinePrimCounters             = envPresent("PHARO_T1_INLINE_PRIM_COUNTERS");
+    t1NoJ2JTramp                     = envPresent("PHARO_T1_NO_J2J_TRAMP");
+    t1SistaDispatchAllow             = envPresent("PHARO_T1_SISTA_DISPATCH_ALLOW");
+    t1TraceEmit                      = envPresent("PHARO_T1_TRACE_EMIT");
+    t2X86Log                         = envPresent("PHARO_T2_X86_LOG");
+    t2X86Trace                       = envPresent("PHARO_T2_X86_TRACE");
+    t2Strict                         = envEq1("PHARO_T2");
+    termBT                           = envPresent("PHARO_TERM_BT");
+    timeGCPhases                     = envPresent("PHARO_TIME_GC_PHASES");
+    traceActivateBlock               = envPresent("PHARO_TRACE_ACTIVATE_BLOCK");
+    traceBC7A                        = envPresent("PHARO_TRACE_BC_7A");
+    traceCullBail                    = envPresent("PHARO_TRACE_CULL_BAIL");
+    traceCullEntry                   = envPresent("PHARO_TRACE_CULL_ENTRY");
+    traceCullReturn                  = envPresent("PHARO_TRACE_CULL_RETURN");
+    traceExceptionSel                = envPresent("PHARO_TRACE_EXCEPTION_SEL");
+    traceExecPrim                    = envPresent("PHARO_TRACE_EXEC_PRIM");
+    traceExit                        = envPresent("PHARO_TRACE_EXIT");
+    traceOpValue1                    = envPresent("PHARO_TRACE_OP_VALUE1");
+    tracePerBCSp                     = envPresent("PHARO_TRACE_PER_BC_SP");
+    tracePrim207                     = envPresent("PHARO_TRACE_PRIM207");
+    traceRecompileFlow               = envPresent("PHARO_TRACE_RECOMPILE_FLOW");
+    traceResumeSp                    = envPresent("PHARO_TRACE_RESUME_SP");
+    traceRewriteIC                   = envPresent("PHARO_TRACE_REWRITE_IC");
+    traceShouldNotImpl               = envPresent("PHARO_TRACE_SHOULDNOTIMPL");
+    traceSistaDispatch               = envPresent("PHARO_TRACE_SISTA_DISPATCH");
+    traceSistaPerBC                  = envPresent("PHARO_TRACE_SISTA_PERBC");
+    traceSpCorrupt                   = envPresent("PHARO_TRACE_SP_CORRUPT");
+    traceStackOrigin                 = envPresent("PHARO_TRACE_STACK_ORIGIN");
+    traceTotalSteps                  = envPresent("PHARO_TRACE_TOTAL_STEPS");
+    traceValueAct                    = envPresent("PHARO_TRACE_VALUE_ACT");
+    trapBadDnu                       = envPresent("PHARO_TRAP_BAD_DNU");
+    xferTrace                        = envPresent("PHARO_XFER_TRACE");
+    // OS environment strings (lifetime tied to process env)
+    envHome                          = std::getenv("HOME");
+    envUser                          = std::getenv("USER");
+    envLogname                       = std::getenv("LOGNAME");
+    envLang                          = std::getenv("LANG");
+    envLcAll                         = std::getenv("LC_ALL");
+    envTmpdir                        = std::getenv("TMPDIR");
+}
+
+const char* DebugSettings::envRuntime(const char* name) {
+    return std::getenv(name);
 }
 
 DebugSettings g_debug;  // static-storage-duration; constructor runs before main().
