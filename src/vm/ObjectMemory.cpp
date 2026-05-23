@@ -1781,10 +1781,20 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
         }
     }
 
+    // jit-may23b R71: phase timing.
+    static const bool timeGCPhases = std::getenv("PHARO_TIME_GC_PHASES") != nullptr;
+    auto readTSC = []() -> uint64_t {
+        uint64_t t;
+        asm volatile("mrs %0, cntvct_el0" : "=r"(t));
+        return t;
+    };
+    uint64_t tPrepGCStart = timeGCPhases ? readTSC() : 0;
+
     // 1. Convert interpreter IPs to offsets (methods may move)
     if (interpreter_) {
         interpreter_->prepareForGC();
     }
+    uint64_t tClearStart = timeGCPhases ? readTSC() : 0;
 
     // 2. Clear all marks AND grey bits
     // Grey bits must be cleared to prevent stale grey bits (from the image
@@ -1799,9 +1809,11 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
             obj->setGrey(false);
         }
     }
+    uint64_t tMarkStart = timeGCPhases ? readTSC() : 0;
 
     // 3. Mark phase
     size_t markedCount = markPhase(skipEphemerons);
+    uint64_t tCompactStart = timeGCPhases ? readTSC() : 0;
 
     // Symbol class corruption check and stale pointer check disabled (verified clean)
 
@@ -1817,6 +1829,15 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     planCompactSavingForwarders();
     updatePointersAfterCompact();
     copyAndUnmark();
+    if (timeGCPhases) {
+        uint64_t tDone = readTSC();
+        std::fprintf(stderr,
+            "[GC-PHASES] prep=%llu clear=%llu mark=%llu compact=%llu (ns each)\n",
+            (unsigned long long)(tClearStart - tPrepGCStart),
+            (unsigned long long)(tMarkStart - tClearStart),
+            (unsigned long long)(tCompactStart - tMarkStart),
+            (unsigned long long)(tDone - tCompactStart));
+    }
 
     // 5. Rebuild free list from gap
     rebuildFreeListAfterCompact();

@@ -67,11 +67,6 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
-### R71 — Look at j2jDepth check in J2J return prelude
-
-ACTION: every J2J return loads w3, w4, compares.  Could we
-maintain a "needs unwind" flag instead?
-DONE: feasibility assessment.
 
 ### R72 — Eliminate redundant SP load in arith bytecodes
 
@@ -132,6 +127,15 @@ DONE: count.
   + comparison.  300 ms / 100K ops = 3 µs per op.  Most of that
   is String hash + comparison (Pharo's String>>hash iterates
   per character).  Inlining hash would be substantial work.
+- ✅ **R71 (fullGC phase timing)**: per-fullGC phase costs:
+    prep:    1-10 µs    (negligible)
+    clear:   ~2 ms      (6% — clears mark+grey bits, linear scan)
+    **mark:  ~60 ms     (65% of fullGC, ~780 ms of bench-suite)**
+    compact: ~25 ms     (29%)
+  Mark phase dominates fullGC.  Each fullGC mark visits ~100K
+  live objects at ~600 ns per object (cache misses + field scans).
+  Reducing requires algorithmic work (parallel mark, generational
+  GC keeping young objects out of old space, etc.) — multi-day.
 - ✅ **R70 KEY FINDING**: cntfrq_el0 = 1 GHz on this M-series.
   Cycle measurements are nanoseconds.  Re-interpreting past data:
   - prim207: 94 cycles = **94 ns/call × 5.2M = 489 ms** in
