@@ -67,22 +67,6 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
-### R58 — Look for any unused or dead code paths in step()
-
-ACTION: scan step()'s bytecode dispatch table.  Any cases that
-never fire (per counters)?
-DONE: list.
-
-### R59 — Audit primitiveDispatch table for redundant entries
-
-ACTION: primitiveTable_ has 1000 entries.  Any entries marked
-unhandled that we could optimize to a faster default?
-DONE: count + finding.
-
-### R60 — Add a `make bench` target
-
-ACTION: simplify the 3-line bench invocation.
-DONE: scripts/Makefile has `bench` target.
 
 
 ## Closed
@@ -115,6 +99,14 @@ DONE: scripts/Makefile has `bench` target.
 - ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
   walk is a good balance per past A/B work.  Reordering
   dispatch checks would need careful measurement.  Skipping.
+- ✅ R58: step()'s bytecode dispatch is via computed-goto table
+  (1668-1700+).  Filtering out cold cases isn't a perf lever —
+  uncalled cases just don't run.
+- ✅ R59: primitiveTable_ has 43 entries + default fallback.
+  Indirect call is ~5 cycles.  Already as cheap as it gets.
+- ✅ R60: `scripts/run_benchmarks.sh` already exists.  My 3-line
+  wrapper (env var + timeout + script + grep) is fine.  Not a
+  perf issue.
 - ✅ R57: sieve x100 uses `100 benchmark` (built-in Sieve)
   measured via Time>>millisecondsToRun: (1ms granularity).  Our
   8ms vs Cog 10ms is within measurement noise.
