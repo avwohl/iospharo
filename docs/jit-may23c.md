@@ -811,6 +811,41 @@ setup, 10-run averages for stable measurement:**
 runs; 10-run distribution shows 1358 ms is the stable average and
 1216 ms was an outlier.  Still a solid 16.6% win.)
 
+## Post-F3-NL6 explorations that didn't help
+
+After F3-NL6 landed, tried several incremental optimizations.  None
+moved the bench-suite average measurably.  Documented here so future
+sessions don't repeat:
+
+1. **F3-NL7 (reverted)**: conditional state-restore in return prelude
+   — skip restore when `save.jitMethod == state.jitMethod` (self-rec).
+   Adds 3-instr cmp+branch overhead, saves 7-instr restore on miss.
+   Net: ~0 effect across 5 runs.
+
+2. **W11b (reverted)**: lift Sista `sendNoSplice` gate for methods
+   with `kSendCallHelper`.  Net-zero: those methods already get
+   compiled via other paths.
+
+3. **`PHARO_T1_INLINE_SISTA_CALL=1`**: documented as dead path
+   ("stays unset until Sista bail-protocol Step 4 lands").  No
+   bench-suite movement.
+
+4. **`PHARO_JIT_DEFER` sweep**: 0/5/15/30 — all 1353-1365 ms range.
+
+5. **`PHARO_SISTA_COMPILE_BAIL_ONLY=1`**: hangs the bench-suite
+   during MorphicRenderLoop startup (Sista compiles methods that
+   crash mid-run).
+
+The remaining bench-suite gap to Cog (10×) is fundamentally about
+dispatch overhead per send (~8.5 ns measured vs Cog ~2 ns).
+Closing that requires:
+- Eliminating J2J save/restore for tier-2 callees → needs IC-bit
+  propagation + separate emit path.  Multi-session.
+- New Sista splice patterns for `select:`, `sort:`, dict access.
+  Each is multi-session lift+lower work.
+- Or fundamentally cheaper dispatch (direct method-to-method calls
+  with type guards) — Cog's approach.
+
 Commits in this session:
 - `c9679589` F3-NL2: state restore in return prelude.
 - `655f5775` F3-NL3: NLR-gate at runtime (later moved to compile time).
