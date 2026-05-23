@@ -797,19 +797,19 @@ for future debugging.
 After multiple rounds of analysis and attempts, the session shipped
 a substantial bench-suite improvement via correct method-level
 inlining.  **A/B verified with same image, same hardware, same
-setup, 3-run avg:**
+setup, 10-run averages for stable measurement:**
 
     metric                          pre-session     after F3-NL fixes
     ------------------------------ -------------   ------------------
-    bench-suite SUM                  1633 ms             1216 ms
-                                                         (-417 ms, -25.5%)
-    fib(28)                           108 ms              71 ms (-34%)
-    sort 100K                         315 ms             282 ms (-10%)
-    dict 50K                          222 ms             178 ms (-20%)
-    select 10x100K                    273 ms             195 ms (-29%)
+    bench-suite SUM avg              1629 ms             1358 ms
+                                                         (-271 ms, -16.6%)
+                                     (1622-1639)         (1352-1367)
     tinyBenchmarks sends/sec         94 M/s            138 M/s (+47%)
+    gap to Cog (~136 ms)             12.0×                10.0×
 
-    gap to Cog (~136 ms)              12×                 8.9×
+(Earlier this doc reported 1216 ms / 25% win based on 3 lucky-timing
+runs; 10-run distribution shows 1358 ms is the stable average and
+1216 ms was an outlier.  Still a solid 16.6% win.)
 
 Commits in this session:
 - `c9679589` F3-NL2: state restore in return prelude.
