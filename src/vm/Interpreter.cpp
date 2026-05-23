@@ -12577,13 +12577,15 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
 // jitBasicNewWithArg but for `Class basicNew` — receiver=class,
 // no size arg.  Invokes primitive 70.
 uint64_t Interpreter::jitBasicNew(jit::JITState* state) {
+    // jit-may23b R41: call primitiveNew directly, skipping
+    // executePrimitive's prim-table indirection.
     Oop* savedSP = stackPointer_;
     stackPointer_ = state->sp;
     int savedArgCount = argCount_;
     argCount_ = 0;
     primitiveFailed_ = false;
     primFailCode_ = 0;
-    PrimitiveResult result = executePrimitive(70, 0);
+    PrimitiveResult result = primitiveNew(0);
     uint64_t ok = 0;
     if (result == PrimitiveResult::Success) {
         state->sp = stackPointer_;
@@ -12596,16 +12598,17 @@ uint64_t Interpreter::jitBasicNew(jit::JITState* state) {
 }
 
 uint64_t Interpreter::jitBasicNewWithArg(jit::JITState* state) {
+    // jit-may23b R41: call primitiveNewWithArg directly, skipping
+    // executePrimitive's prim-table indirection.
     // state.sp points PAST [rcvr=class, size].  Sync interp's stack
-    // pointer so executePrimitive sees the right values via
-    // stackValue(0/1).
+    // pointer so the prim sees the right values via stackValue(0/1).
     Oop* savedSP = stackPointer_;
     stackPointer_ = state->sp;
     int savedArgCount = argCount_;
     argCount_ = 1;
     primitiveFailed_ = false;
     primFailCode_ = 0;
-    PrimitiveResult result = executePrimitive(71, 1);
+    PrimitiveResult result = primitiveNewWithArg(1);
     uint64_t ok = 0;
     if (result == PrimitiveResult::Success) {
         // primitiveSuccess popped (1+1) and pushed newObj.  Reflect

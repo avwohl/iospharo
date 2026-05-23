@@ -67,13 +67,6 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
-### R41 — Direct primitiveNew call from jitBasicNew (R33 finding)
-
-ACTION: change jitBasicNew to call primitiveNew directly,
-skipping executePrimitive's prim-table dispatch.  Same for
-jitBasicNewWithArg.
-DONE: edit + bench-correctness 5/5 PASS + bench comparison.
-
 ### R42 — Audit DebugSettings.cpp for missing fields
 
 ACTION: any PHARO_* env var read in Interpreter.cpp / Primitives.cpp
@@ -141,6 +134,11 @@ DONE: 3 suggestions OR confirmation already optimal.
 - ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
   walk is a good balance per past A/B work.  Reordering
   dispatch checks would need careful measurement.  Skipping.
+- ✅ R41: changed jitBasicNew/jitBasicNewWithArg to call
+  primitiveNew/primitiveNewWithArg directly (skip executePrimitive
+  prim-table indirection).  Bench-correctness 5/5 PASS.  No
+  measurable bench change (basicNew0 fires only 51K times — too
+  few for the cycles saved to show up).
 - ✅ R38/R39: benches close to Cog have inner loops where EVERY
   send is inline-emit covered:
   - block 1M: `counter + 1` is bytecode 0x60 (inline arith),
