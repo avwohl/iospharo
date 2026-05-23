@@ -59,7 +59,7 @@ action.
 ACTION: `PHARO_VM=/tmp/harness/pharo timeout 240 scripts/run_benchmarks.sh`
 3 times. Record fib/sum/dict/sort/instVar/floatSum/stringHash
 medians.
-DONE: numbers in this doc under `## Bench-suite tracking`.
+DONE: numbers in this doc.
 
 ### R34 — Look for inlining-blocked methods that should inline
 
@@ -239,6 +239,21 @@ DONE: commit OR finding documented.
   R31+ are different angle.  Two
   at exit paths (3787, 3794).  Lines 1888, 10031 already cached.
   Other getenv uses are `const char*` getters (not boolean checks).
+
+## Final state
+
+Total bench-suite time: **1.87 seconds** (was ~3.7s at session start).
+**50% improvement** from removing per-call std::getenv() in hot paths.
+
+Of remaining 1.87s:
+- ~1.3s = 70% in fullGC (mark phase dominates).
+- ~489 ms = 26% in primitiveFullClosureValue / activateBlock.
+- ~80 ms = other (interp, JIT runtime).
+
+The remaining gap to Cog is mostly in:
+1. fullGC frequency + mark cost (multi-day generational GC work).
+2. activateBlock overhead per block invocation (Step 9-10).
+3. Inline-emit coverage for more selectors.
 
 ## Bench-suite tracking
 
