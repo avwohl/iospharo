@@ -660,14 +660,99 @@ shows `#to:do:` not understood by `ReadOnlyUnixStore class` —
 state.receiver is being corrupted somewhere in the non-leaf path,
 but NOT in the basic state restore (that's now fixed).
 
-Likely additional bugs in:
-- Chain-break protocol when a block bails to interp mid-execution.
-- NLR (`^ expr` inside non-leaf block) — return prelude pops one
-  save but NLR should unwind multiple saves to the home method.
-- Exception-handler context-chain interaction during startup.
+## F3-NL3 — bisected to ExitSend chain-break (2026-05-23)
 
-These require lldb attach + careful protocol audit.  Multi-session
-work as the doc anticipated.
+Added `PHARO_T1_INLINE_BLOCK_VALUE_MAX=N` bisection knob in
+JITRuntime.cpp + DebugSettings.  Caps non-leaf inline fires to N.
+Result:
+
+    MAX   DNUs in 15s    outcome
+    -----  -------------  ----------------
+      0      6            normal startup
+      1      7            normal
+      2      4            normal
+      3-7    5-7          normal
+      8     60            HANG starts
+      9-500 60-374        HANG
+
+**The 8th non-leaf inline-block-value fire triggers the hang.**
+The first 7 succeed; the 8th leaves state inconsistent.
+
+### Root cause: state.method ≠ interp's method_ at ExitSend
+
+`jit_rt_inline_block_value_prep` (JITRuntime.cpp:1550-1552) sets
+`state.{jitMethod,method,literals,argCount}` to the BLOCK's
+values.  When the block's compiled code bails to interp via
+`ExitSend` (which happens with non-leaf because the block has
+sends that can IC-miss), the chain-loop handler at
+`Interpreter.cpp:17777-17813` syncs ONLY `instructionPointer_`
+and `stackPointer_` from `state`:
+
+    case jit::ExitSend: {
+        instructionPointer_ = state.ip;
+        stackPointer_ = state.sp;
+        // ... NO sync of method_, receiver_, framePointer_, argCount_
+        jitICMisses_++;
+        ...
+        return;
+    }
+
+So interp resumes with:
+- `instructionPointer_` = block's bytecode pointer (correct).
+- `method_` = CALLER's method (STALE — should be block).
+- `receiver_` = CALLER's receiver (STALE).
+- `framePointer_` = CALLER's frame pointer (STALE).
+
+Interp then reads next bytecode from block's bc page but treats
+it under caller's `method_` — wrong literals fetched, wrong
+selector resolved, wrong stack offset, DNU cascade.
+
+Why fire #7 works but #8 doesn't: each of the 8 fires is the
+SAME block.  The first 7 invocations succeed because the
+block's IC HIT path stays in JIT (no chain-break needed).  At
+fire #8, presumably the IC's site reaches a new receiver class,
+the IC slot lookup misses (poly), the chain loop fires — and
+the state-sync bug kicks in.
+
+### Why the assumption held for self-rec inline-J2J
+
+The existing inline-J2J path (default-on for self-recursive
+sends) is gated by `SELF_REC_BIT` so callee == caller.  Since
+they're the same method, `state.method` never differs from
+interp's `method_`.  The ExitSend handler's no-sync assumption
+holds in that narrow case.  Block-value inline violates it.
+
+### Why leaf-only works
+
+Leaf-only blocks have `numICEntries == 0` — they have NO sends
+at all.  No chain-break can fire inside a leaf block.  The
+return prelude (with the F3-NL2 fix) handles return correctly.
+
+### Required fix (multi-session)
+
+Option (a): in the ExitSend chain-loop handler, when
+`state.method != method_`, materialize the J2J save chain into
+interp's `savedFrames_` stack, syncing all interp state from
+`state`.  Same logic as the existing materialize path
+(Interpreter.cpp:17674-17688) but triggered at SEND not at
+RETURN.
+
+Option (b): when block-value inlines, also update interp's
+`method_/receiver_/argCount_/framePointer_` to match state's
+new values.  Requires plumbing interp pointer access into the
+JIT helper.  Restored on return prelude.
+
+Option (a) is the cleaner of the two but requires careful audit
+of every j2jPool ↔ savedFrames_ interaction.  Multi-session
+lldb work as expected.
+
+### Bench-suite total impact still zero
+
+Even with NONLEAF fixed, the actual bench-suite gain depends on
+how often non-leaf BV would fire in benches like sort/select/dict.
+Per `jit-may23b`'s doc estimate, ~300 ms savings.  But this
+session can't ship the fix — committed: bisection knob,
+detailed root cause, partial fix (F3-NL2) for leaf-only path.
 
 ### Net session impact on the goal
 

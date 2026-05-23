@@ -1523,6 +1523,56 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     if ((uintptr_t)s->j2jSaveCursor >= (uintptr_t)s->j2jSaveLimit)
         { g_bvBail_savefull++; return nullptr; }
 
+    // F3-NL3 bisection: PHARO_T1_INLINE_BLOCK_VALUE_MAX=N caps non-leaf
+    // fires to the first N inlines.  N=0 disables non-leaf entirely;
+    // higher N bisects to find the first inline that triggers the
+    // hang.  Counted by g_blockValue_nonleaf_fires; only applied when
+    // we'd be in the non-leaf gate path (blockJM->numICEntries != 0).
+    static uint64_t g_blockValue_nonleaf_fires = 0;
+    if (g_debug.t1InlineBlockValueNonLeaf
+        && blockJM->numICEntries != 0) {
+        if (g_debug.t1InlineBlockValueMax >= 0
+            && g_blockValue_nonleaf_fires
+               >= (uint64_t)g_debug.t1InlineBlockValueMax) {
+            g_bvBail_lookup++;
+            return nullptr;
+        }
+        g_blockValue_nonleaf_fires++;
+        // Trace the suspect 8th fire (bisected as the first hang-trigger).
+        if (g_blockValue_nonleaf_fires <= 12) {
+            const char* selName = "?";
+            static thread_local std::string buf;
+            JITMethod* cJM = reinterpret_cast<JITMethod*>(callerJM);
+            Oop sel = Oop::fromRawBits(cJM ? cJM->selectorOop : 0);
+            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                auto* hdr = sel.asObjectPtr();
+                if (hdr->isBytesObject()) {
+                    buf.assign((const char*)hdr->bytes(), hdr->byteSize());
+                    selName = buf.c_str();
+                }
+            }
+            const char* blkSelName = "?";
+            Oop blkSel = Oop::fromRawBits(blockJM->selectorOop);
+            static thread_local std::string bbuf;
+            if (blkSel.isObject() && blkSel.rawBits() > 0x10000) {
+                auto* hdr = blkSel.asObjectPtr();
+                if (hdr->isBytesObject()) {
+                    bbuf.assign((const char*)hdr->bytes(), hdr->byteSize());
+                    blkSelName = bbuf.c_str();
+                }
+            }
+            fprintf(stderr,
+                "[BV-NL #%llu] caller=#%s blockSel=#%s "
+                "blockCM=0x%llx blockJM=%p numIC=%u nArgs=%d "
+                "rcvBits=0x%llx j2jDepth=%d\n",
+                (unsigned long long)g_blockValue_nonleaf_fires,
+                selName, blkSelName,
+                (unsigned long long)compiledBlockBits,
+                (void*)blockJM, blockJM->numICEntries, nArgs,
+                (unsigned long long)rcvBits, s->j2jDepth);
+        }
+    }
+
     // Push J2J save.  Layout per Interpreter::J2JSave (56 bytes):
     //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
     //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount

@@ -179,6 +179,9 @@ struct DebugSettings {
     // gate was added 2026-05-19 (iter N+16) to suppress chain-break
     // corruption.  Re-attempt after the later fixes.
     bool t1InlineBlockValueNonLeaf = false;
+    // F3-NL3 bisection cap: max non-leaf inline-block-value fires.
+    // PHARO_T1_INLINE_BLOCK_VALUE_MAX=N.  Default -1 = uncapped.
+    int  t1InlineBlockValueMax = -1;
     // Per-primitive call counter dumped at exit.  PHARO_PRIM_PROFILE=1.
     bool primProfile = false;
     // Compile every block on first invocation (instead of waiting for
