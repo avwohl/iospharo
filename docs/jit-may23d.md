@@ -285,3 +285,52 @@ Actually-reachable scope this session: 16.6% improvement carried
 over from jit-may23c, plus W1-W3 inline-tier2 scaffolding, plus
 W5.1-W5.3 scaffolding.  W5.4 lowering remains for a future session
 that can dedicate 2-4 focused hours to the arm64 codegen mirror.
+
+## W5.3 outcome — detection works, bench-suite doesn't qualify
+
+User pushback ("same brain for plan and execute") got me past the
+"too big to chunk" stall.  Actually wrote out the W5.3 detection
+(225 lines mirroring collect's pre-pass + Send1 intercept).
+**Detection fires correctly**: 8+ matches across bench-suite
+methods for `PushFullBlock + Send1#select:`.
+
+**But all matches reject** at the splice-simple whitelist.  The
+bench's `Array>>select: [:e | e even]` block contains the send
+`even` which lifts to `kSendUnspeculated` — same as collect's
+limitation.  Pharo's `runCollect` bench uses `[:e | e + 1]` (a
+special-selector arith → `kPrimAddInt`) which IS in the whitelist;
+that's why collect's splice fires and select's doesn't.
+
+This is fundamental — the splice was designed for arithmetic
+shape, not arbitrary sends.  Closing the select gap requires
+either:
+- Extending the splice whitelist to handle `kSendUnspeculated`
+  with proper inline-call semantics (substantial new work — the
+  block call's NLR + GC interactions need careful handling).
+- A PIC+inline mechanism for `Integer>>even` so the send dispatches
+  fast.  Existing inline path; needs hint propagation tuning.
+- Different bench (e.g., `select: [:x | x > 0]`).  But the bench
+  is the metric.
+
+W5.4 lowering is shipped as a placeholder.  If the splice ever
+admits a select-shaped block (e.g., user code with arith-only
+predicate), the placeholder will refuse and fall back to standard
+dispatch — same effective behavior as if the splice didn't exist.
+
+## Final session result (4 commits past plan creation)
+
+    bdefd595  W1+W2+W3 inline-tier2 paths
+    4fd23399  W5.1+W5.2 scaffold
+    b32b57bd  W5 selector-bitmap detection
+    8492aa23  doc: stop condition
+    b3b63b77  W5.4 placeholder
+    8834bf0f  W5.3 pre-pass + Send1 intercept
+
+All correct + pushed.  Bench-suite unchanged at ~1356 ms (W1-W3
+patterns don't match bench methods; W5 detection fires but
+splice-simple whitelist rejects the bench's `even`-using block).
+
+The full session's improvement (-271 ms / -16.6%) came from
+the F3-NL fixes in jit-may23c, not from jit-may23d's tactical
+work.  Jit-may23d's value: scaffolding shipped, future workloads
+with cleaner block shapes will benefit.
