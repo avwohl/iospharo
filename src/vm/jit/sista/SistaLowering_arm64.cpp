@@ -5252,6 +5252,65 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         blockRegs[bv.id] = dst;
                         break;
                     }
+                    case Op::kSendUnspeculated: {
+                        // W5.4-ext: emit a helper call to
+                        // jit_rt_sista_call_send.  Pushes operands to
+                        // interp stack, calls helper, gets result Oop.
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        uint32_t selIdx =
+                            (uint32_t)(bv.literal & 0xFFFFu);
+                        uint32_t nArgs =
+                            (uint32_t)((bv.literal >> 16) & 0xFFu);
+                        Gp sendSp = cc.new_gp64("sel_send_sp");
+                        cc.ldr(sendSp, ptr(state, OFF_SP));
+                        for (size_t opIdx = 0;
+                             opIdx < bv.operands.size(); opIdx++) {
+                            auto opIt = blockRegs.find(bv.operands[opIdx]);
+                            if (opIt == blockRegs.end()) {
+                                if (failedAtValue) *failedAtValue = v.id;
+                                return nullptr;
+                            }
+                            cc.str(opIt->second,
+                                   ptr(sendSp,
+                                       static_cast<int>(opIdx) * 8));
+                        }
+                        cc.add(sendSp, sendSp,
+                               Imm(static_cast<int>(
+                                   bv.operands.size()) * 8));
+                        cc.str(sendSp, ptr(state, OFF_SP));
+                        Gp selRegL = cc.new_gp64("sel_send_sel");
+                        cc.ldr(selRegL,
+                               ptr(litBaseHoisted,
+                                   static_cast<int>(selIdx) * 8));
+                        Gp nArgsRegL = cc.new_gp64("sel_send_n");
+                        cc.mov(nArgsRegL, Imm((uint64_t)nArgs));
+                        Gp sendFn = cc.new_gp64("sel_send_fn");
+                        cc.mov(sendFn,
+                               Imm((uint64_t)&jit_rt_sista_call_send));
+                        asmjit::InvokeNode* sendInv = nullptr;
+                        asmjit::Error sErr2 = cc.invoke(
+                            asmjit::Out(sendInv), sendFn,
+                            asmjit::FuncSignature::build<
+                                uint64_t, void*, uint64_t, uint64_t>());
+                        if (sErr2 != asmjit::kErrorOk || !sendInv) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        sendInv->set_arg(0, state);
+                        sendInv->set_arg(1, selRegL);
+                        sendInv->set_arg(2, nArgsRegL);
+                        Gp sendResult = cc.new_gp64("sel_send_res");
+                        sendInv->set_ret(0, sendResult);
+                        Label sendOk = cc.new_label();
+                        cc.cbnz(sendResult, sendOk);
+                        emitDeopt(rcvReg, deoptBC);
+                        cc.bind(sendOk);
+                        blockRegs[bv.id] = sendResult;
+                        break;
+                    }
                     case Op::kReturn: {
                         if (bv.operands.size() != 1) {
                             if (failedAtValue) *failedAtValue = v.id;
@@ -5952,6 +6011,65 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                                     ? CondCode::kEQ
                                     : CondCode::kNE);
                         blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kSendUnspeculated: {
+                        // W5.4-ext: emit a helper call to
+                        // jit_rt_sista_call_send.  Pushes operands to
+                        // interp stack, calls helper, gets result Oop.
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        uint32_t selIdx =
+                            (uint32_t)(bv.literal & 0xFFFFu);
+                        uint32_t nArgs =
+                            (uint32_t)((bv.literal >> 16) & 0xFFu);
+                        Gp sendSp = cc.new_gp64("sel_send_sp");
+                        cc.ldr(sendSp, ptr(state, OFF_SP));
+                        for (size_t opIdx = 0;
+                             opIdx < bv.operands.size(); opIdx++) {
+                            auto opIt = blockRegs.find(bv.operands[opIdx]);
+                            if (opIt == blockRegs.end()) {
+                                if (failedAtValue) *failedAtValue = v.id;
+                                return nullptr;
+                            }
+                            cc.str(opIt->second,
+                                   ptr(sendSp,
+                                       static_cast<int>(opIdx) * 8));
+                        }
+                        cc.add(sendSp, sendSp,
+                               Imm(static_cast<int>(
+                                   bv.operands.size()) * 8));
+                        cc.str(sendSp, ptr(state, OFF_SP));
+                        Gp selRegL = cc.new_gp64("sel_send_sel");
+                        cc.ldr(selRegL,
+                               ptr(litBaseHoisted,
+                                   static_cast<int>(selIdx) * 8));
+                        Gp nArgsRegL = cc.new_gp64("sel_send_n");
+                        cc.mov(nArgsRegL, Imm((uint64_t)nArgs));
+                        Gp sendFn = cc.new_gp64("sel_send_fn");
+                        cc.mov(sendFn,
+                               Imm((uint64_t)&jit_rt_sista_call_send));
+                        asmjit::InvokeNode* sendInv = nullptr;
+                        asmjit::Error sErr2 = cc.invoke(
+                            asmjit::Out(sendInv), sendFn,
+                            asmjit::FuncSignature::build<
+                                uint64_t, void*, uint64_t, uint64_t>());
+                        if (sErr2 != asmjit::kErrorOk || !sendInv) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        sendInv->set_arg(0, state);
+                        sendInv->set_arg(1, selRegL);
+                        sendInv->set_arg(2, nArgsRegL);
+                        Gp sendResult = cc.new_gp64("sel_send_res");
+                        sendInv->set_ret(0, sendResult);
+                        Label sendOk = cc.new_label();
+                        cc.cbnz(sendResult, sendOk);
+                        emitDeopt(rcvReg, deoptBC);
+                        cc.bind(sendOk);
+                        blockRegs[bv.id] = sendResult;
                         break;
                     }
                     case Op::kReturn: {

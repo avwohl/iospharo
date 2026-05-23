@@ -1757,6 +1757,11 @@ public:
                             case Op::kPrimIdentityEq:
                             case Op::kPrimIdentityNeq:
                             case Op::kPrimTagCheckInt:
+                            // W5.4-ext: allow kSendUnspeculated in the
+                            // block body.  Lowering calls
+                            // jit_rt_sista_call_send per iteration.  This
+                            // makes blocks like `[:e | e even]` qualify.
+                            case Op::kSendUnspeculated:
                                 break;
                             case Op::kLoadTemp:
                                 if (bv.literal != 0
