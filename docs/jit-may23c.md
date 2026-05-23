@@ -792,6 +792,36 @@ Reverted the failed materialize attempt.  Bisection knob
 (`PHARO_T1_INLINE_BLOCK_VALUE_MAX=N`) stays — useful tooling
 for future debugging.
 
+## SUMMARY (end of session, 2026-05-23)
+
+After multiple rounds of analysis and attempts, the session shipped
+a substantial bench-suite improvement via correct method-level
+inlining:
+
+    metric                          original     after F3-NL fixes
+    ------------------------------ ----------   ------------------
+    bench-suite SUM                  1468 ms          1221 ms
+                                                      (-247 ms, -17%)
+    fib(28)                           108 ms            71 ms (-34%)
+    sort 100K                         315 ms           282 ms (-10%)
+    dict 50K                          222 ms           178 ms (-20%)
+    select 10x100K                    273 ms           195 ms (-29%)
+    tinyBenchmarks sends/sec         94 M/s          138 M/s (+47%)
+
+    gap to Cog (~136 ms)              11×              8.9×
+
+Commits in this session:
+- `c9679589` F3-NL2: state restore in return prelude.
+- `655f5775` F3-NL3: NLR-gate at runtime (later moved to compile time).
+- `3e625350` F3-NL4: compile-time NLR detection.
+- `ba93e3bb` F3-NL5: BV_MAX_IC / BV_MAX_DEPTH tuning knobs.
+- `16c5a8fa` F3-NL6: default-on xmethod + non-leaf BV.
+
+**Goal "faster than Cog" still NOT achieved** (8.9× gap remains) but
+the multi-session F3 correctness blocker is resolved.  Cross-method
+inline-J2J (xmethod) is now default-on AND correct, which the prior
+doc considered the make-or-break.
+
 ## F3-NL3 root cause + fix (2026-05-23, lldb session)
 
 User pushed back: "ok do the lldb debug".  Did it.
