@@ -1637,6 +1637,182 @@ public:
             }
         }
 
+        // --- B2 splice pre-pass: Array>>select: (jit-may23d W5.3) --------
+        // Mirrors the collect: pre-pass above.  Detects:
+        //   <push receiver>  PushFullBlock  Send1#select:
+        // Block must be splice-simple (returns boolean from loads + arith
+        // + compare ops; no sends, no stores).
+        if (!g_debug.noSistaCollect && !g_debug.noSistaDoSplice
+            && memory_ != nullptr && selectSelectorMask_) {
+            size_t i = 0;
+            int lastPushFullBlockEnd = -1;
+            int lastPushFullBlockStart = -1;
+            int lastFullBlockLitIdx = -1;
+            int lastFullBlockFlags = -1;
+            int extA = 0;
+            while (i < len_) {
+                uint8_t op = bc_[i];
+                if (op == jit::SistaV1::ExtendA) {
+                    if (i + 1 >= len_) break;
+                    extA = bc_[i + 1];
+                    i += 2;
+                    continue;
+                }
+                if (op == jit::SistaV1::ExtendB) {
+                    if (i + 1 >= len_) break;
+                    i += 2;
+                    continue;
+                }
+                if (op == jit::SistaV1::PushFullBlock) {
+                    if (i + 2 >= len_) break;
+                    lastPushFullBlockStart = (int)i;
+                    lastFullBlockLitIdx = (extA << 8) | bc_[i + 1];
+                    lastFullBlockFlags = bc_[i + 2];
+                    lastPushFullBlockEnd = (int)(i + 3);
+                    extA = 0;
+                    i += 3;
+                    continue;
+                }
+                if (op >= jit::SistaV1::Send1Base
+                    && op <= jit::SistaV1::Send1Last
+                    && lastPushFullBlockEnd == (int)i) {
+                    uint32_t selIdx = op & 0x0F;
+                    bool isSelect =
+                        ((selectSelectorMask_ >> selIdx) & 1) != 0;
+                    if (!isSelect) {
+                        lastPushFullBlockEnd = -1;
+                        i++;
+                        continue;
+                    }
+                    bool ok = true;
+                    Oop blockOop = Oop::nil();
+                    if (lastFullBlockLitIdx < 0
+                        || (size_t)lastFullBlockLitIdx
+                           >= out_.literals.size()) {
+                        ok = false;
+                    } else {
+                        blockOop = out_.literals[lastFullBlockLitIdx];
+                        if (!blockOop.isObject()) ok = false;
+                    }
+                    bool receiverOnStack =
+                        ((lastFullBlockFlags >> 7) & 1) != 0;
+                    if (ok && receiverOnStack) ok = false;
+                    uint32_t numCopied =
+                        (uint32_t)(lastFullBlockFlags & 0x3F);
+                    uint32_t outerVecTemp = 0;
+                    bool hasCapture = false;
+                    if (ok && numCopied == 1) {
+                        if (lastPushFullBlockStart < 1) {
+                            ok = false;
+                        } else {
+                            uint8_t prevOp =
+                                bc_[lastPushFullBlockStart - 1];
+                            if (prevOp < 0x40 || prevOp > 0x4B) {
+                                ok = false;
+                            } else {
+                                outerVecTemp = (uint32_t)(prevOp - 0x40);
+                                hasCapture = true;
+                            }
+                        }
+                    } else if (ok && numCopied != 0) {
+                        ok = false;
+                    }
+                    std::unique_ptr<Method> blockIR;
+                    if (ok && g_calleeLiftDepth < 1) {
+                        blockIR = std::make_unique<Method>();
+                        g_calleeLiftDepth++;
+                        bool savedBR = g_subLiftAsBlockReturnLocal;
+                        g_subLiftAsBlockReturnLocal = true;
+                        uint32_t failedBc = UINT32_MAX;
+                        LiftResult r = Builder::build(
+                            blockOop, *memory_, *blockIR, &failedBc);
+                        g_subLiftAsBlockReturnLocal = savedBR;
+                        g_calleeLiftDepth--;
+                        if (r != LiftResult::kOk) ok = false;
+                    } else if (ok) {
+                        ok = false;
+                    }
+                    if (ok && blockIR && blockIR->blocks.size() != 1) {
+                        ok = false;
+                    }
+                    if (ok && blockIR) {
+                        for (const auto& bv : blockIR->values) {
+                            switch (bv.op) {
+                            case Op::kLoadReceiver:
+                            case Op::kLoadInstVar:
+                            case Op::kLoadTrueOop:
+                            case Op::kLoadFalseOop:
+                            case Op::kConstantOop:
+                            case Op::kPhi:
+                            case Op::kReturn:
+                            case Op::kPrimAddInt:
+                            case Op::kPrimSubInt:
+                            case Op::kPrimMulInt:
+                            case Op::kPrimLtInt:
+                            case Op::kPrimLeInt:
+                            case Op::kPrimGtInt:
+                            case Op::kPrimGeInt:
+                            case Op::kPrimEqInt:
+                            case Op::kPrimNeqInt:
+                            case Op::kPrimIdentityEq:
+                            case Op::kPrimIdentityNeq:
+                            case Op::kPrimTagCheckInt:
+                                break;
+                            case Op::kLoadTemp:
+                                if (bv.literal != 0
+                                    && !(hasCapture
+                                         && bv.literal == 1)) {
+                                    ok = false;
+                                }
+                                break;
+                            case Op::kLoadTempInVec:
+                                if (!hasCapture
+                                    || (bv.literal >> 32) != 1) {
+                                    ok = false;
+                                }
+                                break;
+                            default:
+                                ok = false;
+                                break;
+                            }
+                            if (!ok) break;
+                        }
+                    }
+                    if (ok && blockIR) {
+                        uint32_t slot = static_cast<uint32_t>(
+                            out_.inlinedBlocks.size());
+                        out_.inlinedBlocks.push_back(
+                            std::move(blockIR));
+                        spliceSelectAtPushFullBlock_[
+                            (size_t)lastPushFullBlockStart] = slot;
+                        if (hasCapture) {
+                            outerVecTempForSelect_[
+                                (size_t)lastPushFullBlockStart] =
+                                outerVecTemp;
+                        }
+                        static int selectCandCount = 0;
+                        if (selectCandCount++ < 16) {
+                            std::fprintf(stderr,
+                                "[SISTA-SELECT-CAND] pfbBC=%d "
+                                "send1BC=%zu selIdx=%u litIdx=%d slot=%u\n",
+                                lastPushFullBlockStart, i,
+                                selIdx, lastFullBlockLitIdx, slot);
+                        }
+                    }
+                    lastPushFullBlockEnd = -1;
+                    i++;
+                    continue;
+                }
+                if (op != jit::SistaV1::ExtendA
+                    && op != jit::SistaV1::ExtendB) {
+                    lastPushFullBlockEnd = -1;
+                }
+                if (jit::SistaV1::isThreeByteBytecode(op)) i += 3;
+                else if (jit::SistaV1::isExtended2Byte(op)) i += 2;
+                else i++;
+            }
+        }
+
         // --- B2 splice pre-pass: Interval-inject pattern --------------
         //
         // Detects: <push start> <push stop> Send1#to:
@@ -3415,6 +3591,55 @@ private:
                                         "slot=%u vid=%u capture=%d\n",
                                         ip, blockSlot, vid,
                                         collectHasCapture ? 1 : 0);
+                                }
+                                ip += 4;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                // jit-may23d W5.3: select: intercept (mirror collect:).
+                {
+                    auto sIt = spliceSelectAtPushFullBlock_.find(ip);
+                    bool selectHasCapture =
+                        outerVecTempForSelect_.count(ip) > 0;
+                    size_t selectNeeded = selectHasCapture ? 2 : 1;
+                    if (sIt != spliceSelectAtPushFullBlock_.end()
+                        && stack_.size() >= selectNeeded
+                        && ip + 3 < len_) {
+                        uint8_t nextOp = bc_[ip + 3];
+                        if (nextOp >= jit::SistaV1::Send1Base
+                            && nextOp <= jit::SistaV1::Send1Last) {
+                            uint32_t selIdx = nextOp & 0x0F;
+                            if (((selectSelectorMask_ >> selIdx) & 1) != 0) {
+                                uint32_t blockSlot = sIt->second;
+                                std::vector<uint32_t> ops;
+                                if (selectHasCapture) {
+                                    uint32_t vec = stack_.back();
+                                    stack_.pop_back();
+                                    uint32_t rcv = stack_.back();
+                                    stack_.pop_back();
+                                    ops = {rcv, vec};
+                                } else {
+                                    uint32_t rcv = stack_.back();
+                                    stack_.pop_back();
+                                    ops = {rcv};
+                                }
+                                uint32_t vid = out_.newValue(currentBlock_,
+                                      Op::kCountedLoopArraySelect,
+                                      Type::kOop,
+                                      std::move(ops),
+                                      /*literal=*/blockSlot);
+                                recordFramepoint(vid, bcOffset);
+                                stack_.push_back(vid);
+                                pendingExtA_ = 0;
+                                pendingExtB_ = 0;
+                                static int selEmitCount = 0;
+                                if (selEmitCount++ < 16) {
+                                    std::fprintf(stderr,
+                                        "[SISTA-SELECT-EMIT] bc=%zu "
+                                        "slot=%u vid=%u\n",
+                                        ip, blockSlot, vid);
                                 }
                                 ip += 4;
                                 continue;
