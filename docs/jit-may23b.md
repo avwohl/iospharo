@@ -97,6 +97,11 @@ DONE: commit OR finding documented.
 - ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
   walk is a good balance per past A/B work.  Reordering
   dispatch checks would need careful measurement.  Skipping.
+- ✅ R66/R67: dict 50K bench creates 50K string keys, then
+  put+get cycle.  Hot operations: String hash, dictionary probe
+  + comparison.  300 ms / 100K ops = 3 µs per op.  Most of that
+  is String hash + comparison (Pharo's String>>hash iterates
+  per character).  Inlining hash would be substantial work.
 - ❌ R62: hoisted primKind 14/15/16 dispatch before bit 60.
   No counter change (at=317K unchanged), no bench change.
   at: IC entries apparently don't have bit 60 set widely.  The
