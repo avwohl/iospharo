@@ -103,6 +103,12 @@ DONE: commit OR finding documented.
   + comparison.  300 ms / 100K ops = 3 µs per op.  Most of that
   is String hash + comparison (Pharo's String>>hash iterates
   per character).  Inlining hash would be substantial work.
+- ❌ R76 (re-attempt of Q34/Q35 IC MTF): implemented with proper
+  slot0WasEmpty semantic preservation.  Bench-correctness 5/5
+  PASS.  Bench shows slight (+1ms fib) regression — the shift
+  cost on every cold IC fill exceeds the hit-walk savings.  Per
+  Q16, only 25K polymorphic IC events / bench-suite, not enough
+  to amortize.  Reverted.
 - ✅ R72: redundant SP loads at every bytecode emit is real but
   requires cross-bytecode register liveness tracking — substantial
   asmjit-T1 refactor.  Skipping.
