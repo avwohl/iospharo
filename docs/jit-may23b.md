@@ -74,6 +74,14 @@ Listed so next session has clear next steps.
 
 ### F1 — Generational GC: keep young objects in young space
 
+NET WIN MEASUREMENT (2026-05-23):
+- yg on (current): 1850-1870 ms.
+- yg off (PHARO_NO_YG=1): 1895-1900 ms.
+- Difference: ~30ms (~2%) net win from current scavenge.
+
+So current scavenge IS helping a bit.  Proper generational
+with aging would unlock MUCH more (~800ms).
+
 CLARIFICATION (2026-05-23): "Generational GC" is PARTIALLY done.
 
 What's done:
