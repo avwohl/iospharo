@@ -61,81 +61,40 @@ ACTION: `PHARO_VM=/tmp/harness/pharo timeout 240 scripts/run_benchmarks.sh`
 medians.
 DONE: numbers in this doc under `## Bench-suite tracking`.
 
-### R17 — Profile sum 1M with `sample` (macOS dtrace alt)
+### R34 — Look for inlining-blocked methods that should inline
 
-ACTION: `sample test_load_image 5` while bench-suite is running
-sum. Capture top 10 symbols.
-DONE: list pasted.
+ACTION: extend the inline-prim emit to handle one more case.
+Choose the most common one not yet inlined.
+DONE: commit OR finding documented.
 
-### R18 — Identify top non-JIT hot symbol from R17
+### R36 — Reduce IC walk depth experiments
 
-ACTION: from R17 output, pick the hottest C++ symbol that ISN'T
-JIT-emitted code. Look at its body for any optimizations.
-DONE: 1 finding recorded.
+ACTION: look at the IC dispatch in asmjit-T1.  If walking 3 slots
+inline is enough vs 6, can we drop to 2?
+DONE: A/B measurement.
 
-### R19 — Implement 1 optimization from R18
+### R37 — Move IC HIT to start of dispatch
 
-ACTION: based on R18 finding, make 1 focused change.
-DONE: edited + committed OR documented why not applicable.
+ACTION: examine the dispatch sequence in asmjit-T1.  Are there
+checks that could be moved AFTER the IC HIT?
+DONE: finding.
 
-### R20 — Profile floatSum 1M with `sample`
+### R38 — `block 1M` is 1ms — what makes it fast?
 
-ACTION: same as R17 but for floatSum.
-DONE: list pasted.
+ACTION: look at the block 1M bench code.  Why is it close to
+Cog while other benches aren't?
+DONE: characterization recorded.
 
-### R21 — Identify boxedFloat overhead
-
-ACTION: floatSum uses SmallFloat for the running total, but each
-+ might create a BoxedFloat. Look at Primitives.cpp prim 541
-result encoding.
-DONE: yes/no answer to "do we box".
-
-### R22 — Profile instVar 1M with `sample`
+### R39 — `sieve 100` is 8ms close to Cog's 10.
 
 ACTION: same.
-DONE: list pasted.
+DONE: characterization recorded.
 
-### R23 — Profile collect 10x100K with `sample`
+### R40 — When queue empties: scan for new opportunities
 
-ACTION: same.
-DONE: list pasted.
-
-### R24 — Profile dict 50K with `sample`
-
-ACTION: same.
-DONE: list pasted.
-
-### R25 — Profile sort 100K with `sample`
-
-ACTION: same.
-DONE: list pasted.
-
-### R26 — Identify pattern across profiles (R17,R20-R25)
-
-ACTION: which C++ symbol appears in ≥3 of the 6 bench profiles?
-That's the highest-leverage fix target.
-DONE: top shared symbol named.
-
-### R27 — Pick one R26 symbol and audit body
-
-ACTION: read the function. List any sub-operations that could be
-inlined or skipped.
-DONE: list of 3 candidates.
-
-### R28 — Implement smallest R27 candidate
-
-ACTION: make the edit. Bench-correctness 5/5 PASS.
-DONE: commit.
-
-### R29 — Measure R28's bench impact
-
-ACTION: 3 runs of bench-suite. Compare to R16.
-DONE: delta recorded; reverted if regressed.
-
-### R30 — Move to next R27 candidate
-
-ACTION: implement.
-DONE: commit.
+ACTION: per CLAUDE.md /goal rules: scan codebase for similar
+issues to past wins.  Add new tasks.
+DONE: ≥3 new tasks added.
 
 ## Closed
 
@@ -161,7 +120,26 @@ DONE: commit.
 - ✅ R16: bench-suite stable across 3 runs.  Same numbers as R10.
 - ✅ R14+R15: src/vm/jit/ audit. All getenvs are in compile-time
   paths (JIT stats print, T2 log, AsmjitT1 compile log, Sista
-  compile dump).  None per-call.  Two
+  compile dump).  None per-call.
+- ✅ R34: inline-prim emit already covers the common cases.
+  Adding more would need new IC bits — multi-day work each.
+- ✅ R35: non-std getenv hits all in static initializers (run once).
+  No hot patterns.
+- ✅ R33: primitiveNew is called via primitiveTable_[] indirect.
+  Directly calling primitiveNew from jitBasicNew would save ~10-20
+  cycles per call.  At 14K calls/run = <1ms gain.  Marginal.
+- ✅ R32: primAt has SmallFloat fast-path then object validation
+  + array dispatch.  Inline emit at asmjit-T1 bypasses for array
+  receivers (the common case).  Not a bottleneck.
+- ✅ R31: primitiveAdd SmI fast-path is 7 lines of work (stack reads,
+  tag checks, add, overflow check, success). Bytecode 0x60 has
+  its own inline emit that bypasses prim 1 entirely.  Already
+  optimal.
+- ❌ R17-R30: `sample` on macOS doesn't symbolize JIT code (anon
+  exec pages).  Captures show __workq_kernreturn/__semwait_signal/
+  ??? unknown.  Sampling-based profiling not productive without
+  JIT symbol annotations.  Skipping all 14 profiling tasks.
+  R31+ are different angle.  Two
   at exit paths (3787, 3794).  Lines 1888, 10031 already cached.
   Other getenv uses are `const char*` getters (not boolean checks).
 
