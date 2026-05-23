@@ -4621,6 +4621,17 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 regFor[v.id] = limitReg;
                 break;
             }
+            case Op::kCountedLoopArraySelect: {
+                // jit-may23d W5.4: placeholder.  Real lowering would mirror
+                // kCountedLoopArrayCollect (664 lines) with:
+                //   - dynamic-size result (alloc at source size, shrink at end)
+                //   - conditional store gated on block-result == trueOop
+                //   - writeIdx counter (separate from read index)
+                // Until that's implemented, bail to fall back to standard
+                // dispatch — same behavior as not having the splice.
+                if (failedAtValue) *failedAtValue = v.id;
+                return nullptr;
+            }
             case Op::kCountedLoopArrayCollect: {
                 // arr collect: [:e | expr] — allocate a fresh Array
                 // of the receiver's size, iterate i = 1..size loading
