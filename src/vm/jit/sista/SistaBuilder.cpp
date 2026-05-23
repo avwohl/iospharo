@@ -6639,6 +6639,7 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     uint16_t injectIntoMask = 0;
     uint16_t toMask = 0;
     uint16_t collectMask = 0;
+    uint16_t selectMask = 0;  // W5
     if (inlineYourself || inlineIdentityEq || injectIntoSplice) {
         const uint32_t scanLimit = std::min(numLiterals, 16u);
         for (uint32_t i = 0; i < scanLimit; i++) {
@@ -6675,6 +6676,11 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
                 && std::memcmp(bytes, "collect:", 8) == 0) {
                 collectMask |= (1u << i);
             }
+            // jit-may23d W5: #select: is 7 bytes.
+            if (injectIntoSplice && bs == 7
+                && std::memcmp(bytes, "select:", 7) == 0) {
+                selectMask |= (1u << i);
+            }
         }
     }
 
@@ -6692,6 +6698,7 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     if (injectIntoMask) l.setInjectIntoSelectorBitmap(injectIntoMask);
     if (toMask) l.setToSelectorBitmap(toMask);
     if (collectMask) l.setCollectSelectorBitmap(collectMask);
+    if (selectMask) l.setSelectSelectorBitmap(selectMask);
     // Item #6: derive the method's defining class name from the last
     // literal (Pharo CompiledMethod convention: last lit is class
     // binding Association, slot 1 = class).  Used by the HELPER_SENDS
