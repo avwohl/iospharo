@@ -12345,7 +12345,9 @@ uint64_t Interpreter::jitSistaSelfRecCall(jit::JITState* state,
     // path (kSendCallHelper's framepoint replay assumes operands were
     // pushed onto state.sp).  Without that handshake, the recursive
     // call sees a misaligned state and benchFib loops/crashes.
-    if (std::getenv("PHARO_SISTA_INLINE_SELF") == nullptr) {
+    static const bool sistaInlineSelf =
+        std::getenv("PHARO_SISTA_INLINE_SELF") != nullptr;
+    if (!sistaInlineSelf) {
         return 0;
     }
     // Save-pool overflow → fall back to standard helper.

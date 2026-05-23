@@ -2443,7 +2443,9 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
 
         // jit-may23 T6: dump per-reason compile failure counts.
         // Opt-in via PHARO_JIT_FAIL_REASONS=1.
-        if (std::getenv("PHARO_JIT_FAIL_REASONS")) {
+        static const bool failReasonsDump =
+            std::getenv("PHARO_JIT_FAIL_REASONS") != nullptr;
+        if (failReasonsDump) {
             extern size_t g_failedBadHeader, g_failedUnsuppPrim,
                           g_failedSkipSel, g_failedBlock, g_failedBcOther;
             fprintf(stderr,
