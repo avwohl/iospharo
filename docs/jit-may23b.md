@@ -68,30 +68,6 @@ Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
 
-### R72 — Eliminate redundant SP load in arith bytecodes
-
-ACTION: 0x60 + emit at 2705+ does `ldr x2, [x0, OFF_SP]`.  If
-the previous bytecode left SP in x2, we could skip this.
-DONE: feasibility.
-
-### R73 — Audit OFF_TEMPBASE writes — are all needed?
-
-ACTION: J2J return prelude writes state.tempBase.  Does the
-caller's JIT body actually read it?
-DONE: yes/no.
-
-### R74 — Look at sieve x100 → see if we beat Cog
-
-ACTION: our sieve is 8 ms, Cog is 10 ms.  Verify run_benchmarks
-gives identical impl.
-DONE: confirmation.
-
-### R75 — Audit dispatchCached emit length
-
-ACTION: read the chain-loop dispatch emit at AsmjitT1.cpp:1938+.
-How many instructions in the fall-through path?
-DONE: count.
-
 ## Closed
 
 - ✅ R1: line 2711 is at interp()'s cg_exit — runs once. NOT hot. No edit.
@@ -127,6 +103,16 @@ DONE: count.
   + comparison.  300 ms / 100K ops = 3 µs per op.  Most of that
   is String hash + comparison (Pharo's String>>hash iterates
   per character).  Inlining hash would be substantial work.
+- ✅ R72: redundant SP loads at every bytecode emit is real but
+  requires cross-bytecode register liveness tracking — substantial
+  asmjit-T1 refactor.  Skipping.
+- ✅ R73: OFF_TEMPBASE is read in many push/pop temp bytecodes;
+  J2J return prelude write is genuinely needed.
+- ✅ R74: sieve x100 uses Pharo's built-in `100 benchmark` —
+  same impl on Cog.  Fair comparison.  We're at 8ms vs Cog 10ms.
+- ✅ R75: dispatchCached emit is 11 instructions, miss is 9.
+  Both could shave 1-2 via stp pairs but only fires ~14% of
+  sends.  Marginal ~2ms gain.  Skipping.
 - ✅ **R71 (fullGC phase timing)**: per-fullGC phase costs:
     prep:    1-10 µs    (negligible)
     clear:   ~2 ms      (6% — clears mark+grey bits, linear scan)
