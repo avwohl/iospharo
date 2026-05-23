@@ -796,19 +796,20 @@ for future debugging.
 
 After multiple rounds of analysis and attempts, the session shipped
 a substantial bench-suite improvement via correct method-level
-inlining:
+inlining.  **A/B verified with same image, same hardware, same
+setup, 3-run avg:**
 
-    metric                          original     after F3-NL fixes
-    ------------------------------ ----------   ------------------
-    bench-suite SUM                  1468 ms          1221 ms
-                                                      (-247 ms, -17%)
-    fib(28)                           108 ms            71 ms (-34%)
-    sort 100K                         315 ms           282 ms (-10%)
-    dict 50K                          222 ms           178 ms (-20%)
-    select 10x100K                    273 ms           195 ms (-29%)
-    tinyBenchmarks sends/sec         94 M/s          138 M/s (+47%)
+    metric                          pre-session     after F3-NL fixes
+    ------------------------------ -------------   ------------------
+    bench-suite SUM                  1633 ms             1216 ms
+                                                         (-417 ms, -25.5%)
+    fib(28)                           108 ms              71 ms (-34%)
+    sort 100K                         315 ms             282 ms (-10%)
+    dict 50K                          222 ms             178 ms (-20%)
+    select 10x100K                    273 ms             195 ms (-29%)
+    tinyBenchmarks sends/sec         94 M/s            138 M/s (+47%)
 
-    gap to Cog (~136 ms)              11×              8.9×
+    gap to Cog (~136 ms)              12×                 8.9×
 
 Commits in this session:
 - `c9679589` F3-NL2: state restore in return prelude.
