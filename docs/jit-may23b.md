@@ -67,12 +67,6 @@ ACTION: extend the inline-prim emit to handle one more case.
 Choose the most common one not yet inlined.
 DONE: commit OR finding documented.
 
-### R57 — Check if sieve x100's 8ms can be measured below 1ms granularity
-
-ACTION: bench script uses Time>>millisecondsToRun:.  Sub-ms
-sieve runs would just show as 0 or 1.  Verify granularity.
-DONE: explanation in doc.
-
 ### R58 — Look for any unused or dead code paths in step()
 
 ACTION: scan step()'s bytecode dispatch table.  Any cases that
@@ -121,6 +115,9 @@ DONE: scripts/Makefile has `bench` target.
 - ✅ R36/R37: IC walk depth tuning is risky; existing 3-slot
   walk is a good balance per past A/B work.  Reordering
   dispatch checks would need careful measurement.  Skipping.
+- ✅ R57: sieve x100 uses `100 benchmark` (built-in Sieve)
+  measured via Time>>millisecondsToRun: (1ms granularity).  Our
+  8ms vs Cog 10ms is within measurement noise.
 - ✅ R56: bench-suite throughput now **69M sends/sec, 45M
   bytecodes/sec**.  At 3GHz CPU = ~45 cycles per send.  Cog is
   ~3× faster per send.  Main gap remains in block-value
