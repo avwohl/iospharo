@@ -105,6 +105,22 @@ Save ~20 cycles per allocation.  ~500K allocs/bench-suite.
 Each ~1 day to add + measure.
 **Gain**: 5-15ms per selector.  **Effort**: 5+ days total.
 
+## Cross-session candidates verified 2026-05-23
+
+Tried these existing opt-in env vars with clean post-getenv-fix
+baseline.  None unlocks real wins:
+
+| Flag | Result |
+|---|---|
+| `PHARO_T1_IC_POLY_WALK=1` (Step 4) | No effect (R69) |
+| `PHARO_T1_INLINE_BLOCK_VALUE=1` (F3) | +2-3% slower, no gain |
+| `PHARO_T1_EAGER_BLOCK_COMPILE=1` | +3% slower (cold compile) |
+| gcHeadroom 32→128MB (Q24) | Mixed: collect win + select loss |
+
+Conclusion: ALL remaining session-scope flag-flips have been
+verified.  Further gains require genuine multi-day code work
+(F1-F5 above).
+
 ## Closed
 
 - ✅ R1: line 2711 is at interp()'s cg_exit — runs once. NOT hot. No edit.
