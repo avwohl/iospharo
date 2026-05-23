@@ -404,7 +404,18 @@ The remaining gap to Cog is mostly in:
   default-on.  Multi-day.
 - **F4** (Eden bump-allocate inline): not attempted; multi-day.
 - **F5** (more inline-emit selectors): partial — added SmI mul
-  (primKind 9) inline emit at R80.  More selectors remain.
+  (primKind 9) at R80 + == (primKind 10) at R81.  More selectors
+  remain.
+
+## Session ceiling reached
+
+After 35 commits in this session, bench-suite is halved
+(3.7→1.6s).  The remaining F1-F4 work is genuinely 1-2 weeks
+each per the doc.  Cannot be completed in a single /goal turn
+without major risk.
+
+Session-scope wins captured.  Real next steps require a
+dedicated multi-day F-work session focused on one F at a time.
 
 ## Bench-suite tracking
 
