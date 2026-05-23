@@ -1523,24 +1523,9 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     // (0x5E) or BlockReturnNil (0x5D) — those are non-local returns,
     // and the BV inline doesn't push a savedFrame for the block, so
     // interp's NLR chain walk can't find the home method's frame.
-    // Bisected as the root cause of the fib(15) non-leaf hang
-    // (cascading DNUs on #to:do: in Array>>do:).
-    {
-        auto* blkObj =
-            reinterpret_cast<pharo::ObjectHeader*>(compiledBlockBits);
-        Oop blkHdr = blkObj->slotAt(0);
-        int blkNumLits = blkHdr.isSmallInteger()
-            ? (int)(blkHdr.asSmallInteger() & 0x7FFF) : 0;
-        uint8_t* bcStart = blkObj->bytes() + (1 + blkNumLits) * 8;
-        size_t bcLen = blkObj->byteSize() - (1 + blkNumLits) * 8;
-        for (size_t i = 0; i < bcLen; i++) {
-            uint8_t op = bcStart[i];
-            if (op == 0x5D || op == 0x5E) {  // BlockReturnNil/Top
-                g_bvBail_canBail++;  // reuse counter
-                return nullptr;
-            }
-        }
-    }
+    // Pre-computed at JIT-compile time in blockJM->hasNLR; one bit
+    // check at the call site, no per-call bytecode scan.
+    if (blockJM->hasNLR) { g_bvBail_canBail++; return nullptr; }
 
     // Save stack space check.
     if ((uintptr_t)s->j2jSaveCursor >= (uintptr_t)s->j2jSaveLimit)

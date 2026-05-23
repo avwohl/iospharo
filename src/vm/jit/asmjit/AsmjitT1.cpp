@@ -5951,6 +5951,19 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             }
         }
         jm->canBailMidMethod = hasCondJump;
+        // F3-NL3: detect non-local return (BlockReturnNil 0x5D /
+        // BlockReturnTop 0x5E) at compile time so the BV inline prep
+        // can skip the per-call bytecode scan.
+        {
+            bool nlr = false;
+            if (isReal) {
+                for (size_t i = 0; i < bcLen; i++) {
+                    uint8_t op = bc[i];
+                    if (op == 0x5D || op == 0x5E) { nlr = true; break; }
+                }
+            }
+            jm->hasNLR = nlr;
+        }
         // g_debug.t1ForceBailMid (set by PHARO_T1_FORCE_BAIL_MID or
         // PHARO_T1_FORCE_SIMPLE) — force canBailMidMethod on every
         // method to disable the chain-loop inline-activate fast path.

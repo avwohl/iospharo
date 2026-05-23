@@ -191,6 +191,10 @@ struct JITMethod {
     bool        isSpliceTarget;     // SistaRuntime registered a splice for this method —
                                     // stencils must skip executionCount bumps to avoid the
                                     // T1-vs-Sista race (project_t1_vs_sista_race).
+    bool        hasNLR;             // F3-NL3: contains 0x5D/0x5E (BlockReturnNil/Top).
+                                    // Computed at JIT-compile time, checked by
+                                    // jit_rt_inline_block_value_prep to refuse BV
+                                    // inline for blocks with non-local return.
     bool        canBailMidMethod;   // Emits ExitMustBool (and similar) mid-body.  The chain-loop
                                     // inline-activate path at Interpreter.cpp:18807-18809 invokes
                                     // a callee without pushing a C++ frame; a mid-method bail
