@@ -450,6 +450,7 @@ struct DebugSettings {
     bool sistaAllowArrayDoHelper = false;          // PHARO_SISTA_ALLOW_ARRAYDO_HELPER
     bool sistaAsmjitLog = false;                   // PHARO_SISTA_ASMJIT_LOG
     bool sistaAtPeephole = false;                  // PHARO_SISTA_AT_PEEPHOLE
+    bool sistaBailLog = false;                     // PHARO_SISTA_BAIL_LOG (W10)
     bool sistaBlockBail = false;                   // PHARO_SISTA_BLOCK_BAIL
     bool sistaBlockHelperTrace = false;            // PHARO_SISTA_BLOCK_HELPER_TRACE
     bool sistaCollectResumeForceBail = false;      // PHARO_SISTA_COLLECT_RESUME_FORCE_BAIL

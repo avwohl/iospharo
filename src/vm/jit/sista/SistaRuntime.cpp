@@ -10,6 +10,15 @@
 namespace pharo {
 namespace sista {
 
+// W10 bail-reason counters.  Dumped at exit when PHARO_SISTA_BAIL_LOG=1.
+extern "C" uint64_t g_sistaCompile_ok        = 0;
+extern "C" uint64_t g_sistaBail_liftFail     = 0;
+extern "C" uint64_t g_sistaBail_arrayDoHelper = 0;
+extern "C" uint64_t g_sistaBail_sendNoSplice  = 0;
+extern "C" uint64_t g_sistaBail_bailOnlyPrim  = 0;
+extern "C" uint64_t g_sistaBail_bailOnlySel   = 0;
+extern "C" uint64_t g_sistaBail_lowerFail     = 0;
+
 Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
                                        const std::vector<InlineHint>* hints,
                                        uint32_t startBcOffset) {
@@ -141,6 +150,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         ? Builder::buildWithHints(method, memory, m, hints, &failedBc)
         : Builder::build(method, memory, m, &failedBc);
     if (r != LiftResult::kOk) {
+        g_sistaBail_liftFail++;
         cache_[key] = nullptr;  // negative cache
         return nullptr;
     }
@@ -168,6 +178,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     bool hasSend   = false;
     bool hasArrayDoSplice = false;  // kCountedLoopArrayDoAccum or kCountedLoopDo
     bool hasSendCallHelper = false;
+    bool hasInlinedSend = false;  // W11: kInlineSend / kSendInlineSelf present.
     for (const auto& v : m.values) {
         if (v.op == Op::kCountedLoopDo
          || v.op == Op::kCountedLoopInjectInto
@@ -193,6 +204,10 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         if (v.op == Op::kSendCallHelper) {
             hasSendCallHelper = true;
         }
+        if (v.op == Op::kInlineSend
+         || v.op == Op::kSendInlineSelf) {
+            hasInlinedSend = true;
+        }
     }
 
     // 2026-05-02: tried to disable this gate after fixing stale
@@ -207,6 +222,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // PHARO_SISTA_ALLOW_ARRAYDO_HELPER=1 for diagnosis or workloads
     // that don't trigger the bench-suite-context corruption.
     if (hasArrayDoSplice && hasSendCallHelper && !g_debug.sistaAllowArrayDoHelper) {
+        g_sistaBail_arrayDoHelper++;
         cache_[key] = nullptr;
         return nullptr;
     }
@@ -220,7 +236,14 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // returning nullptr; the dispatch hook checks `fn != nullptr`.
     //
     // Opt-out: PHARO_SISTA_COMPILE_BAIL_ONLY=1 (for diagnosis).
-    if (hasSend && !hasSplice && !g_debug.sistaCompileBailOnly) {
+    // W11: lift the gate for methods that have at least one inlined send
+    // (kInlineSend / kSendInlineSelf).  Those sends DON'T bail to
+    // interp — they run within Sista — so Sista compile can be
+    // worth its overhead even if other sends in the same method are
+    // unspeculated.  Opt-out: PHARO_SISTA_STRICT_SEND_NO_SPLICE=1.
+    if (hasSend && !hasSplice && !hasInlinedSend
+        && !g_debug.sistaCompileBailOnly) {
+        g_sistaBail_sendNoSplice++;
         cache_[key] = nullptr;
         return nullptr;
     }
@@ -240,6 +263,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         if (hdrOop.isSmallInteger()) {
             int64_t hb = hdrOop.asSmallInteger();
             if ((hb >> 16) & 1) {  // hasPrimitive
+                g_sistaBail_bailOnlyPrim++;
                 cache_[key] = nullptr;
                 return nullptr;
             }
@@ -258,6 +282,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
                 || sel == "forkAt:" || sel == "schedule"
                 || sel == "terminate" || sel == "suspendActiveProcess"
                 || sel == "yield" || sel == "wait") {
+                g_sistaBail_bailOnlySel++;
                 cache_[key] = nullptr;
                 return nullptr;
             }
@@ -267,6 +292,8 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // Lower IR → native.
     uint32_t failedVal = UINT32_MAX;
     Lowering::CompiledFn fn = lowering_.lower(m, &failedVal, bytecodes);
+    if (!fn) g_sistaBail_lowerFail++;
+    else     g_sistaCompile_ok++;
     if (hasSplice && fn) {
         // Mark method as Sista-owned: JITRuntime::noteMethodEntry will
         // skip counting this method, preventing T1 from compiling it

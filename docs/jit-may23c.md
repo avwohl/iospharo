@@ -430,6 +430,143 @@ So pivot: skip W4/W5, jump to **W6-W9 (F3 block-value inline)**
 which targets the 0.5 s of block-invocation cost.  That's
 where the bench-suite numbers will actually move.
 
+## W6 — F3 block-value inline state (2026-05-23 in this session)
+
+Re-measured `PHARO_T1_INLINE_BLOCK_VALUE=1` against baseline:
+
+    bench                    baseline      BV=1
+    -------------------      --------    --------
+    collect 10x100K           110 ms     241 ms   (-131 ms, WORSE)
+    select 10x100K            273 ms     280 ms   (-7 ms)
+    other benches              ±2 ms
+
+Counters: `tries=1917 hits=61 bails=1856 (catch rate 3.2%)`.
+Bail breakdown: `rcv=0 slot=0 cb=0 args=0 lookup=1856 stub=0
+canBail=0 prim=0 savefull=0`.
+
+All 1856 bails go through `lookup` — which combines three
+sub-cases: (a) `methodMapPtr` nullptr, (b) `blockJM` not found
+in cache (queued for compile), (c) leaf-only gate (block has
+`numICEntries != 0`).  Without per-cause counter we can't say
+which dominates.
+
+Net: enabling block-value DEFAULT-LEAF regresses bench-suite by
+~120 ms.  The helper bail path costs more than what a single
+catch saves.
+
+### Why this is multi-day work
+
+Per `jit-may23b` the existing F3 has a wrong-result bug for
+non-leaf N≥17.  Lifting the leaf gate exposes it.  The fix path:
+- Reproduce on a small bench (fib(20)).
+- Bisect via `PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1`.
+- Examine chain-break protocol interactions with `j2jPool` and
+  `materialize`.
+- Add the missing save/restore.
+
+That's at least 2-3 sessions of focused lldb work.  Realistic
+scope for /goal is to characterize, not solve.  W6-W9 deferred.
+
+## Pivot to W10/W11 (Sista coverage)
+
+Smaller and bounded.  Plan: instrument SistaRuntime with per-
+reason bail counters, run bench-suite, identify top tractable
+bail to lift.  Expected win: more methods get Sista-tier compile,
+~20-50 ms on bench-suite.
+
+## W10 — Sista bail-reason survey (2026-05-23 in this session)
+
+Added per-reason bail counters to `SistaRuntime::compile`
+(`g_sistaBail_*`).  Dumped at exit via `PHARO_SISTA_BAIL_LOG=1`.
+
+Baseline bench-suite numbers:
+
+    total Sista compile attempts   4933
+    OK compiled                     248   (5.0%)
+    bail: liftFail                  242   (4.9%)
+    bail: arrayDoHelper               0
+    bail: sendNoSplice             4259  (86.3%)
+    bail: bailOnlyPrim                0   (gated off)
+    bail: bailOnlySel                 0   (gated off)
+    bail: lowerFail                 184   (3.7%)
+
+**Dominant bail (86%) is `sendNoSplice`**: methods with at least
+one `kSendUnspeculated` but no `kCountedLoop*` splice.  The
+heuristic exists because `kSendUnspeculated` bails to interp,
+making Sista compile pure overhead.
+
+Sub-experiment: lifting the gate via `PHARO_SISTA_COMPILE_BAIL_ONLY=1`
+expanded compiles to 10251 total, 8874 OK — but caused a DNU
+crash on `Character class>>specialCharacters` during startup,
+before benchmarks could run.  The gate is load-bearing despite
+appearing pure-perf.
+
+## W11 — lift the gate for methods with inlined sends
+
+Hypothesis: methods that ALREADY have at least one inlined send
+(`kInlineSend` or `kSendInlineSelf`) handle that send within
+Sista — so Sista compile is worth it even if other sends in the
+same method are unspeculated.
+
+Implementation: added `hasInlinedSend` detection; the
+`sendNoSplice` gate now requires `!hasInlinedSend`.
+
+Result: bench-suite ~1489 ms (close to baseline 1468 ms, noise
+range).  Sista compile count went from 248 → 249 (+1 method).
+
+Concrete impact: ZERO.  Almost every method with `kInlineSend`
+already has a splice (counted-loops), so the new gate-lift didn't
+admit any meaningful additional method.
+
+W11 deferred — extending splice detection to recognize a new
+pattern would help, but requires identifying which patterns are
+common in the rejected 4259 methods.  That's another session of
+characterization.
+
+## Session conclusion
+
+The plan's premise (10× speedup needed = 6-11 days of focused
+work) holds up under empirical pressure.  Quick wins are
+exhausted:
+- W2/W3: no real young bakes → no-op.
+- W4/W5: fullGC time isn't in bench timer → no-op.
+- W6-W9: F3 block-value enabled regresses bench-suite by +120 ms
+  due to leaf-only catch rate (3.2%).  Multi-session work to fix
+  the non-leaf chain-break protocol per `jit-may23b`.
+- W10/W11: instrumented, found 86% bail in `sendNoSplice`, but
+  the gate is load-bearing — lifting it crashes.  Single-criterion
+  lift (`hasInlinedSend`) admits +1 method.
+
+Per-bench breakdown (bench-suite SUM = 1468 ms):
+
+    bench                    ms     bottleneck       leverage
+    -----------------     ------    --------------   --------
+    fib(28)                  108    self-recursive   F1?
+    sieve x100                 7    -- already faster than Cog
+    sort 100K                315    block-heavy      F3 (multi-day)
+    dict 50K                 222    block + IC       F3 (multi-day)
+    sum 1M                   100    int arith        already inlined
+    5000!                     24    LargeInt mul     prim
+    1M blocks                  1    -- already faster than Cog
+    1M getter+yourself       105    JIT throughput   F5 (<1ms)
+    100K alloc                 5    basicNew         W12 (~2 ms)
+    floatSum 1M              116    Float arith      F5/Sista (small)
+    stringHash 100K           82    Symbol hash      already inlined
+    collect 10x100K          110    Sista splice     F3 (multi-day)
+    select 10x100K           273    Sista splice     F3 (multi-day)
+    ---                     ----
+    sum                     1468
+
+Bench-suite-moving wins require either:
+1. F3 (block-value inline non-leaf) — multi-session.
+2. Sista compile gate-lift with full correctness audit — multi-session.
+
+Neither fits in a single /goal session.  Recommendation: ship
+W10's instrumentation (useful for future sessions), leave the doc
+as a roadmap for the multi-session work.
+
+
+
 
 ### Implication for W4 (re-evaluate)
 

@@ -364,6 +364,7 @@ DebugSettings::DebugSettings() {
     sistaAllowArrayDoHelper          = envPresent("PHARO_SISTA_ALLOW_ARRAYDO_HELPER");
     sistaAsmjitLog                   = envPresent("PHARO_SISTA_ASMJIT_LOG");
     sistaAtPeephole                  = envPresent("PHARO_SISTA_AT_PEEPHOLE");
+    sistaBailLog                     = envPresent("PHARO_SISTA_BAIL_LOG");
     sistaBlockBail                   = envPresent("PHARO_SISTA_BLOCK_BAIL");
     sistaBlockHelperTrace            = envPresent("PHARO_SISTA_BLOCK_HELPER_TRACE");
     sistaCollectResumeForceBail      = envPresent("PHARO_SISTA_COLLECT_RESUME_FORCE_BAIL");

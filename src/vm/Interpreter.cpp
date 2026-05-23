@@ -112,6 +112,14 @@ extern "C" uint64_t g_primBasicNew_hits;
 extern "C" uint64_t g_primBasicNewZero_hits;
 extern "C" uint64_t g_primBasicNew_bails;
 extern "C" uint64_t g_sistaSelfRec_attempts;
+// W10 Sista bail-reason counters (PHARO_SISTA_BAIL_LOG=1).
+extern "C" uint64_t g_sistaCompile_ok;
+extern "C" uint64_t g_sistaBail_liftFail;
+extern "C" uint64_t g_sistaBail_arrayDoHelper;
+extern "C" uint64_t g_sistaBail_sendNoSplice;
+extern "C" uint64_t g_sistaBail_bailOnlyPrim;
+extern "C" uint64_t g_sistaBail_bailOnlySel;
+extern "C" uint64_t g_sistaBail_lowerFail;
 extern "C" uint64_t g_sistaSelfRec_hits;
 extern "C" uint64_t g_bcFloatArith_hits;
 extern "C" uint64_t g_bcArithBail_hits;
@@ -1509,6 +1517,27 @@ void Interpreter::dumpJITStats() {
     if (g_xmethod_count > 0) {
         fprintf(stderr, "  xmethod inline-J2J fires=%llu\n",
                 (unsigned long long)g_xmethod_count);
+    }
+    // W10 Sista bail-reason survey (PHARO_SISTA_BAIL_LOG=1).
+    if (g_debug.sistaBailLog) {
+        uint64_t totalAttempts = g_sistaCompile_ok + g_sistaBail_liftFail
+                               + g_sistaBail_arrayDoHelper
+                               + g_sistaBail_sendNoSplice
+                               + g_sistaBail_bailOnlyPrim
+                               + g_sistaBail_bailOnlySel
+                               + g_sistaBail_lowerFail;
+        fprintf(stderr,
+            "  sista compile: total=%llu ok=%llu  bails: liftFail=%llu "
+            "arrayDoHelper=%llu sendNoSplice=%llu bailOnlyPrim=%llu "
+            "bailOnlySel=%llu lowerFail=%llu\n",
+            (unsigned long long)totalAttempts,
+            (unsigned long long)g_sistaCompile_ok,
+            (unsigned long long)g_sistaBail_liftFail,
+            (unsigned long long)g_sistaBail_arrayDoHelper,
+            (unsigned long long)g_sistaBail_sendNoSplice,
+            (unsigned long long)g_sistaBail_bailOnlyPrim,
+            (unsigned long long)g_sistaBail_bailOnlySel,
+            (unsigned long long)g_sistaBail_lowerFail);
     }
     if (g_debug.primProfile) {
         // Sort primitive call counts descending and print top 30.
