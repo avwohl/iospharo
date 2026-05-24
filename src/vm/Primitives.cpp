@@ -3731,6 +3731,182 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
         }
     }
 
+    // Fast path: 1-arg `Collection>>inject:into:` outer iter block.
+    // Body (10 bytes):
+    //   0x41 (PushTemp 1 — binaryBlock, first copied)
+    //   0xFB N M (PushTempAtInVec — read nextValue from tempVec)
+    //   0x40 (PushTemp 0 — each, the arg)
+    //   0xA0+L (Send2 literal L — must be #value:value:)
+    //   0xFC N M (StoreTempAtInVec — write result back)
+    //   0x5C/0x5E (return)
+    //
+    // Also requires binaryBlock to match one of our known 4-byte
+    // patterns so we can inline its body too — otherwise we'd need
+    // a recursive call to primitiveFullClosureValue which may
+    // activate a frame, transferring control out of our fast path.
+    //
+    // Currently supports binaryBlock = `[:s :i | s + i]` (SmI+SmI add)
+    // for the `sum 1M` bench, and `[:s :i | s + i asFloat]` for
+    // floatSum.  Saves the outer iter block activation (~50 ns per
+    // iter) on top of the inner block's optimization.
+    if (argCount == 1) {
+        // Read the outer closure: stack[-2] (sp-2 = closure, sp-1 = each)
+        Oop outerClosure = stackValue(1);
+        Oop each = stackValue(0);
+        // Pattern check on outer closure's compiledBlock.
+        Oop outerCB = memory_.fetchPointerUnchecked(1, outerClosure);
+        if (outerCB.isObject() && outerCB.rawBits() > 0x10000) {
+            ObjectHeader* outerCBObj = outerCB.asObjectPtr();
+            Oop outerHdr = memory_.fetchPointerUnchecked(0, outerCB);
+            if (outerHdr.isSmallInteger()) {
+                int outerNumLits = (int)(outerHdr.asSmallInteger() & 0x7FFF);
+                size_t outerBcStart = (1 + outerNumLits) * 8;
+                size_t outerTotal = outerCBObj->byteSize();
+                if (outerTotal >= outerBcStart + 10) {
+                    const uint8_t* obc = outerCBObj->bytes() + outerBcStart;
+                    // Outer iter pattern:
+                    //   0x41, 0xFB N M, 0x40, 0xA0+L, 0xFC N M, return
+                    if (obc[0] == 0x41
+                            && obc[1] == 0xFB
+                            && obc[4] == 0x40
+                            && obc[5] >= 0xA0 && obc[5] <= 0xAF
+                            && obc[6] == 0xFC
+                            && obc[2] == obc[7]   // same slot
+                            && obc[3] == obc[8]   // same temp
+                            && (obc[9] == 0x5C || obc[9] == 0x5E)) {
+                        int litIdx = obc[5] - 0xA0;
+                        if (litIdx < outerNumLits) {
+                            Oop outerSel = memory_.fetchPointerUnchecked(
+                                1 + litIdx, outerCB);
+                            // Check literal is #value:value: (12 bytes).
+                            if (outerSel.isObject() && outerSel.rawBits() > 0x10000) {
+                                ObjectHeader* selObj = outerSel.asObjectPtr();
+                                if (selObj->isBytesObject()
+                                        && selObj->byteSize() == 12) {
+                                    const uint8_t* sb = selObj->bytes();
+                                    if (sb[0] == 'v' && sb[1] == 'a'
+                                            && sb[2] == 'l' && sb[3] == 'u'
+                                            && sb[4] == 'e' && sb[5] == ':'
+                                            && sb[6] == 'v' && sb[7] == 'a'
+                                            && sb[8] == 'l' && sb[9] == 'u'
+                                            && sb[10] == 'e' && sb[11] == ':') {
+                                        // Outer iter pattern confirmed.
+                                        int slotN = obc[2];
+                                        // Closure->slot 4 = binaryBlock,
+                                        // closure->slot 5 = tempVec.
+                                        Oop binaryBlock = memory_.fetchPointerUnchecked(
+                                            4, outerClosure);
+                                        Oop tempVec = memory_.fetchPointerUnchecked(
+                                            5, outerClosure);
+                                        if (binaryBlock.isObject()
+                                                && tempVec.isObject()
+                                                && tempVec.rawBits() > 0x10000) {
+                                            ObjectHeader* vecObj = tempVec.asObjectPtr();
+                                            if (slotN >= 0
+                                                    && (size_t)slotN < vecObj->slotCount()) {
+                                                Oop nextValue = memory_.fetchPointerUnchecked(
+                                                    slotN, tempVec);
+                                                // Now check binaryBlock's body.
+                                                Oop bbCB = memory_.fetchPointerUnchecked(
+                                                    1, binaryBlock);
+                                                if (bbCB.isObject() && bbCB.rawBits() > 0x10000) {
+                                                    ObjectHeader* bbCBObj = bbCB.asObjectPtr();
+                                                    Oop bbHdr = memory_.fetchPointerUnchecked(
+                                                        0, bbCB);
+                                                    if (bbHdr.isSmallInteger()) {
+                                                        int64_t bbHdrBits = bbHdr.asSmallInteger();
+                                                        int bbNumArgs = (bbHdrBits >> 24) & 0x0F;
+                                                        int bbNumLits = bbHdrBits & 0x7FFF;
+                                                        if (bbNumArgs == 2) {
+                                                            size_t bbBcStart = (1 + bbNumLits) * 8;
+                                                            size_t bbTotal = bbCBObj->byteSize();
+                                                            if (bbTotal >= bbBcStart + 4) {
+                                                                const uint8_t* bbBc =
+                                                                    bbCBObj->bytes() + bbBcStart;
+                                                                // SmI/SmI add pattern (4 bytes):
+                                                                //   0x40, 0x41, 0x60 (+), return
+                                                                if (bbBc[0] == 0x40
+                                                                        && bbBc[1] == 0x41
+                                                                        && bbBc[2] == 0x60
+                                                                        && (bbBc[3] == 0x5C
+                                                                            || bbBc[3] == 0x5E)) {
+                                                                    if (nextValue.isSmallInteger()
+                                                                            && each.isSmallInteger()) {
+                                                                        int64_t r =
+                                                                            nextValue.asSmallInteger()
+                                                                            + each.asSmallInteger();
+                                                                        if (r >= Oop::smallIntegerMin()
+                                                                                && r <= Oop::smallIntegerMax()) {
+                                                                            Oop result = Oop::fromSmallInteger(r);
+                                                                            memory_.storePointer(
+                                                                                slotN, tempVec, result);
+                                                                            pop();  // pop each
+                                                                            *(stackPointer_ - 1) = result;
+                                                                            return PrimitiveResult::Success;
+                                                                        }
+                                                                    }
+                                                                }
+                                                                // Float-accumulator pattern (5 bytes):
+                                                                //   0x40, 0x41, Send0 #asFloat, 0x60 (+), return
+                                                                if (bbTotal >= bbBcStart + 5
+                                                                        && bbBc[0] == 0x40
+                                                                        && bbBc[1] == 0x41
+                                                                        && bbBc[2] >= 0x80
+                                                                        && bbBc[2] <= 0x8F
+                                                                        && bbBc[3] == 0x60
+                                                                        && (bbBc[4] == 0x5C
+                                                                            || bbBc[4] == 0x5E)) {
+                                                                    int innerLitIdx = bbBc[2] - 0x80;
+                                                                    if (innerLitIdx < bbNumLits
+                                                                            && nextValue.isSmallFloat()
+                                                                            && each.isSmallInteger()) {
+                                                                        Oop innerSel =
+                                                                            memory_.fetchPointerUnchecked(
+                                                                                1 + innerLitIdx, bbCB);
+                                                                        if (innerSel.isObject()
+                                                                                && innerSel.rawBits() > 0x10000) {
+                                                                            ObjectHeader* iso = innerSel.asObjectPtr();
+                                                                            if (iso->isBytesObject()
+                                                                                    && iso->byteSize() == 7) {
+                                                                                const uint8_t* ib = iso->bytes();
+                                                                                if (ib[0] == 'a' && ib[1] == 's'
+                                                                                        && ib[2] == 'F' && ib[3] == 'l'
+                                                                                        && ib[4] == 'o' && ib[5] == 'a'
+                                                                                        && ib[6] == 't') {
+                                                                                    double iv = (double)
+                                                                                        each.asSmallInteger();
+                                                                                    double sv =
+                                                                                        nextValue.asSmallFloat();
+                                                                                    double rv = sv + iv;
+                                                                                    Oop result;
+                                                                                    if (Oop::tryFromSmallFloat(rv, result)) {
+                                                                                        memory_.storePointer(
+                                                                                            slotN, tempVec, result);
+                                                                                        pop();
+                                                                                        *(stackPointer_ - 1) = result;
+                                                                                        return PrimitiveResult::Success;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Fast path: 1-arg block `[:x | x SEND]` (0-arg send to literal
     // selector).  Body: PushTemp 0; Send0 literal N; return.  Pops
     // the closure and re-dispatches to selector(N) with arg as
