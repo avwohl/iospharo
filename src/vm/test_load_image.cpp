@@ -550,8 +550,14 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
         if (g_jitCodeZone) {
             auto* m = g_jitCodeZone->findMethodByPC(pc);
             if (m) {
-                fprintf(stderr, "[CRASH] JIT method: oop=0x%llx codeStart=%p codeSize=%u "
+                std::string sel = "?";
+                if (gTestInterpreter) {
+                    pharo::Oop methOop = pharo::Oop::fromRawBits(m->compiledMethodOop);
+                    sel = gTestInterpreter->memory().selectorOf(methOop);
+                }
+                fprintf(stderr, "[CRASH] JIT method: sel=#%s oop=0x%llx codeStart=%p codeSize=%u "
                         "numBC=%u numIC=%u offsetInCode=%lld\n",
+                        sel.c_str(),
                         (unsigned long long)m->compiledMethodOop,
                         (void*)m->codeStart(), m->codeSize,
                         m->numBytecodes, m->numICEntries,
