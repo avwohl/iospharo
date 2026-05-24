@@ -3568,6 +3568,87 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
         }
     }
 
+    // Fast path: 1-arg block `[:x | x arithOp K]` for SmallInteger
+    // arg and SmI literal.  Body: PushTemp 0; PushLitConst N;
+    // ArithSend; return.  Saves block activation on workloads like
+    // `(1 to: N) collect: [:x | x * 2]`.
+    if (argCount == 1) {
+        Oop arg = stackValue(0);
+        if (arg.isSmallInteger()) {
+            Oop compiledBlock = memory_.fetchPointerUnchecked(1, closure);
+            if (compiledBlock.isObject() && compiledBlock.rawBits() > 0x10000) {
+                ObjectHeader* blockObj = compiledBlock.asObjectPtr();
+                Oop hdr = memory_.fetchPointerUnchecked(0, compiledBlock);
+                if (hdr.isSmallInteger()) {
+                    int numLits = (int)(hdr.asSmallInteger() & 0x7FFF);
+                    size_t bcStart = (1 + numLits) * 8;
+                    size_t totalBytes = blockObj->byteSize();
+                    if (totalBytes >= bcStart + 4) {
+                        const uint8_t* bc = blockObj->bytes() + bcStart;
+                        // Pattern: PushTemp 0 (0x40); PushLitConst N
+                        // (0x20-0x3F, N in low 5 bits); ArithSend; return.
+                        if (bc[0] == 0x40
+                                && bc[1] >= 0x20 && bc[1] <= 0x3F
+                                && bc[2] >= 0x60 && bc[2] <= 0x6F
+                                && (bc[3] == 0x5C || bc[3] == 0x5E)) {
+                            int litIdx = bc[1] - 0x20;
+                            if (litIdx < numLits) {
+                                Oop lit = memory_.fetchPointerUnchecked(
+                                    1 + litIdx, compiledBlock);
+                                if (lit.isSmallInteger()) {
+                                    int op = bc[2] - 0x60;
+                                    int64_t av = arg.asSmallInteger();
+                                    int64_t bv = lit.asSmallInteger();
+                                    Oop result;
+                                    bool fired = true;
+                                    switch (op) {
+                                        case 0: {
+                                            int64_t r = av + bv;
+                                            if (r >= Oop::smallIntegerMin()
+                                                    && r <= Oop::smallIntegerMax())
+                                                result = Oop::fromSmallInteger(r);
+                                            else fired = false;
+                                            break;
+                                        }
+                                        case 1: {
+                                            int64_t r = av - bv;
+                                            if (r >= Oop::smallIntegerMin()
+                                                    && r <= Oop::smallIntegerMax())
+                                                result = Oop::fromSmallInteger(r);
+                                            else fired = false;
+                                            break;
+                                        }
+                                        case 2: result = av < bv ? memory_.trueObject() : memory_.falseObject(); break;
+                                        case 3: result = av > bv ? memory_.trueObject() : memory_.falseObject(); break;
+                                        case 4: result = av <= bv ? memory_.trueObject() : memory_.falseObject(); break;
+                                        case 5: result = av >= bv ? memory_.trueObject() : memory_.falseObject(); break;
+                                        case 6: result = av == bv ? memory_.trueObject() : memory_.falseObject(); break;
+                                        case 7: result = av != bv ? memory_.trueObject() : memory_.falseObject(); break;
+                                        case 8: {
+                                            int64_t r;
+                                            if (__builtin_mul_overflow(av, bv, &r) ||
+                                                    r < Oop::smallIntegerMin() ||
+                                                    r > Oop::smallIntegerMax())
+                                                fired = false;
+                                            else result = Oop::fromSmallInteger(r);
+                                            break;
+                                        }
+                                        default: fired = false; break;
+                                    }
+                                    if (fired) {
+                                        pop();  // pop arg
+                                        *(stackPointer_ - 1) = result;  // replace closure
+                                        return PrimitiveResult::Success;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     activateBlock(closure, argCount);
     return PrimitiveResult::Success;
 }
