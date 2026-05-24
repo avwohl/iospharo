@@ -402,6 +402,26 @@ Added two new fast paths to commonSend's method-cache dispatch:
 Both fast paths require MethodCacheEntry field additions (evenOddKind,
 returnsLiteralKind) populated from detectTrivialMethod.
 
+## 2026-05-24 — floatSum: `[:s :i | s + i asFloat]` inline
+
+Detect the 5-byte block-body pattern for the Float-accumulator-with-
+SmI-step idiom and inline both the SmI→Float conversion and the
+Float add.  Stack: pops both args + closure, pushes the SmallFloat
+sum.  Encodes via Oop::tryFromSmallFloat which validates round-trip.
+
+Pattern requirements:
+- 2-arg block, no captures
+- body: PushTemp 0; PushTemp 1; Send0 lit (must be #asFloat); ArithSend +; return
+- arg0 must be SmallFloat, arg1 must be SmallInteger
+- result must fit in SmallFloat encoding
+
+Bench:
+```
+floatSum 1M:  191 ms → 115 ms  (-40%, 1.7×)
+```
+
+Cog gap: 27× → 16×.
+
 ## 2026-05-24 — Closure elimination: `[x := x op K] value`
 
 Detect when PushFullBlock is immediately followed by SpecialSend
