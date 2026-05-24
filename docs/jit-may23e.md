@@ -402,6 +402,31 @@ Added two new fast paths to commonSend's method-cache dispatch:
 Both fast paths require MethodCacheEntry field additions (evenOddKind,
 returnsLiteralKind) populated from detectTrivialMethod.
 
+## 2026-05-24 — Closure elimination: `[x := x op K] value`
+
+Detect when PushFullBlock is immediately followed by SpecialSend
+`value` (0x79) for a 0-arg block with 1 copied value and a body
+matching the 9-byte `[remote := remote op K]` pattern.  Skip the
+FullBlockClosure allocation, frame setup, and bytecode dispatch
+entirely — read the captured tempVec directly from the operand
+stack, compute the result inline, store back, advance IP past
+the send.
+
+Bench impact, "1M blocks" `[x := x + 1] value`:
+
+```
+before: 363-380 ms
+after:   29- 30 ms       -92% (12.9× speedup)
+```
+
+Cog gap on this bench: **75× → 6×**.
+
+This is the single biggest single-bench improvement of the session.
+The pattern is narrow but realistic — counter-increment closures
+appear in many "side-effect under loop" idioms.  Larger or more
+complex block bodies still need full closure allocation; I haven't
+added more patterns yet.
+
 ## 2026-05-24 — Cached primitive function pointer + 0-arg block fast path
 
 Two more small wins to round out the session:
