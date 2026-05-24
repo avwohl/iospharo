@@ -3663,6 +3663,74 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
         }
     }
 
+    // Fast path: 2-arg `[:s :i | s + i asFloat]` for SmallFloat
+    // accumulator + SmallInteger.  5-byte body:
+    //   0x40 (PushTemp 0 = s)
+    //   0x41 (PushTemp 1 = i)
+    //   0x80+N (Send0 literal N — must be #asFloat)
+    //   0x60 (ArithSend +)
+    //   0x5C/0x5E (return)
+    //
+    // Used by `inject: 0.0 into: [:s :i | s + i asFloat]` (floatSum
+    // bench, 1M iter).  Inlines the SmI→Float conversion and
+    // Float addition.
+    //
+    // Restricted to the specific shape because more general inner
+    // sends would need their own inline implementations.
+    if (argCount == 2) {
+        Oop s = stackValue(1);
+        Oop i = stackValue(0);
+        if (s.isSmallFloat() && i.isSmallInteger()) {
+            Oop compiledBlock = memory_.fetchPointerUnchecked(1, closure);
+            if (compiledBlock.isObject() && compiledBlock.rawBits() > 0x10000) {
+                ObjectHeader* blockObj = compiledBlock.asObjectPtr();
+                Oop hdr = memory_.fetchPointerUnchecked(0, compiledBlock);
+                if (hdr.isSmallInteger()) {
+                    int numLits = (int)(hdr.asSmallInteger() & 0x7FFF);
+                    size_t bcStart = (1 + numLits) * 8;
+                    size_t totalBytes = blockObj->byteSize();
+                    if (totalBytes >= bcStart + 5) {
+                        const uint8_t* bc = blockObj->bytes() + bcStart;
+                        if (bc[0] == 0x40 && bc[1] == 0x41
+                                && bc[2] >= 0x80 && bc[2] <= 0x8F
+                                && bc[3] == 0x60   // ArithSend + only for now
+                                && (bc[4] == 0x5C || bc[4] == 0x5E)) {
+                            int litIdx = bc[2] - 0x80;
+                            if (litIdx < numLits) {
+                                Oop sel = memory_.fetchPointerUnchecked(
+                                    1 + litIdx, compiledBlock);
+                                if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                    ObjectHeader* selObj = sel.asObjectPtr();
+                                    // Check that the literal is #asFloat
+                                    // (7 bytes: "asFloat").
+                                    if (selObj->isBytesObject()
+                                            && selObj->byteSize() == 7) {
+                                        const uint8_t* selBytes = selObj->bytes();
+                                        if (selBytes[0] == 'a' && selBytes[1] == 's'
+                                                && selBytes[2] == 'F' && selBytes[3] == 'l'
+                                                && selBytes[4] == 'o' && selBytes[5] == 'a'
+                                                && selBytes[6] == 't') {
+                                            // Inline: result = s + (double)i.
+                                            double iv = (double)i.asSmallInteger();
+                                            double sv = s.asSmallFloat();
+                                            double rv = sv + iv;
+                                            Oop result;
+                                            if (Oop::tryFromSmallFloat(rv, result)) {
+                                                popN(2);
+                                                *(stackPointer_ - 1) = result;
+                                                return PrimitiveResult::Success;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Fast path: 1-arg block `[:x | x SEND]` (0-arg send to literal
     // selector).  Body: PushTemp 0; Send0 literal N; return.  Pops
     // the closure and re-dispatches to selector(N) with arg as
