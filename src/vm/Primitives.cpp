@@ -3823,19 +3823,45 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                                                             if (bbTotal >= bbBcStart + 4) {
                                                                 const uint8_t* bbBc =
                                                                     bbCBObj->bytes() + bbBcStart;
-                                                                // SmI/SmI add pattern (4 bytes):
-                                                                //   0x40, 0x41, 0x60 (+), return
+                                                                // SmI/SmI arith pattern (4 bytes):
+                                                                //   0x40, 0x41, ArithSend, return.
                                                                 if (bbBc[0] == 0x40
                                                                         && bbBc[1] == 0x41
-                                                                        && bbBc[2] == 0x60
+                                                                        && bbBc[2] >= 0x60
+                                                                        && bbBc[2] <= 0x6F
                                                                         && (bbBc[3] == 0x5C
                                                                             || bbBc[3] == 0x5E)) {
                                                                     if (nextValue.isSmallInteger()
                                                                             && each.isSmallInteger()) {
-                                                                        int64_t r =
-                                                                            nextValue.asSmallInteger()
-                                                                            + each.asSmallInteger();
-                                                                        if (r >= Oop::smallIntegerMin()
+                                                                        int innerOp = bbBc[2] - 0x60;
+                                                                        int64_t nv = nextValue.asSmallInteger();
+                                                                        int64_t ev = each.asSmallInteger();
+                                                                        int64_t r = 0;
+                                                                        bool fired = true;
+                                                                        bool overflow = false;
+                                                                        switch (innerOp) {
+                                                                            case 0:  // +
+                                                                                r = nv + ev;
+                                                                                break;
+                                                                            case 1:  // -
+                                                                                r = nv - ev;
+                                                                                break;
+                                                                            case 8:  // *
+                                                                                if (__builtin_mul_overflow(nv, ev, &r))
+                                                                                    overflow = true;
+                                                                                break;
+                                                                            case 14:  // bitAnd:
+                                                                                r = nv & ev;
+                                                                                break;
+                                                                            case 15:  // bitOr:
+                                                                                r = nv | ev;
+                                                                                break;
+                                                                            default:
+                                                                                fired = false;
+                                                                                break;
+                                                                        }
+                                                                        if (fired && !overflow
+                                                                                && r >= Oop::smallIntegerMin()
                                                                                 && r <= Oop::smallIntegerMax()) {
                                                                             Oop result = Oop::fromSmallInteger(r);
                                                                             memory_.storePointer(
