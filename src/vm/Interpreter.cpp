@@ -5210,6 +5210,26 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                             if (blkNumArgs == 0) {
                                 size_t bcStart = (1 + blkNumLits) * 8;
                                 size_t totalBytes = blockObj->byteSize();
+                                // Variant A: `[x] value` (lazy read of
+                                // captured variable).  4-byte body:
+                                //   PushTempAtInVec N M; BlockReturnTop
+                                // Just read tempVec.slot[N] and return.
+                                if (totalBytes >= bcStart + 4) {
+                                    const uint8_t* bc = blockObj->bytes() + bcStart;
+                                    if (bc[0] == 0xFB
+                                            && (bc[3] == 0x5C || bc[3] == 0x5E)) {
+                                        int slotN = bc[1];
+                                        ObjectHeader* vecObj = tempVec.asObjectPtr();
+                                        if (slotN >= 0
+                                                && (size_t)slotN < vecObj->slotCount()) {
+                                            Oop x = memory_.fetchPointerUnchecked(
+                                                slotN, tempVec);
+                                            *(stackPointer_ - 1) = x;
+                                            fetchByte();  // skip value
+                                            break;
+                                        }
+                                    }
+                                }
                                 if (totalBytes >= bcStart + 9) {
                                     const uint8_t* bc = blockObj->bytes() + bcStart;
                                     if (bc[0] == 0xFB
