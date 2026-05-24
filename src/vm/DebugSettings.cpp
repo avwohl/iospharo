@@ -104,6 +104,7 @@ DebugSettings::DebugSettings() {
     t1ForceSimple       = envPresent("PHARO_T1_FORCE_SIMPLE");
     t1ForceBailMid      = t1ForceSimple || envPresent("PHARO_T1_FORCE_BAIL_MID");
     t1TraceCompile      = envPresent("PHARO_T1_TRACE_COMPILE");
+    t1CanSkipJ2JSave    = envPresent("PHARO_T1_CAN_SKIP_J2J_SAVE");
     t1NoBlockResume     = t1ForceSimple || envPresent("PHARO_T1_NO_BLOCK_RESUME");
     t1NoPostPrimResume  = t1ForceSimple || envPresent("PHARO_T1_NO_POST_PRIM_RESUME");
     {

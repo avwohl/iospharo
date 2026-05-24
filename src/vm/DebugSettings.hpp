@@ -58,6 +58,7 @@ struct DebugSettings {
     bool t1ForceSimple = false;       // PHARO_T1_FORCE_SIMPLE (enables all three below)
     bool t1ForceBailMid = false;      // PHARO_T1_FORCE_BAIL_MID — force canBailMidMethod=true
     bool t1TraceCompile = false;      // PHARO_T1_TRACE_COMPILE — log every successful asmjit-T1 compile
+    bool t1CanSkipJ2JSave = false;    // PHARO_T1_CAN_SKIP_J2J_SAVE — emit saveless blr path at IC HIT inline-J2J when callee's canSkipJ2JSave bit is set
     bool t1NoBlockResume = false;     // PHARO_T1_NO_BLOCK_RESUME — skip chain-loop block-resume tryExecute
     bool t1NoPostPrimResume = false;  // PHARO_T1_NO_POST_PRIM_RESUME — skip post-prim tryResume
     // Inline IC probe in JIT send emit (DEFAULT-OFF until correctness

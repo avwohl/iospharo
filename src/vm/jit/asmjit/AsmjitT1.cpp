@@ -133,6 +133,10 @@ extern "C" uint64_t g_canSkipJ2JSave_total = 0;
 // inline-J2J IC HIT after computing calleeJM.  Compared with
 // g_inlineJ2J_hits to gauge the optimization's potential coverage.
 extern "C" uint64_t g_canSkipJ2JSave_ic_hits = 0;
+// Eδ.2c (2026-05-24): saveless-J2J fires.  Bumped each time the
+// PHARO_T1_CAN_SKIP_J2J_SAVE emit fires the blr-based call path
+// (callee qualified AND IC hit reached the saveless emit).
+extern "C" uint64_t g_canSkipJ2JSave_fires = 0;
 extern "C" uint64_t g_xmethod_max   = UINT64_MAX;
 
 // Compact xmethod trace.  Stores per-fire data in a buffer, prints
@@ -3831,6 +3835,140 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b(j2jBailSelf2);
                     a.bind(gateDone);
                     emitBailGateLog(1);
+                }
+
+                // Eδ.2c (2026-05-24): saveless inline-J2J emit, opt-in
+                // via PHARO_T1_CAN_SKIP_J2J_SAVE=1.  When callee's
+                // JITMethod::canSkipJ2JSave bit (offset 49) is set, take
+                // a blr-based call path that skips the J2J save push
+                // entirely.  Callee's normalReturn (no save pushed →
+                // j2jDepth == j2jEntryDepth → fall through) stores
+                // retval to OFF_RETVAL and rets via x30 (which we set
+                // via blr).  Caller-side: save state.{sp,receiver,
+                // tempBase,ip,literals,method,jitMethod,argCount} + x30
+                // to sp-stash before blr; after blr restore state and
+                // apply send-return semantics (state.sp -= nArgs*8;
+                // store retval at state.sp-8).  Currently SELF-REC only
+                // (xmethod is opt-in default-OFF), so state.method/
+                // literals/jitMethod/argCount don't change across the
+                // call.  Compatible with the unchanged callee binary —
+                // the callee's existing j2jDepth > j2jEntryDepth check
+                // routes saveless calls to normalReturn automatically.
+                if (g_debug.t1CanSkipJ2JSave) {
+                    asmjit::Label normalJ2J = a.new_label();
+                    // x10 may not be loaded when xmethod is off and
+                    // counters are off.  Load it from x9 (entryAddr).
+                    if (!needCalleeJM) {
+                        a.sub(x10, x9, asmjit::Imm((int)sizeof(JITMethod)));
+                    }
+                    a.ldrb(w14, ptr(x10, 49));  // canSkipJ2JSave byte
+                    a.cbz(w14, normalJ2J);
+
+                    // === SAVELESS PATH ===
+                    // Save caller state to sp-stash (48 bytes).  Layout:
+                    //   [0]  = caller state.sp (pre-send)
+                    //   [8]  = caller state.receiver
+                    //   [16] = caller state.tempBase
+                    //   [24] = caller state.ip
+                    //   [32] = x30 (caller's lr — blr will overwrite)
+                    //   [40] = (pad)
+                    a.sub(sp, sp, asmjit::Imm(48));
+                    a.ldp(x4, x5, ptr(x0, OFF_SP));      // x4=sp x5=recv
+                    a.stp(x4, x5, ptr(sp, 0));
+                    a.ldr(x6, ptr(x0, OFF_TEMPBASE));
+                    a.ldr(x12, ptr(x0, OFF_IP));
+                    a.stp(x6, x12, ptr(sp, 16));
+                    a.str(x30, ptr(sp, 32));
+
+                    // Telemetry: bump fire counter.
+                    a.mov(x14, asmjit::Imm(
+                        (uint64_t)&g_canSkipJ2JSave_fires));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+
+                    // Set up callee state.  Mirror the existing J2J push
+                    // callee-setup pattern (line ~3935+), simpler because
+                    // self-rec only (no xmethod state writes).
+                    //   state.receiver = x1 (new recv, already in x1)
+                    //   state.tempBase = caller_sp - nArgs*8
+                    //   state.ip       = calleeJM->bcStartCache (callee bcStart)
+                    //   state.sp       = new tempBase + tempCount*8
+                    //                    (with nil-fill of extras)
+                    a.str(x1, ptr(x0, OFF_RECEIVER));
+                    a.sub(x13, x4, asmjit::Imm(nArgs * 8));  // new tempBase
+                    a.str(x13, ptr(x0, OFF_TEMPBASE));
+                    a.ldr(x14, ptr(x10, (int)offsetof(JITMethod, bcStartCache)));
+                    a.str(x14, ptr(x0, OFF_IP));
+                    // Compute new sp = caller_sp + extras*8.  For self-rec,
+                    // callee.tempCount == compile-time-known callerTempCount.
+                    int extras = callerTempCount - nArgs;
+                    if (extras > 0 && extras <= 8) {
+                        a.mov(x6, asmjit::Imm(nilBits));
+                        for (int k = 0; k < extras; k++) {
+                            a.str(x6, ptr(x13, (nArgs + k) * 8));
+                        }
+                        a.add(x6, x4, asmjit::Imm(extras * 8));
+                        a.str(x6, ptr(x0, OFF_SP));
+                    } else if (extras == 0) {
+                        // new sp = caller's sp (unchanged); state.sp not
+                        // touched yet.
+                    } else {
+                        // Large extras: dynamic nil-fill loop.
+                        asmjit::Label initLoop = a.new_label();
+                        asmjit::Label initDone = a.new_label();
+                        a.add(x14, x13, asmjit::Imm(nArgs * 8));
+                        a.add(x15, x13, asmjit::Imm(callerTempCount * 8));
+                        a.mov(x6, asmjit::Imm(nilBits));
+                        a.bind(initLoop);
+                        a.cmp(x14, x15);
+                        a.b_hs(initDone);
+                        a.str(x6, ptr(x14));
+                        a.add(x14, x14, asmjit::Imm(8));
+                        a.b(initLoop);
+                        a.bind(initDone);
+                        a.str(x15, ptr(x0, OFF_SP));
+                    }
+
+                    // blr to callee entry.  x9 already holds entryAddr.
+                    // x30 gets overwritten with post-blr address; the
+                    // callee's `ret` (via normalReturn) brings us back.
+                    a.blr(x9);
+
+                    // === Post-return: restore caller state ===
+                    // x0 (state) and x30 (overwritten before blr, restored
+                    // from sp-stash next) are the only regs we need
+                    // post-blr — restore everything from sp-stash.
+                    a.ldp(x4, x5, ptr(sp, 0));     // saved sp + receiver
+                    a.ldp(x6, x12, ptr(sp, 16));   // saved tempBase + ip
+                    a.ldr(x30, ptr(sp, 32));
+                    a.add(sp, sp, asmjit::Imm(48));
+
+                    // Write back state.{receiver,tempBase,ip}.  state.sp
+                    // computed below from saved x4.  state.method/jitMethod/
+                    // literals/argCount are unchanged across self-rec.
+                    a.str(x5, ptr(x0, OFF_RECEIVER));
+                    a.str(x6, ptr(x0, OFF_TEMPBASE));
+                    a.str(x12, ptr(x0, OFF_IP));
+
+                    // Read retval from OFF_RETVAL (callee's normalReturn
+                    // wrote it).  Apply send-return semantics: new sp =
+                    // caller_sp - nArgs*8; retval written at new_sp-8
+                    // (the receiver slot).
+                    a.ldr(x13, ptr(x0, OFF_RETVAL));
+                    a.sub(x14, x4, asmjit::Imm(nArgs * 8));
+                    a.stur(x13, ptr(x14, -8));
+                    a.str(x14, ptr(x0, OFF_SP));
+
+                    // Clear exitReason (callee set EXIT_RETURN).
+                    a.str(wzr, ptr(x0, OFF_EXIT));
+
+                    // Branch to endOfSend (caller's continuation past
+                    // the send).
+                    a.b(endOfSend);
+
+                    a.bind(normalJ2J);
+                    // Fall through to the existing J2J save-push path.
                 }
 
                 // Check save stack space.  cursor (offset 144) and limit
