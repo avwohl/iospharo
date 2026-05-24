@@ -7884,6 +7884,29 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             return;
         }
 
+        // EvenOdd fast path: Integer>>even / Integer>>odd shape
+        //   ^ (self bitAnd: 1) = 0   (even, kind=0)
+        //   ^ (self bitAnd: 1) = 1   (odd,  kind=1)
+        // For SmallInteger receivers we can decide the result from the
+        // tagged bits without activating the method.  SmI bits =
+        // (val<<3)|1, so bit 3 == val's low bit:
+        //   val even: bit3 == 0
+        //   val odd:  bit3 == 1
+        // Bail to normal dispatch for non-SmI receivers (LargePositive
+        // Integer>>even has its own activation).  Hits 1M times on the
+        // bench-suite `select 10x100K` workload.
+        if (cached->evenOddKind >= 0 && argCount == 0 && rcvr.isSmallInteger()) {
+#if PHARO_JIT_ENABLED
+            patchJITICAfterSend(cached->method, rcvr, selector);
+#endif
+            uint64_t bit3 = rcvr.rawBits() & 0x8ULL;
+            bool isEven = (bit3 == 0);
+            bool wantEven = (cached->evenOddKind == 0);
+            *(stackPointer_ - 1) = ((isEven == wantEven)
+                ? memory_.trueObject() : memory_.falseObject());
+            return;
+        }
+
         int primIdx = cached->primitiveIndex;
         if (primIdx > 0) {
             argCount_ = argCount;
@@ -8549,6 +8572,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
         e1.accessorIndex = trivial.getterIndex;
         e1.setterIndex = trivial.setterIndex;
         e1.returnsSelf = trivial.returnsSelf;
+        e1.evenOddKind = trivial.evenOddKind;
         return;
     }
 
@@ -8563,6 +8587,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     e2.accessorIndex = trivial.getterIndex;
     e2.setterIndex = trivial.setterIndex;
     e2.returnsSelf = trivial.returnsSelf;
+    e2.evenOddKind = trivial.evenOddKind;
 }
 
 size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {

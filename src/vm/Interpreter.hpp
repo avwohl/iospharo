@@ -165,6 +165,7 @@ struct MethodCacheEntry {
                               // -1: not a trivial method
     int16_t setterIndex;      // >=0: setter (popStoreRecvVar N + returnSelf)
     bool returnsSelf;         // true: method is just returnReceiver (yourself)
+    int8_t  evenOddKind;      // 0=even, 1=odd, -1=not trivial-evenOdd
 };
 
 /// Well-known selectors (cached for performance)
