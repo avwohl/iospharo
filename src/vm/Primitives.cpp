@@ -3554,6 +3554,14 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                                     else result = Oop::fromSmallInteger(r);
                                     break;
                                 }
+                                case 14: {  // bitAnd:
+                                    result = Oop::fromSmallInteger(av & bv);
+                                    break;
+                                }
+                                case 15: {  // bitOr:
+                                    result = Oop::fromSmallInteger(av | bv);
+                                    break;
+                                }
                                 default: fired = false; break;
                             }
                             if (fired) {
@@ -3683,6 +3691,16 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                                                     r > Oop::smallIntegerMax())
                                                 fired = false;
                                             else result = Oop::fromSmallInteger(r);
+                                            break;
+                                        }
+                                        case 14: {  // bitAnd:
+                                            int64_t r = av & bv;
+                                            result = Oop::fromSmallInteger(r);
+                                            break;
+                                        }
+                                        case 15: {  // bitOr:
+                                            int64_t r = av | bv;
+                                            result = Oop::fromSmallInteger(r);
                                             break;
                                         }
                                         default: fired = false; break;
