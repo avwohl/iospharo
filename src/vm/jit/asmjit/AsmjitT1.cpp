@@ -128,6 +128,11 @@ extern "C" uint64_t g_xmethod_count = 0;
 // (non-stub) method.  Read by JIT stats dump.
 extern "C" uint64_t g_canSkipJ2JSave_count = 0;
 extern "C" uint64_t g_canSkipJ2JSave_total = 0;
+// Eδ.2b (2026-05-24): IC-HIT runtime hits where the callee's
+// canSkipJ2JSave flag is set.  Bumped from JIT-emitted code at every
+// inline-J2J IC HIT after computing calleeJM.  Compared with
+// g_inlineJ2J_hits to gauge the optimization's potential coverage.
+extern "C" uint64_t g_canSkipJ2JSave_ic_hits = 0;
 extern "C" uint64_t g_xmethod_max   = UINT64_MAX;
 
 // Compact xmethod trace.  Stores per-fire data in a buffer, prints
@@ -3608,6 +3613,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     g_debug.t1InlineJ2JXmethod || inlineJ2JCounters;
                 if (needCalleeJM) {
                     a.sub(x10, x9, asmjit::Imm((int)sizeof(JITMethod)));
+                    // Eδ.2b (2026-05-24): count IC HITs where callee
+                    // qualifies for canSkipJ2JSave (offset 49 in JM).
+                    // Tells us how often the future saveless path
+                    // would fire vs. compile-time "20.2% of methods
+                    // qualify".  Emit 5 instrs unconditionally in
+                    // xmethod-on / counters-on builds.
+                    {
+                        asmjit::Label skipCount = a.new_label();
+                        a.ldrb(w14, ptr(x10, 49));   // canSkipJ2JSave byte
+                        a.cbz(w14, skipCount);
+                        a.mov(x14, asmjit::Imm(
+                            (uint64_t)&g_canSkipJ2JSave_ic_hits));
+                        a.ldr(x15, ptr(x14));
+                        a.add(x15, x15, asmjit::Imm(1));
+                        a.str(x15, ptr(x14));
+                        a.bind(skipCount);
+                    }
                 }
 
                 // Self-recursive check via SELF_REC_BIT (bit 56) in the

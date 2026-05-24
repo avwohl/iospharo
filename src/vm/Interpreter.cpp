@@ -89,6 +89,7 @@ extern "C" uint64_t g_inlineJ2J_dbg_callee_method;
 extern "C" uint64_t g_inlineJ2J_dbg_extra;
 extern "C" uint64_t g_canSkipJ2JSave_count;
 extern "C" uint64_t g_canSkipJ2JSave_total;
+extern "C" uint64_t g_canSkipJ2JSave_ic_hits;
 extern "C" uint64_t g_inlineJ2J_dbg_ic_hits;
 extern "C" uint64_t g_blockValue_tries;
 extern "C" uint64_t g_blockValue_hits;
@@ -1538,10 +1539,12 @@ void Interpreter::dumpJITStats() {
     }
     if (g_canSkipJ2JSave_total > 0) {
         fprintf(stderr,
-                "  canSkipJ2JSave: %llu/%llu real-compiled methods qualify (%.1f%%)\n",
+                "  canSkipJ2JSave: %llu/%llu real-compiled methods qualify (%.1f%%); "
+                "ic-hits=%llu\n",
                 (unsigned long long)g_canSkipJ2JSave_count,
                 (unsigned long long)g_canSkipJ2JSave_total,
-                100.0 * g_canSkipJ2JSave_count / g_canSkipJ2JSave_total);
+                100.0 * g_canSkipJ2JSave_count / g_canSkipJ2JSave_total,
+                (unsigned long long)g_canSkipJ2JSave_ic_hits);
     }
     // W10 Sista bail-reason survey (PHARO_SISTA_BAIL_LOG=1).
     if (g_debug.sistaBailLog) {
