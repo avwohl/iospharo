@@ -3743,100 +3743,6 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.tbz(x7, asmjit::Imm(56), j2jBailSelf2);
                 }
 
-                // PURE-J2J GATE (default-OFF as of 2026-05-21 jit-may20 Step 2):
-                // Originally shipped default-ON in A6 N+30k as a safety net
-                // for a materialize-bail wrong-result bug — every benchFib(N)
-                // returned benchFib(N-2)'s value for N>=17 (see deferred A6
-                // N+30i).  The gate iterates ALL of caller's IC sites and
-                // bails inline-J2J if any site lacks J2J_ENTRY_BIT (bit 60).
-                //
-                // Empirically (jit-may20.md Step 2): the gate bails ~100% of
-                // fib's IC hits (catch-rate 0% across 2.88M attempts on a
-                // fib-loop bench) while gate-OFF runs the same fib(20..32)
-                // 5×–15× faster with CORRECT results.  Default flipped to
-                // OFF.  PHARO_T1_PURE_J2J_GATE=1 re-enables the gate for
-                // safety / bisection if a wrong-result regression appears.
-                //
-                // Self-recursive only (the bit 56 check at line ~3341 has
-                // already ensured caller == callee for this push), so the
-                // "callee has cold IC" risk is bounded by what the caller
-                // has actually observed.
-                if (g_debug.t1PureJ2JGate || g_debug.t1WarmJ2JGate) {
-                    using namespace asmjit::a64;
-                    // Gate variant: PureJ2J checks entry0.extras bit 60
-                    // (= "site has J2J target"); WarmJ2J checks entry0.key
-                    // != 0 (= "site has any filled entry").  Warmth is the
-                    // more permissive check — passes for warm prim-only
-                    // sites that the pure gate would bail on for lacking
-                    // bit 60, while still catching cold ICs that would
-                    // trigger the materialize-bail wrong-result bug.
-                    // PureJ2J takes precedence when both flags are on
-                    // (deliberate: bisection knob preserves the older
-                    // stricter behavior).
-                    const bool usePureGate = g_debug.t1PureJ2JGate;
-                    a.ldr(x12, ptr(callerJMReg2,
-                        (int)offsetof(JITMethod, icBuffer)));
-                    a.ldrh(w14, ptr(callerJMReg2,
-                        (int)offsetof(JITMethod, numICEntries)));
-                    asmjit::Label gateLoop = a.new_label();
-                    asmjit::Label gateDone = a.new_label();
-                    asmjit::Label gateBail = a.new_label();
-                    a.cbz(w14, gateDone);
-                    a.bind(gateLoop);
-                    if (usePureGate) {
-                        a.ldr(x4, ptr(x12, 16));   // ic[site].extras (slot 2)
-                        a.tbz(x4, asmjit::Imm(60), gateBail);
-                    } else {
-                        a.ldr(x4, ptr(x12, 0));    // ic[site].key (slot 0)
-                        a.cbz(x4, gateBail);
-                    }
-                    a.add(x12, x12, asmjit::Imm((int)IC_BYTES_PER_SITE));
-                    a.subs(w14, w14, asmjit::Imm(1));
-                    a.b_ne(gateLoop);
-                    a.b(gateDone);
-                    a.bind(gateBail);
-                    emitIncCounter((uint64_t)&g_inlineJ2J_bail_gate);
-                    // jit-may20b Step 6.1: per-caller histogram.  When the
-                    // env var is on, call jit_rt_bail_gate_log(callerJM, kind)
-                    // around the gate exits.  callerJMReg2 == x19 in
-                    // xmethod-off (default), so it's callee-saved across the
-                    // bl per AAPCS.  Saving x0..x15 + x30 covers everything
-                    // the bail target (`j2jBailSelf2` → `j2jBail` →
-                    // inline-prim / dispatchCached) and the pass path use.
-                    auto emitBailGateLog = [&](uint64_t kind) {
-                        if (!g_debug.t1BailGateHisto) return;
-                        a.sub(sp, sp, asmjit::Imm(144));
-                        a.stp(x0, x1,   ptr(sp, 0));
-                        a.stp(x2, x3,   ptr(sp, 16));
-                        a.stp(x4, x5,   ptr(sp, 32));
-                        a.stp(x6, x7,   ptr(sp, 48));
-                        a.stp(x8, x9,   ptr(sp, 64));
-                        a.stp(x10, x11, ptr(sp, 80));
-                        a.stp(x12, x13, ptr(sp, 96));
-                        a.stp(x14, x15, ptr(sp, 112));
-                        a.str(x30,      ptr(sp, 128));
-                        a.mov(x0, callerJMReg2);
-                        a.mov(x1, asmjit::Imm(kind));
-                        a.mov(x16,
-                            asmjit::Imm((uint64_t)&jit_rt_bail_gate_log));
-                        a.blr(x16);
-                        a.ldp(x0, x1,   ptr(sp, 0));
-                        a.ldp(x2, x3,   ptr(sp, 16));
-                        a.ldp(x4, x5,   ptr(sp, 32));
-                        a.ldp(x6, x7,   ptr(sp, 48));
-                        a.ldp(x8, x9,   ptr(sp, 64));
-                        a.ldp(x10, x11, ptr(sp, 80));
-                        a.ldp(x12, x13, ptr(sp, 96));
-                        a.ldp(x14, x15, ptr(sp, 112));
-                        a.ldr(x30,      ptr(sp, 128));
-                        a.add(sp, sp, asmjit::Imm(144));
-                    };
-                    emitBailGateLog(0);
-                    a.b(j2jBailSelf2);
-                    a.bind(gateDone);
-                    emitBailGateLog(1);
-                }
-
                 // Eδ.2c (2026-05-24): saveless inline-J2J emit, opt-in
                 // via PHARO_T1_CAN_SKIP_J2J_SAVE=1.  When callee's
                 // JITMethod::canSkipJ2JSave bit (offset 49) is set, take
@@ -3854,8 +3760,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // call.  Compatible with the unchanged callee binary —
                 // the callee's existing j2jDepth > j2jEntryDepth check
                 // routes saveless calls to normalReturn automatically.
+                //
+                // POSITIONED BEFORE WARM-J2J GATE: canSkipJ2JSave callees
+                // have numICEntries == 0 → cannot trigger the materialize-
+                // bail wrong-result bug the warm gate guards against.
+                // Skipping the gate for these saves the gate-loop cost
+                // and enables saveless emit in default config.
                 if (g_debug.t1CanSkipJ2JSave) {
                     asmjit::Label normalJ2J = a.new_label();
+                    // Saveless emit is SELF-REC ONLY — it does not update
+                    // state.{method,literals,jitMethod,argCount}, which
+                    // are unchanged for self-rec but would differ for
+                    // cross-method.  Cross-method saveless would need
+                    // those updates plus a corresponding restore on
+                    // return.  Out-of-scope for Eδ.2c — bail to normal
+                    // save-push path which DOES handle cross-method
+                    // (xmethod-on only) via the relocated state update.
+                    a.tbz(x7, asmjit::Imm(56), normalJ2J);
                     // x10 may not be loaded when xmethod is off and
                     // counters are off.  Load it from x9 (entryAddr).
                     if (!needCalleeJM) {
@@ -3964,11 +3885,105 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(wzr, ptr(x0, OFF_EXIT));
 
                     // Branch to endOfSend (caller's continuation past
-                    // the send).
+                    // the send).  Skips the warm-J2J gate entirely.
                     a.b(endOfSend);
 
                     a.bind(normalJ2J);
-                    // Fall through to the existing J2J save-push path.
+                    // Fall through to the warm-J2J gate + save-push path.
+                }
+
+                // PURE-J2J GATE (default-OFF as of 2026-05-21 jit-may20 Step 2):
+                // Originally shipped default-ON in A6 N+30k as a safety net
+                // for a materialize-bail wrong-result bug — every benchFib(N)
+                // returned benchFib(N-2)'s value for N>=17 (see deferred A6
+                // N+30i).  The gate iterates ALL of caller's IC sites and
+                // bails inline-J2J if any site lacks J2J_ENTRY_BIT (bit 60).
+                //
+                // Empirically (jit-may20.md Step 2): the gate bails ~100% of
+                // fib's IC hits (catch-rate 0% across 2.88M attempts on a
+                // fib-loop bench) while gate-OFF runs the same fib(20..32)
+                // 5×–15× faster with CORRECT results.  Default flipped to
+                // OFF.  PHARO_T1_PURE_J2J_GATE=1 re-enables the gate for
+                // safety / bisection if a wrong-result regression appears.
+                //
+                // Self-recursive only (the bit 56 check at line ~3341 has
+                // already ensured caller == callee for this push), so the
+                // "callee has cold IC" risk is bounded by what the caller
+                // has actually observed.
+                if (g_debug.t1PureJ2JGate || g_debug.t1WarmJ2JGate) {
+                    using namespace asmjit::a64;
+                    // Gate variant: PureJ2J checks entry0.extras bit 60
+                    // (= "site has J2J target"); WarmJ2J checks entry0.key
+                    // != 0 (= "site has any filled entry").  Warmth is the
+                    // more permissive check — passes for warm prim-only
+                    // sites that the pure gate would bail on for lacking
+                    // bit 60, while still catching cold ICs that would
+                    // trigger the materialize-bail wrong-result bug.
+                    // PureJ2J takes precedence when both flags are on
+                    // (deliberate: bisection knob preserves the older
+                    // stricter behavior).
+                    const bool usePureGate = g_debug.t1PureJ2JGate;
+                    a.ldr(x12, ptr(callerJMReg2,
+                        (int)offsetof(JITMethod, icBuffer)));
+                    a.ldrh(w14, ptr(callerJMReg2,
+                        (int)offsetof(JITMethod, numICEntries)));
+                    asmjit::Label gateLoop = a.new_label();
+                    asmjit::Label gateDone = a.new_label();
+                    asmjit::Label gateBail = a.new_label();
+                    a.cbz(w14, gateDone);
+                    a.bind(gateLoop);
+                    if (usePureGate) {
+                        a.ldr(x4, ptr(x12, 16));   // ic[site].extras (slot 2)
+                        a.tbz(x4, asmjit::Imm(60), gateBail);
+                    } else {
+                        a.ldr(x4, ptr(x12, 0));    // ic[site].key (slot 0)
+                        a.cbz(x4, gateBail);
+                    }
+                    a.add(x12, x12, asmjit::Imm((int)IC_BYTES_PER_SITE));
+                    a.subs(w14, w14, asmjit::Imm(1));
+                    a.b_ne(gateLoop);
+                    a.b(gateDone);
+                    a.bind(gateBail);
+                    emitIncCounter((uint64_t)&g_inlineJ2J_bail_gate);
+                    // jit-may20b Step 6.1: per-caller histogram.  When the
+                    // env var is on, call jit_rt_bail_gate_log(callerJM, kind)
+                    // around the gate exits.  callerJMReg2 == x19 in
+                    // xmethod-off (default), so it's callee-saved across the
+                    // bl per AAPCS.  Saving x0..x15 + x30 covers everything
+                    // the bail target (`j2jBailSelf2` → `j2jBail` →
+                    // inline-prim / dispatchCached) and the pass path use.
+                    auto emitBailGateLog = [&](uint64_t kind) {
+                        if (!g_debug.t1BailGateHisto) return;
+                        a.sub(sp, sp, asmjit::Imm(144));
+                        a.stp(x0, x1,   ptr(sp, 0));
+                        a.stp(x2, x3,   ptr(sp, 16));
+                        a.stp(x4, x5,   ptr(sp, 32));
+                        a.stp(x6, x7,   ptr(sp, 48));
+                        a.stp(x8, x9,   ptr(sp, 64));
+                        a.stp(x10, x11, ptr(sp, 80));
+                        a.stp(x12, x13, ptr(sp, 96));
+                        a.stp(x14, x15, ptr(sp, 112));
+                        a.str(x30,      ptr(sp, 128));
+                        a.mov(x0, callerJMReg2);
+                        a.mov(x1, asmjit::Imm(kind));
+                        a.mov(x16,
+                            asmjit::Imm((uint64_t)&jit_rt_bail_gate_log));
+                        a.blr(x16);
+                        a.ldp(x0, x1,   ptr(sp, 0));
+                        a.ldp(x2, x3,   ptr(sp, 16));
+                        a.ldp(x4, x5,   ptr(sp, 32));
+                        a.ldp(x6, x7,   ptr(sp, 48));
+                        a.ldp(x8, x9,   ptr(sp, 64));
+                        a.ldp(x10, x11, ptr(sp, 80));
+                        a.ldp(x12, x13, ptr(sp, 96));
+                        a.ldp(x14, x15, ptr(sp, 112));
+                        a.ldr(x30,      ptr(sp, 128));
+                        a.add(sp, sp, asmjit::Imm(144));
+                    };
+                    emitBailGateLog(0);
+                    a.b(j2jBailSelf2);
+                    a.bind(gateDone);
+                    emitBailGateLog(1);
                 }
 
                 // Check save stack space.  cursor (offset 144) and limit
