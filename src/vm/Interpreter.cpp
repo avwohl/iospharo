@@ -7907,6 +7907,38 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             return;
         }
 
+        // Returns-literal fast path: methods of the shape `^ X` for
+        // X ∈ {nil, true, false, 0, 1, -1, 2}.  Mirrors the JIT IC's
+        // bit-58 inline emit but at the interp method-cache layer.
+        // No-arg methods only (those with args don't fit the detected
+        // shapes).  Pop args (none), replace receiver with literal.
+        //
+        // IMPORTANT: skip when the method has a primitive — the literal
+        // body is only the FALLBACK if the prim fails.  E.g.,
+        // `Time millisecondClockValue` is `<primitive: 251>; ^ 0`; the
+        // primitive returns the real clock, and short-circuiting to the
+        // literal `0` breaks timing benches.
+        if (cached->returnsLiteralKind != 0
+                && cached->primitiveIndex == 0
+                && argCount == 0) {
+#if PHARO_JIT_ENABLED
+            patchJITICAfterSend(cached->method, rcvr, selector);
+#endif
+            Oop lit;
+            switch (cached->returnsLiteralKind) {
+                case 1: lit = memory_.nil(); break;
+                case 2: lit = memory_.trueObject(); break;
+                case 3: lit = memory_.falseObject(); break;
+                case 4: lit = Oop::fromSmallInteger(0); break;
+                case 5: lit = Oop::fromSmallInteger(1); break;
+                case 6: lit = Oop::fromSmallInteger(-1); break;
+                case 7: lit = Oop::fromSmallInteger(2); break;
+                default: lit = memory_.nil(); break;
+            }
+            *(stackPointer_ - 1) = lit;
+            return;
+        }
+
         int primIdx = cached->primitiveIndex;
         if (primIdx > 0) {
             argCount_ = argCount;
@@ -8573,6 +8605,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
         e1.setterIndex = trivial.setterIndex;
         e1.returnsSelf = trivial.returnsSelf;
         e1.evenOddKind = trivial.evenOddKind;
+        e1.returnsLiteralKind = static_cast<int8_t>(trivial.returnsLiteral);
         return;
     }
 
@@ -8588,6 +8621,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     e2.setterIndex = trivial.setterIndex;
     e2.returnsSelf = trivial.returnsSelf;
     e2.evenOddKind = trivial.evenOddKind;
+    e2.returnsLiteralKind = static_cast<int8_t>(trivial.returnsLiteral);
 }
 
 size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
