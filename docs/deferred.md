@@ -84,6 +84,41 @@ specifically around the SessionManager startup loop to identify
 which method execution diverges from the JIT-off path.  Skill-level
 similar to the X+BV bisect work that landed this session.
 
+**Bisect via PHARO_JIT_THRESHOLD (session E2):**
+
+    threshold=2 (default) → 1175 methods compile → handler NOT fired (0/5)
+    threshold=1000         → 212 methods compile → handler NOT fired (0/3)
+    threshold=1050         → ~210 methods compile → handler FIRED (3/3)
+    threshold=99999999     → 0 methods compile   → handler FIRED
+
+So the regression is in *one of the ~960 methods* that get JIT-compiled
+between threshold=1050 and threshold=2 — i.e., methods with boot
+execution counts in 2-1050.  Diff of compile lists at threshold=1015
+vs threshold=1020 (a narrower boundary that turned out to be flaky)
+yielded 14 candidate selectors:
+
+    allAreasOutsideList:do:  anyMask:  decodeIntFrom:  downHeapSingle:
+    endPC  executeDeferredStartupActions:  findElementOrNil:  initialPC
+    isEmpty  primitive  remove:  remove:ifAbsent:  reverseDo:  wordSize
+
+`#executeDeferredStartupActions:` is the most suspicious (literally on
+SessionManager's deferred-actions path).  But skipping all 14 via
+`PHARO_T1_SKIP_SELECTORS=...` at default threshold=2 did NOT fix
+dispatch — so the actual culprit is either one of these PLUS a
+threshold-dependent cumulative effect, OR a different method whose
+compilation gates on one of these 14.
+
+**Workaround for users until a real fix lands:** set
+`PHARO_JIT_THRESHOLD=1100`.  Stable handler dispatch; trades off
+roughly 80% of JIT coverage by method count (warm-but-not-hot
+methods stay in interp).  Hot loops (fib, bench benches) still get
+JIT'd since they execute much more than 1100 times.
+
+**Useful instrumentation added this session (commit 8b4fff32 + later
+trace addition):** `PHARO_T1_TRACE_COMPILE=1` logs every successful
+asmjit-T1 compile with selector + canBail/canSkipJ2J flags.  Use
+this for the next-session bisect.
+
 ## ✅ JIT silently disabled — RESOLVED 2026-05-24 (session E2)
 
 **Both root causes fixed.**  Working tree at session end has:

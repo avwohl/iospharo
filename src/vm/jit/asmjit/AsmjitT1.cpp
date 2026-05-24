@@ -6478,7 +6478,23 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             }
         }
     }
-
+    // E2 2026-05-24: log every successful asmjit-T1 compile when
+    // PHARO_T1_TRACE_COMPILE=1 (env var → DebugSettings).  Used to
+    // bisect WHICH method's JIT-compilation breaks SessionManager
+    // startup-handler dispatch.
+    if (jm && pharo::g_debug.t1TraceCompile) {
+        static uint64_t compileSeq = 0;
+        compileSeq++;
+        std::string sel = memory.selectorOf(compiledMethod);
+        std::fprintf(stderr,
+                     "[T1-COMPILE #%llu] sel=#%s oop=0x%llx canBail=%d canSkipJ2J=%d bcLen=%zu\n",
+                     (unsigned long long)compileSeq,
+                     sel.c_str(),
+                     (unsigned long long)compiledMethod.rawBits(),
+                     (int)jm->canBailMidMethod,
+                     (int)jm->canSkipJ2JSave,
+                     bcLen);
+    }
     return jm;
 }
 
