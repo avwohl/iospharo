@@ -157,7 +157,17 @@ DebugSettings::DebugSettings() {
     // F3-NL6: default-on xmethod + non-leaf BV after F3-NL2 fix made
     // them correct.  Bench-suite: 1468 → 1217 ms (-17%) with both on.
     // Opt-out via PHARO_T1_NO_INLINE_J2J_XMETHOD / PHARO_T1_NO_INLINE_BLOCK_VALUE_NONLEAF.
-    t1InlineJ2JXmethod  = !envPresent("PHARO_T1_NO_INLINE_J2J_XMETHOD");
+    //
+    // E2 2026-05-24: reverted xmethod to default-OFF after discovering
+    // it breaks SessionManager startup-handler dispatch under JIT-on.
+    // The X+BV SIGSEGV fix earlier this session (commit 0efb2086)
+    // resolved the visible crash but the xmethod path still has
+    // correctness issues that surface more subtly — handlers fork
+    // but never get scheduled.  Verified empirically: with xmethod
+    // off (PHARO_T1_NO_INLINE_J2J_XMETHOD=1) handlers fire 3/3 runs;
+    // with it on they never fire.  Until xmethod is properly fixed,
+    // ship it opt-in.  PHARO_T1_INLINE_J2J_XMETHOD=1 to re-enable.
+    t1InlineJ2JXmethod  = envPresent("PHARO_T1_INLINE_J2J_XMETHOD");
     t1InlineJ2JXmethodMax = envInt("PHARO_T1_INLINE_J2J_XMETHOD_MAX", 30000);
     t1XmethodLog        = envPresent("PHARO_T1_XMETHOD_LOG");
     t1InlineBlockValueNonLeaf =
