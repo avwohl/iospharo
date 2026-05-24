@@ -7958,7 +7958,19 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             int savedSendArgCount = pendingICSendArgCount_;
             Oop savedOwnerMethod = pendingICOwnerMethod_;
 #endif
-            PrimitiveResult result = executePrimitive(primIdx, argCount);
+            // Use cached function pointer when available (saves the
+            // primitiveTable_ lookup + various debug-flag branches in
+            // executePrimitive).  Falls back to executePrimitive for
+            // quick prims 256+ (cached->primitive is null for those).
+            PrimitiveResult result;
+            if (cached->primitive != nullptr) {
+                result = (this->*(cached->primitive))(argCount);
+                if (result == PrimitiveResult::Success) {
+                    lastPrimitiveIndex_ = primIdx;
+                }
+            } else {
+                result = executePrimitive(primIdx, argCount);
+            }
             if (result == PrimitiveResult::Success) {
 #if PHARO_JIT_ENABLED
                 if (!pendingICPatch_) {
@@ -8604,6 +8616,17 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
         }
     }
 
+    // Cache the primitive function pointer if the method has a normal
+    // (0-255 range) primitive — saves the primitiveTable_[primIdx]
+    // lookup on every send.  Quick prims (256-519) handled separately
+    // in executePrimitive; we leave the pointer null for them so the
+    // dispatch path falls through to the quick-prim switch.
+    PrimitiveFunc primFunc = nullptr;
+    if (primIndex > 0 && primIndex < 256
+            && primIndex < (int)primitiveTable_.size()) {
+        primFunc = primitiveTable_[primIndex];
+    }
+
     // Primary slot: use if empty or same key
     size_t h1 = static_cast<size_t>(selBits ^ clsBits) & mask;
     MethodCacheEntry& e1 = methodCache_[h1];
@@ -8612,7 +8635,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
         e1.classOop = classOop;
         e1.method = method;
         e1.primitiveIndex = primIndex;
-        e1.primitive = nullptr;
+        e1.primitive = primFunc;
         e1.accessorIndex = trivial.getterIndex;
         e1.setterIndex = trivial.setterIndex;
         e1.returnsSelf = trivial.returnsSelf;
@@ -8628,7 +8651,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     e2.classOop = classOop;
     e2.method = method;
     e2.primitiveIndex = primIndex;
-    e2.primitive = nullptr;
+    e2.primitive = primFunc;
     e2.accessorIndex = trivial.getterIndex;
     e2.setterIndex = trivial.setterIndex;
     e2.returnsSelf = trivial.returnsSelf;
