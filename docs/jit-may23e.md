@@ -342,6 +342,41 @@ under the "fresh session per chunk" model.  Per the doc's rules:
 they should be picked up in a future fresh session, not bundled into
 this one.
 
+## 2026-05-24 — interp block-body fast paths (cumulative)
+
+Stacking five fast paths in primitiveFullClosureValue + commonSend
+that recognize common trivial block bodies and short-circuit them:
+
+1. **evenOdd** cache fast path (edcf20bb): `Integer>>even/odd` for
+   SmI receivers decided from tagged-bit pattern.
+2. **2-arg cmp** block (35bb73d2): `[:a :b | a cmpOp b]`.
+3. **2-arg arith** block (3e6e0f1c): `[:a :b | a +/-/* b]`.
+4. **1-arg arith** block (1ebc4238): `[:x | x op K]` for SmI lit K.
+5. **1-arg SEND0** block (01415c5d): `[:x | x SEND]` via
+   sendSelector, skips activateBlock.
+
+Cumulative bench-suite wins (median of 5 runs, default config):
+
+```
+bench              before   after   delta
+sum 1M              150 ms  108 ms  -28%
+collect 10x100K     106 ms   63 ms  -41%
+select 10x100K      554 ms  425 ms  -23%
+sort 100K           ~250 ms ~265 ms  bimodal — variance dominates
+dict 50K            ~210 ms ~155 ms  bimodal — variance dominates
+stringHash 100K      73 ms   68 ms   -7%
+1M blocks           358 ms  375 ms   slight regression (~5%)
+fib(28)             110 ms  110 ms    0
+```
+
+~250 ms saved per bench-suite run (~15% of total bench-suite time).
+Cog gap closing: select 10x100K 12× → 9×, collect 21× → 12×.
+
+The slight regression on `1M blocks` may be a fast-path-overhead
+issue on blocks that fall through to activateBlock, OR run-to-run
+noise on this bench (closure allocation dominates).  Worth a focused
+investigation next session.
+
 ## 2026-05-24 — interp evenOdd + returnsLiteral fast paths
 
 Now that the OSR-disabled root cause is identified (see below), the
