@@ -199,9 +199,47 @@ small enough for the hook evaluator:
                     (1 in 5 runs at 1224, 4 at 1357 — bimodality).
                     Doesn't fire for bench's `[:e | e even]` because
                     the block runs in asmjit-T1 not Sista.
-    Eγ   IN_PROG    Array>>sort: splice
-    Eδ   PENDING    Generic dispatch overhead
-    Eε   PENDING    Re-measure
+    Eγ   DEFERRED   Array>>sort: splice — 2-3h chunk needed; sort is
+                    recursive mergesort and the splice would need to
+                    handle the inner per-merge-step loop separately
+                    from the recursion.  Punt to a fresh session.
+    Eδ   DEFERRED   Generic dispatch overhead — needs new IC bit
+                    "no-save tier-2" + new asmjit-T1 emit path that
+                    skips the J2J save push AND a matching no-pop
+                    return prelude.  3-4h work, doesn't fit a 30-min
+                    chunk.  Punt to fresh session.
+    Eε   DONE       Re-measure (10-run): 1353-1362 ms, median 1359 ms.
+                    Same as start of jit-may23e.  Net bench-suite
+                    impact from this session = 0.
+
+## Final result
+
+Bench-suite 10-run median: **1359 ms** (vs jit-may23e start 1349 ms,
+within run-to-run noise).  Gap to Cog (~136 ms): **10×**.
+
+Eβ shipped infrastructure (Sista kPrimEvenOddCheck op) that doesn't
+fire on this specific bench-suite but would benefit workloads where
+the outer method (containing the even-send) is Sista-compiled.
+
+Eα/Eγ/Eδ deferred — each genuinely doesn't fit a single 30-min chunk
+under the "fresh session per chunk" model.  Per the doc's rules:
+they should be picked up in a future fresh session, not bundled into
+this one.
+
+## What to try next session
+
+In priority order based on the chunks' expected impact:
+
+1. **Eδ** (3-4h fresh session): if structural dispatch reduction
+   works, this is the single biggest possible win (~7 ns → ~4 ns
+   per send is a 1.8× improvement on send-bound benches).
+2. **Eγ** (2-3h fresh session): sort 100K alone is 282 ms.  A
+   working splice could halve it.
+3. **Eα** (1h fresh session): explicit eager-compile of iter block
+   to stabilize collect bimodality.  Smaller pay-off but easier
+   to attempt.
+
+Each needs its own fresh session to avoid the hook prompt limit.
 
 ## If the hook still says "Prompt is too long"
 
