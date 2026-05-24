@@ -8295,17 +8295,29 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
     size_t bcLen = totalBytes - bcStart;
     if (bcLen < 2) return info;
 
-    // Methods like Point>>x have a CallPrimitive header (0xF8 lo hi)
-    // followed by a fallback `pushRecvVar N; returnTop` body in case
-    // the primitive fails.  Skip the 3-byte header before applying the
-    // shape match below.  Quick-prim slot getters (prim 264+N) ALSO
-    // route through this fallback path on prim-failure; treating the
-    // fallback as the trivial body gives us bit-63 classification +
-    // inline-getter fast path for ~5× speedup on Point>>x, ivar getters
-    // with explicit `<primitive: 264+N>` declarations, etc.
+    // Methods with a CallPrimitive header (0xF8 lo hi) ONLY have their
+    // fallback body treated as trivial when the primitive is a "quick
+    // prim" (256-519): those produce the same result as the fallback
+    // bytecodes (e.g., prim 264+N == `pushRecvVar N; returnTop`).
+    //
+    // For other primitives (e.g., prim 251 = millisecond clock with
+    // fallback `^ 0`), the prim and fallback compute DIFFERENT values,
+    // so inlining the fallback would break correctness — the JIT IC
+    // bit-58 retLit emit would then push the literal `0` for every
+    // call without ever invoking the prim.
+    //
+    // For non-quick prims, leave bcStart pointing at 0xF8 so the
+    // subsequent shape matchers below all fail (they look for
+    // pushReceiver / pushRecvVar / etc., not CallPrimitive).
     if (bcLen >= 5 && bytes[bcStart] == 0xF8) {
-        bcStart += 3;        // skip CallPrimitive header
-        bcLen   -= 3;
+        // Decode the primitive index from the CallPrimitive bytecode:
+        // 248 iiiiiiii mssjjjjj — primIndex = lo | ((hi & 0x1F) << 8).
+        int primIndex = bytes[bcStart + 1]
+                        | ((bytes[bcStart + 2] & 0x1F) << 8);
+        if (primIndex >= 256) {
+            bcStart += 3;    // skip CallPrimitive header
+            bcLen   -= 3;
+        }
     }
 
     uint8_t bc0 = bytes[bcStart];
@@ -17320,6 +17332,25 @@ void Interpreter::tryJITResumeInCaller() {
         state.j2jDepthInc = 0x0000000100000001ULL;
         state.methodMapPtr = &jitRuntime_.methodMap();
         state.yieldCountdown = 1000;
+        // 2026-05-24 OSR state-sync: tryJITActivation sets these fields
+        // but the resume path was missing them.  JIT-emitted code reads
+        // trueOop/falseOop for inline-prim cmp results — without them
+        // being initialized, the JIT pushes 0 (NULL Oop) and the next
+        // bytecode that reads a boolean crashes.  Same for sista save
+        // pointers (touched by Sista-spliced code paths).
+        state.trueOop = memory_.trueObject();
+        state.falseOop = memory_.falseObject();
+        state.sistaSaveCursor = nullptr;
+        state.sistaSaveLimit = nullptr;
+        state.sistaSaveDepth = 0;
+        state.sistaEntryDepth = 0;
+        state.cachedTarget = Oop::fromRawBits(0);
+        state.returnValue = Oop::fromRawBits(0);
+        state.sendBCLength = 0;
+        state.simTOS = 0;
+        state.simNOS = 0;
+        state.spliceSpill0 = 0;
+        state.spliceSpill1 = 0;
 
         // Register this state as GC-reachable (see tryJITActivation for why).
         jit::JITState* prevJITState = currentJITState_;
