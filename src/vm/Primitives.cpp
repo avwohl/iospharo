@@ -3568,6 +3568,58 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
         }
     }
 
+    // Fast path: 1-arg block `[:x | x SEND]` (0-arg send to literal
+    // selector).  Body: PushTemp 0; Send0 literal N; return.  Pops
+    // the closure and re-dispatches to selector(N) with arg as
+    // receiver.  Saves the activateBlock + frame-setup round trip
+    // (~30-50ns).  Triggers on `select: [:x | x even]` (1M times on
+    // bench-suite's select 10x100K, hits the evenOdd cache-fast-path
+    // for the actual send).
+    //
+    // Stack: [..., closure, arg].  After: pop closure, sendSelector
+    // dispatches with arg as receiver.
+    if (argCount == 1) {
+        Oop compiledBlock = memory_.fetchPointerUnchecked(1, closure);
+        if (compiledBlock.isObject() && compiledBlock.rawBits() > 0x10000) {
+            ObjectHeader* blockObj = compiledBlock.asObjectPtr();
+            Oop hdr = memory_.fetchPointerUnchecked(0, compiledBlock);
+            if (hdr.isSmallInteger()) {
+                int numLits = (int)(hdr.asSmallInteger() & 0x7FFF);
+                size_t bcStart = (1 + numLits) * 8;
+                size_t totalBytes = blockObj->byteSize();
+                if (totalBytes >= bcStart + 3) {
+                    const uint8_t* bc = blockObj->bytes() + bcStart;
+                    // Pattern: PushTemp 0; Send0 literal N; return.
+                    // 0x80-0x8F = Send0 (N = low 4 bits, index 0-15).
+                    if (bc[0] == 0x40
+                            && bc[1] >= 0x80 && bc[1] <= 0x8F
+                            && (bc[2] == 0x5C || bc[2] == 0x5E)) {
+                        int litIdx = bc[1] - 0x80;
+                        if (litIdx < numLits) {
+                            Oop sel = memory_.fetchPointerUnchecked(
+                                1 + litIdx, compiledBlock);
+                            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                                ObjectHeader* selObj = sel.asObjectPtr();
+                                if (selObj->isBytesObject()) {
+                                    // Stack: [..., closure, arg].  Shift arg
+                                    // down by 1 (overwrite closure with arg)
+                                    // then pop the duplicate, so arg ends
+                                    // up at sp-1 as the receiver for the
+                                    // synthesized send.
+                                    Oop arg = stackValue(0);
+                                    *(stackPointer_ - 2) = arg;
+                                    pop();
+                                    sendSelector(sel, 0);
+                                    return PrimitiveResult::Success;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Fast path: 1-arg block `[:x | x arithOp K]` for SmallInteger
     // arg and SmI literal.  Body: PushTemp 0; PushLitConst N;
     // ArithSend; return.  Saves block activation on workloads like
