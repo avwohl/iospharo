@@ -3522,12 +3522,38 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                             Oop result;
                             bool fired = true;
                             switch (op) {
+                                case 0: {  // +
+                                    int64_t r = av + bv;
+                                    if (r >= Oop::smallIntegerMin()
+                                            && r <= Oop::smallIntegerMax())
+                                        result = Oop::fromSmallInteger(r);
+                                    else fired = false;
+                                    break;
+                                }
+                                case 1: {  // -
+                                    int64_t r = av - bv;
+                                    if (r >= Oop::smallIntegerMin()
+                                            && r <= Oop::smallIntegerMax())
+                                        result = Oop::fromSmallInteger(r);
+                                    else fired = false;
+                                    break;
+                                }
                                 case 2: result = av < bv ? memory_.trueObject() : memory_.falseObject(); break;  // <
                                 case 3: result = av > bv ? memory_.trueObject() : memory_.falseObject(); break;  // >
                                 case 4: result = av <= bv ? memory_.trueObject() : memory_.falseObject(); break; // <=
                                 case 5: result = av >= bv ? memory_.trueObject() : memory_.falseObject(); break; // >=
                                 case 6: result = av == bv ? memory_.trueObject() : memory_.falseObject(); break; // =
                                 case 7: result = av != bv ? memory_.trueObject() : memory_.falseObject(); break; // ~=
+                                case 8: {  // *
+                                    // Use __builtin_mul_overflow for safe SmI mul.
+                                    int64_t r;
+                                    if (__builtin_mul_overflow(av, bv, &r) ||
+                                            r < Oop::smallIntegerMin() ||
+                                            r > Oop::smallIntegerMax())
+                                        fired = false;
+                                    else result = Oop::fromSmallInteger(r);
+                                    break;
+                                }
                                 default: fired = false; break;
                             }
                             if (fired) {
