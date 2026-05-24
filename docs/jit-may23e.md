@@ -242,8 +242,16 @@ nothing's lost.
                       design required; do NOT just port the existing
                       save to sp-stash and call it done — that wastes
                       the optimization opportunity.
-    Eε   PENDING      Re-measure bench-suite under live JIT.  Previous
+    Eε   BLOCKED      Re-measure bench-suite under live JIT.  Previous
                       1359 ms numbers were interp-mode and are invalidated.
+                      run_benchmarks.sh times out at 120s for BOTH
+                      Cog (--ref-only) and our VM (--ours-only) —
+                      harness has gone bad (image download / Resolver
+                      issue?).  bench-correctness pattern (uses
+                      Pharo.image.bak) DOES work for fib: under JIT
+                      fib(20)=1ms, fib(28)=73ms; needs extending to
+                      the other 13 bench cases listed in
+                      run_benchmarks.st.
 
 ## ✅ JIT silently disabled / X+BV crash — RESOLVED 2026-05-24 (session E2)
 
