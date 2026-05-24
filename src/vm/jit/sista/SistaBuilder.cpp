@@ -4877,6 +4877,42 @@ private:
                     continue;
                 }
 
+                // jit-may23e Eβ: intercept Send0 #even / #odd.
+                // Replace kSendUnspeculated with kPrimEvenOddCheck so
+                // the lowering inlines the SmI bitAnd test instead of
+                // going through the helper.
+                if (nArgs == 0 && selIdx < out_.literals.size()) {
+                    Oop sel = out_.literals[selIdx];
+                    if (sel.isObject() && sel.rawBits() > 0x10000) {
+                        auto* hdr = sel.asObjectPtr();
+                        if (hdr->isBytesObject()) {
+                            size_t bs = hdr->byteSize();
+                            const uint8_t* sb = hdr->bytes();
+                            bool isEven = (bs == 4
+                                && sb[0]=='e' && sb[1]=='v'
+                                && sb[2]=='e' && sb[3]=='n');
+                            bool isOdd = (bs == 3
+                                && sb[0]=='o' && sb[1]=='d'
+                                && sb[2]=='d');
+                            if (isEven || isOdd) {
+                                uint32_t rcv = stack_.back();
+                                stack_.pop_back();
+                                uint64_t eoLit = isEven ? 0 : 1;
+                                eoLit |= ((uint64_t)bcOffset << 16);
+                                uint32_t vid2 = out_.newValue(
+                                    currentBlock_,
+                                    Op::kPrimEvenOddCheck,
+                                    Type::kOopBool,
+                                    {rcv}, eoLit);
+                                recordFramepoint(vid2, bcOffset);
+                                stack_.push_back(vid2);
+                                ip++;
+                                continue;
+                            }
+                        }
+                    }
+                }
+
                 // Default path: bail flushes the ENTIRE IR stack to
                 // state.sp so the interpreter sees every value
                 // simulated-pushed by compiled code.  Compiled

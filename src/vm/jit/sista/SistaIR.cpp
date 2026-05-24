@@ -73,6 +73,7 @@ bool producesOop(Op op) {
     case Op::kCountedLoopIntervalDoAccum:
     case Op::kCountedLoopArrayCollect:
     case Op::kCountedLoopArraySelect:
+    case Op::kPrimEvenOddCheck:
     case Op::kCountedLoopWhileTrueAccum:
     case Op::kCountedLoopBodyExec:
     case Op::kSendCallHelperSpecial:
@@ -180,6 +181,7 @@ const char* name(Op op) {
     case Op::kCountedLoopIntervalDoAccum: return "counted_loop_iv_do_accum";
     case Op::kCountedLoopArrayCollect: return "counted_loop_arr_collect";
     case Op::kCountedLoopArraySelect: return "counted_loop_arr_select";
+    case Op::kPrimEvenOddCheck:       return "prim_even_odd";
     case Op::kCountedLoopWhileTrueAccum: return "counted_loop_whiletrue_accum";
     case Op::kCountedLoopBodyExec:       return "counted_loop_body_exec";
     case Op::kSendCallHelperSpecial:     return "send_helper_special";

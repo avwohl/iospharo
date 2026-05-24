@@ -861,6 +861,81 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
+            // jit-may23e Eβ: inline `Integer>>even` / `>>odd`.
+            case Op::kPrimEvenOddCheck: {
+                if (v.operands.size() != 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itRcv = regFor.find(v.operands[0]);
+                if (itRcv == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                using namespace asmjit::a64;
+                int kind = (int)(v.literal & 1);  // 0=even 1=odd
+                uint32_t bcOffset =
+                    (uint32_t)((v.literal >> 16) & 0xFFFFFFFFu);
+                Label deopt = cc.new_label();
+                Label cont = cc.new_label();
+                // Tag check: low 3 bits == 1 (SmallInt).
+                Gp tag = cc.new_gp64("eo_tag");
+                cc.and_(tag, itRcv->second, Imm(7));
+                cc.cmp(tag, Imm(1));
+                cc.b_ne(deopt);
+                // bits & 9: keeps tag (bit 0=1) + bit 3 (val low bit).
+                //   = 1 → val low bit = 0 → even.
+                //   = 9 → val low bit = 1 → odd.
+                Gp masked = cc.new_gp64("eo_mask");
+                cc.and_(masked, itRcv->second, Imm(9));
+                Gp expected = cc.new_gp64("eo_expected");
+                cc.mov(expected, Imm(kind == 0 ? 1 : 9));
+                cc.cmp(masked, expected);
+                Gp trueOop = cc.new_gp64("eo_true");
+                Gp falseOop = cc.new_gp64("eo_false");
+                cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
+                cc.ldr(falseOop, ptr(state, OFF_FALSEOOP));
+                Gp dst = cc.new_gp64("eo_dst");
+                cc.csel(dst, trueOop, falseOop, CondCode::kEQ);
+                cc.b(cont);
+                // Deopt: bail to interp at bcOffset, with rcv pushed
+                // back onto interp stack so it can re-execute the
+                // send.
+                cc.bind(deopt);
+                {
+                    Gp sp = cc.new_gp64("eo_sp");
+                    cc.ldr(sp, ptr(state, OFF_SP));
+                    cc.str(itRcv->second, ptr(sp));
+                    cc.add(sp, sp, Imm(8));
+                    cc.str(sp, ptr(state, OFF_SP));
+                    Gp ipReg = cc.new_gp64("eo_ip");
+                    if (bytecodeBase) {
+                        if (bcOffset == 0) {
+                            cc.mov(ipReg, bytecodesHoisted);
+                        } else {
+                            cc.add(ipReg, bytecodesHoisted,
+                                   Imm((int)bcOffset));
+                        }
+                    } else {
+                        cc.mov(ipReg, Imm((uint64_t)bcOffset));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argc = cc.new_gp32("eo_argc");
+                    cc.mov(argc, Imm(0));
+                    cc.str(argc, ptr(state, OFF_SENDARGCOUNT));
+                    Gp z64 = cc.new_gp64("eo_z");
+                    cc.mov(z64, Imm(0));
+                    cc.str(z64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("eo_exit");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                }
+                cc.bind(cont);
+                regFor[v.id] = dst;
+                break;
+            }
+
             case Op::kPrimAddInt:
             case Op::kPrimSubInt:
             case Op::kPrimMulInt: {

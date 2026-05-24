@@ -188,9 +188,18 @@ small enough for the hook evaluator:
 
 ## Status tracker (update in-place)
 
-    Eα   PENDING    Stabilize collect bimodality
-    Eβ   PENDING    Sista-side even/odd inline
-    Eγ   PENDING    Array>>sort: splice
+    Eα   DEFERRED   Stabilize collect bimodality — tried widening
+                    invalidateIfHintless to all slot fills; no effect
+                    (10-run all at 1350-1365, none in good case).
+                    Need different attack: probably explicit eager-
+                    compile of iter block before outer method.
+    Eβ   SHIPPED    Sista-side even/odd inline — Op::kPrimEvenOddCheck
+                    added with lowering (tag-check, bitAnd, csel, deopt).
+                    Bench-correctness PASS.  bench-suite ~unchanged
+                    (1 in 5 runs at 1224, 4 at 1357 — bimodality).
+                    Doesn't fire for bench's `[:e | e even]` because
+                    the block runs in asmjit-T1 not Sista.
+    Eγ   IN_PROG    Array>>sort: splice
     Eδ   PENDING    Generic dispatch overhead
     Eε   PENDING    Re-measure
 
