@@ -224,7 +224,24 @@ nothing's lost.
                       canSkipJ2JSave callee.  56K hits per image boot.
                       Commit 0beec702.
     Eδ.2c PENDING     Implement the actual saveless caller emit at IC HIT.
-                      ~60-90 min, risk: medium-high.  See task #9.
+                      Design challenge to resolve first: existing J2J save
+                      is 7 fields × 8 bytes = 56 bytes, sequential
+                      cache-friendly write.  A "saveless" path that
+                      saves state via sp-stash to survive the blr is
+                      similar instruction count (8 fields ≈ 4 stp / 4 ldp
+                      + 8 ldrs + 8 strs ≈ 24-30 instrs vs the existing
+                      ~22 instrs of save push + return prelude).  The
+                      true "direct br/ret" the doc envisioned only works
+                      for callees that don't modify ANY state field —
+                      a stricter condition than the current canSkipJ2JSave
+                      (which still allows state.sp/state.ip mutation).
+                      Worth pursuing a *stricter* "isPureLeaf" flag that
+                      also forbids stack manipulation, OR doing it
+                      differently (e.g., per-callee specialized stub
+                      that does the state save inline).  Fresh-session
+                      design required; do NOT just port the existing
+                      save to sp-stash and call it done — that wastes
+                      the optimization opportunity.
     Eε   PENDING      Re-measure bench-suite under live JIT.  Previous
                       1359 ms numbers were interp-mode and are invalidated.
 
