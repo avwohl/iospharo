@@ -209,23 +209,24 @@ nothing's lost.
 
 ## Status tracker (update in-place)
 
-    Eα   INVALIDATED  Stabilize collect bimodality — tried widening
-                      invalidateIfHintless to all slot fills; no effect
-                      (10-run all at 1350-1365, none in good case).
-                      All bench numbers in this doc are INTERPRETER mode,
-                      not JIT — see jit-silently-disabled entry below.
-    Eβ   INVALIDATED  "Shipped" Sista-side even/odd inline
-                      (Op::kPrimEvenOddCheck added with lowering).
-                      Bench-correctness PASS in interp; never exercised
-                      under JIT.  bench-suite numbers (1224-1357 ms) are
-                      interp-mode timings.  Code lives but is unvalidated.
-    Eγ   DEFERRED     Array>>sort: splice — blocked on JIT crash fix.
-    Eδ   DEFERRED     Generic dispatch overhead — blocked on JIT crash fix.
-    Eε   INVALIDATED  Re-measure (10-run): 1353-1362 ms, median 1359 ms.
-                      These are interp-mode numbers (JIT was silently
-                      disabled by JM_SIZE mismatch since commit 3e625350,
-                      2026-05-23 15:04).  Net JIT bench impact from this
-                      session is UNKNOWN.
+    Eα   DEFERRED     Stabilize collect bimodality — previous interp-mode
+                      attempt invalidated.  Now that JIT runs (E2 fix),
+                      this should be re-attempted with real measurements.
+    Eβ   NEEDS-VERIFY "Shipped" Sista-side even/odd inline (kPrimEvenOddCheck)
+                      now executes under JIT; whether it actually fires on
+                      the bench is unknown.  Re-measure.
+    Eγ   DEFERRED     Array>>sort: splice — unblocked, fresh session.
+    Eδ.1 ✅ DONE      Added canSkipJ2JSave flag to JITMethod.  20.3% of
+                      real-compiled methods qualify (312/1539 on image boot).
+                      Commit 0e6e9808.
+    Eδ.2a ✅ DONE    Counter for qualifying methods.  Commit 96277cc1.
+    Eδ.2b ✅ DONE    Counter for IC-HITs that route through a
+                      canSkipJ2JSave callee.  56K hits per image boot.
+                      Commit 0beec702.
+    Eδ.2c PENDING     Implement the actual saveless caller emit at IC HIT.
+                      ~60-90 min, risk: medium-high.  See task #9.
+    Eε   PENDING      Re-measure bench-suite under live JIT.  Previous
+                      1359 ms numbers were interp-mode and are invalidated.
 
 ## ✅ JIT silently disabled / X+BV crash — RESOLVED 2026-05-24 (session E2)
 
