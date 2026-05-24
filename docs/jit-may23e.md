@@ -342,18 +342,60 @@ under the "fresh session per chunk" model.  Per the doc's rules:
 they should be picked up in a future fresh session, not bundled into
 this one.
 
+## Investigation 2026-05-24 (this session)
+
+Spent extending Eδ.2c into a working saveless emit (3 commits:
+bfff3b6d, 69faa3b2, 27c68e76) plus diagnostic counters (9f8e799d).
+Outcome: infrastructure landed, but fires=0 on bench-suite in
+default config because canSkipJ2JSave+self-rec are mutually
+exclusive (qualifying methods have no ICs → can't be self-rec).
+
+Then investigated the 1M getter+yourself anomaly (35× gap) and
+discovered:
+  - The bench's `pt x` loop runs MOSTLY in interp, not JIT.
+  - Only ~880 inline-getter fires across 3M iterations.
+  - Total IC HITs ~92K — way below the 3M expected.
+  - PHARO_JIT_THRESHOLD=2, PHARO_JIT_DEFER=0, PHARO_QUEUE_COMPILE=1
+    all produce identical timing → JIT compile delay isn't the
+    fix.  Something more fundamental keeps the loop in interp.
+
+Investigated bench-suite bimodality:
+  - sort 100K alternates 198 ms vs 297 ms run-to-run.
+  - dict 50K alternates 154 ms vs 257 ms — INVERSE to sort.
+  - PHARO_NO_LATE_SPEC_RECOMPILE=1 + PHARO_NO_J2J_INLINE_BUMP=1
+    (kill all recompile triggers) does NOT eliminate the bimodality.
+  - mergeFirst:middle:last:into:by: compiles 3 times (#13 boot,
+    #1000 first-recompile, #1001 late-spec recompile).  Expected
+    per design but adds noise.
+  - Bimodality is some other source.  Possibly L1/L2 cache state
+    or scheduler-affected JIT compile ordering.
+
 ## What to try next session
 
 In priority order based on the chunks' expected impact:
 
-1. **Eδ** (3-4h fresh session): if structural dispatch reduction
-   works, this is the single biggest possible win (~7 ns → ~4 ns
-   per send is a 1.8× improvement on send-bound benches).
-2. **Eγ** (2-3h fresh session): sort 100K alone is 282 ms.  A
-   working splice could halve it.
+1. **1M getter+yourself investigation** (1-2h fresh session):
+   the loop body should be inline-getter (4 instrs/iter) but the
+   bench shows 35ms = ~12ns/iter, suggesting interp dispatch.
+   Add a "send #x bytecode → tryGetter" trace counter to confirm
+   what path is taken.  If interp, why does OSR not transition?
+
+2. **Cross-method saveless** (2h fresh session): extend Eδ.2c
+   to handle cross-method (non-self-rec) callees by saving+
+   restoring caller's state.{method,literals,jitMethod,argCount}
+   to sp-stash.  Would let saveless fire in default config since
+   canSkipJ2JSave callees are leaf methods called from warm
+   callers.  Net cost vs J2J save: +~10 instrs but +better branch
+   prediction.  Likely modest win.
+
 3. **Eα** (1h fresh session): explicit eager-compile of iter block
-   to stabilize collect bimodality.  Smaller pay-off but easier
-   to attempt.
+   to stabilize bimodality.  But this session found bimodality
+   is broader than collect (sort, dict also bimodal) — investigation
+   needed before action.
+
+4. **Eγ** (2-3h fresh session): sort 100K alone is 197-300 ms.
+   A working splice could halve it — assuming the bimodality
+   doesn't dominate the signal.
 
 Each needs its own fresh session to avoid the hook prompt limit.
 
