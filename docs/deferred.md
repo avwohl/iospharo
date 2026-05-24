@@ -36,7 +36,23 @@ letter+number by accident across two numbering generations.
 - **A0 (weak-ref GC: testClearing)** — RESOLVED 2026-04-20
   (generational GC + finalization signal semantics).
 
-## ⚠️ JIT-on breaks SessionManager startup handlers — discovered 2026-05-24
+## ✅ JIT-on breaks SessionManager startup handlers — WORKAROUND landed 2026-05-24
+
+**Resolution.**  Reverted `PHARO_T1_INLINE_J2J_XMETHOD` to default-OFF
+(commit `5190c72f`).  Handlers now fire 5/5 runs at default settings;
+bench-correctness reports real JIT-on numbers (fib(20)=12ms,
+fib(28)=134ms, no longer reading stale result files).  Full
+bench-suite produces output without the threshold workaround
+(~1714 ms total, ~15× Cog ~113 ms).
+
+The xmethod path correctness issue persists — re-enable with
+`PHARO_T1_INLINE_J2J_XMETHOD=1` to reproduce.  Underlying fix
+(audit of xmethod state-restore on JIT-to-interp transitions
+during process fork/preempt) deferred to fresh session.
+
+---
+
+
 
 After the JM_SIZE/X+BV fixes below re-enabled JIT, a deeper regression
 became visible: registered SessionManager startup handlers do not fire

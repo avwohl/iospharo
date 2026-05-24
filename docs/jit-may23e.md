@@ -210,8 +210,12 @@ nothing's lost.
 ## Status tracker (update in-place)
 
     Eα   DEFERRED     Stabilize collect bimodality — previous interp-mode
-                      attempt invalidated.  Now that JIT runs (E2 fix),
+                      attempt invalidated.  Now that JIT runs (E2 fix,
+                      xmethod-default-OFF workaround landed 5190c72f),
                       this should be re-attempted with real measurements.
+                      First step: capture variance across 10 runs of
+                      "collect 10x100K" — current single run = 242 ms,
+                      vs Cog 5 ms.
     Eβ   NEEDS-VERIFY "Shipped" Sista-side even/odd inline (kPrimEvenOddCheck)
                       now executes under JIT; whether it actually fires on
                       the bench is unknown.  Re-measure.
