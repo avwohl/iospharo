@@ -164,16 +164,21 @@ asking.`
 These are the design rules that keep each session's transcript
 small enough for the hook evaluator:
 
-1. **One chunk per session.**  Don't chain Eα→Eβ→Eγ in one
-   `/goal` invocation.  The hook evaluator's prompt grows with
-   each tool call.  Long chains = exceeds limit.
+1. **`/clear` before each new `/goal`.**  The hook evaluator reads
+   the current conversation's transcript every time it checks the
+   stop condition.  If the conversation already has a long history
+   (many tool calls, big file reads), even a single new `/goal`
+   chunk will trigger "Prompt is too long" immediately.
+   `/clear` resets the transcript so the hook starts fresh.
 
-2. **Short `/goal` text.**  Maximum ~50 chars total.  Don't quote
+2. **One chunk per session.**  After `/clear`, do ONE chunk, then
+   `/clear` again before the next.  Don't chain Eα→Eβ→Eγ in one
+   conversation.  Tool calls accumulate, and even within one
+   `/goal` invocation the transcript grows toward the limit.
+
+3. **Short `/goal` text.**  Maximum ~50 chars total.  Don't quote
    long passages from this doc in the goal text — reference by
    chunk name (`execute chunk Eα`).
-
-3. **Fresh session per chunk.**  Restart the conversation between
-   chunks.  Don't try to continue in a long-running thread.
 
 4. **Doc is the state**, not the transcript.  Update the chunk's
    status in this doc as the FIRST step of each chunk.  Future
@@ -185,6 +190,22 @@ small enough for the hook evaluator:
 6. **No `wait for me` patterns.**  Each chunk runs end-to-end
    autonomously.  If user input is needed, fail the chunk and
    document the question.
+
+### Usage pattern
+
+```
+/clear                        # reset transcript
+/goal execute chunk Eα from docs/jit-may23e.md
+# (Claude works the chunk end-to-end, pushes, updates doc, stops)
+
+/clear                        # reset again
+/goal execute chunk Eβ from docs/jit-may23e.md
+# ...
+```
+
+If you hit "Prompt is too long" mid-chunk: `/goal clear`, `/clear`,
+re-invoke.  The chunk's progress so far is in git + the doc;
+nothing's lost.
 
 ## Status tracker (update in-place)
 
@@ -244,21 +265,27 @@ Each needs its own fresh session to avoid the hook prompt limit.
 ## If the hook still says "Prompt is too long"
 
 The issue is the `/goal` hook re-evaluates the WHOLE conversation
-each time it considers whether to allow stopping.  If you've been
-running multiple chunks in one session, the transcript may have
-grown beyond the limit.
+each time it considers whether to allow stopping.  If your
+conversation has accumulated history (even just from typing past
+messages, reading docs in earlier turns, etc.), the transcript
+may already exceed the limit before the chunk even starts.
 
-Workaround:
-1. `/goal clear` to drop the current goal.
-2. Start a fresh conversation.
-3. Re-invoke `/goal execute chunk Eβ from docs/jit-may23e.md.`
+**Workaround (in order, try cheapest first):**
 
-The new session sees only:
-- The system prompt.
-- Your `/goal` invocation.
-- The doc this references.
+1. `/clear` — wipes the current conversation transcript.  Then
+   re-invoke the `/goal` line.  Almost always sufficient.
 
-That fits in the hook's context window.
+2. If `/clear` doesn't help: `/goal clear` to drop the active
+   stop hook, then `/clear`, then re-invoke `/goal`.
+
+3. If still stuck: close the Claude Code session entirely and
+   start a brand-new one.  All state is in git + the doc, so
+   no work is lost.
+
+After any of these:
+- The new transcript sees: system prompt + the `/goal` line + the
+  chunk's tool calls.
+- That fits in the hook's context window.
 
 ## Closing note
 
