@@ -3480,6 +3480,93 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Fast path: 0-arg block `[remoteTemp := remoteTemp op K]`.
+    // Body (9 bytes):
+    //   0xFB N M    PushTempAtInVec slot N of temp M  (read remote temp)
+    //   0x50/0x51/0x52  pushZero/One/MinusOne  (or use pushSmI const)
+    //   0x60-0x6F   ArithSend
+    //   0xFC N M    StoreTempAtInVec (no-pop store)
+    //   0x5C/0x5E   Return(Top|Block)
+    // Hits 1M times on bench-suite's `[x := x + 1] value` 1M-blocks
+    // workload.  Saves the closure activation + frame setup +
+    // remote-temp dispatch — ~50 ns per call.
+    //
+    // For closures, frame temps map to copied values: temp M ==
+    // closure->slot (3 + M).  We read/write the captured tempVec
+    // directly.
+    if (argCount == 0) {
+        Oop compiledBlock = memory_.fetchPointerUnchecked(1, closure);
+        if (compiledBlock.isObject() && compiledBlock.rawBits() > 0x10000) {
+            ObjectHeader* blockObj = compiledBlock.asObjectPtr();
+            Oop hdr0 = memory_.fetchPointerUnchecked(0, compiledBlock);
+            if (hdr0.isSmallInteger()) {
+                int numLits = (int)(hdr0.asSmallInteger() & 0x7FFF);
+                size_t bcStart = (1 + numLits) * 8;
+                size_t totalBytes = blockObj->byteSize();
+                if (totalBytes >= bcStart + 9) {
+                    const uint8_t* bc = blockObj->bytes() + bcStart;
+                    // 9-byte pattern (0-indexed): 0xFB N M, push K,
+                    // ArithSend, 0xFC N M, return.
+                    if (bc[0] == 0xFB
+                            && bc[3] >= 0x50 && bc[3] <= 0x51  // pushZero/One
+                            && bc[4] >= 0x60 && bc[4] <= 0x6F  // ArithSend
+                            && bc[5] == 0xFC
+                            && bc[1] == bc[6]   // same slot N
+                            && bc[2] == bc[7]   // same temp M
+                            && (bc[8] == 0x5C || bc[8] == 0x5E)) {
+                        int slotN = bc[1];
+                        int tempM = bc[2];
+                        // Closure slot 3+ holds copied values; tempM=0
+                        // is the first copied value.
+                        Oop tempVec = memory_.fetchPointerUnchecked(
+                            3 + tempM, closure);
+                        if (tempVec.isObject() && tempVec.rawBits() > 0x10000) {
+                            ObjectHeader* vecObj = tempVec.asObjectPtr();
+                            if (slotN >= 0
+                                    && (size_t)slotN < vecObj->slotCount()) {
+                                Oop x = memory_.fetchPointerUnchecked(
+                                    slotN, tempVec);
+                                if (x.isSmallInteger()) {
+                                    int op = bc[4] - 0x60;
+                                    int64_t xv = x.asSmallInteger();
+                                    int64_t kv = (bc[3] == 0x50) ? 0 : 1;
+                                    Oop result;
+                                    bool fired = true;
+                                    switch (op) {
+                                        case 0: {  // +
+                                            int64_t r = xv + kv;
+                                            if (r >= Oop::smallIntegerMin()
+                                                    && r <= Oop::smallIntegerMax())
+                                                result = Oop::fromSmallInteger(r);
+                                            else fired = false;
+                                            break;
+                                        }
+                                        case 1: {  // -
+                                            int64_t r = xv - kv;
+                                            if (r >= Oop::smallIntegerMin()
+                                                    && r <= Oop::smallIntegerMax())
+                                                result = Oop::fromSmallInteger(r);
+                                            else fired = false;
+                                            break;
+                                        }
+                                        default: fired = false; break;
+                                    }
+                                    if (fired) {
+                                        memory_.storePointer(
+                                            slotN, tempVec, result);
+                                        // Replace closure with result.
+                                        *(stackPointer_ - 1) = result;
+                                        return PrimitiveResult::Success;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Fast path: 2-arg comparator block `[:a :b | a cmpOp b]` for
     // SmallInteger args.  The block's bytecode body is exactly:
     //   0x40 (PushTemp 0 = a)
