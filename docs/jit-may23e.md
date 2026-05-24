@@ -243,15 +243,19 @@ nothing's lost.
                       save to sp-stash and call it done — that wastes
                       the optimization opportunity.
     Eε   BLOCKED      Re-measure bench-suite under live JIT.  Previous
-                      1359 ms numbers were interp-mode and are invalidated.
-                      run_benchmarks.sh times out at 120s for BOTH
-                      Cog (--ref-only) and our VM (--ours-only) —
-                      harness has gone bad (image download / Resolver
-                      issue?).  bench-correctness pattern (uses
-                      Pharo.image.bak) DOES work for fib: under JIT
-                      fib(20)=1ms, fib(28)=73ms; needs extending to
-                      the other 13 bench cases listed in
-                      run_benchmarks.st.
+                      1359 ms numbers were interp-mode.  Setup-side
+                      issue: scripts/run_benchmarks.sh's Cog invocation
+                      lacks `--headless --no-quit`; with those flags
+                      Cog produces results (~113ms total bench-suite
+                      reference).  Deeper issue: SessionManager
+                      startup handlers do NOT fire under JIT-on in
+                      our VM — see "JIT-on breaks SessionManager
+                      startup handlers" in docs/deferred.md.  This
+                      means previously-reported "JIT-mode" bench
+                      timings (fib(28)=73ms from bench-correctness)
+                      came from stale result files; real JIT-on
+                      bench-suite numbers cannot be obtained until
+                      the handler-dispatch regression is fixed.
 
 ## ✅ JIT silently disabled / X+BV crash — RESOLVED 2026-05-24 (session E2)
 

@@ -36,6 +36,54 @@ letter+number by accident across two numbering generations.
 - **A0 (weak-ref GC: testClearing)** — RESOLVED 2026-04-20
   (generational GC + finalization signal semantics).
 
+## ⚠️ JIT-on breaks SessionManager startup handlers — discovered 2026-05-24
+
+After the JM_SIZE/X+BV fixes below re-enabled JIT, a deeper regression
+became visible: registered SessionManager startup handlers do not fire
+when JIT is on.
+
+**Reproduction.**  Inject a minimal class with a `startUp:` method
+into `Pharo.image.bak` via `pharo image eval --save "..."`, register
+with `SessionManager default register: (ClassSessionHandler
+forClassNamed: #X)`.  Under our VM:
+
+    PHARO_NO_JIT=1 ./build/test_load_image /tmp/img.image     → handler fires
+    ./build/test_load_image /tmp/img.image                    → handler does NOT fire
+    PHARO_NO_ASMJIT_T1=1 ./build/test_load_image /tmp/img.image → does NOT fire
+    PHARO_NO_SISTA=1 ./build/test_load_image /tmp/img.image    → does NOT fire
+    PHARO_T1_NO_INLINE_J2J=1 ./build/test_load_image /tmp/img.image → does NOT fire
+
+So any JIT path (asmjit-T1 default, stencil fallback, even with
+inline-J2J disabled) prevents handler dispatch.  Image boot still
+completes (`=== Test Complete ===`), 126K xmethod inline-J2J fires
+happen, BV inline hits, etc. — JIT-compiled methods run.  The
+problem is specifically that some method on the SessionManager
+handler-invocation path is being JIT-compiled and runs incorrectly,
+silently skipping the forked handler block.
+
+**Implication.**  This is why all the `scripts/bench-suite.sh` and
+`scripts/bench-correctness.sh` outputs that claim "JIT-on" results
+are wrong — handlers never fire under JIT, so the bench code never
+runs; the timings come from stale result files from previous JIT-off
+sessions.  Cog reference does fire handlers (needs `--headless
+--no-quit` flags) and produces real numbers.
+
+**Fix scope.**  This is the deeper JIT correctness regression — the
+X+BV SIGSEGV was a symptom that surfaced loudly; the silent
+skip-the-handler regression is more pervasive.  Likely a JIT-to-
+interp sync issue on a process fork / SessionManager loop method.
+Investigation pointers:
+- `Smalltalk snapshot:andQuit:` resume path under JIT
+- `SessionManager>>startUp:` iteration
+- `BlockClosure>>forkAt:` and the priority-fork mechanism
+- `Smalltalk exitSuccess` early-exit (maybe interp exits before the
+  handler fork gets a CPU slice?)
+
+A natural next step: add a `g_lastIpWriter`-style instrumentation
+specifically around the SessionManager startup loop to identify
+which method execution diverges from the JIT-off path.  Skill-level
+similar to the X+BV bisect work that landed this session.
+
 ## ✅ JIT silently disabled — RESOLVED 2026-05-24 (session E2)
 
 **Both root causes fixed.**  Working tree at session end has:
