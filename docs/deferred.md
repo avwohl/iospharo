@@ -36,6 +36,289 @@ letter+number by accident across two numbering generations.
 - **A0 (weak-ref GC: testClearing)** — RESOLVED 2026-04-20
   (generational GC + finalization signal semantics).
 
+## ✅ JIT silently disabled — RESOLVED 2026-05-24 (session E2)
+
+**Both root causes fixed.**  Working tree at session end has:
+
+1. `src/vm/jit/TrampolineAsm.S`: `JM_SIZE 104 → 112`, `JM_BCTOCODEOFF 52 →
+   56`.  These had drifted out of sync with `sizeof(JITMethod)` when
+   commit `3e625350` (hasNLR field add) shipped without updating them,
+   silently disabling JIT for 14 commits.
+
+2. `src/vm/jit/asmjit/AsmjitT1.cpp`: relocated the cross-method
+   `state.{jitMethod,method,literals,argCount} = calleeCM` update from
+   BEFORE the J2J save-full check (line ~3707) to AFTER the save push
+   (line ~3924).  The original placement was reached before the
+   `j2jBailFull` bail at line ~3843, so if the bail fired (more often
+   under X+BV because both paths share the J2J pool), state.method was
+   left at calleeCM.  The bail fell through to `dispatchCached` / `miss`
+   / non-probe-fallback emits at lines 5246/5260/5275, which compute
+   `state.ip = state.method + bcOffsetFromMethObj` — landing state.ip
+   at `calleeCM + caller_bcOff` (a neighbour CompiledMethod's data
+   area).  Interp resumed there, dispatched bytes from that method's
+   data as bytecodes, eventually hitting a `pushReceiverVariable` on a
+   SmI receiver → SIGSEGV.
+
+**Verification:**
+
+- `test_load_image /tmp/harness/Pharo.image` boots to completion with
+  126K xmethod inline-J2J fires (was ~500 before crash).
+- `scripts/bench-correctness.sh fib 20 28`: fib(20)=21891, fib(28)=
+  1028457, both PASS.
+
+Historical investigation notes follow.
+
+### Discovery (E2 2026-05-23 evening)
+
+**Status:** JIT has not actually been running since commit `3e625350`
+(2026-05-23 15:04, "jit F3-NL4: compile-time NLR detection lets non-leaf
+BV ship").  That commit added `hasNLR` to `JITMethod`, bumping
+`sizeof(JITMethod)` from 104 → 112, but missed:
+
+- `TrampolineAsm.S`: `JM_SIZE` still 104 (must be 112)
+- `TrampolineAsm.S`: `JM_BCTOCODEOFF` still 52 (must be 56 — `totalSize`
+  shifted from offset 48 to 52)
+- `stencils/stencils.cpp` `JITMethod_mirror`: still has the pre-hasNLR
+  layout (sizeof 96, totalSize at 48, selBits at 72, stats at 80) —
+  must update to match the real 112-byte struct
+
+The runtime check in `JITRuntime::initialize` (JITRuntime.cpp:2024) fires
+its `[JIT] FATAL: TrampolineAsm.S JM_SIZE=104 != sizeof(JITMethod)=112 …`
+message and returns false; the VM continues `running interpreted only`.
+
+**Impact:** the 14 commits shipped between `3e625350` and HEAD include
+W1-W7 (inline TempReturn/IntCmpReturn/IntArithReturn, select splice,
+even/odd inline, IC HIT inlines, upgradeICToJ2J) and Eβ
+(`bf7830bf` Sista-side Integer>>even/odd inline / kPrimEvenOddCheck).
+**None of these have been validated under live JIT.**  All
+"bench-correctness PASS" claims and the 1349-1359 ms numbers in
+`docs/jit-may23e.md` are interpreter-mode timings, not JIT timings.
+The "Eβ shipped" claim in that doc is not load-bearing — the new op
+was never reached at runtime.
+
+**The latent crash:** applying the obvious fix (`JM_SIZE 104 → 112`,
+`JM_BCTOCODEOFF 52 → 56`, update the mirror) re-enables JIT init.  But
+then loading the standard Pharo image SIGSEGVs deep in
+`Interpreter::interpret()` at PC+1100 — the offending instruction
+`ldr x9, [x8]` dereferences `x8 = 0x51` as a pointer.  `0x51` is the
+tagged SmallInteger 10.  Pattern of the surrounding code:
+
+    ldr x8, [x28, #0xa0]     // load Oop from state+160
+    ldr x9, [x8]             // *** crash here: x8 is SmI ***
+    lsr x9, x9, #56          // class index byte
+    cmp x9, #0xff
+    ...
+    and x11, x23, #0xf       // arg index from bytecode
+    add x8, x8, x11, lsl #3  // recv field slot
+    ldr x1, [x8]
+    bl Interpreter::push(Oop)
+
+This is a `pushReceiverVariable`-style handler where the receiver is
+unexpectedly a SmallInteger.  Symptom is the same under both `asmjit-T1`
+default and `PHARO_NO_ASMJIT_T1=1` (stencil JIT) — the crash backtrace
+in stencil mode goes through `JITRuntime::tryExecute → tryJITActivation
+→ activateMethod → tryJITResumeInCaller → returnValue → returnFromMethod
+→ dispatchBytecode → interpret`, so JIT-compiled code is returning to
+interp with a SmallInt where the next bytecode expects a real object.
+
+This crash predates this session — it's been latent in 14 commits since
+3e625350, hidden by JIT being silently off.
+
+**Bisect result (2026-05-23 session E2):** the first crashing commit
+is `16c5a8fac` ("jit F3-NL6: default-on xmethod inline-J2J + non-leaf
+BV inline").  That commit *only* edits `src/vm/DebugSettings.cpp`,
+flipping three env-var defaults from opt-in to default-on:
+
+- `PHARO_T1_INLINE_J2J_XMETHOD`           (X)
+- `PHARO_T1_INLINE_BLOCK_VALUE`           (BV)
+- `PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF`   (NL)
+
+The bench-correctness fib 5/5 PASS that gated the commit only
+exercises `benchFib` — full image load was never tested.
+
+Empirically (HEAD with JM_SIZE patched, image load via
+`./build/test_load_image /tmp/harness/Pharo.image`):
+
+    config                     result
+    X on, BV on,  NL on        CRASH (default)
+    X on, BV on,  NL off       CRASH
+    X off,BV on,  NL on        OK
+    X on, BV off, NL on        OK
+    X off,BV off, NL on        OK
+    X off,BV off, NL off       OK
+    X on, BV off, NL off       OK
+    X off,BV on,  NL off       OK
+
+→ **The crash requires both X and BV to be on simultaneously.**  NL
+is irrelevant.  The crash is a latent bug in the *interaction* between
+xmethod inline-J2J and block-value inline.
+
+Further bisect with `PHARO_T1_INLINE_J2J_XMETHOD_MAX=N`:
+
+    N=0..400     OK
+    N=500..1000+ CRASH
+
+The crash is NOT deterministic on a specific xmethod call site — it
+takes ~400-500 successful xmethod fires to manifest.  Pattern is
+consistent with state accumulating wrong data over many calls.
+`PHARO_T1_PURE_J2J_GATE=1` and `PHARO_T1_WARM_J2J_GATE=1` do NOT
+prevent the crash; `PHARO_T1_NO_INLINE_J2J=1` (entire J2J inline emit
+off) DOES, confirming the inline-J2J emit is involved.
+
+**lldb inspection at the crash (session E2):**
+
+    PC = Interpreter::interpret() + 1100   (bytecode dispatch)
+    bytecode at IP = 0x1f (pushReceiverVariable 15)
+    Interpreter::receiver_ = 0x51 (SmI 10) — bug source
+    Interpreter::method_   = 0x300374528 (valid method oop)
+    Interpreter::closure_  = nil
+    Interpreter::activeContext_ = (real Oop)
+
+The earlier `[SEL-CORRUPT #7]` event preceding the crash showed
+`rcvr=0x6567616e614d4955` — **little-endian byte order = "UIManage"**,
+i.e., the literal byte content of a string object in memory.  Reading
+the bits as an Oop gives a SmI-like-looking value when the string
+content happens to start with ASCII bytes whose low 3 bits = 001.
+This is classic **stack-pointer-into-string-bytes corruption**:
+state.sp got corrupted to point inside a heap string's content area,
+and `sp[-(nArgs+1)]` (the receiver slot for the send) loaded raw
+string bytes as if they were an Oop.
+
+The asmjit-T1 J2J PUSH always writes save.sp (line ~3836).  The
+asmjit-T1 J2J return prelude always restores state.sp (line ~2578-87).
+BV helper saves/restores sp correctly too.  But adding an extra BV
+helper instrumentation in this session showed **no BV fires occur
+before the crash** when X+BV are both on — i.e., the crash precedes
+any BV inline.  So the bug isn't *during* a BV inline; enabling BV
+must alter codegen in a way that breaks the J2J path even when BV's
+runtime path doesn't fire.
+
+The four asmjit-T1 codegen sites that change when `t1InlineBlockValue`
+flips: line 2628 (F3-NL2 restore gate adds BV to the predicate),
+3350 (bit-59 dispatch tbnz), 3520 (BV inline body emit), 3936
+(spLiveInX2 = false → reload sp from state vs assume x2 still holds it).
+
+3936 was a suspect (spLiveInX2 optimization) but on closer review of
+the codegen, the BV-on path doesn't modify state.sp before the J2J
+push when bit 59 is unset (the only path that reaches the J2J push
+emit).  Hypothesis rejected.
+
+**lldb session 2 (2026-05-24, deeper trace):** Added a runtime check
+in `op_pushRecvVar` (the dispatch label) that fires when receiver_ is
+SmI.  Got concrete state at the crash:
+
+    receiver_ = SmI 10                  (the 0x51)
+    method_   = 0x300374528             (CompiledMethod, classIndex 3101)
+    method.slot[0] header SmI: numLits=13, byteSize=171
+    method.bytes start = 0x300374538, bytecodeEnd = 0x3003745db
+    instructionPointer_ = 0x300374aab   ← 1395 BYTES PAST bytecodeEnd
+    closure_ = nil, activeContext_ = (valid)
+    j2jPoolCursor = 0  (chain already unwound — sync was to interp)
+
+So when interp resumes from the JIT chain unwind, **state.method and
+state.ip are inconsistent**: state.method = M1 (e.g. raisedToInteger:),
+state.ip = an address inside an entirely different CompiledMethod
+object's data area (specifically pointing into another method's
+header-SmI bytes, which read as bytecode 0x00 = pushReceiverVariable 0).
+
+That pairs with receiver_ = SmI 10 (which was a legitimate Integer
+receiver for some inner frame); but executing pushReceiverVariable on
+a SmI dereferences address 0x51 → SIGSEGV.
+
+**Why this happens:** the asmjit-T1 J2J return prelude restores
+state.{receiver,tempBase,jitMethod,method,literals,argCount} from save
+(via the F3-NL2 fix at line 2628), then `br x8` to caller's resumeAddr.
+It does NOT restore state.ip — the long-standing optimization at
+line 2588-2594 assumes "every bytecode writes state.ip before any exit
+to interp."  After a J2J pop, the caller's JIT code continues from the
+resumeAddr without re-writing state.ip, so state.ip stays = the
+callee's stale value.  If the chain then unwinds without any
+intermediate state.ip write, the interp sync (Interpreter.cpp:17779)
+reads a stale state.ip alongside a freshly-restored state.method.
+
+**Attempted fix that didn't work:** added `ldp x6, x9, [x4, 16]` /
+`str x9, [x0, OFF_IP]` to the prelude so it restores state.ip from
+save.ip too.  Build clean, JIT runs, but the crash STILL fires —
+though the symptom *changes*: before the fix, state.method was a
+specific oop (e.g. 0x300374528, raisedToInteger:) and IP was far OOR;
+after the fix, state.method shifts to a different method
+(printOn:base:length:padded:, oop 0x300396e08) with IP still OOR by
+~250KB.  So the fix prevents the older state-restore window but not
+the deeper one.  Also tried `PHARO_T1_J2J_POST_SEND_IP=1` (compute
+save.ip from callerCM + bcOff + 1 instead of reading state.ip at push)
+— no change.  Tried `PHARO_T1_J2J_RECEIVER_SYNC=1` too — no change.
+
+**Call-chain evidence:** the deepest visible savedFrames at crash is
+the integer-printing path:
+
+    [18] printOn:base:                    recv=SmI
+    [17] printOn:
+    [16] print:
+    [15] printOn:                         recv=(real obj)
+    [14] printOn:
+    [13] printOn:
+    [12] streamContents:limitedTo:
+    [11] printStringLimitedTo:using:
+    [10] printStringLimitedTo:
+    [9]  timesRepeat:                     closure=(real)
+    [8]  withIndexDo:
+    [7]  doWithIndex:
+    [0..6] logError:inContext:, logDuring:, ensure:, openLog,
+           ifNotNil:, errorReportOn:, print:
+
+This is the Pharo error/log printing chain — exception handling
+triggered from startup, which then tries to print errors involving
+Integers, which uses printOn:base:length:padded:, which has many
+internal sends and block-value calls.
+
+**Likely deeper cause:** JIT-emitted bytecode bails (`a.str(x5, ptr(x0, OFF_IP))` at canBailMidMethod sites) may set state.ip to a stale
+or relocated address.  Or the BV helper `jit_rt_inline_block_value_prep`
+writes state.ip = block-bytecode-start but the helper's caller (asmjit
+emit at line 3520) doesn't restore state.ip when BV bails (the helper
+returns NULL but state.ip was already pre-bumped).  Worth checking:
+`grep -n "OFF_IP" AsmjitT1.cpp` shows 32 writes — many in bail/exit
+sites.  Audit each for stale callerCM references in xmethod mode.
+
+The corruption is deeper than the prelude restore alone can fix.
+Full investigation requires:
+1. Add per-write logging at every asmjit `a.str(x*, ptr(x0, OFF_IP))`
+   emit (track which write site sets state.ip last before crash).
+2. OR add a runtime check at every JIT exit that verifies state.ip is
+   within state.method's bytecode range; abort + backtrace on mismatch.
+3. Examine `jit_rt_inline_block_value_prep` bail paths in
+   JITRuntime.cpp:1477+ — does it leave state.{method,ip} consistent
+   when it returns NULL?
+
+**Resolution paths (pick one):**
+
+A. **Cheap workaround** — revert ONE of the X / BV defaults to opt-in
+   (leave the other on for partial perf benefit).  Restores image
+   bootability immediately.  Probably loses a few percent of 16c5a8f's
+   17% bench-suite improvement (which is unverified under live JIT
+   anyway — only benchFib was measured).
+
+B. **Real fix** — continue from the lldb-session-2 diagnosis above
+   (the state.ip ≠ state.method mismatch).  Add a watchpoint on
+   state.ip writes that catches the write-to-out-of-bytecode-range
+   moment.  Verify whether the chain-loop materialize path (lines
+   17735/17755/17763) sets state.ip wrong, or whether the asmjit-T1
+   emit writes state.ip somewhere with a stale value (e.g., callee's
+   bcStartCache on a J2J push where callerJM != calleeJM in the
+   xmethod path).  The fix likely lives in either the chain-loop
+   materialize or the asmjit-T1 J2J push (callee setup) emit.
+
+C. **Hard revert** — `git revert 16c5a8fac` plus the JM_SIZE fix.
+   Drops the F3-NL6 perf claims (which were measured on benchFib only)
+   but restores known-working behavior.
+
+**Required for any path:** the JM_SIZE / JM_BCTOCODEOFF fix in
+TrampolineAsm.S and the JITMethod_mirror update in stencils.cpp.
+Without those, JIT stays silently off and "looks fine" while doing
+nothing.
+
+Until this is fixed, **all** Eα/Eγ/Eδ work and any other JIT perf
+investigation is invalidated — there's nothing to measure JIT against.
+
 ## A. Open VM issues
 
 Surfaced 2026-04-19 by removing the harness skip list and the JIT

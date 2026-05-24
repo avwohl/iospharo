@@ -3674,13 +3674,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x14, ptr(x14));
                     a.cmp(x15, x14);
                     a.b_hi(j2jBailSelf2);
-                    // Cross-method update:
-                    a.str(x10, ptr(x0, OFF_JITMETHOD));
-                    a.str(x13, ptr(x0, OFF_METHOD));
-                    a.add(x14, x13, asmjit::Imm(16));
-                    a.str(x14, ptr(x0, OFF_LITERALS));
-                    a.mov(w14, asmjit::Imm(nArgs));
-                    a.str(w14, ptr(x0, OFF_ARGCOUNT));
+                    // E2 2026-05-24: cross-method state.{jitMethod,method,
+                    // literals,argCount} update RELOCATED to after the
+                    // save-full check (line ~3843), because that bail
+                    // falls through to dispatchCached/miss which compute
+                    // state.ip = state.method + bcOffsetFromMethObj.  If
+                    // state.method is calleeCM at that point, state.ip
+                    // lands at calleeCM + caller_bcOff = wrong heap
+                    // address.  X+BV crash root cause.
                     if (pharo::g_debug.t1InlineJ2JXmethodLog) {
                         using namespace asmjit::a64;
                         if (!inlineJ2JCounters) {
@@ -3893,6 +3894,37 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.mov(w15, asmjit::Imm(nArgs));
                         a.stp(x14, x15, ptr(x6, -16));
                     }
+                }
+
+                // E2 2026-05-24: cross-method state.{jitMethod,method,
+                // literals,argCount} update.  Relocated from BEFORE the
+                // save-full check (originally at line ~3707) to AFTER the
+                // save push.  Original location was reached BEFORE the
+                // save-full bail at line ~3843, so if the bail fired with
+                // a full pool (common when X+BV are both on and the pool
+                // is being shared), state.method was left set to calleeCM.
+                // The bail then fell through to dispatchCached / miss /
+                // non-probe-fallback emits, which compute state.ip =
+                // state.method + bcOffsetFromMethObj — landing state.ip
+                // at calleeCM + caller_bcOff = an unrelated heap address.
+                // Symptom: interp resumed, dispatched bytes from a
+                // neighbouring CompiledMethod's data area as bytecodes;
+                // pushReceiverVariable on a SmI receiver → SIGSEGV.
+                // Placing the update *after* the save push means
+                // save-full / pure-J2J-gate / etc. bails leave
+                // state.method unchanged (= callerCM), so the bail's
+                // ip-write lands in the caller's bytecodes as intended.
+                // For self-recursive sends this is a redundant write
+                // of the same value (callee == caller); cost is 4
+                // extra stores per push.
+                if (xmethod) {
+                    a.ldr(x13, ptr(x10, 0));      // x13 = calleeCM
+                    a.str(x10, ptr(x0, OFF_JITMETHOD));
+                    a.str(x13, ptr(x0, OFF_METHOD));
+                    a.add(x13, x13, asmjit::Imm(16));
+                    a.str(x13, ptr(x0, OFF_LITERALS));
+                    a.mov(w13, asmjit::Imm(nArgs));
+                    a.str(w13, ptr(x0, OFF_ARGCOUNT));
                 }
 
                 // Bump cursor + depth + totalCalls.  depth and totalCalls

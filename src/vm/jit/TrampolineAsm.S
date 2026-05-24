@@ -61,7 +61,7 @@
 #define JM_NUMBYTECODES   30
 #define JM_ARGCOUNT       34   // uint8_t cached from method header
 #define JM_TEMPCOUNT      35
-#define JM_BCTOCODEOFF    52   // bcToCodeTableOffset, see JITMethod.hpp
+#define JM_BCTOCODEOFF    56   // bcToCodeTableOffset, see JITMethod.hpp
 // JM_SIZE must equal sizeof(JITMethod) (see JITMethod.hpp).
 // CAN'T USE sizeof IN ASSEMBLY — but a C++ runtime check in
 // JITRuntime::initialize() asserts this constant matches sizeof().
@@ -76,7 +76,11 @@
 // moved out of MAP_JIT into a heap-allocated side-buffer.
 // Bumped to 104 (2026-05-20) when bcStartCache was added so the
 // inline-J2J emit can read pre-computed bytecode-start in one load.
-#define JM_SIZE           104
+// Bumped to 112 (2026-05-23) when hasNLR was added (commit 3e625350);
+// JM_BCTOCODEOFF also shifted 52 → 56 at the same time.  The hasNLR
+// commit missed both updates — JIT silently failed to initialize for
+// ~14 commits until E2 (2026-05-24) caught it.
+#define JM_SIZE           112
 
 // -------- ExitReason values --------
 #define EXIT_RETURN       1

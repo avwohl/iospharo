@@ -209,29 +209,39 @@ nothing's lost.
 
 ## Status tracker (update in-place)
 
-    Eα   DEFERRED   Stabilize collect bimodality — tried widening
-                    invalidateIfHintless to all slot fills; no effect
-                    (10-run all at 1350-1365, none in good case).
-                    Need different attack: probably explicit eager-
-                    compile of iter block before outer method.
-    Eβ   SHIPPED    Sista-side even/odd inline — Op::kPrimEvenOddCheck
-                    added with lowering (tag-check, bitAnd, csel, deopt).
-                    Bench-correctness PASS.  bench-suite ~unchanged
-                    (1 in 5 runs at 1224, 4 at 1357 — bimodality).
-                    Doesn't fire for bench's `[:e | e even]` because
-                    the block runs in asmjit-T1 not Sista.
-    Eγ   DEFERRED   Array>>sort: splice — 2-3h chunk needed; sort is
-                    recursive mergesort and the splice would need to
-                    handle the inner per-merge-step loop separately
-                    from the recursion.  Punt to a fresh session.
-    Eδ   DEFERRED   Generic dispatch overhead — needs new IC bit
-                    "no-save tier-2" + new asmjit-T1 emit path that
-                    skips the J2J save push AND a matching no-pop
-                    return prelude.  3-4h work, doesn't fit a 30-min
-                    chunk.  Punt to fresh session.
-    Eε   DONE       Re-measure (10-run): 1353-1362 ms, median 1359 ms.
-                    Same as start of jit-may23e.  Net bench-suite
-                    impact from this session = 0.
+    Eα   INVALIDATED  Stabilize collect bimodality — tried widening
+                      invalidateIfHintless to all slot fills; no effect
+                      (10-run all at 1350-1365, none in good case).
+                      All bench numbers in this doc are INTERPRETER mode,
+                      not JIT — see jit-silently-disabled entry below.
+    Eβ   INVALIDATED  "Shipped" Sista-side even/odd inline
+                      (Op::kPrimEvenOddCheck added with lowering).
+                      Bench-correctness PASS in interp; never exercised
+                      under JIT.  bench-suite numbers (1224-1357 ms) are
+                      interp-mode timings.  Code lives but is unvalidated.
+    Eγ   DEFERRED     Array>>sort: splice — blocked on JIT crash fix.
+    Eδ   DEFERRED     Generic dispatch overhead — blocked on JIT crash fix.
+    Eε   INVALIDATED  Re-measure (10-run): 1353-1362 ms, median 1359 ms.
+                      These are interp-mode numbers (JIT was silently
+                      disabled by JM_SIZE mismatch since commit 3e625350,
+                      2026-05-23 15:04).  Net JIT bench impact from this
+                      session is UNKNOWN.
+
+## ✅ JIT silently disabled / X+BV crash — RESOLVED 2026-05-24 (session E2)
+
+Two stacked root causes, both fixed in working tree:
+
+1. `JM_SIZE`/`JM_BCTOCODEOFF` drift in `TrampolineAsm.S` since commit
+   `3e625350` (hasNLR field add) — JIT silently failed init since then.
+2. `AsmjitT1.cpp` cross-method `state.method` update happening BEFORE
+   the J2J save-full bail check — bails left state.method = calleeCM,
+   which the bail emits then combined with `bcOffsetFromMethObj` to
+   land state.ip at an unrelated heap address.
+
+Verified by full image boot (~126K xmethod inline-J2J fires) and
+`scripts/bench-correctness.sh fib 20 28` (both PASS).  See
+`docs/deferred.md` "✅ JIT silently disabled — RESOLVED" entry for
+the full diagnosis.
 
 ## Final result
 
