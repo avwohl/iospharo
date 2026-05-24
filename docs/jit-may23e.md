@@ -342,6 +342,28 @@ under the "fresh session per chunk" model.  Per the doc's rules:
 they should be picked up in a future fresh session, not bundled into
 this one.
 
+## 2026-05-24 — detectTrivialMethod CallPrimitive prefix fix (445e49fd)
+
+Found that methods like `Point>>x` declared with `<primitive: 264>`
+weren't classified as trivial getters because the detection only
+matched against the FIRST two bytes (bc0 = 0xF8 CallPrimitive, not
+0x00 pushRecvVar).  Quick-prim slot getters use prim 264+N
+(primitiveLoadInstVar variants) with a fallback `pushRecvVar N;
+returnTop` body — same shape as a non-primitive getter, just
+preceded by the 3-byte CallPrimitive header.
+
+Fix: skip the 3-byte CallPrimitive header in `detectTrivialMethod`
+when bc0 == 0xF8.  Existing shape matches then apply uniformly.
+
+Verified via IC-PATCH trace: `Point>>x` now classifies as
+getter=0 (slot 0), was getter=-1.
+
+This unlocks bit-63 inline-getter classification for many trivial
+methods across the system (anything declared with `<primitive: N>`
+and a trivial fallback).  1M getter+yourself bench dropped from
+~35 ms to ~33 ms (limited gain because the bench loop runs mostly
+in interp; the fix benefits sites that do reach the JIT path).
+
 ## Investigation 2026-05-24 (this session) — getter+yourself anomaly
 
 Bytecode dump (Pharo 13 compile of `1 to: 1000000 do: [:i | pt x]`) at
