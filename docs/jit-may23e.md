@@ -402,6 +402,41 @@ Added two new fast paths to commonSend's method-cache dispatch:
 Both fast paths require MethodCacheEntry field additions (evenOddKind,
 returnsLiteralKind) populated from detectTrivialMethod.
 
+## 2026-05-24 — OSR drive-from-asm investigation (no commit)
+
+Investigated wiring up J2J save pool + chain-loop dispatch in the
+OSR path so JIT-inlined sends don't fall through to activateMethod
+(which pushes real frames).  Two attempts:
+
+1. **Set state.j2jSaveCursor to a j2jPool_ slice** in tryJITResumeInCaller
+   when FORCE_RESUME_FOR_SENDS=1.  Reverted (commit-free) — fib still
+   hangs with frameDepth=4096 during session startup, not during the
+   bench.  The 4096 frames are nested `Array>>do:` calls.
+
+2. **Enable PHARO_RESUME_J2J=1** chain-loop (existing flag, default off)
+   alongside FORCE_RESUME.  Same hang — Array>>do: still recurses 4096
+   deep.
+
+Root cause appears to be a JIT correctness issue specific to
+mid-method OSR entry: JIT-compiled `Array>>do:` produces semantics
+that differ from the interpreter, causing nested recursion that
+doesn't terminate.  Most likely cause: the JIT emit for the
+SistaV1 inlined `to:do:` counted-loop assumes a stack/temp state
+that the OSR target doesn't quite match.
+
+Conclusion: drive-from-asm dispatch alone isn't enough.  To fully
+unblock OSR for send-containing methods needs:
+
+1. Audit each bytecode emit's stack/temp assumptions at OSR entry
+   points, OR
+2. Re-emit a per-bytecode "stack reload" prologue when entered via
+   OSR rather than method-start.
+
+Both are multi-hour design tasks.  The state-sync fix (commit
+2d9da6ee) plus the runtime guard against unsafe CallPrimitive-skip
+(part of same commit) remain valid improvements.  Default config
+unchanged.
+
 ## 2026-05-24 — OSR state-sync second pass (2d9da6ee)
 
 Added missing JITState field init in tryJITResumeInCaller:
