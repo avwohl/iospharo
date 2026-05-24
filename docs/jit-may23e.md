@@ -342,6 +342,52 @@ under the "fresh session per chunk" model.  Per the doc's rules:
 they should be picked up in a future fresh session, not bundled into
 this one.
 
+## 2026-05-24 — ROOT CAUSE of getter+yourself anomaly: OSR disabled for sends
+
+Traced tryResume failures via diagnostic counters.  Found in
+AsmjitT1.cpp:6403:
+
+```
+bool advertiseResume = isReal && !noNumBc && !noBcToCode && bcLen > 0;
+if (numSendSites > 0 && !forceResumeForSends) advertiseResume = false;
+jm->numBytecodes      = advertiseResume ? (uint16_t)bcLen : 0;
+```
+
+**Methods with ANY send sites get numBytecodes=0 → all tryResume
+calls return `bad-codeOffset`.**  OSR can't transition into the
+JIT'd version mid-method.  This means:
+
+- Test methods like `runIt` (with `pt x` send sites) JIT-compile
+  but the JIT'd version is unreachable via OSR.
+- The bench's first activation runs entirely in interp because
+  the JIT compile happens at safe-point AFTER the activation
+  started.
+- A second call would use the JIT'd entry point — but runAsync
+  only calls runIt once.
+
+Comment at AsmjitT1.cpp:6388 documents the cause: "Still breaks
+the differential fuzzer (every test JIT_DIFF, MUSTBOOL cascade in
+#encoderClass, eventual stack overflow).  More than state.method
+is desync'd at the trampoline — investigation deferred."
+
+`PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1` bypasses the gate but
+crashes/hangs per the comment.
+
+**Impact**: This is the major perf gap.  Bench-suite gap to Cog
+(~10× median) is largely because OSR-to-JIT doesn't work for
+methods with sends.  Once the state-sync bug is fixed,
+single-activation benches would benefit dramatically.
+
+Investigation needed (next session, fresh context):
+1. Add OSR-success counter alongside jitOSREntries_ to verify how
+   often OSR-into-sendless methods actually fires successfully.
+2. Bisect the state-sync issue using FORCE_RESUME_FOR_SENDS=1 +
+   the differential fuzzer.  Likely candidates: state.method
+   vs jitMethod desync at J2J entry/return; some register left
+   stale across the resume trampoline.
+3. Once fixed, this could be the largest single perf unlock —
+   potentially 5-10× on send-heavy benches.
+
 ## 2026-05-24 — detectTrivialMethod CallPrimitive prefix fix (445e49fd)
 
 Found that methods like `Point>>x` declared with `<primitive: 264>`
