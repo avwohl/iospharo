@@ -10,6 +10,7 @@
 #include "../ObjectMemory.hpp"
 #include "../Interpreter.hpp"
 #include "sista/SistaRuntime.hpp"
+#include "TrampolineAsm.hpp"
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
@@ -3337,7 +3338,15 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // PHARO_TRACE_RESUME_SP=1 enables; gated to keep zero overhead off.
     Oop* spBefore = state.sp;
 
+#if PHARO_JIT_ENABLED && defined(PHARO_ASM_TRAMPOLINE) && defined(__aarch64__)
+    // 2026-05-24: hoist x19=state.jitMethod, x20=state.j2jDepthInc
+    // before entering JIT code so asmjit-T1 emits see consistent
+    // register state (trampoline + JIT_CALL guarantee this; bare
+    // entry() call from C did not).  See pharo_jit_osr_resume.
+    pharo_jit_osr_resume(&state, reinterpret_cast<void*>(entry));
+#else
     entry(&state);
+#endif
 
     if (__builtin_expect(g_debug.traceResumeSp, 0)) {
         ptrdiff_t delta = state.sp - spBefore;
@@ -3375,7 +3384,11 @@ bool JITRuntime::tryResumeFast(JITMethod* jm, uint32_t bcOffset, JITState& state
     state.exitReason = ExitNone;
 
     StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart() + codeOffset);
+#if PHARO_JIT_ENABLED && defined(PHARO_ASM_TRAMPOLINE) && defined(__aarch64__)
+    pharo_jit_osr_resume(&state, reinterpret_cast<void*>(entry));
+#else
     entry(&state);
+#endif
     return true;
 }
 

@@ -446,6 +446,35 @@ Ltramp_exit:
     ldp     x29, x30, [sp], #128
     ret
 
+// extern "C" void pharo_jit_osr_resume(JITState* state, void* entry);
+//
+// Wrapper for tryResume's mid-method entry into JIT'd asmjit-T1 code.
+// asmjit-T1's bytecode emits assume x19 = state.jitMethod and x20 =
+// j2jDepthInc (the trampoline + JIT_CALL macro guarantee this).  When
+// tryResume jumps directly to a mid-method codeOffset via a plain C
+// call to entry(&state), x19/x20 hold the C caller's stale values —
+// IC HIT loads then dereference garbage, causing SIGSEGV.
+//
+// This wrapper hoists the same registers as the trampoline's entry
+// sequence, calls into the JIT'd code, then restores x19/x20 on
+// return so the C ABI's callee-saved guarantee for the wrapper's
+// caller is preserved (JIT'd code may clobber x19/x20).
+    .text
+    .p2align 4
+    .globl SYMBOL(pharo_jit_osr_resume)
+SYMBOL(pharo_jit_osr_resume):
+    // x0 = JITState*  (preserved through to JIT code)
+    // x1 = entry function pointer
+    stp     x29, x30, [sp, #-32]!     // save fp, lr
+    stp     x19, x20, [sp, #16]       // save x19/x20 (AAPCS callee-saved)
+    mov     x29, sp
+    ldr     x19, [x0, #JS_JITMETHOD]
+    ldr     x20, [x0, #JS_J2J_DEPTH_INC]
+    blr     x1                         // call JIT'd code
+    ldp     x19, x20, [sp, #16]       // restore x19/x20 for our caller
+    ldp     x29, x30, [sp], #32
+    ret
+
 // Cross-TU sentinel: a uint64_t holding our JM_SIZE constant.
 // JITRuntime::initialize() compares this against sizeof(JITMethod)
 // at startup so the asm constant can never silently drift out of
