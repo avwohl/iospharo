@@ -1012,11 +1012,29 @@ private:
     uint32_t compiledMethodClassIndex_ = 0;
     uint32_t compiledBlockClassIndex_ = 0;
     uint32_t fullBlockClosureClassIndex_ = 0;
+    uint32_t orderedCollectionClassIndex_ = 0;
+    uint32_t writeStreamClassIndex_ = 0;
     uint32_t lookupClassIndexByName(const char* name);
     void initializeClassIndexCache();
 public:
     uint32_t compiledBlockClassIndex() const { return compiledBlockClassIndex_; }
     uint32_t fullBlockClosureClassIndex() const { return fullBlockClosureClassIndex_; }
+    uint32_t orderedCollectionClassIndex() const { return orderedCollectionClassIndex_; }
+    // Synthetic primitive: inline OrderedCollection>>add: as if it
+    // were a primitive method.  Implements addLast: behavior (no
+    // resize) directly, falling back to PrimitiveFailure for the
+    // resize case (caller activates the full method).
+    PrimitiveResult primitiveOCAdd(int argCount);
+    // Synthetic primitive: inline WriteStream>>nextPut:.
+    // WriteStream layout (Pharo 13):
+    //   slot 0: collection
+    //   slot 1: position
+    //   slot 2: readLimit
+    //   slot 3: writeLimit
+    // Algorithm:
+    //   if position < writeLimit: position++; collection[position] := arg; ^arg
+    //   else: PrimitiveFailure (caller activates the full method for grow)
+    PrimitiveResult primitiveWSNextPut(int argCount);
 private:
 
     // ===== CACHES =====

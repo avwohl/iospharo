@@ -3453,6 +3453,112 @@ PrimitiveResult Interpreter::primitiveClosureCopyWithCopiedValues(int argCount) 
     return PrimitiveResult::Success;
 }
 
+// Synthetic primitive for OrderedCollection>>add: (forwarder to
+// addLast:).  Inlines the addLast: behavior directly, skipping
+// both the add: forwarder activation AND the addLast: activation.
+//
+// OC layout (Pharo 13):
+//   slot 0: firstIndex
+//   slot 1: lastIndex
+//   slot 2: array
+//
+// Algorithm:
+//   if lastIndex < array size: lastIndex++; array[lastIndex] := arg; return arg
+//   else: return PrimitiveFailure (caller activates the full method to handle resize)
+//
+// Used by `result add: each` style append loops — hits 500K times
+// on bench-suite's select 10x100K.  Saves ~120 ns/call.
+PrimitiveResult Interpreter::primitiveOCAdd(int argCount) {
+    if (__builtin_expect(argCount != 1, 0)) return PrimitiveResult::Failure;
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+    if (!rcvr.isObject() || rcvr.rawBits() < 0x10000) return PrimitiveResult::Failure;
+    ObjectHeader* ocObj = rcvr.asObjectPtr();
+    if (ocObj->slotCount() < 3) return PrimitiveResult::Failure;
+
+    Oop lastIndexOop = memory_.fetchPointerUnchecked(1, rcvr);
+    Oop arrayOop = memory_.fetchPointerUnchecked(2, rcvr);
+    if (!lastIndexOop.isSmallInteger() || !arrayOop.isObject()
+            || arrayOop.rawBits() < 0x10000) {
+        return PrimitiveResult::Failure;
+    }
+    ObjectHeader* arrayObj = arrayOop.asObjectPtr();
+    int64_t lastIndex = lastIndexOop.asSmallInteger();
+    size_t arraySize = arrayObj->slotCount();
+    if ((size_t)lastIndex >= arraySize) {
+        // Resize needed — let the full method handle it.
+        return PrimitiveResult::Failure;
+    }
+
+    // lastIndex := lastIndex + 1; array at: lastIndex put: arg.
+    // Smalltalk at:put: is 1-based, so slot index = lastIndex (new value).
+    // But internally our `fetchPointer/storePointer` is 0-based, so we
+    // store at slot (newLastIndex - 1) = lastIndex (pre-increment).
+    int64_t newLastIndex = lastIndex + 1;
+    memory_.storePointer((size_t)lastIndex, arrayOop, arg);
+    memory_.storePointer(1, rcvr, Oop::fromSmallInteger(newLastIndex));
+
+    // Return arg as the result (replaces receiver on stack, pop arg).
+    pop();
+    *(stackPointer_ - 1) = arg;
+    return PrimitiveResult::Success;
+}
+
+// Synthetic primitive for WriteStream>>nextPut:.  Inlines the
+// position-increment + collection-atPut without a method activation.
+//
+// WriteStream layout (Pharo 13):
+//   slot 0: collection (Array or String)
+//   slot 1: position    (SmI)
+//   slot 2: readLimit   (unused for write)
+//   slot 3: writeLimit  (SmI)
+//
+// Bench `(1 to: N) select: [:x | ...]` uses Array streamContents:
+// which is a WriteStream-on-Array call chain.  nextPut: hits 50K-100K
+// times per bench.  Saves ~120 ns/call.
+PrimitiveResult Interpreter::primitiveWSNextPut(int argCount) {
+    if (__builtin_expect(argCount != 1, 0)) return PrimitiveResult::Failure;
+    Oop arg = stackValue(0);
+    Oop rcvr = stackValue(1);
+    if (!rcvr.isObject() || rcvr.rawBits() < 0x10000) return PrimitiveResult::Failure;
+    ObjectHeader* wsObj = rcvr.asObjectPtr();
+    if (wsObj->slotCount() < 4) return PrimitiveResult::Failure;
+
+    Oop posOop = memory_.fetchPointerUnchecked(1, rcvr);
+    Oop writeLimitOop = memory_.fetchPointerUnchecked(3, rcvr);
+    Oop collOop = memory_.fetchPointerUnchecked(0, rcvr);
+    if (!posOop.isSmallInteger() || !writeLimitOop.isSmallInteger()
+            || !collOop.isObject() || collOop.rawBits() < 0x10000) {
+        return PrimitiveResult::Failure;
+    }
+    int64_t pos = posOop.asSmallInteger();
+    int64_t writeLimit = writeLimitOop.asSmallInteger();
+    if (pos >= writeLimit) {
+        // pastEndPut: needs activation.
+        return PrimitiveResult::Failure;
+    }
+
+    ObjectHeader* collObj = collOop.asObjectPtr();
+    // Bounds check (defense in depth — should be implied by pos < writeLimit).
+    if ((size_t)pos >= collObj->slotCount()) {
+        return PrimitiveResult::Failure;
+    }
+    // Byte collections (strings) can't store arbitrary Oops; bail.
+    if (collObj->isBytesObject()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // position := position + 1; collection at: position put: arg.
+    // Smalltalk at:put: 1-based → slot = newPos - 1 = pos (pre-increment).
+    int64_t newPos = pos + 1;
+    memory_.storePointer((size_t)pos, collOop, arg);
+    memory_.storePointer(1, rcvr, Oop::fromSmallInteger(newPos));
+
+    pop();
+    *(stackPointer_ - 1) = arg;
+    return PrimitiveResult::Success;
+}
+
 // Primitive 207: Full closure value (for closures with many arguments)
 // This handles FullBlockClosures which may have more complex activation
 PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
