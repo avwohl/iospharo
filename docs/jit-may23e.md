@@ -227,25 +227,34 @@ nothing's lost.
     Eδ.2b ✅ DONE    Counter for IC-HITs that route through a
                       canSkipJ2JSave callee.  56K hits per image boot.
                       Commit 0beec702.
-    Eδ.2c PENDING     Implement the actual saveless caller emit at IC HIT.
-                      Design challenge to resolve first: existing J2J save
-                      is 7 fields × 8 bytes = 56 bytes, sequential
-                      cache-friendly write.  A "saveless" path that
-                      saves state via sp-stash to survive the blr is
-                      similar instruction count (8 fields ≈ 4 stp / 4 ldp
-                      + 8 ldrs + 8 strs ≈ 24-30 instrs vs the existing
-                      ~22 instrs of save push + return prelude).  The
-                      true "direct br/ret" the doc envisioned only works
-                      for callees that don't modify ANY state field —
-                      a stricter condition than the current canSkipJ2JSave
-                      (which still allows state.sp/state.ip mutation).
-                      Worth pursuing a *stricter* "isPureLeaf" flag that
-                      also forbids stack manipulation, OR doing it
-                      differently (e.g., per-callee specialized stub
-                      that does the state save inline).  Fresh-session
-                      design required; do NOT just port the existing
-                      save to sp-stash and call it done — that wastes
-                      the optimization opportunity.
+    Eδ.2c ✅ DONE-as-INFRA  Saveless inline-J2J emit landed (commits
+                      bfff3b6d + 69faa3b2).  Positioned BEFORE the warm-
+                      J2J gate (safe because canSkipJ2JSave callees have
+                      numICEntries==0, can't trigger the materialize-bail
+                      wrong-result bug the gate guards against).  Bit-56
+                      self-rec gate inside saveless emit prevents
+                      cross-method corruption (OSPlatform DNU bug fixed).
+
+                      Outcome: emit infrastructure works but fires=0 on
+                      bench-suite because canSkipJ2JSave and self-rec are
+                      mutually exclusive in practice:
+                        - canSkipJ2JSave requires numICEntries==0
+                        - Self-recursive methods (fib, etc.) have ICs
+                          for their own recursive sends
+                      So the saveless path never matches a real call.
+
+                      To make it useful, would need either:
+                        (a) Cross-method saveless with state.{method,
+                            literals,jitMethod,argCount} save/restore
+                            around blr (≈8 extra ldr/str, but enables
+                            leaf-method calls from warm callers — the
+                            real intended use case).
+                        (b) Extend canSkipJ2JSave to allow methods whose
+                            ICs only target other canSkipJ2JSave methods
+                            (transitive leaf analysis).
+
+                      Both deferred to fresh sessions.  Default config
+                      bench-suite: identical perf, no regression.
     Eε   PARTIAL      First-ever real JIT-on bench-suite numbers
                       obtained this session, with PHARO_JIT_THRESHOLD=1100
                       workaround for the SessionManager-handler-dispatch
