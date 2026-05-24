@@ -242,20 +242,44 @@ nothing's lost.
                       design required; do NOT just port the existing
                       save to sp-stash and call it done — that wastes
                       the optimization opportunity.
-    Eε   BLOCKED      Re-measure bench-suite under live JIT.  Previous
-                      1359 ms numbers were interp-mode.  Setup-side
-                      issue: scripts/run_benchmarks.sh's Cog invocation
-                      lacks `--headless --no-quit`; with those flags
-                      Cog produces results (~113ms total bench-suite
-                      reference).  Deeper issue: SessionManager
-                      startup handlers do NOT fire under JIT-on in
-                      our VM — see "JIT-on breaks SessionManager
-                      startup handlers" in docs/deferred.md.  This
-                      means previously-reported "JIT-mode" bench
-                      timings (fib(28)=73ms from bench-correctness)
-                      came from stale result files; real JIT-on
-                      bench-suite numbers cannot be obtained until
-                      the handler-dispatch regression is fixed.
+    Eε   PARTIAL      First-ever real JIT-on bench-suite numbers
+                      obtained this session, with PHARO_JIT_THRESHOLD=1100
+                      workaround for the SessionManager-handler-dispatch
+                      regression (otherwise handler never fires →
+                      bench code never runs → output file empty).
+
+                      Single-run numbers (Cog 10.3.9 ref / our VM):
+
+                        bench                    Cog       Ours      ratio
+                        tinyBenchmarks (M s/s)   462M      92M       5.0×
+                        fibonacci(28)              2 ms   110 ms    55×
+                        sieve x100                 7 ms     7 ms     1×
+                        sort 100K                 16 ms   318 ms    20×
+                        dict 50K put+get          20 ms   342 ms    17×
+                        sum 1M                     4 ms    99 ms    25×
+                        5000 factorial             3 ms    22 ms     7×
+                        1M blocks                  5 ms     2 ms    0.4×
+                        1M getter+yourself         1 ms   104 ms   104×
+                        100K allocations           2 ms     5 ms   2.5×
+                        floatSum 1M                8 ms   117 ms    15×
+                        stringHash 100K            7 ms    76 ms    11×
+                        collect 10x100K            5 ms   111 ms    22×
+                        select 10x100K            36 ms   281 ms     8×
+
+                      Totals: ~113 ms Cog / ~1626 ms ours = **14× gap.**
+
+                      Previous doc claim of "1359 ms median bench-suite"
+                      was interp-mode (JIT silently disabled).  Real
+                      JIT-on number now anchored at ~1626 ms.
+
+                      Caveats:
+                      - Threshold=1100 leaves boot-warm methods in
+                        interp; full-JIT would be different (and is
+                        blocked on the handler-dispatch regression).
+                      - Single run, no run-to-run variance recorded.
+                      - 1M getter+yourself = 104ms is anomalously bad
+                        (Cog=1ms, 104× gap) — worth a focused look at
+                        the getter-inline emit when next session runs.
 
 ## ✅ JIT silently disabled / X+BV crash — RESOLVED 2026-05-24 (session E2)
 
