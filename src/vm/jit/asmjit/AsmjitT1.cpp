@@ -82,6 +82,9 @@ extern "C" uint64_t g_t1SistaDispatch_attempts;
 extern "C" uint64_t g_t1MultiSlot_hits = 0;
 extern "C" uint64_t g_t1MultiSlot_bails = 0;
 extern "C" uint64_t g_t1ReturnsLiteral_hits = 0;
+extern "C" uint64_t g_t1InlineGetter_hits = 0;  // diag: inline-getter (bit 63) fires
+extern "C" uint64_t g_t1InlineSetter_hits = 0;  // diag: inline-setter (bit 62) fires
+extern "C" uint64_t g_t1ReturnsSelf_hits  = 0;  // diag: returnsSelf  (bit 61) fires
 // jit-may23d W1/W2/W3 inline-tier2 IC HIT counters.
 extern "C" uint64_t g_t1TempReturn_hits     = 0;  // W1: `^ arg0`
 extern "C" uint64_t g_t1IntCmpReturn_hits   = 0;  // W2: `^ self cmp arg`
@@ -4400,6 +4403,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // === Inline getter: val = recv->slots[slotIdx] ===
             // x2 still holds SP from probe entry (mirrors x86 rcx-keep).
             a.bind(tryGetter);
+            if (pharo::g_debug.t1InlineJ2J_Env) {
+                a.mov(x6, asmjit::Imm((uint64_t)&g_t1InlineGetter_hits));
+                a.ldr(x3, ptr(x6));
+                a.add(x3, x3, asmjit::Imm(1));
+                a.str(x3, ptr(x6));
+            }
             a.and_(x6, x7, asmjit::Imm(0xFFFF));   // slotIdx
             a.add(x3, x1, x6, asmjit::a64::lsl(3));
             a.ldr(x6, ptr(x3, 8));                // val = *(recv+slot*8+8)
@@ -4413,6 +4422,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // === Inline setter: recv->slots[slotIdx] = arg ===
             // x2 still holds SP from probe entry.
             a.bind(trySetter);
+            if (pharo::g_debug.t1InlineJ2J_Env) {
+                a.mov(x6, asmjit::Imm((uint64_t)&g_t1InlineSetter_hits));
+                a.ldr(x3, ptr(x6));
+                a.add(x3, x3, asmjit::Imm(1));
+                a.str(x3, ptr(x6));
+            }
             a.and_(x6, x7, asmjit::Imm(0xFFFF));
             a.ldur(x3, ptr(x2, -8));               // arg = sp[-1]
             a.add(x4, x1, x6, asmjit::a64::lsl(3));
@@ -4472,6 +4487,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
             // === returnsSelf ===
             a.bind(tryReturnsSelf);
+            if (pharo::g_debug.t1InlineJ2J_Env) {
+                a.mov(x6, asmjit::Imm((uint64_t)&g_t1ReturnsSelf_hits));
+                a.ldr(x3, ptr(x6));
+                a.add(x3, x3, asmjit::Imm(1));
+                a.str(x3, ptr(x6));
+            }
             if (nArgs > 0) {
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));

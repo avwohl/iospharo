@@ -130,6 +130,9 @@ extern "C" uint64_t g_bcArithBail_hits;
 extern "C" uint64_t g_bcRemoteTemp_hits;
 extern "C" uint64_t g_t1MultiSlot_hits;
 extern "C" uint64_t g_t1ReturnsLiteral_hits;
+extern "C" uint64_t g_t1InlineGetter_hits;
+extern "C" uint64_t g_t1InlineSetter_hits;
+extern "C" uint64_t g_t1ReturnsSelf_hits;
 extern "C" uint64_t g_t1TempReturn_hits;
 extern "C" uint64_t g_t1IntCmpReturn_hits;
 extern "C" uint64_t g_t1IntArithReturn_hits;
@@ -1504,14 +1507,18 @@ void Interpreter::dumpJITStats() {
                 || g_t1TempReturn_hits > 0
                 || g_t1IntCmpReturn_hits > 0
                 || g_t1IntArithReturn_hits > 0
-                || g_t1EvenOdd_hits > 0) {
+                || g_t1EvenOdd_hits > 0
+                || g_t1InlineGetter_hits > 0
+                || g_t1InlineSetter_hits > 0
+                || g_t1ReturnsSelf_hits > 0) {
             fprintf(stderr,
                 "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu "
                 "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu "
                 "basicNew=%llu/%llu basicNew0=%llu sistaSelfRec=%llu/%llu "
                 "multiSlot=%llu retLit=%llu "
                 "tempRet=%llu intCmp=%llu intArith=%llu evenOdd=%llu "
-                "sistaShortcut=%llu\n",
+                "sistaShortcut=%llu "
+                "getter=%llu setter=%llu retSelf=%llu\n",
                 (unsigned long long)g_primAt_hits,
                 (unsigned long long)g_primAtPut_hits,
                 (unsigned long long)g_primSize_hits,
@@ -1531,7 +1538,10 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_t1IntCmpReturn_hits,
                 (unsigned long long)g_t1IntArithReturn_hits,
                 (unsigned long long)g_t1EvenOdd_hits,
-                (unsigned long long)g_sistaShortcut_evenOdd_hits);
+                (unsigned long long)g_sistaShortcut_evenOdd_hits,
+                (unsigned long long)g_t1InlineGetter_hits,
+                (unsigned long long)g_t1InlineSetter_hits,
+                (unsigned long long)g_t1ReturnsSelf_hits);
         }
     }
     if (g_xmethod_count > 0) {
