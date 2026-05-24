@@ -402,6 +402,33 @@ Added two new fast paths to commonSend's method-cache dispatch:
 Both fast paths require MethodCacheEntry field additions (evenOddKind,
 returnsLiteralKind) populated from detectTrivialMethod.
 
+## 2026-05-24 — Collection>>inject:into: outer-iter elimination
+
+Detect the OUTER iteration block created inside Collection>>inject:into:
+(passed to `self do:`) at runtime when its closure is value:'d.
+10-byte body:
+  PushTemp 1 (binaryBlock);
+  PushTempAtInVec N M (read nextValue);
+  PushTemp 0 (each);
+  Send2 #value:value:;
+  StoreTempAtInVec N M (write back);
+  return.
+
+When the outer iter pattern matches AND the binaryBlock's body
+matches one of our known 4-byte SmI/SmI add or 5-byte
+Float-accumulator-+-asFloat patterns, inline EVERYTHING — skip both
+the outer-iter activation AND the inner binaryBlock activation.
+
+Bench impact:
+```
+sum 1M:        109 ms →  51 ms  (-53%)   session total: 150 → 51 (-66%)
+floatSum 1M:   115 ms →  56 ms  (-51%)   session total: 191 → 56 (-71%)
+```
+
+Cog gap reductions:
+  sum:        25× → 8.5×
+  floatSum:   27× → 8×
+
 ## 2026-05-24 — floatSum: `[:s :i | s + i asFloat]` inline
 
 Detect the 5-byte block-body pattern for the Float-accumulator-with-
