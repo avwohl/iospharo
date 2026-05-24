@@ -342,6 +342,45 @@ under the "fresh session per chunk" model.  Per the doc's rules:
 they should be picked up in a future fresh session, not bundled into
 this one.
 
+## 2026-05-24 — interp evenOdd + returnsLiteral fast paths
+
+Now that the OSR-disabled root cause is identified (see below), the
+next-best lever is interp dispatch speed.  Most bench-suite execution
+happens in interp because methods with sends can't OSR.
+
+Added two new fast paths to commonSend's method-cache dispatch:
+
+1. **evenOddKind fast path** (edcf20bb): for SmI receivers, decide
+   `x even` / `x odd` from the tagged-bit pattern without method
+   activation.  Hits ~1M times on `select 10x100K`.
+
+   **Real win**: 549-563ms → 464-466ms (~15% improvement, stable
+   across 5 runs).
+
+2. **returnsLiteral fast path** (a21968c2): for `^ nil/true/false/0/
+   1/-1/2` shapes, push the literal directly.  Guarded against
+   methods with primitives (the literal is a fallback if prim
+   fails — Time millisecondClockValue caught this).
+
+   No measured bench impact yet; useful for general code paths.
+
+Both fast paths require MethodCacheEntry field additions (evenOddKind,
+returnsLiteralKind) populated from detectTrivialMethod.
+
+## 2026-05-24 — OSR resume wrapper (f771852a)
+
+Added `pharo_jit_osr_resume` asm wrapper that hoists x19 = state.
+jitMethod and x20 = state.j2jDepthInc before calling JIT entry code.
+Without this, tryResume's bare `entry(&state)` left x19/x20 stale,
+causing inline-J2J IC HIT loads to deref garbage.
+
+Confirmed via test: with FORCE_RESUME_FOR_SENDS=1, crash address
+changed from 0x69 (state-deref) to 0x0 (NULL recv), proving the
+wrapper does its part.  But other state-sync issues remain — the
+full FORCE_RESUME path crashes in #whileFalse: with NULL receiver
+load.  Stack-state mismatch between interp and JIT at mid-method
+OSR entry; a stack-shape audit + reconciliation is needed.
+
 ## 2026-05-24 — ROOT CAUSE of getter+yourself anomaly: OSR disabled for sends
 
 Traced tryResume failures via diagnostic counters.  Found in
