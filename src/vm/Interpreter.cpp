@@ -5172,6 +5172,101 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         int numCopied = flags & 0x3F;
         bool receiverOnStack = (flags >> 7) & 1;
         bool ignoreOuterContext = (flags >> 6) & 1;
+
+        // Closure elimination fast path: `[x := x op K] value` where x
+        // is a captured remote-temp.  Common pattern for counter
+        // increments: `1 to: N do: [:i | [x := x + 1] value]` is
+        // 1M closure allocations in the bench-suite "1M blocks" test.
+        //
+        // Requirements:
+        //   - block is 0-arg (numArgs == 0 — checked via compiledBlock header)
+        //   - numCopied == 1 (just the tempVec)
+        //   - !receiverOnStack (the common case)
+        //   - next bytecode is 0x79 (SpecialSend `value`, 0-arg)
+        //   - block body matches `PushTempAtInVec N M; push K; ArithSend;
+        //     StoreTempAtInVec N M; BlockReturn(Top|Top)` (9 bytes)
+        //   - tempVec on stack is a valid object
+        //   - tempVec[N] is SmI
+        //   - the arith op is + or -
+        //   - result stays in SmI range
+        //
+        // When all match, read tempVec, compute the op, store back,
+        // push result, and skip BOTH the PushFullBlock body activation
+        // AND the Send #value bytecode.  Saves ~200ns per iter
+        // (closure alloc ~100ns + frame setup ~50ns + body dispatch ~50ns).
+        if (numCopied == 1 && !receiverOnStack
+                && *instructionPointer_ == 0x79) {
+            Oop tempVec = stackTop();  // peek (don't pop yet)
+            if (tempVec.isObject() && tempVec.rawBits() > 0x10000) {
+                Oop compiledBlock = literal(fullLitIndex);
+                if (compiledBlock.isObject() && compiledBlock.rawBits() > 0x10000) {
+                    ObjectHeader* blockObj = compiledBlock.asObjectPtr();
+                    if (blockObj->isCompiledMethod()) {
+                        Oop bhdr = memory_.fetchPointerUnchecked(0, compiledBlock);
+                        if (bhdr.isSmallInteger()) {
+                            int64_t bhdrBits = bhdr.asSmallInteger();
+                            int blkNumArgs = (bhdrBits >> 24) & 0x0F;
+                            int blkNumLits = bhdrBits & 0x7FFF;
+                            if (blkNumArgs == 0) {
+                                size_t bcStart = (1 + blkNumLits) * 8;
+                                size_t totalBytes = blockObj->byteSize();
+                                if (totalBytes >= bcStart + 9) {
+                                    const uint8_t* bc = blockObj->bytes() + bcStart;
+                                    if (bc[0] == 0xFB
+                                            && (bc[3] == 0x50 || bc[3] == 0x51)
+                                            && bc[4] >= 0x60 && bc[4] <= 0x6F
+                                            && bc[5] == 0xFC
+                                            && bc[1] == bc[6]
+                                            && bc[2] == bc[7]
+                                            && (bc[8] == 0x5C || bc[8] == 0x5E)) {
+                                        int slotN = bc[1];
+                                        // bc[2] (tempM) for the SYNTHETIC closure's
+                                        // frame would be 0 — but our copied value is
+                                        // directly on the stack, so we use it
+                                        // regardless of tempM.  In practice tempM
+                                        // == 0 for single-copied blocks.
+                                        ObjectHeader* vecObj = tempVec.asObjectPtr();
+                                        if (slotN >= 0
+                                                && (size_t)slotN < vecObj->slotCount()) {
+                                            Oop x = memory_.fetchPointerUnchecked(slotN, tempVec);
+                                            if (x.isSmallInteger()) {
+                                                int op = bc[4] - 0x60;
+                                                int64_t xv = x.asSmallInteger();
+                                                int64_t kv = (bc[3] == 0x50) ? 0 : 1;
+                                                bool fired = true;
+                                                int64_t r;
+                                                if (op == 0) {  // +
+                                                    r = xv + kv;
+                                                } else if (op == 1) {  // -
+                                                    r = xv - kv;
+                                                } else {
+                                                    fired = false;
+                                                    r = 0;
+                                                }
+                                                if (fired
+                                                        && r >= Oop::smallIntegerMin()
+                                                        && r <= Oop::smallIntegerMax()) {
+                                                    memory_.storePointer(
+                                                        slotN, tempVec,
+                                                        Oop::fromSmallInteger(r));
+                                                    // Pop tempVec, push result.
+                                                    *(stackPointer_ - 1) =
+                                                        Oop::fromSmallInteger(r);
+                                                    // Skip the `value` send byte.
+                                                    fetchByte();
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         createFullBlockWithLiteral(fullLitIndex, numCopied, receiverOnStack, ignoreOuterContext);
         break;
     }
