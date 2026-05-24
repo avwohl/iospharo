@@ -281,6 +281,24 @@ nothing's lost.
                         (Cog=1ms, 104× gap) — worth a focused look at
                         the getter-inline emit when next session runs.
 
+                      Side-effect of the workaround: at threshold=1100,
+                      block-value inline never fires (1214 tries, 0
+                      hits during a focused 1M-iter getter bench).
+                      Block compilation lags far behind method
+                      compilation because blocks share the threshold.
+                      So the 14× gap is INFLATED — under real JIT
+                      (threshold=2, no handler regression) BV inline
+                      would fire and many benches would close
+                      substantially.  How much is unknown until the
+                      handler-dispatch regression is fixed and we can
+                      measure with threshold=2.
+
+                      Possible quick win once unblocked: a SEPARATE
+                      JIT threshold for blocks (lower than methods)
+                      so the loop-body block in `1000000 timesRepeat:
+                      [...]` compiles after a few dozen iterations
+                      rather than after 1100.
+
 ## ✅ JIT silently disabled / X+BV crash — RESOLVED 2026-05-24 (session E2)
 
 Two stacked root causes, both fixed in working tree:
