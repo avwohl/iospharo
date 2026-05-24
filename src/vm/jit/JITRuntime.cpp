@@ -1671,17 +1671,71 @@ extern "C" uint64_t jit_rt_sista_basic_at_put(JITState* state,
 // Replaces the old kSendUnspeculated bail-and-exit path so compiled
 // code can continue after sends.  See jitSistaCallSend in
 // Interpreter.cpp for caveats around NLR / process switches / GC.
+// jit-may23d W7: shortcut for `Integer>>even` and `Integer>>odd` on
+// SmI receivers.  Bench-suite's `select: [:e | e even]` calls `even`
+// 1M+ times through this helper; the per-call activation + run +
+// return chain is ~150ns.  Recognizing the selector + SmI receiver
+// and computing inline saves that overhead.
+extern "C" uint64_t g_sistaShortcut_evenOdd_hits = 0;
 extern "C" uint64_t jit_rt_sista_call_send(JITState* state,
                                              uint64_t selBits,
                                              uint64_t nArgs) {
     if (!state || !state->interp) return 0;
-    // Diagnostic: PHARO_SISTA_HELPER_FORCE_BAIL=1 forces every
-    // helper-send to return 0, exercising the deopt path on every
-    // call.  Confirmed (2026-04-29) that the deopt path is correct
-    // — under FORCE_BAIL=1 the eval smoke + larger eval succeed
-    // cleanly.  The remaining B7 bug is in the helper SUCCESS path
-    // (slow per-call frame leak, ~0.5 fd accumulation per call).
     if (g_debug.sistaHelperForceBail) return 0;
+    // W7: even/odd shortcut.  Pre-check before the full send.
+    if (nArgs == 0 && !g_debug.sistaNoShortcutEvenOdd) {
+        // Receiver was just pushed at sp[-1] by the helper's caller.
+        Oop* sp = state->sp;
+        Oop rcvr = sp[-1];
+        if (rcvr.isSmallInteger()) {
+            // Selector must be #even or #odd interned symbol.
+            // Compare against pre-fetched bytes.  Cheap path:
+            // compare raw Oop bits against cached values.
+            // Lookup interned symbol via memory_.
+            Oop sel = Oop::fromRawBits(selBits);
+            if (sel.isObject() && sel.rawBits() > 0x10000) {
+                auto* hdr = sel.asObjectPtr();
+                if (hdr->isBytesObject()) {
+                    size_t bs = hdr->byteSize();
+                    const uint8_t* bytes = hdr->bytes();
+                    bool isEven = (bs == 4
+                                   && bytes[0] == 'e'
+                                   && bytes[1] == 'v'
+                                   && bytes[2] == 'e'
+                                   && bytes[3] == 'n');
+                    bool isOdd  = (bs == 3
+                                   && bytes[0] == 'o'
+                                   && bytes[1] == 'd'
+                                   && bytes[2] == 'd');
+                    if (isEven || isOdd) {
+                        // Compute (val & 1) and compare:
+                        // bits & 9 == 1 → even (val low bit = 0).
+                        // bits & 9 == 9 → odd (val low bit = 1).
+                        uint64_t bits = rcvr.rawBits();
+                        bool low_zero = (bits & 9) == 1;
+                        bool result = isEven ? low_zero : !low_zero;
+                        // Pop rcvr, push result.
+                        auto* memMgr =
+                            reinterpret_cast<ObjectMemory*>(state->memory);
+                        Oop resultOop = result
+                            ? memMgr->trueObject()
+                            : memMgr->falseObject();
+                        sp[-1] = resultOop;
+                        // sp is already past the recv; no movement needed.
+                        // Hmm actually caller pushed rcvr THEN bumped sp.
+                        // We want to LEAVE result on stack at the position
+                        // the standard send would put it.  The standard
+                        // send pops nArgs+1 (= 1 here) and pushes result.
+                        // So result should be at sp[-1] (same slot).
+                        // sp doesn't move.
+                        state->sp = sp;
+                        g_sistaShortcut_evenOdd_hits++;
+                        return resultOop.rawBits();
+                    }
+                }
+            }
+        }
+    }
     return state->interp->jitSistaCallSend(state, selBits, nArgs);
 }
 

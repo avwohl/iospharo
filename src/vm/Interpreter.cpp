@@ -19199,6 +19199,26 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                     newExtra = (1ULL << 58)
                              | ((uint64_t)tmi.returnsLiteral << 48);
                 }
+                // jit-may23d W1/W2/W3/W6: also check at upgradeICToJ2J
+                // path (otherwise hot ICs never get these classifications
+                // — patchJITICAfterSend only fires on cold IC slots, but
+                // hot ICs hit megacache and skip straight to upgrade).
+                if (newExtra == 0 && tmi.tempReturnIndex >= 0) {
+                    newExtra = (1ULL << 54)
+                             | ((uint64_t)(tmi.tempReturnIndex & 7) << 48);
+                }
+                if (newExtra == 0 && tmi.intCmpKind >= 0) {
+                    newExtra = (1ULL << 53)
+                             | ((uint64_t)tmi.intCmpKind << 48);
+                }
+                if (newExtra == 0 && tmi.intArithKind >= 0) {
+                    newExtra = (1ULL << 52)
+                             | ((uint64_t)tmi.intArithKind << 48);
+                }
+                if (newExtra == 0 && tmi.evenOddKind >= 0) {
+                    newExtra = (1ULL << 51)
+                             | ((uint64_t)tmi.evenOddKind << 48);
+                }
             }
             if (newExtra == 0) {
                 // Not trivial — set J2J direct-call entry plus inline primKind bits

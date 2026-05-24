@@ -90,6 +90,9 @@ struct DebugSettings {
     // `^ (self bitAnd: 1) = 0` (even) or `... = 1` (odd).
     // PHARO_T1_NO_INLINE_EVEN_ODD=1 disables.  Uses IC bit 51.
     bool t1InlineEvenOdd = true;
+    // jit-may23d W7: shortcut for #even/#odd in Sista's call_send
+    // helper.  PHARO_SISTA_NO_SHORTCUT_EVEN_ODD=1 disables.
+    bool sistaNoShortcutEvenOdd = false;
     // jit-may22b multi-slot: inline bit-57 pattern
     // (^ self[A] op1 self[B] op2 const).  Common for
     // OrderedCollection>>size.  PHARO_T1_NO_INLINE_MULTISLOT=1 opt-out.
