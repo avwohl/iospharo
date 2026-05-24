@@ -342,6 +342,28 @@ under the "fresh session per chunk" model.  Per the doc's rules:
 they should be picked up in a future fresh session, not bundled into
 this one.
 
+## Investigation 2026-05-24 (this session) — getter+yourself anomaly
+
+Bytecode dump (Pharo 13 compile of `1 to: 1000000 do: [:i | pt x]`) at
+`docs/getter_bench_runIt_bytecode.txt`.  Key observation: byte 142 =
+0x7E = SpecialSend `x` (special selector 30).  Loop body is bytecodes
+141-143 (PushTemp pt, SpecialSend `x`, Pop).  Counted loop machinery
+follows.
+
+The send IS routed through asmjit-T1's IC HIT emit (isPhase4SendOp
+covers 0x70-0xAF).  Inline-getter (bit 63) tryGetter fires only ~880
+times for 3M iterations.
+
+Hypotheses to investigate next session:
+- The IC for `pt x` site never gets bit 63 classified (Pharo's
+  `Point>>x` should be a trivial getter — verify via
+  `PHARO_DUMP_RECOMPILE_IC=runIt` then look at the extra word).
+- `runIt` is real-compiled (bcLen=67, not in BC-DUMP failures) but
+  perhaps OSR doesn't actually transition INTO the JIT'd version,
+  leaving the loop in interp.
+- The 35 ms / 1M iter = 35 ns/iter looks more like interp than JIT
+  (JIT would be ~5 ns/iter for this loop shape).
+
 ## Investigation 2026-05-24 (this session)
 
 Spent extending Eδ.2c into a working saveless emit (3 commits:
