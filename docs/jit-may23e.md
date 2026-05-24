@@ -402,6 +402,42 @@ Added two new fast paths to commonSend's method-cache dispatch:
 Both fast paths require MethodCacheEntry field additions (evenOddKind,
 returnsLiteralKind) populated from detectTrivialMethod.
 
+## 2026-05-24 — OSR state-sync second pass (2d9da6ee)
+
+Added missing JITState field init in tryJITResumeInCaller:
+trueOop, falseOop, sistaSaveCursor/Limit/Depth/EntryDepth,
+cachedTarget, returnValue, sendBCLength, simTOS, simNOS,
+spliceSpill0/1.  Mirrors what tryJITActivation sets but the
+OSR path was missing them.  Without these, JIT inline-prim emit
+pushed NULL Oop for comparison results, crashing downstream.
+
+Also tightened the detectTrivialMethod CallPrimitive-header skip
+to fire only for quick prims (primIdx >= 256).  For lower prims
+like 251 (millisecond clock), the fallback bytecodes
+`pushZero; returnTop` don't match the prim's semantics — inlining
+the fallback would make Time millisecondClockValue return 0 forever,
+breaking timing benches.
+
+With FORCE_RESUME_FOR_SENDS=1:
+- Simple benches (getter+yourself) now complete WITHOUT crash.
+- Recursive benches (fib 20/28) still hang — fib's 514k recursive
+  calls overflow the frame stack because tryJITResumeInCaller
+  sets state.j2jSaveCursor=null, forcing every inline-J2J push to
+  bail to ExitSendCached → activateMethod → real frame push.
+  Default mode avoids this via the trampoline + j2jPool_ inline
+  save mechanism, which tryJITResumeInCaller does NOT wire up.
+
+To fully unblock FORCE_RESUME (and hence the ~5-10× perf opportunity):
+1. Set up state.j2jSaveCursor/Limit to a valid slice of j2jPool_
+   in tryJITResumeInCaller (mirror tryJITActivation's setup).
+2. Preserve the save cursor across the resume loop iterations
+   (currently the JITState is recreated per iter, losing cursor).
+3. Drain ExitJ2JCall the same way the trampoline does (chain-loop
+   push + JIT_CALL into callee).
+
+Multi-hour fresh-session investigation.  Until then, FORCE_RESUME
+remains off-by-default.
+
 ## 2026-05-24 — OSR resume wrapper (f771852a)
 
 Added `pharo_jit_osr_resume` asm wrapper that hoists x19 = state.
