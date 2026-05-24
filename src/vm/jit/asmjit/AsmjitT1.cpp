@@ -123,6 +123,11 @@ extern "C" uint64_t g_inlineJ2J_dbg_extra         = 0;
 // g_xmethod_count > g_xmethod_max.  Limit set from
 // PHARO_T1_INLINE_J2J_XMETHOD_MAX env var (default UINT64_MAX = no limit).
 extern "C" uint64_t g_xmethod_count = 0;
+// Eδ.2a (2026-05-24): count of methods compiled with canSkipJ2JSave=true.
+// Bumped at AsmjitT1.cpp compileMethod when the flag is set on a real
+// (non-stub) method.  Read by JIT stats dump.
+extern "C" uint64_t g_canSkipJ2JSave_count = 0;
+extern "C" uint64_t g_canSkipJ2JSave_total = 0;
 extern "C" uint64_t g_xmethod_max   = UINT64_MAX;
 
 // Compact xmethod trace.  Stores per-fire data in a buffer, prints
@@ -6273,6 +6278,10 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         jm->canSkipJ2JSave = isReal
                               && !jm->canBailMidMethod
                               && jm->numICEntries == 0;
+        if (isReal) {
+            g_canSkipJ2JSave_total++;
+            if (jm->canSkipJ2JSave) g_canSkipJ2JSave_count++;
+        }
         if (hasCondJump) {
             g_condJumpRealCompiles++;
             if (pharo::g_debug.asmjitT1TraceCond) {
