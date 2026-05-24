@@ -211,8 +211,16 @@ struct JITMethod {
                                     // outer send → that's the (3+4) corruption.
                                     // The chain-loop block-resume path checks
                                     // this and bails to interp if set.
+    bool        canSkipJ2JSave;     // Eδ.1 (2026-05-24): "no-bail tier-2"
+                                    // callable.  Set true when the JIT-compiled
+                                    // method neither bails mid-method nor performs
+                                    // any send (numICEntries == 0).  Callers can
+                                    // skip pushing a J2J save before calling such
+                                    // a method — Eδ.2 will use this to emit a
+                                    // direct br/ret pair at the IC HIT inline-J2J
+                                    // site, saving ~12-15 instructions per call.
 
-    // 1 byte pad to offset 48
+    // pad to 4-byte-align totalSize
 
     // --- Sizes / offsets ---
     uint32_t  totalSize;          // Total allocation size including header + code + IC entries

@@ -2778,6 +2778,14 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             break;
         }
     }
+    // Eδ.1 (2026-05-24): same flag as asmjit-T1 path.  Legacy stencil
+    // JIT (PHARO_NO_ASMJIT_T1=1 only) doesn't set canBailMidMethod (it
+    // stays at the memset(0) default), so the gate reduces to "no
+    // sends and no heap writes" — a stricter form of the asmjit-T1
+    // condition.
+    jitMethod->canSkipJ2JSave = !jitMethod->hasSends
+                                 && !jitMethod->hasHeapWrites
+                                 && !jitMethod->canBailMidMethod;
 
     uint8_t* codeBase = jitMethod->codeStart();
     uint64_t* literalPool = reinterpret_cast<uint64_t*>(codeBase + literalPoolOffset);

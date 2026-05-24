@@ -6261,6 +6261,18 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         if (g_debug.t1ForceBailMid) {
             jm->canBailMidMethod = true;
         }
+        // Eδ.1 (2026-05-24): a method is "no-bail tier-2" callable when
+        // it neither bails mid-method nor performs any send.  Such a
+        // method always runs to completion via a plain `ret`; callers
+        // can skip the J2J save push entirely (Eδ.2 will wire this up
+        // at the IC HIT inline-J2J emit).  Stub-on-entry methods also
+        // qualify trivially (they bail with ExitSend on entry and never
+        // return cleanly; the gate also catches them via numICEntries
+        // checks elsewhere, but mark them false here so callers
+        // requesting a saveless call route correctly to the stub path).
+        jm->canSkipJ2JSave = isReal
+                              && !jm->canBailMidMethod
+                              && jm->numICEntries == 0;
         if (hasCondJump) {
             g_condJumpRealCompiles++;
             if (pharo::g_debug.asmjitT1TraceCond) {
