@@ -130,6 +130,7 @@ extern "C" uint64_t g_t1TempReturn_hits;
 extern "C" uint64_t g_t1IntCmpReturn_hits;
 extern "C" uint64_t g_t1IntArithReturn_hits;
 extern "C" uint64_t g_t1EvenOdd_hits;
+extern "C" uint64_t g_sistaShortcut_evenOdd_hits;
 
 // jit-may20b Step 6: per-caller bail-gate histogram dump (defined in
 // AsmjitT1.cpp).  Called from dumpJITStats when PHARO_T1_BAIL_GATE_HISTO=1.
@@ -1505,7 +1506,8 @@ void Interpreter::dumpJITStats() {
                 "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu "
                 "basicNew=%llu/%llu basicNew0=%llu sistaSelfRec=%llu/%llu "
                 "multiSlot=%llu retLit=%llu "
-                "tempRet=%llu intCmp=%llu intArith=%llu evenOdd=%llu\n",
+                "tempRet=%llu intCmp=%llu intArith=%llu evenOdd=%llu "
+                "sistaShortcut=%llu\n",
                 (unsigned long long)g_primAt_hits,
                 (unsigned long long)g_primAtPut_hits,
                 (unsigned long long)g_primSize_hits,
@@ -1524,7 +1526,8 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_t1TempReturn_hits,
                 (unsigned long long)g_t1IntCmpReturn_hits,
                 (unsigned long long)g_t1IntArithReturn_hits,
-                (unsigned long long)g_t1EvenOdd_hits);
+                (unsigned long long)g_t1EvenOdd_hits,
+                (unsigned long long)g_sistaShortcut_evenOdd_hits);
         }
     }
     if (g_xmethod_count > 0) {
