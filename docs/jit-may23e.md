@@ -402,6 +402,25 @@ Added two new fast paths to commonSend's method-cache dispatch:
 Both fast paths require MethodCacheEntry field additions (evenOddKind,
 returnsLiteralKind) populated from detectTrivialMethod.
 
+## 2026-05-24 — Cached primitive function pointer + 0-arg block fast path
+
+Two more small wins to round out the session:
+
+1. **Cached primitive pointer** (commit ee95e3eb): MethodCacheEntry
+   already had a `primitive` field but it was always nullptr.  Now
+   populated with primitiveTable_[primIdx] in cacheMethod, and
+   commonSend calls it directly bypassing executePrimitive's
+   primitiveTable lookup + debug-flag branches.  Modest.
+
+2. **0-arg block `[x := x op K]` fast path** (commit 8e58e7fe):
+   recognizes 9-byte body PushTempAtInVec/push K/ArithSend/
+   StoreTempAtInVec/return.  Used by `[x := x + 1] value` style
+   blocks.  Reads/writes captured tempVec directly without
+   activating the block; storePointer handles the write barrier.
+
+Bench impact: modest, mostly within noise.  Both code-quality wins
+that incidentally improve some cases.
+
 ## 2026-05-24 — OSR drive-from-asm investigation (no commit)
 
 Investigated wiring up J2J save pool + chain-loop dispatch in the
