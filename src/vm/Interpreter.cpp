@@ -5234,16 +5234,30 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                                                 int64_t xv = x.asSmallInteger();
                                                 int64_t kv = (bc[3] == 0x50) ? 0 : 1;
                                                 bool fired = true;
-                                                int64_t r;
-                                                if (op == 0) {  // +
-                                                    r = xv + kv;
-                                                } else if (op == 1) {  // -
-                                                    r = xv - kv;
-                                                } else {
-                                                    fired = false;
-                                                    r = 0;
+                                                int64_t r = 0;
+                                                bool overflow = false;
+                                                switch (op) {
+                                                    case 0:  // +
+                                                        r = xv + kv;
+                                                        break;
+                                                    case 1:  // -
+                                                        r = xv - kv;
+                                                        break;
+                                                    case 8:  // *
+                                                        if (__builtin_mul_overflow(xv, kv, &r))
+                                                            overflow = true;
+                                                        break;
+                                                    case 14:  // bitAnd:
+                                                        r = xv & kv;
+                                                        break;
+                                                    case 15:  // bitOr:
+                                                        r = xv | kv;
+                                                        break;
+                                                    default:
+                                                        fired = false;
+                                                        break;
                                                 }
-                                                if (fired
+                                                if (fired && !overflow
                                                         && r >= Oop::smallIntegerMin()
                                                         && r <= Oop::smallIntegerMax()) {
                                                     memory_.storePointer(
