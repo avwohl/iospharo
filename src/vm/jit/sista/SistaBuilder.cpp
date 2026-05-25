@@ -4560,6 +4560,20 @@ private:
                     continue;
                 }
 
+                // jit-may25 Session E: try monomorphic const-return
+                // inline for special sends.  Selectors like #x, #y,
+                // #value, #class etc. are not arithmetic-special, so
+                // the IC-table-based caller doesn't reach them via the
+                // literal-send path.  Without this, the 1M-pt-x bench's
+                // `pt x` (SpecialSend ssIdx=14) lifts to kSendUnspeculated
+                // and the lift terminates here, so the loop body's
+                // backward jump never lifts into Sista — defeating the
+                // per-bc compile.
+                if (tryInlineConstReturn(nArgs, bcOffset)) {
+                    ip++;  // SpecialSend is 1 byte.
+                    continue;
+                }
+
                 // Default path: bail-and-exit, same as before.
                 std::vector<uint32_t> ops(stack_.begin(), stack_.end());
                 stack_.clear();
@@ -7329,20 +7343,51 @@ uint32_t Builder::findOutermostLiftPoint(Oop compiledMethod,
 // an explicit check here before lifting.
 LiftResult Builder::buildFromOffset(Oop compiledMethod, ObjectMemory& memory,
                                      Method& out, uint32_t startBcOffset,
-                                     uint32_t* failedAtBytecode) {
+                                     uint32_t* failedAtBytecode,
+                                     const std::vector<InlineHint>* hints) {
+    if (pharo::g_debug.sistaBjTrace) {
+        std::fprintf(stderr, "[BFO] method=0x%llx bcOff=%u hints=%s/%zu\n",
+            (unsigned long long)compiledMethod.rawBits(), startBcOffset,
+            hints ? "set" : "null",
+            hints ? hints->size() : 0);
+    }
     if (startBcOffset == 0) {
-        return build(compiledMethod, memory, out, failedAtBytecode);
+        return hints
+            ? buildWithHints(compiledMethod, memory, out, hints, failedAtBytecode)
+            : build(compiledMethod, memory, out, failedAtBytecode);
     }
 
     // Set the per-bytecode entry hook that build() consumes.  build()
     // does the full lifter setup (special-send arg counts, inline
     // hint masks, class-name lookup, etc.) — this avoids duplicating
     // all that into a separate code path.  Reset on early-return.
+    // Session E: also propagate hints so tryInlineConstReturn fires
+    // for per-bc compiles (e.g., bench's outer block whose IC hints
+    // come from the interp-side table populated by cacheMethod).
+    // The lifter uses LOCAL bcOffsets (lift starts at startBcOffset),
+    // but hints record ABSOLUTE bcOffsets.  Shift the hint copy so the
+    // lifter's bcOffset == shifted h.bcOffset.
     g_buildStartBcOffset = startBcOffset;
     g_inPerBcBuild = true;
+    std::vector<InlineHint> shiftedHints;
+    if (hints) {
+        shiftedHints.reserve(hints->size());
+        for (const auto& h : *hints) {
+            if (h.bcOffset < startBcOffset) continue;  // drops out of region
+            InlineHint sh = h;
+            sh.bcOffset = h.bcOffset - startBcOffset;
+            shiftedHints.push_back(sh);
+        }
+        g_currentBuildHints = &shiftedHints;
+        g_currentBuildMemory = &memory;
+    }
     LiftResult r = build(compiledMethod, memory, out, failedAtBytecode);
     g_buildStartBcOffset = 0;
     g_inPerBcBuild = false;
+    if (hints) {
+        g_currentBuildHints = nullptr;
+        g_currentBuildMemory = nullptr;
+    }
     return r;
 }
 

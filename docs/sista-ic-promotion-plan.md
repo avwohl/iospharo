@@ -91,35 +91,57 @@ the method has no JITMethod.
 
 ## Status — 2026-05-25
 
-Sessions A+B+C+D shipped.  Session D revealed real root cause:
+Sessions A+B+C+D+E shipped.  Session E plumbed three off-by-one
+bugs preventing the bench's `pt x` send from being inlined:
 
-**The bench's hot block IS Sista-per-bc-compiled.**  Verified via
-PHARO_SISTA_PER_BC_TRACE=1 + PHARO_SISTA_BJ_TRACE=1:
+1. **cacheMethod recorded post-advance IP as the send bcOff.**
+   The bytecode dispatcher post-increments IP via
+   `bytecode = *instructionPointer_++`, so by the time cacheMethod
+   fires for a 1-byte send (special send 0x70-0x7F or send-literal
+   0x80-0xDF), `instructionPointer_ - bcBase` is at the byte AFTER
+   the send.  T1's IC table records the bcOff of the SEND byte
+   itself (from JITCompiler.cpp:2596 `siteOffsets.push_back(bc.bcOffset)`).
+   TICR / IC matchers expect bcOff to point AT the send byte.  Fix:
+   record `instructionPointer_ - 1 - bcBase` in cacheMethod.
+
+2. **Per-bc Sista lift used local bcOffsets; hints use absolute.**
+   `Builder::buildFromOffset(startBcOffset > 0)` shifts the lifter's
+   bytecode pointer so `ip` starts at 0 within the lifted region.
+   The lifter then queries `h.bcOffset == bcOffset` (local) but
+   hints carry method-absolute bcOffsets.  Fix: in buildFromOffset,
+   build a shifted copy of the hints vector and use that for the
+   lift; drop hints that fall before startBcOffset.
+
+3. **Sista's tryInlineConstReturn (TICR) was wired only into the
+   Send0/Send1/Send2 literal-send path.**  SpecialSend ops
+   (0x70-0x7F) include `#x`, `#y`, `#value`, `#class`, etc.  These
+   went straight to kSendUnspeculated, terminating the lift at the
+   first SpecialSend.  Fix: add the same TICR call (then continue
+   the lift on success) into the SpecialSend handler at
+   SistaBuilder.cpp:~4562.
+
+**Visible-bench outcome**: 1M getter+yourself unchanged at 32-33ms.
+Counter dump:
 ```
-[SISTA-PER-BC-COMPILE] method=0x3038481c8 bcOff=7 result=OK
-[SISTA-BJ] method=0x3038481c8 (BLOCK) #to:do: bcOff=7 count=1001
+[SISTA-INLINE] sends-lifted=4459 hints-provided=2027 hints-consumed=529
+              callees-attempted=485 callees-lifted=476 callee-values=1854
+              inlines-emitted=43
 ```
-The block (a CompiledBlock, `selectorOf` returns the home method's
-`to:do:`) is compiled by Sista at bcOff=7.
+The bench's `pt x` IS inlined now (TICR-EMIT fires once for Point
+class 0x36), AND the bench block's Sista compile is dispatched.
+But the dispatched fn appears to run the loop once then blacklist
+(kBcDispatchBlacklistThreshold=1) on the natural BlockReturnTop
+bail (bailDistance=16 < 20 → marked as "close to entry").  Subsequent
+1M-iter benches go entirely through interp.
 
-**But interp dispatch hook keeps firing after compile** — counts
-climb 1001, 2001, 3001, ... up to 1M.  This means either:
-1. `lookupBcEntry(method_, bcOff)` returns null even after compile.
-2. The dispatched fn bails immediately back to interp, which
-   re-enters via backward jump (hook fires again).
+**Next-session work**: relax the blacklist threshold so a single
+end-of-loop bail at BlockReturnTop doesn't kill future dispatches.
+The current threshold treats "bail within 20 bytes of entry" as a
+bad sign, but for short hot loops (bcOff=7 trigger → bcOff=23 end =
+16 bytes) the natural exit IS close to entry.  Options:
+- Don't blacklist when the bail bytecode is BlockReturnTop/Nil.
+- Lower threshold floor (e.g., 5) so short-but-real loops survive.
+- Require N consecutive bails (not just 1) before blacklisting.
 
-T1 inline-getter ALSO fires only 705 times for the 1M-iter bench
-(0.07% coverage).  So neither Sista nor T1 inline-getter handles
-the bench's hot path.
-
-**Next-session test** (Session E): instrument Sista's dispatch
-return code to see if it's lookupBcEntry returning null, or the
-fn bailing.  Add a counter at line 17293 (lookupBcEntry hit) vs
-fallthrough.  Once we know which, the fix is either:
-- (lookupBcEntry miss): fix the cache key so block+bcOff matches.
-- (immediate bail): debug why `pt x` send in the compiled fn
-  doesn't go through the kGuardClass + kLoadInstVar inline path
-  the builder is supposed to emit.
-
-The infrastructure is in place; the visible bench win is one more
-session away.
+The infrastructure is in place; one more session on the blacklist
+heuristic should land the bench win.

@@ -40,7 +40,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         Method m;
         uint32_t failedBc = UINT32_MAX;
         LiftResult r =
-            Builder::buildFromOffset(method, memory, m, startBcOffset, &failedBc);
+            Builder::buildFromOffset(method, memory, m, startBcOffset, &failedBc, hints);
         if (r != LiftResult::kOk) {
             bcOffsetCache_[key][startBcOffset] = nullptr;  // negative cache
             if (g_debug.sistaPerBCTrace) {

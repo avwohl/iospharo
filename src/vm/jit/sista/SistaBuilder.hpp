@@ -77,7 +77,8 @@ public:
                                        ObjectMemory& memory,
                                        Method& out,
                                        uint32_t startBcOffset,
-                                       uint32_t* failedAtBytecode = nullptr);
+                                       uint32_t* failedAtBytecode = nullptr,
+                                       const std::vector<InlineHint>* hints = nullptr);
 
     // Find the outermost self-contained lift point at or before
     // `triggerBcOffset`.  Returns the smallest bcOffset T such that:

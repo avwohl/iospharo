@@ -8812,10 +8812,21 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
             int nLits = hdr.isSmallInteger()
                 ? (hdr.asSmallInteger() & 0x7FFF) : 0;
             const uint8_t* bcBase = mObj->bytes() + (1 + nLits) * 8;
-            if (instructionPointer_ >= bcBase
+            if (instructionPointer_ >= bcBase + 1
                 && instructionPointer_ < bcBase + 0xFFFF) {
+                // The bytecode dispatcher post-increments IP via
+                // `bytecode = *instructionPointer_++`, so when
+                // cacheMethod fires for a 1-byte send (special send
+                // 0x70-0x7F, send-literal 0x80-0xDF), the send byte
+                // sits at instructionPointer_-1.  TICR / IC matchers
+                // expect bcOff to point AT the send byte (matching the
+                // JIT IC's recorded send-site bcOffset).  Extended
+                // sends (0xEA-0xEB, prefixed by 0xE0-0xE3) have wider
+                // send-byte sequences; the off-by-N there reduces hint
+                // match rate but never produces a wrong inline (no
+                // match = no inline).
                 uint16_t bcOff = static_cast<uint16_t>(
-                    instructionPointer_ - bcBase);
+                    instructionPointer_ - 1 - bcBase);
                 uint32_t classKey = static_cast<uint32_t>(
                     memory_.indexOfClass(classOop) & 0x3FFFFFu);
                 uint64_t callerKey = method_.rawBits();
@@ -8838,6 +8849,15 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
                 }
                 if (!found && vec.size() < 64) {
                     vec.push_back({bcOff, classKey, method.rawBits(), 1});
+                    if (__builtin_expect(g_debug.sistaBjTrace, 0)) {
+                        static std::unordered_map<uint64_t, uint32_t> ch;
+                        if (ch[callerKey]++ < 3) {
+                            fprintf(stderr,
+                                "[INTERP-HINT-REC] caller=0x%llx bcOff=%u classKey=0x%x target=0x%llx\n",
+                                (unsigned long long)callerKey, bcOff,
+                                classKey, (unsigned long long)method.rawBits());
+                        }
+                    }
                 }
             }
         }
@@ -17296,7 +17316,35 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
     // bcOff) consistently bailed, skip the dispatch entirely —
     // dispatch + sstate-init cost was net negative.
     if (sistaRuntimeForGCHook_->isBcDispatchBlacklisted(method_, bcOff)) {
+        if (__builtin_expect(g_debug.sistaBjTrace, 0)) {
+            static std::unordered_map<uint64_t, uint32_t> blSeen;
+            uint64_t bk = (method_.rawBits() << 16) | bcOff;
+            blSeen[bk]++;
+            if (blSeen[bk] == 1 || blSeen[bk] % 1000 == 0) {
+                fprintf(stderr,
+                    "[SISTA-BL] method=0x%llx bcOff=%u BLACKLISTED call#%u\n",
+                    (unsigned long long)method_.rawBits(), bcOff,
+                    blSeen[bk]);
+            }
+        }
         return;
+    }
+
+    // Diagnostic Session E: log lookup results at key milestones
+    if (__builtin_expect(g_debug.sistaBjTrace, 0)) {
+        sista::Lowering::CompiledFn fn2 =
+            sistaRuntimeForGCHook_->lookupBcEntry(method_, bcOff);
+        static std::unordered_map<uint64_t, uint32_t> seenL;
+        uint64_t k = (method_.rawBits() << 16) | bcOff;
+        seenL[k]++;
+        // Log at first encounter (miss expected, pre-compile),
+        // then every 500 invocations to see when miss flips to hit.
+        if (seenL[k] == 1 || seenL[k] % 500 == 0) {
+            fprintf(stderr,
+                "[SISTA-LOOKUP] method=0x%llx bcOff=%u call#%u result=%s\n",
+                (unsigned long long)method_.rawBits(), bcOff,
+                seenL[k], fn2 ? "HIT" : "MISS");
+        }
     }
 
     // Diagnostic: PHARO_SISTA_PER_BC_NO_DISPATCH=1 — compile lifts
@@ -17457,6 +17505,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
             ObjectHeader* mh = method_.asObjectPtr();
             Oop hdr = method_.isObject() ? mh->slots()[0] : Oop::nil();
             ptrdiff_t bailDistance = -1;
+            uint8_t bailByte = 0;
             if (hdr.isSmallInteger()) {
                 int nLits = hdr.asSmallInteger() & 0x7FFF;
                 const uint8_t* bcs = mh->bytes() + (1 + nLits) * 8;
@@ -17464,9 +17513,32 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
                 if (bailBcOff >= 0 && bailBcOff < (ptrdiff_t)mh->byteSize()) {
                     bailDistance = bailBcOff - (ptrdiff_t)bcOff;
                     if (bailDistance < 0) bailDistance = -bailDistance;
+                    // Walk back to find the bail-causing byte.  For 1-byte
+                    // bytecodes (the common case for BlockReturnTop/Nil at
+                    // 0x5D/0x5E) the byte is at bailBcOff - 1 since the
+                    // post-bail ip has advanced past the bytecode.  For
+                    // extended bytecodes (2 or 3 bytes), the byte at
+                    // bailBcOff - 1 is just a tail-byte; the lift handler
+                    // walks back further to find the prefix.  Single-byte
+                    // walk-back is sufficient for BlockReturn detection.
+                    ptrdiff_t bailByteOff = bailBcOff - 1;
+                    if (bailByteOff >= 0 &&
+                        bailByteOff < (ptrdiff_t)mh->byteSize()) {
+                        bailByte = bcs[bailByteOff];
+                    }
                 }
             }
-            if (bailDistance >= 0 && bailDistance < 20) {
+            // jit-may25 Session E: BlockReturnTop/Nil is the natural exit
+            // of a block — bailing there is "good".  Without this guard,
+            // short hot loops (like the 1M getter+yourself bench whose
+            // body is bcOff=7..23, distance 16 < 20) blacklist on their
+            // very first dispatch.  blockReturn-as-exit is the canonical
+            // shape: future dispatches still want to run.
+            bool isBlockReturnExit =
+                (bailByte == jit::SistaV1::BlockReturnTop
+              || bailByte == jit::SistaV1::BlockReturnNil);
+            if (bailDistance >= 0 && bailDistance < 20
+                && !isBlockReturnExit) {
                 sistaRuntimeForGCHook_->noteBcDispatchBail(method_, bcOff);
             }
         }
@@ -17569,6 +17641,13 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
                 hints.empty() ? nullptr : &hints,
                 bcOff);
 
+        if (__builtin_expect(g_debug.sistaBjTrace, 0)) {
+            fprintf(stderr,
+                "[SISTA-COMPILE-TRIGGER] method=0x%llx bcOff=%u "
+                "hints=%zu fn=%s\n",
+                (unsigned long long)method_.rawBits(), bcOff,
+                hints.size(), fn2 ? "OK" : "FAIL");
+        }
         if (g_debug.sistaPerBCTrace) {
             static int logCount = 0;
             if (logCount++ < 32) {
@@ -18834,23 +18913,31 @@ std::vector<sista::InlineHint>
 Interpreter::extractInlineHintsForMethod(Oop method) {
     std::vector<sista::InlineHint> hints;
     auto* jm = jitRuntime_.methodMap().lookup(method.rawBits());
-    if (!jm || jm->numICEntries == 0) {
-        // jit-may25 Step B: fall back to interp-side IC table.  Lets
-        // Sista inline-getter etc. fire for interp-only callers (the
-        // case for benches like 1M getter+yourself whose outer block
-        // is called only once and never JIT-compiled).
-        // See docs/sista-ic-promotion-plan.md.
-        auto it = interpHints_.find(method.rawBits());
-        if (it == interpHints_.end()) return hints;
-        for (const auto& e : it->second) {
-            // Skip polymorphic entries (classKey was zeroed on multi-
-            // class observation).  No hits threshold needed —
-            // cacheMethod only fires on method-cache MISS, so each
-            // entry represents at least one real observed send.
-            // Monomorphic latch is sufficient noise filter.
+    // jit-may25 Session E: gather hints from BOTH JIT IC and interp-side
+    // table.  Previously the fallback to interpHints only fired when
+    // jm was null/empty, but JIT may have compiled a method without
+    // its ICs being filled yet (e.g., bench block compiled via OSR
+    // during warmup before sends are observed).  In that case the
+    // JIT IC loop returns empty hints AND the fallback never fires.
+    // Solution: always also collect interp-side hints; if a (bcOff,
+    // classKey) is already in the JIT IC, the JIT version wins.
+    auto interpIt = interpHints_.find(method.rawBits());
+    auto addInterpHints = [&]() {
+        if (interpIt == interpHints_.end()) return;
+        for (const auto& e : interpIt->second) {
             if (e.classKey == 0) continue;
-            hints.push_back({e.bcOff, e.classKey, e.targetMethod});
+            // Skip if JIT already has a hint at this bcOff.
+            bool already = false;
+            for (const auto& h : hints) {
+                if (h.bcOffset == e.bcOff) { already = true; break; }
+            }
+            if (!already) {
+                hints.push_back({e.bcOff, e.classKey, e.targetMethod});
+            }
         }
+    };
+    if (!jm || jm->numICEntries == 0) {
+        addInterpHints();
         return hints;
     }
     const auto* sendBCs = jitRuntime_.compiler()
@@ -18900,6 +18987,11 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
             }
         }
     }
+    // Session E: also merge in interp-side hints (from cacheMethod
+    // recording for sends that fired before the method was JIT-
+    // compiled).  Without this, T1-OSR-compiled blocks whose ICs
+    // haven't been observed yet return zero hints.
+    addInterpHints();
     return hints;
 }
 
