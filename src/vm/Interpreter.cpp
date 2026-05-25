@@ -17281,8 +17281,12 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         static std::unordered_map<uint64_t, uint32_t> seen;
         uint64_t key = (method_.rawBits() << 16) | (bcOff & 0xFFFF);
         if (seen[key]++ % 1000 == 0) {
-            fprintf(stderr, "[SISTA-BJ] method=0x%llx #%s bcOff=%u count=%u\n",
+            // Also classify the method.
+            ObjectHeader* mh = method_.asObjectPtr();
+            bool isBlock = mh && mh->classIndex() == compiledBlockClassIndex_;
+            fprintf(stderr, "[SISTA-BJ] method=0x%llx %s #%s bcOff=%u count=%u\n",
                     (unsigned long long)method_.rawBits(),
+                    isBlock ? "(BLOCK)" : "(METHOD)",
                     memory_.selectorOf(method_).c_str(),
                     bcOff, seen[key]);
         }

@@ -91,4 +91,35 @@ the method has no JITMethod.
 
 ## Status — 2026-05-25
 
-Survey + design done.  Implementation deferred (architectural).
+Sessions A+B+C+D shipped.  Session D revealed real root cause:
+
+**The bench's hot block IS Sista-per-bc-compiled.**  Verified via
+PHARO_SISTA_PER_BC_TRACE=1 + PHARO_SISTA_BJ_TRACE=1:
+```
+[SISTA-PER-BC-COMPILE] method=0x3038481c8 bcOff=7 result=OK
+[SISTA-BJ] method=0x3038481c8 (BLOCK) #to:do: bcOff=7 count=1001
+```
+The block (a CompiledBlock, `selectorOf` returns the home method's
+`to:do:`) is compiled by Sista at bcOff=7.
+
+**But interp dispatch hook keeps firing after compile** — counts
+climb 1001, 2001, 3001, ... up to 1M.  This means either:
+1. `lookupBcEntry(method_, bcOff)` returns null even after compile.
+2. The dispatched fn bails immediately back to interp, which
+   re-enters via backward jump (hook fires again).
+
+T1 inline-getter ALSO fires only 705 times for the 1M-iter bench
+(0.07% coverage).  So neither Sista nor T1 inline-getter handles
+the bench's hot path.
+
+**Next-session test** (Session E): instrument Sista's dispatch
+return code to see if it's lookupBcEntry returning null, or the
+fn bailing.  Add a counter at line 17293 (lookupBcEntry hit) vs
+fallthrough.  Once we know which, the fix is either:
+- (lookupBcEntry miss): fix the cache key so block+bcOff matches.
+- (immediate bail): debug why `pt x` send in the compiled fn
+  doesn't go through the kGuardClass + kLoadInstVar inline path
+  the builder is supposed to emit.
+
+The infrastructure is in place; the visible bench win is one more
+session away.
