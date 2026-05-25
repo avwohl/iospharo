@@ -16313,12 +16313,27 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
             return PrimitiveResult::Failure;
         }
 
-        // Copy slots (offset by fixed fields)
-        for (size_t i = 0; i < count; i++) {
-            Oop value = srcHdr->slotAt(srcFixed + srcIdx + i);
-            // Use storePointer for proper write barrier (old→young tracking)
-            memory_.storePointer(destFixed + dstStartIdx + i, destOop, value);
+        // Bulk slot copy via memmove (handles overlap).  Write barrier:
+        // if dest is old and any src slot is young, single storePointer
+        // on the first young slot triggers the remembered-set add for
+        // dest, then memmove handles the rest (the remembered set is
+        // per-object, not per-slot).  Faster than the per-slot
+        // storePointer loop (was the per-call hot spot in sort 100K's
+        // merge step — ~10% of bench CPU time).
+        Oop* srcPtrs = srcHdr->slots() + srcFixed + srcIdx;
+        Oop* dstPtrs = destHdr->slots() + destFixed + dstStartIdx;
+        if (memory_.isOld(destOop)) {
+            for (size_t i = 0; i < count; i++) {
+                Oop v = srcPtrs[i];
+                if (v.isObject() && memory_.isYoung(v)) {
+                    // Trigger remembered-set entry via the public API.
+                    memory_.storePointer(destFixed + dstStartIdx + i,
+                                         destOop, v);
+                    break;
+                }
+            }
         }
+        std::memmove(dstPtrs, srcPtrs, count * sizeof(Oop));
 
         popN(4);  // Pop 4 args, leave dest
         return PrimitiveResult::Success;
@@ -16334,11 +16349,9 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
             return PrimitiveResult::Failure;
         }
 
-        // Copy bytes
-        for (size_t i = 0; i < count; i++) {
-            uint8_t byte = srcHdr->byteAt(srcIdx + i);
-            destHdr->byteAtPut(dstStartIdx + i, byte);
-        }
+        // Bulk byte copy via memmove (was per-byte loop).
+        std::memmove(destHdr->bytes() + dstStartIdx,
+                     srcHdr->bytes() + srcIdx, count);
 
         popN(4);  // Pop 4 args, leave dest
         return PrimitiveResult::Success;
@@ -16361,12 +16374,11 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
             return PrimitiveResult::Failure;
         }
 
-        // Access as 32-bit words
+        // Access as 32-bit words — bulk copy via memmove.
         uint32_t* destData = reinterpret_cast<uint32_t*>(destHdr + 1);
         uint32_t* srcData = reinterpret_cast<uint32_t*>(srcHdr + 1);
-        for (size_t i = 0; i < count; i++) {
-            destData[dstStartIdx + i] = srcData[srcIdx + i];
-        }
+        std::memmove(destData + dstStartIdx, srcData + srcIdx,
+                     count * sizeof(uint32_t));
 
         popN(4);
         return PrimitiveResult::Success;
@@ -16382,12 +16394,11 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
             return PrimitiveResult::Failure;
         }
 
-        // Access as 64-bit words
+        // Access as 64-bit words — bulk copy via memmove.
         uint64_t* destData = reinterpret_cast<uint64_t*>(destHdr + 1);
         uint64_t* srcData = reinterpret_cast<uint64_t*>(srcHdr + 1);
-        for (size_t i = 0; i < count; i++) {
-            destData[dstStartIdx + i] = srcData[srcIdx + i];
-        }
+        std::memmove(destData + dstStartIdx, srcData + srcIdx,
+                     count * sizeof(uint64_t));
 
         popN(4);
         return PrimitiveResult::Success;
