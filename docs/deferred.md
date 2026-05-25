@@ -1441,6 +1441,58 @@ Shipped state:
 - Pure-J2J gate ENABLED by default (PHARO_T1_NO_PURE_J2J_GATE=1 disables)
 - `PHARO_T1_NO_INLINE_J2J=1` disables inline-J2J entirely (legacy)
 
+**Iter N+30l (2026-05-25) — additional unwind characterization
+via PHARO_B5_TRACE=1 instrumentation in returnValue.**
+
+Repeat investigation with new instrumentation at `Interpreter.cpp`
+`returnValue`:`if (matRetSlot)` site (commit f1cc3dbc).  Logs each
+materialize-bail SavedFrame pop with: fd post-pop, retVal, current
+method/receiver, resumed bcOff, next bytecode, sp-fp.
+
+PHARO_T1_NO_PURE_J2J_GATE=1 PHARO_T1_NO_WARM_J2J_GATE=1 PHARO_BENCH=fib
+PHARO_FIB_N=20 PHARO_B5_TRACE=1 PHARO_T1_J2J_POST_SEND_IP=1 trace
+shows boundary:
+
+- Frames at unwind depth 8-17 (= benchFib(3..11)): correct retVals
+  bf(2)=3, bf(3)=5, ..., bf(10)=177, bf(11)=287.
+- Frame at unwind depth 7 (= save[5] = benchFib(13)): retVal=12 (wrong;
+  should be bf(12)=465).
+- Frames at depth 6-2 (= save[4..0]): retVal=13, 14, 15, 16, 17 (each
+  = self of that frame).
+- OUTER frame (depth 1): retVal=18 (= self-2 of benchFib(20), the
+  IC2-receiver pushed but never overwritten with bf(18)).
+
+Pattern is sharp: at depth 7+ the unwind starts returning `self` of
+each benchFib(N) instead of bf(N).  Without PostSendIp the broken
+boundary is depth 10 (benchFib(10)); PostSendIp pushes it to
+depth 13 (benchFib(13)), shifting 2-3 levels deeper but not
+eliminating.
+
+Eliminated possibilities:
+- PHARO_NO_JIT_RESUME_AFTER_RETURN=1 (suppresses tryJITResumeInCaller):
+  bug persists, fib(20)=13548.  So the bug isn't purely about JIT
+  re-entry during the interp unwind.
+- PHARO_T1_NO_INLINE_BLOCK_VALUE=1: bug persists; not BV-related.
+- PHARO_NO_JIT=1: bug fixed (fib(20)=21891 correct).  Bug requires
+  JIT activation to fire at all.
+
+Hypothesis (unverified): the nested materialize-bail (when
+benchFib(N>=12) at past-IC1 does IC2 → tryJITActivation → JIT inline-J2J
+chain bails at some inner cold IC → FALLBACK pushes nested OUTER +
+inner saves) leaves OUTER's matRetSlot UNWRITTEN.  The slot retains
+its original "pushed receiver" value (= self).  Subsequent unwind
+of OUTER pops a frame whose state.sp[-1] / matRetSlot equivalent
+holds `self`, leading to returnTop popping self.
+
+Cannot confirm via instrumentation alone; needs lldb attach with
+breakpoints at materializeJ2J + each returnValue pop to verify
+which path writes vs. doesn't write the OUTER matRetSlot during
+nested-bail unwind.
+
+NEXT TURN: lldb-driven investigation per CLAUDE.md's lldb section.
+For now, pure-J2J gate (default-on as of 56c291c6) remains the
+working safety net.
+
 **Iter N+29 (2026-05-20) — J2J save protocol exhausted; routing-to-Sista
 investigation.**
 
