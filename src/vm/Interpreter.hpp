@@ -681,6 +681,17 @@ private:
 #if PHARO_JIT_ENABLED
     std::array<J2JSave, MaxJ2JPoolSize> j2jPool_;
     int j2jPoolCursor_ = 0;
+public:
+    // Session H side-stack for BV inline closure restore.  Lives in
+    // Interpreter so forEachRoot can walk it during GC; the existing
+    // thread_local in JITRuntime.cpp wasn't GC-walked, so closure Oops
+    // saved across allocating sends inside the BV-inlined block went
+    // stale after compaction.  Capacity matches the j2j save pool depth
+    // (256) since BV inline pushes one entry per active save.
+    std::array<Oop, 256> bvClosureSaveStack_;
+    int bvClosureSaveDepth_ = 0;
+    bool bvIsBvSaveAtJ2jDepth_[256] = {false};
+private:
 #endif
 
     // Stack (single stack for all frames)
@@ -3332,6 +3343,13 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         // GC frequency × bench's xmethod fire rate.
         for (int i = 0; i < j2jPoolCursor_; i++) {
             visitor(j2jPool_[i].receiver);
+        }
+
+        // Session H: BV-inline closure side-stack must be walked so
+        // saved closure Oops survive a GC that fires inside the
+        // BV-inlined block's body (e.g., on an allocating send).
+        for (int i = 0; i < bvClosureSaveDepth_; i++) {
+            visitor(bvClosureSaveStack_[i]);
         }
 
         // jit-may22a B1 Sub-step 5: Sista inline-self save pool also

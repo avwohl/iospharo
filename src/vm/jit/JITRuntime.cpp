@@ -1475,26 +1475,20 @@ extern "C" uint64_t g_bvBail_canBail = 0;
 extern "C" uint64_t g_bvBail_prim = 0;
 extern "C" uint64_t g_bvBail_savefull = 0;
 
-// Session H side stack for BV inline closure restore.  Paired with the
-// j2jSaveCursor stack; depth tracks BV-inline nesting only (not all
-// J2J calls).  bvIsBvSaveAtJ2jDepth[N] is set true when the J2J save
-// at depth N is a BV-inline save (so J2J_INLINE_RETURN can pop the
-// closure stack and restore closure_).
-thread_local pharo::Oop bvClosureSaveStack[256];
-thread_local int bvClosureSaveDepth = 0;
-thread_local bool bvIsBvSaveAtJ2jDepth[256] = {false};
-
 extern "C" void jit_rt_pop_bv_closure(pharo::Interpreter* interp,
                                       int callerJ2jDepth) {
     // Called from J2J_INLINE_RETURN_IMPL when popping a J2J save that
     // was a BV-inline.  callerJ2jDepth is the depth AFTER popping
     // (i.e., the save we just popped was at callerJ2jDepth).
+    // Uses Interpreter's GC-walked side-stack (was thread_local global
+    // pre-Session H, but those Oops weren't GC roots — saved closures
+    // went stale after a GC inside the BV-inlined block).
     if (callerJ2jDepth >= 0 && callerJ2jDepth < 256
-        && bvIsBvSaveAtJ2jDepth[callerJ2jDepth]) {
-        bvIsBvSaveAtJ2jDepth[callerJ2jDepth] = false;
-        if (bvClosureSaveDepth > 0) {
+        && interp->bvIsBvSaveAtJ2jDepth_[callerJ2jDepth]) {
+        interp->bvIsBvSaveAtJ2jDepth_[callerJ2jDepth] = false;
+        if (interp->bvClosureSaveDepth_ > 0) {
             interp->setCurrentClosure(
-                bvClosureSaveStack[--bvClosureSaveDepth]);
+                interp->bvClosureSaveStack_[--interp->bvClosureSaveDepth_]);
         }
     }
 }
@@ -1616,10 +1610,10 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     pharo::Oop blockClosureOop = pharo::Oop::fromRawBits(rcvBits);
     int j2jDepthBefore = s->j2jDepth - 1;  // depth of THIS save
     if (j2jDepthBefore >= 0 && j2jDepthBefore < 256
-        && bvClosureSaveDepth < 256) {
-        bvClosureSaveStack[bvClosureSaveDepth++] =
+        && s->interp->bvClosureSaveDepth_ < 256) {
+        s->interp->bvClosureSaveStack_[s->interp->bvClosureSaveDepth_++] =
             s->interp->currentClosure();
-        bvIsBvSaveAtJ2jDepth[j2jDepthBefore] = true;
+        s->interp->bvIsBvSaveAtJ2jDepth_[j2jDepthBefore] = true;
         s->interp->setCurrentClosure(blockClosureOop);
     }
 
