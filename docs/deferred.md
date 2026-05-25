@@ -1484,14 +1484,36 @@ its original "pushed receiver" value (= self).  Subsequent unwind
 of OUTER pops a frame whose state.sp[-1] / matRetSlot equivalent
 holds `self`, leading to returnTop popping self.
 
-Cannot confirm via instrumentation alone; needs lldb attach with
-breakpoints at materializeJ2J + each returnValue pop to verify
-which path writes vs. doesn't write the OUTER matRetSlot during
-nested-bail unwind.
+**Iter N+30m (2026-05-25) — RESOLVED.  Hypothesis confirmed; fix shipped
+in commit `719239f9`.**
 
-NEXT TURN: lldb-driven investigation per CLAUDE.md's lldb section.
-For now, pure-J2J gate (default-on as of 56c291c6) remains the
-working safety net.
+The hypothesis was correct: nested materialize-bail during the unwind
+of the original materialize-bail corrupts the outer matRetSlot chain.
+Each level of recursion stomps the prior level's matRetSlot.
+
+**The fix** (`Interpreter.hpp` `canJITActivate`): scan the top 4
+SavedFrames; if any has `materializedRetSlot != nullptr`, return false.
+This forces interp dispatch during the entire unwind, preventing the
+nested bail cascade.
+
+Bench impact (fib(28), default config):
+- Before: 125 ms (with pure gate ON as safety net)
+- After: 15 ms (gates default-OFF, no-nested-bail check is the gate)
+- 8.3x speedup AND correct results.
+
+Configuration:
+- `t1AllowNestedJitBail` = false by default.  PHARO_T1_ALLOW_NESTED_JIT_BAIL=1
+  reverts (= buggy behavior, fib(28)=635648).
+- `t1PureJ2JGate` = false by default.  Was the prior safety net for the
+  same bug.  PHARO_T1_PURE_J2J_GATE=1 re-enables for bisection.
+- `t1WarmJ2JGate` = false by default.  Same reason.
+
+Verified:
+- fib(17,20,25,28,30) all match expected.
+- sieve x3 = 1028 correct.
+- Full bench-suite + image bench complete cleanly.
+- PHARO_T1_ALLOW_NESTED_JIT_BAIL=1 reproduces the original wrong
+  result, confirming the fix is what makes it work.
 
 **Iter N+29 (2026-05-20) — J2J save protocol exhausted; routing-to-Sista
 investigation.**
