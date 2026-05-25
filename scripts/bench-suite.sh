@@ -80,14 +80,15 @@ PharoBenchSuite class compile: 'time: aBlock
 PharoBenchSuite class compile: 'runAll
   ''/tmp/bench_suite_result.txt'' asFileReference writeStreamDo: [:f |
     | t |
-    [f nextPutAll: ''tinyBenchmarks: ''; nextPutAll: 0 tinyBenchmarks; lf]
-      on: Error do: [:e | f nextPutAll: ''tinyBenchmarks: ERROR: ''; nextPutAll: e messageText; lf].
-    [t := self time: [28 benchFib]. f nextPutAll: ''fib(28) = ''; print: t; nextPutAll: '' ms''; lf]
-      on: Error do: [:e | f nextPutAll: ''fib(28) = ERROR: ''; nextPutAll: e messageText; lf].
-    [t := self time: [(1 to: 100) inject: 0 into: [:s :i | s + i]]. f nextPutAll: ''sieve x100 = ''; print: t; nextPutAll: '' ms''; lf]
-      on: Error do: [:e | f nextPutAll: ''sieve x100 = ERROR: ''; nextPutAll: e messageText; lf].
-    [t := self time: [| a | a := (1 to: 100000) collect: [:i | 100000 - i]. a sort]. f nextPutAll: ''sort 100K = ''; print: t; nextPutAll: '' ms''; lf]
-      on: Error do: [:e | f nextPutAll: ''sort 100K = ERROR: ''; nextPutAll: e messageText; lf].
+    f flush.
+    [f nextPutAll: ''tinyBenchmarks: ''; nextPutAll: 0 tinyBenchmarks; lf. f flush]
+      on: Error do: [:e | f nextPutAll: ''tinyBenchmarks: ERROR: ''; nextPutAll: e messageText; lf. f flush].
+    [t := self time: [28 benchFib]. f nextPutAll: ''fib(28) = ''; print: t; nextPutAll: '' ms''; lf. f flush]
+      on: Error do: [:e | f nextPutAll: ''fib(28) = ERROR: ''; nextPutAll: e messageText; lf. f flush].
+    [t := self time: [(1 to: 100) inject: 0 into: [:s :i | s + i]]. f nextPutAll: ''sieve x100 = ''; print: t; nextPutAll: '' ms''; lf. f flush]
+      on: Error do: [:e | f nextPutAll: ''sieve x100 = ERROR: ''; nextPutAll: e messageText; lf. f flush].
+    [t := self time: [| a | a := (1 to: 100000) collect: [:i | 100000 - i]. a sort]. f nextPutAll: ''sort 100K = ''; print: t; nextPutAll: '' ms''; lf. f flush]
+      on: Error do: [:e | f nextPutAll: ''sort 100K = ERROR: ''; nextPutAll: e messageText; lf. f flush].
     [t := self time: [| d | d := Dictionary new. 1 to: 50000 do: [:i | d at: i put: i]. 1 to: 50000 do: [:i | d at: i]]. f nextPutAll: ''dict 50K = ''; print: t; nextPutAll: '' ms''; lf]
       on: Error do: [:e | f nextPutAll: ''dict 50K = ERROR: ''; nextPutAll: e messageText; lf].
     [t := self time: [(1 to: 1000000) inject: 0 into: [:s :i | s + i]]. f nextPutAll: ''sum 1M = ''; print: t; nextPutAll: '' ms''; lf]
