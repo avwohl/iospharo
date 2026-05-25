@@ -145,7 +145,16 @@ DebugSettings::DebugSettings() {
     // bug with a 99%+ catch rate.  Pure gate kept as opt-in via
     // PHARO_T1_PURE_J2J_GATE=1 for bisection; warmth gate disabled via
     // PHARO_T1_NO_WARM_J2J_GATE=1.
-    t1PureJ2JGate       = envPresent("PHARO_T1_PURE_J2J_GATE");
+    // 2026-05-24: flip pure gate to default-on.  Pure gate checks IC
+    // entry's bit 60 (J2J_ENTRY_BIT) which IS preserved across GC
+    // (see JITRuntime.cpp:3580 FLAGS_MASK selective clear), unlike
+    // warm gate which checks the key (zeroed by GC).  After GC, warm
+    // gate bails on EVERY inline-J2J attempt until ICs re-fill,
+    // making fib pay full activation cost for the rest of the run.
+    // Pure gate stays warm across GC, so it bails LESS often while
+    // still guarding the materialize-bail wrong-result bug.
+    // PHARO_T1_NO_PURE_J2J_GATE=1 disables.
+    t1PureJ2JGate       = !envPresent("PHARO_T1_NO_PURE_J2J_GATE");
     t1WarmJ2JGate       = !envPresent("PHARO_T1_NO_WARM_J2J_GATE");
     t1BailGateTrace     = envPresent("PHARO_T1_BAIL_GATE_TRACE");
     t1BailGateHisto     = t1BailGateTrace
