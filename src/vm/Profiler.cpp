@@ -167,10 +167,9 @@ void Profiler::dump() {
     fprintf(stderr, "    %%   count  class>>selector\n");
     fprintf(stderr, "  ----  -----  ---------------\n");
 
-    // Try to print selectors.  At main()'s end (before destructors)
-    // memory_ is still valid.  Guard against GC-moved oops by
-    // checking the oop is in the heap range and the header looks
-    // like a CompiledMethod.
+    // Try to print class>>selector.  At main()'s end (before
+    // destructors) memory_ is still valid.  Guard with isValidPointer
+    // against GC-moved oops.
     Interpreter* interp = g_profilingInterp;
     auto& mem = interp->memory();
     int shown = 0;
@@ -178,15 +177,34 @@ void Profiler::dump() {
         if (shown >= topN) break;
         Oop methodOop = Oop::fromRawBits(e.methodBits);
         std::string sel = "?";
-        if (methodOop.isObject() && methodOop.rawBits() > 0x10000) {
-            if (mem.isValidPointer(methodOop)) {
-                sel = mem.selectorOf(methodOop);
+        std::string cls = "?";
+        if (methodOop.isObject() && methodOop.rawBits() > 0x10000
+            && mem.isValidPointer(methodOop)) {
+            sel = mem.selectorOf(methodOop);
+            // Try to get class via method's last-literal-1 (the
+            // associated class) — for AdditionalMethodState methods
+            // this lives at slot [numLits-2].
+            size_t nLits = mem.numLiteralsOf(methodOop);
+            if (nLits >= 2) {
+                Oop maybeAssn = mem.fetchPointer(nLits - 2, methodOop);
+                // Could be an Association(class -> nil) or just a class.
+                if (maybeAssn.isObject()
+                    && maybeAssn.rawBits() > 0x10000
+                    && mem.isValidPointer(maybeAssn)) {
+                    ObjectHeader* h = maybeAssn.asObjectPtr();
+                    if (h->slotCount() >= 1) {
+                        Oop slot0 = h->slotAt(0);
+                        if (slot0.isObject() && slot0.rawBits() > 0x10000
+                            && mem.isValidPointer(slot0)) {
+                            cls = mem.classNameOf(slot0);
+                        }
+                    }
+                }
             }
         }
         double pct = (double)e.count * 100.0 / (double)total;
-        fprintf(stderr, "  %4.1f  %5u  0x%llx  %s\n",
-                pct, e.count,
-                (unsigned long long)e.methodBits, sel.c_str());
+        fprintf(stderr, "  %4.1f  %5u  %s>>%s\n",
+                pct, e.count, cls.c_str(), sel.c_str());
         shown++;
     }
     fflush(stderr);
