@@ -6461,9 +6461,14 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         //
         // Session H 2026-05-25: tightened — only flag NLR when the
         // block has 0x58-0x5C (method-style returns inside a block are
-        // TRUE NLR) OR mid-block 0x5D/0x5E (not the natural tail).
-        // Gated by PHARO_T1_NLR_TAIL_ONLY=1 (default OFF — correctness
-        // bug ZnByteEncoder DNU TBD root-caused).
+        // TRUE NLR), mid-block 0x5D/0x5E (not the natural tail), OR
+        // 0xF9/0xFA (PushFullBlock/PushClosure — creates nested closures
+        // whose outerContext would point at the BV-inlined block's
+        // not-quite-real frame, breaking nested-block semantics).  The
+        // bisect showed nested-closure-creating blocks are the source
+        // of the ZnByteEncoder DNU under tail-only loosening.
+        // Gated by PHARO_T1_NLR_TAIL_ONLY=1 (default OFF still — even
+        // with the 0xF9/0xFA guard, bench-suite needs validation).
         {
             bool nlr = false;
             if (isReal) {
@@ -6475,6 +6480,17 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                         }
                         if ((op == 0x5D || op == 0x5E)
                             && i + 1 != bcLen) {
+                            nlr = true; break;
+                        }
+                        // PushFullBlock(0xF9) / PushClosure(0xFA) create
+                        // nested closures whose outerContext binds to
+                        // the current activation.  BV inline's "fake"
+                        // frame can't supply a real outerContext, so
+                        // any nested block created from a BV-inlined
+                        // host runs with a corrupted context — the
+                        // visible failure is mis-interpreted bytecodes
+                        // after the BV return (ZnByteEncoder DNU).
+                        if (op == 0xF9 || op == 0xFA) {
                             nlr = true; break;
                         }
                     }
