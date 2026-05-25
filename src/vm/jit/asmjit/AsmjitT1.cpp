@@ -2643,7 +2643,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // the block's literals, producing the cascading DNU on
         // `nil findNextHandlerContext` we observed.
         if (g_debug.t1InlineJ2JXmethod || g_debug.t1InlineBlockValue) {
+            // 2026-05-24: skip the restore if save.jitMethod is null.
+            // xmethod-off (default) inline-J2J self-rec push at line
+            // ~4060 does NOT write save.jitMethod (state stays the
+            // same for self-rec).  When inline-block-value is also on
+            // (default) but the push was a self-rec one (not a
+            // block-value push), save.jitMethod is 0 from j2jPool_'s
+            // zero-init.  Without this guard, the ldr x6, [x7] below
+            // dereferences NULL and SIGSEGVs — was masked by the
+            // warm-J2J gate which prevented the push from happening.
+            asmjit::Label skipJMRestore = a.new_label();
             a.ldr(x7, ptr(x4, 32));   // jitMethod
+            a.cbz(x7, skipJMRestore);
             a.str(x7, ptr(x0, OFF_JITMETHOD));
             a.ldr(x6, ptr(x7, 0));    // method = callerJM[0]
             a.str(x6, ptr(x0, OFF_METHOD));
@@ -2651,6 +2662,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.str(x10, ptr(x0, OFF_LITERALS));
             a.ldrb(w11, ptr(x7, 34)); // callerJM.argCount byte
             a.str(w11, ptr(x0, OFF_ARGCOUNT));
+            a.bind(skipJMRestore);
         }
 
         // Pop callee's args from caller's sp, push retval (in x1).
