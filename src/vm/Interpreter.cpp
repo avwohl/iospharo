@@ -11372,6 +11372,14 @@ bool Interpreter::popFrame() {
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
 
+    // jit-may24 Step 2: track materialize-bail frame count.  Decrement
+    // here (not in returnValue's matRetSlot path) because popFrame is
+    // the single sink for all frame removal — covers returnValue, NLR,
+    // ensure-cleanup, and stack-overflow paths uniformly.
+    if (__builtin_expect(frame.materializedRetSlot != nullptr, 0)) {
+        if (materializedFrameCount_ > 0) materializedFrameCount_--;
+    }
+
     // Reset stack to frame pointer (discards temps and locals)
     if (__builtin_expect(traceSpCorrupt_, 0)) {
         uint64_t fpB = (uint64_t)framePointer_;
@@ -11488,6 +11496,12 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
+
+    // jit-may24 Step 2: decrement materialize-bail counter, same as
+    // popFrame().  popFrameForJIT is used by JIT direct-call paths.
+    if (__builtin_expect(frame.materializedRetSlot != nullptr, 0)) {
+        if (materializedFrameCount_ > 0) materializedFrameCount_--;
+    }
 
     // Restore interpreter state from saved frame
     stackPointer_ = framePointer_;  // Discard callee's locals
@@ -18211,6 +18225,7 @@ void Interpreter::tryJITResumeInCaller() {
                         save.sp - (save.sendArgCount + 1);
                     frame.savedArgCount = saveJM->argCount;
                     frame.homeFrameDepth = SIZE_MAX;
+                    materializedFrameCount_++;
                 }
                 // Sync interpreter state from innermost callee
                 method_ = state.method;
@@ -20685,6 +20700,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     save.sp - (save.sendArgCount + 1);
                 frame.savedArgCount = saveJM->argCount;
                 frame.homeFrameDepth = SIZE_MAX;
+                materializedFrameCount_++;
             }
             // Adjust frameDepth_ tracking — j2jDepth merged value is
             // wrong when both slices have saves.  Use totalFrames.
@@ -20861,6 +20877,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             frame.materializedRetSlot = save.sp - (save.sendArgCount + 1);
             frame.savedArgCount = saveJM->argCount;
             frame.homeFrameDepth = SIZE_MAX;
+            materializedFrameCount_++;
         }
         chainCallDepth += state.j2jDepth;
         if (state.jitMethod) {
@@ -21065,6 +21082,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             save.sp - (save.sendArgCount + 1);
                         frame.savedArgCount = saveJM->argCount;
                         frame.homeFrameDepth = SIZE_MAX;
+                        materializedFrameCount_++;
                     }
                     chainCallDepth += state.j2jDepth;
                     if (state.jitMethod) {
@@ -21768,6 +21786,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         save.sp - (save.sendArgCount + 1);
                     frame.savedArgCount = saveJM->argCount;
                     frame.homeFrameDepth = SIZE_MAX;
+                    materializedFrameCount_++;
                 }
                 frameDepth_ = baseDepth + state.j2jDepth;
                 chainCallDepth += state.j2jDepth;
@@ -22233,6 +22252,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                             save.sp - (save.sendArgCount + 1);
                                         frame.savedArgCount = saveJM->argCount;
                                         frame.homeFrameDepth = SIZE_MAX;
+                                        materializedFrameCount_++;
                                     }
                                     chainCallDepth += state.j2jDepth;
                                     if (state.jitMethod) {
@@ -22367,6 +22387,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 savedSP - (nArgs + 1);
                             frame.savedArgCount = savedArgCount;
                             frame.homeFrameDepth = SIZE_MAX;
+                            materializedFrameCount_++;
                         }
 
                         // Materialize any J2J frames the callee accumulated
@@ -22404,6 +22425,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                     save.sp - (save.sendArgCount + 1);
                                 frame.savedArgCount = saveJM->argCount;
                                 frame.homeFrameDepth = SIZE_MAX;
+                                materializedFrameCount_++;
                             }
                             chainCallDepth += state.j2jDepth;
                             // Sync from innermost J2J frame

@@ -654,6 +654,14 @@ private:
     static constexpr int PrimErrOSError         = 21; // Index in PrimErrTable for OS errors
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     size_t frameDepth_;
+    // jit-may24 Step 2: counter of SavedFrames currently on the stack
+    // with materializedRetSlot != nullptr.  Used by canJITActivate's
+    // fast-skip check.  Incremented at each materialize-bail push
+    // (see Interpreter.cpp ~line 20861, 22367, etc.); decremented in
+    // popFrame() when the popped frame had materializedRetSlot set.
+    // popFrame is the only path that removes frames, so this stays
+    // accurate across all return paths (returnValue + NLR + ensure).
+    size_t materializedFrameCount_ = 0;
 
     // Shared J2J save pool — heap-allocated once, carved into per-entry slices
     // by tryJITActivation via j2jPoolCursor_ to avoid per-call stack allocation.
@@ -1131,14 +1139,18 @@ public:
         if (!method.isObject() || method.rawBits() < 0x10000) return false;
         jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method.rawBits());
         if (!jm || !jm->isExecutable()) return false;
-        // jit-may24 Step 1: don't re-enter JIT while a materialize-bail
-        // unwind is in progress.  Detect by walking back up to 4 saved
-        // frames; if any has materializedRetSlot set, we're in the
-        // unwind chain.  Re-entering JIT here triggers a nested bail
-        // which corrupts the outer matRetSlot (see deferred.md A6
-        // N+30l).  PHARO_T1_ALLOW_NESTED_JIT_BAIL=1 opts out (legacy
+        // jit-may24 Step 2: don't re-enter JIT while a materialize-bail
+        // unwind is in progress.  Two-stage check: counter fast-path
+        // (1 load) bails out when no mat frames exist; full 4-frame
+        // scan verifies (mirrors original scan exactly — keeps the
+        // safety of the proven-correct scan).  When counter is
+        // accurate (default), no scan happens.  When counter
+        // mismatches (some path missed an increment/decrement), the
+        // scan catches the actual matRetSlot frame regardless.
+        // PHARO_T1_ALLOW_NESTED_JIT_BAIL=1 opts out (legacy buggy
         // behavior, for bisection).
-        if (__builtin_expect(!g_debug.t1AllowNestedJitBail, 1)) {
+        if (__builtin_expect(materializedFrameCount_ > 0
+                && !g_debug.t1AllowNestedJitBail, 0)) {
             size_t scan = (frameDepth_ < 4) ? frameDepth_ : 4;
             for (size_t i = 0; i < scan; i++) {
                 if (savedFrames_[frameDepth_ - 1 - i].materializedRetSlot
