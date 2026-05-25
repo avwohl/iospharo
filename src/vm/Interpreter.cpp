@@ -20260,6 +20260,36 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         ~JITStateGuard() { self->currentJITState_ = prev; }
     } jitStateGuard{this, prevJITState};
 
+    // Session H: cleanup leaked BV-inline closure saves on exit.
+    // BV inlines whose blocks bail to interp via ExitSend (vs returning
+    // through J2J_INLINE_RETURN_IMPL / JITRuntime fast path) leave their
+    // closure saves on the side-stack and their bvIsBvSaveAtJ2jDepth_
+    // flags set.  When this tryJITActivation eventually exits, those
+    // saves are STALE — j2jDepth resets but the side-stack persists.
+    // Drain them by capturing entry depth + closure and restoring on
+    // exit.  The state.j2jDepth at exit tells us how many BV saves
+    // are still active; we clear that many flag entries.
+    int bvEntryDepth = bvClosureSaveDepth_;
+    Oop bvEntryClosure = closure_;
+    struct BvCleanupGuard {
+        Interpreter* self;
+        int entryDepth;
+        Oop entryClosure;
+        jit::JITState* statePtr;
+        ~BvCleanupGuard() {
+            if (self->bvClosureSaveDepth_ > entryDepth) {
+                // Clear flags for j2jDepths [0..statePtr->j2jDepth)
+                // that we set during this activation.  Anything outside
+                // that range was set by an outer activation.
+                for (int d = 0; d < (int)statePtr->j2jDepth && d < 256; d++) {
+                    self->bvIsBvSaveAtJ2jDepth_[d] = false;
+                }
+                self->bvClosureSaveDepth_ = entryDepth;
+                self->closure_ = entryClosure;
+            }
+        }
+    } bvCleanupGuard{this, bvEntryDepth, bvEntryClosure, &state};
+
     // J2J stencil-to-stencil save stack — carved from shared j2jPool_ to avoid
     // per-call stack allocation (was 18KB at depth 256, now zero stack cost).
     //
