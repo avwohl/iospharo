@@ -198,8 +198,17 @@ DebugSettings::DebugSettings() {
     t1InlineJ2JXmethod  = envPresent("PHARO_T1_INLINE_J2J_XMETHOD");
     t1InlineJ2JXmethodMax = envInt("PHARO_T1_INLINE_J2J_XMETHOD_MAX", 30000);
     t1XmethodLog        = envPresent("PHARO_T1_XMETHOD_LOG");
+    // Session H Phase 5 (2026-05-25): default-FLIP to leaf-only BV
+    // inline.  Previous default (NonLeaf=ON) allowed BV inline for
+    // blocks containing sends — those bail mid-bytecode to interp on
+    // IC miss and the J2JSave/SavedFrame stacks diverge, causing
+    // intermittent DNU corruption (ipOff=23680 signature documented
+    // in memory/project_blocks_never_run_in_t1.md).  Restricting to
+    // leaf blocks (numICEntries==0) + tail-only NLR detection (below)
+    // gives 100% pass with bench numbers identical to default.
+    // Opt-back-in via PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1.
     t1InlineBlockValueNonLeaf =
-        !envPresent("PHARO_T1_NO_INLINE_BLOCK_VALUE_NONLEAF");
+        envPresent("PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF");
     t1InlineBlockValueMax = envInt("PHARO_T1_INLINE_BLOCK_VALUE_MAX", -1);
     t1BvMaxIC = envInt("PHARO_T1_BV_MAX_IC", -1);
     t1BvMaxDepth = envInt("PHARO_T1_BV_MAX_DEPTH", -1);
@@ -207,7 +216,12 @@ DebugSettings::DebugSettings() {
     t1EagerBlockCompile = envPresent("PHARO_T1_EAGER_BLOCK_COMPILE");
     t1J2JReceiverSync   = envPresent("PHARO_T1_J2J_RECEIVER_SYNC");
     t1J2JPostSendIp     = envPresent("PHARO_T1_J2J_POST_SEND_IP");
-    t1NlrTailOnly        = envPresent("PHARO_T1_NLR_TAIL_ONLY");
+    // Session H Phase 5 (2026-05-25): default-ON.  Together with
+    // leaf-only BV inline (above), this enables BV inline for leaf
+    // blocks whose only 0x5D/0x5E is the natural tail BlockReturnTop.
+    // 10/10 pass under the combo + identical bench numbers.
+    // Opt-out via PHARO_T1_NO_NLR_TAIL_ONLY=1.
+    t1NlrTailOnly        = !envPresent("PHARO_T1_NO_NLR_TAIL_ONLY");
     t1AllowNestedJitBail = envPresent("PHARO_T1_ALLOW_NESTED_JIT_BAIL");
     profile              = envPresent("PHARO_PROFILE");
     profileIntervalUs    = envInt("PHARO_PROFILE_INTERVAL_US", 1000);
