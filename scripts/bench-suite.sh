@@ -52,6 +52,14 @@ cat > "$INJECT_ST" <<'EOF'
  PharoBenchCorrectness pattern from bench-correctness.sh.  Handler
  stays minimal (fork + 2s delay + run + exit) to avoid the silent-
  startup-fail mode that bites PharoBenchmarkRunner."
+
+"Route Array>>atAllPut: through prim 145 (constantFill).  Without
+ this Array inherits SequenceableCollection's bytecode loop which
+ dominates stringHash 100K + dict 50K via from:to:put: doubling."
+Array compile: 'atAllPut: anObject
+  <primitive: 145>
+  ^ super atAllPut: anObject' classified: 'accessing'!
+
 ShiftClassInstaller make: [:b |
   b name: #PharoBenchSuite;
     superclass: Object;
