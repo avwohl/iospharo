@@ -5914,6 +5914,34 @@ terminate_process:
             // stackPointer_ = framePointer_ landed sp at the callee's FP
             // which is NOT the slot the chain-loop's success path would
             // have written to.
+            // PHARO_B5_TRACE=1 logs materialize-bail unwind retVals.
+            // Used to root-cause the depth-8+ "returns receiver" pattern
+            // where chain-loop FALLBACK's nested materialize-bail
+            // corrupts the outer OUTER's matRetSlot.  See deferred.md
+            // A6 iter N+30c+.
+            if (__builtin_expect(g_debug.b5Trace, 0)) {
+                static int matCount = 0;
+                if (++matCount <= 50) {
+                    int ipOff = -1;
+                    uint8_t op = 0;
+                    if (instructionPointer_ && method_.isObject()) {
+                        ObjectHeader* mo = method_.asObjectPtr();
+                        Oop hdr = mo->slots()[0];
+                        int nLit = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                        const uint8_t* bcStart = mo->bytes() + (1 + nLit) * 8;
+                        ipOff = (int)(instructionPointer_ - bcStart);
+                        op = *instructionPointer_;
+                    }
+                    fprintf(stderr, "[MAT-RET #%d] fd=%zu retVal=0x%llx (%lld) method=#%s recv=%lld bcOff=%d nextBC=0x%02x sp-fp=%lld\n",
+                            matCount, frameDepth_,
+                            (unsigned long long)value.rawBits(),
+                            value.isSmallInteger() ? value.asSmallInteger() : -1,
+                            memory_.selectorOf(method_).c_str(),
+                            receiver_.isSmallInteger() ? receiver_.asSmallInteger() : -1,
+                            ipOff, op,
+                            (long long)(stackPointer_ - framePointer_));
+                }
+            }
             *matRetSlot = value;
             stackPointer_ = matRetSlot + 1;
         } else {
