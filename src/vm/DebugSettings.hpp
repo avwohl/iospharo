@@ -222,6 +222,11 @@ struct DebugSettings {
     // saving.  Found via lldb that pre-send save.ip causes interp to
     // re-execute the send when materialized.  See deferred.md A6 iter N+8.
     bool t1J2JPostSendIp = false;
+    // jit-may24 Step 1: suppress JIT re-activation inside materialize-bail
+    // unwind.  When ANY of the top 4 SavedFrames has materializedRetSlot
+    // set, canJITActivate() returns false to prevent nested bails.
+    // Default-on safety net.  PHARO_T1_ALLOW_NESTED_JIT_BAIL=1 opts out.
+    bool t1AllowNestedJitBail = false;
     // Split-pool layout: JIT inline-J2J pushes saves to a separate slice
     // of j2jPool_, distinct from the chain-loop's rj2jSaves slice.  Avoids
     // collision when both chain loop and JIT push during a single tryJIT-

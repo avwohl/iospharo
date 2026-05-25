@@ -1130,7 +1130,24 @@ public:
         if (!jitInitialized_) return false;
         if (!method.isObject() || method.rawBits() < 0x10000) return false;
         jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method.rawBits());
-        return jm && jm->isExecutable();
+        if (!jm || !jm->isExecutable()) return false;
+        // jit-may24 Step 1: don't re-enter JIT while a materialize-bail
+        // unwind is in progress.  Detect by walking back up to 4 saved
+        // frames; if any has materializedRetSlot set, we're in the
+        // unwind chain.  Re-entering JIT here triggers a nested bail
+        // which corrupts the outer matRetSlot (see deferred.md A6
+        // N+30l).  PHARO_T1_ALLOW_NESTED_JIT_BAIL=1 opts out (legacy
+        // behavior, for bisection).
+        if (__builtin_expect(!g_debug.t1AllowNestedJitBail, 1)) {
+            size_t scan = (frameDepth_ < 4) ? frameDepth_ : 4;
+            for (size_t i = 0; i < scan; i++) {
+                if (savedFrames_[frameDepth_ - 1 - i].materializedRetSlot
+                        != nullptr) {
+                    return false;
+                }
+            }
+        }
+        return true;
 #else
         (void)method;
         return false;

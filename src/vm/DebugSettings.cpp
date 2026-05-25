@@ -154,8 +154,18 @@ DebugSettings::DebugSettings() {
     // Pure gate stays warm across GC, so it bails LESS often while
     // still guarding the materialize-bail wrong-result bug.
     // PHARO_T1_NO_PURE_J2J_GATE=1 disables.
-    t1PureJ2JGate       = !envPresent("PHARO_T1_NO_PURE_J2J_GATE");
-    t1WarmJ2JGate       = !envPresent("PHARO_T1_NO_WARM_J2J_GATE");
+    //
+    // 2026-05-25: pure gate FLIPPED TO DEFAULT-OFF.  The new
+    // no-nested-jit-bail check in canJITActivate (DebugSettings.hpp
+    // t1AllowNestedJitBail) is a tighter fix for the materialize-bail
+    // wrong-result bug — only suppresses JIT entry during active
+    // materialize-bail unwind instead of bailing inline-J2J at every
+    // push.  Bench impact: fib(28) 125ms → 14ms (8.9x).  Gate kept
+    // as PHARO_T1_PURE_J2J_GATE=1 opt-in for bisection.
+    t1PureJ2JGate       = envPresent("PHARO_T1_PURE_J2J_GATE");
+    // Warm gate also default-off as of 2026-05-25 — superseded by
+    // canJITActivate no-nested-bail check.  Opt-in via PHARO_T1_WARM_J2J_GATE=1.
+    t1WarmJ2JGate       = envPresent("PHARO_T1_WARM_J2J_GATE");
     t1BailGateTrace     = envPresent("PHARO_T1_BAIL_GATE_TRACE");
     t1BailGateHisto     = t1BailGateTrace
                          || envPresent("PHARO_T1_BAIL_GATE_HISTO");
@@ -189,6 +199,7 @@ DebugSettings::DebugSettings() {
     t1EagerBlockCompile = envPresent("PHARO_T1_EAGER_BLOCK_COMPILE");
     t1J2JReceiverSync   = envPresent("PHARO_T1_J2J_RECEIVER_SYNC");
     t1J2JPostSendIp     = envPresent("PHARO_T1_J2J_POST_SEND_IP");
+    t1AllowNestedJitBail = envPresent("PHARO_T1_ALLOW_NESTED_JIT_BAIL");
     t1J2JSplitPool      = envPresent("PHARO_T1_J2J_SPLIT_POOL");
     // F3-NL6: default-on BV inline after F3-NL2/3/4 fixes.
     // PHARO_T1_NO_INLINE_BLOCK_VALUE=1 disables.
