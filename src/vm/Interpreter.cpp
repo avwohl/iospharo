@@ -17538,9 +17538,18 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         // loop tops (e.g. inner whileTrue: top within an outer-do:
         // body) reuse this single compile via the lowering's
         // multi-entry-point dispatch prologue.
+        //
+        // jit-may25 Session C: extract inline hints before compile so
+        // Sista's builder can inline known monomorphic sends.  Without
+        // this, every `pt x`-style send in the lifted body stays as
+        // kSendUnspeculated → sendNoSplice bail → no Sista compile.
+        std::vector<sista::InlineHint> hints =
+            extractInlineHintsForMethod(method_);
         sista::Lowering::CompiledFn fn2 =
             sistaRuntimeForGCHook_->compile(
-                method_, memory_, nullptr, bcOff);
+                method_, memory_,
+                hints.empty() ? nullptr : &hints,
+                bcOff);
 
         if (g_debug.sistaPerBCTrace) {
             static int logCount = 0;
@@ -18817,9 +18826,11 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
         if (it == interpHints_.end()) return hints;
         for (const auto& e : it->second) {
             // Skip polymorphic entries (classKey was zeroed on multi-
-            // class observation).  Require min hits to avoid noise.
+            // class observation).  No hits threshold needed —
+            // cacheMethod only fires on method-cache MISS, so each
+            // entry represents at least one real observed send.
+            // Monomorphic latch is sufficient noise filter.
             if (e.classKey == 0) continue;
-            if (e.hits < 5) continue;
             hints.push_back({e.bcOff, e.classKey, e.targetMethod});
         }
         return hints;
