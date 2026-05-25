@@ -6458,12 +6458,33 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         // F3-NL3: detect non-local return (BlockReturnNil 0x5D /
         // BlockReturnTop 0x5E) at compile time so the BV inline prep
         // can skip the per-call bytecode scan.
+        //
+        // Session H 2026-05-25: tightened — only flag NLR when the
+        // block has 0x58-0x5C (method-style returns inside a block are
+        // TRUE NLR) OR mid-block 0x5D/0x5E (not the natural tail).
+        // Gated by PHARO_T1_NLR_TAIL_ONLY=1 (default OFF — correctness
+        // bug ZnByteEncoder DNU TBD root-caused).
         {
             bool nlr = false;
             if (isReal) {
-                for (size_t i = 0; i < bcLen; i++) {
-                    uint8_t op = bc[i];
-                    if (op == 0x5D || op == 0x5E) { nlr = true; break; }
+                if (g_debug.t1NlrTailOnly) {
+                    for (size_t i = 0; i < bcLen; i++) {
+                        uint8_t op = bc[i];
+                        if (op >= 0x58 && op <= 0x5C) {
+                            nlr = true; break;
+                        }
+                        if ((op == 0x5D || op == 0x5E)
+                            && i + 1 != bcLen) {
+                            nlr = true; break;
+                        }
+                    }
+                } else {
+                    for (size_t i = 0; i < bcLen; i++) {
+                        uint8_t op = bc[i];
+                        if (op == 0x5D || op == 0x5E) {
+                            nlr = true; break;
+                        }
+                    }
                 }
             }
             jm->hasNLR = nlr;

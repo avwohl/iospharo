@@ -226,6 +226,7 @@ struct DebugSettings {
     // unwind.  When ANY of the top 4 SavedFrames has materializedRetSlot
     // set, canJITActivate() returns false to prevent nested bails.
     // Default-on safety net.  PHARO_T1_ALLOW_NESTED_JIT_BAIL=1 opts out.
+    bool t1NlrTailOnly = false;       // PHARO_T1_NLR_TAIL_ONLY (loosen hasNLR detection)
     bool t1AllowNestedJitBail = false;
     // SIGPROF sampling profiler (PHARO_PROFILE=1).  Samples
     // interpreter's activeMethod() every PHARO_PROFILE_INTERVAL_US
