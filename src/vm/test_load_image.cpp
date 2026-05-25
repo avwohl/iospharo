@@ -8,6 +8,7 @@
 #include "ImageLoader.hpp"
 #include "Interpreter.hpp"
 #include "DebugSettings.hpp"
+#include "Profiler.hpp"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
 #include <iostream>
@@ -1260,5 +1261,8 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "[EXIT-TRACE] main returning 0\n");
     }
     std::cout << "\n=== Test Complete ===" << std::endl;
+    // Dump profile BEFORE Interpreter destructor runs (atexit's too
+    // late — memory is torn down by then, selectorOf crashes).
+    pharo::Profiler::dump();
     return 0;
 }

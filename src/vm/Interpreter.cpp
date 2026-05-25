@@ -15,6 +15,7 @@
 #include "Interpreter.hpp"
 #include "../platform/Platform.hpp"
 #include "DebugSettings.hpp"
+#include "Profiler.hpp"
 #include "InterpreterProxy.h"
 #include "FFI.hpp"
 #include "jit/TrampolineAsm.hpp"
@@ -497,6 +498,14 @@ Interpreter::Interpreter(ObjectMemory& memory)
 }
 
 bool Interpreter::initialize() {
+    // SIGPROF sampling profiler (opt-in via PHARO_PROFILE=1).  Enable
+    // early so we capture image-startup work too if desired.  Dump
+    // happens from main() before destructors fire (atexit is too late;
+    // memory is torn down by then).
+    if (g_debug.profile) {
+        Profiler::enable(this);
+    }
+
     // Set up initial execution context
     // Find the startup process from special objects
 

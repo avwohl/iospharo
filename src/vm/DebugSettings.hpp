@@ -227,6 +227,13 @@ struct DebugSettings {
     // set, canJITActivate() returns false to prevent nested bails.
     // Default-on safety net.  PHARO_T1_ALLOW_NESTED_JIT_BAIL=1 opts out.
     bool t1AllowNestedJitBail = false;
+    // SIGPROF sampling profiler (PHARO_PROFILE=1).  Samples
+    // interpreter's activeMethod() every PHARO_PROFILE_INTERVAL_US
+    // microseconds of CPU time (default 1000 = 1ms); dumps top-N
+    // by sample count at process exit (PHARO_PROFILE_TOP=N, default 30).
+    bool profile = false;
+    int  profileIntervalUs = 1000;
+    int  profileTopN = 30;
     // Split-pool layout: JIT inline-J2J pushes saves to a separate slice
     // of j2jPool_, distinct from the chain-loop's rj2jSaves slice.  Avoids
     // collision when both chain loop and JIT push during a single tryJIT-
