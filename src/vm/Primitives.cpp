@@ -8388,10 +8388,22 @@ PrimitiveResult Interpreter::primitiveConstantFill(int argCount) {
             quads[i] = word;
         }
     } else if (format <= ObjectFormat::IndexableWithFixed) {
-        // Pointer array - fill slots with the value
+        // Pointer array - bulk fill.  Per-slot storePointer was 700ns
+        // per slot on 100K Array (per-call func overhead dominated).
+        // Direct write loop + one-shot remembered-set entry if needed.
         size_t slotCount = header->slotCount();
-        for (size_t i = 0; i < slotCount; i++) {
-            memory_.storePointer(i, rcvr, value);
+        Oop* slots = header->slots();
+        // Write barrier: only ONE remember-set entry needed (per-object,
+        // not per-slot).  Skip the scan since value is a single Oop —
+        // either it's young or it isn't.
+        if (memory_.isOld(rcvr) && value.isObject() && memory_.isYoung(value)
+            && slotCount > 0) {
+            // Trigger barrier via one storePointer (slot 0), then bulk
+            // write the rest.
+            memory_.storePointer(0, rcvr, value);
+            for (size_t i = 1; i < slotCount; i++) slots[i] = value;
+        } else {
+            for (size_t i = 0; i < slotCount; i++) slots[i] = value;
         }
     } else {
         return PrimitiveResult::Failure;
