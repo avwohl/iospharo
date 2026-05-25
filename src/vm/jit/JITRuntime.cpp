@@ -1475,6 +1475,30 @@ extern "C" uint64_t g_bvBail_canBail = 0;
 extern "C" uint64_t g_bvBail_prim = 0;
 extern "C" uint64_t g_bvBail_savefull = 0;
 
+// Session H side stack for BV inline closure restore.  Paired with the
+// j2jSaveCursor stack; depth tracks BV-inline nesting only (not all
+// J2J calls).  bvIsBvSaveAtJ2jDepth[N] is set true when the J2J save
+// at depth N is a BV-inline save (so J2J_INLINE_RETURN can pop the
+// closure stack and restore closure_).
+thread_local pharo::Oop bvClosureSaveStack[256];
+thread_local int bvClosureSaveDepth = 0;
+thread_local bool bvIsBvSaveAtJ2jDepth[256] = {false};
+
+extern "C" void jit_rt_pop_bv_closure(pharo::Interpreter* interp,
+                                      int callerJ2jDepth) {
+    // Called from J2J_INLINE_RETURN_IMPL when popping a J2J save that
+    // was a BV-inline.  callerJ2jDepth is the depth AFTER popping
+    // (i.e., the save we just popped was at callerJ2jDepth).
+    if (callerJ2jDepth >= 0 && callerJ2jDepth < 256
+        && bvIsBvSaveAtJ2jDepth[callerJ2jDepth]) {
+        bvIsBvSaveAtJ2jDepth[callerJ2jDepth] = false;
+        if (bvClosureSaveDepth > 0) {
+            interp->setCurrentClosure(
+                bvClosureSaveStack[--bvClosureSaveDepth]);
+        }
+    }
+}
+
 extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
                                                  void* resumeAddr) {
     void* callerJM = s->jitMethod;
@@ -1582,6 +1606,22 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     s->j2jSaveCursor += sizeof(Interpreter::J2JSave);
     s->j2jDepth++;
     s->j2jTotalCalls++;
+
+    // Session H 2026-05-25: sync interp's closure_ to this block.
+    // activateBlock does `closure_ = block` at Interpreter.cpp:10568;
+    // BV inline skips that, so the block ran with caller's closure_.
+    // Side-stack the prior value so the BV-paired return path can
+    // restore it.  Pop happens in a paired helper invoked from the
+    // T1 resume continuation (see jit_rt_inline_block_value_post).
+    pharo::Oop blockClosureOop = pharo::Oop::fromRawBits(rcvBits);
+    int j2jDepthBefore = s->j2jDepth - 1;  // depth of THIS save
+    if (j2jDepthBefore >= 0 && j2jDepthBefore < 256
+        && bvClosureSaveDepth < 256) {
+        bvClosureSaveStack[bvClosureSaveDepth++] =
+            s->interp->currentClosure();
+        bvIsBvSaveAtJ2jDepth[j2jDepthBefore] = true;
+        s->interp->setCurrentClosure(blockClosureOop);
+    }
 
     // Set up callee state.  Block's outer receiver is at closure[3].
     pharo::Oop blockRecv = closureObj->slotAt(3);

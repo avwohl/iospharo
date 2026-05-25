@@ -488,12 +488,17 @@ extern "C" void stencil_storeLitVar(JITState* s) {
 // Two variants: base has a B5-trace hook; SimStack variant omits the
 // trace call so the compiler doesn't spill x19-x22 (which would fail
 // the SimStack register-safety verification).
+extern "C" void jit_rt_pop_bv_closure(void* interp, int callerJ2jDepth);
+
 #define J2J_INLINE_RETURN_IMPL(s, retVal, TRACE) do {                         \
     if (s->j2jDepth > 0) {                                                   \
         s->j2jDepth--;                                                        \
         s->j2jSaveCursor -= sizeof(J2JSave);                                 \
         J2JSave* _sv = (J2JSave*)s->j2jSaveCursor;                          \
         TRACE;  /* B5 trace event=2: retVal + saved caller sp */             \
+        /* Session H 2026-05-25: pop BV-inline closure side-stack if this  \
+           was a BV save.  No-op otherwise. */                              \
+        jit_rt_pop_bv_closure(s->interp, s->j2jDepth);                       \
         /* Restore caller state */                                           \
         s->receiver = _sv->receiver;                                          \
         s->tempBase = _sv->tempBase;                                          \

@@ -844,6 +844,11 @@ public:
     // Used by JITCompiler eviction: live J2J entries are 0..j2jPoolLiveCount().
     const J2JSave* j2jPoolBase() const { return j2jPool_.data(); }
     int j2jPoolLiveCount() const { return j2jPoolCursor_; }
+    // Set/get closure_ from JIT helpers (BV inline prep needs to sync
+    // closure_ to the BV-inlined block so closure-relative ops like
+    // PushTempAtInVec resolve the right captured tempVec).
+    Oop currentClosure() const { return closure_; }
+    void setCurrentClosure(Oop c) { closure_ = c; }
 #endif
 private:
     std::vector<std::string> imageArguments_;  // Command-line args for the image (index 2+)
