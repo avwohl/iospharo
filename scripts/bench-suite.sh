@@ -74,23 +74,31 @@ PharoBenchSuite class compile: 'runAsync
 PharoBenchSuite class compile: 'time: aBlock
   ^ aBlock timeToRun asMilliSeconds' classified: 'running'!
 
+PharoBenchSuite class compile: 'tryBench: name block: blk on: f
+  | t |
+  [t := blk timeToRun asMilliSeconds.
+   f nextPutAll: name; nextPutAll: '' = ''; print: t; nextPutAll: '' ms''; lf]
+    on: Error
+    do: [:e |
+      f nextPutAll: name; nextPutAll: '' = ERROR: ''; nextPutAll: e messageText; lf]' classified: 'running'!
+
 PharoBenchSuite class compile: 'runAll
   ''/tmp/bench_suite_result.txt'' asFileReference writeStreamDo: [:f |
-    | t |
-    f nextPutAll: ''tinyBenchmarks: ''; nextPutAll: 0 tinyBenchmarks; lf.
-    t := self time: [28 benchFib]. f nextPutAll: ''fib(28) = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [(1 to: 100) inject: 0 into: [:s :i | s + i]]. f nextPutAll: ''sieve x100 = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [| a | a := (1 to: 100000) collect: [:i | 100000 - i]. a sort]. f nextPutAll: ''sort 100K = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [| d | d := Dictionary new. 1 to: 50000 do: [:i | d at: i put: i]. 1 to: 50000 do: [:i | d at: i]]. f nextPutAll: ''dict 50K = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [(1 to: 1000000) inject: 0 into: [:s :i | s + i]]. f nextPutAll: ''sum 1M = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [5000 factorial]. f nextPutAll: ''5000 factorial = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [| x | x := 0. 1 to: 1000000 do: [:i | [x := x + 1] value]]. f nextPutAll: ''1M blocks = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [| pt | pt := 1 @ 2. 1 to: 1000000 do: [:i | pt x]]. f nextPutAll: ''1M getter+yourself = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [| arr | arr := Array new: 100000. 1 to: 100000 do: [:i | arr at: i put: Object new]]. f nextPutAll: ''100K allocations = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [(1 to: 1000000) inject: 0.0 into: [:s :i | s + i asFloat]]. f nextPutAll: ''floatSum 1M = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [| arr | arr := Array new: 100000 withAll: ''hello''. arr do: [:s | s hash]]. f nextPutAll: ''stringHash 100K = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [| a | a := 1 to: 100000. 1 to: 10 do: [:i | a collect: [:x | x * 2]]]. f nextPutAll: ''collect 10x100K = ''; print: t; nextPutAll: '' ms''; lf.
-    t := self time: [| a | a := 1 to: 100000. 1 to: 10 do: [:i | a select: [:x | x even]]]. f nextPutAll: ''select 10x100K = ''; print: t; nextPutAll: '' ms''; lf.
+    [f nextPutAll: ''tinyBenchmarks: ''; nextPutAll: 0 tinyBenchmarks; lf]
+      on: Error do: [:e | f nextPutAll: ''tinyBenchmarks: ERROR: ''; nextPutAll: e messageText; lf].
+    self tryBench: ''fib(28)'' block: [28 benchFib] on: f.
+    self tryBench: ''sieve x100'' block: [(1 to: 100) inject: 0 into: [:s :i | s + i]] on: f.
+    self tryBench: ''sort 100K'' block: [| a | a := (1 to: 100000) collect: [:i | 100000 - i]. a sort] on: f.
+    self tryBench: ''dict 50K'' block: [| d | d := Dictionary new. 1 to: 50000 do: [:i | d at: i put: i]. 1 to: 50000 do: [:i | d at: i]] on: f.
+    self tryBench: ''sum 1M'' block: [(1 to: 1000000) inject: 0 into: [:s :i | s + i]] on: f.
+    self tryBench: ''5000 factorial'' block: [5000 factorial] on: f.
+    self tryBench: ''1M blocks'' block: [| x | x := 0. 1 to: 1000000 do: [:i | [x := x + 1] value]] on: f.
+    self tryBench: ''1M getter+yourself'' block: [| pt | pt := 1 @ 2. 1 to: 1000000 do: [:i | pt x]] on: f.
+    self tryBench: ''100K allocations'' block: [| arr | arr := Array new: 100000. 1 to: 100000 do: [:i | arr at: i put: Object new]] on: f.
+    self tryBench: ''floatSum 1M'' block: [(1 to: 1000000) inject: 0.0 into: [:s :i | s + i asFloat]] on: f.
+    self tryBench: ''stringHash 100K'' block: [| arr | arr := Array new: 100000 withAll: ''hello''. arr do: [:s | s hash]] on: f.
+    self tryBench: ''collect 10x100K'' block: [| a | a := 1 to: 100000. 1 to: 10 do: [:i | a collect: [:x | x * 2]]] on: f.
+    self tryBench: ''select 10x100K'' block: [| a | a := 1 to: 100000. 1 to: 10 do: [:i | a select: [:x | x even]]] on: f.
     f nextPutAll: ''DONE''; lf]' classified: 'running'!
 
 SessionManager default register:
@@ -98,8 +106,11 @@ SessionManager default register:
 EOF
 
 echo "[setup] injecting bench-suite handler via Cog..."
-(cd /tmp && timeout 60 "$COG_VM" "$IMAGE" eval --save \
-    "'$INJECT_ST' asFileReference fileIn") > /dev/null 2>&1
+# --headless is required: without it Cog drops into the world morph
+# display path during `eval` and the save aborts before the file-in
+# completes.  Symptom: image saves but PharoBenchSuite class is nil.
+(cd /tmp && timeout 60 "$COG_VM" --headless "$IMAGE" st --save --quit \
+    "$INJECT_ST") > /dev/null 2>&1
 
 if $RUN_REF; then
     echo "[ref] running Cog reference..."

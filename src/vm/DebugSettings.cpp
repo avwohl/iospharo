@@ -163,9 +163,17 @@ DebugSettings::DebugSettings() {
     // push.  Bench impact: fib(28) 125ms → 14ms (8.9x).  Gate kept
     // as PHARO_T1_PURE_J2J_GATE=1 opt-in for bisection.
     t1PureJ2JGate       = envPresent("PHARO_T1_PURE_J2J_GATE");
-    // Warm gate also default-off as of 2026-05-25 — superseded by
-    // canJITActivate no-nested-bail check.  Opt-in via PHARO_T1_WARM_J2J_GATE=1.
-    t1WarmJ2JGate       = envPresent("PHARO_T1_WARM_J2J_GATE");
+    // 2026-05-25 Pt 2: warm gate flipped BACK to default-on.  The
+    // canJITActivate no-nested-bail check fixes fib's wrong-result
+    // scenario (commit 719239f9) but image-startup workloads
+    // (snapshot operations, DNU cascade for OSSDL2 #resolve:) still
+    // crash without the gate.  Without gates, JIT runs inline-J2J
+    // aggressively and hits a different state-corruption (interp
+    // +1100 SmI-deref, same signature as the fib bug but a different
+    // root cause — needs lldb-driven investigation).  Warm gate alone
+    // is sufficient as the safety net (bench-suite runs cleanly).
+    // PHARO_T1_NO_WARM_J2J_GATE=1 disables for fib-specific bench.
+    t1WarmJ2JGate       = !envPresent("PHARO_T1_NO_WARM_J2J_GATE");
     t1BailGateTrace     = envPresent("PHARO_T1_BAIL_GATE_TRACE");
     t1BailGateHisto     = t1BailGateTrace
                          || envPresent("PHARO_T1_BAIL_GATE_HISTO");
