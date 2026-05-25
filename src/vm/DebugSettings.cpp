@@ -460,6 +460,7 @@ DebugSettings::DebugSettings() {
     sistaPerBCDispatchTrace          = envPresent("PHARO_SISTA_PER_BC_DISPATCH_TRACE");
     sistaPerBCNoDispatch             = envPresent("PHARO_SISTA_PER_BC_NO_DISPATCH");
     sistaPerBCTrace                  = envPresent("PHARO_SISTA_PER_BC_TRACE");
+    sistaBjTrace                     = envPresent("PHARO_SISTA_BJ_TRACE");
     sistaRekeyAfterGC                = envPresent("PHARO_SISTA_REKEY_AFTER_GC");
     sistaSizePeephole                = envPresent("PHARO_SISTA_SIZE_PEEPHOLE");
     sistaStackWatch                  = envPresent("PHARO_SISTA_STACK_WATCH");

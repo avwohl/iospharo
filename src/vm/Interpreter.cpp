@@ -17274,6 +17274,20 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
     uint32_t bcOff = computeCurrentBCOffset();
     if (bcOff == UINT32_MAX) return;
 
+    // jit-may25 Session D trace: log every distinct method that
+    // reaches the backward-jump hook.  Helps identify why anonymous
+    // blocks don't trigger Sista compile.  PHARO_SISTA_BJ_TRACE=1.
+    if (__builtin_expect(g_debug.sistaBjTrace, 0)) {
+        static std::unordered_map<uint64_t, uint32_t> seen;
+        uint64_t key = (method_.rawBits() << 16) | (bcOff & 0xFFFF);
+        if (seen[key]++ % 1000 == 0) {
+            fprintf(stderr, "[SISTA-BJ] method=0x%llx #%s bcOff=%u count=%u\n",
+                    (unsigned long long)method_.rawBits(),
+                    memory_.selectorOf(method_).c_str(),
+                    bcOff, seen[key]);
+        }
+    }
+
     // Adaptive blacklist: if recent dispatches for this (method,
     // bcOff) consistently bailed, skip the dispatch entirely —
     // dispatch + sstate-init cost was net negative.

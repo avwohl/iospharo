@@ -535,6 +535,7 @@ struct DebugSettings {
     bool sistaPerBCDispatchTrace = false;          // PHARO_SISTA_PER_BC_DISPATCH_TRACE
     bool sistaPerBCNoDispatch = false;             // PHARO_SISTA_PER_BC_NO_DISPATCH
     bool sistaPerBCTrace = false;                  // PHARO_SISTA_PER_BC_TRACE
+    bool sistaBjTrace = false;                     // PHARO_SISTA_BJ_TRACE
     bool sistaRekeyAfterGC = false;                // PHARO_SISTA_REKEY_AFTER_GC
     bool sistaSizePeephole = false;                // PHARO_SISTA_SIZE_PEEPHOLE
     bool sistaStackWatch = false;                  // PHARO_SISTA_STACK_WATCH
