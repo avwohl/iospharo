@@ -8782,6 +8782,67 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     int primIndex = primitiveIndexOf(method);
     TrivialMethodInfo trivial = detectTrivialMethod(method, memory_);
 
+    // jit-may25 Step A: record interp-side IC hint.  Sista's hint
+    // extraction needs (callerMethod, bcOffset) → (receiverClass,
+    // targetMethod) data even when the caller isn't JIT-compiled.
+    // T1's IC is only populated while running JIT code; this fills
+    // the gap for interp-only callers like the 1M getter+yourself
+    // bench's outer block.  See docs/sista-ic-promotion-plan.md.
+    // Gated on PHARO_SISTA_INTERP_HINTS=1 — adds ~25ms/bench-suite
+    // overhead that doesn't pay off until Sista's per-bc lift
+    // reliably fires on the bench block (Session C).
+    if (g_debug.sistaInterpHints
+        && method_.isObject() && method_.rawBits() > 0x10000
+        && instructionPointer_ != nullptr
+        && classOop.isObject() && classOop.rawBits() > 0x10000
+        && method.isObject() && method.rawBits() > 0x10000) {
+        // Only record if caller method isn't JIT-compiled (JIT has its
+        // own ICs).
+        bool callerHasJM = false;
+#if PHARO_JIT_ENABLED
+        if (jitInitialized_) {
+            auto* jm = jitRuntime_.methodMap().lookup(method_.rawBits());
+            callerHasJM = (jm != nullptr);
+        }
+#endif
+        if (!callerHasJM) {
+            // Compute caller bcOffset.
+            ObjectHeader* mObj = method_.asObjectPtr();
+            Oop hdr = mObj->slots()[0];
+            int nLits = hdr.isSmallInteger()
+                ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+            const uint8_t* bcBase = mObj->bytes() + (1 + nLits) * 8;
+            if (instructionPointer_ >= bcBase
+                && instructionPointer_ < bcBase + 0xFFFF) {
+                uint16_t bcOff = static_cast<uint16_t>(
+                    instructionPointer_ - bcBase);
+                uint32_t classKey = static_cast<uint32_t>(
+                    memory_.indexOfClass(classOop) & 0x3FFFFFu);
+                uint64_t callerKey = method_.rawBits();
+                auto& vec = interpHints_[callerKey];
+                bool found = false;
+                for (auto& e : vec) {
+                    if (e.bcOff == bcOff) {
+                        if (e.classKey == classKey
+                            && e.targetMethod == method.rawBits()) {
+                            if (e.hits < 0xFFFFFFFF) e.hits++;
+                        } else {
+                            // Polymorphic — mark as such by zeroing
+                            // classKey.  Hint extractor treats key=0
+                            // as no-hint.
+                            e.classKey = 0;
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found && vec.size() < 64) {
+                    vec.push_back({bcOff, classKey, method.rawBits(), 1});
+                }
+            }
+        }
+    }
+
     // Debug: log caching of specific selectors
     {
         static int cacheLogCount = 0;
@@ -18746,7 +18807,23 @@ std::vector<sista::InlineHint>
 Interpreter::extractInlineHintsForMethod(Oop method) {
     std::vector<sista::InlineHint> hints;
     auto* jm = jitRuntime_.methodMap().lookup(method.rawBits());
-    if (!jm || jm->numICEntries == 0) return hints;
+    if (!jm || jm->numICEntries == 0) {
+        // jit-may25 Step B: fall back to interp-side IC table.  Lets
+        // Sista inline-getter etc. fire for interp-only callers (the
+        // case for benches like 1M getter+yourself whose outer block
+        // is called only once and never JIT-compiled).
+        // See docs/sista-ic-promotion-plan.md.
+        auto it = interpHints_.find(method.rawBits());
+        if (it == interpHints_.end()) return hints;
+        for (const auto& e : it->second) {
+            // Skip polymorphic entries (classKey was zeroed on multi-
+            // class observation).  Require min hits to avoid noise.
+            if (e.classKey == 0) continue;
+            if (e.hits < 5) continue;
+            hints.push_back({e.bcOff, e.classKey, e.targetMethod});
+        }
+        return hints;
+    }
     const auto* sendBCs = jitRuntime_.compiler()
         ? jitRuntime_.compiler()->getSendSiteBCOffsets(method.rawBits())
         : nullptr;

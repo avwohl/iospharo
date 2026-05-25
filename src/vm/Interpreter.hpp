@@ -663,6 +663,19 @@ private:
     // accurate across all return paths (returnValue + NLR + ensure).
     size_t materializedFrameCount_ = 0;
 
+    // jit-may25 Step A — interp-side IC table for Sista hint extraction
+    // when methods aren't JIT-compiled.  Populated by recordInterpSend()
+    // from interp's send dispatch.  Read by extractInlineHintsForMethod()
+    // as fallback when JITMethod doesn't exist.  Keyed by caller method
+    // oop rawBits.  See docs/sista-ic-promotion-plan.md.
+    struct InterpHintEntry {
+        uint16_t bcOff;
+        uint32_t classKey;     // receiver class index (low 22 bits) | (0x80000000 if immediate)
+        uint64_t targetMethod;
+        uint32_t hits;
+    };
+    std::unordered_map<uint64_t, std::vector<InterpHintEntry>> interpHints_;
+
     // Shared J2J save pool — heap-allocated once, carved into per-entry slices
     // by tryJITActivation via j2jPoolCursor_ to avoid per-call stack allocation.
 #if PHARO_JIT_ENABLED

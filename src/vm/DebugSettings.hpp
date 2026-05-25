@@ -234,6 +234,14 @@ struct DebugSettings {
     bool profile = false;
     int  profileIntervalUs = 1000;
     int  profileTopN = 30;
+    // jit-may25: opt-in interp-side IC table for Sista hint extraction
+    // on interp-only methods.  Off by default — adds ~25ms to bench-
+    // suite overhead per send dispatch; payoff (Sista inline-getter
+    // on benches whose outer block never gets JIT'd) needs the
+    // Sista per-bc lift to fire for the bench's block, which it
+    // doesn't reliably do today.  See docs/sista-ic-promotion-plan.md.
+    // PHARO_SISTA_INTERP_HINTS=1 enables.
+    bool sistaInterpHints = false;
     // Split-pool layout: JIT inline-J2J pushes saves to a separate slice
     // of j2jPool_, distinct from the chain-loop's rj2jSaves slice.  Avoids
     // collision when both chain loop and JIT push during a single tryJIT-
