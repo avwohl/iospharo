@@ -11897,6 +11897,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             fprintf(stderr, "[DNU] #%d: #%s not understood by rcvr=0x%llx argCount=%d fd=%zu in #%s P%d\n",
                     dnuLogCount, selName.c_str(), (unsigned long long)rcvr.rawBits(), argCount, frameDepth_,
                     memory_.selectorOf(method_).c_str(), pri);
+
             bool suspiciousRcvr = false;
             if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                 ObjectHeader* rH = rcvr.asObjectPtr();

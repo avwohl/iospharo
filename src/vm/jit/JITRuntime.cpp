@@ -825,6 +825,19 @@ ic_hit:
         // Fast path: pop our save, restore caller, return value on stack.
         state->j2jSaveCursor -= sizeof(Interpreter::J2JSave);
         state->j2jDepth--;
+        // Session H: also pop BV-inline closure side-stack if this
+        // J2JSave was a BV save.  Without this, BV-inlined blocks that
+        // exit via this fast path (vs J2J_INLINE_RETURN_IMPL) leave
+        // their saved closure on the stack — bvDepth grows and
+        // closure_ stays wrong for subsequent interp execution.
+        if (state->interp->bvIsBvSaveAtJ2jDepth_[state->j2jDepth]) {
+            state->interp->bvIsBvSaveAtJ2jDepth_[state->j2jDepth] = false;
+            if (state->interp->bvClosureSaveDepth_ > 0) {
+                state->interp->setCurrentClosure(
+                    state->interp->bvClosureSaveStack_[
+                        --state->interp->bvClosureSaveDepth_]);
+            }
+        }
 
         Oop retVal = state->returnValue;
         state->sp = saveEntry->sp;
