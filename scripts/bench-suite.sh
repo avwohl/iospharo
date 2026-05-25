@@ -71,11 +71,21 @@ PharoBenchSuite class compile: 'runAsync
     Smalltalk exitSuccess
   ] forkAt: Processor highestPriority - 1' classified: 'running'!
 
-PharoBenchSuite class compile: 'time: aBlock
-  ^ aBlock timeToRun asMilliSeconds' classified: 'running'!
+PharoBenchSuite class compile: 'cpuMicros
+  "Process CPU time in microseconds (primitive 247 — our VM extension).
+   On a shared machine, wall-clock measurements are polluted by other
+   processes; CPU time excludes time the process was descheduled."
+  <primitive: 247>
+  ^ 0' classified: 'running'!
 
 PharoBenchSuite class compile: 'time: aBlock
-  ^ aBlock timeToRun asMilliSeconds' classified: 'running'!
+  "Returns CPU time in milliseconds, NOT wall time.  Important on shared
+   machines where Time microsecondClockValue measurements wobble by
+   tens of ms due to background activity (WorldMorph render loop, GC)."
+  | t0 |
+  t0 := self cpuMicros.
+  aBlock value.
+  ^ (self cpuMicros - t0) // 1000' classified: 'running'!
 
 PharoBenchSuite class compile: 'runAll
   ''/tmp/bench_suite_result.txt'' asFileReference writeStreamDo: [:f |

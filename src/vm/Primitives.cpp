@@ -15972,6 +15972,25 @@ PrimitiveResult Interpreter::primitiveCoarseLocalMicrosecondClock(int argCount) 
     return PrimitiveResult::Success;
 }
 
+// Primitive 247: Process CPU time in microseconds
+// Returns process CPU time (user + sys) since process start.  Used by
+// bench-suite to measure CPU time instead of wall time — important on
+// shared machines where background processes pollute wall-time
+// measurements.
+PrimitiveResult Interpreter::primitiveProcessCPUTimeMicroseconds(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    struct timespec ts;
+    if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts) != 0) {
+        return PrimitiveResult::Failure;
+    }
+    int64_t us = (int64_t)ts.tv_sec * 1'000'000 + ts.tv_nsec / 1000;
+
+    pop();  // receiver
+    push(Oop::fromSmallInteger(us));
+    return PrimitiveResult::Success;
+}
+
 // Named primitive: primitiveUtcWithOffset
 // Used by DateAndTime class>>now via <primitive: 'primitiveUtcWithOffset' module: ''>
 // Returns a 2-element array: {UTC microseconds since Posix epoch, timezone offset in seconds}

@@ -2175,6 +2175,7 @@ private:
     PrimitiveResult primitiveUtcAndTimezoneOffset(int argCount);     // 244
     PrimitiveResult primitiveCoarseUTCMicrosecondClock(int argCount); // 245
     PrimitiveResult primitiveCoarseLocalMicrosecondClock(int argCount); // 246
+    PrimitiveResult primitiveProcessCPUTimeMicroseconds(int argCount); // 247
 
     // VM Profiling primitives (250-253)
     PrimitiveResult primitiveClearVMProfile(int argCount);           // 250
