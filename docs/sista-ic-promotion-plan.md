@@ -134,14 +134,22 @@ But the dispatched fn appears to run the loop once then blacklist
 bail (bailDistance=16 < 20 → marked as "close to entry").  Subsequent
 1M-iter benches go entirely through interp.
 
-**Next-session work**: relax the blacklist threshold so a single
-end-of-loop bail at BlockReturnTop doesn't kill future dispatches.
-The current threshold treats "bail within 20 bytes of entry" as a
-bad sign, but for short hot loops (bcOff=7 trigger → bcOff=23 end =
-16 bytes) the natural exit IS close to entry.  Options:
-- Don't blacklist when the bail bytecode is BlockReturnTop/Nil.
-- Lower threshold floor (e.g., 5) so short-but-real loops survive.
-- Require N consecutive bails (not just 1) before blacklisting.
+**Blacklist fix landed** (Session E): added BlockReturnTop/Nil
+detection in the dispatch-bail accounting so natural end-of-block
+bails don't blacklist.  Bench-suite stable; bench-suite mix
+unchanged.
 
-The infrastructure is in place; one more session on the blacklist
-heuristic should land the bench win.
+**Open question after Session E**: even with TICR firing and the
+dispatch surviving, the 1M getter+yourself bench remains at 33ms
+(vs Cog 1ms — 33× gap).  The per-bc Sista compile dispatches once,
+runs ~999K iters in compiled code, bails naturally at BlockReturnTop
+— but compiled-code throughput appears to be at parity with interp
+(~30ns/iter).  Expected throughput for the loop body
+(kPrimTagCheckInt + kPrimLeInt + kBranch + kGuardClass +
+kLoadInstVar + kPrimAddInt + kStoreTemp + kBranch back) is
+~25-35 cycles = 8-12ns at 3GHz, predicting ~8-12ms total.  Gap
+suggests the lowered code carries per-iter overhead (per-iter
+kGuardClass that could be hoisted out of the loop, redundant tag
+checks on back-edge loads, or branch-mispredict cost on the
+deopt branches).  Disassembly + tightening landed in a follow-up
+session focused on Sista lowering, not the IC-promotion path.
