@@ -216,9 +216,21 @@ nothing's lost.
                       First step: capture variance across 10 runs of
                       "collect 10x100K" — current single run = 242 ms,
                       vs Cog 5 ms.
-    Eβ   NEEDS-VERIFY "Shipped" Sista-side even/odd inline (kPrimEvenOddCheck)
-                      now executes under JIT; whether it actually fires on
-                      the bench is unknown.  Re-measure.
+    Eβ   VERIFIED-INACTIVE Session F (2026-05-25): Sista-side
+                      kPrimEvenOddCheck path exists but never fires on
+                      bench-suite — `g_t1EvenOdd_hits=0`,
+                      `g_sistaShortcut_evenOdd_hits=0`.  Root cause is
+                      upstream: the select 10x100K bench's
+                      `[:x | x even]` block is NOT reaching T1 JIT
+                      compilation.  Verified via PHARO_DUMP_EVEN_ODD=1:
+                      patchJITICAfterSend fires for #even with
+                      `pendingPatch=0x0` (interp call, not T1).  Top-10
+                      JIT'd methods at end of bench-suite shows no
+                      blocks above 49K invocations despite 1M+ calls.
+                      Bench-suite reports 1400 compiled, 59212 failed
+                      — block-compile failure is suspected but not
+                      yet root-caused.  Eβ's runtime impact is blocked
+                      on T1 block-JIT investigation, not on Sista.
     Eγ   DEFERRED     Array>>sort: splice — unblocked, fresh session.
     Eδ.1 ✅ DONE      Added canSkipJ2JSave flag to JITMethod.  20.3% of
                       real-compiled methods qualify (312/1539 on image boot).
