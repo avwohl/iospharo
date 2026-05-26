@@ -106,6 +106,11 @@ static uint64_t g_calleeBytecodesLifted = 0;
 // substituted constant) replacing kSendUnspeculated.
 static uint64_t g_inlinesEmitted        = 0;
 
+// Phase 4 leaf 2 counter: multi-block splice fires.  Subset of
+// g_inlinesEmitted; tracks how often the new spliceMultiBlock path
+// activates vs the older shape-recognizer / single-value emit.
+static uint64_t g_multiBlockSplices     = 0;
+
 // Phase 5 Step 1 counters: IC-site polymorphism histogram.  Indexed
 // by entry count (0 unused; 1..6 are valid IC degrees).  Filled by
 // recordPolyDegree() called from extractInlineHintsForMethod().
@@ -5517,6 +5522,24 @@ private:
             case Op::kLoadInstVar:
                 if (iv.operands.size() != 1) return false;
                 break;
+            case Op::kPrimTagCheckInt:
+                // operand[0] = value; deopt-context operands rewritten
+                // to outer stack at emit time.
+                if (iv.operands.empty()) return false;
+                break;
+            case Op::kPrimAddInt:
+            case Op::kPrimSubInt:
+            case Op::kPrimMulInt:
+            case Op::kPrimLtInt:
+            case Op::kPrimLeInt:
+            case Op::kPrimGtInt:
+            case Op::kPrimGeInt:
+            case Op::kPrimEqInt:
+            case Op::kPrimNeqInt:
+            case Op::kPrimIdentityEq:
+            case Op::kPrimIdentityNeq:
+                if (iv.operands.size() < 2) return false;
+                break;
             case Op::kReturn:
                 if (iv.operands.size() != 1) return false;
                 sawReturn = true;
@@ -5532,9 +5555,17 @@ private:
     // true.  On return: currentBlock_ is the continuation block (so
     // caller's subsequent ops emit into it), and resultId points at
     // the kPhi that holds the inlined call's result.
+    //
+    // outerDeoptStack + outerDeoptBcOffset are used as the deopt
+    // context for any inner op that has deopt operands (kPrim*Int,
+    // kPrimTagCheckInt): on miss, interp resumes at outerDeoptBcOffset
+    // with outerDeoptStack restored (so the un-inlined outer send
+    // re-runs).
     void spliceMultiBlock(const Method& innerIR,
                           uint32_t innerRecvId,
                           const std::vector<uint32_t>& innerArgIds,
+                          const std::vector<uint32_t>& outerDeoptStack,
+                          uint32_t outerDeoptBcOffset,
                           uint32_t& resultId) {
         uint32_t outerEntryBlock = currentBlock_;
         // Map every inner block ID to a freshly-allocated outer block.
@@ -5612,6 +5643,49 @@ private:
                     uint32_t nid = out_.newValue(outerBlock,
                         Op::kPhi, Type::kOop,
                         std::move(phiOperands));
+                    idMap[iv.id] = nid;
+                    break;
+                }
+                case Op::kPrimTagCheckInt: {
+                    auto it = idMap.find(iv.operands[0]);
+                    if (it == idMap.end()) return;
+                    std::vector<uint32_t> ops;
+                    ops.reserve(outerDeoptStack.size() + 1);
+                    ops.push_back(it->second);
+                    for (uint32_t s : outerDeoptStack) ops.push_back(s);
+                    uint32_t nid = out_.newValue(outerBlock,
+                        Op::kPrimTagCheckInt, Type::kOopSmallInt,
+                        std::move(ops),
+                        static_cast<uint64_t>(outerDeoptBcOffset));
+                    idMap[iv.id] = nid;
+                    break;
+                }
+                case Op::kPrimAddInt:
+                case Op::kPrimSubInt:
+                case Op::kPrimMulInt:
+                case Op::kPrimLtInt:
+                case Op::kPrimLeInt:
+                case Op::kPrimGtInt:
+                case Op::kPrimGeInt:
+                case Op::kPrimEqInt:
+                case Op::kPrimNeqInt:
+                case Op::kPrimIdentityEq:
+                case Op::kPrimIdentityNeq: {
+                    auto itA = idMap.find(iv.operands[0]);
+                    auto itB = idMap.find(iv.operands[1]);
+                    if (itA == idMap.end() || itB == idMap.end()) return;
+                    std::vector<uint32_t> ops;
+                    ops.reserve(outerDeoptStack.size() + 2);
+                    ops.push_back(itA->second);
+                    ops.push_back(itB->second);
+                    for (uint32_t s : outerDeoptStack) ops.push_back(s);
+                    Type resTy = (iv.op == Op::kPrimAddInt
+                               || iv.op == Op::kPrimSubInt
+                               || iv.op == Op::kPrimMulInt)
+                                   ? Type::kOopSmallInt : Type::kOopBool;
+                    uint32_t nid = out_.newValue(outerBlock,
+                        iv.op, resTy, std::move(ops),
+                        static_cast<uint64_t>(outerDeoptBcOffset));
                     idMap[iv.id] = nid;
                     break;
                 }
@@ -6269,12 +6343,16 @@ private:
                                        std::move(mbGuardOps), mbGuardLit);
                         uint32_t mbResult = 0;
                         spliceMultiBlock(innerIR, /*innerRecv=*/recvId,
-                                          innerArgs, mbResult);
+                                          innerArgs,
+                                          /*outerDeoptStack=*/stack_,
+                                          /*outerDeoptBcOffset=*/bcOffset,
+                                          mbResult);
                         // currentBlock_ now = continuation block.
                         for (uint32_t i = 0; i < nArgs + 1; i++)
                             stack_.pop_back();
                         stack_.push_back(mbResult);
                         g_inlinesEmitted++;
+                        g_multiBlockSplices++;
                         g_totalHintsConsumed++;
                         return true;
                     }
@@ -8302,6 +8380,7 @@ void Builder::resetInlineHintStats() {
     g_calleeLiftSuccess = 0;
     g_calleeBytecodesLifted = 0;
     g_inlinesEmitted = 0;
+    g_multiBlockSplices = 0;
     for (auto& h : g_polyDegreeHisto) h = 0;
 }
 void Builder::recordPolyDegree(uint8_t degree) {
@@ -8315,14 +8394,15 @@ void Builder::dumpInlineHintStats() {
     std::fprintf(stderr,
         "[SISTA-INLINE] sends-lifted=%llu hints-provided=%llu hints-consumed=%llu "
         "callees-attempted=%llu callees-lifted=%llu callee-values=%llu "
-        "inlines-emitted=%llu\n",
+        "inlines-emitted=%llu mb-splices=%llu\n",
         (unsigned long long)g_totalSendsLifted,
         (unsigned long long)g_totalMonomorphicHints,
         (unsigned long long)g_totalHintsConsumed,
         (unsigned long long)g_calleeLiftAttempts,
         (unsigned long long)g_calleeLiftSuccess,
         (unsigned long long)g_calleeBytecodesLifted,
-        (unsigned long long)g_inlinesEmitted);
+        (unsigned long long)g_inlinesEmitted,
+        (unsigned long long)g_multiBlockSplices);
     std::fprintf(stderr,
         "[SISTA-POLY] poly-degree empty=%llu mono=%llu bi=%llu tri=%llu "
         "quad=%llu 5=%llu 6=%llu\n",
