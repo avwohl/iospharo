@@ -1208,14 +1208,43 @@ deopt-infrastructure work — multi-session per
    concrete leaf to actually close fib's 40× gap.  The splice
    builds the unrolled IR at compile time but `hits=0`
    reports the runtime never enters Sista's compiled fn for
-   benchFib.  Likely causes: dispatch hook checks a SISTA_BIT
-   that's never set for self-recursive methods, or the IC
-   path takes precedence over Sista's fn lookup.  Diagnostic
-   recipe: run `PHARO_T1_SELF_REC_SPLICE=1
-   PHARO_SISTA_COMPILE_BAIL_ONLY=1 PHARO_SISTA_VERBOSE=1
-   PHARO_BENCH=fib PHARO_FIB_N=10` and trace what happens
-   when benchFib gets invoked (does dispatch even consider
-   Sista's fn?).
+   benchFib.
+
+   **Root cause traced 2026-05-26**: under
+   `PHARO_SISTA_COMPILE_BAIL_ONLY=1 PHARO_T1_SELF_REC_SPLICE=1
+   PHARO_SISTA_BAIL_LOG=1` the bail-log shows
+   `total=6 ok=0 liftFail=6`.  Added a focused
+   `[SISTA-LIFT-FAIL]` diagnostic (since reverted): every one
+   of the 6 lift-fails was for `sel=#benchFib` at
+   `failedBc=0` — Sista's top-level compile fails at the
+   FIRST bytecode of benchFib.  But my splice's RECURSIVE
+   `Builder::build(selfOop)` call inside the splice SUCCEEDS
+   on the same benchFib oop (the splice fires and produces
+   correct results).
+
+   So there's a state difference between:
+   - Sista runtime's top-level compile path
+     (`Builder::buildWithHints` from
+     `SistaRuntime::compile`) — fails at bc=0
+   - My splice's recursive call
+     (`Builder::build` from the lifter mid-flight, with
+     `ClearOuterHints`) — succeeds
+
+   Likely candidates (untested):
+   - The `buildWithHints` path sets some global state
+     (`g_currentBuildHints` / `g_currentBuildMemory`) that
+     interferes with benchFib's lift.
+   - The top-level call has different `selfMethodBits_`
+     setup or starts at a non-zero `startBcOffset`.
+   - Some image / IC state at the top-level compile time is
+     different from what's present mid-lift.
+
+   Next investigative step: side-by-side trace of the two
+   build paths for the same benchFib oop, identify the
+   global state that differs and causes the failedBc=0
+   rejection.  When fixed, Sista's compiled fn for benchFib
+   will be dispatched, and the self-rec splice's unrolled
+   IR will actually run — closing the fib gap.
 
    Revert was uncommitted.  Splice helper is shipped
    (`9fc78ded` + `da595ce4` + `d99d86f3`) and still fires
