@@ -1246,6 +1246,26 @@ deopt-infrastructure work — multi-session per
    will be dispatched, and the self-rec splice's unrolled
    IR will actually run — closing the fib gap.
 
+   **Verified 2026-05-26**: top-level lift returns
+   `LiftResult::kMalformedMethod` (result=2).  Method header
+   parses cleanly (5 lits, 0 args, 0 temps; standard header
+   layout).  Bytecodes start with `4c 20 62 c2 51 ed 0b 4c`
+   which is the standard `^ self < 2 ifTrue: [1]
+   ifFalse: [(self - 1) benchFib + (self - 2) benchFib]`
+   bytecode prefix — every byte is in the V1 spec.
+
+   So the lifter rejection isn't because of malformed bytes
+   or unsupported ops; it's some state-of-the-world check
+   that fires for the top-level call but passes for the
+   recursive-from-splice call.  Likely candidates to bisect
+   under lldb:
+   - `g_currentBuildHints` / `g_currentBuildMemory` being
+     non-null at the wrong moment.
+   - `g_buildStartBcOffset` being non-zero.
+   - `g_inPerBcBuild` being true.
+   - Some side effect in `inlineHints_` mask computation
+     during lifter setup (e.g. literal scanning).
+
    Revert was uncommitted.  Splice helper is shipped
    (`9fc78ded` + `da595ce4` + `d99d86f3`) and still fires
    for non-self-recursive multi-block inners in the 3-val
