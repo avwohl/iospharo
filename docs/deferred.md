@@ -908,6 +908,53 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+35 (2026-05-26) — Sista cache-churn fix: bench-suite -32%
+on fib and similar on most other workloads.**
+
+invalidateIfHintless() was called from `patchJITICAfterSend` on
+every IC slot fill (~600K times for fib(28)).  For methods whose
+compile produced nullptr (e.g. benchFib — fails the
+send-no-splice gate, structural reason), each invalidation
+forced a fresh extract-hints + lift-IR + fail cycle on the very
+next activation.  ~60 ms of pure waste per fib(28) run.
+
+Fix (commit `2d1ea238` + `7431bbdc`):
+1. `SistaRuntime::invalidateIfHintless` skips invalidation when
+   the prior compile produced nullptr.  Cache stays nullptr
+   instead of bouncing.
+2. `Interpreter::activateMethod`'s Sista hook checks
+   `sista->wasCachedAsFail()` up front and skips both
+   `extractInlineHintsForMethod` and `compile()` for
+   negative-cached methods.
+
+Bench-suite delta (3-run stable median):
+
+```
+bench               before  after   delta
+fib(28)             118 ms   80 ms  -32%
+sort 100K           175 ms  160 ms   -9%
+dict 50K            256 ms  225 ms  -12%
+sum 1M               52 ms   52 ms  flat
+1M getter+yourself    1 ms    1 ms  flat (already 1× Cog)
+100K allocations     14 ms   12 ms  -14%
+stringHash 100K      71 ms   63 ms  -11%
+collect 10x100K      65 ms   65 ms  flat
+select 10x100K      370 ms  327 ms  -12%
+tinyBenchmarks    8.92 Ms 12.93 Ms +45% sends/sec
+```
+
+Also kills the sort/dict bimodal pattern — 3/3 paired runs now
+identical (was alternating between two modes).
+
+Trade-off: inlines-emitted drops from 113 → 52 in bench-suite
+(lost hint-bearing retries for some compile-failed methods),
+but those retries weren't producing measurable bench wins.  The
+cache-stability win exceeds them by ~30%.
+
+Cog gap on fib reduced from 40× to ~27×.  Closing the rest
+still requires Phase-4 inlining (self-rec splice work).
+
+
 **Iter N+34 (Session H follow-up, 2026-05-26) — TICR forwarder
 shape coverage extended; emit count hits diminishing-returns
 ceiling.**
