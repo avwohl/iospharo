@@ -1097,6 +1097,44 @@ deopt-infrastructure work — multi-session per
    method oop) to see which kSendUnspeculated has the wrong
    operands.  Then trace back to the bytecode-to-IR lowering
    for that exact send site.
+
+   **Update 2026-05-26 — bytecode decode reveals the bail
+   isn't the bug**:
+
+   utf8Encoded's bytecode is `[4C 10 81 92 5C]` =
+   `^ self encodeWith: (ZnUTF8Encoder new)`.  Decoded:
+   - `4C` PushReceiver  → push self (the ByteString)
+   - `10` PushLitVar 0  → push ZnUTF8Encoder class
+   - `81` Send0 lit[1] (= #new) → encoder
+   - `92` Send1 lit[2] (= #encodeWith:) → recv=self, arg=encoder
+   - `5C` ReturnTop
+
+   So utf8Encoded LITERALLY sends `#encodeWith:` to the
+   ByteString receiver.  encodeWith:'s own bytecode is
+   `[40 80 4C 91 5C]` = `^ self encodeString: (aThing
+   <send0>)`, which sends `#encodeString:` to self.  Both
+   bytecode chains end with the ByteString as the receiver
+   of `encodeString:`.
+
+   This means **bail-only mode is exposing a LATENT image-
+   logic issue** rather than a Sista stack-corruption bug.
+   In default mode, utf8Encoded/encodeWith: are interp-only
+   and presumably the actual lookup finds something else
+   (maybe a #doesNotUnderstand: handler that succeeds, or
+   the bench-suite never hits the path that calls
+   utf8Encoded).  Under bail-only Sista compiles them and
+   their literal bytecode behavior fires the DNU.
+
+   Net: the Sista bail protocol is NOT the corruption
+   source.  Fixing this requires either (a) image-side
+   investigation of what utf8Encoded is supposed to do
+   (maybe the Pharo image we're testing is mis-built), or
+   (b) leaving sistaCompileBailOnly off-by-default
+   permanently (which is the current state).  The original
+   "fib produces wrong result" issue cited in older docs
+   no longer reproduces, so the gate isn't blocking
+   self-recursive splice for fib — the path is open if a
+   different motivator picks it up.
 3. Polymorphic site handling — emit multi-way kGuardClass + per-
    class inlined body.  Currently TICR rejects sites where the
    IC observed > 1 receiver class.  Sort/dict bench gaps are
