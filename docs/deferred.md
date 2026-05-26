@@ -954,6 +954,38 @@ cache-stability win exceeds them by ~30%.
 Cog gap on fib reduced from 40× to ~27×.  Closing the rest
 still requires Phase-4 inlining (self-rec splice work).
 
+**Iter N+36 (2026-05-26) — spliceMultiBlock contBlock phi double-
+wiring fix (`a9dafef7`).**
+
+spliceMultiBlock emits the contBlock merge phi with operands
+populated explicitly via `phiOps` (one per kReturn /
+implicit-return-send pred).  Pass-4 phi wiring then walked the
+same predecessors AGAIN and appended each `pb.outgoingStack[0]`
+to the phi — but those predecessors had EMPTY outgoingStack
+(set in pass-3 only for blocks the main lifter walked, NOT for
+synthetic spliced blocks).  Result: pass-4 returned
+`kMalformedMethod` on the very phi we'd just populated.
+
+Fix: pass-4 skips any phi whose operand count already equals
+its predecessor count (= explicit population case).  Local; no
+default behavior change.  Unblocks `t1SelfRecSplice=1` testing
+which previously failed at the lifter for benchFib.
+
+With the fix, t1SelfRecSplice DOES fire for benchFib (verified
+via tracing) but produces no measurable bench-suite delta — a
+single-level inline of self-recursion only saves one
+activation cost on the OUTERMOST fib call.  The 600K inner
+recursive sends still pay full activation overhead.  Closing
+the 27× gap would require N-level self-rec unrolling or
+conversion of recursion to iteration with stacked basic
+blocks (what Cog effectively does).  That work is structural
+and multi-session — separate leaf.
+
+Default bench-suite numbers stable across the commit:
+fib=80, sort=158, dict=221, sum=52, getter=1, alloc=12,
+stringHash=63, collect=65, select=327, tinyBenchmarks=12.95M
+sends/s.
+
 
 **Iter N+34 (Session H follow-up, 2026-05-26) — TICR forwarder
 shape coverage extended; emit count hits diminishing-returns
