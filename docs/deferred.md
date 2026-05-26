@@ -908,6 +908,75 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+33 (Session H follow-up, 2026-05-26) — TICR forwarder-pattern
+inlining gap identified.**
+
+Post-flip diagnosis of `[SISTA-INLINE]` counters
+(`PHARO_SISTA_INLINE_DUMP=1 PHARO_SISTA_INLINE_STATS=1` on the
+bench-suite image):
+
+```
+sends-lifted        = 5630
+hints-provided      = 1893   (33% of lifted sends have hints)
+hints-consumed      = 1010   (53% of hints become attempts)
+callees-attempted   = 905
+callees-lifted      = 883    (97% lift success)
+inlines-emitted     = 102    (12% of lifted callees actually inlined)
+```
+
+**781 of the 883 successfully-lifted callees are NOT inlined.** Survey
+of `[SISTA-CALLEE-OK]` dumps shows the dominant rejected shape:
+
+```
+load_recv send              ← `^ self forwardedMessage`
+load_temp send              ← `^ arg forwardedMessage`
+load_recv const_oop send    ← `^ self do: K`
+load_recv load_ivar send    ← `^ self do: ivar`
+load_lit  load_ivar send    ← `^ Class do: ivar`
+```
+
+All single-send "forwarder" methods that end in `... send` rather
+than `... return`.  TICR (`tryInlineConstReturn`) only handles
+const-return shapes; forwarders fall through to `kSendUnspeculated`.
+
+**Required infrastructure (Phase 4, not yet implemented):**
+
+- `kInlineSend` opcode declared in `SistaIR.hpp:102` but the only
+  use is a placeholder reference in `SistaBuilder.cpp:4600` ("Real
+  speculation (kGuardClass + kInlineSend) is Phase 4").
+- No lowering in `SistaLowering_arm64.cpp` or
+  `SistaLowering_x86_64.cpp` — emitting kInlineSend today crashes
+  the lowering pipeline.
+- `SistaRuntime.cpp` has scaffolding for `hasInlinedSend` /
+  deopt-via-bcOffset but no live consumers.
+
+**Expected payoff (rough order of magnitude):**
+
+If 781 forwarder inlines × ~30 cycles each are eliminated from the
+bench-suite hot paths, that's ~25K cycles ≈ 8 µs total saved per
+bench run — small in absolute terms, but the *recursive* fib case
+benefits much more since each unrolled level saves a send-machinery
+cycle.  fib(28)'s ~118 ms vs Cog's ~3 ms (40×) gap is dominated by
+exactly this: the recursive `benchFib n-1 + benchFib n-2` call is
+the canonical forwarder pattern.
+
+**Implementation sketch (multi-session work):**
+
+1. SistaBuilder: detect forwarder shape at TICR site; emit
+   `kInlineSend(guard, callee, args...)` instead of
+   `kSendUnspeculated`.  Recursively lift callee body as nested
+   blocks (`out_.inlinedBlocks`).
+2. SistaLowering: emit guard-fail deopt to source bcOffset + inline
+   the lowered callee body inline.  Per-arch.
+3. SistaRuntime: extend materialize / NLR paths to handle nested
+   inlined-send frames.
+4. Recursion: bound depth (e.g. 2-3 levels for fib) — exponential
+   code growth otherwise.
+
+Memory: [[project-sista-ic-promotion-bench-gap]] is updated to
+reflect that IC-promotion itself is closed; the next gap is this
+TICR forwarder limitation.
+
 **Iter N+32 (Session H follow-up, 2026-05-25) — `sistaInterpHints`
 default flipped ON.**
 
