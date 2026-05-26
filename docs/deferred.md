@@ -952,11 +952,17 @@ deopt-infrastructure work — multi-session per
    chain commit adds 0-1 emits per bench-suite run; the rejected
    inners that DO have inner-forwarder shape are rare in the
    bench-suite image.
-2. Multi-block linear splice (no phi) for callees like
-   `^ cond ifTrue: [...] ifFalse: [...]` — common in `=`, `<`,
-   `hash` overrides.  Requires `Method::newBlock()` plumbing
-   inside TICR to emit multi-block IR (the existing handlers all
-   emit single-block).  This is the next bounded leaf.
+2. ~~Multi-block linear splice~~ — SHIPPED in `9fc78ded`
+   (Phase-4 leaf 2).  canSpliceMultiBlock/spliceMultiBlock
+   helpers copy inner's block graph into outer with operand
+   substitution and merge inner returns via kPhi.  Op whitelist:
+   kLoad{Receiver,Arg,Temp,InstVar,True,False}Oop, kConstantOop,
+   kBranch, kBranchIf*, kPhi, kReturn.  Wired into the 3-val
+   forwarder; tried into the 2-val self-forwarder but caused a
+   -1 inline regression (uncommitted revert) so left only at the
+   3-val site for now.  Multi-block inners with sends/stores/
+   guards/NLR/prims still fall through to existing recognizers
+   (need full Phase-4 deopt infra to splice safely).
 3. Polymorphic site handling — emit multi-way kGuardClass + per-
    class inlined body.  Currently TICR rejects sites where the
    IC observed > 1 receiver class.  Sort/dict bench gaps are
