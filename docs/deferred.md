@@ -1020,6 +1020,49 @@ time.  Reverted (no commit).
 
 Estimated 2-4 sessions if no surprises in (1).
 
+**Iter N+38 (2026-05-26) — Infrastructure shipped for closing
+fib's gap, but the gap remains.**
+
+Three commits land foundation pieces:
+
+- `a8c2f879` Method::hasMultiBlockSplice flag + opt-in
+  PHARO_SISTA_DISPATCH_MULTIBLOCK env that bypasses the
+  sendNoSplice negative-cache gate for self-rec splice methods.
+- `b917f82e` setSelfSelector wiring (passes the method's own
+  selector to the lifter) + BuildMemRAII (makes
+  g_currentBuildMemory non-null on the no-hints path so the
+  splice's recursive Builder::build call succeeds).
+- `e2b97c64` Opt-in PHARO_T1_SELF_REC_SPLICE_HINTLESS flag that
+  enables selector-string-equality self-rec detection.
+
+With the flag combo (T1_SELF_REC_SPLICE + DISPATCH_MULTIBLOCK +
+HINTLESS):
+- SR-FOUND-BENCHFIB fires for benchFib at depth 0 (verified)
+- canSpliceMultiBlock accepts after also gating the fallback
+  to depth==0 only (otherwise inner kSendInlineSelf rejects)
+- Splice IR produced; cache_[benchFib] non-null
+
+BUT: bench-suite hangs without writing results.  The over-
+approximation classifies non-self-rec methods (e.g.
+FileLocator>>resolve) as self-rec by selector-string match
+alone, splice substitutes wrong receiver, runtime DNU on
+#resolve:.  Default-off.
+
+**Step 1 is now CONCRETELY: replace selector-string equality
+with a class-binding-aware check.**  At lift time, look up the
+send's literal selector starting from the method's class
+binding (last literal); if the resolved CompiledMethod equals
+selfMethodBits_, it's truly self-rec (modulo subclass
+overrides — a separate guard).  The class binding is already
+accessible at compile time via memory.nameOfClass(classObj).
+
+Then enable the splice + dispatch combo by default.  Then
+extend g_calleeLiftDepth bound to enable N-level unrolling.
+
+Bench-suite default unchanged across all three commits:
+fib=80, sort=158, dict=221, sum=52, tinyBenchmarks=12.95M
+sends/s.
+
 
 **Iter N+34 (Session H follow-up, 2026-05-26) — TICR forwarder
 shape coverage extended; emit count hits diminishing-returns
