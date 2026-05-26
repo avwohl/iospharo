@@ -991,6 +991,21 @@ deopt-infrastructure work — multi-session per
    inner level also expands inline.  Each unrolled level
    eliminates one J2J round-trip.  Code grows ~2^depth so the
    bound is essential.
+
+   Implementation prototyped 2026-05-26 at the lifter's
+   isSelfRec detection site (line ~4866): instead of emitting
+   kSendInlineSelf, do a separate `Builder::build(selfMethodOop)`
+   to get a fresh IR copy and feed it to spliceMultiBlock.
+   Worked structurally (compiled clean, no crash) but mb-splices
+   counter stayed at 3 — the self-rec splice never fired on the
+   bench-suite image.  **Diagnosis**: benchFib (the canonical
+   self-recursive bench) is never Sista-compiled because Sista's
+   bail-protocol bug rejects send-bearing methods (per
+   `docs/sista-ic-promotion-plan.md` and earlier deferred notes
+   on `PHARO_SISTA_COMPILE_BAIL_ONLY` producing wrong fib
+   results).  Self-rec splice infrastructure can't help fib
+   until that bail-correctness gate is fixed upstream.  Revert
+   was uncommitted.
 3. Polymorphic site handling — emit multi-way kGuardClass + per-
    class inlined body.  Currently TICR rejects sites where the
    IC observed > 1 receiver class.  Sort/dict bench gaps are
