@@ -9413,6 +9413,25 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         if (sista->wasCachedAsFail(method)) {
             goto past_sista_block;
         }
+        // Hot-path early-reject: if the gate cache has already
+        // classified this method as Rejected (hasUnsafeOp scan
+        // ran and decided the method can't run under Sista) or
+        // Blacklisted (8+ bails promoted it out of dispatch),
+        // skip the expensive extractInlineHintsForMethod +
+        // compile() calls.  These cost ~30-50ns per call on
+        // recursion-heavy workloads where Sista compiles but
+        // never dispatches.  PHARO_NO_SISTA=1 baseline 91ms vs
+        // splice-on 95ms (~4ns/call * 1.4M calls).  Without this
+        // early-reject, post-blacklist re-entry costs 30+ms
+        // (131ms vs 91ms baseline).
+        {
+            auto gateIt = sistaGateCache_.find(method.rawBits());
+            if (gateIt != sistaGateCache_.end()
+                && (gateIt->second == kSistaGateRejected
+                    || gateIt->second == kSistaGateBlacklisted)) {
+                goto past_sista_block;
+            }
+        }
         // Phase 4 Step 1: build inline hints from T1's IC info.
         // Pass them to Sista so it can identify monomorphic send
         // sites.  Today only used for the inline-hint stat counters;

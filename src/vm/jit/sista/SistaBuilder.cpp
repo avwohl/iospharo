@@ -5983,8 +5983,32 @@ private:
                         | ((static_cast<uint64_t>(nArgs) & 0xFFu) << 16)
                         | ((static_cast<uint64_t>(outerDeoptBcOffset)
                              & 0xFFFFFFFFu) << 24);
+                    // If the spliced inner send targets the same
+                    // method as the outer (self-recursive), emit
+                    // kSendInlineSelf instead of kSendUnspeculated.
+                    // The lowering routes kSendInlineSelf through
+                    // jit_rt_sista_self_rec_call which bypasses the
+                    // sendSelector IC chain and invokes the cached
+                    // Sista fn directly — saving ~40 cycles per call
+                    // vs kSendUnspeculated → IC probe path.
+                    //
+                    // Detection: the inner method's selector at
+                    // innerSelIdx equals the outer's selfSelector_.
+                    Op sendOp = Op::kSendUnspeculated;
+                    if (!selfSelector_.empty()
+                        && selector.isObject()
+                        && selector.rawBits() > 0x10000) {
+                        ObjectHeader* sh = selector.asObjectPtr();
+                        if (sh->isBytesObject()
+                            && sh->byteSize() == selfSelector_.size()
+                            && std::memcmp(sh->bytes(),
+                                           selfSelector_.data(),
+                                           selfSelector_.size()) == 0) {
+                            sendOp = Op::kSendInlineSelf;
+                        }
+                    }
                     uint32_t nid = out_.newValue(outerBlock,
-                        Op::kSendUnspeculated, Type::kOop,
+                        sendOp, Type::kOop,
                         std::move(sops), newLit);
                     idMap[iv.id] = nid;
                     break;
