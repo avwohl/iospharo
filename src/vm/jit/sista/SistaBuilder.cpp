@@ -6057,24 +6057,80 @@ private:
                 for (const auto& iv : innerIR.values) {
                     if (iv.op == Op::kLoadTemp) return false;
                 }
-                // Inner const-return: 2-value scalar OR 3-value getter.
+                // Inner const-return: 2-value scalar OR 3-value getter,
+                // OR (new) 2-value self-forwarder that chains through to
+                // a const-return inner-inner (uses depth=3 budget).
                 if (innerIR.values.size() == 2) {
                     const Value& iv0 = innerIR.values[0];
                     const Value& iv1 = innerIR.values[1];
-                    if (iv1.op != Op::kReturn) return false;
-                    if (iv1.operands.size() != 1
-                        || iv1.operands[0] != iv0.id) return false;
-                    switch (iv0.op) {
-                    case Op::kLoadTrueOop:  inlineOp = Op::kLoadTrueOop;
-                                            inlineTy = Type::kOopBool; break;
-                    case Op::kLoadFalseOop: inlineOp = Op::kLoadFalseOop;
-                                            inlineTy = Type::kOopBool; break;
-                    case Op::kConstantOop:  inlineOp = Op::kConstantOop;
-                                            inlineTy = Type::kOop;
-                                            inlineLit = iv0.literal; break;
-                    case Op::kLoadReceiver: inlineOp = Op::kLoadReceiver;
-                                            inlineTy = Type::kOop; break;
-                    default: return false;
+                    // Chain: inner is `^ self bar` — walk one more level.
+                    if (iv0.op == Op::kLoadReceiver
+                     && iv1.op == Op::kSendUnspeculated
+                     && !iv1.operands.empty() && iv1.operands[0] == iv0.id
+                     && g_calleeLiftDepth < 3) {
+                        uint32_t iiNArgs = (uint32_t)((iv1.literal >> 16) & 0xFF);
+                        uint32_t iiBcOff = (uint32_t)(iv1.literal >> 24);
+                        if (iiNArgs != 0) return false;
+                        std::vector<InlineHint> iiHints =
+                            g_hintProvider(innerOop);
+                        const InlineHint* iiHit = nullptr;
+                        for (const auto& ih : iiHints) {
+                            if (ih.bcOffset == iiBcOff) {
+                                iiHit = &ih; break;
+                            }
+                        }
+                        if (!iiHit) return false;
+                        if (iiHit->targetMethod == 0) return false;
+                        if ((iiHit->targetMethod & 0x7) != 0) return false;
+                        if (iiHit->targetMethod < 0x10000) return false;
+                        if ((iiHit->classOop & 0x3FFFFFu)
+                            != (innerHit->classOop & 0x3FFFFFu)) return false;
+                        Method iiIR;
+                        uint32_t iiFailedAt = UINT32_MAX;
+                        Oop iiOop = Oop::fromRawBits(iiHit->targetMethod);
+                        g_calleeLiftDepth++;
+                        LiftResult iir;
+                        {
+                            ClearOuterHints g;
+                            iir = Builder::build(iiOop,
+                                *g_currentBuildMemory, iiIR, &iiFailedAt);
+                        }
+                        g_calleeLiftDepth--;
+                        if (iir != LiftResult::kOk) return false;
+                        if (iiIR.values.size() != 2) return false;
+                        const Value& iiv0 = iiIR.values[0];
+                        const Value& iiv1 = iiIR.values[1];
+                        if (iiv1.op != Op::kReturn) return false;
+                        if (iiv1.operands.size() != 1
+                            || iiv1.operands[0] != iiv0.id) return false;
+                        switch (iiv0.op) {
+                        case Op::kLoadTrueOop:  inlineOp = Op::kLoadTrueOop;
+                                                inlineTy = Type::kOopBool; break;
+                        case Op::kLoadFalseOop: inlineOp = Op::kLoadFalseOop;
+                                                inlineTy = Type::kOopBool; break;
+                        case Op::kConstantOop:  inlineOp = Op::kConstantOop;
+                                                inlineTy = Type::kOop;
+                                                inlineLit = iiv0.literal; break;
+                        case Op::kLoadReceiver: inlineOp = Op::kLoadReceiver;
+                                                inlineTy = Type::kOop; break;
+                        default: return false;
+                        }
+                    } else {
+                        if (iv1.op != Op::kReturn) return false;
+                        if (iv1.operands.size() != 1
+                            || iv1.operands[0] != iv0.id) return false;
+                        switch (iv0.op) {
+                        case Op::kLoadTrueOop:  inlineOp = Op::kLoadTrueOop;
+                                                inlineTy = Type::kOopBool; break;
+                        case Op::kLoadFalseOop: inlineOp = Op::kLoadFalseOop;
+                                                inlineTy = Type::kOopBool; break;
+                        case Op::kConstantOop:  inlineOp = Op::kConstantOop;
+                                                inlineTy = Type::kOop;
+                                                inlineLit = iv0.literal; break;
+                        case Op::kLoadReceiver: inlineOp = Op::kLoadReceiver;
+                                                inlineTy = Type::kOop; break;
+                        default: return false;
+                        }
                     }
                 } else if (innerIR.values.size() == 3) {
                     const Value& iv0 = innerIR.values[0];
