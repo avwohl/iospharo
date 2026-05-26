@@ -226,7 +226,7 @@ DebugSettings::DebugSettings() {
     profile              = envPresent("PHARO_PROFILE");
     profileIntervalUs    = envInt("PHARO_PROFILE_INTERVAL_US", 1000);
     profileTopN          = envInt("PHARO_PROFILE_TOP", 30);
-    sistaInterpHints     = envPresent("PHARO_SISTA_INTERP_HINTS");
+    sistaInterpHints     = !envPresent("PHARO_NO_SISTA_INTERP_HINTS");
     t1J2JSplitPool      = envPresent("PHARO_T1_J2J_SPLIT_POOL");
     // F3-NL6: default-on BV inline after F3-NL2/3/4 fixes.
     // PHARO_T1_NO_INLINE_BLOCK_VALUE=1 disables.

@@ -908,6 +908,51 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+32 (Session H follow-up, 2026-05-25) — `sistaInterpHints`
+default flipped ON.**
+
+The interp-side IC table (Sista IC-promotion sessions A-E,
+`docs/sista-ic-promotion-plan.md`) was shipped opt-in via
+`PHARO_SISTA_INTERP_HINTS=1` pending dispatch-reliability validation.
+Bench-suite A/B today confirms the dispatch lands consistently and
+the win is large.
+
+Bench-suite delta (median of 3 runs, default vs `PHARO_NO_SISTA_INTERP_HINTS=1`):
+
+```
+bench                 hints-off  hints-on   delta
+fib(28)               117 ms     118 ms     +1   (+1%)
+sort 100K             167 ms     178 ms     +11  (+6.5%)
+dict 50K              251 ms     253 ms     +2   (flat)
+sum 1M                51 ms      51 ms      0
+5000 factorial        24 ms      23 ms      -1
+1M blocks             29 ms      30 ms      +1
+1M getter+yourself    33 ms      1 ms       -32  (-97%)  ***
+100K allocations      14 ms      15 ms      +1
+floatSum 1M           56 ms      56 ms      0
+stringHash 100K       69 ms      71 ms      +2   (+3%)
+collect 10x100K       65 ms      65 ms      0
+select 10x100K        365 ms     368 ms     +3   (flat)
+TOTAL                 1041 ms    1019 ms    -22  (-2.1%)
+```
+
+The `1M getter+yourself` line closes the entire Cog gap (Cog ~1 ms).
+Sort takes a real ~6.5% hit; everything else is within noise.
+
+Flip details:
+
+- `DebugSettings.cpp`: `sistaInterpHints = !envPresent("PHARO_NO_SISTA_INTERP_HINTS")`.
+- `DebugSettings.hpp`: default flipped `false → true`; comment updated
+  to reflect the actual A/B (was claiming stale "~25 ms overhead with
+  no payoff" — both numbers wrong).
+- `Interpreter.cpp` recording-site comment refreshed.
+
+Revert with `PHARO_NO_SISTA_INTERP_HINTS=1`.  Memory file
+[[project-sista-ic-promotion-bench-gap]] still points at the
+remaining gap (per-iter overhead in Sista lowering — kGuardClass
+hoist, back-edge type narrowing); the IC-promotion thread itself is
+now closed.
+
 **Iter N+31 (Session H, 2026-05-25) — BV-inline default flip + tail-only
 NLR detection.  Commits `4ebd4718..d48e02d3`.**
 

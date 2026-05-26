@@ -8782,15 +8782,12 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     int primIndex = primitiveIndexOf(method);
     TrivialMethodInfo trivial = detectTrivialMethod(method, memory_);
 
-    // jit-may25 Step A: record interp-side IC hint.  Sista's hint
-    // extraction needs (callerMethod, bcOffset) → (receiverClass,
-    // targetMethod) data even when the caller isn't JIT-compiled.
-    // T1's IC is only populated while running JIT code; this fills
-    // the gap for interp-only callers like the 1M getter+yourself
-    // bench's outer block.  See docs/sista-ic-promotion-plan.md.
-    // Gated on PHARO_SISTA_INTERP_HINTS=1 — adds ~25ms/bench-suite
-    // overhead that doesn't pay off until Sista's per-bc lift
-    // reliably fires on the bench block (Session C).
+    // Record interp-side IC hint so Sista's hint extractor sees
+    // (callerMethod, bcOffset) → (receiverClass, targetMethod) for
+    // interp-only callers (e.g. the 1M getter+yourself bench's
+    // outer block, which never gets JIT'd).  Default-on (Session H
+    // follow-up); PHARO_NO_SISTA_INTERP_HINTS=1 reverts.  See
+    // docs/sista-ic-promotion-plan.md.
     if (g_debug.sistaInterpHints
         && method_.isObject() && method_.rawBits() > 0x10000
         && instructionPointer_ != nullptr
