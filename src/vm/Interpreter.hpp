@@ -637,11 +637,10 @@ private:
     // Max J2J save depth per tryJITActivation entry.  At J2JSlotPerEntry
     // depth, the JIT-emitted inline-J2J push bails to ExitSendCached.
     // The bail+materialize path produces wrong results for benchFib-like
-    // recursive workloads beyond this depth (the materialized save's
-    // sp-retSlot computation diverges for deep recursion — open task #8).
-    // Bumping to 256 covers fib(N≤256), which is computationally beyond
-    // reasonable benchmark range (fib(50) is already ~7B calls).
-    // J2J pool can hold 4 nested tryJITActivation entries at this size.
+    // recursive workloads beyond depth limit+12 (the materialized path
+    // diverges as nested JIT/interp transitions accumulate — open task
+    // #8).  Bumping to 256 covers fib(N≤256+12), which is computationally
+    // beyond reasonable benchmark range (fib(50) is already ~7B calls).
     static constexpr int J2JSlotPerEntry = 256;  // max J2J depth per tryJITActivation
     static constexpr int MaxJ2JPoolSize = 1024; // shared pool across recursive entries
     // Primitive error codes (matching PrimErrTable indices in the image).
