@@ -968,22 +968,29 @@ deopt-infrastructure work — multi-session per
    inner reaching this handler still ends in kSendUnspeculated
    (which the splice rejects — see leaf 4 below).
 
-4. **kSendUnspeculated splice** — the next step to make the
-   multi-block infrastructure actually fire.  Requires:
-   - Inner literal-table cross-reference: inner's kSendUnspeculated
-     `literal` packs an inner-relative selector-literal index.
-     Outer's literal table is different.  Either find the selector
-     Oop in outer's existing literals or append it.
-   - Outer-bcOffset rewriting in the send literal (the bc-offset
-     bits track the source send for bail / NLR resume; on splice
-     these need to point at the OUTER send so bail re-runs the
-     outer un-inlined send instead of the inner's).
-   - Depth-bounded recursion (e.g. 2 levels) to avoid exponential
-     code growth, especially for self-recursive callees like
-     benchFib.
-   When this lands, multi-block splice will start firing for
-   forwarder-of-forwarder + ifTrue:/ifFalse: + most idiomatic
-   Smalltalk method bodies.  Estimated 1-2 focused sessions.
+4. ~~**kSendUnspeculated splice**~~ — SHIPPED in `da595ce4`.
+   canSpliceMultiBlock now accepts kSendUnspeculated as a body
+   op AND inner shapes that end in a trailing send (the lifter
+   omits the explicit kReturn when the source body is
+   `^ <send>`).  spliceMultiBlock cross-references inner's
+   selector Oop into out_'s literal table (appends if not
+   found), rewrites the send's literal to use the outer selector
+   index + outer's bcOffset (so bail / NLR resumes the un-
+   inlined outer send), and synthesizes the implicit return by
+   branching the trailing-send block to the continuation block.
+
+   Inlines-emitted: 113 → 116 (+3, mb-splices=3) on the
+   bench-suite image — three real methods of shape
+   `^ self foo: arg` with inner `^ self.x bop: self.y` (or
+   similar two-instVar send pair) are now fully inlined.
+
+5. **Self-recursive splice** — the natural extension to close
+   fib(28)'s 40× Cog gap.  When inner's spliced kSendUnspeculated
+   targets the SAME method being lifted (= self-recursion), do a
+   depth-bounded recursive splice (e.g. 2 levels) so the inner-
+   inner level also expands inline.  Each unrolled level
+   eliminates one J2J round-trip.  Code grows ~2^depth so the
+   bound is essential.
 3. Polymorphic site handling — emit multi-way kGuardClass + per-
    class inlined body.  Currently TICR rejects sites where the
    IC observed > 1 receiver class.  Sort/dict bench gaps are
