@@ -1063,6 +1063,49 @@ Bench-suite default unchanged across all three commits:
 fib=80, sort=158, dict=221, sum=52, tinyBenchmarks=12.95M
 sends/s.
 
+**Iter N+39 (2026-05-26) — narrowed hint-less fallback works
+but splice clashes with pass-1 block enumeration.**
+
+Commit `98450665` narrowed the hint-less detector with a
+receiver-IR check: now requires the receiver value to be either
+`kLoadReceiver` (direct `self`) OR a SmallInt arith op
+(`kPrimAddInt`/`kPrimSubInt`/`kPrimMulInt`) with `kLoadReceiver`
+as one operand.  This covers benchFib's `(self - 1) benchFib`
+pattern AND eliminates the over-approximation DNU on
+FileLocator>>resolve.
+
+Verified `SR-FOUND` fires for benchFib at both sends.
+spliceMultiBlock proceeds (`canSpliceMultiBlock=true`, inner
+lift OK).  BUT the overall lift fails at offset 18
+(kMalformedMethod, the ReturnTop bytecode).
+
+**Root cause**: pass-1 / splice mismatch.  benchFib's bytecode
+splits into 4 blocks (cond, true branch, recursive computation,
+return).  Block 2 = recursive computation has TWO sends + arith
++ falls-through to Block 3 (ReturnTop).  When the splice fires
+on the first send, it creates a `contBlock` and switches
+`currentBlock_` to it — but pass-1's enumeration still expects
+Block 2 → Block 3 fall-through.  Block 3's predecessor list is
+stale; pass-4 phi-wiring fails.
+
+Fix path (next leaf):
+- (a) Re-run pass-1 after splice — re-enumerate blocks from
+  the modified IR.  Generic, supports any splice shape.
+- (b) Restrict splice to single-block-emit cases (no
+  downstream content).  Simpler, but EXCLUDES benchFib (whose
+  two consecutive recursive sends span an entire block).
+
+For closing fib's gap specifically, (a) is required.  Estimated
+1-2 sessions of focused splice/pass-1 alignment work.
+
+Until then, the fallback is wired but DISABLED at the gate
+(`bool hintlessFallbackEnabled = false`).  Wiring stays in tree
+to avoid re-implementing the narrowing logic when (a) lands.
+
+Bench-suite default unchanged.  3-run stable:
+fib=79, sort=157-160, dict=222-224, tinyBenchmarks=12.97-13.02M
+sends/s.
+
 
 **Iter N+34 (Session H follow-up, 2026-05-26) — TICR forwarder
 shape coverage extended; emit count hits diminishing-returns
