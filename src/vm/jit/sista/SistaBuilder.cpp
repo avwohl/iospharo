@@ -5471,6 +5471,196 @@ private:
         }
     }
 
+    // Multi-block splice — Phase-4 leaf 2 (2026-05-26).
+    //
+    // Copy inner's block graph into the outer IR, substituting:
+    //   inner kLoadReceiver       → outer recvId
+    //   inner kLoadArg/kLoadTemp  → outer argIds[idx]
+    // and rerouting inner's kReturn statements to a fresh continuation
+    // block where they merge via kPhi.
+    //
+    // Handles inner shapes that the single-block splice can't:
+    //   `^ cond ifTrue: [a] ifFalse: [b]`  (diamond)
+    //   any linear control flow that lifts cleanly via the regular
+    //   lifter (no sends, no stores, no NLR, no guards).
+    //
+    // Feasibility (canSpliceMultiBlock) must be checked BEFORE outer
+    // emits its guard — once we start creating new blocks and adding
+    // edges, rolling back is messy.
+    //
+    // Returns false (no emit) on any unsupported op.  On success, sets
+    // resultId to the kPhi value at the continuation block and sets
+    // currentBlock_ to that continuation block (so outer's continuing
+    // emits land there).
+    bool canSpliceMultiBlock(const Method& innerIR,
+                              const std::vector<uint32_t>& innerArgIds) {
+        if (innerIR.values.empty()) return false;
+        if (innerIR.blocks.empty()) return false;
+        bool sawReturn = false;
+        for (const auto& iv : innerIR.values) {
+            switch (iv.op) {
+            case Op::kLoadReceiver:
+            case Op::kConstantOop:
+            case Op::kLoadTrueOop:
+            case Op::kLoadFalseOop:
+            case Op::kBranch:
+            case Op::kBranchIfTrue:
+            case Op::kBranchIfFalse:
+            case Op::kPhi:
+                break;
+            case Op::kLoadArg:
+            case Op::kLoadTemp: {
+                uint32_t idx = static_cast<uint32_t>(iv.literal);
+                if (idx >= innerArgIds.size()) return false;
+                break;
+            }
+            case Op::kLoadInstVar:
+                if (iv.operands.size() != 1) return false;
+                break;
+            case Op::kReturn:
+                if (iv.operands.size() != 1) return false;
+                sawReturn = true;
+                break;
+            default:
+                return false;
+            }
+        }
+        return sawReturn;
+    }
+
+    // Emit the multi-block splice.  Pre: canSpliceMultiBlock returned
+    // true.  On return: currentBlock_ is the continuation block (so
+    // caller's subsequent ops emit into it), and resultId points at
+    // the kPhi that holds the inlined call's result.
+    void spliceMultiBlock(const Method& innerIR,
+                          uint32_t innerRecvId,
+                          const std::vector<uint32_t>& innerArgIds,
+                          uint32_t& resultId) {
+        uint32_t outerEntryBlock = currentBlock_;
+        // Map every inner block ID to a freshly-allocated outer block.
+        std::unordered_map<uint32_t, uint32_t> blockMap;
+        for (const auto& ib : innerIR.blocks) {
+            blockMap[ib.id] = out_.newBlock();
+        }
+        // Continuation block: where inner's kReturns merge and outer
+        // resumes.
+        uint32_t contBlock = out_.newBlock();
+        // Terminate outerEntryBlock with kBranch into inner's entry
+        // (inner block 0 is the conventional entry).
+        uint32_t innerEntry = blockMap[innerIR.blocks[0].id];
+        out_.newValue(outerEntryBlock, Op::kBranch, Type::kVoid,
+                      {innerEntry});
+        out_.addEdge(outerEntryBlock, innerEntry);
+
+        std::unordered_map<uint32_t, uint32_t> idMap;
+        std::vector<uint32_t> phiOps;  // values flowing into contBlock
+        // Process inner blocks in their original order so predecessor
+        // ordering inside the cloned subgraph matches the source
+        // (preserves any kPhi operand ordering inside inner).
+        for (const auto& ib : innerIR.blocks) {
+            uint32_t outerBlock = blockMap[ib.id];
+            for (uint32_t vid : ib.values) {
+                const Value& iv = innerIR.values[vid];
+                switch (iv.op) {
+                case Op::kLoadReceiver:
+                    idMap[iv.id] = innerRecvId;
+                    break;
+                case Op::kLoadArg:
+                case Op::kLoadTemp: {
+                    uint32_t idx = static_cast<uint32_t>(iv.literal);
+                    idMap[iv.id] = innerArgIds[idx];
+                    break;
+                }
+                case Op::kLoadInstVar: {
+                    auto it = idMap.find(iv.operands[0]);
+                    if (it == idMap.end()) return;
+                    uint32_t nid = out_.newValue(outerBlock,
+                        Op::kLoadInstVar, Type::kOop,
+                        {it->second}, iv.literal);
+                    idMap[iv.id] = nid;
+                    break;
+                }
+                case Op::kConstantOop: {
+                    uint32_t nid = out_.newValue(outerBlock,
+                        Op::kConstantOop, Type::kOop, {}, iv.literal);
+                    idMap[iv.id] = nid;
+                    break;
+                }
+                case Op::kLoadTrueOop: {
+                    uint32_t nid = out_.newValue(outerBlock,
+                        Op::kLoadTrueOop, Type::kOopBool, {}, 0);
+                    idMap[iv.id] = nid;
+                    break;
+                }
+                case Op::kLoadFalseOop: {
+                    uint32_t nid = out_.newValue(outerBlock,
+                        Op::kLoadFalseOop, Type::kOopBool, {}, 0);
+                    idMap[iv.id] = nid;
+                    break;
+                }
+                case Op::kPhi: {
+                    // Copy operand-by-operand: each inner phi operand
+                    // came from an inner predecessor whose value was
+                    // already mapped (forward-only inner blocks).
+                    std::vector<uint32_t> phiOperands;
+                    phiOperands.reserve(iv.operands.size());
+                    for (uint32_t inOp : iv.operands) {
+                        auto it = idMap.find(inOp);
+                        if (it == idMap.end()) return;
+                        phiOperands.push_back(it->second);
+                    }
+                    uint32_t nid = out_.newValue(outerBlock,
+                        Op::kPhi, Type::kOop,
+                        std::move(phiOperands));
+                    idMap[iv.id] = nid;
+                    break;
+                }
+                case Op::kBranch: {
+                    // Operand 0 is target block ID (inner-space) —
+                    // remap.
+                    uint32_t tgt = blockMap[iv.operands[0]];
+                    out_.newValue(outerBlock, Op::kBranch, Type::kVoid,
+                                  {tgt});
+                    out_.addEdge(outerBlock, tgt);
+                    break;
+                }
+                case Op::kBranchIfTrue:
+                case Op::kBranchIfFalse: {
+                    auto it = idMap.find(iv.operands[0]);
+                    if (it == idMap.end()) return;
+                    if (ib.successors.size() != 2) return;
+                    uint32_t tOut = blockMap[ib.successors[0]];
+                    uint32_t fOut = blockMap[ib.successors[1]];
+                    out_.newValue(outerBlock, iv.op, Type::kVoid,
+                                  {it->second});
+                    out_.addEdge(outerBlock, tOut);
+                    out_.addEdge(outerBlock, fOut);
+                    break;
+                }
+                case Op::kReturn: {
+                    // Replace with kBranch to contBlock; collect value
+                    // for the phi.
+                    auto it = idMap.find(iv.operands[0]);
+                    if (it == idMap.end()) return;
+                    out_.newValue(outerBlock, Op::kBranch, Type::kVoid,
+                                  {contBlock});
+                    out_.addEdge(outerBlock, contBlock);
+                    phiOps.push_back(it->second);
+                    break;
+                }
+                default:
+                    return;  // unhandled — canSpliceMultiBlock should
+                             // have rejected
+                }
+            }
+        }
+        // Build merge phi.  Order matches contBlock.predecessors order
+        // which matches phiOps insertion order (one addEdge per return).
+        currentBlock_ = contBlock;
+        resultId = out_.newValue(contBlock, Op::kPhi, Type::kOop,
+                                  std::move(phiOps));
+    }
+
     // there's exactly one block with both values in it.  Anything more
     // complex still bails to the unspeculated send.
     bool tryInlineConstReturn(uint32_t nArgs, uint32_t bcOffset) {
@@ -6053,6 +6243,42 @@ private:
                 }
                 g_calleeLiftDepth--;
                 if (ir != LiftResult::kOk) return false;
+                // Phase-4 leaf 2: multi-block linear splice.  When inner
+                // has > 1 block (e.g. `^ flag ifTrue: [a] ifFalse: [b]`)
+                // and contains no sends/stores/guards/NLR, copy inner's
+                // block graph into outer with substituted operands and
+                // merge returns via kPhi.  Try this BEFORE the single-
+                // block shape recognizers below — when applicable it
+                // closes the entire ifTrue:/ifFalse: gap that
+                // shape-based handlers can't see.
+                if (innerIR.blocks.size() > 1) {
+                    uint32_t outerArgId =
+                        stack_[stack_.size() - nArgs + tempIdx];
+                    std::vector<uint32_t> innerArgs = {outerArgId};
+                    if (canSpliceMultiBlock(innerIR, innerArgs)) {
+                        // Outer guard (in current block) before the
+                        // splice creates new blocks.
+                        std::vector<uint32_t> mbGuardOps;
+                        mbGuardOps.reserve(stack_.size() + 1);
+                        mbGuardOps.push_back(recvId);
+                        for (uint32_t s : stack_) mbGuardOps.push_back(s);
+                        uint64_t mbGuardLit = (hit->classOop & 0x3FFFFFu)
+                                            | (static_cast<uint64_t>(bcOffset) << 32);
+                        out_.newValue(currentBlock_, Op::kGuardClass,
+                                       Type::kOop,
+                                       std::move(mbGuardOps), mbGuardLit);
+                        uint32_t mbResult = 0;
+                        spliceMultiBlock(innerIR, /*innerRecv=*/recvId,
+                                          innerArgs, mbResult);
+                        // currentBlock_ now = continuation block.
+                        for (uint32_t i = 0; i < nArgs + 1; i++)
+                            stack_.pop_back();
+                        stack_.push_back(mbResult);
+                        g_inlinesEmitted++;
+                        g_totalHintsConsumed++;
+                        return true;
+                    }
+                }
                 // 7-value arith forwarder inner: `^ ivar OP arg`.
                 // Mirror the standalone 7-value handler (line ~6358) but
                 // substitute inner's kLoadTemp(0) with caller's argId.
