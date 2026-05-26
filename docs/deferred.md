@@ -952,17 +952,38 @@ deopt-infrastructure work — multi-session per
    chain commit adds 0-1 emits per bench-suite run; the rejected
    inners that DO have inner-forwarder shape are rare in the
    bench-suite image.
-2. ~~Multi-block linear splice~~ — SHIPPED in `9fc78ded`
-   (Phase-4 leaf 2).  canSpliceMultiBlock/spliceMultiBlock
+2. ~~Multi-block linear splice~~ — SHIPPED in `9fc78ded` +
+   extended in `d99d86f3`.  canSpliceMultiBlock/spliceMultiBlock
    helpers copy inner's block graph into outer with operand
    substitution and merge inner returns via kPhi.  Op whitelist:
    kLoad{Receiver,Arg,Temp,InstVar,True,False}Oop, kConstantOop,
-   kBranch, kBranchIf*, kPhi, kReturn.  Wired into the 3-val
-   forwarder; tried into the 2-val self-forwarder but caused a
-   -1 inline regression (uncommitted revert) so left only at the
-   3-val site for now.  Multi-block inners with sends/stores/
-   guards/NLR/prims still fall through to existing recognizers
-   (need full Phase-4 deopt infra to splice safely).
+   kBranch, kBranchIf*, kPhi, kReturn, kPrimTagCheckInt, kPrim
+   {Add,Sub,Mul,Lt,Le,Gt,Ge,Eq,Neq,IdentityEq,IdentityNeq}Int.
+   For prim ops the splice rewrites deopt-context operands to
+   outer's stack + outer's bcOffset so guard miss / overflow
+   re-runs the un-inlined send.  Wired into the 3-val
+   forwarder; 2-val self-forwarder wiring caused a -1 inline
+   regression (uncommitted revert).  Empirically: `mb-splices=0`
+   on the current bench-suite image because every multi-block
+   inner reaching this handler still ends in kSendUnspeculated
+   (which the splice rejects — see leaf 4 below).
+
+4. **kSendUnspeculated splice** — the next step to make the
+   multi-block infrastructure actually fire.  Requires:
+   - Inner literal-table cross-reference: inner's kSendUnspeculated
+     `literal` packs an inner-relative selector-literal index.
+     Outer's literal table is different.  Either find the selector
+     Oop in outer's existing literals or append it.
+   - Outer-bcOffset rewriting in the send literal (the bc-offset
+     bits track the source send for bail / NLR resume; on splice
+     these need to point at the OUTER send so bail re-runs the
+     outer un-inlined send instead of the inner's).
+   - Depth-bounded recursion (e.g. 2 levels) to avoid exponential
+     code growth, especially for self-recursive callees like
+     benchFib.
+   When this lands, multi-block splice will start firing for
+   forwarder-of-forwarder + ifTrue:/ifFalse: + most idiomatic
+   Smalltalk method bodies.  Estimated 1-2 focused sessions.
 3. Polymorphic site handling — emit multi-way kGuardClass + per-
    class inlined body.  Currently TICR rejects sites where the
    IC observed > 1 receiver class.  Sort/dict bench gaps are
