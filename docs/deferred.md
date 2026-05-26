@@ -1185,6 +1185,38 @@ deopt-infrastructure work — multi-session per
       returning a bool from splice, and the caller skipping
       the inlines-emitted++ + pop/push on failure.
 
+   **Items 1-4 SHIPPED in `55142445`** (topo-order DFS +
+   bool return + safe abort).  bench-suite mb-splices 3→1
+   (two previously-firing splices were emitting broken IR
+   that the new gate now catches), inlines-emitted 116→113;
+   bench numbers within noise.
+
+   **2026-05-26 self-rec splice retry (still crashes,
+   reverted uncommitted)**: re-added the self-rec lifter
+   integration + kLoadLiteral in the splice whitelist (which
+   benchFib needs).  Result: bench-suite shows the literal
+   path firing but **fib(20) under bail-only still crashes**
+   at spliceMultiBlock+2368 dereferencing a bad pointer.
+   So the topo-order fix alone wasn't sufficient — there's
+   ANOTHER bug in the splice's emit pass that doesn't
+   surface for the bench-suite's 3 successful cases.
+
+   Possible remaining issues:
+   - kLoadLiteral cross-method splice emits index that's
+     valid in inner but not outer (need literal cross-ref
+     similar to kSendUnspeculated).  This may corrupt the
+     IR even though the crash is elsewhere.
+   - Block-mapping for blocks with self-edges (loops) —
+     topoOrderBlocks uses post-order DFS which may revisit
+     a block that's already in `visited`.
+   - The splice's addEdge ordering for the continuation
+     block could differ between block-by-block iteration
+     and the source's predecessor enumeration.
+
+   Truly fixing this needs lldb on the spliceMultiBlock
+   crash with a focused repro (just fib(10) under bail-only
+   + self-rec splice).  Multi-session debug.
+
    Revert was uncommitted.  Splice helper is shipped
    (`9fc78ded` + `da595ce4` + `d99d86f3`) and still fires
    for non-self-recursive multi-block inners in the 3-val
