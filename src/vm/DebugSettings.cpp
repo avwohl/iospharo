@@ -450,7 +450,7 @@ DebugSettings::DebugSettings() {
     sistaInjectResumeForceBail       = envPresent("PHARO_SISTA_INJECT_RESUME_FORCE_BAIL");
     sistaInlineDbg                   = envPresent("PHARO_SISTA_INLINE_DBG");
     sistaInlineDump                  = envPresent("PHARO_SISTA_INLINE_DUMP");
-    sistaInlinePoly                  = envPresent("PHARO_SISTA_INLINE_POLY");
+    sistaInlinePoly                  = !envPresent("PHARO_NO_SISTA_INLINE_POLY");
     sistaInlineSelf                  = envPresent("PHARO_SISTA_INLINE_SELF");
     sistaInlineStats                 = envPresent("PHARO_SISTA_INLINE_STATS");
     sistaInvariantCheck              = envPresent("PHARO_SISTA_INVARIANT_CHECK");

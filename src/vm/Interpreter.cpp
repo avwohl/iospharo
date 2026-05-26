@@ -18959,22 +18959,24 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
             else break;
         }
         sista::Builder::recordPolyDegree(polyDegree);
-        // Phase 5 Step 2 (2026-04-29): under PHARO_SISTA_INLINE_POLY,
-        // emit a hint for the dominant entry of polymorphic sites too.
-        // The existing kGuardClass + inline path handles dominant-class
+        // Polymorphic hint emit: under PHARO_SISTA_INLINE_POLY (now
+        // default-on as of 2026-05-26), emit a hint for the dominant
+        // (= first observed) entry of polymorphic sites too.  The
+        // existing kGuardClass + inline path handles dominant-class
         // hits and bails to interp on alt-class (where T1's full IC
         // routes correctly).  Net: dominant class fast-paths into
-        // compiled code; cold-tail invocations cost the same deopt
+        // compiled code; alt-class invocations cost the same deopt
         // they cost today (when the whole site bailed unspeculated).
-        // Gated behind PHARO_SISTA_INLINE_POLY=1 for soak.
         //
-        // Default-on attempt 2026-04-29 hit a dict 50K regression
-        // (154→176, +14%) even with a degree ≤ 3 cap.  Issue: the
-        // IC's first entry isn't actually the most-frequently-hit
-        // class — it's just the first observed.  Guard misses pay
-        // deopt cost per miss.  Real fix needs hit-count tracking
-        // per IC entry to identify the *actual* dominant class.
-        // Until then, leave opt-in.
+        // History: a default-on attempt 2026-04-29 hit a dict 50K
+        // regression (154→176, +14%) and was reverted to opt-in.
+        // Re-validated 2026-05-26 — regression no longer reproduces
+        // (likely fixed downstream by IC promotion default-flip /
+        // other Sista lowering improvements); A/B shows POLY=1 is
+        // flat-to-slightly-better on dict, no regressions elsewhere.
+        // Revert via PHARO_NO_SISTA_INLINE_POLY=1.  The "dominant ==
+        // first observed" concern remains architecturally true, but
+        // empirically the bench-suite delta is acceptable.
         bool emit = (classKey0 != 0
                      && (classKey1 == 0 || g_debug.sistaInlinePoly));
         if (emit) {

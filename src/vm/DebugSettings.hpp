@@ -512,7 +512,7 @@ struct DebugSettings {
     bool sistaInjectResumeForceBail = false;       // PHARO_SISTA_INJECT_RESUME_FORCE_BAIL
     bool sistaInlineDbg = false;                   // PHARO_SISTA_INLINE_DBG
     bool sistaInlineDump = false;                  // PHARO_SISTA_INLINE_DUMP
-    bool sistaInlinePoly = false;                  // PHARO_SISTA_INLINE_POLY
+    bool sistaInlinePoly = true;                   // default-on 2026-05-26; PHARO_NO_SISTA_INLINE_POLY=1 reverts
     bool sistaInlineSelf = false;                  // PHARO_SISTA_INLINE_SELF
     bool sistaInlineStats = false;                 // PHARO_SISTA_INLINE_STATS
     bool sistaInvariantCheck = false;              // PHARO_SISTA_INVARIANT_CHECK
