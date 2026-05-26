@@ -295,6 +295,11 @@ public:
     void setSelfMethodBits(uint64_t bits) {
         selfMethodBits_ = bits;
     }
+    // Set the method's own selector string (for hint-less self-rec
+    // detection — fires when a send's literal selector equals this).
+    void setSelfSelector(std::string sel) {
+        selfSelector_ = std::move(sel);
+    }
 
     LiftResult run(uint32_t* failedAtBytecode) {
         // --- Pre-pass: bytecode-level pattern detection -----------------
@@ -4870,6 +4875,24 @@ private:
                         }
                     }
                 }
+                // Hint-less fallback: if no hint matched and we know
+                // the method's own selector, check whether the send's
+                // literal selector matches.  In principle catches
+                // benchFib-style recursion at FIRST compile (before
+                // T1 IC fills).  In practice over-approximates badly:
+                // a method like `MyClass>>resolve: ... self resolve: ...'
+                // matches even when the inner send dispatches to a
+                // DIFFERENT class's resolve:.  Misclassification
+                // produces correctness bugs (DNU traced in bench-suite
+                // under PHARO_T1_SELF_REC_SPLICE=1 +
+                // PHARO_SISTA_DISPATCH_MULTIBLOCK=1).
+                //
+                // DISABLED until we can verify the send's resolved
+                // target equals selfMethodBits_ (which requires either
+                // hints OR a class-binding lookup at lift time).
+                //
+                // Keeping the setSelfSelector wiring + this code as
+                // documentation for the future fix.
                 if (isSelfRec) {
                     if (g_debug.t1SelfRecSplice
                         && g_calleeLiftDepth < 1
@@ -7809,6 +7832,11 @@ private:
     // detection at send sites).  Set by Builder::build/buildWithHints
     // before run().  Zero means "unknown" — skip self-rec recognition.
     uint64_t selfMethodBits_ = 0;
+    // Selector string for the method being lifted.  Used as a fallback
+    // self-rec detector when inlineHints_ is null (first compile, before
+    // T1 IC fills).  If a Send op's literal selector matches this, treat
+    // the send as a candidate for self-recursive splice.
+    std::string selfSelector_;
     // B2 splice: ObjectMemory used by the peephole's block sub-lift.
     // Set by Builder::build so we don't have to use the global.
     ObjectMemory*          memory_ = nullptr;
@@ -8030,6 +8058,18 @@ static bool readSpecialSelectorArgCounts(ObjectMemory& memory,
 LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
                            Method& out, uint32_t* failedAtBytecode) {
     if (!compiledMethod.isObject()) return LiftResult::kMalformedMethod;
+    // Ensure g_currentBuildMemory is non-null even on the no-hints
+    // path so the hint-less self-rec fallback (which needs to probe-
+    // lift the callee via Builder::build) can fire.  Outer
+    // buildWithHints / buildPerBC already set this when hints are
+    // present; this RAII wrapper covers the plain build() entry too.
+    struct BuildMemRAII {
+        ObjectMemory* prev;
+        BuildMemRAII(ObjectMemory& m) : prev(g_currentBuildMemory) {
+            if (!g_currentBuildMemory) g_currentBuildMemory = &m;
+        }
+        ~BuildMemRAII() { g_currentBuildMemory = prev; }
+    } buildMemRAII(memory);
 
     ObjectHeader* mh = compiledMethod.asObjectPtr();
     if (!mh->isCompiledMethod()) return LiftResult::kMalformedMethod;
@@ -8198,6 +8238,14 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     // jit-84 B1: pass methodOop bits so the send lifter can recognise
     // self-recursive sites via inline hints.
     l.setSelfMethodBits(compiledMethod.rawBits());
+    // Hint-less self-rec fallback: pass the method's own selector
+    // string.  When inline hints are absent (first compile before T1
+    // IC fills), Send opcodes whose literal selector matches this
+    // string get treated as self-rec candidates.
+    {
+        std::string sel = memory.selectorOf(compiledMethod);
+        if (!sel.empty()) l.setSelfSelector(std::move(sel));
+    }
     LiftResult res = l.run(failedAtBytecode);
     if (res == LiftResult::kOk) narrowTempTypes(out);
     return res;
