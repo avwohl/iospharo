@@ -1254,17 +1254,33 @@ deopt-infrastructure work — multi-session per
    ifFalse: [(self - 1) benchFib + (self - 2) benchFib]`
    bytecode prefix — every byte is in the V1 spec.
 
-   So the lifter rejection isn't because of malformed bytes
-   or unsupported ops; it's some state-of-the-world check
-   that fires for the top-level call but passes for the
-   recursive-from-splice call.  Likely candidates to bisect
-   under lldb:
-   - `g_currentBuildHints` / `g_currentBuildMemory` being
-     non-null at the wrong moment.
-   - `g_buildStartBcOffset` being non-zero.
-   - `g_inPerBcBuild` being true.
-   - Some side effect in `inlineHints_` mask computation
-     during lifter setup (e.g. literal scanning).
+   **State diff isolated 2026-05-26**: added a
+   `[LIFTER-RUN-FAIL]` trace at `LinearLifter::run` failure
+   site (since reverted) that dumped all globals.  All
+   matched (depth=0, inPerBc=0, startBc=0, subLiftBR=0,
+   memPtr non-null in both paths) EXCEPT `hintsPtr`:
+   - Top-level (lift fails): `hintsPtr=0x16f01cfa8`
+     (non-null — buildWithHints set the global before calling
+     build).
+   - Splice's recursive (lift succeeds): `hintsPtr=nullptr`
+     (cleared by `ClearOuterHints cg;`).
+
+   **So having inline hints active during the lift causes
+   benchFib's lift to return kMalformedMethod.**  This is
+   the real next-step issue: somewhere in the lifter, the
+   hint-active code path rejects benchFib's bytecodes.
+
+   Next investigative step: bisect which kMalformedMethod
+   return site fires when hints are non-null for benchFib.
+   The 38 `return LiftResult::kMalformedMethod;` sites in
+   SistaBuilder.cpp can be instrumented with a `__LINE__`
+   trace; an `awk` regex-replace was prototyped but hit
+   namespace-linkage friction (file uses anonymous
+   namespace).  Move the trace global to file-level
+   `static` inside the namespace, regenerate the trace
+   hooks, and re-run to identify the failing site.  Then
+   that site's logic explains why benchFib's lift rejects
+   when hints are active.
 
    Revert was uncommitted.  Splice helper is shipped
    (`9fc78ded` + `da595ce4` + `d99d86f3`) and still fires
