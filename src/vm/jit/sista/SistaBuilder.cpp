@@ -4875,24 +4875,32 @@ private:
                         }
                     }
                 }
-                // Hint-less fallback: if no hint matched and we know
-                // the method's own selector, check whether the send's
-                // literal selector matches.  In principle catches
-                // benchFib-style recursion at FIRST compile (before
-                // T1 IC fills).  In practice over-approximates badly:
-                // a method like `MyClass>>resolve: ... self resolve: ...'
-                // matches even when the inner send dispatches to a
-                // DIFFERENT class's resolve:.  Misclassification
-                // produces correctness bugs (DNU traced in bench-suite
-                // under PHARO_T1_SELF_REC_SPLICE=1 +
-                // PHARO_SISTA_DISPATCH_MULTIBLOCK=1).
-                //
-                // DISABLED until we can verify the send's resolved
-                // target equals selfMethodBits_ (which requires either
-                // hints OR a class-binding lookup at lift time).
-                //
-                // Keeping the setSelfSelector wiring + this code as
-                // documentation for the future fix.
+                // Hint-less fallback (narrow, opt-in): when
+                // PHARO_T1_SELF_REC_SPLICE_HINTLESS=1, detect self-rec
+                // via selector-string equality.  Over-approximates:
+                // a different class's same-named selector also
+                // matches, producing miscompiles for code like
+                // `MyClass>>resolve: ... self resolve: ...' when the
+                // inner send actually dispatches via subclass IC to a
+                // different method.  Default-OFF (env opt-in) because
+                // the bench-suite reliably hits DNUs without further
+                // narrowing.
+                if (!isSelfRec
+                    && g_debug.t1SelfRecSpliceHintless
+                    && !selfSelector_.empty()
+                    && g_calleeLiftDepth == 0
+                    && selIdx < out_.literals.size()) {
+                    Oop selOop = out_.literals[selIdx];
+                    if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                        ObjectHeader* sh = selOop.asObjectPtr();
+                        if (sh->isBytesObject() && sh->byteSize() < 80) {
+                            std::string s((char*)sh->bytes(), sh->byteSize());
+                            if (s == selfSelector_) {
+                                isSelfRec = true;
+                            }
+                        }
+                    }
+                }
                 if (isSelfRec) {
                     if (g_debug.t1SelfRecSplice
                         && g_calleeLiftDepth < 1
