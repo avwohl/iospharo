@@ -5650,6 +5650,105 @@ private:
                     return false;
                 }
             }
+            // 2-value arg-forwarder: kLoadTemp + kSendUnspeculated.
+            // Callee body is `^ arg foo` — push temp N, 0-arg send terminates
+            // lifting (no kReturn).  Inline: outer guard on caller's recv
+            // class (per outer hint), inner guard on caller's arg[N]'s
+            // class (per inner hint), then inline inner const-return body.
+            // Top unrecognized shape pre-2026-05-26 (69 instances per
+            // bench-suite SISTA-UNRECOG dump).
+            else if (v0.op == Op::kLoadTemp
+                  && v1.op == Op::kSendUnspeculated
+                  && !v1.operands.empty() && v1.operands[0] == v0.id) {
+                if (!g_hintProvider) return false;
+                uint32_t tempIdx = static_cast<uint32_t>(v0.literal);
+                if (tempIdx >= nArgs) return false;
+                uint32_t innerNArgs = (uint32_t)((v1.literal >> 16) & 0xFF);
+                uint32_t innerBcOff = (uint32_t)(v1.literal >> 24);
+                if (innerNArgs != 0) return false;  // 0-arg send
+                std::vector<InlineHint> innerHints =
+                    g_hintProvider(calleeOop);
+                const InlineHint* innerHit = nullptr;
+                for (const auto& ih : innerHints) {
+                    if (ih.bcOffset == innerBcOff) {
+                        innerHit = &ih; break;
+                    }
+                }
+                if (!innerHit) return false;
+                if (innerHit->targetMethod == 0) return false;
+                if ((innerHit->targetMethod & 0x7) != 0) return false;
+                if (innerHit->targetMethod < 0x10000) return false;
+                if (innerHit->classOop == 0) return false;
+                Method innerIR;
+                uint32_t innerFailedAt = UINT32_MAX;
+                Oop innerOop = Oop::fromRawBits(innerHit->targetMethod);
+                g_calleeLiftDepth++;
+                LiftResult ir;
+                {
+                    ClearOuterHints g;
+                    ir = Builder::build(innerOop,
+                        *g_currentBuildMemory, innerIR, &innerFailedAt);
+                }
+                g_calleeLiftDepth--;
+                if (ir != LiftResult::kOk) return false;
+                if (innerIR.values.size() != 2) return false;
+                const Value& iv0 = innerIR.values[0];
+                const Value& iv1 = innerIR.values[1];
+                if (iv1.op != Op::kReturn) return false;
+                if (iv1.operands.size() != 1
+                    || iv1.operands[0] != iv0.id) return false;
+                // Inner const-return: kLoad{True,False,ConstantOop} only.
+                // kLoadReceiver (inner returns its own rcvr = arg) handled
+                // below as a special case to avoid a redundant emit.
+                Op  innerInlineOp;
+                Type innerInlineTy;
+                uint64_t innerInlineLit = 0;
+                bool innerIsRecvPassthrough = false;
+                switch (iv0.op) {
+                case Op::kLoadTrueOop:  innerInlineOp = Op::kLoadTrueOop;
+                                        innerInlineTy = Type::kOopBool; break;
+                case Op::kLoadFalseOop: innerInlineOp = Op::kLoadFalseOop;
+                                        innerInlineTy = Type::kOopBool; break;
+                case Op::kConstantOop:  innerInlineOp = Op::kConstantOop;
+                                        innerInlineTy = Type::kOop;
+                                        innerInlineLit = iv0.literal; break;
+                case Op::kLoadReceiver: innerIsRecvPassthrough = true;
+                                        innerInlineOp = Op::kLoadReceiver;
+                                        innerInlineTy = Type::kOop; break;
+                default: return false;
+                }
+                uint32_t argId = stack_[stack_.size() - nArgs + tempIdx];
+                std::vector<uint32_t> outerGuardOps;
+                outerGuardOps.reserve(stack_.size() + 1);
+                outerGuardOps.push_back(recvId);
+                for (uint32_t s : stack_) outerGuardOps.push_back(s);
+                uint64_t outerGuardLit = (hit->classOop & 0x3FFFFFu)
+                                       | (static_cast<uint64_t>(bcOffset) << 32);
+                out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                              std::move(outerGuardOps), outerGuardLit);
+                std::vector<uint32_t> innerGuardOps;
+                innerGuardOps.reserve(stack_.size() + 1);
+                innerGuardOps.push_back(argId);
+                for (uint32_t s : stack_) innerGuardOps.push_back(s);
+                uint64_t innerGuardLit = (innerHit->classOop & 0x3FFFFFu)
+                                       | (static_cast<uint64_t>(bcOffset) << 32);
+                out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                              std::move(innerGuardOps), innerGuardLit);
+                uint32_t resultId;
+                if (innerIsRecvPassthrough) {
+                    resultId = argId;
+                } else {
+                    resultId = out_.newValue(currentBlock_,
+                                              innerInlineOp,
+                                              innerInlineTy,
+                                              {}, innerInlineLit);
+                }
+                for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+                stack_.push_back(resultId);
+                g_inlinesEmitted++;
+                g_totalHintsConsumed++;
+                return true;
+            }
             else {
                 recordUnrecognizedShape(calleeIR);
                 return false;
