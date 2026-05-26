@@ -4877,24 +4877,77 @@ private:
                 }
                 // Hint-less fallback (narrow, opt-in): when
                 // PHARO_T1_SELF_REC_SPLICE_HINTLESS=1, detect self-rec
-                // via selector-string equality.  Over-approximates:
-                // a different class's same-named selector also
-                // matches, producing miscompiles for code like
-                // `MyClass>>resolve: ... self resolve: ...' when the
-                // inner send actually dispatches via subclass IC to a
-                // different method.  Default-OFF (env opt-in) because
-                // the bench-suite reliably hits DNUs without further
-                // narrowing.
+                // when BOTH:
+                //   - the send's literal selector equals the method's
+                //     own selector (selfSelector_)
+                //   - the receiver IR value is kLoadReceiver (i.e. the
+                //     send was `self ...`, not `<other> ...`)
+                // The receiver-IR check narrows the over-approximation
+                // from "any same-selector send" to "self-selector sends
+                // only".  For sends like `aFileLocator resolve:` where
+                // the receiver is a captured temp/var, the receiver
+                // value is kLoadTemp / kLoadInstVar, so the fallback
+                // skips it.  Without this narrowing, the fallback
+                // produced #resolve: DNU in bench-suite startup.
+                // Hintless fallback: narrow detection of self-rec when
+                // hints are unavailable.  Requires:
+                //   - selector string matches the method's own selector
+                //   - receiver IR value is kLoadReceiver OR kPrimAddInt/
+                //     SubInt/MulInt where one operand is kLoadReceiver
+                //     (e.g., `(self - 1) ...` pattern)
+                // Both narrowings together prevent the over-
+                // approximation DNUs observed in earlier iterations.
+                //
+                // EVEN WITH the receiver narrowing, the splice currently
+                // breaks pass-1's block enumeration when it fires inside
+                // a bytecode-defined block that has downstream fall-
+                // throughs to other blocks (benchFib's structure with
+                // two recursive sends + arith + ReturnTop in the same
+                // block).  Pass-1 enumerates Block 3 (the return)
+                // expecting Block 2 as a predecessor, but spliceMultiBlock
+                // replaced Block 2's terminator with a branch to
+                // contBlock — leaving Block 3's predecessor list stale
+                // and pass-3 lifting fails at the return bytecode.
+                //
+                // Until splice/pass-1 alignment is fixed (next leaf),
+                // this fallback is wired but DISABLED at the gate.
+                bool hintlessFallbackEnabled = false;  // see comment
                 if (!isSelfRec
+                    && hintlessFallbackEnabled
                     && g_debug.t1SelfRecSpliceHintless
                     && !selfSelector_.empty()
                     && g_calleeLiftDepth == 0
+                    && stack_.size() >= nArgs + 1
                     && selIdx < out_.literals.size()) {
+                    uint32_t rcvrVid = stack_[stack_.size() - nArgs - 1];
+                    bool rcvrIsSafe = false;
+                    if (rcvrVid < out_.values.size()) {
+                        Op rop = out_.values[rcvrVid].op;
+                        if (rop == Op::kLoadReceiver) {
+                            rcvrIsSafe = true;
+                        } else if (rop == Op::kPrimAddInt
+                                || rop == Op::kPrimSubInt
+                                || rop == Op::kPrimMulInt) {
+                            const Value& av = out_.values[rcvrVid];
+                            for (size_t oi = 0; oi < 2 && oi < av.operands.size(); oi++) {
+                                uint32_t opVid = av.operands[oi];
+                                if (opVid < out_.values.size()
+                                    && out_.values[opVid].op
+                                        == Op::kLoadReceiver) {
+                                    rcvrIsSafe = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                     Oop selOop = out_.literals[selIdx];
-                    if (selOop.isObject() && selOop.rawBits() > 0x10000) {
+                    if (rcvrIsSafe
+                        && selOop.isObject()
+                        && selOop.rawBits() > 0x10000) {
                         ObjectHeader* sh = selOop.asObjectPtr();
                         if (sh->isBytesObject() && sh->byteSize() < 80) {
-                            std::string s((char*)sh->bytes(), sh->byteSize());
+                            std::string s((char*)sh->bytes(),
+                                          sh->byteSize());
                             if (s == selfSelector_) {
                                 isSelfRec = true;
                             }
