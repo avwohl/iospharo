@@ -1154,6 +1154,37 @@ deopt-infrastructure work — multi-session per
    - The continuation block's kPhi operand ordering for the
      spliced returns.
 
+   **Root cause identified 2026-05-26 (post-analysis)**:
+   benchFib's IR contains a `kPhi` (op 0x3a) that merges the
+   then-branch (return 1) and the false-branch (recursive
+   computation).  My splice processes innerIR.blocks in their
+   storage order, which is NOT guaranteed to be dominator
+   order — when the phi-containing block is processed BEFORE
+   one of its branch blocks, the phi's operand (which
+   references a value in the unprocessed branch) isn't in
+   `idMap` yet, and the `if (it == idMap.end()) return;`
+   early-return silently exits splice with the IR in a
+   half-emitted state.  Caller proceeds with garbage
+   `mbResult`, lowering produces broken machine code,
+   runtime dereferences a bad pointer.
+
+   Fix sketch for the next attempt:
+   1. Pre-compute a topological order of innerIR.blocks
+      (entry first, then any block whose ALL predecessors
+      are already in the order).  Blocks with backward edges
+      (loops) won't fit a simple topo order — use a reverse
+      post-order DFS instead.
+   2. Process blocks in topo order in spliceMultiBlock.
+   3. The continuation block's predecessors get added in
+      the order we hit returns, which preserves the existing
+      phi operand mapping.
+   4. Add an EMIT-SIDE assert in spliceMultiBlock: if any
+      operand lookup fails, log the inner block id + value
+      id + missing operand id, then ABORT the splice cleanly
+      (caller falls back to kSendInlineSelf).  Requires
+      returning a bool from splice, and the caller skipping
+      the inlines-emitted++ + pop/push on failure.
+
    Revert was uncommitted.  Splice helper is shipped
    (`9fc78ded` + `da595ce4` + `d99d86f3`) and still fires
    for non-self-recursive multi-block inners in the 3-val
