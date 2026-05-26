@@ -242,6 +242,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // worth its overhead even if other sends in the same method are
     // unspeculated.  Opt-out: PHARO_SISTA_STRICT_SEND_NO_SPLICE=1.
     if (hasSend && !hasSplice && !hasInlinedSend
+        && !(m.hasMultiBlockSplice && g_debug.sistaDispatchMultiBlock)
         && !g_debug.sistaCompileBailOnly) {
         g_sistaBail_sendNoSplice++;
         cache_[key] = nullptr;

@@ -558,6 +558,7 @@ struct DebugSettings {
     bool t1SistaDispatchAllow = false;             // PHARO_T1_SISTA_DISPATCH_ALLOW
     bool t1TraceEmit = false;                      // PHARO_T1_TRACE_EMIT
     bool t1SelfRecSplice = false;                  // PHARO_T1_SELF_REC_SPLICE
+    bool sistaDispatchMultiBlock = false;          // PHARO_SISTA_DISPATCH_MULTIBLOCK
     bool t2X86Log = false;                         // PHARO_T2_X86_LOG
     bool t2X86Trace = false;                       // PHARO_T2_X86_TRACE
     bool t2Strict = false;                         // PHARO_T2 strict =1 form (JITRuntime)

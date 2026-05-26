@@ -523,6 +523,13 @@ struct Method {
     // runtime sp).  Populated by Builder::build after pass 2.
     std::vector<std::pair<uint32_t, uint32_t>> dispatchableBlocks;
 
+    // Set by spliceMultiBlock when it fires.  Tells SistaRuntime::
+    // compile that this method's IR contains a beneficial multi-
+    // block inline expansion worth dispatching, so the
+    // "hasSend && !hasSplice" send-no-splice bail (which negative-
+    // caches the method) is SKIPPED for it.
+    bool hasMultiBlockSplice = false;
+
     // ===== Building helpers =====
     // Append a new block; returns its id.  Predecessor/successor links
     // are set up by addEdge().

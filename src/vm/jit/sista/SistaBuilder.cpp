@@ -4909,6 +4909,7 @@ private:
                                     g_totalSendsLifted++;
                                     g_inlinesEmitted++;
                                     g_multiBlockSplices++;
+                                    out_.hasMultiBlockSplice = true;
                                     ip++;
                                     continue;
                                 }
@@ -6579,6 +6580,11 @@ private:
                         stack_.push_back(mbResult);
                         g_inlinesEmitted++;
                         g_multiBlockSplices++;
+                        // NOTE: do NOT set hasMultiBlockSplice here.  TICR's
+                        // splice is for non-self-recursive monomorphic
+                        // sites; the dispatched-fn correctness fix is only
+                        // needed for the self-recursive case (where the
+                        // splice can save N levels of activation cost).
                         g_totalHintsConsumed++;
                         return true;
                     }
