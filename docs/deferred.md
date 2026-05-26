@@ -1297,6 +1297,32 @@ deopt-infrastructure work — multi-session per
    `PHARO_SISTA_COMPILE_BAIL_ONLY=1 PHARO_T1_SELF_REC_SPLICE=1
    PHARO_SISTA_VERBOSE=1 PHARO_BENCH=fib PHARO_FIB_N=10`.
 
+   **2026-05-26 deeper investigation**: the synthetic
+   `src_bc=-1` blocks in the failure trace are created by
+   `spliceMultiBlock` ITSELF, not by the lifter's pass 5
+   loader pseudo-blocks.  The splice creates new outer
+   blocks (mapping inner block ids), then a continuation
+   block, but never sets `outgoingStack` on those synthetic
+   outer blocks.  Pass 4 then can't wire the continuation
+   block's kPhi because the splice's return-branch blocks
+   have empty outgoingStack.
+
+   Attempted fix: set `outgoingStack` on each splice block
+   (return-branches get `{return_value}`, non-return blocks
+   get the remapped inner outgoingStack).  Result: Sista
+   compile of benchFib now SUCCEEDS, but **the spliced code
+   returns WRONG results** — fib(10) = 63 instead of 177.
+   So the splice's IR has runtime correctness bugs beyond
+   the outgoingStack tracking.  Reverted.
+
+   The splice infrastructure needs deeper review: the
+   inner IR's semantics (kPhi merging the two recursive-
+   call results into the addition) aren't being preserved
+   when copied into the outer's blocks.  Possibly the inner
+   kPhi's operands point to spliced values that ARE in
+   idMap but in a way that produces the wrong merge.
+   Genuine multi-session debug.
+
    Revert was uncommitted.  Splice helper is shipped
    (`9fc78ded` + `da595ce4` + `d99d86f3`) and still fires
    for non-self-recursive multi-block inners in the 3-val
