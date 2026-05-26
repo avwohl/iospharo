@@ -4864,6 +4864,53 @@ private:
                     }
                 }
                 if (isSelfRec) {
+                    if (g_debug.t1SelfRecSplice
+                        && g_calleeLiftDepth < 1
+                        && g_currentBuildMemory != nullptr) {
+                        Method selfBody;
+                        uint32_t selfFailedAt = UINT32_MAX;
+                        Oop selfOop = Oop::fromRawBits(selfMethodBits_);
+                        g_calleeLiftDepth++;
+                        LiftResult selfLr;
+                        {
+                            ClearOuterHints cg;
+                            selfLr = Builder::build(selfOop,
+                                *g_currentBuildMemory,
+                                selfBody, &selfFailedAt);
+                        }
+                        g_calleeLiftDepth--;
+                        if (selfLr == LiftResult::kOk
+                            && stack_.size() >= nArgs + 1) {
+                            uint32_t recvId =
+                                stack_[stack_.size() - nArgs - 1];
+                            std::vector<uint32_t> innerArgs;
+                            innerArgs.reserve(nArgs);
+                            for (uint32_t i = 0; i < nArgs; i++) {
+                                innerArgs.push_back(
+                                    stack_[stack_.size() - nArgs + i]);
+                            }
+                            if (canSpliceMultiBlock(selfBody, innerArgs)) {
+                                for (uint32_t i = 0; i < nArgs + 1; i++)
+                                    stack_.pop_back();
+                                std::vector<uint32_t> outerDeoptStack = stack_;
+                                uint32_t mbResult = 0;
+                                bool ok = spliceMultiBlock(selfBody,
+                                    recvId, innerArgs,
+                                    outerDeoptStack, bcOffset, mbResult);
+                                if (ok) {
+                                    stack_.push_back(mbResult);
+                                    g_totalSendsLifted++;
+                                    g_inlinesEmitted++;
+                                    g_multiBlockSplices++;
+                                    ip++;
+                                    continue;
+                                }
+                                // Restore stack for kSendInlineSelf fallback.
+                                for (uint32_t i = 0; i < nArgs + 1; i++)
+                                    stack_.push_back(0);
+                            }
+                        }
+                    }
                     // Mirror the kSendCallHelper emit path: pop only
                     // rcvr+args, push result, continue lifting.
                     std::vector<uint32_t> deoptStack = stack_;
@@ -5527,6 +5574,7 @@ private:
             case Op::kConstantOop:
             case Op::kLoadTrueOop:
             case Op::kLoadFalseOop:
+            case Op::kLoadLiteral:
             case Op::kBranch:
             case Op::kBranchIfTrue:
             case Op::kBranchIfFalse:
@@ -5690,6 +5738,7 @@ private:
                 case Op::kLoadArg:
                 case Op::kLoadTemp: {
                     uint32_t idx = static_cast<uint32_t>(iv.literal);
+                    if (idx >= innerArgIds.size()) return false;
                     idMap[iv.id] = innerArgIds[idx];
                     break;
                 }
@@ -5717,6 +5766,12 @@ private:
                 case Op::kLoadFalseOop: {
                     uint32_t nid = out_.newValue(outerBlock,
                         Op::kLoadFalseOop, Type::kOopBool, {}, 0);
+                    idMap[iv.id] = nid;
+                    break;
+                }
+                case Op::kLoadLiteral: {
+                    uint32_t nid = out_.newValue(outerBlock,
+                        Op::kLoadLiteral, Type::kOop, {}, iv.literal);
                     idMap[iv.id] = nid;
                     break;
                 }
@@ -5827,11 +5882,13 @@ private:
                     break;
                 }
                 case Op::kBranch: {
-                    // Operand 0 is target block ID (inner-space) —
-                    // remap.
-                    uint32_t tgt = blockMap[iv.operands[0]];
+                    // kBranch carries the target in block.successors[0],
+                    // NOT in iv.operands (lifter emits with empty
+                    // operands).  Remap via blockMap.
+                    if (ib.successors.empty()) return false;
+                    uint32_t tgt = blockMap[ib.successors[0]];
                     out_.newValue(outerBlock, Op::kBranch, Type::kVoid,
-                                  {tgt});
+                                  {});
                     out_.addEdge(outerBlock, tgt);
                     break;
                 }
