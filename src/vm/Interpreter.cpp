@@ -9402,6 +9402,17 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             banner = true;
         }
         attempts++;
+        // Hot-path fast-fail: if Sista has previously cached this
+        // method as nullptr (compile failed for any reason — lift
+        // fail, lower fail, blacklist gate), skip the expensive
+        // extractInlineHintsForMethod + compile() call.  Saves ~30%
+        // on workloads like benchFib that re-activate the same
+        // method hundreds of thousands of times.  Pairs with the
+        // invalidateIfHintless fix in SistaRuntime.hpp that keeps
+        // the negative-cache entry stable across IC patches.
+        if (sista->wasCachedAsFail(method)) {
+            goto past_sista_block;
+        }
         // Phase 4 Step 1: build inline hints from T1's IC info.
         // Pass them to Sista so it can identify monomorphic send
         // sites.  Today only used for the inline-hint stat counters;
