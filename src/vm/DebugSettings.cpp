@@ -173,7 +173,7 @@ DebugSettings::DebugSettings() {
     // root cause — needs lldb-driven investigation).  Warm gate alone
     // is sufficient as the safety net (bench-suite runs cleanly).
     // PHARO_T1_NO_WARM_J2J_GATE=1 disables for fib-specific bench.
-    t1WarmJ2JGate       = !envPresent("PHARO_T1_NO_WARM_J2J_GATE");
+    t1WarmJ2JGate       = envPresent("PHARO_T1_WARM_J2J_GATE");
     t1BailGateTrace     = envPresent("PHARO_T1_BAIL_GATE_TRACE");
     t1BailGateHisto     = t1BailGateTrace
                          || envPresent("PHARO_T1_BAIL_GATE_HISTO");

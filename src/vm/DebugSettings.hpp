@@ -126,7 +126,19 @@ struct DebugSettings {
     // but stays passable for warm prim-only sites that t1PureJ2JGate
     // would bail on for lacking bit 60.  Default-ON.
     // PHARO_T1_NO_WARM_J2J_GATE=1 disables for A-B testing.
-    bool t1WarmJ2JGate = true;
+    // Warm-J2J gate: iterate caller's IC entries at IC HIT and bail
+    // inline-J2J self-rec emit if ANY site has key==0 (cold).  Added
+    // 2026-05-20 (commit 6a550da8) as a safety net for a materialize-
+    // bail wrong-result bug that made fib(N) return fib(N-2) for
+    // N>=17.  Empirically bailed ~96% of fib's IC hits — defeating
+    // inline-J2J entirely.  Repeated correctness check 2026-05-26
+    // (50/50 runs of fib(17..35) all return correct values with gate
+    // OFF) shows the underlying bug was fixed by intervening JIT
+    // commits (likely 2d9da6ee state-sync work + dde2903b null-check
+    // + 38bf9887 splice-driven pass-3 fix).  Flipped to OFF: closes
+    // ~6x of the Cog gap on fib (95ms → 14ms).
+    // Opt-in: PHARO_T1_WARM_J2J_GATE=1 to re-enable.
+    bool t1WarmJ2JGate = false;
     // jit-may20b Step 6.1: per-caller histogram of inline-J2J gate pass/bail.
     // When set, the gate bail and gate pass sites emit a `bl` into
     // jit_rt_bail_gate_log(callerJM, kind).  The helper maintains
