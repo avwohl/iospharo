@@ -1130,11 +1130,39 @@ deopt-infrastructure work — multi-session per
    investigation of what utf8Encoded is supposed to do
    (maybe the Pharo image we're testing is mis-built), or
    (b) leaving sistaCompileBailOnly off-by-default
-   permanently (which is the current state).  The original
-   "fib produces wrong result" issue cited in older docs
-   no longer reproduces, so the gate isn't blocking
-   self-recursive splice for fib — the path is open if a
-   different motivator picks it up.
+   permanently (which is the current state).
+
+   **Self-rec splice retry (2026-05-26, reverted)**: with
+   the bail-only gate now known-correct for fib, re-attempted
+   the self-rec splice at the lifter's isSelfRec site +
+   added kLoadLiteral to canSpliceMultiBlock's whitelist
+   (benchFib's body needs it).  Diagnostics confirmed the
+   splice path fires (canSplice=1, builds the second copy
+   of benchFib's body via Builder::build(selfOop)).  But
+   running fib(10) under PHARO_T1_SELF_REC_SPLICE=1 +
+   PHARO_SISTA_COMPILE_BAIL_ONLY=1 **crashes** —
+   "C function dereferencing a bad pointer".  The spliced
+   IR (block-mapping + self-recursive send handling) has
+   a correctness bug that needs careful investigation.
+
+   The crash is likely in one of:
+   - Block-ID remapping when inner has kPhi nodes
+     (predecessor ordering across the cloned subgraph might
+     not match the source).
+   - The cross-referenced kSendUnspeculated for the inner
+     recursive send (literal index, deopt bcOffset).
+   - The continuation block's kPhi operand ordering for the
+     spliced returns.
+
+   Revert was uncommitted.  Splice helper is shipped
+   (`9fc78ded` + `da595ce4` + `d99d86f3`) and still fires
+   for non-self-recursive multi-block inners in the 3-val
+   forwarder handler.  Re-attempt of self-rec splice
+   should start by adding an IR-validity assertion in
+   spliceMultiBlock (every kBranch target must exist in
+   blockMap, every operand must be in idMap or
+   pre-spliced) to fail fast at compile time rather than
+   crashing in lowered code.
 3. Polymorphic site handling — emit multi-way kGuardClass + per-
    class inlined body.  Currently TICR rejects sites where the
    IC observed > 1 receiver class.  Sort/dict bench gaps are
