@@ -6033,6 +6033,80 @@ private:
                 }
                 // Fall through to common emit (outer guard + inline value).
             }
+            // 3-value 1-arg self-forwarder w/ const arg: kLoadReceiver +
+            // kConstantOop + kSendUnspeculated.  Body `^ self foo: K`.
+            // Inline same as the kLoadTemp variant above (inner rcvr is
+            // self, no inner guard needed because inner class == outer)
+            // but inner can also reference its arg via kLoadTemp(0) —
+            // if so, substitute with the constant K.  4th-most
+            // unrecognized shape (sz=3/02.00.13.00:25).
+            else if (v0.op == Op::kLoadReceiver
+                  && v1.op == Op::kConstantOop
+                  && v2.op == Op::kSendUnspeculated
+                  && v2.operands.size() >= 2
+                  && v2.operands[0] == v0.id
+                  && v2.operands[1] == v1.id) {
+                if (!g_hintProvider) return false;
+                uint32_t innerNArgs = (uint32_t)((v2.literal >> 16) & 0xFF);
+                uint32_t innerBcOff = (uint32_t)(v2.literal >> 24);
+                if (innerNArgs != 1) return false;
+                std::vector<InlineHint> innerHints =
+                    g_hintProvider(calleeOop);
+                const InlineHint* innerHit = nullptr;
+                for (const auto& ih : innerHints) {
+                    if (ih.bcOffset == innerBcOff) {
+                        innerHit = &ih; break;
+                    }
+                }
+                if (!innerHit) return false;
+                if (innerHit->targetMethod == 0) return false;
+                if ((innerHit->targetMethod & 0x7) != 0) return false;
+                if (innerHit->targetMethod < 0x10000) return false;
+                if ((innerHit->classOop & 0x3FFFFFu)
+                    != (hit->classOop & 0x3FFFFFu)) return false;
+                Method innerIR;
+                uint32_t innerFailedAt = UINT32_MAX;
+                Oop innerOop = Oop::fromRawBits(innerHit->targetMethod);
+                g_calleeLiftDepth++;
+                LiftResult ir;
+                {
+                    ClearOuterHints g;
+                    ir = Builder::build(innerOop,
+                        *g_currentBuildMemory, innerIR, &innerFailedAt);
+                }
+                g_calleeLiftDepth--;
+                if (ir != LiftResult::kOk) return false;
+                // Inner shape: either 2-value (const-return) or
+                // 2-value `kLoadTemp(0) + kReturn` (arg passthrough →
+                // result is the const we passed).
+                if (innerIR.values.size() != 2) return false;
+                const Value& iv0 = innerIR.values[0];
+                const Value& iv1 = innerIR.values[1];
+                if (iv1.op != Op::kReturn) return false;
+                if (iv1.operands.size() != 1
+                    || iv1.operands[0] != iv0.id) return false;
+                switch (iv0.op) {
+                case Op::kLoadTrueOop:  inlineOp = Op::kLoadTrueOop;
+                                        inlineTy = Type::kOopBool; break;
+                case Op::kLoadFalseOop: inlineOp = Op::kLoadFalseOop;
+                                        inlineTy = Type::kOopBool; break;
+                case Op::kConstantOop:  inlineOp = Op::kConstantOop;
+                                        inlineTy = Type::kOop;
+                                        inlineLit = iv0.literal; break;
+                case Op::kLoadReceiver: inlineOp = Op::kLoadReceiver;
+                                        inlineTy = Type::kOop; break;
+                case Op::kLoadTemp: {
+                    // `^ arg` — inline value is the constant K we passed.
+                    if (static_cast<uint32_t>(iv0.literal) != 0) return false;
+                    inlineOp = Op::kConstantOop;
+                    inlineTy = Type::kOop;
+                    inlineLit = v1.literal;
+                    break;
+                }
+                default: return false;
+                }
+                // Fall through to common emit (outer guard + inline value).
+            }
             else {
                 recordUnrecognizedShape(calleeIR);
                 return false;
