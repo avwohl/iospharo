@@ -908,6 +908,70 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+31 (Session H, 2026-05-25) — BV-inline default flip + tail-only
+NLR detection.  Commits `4ebd4718..d48e02d3`.**
+
+Closed out an intermittent `ZnByteEncoder class >> #to:do:` DNU at
+`ipOff=23680` with `bvDepth=71` on the side-stack — direct evidence of
+J2JSave/SavedFrame stack divergence when a BV-inlined non-leaf block
+bailed mid-bytecode to interp.
+
+The actual fix was a **flag-default flip** (commit `d48e02d3`), not
+new code:
+
+- `t1InlineBlockValueNonLeaf`: ON → OFF (leaf-only BV inline)
+- `t1NlrTailOnly`: OFF → ON (tail BlockReturnTop alone is safe)
+
+Validated: 20/20 bench-suite pass at default config.  Catch rate
+dropped from 11.8 % (118 hits) to 5.9 % (62 hits), but bench numbers
+are identical — the 56 lost non-leaf inlines were unsafe AND not
+measurably useful.  Pure risk removal.
+
+Opt back into the old unsafe behaviour for repro / measurement with
+`PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1 PHARO_T1_NO_NLR_TAIL_ONLY=1`.
+
+**Phases that did NOT work (landmines marked for next session):**
+
+1. **Full `activateBlock` call** from BV prep — broke 10/10 under
+   `NLR_TAIL_ONLY` because `pushFrame` moves `framePointer_`/
+   `stackPointer_` in ways T1's `state.sp/tempBase` derivations
+   can't compensate for.
+2. **State-only frame push** (save method_/closure_/etc., skip
+   fp/sp updates) — broke 10/10 because interp's `framePointer_`-
+   relative `PushTemp` reads from the wrong slots when interp
+   resumes.
+3. **Restoring `_sv->ip`** in `J2J_INLINE_RETURN` (vs bytecode-start)
+   — no effect; GC walks weren't the leak source.
+4. **`wasBVInline` flag on SavedFrame** + `popFrame` coordination —
+   broke 9/10 because T1's send/return stencils compute `state.sp`
+   from caller-relative offsets that don't account for a
+   savedFrame push, even when interp tracks it correctly.
+
+Common thread: T1 stencils are hardcoded around the caller's
+pre-push stack layout assumption.  Any mid-execution savedFrame push
+disturbs that.  Closing this without modifying every send/return
+stencil isn't possible.
+
+**Remaining open work (multi-week; explicit non-goal for now):**
+
+(a) **Stencil-emit refactor.**  Make T1 send/return stencils
+SavedFrame-aware: compute `state.sp` from a SavedFrame-relative
+offset rather than caller-relative.  Unlocks the lost 56 non-leaf
+BV inlines.  Expected upside is small — those inlines didn't help
+measurably even when running unsafely; the BV inline mechanism's
+per-call overhead already swamps savings for non-leaf blocks.
+
+(b) **Lift BV inlining to Sista IR** where stack coordination
+isn't needed.  Sista's `tryInlineConstReturn` already does this
+for constant-return sends via `kGuardClass + kLoadInstVar` emit.
+Extending it to handle leaf-block bodies (no sends, just
+push/load + BlockReturnTop) would inline the block's body
+directly into the caller's Sista IR with no runtime stack
+manipulation.  Closes the same gap without T1 stencil changes.
+
+Snapshot doc: `docs/WIP.md` (Session H).  Sista IC-promotion
+residuals tracked separately in `docs/sista-ic-promotion-plan.md`.
+
 **Iter N+30 (2026-05-20) — CORRECTNESS BUG in asmjit-T1 inline-J2J
 SELF_REC path.**
 

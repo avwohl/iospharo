@@ -1,23 +1,26 @@
-# Work In Progress — Session H (2026-05-25)
+# Session H — closed 2026-05-25
 
-Snapshot of in-flight JIT work.  Memory file with the deeper
-analysis: `memory/project_blocks_never_run_in_t1.md`.
+Closeout record for the JIT BV-inline default-flip session.
+Open deferred items now tracked in `docs/deferred.md` §A6
+iter N+31.  Deeper analysis + landmines in
+`memory/project_blocks_never_run_in_t1.md`.
 
 ## What landed
 
 Eight commits (`4ebd4718..d48e02d3`) addressing the
 "blocks never run in T1" gap:
 
-| Commit | Effect |
-|--------|--------|
-| `4ebd4718` | docs: Eβ verified-inactive — root cause was block JIT compile failures |
-| `2293e035` | `PHARO_T1_NLR_TAIL_ONLY` flag (default-OFF originally) |
-| `8395fe5e` | extend the flag to also guard 0xF9/0xFA (nested-closure-creating blocks) |
-| `fd149f82` | closure side-stack: BV prep sets `closure_=block`, paired pop on J2J return |
-| `5fbb2e68` | move side-stack into Interpreter so `forEachRoot` walks it (GC safety) |
-| `b059fb8f` | also pop the BV closure side-stack from `JITRuntime`'s fast-path return |
-| `8ee0cbc7` | cleanup guard at `tryJITActivation` exit drains leaked saves |
-| `d48e02d3` | **DEFAULT FLAG FLIP — the actual fix** |
+```
+commit     effect
+4ebd4718   docs: Eβ verified-inactive — root cause was block JIT compile failures
+2293e035   PHARO_T1_NLR_TAIL_ONLY flag (default-OFF originally)
+8395fe5e   extend the flag to also guard 0xF9/0xFA (nested-closure-creating blocks)
+fd149f82   closure side-stack: BV prep sets closure_=block, paired pop on J2J return
+5fbb2e68   move side-stack into Interpreter so forEachRoot walks it (GC safety)
+b059fb8f   also pop the BV closure side-stack from JITRuntime's fast-path return
+8ee0cbc7   cleanup guard at tryJITActivation exit drains leaked saves
+d48e02d3   *** DEFAULT FLAG FLIP — the actual fix ***
+```
 
 Sista IC-promotion work earlier in the session
 (`562548ee..3a09e2f4`): hint shifting + SpecialSend TICR +
@@ -133,8 +136,20 @@ the corruption or benchmark the lost inlines):
 
 ## References
 
-- `memory/project_blocks_never_run_in_t1.md` — full investigative
-  arc with phase-by-phase failures and signatures.
+- `docs/deferred.md` §A6 iter N+31 — open deferred items
+  (stencil-emit refactor + Sista IR splice options).
+- `memory/project_blocks_never_run_in_t1.md` — phase-by-phase
+  failure landmines + signatures for future sessions.
 - `memory/project_sista_ic_promotion_bench_gap.md` — Sista-side
   IC promotion work (separate but related).
-- Commits `4ebd4718..d48e02d3` for the BV inline arc.
+- Commits `4ebd4718..d48e02d3` for the BV inline arc;
+  `562548ee..3a09e2f4` for the Sista IC-promotion sub-thread.
+
+## Session-complete checklist
+
+- [x] Default flag flip shipped (`d48e02d3`).
+- [x] 20/20 bench-suite passing at default config.
+- [x] Open items moved to `docs/deferred.md` §A6 iter N+31.
+- [x] Landmines captured in memory file.
+- [x] WIP doc closed out — no further edits expected for
+      Session H.
