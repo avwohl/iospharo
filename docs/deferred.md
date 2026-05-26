@@ -1254,33 +1254,48 @@ deopt-infrastructure work — multi-session per
    ifFalse: [(self - 1) benchFib + (self - 2) benchFib]`
    bytecode prefix — every byte is in the V1 spec.
 
-   **State diff isolated 2026-05-26**: added a
-   `[LIFTER-RUN-FAIL]` trace at `LinearLifter::run` failure
-   site (since reverted) that dumped all globals.  All
-   matched (depth=0, inPerBc=0, startBc=0, subLiftBR=0,
-   memPtr non-null in both paths) EXCEPT `hintsPtr`:
-   - Top-level (lift fails): `hintsPtr=0x16f01cfa8`
-     (non-null — buildWithHints set the global before calling
-     build).
-   - Splice's recursive (lift succeeds): `hintsPtr=nullptr`
-     (cleared by `ClearOuterHints cg;`).
+   **State diff isolated 2026-05-26**: the only differing
+   global is `hintsPtr` — non-null in the top-level
+   (`buildWithHints`) path that fails, null in the splice's
+   recursive (`ClearOuterHints`) path that succeeds.  So
+   having inline hints active during the lift causes
+   benchFib's lift to return `kMalformedMethod`.
 
-   **So having inline hints active during the lift causes
-   benchFib's lift to return kMalformedMethod.**  This is
-   the real next-step issue: somewhere in the lifter, the
-   hint-active code path rejects benchFib's bytecodes.
+   **Exact failure site nailed 2026-05-26**: instrumented
+   all 38 `return LiftResult::kMalformedMethod;` sites with
+   `__LINE__` traces (via an `awk` injection + a
+   file-scope `s_sistaLifterFailLine` accessor function to
+   bridge the anonymous-namespace linkage).  The failure
+   for benchFib + hints fires at **SistaBuilder.cpp:3168**
+   in **Pass 4 — wire phi operands**:
 
-   Next investigative step: bisect which kMalformedMethod
-   return site fires when hints are non-null for benchFib.
-   The 38 `return LiftResult::kMalformedMethod;` sites in
-   SistaBuilder.cpp can be instrumented with a `__LINE__`
-   trace; an `awk` regex-replace was prototyped but hit
-   namespace-linkage friction (file uses anonymous
-   namespace).  Move the trace global to file-level
-   `static` inside the namespace, regenerate the trace
-   hooks, and re-run to identify the failing site.  Then
-   that site's logic explains why benchFib's lift rejects
-   when hints are active.
+   ```cpp
+   if (slotIdx >= pb.outgoingStack.size()) {
+       // Predecessor didn't supply this slot.  Pass 3
+       // should have caught this, but guard anyway.
+       ...
+       return LiftResult::kMalformedMethod;
+   }
+   ```
+
+   So when wiring phi operands for benchFib's merge block,
+   one of its predecessors has FEWER `outgoingStack` slots
+   than the phi expects.  The hint-active lifter takes a
+   code path during pass-3 lifting (probably emitting
+   `kSendInlineSelf` instead of `kSendUnspeculated` for the
+   recursive sends) that leaves the outgoing stack short
+   for that predecessor.
+
+   **Next concrete fix**: in pass 3's per-block lifter,
+   when emitting `kSendInlineSelf` (or whichever
+   hint-active op replaces a regular send), make sure the
+   block's `outgoingStack` retains the same depth as the
+   non-hinted path would have produced.  Likely the
+   inlined-send doesn't push its result onto stack_ before
+   the block terminator runs, leaving the outgoing depth
+   off-by-one vs the phi block's expectation.  Repro:
+   `PHARO_SISTA_COMPILE_BAIL_ONLY=1 PHARO_T1_SELF_REC_SPLICE=1
+   PHARO_SISTA_VERBOSE=1 PHARO_BENCH=fib PHARO_FIB_N=10`.
 
    Revert was uncommitted.  Splice helper is shipped
    (`9fc78ded` + `da595ce4` + `d99d86f3`) and still fires
