@@ -6066,43 +6066,147 @@ private:
             const Value& v1 = calleeIR.values[1];
             const Value& v2 = calleeIR.values[2];
             const Value& v3 = calleeIR.values[3];
-            if (v0.op != Op::kLoadTemp) {
-                // Size==4 but not the setter shape — record so the
-                // histogram surfaces the non-setter 4-value patterns.
-                recordUnrecognizedShape(calleeIR);
-                return false;
-            }
-            if (v1.op != Op::kLoadReceiver) return false;
-            if (v2.op != Op::kStoreInstVar) return false;
-            if (v2.operands.size() != 2) return false;
-            if (v2.operands[0] != v1.id || v2.operands[1] != v0.id) return false;
-            if (v3.op != Op::kReturn) return false;
-            if (v3.operands.size() != 1 || v3.operands[0] != v0.id) return false;
-            uint32_t tempIdx4 = static_cast<uint32_t>(v0.literal);
-            if (tempIdx4 >= nArgs) return false;
-            if (stack_.size() < nArgs + 1) return false;
-            uint32_t argId = stack_[stack_.size() - nArgs + tempIdx4];
+            if (v0.op == Op::kLoadTemp
+             && v1.op == Op::kLoadReceiver
+             && v2.op == Op::kStoreInstVar
+             && v2.operands.size() == 2
+             && v2.operands[0] == v1.id && v2.operands[1] == v0.id
+             && v3.op == Op::kReturn
+             && v3.operands.size() == 1 && v3.operands[0] == v0.id) {
+                uint32_t tempIdx4 = static_cast<uint32_t>(v0.literal);
+                if (tempIdx4 >= nArgs) return false;
+                if (stack_.size() < nArgs + 1) return false;
+                uint32_t argId = stack_[stack_.size() - nArgs + tempIdx4];
 
-            std::vector<uint32_t> setterGuardOps;
-            setterGuardOps.reserve(stack_.size() + 1);
-            setterGuardOps.push_back(recvId);
-            for (uint32_t s : stack_) setterGuardOps.push_back(s);
-            uint64_t setterGuardLit = (hit->classOop & 0x3FFFFFu)
-                                    | (static_cast<uint64_t>(bcOffset) << 32);
-            out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
-                          std::move(setterGuardOps), setterGuardLit);
-            // Mark inline-emitted store with bit 63 so SistaLowering
-            // takes the helper-invoke path (immutability + bounds +
-            // barrier-aware store).  Bytecode-emitted kStoreInstVar
-            // (popStoreRcv*) leaves bit 63 clear and stays SAFETY-BAILed.
-            out_.newValue(currentBlock_, Op::kStoreInstVar, Type::kVoid,
-                          /*operands=*/{recvId, argId},
-                          /*literal=*/(v2.literal | (1ULL << 63)));
-            for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-            stack_.push_back(argId);  // returns the assigned value
-            g_inlinesEmitted++;
-            g_totalHintsConsumed++;
-            return true;
+                std::vector<uint32_t> setterGuardOps;
+                setterGuardOps.reserve(stack_.size() + 1);
+                setterGuardOps.push_back(recvId);
+                for (uint32_t s : stack_) setterGuardOps.push_back(s);
+                uint64_t setterGuardLit = (hit->classOop & 0x3FFFFFu)
+                                        | (static_cast<uint64_t>(bcOffset) << 32);
+                out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                              std::move(setterGuardOps), setterGuardLit);
+                // Mark inline-emitted store with bit 63 so SistaLowering
+                // takes the helper-invoke path (immutability + bounds +
+                // barrier-aware store).  Bytecode-emitted kStoreInstVar
+                // (popStoreRcv*) leaves bit 63 clear and stays SAFETY-BAILed.
+                out_.newValue(currentBlock_, Op::kStoreInstVar, Type::kVoid,
+                              /*operands=*/{recvId, argId},
+                              /*literal=*/(v2.literal | (1ULL << 63)));
+                for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+                stack_.push_back(argId);  // returns the assigned value
+                g_inlinesEmitted++;
+                g_totalHintsConsumed++;
+                return true;
+            }
+            // 4-value ivar-forwarder w/ const arg: kLoadReceiver +
+            // kLoadInstVar + kConstantOop + kSendUnspeculated.  Body is
+            // `^ self ivar foo: K` — load ivar, push literal, 1-arg send
+            // to the ivar.  Inline: outer guard on caller's recv, load
+            // ivar, inner guard on ivar's class (per inner hint), inline
+            // inner const-return body.  Restriction: inner body must not
+            // reference its arg (kLoadTemp absent).
+            // Third-most unrecognized shape (sz=4/02.0b.00.13:37).
+            if (v0.op == Op::kLoadReceiver
+             && v1.op == Op::kLoadInstVar
+             && v1.operands.size() == 1 && v1.operands[0] == v0.id
+             && v2.op == Op::kConstantOop
+             && v3.op == Op::kSendUnspeculated
+             && v3.operands.size() >= 2
+             && v3.operands[0] == v1.id
+             && v3.operands[1] == v2.id) {
+                if (!g_hintProvider) return false;
+                uint32_t innerNArgs = (uint32_t)((v3.literal >> 16) & 0xFF);
+                uint32_t innerBcOff = (uint32_t)(v3.literal >> 24);
+                if (innerNArgs != 1) return false;
+                std::vector<InlineHint> innerHints =
+                    g_hintProvider(calleeOop);
+                const InlineHint* innerHit = nullptr;
+                for (const auto& ih : innerHints) {
+                    if (ih.bcOffset == innerBcOff) {
+                        innerHit = &ih; break;
+                    }
+                }
+                if (!innerHit) return false;
+                if (innerHit->targetMethod == 0) return false;
+                if ((innerHit->targetMethod & 0x7) != 0) return false;
+                if (innerHit->targetMethod < 0x10000) return false;
+                if (innerHit->classOop == 0) return false;
+                Method innerIR;
+                uint32_t innerFailedAt = UINT32_MAX;
+                Oop innerOop = Oop::fromRawBits(innerHit->targetMethod);
+                g_calleeLiftDepth++;
+                LiftResult ir;
+                {
+                    ClearOuterHints g;
+                    ir = Builder::build(innerOop,
+                        *g_currentBuildMemory, innerIR, &innerFailedAt);
+                }
+                g_calleeLiftDepth--;
+                if (ir != LiftResult::kOk) return false;
+                // Reject inner shapes that reference the arg.
+                for (const auto& iv : innerIR.values) {
+                    if (iv.op == Op::kLoadTemp) return false;
+                }
+                Op  innerInlineOp;
+                Type innerInlineTy;
+                uint64_t innerInlineLit = 0;
+                if (innerIR.values.size() == 2) {
+                    const Value& iv0 = innerIR.values[0];
+                    const Value& iv1 = innerIR.values[1];
+                    if (iv1.op != Op::kReturn) return false;
+                    if (iv1.operands.size() != 1
+                        || iv1.operands[0] != iv0.id) return false;
+                    switch (iv0.op) {
+                    case Op::kLoadTrueOop:  innerInlineOp = Op::kLoadTrueOop;
+                                            innerInlineTy = Type::kOopBool; break;
+                    case Op::kLoadFalseOop: innerInlineOp = Op::kLoadFalseOop;
+                                            innerInlineTy = Type::kOopBool; break;
+                    case Op::kConstantOop:  innerInlineOp = Op::kConstantOop;
+                                            innerInlineTy = Type::kOop;
+                                            innerInlineLit = iv0.literal; break;
+                    default: return false;
+                    }
+                } else {
+                    return false;
+                }
+                // Emit: outer guard on rcvr, load ivar, inner guard on ivar,
+                // inner const-return value.
+                std::vector<uint32_t> outerGuardOps;
+                outerGuardOps.reserve(stack_.size() + 1);
+                outerGuardOps.push_back(recvId);
+                for (uint32_t s : stack_) outerGuardOps.push_back(s);
+                uint64_t outerGuardLit = (hit->classOop & 0x3FFFFFu)
+                                       | (static_cast<uint64_t>(bcOffset) << 32);
+                out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                              std::move(outerGuardOps), outerGuardLit);
+                uint32_t ivarId = out_.newValue(currentBlock_,
+                                                 Op::kLoadInstVar,
+                                                 Type::kOop,
+                                                 {recvId},
+                                                 v1.literal);
+                std::vector<uint32_t> innerGuardOps;
+                innerGuardOps.reserve(stack_.size() + 1);
+                innerGuardOps.push_back(ivarId);
+                for (uint32_t s : stack_) innerGuardOps.push_back(s);
+                uint64_t innerGuardLit = (innerHit->classOop & 0x3FFFFFu)
+                                       | (static_cast<uint64_t>(bcOffset) << 32);
+                out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                              std::move(innerGuardOps), innerGuardLit);
+                uint32_t resultId = out_.newValue(currentBlock_,
+                                                   innerInlineOp,
+                                                   innerInlineTy,
+                                                   {}, innerInlineLit);
+                for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+                stack_.push_back(resultId);
+                g_inlinesEmitted++;
+                g_totalHintsConsumed++;
+                return true;
+            }
+            // Size==4 but not a known shape — record so the histogram
+            // surfaces other 4-value patterns.
+            recordUnrecognizedShape(calleeIR);
+            return false;
         } else if (calleeIR.values.size() == 5) {
             // See PHARO_SISTA_NO_INLINE_SETTERS gate above (4-value
             // branch); same default-on rationale applies here.
