@@ -3078,16 +3078,30 @@ public:
 
         // --- Pass 3: lift each block ---------------------------------
         //
-        // Blocks are processed in offset (= id) order.  Short jumps
-        // are forward-only, so every predecessor has a lower id than
-        // its successors — i.e. by the time we lift block B, all of
-        // B's predecessors have their `outgoingStack` populated from
-        // their terminators.
+        // Pass-2 blocks are processed in offset (= id) order.  Short
+        // jumps are forward-only at the bytecode level, so every
+        // pass-2 predecessor has a lower id than its successors.
+        //
+        // Splice complication: spliceMultiBlock (and similar mid-lift
+        // helpers) can create NEW blocks during pass-3.  Those have
+        // ids HIGHER than the current pass-2 block but are lifted
+        // BEFORE pass-3 moves on to the next pass-2 block.  In
+        // particular, the splice's final contBlock becomes the
+        // predecessor of the next pass-2 block (replacing the
+        // original fall-through edge).
+        //
+        // To handle both cases uniformly we track `blockLifted`
+        // explicitly instead of using `pred >= blockId` as a backward-
+        // edge heuristic.  A pass-2 block iteration marks {blockId,
+        // currentBlock_} as lifted on exit — currentBlock_ may differ
+        // from blockId when a splice fired and left the lifter
+        // emitting into the splice's tail contBlock.
         //
         // For blocks with non-empty entry stack (= predecessor
         // outgoing stack of length N > 0), we pre-create N phi
         // values at the block's head.  The phi operands are wired up
         // in pass 4 once every block's outgoingStack is known.
+        std::vector<bool> blockLifted(out_.blocks.size(), false);
         for (auto& kv : offsetToBlock) {
             size_t blockStart = kv.first;
             uint32_t blockId  = kv.second;
@@ -3108,15 +3122,16 @@ public:
             }
 
             // Determine entry stack depth from FORWARD predecessors
-            // (blocks with lower id, already lifted).  Backward
-            // predecessors (loops) aren't lifted yet and their
-            // outgoingStack is empty — skip them here.  Pass 4's phi
-            // wiring validates that their outgoing depth matches this
-            // block's entry depth.
+            // (already-lifted).  Backward predecessors (loops to
+            // later pass-2 blocks not yet processed) aren't lifted
+            // yet and their outgoingStack is empty — skip them here.
+            // Pass 4's phi wiring validates that their outgoing
+            // depth matches this block's entry depth.
             size_t entryDepth = 0;
             bool haveDepth = false;
             for (uint32_t pred : thisBlock.predecessors) {
-                if (pred >= blockId) continue;  // backward edge — validate later
+                if (pred >= blockLifted.size() || !blockLifted[pred])
+                    continue;
                 const Block& pb = out_.blockAt(pred);
                 if (!haveDepth) {
                     entryDepth = pb.outgoingStack.size();
@@ -3141,10 +3156,16 @@ public:
                                            failedAtBytecode);
             if (r != LiftResult::kOk) return r;
 
-            // Record outgoing stack for phi wiring.  The lifter may
-            // have left values on stack_ at a branch terminator; at
-            // returns / sends stack_ ends up empty.
-            out_.blocks[blockId].outgoingStack = stack_;
+            // Record outgoing stack for phi wiring.  After a splice,
+            // currentBlock_ may be the splice's tail contBlock rather
+            // than blockId — the lifter's final stack_ belongs to
+            // currentBlock_, which is what later pass-2 blocks read
+            // as their predecessor's outgoingStack.
+            if (blockLifted.size() < out_.blocks.size())
+                blockLifted.resize(out_.blocks.size(), false);
+            out_.blocks[currentBlock_].outgoingStack = stack_;
+            blockLifted[blockId] = true;
+            blockLifted[currentBlock_] = true;
         }
 
         // --- Pass 4: wire phi operands ---------------------------------
@@ -4898,25 +4919,20 @@ private:
                 // Both narrowings together prevent the over-
                 // approximation DNUs observed in earlier iterations.
                 //
-                // EVEN WITH the receiver narrowing, the splice currently
-                // breaks pass-1's block enumeration when it fires inside
-                // a bytecode-defined block that has downstream fall-
-                // throughs to other blocks (benchFib's structure with
-                // two recursive sends + arith + ReturnTop in the same
-                // block).  Pass-1 enumerates Block 3 (the return)
-                // expecting Block 2 as a predecessor, but spliceMultiBlock
-                // replaced Block 2's terminator with a branch to
-                // contBlock — leaving Block 3's predecessor list stale
-                // and pass-3 lifting fails at the return bytecode.
-                //
-                // Until splice/pass-1 alignment is fixed (next leaf),
-                // this fallback is wired but DISABLED at the gate.
-                bool hintlessFallbackEnabled = false;  // see comment
+                // The pass-3 outgoingStack-tracking fix (set on
+                // currentBlock_ rather than blockId, and use a
+                // blockLifted set for the entryDepth check) lets the
+                // splice fire correctly inside bytecode-defined blocks
+                // that fall through to downstream pass-2 blocks (e.g.,
+                // benchFib's Block 2 = recursive computation that
+                // falls through to Block 3 = ReturnTop).  The
+                // hint-less fallback is now enabled by default.
+                bool hintlessFallbackEnabled = true;
                 if (!isSelfRec
                     && hintlessFallbackEnabled
                     && g_debug.t1SelfRecSpliceHintless
                     && !selfSelector_.empty()
-                    && g_calleeLiftDepth == 0
+                    && g_calleeLiftDepth < g_debug.t1SelfRecSpliceDepth
                     && stack_.size() >= nArgs + 1
                     && selIdx < out_.literals.size()) {
                     uint32_t rcvrVid = stack_[stack_.size() - nArgs - 1];
@@ -4956,7 +4972,7 @@ private:
                 }
                 if (isSelfRec) {
                     if (g_debug.t1SelfRecSplice
-                        && g_calleeLiftDepth < 1
+                        && g_calleeLiftDepth < g_debug.t1SelfRecSpliceDepth
                         && g_currentBuildMemory != nullptr) {
                         Method selfBody;
                         uint32_t selfFailedAt = UINT32_MAX;
