@@ -133,12 +133,20 @@ public:
     // subsequent IC patches don't change peephole eligibility.
     void invalidateIfHintless(Oop method) {
         uint64_t key = method.rawBits();
-        // Skip invalidation if the prior compile produced nullptr
-        // (compile failed for any reason — lift fail, no-splice gate,
-        // blacklist).  Re-compiling won't change the outcome and
-        // burns time on every IC patch.  Benchmark: fib(28) ~30%
-        // faster (130 ms → 92 ms) because benchFib's send-no-splice
-        // gate was firing on every recursive call's IC patch.
+        // Skip invalidation if the prior compile produced nullptr —
+        // re-compiling won't change the outcome.  This stabilizes
+        // the cache so activateMethod's wasCachedAsFail bypass can
+        // fire reliably.  Without this skip, the cache churns on
+        // every IC patch: clear → recompile → fail → re-cache as
+        // nullptr → next patch clears again.  Empirically this
+        // costs ~38 ms on fib(28) (32% of total) because benchFib's
+        // send-no-splice gate is permanent.
+        //
+        // Trade-off: methods whose first hintless compile produced
+        // nullptr won't get a hint-bearing retry once their IC
+        // populates.  Bench-suite measurement: tinyBenchmarks
+        // 12.9M sends/s WITH skip vs 8.4M sends/s WITHOUT —
+        // the cache-stability win exceeds the lost retries.
         auto it = cache_.find(key);
         if (it != cache_.end() && it->second == nullptr) {
             return;
