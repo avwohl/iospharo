@@ -2494,7 +2494,16 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // audit 2026-04-26).  CodeZone::allocate has already alloc'd
     // jitMethod->stats and zeroed it; bump the depth limit here.
     if (jitMethod->stats) {
-        jitMethod->stats->j2jDepthLimit = 2;  // Start conservative; adapts up on clean runs
+        // Start at max (8).  Originally started at 2 and adapted up via
+        // j2jCleanRuns counter (commit 7e3dc5cc et al.), but the warm-J2J
+        // gate flip (commit da4bafd0) made inline-J2J fire on every IC
+        // hit; deep recursion (e.g. benchFib) needs the full 8 slots
+        // immediately or it bails to the slower rj2j chain too often.
+        // The bail path on overflow falls back to the standard inline-
+        // spec dispatch which then re-enters via the chain loop — same
+        // safety as the adaptive path.  Opt-down via env var if a
+        // workload regresses (not currently wired).
+        jitMethod->stats->j2jDepthLimit = 8;
     }
 
     // Set up IC data pointers for send sites. The IC data lives at the end
