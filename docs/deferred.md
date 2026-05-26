@@ -1318,10 +1318,50 @@ deopt-infrastructure work — multi-session per
    The splice infrastructure needs deeper review: the
    inner IR's semantics (kPhi merging the two recursive-
    call results into the addition) aren't being preserved
-   when copied into the outer's blocks.  Possibly the inner
-   kPhi's operands point to spliced values that ARE in
-   idMap but in a way that produces the wrong merge.
-   Genuine multi-session debug.
+   when copied into the outer's blocks.
+
+   **2026-05-26 deeper trace**: tested fib at multiple
+   sizes with the splice firing and outgoingStack fixes
+   applied:
+
+   ```
+   n=3  → 5    (correct: benchFib(3) = 5)
+   n=5  → 11   (WRONG: should be 15)
+   n=7  → 23   (WRONG: should be 41)
+   n=10 → 63   (WRONG: should be 177)
+   n=15 → 383  (WRONG: should be 1973)
+   ```
+
+   The base-case-only path (n=3, 1 level of recursion)
+   works.  Deeper recursion produces wrong-but-deterministic
+   results.  The error grows non-trivially (not just
+   off-by-one or missing +1).
+
+   Likely root cause: when the splice's `currentBlock_` is
+   set to `contBlock` and the outer lifter continues
+   lifting subsequent bytecodes, pass 3's end-of-block
+   `out_.blocks[blockId].outgoingStack = stack_` assigns
+   the wrong block.  blockId is the ORIGINAL outer block
+   the lifter started in; stack_ now reflects contBlock's
+   contents.  So outer-X gets contBlock's outgoing, and
+   contBlock keeps the {resultId} from the splice — but
+   the lifter's outer-X→contBlock branching wasn't
+   explicit, so block flow is confused.
+
+   The splice's interaction with the outer lifter's block
+   management is fundamentally broken for cases where the
+   splice fires mid-block (with more bytecodes to lift
+   after the spliced call).  Either:
+   1. Restructure splice to only fire when the spliced
+      call is the LAST send in the outer block (no outer
+      continuation needed).
+   2. Or restructure to make the outer lifter aware of
+      the new currentBlock_ so it tracks block transitions
+      correctly.
+
+   Both are substantial changes.  Self-recursive splice
+   for fib remains unblocked but requires more careful
+   integration work.
 
    Revert was uncommitted.  Splice helper is shipped
    (`9fc78ded` + `da595ce4` + `d99d86f3`) and still fires
