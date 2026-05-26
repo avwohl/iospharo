@@ -5540,6 +5540,10 @@ private:
             case Op::kPrimIdentityNeq:
                 if (iv.operands.size() < 2) return false;
                 break;
+            case Op::kSendUnspeculated:
+                // Need at least the receiver in operands.
+                if (iv.operands.empty()) return false;
+                break;
             case Op::kReturn:
                 if (iv.operands.size() != 1) return false;
                 sawReturn = true;
@@ -5548,7 +5552,17 @@ private:
                 return false;
             }
         }
-        return sawReturn;
+        if (sawReturn) return true;
+        // No explicit kReturn — accept if ANY block ends in
+        // kSendUnspeculated (lifter omits trailing kReturn when the
+        // method body is `^ <send>`).  The send result becomes the
+        // method's return value (synthesized at splice emit time).
+        for (const auto& ib : innerIR.blocks) {
+            if (ib.values.empty()) continue;
+            const Value& lastVal = innerIR.values[ib.values.back()];
+            if (lastVal.op == Op::kSendUnspeculated) return true;
+        }
+        return false;
     }
 
     // Emit the multi-block splice.  Pre: canSpliceMultiBlock returned
@@ -5585,6 +5599,19 @@ private:
 
         std::unordered_map<uint32_t, uint32_t> idMap;
         std::vector<uint32_t> phiOps;  // values flowing into contBlock
+        // Pre-scan: identify any block whose terminator is a trailing
+        // kSendUnspeculated (the lifter omits the explicit kReturn in
+        // `^ <send>` bodies).  After emitting that block we synthesize
+        // a kReturn-equivalent — kBranch to contBlock + record the
+        // send's result for the merge phi.
+        std::unordered_map<uint32_t, uint32_t> implicitReturnSendId;
+        for (const auto& ib : innerIR.blocks) {
+            if (ib.values.empty()) continue;
+            const Value& lastVal = innerIR.values[ib.values.back()];
+            if (lastVal.op == Op::kSendUnspeculated) {
+                implicitReturnSendId[ib.id] = lastVal.id;
+            }
+        }
         // Process inner blocks in their original order so predecessor
         // ordering inside the cloned subgraph matches the source
         // (preserves any kPhi operand ordering inside inner).
@@ -5689,6 +5716,52 @@ private:
                     idMap[iv.id] = nid;
                     break;
                 }
+                case Op::kSendUnspeculated: {
+                    // Substitute rcvr + args; cross-reference inner's
+                    // selector into out_'s literal table; rewrite the
+                    // send literal to use the outer selector index +
+                    // outer bcOffset (so a bail re-runs the OUTER send
+                    // in interp).  nArgs stays the same.
+                    uint32_t innerSelIdx =
+                        static_cast<uint32_t>(iv.literal & 0xFFFFu);
+                    uint32_t nArgs =
+                        static_cast<uint32_t>((iv.literal >> 16) & 0xFFu);
+                    if (innerSelIdx >= innerIR.literals.size()) return;
+                    if (iv.operands.size() != nArgs + 1) return;
+                    Oop selector = innerIR.literals[innerSelIdx];
+                    // Find or append in out_.literals.
+                    uint32_t outerSelIdx = UINT32_MAX;
+                    for (size_t i = 0; i < out_.literals.size(); i++) {
+                        if (out_.literals[i].rawBits()
+                            == selector.rawBits()) {
+                            outerSelIdx = static_cast<uint32_t>(i);
+                            break;
+                        }
+                    }
+                    if (outerSelIdx == UINT32_MAX) {
+                        outerSelIdx =
+                            static_cast<uint32_t>(out_.literals.size());
+                        out_.literals.push_back(selector);
+                    }
+                    // Substitute operands.
+                    std::vector<uint32_t> sops;
+                    sops.reserve(iv.operands.size());
+                    for (uint32_t inOp : iv.operands) {
+                        auto it = idMap.find(inOp);
+                        if (it == idMap.end()) return;
+                        sops.push_back(it->second);
+                    }
+                    uint64_t newLit =
+                          (static_cast<uint64_t>(outerSelIdx) & 0xFFFFu)
+                        | ((static_cast<uint64_t>(nArgs) & 0xFFu) << 16)
+                        | ((static_cast<uint64_t>(outerDeoptBcOffset)
+                             & 0xFFFFFFFFu) << 24);
+                    uint32_t nid = out_.newValue(outerBlock,
+                        Op::kSendUnspeculated, Type::kOop,
+                        std::move(sops), newLit);
+                    idMap[iv.id] = nid;
+                    break;
+                }
                 case Op::kBranch: {
                     // Operand 0 is target block ID (inner-space) —
                     // remap.
@@ -5726,6 +5799,17 @@ private:
                     return;  // unhandled — canSpliceMultiBlock should
                              // have rejected
                 }
+            }
+            // If this block ends in an implicit-return send, branch to
+            // contBlock and record the send's mapped value for the phi.
+            auto retIt = implicitReturnSendId.find(ib.id);
+            if (retIt != implicitReturnSendId.end()) {
+                auto vit = idMap.find(retIt->second);
+                if (vit == idMap.end()) return;
+                out_.newValue(outerBlock, Op::kBranch, Type::kVoid,
+                              {contBlock});
+                out_.addEdge(outerBlock, contBlock);
+                phiOps.push_back(vit->second);
             }
         }
         // Build merge phi.  Order matches contBlock.predecessors order
