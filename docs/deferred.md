@@ -946,16 +946,30 @@ deopt-infrastructure work — multi-session per
 
 **Concrete next-step leaves** (ordered by leverage):
 
-1. Recursive const-return chain splice (depth-bounded) — handles
-   the ~70 % forwarder-of-forwarder case without full kInlineSend
-   lowering.  Uses existing TICR machinery recursively.
+1. ~~Recursive const-return chain splice (depth-bounded)~~ —
+   SHIPPED in `876488ee` (2-val) + `3fec7aa4` (3-val).  Required
+   bumping `g_calleeLiftDepth` limit 2 → 3 in `8fff7f20`.  Each
+   chain commit adds 0-1 emits per bench-suite run; the rejected
+   inners that DO have inner-forwarder shape are rare in the
+   bench-suite image.
 2. Multi-block linear splice (no phi) for callees like
    `^ cond ifTrue: [...] ifFalse: [...]` — common in `=`, `<`,
-   `hash` overrides.
+   `hash` overrides.  Requires `Method::newBlock()` plumbing
+   inside TICR to emit multi-block IR (the existing handlers all
+   emit single-block).  This is the next bounded leaf.
 3. Polymorphic site handling — emit multi-way kGuardClass + per-
    class inlined body.  Currently TICR rejects sites where the
    IC observed > 1 receiver class.  Sort/dict bench gaps are
    dominated by polymorphic #<, #=, #hash dispatch.
+
+Phase-4 arith inner support landed in `06b23be7` — 3-val outer
++ 7-val arith inner (kPrimTagCheckInt + kPrim*Int with deopt
+context derived from outer stack).  First TICR pattern to emit
+inner ops with deopt operands.  The substitution+deopt model
+demonstrated there is the template for the multi-block splice.
+
+`81c03c49` ships the kLoadLiteral variant of the kConstantOop
+arg-forwarder.
 
 **Iter N+33 (Session H follow-up, 2026-05-26) — TICR forwarder-pattern
 inlining gap identified.**
