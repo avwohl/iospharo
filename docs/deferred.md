@@ -1191,31 +1191,31 @@ deopt-infrastructure work — multi-session per
    that the new gate now catches), inlines-emitted 116→113;
    bench numbers within noise.
 
-   **2026-05-26 self-rec splice retry (still crashes,
-   reverted uncommitted)**: re-added the self-rec lifter
-   integration + kLoadLiteral in the splice whitelist (which
-   benchFib needs).  Result: bench-suite shows the literal
-   path firing but **fib(20) under bail-only still crashes**
-   at spliceMultiBlock+2368 dereferencing a bad pointer.
-   So the topo-order fix alone wasn't sufficient — there's
-   ANOTHER bug in the splice's emit pass that doesn't
-   surface for the bench-suite's 3 successful cases.
+   **SHIPPED 2026-05-26 in `6207680a`** — root cause was a
+   one-line bug: `case Op::kBranch: ... iv.operands[0]`
+   indexed an EMPTY vector because the lifter emits kBranch
+   with no operands (target lives in block.successors[0]).
+   Fixing that + adding kLoadLiteral to the splice whitelist
+   made fib(10/20/28) produce correct results under
+   `PHARO_T1_SELF_REC_SPLICE=1 PHARO_SISTA_COMPILE_BAIL_ONLY=1`.
 
-   Possible remaining issues:
-   - kLoadLiteral cross-method splice emits index that's
-     valid in inner but not outer (need literal cross-ref
-     similar to kSendUnspeculated).  This may corrupt the
-     IR even though the crash is elsewhere.
-   - Block-mapping for blocks with self-edges (loops) —
-     topoOrderBlocks uses post-order DFS which may revisit
-     a block that's already in `visited`.
-   - The splice's addEdge ordering for the continuation
-     block could differ between block-by-block iteration
-     and the source's predecessor enumeration.
+   But fib(28) timing matches baseline (131-132 ms) because
+   `[SISTA] hits=0` for benchFib — the runtime dispatch
+   isn't using Sista's compiled fn even though the splice
+   fires at compile time.
 
-   Truly fixing this needs lldb on the spliceMultiBlock
-   crash with a focused repro (just fib(10) under bail-only
-   + self-rec splice).  Multi-session debug.
+6. **Sista dispatch for self-recursive methods** — the next
+   concrete leaf to actually close fib's 40× gap.  The splice
+   builds the unrolled IR at compile time but `hits=0`
+   reports the runtime never enters Sista's compiled fn for
+   benchFib.  Likely causes: dispatch hook checks a SISTA_BIT
+   that's never set for self-recursive methods, or the IC
+   path takes precedence over Sista's fn lookup.  Diagnostic
+   recipe: run `PHARO_T1_SELF_REC_SPLICE=1
+   PHARO_SISTA_COMPILE_BAIL_ONLY=1 PHARO_SISTA_VERBOSE=1
+   PHARO_BENCH=fib PHARO_FIB_N=10` and trace what happens
+   when benchFib gets invoked (does dispatch even consider
+   Sista's fn?).
 
    Revert was uncommitted.  Splice helper is shipped
    (`9fc78ded` + `da595ce4` + `d99d86f3`) and still fires
