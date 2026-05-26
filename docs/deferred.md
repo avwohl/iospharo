@@ -986,6 +986,40 @@ fib=80, sort=158, dict=221, sum=52, getter=1, alloc=12,
 stringHash=63, collect=65, select=327, tinyBenchmarks=12.95M
 sends/s.
 
+**Iter N+37 (2026-05-26) — explored gating sendNoSplice for
+self-rec splice methods.  ABANDONED, no commit.**
+
+`SistaRuntime::compile` has a "sendNoSplice" bail that
+negative-caches any method with `hasSend && !hasSplice &&
+!hasInlinedSend`.  benchFib (with self-rec splice firing at
+compile time) satisfies the bail: it has kSendUnspeculated for
+its 2 recursive sends, no kCountedLoopDo etc., and no
+kSendInlineSelf (the splice REPLACES the would-be
+kSendInlineSelf).
+
+Added a `hasMultiBlockSplice` flag to `Method`, set it in
+spliceMultiBlock's success path, and bypassed the sendNoSplice
+gate for methods with the flag.  Result: bench-suite stops
+running entirely — Sista's compiled fn for benchFib gets
+dispatched and crashes/hangs in the lowering.
+
+Diagnosis: the lowering doesn't handle the IR pattern that
+spliceMultiBlock produces (synthetic blocks with their own
+phis, mixed with the outer's pass-3 blocks).  Likely missing
+case in IP-dispatch prologue OR phi-slot wiring at lowering
+time.  Reverted (no commit).
+
+**To close fib's remaining 27× gap, the path is:**
+1. Fix the lowering to handle spliceMultiBlock-produced IR
+   for the dispatch case (currently only spliced-then-bail-out
+   works, dispatched-then-run does not).
+2. Add the `hasMultiBlockSplice` gate to sendNoSplice (small).
+3. Verify the dispatched fn produces correct fib values.
+4. Then add N-level recursive unrolling (already in
+   g_calleeLiftDepth — bump from 3 to higher).
+
+Estimated 2-4 sessions if no surprises in (1).
+
 
 **Iter N+34 (Session H follow-up, 2026-05-26) — TICR forwarder
 shape coverage extended; emit count hits diminishing-returns
