@@ -570,17 +570,22 @@ struct DebugSettings {
     bool t1SistaDispatchAllow = false;             // PHARO_T1_SISTA_DISPATCH_ALLOW
     bool t1TraceEmit = false;                      // PHARO_T1_TRACE_EMIT
     // Self-recursive splice: inline a method's own body at its
-    // recursive call sites.  Two-phase detection:
-    //   - TICR hint-driven (preferred): IC inline hint says target =
-    //     current method.  No false positives.
-    //   - Hint-less fallback: matches send selector to method's own
-    //     selector AND requires receiver IR = kLoadReceiver or
-    //     kPrim*Int on receiver.  Catches benchFib's pattern before
-    //     ICs fill.
-    // Default-on (2026-05-26): fib(28) 131→95ms (29% speedup), no
-    // correctness regression.  Opt-out: PHARO_T1_NO_SELF_REC_SPLICE=1.
-    bool t1SelfRecSplice = true;                   // PHARO_T1_NO_SELF_REC_SPLICE
-    bool t1SelfRecSpliceHintless = true;           // PHARO_T1_NO_SELF_REC_SPLICE_HINTLESS
+    // recursive call sites at Sista compile time.
+    //
+    // Default-OFF (2026-05-26).  Initially flipped ON earlier today
+    // to close the fib(28) Cog gap (-29%), but after the warm-J2J
+    // gate flip (same session) the inline-J2J self-rec emit fires
+    // at every IC hit and benchFib runs at 9ms (vs 14ms with splice
+    // ON, vs 30ms Cog).  The splice adds per-call Sista compile +
+    // dispatch overhead that the inline-J2J path doesn't pay.
+    //
+    // Keep the code in tree gated to opt-in (PHARO_T1_SELF_REC_SPLICE=1)
+    // because the splice IR is the foundation for future inline-tail-
+    // call lowering — when kSendInlineSelf gets a direct-call emit
+    // path, splicing the body becomes a profitable transformation.
+    // Until then, the inline-J2J path is faster.
+    bool t1SelfRecSplice = false;                  // PHARO_T1_SELF_REC_SPLICE
+    bool t1SelfRecSpliceHintless = false;          // PHARO_T1_SELF_REC_SPLICE_HINTLESS
     // Number of nested self-recursive splice levels allowed.
     // 1 = single-level (inline one recursive call); 2 = nested
     // (inline a call that itself contains an inlined call).
@@ -588,12 +593,9 @@ struct DebugSettings {
     // values regressed fib(28) at depth >= 3 in measurement.
     int t1SelfRecSpliceDepth = 1;                  // PHARO_T1_SELF_REC_SPLICE_DEPTH
     // Bypass the sendNoSplice negative-cache gate for methods that
-    // emitted a multi-block splice.  Required for the self-rec
-    // splice to actually take effect — without this, the method
-    // would be negative-cached as "send-but-no-splice" and the
-    // splice IR would never dispatch.  Default-on (2026-05-26).
-    // Opt-out: PHARO_NO_SISTA_DISPATCH_MULTIBLOCK=1.
-    bool sistaDispatchMultiBlock = true;           // PHARO_NO_SISTA_DISPATCH_MULTIBLOCK
+    // emitted a multi-block splice.  Paired with t1SelfRecSplice;
+    // both default-off (see t1SelfRecSplice comment).
+    bool sistaDispatchMultiBlock = false;          // PHARO_SISTA_DISPATCH_MULTIBLOCK
     bool t2X86Log = false;                         // PHARO_T2_X86_LOG
     bool t2X86Trace = false;                       // PHARO_T2_X86_TRACE
     bool t2Strict = false;                         // PHARO_T2 strict =1 form (JITRuntime)

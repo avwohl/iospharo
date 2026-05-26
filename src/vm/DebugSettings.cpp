@@ -496,10 +496,10 @@ DebugSettings::DebugSettings() {
     t1NoJ2JTramp                     = envPresent("PHARO_T1_NO_J2J_TRAMP");
     t1SistaDispatchAllow             = envPresent("PHARO_T1_SISTA_DISPATCH_ALLOW");
     t1TraceEmit                      = envPresent("PHARO_T1_TRACE_EMIT");
-    t1SelfRecSplice                  = !envPresent("PHARO_T1_NO_SELF_REC_SPLICE");
-    t1SelfRecSpliceHintless          = !envPresent("PHARO_T1_NO_SELF_REC_SPLICE_HINTLESS");
+    t1SelfRecSplice                  = envPresent("PHARO_T1_SELF_REC_SPLICE");
+    t1SelfRecSpliceHintless          = envPresent("PHARO_T1_SELF_REC_SPLICE_HINTLESS");
     t1SelfRecSpliceDepth             = envInt("PHARO_T1_SELF_REC_SPLICE_DEPTH", 1);
-    sistaDispatchMultiBlock          = !envPresent("PHARO_NO_SISTA_DISPATCH_MULTIBLOCK");
+    sistaDispatchMultiBlock          = envPresent("PHARO_SISTA_DISPATCH_MULTIBLOCK");
     t2X86Log                         = envPresent("PHARO_T2_X86_LOG");
     t2X86Trace                       = envPresent("PHARO_T2_X86_TRACE");
     t2Strict                         = envEq1("PHARO_T2");
