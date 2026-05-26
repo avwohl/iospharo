@@ -634,7 +634,7 @@ public:
     static_assert(sizeof(J2JSave) == 56, "J2JSave should be 56 bytes after reduction");
 #endif
 private:
-    static constexpr int J2JSlotPerEntry = 32;  // max J2J depth per tryJITActivation
+    static constexpr int J2JSlotPerEntry = 64;  // max J2J depth per tryJITActivation
     static constexpr int MaxJ2JPoolSize = 1024; // shared pool across recursive entries
     // Primitive error codes (matching PrimErrTable indices in the image).
     // Index is 1-based and matches Pharo's SpecialObjectsArray slot 52.
