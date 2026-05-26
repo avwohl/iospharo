@@ -6053,7 +6053,101 @@ private:
                 }
                 g_calleeLiftDepth--;
                 if (ir != LiftResult::kOk) return false;
-                // Reject inner shapes that reference the arg.
+                // 7-value arith forwarder inner: `^ ivar OP arg`.
+                // Mirror the standalone 7-value handler (line ~6358) but
+                // substitute inner's kLoadTemp(0) with caller's argId.
+                // Outer guard is emitted via the common fall-through code
+                // below — but the arith ops need their OWN deopt context
+                // (outer.stack + outer.bcOffset), and the final value
+                // here can't use the simple inlineOp pattern (it needs
+                // multiple emits).  So emit everything inline + return
+                // true directly, skipping the common emit.
+                if (innerIR.values.size() == 7) {
+                    if (g_debug.noSistaInlineArithIVar) {
+                        return false;
+                    }
+                    const Value& cv0 = innerIR.values[0];
+                    const Value& cv1 = innerIR.values[1];
+                    const Value& cv2 = innerIR.values[2];
+                    const Value& cv3 = innerIR.values[3];
+                    const Value& cv4 = innerIR.values[4];
+                    const Value& cv5 = innerIR.values[5];
+                    const Value& cv6 = innerIR.values[6];
+                    if (cv0.op != Op::kLoadReceiver) return false;
+                    if (cv1.op != Op::kLoadInstVar
+                        || cv1.operands.size() != 1
+                        || cv1.operands[0] != cv0.id) return false;
+                    if (cv2.op != Op::kLoadTemp
+                        || static_cast<uint32_t>(cv2.literal) != 0) return false;
+                    if (cv3.op != Op::kPrimTagCheckInt
+                        || cv3.operands.empty()
+                        || cv3.operands[0] != cv1.id) return false;
+                    if (cv4.op != Op::kPrimTagCheckInt
+                        || cv4.operands.empty()
+                        || cv4.operands[0] != cv2.id) return false;
+                    if ((cv5.op != Op::kPrimAddInt
+                      && cv5.op != Op::kPrimSubInt
+                      && cv5.op != Op::kPrimMulInt)
+                        || cv5.operands.size() < 2
+                        || cv5.operands[0] != cv1.id
+                        || cv5.operands[1] != cv2.id) return false;
+                    if (cv6.op != Op::kReturn
+                        || cv6.operands.size() != 1
+                        || cv6.operands[0] != cv5.id) return false;
+                    // Caller's arg from outer's stack.
+                    uint32_t callerArgId =
+                        stack_[stack_.size() - nArgs + tempIdx];
+                    // Outer guard on self.
+                    std::vector<uint32_t> outerGuardOps;
+                    outerGuardOps.reserve(stack_.size() + 1);
+                    outerGuardOps.push_back(recvId);
+                    for (uint32_t s : stack_) outerGuardOps.push_back(s);
+                    uint64_t outerGuardLit = (hit->classOop & 0x3FFFFFu)
+                                           | (static_cast<uint64_t>(bcOffset) << 32);
+                    out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                                  std::move(outerGuardOps), outerGuardLit);
+                    // Load ivar from outer recv.
+                    uint32_t ivarId = out_.newValue(currentBlock_,
+                                                     Op::kLoadInstVar,
+                                                     Type::kOop,
+                                                     {recvId},
+                                                     cv1.literal);
+                    // Tag check on ivar.  Deopt context = outer stack;
+                    // deopt resumes at outer bcOffset (so interp re-runs
+                    // the un-inlined send).
+                    std::vector<uint32_t> tagIvarOps;
+                    tagIvarOps.reserve(stack_.size() + 1);
+                    tagIvarOps.push_back(ivarId);
+                    for (uint32_t s : stack_) tagIvarOps.push_back(s);
+                    uint64_t tagDeoptLit =
+                        static_cast<uint64_t>(bcOffset) << 32;
+                    uint32_t ivarChecked = out_.newValue(currentBlock_,
+                        Op::kPrimTagCheckInt, Type::kOopSmallInt,
+                        std::move(tagIvarOps), tagDeoptLit);
+                    // Tag check on caller arg.
+                    std::vector<uint32_t> tagArgOps;
+                    tagArgOps.reserve(stack_.size() + 1);
+                    tagArgOps.push_back(callerArgId);
+                    for (uint32_t s : stack_) tagArgOps.push_back(s);
+                    uint32_t argChecked = out_.newValue(currentBlock_,
+                        Op::kPrimTagCheckInt, Type::kOopSmallInt,
+                        std::move(tagArgOps), tagDeoptLit);
+                    // Arith.
+                    std::vector<uint32_t> arithOps;
+                    arithOps.reserve(stack_.size() + 2);
+                    arithOps.push_back(ivarChecked);
+                    arithOps.push_back(argChecked);
+                    for (uint32_t s : stack_) arithOps.push_back(s);
+                    uint32_t arithId = out_.newValue(currentBlock_,
+                        cv5.op, Type::kOopSmallInt,
+                        std::move(arithOps), tagDeoptLit);
+                    for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+                    stack_.push_back(arithId);
+                    g_inlinesEmitted++;
+                    g_totalHintsConsumed++;
+                    return true;
+                }
+                // Reject other inner shapes that reference the arg.
                 for (const auto& iv : innerIR.values) {
                     if (iv.op == Op::kLoadTemp) return false;
                 }
