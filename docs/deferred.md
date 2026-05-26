@@ -1053,11 +1053,50 @@ deopt-infrastructure work — multi-session per
    `#encodeWith:` send.  In default mode this site doesn't
    compile under Sista, so it doesn't fire.  Under bail-only,
    Sista compiles the caller too and emits a kSendUnspeculated
-   whose receiver operand is computed wrong.  Next investigative
-   step: lldb breakpoint at the `#encodeWith:` DNU and walk
-   savedFrames_ to identify the CALLER method whose Sista emit
-   is producing the bad receiver.  Multi-session debug from
-   here.
+   whose receiver operand is computed wrong.
+
+   **SavedFrame walk (added focused DNU diagnostic 2026-05-26,
+   reverted after capture):**
+
+   ```
+   [DNU-ENC] savedFrames_ depth=17:
+     [16] m=#utf8Encoded rcvr=0x3042029d0 (ByteString cls=52)
+     [15] m=#open:writable: rcvr=0x4bd159070 (File cls=3857)
+     [14] m=#retryWithGC:until:forFileNamed: rcvr=File class
+     [13] m=#basicOpenForWrite: rcvr=File
+     [12] m=#openForWrite: rcvr=File
+     [11] m=#openForWrite rcvr=File
+     [10] m=#writeStream rcvr=File
+     [9]  m=#binaryWriteStream rcvr=FileHandle
+     [8]  m=#binaryWriteStreamOn: rcvr=FileSystem
+     [7]  m=#binaryWriteStream rcvr=FileReference
+     [6]  m=#writeStreamEncoded: rcvr=FileReference
+     [5]  m=#writeStream rcvr=FileReference
+   ```
+
+   The CALLER of encodeWith: (which is broken under bail-only)
+   is `#utf8Encoded` on a ByteString.  In Pharo's standard
+   library this method is roughly:
+   `^ ZnUTF8Encoder new encodeWith: self` (or `encodeString:`
+   depending on the version).  The receiver of `encodeWith:`
+   should be the encoder, NOT self.  Under bail-only mode,
+   Sista compiles utf8Encoded and emits a kSendUnspeculated
+   for the encodeWith: send whose receiver operand resolves
+   to `self` (the ByteString) instead of the encoder
+   instance.  Two likely causes:
+
+   1. The kSendUnspeculated's operands array is `[self_id,
+      self_id]` instead of `[encoder_id, self_id]` — i.e.
+      the IR builder mis-stacked the encoder vs self.
+   2. The encoder allocation (`ZnUTF8Encoder new`) bails to
+      interp BEFORE the encodeWith: send; on bail Sista pushes
+      operands incorrectly, leaving self on the stack twice.
+
+   Next: dump utf8Encoded's lifted IR (via
+   `PHARO_SISTA_INLINE_DUMP=1` filtered to utf8Encoded's
+   method oop) to see which kSendUnspeculated has the wrong
+   operands.  Then trace back to the bytecode-to-IR lowering
+   for that exact send site.
 3. Polymorphic site handling — emit multi-way kGuardClass + per-
    class inlined body.  Currently TICR rejects sites where the
    IC observed > 1 receiver class.  Sort/dict bench gaps are
