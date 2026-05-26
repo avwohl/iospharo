@@ -5483,7 +5483,11 @@ private:
         // Opt-out: PHARO_SISTA_NO_INLINE_CONST=1.
         if (g_debug.sistaNoInlineConst) return false;
         if (g_currentBuildMemory == nullptr) return false;
-        if (g_calleeLiftDepth >= 2) return false;
+        // Depth limit bumped 2 → 3 (2026-05-26): allows one more chain
+        // level of `^ self foo` where `foo` is itself a forwarder.
+        // Each shape recognizer emits at most 1-2 IR values, so code-
+        // size growth stays bounded even at depth 3.
+        if (g_calleeLiftDepth >= 3) return false;
         if (stack_.size() < nArgs + 1) return false;
 
         const InlineHint* hit = nullptr;
