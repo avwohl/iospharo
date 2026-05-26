@@ -3152,6 +3152,13 @@ public:
                 // Since phis are created in order matching the entry
                 // stack slots (bottom-up), we can use the v.id - b.values[0]
                 // offset.
+                // If the phi already has operands matching predecessor
+                // count, it was populated explicitly (e.g., by
+                // spliceMultiBlock).  Skip pass-4 wiring for it.
+                if (v.operands.size() == b.predecessors.size()
+                    && !v.operands.empty()) {
+                    continue;
+                }
                 size_t slotIdx = vid - b.values.front();
                 for (uint32_t pred : b.predecessors) {
                     const Block& pb = out_.blockAt(pred);
@@ -5906,8 +5913,10 @@ private:
                     break;
                 }
                 case Op::kReturn: {
-                    // Replace with kBranch to contBlock; collect value
-                    // for the phi.
+                    // Replace with kBranch to contBlock; collect the
+                    // returned value for contBlock's merge phi
+                    // (populated explicitly below — pass-4 will skip
+                    // pre-populated phis).
                     auto it = idMap.find(iv.operands[0]);
                     if (it == idMap.end()) return false;
                     out_.newValue(outerBlock, Op::kBranch, Type::kVoid,
@@ -5922,7 +5931,7 @@ private:
                 }
             }
             // If this block ends in an implicit-return send, branch to
-            // contBlock and record the send's mapped value for the phi.
+            // contBlock and collect the send's value for the merge phi.
             auto retIt = implicitReturnSendId.find(ib.id);
             if (retIt != implicitReturnSendId.end()) {
                 auto vit = idMap.find(retIt->second);
@@ -5933,8 +5942,9 @@ private:
                 phiOps.push_back(vit->second);
             }
         }
-        // Build merge phi.  Order matches contBlock.predecessors order
-        // which matches phiOps insertion order (one addEdge per return).
+        // Build merge phi with operands matching predecessor order
+        // (= addEdge order = phiOps insertion order).  Pass-4 skips
+        // phis that already have one operand per predecessor.
         currentBlock_ = contBlock;
         resultId = out_.newValue(contBlock, Op::kPhi, Type::kOop,
                                   std::move(phiOps));
