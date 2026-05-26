@@ -1019,20 +1019,45 @@ deopt-infrastructure work — multi-session per
    needs lldb on the encodeString: bail path; cannot just
    default-flip the bail-only gate.
 
-   **DNU origin traced 2026-05-26:** the failing site is
-   `encodeWith:` (method P79) bailing to interp at the
-   `encodeString:` send.  After the bail, interp sees the
-   receiver as a `ByteString` (class 52, fmt 21) — but
-   ByteString doesn't define `encodeString:`.  The Sista bail
-   protocol's receiver-state restoration is wrong for THIS
-   send site; the intended-class receiver (the one that DOES
-   define encodeString:) is being clobbered or swapped with
-   ByteString in the bail's stack reconstruction.  Next
-   investigative step: lldb breakpoint at
-   `terminateCurrentProcess` for `encodeString:` DNU and walk
-   the SavedFrame chain to identify whether the corruption
-   happens at the Sista-emitted send's bail prelude or in the
-   helper-invoke path.
+   **DNU origin traced 2026-05-26 (deeper trace via
+   PHARO_SISTA_VERBOSE=1 + PHARO_SISTA_BAIL_LOG=1):**
+
+   Bench-suite under bail-only mode emits this just before
+   the DNU fires:
+
+   ```
+   [SISTA-SEND] #12938 sel=#encodeWith: bailOp=0x91 ipOff=3
+     spDelta=2 argc=1 rcvr=0x304204b98
+     push[0]=0x304204b98 push[1]=0x304204b98
+     bc=[ 40 80 4c 91 5c 00 04 a0]
+   [DNU] #13: #encodeString: not understood by rcvr=0x304204b98
+     argCount=1 fd=17 in #encodeWith: P79
+   ```
+
+   The "P79" is the OS process priority, not a method index.
+   Decoded bytecode (from SistaV1.hpp): `40` = pushTemp(0),
+   `80` = Send0(lit[0]), `4C` = PushReceiver, `91` = Send1(lit[1]),
+   `5C` = ReturnTop.  So encodeWith:'s body is
+   `^ self <send1>: (arg <send0>)` — i.e. it calls
+   `self encodeString: (anArg charSize)` or similar shape.
+
+   The bail's restored stack is `[result_of_send0, self]` =
+   `[0x304204b98, 0x304204b98]` — both same Oop, because the
+   0-arg send (`#charSize` or whatever) returned `self`.
+   So the bail itself is correct.  The DNU arises because
+   `self` of encodeWith: IS already the ByteString — wrong
+   receiver was set BEFORE encodeWith: was activated.
+
+   **Real bug location**: the Sista-compiled CALLER of
+   encodeWith: is passing ByteString as the receiver to a
+   `#encodeWith:` send.  In default mode this site doesn't
+   compile under Sista, so it doesn't fire.  Under bail-only,
+   Sista compiles the caller too and emits a kSendUnspeculated
+   whose receiver operand is computed wrong.  Next investigative
+   step: lldb breakpoint at the `#encodeWith:` DNU and walk
+   savedFrames_ to identify the CALLER method whose Sista emit
+   is producing the bad receiver.  Multi-session debug from
+   here.
 3. Polymorphic site handling — emit multi-way kGuardClass + per-
    class inlined body.  Currently TICR rejects sites where the
    IC observed > 1 receiver class.  Sort/dict bench gaps are
