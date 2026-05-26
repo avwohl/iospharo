@@ -1018,6 +1018,21 @@ deopt-infrastructure work — multi-session per
    specific receiver / selector combination.  Targeted fix
    needs lldb on the encodeString: bail path; cannot just
    default-flip the bail-only gate.
+
+   **DNU origin traced 2026-05-26:** the failing site is
+   `encodeWith:` (method P79) bailing to interp at the
+   `encodeString:` send.  After the bail, interp sees the
+   receiver as a `ByteString` (class 52, fmt 21) — but
+   ByteString doesn't define `encodeString:`.  The Sista bail
+   protocol's receiver-state restoration is wrong for THIS
+   send site; the intended-class receiver (the one that DOES
+   define encodeString:) is being clobbered or swapped with
+   ByteString in the bail's stack reconstruction.  Next
+   investigative step: lldb breakpoint at
+   `terminateCurrentProcess` for `encodeString:` DNU and walk
+   the SavedFrame chain to identify whether the corruption
+   happens at the Sista-emitted send's bail prelude or in the
+   helper-invoke path.
 3. Polymorphic site handling — emit multi-way kGuardClass + per-
    class inlined body.  Currently TICR rejects sites where the
    IC observed > 1 receiver class.  Sort/dict bench gaps are
