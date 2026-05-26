@@ -1006,6 +1006,18 @@ deopt-infrastructure work — multi-session per
    results).  Self-rec splice infrastructure can't help fib
    until that bail-correctness gate is fixed upstream.  Revert
    was uncommitted.
+
+   **2026-05-26 re-test of the bail-only correctness gate:**
+   `PHARO_BENCH=fib PHARO_FIB_N=20` and `PHARO_FIB_N=28` both
+   produce correct results (21891 and 1028457) under
+   `PHARO_SISTA_COMPILE_BAIL_ONLY=1` at identical timings —
+   the fib-specific failure mode the docs cited (1020114 vs
+   635648) no longer reproduces.  BUT the bench-suite image
+   still triggers a `ByteString >> #encodeString:` DNU under
+   bail-only — the bail-correctness bug has narrowed to that
+   specific receiver / selector combination.  Targeted fix
+   needs lldb on the encodeString: bail path; cannot just
+   default-flip the bail-only gate.
 3. Polymorphic site handling — emit multi-way kGuardClass + per-
    class inlined body.  Currently TICR rejects sites where the
    IC observed > 1 receiver class.  Sort/dict bench gaps are
