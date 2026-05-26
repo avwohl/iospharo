@@ -908,6 +908,55 @@ in line with the x86 documented post-session figures
 
 ### A6. arm64 asmjit-T1 JIT is currently a net perf regression — 2026-05-17
 
+**Iter N+34 (Session H follow-up, 2026-05-26) — TICR forwarder
+shape coverage extended; emit count hits diminishing-returns
+ceiling.**
+
+Shipped three TICR shape extensions in sequence:
+
+- `e3690fa3` 2-value `kLoadTemp + kSendUnspeculated` — top
+  unrecog (70 instances).  +13 emits.
+- `f251374d` 3-value `kLoadReceiver + kLoadTemp + kSendUnspeculated`
+  — second unrecog (46).  +0 emits (inner shape filters reject).
+- `0e622444` 4-value `kLoadReceiver + kLoadInstVar + kConstantOop
+  + kSendUnspeculated` — third unrecog (37).  +0 emits.
+
+Also tried (reverted, uncommitted): a generalized
+`spliceCalleeBody(calleeIR, recvId, argIds)` helper that walks
+inner values and emits substituted versions inline.  When wired
+into the 3-value handler, inlines-emitted went 113 → 112 (flat
+within noise).  Reverted because no measurable benefit.
+
+**Diagnosis**: outer-shape recognizers have plateaued.  Of the
+770 currently-rejected callees:
+
+- ~70 % have inner shapes with `kSendUnspeculated` (forwarder of
+  forwarder) — needs recursive splice with depth bounding.
+- ~20 % have inner shapes with `kBranch* / kReturn` mid-stream
+  (conditional return) — needs multi-block splice with phi node
+  rebuild.
+- ~10 % have `kPrim* / kGuardClass` mid-stream — could be
+  spliced but the existing const-return helper doesn't model
+  type info or guards.
+
+The kInlineSend infrastructure (declared in `SistaIR.hpp:102`,
+unlowered) is the canonical fix.  It is fundamentally Phase 4
+deopt-infrastructure work — multi-session per
+`docs/sista-inlining-plan.md` Phase 3 (4-6 wk) + Phase 4 (4-5 wk).
+
+**Concrete next-step leaves** (ordered by leverage):
+
+1. Recursive const-return chain splice (depth-bounded) — handles
+   the ~70 % forwarder-of-forwarder case without full kInlineSend
+   lowering.  Uses existing TICR machinery recursively.
+2. Multi-block linear splice (no phi) for callees like
+   `^ cond ifTrue: [...] ifFalse: [...]` — common in `=`, `<`,
+   `hash` overrides.
+3. Polymorphic site handling — emit multi-way kGuardClass + per-
+   class inlined body.  Currently TICR rejects sites where the
+   IC observed > 1 receiver class.  Sort/dict bench gaps are
+   dominated by polymorphic #<, #=, #hash dispatch.
+
 **Iter N+33 (Session H follow-up, 2026-05-26) — TICR forwarder-pattern
 inlining gap identified.**
 
