@@ -5584,17 +5584,50 @@ private:
         return false;
     }
 
+    // Reverse post-order DFS of innerIR.blocks starting at block 0.
+    // Blocks reached only via backward (loop) edges get processed
+    // after their forward predecessors, ensuring kPhi operands are
+    // already in idMap when the phi block is emitted.
+    std::vector<uint32_t> topoOrderBlocks(const Method& innerIR) {
+        std::vector<uint32_t> order;
+        std::vector<bool> visited(innerIR.blocks.size(), false);
+        std::function<void(uint32_t)> dfs = [&](uint32_t bid) {
+            if (bid >= innerIR.blocks.size() || visited[bid]) return;
+            visited[bid] = true;
+            for (uint32_t succ : innerIR.blocks[bid].successors) {
+                dfs(succ);
+            }
+            order.push_back(bid);
+        };
+        if (!innerIR.blocks.empty()) {
+            dfs(innerIR.blocks[0].id);
+        }
+        std::reverse(order.begin(), order.end());
+        // Append any unreachable-from-entry blocks at the end (defensive)
+        for (size_t i = 0; i < innerIR.blocks.size(); i++) {
+            if (!visited[i]) order.push_back(innerIR.blocks[i].id);
+        }
+        return order;
+    }
+
     // Emit the multi-block splice.  Pre: canSpliceMultiBlock returned
     // true.  On return: currentBlock_ is the continuation block (so
     // caller's subsequent ops emit into it), and resultId points at
     // the kPhi that holds the inlined call's result.
+    //
+    // Returns true on success.  On any internal failure (operand
+    // resolution miss, malformed inner IR slipping past the
+    // canSplice check) returns false — the IR is left half-emitted
+    // and the caller MUST treat the splice as failed (don't update
+    // counters, don't push the bogus resultId, fall back to
+    // alternative emit).
     //
     // outerDeoptStack + outerDeoptBcOffset are used as the deopt
     // context for any inner op that has deopt operands (kPrim*Int,
     // kPrimTagCheckInt): on miss, interp resumes at outerDeoptBcOffset
     // with outerDeoptStack restored (so the un-inlined outer send
     // re-runs).
-    void spliceMultiBlock(const Method& innerIR,
+    bool spliceMultiBlock(const Method& innerIR,
                           uint32_t innerRecvId,
                           const std::vector<uint32_t>& innerArgIds,
                           const std::vector<uint32_t>& outerDeoptStack,
@@ -5631,10 +5664,22 @@ private:
                 implicitReturnSendId[ib.id] = lastVal.id;
             }
         }
-        // Process inner blocks in their original order so predecessor
-        // ordering inside the cloned subgraph matches the source
-        // (preserves any kPhi operand ordering inside inner).
-        for (const auto& ib : innerIR.blocks) {
+        // Process inner blocks in reverse post-order DFS — this puts
+        // every block AFTER all its forward predecessors, so when we
+        // emit a kPhi the inner operands are already in idMap.  The
+        // storage order in innerIR.blocks is NOT guaranteed to satisfy
+        // this (e.g., benchFib's IR has its merge block stored before
+        // both branch blocks).
+        std::vector<uint32_t> processOrder = topoOrderBlocks(innerIR);
+        for (uint32_t topoBid : processOrder) {
+            // Resolve block index from id (linear scan; inner block
+            // count is small).
+            const Block* ibp = nullptr;
+            for (const auto& b : innerIR.blocks) {
+                if (b.id == topoBid) { ibp = &b; break; }
+            }
+            if (!ibp) return false;
+            const Block& ib = *ibp;
             uint32_t outerBlock = blockMap[ib.id];
             for (uint32_t vid : ib.values) {
                 const Value& iv = innerIR.values[vid];
@@ -5650,7 +5695,7 @@ private:
                 }
                 case Op::kLoadInstVar: {
                     auto it = idMap.find(iv.operands[0]);
-                    if (it == idMap.end()) return;
+                    if (it == idMap.end()) return false;
                     uint32_t nid = out_.newValue(outerBlock,
                         Op::kLoadInstVar, Type::kOop,
                         {it->second}, iv.literal);
@@ -5683,7 +5728,7 @@ private:
                     phiOperands.reserve(iv.operands.size());
                     for (uint32_t inOp : iv.operands) {
                         auto it = idMap.find(inOp);
-                        if (it == idMap.end()) return;
+                        if (it == idMap.end()) return false;
                         phiOperands.push_back(it->second);
                     }
                     uint32_t nid = out_.newValue(outerBlock,
@@ -5694,7 +5739,7 @@ private:
                 }
                 case Op::kPrimTagCheckInt: {
                     auto it = idMap.find(iv.operands[0]);
-                    if (it == idMap.end()) return;
+                    if (it == idMap.end()) return false;
                     std::vector<uint32_t> ops;
                     ops.reserve(outerDeoptStack.size() + 1);
                     ops.push_back(it->second);
@@ -5719,7 +5764,7 @@ private:
                 case Op::kPrimIdentityNeq: {
                     auto itA = idMap.find(iv.operands[0]);
                     auto itB = idMap.find(iv.operands[1]);
-                    if (itA == idMap.end() || itB == idMap.end()) return;
+                    if (itA == idMap.end() || itB == idMap.end()) return false;
                     std::vector<uint32_t> ops;
                     ops.reserve(outerDeoptStack.size() + 2);
                     ops.push_back(itA->second);
@@ -5745,8 +5790,8 @@ private:
                         static_cast<uint32_t>(iv.literal & 0xFFFFu);
                     uint32_t nArgs =
                         static_cast<uint32_t>((iv.literal >> 16) & 0xFFu);
-                    if (innerSelIdx >= innerIR.literals.size()) return;
-                    if (iv.operands.size() != nArgs + 1) return;
+                    if (innerSelIdx >= innerIR.literals.size()) return false;
+                    if (iv.operands.size() != nArgs + 1) return false;
                     Oop selector = innerIR.literals[innerSelIdx];
                     // Find or append in out_.literals.
                     uint32_t outerSelIdx = UINT32_MAX;
@@ -5767,7 +5812,7 @@ private:
                     sops.reserve(iv.operands.size());
                     for (uint32_t inOp : iv.operands) {
                         auto it = idMap.find(inOp);
-                        if (it == idMap.end()) return;
+                        if (it == idMap.end()) return false;
                         sops.push_back(it->second);
                     }
                     uint64_t newLit =
@@ -5793,8 +5838,8 @@ private:
                 case Op::kBranchIfTrue:
                 case Op::kBranchIfFalse: {
                     auto it = idMap.find(iv.operands[0]);
-                    if (it == idMap.end()) return;
-                    if (ib.successors.size() != 2) return;
+                    if (it == idMap.end()) return false;
+                    if (ib.successors.size() != 2) return false;
                     uint32_t tOut = blockMap[ib.successors[0]];
                     uint32_t fOut = blockMap[ib.successors[1]];
                     out_.newValue(outerBlock, iv.op, Type::kVoid,
@@ -5807,7 +5852,7 @@ private:
                     // Replace with kBranch to contBlock; collect value
                     // for the phi.
                     auto it = idMap.find(iv.operands[0]);
-                    if (it == idMap.end()) return;
+                    if (it == idMap.end()) return false;
                     out_.newValue(outerBlock, Op::kBranch, Type::kVoid,
                                   {contBlock});
                     out_.addEdge(outerBlock, contBlock);
@@ -5815,7 +5860,7 @@ private:
                     break;
                 }
                 default:
-                    return;  // unhandled — canSpliceMultiBlock should
+                    return false;  // unhandled — canSpliceMultiBlock should
                              // have rejected
                 }
             }
@@ -5824,7 +5869,7 @@ private:
             auto retIt = implicitReturnSendId.find(ib.id);
             if (retIt != implicitReturnSendId.end()) {
                 auto vit = idMap.find(retIt->second);
-                if (vit == idMap.end()) return;
+                if (vit == idMap.end()) return false;
                 out_.newValue(outerBlock, Op::kBranch, Type::kVoid,
                               {contBlock});
                 out_.addEdge(outerBlock, contBlock);
@@ -5836,6 +5881,7 @@ private:
         currentBlock_ = contBlock;
         resultId = out_.newValue(contBlock, Op::kPhi, Type::kOop,
                                   std::move(phiOps));
+        return true;
     }
 
     // there's exactly one block with both values in it.  Anything more
@@ -6445,11 +6491,21 @@ private:
                                        Type::kOop,
                                        std::move(mbGuardOps), mbGuardLit);
                         uint32_t mbResult = 0;
-                        spliceMultiBlock(innerIR, /*innerRecv=*/recvId,
+                        bool ok = spliceMultiBlock(innerIR,
+                                          /*innerRecv=*/recvId,
                                           innerArgs,
                                           /*outerDeoptStack=*/stack_,
                                           /*outerDeoptBcOffset=*/bcOffset,
                                           mbResult);
+                        if (!ok) {
+                            // Splice left IR partially emitted; the
+                            // most we can do is abandon the inline
+                            // attempt — the outer guard above stays
+                            // (deopts on miss, which is correctness-
+                            // safe).  Don't update counters or push
+                            // mbResult.
+                            return false;
+                        }
                         // currentBlock_ now = continuation block.
                         for (uint32_t i = 0; i < nArgs + 1; i++)
                             stack_.pop_back();
