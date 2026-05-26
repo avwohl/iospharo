@@ -5501,6 +5501,25 @@ private:
                               const std::vector<uint32_t>& innerArgIds) {
         if (innerIR.values.empty()) return false;
         if (innerIR.blocks.empty()) return false;
+        // IR-validity: every kBranch / kBranchIfTrue / kBranchIfFalse
+        // operand referring to a block ID must reference an existing
+        // inner block.  And every value operand must reference an inner
+        // value with a lower id (forward-only).  Catches malformed
+        // inner IR up front so the splice doesn't emit dangling refs
+        // and crash in lowered code.
+        for (size_t bi = 0; bi < innerIR.blocks.size(); bi++) {
+            const Block& ib = innerIR.blocks[bi];
+            for (uint32_t vid : ib.values) {
+                if (vid >= innerIR.values.size()) return false;
+            }
+            for (uint32_t succ : ib.successors) {
+                bool found = false;
+                for (const auto& b : innerIR.blocks) {
+                    if (b.id == succ) { found = true; break; }
+                }
+                if (!found) return false;
+            }
+        }
         bool sawReturn = false;
         for (const auto& iv : innerIR.values) {
             switch (iv.op) {
