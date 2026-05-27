@@ -188,20 +188,35 @@ that the scavenge will redo by scanning every old-space slot.
 
 - ~~asmjit T1 inline setter arm64 (AsmjitT1.cpp:4431)~~ — opt-in
   barrier wired up in commit `6b643915` via PHARO_T1_SETTER_BARRIER=1.
-  Verified no crash; counters added in `fe4c7b27`.  Micro-benches
-  don't exercise the path (calls=0 on fib/tinyBench), so perf-impact
-  measurement needs a setter-heavy workload.
+  Verified no crash; counters added in `fe4c7b27`.
+
+  **Surprise finding:** the inline-setter path doesn't actually fire
+  in practice.  Running normal image startup with
+  `PHARO_T1_INLINE_J2J=1` shows the existing per-path counters as
+  `getter=16059 setter=0`.  So `g_setterBarrier_calls` stays 0 even
+  with the gate on — there are no setter writes to barrier.
+
+  Where the gap actually lives is unclear; bit 62 (SETTER_BIT) is
+  set by `Interpreter.cpp:19388` when `detectTrivialMethod` recognizes
+  a setter, and the recognition pattern (`popStoreRecvVar N`,
+  `returnReceiver`) matches real Pharo setters' bytecodes, so it
+  *should* fire.  Needs investigation — counter parity (getter works,
+  setter doesn't) suggests either the recognizer mis-classifies
+  setters or a downstream gate drops them.
+
 - asmjit T1 inline setter x86 (AsmjitT1.cpp:1929) — same fix needed.
   Can't test on Catalyst arm64.
 - stencils.cpp store-recv-var stencils (lines 422, 442, 464, 475) —
-  these go through extract_stencils.py machine-code blobs; barrier
-  emit there is more invasive.
+  these *do* fire (every instance-variable store in any compiled
+  method routes through them).  Closing this gap is the actual
+  prerequisite for dropping the O(oldSpace) scavenge scan.  Goes
+  through `extract_stencils.py` machine-code blobs; more invasive.
 
-Once all four sites barrier, scavenge can be flipped to consume
+Once stencils barrier, scavenge can be flipped to consume
 `rememberedSet_` (`ObjectMemory.cpp:1571-1597` full-scan replaced
-by remembered-set iteration).  Diagnostic counters in JITRuntime.cpp
-provide ground truth: when `remembered=0` on a workload that uses
-setters, an audit gap is still missing.
+by remembered-set iteration).  The asmjit setter fix is real
+infrastructure for the day bit 62 starts firing, but doesn't unblock
+the scavenge change on its own.
 
 See `memory/jit_remembered_set_dead.md` for the full notes.
 
