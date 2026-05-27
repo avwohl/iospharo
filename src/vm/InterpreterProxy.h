@@ -5,10 +5,17 @@
 // Forward declarations
 namespace pharo { class Interpreter; }
 
-// The sqVirtualMachine.h defines the VirtualMachine struct
+// The sqVirtualMachine.h defines the VirtualMachine struct.
+// Suppress the meaningless `volatile` qualifier on utcMicroseconds's
+// return type — it's part of the upstream VMMaker plugin API contract
+// that we mirror verbatim; modifying the header would diverge from
+// upstream.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wignored-qualifiers"
 extern "C" {
 #include "plugins/sqVirtualMachine.h"
 }
+#pragma GCC diagnostic pop
 
 // Initialize the interpreter proxy for use by plugins.
 // Must be called after the interpreter is fully initialized.

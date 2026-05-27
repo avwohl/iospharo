@@ -279,6 +279,15 @@ bool vm_initialize(size_t heapSize) {
 // the image, before any Smalltalk code runs.  This prevents the ~100ms timing
 // gap where the render loop tries sub-pixel text rendering before startup.st
 // can disable it.  See docs/subpixel-rendering.md.
+//
+// The function has multiple early-exit returns, each preceded by a
+// `pop_macro("nil")` to restore the ObjC-defined `nil`.  Lexically there's
+// only one `push_macro` (function entry) so the trailing pop_macros warn
+// "no matching push" — but per the pragma's lexical semantics that's a
+// no-op: after the first pop the macro is already restored, so subsequent
+// pops correctly leave it as-is.  Suppress the warning function-locally.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wignored-pragmas"
 static void disableSubPixelRendering() {
     // ObjC headers #define nil — undefine it so we can call gMemory->nil()
     #pragma push_macro("nil")
@@ -337,6 +346,7 @@ static void disableSubPixelRendering() {
     }
     #pragma pop_macro("nil")
 }
+#pragma GCC diagnostic pop
 
 bool vm_loadImage(const char* imagePath) {
     // Set app bundle path so FFI can find bundled libraries in Contents/Frameworks
