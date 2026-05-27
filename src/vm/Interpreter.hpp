@@ -667,7 +667,7 @@ private:
     //
     // Mitigation: 256 covers fib(N≤268), beyond practical N (fib(50)
     // is ~7B calls already).
-    static constexpr int J2JSlotPerEntry = 256;  // max J2J depth per tryJITActivation
+    static constexpr int J2JSlotPerEntry = 32;  // max J2J depth per tryJITActivation
     static constexpr int MaxJ2JPoolSize = 1024; // shared pool across recursive entries
     // Primitive error codes (matching PrimErrTable indices in the image).
     // Index is 1-based and matches Pharo's SpecialObjectsArray slot 52.

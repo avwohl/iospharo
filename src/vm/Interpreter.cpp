@@ -5930,7 +5930,7 @@ terminate_process:
             // A6 iter N+30c+.
             if (__builtin_expect(g_debug.b5Trace, 0)) {
                 static int matCount = 0;
-                if (++matCount <= 50) {
+                if (++matCount <= 500) {
                     int ipOff = -1;
                     uint8_t op = 0;
                     if (instructionPointer_ && method_.isObject()) {
@@ -18412,8 +18412,12 @@ void Interpreter::tryJITResumeInCaller() {
                     SavedFrame& frame = savedFrames_[frameDepth_++];
                     Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                     frame.savedIP = save.ip;
-                    frame.savedBytecodeEnd =
-                        saveJM->bcStart() + saveJM->numBytecodes;
+                    {
+                        ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
+                        frame.savedBytecodeEnd = methObj
+                            ? methObj->bytes() + methObj->byteSize()
+                            : saveJM->bcStart() + saveJM->numBytecodes;
+                    }
                     frame.savedMethod = saveMethod;
                     frame.savedHomeMethod = saveMethod;
                     frame.savedReceiver = save.receiver;
@@ -20953,8 +20957,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 SavedFrame& frame = savedFrames_[j2jBaseFrameDepth + i];
                 Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                 frame.savedIP = save.ip;
-                frame.savedBytecodeEnd =
-                    saveJM->bcStart() + saveJM->numBytecodes;
+                {
+                    // saveJM->numBytecodes can be 0 for AsmjitT1 methods with
+                    // send sites (advertiseResume gate, AsmjitT1.cpp:6415).
+                    // Use the CompiledMethod's actual byteSize instead.
+                    ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
+                    frame.savedBytecodeEnd = methObj
+                        ? methObj->bytes() + methObj->byteSize()
+                        : saveJM->bcStart() + saveJM->numBytecodes;
+                }
                 frame.savedMethod = saveMethod;
                 frame.savedHomeMethod = saveMethod;
                 frame.savedReceiver = save.receiver;
@@ -21131,8 +21142,17 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             SavedFrame& frame = savedFrames_[frameDepth_++];
             Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
             frame.savedIP = save.ip;
-            frame.savedBytecodeEnd =
-                saveJM->bcStart() + saveJM->numBytecodes;
+            {
+                // saveJM->numBytecodes is 0 for AsmjitT1 methods with send
+                // sites (advertiseResume gate, AsmjitT1.cpp:6415).  Compute
+                // bytecodeEnd from the CompiledMethod's actual byte size so
+                // that post-pop dispatch doesn't immediately hit the
+                // bytecodeEnd_ safety net which returns receiver_.
+                ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
+                frame.savedBytecodeEnd = methObj
+                    ? methObj->bytes() + methObj->byteSize()
+                    : saveJM->bcStart() + saveJM->numBytecodes;
+            }
             frame.savedMethod = saveMethod;
             frame.savedHomeMethod = saveMethod;
             frame.savedReceiver = save.receiver;
@@ -21335,8 +21355,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         SavedFrame& frame = savedFrames_[frameDepth_++];
                         Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                         frame.savedIP = save.ip;
-                        frame.savedBytecodeEnd =
-                            saveJM->bcStart() + saveJM->numBytecodes;
+                        {
+                            ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
+                            frame.savedBytecodeEnd = methObj
+                                ? methObj->bytes() + methObj->byteSize()
+                                : saveJM->bcStart() + saveJM->numBytecodes;
+                        }
                         frame.savedMethod = saveMethod;
                         frame.savedHomeMethod = saveMethod;
                         frame.savedReceiver = save.receiver;
@@ -22039,8 +22063,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     SavedFrame& frame = savedFrames_[baseDepth + i];
                     Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                     frame.savedIP = save.ip;
-                    frame.savedBytecodeEnd =
-                        saveJM->bcStart() + saveJM->numBytecodes;
+                    {
+                        ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
+                        frame.savedBytecodeEnd = methObj
+                            ? methObj->bytes() + methObj->byteSize()
+                            : saveJM->bcStart() + saveJM->numBytecodes;
+                    }
                     frame.savedMethod = saveMethod;
                     frame.savedHomeMethod = saveMethod;
                     frame.savedReceiver = save.receiver;
@@ -22505,8 +22533,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                         SavedFrame& frame = savedFrames_[frameDepth_++];
                                         Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                                         frame.savedIP = save.ip;
-                                        frame.savedBytecodeEnd =
-                                            saveJM->bcStart() + saveJM->numBytecodes;
+                                        {
+                                            ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
+                                            frame.savedBytecodeEnd = methObj
+                                                ? methObj->bytes() + methObj->byteSize()
+                                                : saveJM->bcStart() + saveJM->numBytecodes;
+                                        }
                                         frame.savedMethod = saveMethod;
                                         frame.savedHomeMethod = saveMethod;
                                         frame.savedReceiver = save.receiver;
