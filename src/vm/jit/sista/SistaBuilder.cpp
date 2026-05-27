@@ -534,7 +534,6 @@ public:
                         }
                     }
                     extA = 0;
-                    extB = 0;
                     // Skip the bytecode by its length.  Conservative:
                     // 1 for normal, 2 for ext2byte, 3 for the f8-fd
                     // range.  Out-of-range escape opcodes are 1-byte.

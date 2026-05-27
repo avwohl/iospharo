@@ -9092,7 +9092,12 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable64) {
+    // Word arrays — Indexable64 (9), Indexable32 (10), Indexable32Odd (11).
+    // The earlier `>= Indexable32 && <= Indexable64` form was always false
+    // because Indexable64=9 < Indexable32=10; word arrays leaked through to
+    // the pointer-slot scan below.  Now matches the enum order in
+    // ObjectHeader.hpp:71-75.
+    if (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable32Odd) {
         // Word arrays (32-bit and 64-bit) - no pointers
         popN(2);
         push(memory_.falseObject());
@@ -19439,7 +19444,7 @@ PrimitiveResult Interpreter::primitiveCreateManualSurface(int argCount) {
     }
     if (surfaceID < 0) return PrimitiveResult::Failure;  // table full
 
-    g_surfaces[surfaceID] = { true, w, h, p, d, msb, nullptr };
+    g_surfaces[surfaceID] = { true, w, h, p, d, msb, nullptr, 0, nullptr };
 
     // Pop args and receiver, push result
     popN(argCount + 1);

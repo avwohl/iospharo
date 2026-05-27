@@ -1389,7 +1389,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded,
             if (!g_debug.noBlockValueSpec) {
                 int argCount = (bc.operand >> 16) & 0xFF;
                 if (argCount <= 2 && methObj
-                        && (bc.opcode >= 0x80 && bc.opcode <= 0xAF
+                        && ((bc.opcode >= 0x80 && bc.opcode <= 0xAF)
                             || bc.opcode == SistaV1::ExtSend)) {
                     int litIndex = bc.branchTarget;
                     if (litIndex >= 0 && litIndex < numLiterals) {
