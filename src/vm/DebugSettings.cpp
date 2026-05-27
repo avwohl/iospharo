@@ -358,6 +358,7 @@ DebugSettings::DebugSettings() {
     }
     ygNoScavenge           = envPresent("PHARO_YG_NO_SCAVENGE");
     finalizeDeferred       = !envPresent("PHARO_INLINE_FINALIZE");
+    gcHeadroomMB           = envInt("PHARO_GC_HEADROOM_MB", 0);
 
     // --- Newly migrated trace / debug bools (mass conversion) ---
     a1Trace                          = envPresent("PHARO_A1_TRACE");

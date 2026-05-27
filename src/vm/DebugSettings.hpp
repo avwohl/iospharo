@@ -651,6 +651,15 @@ struct DebugSettings {
     // restore legacy for bisection.
     bool finalizeDeferred = true;                  // PHARO_INLINE_FINALIZE inverts
 
+    // PHARO_GC_HEADROOM_MB — override ObjectMemory's default 512 MB
+    // threshold for the next-fullGC point.  Higher values reduce GC
+    // count during allocation-heavy benchmarks; physical-memory cost
+    // grows with peak live heap (the 4 GB old-space region is mmap'd
+    // lazy-commit, so the headroom only affects WHEN GC fires, not
+    // baseline RSS).  0 = use the default.  See docs/WIP.md for
+    // the perf-vs-headroom table.
+    int  gcHeadroomMB = 0;
+
     // The constructor reads every env var listed above.  C++ guarantees
     // static-storage-duration objects are initialized before main(), and
     // by that time the process environment is fully populated, so this

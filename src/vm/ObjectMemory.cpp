@@ -109,6 +109,12 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
     std::memset(permSpaceStart_, 0, config.permSpaceSize);
     std::memset(newSpaceStart_, 0, config.newSpaceSize);
 
+    // PHARO_GC_HEADROOM_MB override (default 0 = keep compile-time 512 MB).
+    // See ObjectMemory.hpp gcHeadroom_ comment for the perf-vs-RSS table.
+    if (g_debug.gcHeadroomMB > 0) {
+        gcHeadroom_ = static_cast<size_t>(g_debug.gcHeadroomMB) * 1024ULL * 1024ULL;
+    }
+
     return true;
 }
 
