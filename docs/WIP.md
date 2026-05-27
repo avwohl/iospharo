@@ -199,8 +199,10 @@ kill $PID
       mutex's internal state.  Replaced with explicit per-field reset.
       Fixed in `95378117`.
 
-   Net non-vendor warnings remaining: 2 (intentional `pop_macro`
-   structural choice in PlatformBridge.cpp).
+   Net non-vendor warnings remaining: **0**.
+   Total build warnings: 327, all in vendored plugin sources
+   (B2DPlugin.c, FloatMathPlugin.c, JPEG/Zip/UUID etc. upstream from
+   VMMaker) that we deliberately do not modify.
 
 5. **Sista / Tier 2** — not currently compiling.  `T2 (asmjit):
    compiled=0` in stats.  Unblocking it would help tinyBench's inner
