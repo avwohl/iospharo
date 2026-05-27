@@ -651,6 +651,16 @@ struct DebugSettings {
     // restore legacy for bisection.
     bool finalizeDeferred = true;                  // PHARO_INLINE_FINALIZE inverts
 
+    // PHARO_T1_SETTER_BARRIER=1 — opt in to emitting an old→young
+    // write-barrier call from the JIT T1 inline setter (AsmjitT1.cpp
+    // line 4431 arm64).  Default off: the setter currently writes
+    // recv->slot[i] = arg inline without the barrier, relying on
+    // scavenge's O(oldSpace) full scan to find missed old→young
+    // pointers.  When on, the setter emits a BLR to
+    // jit_rt_setter_write_barrier after the inline store.  Audit-gap
+    // closer — see memory/jit_remembered_set_dead.md.
+    bool t1SetterBarrier = false;
+
     // PHARO_GC_HEADROOM_MB — override ObjectMemory's default 512 MB
     // threshold for the next-fullGC point.  Higher values reduce GC
     // count during allocation-heavy benchmarks; physical-memory cost

@@ -475,6 +475,13 @@ public:
     /// Is this object remembered (has old->young pointer)?
     bool isRemembered(Oop obj) const;
 
+    /// Public hook for JIT helpers that perform their own slot writes
+    /// (e.g. jit_rt_setter_write_barrier) and need to record the
+    /// resulting old→young reference.  storePointer / storePointerUnchecked
+    /// already remember internally; use this only when the slot write
+    /// happened outside ObjectMemory.
+    void rememberObjectPublic(Oop obj) { rememberObject(obj); }
+
     /// Check if an address is within the heap
     bool isValidHeapAddress(void* addr) const;
 

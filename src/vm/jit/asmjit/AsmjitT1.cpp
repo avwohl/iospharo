@@ -77,6 +77,8 @@ extern "C" uint64_t g_primBasicNewZero_bails;
 extern "C" uint64_t jit_rt_t1_sista_dispatch(void* state, uint64_t fnPtr,
                                               uint64_t methodBits,
                                               uint64_t nArgs);
+extern "C" void jit_rt_setter_write_barrier(void* state, uint64_t rcvBits,
+                                             uint64_t valBits);
 extern "C" uint64_t g_t1SistaDispatch_hits;
 extern "C" uint64_t g_t1SistaDispatch_attempts;
 extern "C" uint64_t g_t1MultiSlot_hits = 0;
@@ -4444,6 +4446,24 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             if (nArgs > 0) {
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
+            }
+            // Audit-gap closer (PHARO_T1_SETTER_BARRIER=1, default off).
+            // Emit a BLR to the C helper that records old→young writes
+            // in rememberedSet_.  Helper takes (state, rcv, val) in
+            // (x0, x1, x2).  See jit_rt_setter_write_barrier in
+            // JITRuntime.cpp and memory/jit_remembered_set_dead.md.
+            if (pharo::g_debug.t1SetterBarrier) {
+                a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
+                a.str(x0,  ptr(asmjit::a64::sp, 0));
+                a.str(x30, ptr(asmjit::a64::sp, 8));
+                a.mov(x2, x3);  // x2 = value (helper arg 2)
+                // x0 already = state, x1 already = receiver.
+                a.mov(x9, asmjit::Imm(
+                    (uint64_t)&jit_rt_setter_write_barrier));
+                a.blr(x9);
+                a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+                a.ldr(x30, ptr(asmjit::a64::sp, 8));
+                a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
             }
             a.b(endOfSend);
 

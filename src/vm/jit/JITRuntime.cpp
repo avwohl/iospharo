@@ -1141,6 +1141,32 @@ extern "C" int jit_rt_primatput_ptr(JITState* s, uint64_t rcvBits,
     return 1;
 }
 
+// Audit-gap closer for the JIT-emitted T1 inline setter (AsmjitT1.cpp:
+// arm64 line 4431, x86 line 1929).  The setter writes recv->slot[i] = arg
+// inline without the old→young remembered-set entry.  When opt-in via
+// PHARO_T1_SETTER_BARRIER=1, the JIT emits a BLR to this helper right
+// after the inline store; it records the receiver in rememberedSet_ when
+// the write would cross an old→young boundary.
+//
+// Currently rememberedSet_ is dead infrastructure (see
+// memory/jit_remembered_set_dead.md) — scavenge does an O(oldSpace) full
+// scan instead.  Wiring this helper in is the first step to closing the
+// audit gap so the scan can eventually be replaced with a remembered-set
+// consume.
+extern "C" void jit_rt_setter_write_barrier(JITState* s,
+                                             uint64_t rcvBits,
+                                             uint64_t valBits) {
+    if (!s || !s->memory) return;
+    pharo::Oop rcv = pharo::Oop::fromRawBits(rcvBits);
+    pharo::Oop val = pharo::Oop::fromRawBits(valBits);
+    if (!rcv.isObject() || !val.isObject()) return;
+    auto* mem = static_cast<pharo::ObjectMemory*>(s->memory);
+    if (mem->isOldObject(rcv.asObjectPtr())
+        && mem->isYoungObject(val.asObjectPtr())) {
+        mem->rememberObjectPublic(rcv);
+    }
+}
+
 // Out-of-line array primitive handler for IC hit path.
 // Called from sendJ2J stencil when primKind >= 14 (at:/at:put:/size).
 // info = (primKind << 8) | nArgs
