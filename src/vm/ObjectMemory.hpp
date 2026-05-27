@@ -788,13 +788,18 @@ public:
 private:
     size_t lastCompactedSize_ = 0;  // Old space used bytes after last compacting GC
     // GC headroom: how much old space can grow beyond lastCompactedSize
-    // before requesting a compaction.  Bumped from 32MB to 256MB on
-    // 2026-05-27 after profiling showed tinyBenchmarks was 85% GC-time
-    // with 32MB headroom (64 fullGCs/run, ~89ms each).  256MB cuts that
-    // to ~15% GC time and ~17% total runtime gain.  Virtual address is
-    // reserved up-front (4GB lazy-commit), so this only affects when
-    // the GC fires, not when physical memory is consumed.
-    size_t gcHeadroom_ = 256ULL * 1024 * 1024;
+    // before requesting a compaction.  Tuned 2026-05-27 from profiling:
+    //
+    //   32MB  (original):  64 fullGCs/run, 5851ms GC, 6738ms total (85%)
+    //   256MB:             16 fullGCs/run, 1727ms GC, 5576ms total (31%)
+    //   512MB:              8 fullGCs/run, 1080ms GC, 5279ms total (20%)
+    //   1GB:                4 fullGCs/run,  773ms GC, 5108ms total (15%)
+    //
+    // Picked 512MB as the sweet spot — 1GB saves only 170ms more for
+    // 2x memory pressure.  Virtual address is reserved up-front (4GB
+    // lazy commit), so this only affects when GC fires, not physical
+    // memory usage at idle.  Tunable via env if needed.
+    size_t gcHeadroom_ = 512ULL * 1024 * 1024;
     Interpreter* interpreter_ = nullptr;  // For root enumeration during GC
     std::vector<Oop*> roots_;
     std::vector<ObjectHeader*> rememberedSet_;  // Old-space objects with young pointers
