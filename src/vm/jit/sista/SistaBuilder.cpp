@@ -328,7 +328,6 @@ public:
                 int lastFullBlockLitIdx = -1;
                 int lastFullBlockFlags = -1;
                 int extA = 0;
-                int extB = 0;
                 while (i < len_) {
                     uint8_t op = bc_[i];
                     if (op == jit::SistaV1::ExtendA) {
@@ -339,7 +338,8 @@ public:
                     }
                     if (op == jit::SistaV1::ExtendB) {
                         if (i + 1 >= len_) break;
-                        extB = (int8_t)bc_[i + 1];
+                        // extB ignored — this scan only needs ExtendA for
+                        // PushFullBlock's lit-index high byte.
                         i += 2;
                         continue;
                     }
@@ -349,7 +349,6 @@ public:
                         lastFullBlockFlags = bc_[i + 2];
                         lastFullBlockEnd = (int)(i + 3);
                         extA = 0;
-                        extB = 0;
                         i += 3;
                         continue;
                     }
@@ -2476,8 +2475,6 @@ public:
                                     (b3 == jit::SistaV1::ExtJumpFalse)
                                         ? t + 5 : t + 4;
                                 size_t bodyEnd = i - 4;
-                                size_t bodyLen = bodyEnd > bodyStart
-                                    ? bodyEnd - bodyStart : 0;
                                 // PRE_LOOP: 3 bytes before t.
                                 bool preLoopOk = false;
                                 size_t preLoopStart = 0;

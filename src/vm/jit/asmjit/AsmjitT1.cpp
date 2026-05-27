@@ -314,7 +314,7 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
 }
 
 // Old verbose log helper (kept for reference; unused).
-static uint64_t jit_rt_xmethod_log_old(uint64_t state, uint64_t calleeJM,
+[[maybe_unused]] static uint64_t jit_rt_xmethod_log_old(uint64_t state, uint64_t calleeJM,
                                         uint64_t callerJM, uint64_t calleeCM,
                                         uint64_t callerCM) {
     static size_t logN = 0;
@@ -561,7 +561,7 @@ constexpr int OFF_J2J_SAVE_LIMIT  = 152;
 constexpr int OFF_J2J_DEPTH       = 160;
 constexpr int OFF_J2J_TOTAL_CALLS = 164;
 constexpr int OFF_J2J_ENTRY_DEPTH = 200;
-constexpr int OFF_J2J_DEPTH_INC   = 208;
+[[maybe_unused]] constexpr int OFF_J2J_DEPTH_INC = 208;
 
 // ExitReason values (JITState.hpp).
 constexpr int EXIT_RETURN          = 1;
@@ -3309,7 +3309,6 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label probeDone = a.new_label();
             if (g_debug.t1ICPolyWalk) {
                 asmjit::Label slot1Hit = a.new_label();
-                asmjit::Label checkSlot2 = a.new_label();
                 a.b_eq(probeDone);              // slot 0 hit (common)
                 // Slot 1
                 a.ldr(x6, ptr(x5, 24));
@@ -3534,10 +3533,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 };
 
                 a.bind(tryInlineJ2J);
-                // Resume label used by both block-value inline and xmethod
-                // self-recursive paths.  Declared early so block-value emit
-                // can adr into it.
-                asmjit::Label afterSend = a.new_label();
+                // (Stale `afterSend` label removed — referenced only by
+                // comments, never bound or branched to.)
                 // Block-value inline (PHARO_T1_INLINE_BLOCK_VALUE=1).
                 // When BLOCK_VALUE_BIT (bit 59) is set, the IC site is a
                 // value/value:/value:... send to a FullBlockClosure.  The

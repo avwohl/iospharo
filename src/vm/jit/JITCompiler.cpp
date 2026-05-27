@@ -2511,7 +2511,6 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // (empty IC — will be patched on first miss): 6 x [key, method, extra]
     // + selectorBits. The extra word encodes inline getter/setter info for
     // J2J dispatch (bit 63=getter, bit 62=setter, bit 61=returnsSelf).
-    uint8_t* codeBase_pre = jitMethod->codeStart();
     uint8_t* icBufferBase = jitMethod->icZoneStart();  // heap, not in MAP_JIT
     uint32_t icDataSize = numSendSites * IC_BYTES_PER_SITE;
     // Bail out if IC buffer allocation failed but the method has send
@@ -2640,10 +2639,6 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                     sba[sendIdx] = selectorBits;
                 }
 
-                // A3 DIAG: count compile-time selBits=0 vs non-zero.
-                static size_t compileSelZero = 0, compileSelNonZero = 0;
-                if (selectorBits == 0) compileSelZero++;
-                else compileSelNonZero++;
                 if (g_debug.icHitDbg) {
                     fprintf(stderr, "[IC-COMPILE-SEL] %s opcode=0x%02X litIdx=%d numLits=%d icBase=%p selBits=0x%llx\n",
                             selectorBits == 0 ? "ZERO" : "OK",

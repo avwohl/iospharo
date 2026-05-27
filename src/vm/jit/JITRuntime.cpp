@@ -3721,7 +3721,6 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
         Tier2Entry temp[Tier2MapSize];
         std::memcpy(temp, tier2Map_, sizeof(tier2Map_));
         std::memset(tier2Map_, 0, sizeof(tier2Map_));
-        size_t mask = Tier2MapSize - 1;
         for (size_t i = 0; i < Tier2MapSize; i++) {
             if (temp[i].key == 0) continue;
             tier2Insert(temp[i].key, temp[i].func);

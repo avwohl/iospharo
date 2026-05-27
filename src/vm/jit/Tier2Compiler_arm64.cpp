@@ -78,7 +78,7 @@ constexpr int IC_ENTRIES = 6;
 constexpr int IC_SLOTS   = IC_ENTRIES * 3 + 1;
 constexpr int IC_KEY_OFF(int i)    { return i * 3 * 8;       }
 constexpr int IC_METHOD_OFF(int i) { return i * 3 * 8 + 8;   }
-constexpr int IC_EXTRA_OFF(int i)  { return i * 3 * 8 + 16;  }
+[[maybe_unused]] constexpr int IC_EXTRA_OFF(int i)  { return i * 3 * 8 + 16; }
 
 } // namespace
 
@@ -1481,7 +1481,6 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
     bool sawReturn = false;
     bool willBailAtSend = false;
     size_t bailSendOffset = 0;
-    uint8_t bailSendOp = 0;
     std::set<size_t> jumpTargets;
     auto shortJumpTarget = [](uint8_t op, size_t i) -> size_t {
         uint8_t base = SistaV1::isShortJump(op)      ? SistaV1::ShortJumpBase
@@ -1590,7 +1589,6 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             if (nArgs < 0) { g_mbcBailed++; return nullptr; }
             willBailAtSend = true;
             bailSendOffset = i;
-            bailSendOp = op;
             break;
         }
         // Unsupported — bail the whole method.
