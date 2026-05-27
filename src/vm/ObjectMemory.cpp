@@ -2704,12 +2704,18 @@ void ObjectMemory::scanPointerFields(ObjectHeader* obj) {
 
     size_t numPointers = pointerSlotsOf(obj);
     Oop* slots = obj->slots();
+#if PHARO_HOT_PATH_DIAG
     currentScanParent_ = obj;
+#endif
     for (size_t i = 0; i < numPointers; ++i) {
+#if PHARO_HOT_PATH_DIAG
         currentScanSlot_ = i;
+#endif
         markAndTrace(slots[i]);
     }
+#if PHARO_HOT_PATH_DIAG
     currentScanParent_ = nullptr;
+#endif
 }
 
 size_t ObjectMemory::pointerSlotsOf(ObjectHeader* obj) const {

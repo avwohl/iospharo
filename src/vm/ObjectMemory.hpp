@@ -829,9 +829,13 @@ private:
     // handling to avoid tracing garbage in unused stack slots)
     uint32_t contextClassIndex_ = 0;
 
-    // Debug: track parent object during scanning (for BAD pointer diagnosis)
+    // Debug: track parent object during scanning (for BAD pointer diagnosis).
+    // Disabled in production builds — never read by any code; the per-slot
+    // store was visible in GC profiles as ~6% of fullGC time.
+#if PHARO_HOT_PATH_DIAG
     ObjectHeader* currentScanParent_ = nullptr;
     size_t currentScanSlot_ = 0;
+#endif
 
     // Statistics
     size_t bytesAllocated_ = 0;
