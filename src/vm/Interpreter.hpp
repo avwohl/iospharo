@@ -647,6 +647,26 @@ private:
     // results for benchFib-like recursive workloads beyond depth
     // limit+5 — task #8.  256 covers fib(N≤268), beyond practical N
     // (fib(50) is already ~7B calls).
+    // Max J2J save depth per tryJITActivation entry.  At J2JSlotPerEntry
+    // depth, the JIT-emitted inline-J2J push bails to ExitSendCached
+    // and the C++ materialize creates SavedFrames_ for the inline-J2J
+    // saves.  After materialize, the outer switch activates the cached
+    // method.
+    //
+    // KNOWN BUG (task #8): benchFib(N) materialized at depth limit
+    // returns fib(N-1) instead of fib(N) — the post-first-send work
+    // (second recursive send + sum + add 1) is dropped during the
+    // resume after popFrame.  Investigation 2026-05-26 traced via
+    // PHARO_B5_TRACE=1: MAT-RET log shows retVal=fib(N-1) being
+    // written to matRetSlot for materialized frames at every level.
+    // Root cause: the materialized frame's savedIP points to post-
+    // first-send (offset 60 in benchFib bytecodes), but the resume
+    // somehow doesn't execute the rest of the body.  Needs lldb
+    // single-step at the popFrame → dispatch transition to find
+    // where the second send's bytecodes are skipped.
+    //
+    // Mitigation: 256 covers fib(N≤268), beyond practical N (fib(50)
+    // is ~7B calls already).
     static constexpr int J2JSlotPerEntry = 256;  // max J2J depth per tryJITActivation
     static constexpr int MaxJ2JPoolSize = 1024; // shared pool across recursive entries
     // Primitive error codes (matching PrimErrTable indices in the image).
