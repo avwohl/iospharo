@@ -12809,7 +12809,6 @@ uint64_t Interpreter::jitSistaBasicAtPut(jit::JITState* state,
     size_t slotCount = hdr->slotCount();
     if (fmt == 2) {
         if (i < 1 || (uint64_t)i > slotCount) return 0;
-        Oop* slots = reinterpret_cast<Oop*>(rcvBits + 8);
         // Use storePointerUnchecked so the GC barrier (remember-set
         // / generational write barrier) fires for old-to-young
         // pointer updates.  Avoids a stale-young-survivor bug where
@@ -14213,9 +14212,6 @@ Oop Interpreter::wakeLowerPriorityProcess(int currentPriority) {
     Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
     Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
 
-    ObjectHeader* listsHeader = schedLists.asObjectPtr();
-    size_t numPriorities = listsHeader->slotCount();
-
     // Current priority is 1-based, array index is 0-based
     int maxPriorityIndex = currentPriority - 2;  // One below current priority
 
@@ -14345,12 +14341,6 @@ Oop Interpreter::materializeFrameStack() {
             int64_t pc = (instructionPointer_ - methodBytes) + 1;
             memory_.storePointer(1, activeContext_, Oop::fromSmallInteger(pc));
 
-            // Get numTemps from method header to distinguish temps from expression stack
-            Oop methodHeader = memory_.fetchPointer(0, method_);
-            int numTemps = 0;
-            if (methodHeader.isSmallInteger()) {
-                numTemps = (methodHeader.asSmallInteger() >> 18) & 0x3F;
-            }
 
             // Total items on C++ stack above receiver
             int numItems = static_cast<int>(stackPointer_ - framePointer_) - 1;
@@ -15443,7 +15433,6 @@ bool Interpreter::bootstrapStartup() {
         // Debug logging
         if constexpr (ENABLE_DEBUG_LOGGING) {
         }
-        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
 
         // Use Smalltalk instance if available, otherwise try to get instance from class
         Oop receiver = smalltalk;
@@ -18434,7 +18423,6 @@ void Interpreter::tryJITResumeInCaller() {
 
             // Materialize remaining J2J saves if trampoline bailed with depth>0
             if (rj2jDepth > 0) {
-                Oop nil = memory_.nil();
                 for (int i = 0; i < rj2jDepth; i++) {
                     if (frameDepth_ >= StackOverflowLimit) break;
                     J2JSave& save = rj2jSaves[i];
@@ -20973,7 +20961,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // mode reads zeroed memory and fires the null-saveJM warning.
         if (j2jDepth > 0) {
             j2jMaterialized = true;
-            Oop nil = memory_.nil();
             // 2026-05-19 iter N+18: when splitPool is on AND both state
             // and local j2jDepth are positive, we have saves in TWO
             // slices.  Materialize must push BOTH or downstream interp
@@ -21141,7 +21128,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         jitMaterializeTotalDepth_ += state.j2jDepth;
         jitJ2JStencilCalls_ += state.j2jTotalCalls;
         checkCountdown_ -= state.j2jTotalCalls * 10;
-        Oop nil = memory_.nil();
         // With splitPool, JIT saves are in the state slice; otherwise
         // they're in j2jStack (same slice as chain loop's).
         J2JSave* stateSaves = splitPool
@@ -21328,7 +21314,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 chargeJITBytecodes(state);
                 // Materialize J2J frames from the resumed caller
                 if (state.j2jDepth > 0) {
-                    Oop nil = memory_.nil();
                     J2JSave* _stateSaves = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                     for (int i = 0; i < state.j2jDepth; i++) {
                         if (frameDepth_ >= StackOverflowLimit) break;
@@ -22008,7 +21993,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // If stencil J2J calls left pending frames, materialize them
             // so the interpreter/chain loop can see them.
             if (state.j2jDepth > 0) {
-                Oop nil = memory_.nil();
                 size_t baseDepth = frameDepth_;
                 J2JSave* _stateSaves2 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                 for (int i = 0; i < state.j2jDepth; i++) {
@@ -22449,7 +22433,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 chargeJITBytecodes(state);
                                 // Materialize any J2J frames from the resumed caller
                                 if (state.j2jDepth > 0) {
-                                    Oop nil = memory_.nil();
                                     J2JSave* _stateSaves3 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                                     for (int i = 0; i < state.j2jDepth; i++) {
                                         if (frameDepth_ >= StackOverflowLimit) break;
@@ -22598,7 +22581,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                         // Materialize any J2J frames the callee accumulated
                         if (state.j2jDepth > 0) {
-                            Oop nil = memory_.nil();
                             J2JSave* _stateSaves4 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                             for (int i = 0; i < state.j2jDepth; i++) {
                                 if (frameDepth_ >= StackOverflowLimit) break;
