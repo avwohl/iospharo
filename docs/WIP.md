@@ -146,6 +146,35 @@ sample $PID 5 1 -file /tmp/sample.txt
 kill $PID
 ```
 
+## Audit-gap finding (2026-05-27): remembered-set is dead infrastructure
+
+`storePointer` and friends maintain `rememberedSet_` via the
+old→young write barrier, but the set is never iterated — scavenge
+does an O(oldSpace) full scan for old→young pointers explicitly
+(`ObjectMemory.cpp:1563-1597`).  Comment at 1565 explains: "Trade
+correctness for perf until every write site is audited."
+
+This was a quiet realization while investigating the JIT at:put:
+write-barrier site.  The "barrier" I added in `5a7267cd` does work
+that the scavenge will redo by scanning every old-space slot.
+
+**Closing the gap would be a real perf win:**
+
+- Scavenge time = O(oldSpace) ≈ ~30 ms / scavenge on a 100 MB heap
+- Eliminate by ensuring every slot-write site barriers, then have
+  scavenge consume `rememberedSet_` instead of full-scanning
+
+**Audit status** (sites that still write slots without the barrier):
+
+- asmjit T1 inline setter (x86 AsmjitT1.cpp:1929, arm64 line 4431)
+- stencils.cpp store-recv-var stencils (lines 422, 442, 464, 475)
+
+Both are JIT-emitted machine code, so closing the gap requires
+emitting a barrier check from the codegen.  Mid-sized engineering
+effort — not a one-line fix.
+
+See `memory/jit_remembered_set_dead.md` for the full notes.
+
 ## Open performance opportunities (NOT chased this session)
 
 1. **tinyBench inline-prim path is firing correctly.**  Confirmed via
