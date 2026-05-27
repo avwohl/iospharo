@@ -215,7 +215,7 @@ DebugSettings::DebugSettings() {
     primProfile         = envPresent("PHARO_PRIM_PROFILE");
     t1EagerBlockCompile = envPresent("PHARO_T1_EAGER_BLOCK_COMPILE");
     t1J2JReceiverSync   = envPresent("PHARO_T1_J2J_RECEIVER_SYNC");
-    t1J2JPostSendIp     = envPresent("PHARO_T1_J2J_POST_SEND_IP");
+    t1J2JPostSendIp     = !envPresent("PHARO_T1_NO_J2J_POST_SEND_IP");
     // Session H Phase 5 (2026-05-25): default-ON.  Together with
     // leaf-only BV inline (above), this enables BV inline for leaf
     // blocks whose only 0x5D/0x5E is the natural tail BlockReturnTop.

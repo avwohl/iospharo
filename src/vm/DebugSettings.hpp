@@ -232,8 +232,12 @@ struct DebugSettings {
     // inline-J2J save.ip instead of raw state.ip.  Mirrors chain-loop's
     // J2JCall handler which advances state.ip past the send before
     // saving.  Found via lldb that pre-send save.ip causes interp to
-    // re-execute the send when materialized.  See deferred.md A6 iter N+8.
-    bool t1J2JPostSendIp = false;
+    // re-execute the send when materialized.
+    //
+    // Default-on (2026-05-26): measured fib(28) 9 ms → 8 ms (-10%),
+    // correctness verified on fib(17..40), sieve, even, factorial,
+    // sista_survey.  Opt-out: PHARO_T1_NO_J2J_POST_SEND_IP=1.
+    bool t1J2JPostSendIp = true;                   // PHARO_T1_NO_J2J_POST_SEND_IP
     // jit-may24 Step 1: suppress JIT re-activation inside materialize-bail
     // unwind.  When ANY of the top 4 SavedFrames has materializedRetSlot
     // set, canJITActivate() returns false to prevent nested bails.
