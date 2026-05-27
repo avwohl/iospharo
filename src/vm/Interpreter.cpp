@@ -220,7 +220,18 @@ size_t g_sortstrWatchT0EventNum = 0;
 }  // namespace pharo
 
 // Forward decl; defined as Interpreter method below.
-static inline void checkSortstrWatch(const char* where, size_t fd) {
+//
+// PHARO_HOT_PATH_DIAG (compile-time, default off): when off this is a
+// no-op stub at every call site (pushFrame, popFrame, tryJITActivation
+// entry/exit chain).  Each call was ~5 instructions of loads+branches
+// even on the cold path — ~7 ms / 14 M sends on fib(35).  The
+// sortStructs:into: corruption hunt that motivated this watcher is
+// resolved; opt back in via -DPHARO_HOT_PATH_DIAG=1 if a similar
+// slot-corruption bug reappears.
+static inline void checkSortstrWatch(
+        [[maybe_unused]] const char* where,
+        [[maybe_unused]] size_t fd) {
+#if PHARO_HOT_PATH_DIAG
     using namespace pharo;
     if (g_sortstrWatchActive && g_sortstrWatchSlot) {
         uint64_t cur = g_sortstrWatchSlot->rawBits();
@@ -263,6 +274,7 @@ static inline void checkSortstrWatch(const char* where, size_t fd) {
             }
         }
     }
+#endif  // PHARO_HOT_PATH_DIAG
 }
 
 // Forward decls.  dumpCxxBacktrace is defined inside namespace pharo {} below.
