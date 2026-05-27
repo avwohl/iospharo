@@ -18396,18 +18396,15 @@ void Interpreter::tryJITResumeInCaller() {
                 for (int i = 0; i < rj2jDepth; i++) {
                     if (frameDepth_ >= StackOverflowLimit) break;
                     J2JSave& save = rj2jSaves[i];
-                    jit::JITMethod* saveJM = save.jitMethod;
-                    if (!saveJM) {
-                        // Half-materialized state — frameDepth_ has been
-                        // incremented for prior iterations but state.method
-                        // never got synced.  Bail the entire materialize so
-                        // the post-loop code that reads state.method->bytes()
-                        // doesn't crash.  Restore frameDepth_ to baseline by
-                        // un-pushing the in-progress slot count.
-                        static int warns = 0;
-                        if (++warns <= 5)
-                            fprintf(stderr, "[JIT] WARN: null save.jitMethod at rj2j materialize (warn #%d) — bailing materialize\n", warns);
-                        // Roll back the i frames we pushed.
+                    // rj2j materialize requires save.jitMethod (no fallback);
+                    // it's the only path where state.jitMethod isn't a reliable
+                    // surrogate for inline-J2J self-rec.
+                    SavedFrame& frame = savedFrames_[frameDepth_++];
+                    if (!materializeJ2JSaveIntoFrame(frame, save, nullptr, "rj2j materialize")) {
+                        // Roll back: the helper failed (both nil), but we
+                        // incremented frameDepth_ for THIS iteration plus
+                        // i prior iterations.
+                        if (frameDepth_ > 0) frameDepth_--;
                         for (int j = 0; j < i; j++) {
                             if (frameDepth_ > 0) frameDepth_--;
                         }
@@ -18415,31 +18412,6 @@ void Interpreter::tryJITResumeInCaller() {
                         inJITResume_ = false;
                         return;
                     }
-                    SavedFrame& frame = savedFrames_[frameDepth_++];
-                    Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                    frame.savedIP = save.ip;
-                    {
-                        ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
-                        frame.savedBytecodeEnd = methObj
-                            ? methObj->bytes() + methObj->byteSize()
-                            : saveJM->bcStart() + saveJM->numBytecodes;
-                    }
-                    frame.savedMethod = saveMethod;
-                    frame.savedHomeMethod = saveMethod;
-                    frame.savedReceiver = save.receiver;
-                    frame.savedClosure = nil;
-                    frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
-                    frame.materializedContext = nil;
-                    frame.savedFP = save.tempBase - 1;
-                    // Step 7: receiver slot in the caller's stack.  When this
-                    // SavedFrame is popped, the return value is written here
-                    // (mirrors the chain-loop success-path's
-                    // `state.sp[-(nArgs+1)] = retVal`).
-                    frame.materializedRetSlot =
-                        save.sp - (save.sendArgCount + 1);
-                    frame.savedArgCount = saveJM->argCount;
-                    frame.homeFrameDepth = SIZE_MAX;
-                    materializedFrameCount_++;
                 }
                 // Sync interpreter state from innermost callee
                 method_ = state.method;
@@ -20051,6 +20023,58 @@ extern "C" int pharo_jit_convert_send(jit::JITState* state) {
     return 1;
 }
 
+// Populate a SavedFrame from a J2JSave at materialize-bail time.  Returns
+// false if both save.jitMethod and the fallback are null (caller must
+// bail).  Consolidates what used to be 7 duplicated blocks across
+// tryJITResumeInCaller, tryJITActivation, and the inline materialize
+// lambdas — the duplication previously hosted the savedBytecodeEnd bug
+// (commit 29df9943) in all 5 production sites.
+bool Interpreter::materializeJ2JSaveIntoFrame(
+    SavedFrame& frame, J2JSave& save, jit::JITMethod* fallbackJM,
+    const char* siteTag)
+{
+    jit::JITMethod* saveJM = save.jitMethod;
+    if (!saveJM) {
+        // asmjit-T1's self-recursive push skips writing save.jitMethod
+        // (xmethod-off path).  All such saves reference the SAME method
+        // (state.jitMethod / chain-loop's caller), so the fallback is
+        // safe.  See AsmjitT1.cpp inline-J2J emit (line ~4080).
+        saveJM = fallbackJM;
+        if (!saveJM) {
+            static int warns = 0;
+            if (++warns <= 5)
+                fprintf(stderr,
+                    "[JIT] WARN: null save.jitMethod AND null fallback at %s (warn #%d)\n",
+                    siteTag, warns);
+            return false;
+        }
+    }
+    Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
+    Oop nil = memory_.nil();
+
+    frame.savedIP = save.ip;
+    // Use CompiledMethod's actual byteSize.  saveJM->numBytecodes is 0
+    // for AsmjitT1 methods with send sites (advertiseResume gate at
+    // AsmjitT1.cpp:6415), which would set bytecodeEnd_ = bcStart and
+    // trip the dispatch-loop safety net that returns receiver_.
+    ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
+    frame.savedBytecodeEnd = methObj
+        ? methObj->bytes() + methObj->byteSize()
+        : saveJM->bcStart() + saveJM->numBytecodes;
+    frame.savedMethod = saveMethod;
+    frame.savedHomeMethod = saveMethod;
+    frame.savedReceiver = save.receiver;
+    frame.savedClosure = nil;
+    frame.savedActiveContext = activeContext_;
+    frame.materializedContext = nil;
+    frame.savedFP = save.tempBase - 1;
+    frame.materializedRetSlot = save.sp - (save.sendArgCount + 1);
+    frame.savedArgCount = saveJM->argCount;
+    frame.homeFrameDepth = SIZE_MAX;
+    materializedFrameCount_++;
+    return true;
+}
+
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // PHARO_T1_INLINE_J2J=1 debug: log first 10 fib-related activations.
     {
@@ -20939,52 +20963,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     (i < stateDepth)
                         ? stateSlice[i]
                         : j2jStack[i - stateDepth];
-                jit::JITMethod* saveJM = save.jitMethod;
-                if (!saveJM) {
-                    // asmjit-T1's J2J self-recursive push skips writing
-                    // save.jitMethod (xmethod-off only — see
-                    // AsmjitT1.cpp inline-J2J emit).  All self-recursive
-                    // saves in this chain reference the same method
-                    // (state.jitMethod), so fall back to it.  For
-                    // xmethod-on this null wouldn't appear (push always
-                    // writes jitMethod), so the previous WARN+bail path
-                    // still applies — but state.jitMethod is also the
-                    // correct fallback there (any xmethod cross-method
-                    // updates already wrote save.jitMethod).
-                    saveJM = state.jitMethod;
-                    if (!saveJM) {
-                        static int warns = 0;
-                        if (++warns <= 5)
-                            fprintf(stderr, "[JIT] WARN: null save.jitMethod AND null state.jitMethod at j2jBase materialize (warn #%d) i=%d stateDepth=%d chainDepth=%d\n", warns, i, stateDepth, chainDepth);
-                        j2jMaterialized = false;
-                        break;
-                    }
-                }
                 SavedFrame& frame = savedFrames_[j2jBaseFrameDepth + i];
-                Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                frame.savedIP = save.ip;
-                {
-                    // saveJM->numBytecodes can be 0 for AsmjitT1 methods with
-                    // send sites (advertiseResume gate, AsmjitT1.cpp:6415).
-                    // Use the CompiledMethod's actual byteSize instead.
-                    ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
-                    frame.savedBytecodeEnd = methObj
-                        ? methObj->bytes() + methObj->byteSize()
-                        : saveJM->bcStart() + saveJM->numBytecodes;
+                if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "j2jBase materialize")) {
+                    j2jMaterialized = false;
+                    break;
                 }
-                frame.savedMethod = saveMethod;
-                frame.savedHomeMethod = saveMethod;
-                frame.savedReceiver = save.receiver;
-                frame.savedClosure = nil;
-                frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
-                frame.materializedContext = nil;
-                frame.savedFP = save.tempBase - 1;
-                // Step 7: receiver slot for retVal on unwind.
-                frame.materializedRetSlot =
-                    save.sp - (save.sendArgCount + 1);
-                frame.savedArgCount = saveJM->argCount;
-                frame.homeFrameDepth = SIZE_MAX;
-                materializedFrameCount_++;
             }
             // Adjust frameDepth_ tracking — j2jDepth merged value is
             // wrong when both slices have saves.  Use totalFrames.
@@ -21128,49 +21111,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         for (int i = 0; i < state.j2jDepth; i++) {
             if (frameDepth_ >= StackOverflowLimit) break;
             J2JSave& save = stateSaves[i];
-            jit::JITMethod* saveJM = save.jitMethod;
-            if (!saveJM) {
-                // asmjit-T1 J2J self-recursive push skips writing
-                // save.jitMethod (xmethod-off only) — same fallback
-                // as the j2jBase materialize site.  All self-recursive
-                // saves in this chain reference state.jitMethod.
-                saveJM = state.jitMethod;
-                if (!saveJM) {
-                    static int warns = 0;
-                    if (++warns <= 5)
-                        fprintf(stderr, "[JIT] WARN: null save.jitMethod AND null state.jitMethod in materializeJ2J lambda (warn #%d) — bailing\n", warns);
-                    for (int j = 0; j < i; j++) {
-                        if (frameDepth_ > 0) frameDepth_--;
-                    }
-                    return;
-                }
-            }
             SavedFrame& frame = savedFrames_[frameDepth_++];
-            Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-            frame.savedIP = save.ip;
-            {
-                // saveJM->numBytecodes is 0 for AsmjitT1 methods with send
-                // sites (advertiseResume gate, AsmjitT1.cpp:6415).  Compute
-                // bytecodeEnd from the CompiledMethod's actual byte size so
-                // that post-pop dispatch doesn't immediately hit the
-                // bytecodeEnd_ safety net which returns receiver_.
-                ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
-                frame.savedBytecodeEnd = methObj
-                    ? methObj->bytes() + methObj->byteSize()
-                    : saveJM->bcStart() + saveJM->numBytecodes;
+            if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "materializeJ2J lambda")) {
+                // Roll back: this iteration's increment + i prior.
+                if (frameDepth_ > 0) frameDepth_--;
+                for (int j = 0; j < i; j++) {
+                    if (frameDepth_ > 0) frameDepth_--;
+                }
+                return;
             }
-            frame.savedMethod = saveMethod;
-            frame.savedHomeMethod = saveMethod;
-            frame.savedReceiver = save.receiver;
-            frame.savedClosure = nil;
-            frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
-            frame.materializedContext = nil;
-            frame.savedFP = save.tempBase - 1;
-            // Step 7: receiver slot for retVal on unwind.
-            frame.materializedRetSlot = save.sp - (save.sendArgCount + 1);
-            frame.savedArgCount = saveJM->argCount;
-            frame.homeFrameDepth = SIZE_MAX;
-            materializedFrameCount_++;
         }
         chainCallDepth += state.j2jDepth;
         if (state.jitMethod) {
@@ -21345,41 +21294,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     for (int i = 0; i < state.j2jDepth; i++) {
                         if (frameDepth_ >= StackOverflowLimit) break;
                         J2JSave& save = _stateSaves[i];
-                        jit::JITMethod* saveJM = save.jitMethod;
-                        if (!saveJM) {
-                            // asmjit-T1 self-recursive J2J push skips
-                            // save.jitMethod write (xmethod-off only).
-                            // Fall back to state.jitMethod.
-                            saveJM = state.jitMethod;
-                            if (!saveJM) {
-                                static int warns = 0;
-                                if (++warns <= 5)
-                                    fprintf(stderr, "[JIT] WARN: null save.jitMethod AND state.jitMethod at site4 (warn #%d)\n", warns);
-                                break;
-                            }
-                        }
                         SavedFrame& frame = savedFrames_[frameDepth_++];
-                        Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                        frame.savedIP = save.ip;
-                        {
-                            ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
-                            frame.savedBytecodeEnd = methObj
-                                ? methObj->bytes() + methObj->byteSize()
-                                : saveJM->bcStart() + saveJM->numBytecodes;
+                        if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site4")) {
+                            if (frameDepth_ > 0) frameDepth_--;
+                            break;
                         }
-                        frame.savedMethod = saveMethod;
-                        frame.savedHomeMethod = saveMethod;
-                        frame.savedReceiver = save.receiver;
-                        frame.savedClosure = nil;
-                        frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
-                        frame.materializedContext = nil;
-                        frame.savedFP = save.tempBase - 1;
-                        // Step 7: receiver slot for retVal on unwind.
-                        frame.materializedRetSlot =
-                            save.sp - (save.sendArgCount + 1);
-                        frame.savedArgCount = saveJM->argCount;
-                        frame.homeFrameDepth = SIZE_MAX;
-                        materializedFrameCount_++;
                     }
                     chainCallDepth += state.j2jDepth;
                     if (state.jitMethod) {
@@ -22055,39 +21974,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 J2JSave* _stateSaves2 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                 for (int i = 0; i < state.j2jDepth; i++) {
                     J2JSave& save = _stateSaves2[i];
-                    jit::JITMethod* saveJM = save.jitMethod;
-                    if (!saveJM) {
-                        // asmjit-T1 self-rec push skip — fall back to state.jitMethod.
-                        saveJM = state.jitMethod;
-                        if (!saveJM) {
-                            static int warns = 0;
-                            if (++warns <= 5)
-                                fprintf(stderr, "[JIT] WARN: null save.jitMethod AND state.jitMethod at site5 (warn #%d)\n", warns);
-                            break;
-                        }
-                    }
                     SavedFrame& frame = savedFrames_[baseDepth + i];
-                    Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                    frame.savedIP = save.ip;
-                    {
-                        ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
-                        frame.savedBytecodeEnd = methObj
-                            ? methObj->bytes() + methObj->byteSize()
-                            : saveJM->bcStart() + saveJM->numBytecodes;
+                    if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site5")) {
+                        break;
                     }
-                    frame.savedMethod = saveMethod;
-                    frame.savedHomeMethod = saveMethod;
-                    frame.savedReceiver = save.receiver;
-                    frame.savedClosure = nil;
-                    frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
-                    frame.materializedContext = nil;
-                    frame.savedFP = save.tempBase - 1;
-                    // Step 7: receiver slot for retVal on unwind.
-                    frame.materializedRetSlot =
-                        save.sp - (save.sendArgCount + 1);
-                    frame.savedArgCount = saveJM->argCount;
-                    frame.homeFrameDepth = SIZE_MAX;
-                    materializedFrameCount_++;
                 }
                 frameDepth_ = baseDepth + state.j2jDepth;
                 chainCallDepth += state.j2jDepth;
@@ -22525,39 +22415,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                     for (int i = 0; i < state.j2jDepth; i++) {
                                         if (frameDepth_ >= StackOverflowLimit) break;
                                         J2JSave& save = _stateSaves3[i];
-                                        jit::JITMethod* saveJM = save.jitMethod;
-                                        if (!saveJM) {
-                                            // asmjit-T1 self-rec push skip.
-                                            saveJM = state.jitMethod;
-                                            if (!saveJM) {
-                                                static int warns = 0;
-                                                if (++warns <= 5)
-                                                    fprintf(stderr, "[JIT] WARN: null save.jitMethod AND state.jitMethod at site6 (warn #%d)\n", warns);
-                                                break;
-                                            }
-                                        }
                                         SavedFrame& frame = savedFrames_[frameDepth_++];
-                                        Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                                        frame.savedIP = save.ip;
-                                        {
-                                            ObjectHeader* methObj = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
-                                            frame.savedBytecodeEnd = methObj
-                                                ? methObj->bytes() + methObj->byteSize()
-                                                : saveJM->bcStart() + saveJM->numBytecodes;
+                                        if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site6")) {
+                                            if (frameDepth_ > 0) frameDepth_--;
+                                            break;
                                         }
-                                        frame.savedMethod = saveMethod;
-                                        frame.savedHomeMethod = saveMethod;
-                                        frame.savedReceiver = save.receiver;
-                                        frame.savedClosure = nil;
-                                        frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
-                                        frame.materializedContext = nil;
-                                        frame.savedFP = save.tempBase - 1;
-                                        // Step 7: receiver slot for retVal.
-                                        frame.materializedRetSlot =
-                                            save.sp - (save.sendArgCount + 1);
-                                        frame.savedArgCount = saveJM->argCount;
-                                        frame.homeFrameDepth = SIZE_MAX;
-                                        materializedFrameCount_++;
                                     }
                                     chainCallDepth += state.j2jDepth;
                                     if (state.jitMethod) {
@@ -22702,35 +22564,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             for (int i = 0; i < state.j2jDepth; i++) {
                                 if (frameDepth_ >= StackOverflowLimit) break;
                                 J2JSave& save = _stateSaves4[i];
-                                jit::JITMethod* saveJM = save.jitMethod;
-                                if (!saveJM) {
-                                    // asmjit-T1 self-rec push skip.
-                                    saveJM = state.jitMethod;
-                                    if (!saveJM) {
-                                        static int warns = 0;
-                                        if (++warns <= 5)
-                                            fprintf(stderr, "[JIT] WARN: null save.jitMethod AND state.jitMethod at site7 (warn #%d)\n", warns);
-                                        break;
-                                    }
-                                }
                                 SavedFrame& frame = savedFrames_[frameDepth_++];
-                                Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                                frame.savedIP = save.ip;
-                                frame.savedBytecodeEnd =
-                                    saveJM->bcStart() + saveJM->numBytecodes;
-                                frame.savedMethod = saveMethod;
-                                frame.savedHomeMethod = saveMethod;
-                                frame.savedReceiver = save.receiver;
-                                frame.savedClosure = nil;
-                                frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
-                                frame.materializedContext = nil;
-                                frame.savedFP = save.tempBase - 1;
-                                // Step 7: receiver slot for retVal on unwind.
-                                frame.materializedRetSlot =
-                                    save.sp - (save.sendArgCount + 1);
-                                frame.savedArgCount = saveJM->argCount;
-                                frame.homeFrameDepth = SIZE_MAX;
-                                materializedFrameCount_++;
+                                if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site7")) {
+                                    if (frameDepth_ > 0) frameDepth_--;
+                                    break;
+                                }
                             }
                             chainCallDepth += state.j2jDepth;
                             // Sync from innermost J2J frame

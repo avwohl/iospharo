@@ -1156,6 +1156,13 @@ public:
     // (caller should NOT proceed with interpreter execution).
     bool tryJITActivation(Oop method, int argCount);
 
+    // Populate a SavedFrame from a J2JSave at materialize-bail time.
+    // Returns false if both save.jitMethod and fallbackJM are null
+    // (caller must bail).  See Interpreter.cpp for full semantics.
+    bool materializeJ2JSaveIntoFrame(
+        SavedFrame& frame, J2JSave& save, jit::JITMethod* fallbackJM,
+        const char* siteTag);
+
     // Inline fast-reject for tryJITActivation (todo.md §2.9).
     // Returns true if the method has a chance of being JIT-compiled;
     // false means definitely not — caller should skip the
