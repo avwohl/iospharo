@@ -1022,6 +1022,7 @@ private:
     size_t benchStartFullTime_ = 0;
     size_t benchStartSweepCount_ = 0;
     size_t benchStartSweepTime_ = 0;
+    size_t benchStartBytesAllocated_ = 0;
     Oop findMethod(const char* className, const char* selector);
     Oop findMethodInHierarchy(Oop cls, const char* selector);  // walks superclass chain
     Oop allocateInstance(const char* className);  // allocate zero-slot instance

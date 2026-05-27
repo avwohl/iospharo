@@ -1091,6 +1091,7 @@ void Interpreter::setupBenchContext() {
         benchStartFullTime_  = memory_.fullGCTime_;
         benchStartSweepCount_ = memory_.sweepCount_;
         benchStartSweepTime_  = memory_.sweepTime_;
+        benchStartBytesAllocated_ = preStats.bytesAllocated;
     }
 
     Oop method;
@@ -1170,7 +1171,8 @@ void Interpreter::handleBenchComplete(Oop returnValue) {
         auto memStats = memory_.statistics();
         // Show per-run deltas — cumulative counters confused readers
         // into seeing GC growth that was just accumulation across runs.
-        fprintf(stderr, "[BENCH] %s run %d: %ld us (%ld ms) gcCount=%zu gcTime=%zums [scav=%zu/%zums full=%zu/%zums sweep=%zu/%zums]\n",
+        size_t allocDelta = memStats.bytesAllocated - benchStartBytesAllocated_;
+        fprintf(stderr, "[BENCH] %s run %d: %ld us (%ld ms) gcCount=%zu gcTime=%zums [scav=%zu/%zums full=%zu/%zums sweep=%zu/%zums] alloc=%.1fMB\n",
                 spec.name.c_str(), benchRunCount_, us, us / 1000,
                 memStats.gcCount - benchStartGcCount_,
                 memStats.totalGCTime - benchStartGcTime_,
@@ -1179,7 +1181,8 @@ void Interpreter::handleBenchComplete(Oop returnValue) {
                 memory_.fullGCCount_ - benchStartFullCount_,
                 memory_.fullGCTime_  - benchStartFullTime_,
                 memory_.sweepCount_ - benchStartSweepCount_,
-                memory_.sweepTime_  - benchStartSweepTime_);
+                memory_.sweepTime_  - benchStartSweepTime_,
+                allocDelta / (1024.0 * 1024.0));
         benchRunCount_++;
     }
     if (benchRunCount_ >= spec.runs) {
