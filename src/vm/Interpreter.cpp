@@ -1686,8 +1686,15 @@ void Interpreter::dumpJITStats() {
     fprintf(stderr, "=================\n");
     // One-off diagnostic: print offsets of key Interpreter fields to
     // disambiguate what x28 holds in the cross-method crash.
+    //
+    // Interpreter is non-standard-layout (it has Oop members with
+    // non-trivial copy-init), so offsetof is conditionally-supported.
+    // In practice clang+gcc both give the right answer for our layout —
+    // suppress the warning locally.
     if (g_debug.dumpInterpOffsets) {
         fprintf(stderr, "Interpreter offsets:\n");
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Winvalid-offsetof"
         #define O(f) fprintf(stderr, "  +0x%05zx (%4zu): %s\n", offsetof(Interpreter, f), offsetof(Interpreter, f), #f)
         O(method_);
         O(newMethod_);
@@ -1704,6 +1711,7 @@ void Interpreter::dumpJITStats() {
         O(argCount_);
         O(benchMode_);
         #undef O
+        #pragma GCC diagnostic pop
         fprintf(stderr, "sizeof(Interpreter) = %zu\n", sizeof(Interpreter));
     }
 #endif
@@ -3029,7 +3037,7 @@ void Interpreter::handleForceYield() {
                     }
                 }
             }
-            fprintf(stderr, "[DIAG] P%d %s>>%s ip=%lld fd=%d\n",
+            fprintf(stderr, "[DIAG] P%d %s>>%s ip=%lld fd=%zu\n",
                     prio, rcvrClass.c_str(), selector.c_str(),
                     (long long)ipOffset_, frameDepth_);
             // Show call stack (up to 20 callers)
@@ -4016,7 +4024,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                     }
                 }
             }
-            fprintf(stderr, "[CALLBACK-PROGRESS] steps=%ld pending=%d active=0x%llx pri=%d %s>>%s fd=%d\n",
+            fprintf(stderr, "[CALLBACK-PROGRESS] steps=%ld pending=%d active=0x%llx pri=%d %s>>%s fd=%zu\n",
                     nestedStepCount, (int)(pendingCallbackReturn_ != nullptr),
                     (unsigned long long)activeProc.rawBits(), activePri,
                     rcvrClass.c_str(), selector.c_str(), frameDepth_);
@@ -11258,7 +11266,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                 (unsigned long long)receiver_.rawBits());
         // GC info
         fprintf(crashLog, "  gcCount=%zu lastGCStep=%llu\n",
-                0/*gcCount*/, (unsigned long long)0/*lastGCStep*/);
+                (size_t)0/*gcCount*/, (unsigned long long)0/*lastGCStep*/);
         // Check if method address is in valid heap range
         fprintf(crashLog, "  methodAddr in heap: old=%d perm=%d\n",
                 memory_.isOldObject(mObj), memory_.isPermObject(mObj));
@@ -16918,7 +16926,7 @@ void Interpreter::afterGC() {
                 static int gcMismatchCount = 0;
                 if (++gcMismatchCount <= 10) {
                     fprintf(stderr, "[GC-VERIFY-FAIL #%d] BC mismatch! saved=0x%02X actual=0x%02X "
-                            "oldMethod=0x%llx newMethod=0x%llx ipOff=%lld fd=%zu gcCount=%d\n",
+                            "oldMethod=0x%llx newMethod=0x%llx ipOff=%lld fd=%zu gcCount=%zu\n",
                             gcMismatchCount, gcVerifyBytecodeAtIP_, actualBC,
                             (unsigned long long)gcVerifyMethodOop_,
                             (unsigned long long)method_.rawBits(),
@@ -17229,7 +17237,8 @@ void Interpreter::drainMournQueueNatively() {
         fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu wkaarr-drop=%zu kept=%zu dec=%zu pending=%zu->%zu\n",
                 drainLog, initialQueueSize, processed, wkaProcessed,
                 weakArraysDropped, nonWkaKept, decremented,
-                initialPending, memory_.pendingFinalizationSignals());
+                initialPending,
+                (size_t)memory_.pendingFinalizationSignals());
     }
 }
 
@@ -19713,7 +19722,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                         // For block-value sends, classKey is always
                         // FullBlockClosure-equivalent (the IC HIT already
                         // matched the receiver class).
-                        for (int e = 0; e < jit::IC_ENTRIES_PER_SITE; ++e) {
+                        for (uint32_t e = 0; e < jit::IC_ENTRIES_PER_SITE; ++e) {
                             if (icData[e * 3] != 0) continue;  // occupied
                             // Reconstruct lookupKey from receiver_.
                             uint64_t rb = receiver_.rawBits();

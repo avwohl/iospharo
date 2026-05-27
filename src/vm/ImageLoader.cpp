@@ -350,7 +350,6 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
     }
 
     // Read class table pages from hiddenRoots slots 0..4095
-    size_t numPages = 0;
     for (size_t pageNum = 0; pageNum < MaxClassTablePages; pageNum++) {
         Oop pageOop = hiddenRoots->slotAt(pageNum);
 
@@ -367,7 +366,6 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
 
         ObjectHeader* pageHdr = pageOop.asObjectPtr();
         size_t pageSlots = pageHdr->slotCount();
-        numPages++;
 
         // Register page in C++ side structure so GC keeps it updated
         memory.setClassTablePage(pageNum, pageOop);

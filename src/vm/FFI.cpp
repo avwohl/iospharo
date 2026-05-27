@@ -1628,7 +1628,7 @@ static void stub_git_libgit2_version(int* major, int* minor, int* rev) {
 }
 
 // Generic no-op for git_ functions we don't explicitly stub — returns -1 (GIT_ERROR)
-static int stub_git_generic_error() { return -1; }
+[[maybe_unused]] static int stub_git_generic_error() { return -1; }
 
 void registerLibgit2Stubs() {
     // Only register stubs if real libgit2 isn't statically linked

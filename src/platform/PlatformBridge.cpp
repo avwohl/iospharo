@@ -32,7 +32,7 @@
 // the problematic methods to no-ops — Pharo's AppKit menus are meaningless
 // on Catalyst since UIKit handles menus via UIMenu.
 // Saved original IMP for setMainMenu: — called through for UIKit (main thread) calls.
-static IMP origSetMainMenu = nullptr;
+[[maybe_unused]] static IMP origSetMainMenu = nullptr;
 
 static void swizzleCatalystAppKit() {
 #if TARGET_OS_MACCATALYST
