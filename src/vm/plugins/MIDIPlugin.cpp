@@ -180,7 +180,17 @@ int midiOpenPort(int portIndex) {
 
     int nDest = numDestinations();
     OpenPort* p = &gPorts[slot];
-    memset(p, 0, sizeof(OpenPort));
+    // Explicit field reset — memset would clobber std::mutex internals
+    // (UB on non-trivially-copyable types).
+    p->active = false;
+    p->isInput = false;
+    p->endpointIndex = 0;
+    p->port = MIDIPortRef{};
+    p->endpoint = MIDIEndpointRef{};
+    std::memset(p->ringBuf, 0, sizeof(p->ringBuf));
+    p->ringHead = 0;
+    p->ringTail = 0;
+    // p->ringMutex: leave as-is; default-constructed at file scope.
 
     if (portIndex < nDest) {
         // Output port (destination)

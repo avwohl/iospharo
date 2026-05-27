@@ -73,10 +73,6 @@ private:
 
     // Menu interaction state
     int selectedMenuIndex_ = -1;
-    int prevSelectedMenuIndex_ = -1;
-    int64_t lastMenuClickTime_ = 0;
-    int lastMenuClickX_ = -1000;
-    int lastMenuClickY_ = -1000;
     std::vector<std::pair<int, int>> menuItemBounds_;
     std::vector<Oop> menuBarItemMorphs_;
     int menuBarTop_ = 28;

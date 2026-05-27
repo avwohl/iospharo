@@ -358,7 +358,14 @@ public:
                 // implied actual memory corruption.
                 bool cleanOverflow = (spB == arrEnd);
                 void* ra0 = __builtin_return_address(0);
+                // __builtin_return_address(1) is "unsafe" per clang but
+                // we only use it as a diagnostic aid on a panic path —
+                // a missing/garbage caller PC is fine.  Suppress the
+                // -Wframe-address warning for this single call.
+                #pragma GCC diagnostic push
+                #pragma GCC diagnostic ignored "-Wframe-address"
                 void* ra1 = __builtin_extract_return_addr(__builtin_return_address(1));
+                #pragma GCC diagnostic pop
                 Dl_info info0{}, info1{};
                 int got0 = dladdr(ra0, &info0);
                 int got1 = dladdr(ra1, &info1);

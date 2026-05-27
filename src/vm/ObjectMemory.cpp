@@ -176,7 +176,10 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
         n++;
         if (n <= 30) {
             void* ra1 = __builtin_return_address(0);
+            #pragma GCC diagnostic push
+            #pragma GCC diagnostic ignored "-Wframe-address"
             void* ra2 = __builtin_extract_return_addr(__builtin_return_address(1));
+            #pragma GCC diagnostic pop
             Dl_info i1{}, i2{};
             int got1 = dladdr(ra1, &i1);
             int got2 = dladdr(ra2, &i2);

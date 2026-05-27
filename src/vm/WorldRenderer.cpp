@@ -143,7 +143,6 @@ std::string WorldRenderer::getMorphClassName(Oop morph) const {
 }
 
 uint32_t WorldRenderer::extractColor(Oop colorObj) const {
-    Oop nilObj = memory_.nil();
     if (colorObj.isNil() || !colorObj.isObject()) return 0xFFCCCCCC;
 
     Oop rgb = memory_.fetchPointer(0, colorObj);
