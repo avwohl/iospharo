@@ -120,6 +120,19 @@ in the original measurement was inter-run setup GCs, not the
 benchmark inner loop.  The 512 MB choice still helps because it
 reduces those setup GCs too.
 
+Headroom knob is now env-tunable (`d0df5a6f` —
+`PHARO_GC_HEADROOM_MB`).  Fresh per-run-delta measurements:
+
+    headroom_mb  gcCount  gcTime   wall    delta-vs-512
+    512          5        438ms    5533ms  baseline
+    1024         2        224ms    5435ms  -98ms (-1.8%)
+    2048         0        0ms      5351ms  -182ms (-3.3%)
+
+Allocation pressure is 2 GB/run, so 2048 MB headroom is the smallest
+value that fully eliminates intra-run GC.  Real wins are modest
+because GC was already only ~8% of run time at 512 MB; the bigger
+wins from the old WIP table were calibration artifacts.
+
 Default sweep:
 ```
  32MB:   64 fullGCs, 5851ms GC, 6738ms total (85% GC)
