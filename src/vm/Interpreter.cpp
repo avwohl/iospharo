@@ -200,6 +200,14 @@ constexpr bool ENABLE_DEBUG_LOGGING = false;
 
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
 
+// Setter write-barrier counters (defined in JITRuntime.cpp).
+extern "C" {
+    extern size_t g_setterBarrier_calls;
+    extern size_t g_setterBarrier_skipImm;
+    extern size_t g_setterBarrier_skipSameGen;
+    extern size_t g_setterBarrier_remembered;
+}
+
 // Slot watcher for the sortStructs:into: corruption hunt.  See checkSortstrWatch()
 // in this file.  Active only under PHARO_SORTSTR_WATCH=1.
 Oop* g_sortstrWatchSlot = nullptr;
@@ -1257,6 +1265,15 @@ void Interpreter::handleBenchComplete(Oop returnValue) {
         // vs polymorphic vs megamorphic.
         if (g_debug.icHistogram) {
             jitRuntime_.dumpICHistogram();
+        }
+        // Setter write-barrier audit counters (PHARO_T1_SETTER_BARRIER=1).
+        // Only print if barrier was on so default-build output is unchanged.
+        if (g_debug.t1SetterBarrier) {
+            fprintf(stderr,
+                "[BENCH]   setter-barrier: calls=%zu imm-skip=%zu "
+                "samegen-skip=%zu remembered=%zu\n",
+                g_setterBarrier_calls, g_setterBarrier_skipImm,
+                g_setterBarrier_skipSameGen, g_setterBarrier_remembered);
         }
 #endif
         fprintf(stderr, "[BENCH] All benchmarks complete.\n");

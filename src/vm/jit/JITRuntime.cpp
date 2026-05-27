@@ -1153,17 +1153,33 @@ extern "C" int jit_rt_primatput_ptr(JITState* s, uint64_t rcvBits,
 // scan instead.  Wiring this helper in is the first step to closing the
 // audit gap so the scan can eventually be replaced with a remembered-set
 // consume.
+// Diagnostic counters for the setter-barrier audit.  Reported in the
+// end-of-bench summary when PHARO_T1_SETTER_BARRIER=1.
+extern "C" {
+    size_t g_setterBarrier_calls = 0;       // total invocations
+    size_t g_setterBarrier_skipImm = 0;     // value not an Oop, no-op
+    size_t g_setterBarrier_skipSameGen = 0; // both same generation
+    size_t g_setterBarrier_remembered = 0;  // actually marked
+}
+
 extern "C" void jit_rt_setter_write_barrier(JITState* s,
                                              uint64_t rcvBits,
                                              uint64_t valBits) {
+    g_setterBarrier_calls++;
     if (!s || !s->memory) return;
     pharo::Oop rcv = pharo::Oop::fromRawBits(rcvBits);
     pharo::Oop val = pharo::Oop::fromRawBits(valBits);
-    if (!rcv.isObject() || !val.isObject()) return;
+    if (!rcv.isObject() || !val.isObject()) {
+        g_setterBarrier_skipImm++;
+        return;
+    }
     auto* mem = static_cast<pharo::ObjectMemory*>(s->memory);
     if (mem->isOldObject(rcv.asObjectPtr())
         && mem->isYoungObject(val.asObjectPtr())) {
         mem->rememberObjectPublic(rcv);
+        g_setterBarrier_remembered++;
+    } else {
+        g_setterBarrier_skipSameGen++;
     }
 }
 
