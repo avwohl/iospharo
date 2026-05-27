@@ -14490,13 +14490,6 @@ Oop Interpreter::materializeFrameStack() {
                     exprEnd = framePointer_;
                 }
                 if (exprEnd > exprStart && (exprEnd - exprStart) < 100) {
-                    int nextArgCount;
-                    if (1 < frameDepth_) {
-                        Oop nextMH = memory_.fetchPointer(0, savedFrames_[1].savedMethod);
-                        nextArgCount = nextMH.isSmallInteger() ? ((nextMH.asSmallInteger() >> 24) & 0xF) : 0;
-                    } else {
-                        nextArgCount = argCount_;
-                    }
                     Oop* exprEndPtr = exprEnd;  // expression ends before callee receiver
                     ptrdiff_t exprCount = exprEndPtr - exprStart;
                     for (ptrdiff_t e = 0; e < exprCount && e < 100; e++) {
@@ -14532,9 +14525,7 @@ Oop Interpreter::materializeFrameStack() {
             continue;
         }
         int64_t headerValue = methodHeader.asSmallInteger();
-        int numLiterals = headerValue & 0x7FFF;
         int numTemps = (headerValue >> 18) & 0x3F;  // Fixed: was using wrong bit offset
-        int numArgs = (headerValue >> 24) & 0xF;
 
         // GC SAFETY: Compute IP offset BEFORE any allocation that could trigger GC.
         // frame.savedIP is a raw uint8_t* into the method's byte array. GC compaction
@@ -14600,7 +14591,6 @@ Oop Interpreter::materializeFrameStack() {
 
         // Calculate PC using the pre-computed IP offset (GC safe).
         // ipOffset was computed before any allocation that could trigger GC.
-        uint8_t* methodBytes = methodHdr->bytes();
         int pc = ipOffset + 1;  // 1-based PC from 0-based offset
 
         // Initialize context (sender via cycle guard)
@@ -14627,15 +14617,10 @@ Oop Interpreter::materializeFrameStack() {
             // Save expression stack items above the temps.
             Oop* exprStart = frame.savedFP + 1 + numTemps;
             Oop* nextFrameStart;
-            int nextArgCount;
             if (i + 1 < frameDepth_) {
                 nextFrameStart = savedFrames_[i + 1].savedFP;
-                Oop nextMethodHdr = memory_.fetchPointer(0, savedFrames_[i + 1].savedMethod);
-                nextArgCount = nextMethodHdr.isSmallInteger()
-                    ? static_cast<int>((nextMethodHdr.asSmallInteger() >> 24) & 0xF) : 0;
             } else {
                 nextFrameStart = framePointer_;
-                nextArgCount = argCount_;
             }
             Oop* exprEndPtr = nextFrameStart;  // expression ends before callee receiver
             if (exprEndPtr > exprStart && (exprEndPtr - exprStart) < 100) {
@@ -15117,19 +15102,6 @@ void Interpreter::installOSiOSDriver() {
     }
 
     // Check if we're using OSiOSDriver (vs. some other driver class)
-    bool usingOSiOSDriver = false;
-    {
-        Oop nameOop = memory_.fetchPointer(6, osDriverClass);
-        if (nameOop.isObject()) {
-            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-            if (nameHdr->isBytesObject() && nameHdr->byteSize() == 11) {
-                if (memcmp(nameHdr->bytes(), "OSiOSDriver", 11) == 0) {
-                    usingOSiOSDriver = true;
-                }
-            }
-        }
-    }
-
     if (setupMethod.isNil() || !setupMethod.isObject()) {
         // setupEventLoop not found - enable VM-based event processing
         enableDirectInputSignaling_ = true;
@@ -15547,11 +15519,9 @@ bool Interpreter::bootstrapStartup() {
                         "startUp:", "install", "eventLoopProcess", nullptr
                     };
                     Oop startUpMethod = Oop::nil();
-                    const char* foundMethodName = nullptr;
                     for (int i = 0; methodNames[i] != nullptr; i++) {
                         startUpMethod = lookupMethodInClass(sensorClass, methodNames[i]);
                         if (!startUpMethod.isNil() && startUpMethod.isObject()) {
-                            foundMethodName = methodNames[i];
                             break;
                         }
                     }
@@ -16105,17 +16075,6 @@ bool Interpreter::executeFromContext(Oop context) {
 
     // If method is a CompiledBlock, we need to check if the context has a closure
     // In modern Pharo, BlockContext/FullBlockClosure contexts may need special handling
-    if (method_.isObject() && memory_.isValidPointer(method_)) {
-        ObjectHeader* methodHdr = method_.asObjectPtr();
-        if (methodHdr->classIndex() == compiledBlockClassIndex_) {
-            Oop closure = memory_.fetchPointer(4, context);  // closureOrNil
-            if (closure.isObject() && memory_.isValidPointer(closure)) {
-                ObjectHeader* closureHdr = closure.asObjectPtr();
-                          // << " slots=" << closureHdr->slotCount();
-            }
-        }
-    }
-
     if (method_.isNil() || !method_.isObject() || !memory_.isValidPointer(method_)) {
         return false;
     }
@@ -17437,7 +17396,6 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         ObjectHeader* methodObj = method_.asObjectPtr();
         Oop hdrOop = method_.isObject() ? methodObj->slots()[0] : Oop::nil();
         if (!hdrOop.isSmallInteger()) return;
-        int numLiterals = hdrOop.asSmallInteger() & 0x7FFF;
 
         jit::JITState sstate;
         sstate.sp = stackPointer_;
@@ -17929,7 +17887,6 @@ void Interpreter::tryJITResumeInCaller() {
         } jitStateGuard{this, prevJITState};
 
         // --- DIAGNOSTIC: scan stack for megaCache pointers before resume ---
-        Oop* preResumeSP = stackPointer_;
         uint64_t megaBase = (uint64_t)jitRuntime_.megaCache();
         uint64_t megaEnd  = megaBase + 65536 * 32;
         {
@@ -20281,10 +20238,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.tempBase = framePointer_ + 1;
 
     if (__builtin_expect(g_debug.traceCullEntry, 0)) {
-        static size_t entryCount = 0;
         std::string sel = memory_.selectorOf(method);
         if (sel == "cull:") {
-            entryCount++;
             // Track unique CompiledBlocks per dump (just print each once).
             static std::unordered_map<uint64_t, int> seen;
             if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
@@ -22685,7 +22640,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 jitRuntime_.noteMethodEntry(method_);
                                 method = method_;
                                 methObj = method.asObjectPtr();
-                                uint32_t blockBC = computeCurrentBCOffset();
                                 {
                                     state.sp = stackPointer_;
                                     state.receiver = receiver_;

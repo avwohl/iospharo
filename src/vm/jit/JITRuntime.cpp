@@ -240,9 +240,6 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
     }
     static bool trace = g_debug.b5Trace;
     if (!trace) return;
-    // Raw entry log so we can see if the stencil ever calls us with event=3.
-    static size_t entryCount = 0;
-    entryCount++;
     // Always record to ring; filter only controls live stderr print.
     g_b5Count++;
     B5Event& slot = g_b5Ring[g_b5Head];
