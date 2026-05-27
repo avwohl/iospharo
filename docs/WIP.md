@@ -214,11 +214,23 @@ that the scavenge will redo by scanning every old-space slot.
 
 - asmjit T1 inline setter x86 (AsmjitT1.cpp:1929) — same fix needed.
   Can't test on Catalyst arm64.
-- stencils.cpp store-recv-var stencils (lines 422, 442, 464, 475) —
-  these *do* fire (every instance-variable store in any compiled
-  method routes through them).  Closing this gap is the actual
-  prerequisite for dropping the O(oldSpace) scavenge scan.  Goes
-  through `extract_stencils.py` machine-code blobs; more invasive.
+- stencils.cpp store-recv-var stencils — base variants now barrier'd
+  via _HOLE_RT_WRITE_BARRIER (commit `65792d23`).  Pipeline end-to-end
+  wired (extract_stencils.py registers the hole, JITCompiler patches
+  helper-19, JITRuntime sets helpers.writeBarrier).
+
+  **BUT** the base stencils are essentially never executed at runtime:
+  JITCompiler.cpp:1137-1141 remaps every popStoreRecvVar to a SimStack
+  variant (_1/_2/_3/_4) whenever the operand stack has a TOS value
+  (which is always for a store).  Counter stays at 0 across fib,
+  sieve, tinyBench, and normal image startup.
+
+  The SimStack variants can't safely call a C helper — extract's
+  SimStack verifier fails because the call forces clang to save/
+  restore x19-x22, defeating register caching.  Closing this gap
+  requires either inline barrier emit (no C call, set the remembered
+  bit + push to vector via inline asm) or restructuring the SimStack
+  invariant.  Deferred — needs its own session.
 
 Once stencils barrier, scavenge can be flipped to consume
 `rememberedSet_` (`ObjectMemory.cpp:1571-1597` full-scan replaced
