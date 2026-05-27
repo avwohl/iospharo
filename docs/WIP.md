@@ -184,6 +184,14 @@ kill $PID
    - `-Wignored-pragmas` × 2 (PlatformBridge.cpp nil push/pop_macro
      for early-exit returns; intentional structural choice)
 
+   **Bonus: warning hygiene surfaced a real latent bug.**
+   `-Wtautological-overlap-compare` flagged Primitive 132's
+   `format >= Indexable32 && format <= Indexable64` shortcut as
+   always-false (Indexable64=9 < Indexable32=10).  Word arrays
+   leaked through to the pointer-slot scan below, where their
+   32/64-bit elements would be read as Oop slots.  Fixed in
+   `f68392c2`.
+
 5. **Sista / Tier 2** — not currently compiling.  `T2 (asmjit):
    compiled=0` in stats.  Unblocking it would help tinyBench's inner
    loops significantly, but requires resolving the Sista bail-protocol
