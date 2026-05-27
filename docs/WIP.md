@@ -200,14 +200,17 @@ kill $PID
       Fixed in `95378117`.
 
    3. JIT inline at:put: helper (`jit_rt_primatput_ptr`) wrote slots
-      directly without the old→young remembered-set entry.  The
-      pre-existing `TODO: emit remember bit` comment acknowledged
-      this; the fallback ("defer to GC's full scan") only holds for
-      major-GC, not scavenges.  An `oldArray at: i put: youngObj`
-      could leave `youngObj` reachable only via the unrecorded slot,
-      vulnerable to a subsequent scavenge.  Switched to
-      ObjectMemory::storePointerUnchecked which does both the store
-      and the barrier.  Fixed in `5a7267cd`.
+      directly without the old→young remembered-set entry.  Pre-
+      existing TODO comment acknowledged the gap.  Switched to
+      ObjectMemory::storePointerUnchecked so the remembered-set is
+      now maintained for this site too.  Note: not a bug per se —
+      scavenge does an O(oldSpace) full scan for old→young pointers
+      explicitly to tolerate missed barriers ("Trade correctness for
+      perf until every write site is audited", ObjectMemory.cpp:1563).
+      Same audit-gap remains in JIT-emitted inline setter (AsmjitT1
+      arm64 line 4431, x86 line 1925, comment at 1925-1928 documents
+      the choice).  Closing the gap on these sites would enable
+      removing the full scan.  Fixed in `5a7267cd`.
 
    Net non-vendor warnings remaining: **0**.
    Total build warnings: 327, all in vendored plugin sources
