@@ -196,13 +196,21 @@ that the scavenge will redo by scanning every old-space slot.
   `getter=16059 setter=0`.  So `g_setterBarrier_calls` stays 0 even
   with the gate on — there are no setter writes to barrier.
 
-  Where the gap actually lives is unclear; bit 62 (SETTER_BIT) is
-  set by `Interpreter.cpp:19388` when `detectTrivialMethod` recognizes
-  a setter, and the recognition pattern (`popStoreRecvVar N`,
-  `returnReceiver`) matches real Pharo setters' bytecodes, so it
-  *should* fire.  Needs investigation — counter parity (getter works,
-  setter doesn't) suggests either the recognizer mis-classifies
-  setters or a downstream gate drops them.
+  **2026-05-27 investigation:** added throw-away diagnostic counters
+  inside `detectTrivialMethod` (now reverted) — the function is only
+  invoked ~168 times during a tinyBench run, none classifying as
+  setter.  bc0 histogram top entries: `0xf8` (CallPrimitive),
+  `0x4c` (PushReceiver), `0x10` (PushTemp 0), `0x40` (PushLitVar).
+  No `0xC8-0xCF` (popStoreRecvVar) sightings at all.  The 0x10
+  occurrences are followed by `0x81` (send literal 0, 0-args), i.e.
+  `^ arg msg`, not the setter pattern.
+
+  Conclusion: the setter recognizer isn't broken — micro-benches
+  (fib, sieve, tinyBench) simply don't exercise setter sends.  The
+  inline-setter path is alive for real Pharo workloads but invisible
+  in our perf-critical benchmarks.  Audit-gap closure stays on the
+  todo list but the asmjit setter is not the bottleneck for any
+  workload we currently benchmark.
 
 - asmjit T1 inline setter x86 (AsmjitT1.cpp:1929) — same fix needed.
   Can't test on Catalyst arm64.
