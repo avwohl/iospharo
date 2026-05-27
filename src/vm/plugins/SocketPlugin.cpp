@@ -88,7 +88,7 @@ static void registerSocket(PrivateSocket* ps) {
     wakeIOThread();
 }
 
-static void unregisterSocket(PrivateSocket* ps) {
+[[maybe_unused]] static void unregisterSocket(PrivateSocket* ps) {
     std::lock_guard<std::mutex> lock(gSocketMutex);
     auto it = std::find(gActiveSockets.begin(), gActiveSockets.end(), ps);
     if (it != gActiveSockets.end()) {

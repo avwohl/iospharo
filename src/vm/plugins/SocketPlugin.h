@@ -11,7 +11,14 @@
 #ifndef SOCKET_PLUGIN_H
 #define SOCKET_PLUGIN_H
 
+// Vendored upstream sqVirtualMachine.h has `volatile unsigned long long
+// (*utcMicroseconds)(void)` — the volatile qualifier on a return type is
+// a no-op (clang -Wignored-qualifiers).  Suppress here; mirroring upstream
+// is intentional.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wignored-qualifiers"
 #include "sqVirtualMachine.h"
+#pragma GCC diagnostic pop
 
 // SQSocket — the handle stored in a Pharo ByteArray
 // Layout must match the standard VM exactly.
