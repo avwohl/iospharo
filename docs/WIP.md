@@ -172,6 +172,18 @@ kill $PID
    Cleared 2026-05-27.  Vendored plugins still warn (~360 lines):
    B2DPlugin.c, FloatMathPlugin.c, SocketPlugin.c, etc. — leave alone.
 
+   Other non-vendor warnings also cleared on 2026-05-27:
+   - `-Wreorder-ctor` (Interpreter init-list order)
+   - `-Wformat` (4 sites in Interpreter.cpp)
+   - `-Wsign-compare` (IC entries loop)
+   - `-Winvalid-offsetof` (dumpInterpOffsets, suppressed locally)
+
+   The four remaining are intentional / vendored:
+   - `-Wframe-address` (Interpreter.hpp:361 — backtrace aid)
+   - `-Wignored-qualifiers` (vendored sqVirtualMachine.h)
+   - `-Wignored-pragmas` × 2 (PlatformBridge.cpp nil push/pop_macro
+     for early-exit returns; intentional structural choice)
+
 5. **Sista / Tier 2** — not currently compiling.  `T2 (asmjit):
    compiled=0` in stats.  Unblocking it would help tinyBench's inner
    loops significantly, but requires resolving the Sista bail-protocol
