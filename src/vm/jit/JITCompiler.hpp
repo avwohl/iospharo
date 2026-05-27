@@ -98,6 +98,7 @@ public:
         void* primAtPutPtr;     // jit_rt_primatput_ptr (basicAt:put: for fmt 3/4/5)
         void* recompileQueue;   // jit_rt_recompile_queue (queues callee for safe-point recompile)
         void* fillIC;           // jit_rt_fill_ic (cold-IC fill on mega-cache hit)
+        void* writeBarrier;     // jit_rt_setter_write_barrier (old→young remember-set entry)
     };
 
     void setHelpers(const RuntimeHelpers& h) { helpers_ = h; }

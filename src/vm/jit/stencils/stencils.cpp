@@ -232,6 +232,17 @@ extern "C" {
 extern "C" void (*_HOLE_RT_J2J_TRACE)(
     JITState* s, uint64_t event, uint64_t extra1, uint64_t extra2);
 
+// Write-barrier helper for the store-recv-var stencils.  Declared
+// early (alongside _HOLE_RT_J2J_TRACE) because the store stencils
+// are at lines 417-454, well before the rest of the _HOLE_RT_*
+// declarations below stencil_sendJ2J.  Records the receiver in
+// rememberedSet_ when the store crosses an old→young boundary; closes
+// the audit gap that forces scavenge to do an O(oldSpace) full scan
+// for old→young pointers.  See memory/jit_remembered_set_dead.md.
+extern "C" void (*_HOLE_RT_WRITE_BARRIER)(JITState* s,
+                                           uint64_t rcvBits,
+                                           uint64_t valBits);
+
 // _HOLE_RT_SEND / _HOLE_RT_RETURN used to tail-call jit_rt_send /
 // jit_rt_return helpers. Those helpers were empty no-ops: stencil set
 // state.exitReason, then branched through a 3-load GOT indirection to
@@ -420,6 +431,7 @@ extern "C" void stencil_popStoreRecvVar(JITState* s) {
     Oop value = *(s->sp);
     ObjectHeader* obj = asObjectPtr(s->receiver);
     obj->slots()[idx] = value;
+    _HOLE_RT_WRITE_BARRIER(s, s->receiver.bits, value.bits);
     _HOLE_CONTINUE(s);
 }
 
@@ -440,6 +452,7 @@ extern "C" void stencil_storeRecvVar(JITState* s) {
     Oop value = s->sp[-1];
     ObjectHeader* obj = asObjectPtr(s->receiver);
     obj->slots()[idx] = value;
+    _HOLE_RT_WRITE_BARRIER(s, s->receiver.bits, value.bits);
     _HOLE_CONTINUE(s);
 }
 
@@ -4395,7 +4408,10 @@ extern "C" void stencil_popStoreTemp_4(JITState* s) {
 
 // ----- STORE RECV VAR variants -----
 
-// 1: store x19 to receiver field, keep in register
+// 1: store x19 to receiver field, keep in register.
+// NOTE: barrier omitted — calling a C helper here forces the compiler
+// to save/restore x19-x22 (callee-saved), which defeats SimStack
+// register caching.  Audit gap stays open for this variant.
 extern "C" void stencil_storeRecvVar_1(JITState* s) {
     int idx = OPERAND;
     ObjectHeader* obj = asObjectPtr(s->receiver);
@@ -4406,6 +4422,8 @@ extern "C" void stencil_storeRecvVar_1(JITState* s) {
 }
 
 // ----- POP+STORE RECV VAR variants -----
+
+// SimStack variants: barrier omitted (would clobber callee-saved x19-x22).
 
 // 2 → 1: store x19 to receiver field, x20 becomes x19
 extern "C" void stencil_popStoreRecvVar_2(JITState* s) {

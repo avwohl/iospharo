@@ -1675,6 +1675,15 @@ void Interpreter::dumpJITStats() {
         fprintf(stderr, "  xmethod inline-J2J fires=%llu\n",
                 (unsigned long long)g_xmethod_count);
     }
+    // Stencil-side write barrier: hits from stencil_popStoreRecvVar /
+    // stencil_storeRecvVar.  Same counters as the asmjit-T1 setter
+    // barrier — they both call jit_rt_setter_write_barrier.
+    if (g_setterBarrier_calls > 0) {
+        fprintf(stderr,
+            "  write-barrier: calls=%zu imm-skip=%zu samegen-skip=%zu remembered=%zu\n",
+            g_setterBarrier_calls, g_setterBarrier_skipImm,
+            g_setterBarrier_skipSameGen, g_setterBarrier_remembered);
+    }
     if (g_canSkipJ2JSave_total > 0) {
         fprintf(stderr,
                 "  canSkipJ2JSave: %llu/%llu real-compiled methods qualify (%.1f%%); "

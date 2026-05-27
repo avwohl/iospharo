@@ -2173,6 +2173,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.primAtPutPtr = reinterpret_cast<void*>(&jit_rt_primatput_ptr);
     helpers.recompileQueue = reinterpret_cast<void*>(&jit_rt_recompile_queue);
     helpers.fillIC = reinterpret_cast<void*>(&jit_rt_fill_ic);
+    helpers.writeBarrier = reinterpret_cast<void*>(&jit_rt_setter_write_barrier);
     compiler_->setHelpers(helpers);
 
     // Create Tier 2 compiler (asmjit-based)
