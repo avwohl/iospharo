@@ -659,8 +659,6 @@ bool Interpreter::initialize() {
     int snapshotEndDepth = -1;
 
     while (currentCtx.isObject() && currentCtx.rawBits() != nilObj.rawBits() && depth < 20) {
-        ObjectHeader* ctxHdr = currentCtx.asObjectPtr();
-
         // Get receiver and method from context
         Oop receiver = memory_.fetchPointer(5, currentCtx);
         Oop method = memory_.fetchPointer(3, currentCtx);
@@ -829,7 +827,6 @@ bool Interpreter::initialize() {
                     if (p10List.isObject() && !p10List.isNil()) {
                         // Append P40 list to P10 list
                         Oop p10Last = memory_.fetchPointer(LinkedListLastLinkIndex, p10List);
-                        Oop p10First = memory_.fetchPointer(LinkedListFirstLinkIndex, p10List);
                         if (p10Last.isObject() && !p10Last.isNil() && p10Last.rawBits() != memory_.nil().rawBits()) {
                             // P10 list has existing entries; append
                             memory_.storePointer(ProcessNextLinkIndex, p10Last, first);
@@ -4066,7 +4063,6 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                         nestedStepCount, (void*)pendingCallbackReturn_);
                 fflush(stderr);
             }
-            VMCallbackContext* retVmcc = pendingCallbackReturn_;
             pendingCallbackReturn_ = nullptr;
 
             // COOLDOWN: Run extra steps so Smalltalk finishes cleanup.
@@ -9406,11 +9402,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
               // << " totalBytes=" << totalBytes
               // << " homeMethod=" << (homeMethod_ == method_ ? "same" : "different");
     if (homeMethod_ != method_ && homeMethod_.isObject()) {
-        Oop homeHeader = memory_.fetchPointer(0, homeMethod_);
-        if (homeHeader.isSmallInteger()) {
-            int64_t hBits = homeHeader.asSmallInteger();
-            // std::cerr << " (homeLiterals=" << (hBits & 0x7FFF) << ")";
-        }
     }
     // std::cerr; // DEBUG
 
@@ -13156,8 +13147,6 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     // (Interpreter.cpp:10391+) but inlined here so we control the
     // post-fn unwind exactly.
     if (frameDepth_ >= MaxFrameDepth) return 0;
-    Oop* savedFP_interp = framePointer_;
-    Oop* savedSP_interp = stackPointer_;
     stackPointer_ = callerState->sp;
     SavedFrame& frame = savedFrames_[frameDepth_++];
     frame.savedIP = instructionPointer_;
@@ -20277,9 +20266,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         ~ResumeGuard() { flag = prev; }
     } resumeGuard{inJITResume_, wasInJITResume};
 
-    static int jitActivationDepth = 0;
-    jitActivationDepth++;
-    struct DepthGuard { ~DepthGuard() { jitActivationDepth--; } } depthGuard;
     // Guard: method must be a valid object pointer
     if (!method.isObject() || method.rawBits() < 0x10000) return false;
 
