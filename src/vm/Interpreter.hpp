@@ -1010,6 +1010,18 @@ private:
     int traceAtAllPut_ = 0;  // >0 = trace bytecodes inside atAllPut: (counts calls)
     int benchRunCount_ = 0;  // -1=warmup, 0-4=timed runs, 5=done
     std::chrono::high_resolution_clock::time_point benchStartTime_;
+    // GC counter snapshots captured at setupBenchContext start, used to
+    // compute per-run deltas for the [BENCH ... run N] line.  Without
+    // these, the printed gcCount/gcTime is cumulative across all runs
+    // and the user has to subtract previous-run's numbers manually.
+    size_t benchStartGcCount_ = 0;
+    size_t benchStartGcTime_ = 0;
+    size_t benchStartScavCount_ = 0;
+    size_t benchStartScavTime_ = 0;
+    size_t benchStartFullCount_ = 0;
+    size_t benchStartFullTime_ = 0;
+    size_t benchStartSweepCount_ = 0;
+    size_t benchStartSweepTime_ = 0;
     Oop findMethod(const char* className, const char* selector);
     Oop findMethodInHierarchy(Oop cls, const char* selector);  // walks superclass chain
     Oop allocateInstance(const char* className);  // allocate zero-slot instance

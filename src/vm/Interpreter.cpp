@@ -1081,6 +1081,17 @@ void Interpreter::setupBenchContext() {
     const BenchSpec& spec = benchSpecs_[benchSpecIdx_];
     checkCountdown_ = 1024;
     benchStartTime_ = std::chrono::high_resolution_clock::now();
+    {
+        auto preStats = memory_.statistics();
+        benchStartGcCount_ = preStats.gcCount;
+        benchStartGcTime_  = preStats.totalGCTime;
+        benchStartScavCount_ = memory_.scavCount_;
+        benchStartScavTime_  = memory_.scavTime_;
+        benchStartFullCount_ = memory_.fullGCCount_;
+        benchStartFullTime_  = memory_.fullGCTime_;
+        benchStartSweepCount_ = memory_.sweepCount_;
+        benchStartSweepTime_  = memory_.sweepTime_;
+    }
 
     Oop method;
     if (spec.instanceReceiver) {
@@ -1157,12 +1168,18 @@ void Interpreter::handleBenchComplete(Oop returnValue) {
         auto now = std::chrono::high_resolution_clock::now();
         long us = std::chrono::duration_cast<std::chrono::microseconds>(now - benchStartTime_).count();
         auto memStats = memory_.statistics();
+        // Show per-run deltas — cumulative counters confused readers
+        // into seeing GC growth that was just accumulation across runs.
         fprintf(stderr, "[BENCH] %s run %d: %ld us (%ld ms) gcCount=%zu gcTime=%zums [scav=%zu/%zums full=%zu/%zums sweep=%zu/%zums]\n",
                 spec.name.c_str(), benchRunCount_, us, us / 1000,
-                memStats.gcCount, memStats.totalGCTime,
-                memory_.scavCount_, memory_.scavTime_,
-                memory_.fullGCCount_, memory_.fullGCTime_,
-                memory_.sweepCount_, memory_.sweepTime_);
+                memStats.gcCount - benchStartGcCount_,
+                memStats.totalGCTime - benchStartGcTime_,
+                memory_.scavCount_ - benchStartScavCount_,
+                memory_.scavTime_  - benchStartScavTime_,
+                memory_.fullGCCount_ - benchStartFullCount_,
+                memory_.fullGCTime_  - benchStartFullTime_,
+                memory_.sweepCount_ - benchStartSweepCount_,
+                memory_.sweepTime_  - benchStartSweepTime_);
         benchRunCount_++;
     }
     if (benchRunCount_ >= spec.runs) {
