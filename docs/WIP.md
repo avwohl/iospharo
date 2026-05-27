@@ -184,7 +184,7 @@ kill $PID
    - `-Wignored-pragmas` × 2 (PlatformBridge.cpp nil push/pop_macro
      for early-exit returns; intentional structural choice)
 
-   **Bonus: warning hygiene surfaced TWO real latent bugs.**
+   **Bonus: warning hygiene + TODO sweep surfaced THREE real bugs.**
 
    1. `-Wtautological-overlap-compare` flagged Primitive 132's
       `format >= Indexable32 && format <= Indexable64` shortcut as
@@ -198,6 +198,16 @@ kill $PID
       memset on a non-trivially-copyable type is UB and clobbers the
       mutex's internal state.  Replaced with explicit per-field reset.
       Fixed in `95378117`.
+
+   3. JIT inline at:put: helper (`jit_rt_primatput_ptr`) wrote slots
+      directly without the old→young remembered-set entry.  The
+      pre-existing `TODO: emit remember bit` comment acknowledged
+      this; the fallback ("defer to GC's full scan") only holds for
+      major-GC, not scavenges.  An `oldArray at: i put: youngObj`
+      could leave `youngObj` reachable only via the unrecorded slot,
+      vulnerable to a subsequent scavenge.  Switched to
+      ObjectMemory::storePointerUnchecked which does both the store
+      and the barrier.  Fixed in `5a7267cd`.
 
    Net non-vendor warnings remaining: **0**.
    Total build warnings: 327, all in vendored plugin sources
