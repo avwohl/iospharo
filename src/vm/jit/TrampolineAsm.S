@@ -40,6 +40,9 @@
 #define JS_RETURNVALUE    80
 #define JS_CACHEDTARGET   88
 #define JS_SENDARGCOUNT   104
+#define JS_J2J_SAVE_CURSOR 144
+#define JS_J2J_SAVE_LIMIT  152
+#define JS_J2J_DEPTH      160
 #define JS_J2J_DEPTH_INC  208
 
 // -------- J2JSave field offsets (see Interpreter.hpp struct J2JSave) --------
@@ -195,6 +198,8 @@ Ltramp_return:
 
     add     x26, x26, #1              // localReturns++
     sub     x23, x23, #JSV_SIZE       // pop save slot; now points to just-popped
+    // Sync state.j2jSaveCursor — same defensive rationale as Ltramp_call.
+    str     x23, [x21, #JS_J2J_SAVE_CURSOR]
     sub     x24, x24, #1              // localFrameDepth--
 
     // retVal lives in x17 (caller-saved IP1) — we never cross a BLR between
@@ -340,6 +345,12 @@ Lresume_null:
 Lcall_after_resume:
     // Advance save cursor now that the slot is fully written
     add     x23, x23, #JSV_SIZE
+    // Sync state.j2jSaveCursor with the trampoline's local x23 so any
+    // callee-side code that reads state.j2jSaveCursor (e.g. asmjit-T1's
+    // inline-J2J push) sees a consistent view.  Defensive: without this
+    // the asm and C++ paths could diverge.  (Doesn't fix task #8 — that
+    // bug is in the materialize/dispatch interaction, not the cursor.)
+    str     x23, [x21, #JS_J2J_SAVE_CURSOR]
 
     // Stack (frame depth) overflow check
     // 4096 fits in `cmp (imm12, lsl #12)` form: #1, lsl #12
