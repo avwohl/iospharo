@@ -1129,9 +1129,15 @@ extern "C" int jit_rt_primatput_ptr(JITState* s, uint64_t rcvBits,
     size_t indexableSize = slotCount - fixedFields;
     if (i < 1 || i > indexableSize) return 0;
     size_t actualSlot = fixedFields + (i - 1);
-    rh->slots()[actualSlot] = pharo::Oop::fromRawBits(valBits);
-    // Note: write barrier for old-to-young pointer might be needed.
-    // For now, defer to GC's full scan.  TODO: emit remember bit.
+    // storePointerUnchecked does the old→young write barrier
+    // (remembered-set entry) as well as the store, so a young value
+    // stored into an old array isn't collected by the next scavenge.
+    // Prior code wrote the slot directly without the barrier, relying
+    // on GC's full scan — correct but wasteful, and only safe because
+    // the scavenge's promotion path also enumerated old objects.
+    mem->storePointerUnchecked(actualSlot,
+                               pharo::Oop::fromRawBits(rcvBits),
+                               pharo::Oop::fromRawBits(valBits));
     return 1;
 }
 
