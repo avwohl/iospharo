@@ -113,6 +113,13 @@ Profiling tinyBenchmarks with `sample` found 85% of runtime in
 fullGCs/run, ~89 ms each).  Bumping to 512 MB drops total GC time from
 5851 ms to ~1080 ms — about a 22% gain on tinyBench.
 
+**2026-05-27 amendment:** the "85% GC" reading was cumulative across
+all runs.  After the per-run-delta fix (`da56f9ce`), tinyBench
+shows ~8% intra-run GC at 512 MB headroom — the bulk of "GC overhead"
+in the original measurement was inter-run setup GCs, not the
+benchmark inner loop.  The 512 MB choice still helps because it
+reduces those setup GCs too.
+
 Default sweep:
 ```
  32MB:   64 fullGCs, 5851ms GC, 6738ms total (85% GC)
