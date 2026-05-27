@@ -6,7 +6,7 @@ faster than Cog.  tinyBenchmarks gap (was 3x, now ~2x) remains.
 
 ## Current state — all clean
 
-- Branch: `jit` at `80b87e5b` (pushed to origin).
+- Branch: `jit` at `f497528d` (pushed to origin).
 - Working tree clean.
 - fib(15) → fib(45) all produce correct values.
 - fib(28) at ~9 ms (Cog ~30 ms — 3.3x faster).
@@ -16,6 +16,9 @@ faster than Cog.  tinyBenchmarks gap (was 3x, now ~2x) remains.
 ## Session commits (in order)
 
 ```
+f497528d vm: clear remaining Primitives.cpp unused-variable warnings
+d0660c63 vm: remove 12 unused-variable warnings across VM + JIT
+1e0aa459 docs: WIP.md — session resume info for JIT optimization work
 80b87e5b vm: remove more unused-variable warnings (5 sites)
 b4ea4ecd vm: remove 6 unused-variable warnings from Interpreter.cpp
 d33a4fdd gc: gate currentScanParent_/currentScanSlot_ stores behind PHARO_HOT_PATH_DIAG
@@ -26,6 +29,29 @@ d33a4fdd gc: gate currentScanParent_/currentScanSlot_ stores behind PHARO_HOT_PA
 22adef73 jit: drop stale task-#8 / J2JSlotPerEntry workaround comments
 29df9943 jit: fix materialized frame savedBytecodeEnd — root cause of task #8
 ```
+
+## 2026-05-27 session notes
+
+Picked up after the prior WIP.  Confirmed baseline (fib=9 ms,
+tiny=5286 ms).  Sample profile shows:
+- 1424/2541 samples (56%) in JIT-compiled code via dispatchBytecode chain
+- 370 samples (15%) in JIT code via activateMethod → tryJITActivation
+- ~5.8% primitiveStringReplace memmove
+- ~3.9% primitiveNewWithArg → allocateSlots
+- gcTime 21% of run
+
+OSR disable test (PHARO_NO_OSR=1) → 5272 ms, basically same as baseline.
+OSR is not the bottleneck — the JIT-compiled code itself is.
+
+Big remaining wins (all require multi-week work or known-broken):
+- Sista Tier-2 (`canBailMidMethod` bail protocol, blocked since 2026-05-21)
+- xmethod inline-J2J (known broken — #value: DNU on startup)
+- bumping gcHeadroom to 2GB gains only ~300 ms (vs 3.3 s gap to Cog)
+
+Cleanup taken this session: all non-vendor unused-variable warnings
+are gone (Interpreter.cpp, ObjectMemory.cpp, JITRuntime.cpp,
+ImageLoader.hpp, Primitives.cpp).  Remaining warnings are all in
+vendored plugin code (B2DPlugin, FloatMath, etc.).
 
 ## Root-cause story: the materialize bytecodeEnd bug (29df9943)
 
@@ -113,9 +139,10 @@ kill $PID
    broken, produces #value: DNU + C-stack crash during normal startup.
    Was attempted prior to this session; left default-off.
 
-4. **`-Wunused` remaining warnings**: 13 left (was 24).  See
-   `cmake --build build 2>&1 | grep unused` — mostly debug/diagnostic
-   leftovers in `numLiterals`, `closureHdr`, `entryCount`, etc.
+4. **`-Wunused` remaining warnings**: 0 in non-vendor code (was 13
+   in Interpreter.cpp + ~25 more in Primitives.cpp / ObjectMemory.cpp).
+   Cleared 2026-05-27.  Vendored plugins still warn (~360 lines):
+   B2DPlugin.c, FloatMathPlugin.c, SocketPlugin.c, etc. — leave alone.
 
 5. **Sista / Tier 2** — not currently compiling.  `T2 (asmjit):
    compiled=0` in stats.  Unblocking it would help tinyBench's inner
