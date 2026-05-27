@@ -186,12 +186,22 @@ that the scavenge will redo by scanning every old-space slot.
 
 **Audit status** (sites that still write slots without the barrier):
 
-- asmjit T1 inline setter (x86 AsmjitT1.cpp:1929, arm64 line 4431)
-- stencils.cpp store-recv-var stencils (lines 422, 442, 464, 475)
+- ~~asmjit T1 inline setter arm64 (AsmjitT1.cpp:4431)~~ — opt-in
+  barrier wired up in commit `6b643915` via PHARO_T1_SETTER_BARRIER=1.
+  Verified no crash; counters added in `fe4c7b27`.  Micro-benches
+  don't exercise the path (calls=0 on fib/tinyBench), so perf-impact
+  measurement needs a setter-heavy workload.
+- asmjit T1 inline setter x86 (AsmjitT1.cpp:1929) — same fix needed.
+  Can't test on Catalyst arm64.
+- stencils.cpp store-recv-var stencils (lines 422, 442, 464, 475) —
+  these go through extract_stencils.py machine-code blobs; barrier
+  emit there is more invasive.
 
-Both are JIT-emitted machine code, so closing the gap requires
-emitting a barrier check from the codegen.  Mid-sized engineering
-effort — not a one-line fix.
+Once all four sites barrier, scavenge can be flipped to consume
+`rememberedSet_` (`ObjectMemory.cpp:1571-1597` full-scan replaced
+by remembered-set iteration).  Diagnostic counters in JITRuntime.cpp
+provide ground truth: when `remembered=0` on a workload that uses
+setters, an audit gap is still missing.
 
 See `memory/jit_remembered_set_dead.md` for the full notes.
 
