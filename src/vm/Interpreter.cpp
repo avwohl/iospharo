@@ -1119,11 +1119,24 @@ void Interpreter::handleBenchComplete(Oop returnValue) {
         returnValue.isNil() ? "nil" :
         returnValue.isSmallInteger() ? "int" : "obj";
     long long intVal = returnValue.isSmallInteger() ? returnValue.asSmallInteger() : 0;
-    fprintf(stderr, "[BENCH] handleBenchComplete called (specIdx=%d runCount=%d) ret=0x%llx (%s%s%lld)\n",
+
+    // Decode String return values (e.g., tinyBenchmarks returns
+    // "5M bytecodes/sec; 200K sends/sec").
+    std::string strVal;
+    if (returnValue.isObject() && returnValue.rawBits() > 0x10000) {
+        ObjectHeader* h = returnValue.asObjectPtr();
+        if (h->isBytesObject() && h->byteSize() < 256) {
+            strVal.assign(reinterpret_cast<const char*>(h->bytes()), h->byteSize());
+        }
+    }
+
+    fprintf(stderr, "[BENCH] handleBenchComplete called (specIdx=%d runCount=%d) ret=0x%llx (%s%s%lld)%s%s\n",
             benchSpecIdx_, benchRunCount_,
             (unsigned long long)returnValue.rawBits(), retTag,
             returnValue.isSmallInteger() ? " " : "",
-            returnValue.isSmallInteger() ? intVal : 0LL);
+            returnValue.isSmallInteger() ? intVal : 0LL,
+            strVal.empty() ? "" : " = ",
+            strVal.c_str());
     const BenchSpec& spec = benchSpecs_[benchSpecIdx_];
     if (benchRunCount_ == -1) {
         fprintf(stderr, "[BENCH] %s warmup done\n", spec.name.c_str());

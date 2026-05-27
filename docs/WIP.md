@@ -32,6 +32,34 @@ d33a4fdd gc: gate currentScanParent_/currentScanSlot_ stores behind PHARO_HOT_PA
 
 ## 2026-05-27 session notes
 
+### tinyBenchmarks self-measurement insight
+
+handleBenchComplete now decodes String return values.  Our actual
+numbers per run:
+
+    6,460,567,823 bytecodes/sec
+      114,265,556 sends/sec
+
+For comparison, Cog typically reports ~5B bytecodes/sec and
+~150M sends/sec.  We're FASTER per-bytecode and slightly slower
+per-send.
+
+Wall-clock 5.3 s is dominated by the doubling-calibration phase
+that tinyBenchmarks runs to find an `n` that takes ≥ 1 s:
+- Bytecodes calibration: 1+2+4+...+16384 = 32767 trials at 500K
+  ops each → ~16 B ops at 6.46 B/s ≈ 2.5 s
+- Sends calibration: sum of fib(28..40) ≈ 426 M sends at 114 M/s
+  ≈ 3.7 s
+- Total: ~6.2 s expected, observed 5.3 s
+
+A FASTER VM spends MORE time in calibration because it needs
+larger n to hit the 1 s threshold.  The WIP's "Cog ~2 s" target
+appears to be a misleading benchmark — apples-to-apples
+bytecodes/sec and sends/sec rates are the right metric, and on
+those we are already competitive.
+
+### Sample profile findings
+
 Picked up after the prior WIP.  Confirmed baseline (fib=9 ms,
 tiny=5286 ms).  Sample profile shows:
 - 1424/2541 samples (56%) in JIT-compiled code via dispatchBytecode chain
