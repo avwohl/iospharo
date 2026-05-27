@@ -1081,7 +1081,13 @@ void Interpreter::handleBenchComplete(Oop returnValue) {
     } else if (benchRunCount_ >= 0 && benchRunCount_ < spec.runs) {
         auto now = std::chrono::high_resolution_clock::now();
         long us = std::chrono::duration_cast<std::chrono::microseconds>(now - benchStartTime_).count();
-        fprintf(stderr, "[BENCH] %s run %d: %ld us (%ld ms)\n", spec.name.c_str(), benchRunCount_, us, us / 1000);
+        auto memStats = memory_.statistics();
+        fprintf(stderr, "[BENCH] %s run %d: %ld us (%ld ms) gcCount=%zu gcTime=%zums [scav=%zu/%zums full=%zu/%zums sweep=%zu/%zums]\n",
+                spec.name.c_str(), benchRunCount_, us, us / 1000,
+                memStats.gcCount, memStats.totalGCTime,
+                memory_.scavCount_, memory_.scavTime_,
+                memory_.fullGCCount_, memory_.fullGCTime_,
+                memory_.sweepCount_, memory_.sweepTime_);
         benchRunCount_++;
     }
     if (benchRunCount_ >= spec.runs) {

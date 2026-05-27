@@ -787,7 +787,14 @@ public:
     bool enableYoungGen_ = false;
 private:
     size_t lastCompactedSize_ = 0;  // Old space used bytes after last compacting GC
-    size_t gcHeadroom_ = 32ULL * 1024 * 1024;  // 32MB headroom before triggering compaction GC
+    // GC headroom: how much old space can grow beyond lastCompactedSize
+    // before requesting a compaction.  Bumped from 32MB to 256MB on
+    // 2026-05-27 after profiling showed tinyBenchmarks was 85% GC-time
+    // with 32MB headroom (64 fullGCs/run, ~89ms each).  256MB cuts that
+    // to ~15% GC time and ~17% total runtime gain.  Virtual address is
+    // reserved up-front (4GB lazy-commit), so this only affects when
+    // the GC fires, not when physical memory is consumed.
+    size_t gcHeadroom_ = 256ULL * 1024 * 1024;
     Interpreter* interpreter_ = nullptr;  // For root enumeration during GC
     std::vector<Oop*> roots_;
     std::vector<ObjectHeader*> rememberedSet_;  // Old-space objects with young pointers
@@ -825,6 +832,15 @@ private:
     size_t bytesAllocated_ = 0;
     size_t gcCount_ = 0;
     size_t totalGCTime_ = 0;
+public:
+    // Per-GC-type counters/timing for perf analysis
+    size_t scavCount_ = 0;
+    size_t scavTime_ = 0;
+    size_t fullGCCount_ = 0;
+    size_t fullGCTime_ = 0;
+    size_t sweepCount_ = 0;
+    size_t sweepTime_ = 0;
+private:
 
     // ===== PRIVATE HELPERS =====
 

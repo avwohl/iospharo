@@ -1644,6 +1644,8 @@ GCResult ObjectMemory::scavenge() {
         end - start).count();
     gcCount_++;
     totalGCTime_ += result.milliseconds;
+    scavCount_++;
+    scavTime_ += result.milliseconds;
     return result;
 }
 
@@ -1750,6 +1752,8 @@ void ObjectMemory::sweepGC() {
 
     gcCount_++;
     totalGCTime_ += ms;
+    sweepCount_++;
+    sweepTime_ += ms;
 }
 
 GCResult ObjectMemory::fullGC(bool skipEphemerons) {
@@ -1862,6 +1866,8 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
 
     gcCount_++;
     totalGCTime_ += result.milliseconds;
+    fullGCCount_++;
+    fullGCTime_ += result.milliseconds;
 
     // PHARO_DELAY_DEBUG: log any GC over 10ms. Long GCs stall the main
     // interpreter loop, which is what blocks checkTimerSemaphore and
