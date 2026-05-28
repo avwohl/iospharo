@@ -149,6 +149,20 @@ struct JITState {
     uint8_t* sistaSaveLimit;  // offset 224: end-of-pool sentinel
     int32_t  sistaSaveDepth;  // offset 232: current nesting depth
     int32_t  sistaEntryDepth; // offset 236: per-entry baseline depth
+
+    // --- Cached space pointers for the inline-asm write barrier ---
+    // SimStack store-recv-var stencils (popStoreRecvVar_{1..4},
+    // storeRecvVar_1) need to range-check rcv against old-space and val
+    // against young-space.  Reading these as ObjectMemory member fields
+    // would require either two indirections (s->memory->oldSpaceStart_)
+    // or hardcoded layout offsets.  Stashing them here, set once at
+    // tryJITActivation entry, lets the barrier be a few `ldr`s off x0
+    // — no function call, so the SimStack register cache (x19-x22)
+    // stays untouched.
+    uint8_t* oldSpaceStart;   // offset 240
+    uint8_t* oldSpaceEnd;     // offset 248
+    uint8_t* newSpaceStart;   // offset 256
+    uint8_t* newSpaceEnd;     // offset 264
 };
 
 // Verify expected offsets (stencils depend on these)
@@ -180,6 +194,10 @@ static_assert(offsetof(JITState, sistaSaveCursor) == 216, "sistaSaveCursor offse
 static_assert(offsetof(JITState, sistaSaveLimit)  == 224, "sistaSaveLimit offset");
 static_assert(offsetof(JITState, sistaSaveDepth)  == 232, "sistaSaveDepth offset");
 static_assert(offsetof(JITState, sistaEntryDepth) == 236, "sistaEntryDepth offset");
+static_assert(offsetof(JITState, oldSpaceStart)   == 240, "oldSpaceStart offset");
+static_assert(offsetof(JITState, oldSpaceEnd)     == 248, "oldSpaceEnd offset");
+static_assert(offsetof(JITState, newSpaceStart)   == 256, "newSpaceStart offset");
+static_assert(offsetof(JITState, newSpaceEnd)     == 264, "newSpaceEnd offset");
 
 // SistaSave: 56 bytes per entry (8-byte aligned).  Mirrors J2JSave's
 // layout but sized for Sista's needs.  See docs/jit-may22a.md for

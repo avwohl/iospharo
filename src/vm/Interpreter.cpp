@@ -20457,6 +20457,17 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.sistaSaveDepth = 0;
     state.sistaEntryDepth = 0;
 
+    // Space-range pointers for the SimStack write-barrier inline-asm
+    // in popStoreRecvVar_{1..4} / storeRecvVar_1.  Caching these here
+    // (set once per JIT entry) lets the stencil load them as
+    // `ldr x?, [x0, #240..264]` instead of indirecting through
+    // ObjectMemory's class layout — no function call, x19-x22
+    // SimStack cache stays untouched.
+    state.oldSpaceStart = memory_.oldSpaceStart();
+    state.oldSpaceEnd   = memory_.oldSpaceEnd();
+    state.newSpaceStart = memory_.newSpaceStart();
+    state.newSpaceEnd   = memory_.newSpaceEnd();
+
     // Save entry SP so we can restore it on ExitDeopt/ExitPrimFail.
     Oop* entrySP = stackPointer_;
 

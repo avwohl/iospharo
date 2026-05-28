@@ -103,6 +103,24 @@ struct JITState {
     void*         methodMapPtr;  // offset 168
     // Yield support
     int32_t       yieldCountdown; // offset 176
+    int32_t       _pad180;        // offset 180 (align to 8)
+    // Sista splice scratch (offsets 184/192) — not used by stencils.
+    uint64_t      _spliceSpill0;  // offset 184
+    uint64_t      _spliceSpill1;  // offset 192
+    int32_t       j2jEntryDepth;  // offset 200
+    int32_t       _pad204;        // offset 204
+    uint64_t      j2jDepthInc;    // offset 208
+    // jit-may22a B1 Sista save stack — not used by store stencils.
+    uint8_t*      _sistaCursor;   // offset 216
+    uint8_t*      _sistaLimit;    // offset 224
+    int32_t       _sistaDepth;    // offset 232
+    int32_t       _sistaEntry;    // offset 236
+    // Cached space pointers for the inline-asm write barrier in
+    // popStoreRecvVar_{1..4} / storeRecvVar_1.  See JITState.hpp.
+    uint8_t*      oldSpaceStart;  // offset 240
+    uint8_t*      oldSpaceEnd;    // offset 248
+    uint8_t*      newSpaceStart;  // offset 256
+    uint8_t*      newSpaceEnd;    // offset 264
 };
 
 // J2JSave matches the struct in Interpreter.cpp exactly (56 bytes).
@@ -242,6 +260,37 @@ extern "C" void (*_HOLE_RT_J2J_TRACE)(
 extern "C" void (*_HOLE_RT_WRITE_BARRIER)(JITState* s,
                                            uint64_t rcvBits,
                                            uint64_t valBits);
+
+// Inline-asm write barrier for SimStack-variant store stencils that
+// can't safely call a C helper (BLR would force x19-x22 spill,
+// defeating register caching).  Sets RememberedBit (bit 29 of header)
+// on the receiver when val is a heap Oop in newSpace and rcv is in
+// oldSpace.  Uses caller-saved x11 only.  Inputs: `_rcv` is the rcv
+// pointer (post-tag-strip), `_val` is the value bits.
+#define INLINE_WRITE_BARRIER_OLD_TO_YOUNG(_rcv, _val) \
+    asm volatile( \
+        "and x11, %[val], #7\n"               \
+        "cbnz x11, 1f\n"                       \
+        "ldr x11, [x0, #240]\n"  /* oldStart */ \
+        "cmp %[rcv], x11\n"                    \
+        "b.lo 1f\n"                            \
+        "ldr x11, [x0, #248]\n"  /* oldEnd */   \
+        "cmp %[rcv], x11\n"                    \
+        "b.hs 1f\n"                            \
+        "ldr x11, [x0, #256]\n"  /* newStart */ \
+        "cmp %[val], x11\n"                    \
+        "b.lo 1f\n"                            \
+        "ldr x11, [x0, #264]\n"  /* newEnd */   \
+        "cmp %[val], x11\n"                    \
+        "b.hs 1f\n"                            \
+        "ldr x11, [%[rcv]]\n"                  \
+        "orr x11, x11, #(1 << 29)\n"           \
+        "str x11, [%[rcv]]\n"                  \
+        "1:\n"                                 \
+        :                                      \
+        : [rcv] "r"((uint64_t)(_rcv)), [val] "r"((uint64_t)(_val)) \
+        : "x11", "memory", "cc"                \
+    )
 
 // _HOLE_RT_SEND / _HOLE_RT_RETURN used to tail-call jit_rt_send /
 // jit_rt_return helpers. Those helpers were empty no-ops: stencil set
@@ -4409,19 +4458,17 @@ extern "C" void stencil_popStoreTemp_4(JITState* s) {
 // ----- STORE RECV VAR variants -----
 
 // 1: store x19 to receiver field, keep in register.
-// NOTE: barrier omitted — calling a C helper here forces the compiler
-// to save/restore x19-x22 (callee-saved), which defeats SimStack
-// register caching even with `register asm()` reservations (tried
-// 2026-05-27, still emits STP at prologue/LDP at epilogue).  Audit
-// gap stays open for this variant.  Closing it needs inline-asm
-// barrier (no BLR, manual remembered-set push) or a 1-arg helper
-// signature that stashes args in JITState fields first.
+// Inline-asm write barrier sets the RememberedBit (bit 29 of the
+// receiver header) when the store crosses an old→young boundary.
+// No BLR / no callee-saved spills → SimStack register cache stays
+// intact.  See JITState.hpp for the cached space pointers used here.
 extern "C" void stencil_storeRecvVar_1(JITState* s) {
     int idx = OPERAND;
     ObjectHeader* obj = asObjectPtr(s->receiver);
     uint64_t tos;
     asm volatile("mov %0, x19" : "=r"(tos));
     obj->slots()[idx].bits = tos;
+    INLINE_WRITE_BARRIER_OLD_TO_YOUNG(obj, tos);
     _HOLE_CONTINUE(s);
 }
 
@@ -4436,6 +4483,7 @@ extern "C" void stencil_popStoreRecvVar_2(JITState* s) {
     uint64_t tos;
     asm volatile("mov %0, x19" : "=r"(tos));
     obj->slots()[idx].bits = tos;
+    INLINE_WRITE_BARRIER_OLD_TO_YOUNG(obj, tos);
     asm volatile("mov x19, x20" :::);
     _HOLE_CONTINUE(s);
 }
@@ -4447,6 +4495,7 @@ extern "C" void stencil_popStoreRecvVar_1(JITState* s) {
     uint64_t tos;
     asm volatile("mov %0, x19" : "=r"(tos));
     obj->slots()[idx].bits = tos;
+    INLINE_WRITE_BARRIER_OLD_TO_YOUNG(obj, tos);
     _HOLE_CONTINUE(s);
 }
 
@@ -4457,6 +4506,7 @@ extern "C" void stencil_popStoreRecvVar_3(JITState* s) {
     uint64_t tos;
     asm volatile("mov %0, x19" : "=r"(tos));
     obj->slots()[idx].bits = tos;
+    INLINE_WRITE_BARRIER_OLD_TO_YOUNG(obj, tos);
     asm volatile("mov x19, x20" :::);
     asm volatile("mov x20, x21" :::);
     _HOLE_CONTINUE(s);
@@ -4469,6 +4519,7 @@ extern "C" void stencil_popStoreRecvVar_4(JITState* s) {
     uint64_t tos;
     asm volatile("mov %0, x19" : "=r"(tos));
     obj->slots()[idx].bits = tos;
+    INLINE_WRITE_BARRIER_OLD_TO_YOUNG(obj, tos);
     asm volatile("mov x19, x20" :::);
     asm volatile("mov x20, x21" :::);
     asm volatile("mov x21, x22" :::);
