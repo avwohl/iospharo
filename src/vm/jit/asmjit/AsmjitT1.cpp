@@ -81,6 +81,8 @@ extern "C" void jit_rt_setter_write_barrier(void* state, uint64_t rcvBits,
                                              uint64_t valBits);
 extern "C" int jit_rt_primsize_ptr(void* state, uint64_t rcvBits,
                                     uint64_t* out);
+extern "C" int jit_rt_primat_ptr(void* state, uint64_t rcvBits,
+                                  uint64_t i, uint64_t* out);
 extern "C" uint64_t g_t1SistaDispatch_hits;
 extern "C" uint64_t g_t1SistaDispatch_attempts;
 extern "C" uint64_t g_t1MultiSlot_hits = 0;
@@ -2233,6 +2235,43 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             a.ret(x30);
+            // fmt 3/4/5/9 (IndexableWithFixed / Weak / Indexable64) — call
+            // jit_rt_primat_ptr helper.  Same dual-path trap as basicSize:
+            // without this branch, LayoutClassScope.at: (fmt 3) fell
+            // through to the bytecode body's "primitiveFailed" path which
+            // raised a confusing ArgumentsCountMismatch instead of doing
+            // the right thing for fmt-3 receivers.
+            {
+                asmjit::Label tryFmt345At = a.new_label();
+                a.sub(x8, x6, asmjit::Imm(3));
+                a.cmp(x8, asmjit::Imm(3));
+                a.b_lo(tryFmt345At);
+                a.cmp(x6, asmjit::Imm(9));
+                a.b_ne(fail);
+                a.bind(tryFmt345At);
+                // Untag idx (x3 has tagged), save x1 (rcvr) for helper call.
+                a.asr(x4, x3, asmjit::Imm(3));   // x4 = untagged idx
+                // Helper signature: int(JITState* s, uint64_t rcvBits, uint64_t i, uint64_t* out)
+                //   x0 in: state (already); x1 in: rcvBits (already);
+                //   x2 in: untagged idx; x3 in: &OFF_RETVAL
+                a.sub(sp, sp, asmjit::Imm(16));
+                a.str(x0,  ptr(sp, 0));
+                a.str(x30, ptr(sp, 8));
+                a.mov(x2, x4);                   // x2 = idx
+                a.add(x3, x0, asmjit::Imm(OFF_RETVAL));
+                a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_primat_ptr));
+                a.blr(x9);
+                a.mov(x9, x0);
+                a.ldr(x0,  ptr(sp, 0));
+                a.ldr(x30, ptr(sp, 8));
+                a.add(sp, sp, asmjit::Imm(16));
+                a.cbz(x9, fail);
+                // jit_rt_primat_ptr wrote the result oop directly into
+                // *out (already tagged for SmI / pointer).  Set EXIT_RETURN.
+                a.mov(w3, asmjit::Imm(EXIT_RETURN));
+                a.str(w3, ptr(x0, OFF_EXIT));
+                a.ret(x30);
+            }
             a.bind(fail);
             return;
         }
