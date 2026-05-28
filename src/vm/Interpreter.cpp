@@ -9917,6 +9917,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             sstate.tempBase = framePointer_ + 1;
             sstate.memory = &memory_;
             sstate.interp = this;
+            sstate.oldSpaceStart = memory_.oldSpaceStart();
+            sstate.oldSpaceEnd   = memory_.oldSpaceEnd();
+            sstate.newSpaceStart = memory_.newSpaceStart();
+            sstate.newSpaceEnd   = memory_.newSpaceEnd();
             sstate.ip = instructionPointer_;
             sstate.method = method;
             sstate.argCount = argCount;
@@ -13266,6 +13270,10 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     sstate.literals = methodObj->slots() + 1;
     sstate.tempBase = framePointer_ + 1;
     sstate.memory = &memory_;
+    sstate.oldSpaceStart = memory_.oldSpaceStart();
+    sstate.oldSpaceEnd   = memory_.oldSpaceEnd();
+    sstate.newSpaceStart = memory_.newSpaceStart();
+    sstate.newSpaceEnd   = memory_.newSpaceEnd();
     sstate.interp = this;
     sstate.ip = bcStart;
     sstate.method = method;
@@ -17484,6 +17492,10 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         sstate.tempBase = framePointer_ + 1;
         sstate.memory = &memory_;
         sstate.interp = this;
+        sstate.oldSpaceStart = memory_.oldSpaceStart();
+        sstate.oldSpaceEnd   = memory_.oldSpaceEnd();
+        sstate.newSpaceStart = memory_.newSpaceStart();
+        sstate.newSpaceEnd   = memory_.newSpaceEnd();
         sstate.ip = instructionPointer_;
         sstate.method = method_;
         sstate.argCount = static_cast<int>((hdrOop.asSmallInteger() >> 24) & 0x0F);
@@ -17914,6 +17926,10 @@ void Interpreter::tryJITResumeInCaller() {
         state.tempBase = framePointer_ + 1;
         state.memory = &memory_;
         state.interp = this;
+        state.oldSpaceStart = memory_.oldSpaceStart();
+        state.oldSpaceEnd   = memory_.oldSpaceEnd();
+        state.newSpaceStart = memory_.newSpaceStart();
+        state.newSpaceEnd   = memory_.newSpaceEnd();
         {
             Oop hdr = methObj->slots()[0];
             int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;

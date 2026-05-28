@@ -1584,6 +1584,10 @@ GCResult ObjectMemory::scavenge() {
     size_t auditBitUnsetHit = 0;   // bit unset + ≥1 young ref (audit-gap MISS!)
     size_t auditBitUnsetSafe = 0;  // bit unset + no young ref (true negative)
 
+    // For audit-gap miss logging (first N per scavenge).
+    static thread_local size_t auditMissLogCount = 0;
+    constexpr size_t kAuditMissLogMax = 10;
+
     auto scanRegionForYoung = [&](uint8_t* regionStart, uint8_t* regionEnd) {
         ObjectScanner scan(regionStart, regionEnd);
         while (ObjectHeader* obj = scan.next()) {
@@ -1591,11 +1595,13 @@ GCResult ObjectMemory::scavenge() {
             Oop* slots = obj->slots();
             size_t cnt = obj->slotCount();
             bool foundYoungRef = false;
+            int firstYoungSlot = -1;
             for (size_t i = 0; i < np && i < cnt; ++i) {
                 Oop s = slots[i];
                 if (!s.isObject()) continue;
                 uint8_t* hp = reinterpret_cast<uint8_t*>(s.asObjectPtr());
                 if (hp >= edenStart_ && hp < edenFree_) {
+                    if (bitAudit && !foundYoungRef) firstYoungSlot = (int)i;
                     if (bitAudit) foundYoungRef = true;
                     Oop newS = tenureIfYoung(s);
                     slots[i] = newS;
@@ -1608,7 +1614,21 @@ GCResult ObjectMemory::scavenge() {
                 bool wasRemembered = obj->isRemembered();
                 if (wasRemembered && foundYoungRef) auditBitSetHit++;
                 else if (wasRemembered && !foundYoungRef) auditBitSetMiss++;
-                else if (!wasRemembered && foundYoungRef) auditBitUnsetHit++;
+                else if (!wasRemembered && foundYoungRef) {
+                    auditBitUnsetHit++;
+                    if (auditMissLogCount < kAuditMissLogMax) {
+                        auditMissLogCount++;
+                        uint32_t cls = obj->classIndex();
+                        Oop clsOop = classAtIndex(cls);
+                        std::string cn = clsOop.isObject()
+                            ? nameOfClass(clsOop) : std::string("?");
+                        fprintf(stderr,
+                            "[SCAV-MISS #%zu] obj=%p cls=%s(idx=%u) "
+                            "slotCount=%zu firstYoungSlot=%d\n",
+                            auditMissLogCount, (void*)obj, cn.c_str(),
+                            cls, cnt, firstYoungSlot);
+                    }
+                }
                 else auditBitUnsetSafe++;
             }
         }
