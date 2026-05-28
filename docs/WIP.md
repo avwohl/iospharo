@@ -238,6 +238,24 @@ that the scavenge will redo by scanning every old-space slot.
     the helper, so they DO maintain the vector — but those paths
     are essentially never reached.
 
+  **2026-05-27 hunt for the 256 misses:**
+  - Added PHARO_SCAV_BIT_AUDIT (commit `95924da2`) with per-class
+    miss logging.  Audit reveals: 260 misses/run across 8 scavenges,
+    spread over Context, FullBlockClosure, Array, OrderedCollection,
+    etc.  firstYoungSlot is usually 0.
+  - Fixed JITState space-pointer init across all 5 entry sites
+    (commit `e67ec61d`) — no impact on miss count, so the JIT path
+    is already barriered.  The misses come from C++.
+  - Identified `become` primitive (Primitives.cpp ~384) as one
+    culprit: `slots1[s] = slots2[s]` swap and `header->slotAtPut(s, to)`
+    heap scan both bypass storePointer.  `ObjectHeader::slotAtPut()`
+    itself has no production barrier.
+
+  Closing the 256-miss budget requires auditing every C++ site that
+  uses `slotAtPut` / direct `slots()[i] = x` and either adding a
+  barrier call or routing through `storePointer*`.  Each fix is
+  small; the count of sites is the work.
+
 Once stencils barrier, scavenge can be flipped to consume
 `rememberedSet_` (`ObjectMemory.cpp:1571-1597` full-scan replaced
 by remembered-set iteration).  The asmjit setter fix is real
