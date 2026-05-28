@@ -11,18 +11,21 @@ SUnitRunner + FakeGUI shims).  Per-package raw output under
        Cairo        2        4     0     0    0        100%         clean
        Color/Form   3        31    0     0    0        100%         clean
        Morph        5        19    1     26   0        42% of 46    most ERRs from FakeGUI (testOpenInWorld etc.)
+       PolyMath     101      11    0     0    0        100% of 11   crash @ test 11 (primitiveFloatAdd, same J2J family)
 
-       totals       321      501   20    351  2        58% of 874   (Roassal3 covers only 35 of its 879; partial)
+       totals       422      512   20    351  2        58% of 885   (Roassal3 reached 35/879, PolyMath 11/3500)
 
 ## Headline findings
 
-* **Roassal3 crash** — JIT-emitted `#inverseTransformPiOrZero:` faults
-  with `J2J_ENTRY_BIT` (bit 60) leaking into a receiver Oop.  Tracks as
-  task #10.  This is the single biggest blocker — fixing it unlocks
-  844 more Roassal3 tests.
-* **`Color>>blue` KeyNotFound** (3 Roassal3 errors) — transient
-  IdentityDictionary corruption late in the run; not reproducible in
-  isolation.  Tracks as task #11.
+* **Roassal3 crash + PolyMath crash + Color>>blue errors** all
+  stem from one bug: JIT-side classifier bits (bit 60 J2J_ENTRY_BIT,
+  bit 63 getter, etc.) leaking into Oops that downstream code
+  dereferences.  `PHARO_NO_JIT=1` removes all three symptoms;
+  attempting to filter the bad Oops at C++ primitive boundaries
+  (`extractFloat`) made things WORSE because the original
+  primitiveFloatAdd crash was acting as fail-fast.  Closing #11
+  and #14 as duplicates of #10 — fix #10 and ~850 + ~3500 tests
+  unblock.
 * **Athens 93%** — only failures are CairoSVGSurfaceTest, which
   needs the `libcairo` external plugin that our VM doesn't load.
   Not a VM bug.
@@ -33,9 +36,11 @@ SUnitRunner + FakeGUI shims).  Per-package raw output under
 
 ## Out of scope here
 
-* **PolyMath** (task #7) — not preinstalled; Metacello load fails on
-  Iceberg's `Character>>bitShift:` regression during SHA1 of the
-  commit blob.
+* **PolyMath** (task #7) — was blocked on Iceberg's
+  `Character>>bitShift:` regression; **fixed 2026-05-28** via
+  `scripts/patches/character_numeric_coercion.st` (see
+  `docs/image_issues.md`).  309 classes load, 11 tests pass before
+  hitting the same J2J leak as Roassal3.
 * **Bloc** — confirmed NOT preinstalled in Pharo 13; the 183 substring
   matches were all `*Block*` compiler tests.  Deleted from queue.
 * **Plot, Chart** — RS-prefix subsets of Roassal3, already exercised by
@@ -43,14 +48,18 @@ SUnitRunner + FakeGUI shims).  Per-package raw output under
 
 ## Next focus
 
-Picking based on bang-for-buck:
+Task #10 is now the only blocker.  Fixing it unlocks:
 
-1. **Task #10 — J2J entry-bit leak in `#inverseTransformPiOrZero:`** —
-   unblocks 844 Roassal3 tests.  Reproducer is one method, asmjit dump
-   is one env-var away.
-2. **Task #11 — `Color>>blue` KeyNotFound** — likely a GC/identity
-   regression triggered under Roassal3's allocation pressure.  Catch
-   it with an lldb watchpoint on `ColorRegistry`'s Oop.
-3. **Task #8 — PNG render harness** — once #10/#11 are fixed, a fully
-   green Roassal3 run is the right time to add visual diff against a
-   Cog-rendered baseline.
+* ~844 more Roassal3 tests (currently reached 35 of 879)
+* ~3489 more PolyMath tests (currently reached 11 of 3500)
+* The 3 Color>>blue errors and any other transient corruption
+  symptoms.
+* The 3 remaining renders in the PNG harness
+  (single_box, bar_plot, line_plot).
+
+The bug needs lldb to root-cause — set a breakpoint at the
+crashing PC (`codeStart + 2496` in the JIT'd
+`#inverseTransformPiOrZero:`) and walk back to find which IC fill
+or method-map mutation left bit 60 set on a slot that's later
+loaded as a clean Oop.  See `docs/results-roassal3.md` for the
+full investigation log.
