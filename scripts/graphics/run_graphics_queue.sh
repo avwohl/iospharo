@@ -50,10 +50,12 @@ run_one() {
 }
 
 # Queue: tag, classlist
-run_one bloc    /tmp/bloc_test_classes.txt
-run_one athens  /tmp/athens_test_classes.txt
-run_one cairo   /tmp/cairo_test_classes.txt
-run_one plot    /tmp/plot_test_classes.txt
-run_one chart   /tmp/chart_test_classes.txt
+# (Bloc-the-framework is NOT preinstalled in Pharo 13 — its 183 substring
+#  matches were all *Block* compiler tests.  Plot/Chart are RS-prefix
+#  subsets already exercised by the Roassal3 run.)
+run_one athens     /tmp/athens_test_classes.txt
+run_one cairo      /tmp/cairo_test_classes.txt
+run_one color_form /tmp/color_test_classes.txt
+run_one morph      /tmp/morph_test_classes.txt
 
 echo "[done] graphics queue complete"
