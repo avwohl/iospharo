@@ -4411,7 +4411,11 @@ extern "C" void stencil_popStoreTemp_4(JITState* s) {
 // 1: store x19 to receiver field, keep in register.
 // NOTE: barrier omitted — calling a C helper here forces the compiler
 // to save/restore x19-x22 (callee-saved), which defeats SimStack
-// register caching.  Audit gap stays open for this variant.
+// register caching even with `register asm()` reservations (tried
+// 2026-05-27, still emits STP at prologue/LDP at epilogue).  Audit
+// gap stays open for this variant.  Closing it needs inline-asm
+// barrier (no BLR, manual remembered-set push) or a 1-arg helper
+// signature that stashes args in JITState fields first.
 extern "C" void stencil_storeRecvVar_1(JITState* s) {
     int idx = OPERAND;
     ObjectHeader* obj = asObjectPtr(s->receiver);
