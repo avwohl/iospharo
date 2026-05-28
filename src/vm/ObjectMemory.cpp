@@ -1643,8 +1643,6 @@ GCResult ObjectMemory::scavenge() {
                         Oop clsOop = classAtIndex(cls);
                         std::string cn = clsOop.isObject()
                             ? nameOfClass(clsOop) : std::string("?");
-                        // Also describe the young referent at firstYoungSlot —
-                        // its class is the clue to who created it.
                         std::string vcn = "?";
                         if (firstYoungSlot >= 0 && (size_t)firstYoungSlot < cnt) {
                             Oop v = slots[firstYoungSlot];
@@ -1654,10 +1652,18 @@ GCResult ObjectMemory::scavenge() {
                                 if (vcl.isObject()) vcn = nameOfClass(vcl);
                             }
                         }
+                        // Tag the space: perm objects never barrier so
+                        // they're a categorical exemption.
+                        uint8_t* hp = reinterpret_cast<uint8_t*>(obj);
+                        const char* space =
+                            (hp >= permSpaceStart_ && hp < permSpaceEnd_)
+                                ? "perm"
+                                : (hp >= oldSpaceStart_ && hp < oldSpaceEnd_)
+                                    ? "old" : "?";
                         fprintf(stderr,
-                            "[SCAV-MISS #%zu] obj=%p cls=%s(idx=%u) "
+                            "[SCAV-MISS #%zu] obj=%p[%s] cls=%s(idx=%u) "
                             "slotCount=%zu firstYoungSlot=%d val.cls=%s\n",
-                            auditMissLogCount, (void*)obj, cn.c_str(),
+                            auditMissLogCount, (void*)obj, space, cn.c_str(),
                             cls, cnt, firstYoungSlot, vcn.c_str());
                     }
                 }
