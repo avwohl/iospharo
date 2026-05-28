@@ -41,6 +41,37 @@ pointer.  Where exactly the buggy stores come from is TBD —
 would need printf instrumentation or lldb.  Worth a focused
 session.
 
+### 2026-05-28 late PM — diagnostic attempts
+
+Added gated printf to `primitiveStringAtPut` for WideString
+branch and ran a minimal `WriteStream on: (WideString new: 6)`
+probe.  Observations:
+
+* `ManProbe` (instance-vars `collection`/`position`, manual
+  `position := position + 1. collection at: position put: anObject`)
+  works correctly on `WideString new: 10`.
+* `WSProbe` running `WriteStream on: ws` followed by 6
+  `nextPut:`s produces NO `stringAtPut` traces with the correct
+  receiver bits, and the probe itself stops emitting at
+  `print: stream collection class`.  The `print:` aborts the
+  outer file-write block — likely because the printed object
+  is unusable (collection's class chain is corrupt, or `print:`
+  recurses into the same buggy stream init).
+* Disabling each individual T1 inline flag in turn
+  (multislot, retlit, inline-getter, inline-setter,
+  inline-prim-at, PHARO_NO_JIT) does NOT change the behavior:
+  the probe still stops at the same point.
+
+Hypothesis: `WriteStream class >> on:` or
+`PositionableStream >> on:from:to:` triggers a bytecode
+sequence the VM mis-executes for an arg that is a WideString.
+Most likely candidate: a sista bytecode that branches on
+`isBytesObject` / `isWideString` returns the wrong answer for
+fmt 10/11, causing `WriteStream` to think its buffer is a
+`ByteString` and to store 8-bit oops at 4-byte offsets.
+Diagnostic printf removed (committed-clean tree); needs lldb
+breakpoint at `WriteStream>>nextPut:` entry to confirm.
+
 ## 2026-05-28 PM — broader 20-class SUnit run: 3170/3189 (99.6%)
 
 After hardcoding the cos JIT skip (commit `5c870c75`), extended the
