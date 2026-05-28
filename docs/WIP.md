@@ -3,6 +3,48 @@
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
+## 2026-05-28 PM — SUnit test results
+
+**First real SUnit run on our VM.**  Focused subset (4 classes:
+SmallIntegerTest, SymbolTest, CharacterTest, ArrayTest):
+
+```
+class             total  PASS  FAIL  ERROR  SKIP
+SmallIntegerTest    29    27    0    0      0       (93%)
+SymbolTest         268   128    2  138      0       (48%)
+CharacterTest       19    15    0    1      0       (79%)
+ArrayTest          324   127   11  185      0       (39%)
+TOTAL              634   297   13  324      0       (47%)
+```
+
+Before the basicSize JIT fix: **0 tests ran**, every class reported
+0/0/0/0 because Symbol>>numArgs returned -1, making OpalCompiler
+reject every recompile attempt.
+
+The remaining ERRORs (324) are largely a single repeating pattern in
+SymbolTest's `test0FixtureXxx` series:
+
+```
+ArgumentsCountMismatch: This block accepts 0 arguments, but was called with 1.
+  >> FullBlockClosure(BlockClosure)>>numArgsError:
+  >> FullBlockClosure(BlockClosure)>>value:
+  >> LayoutClassScope>>do:
+  >> LayoutClassScope(BlockClosure)>>cull:
+  >> FixedLayout(PointerLayout)>>allVisibleSlots
+```
+
+`cull:` should branch on `numArgs = 0` (call `value`) vs not (call
+`value: arg`).  Direct probe (`[42] cull: 5 = 42`) works.  So the
+cull: bug only manifests in some specific JIT-compile context — TBD.
+Likely another JIT correctness gap, separate from basicSize.
+
+ArrayTest ERRORs probably overlap with the same cull: issue.
+
+The win: **our VM now runs real Pharo test classes with healthy
+pass rates on the ones where the cull: issue doesn't trigger**
+(SmallIntegerTest 93 %, CharacterTest 79 %).  Before today the
+fraction was zero.
+
 ## 2026-05-28 PM — JIT basicSize correctness bug fixed (71cc0701)
 
 While running SUnit, found a JIT correctness regression that broke
