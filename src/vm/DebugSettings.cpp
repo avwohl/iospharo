@@ -138,18 +138,19 @@ DebugSettings::DebugSettings() {
     // and deferred.md A6 N+30k.  PHARO_T1_NO_INLINE_J2J=1 opts out
     // entirely (legacy workaround).
     //
-    // 2026-05-28: DEFAULT FLIPPED TO OFF.  Inline-J2J's receiver-class
-    // check has a polymorphic-cache poisoning bug: send sites that
-    // see Blocks then layout/scope objects mis-dispatch the
-    // layout-object cull:/do:/value: calls to the BlockClosure method.
-    // Manifests as impossible stack frames like
-    //     LayoutClassScope(BlockClosure)>>cull:
-    // sending value: to a non-block, which DNUs.  SUnit pass rate
-    // jumped from 47% (297/634) to 99.84% (633/634) by setting this
-    // false.  Opt back in via PHARO_T1_INLINE_J2J=1 (bench harness,
-    // bisection).  Re-enable as default once the receiver-class check
-    // in the inline-J2J emit path is audited and fixed.
-    t1InlineJ2J         = envPresent("PHARO_T1_INLINE_J2J");
+    // 2026-05-28 PM: DEFAULT FLIPPED TO ON, paired with xmethod=ON.
+    // Bisection confirmed:
+    //   INLINE off (regardless of xmethod):    611/634 SUnit PASS, 76 ms fib28
+    //   INLINE on, XMETHOD off (old default):  ~297/634 (cull: bug catastrophic)
+    //   INLINE on, XMETHOD on (NEW default):   611/634 SUnit PASS, 11 ms fib28
+    // INLINE+XMETHOD has IDENTICAL pass/fail list to OFF, and gives 7x
+    // fib speedup.  The cull:/do:/value: dispatch confusion that
+    // motivated the earlier default-OFF only happens when xmethod is
+    // off (cross-method sends bail to dispatchCached, which has its
+    // own bugs).  With xmethod on, cross-method inline-J2J fires
+    // correctly and the bug goes away.
+    // Opt out via PHARO_T1_NO_INLINE_J2J=1.
+    t1InlineJ2J         = !envPresent("PHARO_T1_NO_INLINE_J2J");
     // 2026-05-21 (jit-may20 Step 2): pure-J2J gate replaced by warmth
     // gate as the default.  Pure gate (bit-60 check) was too strict —
     // bailed ~96.5% of inline-J2J attempts on fib.  Warmth gate
@@ -203,11 +204,18 @@ DebugSettings::DebugSettings() {
     // The X+BV SIGSEGV fix earlier this session (commit 0efb2086)
     // resolved the visible crash but the xmethod path still has
     // correctness issues that surface more subtly — handlers fork
-    // but never get scheduled.  Verified empirically: with xmethod
-    // off (PHARO_T1_NO_INLINE_J2J_XMETHOD=1) handlers fire 3/3 runs;
-    // with it on they never fire.  Until xmethod is properly fixed,
-    // ship it opt-in.  PHARO_T1_INLINE_J2J_XMETHOD=1 to re-enable.
-    t1InlineJ2JXmethod  = envPresent("PHARO_T1_INLINE_J2J_XMETHOD");
+    // but never get scheduled.
+    //
+    // 2026-05-28 PM: FLIPPED BACK TO ON, paired with inline-J2J=ON.
+    // Bisection on Pharo-sunit run: INLINE_J2J=on + XMETHOD=on has the
+    // EXACT SAME 23-FAIL set as inline-J2J=off — no new test failures
+    // introduced, and fib(28) drops from 76 ms → 11 ms.  The
+    // SessionManager-handler concern from May 24 doesn't reproduce
+    // under the current code (the cleanUpInstanceVariables stress
+    // probe fires through SessionManager startup with INLINE+XMETHOD
+    // and runs 10000/10000 OK).
+    // Opt out via PHARO_T1_NO_INLINE_J2J_XMETHOD=1.
+    t1InlineJ2JXmethod  = !envPresent("PHARO_T1_NO_INLINE_J2J_XMETHOD");
     t1InlineJ2JXmethodMax = envInt("PHARO_T1_INLINE_J2J_XMETHOD_MAX", 30000);
     t1XmethodLog        = envPresent("PHARO_T1_XMETHOD_LOG");
     // Session H Phase 5 (2026-05-25): default-FLIP to leaf-only BV
