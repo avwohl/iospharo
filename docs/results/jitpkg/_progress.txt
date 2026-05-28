@@ -8,3 +8,6 @@ ring           PASS=250   FAIL=35   ERROR=5    rc=0   23s  last=
 zincenc        PASS=109   FAIL=9    ERROR=2    rc=0   107s  last=
 aigraph        PASS=78    FAIL=0    ERROR=6    rc=0   15s  last=
 numberparser   PASS=36    FAIL=0    ERROR=0    rc=0   2s  last=
+systime        PASS=3     FAIL=0    ERROR=0    rc=0   290s  last=
+strings        PASS=733   FAIL=3    ERROR=0    rc=0   4s  last=
+opal           PASS=446   FAIL=30   ERROR=147  rc=0   177s  last=

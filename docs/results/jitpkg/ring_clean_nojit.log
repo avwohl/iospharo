@@ -1,0 +1,2571 @@
+Pharo Clean VM - Image Loader Test
+===================================
+
+=== Oop Tagging Tests ===
+SmallInteger 42:  0x151 isSmallInteger=1 value=42
+SmallInteger -100: 0xfffffffffffffce1 value=-100
+Character 'A':    0x20b isCharacter=1 codepoint=65
+nil:              0x0 isNil=1
+
+SmallFloat tests:
+  1 -> 0x7f00000000000005 -> 1 OK
+  168 -> 0x8650000000000005 -> 168 OK
+  80 -> 0x8540000000000005 -> 80 OK
+  -42.5 -> 0x845400000000000d -> -42.5 OK
+  0 -> 0x5 -> 0 OK
+  1024 -> 0x8900000000000005 -> 1024 OK
+  0.5 -> 0x7e00000000000005 -> 0.5 OK
+
+Decoding known SmallFloat values from Pharo:
+  0x8540000000000005 -> 80
+  0x8650000000000005 -> 168
+  0x8000000000000005 -> 2
+
+Tag verification (should use low 3 bits only):
+  SmallInteger tag: 1 (expected 1)
+  Character tag:    3 (expected 3)
+
+Loading image: /tmp/harness/Pharo-jit.image
+Working directory: /private/tmp/harness
+Memory initialized successfully
+Image loaded successfully!
+=== Image Header ===
+Format:            68021 (Spur 64-bit)
+Header size:       128 bytes
+Image size:        59062072 bytes (56 MB)
+Old base address:  0x10000000000
+Special objects:   0x100010f1838
+Last hash:         2479426907823963612
+Screen size:       0 x 0
+Flags:             0x2
+First segment:     59062072 bytes
+Free old space:    0 bytes
+Eden bytes:        22003584
+
+=== Special Objects ===
+Special objects array: 0x3010f1838
+  Raw header: 0x3c00000002000033
+  Slot count (bits 0-7): 51
+  Hash (bits 8-29): 131072
+  Format (bits 30-34): 0
+  Class index (bits 35-56): 0
+  Flags (bits 57-63): 30
+  Computed slot count: 60
+
+First 20 special objects:
+  [0]: 0x300000000 (object, class: 3075)
+  [1]: 0x300000010 (object, class: 3077)
+  [2]: 0x300000020 (object, class: 3079)
+  [3]: 0x30006d468 (object, class: 3139)
+  [4]: 0x3009258e8 (object, class: 7589)
+  [5]: 0x300366d28 (object, class: 3080)
+  [6]: 0x3000162d0 (object, class: 3086)
+  [7]: 0x3000164b0 (object, class: 3092)
+  [8]: 0x300020ce8 (object, class: 3135)
+  [9]: 0x3000167d0 (object, class: 3102)
+  [10]: 0x300016870 (object, class: 3104)
+  [11]: 0x300000000 (object, class: 3075)
+  [12]: 0x300016cd0 (object, class: 3118)
+  [13]: 0x300016690 (object, class: 3098)
+  [14]: 0x300000000 (object, class: 3075)
+  [15]: 0x300016af0 (object, class: 3112)
+  [16]: 0x300000000 (object, class: 3075)
+  [17]: 0x30381a6f0 (object, class: 48)
+  [18]: 0x300016b90 (object, class: 3114)
+  [19]: 0x300366cc0 (object, class: 3082)
+
+=== Memory Layout ===
+Old space:  0x300000000 - 0x400000000
+Allocated:  0 MB
+Free:       4039 MB
+
+First 128 bytes of old space (raw):
+  [0]: 0x25c97500800c03
+  [8]: 0x0
+  [16]: 0x106b2800800c05
+  [24]: 0x0
+  [32]: 0x2b1f8100800c07
+  [40]: 0x0
+  [48]: 0x4000000009000013
+  [56]: 0x0
+  [64]: 0x0
+  [72]: 0x0
+  [80]: 0x0
+  [88]: 0x0
+  [96]: 0x0
+  [104]: 0x0
+  [112]: 0x0
+  [120]: 0x0
+
+First object header analysis:
+  Raw: 0x25c97500800c03
+  Slot count: 3
+  Format: 20
+  Class index: 309550
+
+=== Object Statistics ===
+Total objects:    741393
+Pointer objects:  437613
+Byte objects:     127367
+Compiled methods: 175938
+Total size:       56 MB
+
+=== Checking iOS Classes ===
+  OSWorldRenderer: found
+  OSiOSDriver: NOT FOUND
+  OSiOSBackendWindow: NOT FOUND
+  NullWorldRenderer: found
+  OSWindowDriver: found
+  OSWindow: found
+  WorldMorph: found
+  WorldState: found
+  Display: NOT FOUND
+
+=== Display Surface Setup ===
+Created 1024x768 test display surface
+
+=== Interpreter Initialization ===
+Event callback registered
+[RESUME] ctx[0]: SnapshotOperation>>doSnapshot
+[RESUME] ctx[1]: SnapshotOperation>>doSnapshot
+[RESUME] ctx[2]: FullBlockClosure>>on:do:
+[RESUME] ctx[3]: FullBlockClosure>>onErrorDo:
+[RESUME] ctx[4]: SnapshotOperation>>executeStoringError:
+[RESUME] ctx[5]: SnapshotOperation>>performSnapshot
+[RESUME] ctx[6]: SessionManager>>launchSnapshot:andQuit:
+[RESUME] ctx[7]: SessionManager>>signal
+[RESUME] ctx[8]: FullBlockClosure>>terminateRealActive
+[RESUME] inSnapshotCode=1 chainDepth=9
+[RESUME] Initial context: method=#doSnapshot pc=55
+[RESUME] Patching: stackp=1 stackTopSlot=6 oldVal=true(0x300000020) -> true
+[RESUME] Found SnapshotOperation 0x30382dc30 at ctx depth 0, isImageStarting=false
+[RESUME] Found SnapshotOperation 0x30382dc30 at ctx depth 1, isImageStarting=true
+[RESUME] Found SnapshotOperation 0x30382dc30 at ctx depth 4, isImageStarting=true
+[RESUME] Found SnapshotOperation 0x30382dc30 at ctx depth 5, isImageStarting=true
+[RESUME] Patched isImageStarting on 1 SnapshotOperation(s)
+[STARTUP] Boosting startup process 0x30381e618 from P79 to P80
+[JIT] Disabled via PHARO_NO_JIT env var
+[STARTUP] Headless mode: deferring timer semaphore signal
+Interpreter initialized successfully!
+Active method: 0x300339380
+
+=== Creating Display ===
+[ensureDisplayForm] Created 1024x768x32 Form, setGlobal=true
+[ensureDisplayForm] Verify: findGlobal(Display)=found raw=0x303e53748 formObj=0x303e53748
+Display after ensureDisplayForm: created!
+
+=== Direct BitBlt Test ===
+Display bits: object width: 1024 height: 768 depth: 32
+Bitmap format: 9 byteSize: 6291456
+Filling display with gradient (1572864 pixels)...
+Wrote gradient to display bitmap
+Heartbeat will start after startup completes...
+
+=== Forced GC Test ===
+Before GC: used=62MB free=4033MB
+After GC: used=62MB free=4033MB
+Freed: 159KB
+GC reclaimed: 163776 bytes, moved: 0 objects, took: 88ms
+
+=== Execution Test ===
+Running up to 60000000000 bytecode steps...
+[SISTA] compile=0 dispatch=1 hook active
+[SISTA] hits=0/1 cache=1 disp=0 ret=0 send=0 unk=0
+[CACHE-1] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x3003040d0
+[CACHE-2] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x300304048
+[SISTA-SPLICE-DIAG] doBC=12 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=4 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=4 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=5 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=11 lead=40 (want 9-10, lead=fb)
+[SEM-SIGNAL-2] sem=0x3037f28c0 active-pri=80 waiter=0x302c61398 waiter-pri=80
+[CACHE-3] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000168d8 method=0x3003aa4d8
+[CACHE-4] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300016b58 method=0x3003aa4d8
+[XFER-1] old=0x3037f6668 pri=80 -> new=0x302c61398 pri=80
+[SISTA-SPLICE-DIAG] doBC=18 litIdx=1 icCls=0 verdict=REJECT reject=numCopied > 1 rejOp=return
+[SISTA-SPLICE-DIAG] doBC=8 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=5 blockLen=11 lead=40 (want 9-10, lead=fb)
+[XFER-2] old=0x302c61398 pri=80 -> new=0x3037f28e0 pri=80
+[SEM-SIGNAL-3] sem=0x687018e78 active-pri=80 waiter=0x3037f6668 waiter-pri=80
+[XFER-3] old=0x3037f28e0 pri=80 -> new=0x3037f6668 pri=80
+[XFER-4] old=0x3037f6668 pri=80 -> new=0x3037f2938 pri=80
+[SEM-SIGNAL-4] sem=0x68701faf8 active-pri=80 waiter=0x3037f6668 waiter-pri=80
+[XFER-5] old=0x3037f2938 pri=80 -> new=0x3037f6668 pri=80
+[SISTA-SPLICE-DIAG] doBC=6 litIdx=0 icCls=0 verdict=REJECT reject=numCopied > 1 rejOp=return
+[SISTA-SPLICE-DIAG] doBC=5 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[CACHE-5] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300016478 method=0x3003aa468
+[CACHE-6] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001a1f0 method=0x3003aa468
+[INIT-RESOLVER] #1 Resolver class var set non-nil at step 179749 (value=0x6870d1b48) — defer will lift after buffer
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x79($y) str='y-mm-dd'(7)
+[SISTA-SPLICE-DIAG] doBC=8 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=5 blockLen=13 lead=4c (want 9-10, lead=fb)
+[P63] idx=1 arrIdx=0 byte=0x79($y) str='yyy'(3)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x30($0) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x30($0) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=4 arrIdx=3 byte=0x36($6) str='2026-04-06 12:00:00 '(25)
+[P63] idx=4 arrIdx=3 byte=0x36($6) str='2026-04-06 12:00:00 '(25)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x6d($m) str='y-mm-dd'(7)
+[P63] idx=4 arrIdx=3 byte=0x6d($m) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=2 arrIdx=1 byte=0x34($4) str='04'(2)
+[P63] idx=2 arrIdx=1 byte=0x34($4) str='04'(2)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=8 arrIdx=7 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=6 arrIdx=5 byte=0x64($d) str='y-mm-dd'(7)
+[P63] idx=7 arrIdx=6 byte=0x64($d) str='y-mm-dd'(7)
+[SISTA-SPLICE-DIAG] doBC=17 litIdx=3 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[XFER-6] old=0x3037f6668 pri=80 -> new=0x3037f5f80 pri=80
+[SEM-SIGNAL-8] sem=0x6870e0370 active-pri=80 waiter=0x3037f6668 waiter-pri=80
+[XFER-7] old=0x3037f5f80 pri=80 -> new=0x3037f6668 pri=80
+[SISTA-SPLICE-DIAG] doBC=13 litIdx=2 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=20 litIdx=3 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[CACHE-7] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001edd0 method=0x3002e2688
+[SISTA-COLLECT-DIAG] send1BC=4 selIdx=1 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SPLICE-DIAG] doBC=9 litIdx=1 icCls=0 verdict=REJECT reject=numCopied > 1 rejOp=return
+[SISTA-SPLICE-DIAG] doBC=5 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=7 lead=41 (want 9-10, lead=fb)
+[CACHE-8] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001eb18 method=0x3003aa468
+[CACHE-9] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001b3b0 method=0x3003aa468
+[SISTA-COLLECT-DIAG] send1BC=10 selIdx=6 verdict=REJECT reject=non-simple block op rejOp=send
+[CACHE-10] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002329d0 method=0x3003aa4d8
+[CACHE-11] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002329d0 method=0x3003aa468
+[CACHE-12] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300232390 method=0x3003aa4d8
+[CACHE-13] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002336f0 method=0x3003aa4d8
+[CACHE-14] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002336f0 method=0x3003aa468
+[CACHE-15] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002333d0 method=0x3003aa4d8
+[CACHE-16] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002333d0 method=0x3003aa468
+[CACHE-17] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002336f0 method=0x3003aa468
+[CACHE-18] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300024cd0 method=0x3003aa468
+[CACHE-19] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001a710 method=0x3003aa468
+[SISTA-SELECT-CAND] pfbBC=1 send1BC=4 selIdx=1 litIdx=0 slot=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-COLLECT-DIAG] send1BC=15 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SPLICE-DIAG] doBC=9 litIdx=3 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=6 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=3 blockLen=4 lead=40 (want 9-10, lead=fb)
+[SISTA-COLLECT-DIAG] send1BC=7 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-ACCUM-DIAG] pfbBC=5 blockLen=14 lead=41 (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=21 blockLen=29 lead=40 (want 9-10, lead=fb)
+[SISTA-INJECT-SPLICE-DIAG] send2BC=7 selIdx=5 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=8 lead=41 (want 9-10, lead=fb)
+[syncDisplay] displayFormReady_=false (call 0), displayForm_ isNil=0
+[CACHE-20] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[CACHE-21] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[CACHE-22] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[CACHE-23] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[CACHE-24] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[syncDisplay] displayFormReady_=false (call 1), displayForm_ isNil=0
+[DNU-STACK] Full call stack for #asInteger (DNU #1):
+[DNU-STACK]   [0] Array>>do:
+[DNU-STACK]   [1] WorkingSession>>on:do:
+[DNU-STACK]   [2] FullBlockClosure>>on:do:
+[DNU-STACK]   [3] WorkingSession>>?
+[DNU-STACK]   [4] WorkingSession>>startup:
+[DNU-STACK]   [5] ClassSessionHandler>>startup:
+[DNU-STACK]   [6] SUnitRunner class>>startUp:
+[DNU-STACK]   [7] SUnitRunner class>>runAllTests
+[DNU-STACK]   [8] SUnitRunner class>>nextRunNumber
+[DNU-STACK]   [9] FullBlockClosure>>on:do:
+[DNU-STACK]   [10] SUnitRunner class>>asInteger
+[DNU-STACK]   [current] #asInteger fd=10
+[SISTA-RING] tag=asInteger seq=28198 count=32:
+  [0] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [1] #delimiter                    RET   rcvr=0x300233e08 ret/top=0x17b bailOp=0x00 argc=0 spΔ=0
+  [2] #delimiter                    RET   rcvr=0x300233e08 ret/top=0x17b bailOp=0x00 argc=0 spΔ=0
+  [3] #max:                         RET   rcvr=0x1 ret/top=0xc9 bailOp=0x00 argc=0 spΔ=0
+  [4] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x1 ret/top=0xc9 bailOp=0x00 argc=0 spΔ=0
+  [6] #negative                     RET   rcvr=0x81 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [7] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [8] #size                         RET   rcvr=0x687888398 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [9] #size                         RET   rcvr=0x687888398 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [10] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [11] #max:                         RET   rcvr=0x31 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [12] #size                         RET   rcvr=0x687888398 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [13] #size                         RET   rcvr=0x687888398 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [14] #size                         RET   rcvr=0x687888398 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [15] #size                         RET   rcvr=0x687888398 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [16] #size                         RET   rcvr=0x687888398 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [17] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [18] #max:                         RET   rcvr=0x61 ret/top=0x61 bailOp=0x00 argc=0 spΔ=0
+  [19] #size                         RET   rcvr=0x687888398 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [20] #size                         RET   rcvr=0x687888398 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [21] #size                         RET   rcvr=0x687888398 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [22] #size                         RET   rcvr=0x687888398 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [23] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [24] #handlesEncoding:             RET   rcvr=0x300011238 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [27] #handlesEncoding:             RET   rcvr=0x300011198 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [28] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [29] #collectionSpecies            RET   rcvr=0x687888378 ret/top=0x3000175a8 bailOp=0x00 argc=0 spΔ=0
+  [30] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [31] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+[DNU] #1: #asInteger not understood by rcvr=0x687885058 argCount=0 fd=10 in #asInteger P80
+[DNU]   rcvr cls=5709 fmt=1 class=FileReference
+[DNU]   FP=0x689b0ea90 SP=0x689b0eaa8 base=0x689b0e950
+[DNU]   receiver_=0x3037fc300 method_=0x30380d5f0
+[DNU]   FP[-2] = 0x3000182e0
+[DNU]   FP[-1] = 0x30380d620
+[DNU]   FP[0] = 0x687885070
+[DNU]   FP[1] = 0x687885058
+[DNU]   FP[2] = 0x687885058
+[DNU]   FP[3] = 0x687885058
+[DNU]   FP[4] = 0x6878850a0
+[DNU]   FP[5] = 0x687888378
+[DNU]   FP[6] = 0x3041f40a8
+[DNU]   FP[7] = 0x68788c4b8
+[DNU]   FP[8] = 0x68788c4b8
+[DNU]   FP[9] = 0x300000020
+[DNU]   FP[10] = 0x3041f40a8
+[CACHE-25] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300022b08 method=0x3003aa468
+[CACHE-26] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001ac30 method=0x3003aa4d8
+[CACHE-27] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ac30 method=0x3003aa468
+[CACHE-28] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000194d0 method=0x3003aa4d8
+[STARTUP] Firing deferred timer semaphore signal (step 5000993)
+[XFER-8] old=0x3037f6668 pri=80 -> new=0x302c61398 pri=80
+[XFER-9] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[CACHE-29] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001ac30 method=0x3003aa4d8
+[CACHE-30] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ac30 method=0x3003aa468
+[CACHE-31] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000168d8 method=0x3003aa4d8
+[CACHE-32] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001ac30 method=0x3003aa4d8
+[CACHE-33] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001d310 method=0x3003aa4d8
+[CACHE-34] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001d310 method=0x3003aa468
+[CACHE-35] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001ce10 method=0x3003aa4d8
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=6 lead=4c (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=9 blockLen=4 lead=40 (want 9-10, lead=fb)
+[syncDisplay] displayFormReady_=false (call 2), displayForm_ isNil=0
+[XFER-10] old=0x3037f6668 pri=80 -> new=0x687c3b1d8 pri=80
+[XFER-11] old=0x687c3b1d8 pri=80 -> new=0x302c61398 pri=80
+[XFER-12] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[SISTA-ACCUM-DIAG] pfbBC=17 blockLen=13 lead=40 (want 9-10, lead=fb)
+[CACHE-36] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ce10 method=0x3003aa468
+[CACHE-37] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ceb0 method=0x3003aa468
+[CACHE-38] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300017938 method=0x3003aa468
+[CACHE-39] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300016f28 method=0x3003aa468
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[CACHE-40] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[CACHE-41] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x300335a50
+[SISTA-ACCUM-DIAG] pfbBC=3 blockLen=4 lead=40 (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=7 blockLen=4 lead=40 (want 9-10, lead=fb)
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[SISTA-ACCUM-DIAG] pfbBC=88 blockLen=12 lead=40 (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=15 blockLen=5 lead=4c (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=22 blockLen=5 lead=4c (want 9-10, lead=fb)
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=4 selIdx=1 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[syncDisplay] displayFormReady_=false (call 3), displayForm_ isNil=0
+[SISTA-INJECT-SPLICE-DIAG] send2BC=36 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=52 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=31 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=47 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=51 selIdx=6 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=46 verdict=REJECT reject=non-simple block op rejOp=send
+[syncDisplay] displayFormReady_=false (call 4), displayForm_ isNil=0
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[CACHE-42] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300024a50 method=0x3003aa468
+[CACHE-43] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300024af0 method=0x3003aa468
+[CACHE-44] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ba90 method=0x3003aa468
+[CACHE-45] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300019b10 method=0x3003aa468
+[CACHE-46] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300017938 method=0x3003aa468
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[CACHE-47] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x3003040d0
+[CACHE-48] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x300304048
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=multi-block IR rejOp=return
+[CACHE-49] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002329d0 method=0x3003aa4d8
+[CACHE-50] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002329d0 method=0x3003aa468
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[XFER-13] old=0x3037f6668 pri=80 -> new=0x68805ed40 pri=80
+[XFER-14] old=0x68805ed40 pri=80 -> new=0x3037f6668 pri=80
+[XFER-15] old=0x3037f6668 pri=80 -> new=0x302c61398 pri=80
+[XFER-16] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=10 selIdx=2 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-COLLECT-DIAG] send1BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-COLLECT-DIAG] send1BC=8 selIdx=4 verdict=REJECT reject=recursion guard rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=load_lit
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[XFER-17] old=0x3037f6668 pri=80 -> new=0x302c61398 pri=80
+[XFER-18] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[XFER-19] old=0x3037f6668 pri=80 -> new=0x68805ed40 pri=80
+[XFER-20] old=0x68805ed40 pri=80 -> new=0x3037f6668 pri=80
+[XFER-21] old=0x3037f6668 pri=80 -> new=0x68805ed40 pri=80
+[XFER-22] old=0x68805ed40 pri=80 -> new=0x3037f6668 pri=80
+[XFER-23] old=0x3037f6668 pri=80 -> new=0x68805ed40 pri=80
+[XFER-24] old=0x68805ed40 pri=80 -> new=0x3037f6668 pri=80
+[XFER-25] old=0x3037f6668 pri=80 -> new=0x68805ed40 pri=80
+[XFER-26] old=0x68805ed40 pri=80 -> new=0x3037f6668 pri=80
+[XFER-27] old=0x3037f6668 pri=80 -> new=0x68805ed40 pri=80
+[XFER-28] old=0x68805ed40 pri=80 -> new=0x3037f6668 pri=80
+[XFER-29] old=0x3037f6668 pri=80 -> new=0x68805ed40 pri=80
+[XFER-30] old=0x68805ed40 pri=80 -> new=0x3037f6668 pri=80
+[SISTA-SELECT-CAND] pfbBC=1 send1BC=4 selIdx=1 litIdx=0 slot=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[XFER-31] old=0x3037f6668 pri=80 -> new=0x302c61398 pri=80
+[XFER-32] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[XFER-33] old=0x3037f6668 pri=80 -> new=0x68782f5c8 pri=80
+[XFER-34] old=0x68782f5c8 pri=80 -> new=0x302c61398 pri=80
+[XFER-35] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[XFER-36] old=0x3037f6668 pri=80 -> new=0x68782f5c8 pri=80
+[XFER-37] old=0x68782f5c8 pri=80 -> new=0x3037f6668 pri=80
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=recursion guard rejOp=return
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=recursion guard rejOp=return
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-INJECT-SPLICE-DIAG] send2BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[MUSTBOOL] #1 fd=26 value_class=IceLibgitRepository value=0x30229a930 in=#ifTrue: rcv_class=IceSystemEventListener class method=0x3021ec778 numLits=8 ipOff=19
+[MUSTBOOL] method header=0x8000000008600041 slotCount=13 method_class=CompiledBlock method_format=28 method_classIdx=3117
+[MUSTBOOL]   slot[0]=0x8000000008600041
+[MUSTBOOL]   slot[1]=0x3021f4518 class=3117 format=31
+[MUSTBOOL]   slot[2]=0x3021a97e8 class=3139 format=1
+[MUSTBOOL]   slot[3]=0x300060c18 class=3085 format=23 bytes="announcer"
+[MUSTBOOL]   slot[4]=0x3021a9c50 class=3139 format=1
+[MUSTBOOL]   slot[5]=0x30011a4d0 class=3085 format=20 bytes="for:"
+[MUSTBOOL]   slot[6]=0x30005f910 class=3085 format=23 bytes="announce:"
+[MUSTBOOL]   slot[7]=0x300050708 class=3085 format=17 bytes="ifTrue:"
+[MUSTBOOL]   slot[8]=0x3021e1e28 class=3101 format=26
+[MUSTBOOL]   slot[9]=0x410200fd4ed201e7 (raw bytecode bytes)
+[MUSTBOOL]   slot[10]=0xfbd87b0200f94240 (raw bytecode bytes)
+[MUSTBOOL]   slot[11]=0x9440138211c60200 (raw bytecode bytes)
+[MUSTBOOL]   slot[12]=0x5e4fb095 (raw bytecode bytes)
+[MUSTBOOL] bytecodes near ipOff=19: 00 02 7b d8 fb 00 02 c6 11 82 13 40 94
+[MUSTBOOL] full bytecodes (21):
+    0: e7 01 d2 4e fd 00 02 41 40 42 f9 00 02 7b d8 fb 00 02 c6 11 82
+[MUSTBOOL] receiver slotCount=12 class=IceSystemEventListener class
+[MUSTBOOL]   recv.slot[0]=0x300017970 (Object class)
+[MUSTBOOL]   recv.slot[1]=0x302cfab68 (MethodDictionary)
+[MUSTBOOL]   recv.slot[2]=0x1 (SmI(0))
+[MUSTBOOL]   recv.slot[3]=0x3021b8a80 (FixedLayout)
+[MUSTBOOL]   recv.slot[4]=0x3021b8a98 (Array)
+[MUSTBOOL]   recv.slot[5]=0x300000000 (nil)
+[MUSTBOOL]   recv.slot[6]=0x3021b0770 (ByteSymbol)
+[MUSTBOOL]   recv.slot[7]=0x300000000 (nil)
+[MUSTBOOL] stack: sp=0x689b0ec98 fp=0x689b0ec70 depth=26
+[MUSTBOOL]   sp[-3]=0x6878703a8 (Array)
+[MUSTBOOL]   sp[-2]=0x687870cc0 (Array)
+[MUSTBOOL]   sp[-1]=0x30229a930 (IceLibgitRepository)
+[MUSTBOOL]   sp[0]=0x687870cd0 (FullBlockClosure)
+[MUSTBOOL]   sp[1]=0x9 (SmallInteger)
+[MUSTBOOL]   recent[16] WeakAnnouncementSubscription>>deliver:
+[MUSTBOOL]   recent[17] FullBlockClosure>>on:fork:
+[MUSTBOOL]   recent[18] FullBlockClosure>>on:do:
+[MUSTBOOL]   recent[19] WeakAnnouncementSubscription>>cull:cull:
+[MUSTBOOL]   recent[20] WeakMessageSend>>cull:cull:
+[MUSTBOOL]   recent[21] WeakMessageSend>>cull:
+[MUSTBOOL]   recent[22] WeakMessageSend>>value:
+[MUSTBOOL]   recent[23] IceSystemEventListener class>>handleMethodChange:
+[MUSTBOOL]   recent[24] IceSystemEventListener class>>handlePackagesChange:
+[MUSTBOOL]   recent[25] OrderedCollection>>do:
+[XFER-38] old=0x3037f6668 pri=80 -> new=0x68788a360 pri=80
+[XFER-39] old=0x68788a360 pri=80 -> new=0x3037f6668 pri=80
+[XFER-40] old=0x3037f6668 pri=80 -> new=0x6878862d0 pri=79
+[XFER-41] old=0x6878862d0 pri=79 -> new=0x3037f6668 pri=80
+[XFER-42] old=0x3037f6668 pri=80 -> new=0x304304478 pri=70
+[XFER-43] old=0x304304478 pri=70 -> new=0x3037f6668 pri=80
+[XFER-44] old=0x3037f6668 pri=80 -> new=0x3043043b8 pri=60
+[DRAIN-1] initial=9 processed=9 wka=2 wkaarr-drop=1 kept=6 dec=0 pending=9->9
+[XFER-45] old=0x303e55520 pri=60 -> new=0x3037f5d00 pri=80
+[XFER-46] old=0x3037f5d00 pri=80 -> new=0x303e55578 pri=50
+[XFER-47] old=0x303e55578 pri=50 -> new=0x6870008e0 pri=51
+[XFER-48] old=0x6870008e0 pri=51 -> new=0x3037f5d00 pri=80
+[XFER-49] old=0x3037f5d00 pri=80 -> new=0x303e55578 pri=50
+
+=== Injecting Right-Click (World Menu) ===
+[TEST] Injected mouse DOWN at (50,300) button=2 subtype=1 queueAddr=0x10106bd98 isEmpty=0
+[TEST] Injected mouse UP at (50,300) subtype=2
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #1
+[DELAY-RECOVERY] Re-signaling timer semaphore 0x300362a88 (attempt 1)
+[PREEMPT] P40→P60 (active=0x687023908 → 0x6870278b8)
+[DNU-STACK] Full call stack for #suspend (DNU #2):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=71728 count=32:
+  [0] #defaultAuthor                RET   rcvr=0x687042468 ret/top=0x3002711b8 bailOp=0x00 argc=0 spΔ=0
+  [1] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [2] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [3] #unresolvedName               RET   rcvr=0x687042c58 ret/top=0x301b35f68 bailOp=0x00 argc=0 spΔ=0
+  [4] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [6] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [7] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [8] #size                         RET   rcvr=0x6870469d0 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [9] #size                         RET   rcvr=0x6870469d0 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [10] #size                         RET   rcvr=0x6870469d0 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [11] #size                         RET   rcvr=0x6870469d0 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [12] #size                         RET   rcvr=0x6870469d0 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [13] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [14] #size                         RET   rcvr=0x6870469d0 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [15] #size                         RET   rcvr=0x687046a70 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [16] #size                         RET   rcvr=0x687046a70 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [17] #size                         RET   rcvr=0x687046a70 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [18] #size                         RET   rcvr=0x687046a70 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [19] #size                         RET   rcvr=0x687046a70 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [20] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [21] #size                         RET   rcvr=0x687046a70 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [22] #size                         RET   rcvr=0x687046b28 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [23] #size                         RET   rcvr=0x687046b28 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [24] #max:                         RET   rcvr=0x61 ret/top=0x61 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [27] #size                         RET   rcvr=0x68702e870 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x6870480b8 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x68702c8d0 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x68702c8d0 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #2: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU]   FP=0x689b0e9e8 SP=0x689b0ea00 base=0x689b0e950
+[DNU]   receiver_=0x3037fb968 method_=0x303809790
+[DNU]   FP[-2] = 0x3000182e0
+[DNU]   FP[-1] = 0x3038097b8
+[DNU]   FP[0] = 0x68704a1c8
+[DNU]   FP[1] = 0x300000000
+[DNU]   FP[2] = 0x300000000
+[DNU]   FP[3] = 0x80001
+[DNU]   FP[4] = 0x687049330
+[DNU]   FP[5] = 0x687049738
+[DNU]   FP[6] = 0x300000000
+[DNU]   FP[7] = 0x3005a6ab8
+[DNU]   FP[8] = 0x687049330
+[DNU]   FP[9] = 0x687049738
+[DNU]   FP[10] = 0x301b87260
+[DNU-STACK] Full call stack for #suspend (DNU #3):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=71901 count=32:
+  [0] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [1] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [2] #unresolvedName               RET   rcvr=0x68706e650 ret/top=0x301b35f68 bailOp=0x00 argc=0 spΔ=0
+  [3] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [4] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [6] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [7] #size                         RET   rcvr=0x6870723c8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [8] #size                         RET   rcvr=0x6870723c8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [9] #size                         RET   rcvr=0x6870723c8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [10] #size                         RET   rcvr=0x6870723c8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [11] #size                         RET   rcvr=0x6870723c8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [12] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [13] #size                         RET   rcvr=0x6870723c8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [14] #size                         RET   rcvr=0x687072468 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [15] #size                         RET   rcvr=0x687072468 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [16] #size                         RET   rcvr=0x687072468 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [17] #size                         RET   rcvr=0x687072468 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [18] #size                         RET   rcvr=0x687072468 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [19] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [20] #size                         RET   rcvr=0x687072468 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [21] #size                         RET   rcvr=0x687072520 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [22] #size                         RET   rcvr=0x687072520 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [23] #max:                         RET   rcvr=0x61 ret/top=0x61 bailOp=0x00 argc=0 spΔ=0
+  [24] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [26] #size                         RET   rcvr=0x687059728 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [27] #size                         RET   rcvr=0x68705a540 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x687073ab0 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x687057788 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x687057788 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #3: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU]   FP=0x689b0e9e8 SP=0x689b0ea00 base=0x689b0e950
+[DNU]   receiver_=0x3037fb968 method_=0x303809790
+[DNU]   FP[-2] = 0x3000182e0
+[DNU]   FP[-1] = 0x3038097b8
+[DNU]   FP[0] = 0x687075bc0
+[DNU]   FP[1] = 0x300000000
+[DNU]   FP[2] = 0x300000000
+[DNU]   FP[3] = 0x80001
+[DNU]   FP[4] = 0x687074d28
+[DNU]   FP[5] = 0x687075130
+[DNU]   FP[6] = 0x300000000
+[DNU]   FP[7] = 0x3005a6ab8
+[DNU]   FP[8] = 0x687074d28
+[DNU]   FP[9] = 0x687075130
+[DNU]   FP[10] = 0x301b87260
+[PREEMPT] P60→P80 (active=0x68707e0d8 → 0x3037f5d00)
+[SISTA-SELECT-CAND] pfbBC=27 send1BC=30 selIdx=11 litIdx=10 slot=0
+[DNU-STACK] Full call stack for #suspend (DNU #4):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=72078 count=32:
+  [0] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [1] #unresolvedName               RET   rcvr=0x6870a1290 ret/top=0x301b35f68 bailOp=0x00 argc=0 spΔ=0
+  [2] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [3] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [4] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [5] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [6] #size                         RET   rcvr=0x6870a5008 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [7] #size                         RET   rcvr=0x6870a5008 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [8] #size                         RET   rcvr=0x6870a5008 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [9] #size                         RET   rcvr=0x6870a5008 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [10] #size                         RET   rcvr=0x6870a5008 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [11] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [12] #size                         RET   rcvr=0x6870a5008 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [13] #size                         RET   rcvr=0x6870a50a8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [14] #size                         RET   rcvr=0x6870a50a8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [15] #size                         RET   rcvr=0x6870a50a8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [16] #size                         RET   rcvr=0x6870a50a8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [17] #size                         RET   rcvr=0x6870a50a8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [18] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [19] #size                         RET   rcvr=0x6870a50a8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [20] #size                         RET   rcvr=0x6870a5160 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [21] #size                         RET   rcvr=0x6870a5160 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [22] #max:                         RET   rcvr=0x61 ret/top=0x61 bailOp=0x00 argc=0 spΔ=0
+  [23] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [24] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [25] #size                         RET   rcvr=0x687085208 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [26] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [27] #size                         RET   rcvr=0x6870a6a18 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x6870a7d30 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x687083278 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x687083278 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #4: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[PREEMPT] P40→P60 (active=0x6870ae3a8 → 0x6870b2358)
+[DNU-STACK] Full call stack for #suspend (DNU #5):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=72268 count=32:
+  [0] #size                         RET   rcvr=0x6870d73e0 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [1] #size                         RET   rcvr=0x6870d7480 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [2] #size                         RET   rcvr=0x6870d7480 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [3] #size                         RET   rcvr=0x6870d7480 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [4] #size                         RET   rcvr=0x6870d7480 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [5] #size                         RET   rcvr=0x6870d7480 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [6] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [7] #size                         RET   rcvr=0x6870d7480 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [8] #size                         RET   rcvr=0x6870d7538 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [9] #size                         RET   rcvr=0x6870d7538 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [10] #max:                         RET   rcvr=0x61 ret/top=0x61 bailOp=0x00 argc=0 spΔ=0
+  [11] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [12] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [13] #size                         RET   rcvr=0x6870b9420 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [14] #flag:                        RET   rcvr=0x30001bb68 ret/top=0x30001bb68 bailOp=0x00 argc=0 spΔ=0
+  [15] #isSuspended                  RET   rcvr=0x6870b9498 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [16] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [17] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [18] #size                         RET   rcvr=0x6870b9420 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [19] #flag:                        RET   rcvr=0x30001bb68 ret/top=0x30001bb68 bailOp=0x00 argc=0 spΔ=0
+  [20] #isSuspended                  RET   rcvr=0x6870b9498 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [21] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [22] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [23] #flag:                        RET   rcvr=0x30001bb68 ret/top=0x30001bb68 bailOp=0x00 argc=0 spΔ=0
+  [24] #isSuspended                  RET   rcvr=0x6870b9498 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [27] #size                         RET   rcvr=0x6870b9420 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x6870e50a0 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x6870b7490 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x6870b7490 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #5: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU-STACK] Full call stack for #suspend (DNU #6):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=72456 count=32:
+  [0] #size                         RET   rcvr=0x68710d828 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [1] #max:                         RET   rcvr=0x61 ret/top=0x61 bailOp=0x00 argc=0 spΔ=0
+  [2] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [3] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [4] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [6] #species                      RET   rcvr=0x301b35f68 ret/top=0x3000162d0 bailOp=0x00 argc=0 spΔ=0
+  [7] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [8] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [9] #isSuspended                  RET   rcvr=0x6871080d0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [10] #maxSmallSize                 RET   rcvr=0x300016e10 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [11] #maxSmallSize                 RET   rcvr=0x300016e10 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [12] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [13] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [14] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [15] #size                         RET   rcvr=0x687117450 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [16] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [17] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [18] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [19] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [20] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [21] #isSuspended                  RET   rcvr=0x6871080d0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [22] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [23] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [24] #isSuspended                  RET   rcvr=0x6871080d0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [27] #size                         RET   rcvr=0x68710edb8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x68711d3e0 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x6870f46e0 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x6870f46e0 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #6: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[PREEMPT] P40→P60 (active=0x687123a58 → 0x687127a08)
+[PREEMPT] P40→P60 (active=0x687123a58 → 0x687127a08)
+[DNU-STACK] Full call stack for #suspend (DNU #7):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=73004 count=32:
+  [0] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [1] #isSuspended                  RET   rcvr=0x687140b88 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [2] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [3] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [4] #isSuspended                  RET   rcvr=0x687140b88 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [6] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [7] #isSuspended                  RET   rcvr=0x687140b88 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [8] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [9] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [10] #size                         RET   rcvr=0x687186340 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [11] #isSuspended                  RET   rcvr=0x687140b88 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [12] #maxSmallSize                 RET   rcvr=0x300016e10 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [13] #maxSmallSize                 RET   rcvr=0x300016e10 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [14] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [15] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [16] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [17] #size                         RET   rcvr=0x6871ba1a8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [18] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [19] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [20] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [21] #isSuspended                  RET   rcvr=0x687140b88 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [22] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [23] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [24] #isSuspended                  RET   rcvr=0x687140b88 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [27] #size                         RET   rcvr=0x687186340 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x6871bffc8 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x68712ca20 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x68712ca20 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #7: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU-STACK] Full call stack for #suspend (DNU #8):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=73388 count=32:
+  [0] #maxSmallSize                 RET   rcvr=0x300016e10 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [1] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [2] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [3] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [4] #size                         RET   rcvr=0x687229310 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [5] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [6] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [7] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [8] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [9] #isSuspended                  RET   rcvr=0x6871e34c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [10] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [11] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [12] #isSuspended                  RET   rcvr=0x6871e34c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [13] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [14] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [15] #isSuspended                  RET   rcvr=0x6871e34c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [16] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [17] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [18] #isSuspended                  RET   rcvr=0x6871e34c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [19] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [20] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [21] #isSuspended                  RET   rcvr=0x6871e34c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [22] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [23] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [24] #isSuspended                  RET   rcvr=0x6871e34c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [27] #size                         RET   rcvr=0x68720b7b8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x6872366c0 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x6871cf608 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x6871cf608 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #8: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU-STACK] Full call stack for #suspend (DNU #9):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=73429 count=32:
+  [0] #atEnd                        RET   rcvr=0x68723c660 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [1] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [2] #lowestPriority               RET   rcvr=0x300081c60 ret/top=0x51 bailOp=0x00 argc=0 spΔ=0
+  [3] #size                         RET   rcvr=0x303e7d8d8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [4] #handleNewProcess:            RET   rcvr=0x303e7d950 ret/top=0x303e7d950 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [6] #lowestPriority               RET   rcvr=0x300081c60 ret/top=0x51 bailOp=0x00 argc=0 spΔ=0
+  [7] #lowestPriority               RET   rcvr=0x300081c60 ret/top=0x51 bailOp=0x00 argc=0 spΔ=0
+  [8] #size                         RET   rcvr=0x303e7d8d8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [9] #handleNewProcess:            RET   rcvr=0x303e7d950 ret/top=0x303e7d950 bailOp=0x00 argc=0 spΔ=0
+  [10] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [11] #lowestPriority               RET   rcvr=0x300081c60 ret/top=0x51 bailOp=0x00 argc=0 spΔ=0
+  [12] #resources                    RET   rcvr=0x301b69e68 ret/top=0x300261cf8 bailOp=0x00 argc=0 spΔ=0
+  [13] #unresolvedName               RET   rcvr=0x687247b20 ret/top=0x301b35f68 bailOp=0x00 argc=0 spΔ=0
+  [14] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [15] #unresolvedName               RET   rcvr=0x687247c00 ret/top=0x301b35f68 bailOp=0x00 argc=0 spΔ=0
+  [16] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [17] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [18] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [19] #unresolvedName               RET   rcvr=0x687248910 ret/top=0x301b35f68 bailOp=0x00 argc=0 spΔ=0
+  [20] #defaultVersion               RET   rcvr=0x687248910 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [21] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [22] #isSuspended                  RET   rcvr=0x687249c18 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [23] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [24] #isSuspended                  RET   rcvr=0x687249c18 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [27] #size                         RET   rcvr=0x687247de0 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x68724cb10 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x687245d00 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x687245d00 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #9: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU-STACK] Full call stack for #suspend (DNU #10):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=73596 count=32:
+  [0] #defaultAuthor                RET   rcvr=0x687272850 ret/top=0x3002711b8 bailOp=0x00 argc=0 spΔ=0
+  [1] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [2] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [3] #unresolvedName               RET   rcvr=0x687273040 ret/top=0x301b35f68 bailOp=0x00 argc=0 spΔ=0
+  [4] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [6] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [7] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [8] #size                         RET   rcvr=0x687276db8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [9] #size                         RET   rcvr=0x687276db8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [10] #size                         RET   rcvr=0x687276db8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [11] #size                         RET   rcvr=0x687276db8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [12] #size                         RET   rcvr=0x687276db8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [13] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [14] #size                         RET   rcvr=0x687276db8 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [15] #size                         RET   rcvr=0x687276e58 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [16] #size                         RET   rcvr=0x687276e58 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [17] #size                         RET   rcvr=0x687276e58 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [18] #size                         RET   rcvr=0x687276e58 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [19] #size                         RET   rcvr=0x687276e58 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [20] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [21] #size                         RET   rcvr=0x687276e58 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [22] #size                         RET   rcvr=0x687276f10 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [23] #size                         RET   rcvr=0x687276f10 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [24] #max:                         RET   rcvr=0x61 ret/top=0x61 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [27] #size                         RET   rcvr=0x68725e320 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x687278520 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x68725c390 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x68725c390 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #10: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[SISTA-SELECT-CAND] pfbBC=1 send1BC=4 selIdx=1 litIdx=0 slot=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[DNU] #11: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #12: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #13: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #14: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #15: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[DNU] #16: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #17: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #18: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #19: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #20: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #21: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #22: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #23: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #24: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #25: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #26: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #27: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #28: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #29: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #30: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #31: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #32: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #33: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #34: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #35: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #36: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #37: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #38: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #39: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #40: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #41: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #42: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #43: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #44: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #45: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #46: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #47: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #48: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #49: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #50: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #51: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #52: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #53: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #54: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #55: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #56: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #57: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #58: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #59: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #60: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[SISTA-ACCUM-CAND] pfbBC=9 doBC=12 outerTemp=0 slot=0 arith=0
+[SISTA-ACCUM-EMIT] bc=9 vid=7 packed=0x0
+[SISTA-SPLICE-LOWER-OK] method=0x3002f5740
+[SISTA-SELECT-CAND] pfbBC=3 send1BC=6 selIdx=2 litIdx=1 slot=0
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[MUSTBOOL] #2 fd=45 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL] method header=0x8000000008400061 slotCount=19 method_class=CompiledMethod method_format=27 method_classIdx=3101
+[MUSTBOOL]   slot[0]=0x8000000008400061
+[MUSTBOOL]   slot[1]=0x300054f90 class=3085 format=21 bytes="isSuspended"
+[MUSTBOOL]   slot[2]=0x300052ac0 class=3085 format=18 bytes="asAnnouncement"
+[MUSTBOOL]   slot[3]=0x30005daf0 class=3085 format=17 bytes="isEmpty"
+[MUSTBOOL]   slot[4]=0x300062610 class=3085 format=18 bytes="preventedAnnouncements"
+[MUSTBOOL]   slot[5]=0x3000529e8 class=3085 format=20 bytes="handlesAnnouncement:"
+[MUSTBOOL]   slot[6]=0x30005fc00 class=3085 format=16 bytes="deliver:"
+[MUSTBOOL]   slot[7]=0x300058f88 class=3085 format=20 bytes="add:"
+[MUSTBOOL]   slot[8]=0x300050708 class=3085 format=17 bytes="ifTrue:"
+[MUSTBOOL]   slot[9]=0x300050760 class=3085 format=17 bytes="ifFalse:ifTrue:"
+[MUSTBOOL]   slot[10]=0x300050530 class=3085 format=23 bytes="ifNotNil:"
+[MUSTBOOL]   slot[11]=0x30005f910 class=3085 format=23 bytes="announce:"
+[MUSTBOOL]   slot[12]=0x30007a190 class=3139 format=1
+[MUSTBOOL]   slot[13]=0xd181401aee804c (raw bytecode bytes)
+[MUSTBOOL]   slot[14]=0x834cd84f5c41c182 (raw bytecode bytes)
+[MUSTBOOL]   slot[15]=0xd84f5c41c19441 (raw bytecode bytes)
+[MUSTBOOL] bytecodes near ipOff=10: ee 1a 40 81 d1 00 82 c1 41 5c 4f d8 4c
+[MUSTBOOL] full bytecodes (40):
+    0: 4c 80 ee 1a 40 81 d1 00 82 c1 41 5c 4f d8 4c 83 41 94 c1 41 5c 4f d8 00 41 95 d8 41 ed 09 02 53
+   32: 4f 76 bb d8 02 40 96 5c
+[MUSTBOOL] receiver slotCount=4 class=RGEnvironmentAnnouncer
+[MUSTBOOL]   recv.slot[0]=0x6870177a8 (SubscriptionRegistry)
+[MUSTBOOL]   recv.slot[1]=0x300000000 (nil)
+[MUSTBOOL]   recv.slot[2]=0x300000000 (nil)
+[MUSTBOOL]   recv.slot[3]=0x1 (SmI(0))
+[MUSTBOOL] stack: sp=0x689b0ed00 fp=0x689b0ece0 depth=45
+[MUSTBOOL]   sp[-3]=0x687017828 (ClassAdded)
+[MUSTBOOL]   sp[-2]=0x687017828 (ClassAdded)
+[MUSTBOOL]   sp[-1]=0x1 (SmallInteger)
+[MUSTBOOL]   sp[0]=0x687017828 (ClassAdded)
+[MUSTBOOL]   sp[1]=0x687014e48 (RGBehavior)
+[MUSTBOOL]   recent[35] RGClassStrategy>>environment
+[MUSTBOOL]   recent[36] RGBehavior>>environment
+[MUSTBOOL]   recent[37] RGBehavior>>propertyNamed:ifAbsent:
+[MUSTBOOL]   recent[38] IdentityDictionary>>at:ifAbsent:
+[MUSTBOOL]   recent[39] RGBehavior>>?
+[MUSTBOOL]   recent[40] RGBehavior>>environment
+[MUSTBOOL]   recent[41] RGBehavior>>parent
+[MUSTBOOL]   recent[42] RGBehavior>>addoptToParentStub
+[MUSTBOOL]   recent[43] RGEnvironment>>pvtAddBehavior:
+[MUSTBOOL]   recent[44] RGEnvironmentAnnouncer>>behaviorAdded:
+[SISTA-SELECT-CAND] pfbBC=1 send1BC=4 selIdx=1 litIdx=0 slot=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-INJECT-SPLICE-DIAG] send2BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[MUSTBOOL] #3 fd=40 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL]   recent[30] RGTraitStrategy>>environment
+[MUSTBOOL]   recent[31] RGBehavior>>environment
+[MUSTBOOL]   recent[32] RGBehavior>>propertyNamed:ifAbsent:
+[MUSTBOOL]   recent[33] IdentityDictionary>>at:ifAbsent:
+[MUSTBOOL]   recent[34] RGBehavior>>?
+[MUSTBOOL]   recent[35] RGBehavior>>environment
+[MUSTBOOL]   recent[36] RGBehavior>>parent
+[MUSTBOOL]   recent[37] RGBehavior>>addoptToParentStub
+[MUSTBOOL]   recent[38] RGEnvironment>>pvtAddBehavior:
+[MUSTBOOL]   recent[39] RGEnvironmentAnnouncer>>behaviorAdded:
+[MUSTBOOL] #4 fd=43 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL]   recent[33] RGClassStrategy>>environment
+[MUSTBOOL]   recent[34] RGBehavior>>environment
+[MUSTBOOL]   recent[35] RGBehavior>>propertyNamed:ifAbsent:
+[MUSTBOOL]   recent[36] IdentityDictionary>>at:ifAbsent:
+[MUSTBOOL]   recent[37] RGBehavior>>?
+[MUSTBOOL]   recent[38] RGBehavior>>environment
+[MUSTBOOL]   recent[39] RGBehavior>>parent
+[MUSTBOOL]   recent[40] RGBehavior>>addoptToParentStub
+[MUSTBOOL]   recent[41] RGEnvironment>>pvtAddBehavior:
+[MUSTBOOL]   recent[42] RGEnvironmentAnnouncer>>behaviorAdded:
+[SISTA-INJECT-SPLICE-DIAG] send2BC=51 selIdx=6 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=46 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=36 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=52 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=31 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=47 verdict=REJECT reject=non-simple block op rejOp=send
+[MUSTBOOL] #5 fd=35 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL]   recent[25] RGTraitStrategy>>environment
+[MUSTBOOL]   recent[26] RGBehavior>>environment
+[MUSTBOOL]   recent[27] RGBehavior>>propertyNamed:ifAbsent:
+[MUSTBOOL]   recent[28] IdentityDictionary>>at:ifAbsent:
+[MUSTBOOL]   recent[29] RGBehavior>>?
+[MUSTBOOL]   recent[30] RGBehavior>>environment
+[MUSTBOOL]   recent[31] RGBehavior>>parent
+[MUSTBOOL]   recent[32] RGBehavior>>addoptToParentStub
+[MUSTBOOL]   recent[33] RGEnvironment>>pvtAddBehavior:
+[MUSTBOOL]   recent[34] RGEnvironmentAnnouncer>>behaviorAdded:
+[DIAG] P40 EFFormatter>>ifTrue: ip=50 fd=32
+[DIAG]   [-1] EFFormatter>>formatSelectorAndArguments:
+[DIAG]   [-2] EFFormatter>>visitMessageNode:
+[DIAG]   [-3] OCMessageNode>>acceptVisitor:
+[DIAG]   [-4] EFFormatter>>visitNode:
+[DIAG]   [-5] EFFormatter>>ifFalse:
+[DIAG]   [-6] EFFormatter>>bracketWith:around:indentExtraSpaces:
+[DIAG]   [-7] EFFormatter>>visitNode:
+[DIAG]   [-8] EFFormatter>>ifTrue:ifFalse:
+[DIAG]   [-9] OrderedCollection>>withIndexDo:
+[DIAG]   [-10] EFFormatter>>formatSequenceNodeStatementsFor:
+[DIAG]   [-11] EFFormatter>>visitSequenceNode:
+[DIAG]   [-12] EFFormatter>>formatBlock:
+[DIAG]   [-13] EFFormatter>>formatBlock:
+[DIAG]   [-14] FullBlockClosure>>ensure:
+[DIAG]   [-15] EFFormatter>>bracketWith:around:
+[DIAG]   [-16] EFFormatter>>visitBlockNode:
+[DIAG]   [-17] OCBlockNode>>acceptVisitor:
+[DIAG]   [-18] EFFormatter>>visitNode:
+[DIAG]   [-19] EFFormatter>>ifFalse:
+[DIAG]   [-20] EFFormatter>>bracketWith:around:indentExtraSpaces:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a10e1ec52 nextMs=0
+[DIAG-TIMER] wakeup delta=799415 usec (0.799 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x687a20ad8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e554c8 susp=ProcessorScheduler class>>idleProcess
+[MUSTBOOL] #6 fd=35 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL]   recent[25] RGTraitStrategy>>environment
+[MUSTBOOL]   recent[26] RGBehavior>>environment
+[MUSTBOOL]   recent[27] RGBehavior>>propertyNamed:ifAbsent:
+[MUSTBOOL]   recent[28] IdentityDictionary>>at:ifAbsent:
+[MUSTBOOL]   recent[29] RGBehavior>>?
+[MUSTBOOL]   recent[30] RGBehavior>>environment
+[MUSTBOOL]   recent[31] RGBehavior>>parent
+[MUSTBOOL]   recent[32] RGBehavior>>addoptToParentStub
+[MUSTBOOL]   recent[33] RGEnvironment>>pvtAddBehavior:
+[MUSTBOOL]   recent[34] RGEnvironmentAnnouncer>>behaviorAdded:
+[MUSTBOOL] #7 fd=38 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL]   recent[28] RGClassStrategy>>environment
+[MUSTBOOL]   recent[29] RGBehavior>>environment
+[MUSTBOOL]   recent[30] RGBehavior>>propertyNamed:ifAbsent:
+[MUSTBOOL]   recent[31] IdentityDictionary>>at:ifAbsent:
+[MUSTBOOL]   recent[32] RGBehavior>>?
+[MUSTBOOL]   recent[33] RGBehavior>>environment
+[MUSTBOOL]   recent[34] RGBehavior>>parent
+[MUSTBOOL]   recent[35] RGBehavior>>addoptToParentStub
+[MUSTBOOL]   recent[36] RGEnvironment>>pvtAddBehavior:
+[MUSTBOOL]   recent[37] RGEnvironmentAnnouncer>>behaviorAdded:
+[MUSTBOOL] #8 fd=40 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL]   recent[30] RGTraitStrategy>>environment
+[MUSTBOOL]   recent[31] RGBehavior>>environment
+[MUSTBOOL]   recent[32] RGBehavior>>propertyNamed:ifAbsent:
+[MUSTBOOL]   recent[33] IdentityDictionary>>at:ifAbsent:
+[MUSTBOOL]   recent[34] RGBehavior>>?
+[MUSTBOOL]   recent[35] RGBehavior>>environment
+[MUSTBOOL]   recent[36] RGBehavior>>parent
+[MUSTBOOL]   recent[37] RGBehavior>>addoptToParentStub
+[MUSTBOOL]   recent[38] RGEnvironment>>pvtAddBehavior:
+[MUSTBOOL]   recent[39] RGEnvironmentAnnouncer>>behaviorAdded:
+[PROGRESS] 10s: ~28597308 steps
+[MUSTBOOL] #9 fd=39 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL]   recent[29] RGClassStrategy>>environment
+[MUSTBOOL]   recent[30] RGBehavior>>environment
+[MUSTBOOL]   recent[31] RGBehavior>>propertyNamed:ifAbsent:
+[MUSTBOOL]   recent[32] IdentityDictionary>>at:ifAbsent:
+[MUSTBOOL]   recent[33] RGBehavior>>?
+[MUSTBOOL]   recent[34] RGBehavior>>environment
+[MUSTBOOL]   recent[35] RGBehavior>>parent
+[MUSTBOOL]   recent[36] RGBehavior>>addoptToParentStub
+[MUSTBOOL]   recent[37] RGEnvironment>>pvtAddBehavior:
+[MUSTBOOL]   recent[38] RGEnvironmentAnnouncer>>behaviorAdded:
+[MUSTBOOL] #10 fd=46 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL]   recent[36] RGClassStrategy>>environment
+[MUSTBOOL]   recent[37] RGBehavior>>environment
+[MUSTBOOL]   recent[38] RGBehavior>>propertyNamed:ifAbsent:
+[MUSTBOOL]   recent[39] IdentityDictionary>>at:ifAbsent:
+[MUSTBOOL]   recent[40] RGBehavior>>?
+[MUSTBOOL]   recent[41] RGBehavior>>environment
+[MUSTBOOL]   recent[42] RGBehavior>>parent
+[MUSTBOOL]   recent[43] RGBehavior>>addoptToParentStub
+[MUSTBOOL]   recent[44] RGEnvironment>>pvtAddBehavior:
+[MUSTBOOL]   recent[45] RGEnvironmentAnnouncer>>behaviorAdded:
+[MUSTBOOL] #11 fd=46 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL] #12 fd=34 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL] #13 fd=32 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL] #14 fd=40 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL] #15 fd=24 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL] #16 fd=38 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL] #17 fd=38 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL] #18 fd=38 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL] #19 fd=38 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[MUSTBOOL] #20 fd=25 value_class=SmallInteger value=0x1 in=#announce: rcv_class=RGEnvironmentAnnouncer method=0x3003d17e0 numLits=12 ipOff=10
+[DIAG] P40 IdentityDictionary>>to:do: ip=41 fd=55
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>traitComposition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a116f5556 nextMs=0
+[DIAG-TIMER] wakeup delta=64428 usec (0.064 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x304671538 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e554c8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 20s: ~111411164 steps
+[DIAG] P40 RGBehavior>>parent ip=53 fd=57
+[DIAG]   [-1] RGBehavior>>?
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a12081dfa nextMs=0
+[DIAG-TIMER] wakeup delta=75569 usec (0.076 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x304671538 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e554c8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 30s: ~136586516 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=48 fd=57
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a12a0c211 nextMs=0
+[DIAG-TIMER] wakeup delta=77106 usec (0.077 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x304671538 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e554c8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 40s: ~161787348 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=113 fd=49
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>traitComposition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1339627f nextMs=0
+[DIAG-TIMER] wakeup delta=77735 usec (0.078 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x304671538 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e554c8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 50s: ~186849308 steps
+[syncDisplay] displayFormReady_=false (call 1000), displayForm_ isNil=0
+[DIAG] P40 ByteSymbol>>? ip=32 fd=58
+[DIAG]   [-1] IdentityDictionary>>scanFor:
+[DIAG]   [-2] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-3] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-4] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-5] RGBehavior>>environment
+[DIAG]   [-6] RGBehavior>>backend
+[DIAG]   [-7] RGBehavior>>traitComposition
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a13d20467 nextMs=0
+[DIAG-TIMER] wakeup delta=78100 usec (0.078 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x304671538 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e554c8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 60s: ~211840780 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=140 fd=57
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a146aa748 nextMs=0
+[DIAG-TIMER] wakeup delta=78550 usec (0.079 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x304671538 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e554c8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 70s: ~236646140 steps
+[DIAG] P40 IdentityDictionary>>ifNil:ifNotNil: ip=67 fd=55
+[DIAG]   [-1] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-2] RGBehavior>>environment
+[DIAG]   [-3] RGBehavior>>backend
+[DIAG]   [-4] RGBehavior>>traitComposition
+[DIAG]   [-5] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-6] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a15034d38 nextMs=0
+[DIAG-TIMER] wakeup delta=81168 usec (0.081 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x304671538 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e554c8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 80s: ~261457036 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=133 fd=51
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a159bf3cf nextMs=0
+[DIAG-TIMER] wakeup delta=82899 usec (0.083 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x304671538 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e554c8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 90s: ~286076660 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=52 fd=57
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a163c7490 nextMs=0
+[DIAG-TIMER] wakeup delta=599976 usec (0.600 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 100s: ~308360404 steps
+[syncDisplay] displayFormReady_=false (call 2000), displayForm_ isNil=0
+[DIAG] P40 RGBehavior>>postCopy ip=34 fd=51
+[DIAG]   [-1] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-2] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-3] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-4] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-5] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-6] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a16d66f4e nextMs=0
+[DIAG-TIMER] wakeup delta=691253 usec (0.691 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 110s: ~332879588 steps
+[DIAG] P40 RGBehavior>>postCopy ip=129 fd=51
+[DIAG]   [-1] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-2] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-3] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-4] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-5] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-6] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1770cb5b nextMs=0
+[DIAG-TIMER] wakeup delta=807379 usec (0.807 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 120s: ~357415948 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=117 fd=51
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a180bb376 nextMs=0
+[DIAG-TIMER] wakeup delta=956682 usec (0.957 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 130s: ~381813828 steps
+[DIAG] P40 IdentityDictionary>>ifNil:ifNotNil: ip=51 fd=49
+[DIAG]   [-1] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-2] RGBehavior>>environment
+[DIAG]   [-3] RGBehavior>>backend
+[DIAG]   [-4] RGBehavior>>superclass
+[DIAG]   [-5] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-6] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a189792ff nextMs=0
+[DIAG-TIMER] wakeup delta=121001 usec (0.121 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 140s: ~405988212 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=51 fd=57
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>traitComposition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a193396ff nextMs=0
+[DIAG-TIMER] wakeup delta=344064 usec (0.344 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 150s: ~430148596 steps
+[syncDisplay] displayFormReady_=false (call 3000), displayForm_ isNil=0
+[PROGRESS] 160s: ~451828780 steps
+[DIAG] P40 RGBehavior>>backend ip=33 fd=52
+[DIAG]   [-1] RGBehavior>>traitComposition
+[DIAG]   [-2] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-3] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-4] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-5] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-6] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a19d0255c nextMs=0
+[DIAG-TIMER] wakeup delta=603148 usec (0.603 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[DIAG] P40 IdentityDictionary>>to:do: ip=96 fd=57
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1a6d2d7e nextMs=0
+[DIAG-TIMER] wakeup delta=893846 usec (0.894 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 170s: ~475840628 steps
+[DIAG] P40 RGBehavior>>ifNil: ip=59 fd=55
+[DIAG]   [-1] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-2] RGBehavior>>environment
+[DIAG]   [-3] RGBehavior>>backend
+[DIAG]   [-4] RGBehavior>>superclass
+[DIAG]   [-5] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-6] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1afaf9cd nextMs=0
+[DIAG-TIMER] wakeup delta=184511 usec (0.185 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 180s: ~499942300 steps
+[DIAG] P40 RGBehavior>>ifNil: ip=60 fd=55
+[DIAG]   [-1] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-2] RGBehavior>>environment
+[DIAG]   [-3] RGBehavior>>backend
+[DIAG]   [-4] RGBehavior>>superclass
+[DIAG]   [-5] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-6] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1b97db7a nextMs=0
+[DIAG-TIMER] wakeup delta=464073 usec (0.464 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 190s: ~518967964 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=58 fd=57
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1c364e43 nextMs=0
+[DIAG-TIMER] wakeup delta=846558 usec (0.847 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 200s: ~542738588 steps
+[syncDisplay] displayFormReady_=false (call 4000), displayForm_ isNil=0
+[DIAG] P40 IdentityDictionary>>to:do: ip=43 fd=56
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>traitComposition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1cc529ce nextMs=0
+[DIAG-TIMER] wakeup delta=208655 usec (0.209 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 210s: ~566515340 steps
+[DIAG] P40 RGBehavior>>superclassFor: ip=113 fd=51
+[DIAG]   [-1] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-2] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-3] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-4] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-5] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-6] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1d6484e4 nextMs=0
+[DIAG-TIMER] wakeup delta=648822 usec (0.649 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 220s: ~590369956 steps
+[DIAG] P40 RGEnvironment>>ifNil: ip=79 fd=53
+[DIAG]   [-1] RGBehavior>>backend
+[DIAG]   [-2] RGBehavior>>superclass
+[DIAG]   [-3] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-4] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-5] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-6] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1df45c4b nextMs=0
+[DIAG-TIMER] wakeup delta=73477 usec (0.073 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 230s: ~613849524 steps
+[DIAG] P40 RGEnvironmentBackend>>pvtSuperclass ip=56 fd=52
+[DIAG]   [-1] RGBehavior>>superclass
+[DIAG]   [-2] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-3] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-4] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-5] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-6] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1e94a6fe nextMs=0
+[DIAG-TIMER] wakeup delta=576208 usec (0.576 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 240s: ~637582260 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=48 fd=57
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1f2569b9 nextMs=0
+[DIAG-TIMER] wakeup delta=61649 usec (0.062 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 250s: ~660909300 steps
+[DIAG] P40 RGEnvironment>>ifNil: ip=97 fd=45
+[DIAG]   [-1] RGBehavior>>backend
+[DIAG]   [-2] RGBehavior>>traitComposition
+[DIAG]   [-3] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-4] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-5] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-6] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a1fc6bc47 nextMs=0
+[DIAG-TIMER] wakeup delta=634308 usec (0.634 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 260s: ~684401300 steps
+[syncDisplay] displayFormReady_=false (call 5000), displayForm_ isNil=0
+[DIAG] P40 IdentityDictionary>>to:do: ip=33 fd=57
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a2058bb21 nextMs=0
+[DIAG-TIMER] wakeup delta=198604 usec (0.199 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 270s: ~707504268 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=64 fd=57
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a20fbd44b nextMs=0
+[DIAG-TIMER] wakeup delta=885975 usec (0.886 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 280s: ~723411188 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=79 fd=57
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>superclass
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a218e3107 nextMs=0
+[DIAG-TIMER] wakeup delta=475619 usec (0.476 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 290s: ~746482252 steps
+[DIAG] P40 RGBehavior>>parent ip=81 fd=55
+[DIAG]   [-1] RGBehavior>>?
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>traitComposition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a22212355 nextMs=0
+[DIAG-TIMER] wakeup delta=104418 usec (0.104 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 300s: ~769746820 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=70 fd=49
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGBehavior>>traitComposition
+[DIAG]   [-7] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-8] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-9] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-10] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-11] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-12] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-13] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-14] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-15] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-16] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-17] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-18] RGBehavior>>copyForBehaviorDefinition
+[DIAG]   [-19] RGBehavior>>copyForBehaviorDefinitionPostCopy
+[DIAG]   [-20] RGBehavior>>copyForBehaviorDefinition
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a22c4c10f nextMs=0
+[DIAG-TIMER] wakeup delta=825609 usec (0.826 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x303fb91d8 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 310s: ~792825444 steps
+[MUSTBOOL] #21 fd=0 value_class=UndefinedObject value=0x300000000 in=#setDelay:forSemaphore: rcv_class=DelayWaitTimeout method=0x300380938 numLits=6 ipOff=7
+[MUSTBOOL] method header=0x8000000010400031 slotCount=10 method_class=CompiledMethod method_format=25 method_classIdx=3101
+[MUSTBOOL]   slot[0]=0x8000000010400031
+[MUSTBOOL]   slot[1]=0x300051120 class=3085 format=23 bytes="asInteger"
+[MUSTBOOL]   slot[2]=0x300391cc0 class=52 format=18 bytes="delay times cannot be negative"
+[MUSTBOOL]   slot[3]=0x30005cc38 class=3085 format=18 bytes="error:"
+[MUSTBOOL]   slot[4]=0x300050708 class=3085 format=17 bytes="ifTrue:"
+[MUSTBOOL]   slot[5]=0x3000690e8 class=3085 format=18 bytes="setDelay:forSemaphore:"
+[MUSTBOOL]   slot[6]=0x300078780 class=3139 format=1
+[MUSTBOOL]   slot[7]=0x4cc3625002ca8040 (raw bytecode bytes)
+[MUSTBOOL]   slot[8]=0x4ec841d84fb09221 (raw bytecode bytes)
+[MUSTBOOL]   slot[9]=0xc4b7d3000058c9 (raw bytecode bytes)
+[MUSTBOOL] bytecodes near ipOff=7: 40 80 ca 02 50 62 c3 4c 21 92 b0 4f
+[MUSTBOOL] full bytecodes (18):
+    0: 40 80 ca 02 50 62 c3 4c 21 92 b0 4f d8 41 c8 4e c9 58
+[MUSTBOOL] receiver slotCount=7 class=DelayWaitTimeout
+[MUSTBOOL]   recv.slot[0]=0x300000000 (nil)
+[MUSTBOOL]   recv.slot[1]=0x300000000 (nil)
+[MUSTBOOL]   recv.slot[2]=0x300000000 (nil)
+[MUSTBOOL]   recv.slot[3]=0x300000000 (nil)
+[MUSTBOOL]   recv.slot[4]=0x300000000 (nil)
+[MUSTBOOL]   recv.slot[5]=0x300000000 (nil)
+[MUSTBOOL]   recv.slot[6]=0x300000000 (nil)
+[MUSTBOOL] stack: sp=0x689b0e970 fp=0x689b0e950 depth=0
+[MUSTBOOL]   sp[-3]=0x300000000 (UndefinedObject)
+[MUSTBOOL]   sp[-2]=0x303e69b10 (Semaphore)
+[MUSTBOOL]   sp[-1]=0x300000000 (UndefinedObject)
+[MUSTBOOL]   sp[0]=0x300000000 (UndefinedObject)
+[MUSTBOOL]   sp[1]=0x370f21058 (Context)
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #1
+[DELAY-RECOVERY] Re-signaling timer semaphore 0x300362a88 (attempt 1)
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=103 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[PROGRESS] 320s: ~961494478 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #2
+[DELAY-RECOVERY] Re-signaling timer semaphore 0x300362a88 (attempt 2)
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #3
+[DELAY-RECOVERY] Re-signaling timer semaphore 0x300362a88 (attempt 3)
+[syncDisplay] displayFormReady_=false (call 6000), displayForm_ isNil=0
+[DIAG] P40 OCScanner>>ifTrue: ip=103 fd=1
+[DIAG]   [-1] OCScanner>>scanComment
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x6876e9f60 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=recursion guard rejOp=return
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-IVINJECT-DIAG] toBC=46 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=31 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=47 verdict=REJECT reject=non-simple block op rejOp=send
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #4
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #5
+[PROGRESS] 340s: ~1009142612 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=103 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #6
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #7
+[PROGRESS] 350s: ~1009389891 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=103 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #8
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #9
+[PROGRESS] 360s: ~1018820124 steps
+[DIAG] P40 IdentityDictionary>>ifNil:ifNotNil: ip=53 fd=30
+[DIAG]   [-1] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-2] RGBehavior>>environment
+[DIAG]   [-3] RGBehavior>>backend
+[DIAG]   [-4] RGMetaclassTraitStrategy>>backend
+[DIAG]   [-5] RGMetaclassTraitStrategy>>baseTrait
+[DIAG]   [-6] RGMetaclassTraitStrategy>>package
+[DIAG]   [-7] RGMetaclassTraitStrategy>>package
+[DIAG]   [-8] RGMetaclassTraitStrategy>>package
+[DIAG]   [-9] RGMetaclassTraitStrategy>>package
+[DIAG]   [-10] RGMetaclassTraitStrategy>>package
+[DIAG]   [-11] RGMetaclassTraitStrategy>>package
+[DIAG]   [-12] RGMetaclassTraitStrategy>>package
+[DIAG]   [-13] RGMetaclassTraitStrategy>>package
+[DIAG]   [-14] RGMetaclassTraitStrategy>>package
+[DIAG]   [-15] RGMetaclassTraitStrategy>>package
+[DIAG]   [-16] RGMetaclassTraitStrategy>>package
+[DIAG]   [-17] RGMetaclassTraitStrategy>>package
+[DIAG]   [-18] RGMetaclassTraitStrategy>>package
+[DIAG]   [-19] RGMetaclassTraitStrategy>>package
+[DIAG]   [-20] RGMetaclassTraitStrategy>>package
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x37134b458 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #10
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #11
+[PROGRESS] 370s: ~1037189172 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=43 fd=51
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGMetaclassTraitStrategy>>backend
+[DIAG]   [-7] RGMetaclassTraitStrategy>>baseTrait
+[DIAG]   [-8] RGMetaclassTraitStrategy>>package
+[DIAG]   [-9] RGMetaclassTraitStrategy>>package
+[DIAG]   [-10] RGMetaclassTraitStrategy>>package
+[DIAG]   [-11] RGMetaclassTraitStrategy>>package
+[DIAG]   [-12] RGMetaclassTraitStrategy>>package
+[DIAG]   [-13] RGMetaclassTraitStrategy>>package
+[DIAG]   [-14] RGMetaclassTraitStrategy>>package
+[DIAG]   [-15] RGMetaclassTraitStrategy>>package
+[DIAG]   [-16] RGMetaclassTraitStrategy>>package
+[DIAG]   [-17] RGMetaclassTraitStrategy>>package
+[DIAG]   [-18] RGMetaclassTraitStrategy>>package
+[DIAG]   [-19] RGMetaclassTraitStrategy>>package
+[DIAG]   [-20] RGMetaclassTraitStrategy>>package
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x37134b458 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #12
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #13
+[PROGRESS] 380s: ~1055400708 steps
+[DIAG] P40 RGBehavior>>at:ifAbsent: ip=43 fd=57
+[DIAG]   [-1] RGBehavior>>environment
+[DIAG]   [-2] RGBehavior>>backend
+[DIAG]   [-3] RGMetaclassTraitStrategy>>backend
+[DIAG]   [-4] RGMetaclassTraitStrategy>>baseTrait
+[DIAG]   [-5] RGMetaclassTraitStrategy>>package
+[DIAG]   [-6] RGMetaclassTraitStrategy>>package
+[DIAG]   [-7] RGMetaclassTraitStrategy>>package
+[DIAG]   [-8] RGMetaclassTraitStrategy>>package
+[DIAG]   [-9] RGMetaclassTraitStrategy>>package
+[DIAG]   [-10] RGMetaclassTraitStrategy>>package
+[DIAG]   [-11] RGMetaclassTraitStrategy>>package
+[DIAG]   [-12] RGMetaclassTraitStrategy>>package
+[DIAG]   [-13] RGMetaclassTraitStrategy>>package
+[DIAG]   [-14] RGMetaclassTraitStrategy>>package
+[DIAG]   [-15] RGMetaclassTraitStrategy>>package
+[DIAG]   [-16] RGMetaclassTraitStrategy>>package
+[DIAG]   [-17] RGMetaclassTraitStrategy>>package
+[DIAG]   [-18] RGMetaclassTraitStrategy>>package
+[DIAG]   [-19] RGMetaclassTraitStrategy>>package
+[DIAG]   [-20] RGMetaclassTraitStrategy>>package
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x37134b458 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #14
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #15
+[PROGRESS] 390s: ~1073569716 steps
+[DIAG] P40 RGBehavior>>at:ifAbsent: ip=58 fd=48
+[DIAG]   [-1] RGBehavior>>environment
+[DIAG]   [-2] RGBehavior>>backend
+[DIAG]   [-3] RGMetaclassTraitStrategy>>backend
+[DIAG]   [-4] RGMetaclassTraitStrategy>>baseTrait
+[DIAG]   [-5] RGMetaclassTraitStrategy>>package
+[DIAG]   [-6] RGMetaclassTraitStrategy>>package
+[DIAG]   [-7] RGMetaclassTraitStrategy>>package
+[DIAG]   [-8] RGMetaclassTraitStrategy>>package
+[DIAG]   [-9] RGMetaclassTraitStrategy>>package
+[DIAG]   [-10] RGMetaclassTraitStrategy>>package
+[DIAG]   [-11] RGMetaclassTraitStrategy>>package
+[DIAG]   [-12] RGMetaclassTraitStrategy>>package
+[DIAG]   [-13] RGMetaclassTraitStrategy>>package
+[DIAG]   [-14] RGMetaclassTraitStrategy>>package
+[DIAG]   [-15] RGMetaclassTraitStrategy>>package
+[DIAG]   [-16] RGMetaclassTraitStrategy>>package
+[DIAG]   [-17] RGMetaclassTraitStrategy>>package
+[DIAG]   [-18] RGMetaclassTraitStrategy>>package
+[DIAG]   [-19] RGMetaclassTraitStrategy>>package
+[DIAG]   [-20] RGMetaclassTraitStrategy>>package
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x37134b458 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #16
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #17
+[PROGRESS] 400s: ~1091901756 steps
+[DIAG] P40 IdentityDictionary>>to:do: ip=64 fd=51
+[DIAG]   [-1] IdentityDictionary>>findElementOrNil:
+[DIAG]   [-2] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-3] RGBehavior>>propertyNamed:ifAbsent:
+[DIAG]   [-4] RGBehavior>>environment
+[DIAG]   [-5] RGBehavior>>backend
+[DIAG]   [-6] RGMetaclassTraitStrategy>>backend
+[DIAG]   [-7] RGMetaclassTraitStrategy>>baseTrait
+[DIAG]   [-8] RGMetaclassTraitStrategy>>package
+[DIAG]   [-9] RGMetaclassTraitStrategy>>package
+[DIAG]   [-10] RGMetaclassTraitStrategy>>package
+[DIAG]   [-11] RGMetaclassTraitStrategy>>package
+[DIAG]   [-12] RGMetaclassTraitStrategy>>package
+[DIAG]   [-13] RGMetaclassTraitStrategy>>package
+[DIAG]   [-14] RGMetaclassTraitStrategy>>package
+[DIAG]   [-15] RGMetaclassTraitStrategy>>package
+[DIAG]   [-16] RGMetaclassTraitStrategy>>package
+[DIAG]   [-17] RGMetaclassTraitStrategy>>package
+[DIAG]   [-18] RGMetaclassTraitStrategy>>package
+[DIAG]   [-19] RGMetaclassTraitStrategy>>package
+[DIAG]   [-20] RGMetaclassTraitStrategy>>package
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x37134b458 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #18
+[syncDisplay] displayFormReady_=false (call 7000), displayForm_ isNil=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #19
+[PROGRESS] 410s: ~1109994348 steps
+[DIAG] P40 RGBehavior>>at:ifAbsent: ip=48 fd=21
+[DIAG]   [-1] RGBehavior>>environment
+[DIAG]   [-2] RGBehavior>>backend
+[DIAG]   [-3] RGMetaclassTraitStrategy>>backend
+[DIAG]   [-4] RGMetaclassTraitStrategy>>baseTrait
+[DIAG]   [-5] RGMetaclassTraitStrategy>>package
+[DIAG]   [-6] RGMetaclassTraitStrategy>>package
+[DIAG]   [-7] RGMetaclassTraitStrategy>>package
+[DIAG]   [-8] RGMetaclassTraitStrategy>>package
+[DIAG]   [-9] RGMetaclassTraitStrategy>>package
+[DIAG]   [-10] RGMetaclassTraitStrategy>>package
+[DIAG]   [-11] RGMetaclassTraitStrategy>>package
+[DIAG]   [-12] RGMetaclassTraitStrategy>>package
+[DIAG]   [-13] RGMetaclassTraitStrategy>>package
+[DIAG]   [-14] RGMetaclassTraitStrategy>>package
+[DIAG]   [-15] RGMetaclassTraitStrategy>>package
+[DIAG]   [-16] RGMetaclassTraitStrategy>>package
+[DIAG]   [-17] RGMetaclassTraitStrategy>>package
+[DIAG]   [-18] RGMetaclassTraitStrategy>>package
+[DIAG]   [-19] RGMetaclassTraitStrategy>>package
+[DIAG]   [-20] RGMetaclassTraitStrategy>>package
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x37134b458 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #20
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #21
+[PROGRESS] 420s: ~1127968852 steps
+[DIAG] P40 RGBehavior>>at:ifAbsent: ip=62 fd=57
+[DIAG]   [-1] RGBehavior>>environment
+[DIAG]   [-2] RGBehavior>>backend
+[DIAG]   [-3] RGMetaclassTraitStrategy>>backend
+[DIAG]   [-4] RGMetaclassTraitStrategy>>baseTrait
+[DIAG]   [-5] RGMetaclassTraitStrategy>>package
+[DIAG]   [-6] RGMetaclassTraitStrategy>>package
+[DIAG]   [-7] RGMetaclassTraitStrategy>>package
+[DIAG]   [-8] RGMetaclassTraitStrategy>>package
+[DIAG]   [-9] RGMetaclassTraitStrategy>>package
+[DIAG]   [-10] RGMetaclassTraitStrategy>>package
+[DIAG]   [-11] RGMetaclassTraitStrategy>>package
+[DIAG]   [-12] RGMetaclassTraitStrategy>>package
+[DIAG]   [-13] RGMetaclassTraitStrategy>>package
+[DIAG]   [-14] RGMetaclassTraitStrategy>>package
+[DIAG]   [-15] RGMetaclassTraitStrategy>>package
+[DIAG]   [-16] RGMetaclassTraitStrategy>>package
+[DIAG]   [-17] RGMetaclassTraitStrategy>>package
+[DIAG]   [-18] RGMetaclassTraitStrategy>>package
+[DIAG]   [-19] RGMetaclassTraitStrategy>>package
+[DIAG]   [-20] RGMetaclassTraitStrategy>>package
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DIAG-QUEUE] P80 proc=0x3037f5bd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x37134b458 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e53fc8 susp=ProcessorScheduler class>>idleProcess
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #22
+[CORRUPT-PRI] non-SmallInt priority: bits=0x300000000 process=0x37134b670
+[CORRUPT-PRI] non-SmallInt priority: bits=0x300000000 process=0x37134b670
+[DNU] CASCADE: receiver can't handle doesNotUnderstand:
+[DNU]   caller=#copyTo: fd=6
+[CORRUPT-PRI] priority 0 out of range process=0x37134b458
+[CORRUPT-PRI] priority 0 out of range process=0x37134b458
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #23
+[PROGRESS] 430s: ~1134653436 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=3s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #24
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #25
+[PROGRESS] 440s: ~1134659580 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=3s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #26
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #27
+[PROGRESS] 450s: ~1134665724 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=3s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #28
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #29
+[PROGRESS] 460s: ~1134671868 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=4s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #30
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #31
+[PROGRESS] 470s: ~1134678012 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=4s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #32
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #33
+[PROGRESS] 480s: ~1134684156 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=4s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #34
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #35
+[PROGRESS] 490s: ~1134689276 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=4s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #36
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #37
+[PROGRESS] 500s: ~1134695420 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=4s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #38
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #39
+[PROGRESS] 510s: ~1134701564 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #40
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=0s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #41
+[PROGRESS] 520s: ~1134707708 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #42
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=0s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #43
+[PROGRESS] 530s: ~1134713852 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #44
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=0s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #45
+[PROGRESS] 540s: ~1134719996 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #46
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=0s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #47
+[PROGRESS] 550s: ~1134725116 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #48
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #49
+[PROGRESS] 560s: ~1134731260 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #50
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #51
+[PROGRESS] 570s: ~1134737404 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #52
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #53
+[PROGRESS] 580s: ~1134743548 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #54
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #55
+[PROGRESS] 590s: ~1134749692 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #56
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #57
+[PROGRESS] 600s: ~1134755836 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #58
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #59
+[PROGRESS] 610s: ~1134761980 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #60
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #61
+[PROGRESS] 620s: ~1134768124 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #62
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #63
+[PROGRESS] 630s: ~1134774268 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #64
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #65
+[PROGRESS] 640s: ~1134780412 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #66
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #67
+[PROGRESS] 650s: ~1134785532 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #68
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=3s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #69
+[PROGRESS] 660s: ~1134791676 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #70
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=3s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #71
+[PROGRESS] 670s: ~1134797820 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #72
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=3s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #73
+[PROGRESS] 680s: ~1134803964 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #74
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=3s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #75
+[PROGRESS] 690s: ~1134810108 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #76
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=4s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #77
+[PROGRESS] 700s: ~1134815228 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #78
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=4s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #79
+[PROGRESS] 710s: ~1134821372 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #80
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=4s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #81
+[PROGRESS] 720s: ~1134827516 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #82
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=4s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #83
+[PROGRESS] 730s: ~1134833660 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #84
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=4s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #85
+[PROGRESS] 740s: ~1134839804 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #86
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=4s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #87
+[PROGRESS] 750s: ~1134845948 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #88
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #89
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=0s ago nextUsec=0x7fffffffffffffff nextMs=0
+[PROGRESS] 760s: ~1134852092 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #90
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #91
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=0s ago nextUsec=0x7fffffffffffffff nextMs=0
+[PROGRESS] 770s: ~1134858236 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #92
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #93
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=0s ago nextUsec=0x7fffffffffffffff nextMs=0
+[PROGRESS] 780s: ~1134864380 steps
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #94
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #95
+[PROGRESS] 790s: ~1134869500 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #96
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #97
+[PROGRESS] 800s: ~1134875644 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #98
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #99
+[PROGRESS] 810s: ~1134881788 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #100
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #101
+[PROGRESS] 820s: ~1134887932 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #102
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #103
+[PROGRESS] 830s: ~1134893052 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=1s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #104
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #105
+[PROGRESS] 840s: ~1134899196 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #106
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #107
+[PROGRESS] 850s: ~1134905340 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #108
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #109
+[PROGRESS] 860s: ~1134911484 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #110
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #111
+[PROGRESS] 870s: ~1134917628 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=2s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #112
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #113
+[PROGRESS] 880s: ~1134923772 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=3s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #114
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #115
+[PROGRESS] 890s: ~1134929916 steps
+[DIAG] P10 ProcessorScheduler class>>whileTrue: ip=92 fd=0
+[DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil lastSignal=3s ago nextUsec=0x7fffffffffffffff nextMs=0
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #116
+
+=== JIT Stats ===
+  compiled: 0 methods
+  IC: 0 hits / 0 total (0.0%), patches=0 stale=0
+  IC miss breakdown: noSelBits=0 cold=0 poly=0 noICData=0
+  activations: 0 hits / 0 total (0.0%)
+  resume (J2J-r): 0 chains / 0 total (0.0%)
+  J2J stencil: calls=0 returns=0 patches=0
+  materialize: count=0 totalDepth=0
+  chain: actChain=0 actFall=0 | primChain=0 primFall=0
+  yields=0 OSR=0
+  T2-IC: 0 hits / 0 total (0.0%)
+  T2 (asmjit): compiled=0 bailed=0
+=================
+
+=== JIT Stats ===

@@ -21,23 +21,37 @@ on stock Pharo, so any divergence on our VM is a VM/JIT bug.
    - fails JIT-on and JIT-off     → VM/interpreter/primitive bug (not JIT)
    - passes in isolation          → suite-interaction / image-state artifact
 
-## Summary (our VM, Pharo-gfx.image suite run)
+## Summary
 
-       package       our PASS  F   E    cog PASS  F   E    Δcog candidates  notes
-       regex         196       0   0    196       0   0    0                clean both
-       numberparser  36        0   0    38        0   0    0                clean
-       aigraph       78        0   6    84        0   0    6                Prim MST + Tarjan SCC — HIGH signal
-       zincenc       109       9   2    120       0   1    11               wide-codepoint encoders (WideString family)
-       ston          153       4   5    156       0   6    9                triaged: 0 JIT bugs (see below)
-       ast           597       5   19   621       1   1    24               OpalCompiler AST nodes — triage pending
-       ring          250       35  5    290       0   0    40               Ring metamodel (class/trait defs) — triage pending
-       systime       ...                659       0   0    ...              running
-       strings       ...                738       0   0    ...              running
-       opal          ...                633       0   0    ...              running
-       microdown     ...                620       4   6    ...              running
-       seq           ...                1695      0   0    ...              running
+14 packages run on our VM (gfx image) vs stock Cog, then JIT-bug verdicts via
+clean-image JIT-on-vs-off where it mattered. Verdict legend: JIT = confirmed
+JIT bug (clean-image on/off); WS = known WideString bug (non-JIT); STORM =
+JIT hang; — = clean / no JIT bug.
 
-(Counts are gfx-image suite runs and OVER-count real bugs — see finding #1.)
+       package       cog P/F/E      our (gfx) P/F/E    verdict
+       regex         196/0/0        196/0/0            — clean both
+       numberparser  38/0/0         36/0/0             — clean
+       strings       738/0/0        733/3/0            WS (3 = known WideString, JIT on==off)
+       seq           1695/0/0       (skipped — overlaps kernel suite)
+       ston          156/0/6        153/4/5            0 JIT; +1 NEW non-JIT word-array bug
+       zincenc       120/0/1        109/9/2            WS family (wide-codepoint encoders)
+       ast           621/1/1        597/5/19           clean-image on 594/6/20; JIT-off too slow to confirm fraction
+       opal          633/0/0        446/30/147         many gfx artifacts; JIT-off too slow to confirm
+       microdown     620/4/6        (partial)          batch killed to free VM
+       systime       659/0/0        3/0/0 (killed)     NEW Delay/scheduler nil bug breaks valueWithin:
+       aigraph       84/0/0         78/0/6             **JIT** — inline IC probe (inline-getter). on/off proven
+       ring          290/0/0        250/35/5           **JIT** — inline IC probe (returnsSelf/Literal); +non-JIT metamodel
+       reflectivity  322/0/0        STORM              metalink instrumentation send-storm (hang)
+       fuel          37/0/474       STORM              reflective-walk megamorphic thrash (also broken on cog)
+
+Clean-image JIT-on-vs-off verdicts (the authoritative JIT-bug test):
+
+       aigraph   JIT-on 78P/6E   JIT-off 84P/0E   -> 6 JIT-induced  (inline-getter)
+       ring      JIT-on 263P/25F JIT-off (slow, partial) -> >=8 JIT-induced (returnsSelf/Literal)
+       ston      same JIT on/off                  -> 0 JIT-induced
+
+Headline: BOTH aigraph and ring JIT bugs root-cause to the **inline IC probe**
+(`PHARO_T1_NO_IC_PROBE=1` fixes both). See below.
 
 ## HEADLINE: confirmed JIT correctness bug in aigraph (Prim/Tarjan)
 
@@ -84,16 +98,71 @@ Reliable repro:
        ./build/test_load_image /tmp/harness/Pharo-jit.image      # JIT on  -> 3 ERROR
        PHARO_NO_JIT=1 ./build/test_load_image /tmp/harness/Pharo-jit.image  # -> 0 ERROR
 
-Next: lldb per CLAUDE.md — break at `sendDoesNotUnderstand` when the receiver is
-a stack address (non-heap, FP-range), walk back to the JIT frame and the
-stencil whose epilog/arg-load leaves the wrong slot. Likely a J2J or
-process-resume frame-restore that mis-sets an argument/receiver slot.
+### ROOT CAUSE: the inline IC probe (confirmed by env-knob bisection)
 
-CAVEAT on the isolation-triage method: because this bug is warmup+fork
+Bisected on the reliable 2-class repro (`Pharo-jit`, JIT on):
+
+       baseline (JIT on)                3 ERROR   (full suite: 6)
+       PHARO_NO_J2J=1                   still fails   -> NOT J2J
+       PHARO_T1_NO_IC_PROBE=1           0 ERROR (84/84) -> the inline IC probe
+       PHARO_T1_NO_INLINE_GETTER=1      0 ERROR (84/84) -> specifically inline-getter
+
+So aigraph's bug is the **inline-getter specialization of the asmjit-T1 inline
+IC probe** (`AsmjitT1.cpp` ~4586, `tryGetter`). Ring's 8 JIT-induced failures
+are also in the IC probe but a DIFFERENT spec: `PHARO_T1_NO_IC_PROBE=1` fixes
+them (ring-min 41/41), and `PHARO_T1_NO_INLINE_RETURNS_SELF=1` /
+`PHARO_T1_NO_INLINE_RETURNS_LITERAL=1` each fix 7 of 8; inline-getter-off does
+NOT. So the IC probe has correctness bugs across MULTIPLE inline
+specializations.
+
+The probe (`t1ICProbe`) was **default-OFF until 2026-05-16** precisely because
+of "correctness icData[2]==0 guard, downstream DNUs" (DebugSettings.hpp comment)
+— then flipped default-ON. This campaign shows the correctness gap is still
+present: the probe takes an IC HIT on a 22-bit class key (`AsmjitT1.cpp:3465`,
+`w4 & 0x3FFFFF`) and inlines a getter/returnsSelf/returnsLiteral, but in a
+warmup+fork scenario the inlined spec is applied wrongly — reading the wrong
+slot (getter → wrong value, e.g. `curEdge first` yields the whole tuple) or
+leaving a garbage value that becomes a later send's receiver (the stack-address
+/ nil DNUs). The immediate-receiver guard (`tst x1,#7; b.ne dispatchCached`,
+:3650) is present, so it is NOT a SmallInteger-as-pointer bug; the insufficiency
+is in HIT validation / classification under the warmed, forked state.
+
+Mitigation (immediate): `PHARO_T1_NO_IC_PROBE=1` (or per-spec
+`PHARO_T1_NO_INLINE_GETTER=1`) — both fix aigraph fully; whole-probe fixes ring.
+Cost: the probe is a perf optimization, so this is a workaround, not the fix.
+Root fix: strengthen the IC-HIT validation in the probe before dispatching an
+inline spec (the original `icData[2]==0` guard direction). Next step is lldb
+single-stepping `tryGetter` at a failing HIT to see whether the slot index, the
+class key, or IC staleness is wrong. Flipping the default back OFF is the
+conservative product call given confirmed correctness bugs in real packages.
+
+CAVEAT on the per-test isolation-triage method: because this bug is warmup+fork
 dependent, isolation repro (one test at a time) mislabels it ARTIFACT. The
 authoritative test is full-suite JIT-on vs JIT-off on the clean image
 (`scripts/graphics/run_clean_onoff.sh`); the per-test isolation pass
 (`triage_candidates.sh`) only catches non-warmup-dependent bugs.
+
+## Second package with JIT bugs: Ring metamodel
+
+Clean image, full `Ring-Core` suite:
+
+       JIT ON  : 263 PASS / 21 FAIL / 4 ERROR / 2 TIMEOUT
+       JIT OFF : 144 PASS / 2 FAIL / 19 ERROR / 1 TIMEOUT  (INCOMPLETE — see caveat)
+
+**8 confirmed JIT-induced** (FAIL on JIT-on, PASS on JIT-off):
+`RGClassStrategyTest>>{testCategory, testDefinition, testDefinitionWithSlots}`,
+`RGClassTest>>{testCopyForBehaviorDefinition, testDefinition, testTagsCollection,
+testTagsForMethodsCollection, testTagsForMethodsRemoval}`. These are *wrong-result*
+assertion failures (class definition / category / tags strings differ under JIT) —
+a different manifestation than aigraph's exceptions, but same conclusion: JIT'd
+code computes the wrong answer. 2 both-fail (non-JIT): `RGEnsureTraitTest` trait
+tests.
+
+CAVEAT — **JIT-off is 10-100× slower on reflective code**, so the JIT-off Ring run
+hit the 900s cap after 166/290 tests. 17 JIT-on failures are in classes JIT-off
+never reached, so their status is unknown. The 8 confirmed are a LOWER BOUND;
+Ring likely has more. A definitive count needs a long-timeout JIT-off rerun
+(`TO=3600` or `SUnitTimeoutMultiplier`).
 
 ## Key findings
 

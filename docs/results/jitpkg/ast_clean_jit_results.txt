@@ -1,0 +1,1239 @@
+=== SUnit Test Run #1 (batch 1-23 of 2051) ===
+
+BATCH-DEBUG: batchClasses size=23 first=OCBlockNodeTest last=OCVariableNodeTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T20:49:08.657135-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-ERR: Error Missing jumpAheadTo: #else
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout patch error: proceed for truth.
+=== OCBlockNodeTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testConstantValue
+  ERROR: testConstantValue (MessageNotUnderstood: Message not understood: OCCascadeNode >> #constantValue)
+    >> OCCascadeNode(Object)>>doesNotUnderstand: #constantValue
+    >> OCBlockNodeTest>>testConstantValue
+    >> OCBlockNodeTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCBlockNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCBlockNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> OCBlockNodeTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testHasNonLocalReturn
+  FAIL: testHasNonLocalReturn [Denial failed]
+  RUN: testIsClean
+  ERROR: testIsClean (MessageNotUnderstood: Message not understood: OCMethodNode >> #isClean)
+    >> OCMethodNode(Object)>>doesNotUnderstand: #isClean
+    >> OCBlockNodeTest>>testIsClean
+    >> OCBlockNodeTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCBlockNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCBlockNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> OCBlockNodeTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testIsConstant
+  ERROR: testIsConstant (MessageNotUnderstood: Message not understood: OCCascadeNode >> #isConstant)
+    >> OCCascadeNode(Object)>>doesNotUnderstand: #isConstant
+    >> OCBlockNodeTest>>testIsConstant
+    >> OCBlockNodeTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCBlockNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCBlockNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> OCBlockNodeTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testNumArgs
+  ERROR: testNumArgs (MessageNotUnderstood: Message not understood: OCCascadeNode >> #numArgs)
+    >> OCCascadeNode(Object)>>doesNotUnderstand: #numArgs
+    >> OCBlockNodeTest>>testNumArgs
+    >> OCBlockNodeTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCBlockNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCBlockNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> OCBlockNodeTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+Total: 5 P:0 F:1 E:4 S:0
+=== OCCodeSnippetScriptingTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testEvaluateFailBlock
+  RUN: testEvaluateFaulty
+  RUN: testEvaluateOnError
+  RUN: testEvaluateOnErrorResume
+Total: 4 P:4 F:0 E:0 S:0
+=== OCCodeSnippetTest ===
+  SORT-OK: 45 comparisons for 19 items
+  RUN: testCodeImporter
+  RUN: testCompileFailBlock
+  RUN: testCompileFaulty
+  RUN: testCompileOnError
+  RUN: testCompileOnErrorResume
+  RUN: testCompileUndeclaredFaultyFailBlock
+  RUN: testCompileWithRequestor
+  RUN: testCritiques
+  RUN: testDecompile
+  RUN: testDecompileIR
+  RUN: testDoSemanticAnalysis
+  RUN: testDoSemanticAnalysisOnError
+  RUN: testDump
+  RUN: testFormattedCode
+  RUN: testMonticello
+  RUN: testParse
+  RUN: testParseOnError
+  RUN: testSimpleFormattedCode
+  RUN: testStyler
+Total: 19 P:19 F:0 E:0 S:0
+=== OCCommentNodeTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testFoo
+  RUN: testIntersectsInterval
+Total: 2 P:2 F:0 E:0 S:0
+=== OCCommentNodeVisitorTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testVisitDetect
+  RUN: testVisitDo
+  RUN: testVisitSelect
+Total: 3 P:3 F:0 E:0 S:0
+=== OCDumpVisitorTest ===
+  SORT-OK: 48 comparisons for 20 items
+  RUN: testAPI
+  RUN: testArrayNodeDump
+  RUN: testAssignmentNodeDump
+  RUN: testBlockNodeDump
+  RUN: testCascadeNodeDump
+  RUN: testDumpOnObjectMethod
+  RUN: testDumpOnSelfClassMethods
+  RUN: testErrorNodeDump
+  RUN: testGlobalNodeDump
+  RUN: testLiteralArrayNodeDump
+  RUN: testLiteralValueNodeDump
+  RUN: testMessageNodeDump
+  RUN: testMethodNodeDump
+  RUN: testPragmaNodeDump
+  RUN: testReturnNodeDump
+  RUN: testSelfNodeDump
+  RUN: testSequenceNodeDump
+  RUN: testSuperNodeDump
+  RUN: testThisContextNodeDump
+  RUN: testVariableNodeDump
+Total: 20 P:20 F:0 E:0 S:0
+=== OCEOFTokenTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testLength
+  RUN: testSource
+  RUN: testValue
+  RUN: testisEOF
+Total: 4 P:4 F:0 E:0 S:0
+=== OCErrorNodeParserTest ===
+  SORT-OK: 75 comparisons for 29 items
+  RUN: testFaultyAssigment
+  RUN: testFaultyAssigment2
+  RUN: testFaultyBinaryMessageSendArgument
+  RUN: testFaultyBinaryMessageSendArgumentInside
+  RUN: testFaultyBinaryMessageSendArgumentShouldHaveTheCorrectMessage
+  RUN: testFaultyBinaryMessageSendReceiver
+  RUN: testFaultyBinaryMessageSendReceiverInside
+  RUN: testFaultyBinaryMessageSendWithLiteralArgumentShouldHaveTheCorrectMessage
+  RUN: testFaultyBlockUnclosed
+  RUN: testFaultyBlockUnopeneed
+  RUN: testFaultyCascade
+  RUN: testFaultyCascadeCascadeMessageExpected
+  RUN: testFaultyCascadeCascadeMessageExpected2
+  RUN: testFaultyCascadeCascadeMessageExpected3
+  RUN: testFaultyCascadeMessageExpected
+  RUN: testFaultyCascadeMessageExpected2
+  RUN: testFaultyCascadeMessageExpected3
+  RUN: testFaultyCascadeMessageExpected4
+  RUN: testFaultyLiterabByteArray
+  RUN: testFaultyMessageSendShouldHaveTheCorrectMessage
+  RUN: testFaultyMessageSendWithLiteralArgumentShouldHaveTheCorrectMessage
+  RUN: testFaultyMessageSendWithSymbolsArgumentShouldHaveTheCorrectMessage
+  RUN: testFaultyMethodConsumesEntireStream
+  RUN: testFaultyMethodWithSignatureKeepsSignature
+  RUN: testFaultyMethodWithoutSignatureHasAnErrorNodeAndContinueParsing
+  RUN: testFaultyNumericLiteral
+  RUN: testFaultyNumericLiteral2
+  RUN: testFaultyStringLiteral
+  RUN: testFaultyStringLiteral2
+Total: 29 P:29 F:0 E:0 S:0
+=== OCEvaluationTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testEvaluate
+  RUN: testEvaluateForContext
+  FAIL: testEvaluateForContext [Got OCEvaluationTest>>#testEvaluateForContext instead of (4@5).]
+  RUN: testEvaluateForReceiver
+Total: 3 P:2 F:1 E:0 S:0
+=== OCGenericNodeVisitorTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testVisitAnySatisfy
+  RUN: testVisitDetect
+  RUN: testVisitDetectIfNone
+  RUN: testVisitNoneSatisfy
+  RUN: testVisitSelect
+Total: 5 P:5 F:0 E:0 S:0
+=== OCMessageNodeTest ===
+  SORT-OK: 32 comparisons for 16 items
+  RUN: testArgumentPartsForBinaryMessages
+  RUN: testArgumentPartsForKeywordMessages
+  RUN: testArgumentPartsForKeywordMessages1
+  RUN: testArgumentPartsForKeywordMessages2
+  RUN: testArgumentPartsForUnaryMessages
+  RUN: testIntersectsInterval
+  RUN: testIsInlineToDo
+  RUN: testSelectorAndArgumentNamesForComposedKeywords
+  RUN: testSelectorAndArgumentNamesForComposedKeywordsAndComplexArgs
+  RUN: testSelectorAndArgumentNamesForSimpleKeywords
+  RUN: testSelectorAndArgumentNamesForUnary
+  RUN: testSelectorInterval
+  RUN: testSelectorPartsForBinaryMessages
+  RUN: testSelectorPartsForKeywordMessages
+  RUN: testSelectorPartsForUnaryMessages
+  RUN: testStart
+Total: 16 P:16 F:0 E:0 S:0
+=== OCMethodNodeTest ===
+  SORT-OK: 79 comparisons for 31 items
+  RUN: testAddingMethodProperties
+  RUN: testBlockHasArguments
+  RUN: testBlockHasTemporaries
+  RUN: testBlockHeadIsNotEmpty
+  RUN: testBlockHeadIsNotEmpty2
+  RUN: testBlockHeadIsNotEmpty3
+  RUN: testBytecodeMethodWithArguments
+  RUN: testBytecodeMethodWithNoArguments
+  RUN: testCachingMethodArguments
+  FAIL: testCachingMethodArguments [Got #(#arg1 #arg2) instead of #(#someArgName #someAnotherArgName).]
+  RUN: testCommentedMethodHasComments
+  RUN: testCommentsParent
+  ERROR: testCommentsParent (SubscriptOutOfBounds: 1 in #())
+    >> Array(Object)>>errorSubscriptBounds:
+    >> Array(Object)>>at:
+    >> Array(SequenceableCollection)>>first
+    >> OCMethodNodeTest>>testCommentsParent
+    >> OCMethodNodeTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCMethodNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCMethodNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> OCMethodNodeTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testHasArguments
+  RUN: testHasComments
+  RUN: testIsPrimitive
+  RUN: testMethodClass
+  RUN: testMethodWithCommentsAndEmptyStatements
+  RUN: testMethodsHasTemporaries
+  RUN: testNodeForOffsetAssignment
+  RUN: testNodeForOffsetMessage
+  RUN: testNodeForOffsetTempDefinition
+  RUN: testNodeForOffsetVar
+  RUN: testNormalMethodIsNotPrimitive
+  RUN: testOffsetIsComment
+  FAIL: testOffsetIsComment [Assertion failed]
+  RUN: testPrimitiveErrorIsPrimitive
+  RUN: testPrimitiveModuleErrorIsPrimitive
+  RUN: testPrimitiveModuleIsPrimitive
+  RUN: testSelectorAndArgumentNames
+  RUN: testSizeOfSignatureOfBinaryMethod
+  RUN: testSizeOfSignatureOfKeywordsMethod
+  RUN: testSizeOfSignatureOfUnaryMethod
+  RUN: testUncommentMethodDoesNotHaveComments
+Total: 31 P:28 F:2 E:1 S:0
+=== OCParseErrorNodeTest ===
+  SORT-OK: 0 comparisons for 1 items
+  RUN: testErrorNodeStart
+Total: 1 P:1 F:0 E:0 S:0
+=== OCParseTreeRewriterTest ===
+  SORT-OK: 24 comparisons for 12 items
+  RUN: testBlockRewrites
+  RUN: testBlockRewritesAreNotChained
+  RUN: testBlockRewritesArguments
+  RUN: testBlockRewritesArgumentsTakeIntoAccountConditions
+  RUN: testBlockRewritesFirstRuleTakePrecedence
+  RUN: testBlockRewritesWithTrueConditionIsNotExecutedWhenNotMatchingCorrectNode
+  RUN: testMultimatch
+  RUN: testPatternCascade
+  RUN: testRewriteDoesNotReuseOriginalNodes
+  RUN: testRewriteDynamicArray
+  RUN: testRewriteMethods
+  RUN: testRewrites
+Total: 12 P:12 F:0 E:0 S:0
+=== OCParseTreeSearcherTest ===
+  SORT-OK: 139 comparisons for 46 items
+  RUN: testAListDoesNotMatchComposedMessagesBecauseOfTreeMismatch
+  RUN: testAListDoesNotMatchComposedMessagesBecauseOfTreeMismatch2
+  RUN: testAListMatchesComposedMessages
+  RUN: testDoesNotMultipleKeywordsWithoutAList
+  RUN: testMacthesDoisMatchingStatementsInDynamicArray
+  RUN: testMatchesArgumentToTestImplicitAddArgument
+  RUN: testMatchesDoDoesNotMatchAllElementsOfDynamicArray
+  RUN: testMatchesDoIsMatchingAllElementsOfDynamicArray
+  RUN: testMatchesDoIsMatchingPatternedExpressionWithLiterals
+  RUN: testMatchesDoIsNotMatchingPatternedExpressionWithLiterals
+  RUN: testMatchingAnyNodeWithoutConstrainingThePattern
+  RUN: testMatchingReceiver
+  RUN: testMatchingReceiver2
+  RUN: testMatchingReceiverAndMultiKeywordSelector
+  RUN: testMatchingReceiverAndMultiKeywordSelector2
+  RUN: testMatchingReceiverAndSelector
+  RUN: testMatchingReceiverAndSelector2
+  RUN: testMatchingReceiverComposite
+  RUN: testSearchListComplex
+  RUN: testSearchListComplexNotMatching
+  RUN: testSearchListReceiverNotMatching
+  RUN: testSearchListTempVars
+  RUN: testSearchListTempVarsNotMatching
+  RUN: testSearchLiteralArray
+  RUN: testSearchLiteralCollectNotWorking
+  RUN: testSearchLiteralNumber
+  RUN: testSearchLiteralString
+  RUN: testSearchRecurseInto
+  RUN: testSearchRecurseIntoNotMatching
+  RUN: testSearchSelectors
+  RUN: testSearchSelectorsMultiArgs
+  RUN: testSearchSelectorsNotMatching
+  RUN: testSearchStatements
+  RUN: testSearching
+  RUN: testSearchingComposedMessage
+  RUN: testSearchingComposedSelector
+  RUN: testSearchingComposedSelector2
+  RUN: testSearchingComposedSelectorWithCascade
+  RUN: testSearchingComposedSelectorWithListIsNotWorking
+  RUN: testSearchingComposedSelectorwithinCascade
+  RUN: testSearchingKeywordsPartWithOptionInTheMiddleIsBogus
+  RUN: testSearchingOptionKeywordsPartComposedSelector
+  RUN: testSearchingOptionKeywordsPartComposedSelector2
+  RUN: testSimpleAddSearch
+  RUN: testSimpleAddSearches
+  RUN: testWithoutAListDoesNotMatchComposedMessages
+Total: 46 P:46 F:0 E:0 S:0
+=== OCParserTest ===
+  SORT-OK: 535 comparisons for 142 items
+  RUN: testASTHasClass
+  RUN: testArray
+  RUN: testArrayNodesArentArrays
+  RUN: testArrayNodesContainRightAmountOfStatementsAndPeriods
+  RUN: testAssignToMessageRaisesSyntaxError
+  RUN: testAssignementRightValueWithUnfortunatePontuationRaisesSyntaxError
+  RUN: testBadlyPlacedPragmaRaiseError
+  RUN: testBestNodeFor
+  RUN: testBinarySelectors
+  RUN: testBlockReturnNode
+  RUN: testCascade
+  RUN: testCascadeReplacement
+  RUN: testCascadeReplacementCanLeadToOddErrors
+  RUN: testCascadeWithInvalidSelectorRaisesError
+  RUN: testCascadeWithMissingSelectorRaisesError
+  RUN: testCascadeWithNoMessageRaiseError
+  RUN: testComparingTrees
+  ERROR: testComparingTrees (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+    >> OCMethodNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTSemanticAnalyzer>>analyze:
+    >> OpalCompiler>>doSemanticAnalysis
+    >> OpalCompiler>>parse
+    >> CompiledMethod>>parseTree
+    >> OCParser class(Behavior)>>parseTreeForSelector:
+  RUN: testCopy
+  ERROR: testCopy (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+    >> OCMethodNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTSemanticAnalyzer>>analyze:
+    >> OpalCompiler>>doSemanticAnalysis
+    >> OpalCompiler>>parse
+    >> CompiledMethod>>parseTree
+    >> OCParser class(Behavior)>>parseTreeForSelector:
+  RUN: testCopyInContext
+  ERROR: testCopyInContext (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+    >> OCMethodNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTSemanticAnalyzer>>analyze:
+    >> OpalCompiler>>doSemanticAnalysis
+    >> OpalCompiler>>parse
+    >> CompiledMethod>>parseTree
+    >> OCParser class(Behavior)>>parseTreeForSelector:
+  RUN: testCreationBlockNodeWithExpression
+  RUN: testCreationCascadeNodeFromExpression
+  RUN: testCreationLiteralArrayNodeWithExpression
+  RUN: testCreationLiteralValueNodeWithExpression
+  RUN: testCreationLiteralValueNodeWithExpressionForNumber
+  RUN: testCreationMessageNodeFromExpression
+  RUN: testCreationProtocol
+  RUN: testCreationSelfNodeWithExpression
+  RUN: testCreationSuperNodeWithExpression
+  RUN: testCreationThisContexNodeWithExpression
+  RUN: testCreationThisProcessNodeWithExpression
+  RUN: testCreationVariableNodeWithExpression
+  RUN: testDelimitationsOfArrayNodesAreBrackets
+  RUN: testEqualToWithMapping
+  ERROR: testEqualToWithMapping (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+    >> OCMethodNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTSemanticAnalyzer>>analyze:
+    >> OpalCompiler>>doSemanticAnalysis
+    >> OpalCompiler>>parse
+    >> CompiledMethod>>parseTree
+    >> OCParser class(Behavior)>>parseTreeForSelector:
+  RUN: testEquivalentExceptRenaming
+  RUN: testErrorNodeForBadParenthesesHasRightMessage
+  RUN: testErrorNodeForBadParenthesesIsEnglobing
+  RUN: testErrorNodeForBadParenthesesOfLiteralArrayIsEnglobingNode
+  RUN: testErrorNodeForBadParenthesesStartAtFirstParenthese
+  RUN: testErrorNodeForBadParenthesesStartAtLiteralArrayToken
+  RUN: testErrorNodeForBadParenthesesStopAtEnd
+  RUN: testFaultyLiteralRaiseSyntaxError
+  RUN: testFormatter
+  ERROR: testFormatter (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+    >> OCMethodNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTSemanticAnalyzer>>analyze:
+    >> OpalCompiler>>doSemanticAnalysis
+    >> OpalCompiler>>parse
+    >> CompiledMethod>>parseTree
+    >> OCParser class(Behavior)>>parseTreeForSelector:
+  RUN: testGarbageForgottenDotAfterAssignement
+  RUN: testGarbageForgottenReceiver
+  RUN: testGarbageTemporaryVariable
+  RUN: testGarbageTemporaryVariableHasMissingClosure
+  RUN: testGarbageTemporaryVariableIsWrong
+  RUN: testGeneralBlockIntervalsArray
+  RUN: testGeneralBlockIntervalsAssignement
+  RUN: testGeneralBlockIntervalsBlock
+  RUN: testGeneralBlockIntervalsCascade
+  RUN: testGeneralBlockIntervalsLiteralArray
+  RUN: testGeneralBlockIntervalsLiteralValue
+  RUN: testGeneralBlockIntervalsMessage
+  RUN: testGeneralBlockIntervalsReturn
+  RUN: testGeneralMethodIntervalsArray
+  RUN: testGeneralMethodIntervalsAssignement
+  RUN: testGeneralMethodIntervalsBlock
+  RUN: testGeneralMethodIntervalsCascade
+  RUN: testGeneralMethodIntervalsComment
+  RUN: testGeneralMethodIntervalsLiteralArray
+  RUN: testGeneralMethodIntervalsLiteralValue
+  RUN: testGeneralMethodIntervalsMessage
+  RUN: testGeneralMethodIntervalsPragma
+  RUN: testGeneralMethodIntervalsReturn
+  RUN: testIdentificationOfPrimitiveMethods
+  RUN: testIntervals
+  RUN: testInvalidPragmaPosition
+  RUN: testInvalidSelectorRaisesSyntaxError
+  RUN: testIsA
+  FAIL: testIsA [a Bag(#isVariable #isVariable #isVariable #isVariable #isVariable #isVariable #isVariable #isImmediateNode #isImmediateNode #isImmediateNode #isImmediateNode #isImmediateNode #isImmediateNode #isImmediateNode #isImmediateNode #isImmediateNode #isImmediateNode #isBlock #isLiteralNode #isLiteralNode #isValue #isValue #isValue #isValue #isValue #isValue #isValue #isValue #isValue #isValue #isValue #isValue #isValue #isValue #isValue #isMessage #isMessage #isMessage #isMethod #isRead #isRead #isRead]
+  RUN: testIsUsedWhenABlockNodeIsReturnedExpectIsUsed
+  RUN: testIsUsedWhenBlockAloneExpectIsNotUsed
+  RUN: testIsUsedWhenInAssignmentExpectIsUsed
+  RUN: testIsUsedWhenNonLocalReturnExpectNotUsed
+  RUN: testLiteralArray
+  RUN: testLiteralArrayContainsLiteralValues
+  RUN: testLiteralIntevals
+  RUN: testMatchInContext
+  ERROR: testMatchInContext (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+    >> OCMethodNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTSemanticAnalyzer>>analyze:
+    >> OpalCompiler>>doSemanticAnalysis
+    >> OpalCompiler>>parse
+    >> CompiledMethod>>parseTree
+    >> OCParser class(Behavior)>>parseTreeForSelector:
+  RUN: testMessageWithFaultySelectorIsFaulty
+  RUN: testMethodNodeEndAtTheEndOfTheString
+  RUN: testMethodNodeStartAtOne
+  RUN: testMethodPatterns
+  RUN: testModifying
+  RUN: testNegativeNumberError
+  RUN: testNodeWithMissingArgumentHasSameSourceAsOriginal
+  RUN: testNodesDo
+  RUN: testNumberParsing
+  RUN: testNumberRadixParsing
+  RUN: testParentOfArgumentNodeIsMethodNode
+  RUN: testParentOfMethodNodeIsNil
+  RUN: testParentOfSequenceNodeIsMethodNode
+  RUN: testParentOfStatementsIsSequenceNode
+  RUN: testParents
+  RUN: testParseExpressionDontFreeze (expectedFailure)
+  RUN: testParseExpressionGivesTheWriteAmountOfStatements
+  RUN: testParseFaultyLiteral
+  RUN: testParseFaultyMethod
+  RUN: testParseFaultyMethodExpressionHasErrorNodeAsFinal
+  RUN: testParseFaultyMethodMessagePattern
+  RUN: testParseFaultyMethodStop
+  RUN: testParseFaultyPragma
+  RUN: testParseGivesMethod
+  RUN: testParseLiterals
+  RUN: testParseMethodPatternGivesSelector
+  RUN: testParseMethodWhichEndsWithUncompleteStringWithEscapedMarkAtTheEnd
+  RUN: testParseMethodWithErrorTokenIsWellFormed
+  RUN: testParseRegistersTheSourceInMethodNode
+  RUN: testParseUnfinishedBlockWithFaultyBody
+  RUN: testParserErrors
+  RUN: testParserErrorsWithErrorBlock
+  RUN: testParsingArrayGivesArrayNode
+  RUN: testParsingLiteralMessages
+  RUN: testParsingPragmaRecogniseAndStorePragmas
+  RUN: testParsingPragmaRecogniseArguments
+  RUN: testParsingPragmaRecogniseSelector
+  RUN: testPositions
+  RUN: testPragmaConstantLiteralArgument
+  RUN: testPragmaImplicitLiteralArrayIsInvalid
+  RUN: testPragmaInExpression
+  RUN: testPragmaPrimitiveError
+  RUN: testPragmas
+  RUN: testPrimitives
+  FAIL: testPrimitives [Assertion failed]
+  RUN: testQuerying
+  ERROR: testQuerying (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitTemporaryVariableNode:
+    >> TemporaryVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitAssignmentNode:
+    >> OCAssignmentNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> [ :arg2 | self visitNode: arg2 ] in OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+    >> OCMethodNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTSemanticAnalyzer>>analyze:
+    >> OpalCompiler>>doSemanticAnalysis
+    >> OCMethodNode>>doSemanticAnalysis
+  RUN: testQueryingPrimitiveErrorVar
+  RUN: testReplacingNodes
+  RUN: testScopesEnclosingMatchingLiterals
+  RUN: testSelectorFromMessageIsSelectorNode
+  RUN: testSemiColonAfterMessageIsCascade
+  RUN: testSequenceNodeEndAtTheEndOfTheString
+  RUN: testSequenceNodeStartAtFirstTokenAfterTheSelector
+  RUN: testStatements
+  RUN: testString
+  RUN: testSymbolLiteral
+  RUN: testSymbolLiteralSuccessfullyCreateLiteralNode
+  RUN: testUnclosedArrayErrorNodeContainsRightValue
+  RUN: testUnclosedBracketErrorNodeContainsRightValue
+  RUN: testUnclosedParenthesesErrorNodeContainsRightValue
+  RUN: testUnclosedParenthesesRaiseSyntaxError
+  RUN: testUnclosedTemporariesErrorNodeContainsRightValue
+  SKIP: testUnclosedTemporariesErrorNodeContainsRightValue ()
+  RUN: testUnfinishedStatementWithLeadingBracesRaisesError
+  RUN: testUnfinishedStatementWithLeadingBracketRaisesError
+  RUN: testUnfinishedStatementWithLeadingParenthesisRaisesError
+Total: 142 P:131 F:2 E:7 S:2
+=== OCPatternParserTest ===
+  SORT-OK: 12 comparisons for 8 items
+  RUN: testMatchingPatternBlockNode1
+  RUN: testMatchingPatternBlockNode2
+  RUN: testParseFaultyPatternBlock
+  RUN: testPatternNotStringExpression
+  ERROR: testPatternNotStringExpression (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> [ :arg2 | self visitNode: arg2 ] in OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitBlockNode:
+    >> OCBlockNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> Array(SequenceableCollection)>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+    >> OCDoItMethodNode(OCMethodNode)>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+  RUN: testPatternStringExpression
+  ERROR: testPatternStringExpression (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> [ :arg2 | self visitNode: arg2 ] in OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitBlockNode:
+    >> OCBlockNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> Array(SequenceableCollection)>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+    >> OCDoItMethodNode(OCMethodNode)>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+  RUN: testPatternVariable
+  RUN: testPatternVariableSimpleVariable
+  RUN: testPatternVariableSymbol
+Total: 8 P:6 F:0 E:2 S:0
+=== OCProgramNodeTest ===
+  SORT-OK: 432 comparisons for 121 items
+  RUN: testAddNode
+  RUN: testAddNodeBefore
+  RUN: testAddNodeFirst
+  RUN: testAddNodes
+  RUN: testAddNodesBefore
+  RUN: testAddNodesFirst
+  RUN: testAddReturn
+  RUN: testAddTemporariesNamed
+  RUN: testAddTemporaryNamed
+  RUN: testAllComments
+  ERROR: testAllComments (SubscriptOutOfBounds: 1 in an OrderedCollection())
+    >> OrderedCollection(Object)>>errorSubscriptBounds:
+    >> OrderedCollection>>at:
+    >> OrderedCollection(SequenceableCollection)>>first
+    >> OCProgramNodeTest>>testAllComments
+    >> OCProgramNodeTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCProgramNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCProgramNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> OCProgramNodeTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testAllParents
+  ERROR: testAllParents (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> [ :arg2 | self visitNode: arg2 ] in OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitBlockNode:
+    >> OCBlockNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+    >> OCMethodNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+  RUN: testAllStatementsAssignment
+  RUN: testAllStatementsBlockWithReturn
+  RUN: testAllStatementsBlockWithTemps
+  RUN: testAllStatementsDynamicArray
+  RUN: testAllStatementsReturns
+  RUN: testAllStatementsReturnsMultiple
+  RUN: testAllStatementsSimpleBlock
+  RUN: testAllStatementsTemps
+  RUN: testAllStatementsTwoMessages
+  RUN: testAsDoit
+  RUN: testBestNodeFirstTempsAndFirstCommentGivesVariableNode
+  RUN: testBestNodeForAStatementStrictMatch
+  RUN: testBestNodeForCommentInbetweenStatements
+  RUN: testBestNodeForCommentInsideACascadeNodeOnMessageNode
+  RUN: testBestNodeForCommentInsideACascadeNodeOnReceiver
+  RUN: testBestNodeForCommentInsideAssignementNode
+  RUN: testBestNodeForCommentInsideMessageNode
+  RUN: testBestNodeForCommentInsideMethodNode
+  RUN: testBestNodeForCommentInsideReturnNode
+  RUN: testBestNodeForCommentInsideSequenceNode
+  RUN: testBestNodeForReturnAStatementWhenIntervalInStatement
+  RUN: testBestNodeForReturnAStatementWhenIntervalInStatementWithoutLeftPart (expectedFailure)
+  RUN: testBestNodeForStatementInsideMethodNodeReturnsStatement
+  RUN: testBestNodeForTwoStatementsOurOfThree
+  RUN: testBestNodeInsideAssignementGivesSelectedValue
+  RUN: testBestNodeInsideAssignementGivesSelectedVariable
+  RUN: testBestNodeWithMethodSelectorGivesCommentNode
+  RUN: testCursorAfterArgumentReturnsVariableNode
+  RUN: testCursorAfterColonReturnsPreviousStatement
+  RUN: testCursorAfterMessageAndBeforeNewlineReturnsMessageNode
+  RUN: testCursorAfterMessageAndSpaceReturnsMessageNode
+  RUN: testCursorAfterMessageReturnsMessageNode
+  RUN: testCursorAfterVariableReturnsVariableNode
+  RUN: testCursorBeforeArgumentNextToSelectorReturnsMethodNode
+  RUN: testCursorBeforeArgumentReturnsVariableNode
+  RUN: testCursorBeforeMessageAndAfterNewlineReturnsMessageNode
+  RUN: testCursorBeforeVariableReturnsVariableNode
+  RUN: testCursorInMiddleOfVariableReturnsVariableNode
+  RUN: testHasProperty
+  RUN: testHasSameExitPointWhenBlockWithoutReturnExpectTrue
+  RUN: testHasSameExitPointWhenMessageWithReturnBlockExpectFalse
+  RUN: testHasSameExitPointWhenMessageWithoutReturnBlockExpectTrue
+  RUN: testHasSameExitPointWhenReturnNodeExpectTrue
+  RUN: testHasSameExitPointWhenReturnNodeWithAssignmentExpectTrue
+  RUN: testHasSameExitPointWhenReturnNodeWithMessageSendExpectTrue
+  RUN: testHasSameExitPointWhenReturnWithBlockAndSequenceWithNestedBlockWithoutReturnExpectTrue
+  RUN: testHasSameExitPointWhenReturnWithBlockWithoutReturnExpectTrue
+  RUN: testHasSameExitPointWhenReturnWithEmptyBlockExpectTrue
+  RUN: testHasSameExitPointWhenReturnWithMessageWithReturnBlockExpectTrue
+  RUN: testHasSameExitPointWhenReturnWithMessageWithoutReturnBlockExpecTrue
+  RUN: testHasSameExitPointWhenReturnWithWhileFalseBlockWithReturnExpectFalse
+  RUN: testHasSameExitPointWhenSequenceWithLastReturnAndNonLocalReturnExpectTrue
+  RUN: testHasSameExitPointWhenSequenceWithLastReturnExpectTrue
+  RUN: testHasSameExitPointWhenSequenceWithoutAnyReturnsExpectTrue
+  RUN: testHasSameExitPointWhenSequenceWithoutLastReturnAndMultipleNonLocalReturnExpectFalse
+  RUN: testHasSameExitPointWhenSequenceWithoutLastReturnAndNonLocalReturnExpectFalse
+  RUN: testIsUsedAsReturnValueWhenBlockNodeInSequenceNodeExpectFalse
+  RUN: testIsUsedAsReturnValueWhenFirstNodeInSequenceNodeExpectFalse
+  RUN: testIsUsedAsReturnValueWhenInSequenceNodeExpectFalse
+  RUN: testIsUsedAsReturnValueWhenLastNodeInSequenceExpectFalse
+  RUN: testIsUsedAsReturnValueWhenLastNodeIsReturnStatementInSequenceExpectTrue
+  RUN: testIsUsedAsReturnValueWhenNodeIsArrayExpectFalse
+  RUN: testIsUsedAsReturnValueWhenNodeIsAssignmentExpectFalse
+  RUN: testIsUsedAsReturnValueWhenNodeIsAssignmentInSequenceExpectFalse
+  RUN: testIsUsedAsReturnValueWhenNodeIsAssignmentValueExpectTrue
+  RUN: testIsUsedAsReturnValueWhenNodeIsAssignmentVariableExpectFalse
+  RUN: testIsUsedAsReturnValueWhenNodeIsLastInBlockExpectFalse
+  RUN: testIsUsedAsReturnValueWhenNodeIsNotLastInBlockExpectFalse
+  RUN: testIsUsedAsReturnValueWhenNodeIsPartOfArrayExpectTrue
+  RUN: testNumberOfSentMessages
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtIfAbsentPut
+  RUN: testPropertyAtIfPresent
+  RUN: testPropertyAtIfPresentIfAbsent
+  RUN: testRemoveProperty
+  RUN: testRemovePropertyIfAbsent
+  RUN: testReplaceAssignment
+  RUN: testReplaceBlock
+  RUN: testReplaceLiteral
+  RUN: testReplaceLiteralArray1
+  RUN: testReplaceLiteralArray2
+  RUN: testReplaceMessage
+  RUN: testReplaceMessageArgument
+  RUN: testReplaceMessageReceiver
+  RUN: testReplaceMethodBinary
+  RUN: testReplaceMethodKeyword
+  RUN: testReplaceMethodKeywordLong
+  RUN: testReplaceMethodUnary
+  RUN: testReplaceVariable
+  RUN: testSentMessages
+  RUN: testSetCommentsToNilSetAnEmptyCollection
+  RUN: testWithAllParents
+  ERROR: testWithAllParents (SubscriptOutOfBounds: 1 in an OrderedCollection())
+    >> OrderedCollection(Object)>>errorSubscriptBounds:
+    >> OrderedCollection>>at:
+    >> OrderedCollection(SequenceableCollection)>>first
+    >> OCProgramNodeTest>>testWithAllParents
+    >> OCProgramNodeTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCProgramNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in OCProgramNodeTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> OCProgramNodeTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testlastIsReturnWhenArrayNodeWithFirstReturnExpectFalse
+  RUN: testlastIsReturnWhenArrayNodeWithLastReturnExpectTrue
+  RUN: testlastIsReturnWhenBlockNodeExpectFalse
+  RUN: testlastIsReturnWhenEmptyArrayNodeExpectFalse
+  RUN: testlastIsReturnWhenEmptySequenceExpectFalse
+  RUN: testlastIsReturnWhenMessageNodeIsInlinedIfAndHasOneArgumentExpectFalse
+  RUN: testlastIsReturnWhenMessageNodeIsInlinedIfAndHasTwoArgumentExpectFalse
+  RUN: testlastIsReturnWhenMessageNodeIsInlinedIfAndHasTwoArgumentsAndBothArgsHaveReturnExpectTrue
+  RUN: testlastIsReturnWhenMessageNodeIsInlinedIfAndHasTwoArgumentsAndFirstArgHasReturnExpectFalse
+  RUN: testlastIsReturnWhenMessageNodeIsInlinedIfAndHasTwoArgumentsAndSecondArgHasReturnExpectFalse
+  RUN: testlastIsReturnWhenMessageNodeIsNotInlinedIfExpectFalse
+  RUN: testlastIsReturnWhenMethodNodeWithLastReturnExpectTrue
+  RUN: testlastIsReturnWhenNodeIsNotReturnExpectFalse
+  RUN: testlastIsReturnWhenNodeIsReturnExpectTrue
+  RUN: testlastIsReturnWhenNodeIsSequenceWithLastReturnNodeExpectTrue
+  RUN: testlastIsReturnWhenNodeIsSequenceWithoutLastReturnNodeExpectFalse
+  RUN: testlastIsReturnWhenReturnNodeWithBlockNodeExpectTrue
+Total: 121 P:117 F:0 E:3 S:1
+=== OCScannerTest ===
+  SORT-OK: 513 comparisons for 138 items
+  RUN: testCommentTokenHasTheRightValue
+  RUN: testCommentTokenStartAtFirstQuote
+  RUN: testCommentTokenStopAtLastQuote
+  RUN: testIsValidSelector
+  RUN: testMultipleCommentTokensAreWellSeparated
+  RUN: testNextAcceptAllAlphabeticAsLiteral
+  RUN: testNextAcceptFloatNumbers
+  RUN: testNextAcceptLiteralArrayWithBracket
+  RUN: testNextAcceptLiteralArrayWithParenthesis
+  RUN: testNextAcceptRadixNumbers
+  RUN: testNextAllAlphabeticEndingWithColonGiveKeyword
+  RUN: testNextAllAlphabeticsGiveIdentifier
+  RUN: testNextAlphabeticAndDigitEndingWithColonGiveKeyword
+  RUN: testNextAlphabeticsAndDigitGiveIdentifier
+  RUN: testNextAssignementStartAtColon
+  RUN: testNextAssignementStopAtEqual
+  RUN: testNextBaseOfRadixNumbersCanNotBeOne
+  RUN: testNextBeginningWithDigitIsNumber
+  RUN: testNextBinaryGivesBinarySelector
+  RUN: testNextBinarySelectorCanBeMultipleBinaries
+  RUN: testNextBinarySelectorStartAtFirstLetter
+  RUN: testNextBinarySelectorStopAtLastLetter
+  RUN: testNextBinarySelectorStopsAtNonBinary
+  RUN: testNextBinarySelectorValueIsBinary
+  RUN: testNextCommentIsCommentToken
+  RUN: testNextDoesNotAddLineBreakToComments
+  RUN: testNextDoesNotAddSpacesToComments
+  RUN: testNextDoesNotAddTabToComments
+  RUN: testNextDollarSignErrorHasDollarValue
+  RUN: testNextDollarSignExpectedACharacter
+  RUN: testNextDollarSignIsError
+  RUN: testNextEOFContainsCommentsWhenNoOtherToken
+  RUN: testNextErrorStartAtFirstCharacter
+  RUN: testNextErrorStopAtErrorCharacter
+  RUN: testNextFalseIsLiteral
+  RUN: testNextFirstTokenContainsFollowingComments
+  RUN: testNextFirstTokenContainsPrecedingComments
+  RUN: testNextFloatNumbersCanBeNegative
+  RUN: testNextFloatNumbersCanNotHaveSpaces
+  RUN: testNextFloatNumbersHasFloatValue
+  RUN: testNextHashtagCanNotStandAlone
+  RUN: testNextHashtagStringIsLiteral
+  RUN: testNextIdentifierCanContainUnderscore
+  RUN: testNextIdentifierCanNotBeginWithBinary
+  RUN: testNextIdentifierCanNotBeginWithDigit
+  RUN: testNextIdentifierCanNotEndWithBinary
+  RUN: testNextIdentifierCanNotHaveBinary
+  RUN: testNextIdentifierStartAtFirstLetter
+  RUN: testNextIdentifierStopAtLastLetter
+  RUN: testNextIdentifierValueIsName
+  RUN: testNextKeyWordStartAtFirstLetter
+  RUN: testNextKeywordBeginningWithSpecialCharacterIsNotKeyword
+  RUN: testNextKeywordCanContainUnderscore
+  RUN: testNextKeywordCanNotBeFullBinary
+  RUN: testNextKeywordCanNotBeFullDigit
+  RUN: testNextKeywordCanNotBeginWithBinary
+  RUN: testNextKeywordCanNotBeginWithDigit
+  RUN: testNextKeywordStopAtColon
+  RUN: testNextKeywordValueIsStartToStop
+  RUN: testNextLiteralArrayHasRightValue
+  RUN: testNextLiteralArrayWithBracketStartAtHashtag
+  RUN: testNextLiteralArrayWithBracketStopAtBracket
+  RUN: testNextLiteralArrayWithParenthesisHasRigthValue
+  RUN: testNextLiteralArrayWithParenthesisStartAtHashTag
+  RUN: testNextLiteralArrayWithParenthesisStopAtParenthesis
+  RUN: testNextLiteralBeginningWithApostropheThrowsError
+  RUN: testNextLiteralBeginningWithDigitThrowsError
+  RUN: testNextLiteralBeginningWithSpecialThrowsError
+  RUN: testNextLiteralBeginningWithUnknownThrowsError
+  RUN: testNextLiteralCanBeBinary
+  RUN: testNextLiteralCanContainColon
+  RUN: testNextLiteralCanContainDigits
+  RUN: testNextLiteralCanHaveMultipleHashtag
+  RUN: testNextLiteralCanNotContainBinaryAndAlphabetic
+  RUN: testNextLiteralCharacterCanBeAnyCharacter
+  RUN: testNextLiteralCharacterHasCharacterAsValue
+  RUN: testNextLiteralCharacterHasOnlyOneCharacter
+  RUN: testNextLiteralCharacterWithAMissingCharacter
+  RUN: testNextLiteralStartAtFirstLetter
+  RUN: testNextLiteralStopAtLastLetter
+  RUN: testNextLiteralWithMultipleHashtagTrimThem
+  RUN: testNextMultipleKeywordColonIsSufficientAfterFirstKeyword
+  RUN: testNextMultipleKeywordStartAtFirstLetter
+  RUN: testNextMultipleKeywordStopAtLastLetter
+  RUN: testNextNegativeFloatNumbersIsNumberLiteral
+  RUN: testNextNegativeNumberCanNotHaveSpaces
+  RUN: testNextNegativeNumberIsNumberLiteral
+  RUN: testNextNilIsLiteral
+  RUN: testNextNumberLiteralStartAtTheBeginning
+  RUN: testNextNumberLiteralStopAtTheLastDigit
+  RUN: testNextRadixNumbersCanBeFloatAsWell
+  RUN: testNextRadixNumbersCanBeNegative
+  RUN: testNextSecondTokenDoesNotConsumePrecedingComment
+  RUN: testNextSpecialCharacterStartAtTheBeginning
+  RUN: testNextSpecialCharacterStopAtThemself
+  RUN: testNextSpecialCharactereCanBeAssignement
+  RUN: testNextSpecialCharactereisSingle
+  RUN: testNextSpecialCharactereisSpecial
+  RUN: testNextStringCanContainOtherString
+  RUN: testNextStringContainsAllTheContent
+  RUN: testNextStringErrorDoesNotPropagateInside
+  RUN: testNextStringIsLiteral
+  RUN: testNextTokenStartAfterComment
+  RUN: testNextTokenStartAfterLineBreak
+  RUN: testNextTokenStartAfterSpaces
+  RUN: testNextTokenStartAfterTab
+  RUN: testNextTrimsBeginningComment
+  RUN: testNextTrimsBeginningLineBreak
+  RUN: testNextTrimsBeginningSpaces
+  RUN: testNextTrimsBeginningTab
+  RUN: testNextTrimsEndComment
+  RUN: testNextTrimsEndLineBreak
+  RUN: testNextTrimsEndSpaces
+  RUN: testNextTrimsEndTab
+  RUN: testNextTrimsMiddleComment
+  RUN: testNextTrimsMiddleLineBreak
+  RUN: testNextTrimsMiddleSpaces
+  RUN: testNextTrimsMiddleTab
+  RUN: testNextTrueIsLiteral
+  RUN: testNextTwoKeywordIsMultipleKeyword
+  RUN: testNextUnderscoreWithOnlyDigitsIsIdentifier
+  RUN: testNextUnknownCharacterThrowsError
+  RUN: testNextValueOfNegativeNumbers
+  RUN: testNextValueOfRadixNumbersCutsWhenValueIsImpossible
+  RUN: testNextValueOfRadixNumbersIsConvertedToDecimal
+  RUN: testNextWithAWrongSymbolGetError
+  RUN: testNextWithAnIdentifierTokenGetTheIdentifierToken
+  RUN: testNextWithAnOpeningCommentAtEndGetError
+  RUN: testNextWithAnOpeningCommentGetError
+  RUN: testNextWithAnOpeningStringsGetError
+  RUN: testNextWithAnUnknownCharacterGetError
+  RUN: testNextWithTwoDoubleQuotesInComment
+  RUN: testNextWithTwoDoubleQuotesInCommentGetError
+  RUN: testNextWithUnFinishedCommentGivesAnError
+  RUN: testScanTokenObjects1
+  RUN: testScanTokenObjects2
+  RUN: testScanTokensDoesNotBreak
+  RUN: testScanTokensHandleParentheses
+Total: 138 P:138 F:0 E:0 S:0
+=== OCSequenceNodeTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testModifyParametersShouldNotModifyPeriods
+  RUN: testStop
+Total: 2 P:2 F:0 E:0 S:0
+=== OCSimpleFormatterTest ===
+  SORT-OK: 9 comparisons for 6 items
+  RUN: testCoreSystem
+  TIMEOUT: testCoreSystem (exceeded 80s)
+  RUN: testFormatPragmaWithLastIsSymbolArgument
+  RUN: testLiteralDynamicArray
+  RUN: testParseError
+  RUN: testPreserveLiteralArrayFormat
+  RUN: testPreserveLiteralNumberFormat
+Total: 6 P:5 F:0 E:0 S:0 T:1
+=== OCTypingVisitorTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testExampleCHA
+  RUN: testExampleKernel
+  RUN: testExampleLoop
+  ERROR: testExampleLoop (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitBlockNode:
+    >> OCBlockNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> [ :arg2 | self visitNode: arg2 ] in OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+  RUN: testExampleMethod
+  ERROR: testExampleMethod (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitBlockNode:
+    >> OCBlockNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> [ :arg2 | self visitNode: arg2 ] in OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> [ :arg2 | self visitNode: arg2 ] in OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+  RUN: testExampleMethod2
+  ERROR: testExampleMethod2 (MessageNotUnderstood: receiver of "isTempVectorTemp" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #isTempVectorTemp
+    >> OCASTClosureAnalyzer>>visitLocalVariableNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitArgumentVariableNode:
+    >> ArgumentVariable>>acceptVisitor:node:
+    >> OCVariableNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitBlockNode:
+    >> OCBlockNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> [ :arg2 | self visitNode: arg2 ] in OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitMessageNode:
+    >> OCMessageNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> [ :arg2 | self visitNode: arg2 ] in OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OrderedCollection>>do:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitSequenceNode:
+    >> OCSequenceNode>>acceptVisitor:
+    >> OCASTClosureAnalyzer(OCProgramNodeVisitor)>>visitNode:
+    >> OCASTClosureAnalyzer>>visitMethodNode:
+Total: 5 P:2 F:0 E:3 S:0
+=== OCVariableNodeTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testStartForReplacement
+  RUN: testStartForReplacement02
+Total: 2 P:2 F:0 E:0 S:0
+*** BATCH COMPLETED for 23 classes (1-23)
+=== BATCH TOTAL ===
+Run: #1
+Batch: 1-23
+Classes: 23
+Pass: 594
+Fail: 6
+Error: 20
+Skip: 3
+Timeout: 1
+Total: 624
+=== BATCH COMPLETE ===

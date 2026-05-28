@@ -1,0 +1,18 @@
+ARTIFACT  AIPrimTest>>testMinSpanningTreeComplex2
+    on : PASS
+    off: PASS
+ARTIFACT  AIPrimTest>>testMinimumSpanningTreeComplex
+    on : PASS
+    off: PASS
+ARTIFACT  AIPrimTest>>testMinimumSpanningTreeSimple
+    on : PASS
+    off: PASS
+ARTIFACT  AITarjanTest>>testComplexCycle
+    on : PASS
+    off: PASS
+ARTIFACT  AITarjanTest>>testStronglyConnectedGraph
+    on : PASS
+    off: PASS
+ARTIFACT  AITarjanTest>>testStronglyConnectedGraphWithObjects
+    on : PASS
+    off: PASS

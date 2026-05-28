@@ -1,0 +1,548 @@
+=== SUnit Test Run #1 (batch 1-32 of 2051) ===
+
+BATCH-DEBUG: batchClasses size=32 first=RGAnnouncementsTest last=RGUnresolvedValueTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T20:31:05.236906-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-ERR: Error Missing jumpAheadTo: #else
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout patch error: proceed for truth.
+=== RGAnnouncementsTest ===
+  SORT-OK: 16 comparisons for 9 items
+  RUN: testAnnouncerSuspending
+  RUN: testAnnouncerSuspendingWithStoring
+  RUN: testBehaviorAdded
+  RUN: testBehaviorCommentModified
+  RUN: testBehaviorDefinitionModifiedForCategory
+  RUN: testBehaviorDefinitionModifiedForSuperclass
+  RUN: testBehaviorParentRenamed
+  RUN: testDirectAnnouncement
+  RUN: testUnsubscribe
+Total: 9 P:9 F:0 E:0 S:0
+=== RGBackendTest ===
+  DIAG-EMPTY: allTestSelectors=0 for RGBackendTest
+  DIAG-EMPTY: allSelectors size=610
+  DIAG-EMPTY: test* in allSelectors=1
+  DIAG-EMPTY: first5=#(#testDefaultContentFor:)
+  DIAG-EMPTY: methodDict size=2
+  DIAG-EMPTY: test* in methodDict=1
+  DIAG: characterSet=#Unicode class='Unicode class'
+  DIAG: cs isLetter: $t=true
+  DIAG: $t between:$a and:$z=true
+  DIAG: isLetter: source=isLetter: arg1	| tmp1 |	tmp1 := arg1 charCode + 1.	tmp1 > GeneralCategory size ifTrue: [ ^ false ].	nil.	^ (GeneralCategory at: tmp1) between: Ll and: Lu
+  DIAG: Character>>isLetter source=isLetter	^ self characterSet isLetter: self
+  DIAG: $t class=#Character
+  DIAG: $t class characterSet=#Unicode
+  DIAG: CharSet=Unicode
+  DIAG: AsciiCharset='MISSING'
+  SORT-OK: 0 comparisons for 0 items
+Total: 0 P:0 F:0 E:0 S:0
+=== RGBehaviorTest ===
+  SORT-OK: 12 comparisons for 8 items
+  RUN: testBadInstantiation
+  RUN: testBehaviorWithMethodTags
+  RUN: testBehaviorWithProtocols
+  RUN: testInheritsFromUnresolved
+  RUN: testOldDefinition
+  RUN: testResolvingConsistency
+  RUN: testSiblings
+  RUN: testUnresolveSuperclass
+Total: 8 P:8 F:0 E:0 S:0
+=== RGClassDescripitonStrategyTest ===
+  SORT-OK: 58 comparisons for 23 items
+  RUN: testAllSlots
+  RUN: testClassDescriptionMakeResolved
+  RUN: testClassDescriptionResolvableProperties
+  RUN: testCopyForBehaviorDefinitionPostCopy
+  RUN: testCreationByMethod
+  RUN: testCreationByNamed
+  RUN: testCreationByNamedParent
+  RUN: testCreationByParent
+  RUN: testCreationByUnnamed
+  RUN: testCreationByUnresolved
+  RUN: testCreationByUnresolvedNamed
+  RUN: testDefaultLayout
+  RUN: testDefaultMetaclass
+  RUN: testEmtpyClassVariableString
+  RUN: testInstSize
+  RUN: testInstanceVariablesString
+  RUN: testKindOfSubclass
+  RUN: testLayout
+  RUN: testLayoutSet
+  RUN: testSetInstanceVariables
+  RUN: testSharedPools
+  RUN: testUnresolvedClassGroupCreatorProperties
+  RUN: testUnresolvedClassGroupRoleProperties
+Total: 23 P:23 F:0 E:0 S:0
+=== RGClassStrategyTest ===
+  SORT-OK: 19 comparisons for 10 items
+  RUN: testCategory
+  FAIL: testCategory [Got #unresolved instead of 'SomeCategory'.]
+  RUN: testComment
+  RUN: testCopying
+  RUN: testDefinition
+  FAIL: testDefinition [Assertion failed]
+  RUN: testDefinitionWithSlots
+  FAIL: testDefinitionWithSlots [Assertion failed]
+  RUN: testIncompatibleBehavior
+  RUN: testKind
+  RUN: testPackage
+  RUN: testResolvingConsistency
+  RUN: testStoreString
+Total: 10 P:7 F:3 E:0 S:0
+=== RGClassTest ===
+  SORT-OK: 79 comparisons for 31 items
+  RUN: testBehavior
+  RUN: testBehaviorWithCategorizedMethods
+  RUN: testBehaviorWithMethods
+  RUN: testBehaviorWithOneMethod
+  RUN: testBehaviorWithProtocols
+  RUN: testBehaviorWithUnategorizedMethod
+  RUN: testBehaviorWithUnategorizedMethods
+  RUN: testClassSide
+  RUN: testClassVariablesCollection
+  RUN: testConversionToTrait
+  RUN: testCopyForBehaviorDefinition
+  FAIL: testCopyForBehaviorDefinition [Got #(#tag1) instead of #(#tag1 #tag2).]
+  RUN: testCopyForBehaviorDefinitionForClass
+  RUN: testCopyForBehaviorDefinitionForClassDescription
+  RUN: testDefinition
+  FAIL: testDefinition [Got 'Object << #Object	slots: {  };	sharedVariables: { #DependentsFields };	package: #''Kernel-Objects''' instead of 'ProtoObject << #Object	slots: {  };	sharedVariables: { #DependentsFields };	package: #''Kernel-Objects'''.]
+  RUN: testEnsureProtocol
+  RUN: testEnvironmentStubs
+  RUN: testHasMethods
+  RUN: testIsBehavior
+  RUN: testMakeReslolvedResolvesEverything
+  RUN: testNewBehavior
+  RUN: testPrinting
+  RUN: testProtocols
+  RUN: testProtocolsForAllMethods
+  RUN: testProtocolsForAllMethodsForClassWithoutTraits
+  RUN: testSharedPoolsCollection
+  RUN: testTagsCollection
+  FAIL: testTagsCollection [Got 1 instead of 2.]
+  RUN: testTagsForMethods
+  RUN: testTagsForMethodsCollection
+  FAIL: testTagsForMethodsCollection [Got 1 instead of 2.]
+  RUN: testTagsForMethodsRemoval
+  FAIL: testTagsForMethodsRemoval [Got #() instead of #(#tag1).]
+  RUN: testTesting
+  RUN: testTypes
+Total: 31 P:26 F:5 E:0 S:0
+=== RGClassVariableTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testClassVariableImplicitEnvironment
+  RUN: testNewClassVariable
+  RUN: testResolvingConsistency
+Total: 3 P:3 F:0 E:0 S:0
+=== RGCommentTest ===
+  SORT-OK: 9 comparisons for 6 items
+  RUN: testClass
+  RUN: testImplicitEnvironment
+  RUN: testMakeReslolved
+  RUN: testNewComment
+  RUN: testResolvingConsistency
+  RUN: testTransformations
+Total: 6 P:6 F:0 E:0 S:0
+=== RGEnsureTraitTest ===
+  SORT-OK: 9 comparisons for 6 items
+  RUN: testClassTrait
+  RUN: testClassTraitIfMetaclassAlreadyExists
+  RUN: testClassTraitIfTraitAlreadyExists
+  FAIL: testClassTraitIfTraitAlreadyExists [SomeTrait classTrait is not identical to unresolved.]
+  RUN: testTrait
+  RUN: testTraitIfClassAlreadyExists
+  FAIL: testTraitIfClassAlreadyExists [SomeTrait is not identical to SomeTrait.]
+  RUN: testTraitIfClassTraitAlreadyExists
+Total: 6 P:4 F:2 E:0 S:0
+=== RGEnvironmentBackendTest ===
+  SORT-OK: 12 comparisons for 8 items
+  RUN: testAST
+  RUN: testCreationOfDefinitions
+  RUN: testDefaultEnvironmentContent
+  RUN: testDefinitionsIdentity
+  RUN: testImplicitEnvironmentContentForClassDefinition
+  RUN: testImplicitEnvironmentContentForMetaclassDefinition
+  RUN: testImplicitEnvironmentContentForMethodDefinition
+  RUN: testReadOnlyErrors
+Total: 8 P:8 F:0 E:0 S:0
+=== RGEnvironmentQueryInterfaceTest ===
+  SORT-OK: 0 comparisons for 1 items
+  RUN: testCachingBehaviors
+Total: 1 P:1 F:0 E:0 S:0
+=== RGEnvironmentTest ===
+  SORT-OK: 41 comparisons for 18 items
+  RUN: testBehaviortNamed
+  RUN: testBehaviortNamedIndirect
+  RUN: testCleanUnusedUnreferencedBehaviors
+  RUN: testCleanUnusedUnreferencedPackages
+  RUN: testCompatibility
+  RUN: testDefaultEnvironment
+  RUN: testEnsureClassNamed
+  RUN: testEnvironmentWithNamespace
+  RUN: testFixProtoObjectClassSuperclass
+  RUN: testMerging
+  RUN: testNewEnvironment
+  RUN: testPackageNamed
+  RUN: testReferencedPackages
+  RUN: testTraitNamed
+  RUN: testUnifyClassTrait
+  RUN: testUnifyMetaclass
+  RUN: testUnifyTrait
+  RUN: testUnpackagedPackage
+Total: 18 P:18 F:0 E:0 S:0
+=== RGGlobalVariableTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testGlobalVariableImplicitEnvironment
+  RUN: testNewGlobalVariable
+  RUN: testResolvingConsistency
+Total: 3 P:3 F:0 E:0 S:0
+=== RGLayoutDefinitionTest ===
+  SORT-OK: 31 comparisons for 15 items
+  RUN: testImplicitEnvironment
+  RUN: testIsBitsLayout
+  RUN: testIsBytesLayout
+  RUN: testIsCompiledMethodLayout
+  RUN: testIsEmptyLayout
+  RUN: testIsEphemeronLayout
+  RUN: testIsFixedLayout
+  RUN: testIsImmediateLayout
+  RUN: testIsObjectLayout
+  RUN: testIsPointerLayout
+  RUN: testIsVariableLayout
+  RUN: testIsWeakLayout
+  RUN: testIsWordLayouts
+  RUN: testNewLayouts
+  RUN: testResolvingConsistency
+Total: 15 P:15 F:0 E:0 S:0
+=== RGMCTraitCompositionVisitorTest ===
+  SORT-OK: 22 comparisons for 11 items
+  RUN: testAlias
+  RUN: testAliasWithMultipleAliases
+  RUN: testClassTrait
+  RUN: testComplexDefinition
+  RUN: testEmpty
+  RUN: testMultipleTraits
+  RUN: testRemovedSelectors
+  RUN: testRemovedSelectorsWithLiteralArray
+  RUN: testRemovedSelectorsWithMultipleSelectors
+  RUN: testSingleTrait
+  RUN: testTwoTraits
+Total: 11 P:11 F:0 E:0 S:0
+=== RGMetaclassStrategyTest ===
+  SORT-OK: 12 comparisons for 8 items
+  RUN: testCreationByMethod
+  RUN: testIncompatibleBehavior
+  RUN: testKind
+  RUN: testResolvingConsistency
+  RUN: testSetBaseClass
+  RUN: testSharedPools
+  RUN: testStoreString
+  RUN: testTheMetaclass
+Total: 8 P:8 F:0 E:0 S:0
+=== RGMetaclassTraitStrategyTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testCreationByMethod
+  RUN: testKind
+  RUN: testResolvingConsistency
+Total: 3 P:3 F:0 E:0 S:0
+=== RGMetaclassTraitTest ===
+  SORT-OK: 41 comparisons for 18 items
+  RUN: testBehavior
+  RUN: testBehaviorWithCategorizedMethods
+  RUN: testBehaviorWithMethods
+  RUN: testBehaviorWithOneMethod
+  RUN: testBehaviorWithProtocols
+  FAIL: testBehaviorWithProtocols [Got 1 instead of 10.]
+  RUN: testBehaviorWithUnategorizedMethod
+  RUN: testBehaviorWithUnategorizedMethods
+  RUN: testCopyForBehaviorDefinition
+  FAIL: testCopyForBehaviorDefinition [Got #(#tag1) instead of #(#tag1 #tag2).]
+  RUN: testEnsureProtocol
+  RUN: testHasMethods
+  RUN: testImplicitConversionFromClass
+  FAIL: testImplicitConversionFromClass [Got 2 instead of 1.]
+  RUN: testImplicitConversionFromClassProperties
+  RUN: testIsBehavior
+  RUN: testMakeReslolvedResolvesEverything
+  RUN: testMetaclassTraitImplicitEnvironment
+  RUN: testNewBehavior
+  RUN: testNewMetaclassTrait
+  RUN: testProtocols
+Total: 18 P:15 F:3 E:0 S:0
+=== RGMethodTest ===
+  SORT-OK: 22 comparisons for 11 items
+  RUN: testAST
+  ERROR: testAST (Error: Instances of RGUnresolvedValue are not indexable)
+    >> RGUnresolvedValue(Object)>>error:
+    >> RGUnresolvedValue(Object)>>errorNotIndexable
+    >> RGUnresolvedValue(Object)>>size
+    >> ReadStream(PositionableStream)>>on:
+    >> ReadStream class(PositionableStream class)>>on:
+    >> OCParser>>initializeParserWith:
+    >> OCParser class>>parseFaultyMethod:
+    >> OCParser class>>parseMethod:onError:
+    >> RGMethod>>parseTree
+    >> [		  self parseTree doSemanticAnalysisIn: self methodClass ] in RGMethod>>ast
+    >> [ self at: arg1 put: arg2 value ] in IdentityDictionary(Dictionary)>>at:ifAbsentPut:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsentPut:
+    >> RGMethod(RGObject)>>propertyNamed:ifAbsentPut:
+    >> RGMethod>>ast
+    >> RGMethodTest>>testAST
+    >> RGMethodTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGMethodTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGMethodTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> RGMethodTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testFullName
+  RUN: testImplicitEnvironment
+  RUN: testMetaSide
+  RUN: testNewMethod
+  ERROR: testNewMethod (MessageNotUnderstood: Message not understood: RGUnresolvedValue >> #lines)
+    >> RGUnresolvedValue(Object)>>doesNotUnderstand: #lines
+    >> RGMethodTest>>testNewMethod
+    >> RGMethodTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGMethodTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGMethodTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> RGMethodTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testNewNamedMethod
+  ERROR: testNewNamedMethod (MessageNotUnderstood: Message not understood: RGUnresolvedValue >> #lines)
+    >> RGUnresolvedValue(Object)>>doesNotUnderstand: #lines
+    >> RGMethodTest>>testNewNamedMethod
+    >> RGMethodTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGMethodTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGMethodTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> RGMethodTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testPackages
+  RUN: testRemovePackage
+  RUN: testResolvingConsistency
+  RUN: testSourceCode
+  RUN: testTagsCollection
+Total: 11 P:8 F:0 E:3 S:0
+=== RGObjectTest ===
+  SORT-OK: 19 comparisons for 10 items
+  RUN: testFullCopy
+  RUN: testNameAccess
+  RUN: testParent
+  RUN: testProperties
+  FAIL: testProperties [Assertion failed]
+  RUN: testResolveability
+  RUN: testResolvedNameOrNil
+  RUN: testTrivialMethods
+  RUN: testTypes
+  RUN: testUnresolveName
+  RUN: testUnresolvedValue
+Total: 10 P:9 F:1 E:0 S:0
+=== RGPackageTest ===
+  SORT-OK: 24 comparisons for 12 items
+  RUN: testAddingClass
+  RUN: testAddingPackage
+  RUN: testCategories
+  FAIL: testCategories [Got #('SomePackage' 'SomePackage-tag1') instead of #('SomePackage-tag1' 'SomePackage-tag2').]
+  RUN: testClasses
+  RUN: testDefinedBehaviorsCollection
+  RUN: testDefinedBehaviorsOfUnresolvedPackages
+  RUN: testNewPackage
+  RUN: testPrinting
+  RUN: testResolvingConsistency
+  RUN: testStubPackage
+  RUN: testTagsForClasses
+  FAIL: testTagsForClasses [Got #(#tag1) instead of #(#tag1 #tag2).]
+  RUN: testTagsForClassesCollection
+Total: 12 P:10 F:2 E:0 S:0
+=== RGPoolVariableTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testPoolVariableImplicitEnvironment
+  RUN: testResolvingConsistency
+Total: 2 P:2 F:0 E:0 S:0
+=== RGReadOnlyBackendTest ===
+  SORT-OK: 0 comparisons for 1 items
+  RUN: testReadOnlyErrors
+Total: 1 P:1 F:0 E:0 S:0
+=== RGReadOnlyImageBackendTest ===
+  SORT-OK: 45 comparisons for 19 items
+  RUN: testBehavior
+  RUN: testBehaviorLocalMethods
+  RUN: testClassComment
+  ERROR: testClassComment (MessageNotUnderstood: receiver of "notEmpty" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #notEmpty
+    >> RGReadOnlyImageBackendTest>>testClassComment
+    >> RGReadOnlyImageBackendTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGReadOnlyImageBackendTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGReadOnlyImageBackendTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> RGReadOnlyImageBackendTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testClassTrait
+  RUN: testClassVariable
+  RUN: testDefaultEnvironmentContent
+  RUN: testDefinitionsIdentity
+  RUN: testEmptyLayout
+  RUN: testGlobalVariable
+  RUN: testLayouts
+  RUN: testMethod
+  RUN: testProtocols
+  RUN: testReadOnlyErrors
+  RUN: testSlots
+  RUN: testTrait
+  RUN: testTraitAlias
+  RUN: testTraitComposition
+  RUN: testTraitExclusions
+  RUN: testUnknownSlots
+Total: 19 P:18 F:0 E:1 S:0
+=== RGSlotTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testNewSlot
+  RUN: testResolvingConsistency
+  RUN: testResolvingConsistencyUnknown
+  RUN: testSlotsImplicitEnvironment
+  RUN: testUnknownSlot
+Total: 5 P:5 F:0 E:0 S:0
+=== RGStampParserTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testAuthor
+  RUN: testTime
+Total: 2 P:2 F:0 E:0 S:0
+=== RGTraitAliasTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testAliasesCollection
+  RUN: testImplicitEnvironment
+  FAIL: testImplicitEnvironment [Assertion failed]
+  RUN: testNewTraitAlias
+  RUN: testResolvingConsistency
+  RUN: testUsedTraits
+  TIMEOUT: testUsedTraits (exceeded 80s)
+Total: 5 P:3 F:1 E:0 S:0 T:1
+=== RGTraitCompositionTest ===
+  SORT-OK: 9 comparisons for 6 items
+  RUN: testGlobalVariablesCollection
+  RUN: testImplicitEnvironment
+  RUN: testNewTraitComposition
+  RUN: testResolvingConsistency
+  RUN: testTransformationsCollection
+  RUN: testUsedTraits
+Total: 6 P:6 F:0 E:0 S:0
+=== RGTraitExclusionTest ===
+  SORT-OK: 11 comparisons for 7 items
+  RUN: testAliasesCollection
+  FAIL: testAliasesCollection [Got 1 instead of 2.]
+  RUN: testExclusionsCollection
+  RUN: testImplicitEnvironment
+  FAIL: testImplicitEnvironment [Assertion failed]
+  RUN: testNewTraitAlias
+  RUN: testNewTraitExlusion
+  RUN: testResolvingConsistency
+  RUN: testUsedTraits
+Total: 7 P:5 F:2 E:0 S:0
+=== RGTraitStrategyTest ===
+  SORT-OK: 19 comparisons for 10 items
+  RUN: testClassVariablesString
+  RUN: testCreationByMethod
+  RUN: testIncompatibleBehavior
+  RUN: testInstSize
+  RUN: testInstanceVariablesString
+  RUN: testKind
+  RUN: testResolvingConsistency
+  RUN: testSharedPoolNames
+  RUN: testSharedPools
+  RUN: testTrait
+Total: 10 P:10 F:0 E:0 S:0
+=== RGTraitTest ===
+  SORT-OK: 37 comparisons for 17 items
+  RUN: testBehavior
+  RUN: testBehaviorWithCategorizedMethods
+  RUN: testBehaviorWithMethods
+  RUN: testBehaviorWithOneMethod
+  RUN: testBehaviorWithProtocols
+  FAIL: testBehaviorWithProtocols [Got 1 instead of 10.]
+  RUN: testBehaviorWithUnategorizedMethod
+  RUN: testBehaviorWithUnategorizedMethods
+  RUN: testClassSide
+  RUN: testCopyForBehaviorDefinition
+  FAIL: testCopyForBehaviorDefinition [Got #(#tag1) instead of #(#tag1 #tag2).]
+  RUN: testEnsureProtocol
+  RUN: testHasMethods
+  RUN: testIsBehavior
+  RUN: testMakeReslolvedResolvesEverything
+  RUN: testNewBehavior
+  RUN: testNewTrait
+  TIMEOUT: testNewTrait (exceeded 80s)
+  RUN: testProtocols
+  RUN: testTraitImplicitEnvironment
+Total: 17 P:14 F:2 E:0 S:0 T:1
+=== RGUnresolvedValueTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testDefaultValue
+  RUN: testReferencedBehaviors
+Total: 2 P:2 F:0 E:0 S:0
+*** BATCH COMPLETED for 32 classes (1-32)
+=== BATCH TOTAL ===
+Run: #1
+Batch: 1-32
+Classes: 32
+Pass: 263
+Fail: 21
+Error: 4
+Skip: 0
+Timeout: 2
+Total: 290
+=== BATCH COMPLETE ===

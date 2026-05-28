@@ -1,0 +1,761 @@
+=== SUnit Test Run #1 (batch 1-32 of 2051) ===
+
+BATCH-DEBUG: batchClasses size=32 first=RGAnnouncementsTest last=RGUnresolvedValueTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T20:34:08.603987-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-INSTALLED
+SCHED-LOGGER-ERR: Error Expected timing priority event loop terminated already
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout patch error: proceed for truth.
+=== RGAnnouncementsTest ===
+  DELAY-DEAD: RGAnnouncementsTest
+  DELAY-RESTARTED: RGAnnouncementsTest
+  SORT-OK: 16 comparisons for 9 items
+  RUN: testAnnouncerSuspending
+  RUN: testAnnouncerSuspendingWithStoring
+  RUN: testBehaviorAdded
+  RUN: testBehaviorCommentModified
+  RUN: testBehaviorDefinitionModifiedForCategory
+  RUN: testBehaviorDefinitionModifiedForSuperclass
+  RUN: testBehaviorParentRenamed
+  RUN: testDirectAnnouncement
+  RUN: testUnsubscribe
+Total: 9 P:9 F:0 E:0 S:0
+=== RGBackendTest ===
+  DIAG-EMPTY: allTestSelectors=0 for RGBackendTest
+  DIAG-EMPTY: allSelectors size=610
+  DIAG-EMPTY: test* in allSelectors=1
+  DIAG-EMPTY: first5=#(#testDefaultContentFor:)
+  DIAG-EMPTY: methodDict size=2
+  DIAG-EMPTY: test* in methodDict=1
+  DIAG: characterSet=#Unicode class='Unicode class'
+  DIAG: cs isLetter: $t=true
+  DIAG: $t between:$a and:$z=true
+  DIAG: isLetter: source=isLetter: arg1	| tmp1 |	tmp1 := arg1 charCode + 1.	tmp1 > GeneralCategory size ifTrue: [ ^ false ].	nil.	^ (GeneralCategory at: tmp1) between: Ll and: Lu
+  DIAG: Character>>isLetter source=isLetter	^ self characterSet isLetter: self
+  DIAG: $t class=#Character
+  DIAG: $t class characterSet=#Unicode
+  DIAG: CharSet=Unicode
+  DIAG: AsciiCharset='MISSING'
+  SORT-OK: 0 comparisons for 0 items
+Total: 0 P:0 F:0 E:0 S:0
+=== RGBehaviorTest ===
+  SORT-OK: 12 comparisons for 8 items
+  RUN: testBadInstantiation
+  RUN: testBehaviorWithMethodTags
+  RUN: testBehaviorWithProtocols
+  RUN: testInheritsFromUnresolved
+  RUN: testOldDefinition
+  RUN: testResolvingConsistency
+  RUN: testSiblings
+  RUN: testUnresolveSuperclass
+Total: 8 P:8 F:0 E:0 S:0
+=== RGClassDescripitonStrategyTest ===
+  SORT-OK: 58 comparisons for 23 items
+  RUN: testAllSlots
+  RUN: testClassDescriptionMakeResolved
+  RUN: testClassDescriptionResolvableProperties
+  RUN: testCopyForBehaviorDefinitionPostCopy
+  RUN: testCreationByMethod
+  RUN: testCreationByNamed
+  RUN: testCreationByNamedParent
+  RUN: testCreationByParent
+  RUN: testCreationByUnnamed
+  RUN: testCreationByUnresolved
+  RUN: testCreationByUnresolvedNamed
+  RUN: testDefaultLayout
+  RUN: testDefaultMetaclass
+  RUN: testEmtpyClassVariableString
+  RUN: testInstSize
+  RUN: testInstanceVariablesString
+  RUN: testKindOfSubclass
+  RUN: testLayout
+  RUN: testLayoutSet
+  RUN: testSetInstanceVariables
+  RUN: testSharedPools
+  RUN: testUnresolvedClassGroupCreatorProperties
+  RUN: testUnresolvedClassGroupRoleProperties
+Total: 23 P:23 F:0 E:0 S:0
+=== RGClassStrategyTest ===
+  SORT-OK: 19 comparisons for 10 items
+  RUN: testCategory
+  RUN: testComment
+  RUN: testCopying
+  RUN: testDefinition
+  RUN: testDefinitionWithSlots
+  RUN: testIncompatibleBehavior
+  RUN: testKind
+  RUN: testPackage
+  RUN: testResolvingConsistency
+  RUN: testStoreString
+Total: 10 P:10 F:0 E:0 S:0
+=== RGClassTest ===
+  SORT-OK: 79 comparisons for 31 items
+  RUN: testBehavior
+  RUN: testBehaviorWithCategorizedMethods
+  RUN: testBehaviorWithMethods
+  RUN: testBehaviorWithOneMethod
+  RUN: testBehaviorWithProtocols
+  RUN: testBehaviorWithUnategorizedMethod
+  RUN: testBehaviorWithUnategorizedMethods
+  RUN: testClassSide
+  RUN: testClassVariablesCollection
+  RUN: testConversionToTrait
+  RUN: testCopyForBehaviorDefinition
+  RUN: testCopyForBehaviorDefinitionForClass
+  RUN: testCopyForBehaviorDefinitionForClassDescription
+  RUN: testDefinition
+  RUN: testEnsureProtocol
+  RUN: testEnvironmentStubs
+  RUN: testHasMethods
+  RUN: testIsBehavior
+  RUN: testMakeReslolvedResolvesEverything
+  RUN: testNewBehavior
+  RUN: testPrinting
+  RUN: testProtocols
+  RUN: testProtocolsForAllMethods
+  RUN: testProtocolsForAllMethodsForClassWithoutTraits
+  RUN: testSharedPoolsCollection
+  RUN: testTagsCollection
+  RUN: testTagsForMethods
+  RUN: testTagsForMethodsCollection
+  RUN: testTagsForMethodsRemoval
+  RUN: testTesting
+  RUN: testTypes
+Total: 31 P:31 F:0 E:0 S:0
+=== RGClassVariableTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testClassVariableImplicitEnvironment
+  RUN: testNewClassVariable
+  RUN: testResolvingConsistency
+Total: 3 P:3 F:0 E:0 S:0
+=== RGCommentTest ===
+  SORT-OK: 9 comparisons for 6 items
+  RUN: testClass
+  RUN: testImplicitEnvironment
+  RUN: testMakeReslolved
+  RUN: testNewComment
+  RUN: testResolvingConsistency
+  RUN: testTransformations
+  ERROR: testTransformations (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>unresolvedWithBehaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>unresolved
+    >> RGComment(RGObject)>>defaultClassStub
+    >> RGComment>>defaultParentStub
+    >> RGComment(RGObject)>>parent
+    >> [ self parent environment ] in RGComment(RGObject)>>environment
+    >> [ arg2 value ] in RGComment(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGComment(RGObject)>>propertyNamed:ifAbsent:
+Total: 6 P:5 F:0 E:1 S:0
+=== RGEnsureTraitTest ===
+  SORT-OK: 9 comparisons for 6 items
+  RUN: testClassTrait
+  ERROR: testClassTrait (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGTraitStrategy(RGBehaviorStrategy)>>environment
+    >> RGTraitStrategy>>defaultPackage
+    >> RGTraitStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>unresolvedWithParent:behaviorStrategy:
+    >> RGTrait class(RGBehaviorFactory class)>>unresolvedWithParent:
+    >> RGEnvironmentBackend>>createUnresolvedTraitGroupFor:
+    >> RGMetaclassTraitStrategy(RGTraitDescriptionStrategy)>>initialize
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGMetaclassTrait class(RGBehaviorFactory class)>>named:parent:
+    >> RGEnvironment>>ensureMetaclassTraitNamed:
+    >> RGEnvironment>>ensureTraitNamed:
+    >> RGEnsureTraitTest>>testClassTrait
+  RUN: testClassTraitIfMetaclassAlreadyExists
+  ERROR: testClassTraitIfMetaclassAlreadyExists (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>unresolvedWithParent:behaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>unresolvedWithParent:
+    >> RGEnvironmentBackend>>createUnresolvedClassGroupFor:
+    >> RGMetaclassStrategy(RGClassDescriptionStrategy)>>initialize
+    >> RGMetaclassStrategy>>initialize
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGMetaclass class(RGBehaviorFactory class)>>named:parent:
+    >> [			  | tmp1 tmp2 tmp3 tmp4 tmp5 |			  tmp4 := (arg1 endsWith: ' class')				          ifTrue: [ arg1 withoutSuffix: ' class' ]				          ifFalse: [ (arg1 , ' class') asSymbol ].			  tmp3 := self ask behaviors				          detect: [ :arg2 | arg2 name = tmp4 ]				          ifNone: nil.			  tmp3 ifNotNil: [					  tmp5 := tmp3 isMetaclass						          ifTrue: [ tmp3 baseClass ]						          ifFalse: [ tmp3 metaclass ].					  tmp5						  name: arg1;						  propertyNamed: #resolved put: true.					  ^ tmp5 ].			  tmp1 := (arg1 endsWith: ' class')				          ifTrue: [ RGMetaclass ]				          ifFalse: [ RGClass ].			  tmp2 := tmp1 named: arg1 parent: self.			  self addBehavior: tmp2.			  tmp2 ] in RGEnvironment>>ensureClassNamed:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+  RUN: testClassTraitIfTraitAlreadyExists
+  ERROR: testClassTraitIfTraitAlreadyExists (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGTraitStrategy(RGBehaviorStrategy)>>environment
+    >> RGTraitStrategy>>defaultPackage
+    >> RGTraitStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGTrait class(RGBehaviorFactory class)>>named:parent:
+    >> RGEnvironment>>ensureTraitNamed:
+    >> RGEnsureTraitTest>>testClassTraitIfTraitAlreadyExists
+    >> RGEnsureTraitTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnsureTraitTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnsureTraitTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testTrait
+  ERROR: testTrait (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGTraitStrategy(RGBehaviorStrategy)>>environment
+    >> RGTraitStrategy>>defaultPackage
+    >> RGTraitStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGTrait class(RGBehaviorFactory class)>>named:parent:
+    >> RGEnvironment>>ensureTraitNamed:
+    >> RGEnsureTraitTest>>testTrait
+    >> RGEnsureTraitTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnsureTraitTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnsureTraitTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testTraitIfClassAlreadyExists
+  ERROR: testTraitIfClassAlreadyExists (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>named:parent:
+    >> [			  | tmp1 tmp2 tmp3 tmp4 tmp5 |			  tmp4 := (arg1 endsWith: ' class')				          ifTrue: [ arg1 withoutSuffix: ' class' ]				          ifFalse: [ (arg1 , ' class') asSymbol ].			  tmp3 := self ask behaviors				          detect: [ :arg2 | arg2 name = tmp4 ]				          ifNone: nil.			  tmp3 ifNotNil: [					  tmp5 := tmp3 isMetaclass						          ifTrue: [ tmp3 baseClass ]						          ifFalse: [ tmp3 metaclass ].					  tmp5						  name: arg1;						  propertyNamed: #resolved put: true.					  ^ tmp5 ].			  tmp1 := (arg1 endsWith: ' class')				          ifTrue: [ RGMetaclass ]				          ifFalse: [ RGClass ].			  tmp2 := tmp1 named: arg1 parent: self.			  self addBehavior: tmp2.			  tmp2 ] in RGEnvironment>>ensureClassNamed:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGEnvironmentQueryInterface>>behaviorNamedExactlyAs:ifAbsent:
+    >> RGEnvironment>>ensureClassNamed:
+    >> RGEnsureTraitTest>>testTraitIfClassAlreadyExists
+    >> RGEnsureTraitTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnsureTraitTest(TestCase)>>runCase
+  RUN: testTraitIfClassTraitAlreadyExists
+  ERROR: testTraitIfClassTraitAlreadyExists (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGTraitStrategy(RGBehaviorStrategy)>>environment
+    >> RGTraitStrategy>>defaultPackage
+    >> RGTraitStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>unresolvedWithParent:behaviorStrategy:
+    >> RGTrait class(RGBehaviorFactory class)>>unresolvedWithParent:
+    >> RGEnvironmentBackend>>createUnresolvedTraitGroupFor:
+    >> RGMetaclassTraitStrategy(RGTraitDescriptionStrategy)>>initialize
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGMetaclassTrait class(RGBehaviorFactory class)>>named:parent:
+    >> RGEnvironment>>ensureMetaclassTraitNamed:
+    >> RGEnvironment>>ensureTraitNamed:
+    >> RGEnsureTraitTest>>testTraitIfClassTraitAlreadyExists
+Total: 6 P:0 F:0 E:6 S:0
+=== RGEnvironmentBackendTest ===
+  SORT-OK: 12 comparisons for 8 items
+  RUN: testAST
+  ERROR: testAST (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>unresolvedWithBehaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>unresolved
+    >> RGMethod(RGObject)>>defaultClassStub
+    >> RGMethod>>defaultParentStub
+    >> RGMethod(RGObject)>>parent
+    >> RGMethod>>initialize
+    >> RGMethod class(Behavior)>>new
+    >> RGEnvironmentBackendTest>>testAST
+    >> RGEnvironmentBackendTest(TestCase)>>performTest
+  RUN: testCreationOfDefinitions
+  ERROR: testCreationOfDefinitions (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>named:parent:
+    >> [		  RGClass named: self name asSymbol parent: arg1 ] in Object class(Class)>>asRingMinimalDefinitionIn:
+    >> [ arg2 value ] in RGEnvironmentBackend>>definitionFor:ifAbsentRegister:
+    >> [ self at: arg1 put: arg3 value ] in IdentityDictionary(Dictionary)>>at:ifPresent:ifAbsentPut:
+    >> IdentityDictionary(Dictionary)>>at:ifPresent:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifPresent:ifAbsentPut:
+    >> RGEnvironmentBackend>>definitionFor:ifAbsentRegister:
+    >> Object class(Class)>>asRingMinimalDefinitionIn:
+  RUN: testDefaultEnvironmentContent
+  RUN: testDefinitionsIdentity
+  ERROR: testDefinitionsIdentity (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>named:parent:
+    >> [		  RGClass named: self name asSymbol parent: arg1 ] in Object class(Class)>>asRingMinimalDefinitionIn:
+    >> [ arg2 value ] in RGEnvironmentBackend>>definitionFor:ifAbsentRegister:
+    >> [ self at: arg1 put: arg3 value ] in IdentityDictionary(Dictionary)>>at:ifPresent:ifAbsentPut:
+    >> IdentityDictionary(Dictionary)>>at:ifPresent:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifPresent:ifAbsentPut:
+    >> RGEnvironmentBackend>>definitionFor:ifAbsentRegister:
+    >> Object class(Class)>>asRingMinimalDefinitionIn:
+  RUN: testImplicitEnvironmentContentForClassDefinition
+  ERROR: testImplicitEnvironmentContentForClassDefinition (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>named:behaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>named:
+    >> RGEnvironmentBackendTest>>testImplicitEnvironmentContentForClassDefinition
+    >> RGEnvironmentBackendTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnvironmentBackendTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnvironmentBackendTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> RGEnvironmentBackendTest(TestCase)>>runCase
+  RUN: testImplicitEnvironmentContentForMetaclassDefinition
+  ERROR: testImplicitEnvironmentContentForMetaclassDefinition (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGMetaclassStrategy(RGClassDescriptionStrategy)>>initialize
+    >> RGMetaclassStrategy>>initialize
+    >> RGBehavior class>>named:behaviorStrategy:
+    >> RGMetaclass class(RGBehaviorFactory class)>>named:
+    >> RGEnvironmentBackendTest>>testImplicitEnvironmentContentForMetaclassDefinition
+    >> RGEnvironmentBackendTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnvironmentBackendTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnvironmentBackendTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> RGEnvironmentBackendTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  RUN: testImplicitEnvironmentContentForMethodDefinition
+  ERROR: testImplicitEnvironmentContentForMethodDefinition (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>unresolvedWithBehaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>unresolved
+    >> RGMethod(RGObject)>>defaultClassStub
+    >> RGMethod>>defaultParentStub
+    >> RGMethod(RGObject)>>parent
+    >> RGMethod>>initialize
+    >> RGMethod class(Behavior)>>new
+    >> RGMethod class(RGObject class)>>named:
+    >> RGEnvironmentBackendTest>>testImplicitEnvironmentContentForMethodDefinition
+  RUN: testReadOnlyErrors
+Total: 8 P:2 F:0 E:6 S:0
+=== RGEnvironmentQueryInterfaceTest ===
+  SORT-OK: 0 comparisons for 1 items
+  RUN: testCachingBehaviors
+  ERROR: testCachingBehaviors (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>named:parent:
+    >> [			  | tmp1 tmp2 tmp3 tmp4 tmp5 |			  tmp4 := (arg1 endsWith: ' class')				          ifTrue: [ arg1 withoutSuffix: ' class' ]				          ifFalse: [ (arg1 , ' class') asSymbol ].			  tmp3 := self ask behaviors				          detect: [ :arg2 | arg2 name = tmp4 ]				          ifNone: nil.			  tmp3 ifNotNil: [					  tmp5 := tmp3 isMetaclass						          ifTrue: [ tmp3 baseClass ]						          ifFalse: [ tmp3 metaclass ].					  tmp5						  name: arg1;						  propertyNamed: #resolved put: true.					  ^ tmp5 ].			  tmp1 := (arg1 endsWith: ' class')				          ifTrue: [ RGMetaclass ]				          ifFalse: [ RGClass ].			  tmp2 := tmp1 named: arg1 parent: self.			  self addBehavior: tmp2.			  tmp2 ] in RGEnvironment>>ensureClassNamed:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGEnvironmentQueryInterface>>behaviorNamedExactlyAs:ifAbsent:
+    >> RGEnvironment>>ensureClassNamed:
+    >> RGEnvironmentQueryInterfaceTest>>testCachingBehaviors
+    >> RGEnvironmentQueryInterfaceTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnvironmentQueryInterfaceTest(TestCase)>>runCase
+Total: 1 P:0 F:0 E:1 S:0
+=== RGEnvironmentTest ===
+  SORT-OK: 41 comparisons for 18 items
+  RUN: testBehaviortNamed
+  ERROR: testBehaviortNamed (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>named:parent:
+    >> [			  | tmp1 tmp2 tmp3 tmp4 tmp5 |			  tmp4 := (arg1 endsWith: ' class')				          ifTrue: [ arg1 withoutSuffix: ' class' ]				          ifFalse: [ (arg1 , ' class') asSymbol ].			  tmp3 := self ask behaviors				          detect: [ :arg2 | arg2 name = tmp4 ]				          ifNone: nil.			  tmp3 ifNotNil: [					  tmp5 := tmp3 isMetaclass						          ifTrue: [ tmp3 baseClass ]						          ifFalse: [ tmp3 metaclass ].					  tmp5						  name: arg1;						  propertyNamed: #resolved put: true.					  ^ tmp5 ].			  tmp1 := (arg1 endsWith: ' class')				          ifTrue: [ RGMetaclass ]				          ifFalse: [ RGClass ].			  tmp2 := tmp1 named: arg1 parent: self.			  self addBehavior: tmp2.			  tmp2 ] in RGEnvironment>>ensureClassNamed:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGEnvironmentQueryInterface>>behaviorNamedExactlyAs:ifAbsent:
+    >> RGEnvironment>>ensureClassNamed:
+    >> RGEnvironmentTest>>testBehaviortNamed
+    >> RGEnvironmentTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnvironmentTest(TestCase)>>runCase
+  RUN: testBehaviortNamedIndirect
+  ERROR: testBehaviortNamedIndirect (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>named:parent:
+    >> [			  | tmp1 tmp2 tmp3 tmp4 tmp5 |			  tmp4 := (arg1 endsWith: ' class')				          ifTrue: [ arg1 withoutSuffix: ' class' ]				          ifFalse: [ (arg1 , ' class') asSymbol ].			  tmp3 := self ask behaviors				          detect: [ :arg2 | arg2 name = tmp4 ]				          ifNone: nil.			  tmp3 ifNotNil: [					  tmp5 := tmp3 isMetaclass						          ifTrue: [ tmp3 baseClass ]						          ifFalse: [ tmp3 metaclass ].					  tmp5						  name: arg1;						  propertyNamed: #resolved put: true.					  ^ tmp5 ].			  tmp1 := (arg1 endsWith: ' class')				          ifTrue: [ RGMetaclass ]				          ifFalse: [ RGClass ].			  tmp2 := tmp1 named: arg1 parent: self.			  self addBehavior: tmp2.			  tmp2 ] in RGEnvironment>>ensureClassNamed:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGEnvironmentQueryInterface>>behaviorNamedExactlyAs:ifAbsent:
+    >> RGEnvironment>>ensureClassNamed:
+    >> RGEnvironmentTest>>testBehaviortNamedIndirect
+    >> RGEnvironmentTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnvironmentTest(TestCase)>>runCase
+  RUN: testCleanUnusedUnreferencedBehaviors
+  ERROR: testCleanUnusedUnreferencedBehaviors (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironmentAnnouncer>>behaviorAdded:
+    >> RGEnvironment>>pvtAddBehavior:
+    >> RGBehavior>>addoptToParentStub
+    >> RGBehavior(RGObject)>>parent
+    >> [ self parent environment ] in RGBehavior(RGObject)>>environment
+    >> [ arg2 value ] in RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGBehavior(RGObject)>>propertyNamed:ifAbsent:
+    >> RGBehavior(RGObject)>>environment
+    >> RGClassStrategy(RGBehaviorStrategy)>>environment
+    >> RGClassStrategy>>defaultPackage
+    >> RGClassStrategy>>initializeUnresolved
+    >> RGBehavior(RGBehaviorStrategyUser)>>behaviorStrategy:
+    >> RGBehavior class>>named:parent:behaviorStrategy:
+    >> RGClass class(RGBehaviorFactory class)>>named:parent:
+    >> [			  | tmp1 tmp2 tmp3 tmp4 tmp5 |			  tmp4 := (arg1 endsWith: ' class')				          ifTrue: [ arg1 withoutSuffix: ' class' ]				          ifFalse: [ (arg1 , ' class') asSymbol ].			  tmp3 := self ask behaviors				          detect: [ :arg2 | arg2 name = tmp4 ]				          ifNone: nil.			  tmp3 ifNotNil: [					  tmp5 := tmp3 isMetaclass						          ifTrue: [ tmp3 baseClass ]						          ifFalse: [ tmp3 metaclass ].					  tmp5						  name: arg1;						  propertyNamed: #resolved put: true.					  ^ tmp5 ].			  tmp1 := (arg1 endsWith: ' class')				          ifTrue: [ RGMetaclass ]				          ifFalse: [ RGClass ].			  tmp2 := tmp1 named: arg1 parent: self.			  self addBehavior: tmp2.			  tmp2 ] in RGEnvironment>>ensureClassNamed:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> RGEnvironmentQueryInterface>>behaviorNamedExactlyAs:ifAbsent:
+    >> RGEnvironment>>ensureClassNamed:
+    >> RGEnvironmentTest>>testCleanUnusedUnreferencedBehaviors
+    >> RGEnvironmentTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnvironmentTest(TestCase)>>runCase
+  RUN: testCleanUnusedUnreferencedPackages
+  ERROR: testCleanUnusedUnreferencedPackages (NonBooleanReceiver: proceed for truth.)
+    >> SmallInteger(ProtoObject)>>mustBeBooleanIn:
+    >> SmallInteger(ProtoObject)>>mustBeBoolean
+    >> RGEnvironmentAnnouncer(Announcer)>>announce:
+    >> RGEnvironment(RGObject)>>announce:
+    >> RGEnvironment>>addPackage:
+    >> [			  | tmp1 |			  tmp1 := RGPackage named: arg1 parent: self.			  self addPackage: tmp1.			  tmp1 ] in RGEnvironment>>ensurePackageNamed:
+    >> Array(Collection)>>detect:ifFound:ifNone:
+    >> Array(Collection)>>detect:ifNone:
+    >> RGEnvironment>>ensurePackageNamed:
+    >> RGEnvironmentTest>>testCleanUnusedUnreferencedPackages
+    >> RGEnvironmentTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnvironmentTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGEnvironmentTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> RGEnvironmentTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testCompatibility
+  RUN: testDefaultEnvironment
+  RUN: testEnsureClassNamed
+  RUN: testEnvironmentWithNamespace
+  RUN: testFixProtoObjectClassSuperclass
+  FAIL: testFixProtoObjectClassSuperclass [Got unresolved instead of Class.]
+  RUN: testMerging
+  RUN: testNewEnvironment
+  RUN: testPackageNamed
+  RUN: testReferencedPackages
+  RUN: testTraitNamed
+  RUN: testUnifyClassTrait
+  RUN: testUnifyMetaclass
+  RUN: testUnifyTrait
+  RUN: testUnpackagedPackage
+Total: 18 P:13 F:1 E:4 S:0
+=== RGGlobalVariableTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testGlobalVariableImplicitEnvironment
+  RUN: testNewGlobalVariable
+  RUN: testResolvingConsistency
+Total: 3 P:3 F:0 E:0 S:0
+=== RGLayoutDefinitionTest ===
+  SORT-OK: 31 comparisons for 15 items
+  RUN: testImplicitEnvironment
+  FAIL: testImplicitEnvironment [Assertion failed]
+  RUN: testIsBitsLayout
+  RUN: testIsBytesLayout
+  RUN: testIsCompiledMethodLayout
+  RUN: testIsEmptyLayout
+  RUN: testIsEphemeronLayout
+  RUN: testIsFixedLayout
+  RUN: testIsImmediateLayout
+  RUN: testIsObjectLayout
+  RUN: testIsPointerLayout
+  RUN: testIsVariableLayout
+  RUN: testIsWeakLayout
+  RUN: testIsWordLayouts
+  RUN: testNewLayouts
+  RUN: testResolvingConsistency
+Total: 15 P:14 F:1 E:0 S:0
+=== RGMCTraitCompositionVisitorTest ===
+  SORT-OK: 22 comparisons for 11 items
+  RUN: testAlias
+  RUN: testAliasWithMultipleAliases
+  RUN: testClassTrait
+  TIMEOUT(prim-stuck): testClassTrait
+  RUN: testComplexDefinition
+  RUN: testEmpty
+  RUN: testMultipleTraits
+  RUN: testRemovedSelectors
+  RUN: testRemovedSelectorsWithLiteralArray
+  RUN: testRemovedSelectorsWithMultipleSelectors
+  RUN: testSingleTrait
+  RUN: testTwoTraits
+DELAY-DEAD-AFTER: RGMCTraitCompositionVisitorTest
+  DELAY-DIAG: proc=Process pri=80 suspended=ProcessMonitorTestService>>suspendBackgroundFailure: isTerminated=false isSuspended=true  DELAY-RESTART-FAILED: Error Expected timing priority event loop terminated already
+Total: 11 P:10 F:0 E:0 S:0 T:1
+=== RGMetaclassStrategyTest ===
+  DELAY-DEAD: RGMetaclassStrategyTest
+  DELAY-RESTART-FAILED: Error Expected timing priority event loop terminated already
+  SORT-OK: 12 comparisons for 8 items
+  RUN: testCreationByMethod
+  RUN: testIncompatibleBehavior
+  RUN: testKind
+  RUN: testResolvingConsistency
+  RUN: testSetBaseClass
+  ERROR: testSetBaseClass (RGIncompatibleBehaviorTypeError: This message cannot be sent. Incompatible behavior type.)
+    >> RGClassStrategy(RGBehaviorStrategy)>>incompatibleBehaviorType
+    >> RGClassStrategy(RGBehaviorStrategy)>>baseClass:
+    >> RGBehavior(RGBehaviorStrategyUser)>>baseClass:
+    >> RGMetaclassStrategyTest>>testSetBaseClass
+    >> RGMetaclassStrategyTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGMetaclassStrategyTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RGMetaclassStrategyTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> RGMetaclassStrategyTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> [			        tmp2 insertSender: thisContext.			        tmp1 jump ] in [		        [			        tmp2 insertSender: thisContext.			        tmp1 jump ]			        on: arg1			        do: arg2.		        Processor terminateRealActive ] in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> [		        [			        tmp2 insertSender: thisContext.			        tmp1 jump ]			        on: arg1			        do: arg2.		        Processor terminateRealActive ] in Process>>on:do:
+  RUN: testSharedPools
+  RUN: testStoreString
+  RUN: testTheMetaclass
+DELAY-DEAD-AFTER: RGMetaclassStrategyTest
+  DELAY-DIAG: proc=Process pri=80 suspended=ProcessMonitorTestService>>suspendBackgroundFailure: isTerminated=false isSuspended=true  DELAY-RESTART-FAILED: Error Expected timing priority event loop terminated already
+Total: 8 P:7 F:0 E:1 S:0
+=== RGMetaclassTraitStrategyTest ===
+  DELAY-DEAD: RGMetaclassTraitStrategyTest
+  DELAY-RESTART-FAILED: Error Expected timing priority event loop terminated already
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testCreationByMethod
+  RUN: testKind
+  RUN: testResolvingConsistency
+DELAY-DEAD-AFTER: RGMetaclassTraitStrategyTest
+  DELAY-DIAG: proc=Process pri=80 suspended=ProcessMonitorTestService>>suspendBackgroundFailure: isTerminated=false isSuspended=true  DELAY-RESTART-FAILED: Error Expected timing priority event loop terminated already
+Total: 3 P:3 F:0 E:0 S:0
+=== RGMetaclassTraitTest ===
+  DELAY-DEAD: RGMetaclassTraitTest
+  DELAY-RESTART-FAILED: Error Expected timing priority event loop terminated already
+  SORT-OK: 41 comparisons for 18 items
+  RUN: testBehavior
+  RUN: testBehaviorWithCategorizedMethods
+  RUN: testBehaviorWithMethods
+  RUN: testBehaviorWithOneMethod

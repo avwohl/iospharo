@@ -1,0 +1,28 @@
+=== SUnit Test Run #1 (batch 1-21 of 2051) ===
+
+BATCH-DEBUG: batchClasses size=21 first=BlockClosureValueWithinDurationTest last=YearTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T20:14:27.665986-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-ERR: Error Missing jumpAheadTo: #else
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout patch error: proceed for truth.
+=== BlockClosureValueWithinDurationTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testValueWithinNonLocalReturn
+  RUN: testValueWithinTimingBasic
+  RUN: testValueWithinTimingNestedInner
+  TIMEOUT: testValueWithinTimingNestedInner (exceeded 80s)
+  RUN: testValueWithinTimingNestedOuter
+  TIMEOUT: testValueWithinTimingNestedOuter (exceeded 80s)
+  RUN: testValueWithinTimingRepeat
+  TIMEOUT: testValueWithinTimingRepeat (exceeded 8dTotal: 5 P:2 F:0 E:0 S:0 T:3
+=== BlockClosureValueWithinTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testValueWithinNonLocalReturnDoesNotTimeout
+  RUN: testValueWithinTimingBasicMilliseconds

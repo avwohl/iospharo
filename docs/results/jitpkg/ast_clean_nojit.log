@@ -1,0 +1,1267 @@
+Pharo Clean VM - Image Loader Test
+===================================
+
+=== Oop Tagging Tests ===
+SmallInteger 42:  0x151 isSmallInteger=1 value=42
+SmallInteger -100: 0xfffffffffffffce1 value=-100
+Character 'A':    0x20b isCharacter=1 codepoint=65
+nil:              0x0 isNil=1
+
+SmallFloat tests:
+  1 -> 0x7f00000000000005 -> 1 OK
+  168 -> 0x8650000000000005 -> 168 OK
+  80 -> 0x8540000000000005 -> 80 OK
+  -42.5 -> 0x845400000000000d -> -42.5 OK
+  0 -> 0x5 -> 0 OK
+  1024 -> 0x8900000000000005 -> 1024 OK
+  0.5 -> 0x7e00000000000005 -> 0.5 OK
+
+Decoding known SmallFloat values from Pharo:
+  0x8540000000000005 -> 80
+  0x8650000000000005 -> 168
+  0x8000000000000005 -> 2
+
+Tag verification (should use low 3 bits only):
+  SmallInteger tag: 1 (expected 1)
+  Character tag:    3 (expected 3)
+
+Loading image: /tmp/harness/Pharo-jit.image
+Working directory: /private/tmp/harness
+Memory initialized successfully
+Image loaded successfully!
+=== Image Header ===
+Format:            68021 (Spur 64-bit)
+Header size:       128 bytes
+Image size:        59062072 bytes (56 MB)
+Old base address:  0x10000000000
+Special objects:   0x100010f1838
+Last hash:         2479426907823963612
+Screen size:       0 x 0
+Flags:             0x2
+First segment:     59062072 bytes
+Free old space:    0 bytes
+Eden bytes:        22003584
+
+=== Special Objects ===
+Special objects array: 0x3010f1838
+  Raw header: 0x3c00000002000033
+  Slot count (bits 0-7): 51
+  Hash (bits 8-29): 131072
+  Format (bits 30-34): 0
+  Class index (bits 35-56): 0
+  Flags (bits 57-63): 30
+  Computed slot count: 60
+
+First 20 special objects:
+  [0]: 0x300000000 (object, class: 3075)
+  [1]: 0x300000010 (object, class: 3077)
+  [2]: 0x300000020 (object, class: 3079)
+  [3]: 0x30006d468 (object, class: 3139)
+  [4]: 0x3009258e8 (object, class: 7589)
+  [5]: 0x300366d28 (object, class: 3080)
+  [6]: 0x3000162d0 (object, class: 3086)
+  [7]: 0x3000164b0 (object, class: 3092)
+  [8]: 0x300020ce8 (object, class: 3135)
+  [9]: 0x3000167d0 (object, class: 3102)
+  [10]: 0x300016870 (object, class: 3104)
+  [11]: 0x300000000 (object, class: 3075)
+  [12]: 0x300016cd0 (object, class: 3118)
+  [13]: 0x300016690 (object, class: 3098)
+  [14]: 0x300000000 (object, class: 3075)
+  [15]: 0x300016af0 (object, class: 3112)
+  [16]: 0x300000000 (object, class: 3075)
+  [17]: 0x30381a6f0 (object, class: 48)
+  [18]: 0x300016b90 (object, class: 3114)
+  [19]: 0x300366cc0 (object, class: 3082)
+
+=== Memory Layout ===
+Old space:  0x300000000 - 0x400000000
+Allocated:  0 MB
+Free:       4039 MB
+
+First 128 bytes of old space (raw):
+  [0]: 0x25c97500800c03
+  [8]: 0x0
+  [16]: 0x106b2800800c05
+  [24]: 0x0
+  [32]: 0x2b1f8100800c07
+  [40]: 0x0
+  [48]: 0x4000000009000013
+  [56]: 0x0
+  [64]: 0x0
+  [72]: 0x0
+  [80]: 0x0
+  [88]: 0x0
+  [96]: 0x0
+  [104]: 0x0
+  [112]: 0x0
+  [120]: 0x0
+
+First object header analysis:
+  Raw: 0x25c97500800c03
+  Slot count: 3
+  Format: 20
+  Class index: 309550
+
+=== Object Statistics ===
+Total objects:    741393
+Pointer objects:  437613
+Byte objects:     127367
+Compiled methods: 175938
+Total size:       56 MB
+
+=== Checking iOS Classes ===
+  OSWorldRenderer: found
+  OSiOSDriver: NOT FOUND
+  OSiOSBackendWindow: NOT FOUND
+  NullWorldRenderer: found
+  OSWindowDriver: found
+  OSWindow: found
+  WorldMorph: found
+  WorldState: found
+  Display: NOT FOUND
+
+=== Display Surface Setup ===
+Created 1024x768 test display surface
+
+=== Interpreter Initialization ===
+Event callback registered
+[RESUME] ctx[0]: SnapshotOperation>>doSnapshot
+[RESUME] ctx[1]: SnapshotOperation>>doSnapshot
+[RESUME] ctx[2]: FullBlockClosure>>on:do:
+[RESUME] ctx[3]: FullBlockClosure>>onErrorDo:
+[RESUME] ctx[4]: SnapshotOperation>>executeStoringError:
+[RESUME] ctx[5]: SnapshotOperation>>performSnapshot
+[RESUME] ctx[6]: SessionManager>>launchSnapshot:andQuit:
+[RESUME] ctx[7]: SessionManager>>signal
+[RESUME] ctx[8]: FullBlockClosure>>terminateRealActive
+[RESUME] inSnapshotCode=1 chainDepth=9
+[RESUME] Initial context: method=#doSnapshot pc=55
+[RESUME] Patching: stackp=1 stackTopSlot=6 oldVal=true(0x300000020) -> true
+[RESUME] Found SnapshotOperation 0x30382dc30 at ctx depth 0, isImageStarting=false
+[RESUME] Found SnapshotOperation 0x30382dc30 at ctx depth 1, isImageStarting=true
+[RESUME] Found SnapshotOperation 0x30382dc30 at ctx depth 4, isImageStarting=true
+[RESUME] Found SnapshotOperation 0x30382dc30 at ctx depth 5, isImageStarting=true
+[RESUME] Patched isImageStarting on 1 SnapshotOperation(s)
+[STARTUP] Boosting startup process 0x30381e618 from P79 to P80
+[JIT] Disabled via PHARO_NO_JIT env var
+[STARTUP] Headless mode: deferring timer semaphore signal
+Interpreter initialized successfully!
+Active method: 0x300339380
+
+=== Creating Display ===
+[ensureDisplayForm] Created 1024x768x32 Form, setGlobal=true
+[ensureDisplayForm] Verify: findGlobal(Display)=found raw=0x303e53748 formObj=0x303e53748
+Display after ensureDisplayForm: created!
+
+=== Direct BitBlt Test ===
+Display bits: object width: 1024 height: 768 depth: 32
+Bitmap format: 9 byteSize: 6291456
+Filling display with gradient (1572864 pixels)...
+Wrote gradient to display bitmap
+Heartbeat will start after startup completes...
+
+=== Forced GC Test ===
+Before GC: used=62MB free=4033MB
+After GC: used=62MB free=4033MB
+Freed: 159KB
+GC reclaimed: 163776 bytes, moved: 0 objects, took: 84ms
+
+=== Execution Test ===
+Running up to 60000000000 bytecode steps...
+[SISTA] compile=0 dispatch=1 hook active
+[SISTA] hits=0/1 cache=1 disp=0 ret=0 send=0 unk=0
+[CACHE-1] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x3003040d0
+[CACHE-2] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x300304048
+[SISTA-SPLICE-DIAG] doBC=12 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=4 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=4 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=5 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=11 lead=40 (want 9-10, lead=fb)
+[SEM-SIGNAL-2] sem=0x3037f28c0 active-pri=80 waiter=0x302c61398 waiter-pri=80
+[CACHE-3] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000168d8 method=0x3003aa4d8
+[CACHE-4] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300016b58 method=0x3003aa4d8
+[XFER-1] old=0x3037f6668 pri=80 -> new=0x302c61398 pri=80
+[SISTA-SPLICE-DIAG] doBC=18 litIdx=1 icCls=0 verdict=REJECT reject=numCopied > 1 rejOp=return
+[SISTA-SPLICE-DIAG] doBC=8 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=5 blockLen=11 lead=40 (want 9-10, lead=fb)
+[XFER-2] old=0x302c61398 pri=80 -> new=0x3037f28e0 pri=80
+[SEM-SIGNAL-3] sem=0x46f018e78 active-pri=80 waiter=0x3037f6668 waiter-pri=80
+[XFER-3] old=0x3037f28e0 pri=80 -> new=0x3037f6668 pri=80
+[XFER-4] old=0x3037f6668 pri=80 -> new=0x3037f2938 pri=80
+[SEM-SIGNAL-4] sem=0x46f01faf8 active-pri=80 waiter=0x3037f6668 waiter-pri=80
+[XFER-5] old=0x3037f2938 pri=80 -> new=0x3037f6668 pri=80
+[SISTA-SPLICE-DIAG] doBC=6 litIdx=0 icCls=0 verdict=REJECT reject=numCopied > 1 rejOp=return
+[SISTA-SPLICE-DIAG] doBC=5 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[CACHE-5] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300016478 method=0x3003aa468
+[CACHE-6] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001a1f0 method=0x3003aa468
+[INIT-RESOLVER] #1 Resolver class var set non-nil at step 179749 (value=0x46f0d1b48) — defer will lift after buffer
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x79($y) str='y-mm-dd'(7)
+[SISTA-SPLICE-DIAG] doBC=8 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=5 blockLen=13 lead=4c (want 9-10, lead=fb)
+[P63] idx=1 arrIdx=0 byte=0x79($y) str='yyy'(3)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x30($0) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x30($0) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=4 arrIdx=3 byte=0x36($6) str='2026-04-06 12:00:00 '(25)
+[P63] idx=4 arrIdx=3 byte=0x36($6) str='2026-04-06 12:00:00 '(25)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x6d($m) str='y-mm-dd'(7)
+[P63] idx=4 arrIdx=3 byte=0x6d($m) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=2 arrIdx=1 byte=0x34($4) str='04'(2)
+[P63] idx=2 arrIdx=1 byte=0x34($4) str='04'(2)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=8 arrIdx=7 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=6 arrIdx=5 byte=0x64($d) str='y-mm-dd'(7)
+[P63] idx=7 arrIdx=6 byte=0x64($d) str='y-mm-dd'(7)
+[SISTA-SPLICE-DIAG] doBC=17 litIdx=3 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[XFER-6] old=0x3037f6668 pri=80 -> new=0x3037f5f80 pri=80
+[SEM-SIGNAL-8] sem=0x46f0e0370 active-pri=80 waiter=0x3037f6668 waiter-pri=80
+[XFER-7] old=0x3037f5f80 pri=80 -> new=0x3037f6668 pri=80
+[SISTA-SPLICE-DIAG] doBC=13 litIdx=2 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=20 litIdx=3 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[CACHE-7] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001edd0 method=0x3002e2688
+[SISTA-COLLECT-DIAG] send1BC=4 selIdx=1 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SPLICE-DIAG] doBC=9 litIdx=1 icCls=0 verdict=REJECT reject=numCopied > 1 rejOp=return
+[SISTA-SPLICE-DIAG] doBC=5 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=7 lead=41 (want 9-10, lead=fb)
+[CACHE-8] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001eb18 method=0x3003aa468
+[CACHE-9] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001b3b0 method=0x3003aa468
+[SISTA-COLLECT-DIAG] send1BC=10 selIdx=6 verdict=REJECT reject=non-simple block op rejOp=send
+[CACHE-10] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002329d0 method=0x3003aa4d8
+[CACHE-11] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002329d0 method=0x3003aa468
+[CACHE-12] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300232390 method=0x3003aa4d8
+[CACHE-13] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002336f0 method=0x3003aa4d8
+[CACHE-14] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002336f0 method=0x3003aa468
+[CACHE-15] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002333d0 method=0x3003aa4d8
+[CACHE-16] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002333d0 method=0x3003aa468
+[CACHE-17] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002336f0 method=0x3003aa468
+[CACHE-18] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300024cd0 method=0x3003aa468
+[CACHE-19] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001a710 method=0x3003aa468
+[SISTA-SELECT-CAND] pfbBC=1 send1BC=4 selIdx=1 litIdx=0 slot=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-COLLECT-DIAG] send1BC=15 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SPLICE-DIAG] doBC=9 litIdx=3 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=6 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=3 blockLen=4 lead=40 (want 9-10, lead=fb)
+[SISTA-COLLECT-DIAG] send1BC=7 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-ACCUM-DIAG] pfbBC=5 blockLen=14 lead=41 (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=21 blockLen=29 lead=40 (want 9-10, lead=fb)
+[SISTA-INJECT-SPLICE-DIAG] send2BC=7 selIdx=5 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=8 lead=41 (want 9-10, lead=fb)
+[syncDisplay] displayFormReady_=false (call 0), displayForm_ isNil=0
+[CACHE-20] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[CACHE-21] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[CACHE-22] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[CACHE-23] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[CACHE-24] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[syncDisplay] displayFormReady_=false (call 1), displayForm_ isNil=0
+[DNU-STACK] Full call stack for #asInteger (DNU #1):
+[DNU-STACK]   [0] Array>>do:
+[DNU-STACK]   [1] WorkingSession>>on:do:
+[DNU-STACK]   [2] FullBlockClosure>>on:do:
+[DNU-STACK]   [3] WorkingSession>>?
+[DNU-STACK]   [4] WorkingSession>>startup:
+[DNU-STACK]   [5] ClassSessionHandler>>startup:
+[DNU-STACK]   [6] SUnitRunner class>>startUp:
+[DNU-STACK]   [7] SUnitRunner class>>runAllTests
+[DNU-STACK]   [8] SUnitRunner class>>nextRunNumber
+[DNU-STACK]   [9] FullBlockClosure>>on:do:
+[DNU-STACK]   [10] SUnitRunner class>>asInteger
+[DNU-STACK]   [current] #asInteger fd=10
+[SISTA-RING] tag=asInteger seq=28198 count=32:
+  [0] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [1] #delimiter                    RET   rcvr=0x300233e08 ret/top=0x17b bailOp=0x00 argc=0 spΔ=0
+  [2] #delimiter                    RET   rcvr=0x300233e08 ret/top=0x17b bailOp=0x00 argc=0 spΔ=0
+  [3] #max:                         RET   rcvr=0x1 ret/top=0xc9 bailOp=0x00 argc=0 spΔ=0
+  [4] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x1 ret/top=0xc9 bailOp=0x00 argc=0 spΔ=0
+  [6] #negative                     RET   rcvr=0x81 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [7] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [8] #size                         RET   rcvr=0x46f888398 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [9] #size                         RET   rcvr=0x46f888398 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [10] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [11] #max:                         RET   rcvr=0x31 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [12] #size                         RET   rcvr=0x46f888398 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [13] #size                         RET   rcvr=0x46f888398 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [14] #size                         RET   rcvr=0x46f888398 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [15] #size                         RET   rcvr=0x46f888398 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [16] #size                         RET   rcvr=0x46f888398 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [17] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [18] #max:                         RET   rcvr=0x61 ret/top=0x61 bailOp=0x00 argc=0 spΔ=0
+  [19] #size                         RET   rcvr=0x46f888398 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [20] #size                         RET   rcvr=0x46f888398 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [21] #size                         RET   rcvr=0x46f888398 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [22] #size                         RET   rcvr=0x46f888398 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [23] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [24] #handlesEncoding:             RET   rcvr=0x300011238 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [27] #handlesEncoding:             RET   rcvr=0x300011198 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [28] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [29] #collectionSpecies            RET   rcvr=0x46f888378 ret/top=0x3000175a8 bailOp=0x00 argc=0 spΔ=0
+  [30] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [31] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+[DNU] #1: #asInteger not understood by rcvr=0x46f885058 argCount=0 fd=10 in #asInteger P80
+[DNU]   rcvr cls=5709 fmt=1 class=FileReference
+[DNU]   FP=0x473b0ea90 SP=0x473b0eaa8 base=0x473b0e950
+[DNU]   receiver_=0x3037fc300 method_=0x30380d5f0
+[DNU]   FP[-2] = 0x3000182e0
+[DNU]   FP[-1] = 0x30380d620
+[DNU]   FP[0] = 0x46f885070
+[DNU]   FP[1] = 0x46f885058
+[DNU]   FP[2] = 0x46f885058
+[DNU]   FP[3] = 0x46f885058
+[DNU]   FP[4] = 0x46f8850a0
+[DNU]   FP[5] = 0x46f888378
+[DNU]   FP[6] = 0x3041f40a8
+[DNU]   FP[7] = 0x46f88c4b8
+[DNU]   FP[8] = 0x46f88c4b8
+[DNU]   FP[9] = 0x300000020
+[DNU]   FP[10] = 0x3041f40a8
+[CACHE-25] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300022b08 method=0x3003aa468
+[CACHE-26] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001ac30 method=0x3003aa4d8
+[CACHE-27] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ac30 method=0x3003aa468
+[CACHE-28] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000194d0 method=0x3003aa4d8
+[STARTUP] Firing deferred timer semaphore signal (step 5000993)
+[XFER-8] old=0x3037f6668 pri=80 -> new=0x302c61398 pri=80
+[XFER-9] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[XFER-10] old=0x3037f6668 pri=80 -> new=0x302c61398 pri=80
+[XFER-11] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[CACHE-29] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001ac30 method=0x3003aa4d8
+[CACHE-30] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ac30 method=0x3003aa468
+[CACHE-31] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000168d8 method=0x3003aa4d8
+[CACHE-32] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001ac30 method=0x3003aa4d8
+[CACHE-33] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001d310 method=0x3003aa4d8
+[CACHE-34] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001d310 method=0x3003aa468
+[CACHE-35] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001ce10 method=0x3003aa4d8
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=6 lead=4c (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=9 blockLen=4 lead=40 (want 9-10, lead=fb)
+[XFER-12] old=0x3037f6668 pri=80 -> new=0x46fc38658 pri=80
+[XFER-13] old=0x46fc38658 pri=80 -> new=0x302c61398 pri=80
+[XFER-14] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[syncDisplay] displayFormReady_=false (call 2), displayForm_ isNil=0
+[SISTA-ACCUM-DIAG] pfbBC=17 blockLen=13 lead=40 (want 9-10, lead=fb)
+[CACHE-36] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ce10 method=0x3003aa468
+[CACHE-37] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ceb0 method=0x3003aa468
+[CACHE-38] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300017938 method=0x3003aa468
+[CACHE-39] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300016f28 method=0x3003aa468
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[CACHE-40] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[CACHE-41] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x300335a50
+[SISTA-ACCUM-DIAG] pfbBC=3 blockLen=4 lead=40 (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=7 blockLen=4 lead=40 (want 9-10, lead=fb)
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[SISTA-ACCUM-DIAG] pfbBC=88 blockLen=12 lead=40 (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=15 blockLen=5 lead=4c (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=22 blockLen=5 lead=4c (want 9-10, lead=fb)
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=4 selIdx=1 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[syncDisplay] displayFormReady_=false (call 3), displayForm_ isNil=0
+[SISTA-INJECT-SPLICE-DIAG] send2BC=36 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=52 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=31 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=47 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=51 selIdx=6 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=46 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[CACHE-42] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300024a50 method=0x3003aa468
+[CACHE-43] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300024af0 method=0x3003aa468
+[CACHE-44] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ba90 method=0x3003aa468
+[CACHE-45] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300019b10 method=0x3003aa468
+[CACHE-46] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300017938 method=0x3003aa468
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[CACHE-47] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x3003040d0
+[CACHE-48] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x300304048
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=multi-block IR rejOp=return
+[CACHE-49] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002329d0 method=0x3003aa4d8
+[CACHE-50] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002329d0 method=0x3003aa468
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[syncDisplay] displayFormReady_=false (call 4), displayForm_ isNil=0
+[XFER-15] old=0x3037f6668 pri=80 -> new=0x47005c1c0 pri=80
+[XFER-16] old=0x47005c1c0 pri=80 -> new=0x3037f6668 pri=80
+[XFER-17] old=0x3037f6668 pri=80 -> new=0x302c61398 pri=80
+[XFER-18] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=10 selIdx=2 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-COLLECT-DIAG] send1BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-COLLECT-DIAG] send1BC=8 selIdx=4 verdict=REJECT reject=recursion guard rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=load_lit
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[XFER-19] old=0x3037f6668 pri=80 -> new=0x302c61398 pri=80
+[XFER-20] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[XFER-21] old=0x3037f6668 pri=80 -> new=0x47005c1c0 pri=80
+[XFER-22] old=0x47005c1c0 pri=80 -> new=0x3037f6668 pri=80
+[XFER-23] old=0x3037f6668 pri=80 -> new=0x47005c1c0 pri=80
+[XFER-24] old=0x47005c1c0 pri=80 -> new=0x3037f6668 pri=80
+[XFER-25] old=0x3037f6668 pri=80 -> new=0x47005c1c0 pri=80
+[XFER-26] old=0x47005c1c0 pri=80 -> new=0x3037f6668 pri=80
+[XFER-27] old=0x3037f6668 pri=80 -> new=0x47005c1c0 pri=80
+[XFER-28] old=0x47005c1c0 pri=80 -> new=0x3037f6668 pri=80
+[SISTA-SELECT-CAND] pfbBC=1 send1BC=4 selIdx=1 litIdx=0 slot=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[XFER-29] old=0x3037f6668 pri=80 -> new=0x46f82b610 pri=80
+[XFER-30] old=0x46f82b610 pri=80 -> new=0x302c61398 pri=80
+[XFER-31] old=0x302c61398 pri=80 -> new=0x3037f6668 pri=80
+[XFER-32] old=0x3037f6668 pri=80 -> new=0x46f82b610 pri=80
+[XFER-33] old=0x46f82b610 pri=80 -> new=0x3037f6668 pri=80
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=recursion guard rejOp=return
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=recursion guard rejOp=return
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-INJECT-SPLICE-DIAG] send2BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[MUSTBOOL] #1 fd=26 value_class=IceLibgitRepository value=0x30229a930 in=#ifTrue: rcv_class=IceSystemEventListener class method=0x3021ec778 numLits=8 ipOff=19
+[MUSTBOOL] method header=0x8000000008600041 slotCount=13 method_class=CompiledBlock method_format=28 method_classIdx=3117
+[MUSTBOOL]   slot[0]=0x8000000008600041
+[MUSTBOOL]   slot[1]=0x3021f4518 class=3117 format=31
+[MUSTBOOL]   slot[2]=0x3021a97e8 class=3139 format=1
+[MUSTBOOL]   slot[3]=0x300060c18 class=3085 format=23 bytes="announcer"
+[MUSTBOOL]   slot[4]=0x3021a9c50 class=3139 format=1
+[MUSTBOOL]   slot[5]=0x30011a4d0 class=3085 format=20 bytes="for:"
+[MUSTBOOL]   slot[6]=0x30005f910 class=3085 format=23 bytes="announce:"
+[MUSTBOOL]   slot[7]=0x300050708 class=3085 format=17 bytes="ifTrue:"
+[MUSTBOOL]   slot[8]=0x3021e1e28 class=3101 format=26
+[MUSTBOOL]   slot[9]=0x410200fd4ed201e7 (raw bytecode bytes)
+[MUSTBOOL]   slot[10]=0xfbd87b0200f94240 (raw bytecode bytes)
+[MUSTBOOL]   slot[11]=0x9440138211c60200 (raw bytecode bytes)
+[MUSTBOOL]   slot[12]=0x5e4fb095 (raw bytecode bytes)
+[MUSTBOOL] bytecodes near ipOff=19: 00 02 7b d8 fb 00 02 c6 11 82 13 40 94
+[MUSTBOOL] full bytecodes (21):
+    0: e7 01 d2 4e fd 00 02 41 40 42 f9 00 02 7b d8 fb 00 02 c6 11 82
+[MUSTBOOL] receiver slotCount=12 class=IceSystemEventListener class
+[MUSTBOOL]   recv.slot[0]=0x300017970 (Object class)
+[MUSTBOOL]   recv.slot[1]=0x302cfab68 (MethodDictionary)
+[MUSTBOOL]   recv.slot[2]=0x1 (SmI(0))
+[MUSTBOOL]   recv.slot[3]=0x3021b8a80 (FixedLayout)
+[MUSTBOOL]   recv.slot[4]=0x3021b8a98 (Array)
+[MUSTBOOL]   recv.slot[5]=0x300000000 (nil)
+[MUSTBOOL]   recv.slot[6]=0x3021b0770 (ByteSymbol)
+[MUSTBOOL]   recv.slot[7]=0x300000000 (nil)
+[MUSTBOOL] stack: sp=0x473b0ec98 fp=0x473b0ec70 depth=26
+[MUSTBOOL]   sp[-3]=0x46f86c168 (Array)
+[MUSTBOOL]   sp[-2]=0x46f86ca80 (Array)
+[MUSTBOOL]   sp[-1]=0x30229a930 (IceLibgitRepository)
+[MUSTBOOL]   sp[0]=0x46f86ca90 (FullBlockClosure)
+[MUSTBOOL]   sp[1]=0x9 (SmallInteger)
+[MUSTBOOL]   recent[16] WeakAnnouncementSubscription>>deliver:
+[MUSTBOOL]   recent[17] FullBlockClosure>>on:fork:
+[MUSTBOOL]   recent[18] FullBlockClosure>>on:do:
+[MUSTBOOL]   recent[19] WeakAnnouncementSubscription>>cull:cull:
+[MUSTBOOL]   recent[20] WeakMessageSend>>cull:cull:
+[MUSTBOOL]   recent[21] WeakMessageSend>>cull:
+[MUSTBOOL]   recent[22] WeakMessageSend>>value:
+[MUSTBOOL]   recent[23] IceSystemEventListener class>>handleMethodChange:
+[MUSTBOOL]   recent[24] IceSystemEventListener class>>handlePackagesChange:
+[MUSTBOOL]   recent[25] OrderedCollection>>do:
+[XFER-34] old=0x3037f6668 pri=80 -> new=0x46f886120 pri=80
+[XFER-35] old=0x46f886120 pri=80 -> new=0x3037f6668 pri=80
+[XFER-36] old=0x3037f6668 pri=80 -> new=0x46f882090 pri=79
+[XFER-37] old=0x46f882090 pri=79 -> new=0x3037f6668 pri=80
+[XFER-38] old=0x3037f6668 pri=80 -> new=0x3043060f0 pri=70
+[XFER-39] old=0x3043060f0 pri=70 -> new=0x3037f6668 pri=80
+[XFER-40] old=0x3037f6668 pri=80 -> new=0x304306030 pri=60
+[DRAIN-1] initial=9 processed=9 wka=2 wkaarr-drop=1 kept=6 dec=0 pending=9->9
+[XFER-41] old=0x303e564b8 pri=60 -> new=0x3037f5d00 pri=80
+[XFER-42] old=0x3037f5d00 pri=80 -> new=0x303e56510 pri=50
+[XFER-43] old=0x303e56510 pri=50 -> new=0x46f0008e0 pri=51
+[XFER-44] old=0x46f0008e0 pri=51 -> new=0x3037f5d00 pri=80
+[XFER-45] old=0x3037f5d00 pri=80 -> new=0x303e56510 pri=50
+[XFER-46] old=0x303e56510 pri=50 -> new=0x3037f5d00 pri=80
+[XFER-47] old=0x3037f5d00 pri=80 -> new=0x3037fee28 pri=40
+[XFER-48] old=0x3037fee28 pri=40 -> new=0x3037f5d00 pri=80
+[XFER-49] old=0x3037f5d00 pri=80 -> new=0x303804480 pri=40
+
+=== Injecting Right-Click (World Menu) ===
+[TEST] Injected mouse DOWN at (50,300) button=2 subtype=1 queueAddr=0x102907d98 isEmpty=0
+[TEST] Injected mouse UP at (50,300) subtype=2
+[DELAY-DEATH] Timer semaphore signaled 5s ago but scheduler never re-armed. Recovery attempt #1
+[DELAY-RECOVERY] Re-signaling timer semaphore 0x300362a88 (attempt 1)
+[PREEMPT] P40→P60 (active=0x46f02b048 → 0x46f02eff8)
+[PREEMPT] P40→P60 (active=0x46f02b048 → 0x46f02eff8)
+[PREEMPT] P40→P60 (active=0x46f02b048 → 0x46f02eff8)
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-INJECT-SPLICE-DIAG] send2BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[PREEMPT] P40→P60 (active=0x46f02b048 → 0x46f02eff8)
+[PREEMPT] P40→P60 (active=0x46f02b048 → 0x46f02eff8)
+[DNU-STACK] Full call stack for #constantValue (DNU #2):
+[DNU-STACK]   [0] OCMethodNode>>sourceNodeForPC:
+[DNU-STACK]   [current] #testConstantValue fd=0
+[SISTA-RING] tag=constantValue seq=74297 count=32:
+  [0] #arrayType                    RET   rcvr=0x3000262e8 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [1] #size                         RET   rcvr=0x46f1d6c98 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [2] #size                         RET   rcvr=0x46f1d6730 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [3] #size                         RET   rcvr=0x46f1d6c98 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [4] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [6] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [7] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [8] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [9] #maxSmallSize                 RET   rcvr=0x300016e10 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [10] #max:                         RET   rcvr=0x11 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [11] #max:                         RET   rcvr=0x11 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [12] #max:                         RET   rcvr=0x11 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [13] #max:                         RET   rcvr=0x11 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [14] #max:                         RET   rcvr=0x11 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [15] #maxSmallSize                 RET   rcvr=0x300016e10 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [16] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [17] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [18] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [19] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [20] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [21] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [22] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [23] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [24] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [25] #maxSmallSize                 RET   rcvr=0x300016e10 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [27] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [28] #max:                         RET   rcvr=0xa9 ret/top=0xa9 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x46f1dd918 ret/top=0xa9 bailOp=0x00 argc=0 spΔ=0
+  [30] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [31] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+[DNU] #2: #constantValue not understood by rcvr=0x46f12e2f0 argCount=0 fd=0 in #testConstantValue P40
+[DNU]   rcvr cls=5355 fmt=1 class=OCCascadeNode
+[DNU]   FP=0x473b0e950 SP=0x473b0e968 base=0x473b0e950
+[DNU]   receiver_=0x46f034010 method_=0x300826f78
+[DNU]   FP[-2] = 0x0
+[DNU]   FP[-1] = 0x0
+[DNU]   FP[0] = 0x46f034010
+[DNU]   FP[1] = 0x46f034010
+[DNU]   FP[2] = 0x46f12e2f0
+[DNU]   FP[3] = 0x46f12e2f0
+[DNU]   FP[4] = 0x46f12e2f0
+[DNU]   FP[5] = 0x311
+[DNU]   FP[6] = 0x46f12e2f0
+[DNU]   FP[7] = 0x311
+[DNU]   FP[8] = 0x46f1df960
+[DNU]   FP[9] = 0x46f1d7b50
+[DNU]   FP[10] = 0x46f12e2f0
+[SISTA-SELECT-CAND] pfbBC=1 send1BC=4 selIdx=1 litIdx=0 slot=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-INJECT-SPLICE-DIAG] send2BC=51 selIdx=6 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=46 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=36 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=52 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=31 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=47 verdict=REJECT reject=non-simple block op rejOp=send
+[DNU-STACK] Full call stack for #suspend (DNU #3):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=497708 count=32:
+  [0] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [1] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [2] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [3] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [4] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [5] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [6] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [7] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [8] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [9] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [10] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [11] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [12] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [13] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [14] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [15] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [16] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [17] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [18] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [19] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [20] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [21] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [22] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [23] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [24] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0xc9 ret/top=0xc9 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x1 ret/top=0x5a9 bailOp=0x00 argc=0 spΔ=0
+  [27] #value:value:                 RET   rcvr=0x3003c9848 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x470341e80 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x46f034010 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x46f034010 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #3: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU]   FP=0x473b0e9e8 SP=0x473b0ea00 base=0x473b0e950
+[DNU]   receiver_=0x3037fb968 method_=0x303809790
+[DNU]   FP[-2] = 0x3000182e0
+[DNU]   FP[-1] = 0x3038097b8
+[DNU]   FP[0] = 0x470343f90
+[DNU]   FP[1] = 0x300000000
+[DNU]   FP[2] = 0x300000000
+[DNU]   FP[3] = 0x80001
+[DNU]   FP[4] = 0x300000000
+[DNU]   FP[5] = 0x300000000
+[DNU]   FP[6] = 0x3005a6ab8
+[DNU]   FP[7] = 0x4703430f8
+[DNU]   FP[8] = 0x470343500
+[DNU]   FP[9] = 0x300000000
+[DNU]   FP[10] = 0x3005a6ab8
+[DNU-STACK] Full call stack for #suspend (DNU #4):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=503120 count=32:
+  [0] #max:                         RET   rcvr=0xc1 ret/top=0xc1 bailOp=0x00 argc=0 spΔ=0
+  [1] #max:                         RET   rcvr=0xc1 ret/top=0xc1 bailOp=0x00 argc=0 spΔ=0
+  [2] #max:                         RET   rcvr=0xc1 ret/top=0xc1 bailOp=0x00 argc=0 spΔ=0
+  [3] #max:                         RET   rcvr=0xc1 ret/top=0xc1 bailOp=0x00 argc=0 spΔ=0
+  [4] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [5] #children                     RET   rcvr=0x470550c18 ret/top=0x300261cf8 bailOp=0x00 argc=0 spΔ=0
+  [6] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [7] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [8] #size                         RET   rcvr=0x470553520 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [9] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [10] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [11] #children                     RET   rcvr=0x470550c18 ret/top=0x300261cf8 bailOp=0x00 argc=0 spΔ=0
+  [12] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [13] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [14] #size                         RET   rcvr=0x4705591c0 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [15] #size                         RET   rcvr=0x4705591c0 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [16] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [17] #size                         RET   rcvr=0x47055b510 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [18] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [19] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [20] #children                     RET   rcvr=0x470550c18 ret/top=0x300261cf8 bailOp=0x00 argc=0 spΔ=0
+  [21] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [22] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [23] #size                         RET   rcvr=0x470562fc8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [24] #size                         RET   rcvr=0x470562fc8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [25] #classForTestResult           RET   rcvr=0x3007dfad8 ret/top=0x30056b568 bailOp=0x00 argc=0 spΔ=0
+  [26] #failure                      RET   rcvr=0x30056b568 ret/top=0x30056a108 bailOp=0x00 argc=0 spΔ=0
+  [27] #receiver                     RET   rcvr=0x4706e7550 ret/top=0x4706e6d60 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x4706e7f80 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x470351550 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x470351550 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #4: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=recursion guard rejOp=return
+[SISTA-SELECT-CAND] pfbBC=1 send1BC=4 selIdx=1 litIdx=0 slot=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-IVINJECT-DIAG] toBC=46 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=31 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=47 verdict=REJECT reject=non-simple block op rejOp=send
+[DNU-STACK] Full call stack for #isClean (DNU #5):
+[DNU-STACK]   [0] OCMethodNode>>sourceNodeForPC:
+[DNU-STACK]   [current] #testIsClean fd=0
+[SISTA-RING] tag=isClean seq=523220 count=32:
+  [0] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [1] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [2] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [3] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [4] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [6] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [7] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [8] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [9] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [10] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [11] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [12] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [13] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [14] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [15] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [16] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [17] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [18] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [19] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [20] #max:                         RET   rcvr=0x1a1 ret/top=0x1a1 bailOp=0x00 argc=0 spΔ=0
+  [21] #maxSmallSize                 RET   rcvr=0x300016e10 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [22] #max:                         RET   rcvr=0x399 ret/top=0x399 bailOp=0x00 argc=0 spΔ=0
+  [23] #max:                         RET   rcvr=0x399 ret/top=0x399 bailOp=0x00 argc=0 spΔ=0
+  [24] #max:                         RET   rcvr=0x399 ret/top=0x399 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x399 ret/top=0x399 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x399 ret/top=0x399 bailOp=0x00 argc=0 spΔ=0
+  [27] #max:                         RET   rcvr=0x399 ret/top=0x399 bailOp=0x00 argc=0 spΔ=0
+  [28] #max:                         RET   rcvr=0x399 ret/top=0x399 bailOp=0x00 argc=0 spΔ=0
+  [29] #max:                         RET   rcvr=0x399 ret/top=0x399 bailOp=0x00 argc=0 spΔ=0
+  [30] #max:                         RET   rcvr=0x399 ret/top=0x399 bailOp=0x00 argc=0 spΔ=0
+  [31] #max:                         RET   rcvr=0x399 ret/top=0x399 bailOp=0x00 argc=0 spΔ=0
+[DNU] #5: #isClean not understood by rcvr=0x46f48cbe0 argCount=0 fd=0 in #testIsClean P40
+[DNU]   rcvr cls=5355 fmt=1 class=OCCascadeNode
+[DNU-STACK] Full call stack for #suspend (DNU #6):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=937952 count=32:
+  [0] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [1] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [2] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [3] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [4] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [5] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [6] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [7] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [8] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [9] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [10] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [11] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [12] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [13] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [14] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [15] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [16] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [17] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [18] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [19] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [20] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [21] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [22] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [23] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [24] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0xc9 ret/top=0xc9 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x1 ret/top=0x5a9 bailOp=0x00 argc=0 spΔ=0
+  [27] #value:value:                 RET   rcvr=0x3003c9848 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x4704ef6b8 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x304309b08 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x304309b08 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #6: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU-STACK] Full call stack for #isConstant (DNU #7):
+[DNU-STACK]   [0] OCMethodNode>>sourceNodeForPC:
+[DNU-STACK]   [current] #testIsConstant fd=0
+[SISTA-RING] tag=isConstant seq=942297 count=32:
+  [0] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [1] #method                       RET   rcvr=0x4706cb680 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [2] #method                       RET   rcvr=0x4706cba90 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [3] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [4] #method                       RET   rcvr=0x4706cba90 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [5] #method                       RET   rcvr=0x4706cc000 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [6] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [7] #method                       RET   rcvr=0x4706cc000 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [8] #method                       RET   rcvr=0x4706e3ac8 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [9] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [10] #method                       RET   rcvr=0x4706e3ac8 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [11] #method                       RET   rcvr=0x4706e3ef8 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [12] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [13] #method                       RET   rcvr=0x4706e3ef8 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [14] #method                       RET   rcvr=0x4706e4330 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [15] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [16] #method                       RET   rcvr=0x4706e4330 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [17] #method                       RET   rcvr=0x4706e4740 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [18] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [19] #method                       RET   rcvr=0x4706e4740 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [20] #method                       RET   rcvr=0x4706e4cb0 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [21] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [22] #method                       RET   rcvr=0x4706e4cb0 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [23] #method                       RET   rcvr=0x4706e9038 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [24] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [25] #method                       RET   rcvr=0x4706e9038 ret/top=0x470663e20 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0xf9 ret/top=0xf9 bailOp=0x00 argc=0 spΔ=0
+  [27] #size                         RET   rcvr=0x47070f2b0 ret/top=0xf9 bailOp=0x00 argc=0 spΔ=0
+  [28] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [29] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [30] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [31] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+[DNU] #7: #isConstant not understood by rcvr=0x470637698 argCount=0 fd=0 in #testIsConstant P40
+[DNU]   rcvr cls=5355 fmt=1 class=OCCascadeNode
+[DIAG] P40 ZnBufferedReadStream>>and: ip=136 fd=3
+[DIAG]   [-1] ZnCharacterReadStream>>next
+[DIAG]   [-2] SourceFile>>next
+[DIAG]   [-3] ChunkReadStream>>basicNextChunk
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a4caabd3b nextMs=0
+[DIAG-TIMER] wakeup delta=770336 usec (0.770 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x30487dbd0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e56460 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 10s: ~132811919 steps
+[DNU-STACK] Full call stack for #suspend (DNU #8):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=1357036 count=32:
+  [0] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [1] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [2] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [3] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [4] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [5] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [6] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [7] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [8] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [9] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [10] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [11] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [12] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [13] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [14] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [15] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [16] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [17] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [18] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [19] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [20] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [21] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [22] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [23] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [24] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0xc9 ret/top=0xc9 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x1 ret/top=0x5a9 bailOp=0x00 argc=0 spΔ=0
+  [27] #value:value:                 RET   rcvr=0x3003c9848 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x46f8d7120 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x30487e368 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x30487e368 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #8: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[DNU-STACK] Full call stack for #numArgs (DNU #9):
+[DNU-STACK]   [0] OCMethodNode>>sourceNodeForPC:
+[DNU-STACK]   [current] #testNumArgs fd=0
+[SISTA-RING] tag=numArgs seq=1360203 count=32:
+  [0] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [1] #method                       RET   rcvr=0x46fa44368 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [2] #method                       RET   rcvr=0x46fa448d8 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [3] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [4] #method                       RET   rcvr=0x46fa448d8 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [5] #method                       RET   rcvr=0x46fa5dd10 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [6] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [7] #method                       RET   rcvr=0x46fa5dd10 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [8] #method                       RET   rcvr=0x46fa5e140 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [9] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [10] #method                       RET   rcvr=0x46fa5e140 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [11] #method                       RET   rcvr=0x46fa5e578 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [12] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [13] #method                       RET   rcvr=0x46fa5e578 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [14] #method                       RET   rcvr=0x46fa76e60 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [15] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [16] #maxSmallSize                 RET   rcvr=0x300016e10 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [17] #method                       RET   rcvr=0x46fa76e60 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [18] #method                       RET   rcvr=0x46fa77290 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [19] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [20] #method                       RET   rcvr=0x46fa77290 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [21] #method                       RET   rcvr=0x46fa776a0 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [22] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [23] #method                       RET   rcvr=0x46fa776a0 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [24] #method                       RET   rcvr=0x46fa77d58 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [26] #method                       RET   rcvr=0x46fa77d58 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [27] #method                       RET   rcvr=0x46fa7c0e0 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [28] #max:                         RET   rcvr=0x59 ret/top=0x59 bailOp=0x00 argc=0 spΔ=0
+  [29] #method                       RET   rcvr=0x46fa7c0e0 ret/top=0x46fa0cb80 bailOp=0x00 argc=0 spΔ=0
+  [30] #max:                         RET   rcvr=0xb9 ret/top=0xb9 bailOp=0x00 argc=0 spΔ=0
+  [31] #size                         RET   rcvr=0x46fa9ae80 ret/top=0xb9 bailOp=0x00 argc=0 spΔ=0
+[DNU] #9: #numArgs not understood by rcvr=0x46f9dd140 argCount=0 fd=0 in #testNumArgs P40
+[DNU]   rcvr cls=5355 fmt=1 class=OCCascadeNode
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[DNU-STACK] Full call stack for #suspend (DNU #10):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=1774918 count=32:
+  [0] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [1] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [2] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [3] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [4] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [5] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [6] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [7] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [8] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [9] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [10] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [11] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [12] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [13] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [14] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [15] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [16] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [17] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [18] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [19] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [20] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [21] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [22] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [23] #isExtension:                 RET   rcvr=0x3000176e8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [24] #bytecodeSize:                RET   rcvr=0x3000176e8 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0xc9 ret/top=0xc9 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x1 ret/top=0x5a9 bailOp=0x00 argc=0 spΔ=0
+  [27] #value:value:                 RET   rcvr=0x3003c9848 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #size                         RET   rcvr=0x4705f69a0 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0x46f8e6760 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0x46f8e6760 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #10: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #11: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #12: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #13: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #14: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #15: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #16: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #17: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #18: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #19: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #20: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #21: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #22: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #23: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #24: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #25: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #26: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #27: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #28: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #29: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #30: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #31: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #32: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #33: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #34: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #35: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #36: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #37: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #38: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #39: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #40: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #41: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #42: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #43: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #44: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[DNU] #45: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #46: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #47: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #48: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #49: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #50: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #51: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #52: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #53: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #54: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #55: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #56: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #57: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #58: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #59: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #60: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[DIAG] P40 ByteString class>>ifTrue:ifFalse: ip=80 fd=74
+[DIAG]   [-1] ByteString>>copyFrom:to:
+[DIAG]   [-2] ReadWriteStream>>contents
+[DIAG]   [-3] EFFormatter>>format:
+[DIAG]   [-4] EFFormatter>>format:
+[DIAG]   [-5] IdentityDictionary>>?
+[DIAG]   [-6] IdentityDictionary>>at:ifAbsent:
+[DIAG]   [-7] IdentityDictionary>>at:ifAbsentPut:
+[DIAG]   [-8] EFFormatter>>formattedSourceFor:
+[DIAG]   [-9] EFFormatter>>willBeMultiline:
+[DIAG]   [-10] EFFormatter>>formatBlock:
+[DIAG]   [-11] EFFormatter>>formatBlock:
+[DIAG]   [-12] FullBlockClosure>>ensure:
+[DIAG]   [-13] EFFormatter>>bracketWith:around:
+[DIAG]   [-14] EFFormatter>>visitBlockNode:
+[DIAG]   [-15] OCBlockNode>>acceptVisitor:
+[DIAG]   [-16] EFFormatter>>visitNode:
+[DIAG]   [-17] EFFormatter>>ifFalse:
+[DIAG]   [-18] EFFormatter>>bracketWith:around:indentExtraSpaces:
+[DIAG]   [-19] EFFormatter>>visitNode:
+[DIAG]   [-20] EFFormatter>>format:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a4d3f1c10 nextMs=0
+[DIAG-TIMER] wakeup delta=493834 usec (0.494 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x305fa4710 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e56460 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 20s: ~406428784 steps
+[DIAG] P40 WriteStream>> ip=42 fd=70
+[DIAG]   [-1] WriteStream>>nextPutAll:
+[DIAG]   [-2] ByteSymbol>>storeOn:
+[DIAG]   [-3] OCLiteralValueNode>>ifTrue:ifFalse:
+[DIAG]   [-4] String class>>new:streamContents:
+[DIAG]   [-5] String class>>streamContents:
+[DIAG]   [-6] OCLiteralValueNode>>sourceText
+[DIAG]   [-7] EFFormatter>>visitLiteralNode:
+[DIAG]   [-8] EFFormatter>>visitLiteralValueNode:
+[DIAG]   [-9] OCLiteralValueNode>>acceptVisitor:
+[DIAG]   [-10] EFFormatter>>visitNode:
+[DIAG]   [-11] EFFormatter>>ifFalse:
+[DIAG]   [-12] EFFormatter>>bracketWith:around:indentExtraSpaces:
+[DIAG]   [-13] EFFormatter>>visitNode:
+[DIAG]   [-14] EFFormatter>>handleLineForArgument:
+[DIAG]   [-15] EFFormatter>>handleLineForArgument:
+[DIAG]   [-16] FullBlockClosure>>ensure:
+[DIAG]   [-17] EFFormatter>>indent:around:
+[DIAG]   [-18] EFFormatter>>and:
+[DIAG]   [-19] Array>>with:do:
+[DIAG]   [-20] EFFormatter>>formatSelectorAndArguments:firstSeparator:restSeparator:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a4dd7b738 nextMs=0
+[DIAG-TIMER] wakeup delta=493872 usec (0.494 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x309c40438 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e56460 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 30s: ~573502640 steps
+[DIAG] P40 ByteSymbol>>ifTrue: ip=97 fd=78
+[DIAG]   [-1] OrderedCollection>>indexOf:startingAt:ifAbsent:
+[DIAG]   [-2] OrderedCollection>>indexOf:ifAbsent:
+[DIAG]   [-3] OrderedCollection>>indexOf:
+[DIAG]   [-4] OrderedCollection>>includes:
+[DIAG]   [-5] EFFormatter>>formatSelectorAndArguments:
+[DIAG]   [-6] EFFormatter>>visitMessageNode:
+[DIAG]   [-7] OCMessageNode>>acceptVisitor:
+[DIAG]   [-8] EFFormatter>>visitNode:
+[DIAG]   [-9] EFFormatter>>ifFalse:
+[DIAG]   [-10] EFFormatter>>bracketWith:around:indentExtraSpaces:
+[DIAG]   [-11] EFFormatter>>visitNode:
+[DIAG]   [-12] EFFormatter>>ifTrue:ifFalse:
+[DIAG]   [-13] OrderedCollection>>withIndexDo:
+[DIAG]   [-14] EFFormatter>>formatSequenceNodeStatementsFor:
+[DIAG]   [-15] EFFormatter>>visitSequenceNode:
+[DIAG]   [-16] EFFormatter>>formatBlock:
+[DIAG]   [-17] EFFormatter>>formatBlock:
+[DIAG]   [-18] FullBlockClosure>>ensure:
+[DIAG]   [-19] EFFormatter>>bracketWith:around:
+[DIAG]   [-20] EFFormatter>>visitBlockNode:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a4e708c6a nextMs=0
+[DIAG-TIMER] wakeup delta=506990 usec (0.507 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x30dbaf4c0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e56460 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 40s: ~743898801 steps
+[DIAG] P40 OCASTClosureAnalyzer>>acceptVisitor: ip=33 fd=35
+[DIAG]   [-1] OCASTClosureAnalyzer>>visitNode:
+[DIAG]   [-2] OrderedCollection>>do:
+[DIAG]   [-3] OCASTClosureAnalyzer>>visitSequenceNode:
+[DIAG]   [-4] OCSequenceNode>>acceptVisitor:
+[DIAG]   [-5] OCASTClosureAnalyzer>>visitNode:
+[DIAG]   [-6] OCASTClosureAnalyzer>>visitBlockNode:
+[DIAG]   [-7] OCBlockNode>>acceptVisitor:
+[DIAG]   [-8] OCASTClosureAnalyzer>>visitNode:
+[DIAG]   [-9] OCASTClosureAnalyzer>>visitNode:
+[DIAG]   [-10] Array>>do:
+[DIAG]   [-11] OCASTClosureAnalyzer>>visitMessageNode:
+[DIAG]   [-12] OCMessageNode>>acceptVisitor:
+[DIAG]   [-13] OCASTClosureAnalyzer>>visitNode:
+[DIAG]   [-14] OCASTClosureAnalyzer>>visitNode:
+[DIAG]   [-15] OrderedCollection>>do:
+[DIAG]   [-16] OCASTClosureAnalyzer>>visitSequenceNode:
+[DIAG]   [-17] OCSequenceNode>>acceptVisitor:
+[DIAG]   [-18] OCASTClosureAnalyzer>>visitNode:
+[DIAG]   [-19] OCASTClosureAnalyzer>>visitBlockNode:
+[DIAG]   [-20] OCBlockNode>>acceptVisitor:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a4f0928af nextMs=0
+[DIAG-TIMER] wakeup delta=507913 usec (0.508 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x30fb19530 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e56460 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 50s: ~901672404 steps
+[syncDisplay] displayFormReady_=false (call 1000), displayForm_ isNil=0
+[SISTA-ACCUM-CAND] pfbBC=9 doBC=12 outerTemp=0 slot=0 arith=0
+[SISTA-ACCUM-EMIT] bc=9 vid=7 packed=0x0
+[SISTA-SPLICE-LOWER-OK] method=0x3002f5740
+[DIAG] P40 ByteSymbol>>ifTrue: ip=93 fd=124
+[DIAG]   [-1] Array>>indexOf:startingAt:ifAbsent:
+[DIAG]   [-2] Array>>indexOf:ifAbsent:
+[DIAG]   [-3] Array>>indexOf:
+[DIAG]   [-4] Array>>includes:
+[DIAG]   [-5] EFFormatter>>isMultiLineMessage:
+[DIAG]   [-6] EFFormatter>>formatSelectorAndArguments:
+[DIAG]   [-7] EFFormatter>>visitMessageNode:
+[DIAG]   [-8] OCMessageNode>>acceptVisitor:
+[DIAG]   [-9] EFFormatter>>visitNode:
+[DIAG]   [-10] EFFormatter>>ifFalse:
+[DIAG]   [-11] EFFormatter>>bracketWith:around:indentExtraSpaces:
+[DIAG]   [-12] EFFormatter>>visitNode:
+[DIAG]   [-13] EFFormatter>>visitMessageNode:
+[DIAG]   [-14] OCMessageNode>>acceptVisitor:
+[DIAG]   [-15] EFFormatter>>visitNode:
+[DIAG]   [-16] EFFormatter>>ifFalse:
+[DIAG]   [-17] EFFormatter>>bracketWith:around:indentExtraSpaces:
+[DIAG]   [-18] EFFormatter>>visitNode:
+[DIAG]   [-19] EFFormatter>>visitMessageNode:
+[DIAG]   [-20] OCMessageNode>>acceptVisitor:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a4fa1c6b5 nextMs=0
+[DIAG-TIMER] wakeup delta=507739 usec (0.508 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x313b3e7e0 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e56460 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 60s: ~1069290005 steps
+[SISTA-ACCUM-CAND] pfbBC=9 doBC=12 outerTemp=0 slot=0 arith=0
+[SISTA-ACCUM-EMIT] bc=9 vid=7 packed=0x0
+[SISTA-SPLICE-LOWER-OK] method=0x3002f5740
+[DIAG] P40 OCScanner>>? ip=33 fd=8
+[DIAG]   [-1] OCScanner class>>on:
+[DIAG]   [-2] OCParser>>initializeParserWith:
+[DIAG]   [-3] OCParser class>>parseFaultyMethod:
+[DIAG]   [-4] OCParser class>>parseMethod:onError:
+[DIAG]   [-5] OCParser class>>parseMethod:
+[DIAG]   [-6] OCSimpleFormatterTest>>formatClass:selector:
+[DIAG]   [-7] OCSimpleFormatterTest>>formatClass:selector:
+[DIAG]   [-8] Array>>do:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a503eea2f nextMs=0
+[DIAG-TIMER] wakeup delta=798282 usec (0.798 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x315f8ee68 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e56460 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 70s: ~1274376181 steps
+[DIAG] P40 SparseLargeTable>>ifNil: ip=27 fd=21
+[DIAG]   [-1] SparseLargeTable>>at:
+[DIAG]   [-2] Unicode class>>isLetter:
+[DIAG]   [-3] (?)>>isLetter
+[DIAG]   [-4] ByteSymbol>>numArgs
+[DIAG]   [-5] OCSelectorNode>>numArgs
+[DIAG]   [-6] OCMessageNode>>receiver:selector:keywordsPositions:arguments:
+[DIAG]   [-7] OCMessageNode class>>receiver:selector:keywordsPositions:arguments:
+[DIAG]   [-8] OCParser>>parseBinaryMessageWith:
+[DIAG]   [-9] OCParser>>parseBinaryMessage
+[DIAG]   [-10] OCParser>>parseKeywordMessageWith:
+[DIAG]   [-11] OCParser>>parseKeywordMessage
+[DIAG]   [-12] OCParser>>parseCascadeMessage
+[DIAG]   [-13] OCParser>>parseAssignment
+[DIAG]   [-14] OCParser>>parseStatementInto:periodList:withAcceptedStatementClosers:
+[DIAG]   [-15] OCParser>>parseStatementList:into:untilAnyCloserOf:
+[DIAG]   [-16] OCParser>>parseStatements:into:untilAnyCloserOf:
+[DIAG]   [-17] OCParser>>parseMethodBodyInto:
+[DIAG]   [-18] OCParser>>parseMethod
+[DIAG]   [-19] OCParser class>>parseFaultyMethod:
+[DIAG]   [-20] OCParser class>>parseMethod:onError:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe0f4a50d7a704 nextMs=0
+[DIAG-TIMER] wakeup delta=807590 usec (0.808 sec)
+[DIAG-QUEUE] P80 proc=0x3037f5d00 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P60 proc=0x315f8ee68 susp=SUnitRunner class>>ifFalse:
+[DIAG-QUEUE] P10 proc=0x303e56460 susp=ProcessorScheduler class>>idleProcess
+[PROGRESS] 80s: ~1432738426 steps
