@@ -214,23 +214,29 @@ that the scavenge will redo by scanning every old-space slot.
 
 - asmjit T1 inline setter x86 (AsmjitT1.cpp:1929) — same fix needed.
   Can't test on Catalyst arm64.
-- stencils.cpp store-recv-var stencils — base variants now barrier'd
-  via _HOLE_RT_WRITE_BARRIER (commit `65792d23`).  Pipeline end-to-end
-  wired (extract_stencils.py registers the hole, JITCompiler patches
-  helper-19, JITRuntime sets helpers.writeBarrier).
+- stencils.cpp store-recv-var stencils — base variants barrier'd
+  via _HOLE_RT_WRITE_BARRIER (commit `65792d23`).  SimStack variants
+  (_1/_2/_3/_4) barrier'd via inline-asm bit-set (commit `870c864e`).
+  Audit gap for *bit accuracy* is now closed.
 
-  **BUT** the base stencils are essentially never executed at runtime:
-  JITCompiler.cpp:1137-1141 remaps every popStoreRecvVar to a SimStack
-  variant (_1/_2/_3/_4) whenever the operand stack has a TOS value
-  (which is always for a store).  Counter stays at 0 across fib,
-  sieve, tinyBench, and normal image startup.
+  **What works:**
+  - JITState gained 4 cached space pointers (offsets 240/248/256/264)
+    populated once per tryJITActivation entry.
+  - INLINE_WRITE_BARRIER_OLD_TO_YOUNG macro emits ~13 instructions
+    of pure inline asm using only caller-saved x11 — no BLR, no
+    x19-x22 spill, extract verifier passes.
+  - All 5 SimStack store stencils now call the macro after their
+    inline slot write.
 
-  The SimStack variants can't safely call a C helper — extract's
-  SimStack verifier fails because the call forces clang to save/
-  restore x19-x22, defeating register caching.  Closing this gap
-  requires either inline barrier emit (no C call, set the remembered
-  bit + push to vector via inline asm) or restructuring the SimStack
-  invariant.  Deferred — needs its own session.
+  **What's still open:**
+  - rememberedSet_ vector is still stale (the inline asm sets the
+    bit but can't push to std::vector).  Wiring scavenge to consume
+    a ring-buffer remembered set, or to skip un-remembered objects
+    via the bit alone, is the path to actually dropping the
+    O(oldSpace) full scan in `ObjectMemory.cpp:1571-1597`.
+  - The non-SimStack base stencils (commit `65792d23`) still call
+    the helper, so they DO maintain the vector — but those paths
+    are essentially never reached.
 
 Once stencils barrier, scavenge can be flipped to consume
 `rememberedSet_` (`ObjectMemory.cpp:1571-1597` full-scan replaced
