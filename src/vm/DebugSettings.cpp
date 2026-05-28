@@ -250,7 +250,22 @@ DebugSettings::DebugSettings() {
     t1J2JSplitPool      = envPresent("PHARO_T1_J2J_SPLIT_POOL");
     // F3-NL6: default-on BV inline after F3-NL2/3/4 fixes.
     // PHARO_T1_NO_INLINE_BLOCK_VALUE=1 disables.
-    t1InlineBlockValue  = !envPresent("PHARO_T1_NO_INLINE_BLOCK_VALUE");
+    //
+    // 2026-05-28: DEFAULT FLIPPED TO OFF.  The BV-inline path
+    // corrupts inner-block iteration when the outer caller is itself
+    // doing `arr do:` over the same receiver and the inner block
+    // compares captured outer-`each` against the inner-`each`.
+    // Reproducer: `#($a $b $a $c $d) do: [:e | print: (arr2 occurrencesOf: e)]`
+    // returns 3,1,3,1,1 instead of 2,1,2,1,1 with BV inline on.
+    // Costs 22 SUnit FAILs in our focused-4-class run
+    // (testAsArray/testAsBag/test0FixtureIterateTest etc. all hit
+    // this pattern).  Flipping off lifts SUnit pass from 611/634
+    // (96%) to 633/634 (99.8%) — only remaining issue is
+    // CharacterTest>>testStoreStringAll (ERROR, unrelated).
+    // Perf cost: fib28 10 ms -> 12 ms (small — fib doesn't use
+    // blocks heavily).
+    // Opt back in via PHARO_T1_INLINE_BLOCK_VALUE=1.
+    t1InlineBlockValue  = envPresent("PHARO_T1_INLINE_BLOCK_VALUE");
     t1ProbeAlwaysMiss   = envPresent("PHARO_T1_PROBE_ALWAYS_MISS");
     t1HitAsMiss         = envPresent("PHARO_T1_HIT_AS_MISS");
     t1ICHitVerify       = envPresent("PHARO_T1_IC_HIT_VERIFY");
