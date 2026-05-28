@@ -168,3 +168,43 @@ the per-test watchdog should catch it but we killed early).
 The leak itself is still upstream — these guards prevent the crash
 but don't stop the bit-60 escape.  Next step: find the IC fill /
 return-value path that emits the polluted Oop.
+
+### Bisection attempt — bit 63, not bit 60
+
+A closer look at the fault address `0x86fe800000000008` shows
+**bit 63 set, bit 60 CLEAR** — so this is the inline-getter / quick-prim
+classifier bit (bit 63), not J2J_ENTRY_BIT (bit 60).  The Oop is
+shaped like an IC `extras` word: `(1ULL << 63) | classifier_bits |
+low_address_bits` — typical of `quickPrimExtra` at
+`Interpreter.cpp:19858` or trivial-method getter classification at
+:19438.
+
+Tried two angles:
+
+1. **`PHARO_T1_NO_INLINE_GETTER=1`** — no `[DNU-LEAK]` events fire,
+   but the run also doesn't get past test 35 (different reason: many
+   methods that were inlined now take the chain-loop path and the
+   suite gets slow enough that no test completes inside a reasonable
+   wall budget).  Suggestive that the inline-getter path participates
+   in the leak, but not conclusive.
+
+2. **Canonicalize the inline-getter result** — `a.and_` the loaded
+   slot value with `0x0000FFFFFFFFFFFF` after checking the tag is 0
+   (object).  Build clean, test runs, but `[DNU-LEAK]` still fires —
+   so whatever is producing the corrupt receiver is NOT the inline-
+   getter result store.  Reverted the mask.
+
+The leak is somewhere else.  Plausible remaining suspects:
+
+* Inline-setter, inline-returnsSelf, or inline-prim-at result paths
+  that write extras-shaped values back to the operand stack.
+* `dispatchCached` storing the IC's `icData[1]` (cached method
+  Oop) into `OFF_CACHED_TARGET` without masking — if the IC fill
+  ever wrote a getter-extras-shaped value to the method slot, this
+  would propagate.
+* A return-value path (returnTop / returnReceiver / etc.) that
+  reads from a polluted stack slot.
+
+Needs another lldb pass with a hardware watchpoint on the stack
+slot that ends up corrupt, to catch the actual store that pollutes
+it.
