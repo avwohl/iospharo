@@ -138,19 +138,25 @@ DebugSettings::DebugSettings() {
     // and deferred.md A6 N+30k.  PHARO_T1_NO_INLINE_J2J=1 opts out
     // entirely (legacy workaround).
     //
-    // 2026-05-28 PM: DEFAULT FLIPPED TO ON, paired with xmethod=ON.
-    // Bisection confirmed:
-    //   INLINE off (regardless of xmethod):    611/634 SUnit PASS, 76 ms fib28
+    // 2026-05-28 PM (final): DEFAULT FLIPPED BACK TO OFF.
+    //
+    // Bisection found:
+    //   INLINE off + BV off (NEW default):     634/634 SUnit PASS (100%),  76 ms fib28
     //   INLINE on, XMETHOD off (old default):  ~297/634 (cull: bug catastrophic)
-    //   INLINE on, XMETHOD on (NEW default):   611/634 SUnit PASS, 11 ms fib28
-    // INLINE+XMETHOD has IDENTICAL pass/fail list to OFF, and gives 7x
-    // fib speedup.  The cull:/do:/value: dispatch confusion that
-    // motivated the earlier default-OFF only happens when xmethod is
-    // off (cross-method sends bail to dispatchCached, which has its
-    // own bugs).  With xmethod on, cross-method inline-J2J fires
-    // correctly and the bug goes away.
-    // Opt out via PHARO_T1_NO_INLINE_J2J=1.
-    t1InlineJ2J         = !envPresent("PHARO_T1_NO_INLINE_J2J");
+    //   INLINE on, XMETHOD on, BV off:         633/634 SUnit PASS,         13 ms fib28
+    //
+    // The 1-test gap with INLINE on is CharacterTest>>testStoreStringAll
+    // — deep OCParser/JIT interaction (parseAssignment gets a non-Boolean
+    // OCIdentifierToken from a JIT-emitted conditional).  Workarounds
+    // tried that don't help: PHARO_T1_PURE_J2J_GATE=1,
+    // PHARO_T1_WARM_J2J_GATE=1, PHARO_T1_J2J_RECEIVER_SYNC=1,
+    // PHARO_T1_CAN_SKIP_J2J_SAVE=1, PHARO_T1_INLINE_J2J_XMETHOD_MAX=0.
+    //
+    // Trading 7x fib speedup for 100% test pass rate per the
+    // user's "fix the existing fails" directive.  Opt back in via
+    // PHARO_T1_INLINE_J2J=1 + PHARO_T1_INLINE_J2J_XMETHOD=1 for
+    // bench harnesses that need fib-style perf.
+    t1InlineJ2J         = envPresent("PHARO_T1_INLINE_J2J");
     // 2026-05-21 (jit-may20 Step 2): pure-J2J gate replaced by warmth
     // gate as the default.  Pure gate (bit-60 check) was too strict —
     // bailed ~96.5% of inline-J2J attempts on fib.  Warmth gate
