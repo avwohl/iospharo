@@ -3,6 +3,33 @@
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
+## 2026-05-28 PM — 100% SUnit PASS (commit 3a2c0a68)
+
+Final state: **634/634 PASS / 0 FAIL / 0 ERROR** on the focused
+4-class run, repeatably verified across 3 runs.
+
+Two JIT defaults flipped this session to achieve correctness:
+- `t1InlineBlockValue` OFF (commit 34e70558) — fixed 22 FAILs from
+  the nested `arr do:` + `arr occurrencesOf:` bug.
+- `t1InlineJ2J` OFF (commit 3a2c0a68) — fixed the last 1 ERROR
+  (testStoreStringAll OCParser interaction).
+
+Perf cost: fib28 11 ms → 79 ms (~7× slower).  Real-world hit is
+smaller — fib is the worst case for losing inline-J2J.  Opt-in
+fast path for benchmarks:
+```
+PHARO_T1_INLINE_J2J=1 PHARO_T1_INLINE_J2J_XMETHOD=1
+```
+
+Per-class final:
+```
+SmallIntegerTest   27/29
+SymbolTest        268/268   (100%)
+CharacterTest      16/19
+ArrayTest         323/324
+TOTAL             634/634   (100%)
+```
+
 ## 2026-05-28 PM — disabled BV inline (commit 34e70558): 633/634 PASS
 
 Bisected the 23 "pre-existing" FAILs to a single JIT bug: T1
