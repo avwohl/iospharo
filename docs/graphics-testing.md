@@ -140,13 +140,12 @@ For **Metacello-loaded** packages (Athens, Bloc, PolyMath):
   installed but never opened a world.  Root cause TBD — likely a
   `BitBlt class>>copyBits` overload our VM mis-dispatches when the
   destination form is the live display surface.
-* **Metacello `Character>>bitShift:` regression** — installing any
-  package from a GitHub repo throws `Instance of Character did not
-  understand #bitShift:` inside `SHA1>>processBuffer:`.  Iceberg
-  computes the SHA1 of a commit blob and treats each char as
-  a `bitShift:` recipient.  Probably an Iceberg/SHA1 expectation
-  that strings stream as `SmallInteger` codepoints, not `Character`.
-  Blocks Athens/Bloc/PolyMath install on the standard Pharo 13 image.
+* **Metacello `Character>>bitShift:` regression** — **FIXED**
+  2026-05-28 via `scripts/patches/character_numeric_coercion.st`.
+  Adds `Character>>{bitShift,bitAnd,bitOr,bitXor}:` and
+  `adaptTo{Integer,Float,Number}:andSend:`.  See
+  `docs/image_issues.md`.  PolyMath now installs cleanly (309
+  classes).
 
 ## Status
 
@@ -161,7 +160,7 @@ Queue tracked in TaskList:
        #13   Morph        5        ~40     yes           queued (bundled)
        #6    Bloc         0        0       no            deleted — not preinstalled (was substring false-match)
        #12   Plot/Chart   —        —       n/a           deleted — RS-subset of Roassal3 task #4
-       #7    PolyMath     —        —       no            blocked on Iceberg SHA1 bug
+       #7    PolyMath     101      ~3500   no, Metacello yes   done — 11 PASS then primitiveFloatAdd SIGSEGV
        #8    Render       —        —       —             pending (cross-cutting)
 
 All preinstalled-package class lists are pre-extracted to
