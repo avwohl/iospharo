@@ -114,8 +114,19 @@ test (test 17 instead of 35), same bit-60+ pattern in fault addr
 (`0x8340000000000000`).  So the bug is not isolated to one inline
 path; the basicNew inline was masking a different latent J2J leak.
 
-In-flight: `PHARO_NO_JIT=1` run on the same 99-class list to
-confirm zero crashes when JIT is off.
+### `PHARO_NO_JIT=1` removes BOTH the crash AND the errors
+
+At 35 tests in, the JIT run produces 32 PASS / 3 ERROR (`Color>>blue`
+KeyNotFound on testRendering01, testSorting01, testSorting02) and
+then crashes.  The same 35 tests under `PHARO_NO_JIT=1` produce
+35 PASS / 0 ERROR — the same `Color>>blue` calls succeed.
+
+So both task #10 (SIGSEGV) and task #11 (Color KeyNotFound) are
+JIT bugs.  Task #11 is no longer a separate "identity dictionary
+corruption" hypothesis — it's the same J2J-bit leak as task #10
+manifesting differently (the dispatched Color>>blue method ends
+up reading from a tagged extras word instead of the clean
+`ColorRegistry` slot).
 
 ### Next steps requiring lldb
 
