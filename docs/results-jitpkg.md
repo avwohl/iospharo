@@ -127,14 +127,21 @@ leaving a garbage value that becomes a later send's receiver (the stack-address
 :3650) is present, so it is NOT a SmallInteger-as-pointer bug; the insufficiency
 is in HIT validation / classification under the warmed, forked state.
 
-Mitigation (immediate): `PHARO_T1_NO_IC_PROBE=1` (or per-spec
-`PHARO_T1_NO_INLINE_GETTER=1`) — both fix aigraph fully; whole-probe fixes ring.
-Cost: the probe is a perf optimization, so this is a workaround, not the fix.
-Root fix: strengthen the IC-HIT validation in the probe before dispatching an
-inline spec (the original `icData[2]==0` guard direction). Next step is lldb
-single-stepping `tryGetter` at a failing HIT to see whether the slot index, the
-class key, or IC staleness is wrong. Flipping the default back OFF is the
-conservative product call given confirmed correctness bugs in real packages.
+Mitigation breadth (clean image, baseline vs `PHARO_T1_NO_IC_PROBE=1`):
+
+       aigraph   78P/6E   -> 84P/0E    FIXED by probe-off
+       ring-min  33P/8F   -> 41P/0F    FIXED by probe-off
+       ston      153P/4F/5E -> 154P/3F/5E   UNCHANGED — ston is genuinely non-JIT
+       ast       592P/6F/22E -> CRASHES after ~34 tests (SIGSEGV in interpret())
+
+So disabling the probe is NOT a universally safe mitigation: the non-probe
+dispatch path SIGSEGVs on `ast` (dispatch-heavy compiler suite). That argues for
+FIXING the probe's HIT validation, not flipping it off. Root fix: strengthen
+IC-HIT validation before dispatching an inline spec (the original `icData[2]==0`
+guard direction); lldb single-step `tryGetter` at a failing HIT to see whether
+the slot index, the cached method/selector, or IC staleness is wrong. (The
+22-bit class key `& 0x3FFFFF` is NOT truncating — image classIndexes are < 2^22 —
+so it is not a key-collision bug.)
 
 CAVEAT on the per-test isolation-triage method: because this bug is warmup+fork
 dependent, isolation repro (one test at a time) mislabels it ARTIFACT. The
@@ -166,19 +173,28 @@ Ring likely has more. A definitive count needs a long-timeout JIT-off rerun
 
 ## Key findings
 
-### 1. The Pharo-gfx.image inflates failure counts (suite/image artifact)
+### 1. The suite-vs-isolation gap is mostly the IC probe, not (only) the gfx image
 
-The gfx image (clean Pharo 13 + SUnitRunner + FakeGUI shims) emits a
-`KeyNotFound` / "Decompilation failed" / WorkingSession error storm at startup
-(the known Color/ColorRegistry + Morphic issue). That corrupted startup state
-leaks into later tests. STON's `testUser`, `testUser2`, `testColors`,
-`testTextAndRunArray` all FAIL in the gfx suite but PASS in isolation on the
-clean image — so they are image-state artifacts, not bugs in the tested code.
+Initial read: the gfx image (clean Pharo 13 + SUnitRunner + FakeGUI shims) emits
+a `KeyNotFound` / "Decompilation failed" startup storm (known Color/Morphic
+issue), and tests that PASS in isolation but FAIL in the full suite looked like
+image-state artifacts. **That was partly wrong.** The aigraph "artifacts" pass
+in isolation but are CONFIRMED IC-probe JIT bugs in the full suite (same 6
+errors on the *clean* image, fixed by `PHARO_T1_NO_IC_PROBE=1`). So the
+"passes-alone-fails-in-suite" pattern is largely the IC probe's WARMUP
+dependence: in isolation the method runs interpreted / un-warmed and the buggy
+inline-spec IC HIT never fires; in the full suite it gets JIT-compiled + the IC
+filled, and the bug triggers.
 
-Consequence: the suite numbers above are a *net* for catching candidates, not a
-bug count. Real classification is done by isolation repro on the clean image
-(`Pharo-jit.image` = clean Pharo + SUnitRunner only, no FakeGUI — built for
-cross-checks).
+What IS genuinely gfx/image-state vs IC-probe vs non-JIT (clean-image,
+probe-off):
+- aigraph, ring(RGClass*): IC-probe JIT bugs (probe-off fixes).
+- ston (testStrings/WideSymbol/Collections/...): non-JIT (probe-off UNCHANGED,
+  same JIT on/off) — WideString + word-array + memory-FS.
+- gfx startup storm is real but a smaller contributor than first thought.
+
+Lesson: classify with full-suite clean-image JIT-on-vs-off (and probe-on-vs-off),
+NOT per-test isolation — isolation hides warmup-dependent JIT bugs.
 
 ### 2. Reflectivity and Fuel storm the JIT (performance pathology, not a crash)
 

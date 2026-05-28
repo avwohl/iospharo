@@ -14,7 +14,8 @@ OUTDIR=/Users/wohl/src/iospharo/docs/results/jitpkg
 for tag in "$@"; do
     cand="/tmp/cand/${tag}.txt"
     [ -s "$cand" ] || { echo "$tag: no candidates"; continue; }
-    mapfile -t specs < "$cand"
+    specs=()
+    while IFS= read -r line; do [ -n "$line" ] && specs+=("$line"); done < "$cand"
     "$REPRO" "$IMG" "${specs[@]}" >/dev/null 2>&1
     out="$OUTDIR/${tag}_isolation.txt"
     jitbug=0; vmbug=0; artifact=0
