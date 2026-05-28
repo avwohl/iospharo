@@ -83,6 +83,8 @@ extern "C" int jit_rt_primsize_ptr(void* state, uint64_t rcvBits,
                                     uint64_t* out);
 extern "C" int jit_rt_primat_ptr(void* state, uint64_t rcvBits,
                                   uint64_t i, uint64_t* out);
+extern "C" int jit_rt_primatput_ptr(void* state, uint64_t rcvBits,
+                                     uint64_t i, uint64_t valBits);
 extern "C" uint64_t g_t1SistaDispatch_hits;
 extern "C" uint64_t g_t1SistaDispatch_attempts;
 extern "C" uint64_t g_t1MultiSlot_hits = 0;
@@ -2358,6 +2360,42 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             a.ret(x30);
+            // fmt 3/4/5 — call jit_rt_primatput_ptr helper.  Same dual-
+            // path trap as basicSize/at:.
+            {
+                asmjit::Label tryFmt345AtPut = a.new_label();
+                a.sub(x8, x6, asmjit::Imm(3));
+                a.cmp(x8, asmjit::Imm(3));
+                a.b_hs(fail);
+                a.bind(tryFmt345AtPut);
+                // SmI tag check on idx (x3 was tagged).
+                a.and_(x7, x3, asmjit::Imm(0x7));
+                a.cmp(x7, asmjit::Imm(1));
+                a.b_ne(fail);
+                a.asr(x4, x3, asmjit::Imm(3));   // untagged idx
+                // Helper: int(state, rcvBits, i, valBits)
+                //   x0 state (already); x1 rcv (already); x2 idx; x3 valBits
+                a.sub(sp, sp, asmjit::Imm(16));
+                a.str(x0,  ptr(sp, 0));
+                a.str(x30, ptr(sp, 8));
+                a.mov(x2, x4);
+                a.mov(x3, x9);                   // valBits (already loaded)
+                a.mov(x10, asmjit::Imm((uint64_t)&jit_rt_primatput_ptr));
+                a.blr(x10);
+                a.mov(x10, x0);
+                a.ldr(x0,  ptr(sp, 0));
+                a.ldr(x30, ptr(sp, 8));
+                a.add(sp, sp, asmjit::Imm(16));
+                a.cbz(x10, fail);
+                // Return the stored value (still in x9 — saved before call?).
+                // Actually x9 is caller-saved; reload val from temp.
+                a.ldr(x2, ptr(x0, OFF_TEMPBASE));
+                a.ldr(x9, ptr(x2, 8));
+                a.str(x9, ptr(x0, OFF_RETVAL));
+                a.mov(w3, asmjit::Imm(EXIT_RETURN));
+                a.str(w3, ptr(x0, OFF_EXIT));
+                a.ret(x30);
+            }
             a.bind(fail);
             return;
         }

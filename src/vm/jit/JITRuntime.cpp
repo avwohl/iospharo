@@ -1293,6 +1293,17 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
             s->sp -= nArgs;
             return 1;
         }
+        if (fmt == 3 || fmt == 4 || fmt == 5 || fmt == 9) {
+            // IndexableWithFixed / Weak / Indexable64 — delegate to the
+            // class-lookup helper that the method-prologue path also uses.
+            uint64_t out = 0;
+            if (jit_rt_primat_ptr(s, rcvBits, (uint64_t)i, &out)) {
+                s->sp[-(nArgs + 1)] = Oop::fromRawBits(out);
+                s->sp -= nArgs;
+                return 1;
+            }
+            return 0;
+        }
         return 0;
     }
 
@@ -1322,6 +1333,15 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
             s->sp[-(nArgs + 1)] = val;
             s->sp -= nArgs;
             return 1;
+        }
+        if (fmt == 3 || fmt == 4 || fmt == 5) {
+            // IndexableWithFixed / Weak — delegate to helper.
+            if (jit_rt_primatput_ptr(s, rcvBits, (uint64_t)i, val.rawBits())) {
+                s->sp[-(nArgs + 1)] = val;
+                s->sp -= nArgs;
+                return 1;
+            }
+            return 0;
         }
         return 0;
     }
