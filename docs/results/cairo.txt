@@ -1,0 +1,35 @@
+=== SUnit Test Run #1 (batch 1-2 of 2051) ===
+
+BATCH-DEBUG: batchClasses size=2 first=CairoLibraryTest last=CairoUTF8ConverterTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T17:03:38.598518-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-ERR: Error Missing jumpAheadTo: #else
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout patch error: proceed for truth.
+=== CairoLibraryTest ===
+  SORT-OK: 0 comparisons for 1 items
+  RUN: testVersionString
+Total: 1 P:1 F:0 E:0 S:0
+=== CairoUTF8ConverterTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testEncodingString
+  RUN: testReusingConverterShouldReplaceOldData
+  RUN: testUnicodencodingShouldTerminateWithNull
+Total: 3 P:3 F:0 E:0 S:0
+*** BATCH COMPLETED for 2 classes (1-2)
+=== BATCH TOTAL ===
+Run: #1
+Batch: 1-2
+Classes: 2
+Pass: 4
+Fail: 0
+Error: 0
+Skip: 0
+Total: 4
+=== BATCH COMPLETE ===

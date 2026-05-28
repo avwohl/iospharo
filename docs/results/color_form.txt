@@ -1,0 +1,65 @@
+=== SUnit Test Run #1 (batch 1-3 of 2051) ===
+
+BATCH-DEBUG: batchClasses size=3 first=ColorTest last=FormTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T17:03:40.829349-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-ERR: Error Missing jumpAheadTo: #else
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout patch error: proceed for truth.
+=== ColorTest ===
+  SORT-OK: 32 comparisons for 16 items
+  RUN: test32BitBlackColorTranformation
+  RUN: test32BitOpaqueBlackIsTotallyBlack
+  RUN: test32BitTranslucentPixelValueKeepsRGB
+  RUN: testAsColorrefPrimaryColors
+  RUN: testAsHexString
+  RUN: testColorFrom
+  RUN: testCoverage
+  RUN: testFromHexString
+  RUN: testFromString
+  RUN: testMultiplyByArray
+  RUN: testMultiplyByArrayIdentityTransform
+  RUN: testMultiplyByNumber
+  RUN: testNew
+  RUN: testUnCategorizedMethods
+Total: 16 P:14 F:0 E:0 S:0
+=== FormSetTest ===
+  SORT-OK: 27 comparisons for 13 items
+  RUN: testAsForm
+  RUN: testAsFormAtScale
+  RUN: testAsFormWithExtent
+  RUN: testCoverage
+  RUN: testDepth
+  RUN: testExtent
+  RUN: testForms
+  RUN: testHeight
+  RUN: testNew
+  RUN: testUnCategorizedMethods
+  RUN: testWidth
+Total: 13 P:11 F:0 E:0 S:0
+=== FormTest ===
+  SORT-OK: 12 comparisons for 8 items
+  RUN: test32BitFormBlackShouldStayBlackAfterSave
+  RUN: test32BitTranslucentBlackIsBlack
+  RUN: testCoverage
+  RUN: testIsAllWhite
+  RUN: testNew
+  RUN: testUnCategorizedMethods
+Total: 8 P:6 F:0 E:0 S:0
+*** BATCH COMPLETED for 3 classes (1-3)
+=== BATCH TOTAL ===
+Run: #1
+Batch: 1-3
+Classes: 3
+Pass: 31
+Fail: 0
+Error: 0
+Skip: 0
+Total: 31
+=== BATCH COMPLETE ===

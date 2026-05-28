@@ -1,0 +1,301 @@
+=== SUnit Test Run #1 (batch 1-8 of 2051) ===
+
+BATCH-DEBUG: batchClasses size=8 first=AthensAffineTransformTest last=AthensTransformTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T17:03:07.197199-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-ERR: Error Missing jumpAheadTo: #else
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout patch error: proceed for truth.
+=== AthensAffineTransformTest ===
+  SORT-OK: 31 comparisons for 15 items
+  RUN: testIdentity
+  RUN: testInvert
+  RUN: testLoadAffineTransform
+  RUN: testLoadIdentity
+  RUN: testRestoreAfter
+  RUN: testRotateByDegrees
+  RUN: testRotateByRadians
+  RUN: testScaleBy
+  RUN: testScaleXY
+  RUN: testTransform
+  RUN: testTransformRectangle
+  RUN: testTransformXY
+  RUN: testTranslate
+  RUN: testTranslateBy
+  RUN: testTranslateXY
+Total: 15 P:15 F:0 E:0 S:0
+=== AthensCairoCanvasTest ===
+  SORT-OK: 0 comparisons for 1 items
+  RUN: testTextExtentsAnswerValidData
+Total: 1 P:1 F:0 E:0 S:0
+=== AthensCairoExportSurfaceTest === SKIPPED (abstract)
+=== AthensCairoMatrixTest ===
+  SORT-OK: 37 comparisons for 17 items
+  RUN: testCopy
+  RUN: testIdentity
+  RUN: testInvert
+  RUN: testInverted
+  RUN: testLoadAffineTransform
+  RUN: testLoadIdentity
+  RUN: testRestoreAfter
+  RUN: testRotateByDegrees
+  RUN: testRotateByRadians
+  RUN: testScaleBy
+  RUN: testScaleXY
+  RUN: testTransform
+  RUN: testTransformRectangle
+  RUN: testTransformXY
+  RUN: testTranslate
+  RUN: testTranslateBy
+  RUN: testTranslateXY
+Total: 17 P:17 F:0 E:0 S:0
+=== AthensCairoPDFSurfaceTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testExportBoxes
+  RUN: testExtent
+  RUN: testHeight
+  RUN: testWidth
+Total: 4 P:4 F:0 E:0 S:0
+=== AthensCairoSVGSurfaceTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testExportBoxes
+  ERROR: testExportBoxes (NonBooleanReceiver: proceed for truth.)
+    >> Dictionary(ProtoObject)>>mustBeBooleanIn:
+    >> Dictionary(ProtoObject)>>mustBeBoolean
+    >> FFIExternalObjectType(FFIExternalReferenceType)>>emitReturn:resultTempVar:context:inCallout:
+    >> FFITypeDeclaration>>emitReturn:resultTempVar:context:inCallout:
+    >> TFCalloutMethodBuilder>>generateFFICallout:spec:ffiLibrary:
+    >> generateMethodFromSpec: t1	self error: 'Decompilation failed' in TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generateMethodFromSpec:
+    >> OCIRBuilder class>>buildIR:
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generateMethodFromSpec:
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generate
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>build:
+    >> TFCalloutAPI(FFICalloutAPI)>>function:library:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:library:options:fixedArgumentCount:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:library:options:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:
+    >> AthensCairoSVGSurface class>>createExportingTo:width:height:
+    >> AthensCairoSVGSurface class(AthensCairoExportSurface class)>>extent:fileName:
+    >> AthensCairoSVGSurfaceTest(AthensCairoExportSurfaceTest)>>testExportBoxes
+    >> AthensCairoSVGSurfaceTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  ERROR: testExportBoxes (MessageNotUnderstood: receiver of "close" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #close
+    >> AthensCairoSVGSurfaceTest(AthensCairoExportSurfaceTest)>>tearDown
+    >> [ self tearDown ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> Context>>resume:through:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testExtent
+  ERROR: testExtent (NonBooleanReceiver: proceed for truth.)
+    >> Dictionary(ProtoObject)>>mustBeBooleanIn:
+    >> Dictionary(ProtoObject)>>mustBeBoolean
+    >> FFIExternalObjectType(FFIExternalReferenceType)>>emitReturn:resultTempVar:context:inCallout:
+    >> FFITypeDeclaration>>emitReturn:resultTempVar:context:inCallout:
+    >> TFCalloutMethodBuilder>>generateFFICallout:spec:ffiLibrary:
+    >> generateMethodFromSpec: t1	self error: 'Decompilation failed' in TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generateMethodFromSpec:
+    >> OCIRBuilder class>>buildIR:
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generateMethodFromSpec:
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generate
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>build:
+    >> TFCalloutAPI(FFICalloutAPI)>>function:library:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:library:options:fixedArgumentCount:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:library:options:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:
+    >> AthensCairoSVGSurface class>>createExportingTo:width:height:
+    >> AthensCairoSVGSurface class(AthensCairoExportSurface class)>>extent:fileName:
+    >> AthensCairoSVGSurfaceTest(AthensCairoExportSurfaceTest)>>testExtent
+    >> AthensCairoSVGSurfaceTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  ERROR: testExtent (MessageNotUnderstood: receiver of "close" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #close
+    >> AthensCairoSVGSurfaceTest(AthensCairoExportSurfaceTest)>>tearDown
+    >> [ self tearDown ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> Context>>resume:through:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testHeight
+  ERROR: testHeight (NonBooleanReceiver: proceed for truth.)
+    >> Dictionary(ProtoObject)>>mustBeBooleanIn:
+    >> Dictionary(ProtoObject)>>mustBeBoolean
+    >> FFIExternalObjectType(FFIExternalReferenceType)>>emitReturn:resultTempVar:context:inCallout:
+    >> FFITypeDeclaration>>emitReturn:resultTempVar:context:inCallout:
+    >> TFCalloutMethodBuilder>>generateFFICallout:spec:ffiLibrary:
+    >> generateMethodFromSpec: t1	self error: 'Decompilation failed' in TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generateMethodFromSpec:
+    >> OCIRBuilder class>>buildIR:
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generateMethodFromSpec:
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generate
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>build:
+    >> TFCalloutAPI(FFICalloutAPI)>>function:library:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:library:options:fixedArgumentCount:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:library:options:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:
+    >> AthensCairoSVGSurface class>>createExportingTo:width:height:
+    >> AthensCairoSVGSurface class(AthensCairoExportSurface class)>>extent:fileName:
+    >> AthensCairoSVGSurfaceTest(AthensCairoExportSurfaceTest)>>testHeight
+    >> AthensCairoSVGSurfaceTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  ERROR: testHeight (MessageNotUnderstood: receiver of "close" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #close
+    >> AthensCairoSVGSurfaceTest(AthensCairoExportSurfaceTest)>>tearDown
+    >> [ self tearDown ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> Context>>resume:through:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+  RUN: testWidth
+  ERROR: testWidth (NonBooleanReceiver: proceed for truth.)
+    >> Dictionary(ProtoObject)>>mustBeBooleanIn:
+    >> Dictionary(ProtoObject)>>mustBeBoolean
+    >> FFIExternalObjectType(FFIExternalReferenceType)>>emitReturn:resultTempVar:context:inCallout:
+    >> FFITypeDeclaration>>emitReturn:resultTempVar:context:inCallout:
+    >> TFCalloutMethodBuilder>>generateFFICallout:spec:ffiLibrary:
+    >> generateMethodFromSpec: t1	self error: 'Decompilation failed' in TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generateMethodFromSpec:
+    >> OCIRBuilder class>>buildIR:
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generateMethodFromSpec:
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generate
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>build:
+    >> TFCalloutAPI(FFICalloutAPI)>>function:library:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:library:options:fixedArgumentCount:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:library:options:
+    >> AthensCairoSVGSurface class(Object)>>ffiCall:
+    >> AthensCairoSVGSurface class>>createExportingTo:width:height:
+    >> AthensCairoSVGSurface class(AthensCairoExportSurface class)>>extent:fileName:
+    >> AthensCairoSVGSurfaceTest(AthensCairoExportSurfaceTest)>>testWidth
+    >> AthensCairoSVGSurfaceTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  ERROR: testWidth (MessageNotUnderstood: receiver of "close" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #close
+    >> AthensCairoSVGSurfaceTest(AthensCairoExportSurfaceTest)>>tearDown
+    >> [ self tearDown ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> Context>>resume:through:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AthensCairoSVGSurfaceTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+Total: 4 P:0 F:0 E:4 S:0
+=== AthensProjectiveTransformTest ===
+  SORT-OK: 31 comparisons for 15 items
+  RUN: testIdentity
+  RUN: testInvert
+  RUN: testLoadAffineTransform
+  RUN: testLoadIdentity
+  RUN: testRestoreAfter
+  RUN: testRotateByDegrees
+  RUN: testRotateByRadians
+  RUN: testScaleBy
+  RUN: testScaleXY
+  RUN: testTransform
+  RUN: testTransformRectangle
+  RUN: testTransformXY
+  RUN: testTranslate
+  RUN: testTranslateBy
+  RUN: testTranslateXY
+Total: 15 P:15 F:0 E:0 S:0
+=== AthensTransformTest === SKIPPED (abstract)
+*** BATCH COMPLETED for 8 classes (1-8)
+=== BATCH TOTAL ===
+Run: #1
+Batch: 1-8
+Classes: 8
+Pass: 52
+Fail: 0
+Error: 4
+Skip: 0
+Total: 56
+=== BATCH COMPLETE ===

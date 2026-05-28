@@ -1,0 +1,917 @@
+=== SUnit Test Run #1 (batch 1-5 of 2051) ===
+
+BATCH-DEBUG: batchClasses size=5 first=MorphTest last=MorphicWindowManagerTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T17:03:43.07526-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-ERR: MessageNotUnderstood receiver of "isTempVectorTemp" is nil
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout: scale=5x, defaultTimeLimit=50s, watchdog=80s, 1 class overrides removed
+=== MorphTest ===
+  SORT-OK: 16 comparisons for 9 items
+  RUN: testBoundingBoxOfSubmorphs
+  RUN: testExtent
+  RUN: testForTiltedStickyness
+  ERROR: testForTiltedStickyness (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphTest>>testForTiltedStickyness
+    >> MorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testHaloIsDisable
+  ERROR: testHaloIsDisable (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphTest>>testHaloIsDisable
+    >> MorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testIntoWorldCollapseOutOfWorld
+  ERROR: testIntoWorldCollapseOutOfWorld (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> TestInWorldMorph(Morph)>>defaultColor
+    >> TestInWorldMorph(Morph)>>initialize
+    >> TestInWorldMorph>>initialize
+    >> TestInWorldMorph class(Behavior)>>new
+    >> MorphTest>>testIntoWorldCollapseOutOfWorld
+    >> MorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testIntoWorldDeleteOutOfWorld
+  ERROR: testIntoWorldDeleteOutOfWorld (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> TestInWorldMorph(Morph)>>defaultColor
+    >> TestInWorldMorph(Morph)>>initialize
+    >> TestInWorldMorph>>initialize
+    >> TestInWorldMorph class(Behavior)>>new
+    >> MorphTest>>testIntoWorldDeleteOutOfWorld
+    >> MorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testIntoWorldTransferToNewGuy
+  ERROR: testIntoWorldTransferToNewGuy (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> TestInWorldMorph(Morph)>>defaultColor
+    >> TestInWorldMorph(Morph)>>initialize
+    >> TestInWorldMorph>>initialize
+    >> TestInWorldMorph class(Behavior)>>new
+    >> MorphTest>>testIntoWorldTransferToNewGuy
+    >> MorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testIsMorph
+  RUN: testOpenInWorld
+  ERROR: testOpenInWorld (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphTest>>setUp
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  ERROR: testOpenInWorld (MessageNotUnderstood: receiver of "delete" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #delete
+    >> MorphTest>>tearDown
+    >> [ self tearDown ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> Context>>resume:through:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' > in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+Total: 9 P:3 F:0 E:6 S:0
+=== MorphTreeMorphTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testLastClickedMorphSetUponUpdateList
+  ERROR: testLastClickedMorphSetUponUpdateList (MessageNotUnderstood: receiver of "asText" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #asText
+    >> TextMorph>>newContents:
+    >> TextMorph>>contentsAsIs:
+    >> TextMorph>>contents:
+    >> DarkBlueTheme(UITheme)>>newTextIn:text:
+    >> ClassTreeNodeExample>>commentText
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in MorphTreeColumn>>rowMorphGetterBlock
+    >> MorphTreeColumn>>rowMorphFor:
+    >> buildRowMorph	self error: 'Decompilation failed' in MorphTreeNodeMorph>>buildRowMorph
+    >> OrderedCollection>>collect:
+    >> MorphTreeNodeMorph>>buildRowMorph
+    >> MorphTreeNodeMorph>>initRow
+    >> MorphTreeNodeMorph>>initWithContents:prior:forList:indentLevel:
+    >> addMorphsTo: arg1 from: arg2 withExpandedItems: arg3 atLevel: arg4	| tmp2 tmp3 |	tmp2 := nil.	tmp3 := nil.	arg2 doWithIndex: [ :arg5 :arg6 |			tmp2 := self indentingItemClass new				        initWithContents: arg5				        prior: tmp2				        forList: self				        indentLevel: arg4.			tmp3 ifNil: [ tmp3 := tmp2 ] ifNotNil: [ tmp3 ].			arg1 add: tmp2.			((arg5 hasEquivalentIn: arg3) or: [ tmp2 isExpanded ]) ifTrue: [					tmp2						isExpanded: true;						addChildrenForList: self addingTo: arg1 withExpandedItems: arg3 ] ].	^ tmp3 in MorphTreeMorph>>addMorphsTo:from:withExpandedItems:atLevel:
+    >> OrderedCollection(SequenceableCollection)>>withIndexDo:
+    >> OrderedCollection(Collection)>>doWithIndex:
+    >> MorphTreeMorph>>addMorphsTo:from:withExpandedItems:atLevel:
+    >> MorphTreeMorph>>addSubmorphsFromNodeList:previouslyExpanded:
+    >> MorphTreeMorph>>addSubmorphsFromNodeList
+    >> MorphTreeMorph>>buildContents
+    >> ClassTreeExample>>treeMorph
+    >> ClassTreeExample>>openOn:
+    >> [		tmp3 := tmp1 openOn: Collection.		tmp4 := tmp1 dependents last.		tmp4 expandAll.		tmp1 selectItems: { CharacterSet }.		self assert: tmp4 listManager lastClickedMorph isNotNil.		tmp1			rootClass: Bag;			updateList.		self assert: tmp4 listManager lastClickedMorph isNil.		tmp1 selectItems: { Bag }.		self assert: tmp4 listManager lastClickedMorph isNotNil ] in MorphTreeMorphTest>>testLastClickedMorphSetUponUpdateList
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest>>testLastClickedMorphSetUponUpdateList
+  ERROR: testLastClickedMorphSetUponUpdateList (MessageNotUnderstood: receiver of "close" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #close
+    >> [		tmp3 close ] in MorphTreeMorphTest>>testLastClickedMorphSetUponUpdateList
+    >> Context>>resume:through:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest>>testLastClickedMorphSetUponUpdateList
+    >> MorphTreeMorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  RUN: testLeakingSelectionsOnUpdate
+  ERROR: testLeakingSelectionsOnUpdate (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> MultistateButtonMorph(Morph)>>defaultColor
+    >> MultistateButtonMorph(Morph)>>initialize
+    >> MultistateButtonMorph>>initialize
+    >> MultistateButtonMorph class(Behavior)>>new
+    >> DarkBlueTheme(UITheme)>>createCollapseBoxFor:
+    >> StandardWindow(SystemWindow)>>createCollapseBox
+    >> StandardWindow(SystemWindow)>>initializeLabelArea
+    >> StandardWindow(SystemWindow)>>initialize
+    >> StandardWindow>>initialize
+    >> StandardWindow class(Behavior)>>new
+    >> ClassTreeExample>>openOn:
+    >> testLeakingSelectionsOnUpdate	| tmp1 tmp3 tmp4 |	tmp1 := ClassTreeExample new.	[		tmp3 := tmp1 openOn: Collection.		tmp4 := tmp1 dependents last.		tmp4			expandAll;			selectAll.		tmp1 updateList.		tmp4 listManager selectedMorphList do: [ :arg1 |			self assert: (tmp4 allNodeMorphs includes: arg1) ] ] ensure: [		tmp3 close ] in MorphTreeMorphTest>>testLeakingSelectionsOnUpdate
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest>>testLeakingSelectionsOnUpdate
+    >> MorphTreeMorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest(TestCase)>>runCase
+  ERROR: testLeakingSelectionsOnUpdate (MessageNotUnderstood: receiver of "close" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #close
+    >> testLeakingSelectionsOnUpdate	| tmp1 tmp3 tmp4 |	tmp1 := ClassTreeExample new.	[		tmp3 := tmp1 openOn: Collection.		tmp4 := tmp1 dependents last.		tmp4			expandAll;			selectAll.		tmp1 updateList.		tmp4 listManager selectedMorphList do: [ :arg1 |			self assert: (tmp4 allNodeMorphs includes: arg1) ] ] ensure: [		tmp3 close ] in MorphTreeMorphTest>>testLeakingSelectionsOnUpdate
+    >> Context>>resume:through:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest>>testLeakingSelectionsOnUpdate
+    >> MorphTreeMorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  RUN: testMaintainingSelectionsOnUpdate
+  ERROR: testMaintainingSelectionsOnUpdate (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> MultistateButtonMorph(Morph)>>defaultColor
+    >> MultistateButtonMorph(Morph)>>initialize
+    >> MultistateButtonMorph>>initialize
+    >> MultistateButtonMorph class(Behavior)>>new
+    >> DarkBlueTheme(UITheme)>>createCollapseBoxFor:
+    >> StandardWindow(SystemWindow)>>createCollapseBox
+    >> StandardWindow(SystemWindow)>>initializeLabelArea
+    >> StandardWindow(SystemWindow)>>initialize
+    >> StandardWindow>>initialize
+    >> StandardWindow class(Behavior)>>new
+    >> ClassTreeExample>>openOn:
+    >> testMaintainingSelectionsOnUpdate	| tmp1 tmp3 tmp4 |	tmp1 := ClassTreeExample new.	[		tmp3 := tmp1 openOn: Collection.		tmp4 := tmp1 dependents last.		tmp4 expandAll.		tmp1 selectItems: {				Bag.				CharacterSet }.		tmp4 selectedMorphList do: [ :arg1 |				self assert: ({						 Bag.						 CharacterSet } includes:						 arg1 complexContents withoutListWrapper) ].		tmp1 updateList.		tmp4 selectedMorphList do: [ :arg2 |				self assert: ({						 Bag.						 CharacterSet } includes:						 arg2 complexContents withoutListWrapper) ] ] ensure: [		tmp3 close ] in MorphTreeMorphTest>>testMaintainingSelectionsOnUpdate
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest>>testMaintainingSelectionsOnUpdate
+    >> MorphTreeMorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest(TestCase)>>runCase
+  ERROR: testMaintainingSelectionsOnUpdate (MessageNotUnderstood: receiver of "close" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #close
+    >> testMaintainingSelectionsOnUpdate	| tmp1 tmp3 tmp4 |	tmp1 := ClassTreeExample new.	[		tmp3 := tmp1 openOn: Collection.		tmp4 := tmp1 dependents last.		tmp4 expandAll.		tmp1 selectItems: {				Bag.				CharacterSet }.		tmp4 selectedMorphList do: [ :arg1 |				self assert: ({						 Bag.						 CharacterSet } includes:						 arg1 complexContents withoutListWrapper) ].		tmp1 updateList.		tmp4 selectedMorphList do: [ :arg2 |				self assert: ({						 Bag.						 CharacterSet } includes:						 arg2 complexContents withoutListWrapper) ] ] ensure: [		tmp3 close ] in MorphTreeMorphTest>>testMaintainingSelectionsOnUpdate
+    >> Context>>resume:through:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest>>testMaintainingSelectionsOnUpdate
+    >> MorphTreeMorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  RUN: testUpdatingSelectionsOnUpdate
+  ERROR: testUpdatingSelectionsOnUpdate (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> MultistateButtonMorph(Morph)>>defaultColor
+    >> MultistateButtonMorph(Morph)>>initialize
+    >> MultistateButtonMorph>>initialize
+    >> MultistateButtonMorph class(Behavior)>>new
+    >> DarkBlueTheme(UITheme)>>createCollapseBoxFor:
+    >> StandardWindow(SystemWindow)>>createCollapseBox
+    >> StandardWindow(SystemWindow)>>initializeLabelArea
+    >> StandardWindow(SystemWindow)>>initialize
+    >> StandardWindow>>initialize
+    >> StandardWindow class(Behavior)>>new
+    >> ClassTreeExample>>openOn:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in MorphTreeMorphTest>>testUpdatingSelectionsOnUpdate
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest>>testUpdatingSelectionsOnUpdate
+    >> MorphTreeMorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest(TestCase)>>runCase
+  ERROR: testUpdatingSelectionsOnUpdate (MessageNotUnderstood: receiver of "close" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #close
+    >> [ tmp3 close ] in MorphTreeMorphTest>>testUpdatingSelectionsOnUpdate
+    >> Context>>resume:through:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest>>testUpdatingSelectionsOnUpdate
+    >> MorphTreeMorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  RUN: testUpdatingSelectionsOnUpdateWithRemoval
+  ERROR: testUpdatingSelectionsOnUpdateWithRemoval (MessageNotUnderstood: receiver of "asText" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #asText
+    >> TextMorph>>newContents:
+    >> TextMorph>>contentsAsIs:
+    >> TextMorph>>contents:
+    >> DarkBlueTheme(UITheme)>>newTextIn:text:
+    >> ClassTreeNodeExample>>commentText
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in MorphTreeColumn>>rowMorphGetterBlock
+    >> MorphTreeColumn>>rowMorphFor:
+    >> buildRowMorph	self error: 'Decompilation failed' in MorphTreeNodeMorph>>buildRowMorph
+    >> OrderedCollection>>collect:
+    >> MorphTreeNodeMorph>>buildRowMorph
+    >> MorphTreeNodeMorph>>initRow
+    >> MorphTreeNodeMorph>>initWithContents:prior:forList:indentLevel:
+    >> addMorphsTo: arg1 from: arg2 withExpandedItems: arg3 atLevel: arg4	| tmp2 tmp3 |	tmp2 := nil.	tmp3 := nil.	arg2 doWithIndex: [ :arg5 :arg6 |			tmp2 := self indentingItemClass new				        initWithContents: arg5				        prior: tmp2				        forList: self				        indentLevel: arg4.			tmp3 ifNil: [ tmp3 := tmp2 ] ifNotNil: [ tmp3 ].			arg1 add: tmp2.			((arg5 hasEquivalentIn: arg3) or: [ tmp2 isExpanded ]) ifTrue: [					tmp2						isExpanded: true;						addChildrenForList: self addingTo: arg1 withExpandedItems: arg3 ] ].	^ tmp3 in MorphTreeMorph>>addMorphsTo:from:withExpandedItems:atLevel:
+    >> OrderedCollection(SequenceableCollection)>>withIndexDo:
+    >> OrderedCollection(Collection)>>doWithIndex:
+    >> MorphTreeMorph>>addMorphsTo:from:withExpandedItems:atLevel:
+    >> MorphTreeMorph>>addSubmorphsFromNodeList:previouslyExpanded:
+    >> MorphTreeMorph>>addSubmorphsFromNodeList
+    >> MorphTreeMorph>>buildContents
+    >> ClassTreeExample>>treeMorph
+    >> ClassTreeExample>>openOn:
+    >> [		tmp3 := tmp1 openOn: Collection.		tmp4 := tmp1 dependents last.		tmp4 expandAll.		tmp1 selectItems: {				Bag.				CharacterSet }.		tmp1 selection selectedNodes do: [ :arg1 |				self assert: (tmp4 selectedMorphList anySatisfy: [ :arg2 |						 arg2 complexContents = arg1 ]) ].		tmp1			rootClass: Bag;			updateList.		self			assert: tmp4 selectedMorphList size equals: 1;			assert:				tmp4 selectedMorphList first complexContents withoutListWrapper			identicalTo: Bag.		tmp1 selection selectedNodes do: [ :arg3 |				self assert: (tmp4 selectedMorphList anySatisfy: [ :arg4 |						 arg4 complexContents = arg3 ]) ] ] in MorphTreeMorphTest>>testUpdatingSelectionsOnUpdateWithRemoval
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest>>testUpdatingSelectionsOnUpdateWithRemoval
+  ERROR: testUpdatingSelectionsOnUpdateWithRemoval (MessageNotUnderstood: receiver of "close" is nil)
+    >> UndefinedObject(Object)>>doesNotUnderstand: #close
+    >> [ tmp3 close ] in MorphTreeMorphTest>>testUpdatingSelectionsOnUpdateWithRemoval
+    >> Context>>resume:through:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest>>testUpdatingSelectionsOnUpdateWithRemoval
+    >> MorphTreeMorphTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphTreeMorphTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphTreeMorphTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+Total: 5 P:0 F:0 E:5 S:0
+=== MorphicEventHandlerTest ===
+  SORT-OK: 29 comparisons for 14 items
+  RUN: testClickFromMorph
+  RUN: testDoubleClickFromMorph
+  RUN: testDoubleClickTimeoutFromMorph
+  RUN: testKeyDownFromMorph
+  RUN: testKeyStrokeFromMorph
+  RUN: testKeyUpFromMorph
+  RUN: testMiddleButtonOpenHalos
+  FAIL: testMiddleButtonOpenHalos [Assertion failed]
+  RUN: testMouseDownFromMorph
+  RUN: testMouseEnterDraggingFromMorph
+  RUN: testMouseEnterEventIsNotDuplicated
+  RUN: testMouseEnterFromMorph
+  RUN: testMouseLeaveFromMorph
+  RUN: testMouseUpFromMorph
+  RUN: testTwoEventHandlersAreAttached
+Total: 14 P:13 F:1 E:0 S:0
+=== MorphicNativeWindowTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testMaximizeWindow
+  ERROR: testMaximizeWindow (NonBooleanReceiver: proceed for truth.)
+    >> Dictionary(ProtoObject)>>mustBeBooleanIn:
+    >> Dictionary(ProtoObject)>>mustBeBoolean
+    >> FFIVoid>>emitReturn:resultTempVar:context:inCallout:
+    >> FFITypeDeclaration>>emitReturn:resultTempVar:context:inCallout:
+    >> TFCalloutMethodBuilder>>generateFFICallout:spec:ffiLibrary:
+    >> generateMethodFromSpec: t1	self error: 'Decompilation failed' in TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generateMethodFromSpec:
+    >> OCIRBuilder class>>buildIR:
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generateMethodFromSpec:
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>generate
+    >> TFCalloutMethodBuilder(FFICalloutMethodBuilder)>>build:
+    >> TFCalloutAPI(FFICalloutAPI)>>function:library:
+    >> TFCalloutAPI(FFICalloutAPI)>>function:module:
+    >> ObjCLibrary(FFILibrary)>>ffiCall:
+    >> ObjCLibrary>>lookupSelector:
+    >> ObjCLibrary>>sharedApplication
+    >> SDLOSXPlatform>>initPlatformSpecific
+    >> SDL2 class>>initPlatformSpecific
+    >> SDL2 class>>initLibrary
+    >> SDL2 class>>initEverything
+    >> OSSDL2Driver>>initialize
+    >> OSSDL2Driver class(Behavior)>>new
+    >> OSWindowDriver class>>current
+    >> [ OSWindowDriver current ] in OSWorldRenderer>>pickMostSuitableWindowDriver
+    >> UnixEnvironment(OSEnvironment)>>at:ifPresent:ifAbsent:
+    >> OSWorldRenderer>>pickMostSuitableWindowDriver
+  RUN: testMinimizeWindow
+  ERROR: testMinimizeWindow (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicNativeWindowTest>>setUp
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicNativeWindowTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicNativeWindowTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicNativeWindowTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testNewWindowDefaultsIsNotMaximize
+  ERROR: testNewWindowDefaultsIsNotMaximize (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicNativeWindowTest>>setUp
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicNativeWindowTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicNativeWindowTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicNativeWindowTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testNewWindowDefaultsIsNotMinimized
+  ERROR: testNewWindowDefaultsIsNotMinimized (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicNativeWindowTest>>setUp
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicNativeWindowTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicNativeWindowTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicNativeWindowTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testRestoreWindow
+  ERROR: testRestoreWindow (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicNativeWindowTest>>setUp
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicNativeWindowTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicNativeWindowTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicNativeWindowTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+Total: 5 P:0 F:0 E:5 S:0
+=== MorphicWindowManagerTest ===
+  SORT-OK: 27 comparisons for 13 items
+  RUN: testDeleteANonOpenWindowFails
+  ERROR: testDeleteANonOpenWindowFails (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicWindowManagerTest>>testDeleteANonOpenWindowFails
+    >> MorphicWindowManagerTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicWindowManagerTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testDeleteAWindow
+  ERROR: testDeleteAWindow (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicWindowManagerTest>>testDeleteAWindow
+    >> MorphicWindowManagerTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicWindowManagerTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testDeleteAWindowAndTaskBarActualized
+  ERROR: testDeleteAWindowAndTaskBarActualized (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> TaskbarMorphForManager(Morph)>>defaultColor
+    >> TaskbarMorphForManager(Morph)>>initialize
+    >> TaskbarMorphForManager(TaskbarMorph)>>initialize
+    >> TaskbarMorphForManager class(Behavior)>>new
+    >> TaskbarMorphForManager class>>newByManager:
+    >> MorphicWindowManager>>startupTaskbar
+    >> MorphicWindowManager>>open
+    >> MorphicWindowManager class>>open
+    >> MorphicWindowManagerTest>>testDeleteAWindowAndTaskBarActualized
+    >> MorphicWindowManagerTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicWindowManagerTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testDeleteAllWindow
+  ERROR: testDeleteAllWindow (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicWindowManagerTest>>testDeleteAllWindow
+    >> MorphicWindowManagerTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicWindowManagerTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testDeleteAllWindowToLeftOfAWindow
+  ERROR: testDeleteAllWindowToLeftOfAWindow (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicWindowManagerTest>>testDeleteAllWindowToLeftOfAWindow
+    >> MorphicWindowManagerTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicWindowManagerTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testDeleteAllWindowToLeftOfAWindowWhenDontHaveWindowOnLeft
+  ERROR: testDeleteAllWindowToLeftOfAWindowWhenDontHaveWindowOnLeft (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicWindowManagerTest>>testDeleteAllWindowToLeftOfAWindowWhenDontHaveWindowOnLeft
+    >> MorphicWindowManagerTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicWindowManagerTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testDeleteAllWindowToRightOfAWindow
+  ERROR: testDeleteAllWindowToRightOfAWindow (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicWindowManagerTest>>testDeleteAllWindowToRightOfAWindow
+    >> MorphicWindowManagerTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicWindowManagerTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testDeleteAllWindowToRightOfAWindowWhenDontHaveWindowOnRight
+  ERROR: testDeleteAllWindowToRightOfAWindowWhenDontHaveWindowOnRight (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicWindowManagerTest>>testDeleteAllWindowToRightOfAWindowWhenDontHaveWindowOnRight
+    >> MorphicWindowManagerTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicWindowManagerTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testNewWindowShouldBeSave
+  ERROR: testNewWindowShouldBeSave (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicWindowManagerTest>>testNewWindowShouldBeSave
+    >> MorphicWindowManagerTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicWindowManagerTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testWindowShouldBeOpenAfterStartupWithGoodMorphWhenNoMorphIsSave
+  RUN: testWindowShouldBeSaveBeforeShutDownSaveAttributesButNoRoot
+  RUN: testWindowShouldBeSaveBeforeShutDownSaveRoot
+  ERROR: testWindowShouldBeSaveBeforeShutDownSaveRoot (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> Morph>>defaultColor
+    >> Morph>>initialize
+    >> Morph class(Behavior)>>new
+    >> MorphicWindowManagerTest>>testWindowShouldBeSaveBeforeShutDownSaveRoot
+    >> MorphicWindowManagerTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in MorphicWindowManagerTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> MorphicWindowManagerTest(TestCase)>>runCase
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in runSingleTest: t1 selector: t2 timeout: t3 priority: t4 on: t5	self error: 'Decompilation failed' in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+  RUN: testWindowShouldBeSaveBeforeShutDownSaveRootButHaveNotRoot
+Total: 13 P:3 F:0 E:10 S:0
+*** BATCH COMPLETED for 5 classes (1-5)
+=== BATCH TOTAL ===
+Run: #1
+Batch: 1-5
+Classes: 5
+Pass: 19
+Fail: 1
+Error: 26
+Skip: 0
+Total: 46
+=== BATCH COMPLETE ===

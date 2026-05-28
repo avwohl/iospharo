@@ -1,0 +1,1196 @@
+Pharo Clean VM - Image Loader Test
+===================================
+
+=== Oop Tagging Tests ===
+SmallInteger 42:  0x151 isSmallInteger=1 value=42
+SmallInteger -100: 0xfffffffffffffce1 value=-100
+Character 'A':    0x20b isCharacter=1 codepoint=65
+nil:              0x0 isNil=1
+
+SmallFloat tests:
+  1 -> 0x7f00000000000005 -> 1 OK
+  168 -> 0x8650000000000005 -> 168 OK
+  80 -> 0x8540000000000005 -> 80 OK
+  -42.5 -> 0x845400000000000d -> -42.5 OK
+  0 -> 0x5 -> 0 OK
+  1024 -> 0x8900000000000005 -> 1024 OK
+  0.5 -> 0x7e00000000000005 -> 0.5 OK
+
+Decoding known SmallFloat values from Pharo:
+  0x8540000000000005 -> 80
+  0x8650000000000005 -> 168
+  0x8000000000000005 -> 2
+
+Tag verification (should use low 3 bits only):
+  SmallInteger tag: 1 (expected 1)
+  Character tag:    3 (expected 3)
+
+Loading image: /tmp/harness/Pharo-gfx.image
+Working directory: /private/tmp/harness
+Memory initialized successfully
+Image loaded successfully!
+=== Image Header ===
+Format:            68021 (Spur 64-bit)
+Header size:       128 bytes
+Image size:        59070824 bytes (56 MB)
+Old base address:  0x10000000000
+Special objects:   0x100010f1498
+Last hash:         17488378538411402268
+Screen size:       0 x 0
+Flags:             0x2
+First segment:     59070824 bytes
+Free old space:    0 bytes
+Eden bytes:        22003584
+
+=== Special Objects ===
+Special objects array: 0x3010f1498
+  Raw header: 0x3c00000002000033
+  Slot count (bits 0-7): 51
+  Hash (bits 8-29): 131072
+  Format (bits 30-34): 0
+  Class index (bits 35-56): 0
+  Flags (bits 57-63): 30
+  Computed slot count: 60
+
+First 20 special objects:
+  [0]: 0x300000000 (object, class: 3075)
+  [1]: 0x300000010 (object, class: 3077)
+  [2]: 0x300000020 (object, class: 3079)
+  [3]: 0x30006d468 (object, class: 3139)
+  [4]: 0x3009258b8 (object, class: 7589)
+  [5]: 0x300366d28 (object, class: 3080)
+  [6]: 0x3000162d0 (object, class: 3086)
+  [7]: 0x3000164b0 (object, class: 3092)
+  [8]: 0x300020ce8 (object, class: 3135)
+  [9]: 0x3000167d0 (object, class: 3102)
+  [10]: 0x300016870 (object, class: 3104)
+  [11]: 0x300000000 (object, class: 3075)
+  [12]: 0x300016cd0 (object, class: 3118)
+  [13]: 0x300016690 (object, class: 3098)
+  [14]: 0x300000000 (object, class: 3075)
+  [15]: 0x300016af0 (object, class: 3112)
+  [16]: 0x300000000 (object, class: 3075)
+  [17]: 0x303819bc0 (object, class: 48)
+  [18]: 0x300016b90 (object, class: 3114)
+  [19]: 0x300366cc0 (object, class: 3082)
+
+=== Memory Layout ===
+Old space:  0x300000000 - 0x400000000
+Allocated:  0 MB
+Free:       4039 MB
+
+First 128 bytes of old space (raw):
+  [0]: 0x25c97500800c03
+  [8]: 0x0
+  [16]: 0x106b2800800c05
+  [24]: 0x0
+  [32]: 0x2b1f8100800c07
+  [40]: 0x0
+  [48]: 0x4000000009000013
+  [56]: 0x0
+  [64]: 0x0
+  [72]: 0x0
+  [80]: 0x0
+  [88]: 0x0
+  [96]: 0x0
+  [104]: 0x0
+  [112]: 0x0
+  [120]: 0x0
+
+First object header analysis:
+  Raw: 0x25c97500800c03
+  Slot count: 3
+  Format: 20
+  Class index: 309550
+
+=== Object Statistics ===
+Total objects:    741557
+Pointer objects:  437692
+Byte objects:     127420
+Compiled methods: 175970
+Total size:       56 MB
+
+=== Checking iOS Classes ===
+  OSWorldRenderer: found
+  OSiOSDriver: NOT FOUND
+  OSiOSBackendWindow: NOT FOUND
+  NullWorldRenderer: found
+  OSWindowDriver: found
+  OSWindow: found
+  WorldMorph: found
+  WorldState: found
+  Display: found
+
+=== Display Surface Setup ===
+Created 1024x768 test display surface
+
+=== Interpreter Initialization ===
+Event callback registered
+[RESUME] ctx[0]: SnapshotOperation>>doSnapshot
+[RESUME] ctx[1]: SnapshotOperation>>doSnapshot
+[RESUME] ctx[2]: FullBlockClosure>>on:do:
+[RESUME] ctx[3]: FullBlockClosure>>onErrorDo:
+[RESUME] ctx[4]: SnapshotOperation>>executeStoringError:
+[RESUME] ctx[5]: SnapshotOperation>>performSnapshot
+[RESUME] ctx[6]: SessionManager>>launchSnapshot:andQuit:
+[RESUME] ctx[7]: SessionManager>>signal
+[RESUME] ctx[8]: FullBlockClosure>>terminateRealActive
+[RESUME] inSnapshotCode=1 chainDepth=9
+[RESUME] Initial context: method=#doSnapshot pc=55
+[RESUME] Patching: stackp=1 stackTopSlot=6 oldVal=true(0x300000020) -> true
+[RESUME] Found SnapshotOperation 0x30382e5d0 at ctx depth 0, isImageStarting=false
+[RESUME] Found SnapshotOperation 0x30382e5d0 at ctx depth 1, isImageStarting=true
+[RESUME] Found SnapshotOperation 0x30382e5d0 at ctx depth 4, isImageStarting=true
+[RESUME] Found SnapshotOperation 0x30382e5d0 at ctx depth 5, isImageStarting=true
+[RESUME] Patched isImageStarting on 1 SnapshotOperation(s)
+[STARTUP] Boosting startup process 0x30381dae0 from P79 to P80
+[JIT] Initialized: 16 MB code zone at 0x108754000
+[STARTUP] Headless mode: deferring timer semaphore signal
+Interpreter initialized successfully!
+Active method: 0x300339380
+
+=== Creating Display ===
+Display after ensureDisplayForm: created!
+
+=== Direct BitBlt Test ===
+Display bits: object width: 1024 height: 768 depth: 32
+Bitmap format: 21 byteSize: 11
+Heartbeat will start after startup completes...
+
+=== Forced GC Test ===
+Before GC: used=56MB free=4039MB
+After GC: used=56MB free=4039MB
+Freed: 159KB
+GC reclaimed: 163776 bytes, moved: 0 objects, took: 96ms
+
+=== Execution Test ===
+Running up to 60000000000 bytecode steps...
+[SISTA] compile=0 dispatch=1 hook active
+[SISTA] hits=0/1 cache=1 disp=0 ret=0 send=0 unk=0
+[CACHE-1] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x3003040d0
+[CACHE-2] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x300304048
+[SISTA-SPLICE-DIAG] doBC=12 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=4 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=4 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=5 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=11 lead=40 (want 9-10, lead=fb)
+[SEM-SIGNAL-2] sem=0x3037f1d90 active-pri=80 waiter=0x302c60998 waiter-pri=80
+[CACHE-3] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000168d8 method=0x3003aa4d8
+[CACHE-4] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300016b58 method=0x3003aa4d8
+[JIT] AUTO-EXCLUDED exception infra #findContextSuchThat:
+[JIT] AUTO-EXCLUDED exception infra #findContextSuchThat:
+[XFER-1] old=0x3037f5b30 pri=80 -> new=0x302c60998 pri=80
+[SISTA-SPLICE-DIAG] doBC=18 litIdx=1 icCls=0 verdict=REJECT reject=numCopied > 1 rejOp=return
+[SISTA-SPLICE-DIAG] doBC=8 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=5 blockLen=11 lead=40 (want 9-10, lead=fb)
+[XFER-2] old=0x302c60998 pri=80 -> new=0x3037f1db0 pri=80
+[SEM-SIGNAL-3] sem=0xcf1018e78 active-pri=80 waiter=0x3037f5b30 waiter-pri=80
+[XFER-3] old=0x3037f1db0 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-4] old=0x3037f5b30 pri=80 -> new=0x3037f1e08 pri=80
+[SEM-SIGNAL-4] sem=0xcf101faf8 active-pri=80 waiter=0x3037f5b30 waiter-pri=80
+[XFER-5] old=0x3037f1e08 pri=80 -> new=0x3037f5b30 pri=80
+[SISTA-SPLICE-DIAG] doBC=6 litIdx=0 icCls=0 verdict=REJECT reject=numCopied > 1 rejOp=return
+[asmjit-t1] code.code_size=3704 out of [1, 3584]
+[asmjit-t1] code.code_size=5732 out of [1, 4608]
+[asmjit-t1] code.code_size=3920 out of [1, 3584]
+[asmjit-t1] code.code_size=3692 out of [1, 3584]
+[asmjit-t1] code.code_size=5772 out of [1, 5632]
+[SLOW-EXIT-SEND #1] method=#next ic=0x88d0eda40
+[IC-PATCH] #at: J2J=1 key=0x32 extra=0x100e0001087589f0
+[SLOW-EXIT-SEND #2] method=#nextPut: ic=0x88cd39360
+[SLOW-EXIT-SEND #3] method=#contents ic=0x88cd39a40
+[IC-PATCH] #max: J2J=1 key=0x80000001 extra=0x10000001087570f0
+[SLOW-EXIT-SEND #4] method=#copyFrom:to: ic=0x88cd39b80
+[SLOW-EXIT-SEND #5] method=#new: ic=0x88b0c8600
+[SLOW-EXIT-SEND #6] method=#= ic=0x10101ac90
+[SLOW-EXIT-SEND #7] method=#compare:with: ic=0x88b0c9600
+[SLOW-EXIT-SEND #8] method=#install ic=0x88b0ec8c0
+[IC-PATCH] #platformName J2J=1 key=0xc3f extra=0x10000001087fab70
+[SLOW-EXIT-SEND #9] method=#vm ic=0x88cd39f40
+[SLOW-EXIT-SEND #10] method=#getSystemAttribute: ic=0x10101aa10
+[IC-PATCH] #utf8 J2J=1 key=0x139c extra=0x100000010878d6f0
+[IC-PATCH] #readStream J2J=1 key=0x32 extra=0x10000001087903b0
+[IC-PATCH] #new:streamContents: J2J=1 key=0xc4c extra=0x10000001087639f0
+[IC-PATCH] #max: J2J=1 key=0x80000001 extra=0x10000001087570f0
+[IC-PATCH] #decodeBytes: J2J=1 key=0x1409 extra=0x100000010878f670
+[IC-PATCH] #size J2J=1 key=0x34 extra=0x1010000108754070
+[IC-PATCH] #reset J2J=1 key=0xc79 extra=0x1000000108756770
+[IC-PATCH] #at: J2J=1 key=0x32 extra=0x100e0001087589f0
+[IC-PATCH] #findElementOrNil: J2J=1 key=0xc41 extra=0x100000010876abf0
+[SISTA-SPLICE-DIAG] doBC=5 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[IC-PATCH] #== J2J=1 key=0x80000001 extra=0x100a0001087fca30
+[CACHE-5] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300016478 method=0x3003aa468
+[CACHE-6] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001a1f0 method=0x3003aa468
+[IC-PATCH] #reset J2J=1 key=0xc57 extra=0x1000000108779bf0
+[IC-PATCH] #asContextWithSender: J2J=1 key=0x26 extra=0x10000001087c5b70
+[IC-PATCH] #header J2J=1 key=0xc2d extra=0x10000001087a37f0
+[IC-PATCH] #vm J2J=1 key=0xc3f extra=0x1000000108781930
+[IC-PATCH] #header J2J=1 key=0xc2d extra=0x10000001087a37f0
+[IC-PATCH] #activeProcess J2J=1 key=0xc31 extra=0x10000001087afd70
+[IC-PATCH] #new J2J=1 key=0xc22 extra=0x10000001087ca5b0
+[IC-PATCH] #lowestPriority J2J=1 key=0xc31 extra=0x10000001087cd9b0
+[IC-PATCH] #size J2J=1 key=0x33 extra=0x1010000108754070
+[IC-PATCH] #isActive J2J=1 key=0xc23 extra=0x10000001087b0bb0
+[IC-PATCH] #== J2J=1 key=0xc8f extra=0x100a0001087fca30
+[IC-PATCH] #findElementOrNil: J2J=1 key=0xc8f extra=0x100000010876abf0
+[IC-PATCH] #state J2J=1 key=0xc23 extra=0x10000001087b1870
+[IC-PATCH] #effectiveProcess J2J=1 key=0xc23 extra=0x10000001087b02b0
+[IC-PATCH] #== J2J=1 key=0xc5b extra=0x100a0001087fca30
+[IC-PATCH] #== J2J=1 key=0x24 extra=0x100a0001087fca30
+[IC-PATCH] #activeProcess J2J=1 key=0xc31 extra=0x10000001087afd70
+[INIT-RESOLVER] #1 Resolver class var set non-nil at step 445040 (value=0xcf10d1b48) — defer will lift after buffer
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x79($y) str='y-mm-dd'(7)
+[SISTA-SPLICE-DIAG] doBC=8 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=5 blockLen=13 lead=4c (want 9-10, lead=fb)
+[P63] idx=1 arrIdx=0 byte=0x79($y) str='yyy'(3)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x30($0) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x30($0) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=4 arrIdx=3 byte=0x36($6) str='2026-04-06 12:00:00 '(25)
+[P63] idx=4 arrIdx=3 byte=0x36($6) str='2026-04-06 12:00:00 '(25)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x6d($m) str='y-mm-dd'(7)
+[P63] idx=4 arrIdx=3 byte=0x6d($m) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=2 arrIdx=1 byte=0x34($4) str='04'(2)
+[P63] idx=2 arrIdx=1 byte=0x34($4) str='04'(2)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=8 arrIdx=7 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=6 arrIdx=5 byte=0x64($d) str='y-mm-dd'(7)
+[P63] idx=7 arrIdx=6 byte=0x64($d) str='y-mm-dd'(7)
+[SISTA-SPLICE-DIAG] doBC=17 litIdx=3 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[XFER-6] old=0x3037f5b30 pri=80 -> new=0x3037f5450 pri=80
+[SEM-SIGNAL-8] sem=0xcf10e0370 active-pri=80 waiter=0x3037f5b30 waiter-pri=80
+[XFER-7] old=0x3037f5450 pri=80 -> new=0x3037f5b30 pri=80
+[asmjit-t1] code.code_size=3704 out of [1, 3584]
+[asmjit-t1] code.code_size=5224 out of [1, 5120]
+[asmjit-t1] code.code_size=3108 out of [1, 3072]
+[SISTA-SPLICE-DIAG] doBC=13 litIdx=2 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=20 litIdx=3 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[asmjit-t1] code.code_size=3700 out of [1, 3584]
+[asmjit-t1] code.code_size=4928 out of [1, 4096]
+[asmjit-t1] code.code_size=7552 out of [1, 5632]
+[CACHE-7] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001edd0 method=0x3002e2688
+[SISTA-COLLECT-DIAG] send1BC=4 selIdx=1 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SPLICE-DIAG] doBC=9 litIdx=1 icCls=0 verdict=REJECT reject=numCopied > 1 rejOp=return
+[SISTA-SPLICE-DIAG] doBC=5 litIdx=0 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=7 lead=41 (want 9-10, lead=fb)
+[CACHE-8] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001eb18 method=0x3003aa468
+[CACHE-9] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001b3b0 method=0x3003aa468
+[JIT] AUTO-EXCLUDED exception infra #signal (class Exception class)
+[JIT] AUTO-EXCLUDED exception infra #receiver (class Exception class)
+[JIT] AUTO-EXCLUDED exception infra #signalerContext
+[JIT] AUTO-EXCLUDED exception infra #handleSignal:
+[SISTA-COLLECT-DIAG] send1BC=10 selIdx=6 verdict=REJECT reject=non-simple block op rejOp=send
+[CACHE-10] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002329d0 method=0x3003aa4d8
+[CACHE-11] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002329d0 method=0x3003aa468
+[CACHE-12] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300232390 method=0x3003aa4d8
+[CACHE-13] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002336f0 method=0x3003aa4d8
+[asmjit-t1] code.code_size=3700 out of [1, 3584]
+[asmjit-t1] code.code_size=7904 out of [1, 7680]
+[asmjit-t1] code.code_size=4720 out of [1, 4096]
+[asmjit-t1] code.code_size=3920 out of [1, 3584]
+[asmjit-t1] code.code_size=6792 out of [1, 6144]
+[CACHE-14] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002336f0 method=0x3003aa468
+[CACHE-15] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002333d0 method=0x3003aa4d8
+[CACHE-16] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002333d0 method=0x3003aa468
+[asmjit-t1] code.code_size=3704 out of [1, 3584]
+[asmjit-t1] code.code_size=3696 out of [1, 3584]
+[CACHE-17] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300024cd0 method=0x3003aa468
+[CACHE-18] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001a710 method=0x3003aa468
+[asmjit-t1] code.code_size=7560 out of [1, 5632]
+[asmjit-t1] code.code_size=3108 out of [1, 3072]
+[asmjit-t1] code.code_size=3924 out of [1, 3584]
+[SISTA-SELECT-CAND] pfbBC=1 send1BC=4 selIdx=1 litIdx=0 slot=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[asmjit-t1] code.code_size=3108 out of [1, 3072]
+[asmjit-t1] code.code_size=4712 out of [1, 4096]
+[asmjit-t1] code.code_size=5516 out of [1, 4608]
+[SISTA-COLLECT-DIAG] send1BC=15 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SPLICE-DIAG] doBC=9 litIdx=3 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-SPLICE-DIAG] doBC=6 litIdx=1 icCls=0 verdict=REJECT reject=no hints provided rejOp=return
+[SISTA-ACCUM-DIAG] pfbBC=3 blockLen=4 lead=40 (want 9-10, lead=fb)
+[asmjit-t1] code.code_size=4712 out of [1, 4096]
+[asmjit-t1] code.code_size=3908 out of [1, 3584]
+[SISTA-COLLECT-DIAG] send1BC=7 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-ACCUM-DIAG] pfbBC=5 blockLen=14 lead=41 (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=21 blockLen=29 lead=40 (want 9-10, lead=fb)
+[asmjit-t1] code.code_size=24108 out of [1, 22528]
+[JIT] Stats: 65536 sends, 675 compiled, 2437 failed, 2528/16384 KB code | IC: 7615/9880 (77% hit, 348 patched, 0 stale) | J2J-r: 0/0 J2J-a: 6729/9511 J2J-d: 227 J2J-s: 2255/4683 | map: 1298 tracked, 841 hot
+[SISTA-INJECT-SPLICE-DIAG] send2BC=7 selIdx=5 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=8 lead=41 (want 9-10, lead=fb)
+[JIT] Stats: 131072 sends, 805 compiled, 4348 failed, 3099/16384 KB code | IC: 14454/19844 (72% hit, 434 patched, 0 stale) | J2J-r: 0/0 J2J-a: 13374/19021 J2J-d: 300 J2J-s: 5083/10314 | map: 1443 tracked, 963 hot
+[syncDisplay] displayFormReady_=false (call 0), displayForm_ isNil=0
+[JIT] Stats: 196608 sends, 818 compiled, 5908 failed, 3138/16384 KB code | IC: 22394/32615 (68% hit, 446 patched, 0 stale) | J2J-r: 0/0 J2J-a: 21966/31015 J2J-d: 304 J2J-s: 8291/16827 | map: 1447 tracked, 970 hot
+[STARTUP] Firing deferred timer semaphore signal (step 5000447)
+[XFER-8] old=0x3037f5b30 pri=80 -> new=0x302c60998 pri=80
+[XFER-9] old=0x302c60998 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-10] old=0x3037f5b30 pri=80 -> new=0x302c60998 pri=80
+[XFER-11] old=0x302c60998 pri=80 -> new=0x3037f5b30 pri=80
+[CACHE-19] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[asmjit-t1] code.code_size=3700 out of [1, 3584]
+[asmjit-t1] code.code_size=5740 out of [1, 4608]
+[JIT] Stats: 262144 sends, 856 compiled, 7566 failed, 3271/16384 KB code | IC: 30123/44853 (67% hit, 478 patched, 0 stale) | J2J-r: 0/0 J2J-a: 29982/42430 J2J-d: 333 J2J-s: 11136/22925 | map: 1542 tracked, 1019 hot
+[asmjit-t1] code.code_size=3700 out of [1, 3584]
+[asmjit-t1] code.code_size=8648 out of [1, 8192]
+[asmjit-t1] code.code_size=6748 out of [1, 5120]
+[asmjit-t1] code.code_size=3696 out of [1, 3584]
+[asmjit-t1] code.code_size=6748 out of [1, 5120]
+[asmjit-t1] code.code_size=3916 out of [1, 3584]
+[asmjit-t1] code.code_size=3116 out of [1, 3072]
+[JIT] Stats: 327680 sends, 916 compiled, 9281 failed, 3484/16384 KB code | IC: 37921/55247 (68% hit, 524 patched, 0 stale) | J2J-r: 0/0 J2J-a: 36332/52447 J2J-d: 375 J2J-s: 13284/28689 | map: 1604 tracked, 1079 hot
+[asmjit-t1] code.code_size=3912 out of [1, 3584]
+[asmjit-t1] code.code_size=4944 out of [1, 4096]
+[asmjit-t1] code.code_size=4944 out of [1, 4096]
+[asmjit-t1] code.code_size=4944 out of [1, 4096]
+[syncDisplay] displayFormReady_=false (call 1), displayForm_ isNil=0
+[JIT] Stats: 393216 sends, 972 compiled, 10968 failed, 3659/16384 KB code | IC: 45913/66184 (69% hit, 561 patched, 0 stale) | J2J-r: 0/0 J2J-a: 42816/62913 J2J-d: 413 J2J-s: 15550/34834 | map: 1639 tracked, 1130 hot
+[asmjit-t1] code.code_size=3116 out of [1, 3072]
+[asmjit-t1] code.code_size=4136 out of [1, 3584]
+[JIT] Stats: 458752 sends, 1008 compiled, 12656 failed, 3761/16384 KB code | IC: 53701/76556 (70% hit, 578 patched, 0 stale) | J2J-r: 0/0 J2J-a: 49221/72974 J2J-d: 426 J2J-s: 17716/40616 | map: 1639 tracked, 1158 hot
+[DNU-STACK] Full call stack for #asInteger (DNU #1):
+[DNU-STACK]   [0] Array>>do:
+[DNU-STACK]   [1] WorkingSession>>on:do:
+[DNU-STACK]   [2] FullBlockClosure>>on:do:
+[DNU-STACK]   [3] WorkingSession>>?
+[DNU-STACK]   [4] WorkingSession>>startup:
+[DNU-STACK]   [5] ClassSessionHandler>>startup:
+[DNU-STACK]   [6] SUnitRunner class>>startUp:
+[DNU-STACK]   [7] SUnitRunner class>>runAllTests
+[DNU-STACK]   [8] SUnitRunner class>>nextRunNumber
+[DNU-STACK]   [9] FullBlockClosure>>on:do:
+[DNU-STACK]   [10] SUnitRunner class>>asInteger
+[DNU-STACK]   [current] #asInteger fd=10
+[SISTA-RING] tag=asInteger seq=17848 count=32:
+  [0] #size                         RET   rcvr=0x303be5f68 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [1] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [2] #size                         RET   rcvr=0xcf1885c30 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [3] #handleClass                  RET   rcvr=0xcf10dc100 ret/top=0x300233ae8 bailOp=0x00 argc=0 spΔ=0
+  [4] #flag:                        RET   rcvr=0xcf1886138 ret/top=0xcf1886138 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x321 ret/top=0x321 bailOp=0x00 argc=0 spΔ=0
+  [6] #delimiter                    RET   rcvr=0x300233e08 ret/top=0x17b bailOp=0x00 argc=0 spΔ=0
+  [7] #delimiter                    RET   rcvr=0x300233e08 ret/top=0x17b bailOp=0x00 argc=0 spΔ=0
+  [8] #max:                         RET   rcvr=0x1 ret/top=0xc9 bailOp=0x00 argc=0 spΔ=0
+  [9] #max:                         RET   rcvr=0x1 ret/top=0xc9 bailOp=0x00 argc=0 spΔ=0
+  [10] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [11] #size                         RET   rcvr=0xcf1889030 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [12] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [13] #max:                         RET   rcvr=0x31 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [14] #size                         RET   rcvr=0xcf1889030 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [15] #size                         RET   rcvr=0xcf1889030 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [16] #size                         RET   rcvr=0xcf1889030 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [17] #size                         RET   rcvr=0xcf1889030 ret/top=0x31 bailOp=0x00 argc=0 spΔ=0
+  [18] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [19] #max:                         RET   rcvr=0x61 ret/top=0x61 bailOp=0x00 argc=0 spΔ=0
+  [20] #size                         RET   rcvr=0xcf1889030 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [21] #size                         RET   rcvr=0xcf1889030 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [22] #size                         RET   rcvr=0xcf1889030 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [23] #size                         RET   rcvr=0xcf1889030 ret/top=0x41 bailOp=0x00 argc=0 spΔ=0
+  [24] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [25] #handlesEncoding:             RET   rcvr=0x300011238 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [27] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [28] #handlesEncoding:             RET   rcvr=0x300011198 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [29] #max:                         RET   rcvr=0x21 ret/top=0x21 bailOp=0x00 argc=0 spΔ=0
+  [30] #collectionSpecies            RET   rcvr=0xcf1889010 ret/top=0x3000175a8 bailOp=0x00 argc=0 spΔ=0
+  [31] #max:                         RET   rcvr=0x1 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+[DNU] #1: #asInteger not understood by rcvr=0xcf1885cf0 argCount=0 fd=10 in #asInteger P80
+[DNU]   rcvr cls=5709 fmt=1 class=FileReference
+[DNU]   FP=0xcf5b0ea90 SP=0xcf5b0eaa8 base=0xcf5b0e950
+[DNU]   receiver_=0x3037fbfb8 method_=0x30380fe78
+[DNU]   FP[-2] = 0x3000182e0
+[DNU]   FP[-1] = 0x30380fea8
+[DNU]   FP[0] = 0xcf1885d08
+[DNU]   FP[1] = 0xcf1885cf0
+[DNU]   FP[2] = 0xcf1885cf0
+[DNU]   FP[3] = 0xcf1885cf0
+[DNU]   FP[4] = 0xcf1885d38
+[DNU]   FP[5] = 0xcf1889010
+[DNU]   FP[6] = 0x303bf6270
+[DNU]   FP[7] = 0xcf188d150
+[DNU]   FP[8] = 0xcf188d150
+[DNU]   FP[9] = 0x300000020
+[DNU]   FP[10] = 0x303bf6270
+[CACHE-20] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300022b08 method=0x3003aa468
+[CACHE-21] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001ac30 method=0x3003aa4d8
+[CACHE-22] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ac30 method=0x3003aa468
+[CACHE-23] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000194d0 method=0x3003aa4d8
+[asmjit-t1] code.code_size=3696 out of [1, 3584]
+[asmjit-t1] code.code_size=3692 out of [1, 3584]
+[asmjit-t1] code.code_size=3920 out of [1, 3584]
+[asmjit-t1] code.code_size=8720 out of [1, 8704]
+[asmjit-t1] code.code_size=3700 out of [1, 3584]
+[JIT] Stats: 524288 sends, 1061 compiled, 13032 failed, 3929/16384 KB code | IC: 61934/85365 (72% hit, 613 patched, 0 stale) | J2J-r: 0/0 J2J-a: 57120/81736 J2J-d: 452 J2J-s: 21637/45370 | map: 1701 tracked, 1217 hot
+[JIT] Stats: 589824 sends, 1061 compiled, 13032 failed, 3929/16384 KB code | IC: 70673/94104 (75% hit, 613 patched, 0 stale) | J2J-r: 0/0 J2J-a: 65858/90475 J2J-d: 452 J2J-s: 26007/49741 | map: 1701 tracked, 1217 hot
+[JIT] Stats: 655360 sends, 1067 compiled, 13560 failed, 3945/16384 KB code | IC: 79399/103363 (76% hit, 618 patched, 0 stale) | J2J-r: 0/0 J2J-a: 75113/99734 J2J-d: 455 J2J-s: 30371/54109 | map: 1707 tracked, 1222 hot
+[asmjit-t1] code.code_size=5516 out of [1, 4608]
+[asmjit-t1] code.code_size=4716 out of [1, 4096]
+[asmjit-t1] code.code_size=3696 out of [1, 3584]
+[JIT] Stats: 720896 sends, 1092 compiled, 13617 failed, 4105/16384 KB code | IC: 86027/110720 (77% hit, 644 patched, 0 stale) | J2J-r: 0/0 J2J-a: 77485/107090 J2J-d: 476 J2J-s: 30960/59667 | map: 1724 tracked, 1239 hot
+[JIT] Stats: 786432 sends, 1238 compiled, 13861 failed, 4315/16384 KB code | IC: 96193/126475 (76% hit, 723 patched, 0 stale) | J2J-r: 0/0 J2J-a: 84117/118868 J2J-d: 1846 J2J-s: 35075/68059 | map: 1880 tracked, 1376 hot
+[syncDisplay] displayFormReady_=false (call 2), displayForm_ isNil=0
+[JIT] Stats: 851968 sends, 1242 compiled, 13862 failed, 4326/16384 KB code | IC: 103685/145892 (71% hit, 727 patched, 0 stale) | J2J-r: 0/0 J2J-a: 86049/126365 J2J-d: 1850 J2J-s: 35866/74415 | map: 1881 tracked, 1379 hot
+[JIT] Stats: 917504 sends, 1242 compiled, 13862 failed, 4326/16384 KB code | IC: 110762/164754 (67% hit, 727 patched, 0 stale) | J2J-r: 0/0 J2J-a: 87233/133442 J2J-d: 1850 J2J-s: 35866/80308 | map: 1881 tracked, 1379 hot
+[JIT] Stats: 983040 sends, 1242 compiled, 13862 failed, 4326/16384 KB code | IC: 117831/183599 (64% hit, 727 patched, 0 stale) | J2J-r: 0/0 J2J-a: 88414/140511 J2J-d: 1850 J2J-s: 35866/86196 | map: 1881 tracked, 1379 hot
+[JIT] Stats: 1048576 sends, 1242 compiled, 13862 failed, 4326/16384 KB code | IC: 124919/202459 (61% hit, 727 patched, 0 stale) | J2J-r: 0/0 J2J-a: 89616/147598 J2J-d: 1850 J2J-s: 35866/92081 | map: 1881 tracked, 1379 hot
+[JIT] Stats: 1114112 sends, 1244 compiled, 13862 failed, 4340/16384 KB code | IC: 131963/218197 (60% hit, 727 patched, 0 stale) | J2J-r: 0/0 J2J-a: 91069/154643 J2J-d: 1850 J2J-s: 36137/97944 | map: 1882 tracked, 1380 hot
+[JIT] Stats: 1179648 sends, 1244 compiled, 13862 failed, 4340/16384 KB code | IC: 138515/224750 (61% hit, 728 patched, 0 stale) | J2J-r: 0/0 J2J-a: 92746/161196 J2J-d: 1851 J2J-s: 36977/103660 | map: 1882 tracked, 1380 hot
+[asmjit-t1] code.code_size=4720 out of [1, 4096]
+[CACHE-24] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001ac30 method=0x3003aa4d8
+[CACHE-25] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ac30 method=0x3003aa468
+[CACHE-26] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000194d0 method=0x3003aa4d8
+[CACHE-27] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000168d8 method=0x3003aa4d8
+[CACHE-28] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001d310 method=0x3003aa4d8
+[CACHE-29] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001d310 method=0x3003aa468
+[CACHE-30] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x30001ce10 method=0x3003aa4d8
+[SISTA-ACCUM-DIAG] pfbBC=2 blockLen=6 lead=4c (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=9 blockLen=4 lead=40 (want 9-10, lead=fb)
+[XFER-12] old=0x3037f5b30 pri=80 -> new=0xcf1c2e630 pri=80
+[XFER-13] old=0xcf1c2e630 pri=80 -> new=0x302c60998 pri=80
+[XFER-14] old=0x302c60998 pri=80 -> new=0x3037f5b30 pri=80
+[asmjit-t1] code.code_size=6752 out of [1, 5632]
+[syncDisplay] displayFormReady_=false (call 3), displayForm_ isNil=0
+[asmjit-t1] code.code_size=3908 out of [1, 3584]
+[JIT] Stats: 1245184 sends, 1495 compiled, 15259 failed, 5601/16384 KB code | IC: 148151/236956 (62% hit, 1050 patched, 0 stale) | J2J-r: 0/0 J2J-a: 98742/172222 J2J-d: 2083 J2J-s: 40119/111551 | map: 2279 tracked, 1644 hot
+[SISTA-ACCUM-DIAG] pfbBC=17 blockLen=13 lead=40 (want 9-10, lead=fb)
+[CACHE-31] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ce10 method=0x3003aa468
+[CACHE-32] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ceb0 method=0x3003aa468
+[CACHE-33] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300017938 method=0x3003aa468
+[CACHE-34] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300016f28 method=0x3003aa468
+[asmjit-t1] code.code_size=3700 out of [1, 3584]
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[CACHE-35] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x3003359d0
+[CACHE-36] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300023cc0 method=0x300335a50
+[asmjit-t1] code.code_size=14404 out of [1, 13312]
+[SISTA-ACCUM-DIAG] pfbBC=3 blockLen=4 lead=40 (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=7 blockLen=4 lead=40 (want 9-10, lead=fb)
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[asmjit-t1] code.code_size=25728 out of [1, 25600]
+[SISTA-ACCUM-DIAG] pfbBC=88 blockLen=12 lead=40 (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=15 blockLen=5 lead=4c (want 9-10, lead=fb)
+[SISTA-ACCUM-DIAG] pfbBC=22 blockLen=5 lead=4c (want 9-10, lead=fb)
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=4 selIdx=1 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[asmjit-t1] code.code_size=5948 out of [1, 4608]
+[syncDisplay] displayFormReady_=false (call 4), displayForm_ isNil=0
+[asmjit-t1] code.code_size=3700 out of [1, 3584]
+[asmjit-t1] code.code_size=3108 out of [1, 3072]
+[asmjit-t1] code.code_size=3700 out of [1, 3584]
+[CACHE-37] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ceb0 method=0x3003aa468
+[CACHE-38] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300017938 method=0x3003aa468
+[asmjit-t1] code.code_size=3700 out of [1, 3584]
+[JIT] Stats: 1310720 sends, 1906 compiled, 16882 failed, 7373/16384 KB code | IC: 155412/249007 (62% hit, 1406 patched, 0 stale) | J2J-r: 0/0 J2J-a: 105294/183694 J2J-d: 2389 J2J-s: 44414/120400 | map: 2921 tracked, 2126 hot
+[SISTA-INJECT-SPLICE-DIAG] send2BC=36 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=52 selIdx=4 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=31 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=47 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-INJECT-SPLICE-DIAG] send2BC=51 selIdx=6 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-IVINJECT-DIAG] toBC=46 verdict=REJECT reject=non-simple block op rejOp=send
+[asmjit-t1] code.code_size=5736 out of [1, 5120]
+[asmjit-t1] code.code_size=5736 out of [1, 5120]
+[asmjit-t1] code.code_size=3916 out of [1, 3584]
+[asmjit-t1] code.code_size=4720 out of [1, 4096]
+[JIT] Stats: 1376256 sends, 2131 compiled, 18115 failed, 8302/16384 KB code | IC: 161031/259394 (62% hit, 1664 patched, 0 stale) | J2J-r: 0/0 J2J-a: 110793/193391 J2J-d: 2712 J2J-s: 47482/127366 | map: 3139 tracked, 2434 hot
+[asmjit-t1] code.code_size=3708 out of [1, 3584]
+[asmjit-t1] code.code_size=3708 out of [1, 3584]
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[CACHE-39] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300024a50 method=0x3003aa468
+[CACHE-40] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300024af0 method=0x3003aa468
+[CACHE-41] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x30001ba90 method=0x3003aa468
+[CACHE-42] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300019b10 method=0x3003aa468
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[CACHE-43] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x3003040d0
+[CACHE-44] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000173c8 method=0x300304048
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=multi-block IR rejOp=return
+[CACHE-45] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3002329d0 method=0x3003aa4d8
+[CACHE-46] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x3002329d0 method=0x3003aa468
+[CACHE-47] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x300232390 method=0x3003aa4d8
+[SISTA-SELECT-CAND] pfbBC=2 send1BC=5 selIdx=2 litIdx=1 slot=0
+[CACHE-48] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x300015fb0 method=0x3003aa468
+[CACHE-49] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000a2088 method=0x3003aa4d8
+[asmjit-t1] code.code_size=9944 out of [1, 8704]
+[asmjit-t1] code.code_size=4936 out of [1, 4096]
+[asmjit-t1] code.code_size=4716 out of [1, 4096]
+[CACHE-50] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x3000168d8 method=0x3003aa4d8
+[asmjit-t1] code.code_size=3908 out of [1, 3584]
+[asmjit-t1] code.code_size=3912 out of [1, 3584]
+[XFER-15] old=0x3037f5b30 pri=80 -> new=0xcf2057a28 pri=80
+[XFER-16] old=0xcf2057a28 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-17] old=0x3037f5b30 pri=80 -> new=0x302c60998 pri=80
+[XFER-18] old=0x302c60998 pri=80 -> new=0x3037f5b30 pri=80
+[JIT] Stats: 1441792 sends, 2426 compiled, 19683 failed, 9514/16384 KB code | IC: 168629/269490 (62% hit, 2130 patched, 0 stale) | J2J-r: 0/0 J2J-a: 115764/203116 J2J-d: 3155 J2J-s: 49348/133729 | map: 3628 tracked, 2699 hot
+[asmjit-t1] code.code_size=3908 out of [1, 3584]
+[asmjit-t1] code.code_size=25212 out of [1, 25088]
+[asmjit-t1] code.code_size=4720 out of [1, 4608]
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=10 selIdx=2 verdict=REJECT reject=multi-block IR rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[SISTA-COLLECT-DIAG] send1BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[asmjit-t1] code.code_size=6784 out of [1, 6144]
+[asmjit-t1] code.code_size=5984 out of [1, 5632]
+[asmjit-t1] code.code_size=5744 out of [1, 4608]
+[asmjit-t1] code.code_size=4712 out of [1, 4096]
+[SISTA-COLLECT-DIAG] send1BC=8 selIdx=4 verdict=REJECT reject=recursion guard rejOp=return
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=load_lit
+[asmjit-t1] code.code_size=19404 out of [1, 18944]
+[JIT] Stats: 1507328 sends, 2697 compiled, 21774 failed, 10573/16384 KB code | IC: 176690/280207 (63% hit, 2511 patched, 0 stale) | J2J-r: 0/0 J2J-a: 121338/212892 J2J-d: 3526 J2J-s: 50959/139293 | map: 3900 tracked, 2997 hot
+[asmjit-t1] code.code_size=5152 out of [1, 4096]
+[asmjit-t1] code.code_size=5152 out of [1, 4096]
+[asmjit-t1] code.code_size=3704 out of [1, 3584]
+[SISTA-COLLECT-DIAG] send1BC=5 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[asmjit-t1] code.code_size=4720 out of [1, 4096]
+[asmjit-t1] code.code_size=10512 out of [1, 10240]
+[asmjit-t1] code.code_size=3692 out of [1, 3584]
+[XFER-19] old=0x3037f5b30 pri=80 -> new=0x302c60998 pri=80
+[XFER-20] old=0x302c60998 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-21] old=0x3037f5b30 pri=80 -> new=0xcf2057a28 pri=80
+[XFER-22] old=0xcf2057a28 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-23] old=0x3037f5b30 pri=80 -> new=0x302c60998 pri=80
+[XFER-24] old=0x302c60998 pri=80 -> new=0x3037f5b30 pri=80
+[JIT] Stats: 1572864 sends, 2874 compiled, 24888 failed, 11461/16384 KB code | IC: 184675/291132 (63% hit, 2754 patched, 0 stale) | J2J-r: 0/0 J2J-a: 127550/223340 J2J-d: 3783 J2J-s: 53337/145644 | map: 4122 tracked, 3207 hot
+[asmjit-t1] code.code_size=6696 out of [1, 6656]
+[JIT] Stats: 1638400 sends, 2909 compiled, 27801 failed, 11674/16384 KB code | IC: 193425/303225 (63% hit, 2857 patched, 0 stale) | J2J-r: 0/0 J2J-a: 134967/234577 J2J-d: 3900 J2J-s: 56589/152385 | map: 4126 tracked, 3236 hot
+[asmjit-t1] code.code_size=3916 out of [1, 3584]
+[JIT] AUTO-EXCLUDED exception infra #signal: (class Exception class)
+[JIT] Stats: 1703936 sends, 2980 compiled, 28763 failed, 11946/16384 KB code | IC: 198589/312446 (63% hit, 3039 patched, 0 stale) | J2J-r: 0/0 J2J-a: 139400/242013 J2J-d: 4121 J2J-s: 59239/157853 | map: 4209 tracked, 3311 hot
+[asmjit-t1] code.code_size=5772 out of [1, 5632]
+[asmjit-t1] code.code_size=4720 out of [1, 4096]
+[asmjit-t1] code.code_size=3108 out of [1, 3072]
+[XFER-25] old=0x3037f5b30 pri=80 -> new=0x302c60998 pri=80
+[XFER-26] old=0x302c60998 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-27] old=0x3037f5b30 pri=80 -> new=0xcf2057a28 pri=80
+[XFER-28] old=0xcf2057a28 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-29] old=0x3037f5b30 pri=80 -> new=0x302c60998 pri=80
+[XFER-30] old=0x302c60998 pri=80 -> new=0x3037f5b30 pri=80
+[JIT] Stats: 1769472 sends, 3050 compiled, 30685 failed, 12229/16384 KB code | IC: 206907/323950 (63% hit, 3124 patched, 0 stale) | J2J-r: 0/0 J2J-a: 145138/252864 J2J-d: 4305 J2J-s: 62058/165313 | map: 4214 tracked, 3380 hot
+[JIT] Stats: 1835008 sends, 3062 compiled, 34244 failed, 12276/16384 KB code | IC: 215688/334925 (64% hit, 3339 patched, 0 stale) | J2J-r: 0/0 J2J-a: 151585/263372 J2J-d: 4477 J2J-s: 64256/171323 | map: 1652 tracked, 826 hot
+[SISTA-SELECT-CAND] pfbBC=1 send1BC=4 selIdx=1 litIdx=0 slot=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+[JIT] Stats: 1900544 sends, 3070 compiled, 35787 failed, 12314/16384 KB code | IC: 223780/346064 (64% hit, 3805 patched, 0 stale) | J2J-r: 0/0 J2J-a: 157881/273928 J2J-d: 4876 J2J-s: 67154/178105 | map: 2380 tracked, 1312 hot
+[XFER-31] old=0x3037f5b30 pri=80 -> new=0x302c60998 pri=80
+[XFER-32] old=0x302c60998 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-33] old=0x3037f5b30 pri=80 -> new=0x303d1b890 pri=80
+[XFER-34] old=0x303d1b890 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-35] old=0x3037f5b30 pri=80 -> new=0x303d1b890 pri=80
+[XFER-36] old=0x303d1b890 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-37] old=0x3037f5b30 pri=80 -> new=0x303d1b890 pri=80
+[XFER-38] old=0x303d1b890 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-39] old=0x3037f5b30 pri=80 -> new=0x303d1b890 pri=80
+[JIT] Stats: 1966080 sends, 3145 compiled, 37867 failed, 12658/16384 KB code | IC: 234550/359420 (65% hit, 4002 patched, 0 stale) | J2J-r: 0/0 J2J-a: 163823/286533 J2J-d: 5055 J2J-s: 70439/187857 | map: 2615 tracked, 1526 hot
+[XFER-40] old=0x303d1b890 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-41] old=0x3037f5b30 pri=80 -> new=0x303d1b890 pri=80
+[XFER-42] old=0x303d1b890 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-43] old=0x3037f5b30 pri=80 -> new=0x303d1b890 pri=80
+[JIT] Stats: 2031616 sends, 3160 compiled, 40214 failed, 12720/16384 KB code | IC: 248353/375946 (66% hit, 4026 patched, 0 stale) | J2J-r: 0/0 J2J-a: 169931/300952 J2J-d: 5112 J2J-s: 73954/199634 | map: 2617 tracked, 1541 hot
+[XFER-44] old=0x303d1b890 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-45] old=0x3037f5b30 pri=80 -> new=0x303d1b890 pri=80
+[XFER-46] old=0x303d1b890 pri=80 -> new=0x3037f5b30 pri=80
+[JIT] Stats: 2097152 sends, 3178 compiled, 43725 failed, 12784/16384 KB code | IC: 258017/387404 (66% hit, 4066 patched, 0 stale) | J2J-r: 0/0 J2J-a: 176253/311820 J2J-d: 5162 J2J-s: 76145/206136 | map: 2669 tracked, 1566 hot
+[JIT] Stats: 2162688 sends, 3185 compiled, 44890 failed, 12814/16384 KB code | IC: 262820/392937 (66% hit, 4138 patched, 0 stale) | J2J-r: 0/0 J2J-a: 180236/317186 J2J-d: 5220 J2J-s: 77811/209088 | map: 2777 tracked, 1732 hot
+[XFER-47] old=0x3037f5b30 pri=80 -> new=0xcf1709b08 pri=80
+[XFER-48] old=0xcf1709b08 pri=80 -> new=0x3037f5b30 pri=80
+[XFER-49] old=0x3037f5b30 pri=80 -> new=0x302c60998 pri=80
+[JIT] Stats: 2228224 sends, 3185 compiled, 44891 failed, 12814/16384 KB code | IC: 262828/392954 (66% hit, 4144 patched, 0 stale) | J2J-r: 0/0 J2J-a: 180245/317202 J2J-d: 5225 J2J-s: 77813/209097 | map: 2792 tracked, 1742 hot
+[JIT] Stats: 2293760 sends, 3185 compiled, 44891 failed, 12814/16384 KB code | IC: 262828/392954 (66% hit, 4144 patched, 0 stale) | J2J-r: 0/0 J2J-a: 180245/317202 J2J-d: 5225 J2J-s: 77813/209097 | map: 2792 tracked, 1742 hot
+[JIT] Stats: 2359296 sends, 3185 compiled, 44891 failed, 12814/16384 KB code | IC: 262828/392954 (66% hit, 4144 patched, 0 stale) | J2J-r: 0/0 J2J-a: 180245/317202 J2J-d: 5225 J2J-s: 77813/209097 | map: 2792 tracked, 1742 hot
+[JIT] Stats: 2424832 sends, 3185 compiled, 44891 failed, 12814/16384 KB code | IC: 262828/392954 (66% hit, 4144 patched, 0 stale) | J2J-r: 0/0 J2J-a: 180245/317202 J2J-d: 5225 J2J-s: 77813/209097 | map: 2792 tracked, 1742 hot
+[JIT] Stats: 2490368 sends, 3185 compiled, 44891 failed, 12814/16384 KB code | IC: 262828/392954 (66% hit, 4144 patched, 0 stale) | J2J-r: 0/0 J2J-a: 180245/317202 J2J-d: 5225 J2J-s: 77813/209097 | map: 2792 tracked, 1742 hot
+[SISTA-SELECT-CAND] pfbBC=10 send1BC=13 selIdx=4 litIdx=3 slot=0
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=recursion guard rejOp=return
+[SISTA-INJECT-SPLICE-DIAG] send2BC=5 selIdx=1 verdict=REJECT reject=recursion guard rejOp=return
+[SISTA-INJECT-SPLICE-DIAG] send2BC=6 selIdx=2 verdict=REJECT reject=non-simple block op rejOp=send
+[asmjit-t1] code.code_size=24324 out of [1, 24064]
+[MUSTBOOL] #1 fd=26 value_class=IceLibgitRepository value=0x30229a2e0 in=#ifTrue: rcv_class=IceSystemEventListener class method=0x3021ec128 numLits=8 ipOff=19
+[MUSTBOOL] method header=0x8000000008600041 slotCount=13 method_class=CompiledBlock method_format=28 method_classIdx=3117
+[MUSTBOOL]   slot[0]=0x8000000008600041
+[MUSTBOOL]   slot[1]=0x3021f3ec8 class=3117 format=31
+[MUSTBOOL]   slot[2]=0x3021a9198 class=3139 format=1
+[MUSTBOOL]   slot[3]=0x300060c18 class=3085 format=23 bytes="announcer"
+[MUSTBOOL]   slot[4]=0x3021a9600 class=3139 format=1
+[MUSTBOOL]   slot[5]=0x30011a4d0 class=3085 format=20 bytes="for:"
+[MUSTBOOL]   slot[6]=0x30005f910 class=3085 format=23 bytes="announce:"
+[MUSTBOOL]   slot[7]=0x300050708 class=3085 format=17 bytes="ifTrue:"
+[MUSTBOOL]   slot[8]=0x3021e17d8 class=3101 format=26
+[MUSTBOOL]   slot[9]=0x410200fd4ed201e7 (raw bytecode bytes)
+[MUSTBOOL]   slot[10]=0xfbd87b0200f94240 (raw bytecode bytes)
+[MUSTBOOL]   slot[11]=0x9440138211c60200 (raw bytecode bytes)
+[MUSTBOOL]   slot[12]=0x5e4fb095 (raw bytecode bytes)
+[MUSTBOOL] bytecodes near ipOff=19: 00 02 7b d8 fb 00 02 c6 11 82 13 40 94
+[MUSTBOOL] full bytecodes (21):
+    0: e7 01 d2 4e fd 00 02 41 40 42 f9 00 02 7b d8 fb 00 02 c6 11 82
+[MUSTBOOL] receiver slotCount=12 class=IceSystemEventListener class
+[MUSTBOOL]   recv.slot[0]=0x300017970 (Object class)
+[MUSTBOOL]   recv.slot[1]=0x302cfa050 (MethodDictionary)
+[MUSTBOOL]   recv.slot[2]=0x1 (SmI(0))
+[MUSTBOOL]   recv.slot[3]=0x3021b8430 (FixedLayout)
+[MUSTBOOL]   recv.slot[4]=0x3021b8448 (Array)
+[MUSTBOOL]   recv.slot[5]=0x300000000 (nil)
+[MUSTBOOL]   recv.slot[6]=0x3021b0120 (ByteSymbol)
+[MUSTBOOL]   recv.slot[7]=0x300000000 (nil)
+[MUSTBOOL] stack: sp=0xcf5b0ec98 fp=0xcf5b0ec70 depth=26
+[MUSTBOOL]   sp[-3]=0xcf1747178 (Array)
+[MUSTBOOL]   sp[-2]=0xcf1747a90 (Array)
+[MUSTBOOL]   sp[-1]=0x30229a2e0 (IceLibgitRepository)
+[MUSTBOOL]   sp[0]=0xcf1747aa0 (FullBlockClosure)
+[MUSTBOOL]   sp[1]=0x9 (SmallInteger)
+[MUSTBOOL]   recent[16] WeakAnnouncementSubscription>>deliver:
+[MUSTBOOL]   recent[17] FullBlockClosure>>on:fork:
+[MUSTBOOL]   recent[18] FullBlockClosure>>on:do:
+[MUSTBOOL]   recent[19] WeakAnnouncementSubscription>>cull:cull:
+[MUSTBOOL]   recent[20] WeakMessageSend>>cull:cull:
+[MUSTBOOL]   recent[21] WeakMessageSend>>cull:
+[MUSTBOOL]   recent[22] WeakMessageSend>>value:
+[MUSTBOOL]   recent[23] IceSystemEventListener class>>handleMethodChange:
+[MUSTBOOL]   recent[24] IceSystemEventListener class>>handlePackagesChange:
+[MUSTBOOL]   recent[25] OrderedCollection>>do:
+[JIT] Stats: 2555904 sends, 3302 compiled, 45393 failed, 13463/16384 KB code | IC: 264710/396492 (66% hit, 4703 patched, 0 stale) | J2J-r: 0/0 J2J-a: 181769/320004 J2J-d: 5679 J2J-s: 78368/210851 | map: 3335 tracked, 2174 hot
+[DRAIN-1] initial=11 processed=11 wka=3 wkaarr-drop=2 kept=6 dec=0 pending=11->11
+[PREEMPT] P40→P60 (active=0x303805488 → 0xcf101da88)
+[DNU-STACK] Full call stack for #suspend (DNU #2):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=51659 count=32:
+  [0] #max:                         RET   rcvr=0x191 ret/top=0x191 bailOp=0x00 argc=0 spΔ=0
+  [1] #max:                         RET   rcvr=0x191 ret/top=0x191 bailOp=0x00 argc=0 spΔ=0
+  [2] #arrayType                    RET   rcvr=0x3000262e8 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [3] #size                         RET   rcvr=0xcf1012468 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [4] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [5] #size                         RET   rcvr=0xcf1012a40 ret/top=0x81 bailOp=0x00 argc=0 spΔ=0
+  [6] #negative                     RET   rcvr=0x9 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [7] #negative                     RET   rcvr=0x9 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [8] #>=                           SEND  rcvr=0xcf10148d0 ret/top=0xcf10148d0 bailOp=0x64 argc=0 spΔ=2
+  [9] #>                            SEND  rcvr=0x3038583d8 ret/top=0x3038583d8 bailOp=0x62 argc=0 spΔ=2
+  [10] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [11] #size                         RET   rcvr=0xcf1017058 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [12] #size                         RET   rcvr=0xcf1017058 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [13] #size                         RET   rcvr=0xcf1017058 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [14] #size                         RET   rcvr=0xcf1017058 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [15] #isDefaultFor:                RET   rcvr=0x30098d6c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [16] #flag:                        RET   rcvr=0x30098d760 ret/top=0x30098d760 bailOp=0x00 argc=0 spΔ=0
+  [17] #max:                         RET   rcvr=0x1 ret/top=0x61 bailOp=0x00 argc=0 spΔ=0
+  [18] #method                       RET   rcvr=0xcf1019020 ret/top=0x3003d06f0 bailOp=0x00 argc=0 spΔ=0
+  [19] #sender                       RET   rcvr=0xcf1019020 ret/top=0x300000000 bailOp=0x00 argc=0 spΔ=0
+  [20] #receiver                     RET   rcvr=0xcf1019020 ret/top=0xcf1018d30 bailOp=0x00 argc=0 spΔ=0
+  [21] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [22] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [23] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [24] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [25] #resources                    RET   rcvr=0x301861538 ret/top=0x300261cf8 bailOp=0x00 argc=0 spΔ=0
+  [26] #isTransparent                RET   rcvr=0x300969920 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [27] #max:                         RET   rcvr=0x7f9 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #instanceVariablesToKeep      RET   rcvr=0xcf1032090 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0xcf1032090 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0xcf1032090 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #2: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU]   FP=0xcf5b0e9e8 SP=0xcf5b0ea00 base=0xcf5b0e950
+[DNU]   receiver_=0x3037fbbc8 method_=0x30380bee8
+[DNU]   FP[-2] = 0x3000182e0
+[DNU]   FP[-1] = 0x30380bf10
+[DNU]   FP[0] = 0xcf1037448
+[DNU]   FP[1] = 0x300000000
+[DNU]   FP[2] = 0x300000000
+[DNU]   FP[3] = 0x80001
+[DNU]   FP[4] = 0xcf1016e48
+[DNU]   FP[5] = 0x303857ff0
+[DNU]   FP[6] = 0x301890358
+[DNU]   FP[7] = 0xcf1032090
+[DNU]   FP[8] = 0x30056a248
+[DNU]   FP[9] = 0xcf1033140
+[DNU]   FP[10] = 0xcf1032090
+[DNU-STACK] Full call stack for #suspend (DNU #3):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=51671 count=32:
+  [0] #size                         RET   rcvr=0xcf1017058 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [1] #size                         RET   rcvr=0xcf1017058 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [2] #size                         RET   rcvr=0xcf1017058 ret/top=0x19 bailOp=0x00 argc=0 spΔ=0
+  [3] #isDefaultFor:                RET   rcvr=0x30098d6c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [4] #flag:                        RET   rcvr=0x30098d760 ret/top=0x30098d760 bailOp=0x00 argc=0 spΔ=0
+  [5] #max:                         RET   rcvr=0x1 ret/top=0x61 bailOp=0x00 argc=0 spΔ=0
+  [6] #method                       RET   rcvr=0xcf1019020 ret/top=0x3003d06f0 bailOp=0x00 argc=0 spΔ=0
+  [7] #sender                       RET   rcvr=0xcf1019020 ret/top=0x300000000 bailOp=0x00 argc=0 spΔ=0
+  [8] #receiver                     RET   rcvr=0xcf1019020 ret/top=0xcf1018d30 bailOp=0x00 argc=0 spΔ=0
+  [9] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [10] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [11] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [12] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [13] #resources                    RET   rcvr=0x301861538 ret/top=0x300261cf8 bailOp=0x00 argc=0 spΔ=0
+  [14] #isTransparent                RET   rcvr=0x300969920 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [15] #max:                         RET   rcvr=0x7f9 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [16] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [17] #instanceVariablesToKeep      RET   rcvr=0xcf1032090 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [18] #instanceVariablesToKeep      RET   rcvr=0xcf1032090 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [19] #instanceVariablesToKeep      RET   rcvr=0xcf1032090 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [20] #negative                     RET   rcvr=0x81 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [21] #>=                           SEND  rcvr=0xcf1039a68 ret/top=0xcf1039a68 bailOp=0x64 argc=0 spΔ=2
+  [22] #>                            SEND  rcvr=0x3038583d8 ret/top=0x3038583d8 bailOp=0x62 argc=0 spΔ=2
+  [23] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [24] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [25] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [27] #resources                    RET   rcvr=0x301861538 ret/top=0x300261cf8 bailOp=0x00 argc=0 spΔ=0
+  [28] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [29] #instanceVariablesToKeep      RET   rcvr=0xcf10463c8 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0xcf10463c8 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0xcf10463c8 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #3: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU]   FP=0xcf5b0e9e8 SP=0xcf5b0ea00 base=0xcf5b0e950
+[DNU]   receiver_=0x3037fbbc8 method_=0x30380bee8
+[DNU]   FP[-2] = 0x3000182e0
+[DNU]   FP[-1] = 0x30380bf10
+[DNU]   FP[0] = 0xcf104b4b0
+[DNU]   FP[1] = 0x300000000
+[DNU]   FP[2] = 0x300000000
+[DNU]   FP[3] = 0x80001
+[DNU]   FP[4] = 0xcf103be90
+[DNU]   FP[5] = 0x303857ff0
+[DNU]   FP[6] = 0x3018903e0
+[DNU]   FP[7] = 0xcf10463c8
+[DNU]   FP[8] = 0x30056a248
+[DNU]   FP[9] = 0xcf1047478
+[DNU]   FP[10] = 0xcf10463c8
+[DNU-STACK] Full call stack for #suspend (DNU #4):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=51685 count=32:
+  [0] #isTransparent                RET   rcvr=0x300969920 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [1] #max:                         RET   rcvr=0x7f9 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [2] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [3] #instanceVariablesToKeep      RET   rcvr=0xcf1032090 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [4] #instanceVariablesToKeep      RET   rcvr=0xcf1032090 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [5] #instanceVariablesToKeep      RET   rcvr=0xcf1032090 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [6] #negative                     RET   rcvr=0x81 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [7] #>=                           SEND  rcvr=0xcf1039a68 ret/top=0xcf1039a68 bailOp=0x64 argc=0 spΔ=2
+  [8] #>                            SEND  rcvr=0x3038583d8 ret/top=0x3038583d8 bailOp=0x62 argc=0 spΔ=2
+  [9] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [10] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [11] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [12] #max:                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [13] #resources                    RET   rcvr=0x301861538 ret/top=0x300261cf8 bailOp=0x00 argc=0 spΔ=0
+  [14] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [15] #instanceVariablesToKeep      RET   rcvr=0xcf10463c8 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [16] #instanceVariablesToKeep      RET   rcvr=0xcf10463c8 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [17] #instanceVariablesToKeep      RET   rcvr=0xcf10463c8 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [18] #>=                           SEND  rcvr=0xcf104dad0 ret/top=0xcf104dad0 bailOp=0x64 argc=0 spΔ=2
+  [19] #>                            SEND  rcvr=0x3038583d8 ret/top=0x3038583d8 bailOp=0x62 argc=0 spΔ=2
+  [20] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [21] #max:                         RET   rcvr=0x11 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [22] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [23] #max:                         RET   rcvr=0x11 ret/top=0x11 bailOp=0x00 argc=0 spΔ=0
+  [24] #resources                    RET   rcvr=0x301861538 ret/top=0x300261cf8 bailOp=0x00 argc=0 spΔ=0
+  [25] #abs                          SEND  rcvr=0x5 ret/top=0x5 bailOp=0x64 argc=0 spΔ=2
+  [26] #abs                          SEND  rcvr=0x5 ret/top=0x5 bailOp=0x64 argc=0 spΔ=2
+  [27] #abs                          SEND  rcvr=0x5 ret/top=0x5 bailOp=0x64 argc=0 spΔ=2
+  [28] #max:                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [29] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0xcf1059cd0 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0xcf1059cd0 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #4: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[PREEMPT] P40→P60 (active=0xcf1064638 → 0xcf10685e8)
+[asmjit-t1] code.code_size=3916 out of [1, 3584]
+[asmjit-t1] code.code_size=3916 out of [1, 3584]
+[asmjit-t1] code.code_size=3916 out of [1, 3584]
+[PREEMPT] P40→P60 (active=0xcf1064638 → 0xcf10685e8)
+[DNU-STACK] Full call stack for #suspend (DNU #5):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=52093 count=32:
+  [0] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [1] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [2] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [3] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [4] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [5] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [6] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [7] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [8] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [9] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [10] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [11] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [12] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [13] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [14] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [15] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [16] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [17] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [18] #max:                         RET   rcvr=0x189 ret/top=0x189 bailOp=0x00 argc=0 spΔ=0
+  [19] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [20] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [21] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [22] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [23] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [24] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [25] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [26] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [27] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [28] #atEnd                        RET   rcvr=0xcf1082c90 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [29] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0xcf106d600 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0xcf106d600 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #5: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[PREEMPT] P40→P60 (active=0xcf108cdf8 → 0xcf1090ec8)
+[PREEMPT] P40→P60 (active=0xcf108cdf8 → 0xcf1090ec8)
+[asmjit-t1] code.code_size=15840 out of [1, 14336]
+[DNU-STACK] Full call stack for #suspend (DNU #6):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=53122 count=32:
+  [0] #atEnd                        RET   rcvr=0xcf10b8690 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [1] #atEnd                        RET   rcvr=0xcf10b8690 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [2] #atEnd                        RET   rcvr=0xcf10b8690 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [3] #atEnd                        RET   rcvr=0xcf10b8740 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [4] #atEnd                        RET   rcvr=0xcf10b8740 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [5] #atEnd                        RET   rcvr=0xcf10b8740 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [6] #atEnd                        RET   rcvr=0xcf10b8740 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [7] #precision                    RET   rcvr=0x30001b028 ret/top=0x1a9 bailOp=0x00 argc=0 spΔ=0
+  [8] #sign                         SEND  rcvr=0x88dd666666666675 ret/top=0x1 bailOp=0x63 argc=0 spΔ=2
+  [9] #precision                    RET   rcvr=0x30001b028 ret/top=0x1a9 bailOp=0x00 argc=0 spΔ=0
+  [10] #sign                         SEND  rcvr=0x88dd666666666675 ret/top=0x1 bailOp=0x63 argc=0 spΔ=2
+  [11] #precision                    RET   rcvr=0x30001b028 ret/top=0x1a9 bailOp=0x00 argc=0 spΔ=0
+  [12] #sign                         SEND  rcvr=0x88dd666666666675 ret/top=0x1 bailOp=0x63 argc=0 spΔ=2
+  [13] #max:                         RET   rcvr=0x7f9 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [14] #sign                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [15] #atEnd                        RET   rcvr=0xcf10b8d70 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [16] #atEnd                        RET   rcvr=0xcf10b8d70 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [17] #atEnd                        RET   rcvr=0xcf10b8d70 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [18] #atEnd                        RET   rcvr=0xcf10b8d70 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [19] #atEnd                        RET   rcvr=0xcf10b8df0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [20] #atEnd                        RET   rcvr=0xcf10b8df0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [21] #atEnd                        RET   rcvr=0xcf10b8df0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [22] #atEnd                        RET   rcvr=0xcf10b8df0 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [23] #atEnd                        RET   rcvr=0xcf10b8e70 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [24] #atEnd                        RET   rcvr=0xcf10b8e70 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [25] #atEnd                        RET   rcvr=0xcf10b8e70 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [26] #atEnd                        RET   rcvr=0xcf10b8e70 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [27] #max:                         RET   rcvr=0x7f9 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [28] #sign                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [29] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0xcf1095ee0 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0xcf1095ee0 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #6: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU-STACK] Full call stack for #suspend (DNU #7):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=53250 count=32:
+  [0] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [1] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [2] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [3] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [4] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [5] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [6] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [7] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [8] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [9] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [10] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [11] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [12] #atEnd                        RET   rcvr=0xcf10d0510 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [13] #atEnd                        RET   rcvr=0xcf10d0510 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [14] #atEnd                        RET   rcvr=0xcf10d0510 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [15] #atEnd                        RET   rcvr=0xcf10d0510 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [16] #atEnd                        RET   rcvr=0xcf10d05c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [17] #atEnd                        RET   rcvr=0xcf10d05c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [18] #atEnd                        RET   rcvr=0xcf10d05c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [19] #atEnd                        RET   rcvr=0xcf10d05c0 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [20] #atEnd                        RET   rcvr=0xcf10d0670 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [21] #atEnd                        RET   rcvr=0xcf10d0670 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [22] #atEnd                        RET   rcvr=0xcf10d0670 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [23] #atEnd                        RET   rcvr=0xcf10d0670 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [24] #precision                    RET   rcvr=0x30001b028 ret/top=0x1a9 bailOp=0x00 argc=0 spΔ=0
+  [25] #precision                    RET   rcvr=0x30001b028 ret/top=0x1a9 bailOp=0x00 argc=0 spΔ=0
+  [26] #precision                    RET   rcvr=0x30001b028 ret/top=0x1a9 bailOp=0x00 argc=0 spΔ=0
+  [27] #max:                         RET   rcvr=0x7f9 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [28] #sign                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [29] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0xcf10ca890 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0xcf10ca890 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #7: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU-STACK] Full call stack for #suspend (DNU #8):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=53260 count=32:
+  [0] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [1] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [2] #atEnd                        RET   rcvr=0xcf10d0510 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [3] #atEnd                        RET   rcvr=0xcf10d0510 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [4] #atEnd                        RET   rcvr=0xcf10d0510 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [5] #atEnd                        RET   rcvr=0xcf10d0510 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [6] #atEnd                        RET   rcvr=0xcf10d05c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [7] #atEnd                        RET   rcvr=0xcf10d05c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [8] #atEnd                        RET   rcvr=0xcf10d05c0 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [9] #atEnd                        RET   rcvr=0xcf10d05c0 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [10] #atEnd                        RET   rcvr=0xcf10d0670 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [11] #atEnd                        RET   rcvr=0xcf10d0670 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [12] #atEnd                        RET   rcvr=0xcf10d0670 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [13] #atEnd                        RET   rcvr=0xcf10d0670 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [14] #precision                    RET   rcvr=0x30001b028 ret/top=0x1a9 bailOp=0x00 argc=0 spΔ=0
+  [15] #precision                    RET   rcvr=0x30001b028 ret/top=0x1a9 bailOp=0x00 argc=0 spΔ=0
+  [16] #precision                    RET   rcvr=0x30001b028 ret/top=0x1a9 bailOp=0x00 argc=0 spΔ=0
+  [17] #max:                         RET   rcvr=0x7f9 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [18] #sign                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [19] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [20] #instanceVariablesToKeep      RET   rcvr=0xcf10ca890 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [21] #instanceVariablesToKeep      RET   rcvr=0xcf10ca890 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [22] #>=                           SEND  rcvr=0xcf10d56a0 ret/top=0xcf10d56a0 bailOp=0x64 argc=0 spΔ=2
+  [23] #>                            SEND  rcvr=0x3038583d8 ret/top=0x3038583d8 bailOp=0x62 argc=0 spΔ=2
+  [24] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [25] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [26] #handleNewProcess:            RET   rcvr=0x303875a68 ret/top=0x303875a68 bailOp=0x00 argc=0 spΔ=0
+  [27] #max:                         RET   rcvr=0x29 ret/top=0x29 bailOp=0x00 argc=0 spΔ=0
+  [28] #resources                    RET   rcvr=0x301861538 ret/top=0x300261cf8 bailOp=0x00 argc=0 spΔ=0
+  [29] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0xcf10e2688 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0xcf10e2688 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #8: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[JIT] Stats: 2621440 sends, 3435 compiled, 46750 failed, 14072/16384 KB code | IC: 273314/408088 (66% hit, 5130 patched, 0 stale) | J2J-r: 0/0 J2J-a: 187811/330658 J2J-d: 5969 J2J-s: 80456/217208 | map: 1940 tracked, 1125 hot
+[DNU-STACK] Full call stack for #suspend (DNU #9):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=53344 count=32:
+  [0] #atEnd                        RET   rcvr=0xcf10f9c28 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [1] #atEnd                        RET   rcvr=0xcf10f9c28 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [2] #atEnd                        RET   rcvr=0xcf10f9ca8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [3] #atEnd                        RET   rcvr=0xcf10f9ca8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [4] #atEnd                        RET   rcvr=0xcf10f9ca8 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [5] #atEnd                        RET   rcvr=0xcf10f9ca8 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [6] #atEnd                        RET   rcvr=0xcf10f9d28 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [7] #atEnd                        RET   rcvr=0xcf10f9d28 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [8] #atEnd                        RET   rcvr=0xcf10f9d28 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [9] #atEnd                        RET   rcvr=0xcf10f9d28 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [10] #max:                         RET   rcvr=0x7f9 ret/top=0x7f9 bailOp=0x00 argc=0 spΔ=0
+  [11] #atEnd                        RET   rcvr=0xcf10fa608 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [12] #atEnd                        RET   rcvr=0xcf10fa608 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [13] #atEnd                        RET   rcvr=0xcf10fa608 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [14] #atEnd                        RET   rcvr=0xcf10fa608 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [15] #atEnd                        RET   rcvr=0xcf10fa688 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [16] #atEnd                        RET   rcvr=0xcf10fa688 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [17] #atEnd                        RET   rcvr=0xcf10fa688 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [18] #atEnd                        RET   rcvr=0xcf10fa688 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [19] #atEnd                        RET   rcvr=0xcf10fa708 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [20] #atEnd                        RET   rcvr=0xcf10fa708 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [21] #atEnd                        RET   rcvr=0xcf10fa708 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [22] #atEnd                        RET   rcvr=0xcf10fa708 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [23] #atEnd                        RET   rcvr=0xcf10fa788 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [24] #atEnd                        RET   rcvr=0xcf10fa788 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [25] #atEnd                        RET   rcvr=0xcf10fa788 ret/top=0x300000010 bailOp=0x00 argc=0 spΔ=0
+  [26] #atEnd                        RET   rcvr=0xcf10fa788 ret/top=0x300000020 bailOp=0x00 argc=0 spΔ=0
+  [27] #precision                    RET   rcvr=0x30001b028 ret/top=0x1a9 bailOp=0x00 argc=0 spΔ=0
+  [28] #max:                         RET   rcvr=0x2a9 ret/top=0x2a9 bailOp=0x00 argc=0 spΔ=0
+  [29] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0xcf10f5668 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0xcf10f5668 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #9: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU-STACK] Full call stack for #suspend (DNU #10):
+[DNU-STACK]   [0] SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+[DNU-STACK]   [1] FullBlockClosure>>on:do:
+[DNU-STACK]   [2] Process>>unwindTo:
+[DNU-STACK]   [current] #suspend fd=2
+[SISTA-RING] tag=suspend seq=53667 count=32:
+  [0] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [1] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [2] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [3] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [4] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [5] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [6] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [7] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [8] #sign                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [9] #max:                         RET   rcvr=0x139 ret/top=0x139 bailOp=0x00 argc=0 spΔ=0
+  [10] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [11] #sign                         RET   rcvr=0xfffffffffffffff9 ret/top=0xfffffffffffffff9 bailOp=0x00 argc=0 spΔ=0
+  [12] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [13] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [14] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [15] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [16] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [17] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [18] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [19] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [20] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [21] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [22] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [23] #sign                         RET   rcvr=0xfffffffffffffff9 ret/top=0xfffffffffffffff9 bailOp=0x00 argc=0 spΔ=0
+  [24] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [25] #sign                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [26] #max:                         RET   rcvr=0x139 ret/top=0x139 bailOp=0x00 argc=0 spΔ=0
+  [27] #sign                         RET   rcvr=0x9 ret/top=0x9 bailOp=0x00 argc=0 spΔ=0
+  [28] #sign                         RET   rcvr=0x1 ret/top=0x1 bailOp=0x00 argc=0 spΔ=0
+  [29] #arrayType                    RET   rcvr=0x3000178d0 ret/top=0x3000164b0 bailOp=0x00 argc=0 spΔ=0
+  [30] #instanceVariablesToKeep      RET   rcvr=0xcf110bbf8 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+  [31] #instanceVariablesToKeep      RET   rcvr=0xcf110bbf8 ret/top=0x3005a68b8 bailOp=0x00 argc=0 spΔ=0
+[DNU] #10: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #11: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #12: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #13: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #14: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #15: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[asmjit-t1] code.code_size=19432 out of [1, 13312]
+[asmjit-t1] code.code_size=3700 out of [1, 3584]
+[asmjit-t1] code.code_size=12088 out of [1, 10752]
+[JIT] Stats: 2686976 sends, 3536 compiled, 47997 failed, 14651/16384 KB code | IC: 281824/417874 (67% hit, 5230 patched, 0 stale) | J2J-r: 0/0 J2J-a: 193573/340141 J2J-d: 6027 J2J-s: 83619/223999 | map: 2120 tracked, 1276 hot
+[JIT] Stats: 2752512 sends, 3536 compiled, 49727 failed, 14651/16384 KB code | IC: 290498/426548 (68% hit, 5230 patched, 0 stale) | J2J-r: 0/0 J2J-a: 200472/348815 J2J-d: 6027 J2J-s: 87058/229213 | map: 2120 tracked, 1276 hot
+[JIT] Stats: 2818048 sends, 3536 compiled, 51458 failed, 14651/16384 KB code | IC: 299172/435223 (68% hit, 5231 patched, 0 stale) | J2J-r: 0/0 J2J-a: 207371/357489 J2J-d: 6027 J2J-s: 90496/234425 | map: 2120 tracked, 1276 hot
+[DNU] #16: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[asmjit-t1] code.code_size=4724 out of [1, 4096]
+[asmjit-t1] code.code_size=3916 out of [1, 3584]
+[asmjit-t1] code.code_size=3916 out of [1, 3584]
+[DNU] #17: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #18: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #19: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #20: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #21: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #22: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #23: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #24: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #25: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #26: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #27: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #28: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #29: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[JIT] Stats: 2883584 sends, 3589 compiled, 52827 failed, 14952/16384 KB code | IC: 308713/446452 (69% hit, 5321 patched, 0 stale) | J2J-r: 0/0 J2J-a: 213259/368276 J2J-d: 6087 J2J-s: 93229/241744 | map: 2175 tracked, 1362 hot
+[DNU] #30: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #31: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[DNU] #32: #suspend not understood by rcvr=0x300000000 argCount=0 fd=2 in #suspend P80
+[DNU]   rcvr cls=3075 fmt=0 class=nil
+[DNU] 1MB-aligned check: rcvr=0x300000000 classAtIdx(3075).isNil=0 trap_env=0
+[SISTA-SELECT-CAND] pfbBC=1 send1BC=4 selIdx=1 litIdx=0 slot=0
+[SISTA-SELECT-EMIT] bc=1 slot=0 vid=1
+
+=== Execution Summary ===
+Active bytecode steps: 66788824
+
+=== JIT Stats ===
+  compiled: 3317 methods
+  IC: 310542 hits / 448830 total (69.2%), patches=5408 stale=0
+  IC miss breakdown: noSelBits=12029 cold=2591 poly=45334 noICData=78334
+  activations: 514732 hits / 514732 total (100.0%)
+  resume (J2J-r): 0 chains / 0 total (0.0%)
+  J2J stencil: calls=243482 returns=93843 patches=6153
+  materialize: count=0 totalDepth=0
+  chain: actChain=4 actFall=6204 | primChain=120480 primFall=326
+  yields=0 OSR=5541
+  T2-IC: 0 hits / 0 total (0.0%)
+  T2 (asmjit): compiled=0 bailed=0
+  inline-prim: at=0 atPut=0 size=0 bitOp=0 floatOp=0 bcFloat=9 bcArithBail=9 remoteTemp=667 basicNew=718/0 basicNew0=0 sistaSelfRec=0/0 multiSlot=0 retLit=0 tempRet=0 intCmp=0 intArith=0 evenOdd=0 sistaShortcut=0 getter=0 setter=0 retSelf=0
+  canSkipJ2JSave: 453/3488 real-compiled methods qualify (13.0%); ic-hits=0 fires=0
+=================
+
+=== Display Check ===
+Pixel count: 2
+First 100 pixels: 2 modified from gradient
+Stopping heartbeat thread...
+
+=== Display Surface Stats ===
+Size: 1024x768
+Update calls: 0
+Pixels changed: NO
+Initial checksum: 0x3fbf8040
+Current checksum: 0x3fbf8040
+
+Sample pixels:
+  [0,0]: 0xff808080 (A=255 R=128 G=128 B=128)
+  [10,35]: 0xff808080 (A=255 R=128 G=128 B=128)
+  [100,100]: 0xff808080 (A=255 R=128 G=128 B=128)
+  [512,384]: 0xff808080 (A=255 R=128 G=128 B=128)
+  [1023,767]: 0xff808080 (A=255 R=128 G=128 B=128)
+
+Unique colors: 1
+  0xff808080: 786432 pixels
+
+Framebuffer saved to /tmp/pharo-display.ppm
+
+=== Test Complete ===

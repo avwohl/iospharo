@@ -1,0 +1,4 @@
+1	CairoLibraryTest	testVersionString	PASS
+1	CairoUTF8ConverterTest	testEncodingString	PASS
+1	CairoUTF8ConverterTest	testReusingConverterShouldReplaceOldData	PASS
+1	CairoUTF8ConverterTest	testUnicodencodingShouldTerminateWithNull	PASS
