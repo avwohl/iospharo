@@ -3,6 +3,26 @@
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
+## 2026-05-28 PM — INLINE_J2J + XMETHOD interaction matrix
+
+Bisection on `cleanUpInstanceVariables` stress + full SUnit found
+that `PHARO_T1_INLINE_J2J_XMETHOD=1` together with INLINE_J2J=1
+recovers most of the perf without the cull: dispatch bug — but
+introduces 23 silent wrong-value `FAIL` results in collection tests.
+
+```
+config                      SUnit pass     fib28
+INLINE off (default)        633/634 99.84% 76 ms
+INLINE on, XMETHOD off      297/634 47%    SEGV
+INLINE on, XMETHOD on       611/634 96.4%  11 ms
+```
+
+XMETHOD-on cross-method inline-J2J fires for more call sites but
+produces wrong results on `testAsArray`, `testSize`,
+`testAsOrderedCollection`, `test0FixtureCopyPartOfSequenceableTest`,
+etc.  Both inline-J2J modes have correctness bugs; default stays off.
+Future fix needs to address BOTH paths.
+
 ## 2026-05-28 PM — inline-J2J disabled by default (633/634 = 99.84%!)
 
 Bisection found the `cull:`/`do:`/`value:` dispatch confusion bug:
