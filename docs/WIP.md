@@ -3,7 +3,30 @@
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
-## 2026-05-28 PM — INLINE_J2J + XMETHOD interaction matrix
+## 2026-05-28 PM — INLINE+XMETHOD flipped back ON (commit 0731f841)
+
+Bisection on the focused-4-class SUnit run found the earlier
+"99.84%" measurement was a Monitor counting artifact — the real
+stable result is 611/634 with INLINE off, and the SAME 611/634
+with both INLINE+XMETHOD on (identical 23-FAIL list, verified by
+diff).  XMETHOD has NO correctness regression in this run but
+gives 7× fib speedup:
+
+```
+config                       SUnit    fib28
+INLINE off                   611/634  76 ms
+INLINE on, XMETHOD off       ~297/634 SEGV (cull: bug)
+INLINE on, XMETHOD on (NEW)  611/634  11 ms
+```
+
+Flipped both defaults back ON.  Opt out via `PHARO_T1_NO_INLINE_J2J=1`
+or `PHARO_T1_NO_INLINE_J2J_XMETHOD=1`.
+
+The 23 pre-existing FAILs (5 SymbolTest, 17 ArrayTest assertions,
+1 CharacterTest ERROR) are unrelated to inline-J2J — same set
+appears in INLINE-off and INLINE+XMETHOD-on.
+
+## 2026-05-28 PM — INLINE_J2J + XMETHOD interaction matrix (superseded)
 
 Bisection on `cleanUpInstanceVariables` stress + full SUnit found
 that `PHARO_T1_INLINE_J2J_XMETHOD=1` together with INLINE_J2J=1
