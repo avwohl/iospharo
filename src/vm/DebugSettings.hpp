@@ -651,6 +651,16 @@ struct DebugSettings {
     // restore legacy for bisection.
     bool finalizeDeferred = true;                  // PHARO_INLINE_FINALIZE inverts
 
+    // PHARO_SCAV_BIT_AUDIT=1 — verify that the RememberedBit (set by
+    // the JIT inline-asm write barrier and storePointer's C++ barrier)
+    // is reliably populated.  Scavenge still does its full old-space
+    // scan; this mode adds bookkeeping that counts (a) objects with
+    // young refs that had the bit set, (b) objects with young refs
+    // that had the bit UNSET (audit-gap misses), (c) objects with the
+    // bit set but no actual young refs (false positives, harmless).
+    // Reported in JIT stats summary.  Low overhead, default off.
+    bool scavBitAudit = false;
+
     // PHARO_T1_SETTER_BARRIER=1 — opt in to emitting an old→young
     // write-barrier call from the JIT T1 inline setter (AsmjitT1.cpp
     // line 4431 arm64).  Default off: the setter currently writes

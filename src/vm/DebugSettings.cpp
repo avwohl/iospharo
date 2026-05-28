@@ -360,6 +360,7 @@ DebugSettings::DebugSettings() {
     finalizeDeferred       = !envPresent("PHARO_INLINE_FINALIZE");
     gcHeadroomMB           = envInt("PHARO_GC_HEADROOM_MB", 0);
     t1SetterBarrier        = envPresent("PHARO_T1_SETTER_BARRIER");
+    scavBitAudit           = envPresent("PHARO_SCAV_BIT_AUDIT");
 
     // --- Newly migrated trace / debug bools (mass conversion) ---
     a1Trace                          = envPresent("PHARO_A1_TRACE");

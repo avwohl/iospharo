@@ -1574,23 +1574,42 @@ GCResult ObjectMemory::scavenge() {
     //
     // Snapshot oldSpaceFree_ so we don't re-scan freshly-tenured
     // objects appended during this loop (Phase 2 drains those).
+    // PHARO_SCAV_BIT_AUDIT: count whether RememberedBit accurately tracks
+    // old→young refs.  Low overhead — just bookkeeping during the existing
+    // full scan.  Used to validate write-barrier coverage before a
+    // future session flips scavenge to skip un-remembered objects.
+    const bool bitAudit = g_debug.scavBitAudit;
+    size_t auditBitSetHit = 0;     // bit set + ≥1 young ref (true positive)
+    size_t auditBitSetMiss = 0;    // bit set + no young ref (false positive, harmless)
+    size_t auditBitUnsetHit = 0;   // bit unset + ≥1 young ref (audit-gap MISS!)
+    size_t auditBitUnsetSafe = 0;  // bit unset + no young ref (true negative)
+
     auto scanRegionForYoung = [&](uint8_t* regionStart, uint8_t* regionEnd) {
         ObjectScanner scan(regionStart, regionEnd);
         while (ObjectHeader* obj = scan.next()) {
             size_t np = pointerSlotsOf(obj);
             Oop* slots = obj->slots();
             size_t cnt = obj->slotCount();
+            bool foundYoungRef = false;
             for (size_t i = 0; i < np && i < cnt; ++i) {
                 Oop s = slots[i];
                 if (!s.isObject()) continue;
                 uint8_t* hp = reinterpret_cast<uint8_t*>(s.asObjectPtr());
                 if (hp >= edenStart_ && hp < edenFree_) {
+                    if (bitAudit) foundYoungRef = true;
                     Oop newS = tenureIfYoung(s);
                     slots[i] = newS;
                     if (newS.rawBits() != s.rawBits()) {
                         scanQueue.push_back(newS.asObjectPtr());
                     }
                 }
+            }
+            if (bitAudit) {
+                bool wasRemembered = obj->isRemembered();
+                if (wasRemembered && foundYoungRef) auditBitSetHit++;
+                else if (wasRemembered && !foundYoungRef) auditBitSetMiss++;
+                else if (!wasRemembered && foundYoungRef) auditBitUnsetHit++;
+                else auditBitUnsetSafe++;
             }
         }
     };
@@ -1601,6 +1620,13 @@ GCResult ObjectMemory::scavenge() {
     // does direct slotAtPut bypassing the write barrier.
     if (permSpaceStart_ && permSpaceEnd_ > permSpaceStart_) {
         scanRegionForYoung(permSpaceStart_, permSpaceEnd_);
+    }
+    if (bitAudit) {
+        fprintf(stderr,
+            "[SCAV-AUDIT] bit accuracy: setHit=%zu setMiss=%zu "
+            "unsetHit=%zu (gap!) unsetSafe=%zu\n",
+            auditBitSetHit, auditBitSetMiss,
+            auditBitUnsetHit, auditBitUnsetSafe);
     }
     rememberedSet_.clear();
 
