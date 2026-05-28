@@ -3,6 +3,28 @@
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
+## 2026-05-28 PM — broader test coverage findings
+
+Extended to 20 classes (from focused 4): finds new JIT correctness
+bugs.  Most prominent:
+
+- **`Float>>cos` JIT compilation SIGSEGVs** under repeated
+  `i degreesToRadians cos` calls (e.g., IntegerTest>>testDegreeCos).
+  Reproducer:
+  ```
+  -360 to: 360 do: [:i | i degreesToRadians cos]
+  ```
+  Crashes inside JIT'd cos at offset 336 with fault addr
+  `0x812d97c7f3321d28` (looks like a SmallFloat64 raw-bits
+  interpreted as a heap pointer).
+  Workaround: `PHARO_T1_SKIP_SELECTORS=cos` makes the test pass.
+  Bytecodes are simple (`self pushLitVar 0 send: + send: sin
+  returnTop`) — bug is in the JIT'd sequence somewhere.
+
+These broader-coverage bugs are out of scope for the "fix existing
+fails" pass that achieved 100% on the focused 4 classes — listing
+here as next targets.
+
 ## 2026-05-28 PM — 100% SUnit PASS (commit 3a2c0a68)
 
 Final state: **634/634 PASS / 0 FAIL / 0 ERROR** on the focused
