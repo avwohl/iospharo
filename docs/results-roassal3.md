@@ -69,14 +69,60 @@ Either:
 
 Documented in `docs/deferred.md` (or should be — TBD).
 
-## Next runs
+## Investigation log — 2026-05-28 PM
 
-* **Skip the test classes that crashed**: filter the 99 down to a
-  list excluding `RSAdjacencyMatrixBuilderTest`, re-run, see how
-  much further we get before the next crash.
-* **Bisect with `PHARO_NO_JIT=1`**: confirm the SIGSEGV goes away
-  when JIT is off (will be ~50× slower; only worth running the
-  first few classes to confirm).
-* **Capture the JIT'd `#inverseTransformPiOrZero:`** via the
-  asmjit disassembler dump (`PHARO_JIT_DUMP=…`) to spot the missing
-  mask.
+### Crash is deterministic
+
+Reran the full 99-class list a second time (commit `41eeed6a` baseline).
+Identical crash: same method (`#inverseTransformPiOrZero:`), same
+codeSize (8464), same offset (2496), same fault addr
+(`0x86fe800000000008`), same call site reached at test 35.  So we
+have a reliable reproducer.
+
+### Single-class runs do NOT crash
+
+Running just `RSAdjacencyMatrixBuilderTest` alone completes with
+13 PASS / 0 FAIL / 3 ERROR (the 3 `Color>>blue` errors) and no SIGSEGV.
+Running `RSBarPlotTest` alone also completes (16 ERRORs from
+Color/transform issues but no crash).  Even a 9-class subset
+(`RSAdjacencyMatrix` through `RSBoxPlot`) completes without crashing.
+
+So the crash needs the full 99-class context — JIT cache pressure
+seems to be a precondition.  Plausible mechanisms:
+
+* Method-map / IC eviction patches a J2J entry into an IC that
+  later gets read without the corresponding J2J epilog.
+* GC moves a JIT-marked method while an IC still holds the old
+  bit-tagged address.
+
+### `#inverseTransformPiOrZero:` is not the culprit on its own
+
+The method body is six lines, four float sends.  An isolated probe
+that calls it 100 K times with both identical and varying Points
+returns correct results and never crashes — so the JIT'd code for
+this method is fine in isolation.
+
+The bug only shows up when this method is dispatched THROUGH an IC
+whose extras word still carries J2J-classifier bits from a prior
+caller.  The crashing site loads `[x19]` where x19 = the IC slot's
+cached value with bits 60+57+56+63 still set.
+
+### Bisection so far
+
+Tried `PHARO_T1_NO_INLINE_PRIM_BASIC_NEW=1` — different crash, earlier
+test (test 17 instead of 35), same bit-60+ pattern in fault addr
+(`0x8340000000000000`).  So the bug is not isolated to one inline
+path; the basicNew inline was masking a different latent J2J leak.
+
+In-flight: `PHARO_NO_JIT=1` run on the same 99-class list to
+confirm zero crashes when JIT is off.
+
+### Next steps requiring lldb
+
+1. Set a breakpoint at the crashing PC (`codeStart + 2496` in
+   `#inverseTransformPiOrZero:`) and inspect what populated x19.
+2. Walk back from there to find the IC fill site that left bit 60
+   on the cached value.
+3. Either mask bits 56-63 in dispatchCached's `[x5, 8]` load, OR
+   fix the IC fill so bit 60 only goes into the `extras` word at
+   `[x5, 16]`, never into `icData[1]` at `[x5, 8]`.
