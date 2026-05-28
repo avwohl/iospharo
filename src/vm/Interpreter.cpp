@@ -11917,6 +11917,30 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     const int MAX_DNU_DEPTH = 10;
 
+    // Defensive: if the receiver is a non-canonical Oop (top 16 bits set),
+    // it's a JIT classifier-bit leak — see task #10 and the matching guard
+    // in AsmjitT1.cpp's emit_send.  The JIT-side guard routes corrupt
+    // receivers to MISS, which lands here with a useless receiver; without
+    // this bail the next deref SIGSEGV's.  Push nil and return so the image
+    // sees a clean nil result instead of a crash.
+    {
+        Oop dnuReceiver = stackValue(argCount);
+        if (dnuReceiver.isObject() && (dnuReceiver.rawBits() >> 48) != 0) {
+            static int leakLog = 0;
+            if (++leakLog <= 3) {
+                fprintf(stderr,
+                    "[DNU-LEAK] non-canonical receiver 0x%llx (top 16 bits set) "
+                    "→ #%s with %d args; pushing nil\n",
+                    (unsigned long long)dnuReceiver.rawBits(),
+                    memory_.selectorOf(selector).c_str(),
+                    argCount);
+            }
+            popN(argCount + 1);
+            push(memory_.nil());
+            return;
+        }
+    }
+
     // Fast path: nil findNextHandlerContext → return nil
     // UndefinedObject doesn't implement this method in Pharo 13,
     // but the expected behavior is to return nil (terminate handler chain).

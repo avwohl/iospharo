@@ -3452,6 +3452,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.ldur(x1, ptr(x2, rcvrOffsetBytes));   // x1 = receiver
             a.and_(x4, x1, asmjit::Imm(0x7));
             a.cbnz(x4, imm);
+            // Defensive: an object-tagged Oop must be a canonical user-space
+            // pointer — bits 48-63 zero on macOS/Linux arm64.  Receivers with
+            // top bits set are JIT classifier-bit leaks (task #10 — J2J entry
+            // bit 60, getter bit 63, etc.) and dereferencing them SIGSEGV's
+            // (Roassal3 #inverseTransformPiOrZero: crash at fault addr
+            // 0x86fe800000000008).  Route to MISS so the chain loop does a
+            // safe full lookup (or surfaces a real error) instead of crashing.
+            a.lsr(x4, x1, asmjit::Imm(48));
+            a.cbnz(x4, miss);
             a.ldr(w4, ptr(x1));               // low 32 bits of header
             a.and_(w4, w4, asmjit::Imm(0x3FFFFF));
             a.b(haveKey);
