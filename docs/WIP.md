@@ -3,6 +3,39 @@
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
+## 2026-05-28 PM — disabled BV inline (commit 34e70558): 633/634 PASS
+
+Bisected the 23 "pre-existing" FAILs to a single JIT bug: T1
+inline-block-value (BV) corrupts inner-block iteration when the
+outer caller is also doing `arr do:` over the same receiver and the
+inner block compares captured-outer-each against inner-each.
+
+Minimal reproducer (in our VM with BV inline on):
+```
+| arr2 |
+arr2 := #($a $b $a $c $d).
+arr2 do: [:e | Transcript print: (arr2 occurrencesOf: e); cr].
+```
+Returns 3, 1, 3, 1, 1 (wrong — `$a` appears only twice).
+With BV inline off: 2, 1, 2, 1, 1 (correct).
+
+Flipped `t1InlineBlockValue` default to OFF.  SUnit jumped from
+611/634 (96.4%) to **633/634 (99.8%)** — 22 FAILs eliminated, only
+`CharacterTest>>testStoreStringAll` ERROR remains (separate
+OCParser/mustBeBoolean issue, unrelated).
+
+Per-class after the fix:
+```
+SmallIntegerTest  27/29
+SymbolTest       268/268   (100%, was 263/268)
+CharacterTest     15/19    (1 ERROR — testStoreStringAll)
+ArrayTest        323/324   (was 306/324)
+TOTAL            633/634   (99.8%)
+```
+
+Perf cost: `fib28` 10 ms → 13 ms (small; fib doesn't lean on
+blocks).  Opt back in via `PHARO_T1_INLINE_BLOCK_VALUE=1`.
+
 ## 2026-05-28 PM — INLINE+XMETHOD flipped back ON (commit 0731f841)
 
 Bisection on the focused-4-class SUnit run found the earlier
