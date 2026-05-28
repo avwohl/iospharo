@@ -1,0 +1,34 @@
+=== SUnit Test Run #1 (batch 1-101 of 2168) ===
+
+BATCH-DEBUG: batchClasses size=101 first=PMAB2SolverTest last=PMVectorTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T18:21:07.877455-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-ERR: Error Missing jumpAheadTo: #else
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout patch error: proceed for truth.
+=== PMAB2SolverTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testSimpleSystem2
+  RUN: testSimpleSystem3
+  RUN: testSimpleSystem4
+  RUN: testVectorSystem
+Total: 4 P:4 F:0 E:0 S:0
+=== PMAB2StepperTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testOrderIsTwo
+  RUN: testSimpleSystem
+  RUN: testSimpleSystem2
+  RUN: testSimpleSystem3
+Total: 4 P:4 F:0 E:0 S:0
+=== PMAB3SolverTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testSimpleSystem2
+  RUN: testSimpleSystem3
+  RUN: testSimpleSystem4
+  RUN: testVectorSystem
