@@ -39,6 +39,62 @@ on stock Pharo, so any divergence on our VM is a VM/JIT bug.
 
 (Counts are gfx-image suite runs and OVER-count real bugs — see finding #1.)
 
+## HEADLINE: confirmed JIT correctness bug in aigraph (Prim/Tarjan)
+
+The one unambiguous JIT bug this campaign found. On the **clean** harness image
+(Pharo-jit, no FakeGUI, 0 startup-corruption lines), full `AI-Algorithms-Graph`
+suite:
+
+       JIT ON  : 78 PASS / 6 ERROR
+       JIT OFF : 84 PASS / 0 ERROR    (PHARO_NO_JIT=1)
+
+Only the JIT toggles. The 6:
+`AIPrimTest>>{testMinimumSpanningTreeSimple, testMinimumSpanningTreeComplex,
+testMinSpanningTreeComplex2}`,
+`AITarjanTest>>{testStronglyConnectedGraph, testComplexCycle,
+testStronglyConnectedGraphWithObjects}`.
+
+Exception (captured via the runner's stack-trace logging):
+
+       Error: No Element in Graph : #(3 4 2)
+         AIPrim(AIGraphAlgorithm)>>findNode:
+         AIPrim>>run
+
+`AIPrim>>run` does `fromNode := self findNode: curEdge first` but under JIT
+`findNode:` receives the WHOLE edge tuple `#(3 4 2)` instead of `curEdge first`
+(`3`). So a JIT'd send passes the wrong argument — `curEdge first` evaluates to
+`curEdge`, or the argument slot is mis-loaded. The raw VM log corroborates
+stack/arg corruption: garbage receivers appear in the forked test processes —
+a **stack address** (`#asInteger not understood by rcvr=0x591885918`, FP is
+`0x5bdb...`) and `nil` (`#suspend`/`#acceptVisitor:` to `0x300000000`). Bits
+48-63 are clear, so this is distinct from the known classifier-bit leak (task
+#10 / b8eead95).
+
+Trigger: **warmup + fork**. Passes in isolation (even JIT-on). Needs
+SUnitRunner's multi-test fork sequence — running several different test methods
+forks them at priority 40 and warms up multiple JIT compilations; one of the
+warmed compiled methods then mis-passes an argument when re-entered in a forked
+context. A minimal same-test `forkAt: 40` repro does NOT trigger it (the
+multi-method warmup matters).
+
+Reliable repro:
+
+       printf 'AIPrimTest\nAITarjanTest\n' > /tmp/sunit_class_names.txt
+       rm -f /tmp/sunit_run_completed.txt /tmp/sunit_test_{results,detail}.txt
+       ./build/test_load_image /tmp/harness/Pharo-jit.image      # JIT on  -> 3 ERROR
+       PHARO_NO_JIT=1 ./build/test_load_image /tmp/harness/Pharo-jit.image  # -> 0 ERROR
+
+Next: lldb per CLAUDE.md — break at `sendDoesNotUnderstand` when the receiver is
+a stack address (non-heap, FP-range), walk back to the JIT frame and the
+stencil whose epilog/arg-load leaves the wrong slot. Likely a J2J or
+process-resume frame-restore that mis-sets an argument/receiver slot.
+
+CAVEAT on the isolation-triage method: because this bug is warmup+fork
+dependent, isolation repro (one test at a time) mislabels it ARTIFACT. The
+authoritative test is full-suite JIT-on vs JIT-off on the clean image
+(`scripts/graphics/run_clean_onoff.sh`); the per-test isolation pass
+(`triage_candidates.sh`) only catches non-warmup-dependent bugs.
+
 ## Key findings
 
 ### 1. The Pharo-gfx.image inflates failure counts (suite/image artifact)
