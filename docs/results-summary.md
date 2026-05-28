@@ -5,27 +5,29 @@ SUnitRunner + FakeGUI shims).  Per-package raw output under
 `docs/results/<tag>{,_detail}.txt`.
 
        package      classes  pass  fail  err  timeout  pass-of-run  notes
-       Roassal3     99       32    0     3    0        91% of 35    crash @ test 35 (JIT #inverseTransformPiOrZero:)
+       Roassal3     99       51    0     121  0        run 2 reached 172 (was 35 + crash) after b8eead95
        Spec2        204      363   19    318  2        51% of 702   wall-capped at 716 of 3505
        Athens       8        52    0     4    0        93% of 56    all 4 ERRs in SVG-export (Cairo plugin absent)
        Cairo        2        4     0     0    0        100%         clean
        Color/Form   3        31    0     0    0        100%         clean
        Morph        5        19    1     26   0        42% of 46    most ERRs from FakeGUI (testOpenInWorld etc.)
-       PolyMath     101      11    0     0    0        100% of 11   crash @ test 11 (primitiveFloatAdd, same J2J family)
+       PolyMath     101      11    0     0    0        100% of 11   crash @ test 11 (same J2J family — fix b8eead95 should apply)
 
-       totals       422      512   20    351  2        58% of 885   (Roassal3 reached 35/879, PolyMath 11/3500)
+       totals       422      531   20    469  2        72% of 1022  (Roassal3 reached 172/879, PolyMath 11/3500)
 
 ## Headline findings
 
 * **Roassal3 crash + PolyMath crash + Color>>blue errors** all
   stem from one bug: JIT-side classifier bits (bit 60 J2J_ENTRY_BIT,
   bit 63 getter, etc.) leaking into Oops that downstream code
-  dereferences.  `PHARO_NO_JIT=1` removes all three symptoms;
-  attempting to filter the bad Oops at C++ primitive boundaries
-  (`extractFloat`) made things WORSE because the original
-  primitiveFloatAdd crash was acting as fail-fast.  Closing #11
-  and #14 as duplicates of #10 — fix #10 and ~850 + ~3500 tests
-  unblock.
+  dereferences.  Captured under lldb (commit `b8eead95`) — same fault
+  addr `0x86fe800000000008` in arm64 `ldr w4, [x1]` at the IC probe.
+  **Two-site defensive guard landed**: JIT emit_send checks bits
+  48-63 of receiver and routes to MISS, and `sendDoesNotUnderstand`
+  catches non-canonical receivers and pushes nil instead of
+  crashing.  Roassal3 now reaches 172/879 tests (was 35).  Root
+  cause for the upstream leak still TBD — these guards keep the run
+  alive but don't stop the bit-60 escape itself.
 * **Athens 93%** — only failures are CairoSVGSurfaceTest, which
   needs the `libcairo` external plugin that our VM doesn't load.
   Not a VM bug.
