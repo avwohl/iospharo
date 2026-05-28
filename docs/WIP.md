@@ -3,6 +3,44 @@
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
+## 2026-05-28 PM — StringTest fail investigation
+
+StringTest>>testOnlyLetters and the line-ending tests fail because
+of a `WriteStream on: WideString` interaction bug.  The select-by-
+isLetter pattern is:
+```
+result := src species new: src size streamContents: [:stream |
+  1 to: src size do: [:i |
+    (each := src at: i) isLetter ifTrue: [stream nextPut: each]]]
+```
+where `src species` for a WideString returns WideString, so the
+stream's underlying buffer is `WideString new: 14`.  Subsequent
+`nextPut:`s produce a buggy pattern (Character oop bits in odd
+slots, zeros in even slots, then transitioning to correct
+codepoints at slot ~50+).
+
+Pattern observed (write 100 chars cp 1001..1100 to `WideString new: 100`):
+```
+ws[1] = 8011 (= (1001<<3) | 3 oop bits)
+ws[2] = 0
+ws[3] = 8019 (cp 1003 oop bits)
+ws[4] = 0
+...
+ws[50] = 0
+ws[51] = 1051 (correct codepoint!)
+ws[52] = 1052
+...
+```
+
+The bug is independent of JIT — `PHARO_NO_JIT=1` shows identical
+behavior.  Direct `ws at: i put: ch` works correctly; only the
+WriteStream wrapping triggers the bug.  Investigated:
+`primitiveStringAtPut` (Primitives.cpp:5599) looks correct;
+`asCharacter()` correctly decodes; `bytes()` returns the right
+pointer.  Where exactly the buggy stores come from is TBD —
+would need printf instrumentation or lldb.  Worth a focused
+session.
+
 ## 2026-05-28 PM — broader 20-class SUnit run: 3170/3189 (99.6%)
 
 After hardcoding the cos JIT skip (commit `5c870c75`), extended the
