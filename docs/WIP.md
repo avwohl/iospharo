@@ -255,17 +255,33 @@ that the scavenge will redo by scanning every old-space slot.
 
   Status: **260 → 230** misses.
 
-  **Next likely culprit identified:** `stencil_popStoreTemp` writes
-  `s->tempBase[idx] = value`.  For non-materialized frames tempBase
-  is on the C stack — no barrier needed.  For materialized frames
-  (activeContext_ set, frameDepth_=0) tempBase points at slot 6 of
-  the Context object — so this is a direct slot write into a
-  potentially-old Context with a potentially-young value.  Closing
-  this gap needs the stencil to range-check `tempBase` against
-  oldSpace and conditionally call the barrier.  Doable with the
-  same inline-asm pattern used for storeRecvVar; deferred to its
-  own session because it touches a different stencil and the
-  tempBase→ContextHeader address math is more delicate.
+  **stencil_popStoreTemp barrier attempt (2026-05-28):**
+  Tried adding the inline-asm barrier to all 6 temp-store stencil
+  variants (storeTemp_1/_2, popStoreTemp_1/_2/_3/_4 + the two base
+  variants).  Range-check tempBase against oldSpace to skip the
+  C-stack case, with `tempBase - 48` as the derived Context header.
+  Verifier passes; build clean.
+
+  Result: **miss count unchanged at 230, and tinyBench regressed
+  ~11 %** (5350 ms → 5950 ms).  Two findings:
+
+  1. The materialized-context temp-store path is virtually never
+     exercised in normal workloads.  JIT-compiled code runs with
+     frameDepth_ > 0 (non-materialized); only reflection-style
+     paths (`Context>>tempAt:put:`) hit materialized frames, and
+     those go through C++ primitives, not the temp stencils.
+     So the barrier was correctness-improving but caught no real
+     gaps.
+  2. The ~6-instruction barrier check ran on every temp store in
+     hot loops (tinyBench's bytecodes test does millions of temp
+     stores per run).  Pure overhead with no audit benefit.
+
+  Reverted.  The 230 audit-gap misses must come from a different
+  C++ path — likely Sista-emitted stores or another primitive's
+  direct write that I haven't located yet.  Continuing the hunt
+  needs per-miss callsite logging (e.g. backtrace at storePointer
+  vs at direct slot-write sites) rather than path-by-path
+  speculation.
 
 Once stencils barrier, scavenge can be flipped to consume
 `rememberedSet_` (`ObjectMemory.cpp:1571-1597` full-scan replaced
