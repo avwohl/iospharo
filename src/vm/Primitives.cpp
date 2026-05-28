@@ -388,6 +388,24 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
                 slots1[s] = slots2[s];
                 slots2[s] = temp;
             }
+            // Write-barrier fixup: the direct slot swap above bypasses
+            // storePointer.  If either object is now in old space with
+            // young slots (from the swap), remember it.  Audit-gap
+            // closure (see memory/jit_remembered_set_dead.md).
+            auto rememberIfNeeded = [&](Oop o) {
+                if (!memory_.isOld(o)) return;
+                ObjectHeader* h = o.asObjectPtr();
+                Oop* s = h->slots();
+                size_t n = h->slotCount();
+                for (size_t i = 0; i < n; ++i) {
+                    if (s[i].isObject() && memory_.isYoung(s[i])) {
+                        memory_.rememberObjectPublic(o);
+                        return;
+                    }
+                }
+            };
+            rememberIfNeeded(obj1);
+            rememberIfNeeded(obj2);
         } else {
             // Different sizes — need heap scan to swap all references
             heapScanPairs.push_back({obj1, obj2});
@@ -420,10 +438,13 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
                 Oop slot = header->slotAt(s);
                 for (auto& [from, to] : heapScanPairs) {
                     if (slot.rawBits() == from.rawBits()) {
-                        header->slotAtPut(s, to);
+                        // Use storePointer to maintain the old→young
+                        // write barrier — `to` may be young while
+                        // `obj` is in old space.
+                        memory_.storePointer(s, obj, to);
                         break;
                     } else if (slot.rawBits() == to.rawBits()) {
-                        header->slotAtPut(s, from);
+                        memory_.storePointer(s, obj, from);
                         break;
                     }
                 }

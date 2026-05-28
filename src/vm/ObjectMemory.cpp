@@ -373,6 +373,27 @@ Oop ObjectMemory::shallowCopy(Oop original) {
 
     bytesAllocated_ += size;
     Oop copyResult = oopFromPointer(copy);
+
+    // Write-barrier fixup: shallowCopy allocates in old space and
+    // memcpy's the source's slots verbatim.  If the source had any
+    // young refs (and our `setRemembered(false)` above just cleared
+    // the bit), the copy now contains an unbarried old→young ref.
+    // Scan pointer slots and rememberObject if any young found —
+    // matches what storePointer would have done if we'd reached
+    // here via normal slot writes.  This was the single largest
+    // source of scavenge audit-gap misses (memory/
+    // jit_remembered_set_dead.md).
+    if (isOldObject(copy) && src->isPointersObject()) {
+        size_t np = pointerSlotsOf(src);
+        Oop* slots = copy->slots();
+        for (size_t i = 0; i < np; ++i) {
+            Oop v = slots[i];
+            if (v.isObject() && isYoung(v)) {
+                rememberObject(copyResult);
+                break;
+            }
+        }
+    }
     if (g_debug.mnuAllocDbg && src->classIndex() == 4307) {
         static int n = 0;
         n++;

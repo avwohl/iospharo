@@ -17262,10 +17262,13 @@ void Interpreter::drainMournQueueNatively() {
             Oop entKey = entHdr->slotAt(0);
             size_t correctIdx = findElementOrNilIdx(entKey);
             if (correctIdx != SIZE_MAX && correctIdx != idx) {
-                // Swap entry into its correct position.
+                // Swap entry into its correct position.  Use storePointer
+                // so the old→young write barrier fires if `entry` was
+                // recently allocated and the bucket array is in old space
+                // (commit `e67ec61d` audit gap closure).
                 Oop atCorrect = arrHdr->slotAt(correctIdx);
-                arrHdr->slotAtPut(correctIdx, entry);
-                arrHdr->slotAtPut(idx, atCorrect);
+                memory_.storePointer(correctIdx, arrayOop, entry);
+                memory_.storePointer(idx, arrayOop, atCorrect);
             }
         }
     }
