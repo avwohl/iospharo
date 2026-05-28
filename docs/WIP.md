@@ -3,6 +3,55 @@
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
+## 2026-05-28 PM — additional fixes and cull: investigation
+
+Extended the dual-path primitive trap fix:
+- `emitPrimProlog_arm64` for prim 60 (at:) now handles fmt 3/4/5/9
+  via `jit_rt_primat_ptr` helper.  Commit `5b2d6e55`.
+- `emitPrimProlog_arm64` for prim 61 (at:put:) handles fmt 3/4/5
+  via `jit_rt_primatput_ptr`.
+- `jit_rt_array_prim` (IC-shortcut path) primKind 14/15 extended for
+  fmt 3/4/5(/9 for at:).  Commit `2512d03f`.
+
+**`cull:` JIT bug — unresolved, persists.**
+
+Many SymbolTest ERRORs (138 → ~120 after at: fix) come from a single
+recurring pattern:
+```
+ArgumentsCountMismatch: This block accepts 0 arguments, but called with 1.
+  BlockClosure>>value:                          <-- block (real one)
+  LayoutClassScope>>do:
+  LayoutClassScope(BlockClosure)>>cull:         <-- impossible inheritance
+  PointerLayout>>allVisibleSlots
+  ClassDescription>>allSlots
+  TestCase>>cleanUpInstanceVariables
+```
+
+The fourth stack frame is impossible: `LayoutClassScope` doesn't
+inherit from `BlockClosure`, and `(LayoutClassScope canUnderstand:
+#cull:)` is `false`.  Yet cull: is somehow executing on a
+LayoutClassScope receiver — sending `value:` to it, which DNUs.
+
+Probes show:
+- Direct call `[42] cull: 5 = 42` works.
+- 200,000-call stress (`[:x | x*10] cull: i`) — all correct.
+- `SymbolTest class allInstVarNames` direct → works.
+- `SymbolTest selector: #test0CopyTest` `runCase` direct → works.
+- Forked equivalent → hangs.
+
+`PHARO_T1_SKIP_SELECTORS=cull:` lifts SymbolTest test0Fixture from
+12/24 to 28/32 (88%) but regresses CharacterTest 15/19 → 0/19 because
+the same dispatch confusion now hits `do:` instead.  The bug is
+something deeper — likely IC polymorphic-cache poisoning where one
+class's IC entry mis-matches a different-class receiver.
+
+Hypothesis: under the SUnit fork-and-watchdog harness, a polymorphic
+send site's IC accumulates entries from blocks AND from layout/scope
+receivers; the IC class-key check is missing or wrong in some emit
+path.  Worth an lldb session to verify.  Skipping cull: from JIT is
+NOT a clean workaround because the same pattern recurs on other
+selectors (do:, etc.).
+
 ## 2026-05-28 PM — SUnit test results
 
 **First real SUnit run on our VM.**  Focused subset (4 classes:
