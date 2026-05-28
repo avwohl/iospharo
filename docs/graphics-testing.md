@@ -152,13 +152,19 @@ For **Metacello-loaded** packages (Athens, Bloc, PolyMath):
 
 Queue tracked in TaskList:
 
-* #4 Roassal3 (in progress)
-* #5 Athens (needs Metacello — blocked by the Iceberg
-  `Character>>bitShift:` regression unless preinstalled)
-* #6 Bloc (same Metacello dependency)
-* #7 PolyMath (same Metacello dependency)
-* #8 PNG render harness (cross-cutting)
-* #9 Spec2 (preinstalled, 204 classes / 3505 tests)
+       task  package    classes  tests   preinstalled  status
+       #4    Roassal3   99       879     yes           done (run 1: 32 PASS / 3 ERROR, crashed)
+       #9    Spec2      204      3505    yes           in progress
+       #6    Bloc       53       642     yes           pending
+       #5    Athens     10       80      yes           pending
+       #6b   Cairo      7        32      yes           pending (bundled with Bloc)
+       #12   Plot       10       146     yes           pending
+       #12b  Chart      4        17      yes           pending (bundled with Plot)
+       #7    PolyMath   —        —       no            blocked on Iceberg SHA1 bug
+       #8    Render     —        —       —             pending (cross-cutting)
+
+All preinstalled-package class lists are pre-extracted to
+`/tmp/<pkg>_test_classes.txt`.
 
 Results land in `docs/results-<package>.md` (one per package, same
 shape as `docs/test-results.md` for kernel SUnit).

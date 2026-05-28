@@ -1,0 +1,163 @@
+=== SUnit Test Run #1 (batch 1-99 of 2051) ===
+
+BATCH-DEBUG: batchClasses size=99 first=RSAbstractPlotTest last=RSWrapLabelTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T16:49:52.059003-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-ERR: Error Missing jumpAheadTo: #else
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout patch error: proceed for truth.
+=== RSAbstractPlotTest === SKIPPED (abstract)
+=== RSAdjacencyMatrixBuilderTest ===
+  SORT-OK: 27 comparisons for 13 items
+  RUN: testBasic01
+  RUN: testBasic02
+  RUN: testBasic03
+  RUN: testConnections01
+  RUN: testCycle01
+  RUN: testCycle02
+  RUN: testCycle03
+  RUN: testCycle04
+  RUN: testIncomingConnectionsOf
+  RUN: testOutgoingConnectionsOf
+  RUN: testRendering01
+  ERROR: testRendering01 (KeyNotFound: key #blue not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>blue
+    >> RSAdjacencyMatrixBuilder>>connectingColor
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in RSAdjacencyMatrixBuilder>>renderIn:
+    >> Interval>>do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in RSAdjacencyMatrixBuilder>>renderIn:
+    >> Interval>>do:
+    >> RSAdjacencyMatrixBuilder>>renderIn:
+    >> RSAdjacencyMatrixBuilder(RSBuilder)>>build
+    >> RSAdjacencyMatrixBuilderTest>>testRendering01
+    >> RSAdjacencyMatrixBuilderTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RSAdjacencyMatrixBuilderTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RSAdjacencyMatrixBuilderTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> RSAdjacencyMatrixBuilderTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  RUN: testSorting01
+  ERROR: testSorting01 (KeyNotFound: key #lightGray not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>lightGray
+    >> RSBox(RSShape)>>defaultColor
+    >> RSBox(RSShape)>>initialize
+    >> RSBox(RSBoundingShape)>>initialize
+    >> RSBox class(Behavior)>>new
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in RSAdjacencyMatrixBuilder>>renderIn:
+    >> Interval>>do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in RSAdjacencyMatrixBuilder>>renderIn:
+    >> Interval>>do:
+    >> RSAdjacencyMatrixBuilder>>renderIn:
+    >> RSAdjacencyMatrixBuilder(RSBuilder)>>build
+    >> RSAdjacencyMatrixBuilderTest>>testSorting01
+    >> RSAdjacencyMatrixBuilderTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RSAdjacencyMatrixBuilderTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RSAdjacencyMatrixBuilderTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> RSAdjacencyMatrixBuilderTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testSorting02
+  ERROR: testSorting02 (KeyNotFound: key #lightGray not found in IdentityDictionary)
+    >> IdentityDictionary(Dictionary)>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in IdentityDictionary(Dictionary)>>at:
+    >> IdentityDictionary(Dictionary)>>at:ifAbsent:
+    >> IdentityDictionary(Dictionary)>>at:
+    >> Color class>>lightGray
+    >> RSBox(RSShape)>>defaultColor
+    >> RSBox(RSShape)>>initialize
+    >> RSBox(RSBoundingShape)>>initialize
+    >> RSBox class(Behavior)>>new
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in RSAdjacencyMatrixBuilder>>renderIn:
+    >> Array(SequenceableCollection)>>do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in RSAdjacencyMatrixBuilder>>renderIn:
+    >> Array(SequenceableCollection)>>do:
+    >> RSAdjacencyMatrixBuilder>>renderIn:
+    >> RSAdjacencyMatrixBuilder(RSBuilder)>>build
+    >> RSAdjacencyMatrixBuilderTest>>testSorting02
+    >> RSAdjacencyMatrixBuilderTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RSAdjacencyMatrixBuilderTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in RSAdjacencyMatrixBuilderTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> RSAdjacencyMatrixBuilderTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+Total: 13 P:10 F:0 E:3 S:0
+=== RSAlignmentTest ===
+  SORT-OK: 19 comparisons for 10 items
+  RUN: testCenter
+  RUN: testFromBottom
+  RUN: testFromLeft
+  RUN: testFromLeftWithAFixShape
+  RUN: testFromLeftWithFixedShape
+  RUN: testFromRight
+  RUN: testFromTop
+  RUN: testFromTopWithAFixShape
+  RUN: testHasElement
+  RUN: testNoErrorOnDefault
+Total: 10 P:10 F:0 E:0 S:0
+=== RSAngleLineLayoutTest ===
+  SORT-OK: 9 comparisons for 6 items
+  RUN: testBasic
+  RUN: testGapSize
+  RUN: testLayoutWith0Angle
+  RUN: testLayoutWith90Angle
+  RUN: testLayoutWithThreeElements
+  RUN: testLoop
+Total: 6 P:6 F:0 E:0 S:0
+=== RSAnimationTest ===
+  DIAG-EMPTY: allTestSelectors=0 for RSAnimationTest
+  DIAG-EMPTY: allSelectors size=607
+  DIAG-EMPTY: test* in allSelectors=0
+  DIAG-EMPTY: methodDict size=4
+  DIAG-EMPTY: test* in methodDict=0
+  DIAG: characterSet=#Unicode class='Unicode class'
+  DIAG: cs isLetter: $t=true
+  DIAG: $t between:$a and:$z=true
+  DIAG: isLetter: source=isLetter: arg1	| tmp1 |	tmp1 := arg1 charCode + 1.	tmp1 > GeneralCategory size ifTrue: [ ^ false ].	nil.	^ (GeneralCategory at: tmp1) between: Ll and: Lu
+  DIAG: Character>>isLetter source=isLetter	^ self characterSet isLetter: self
+  DIAG: $t class=#Character
+  DIAG: $t class characterSet=#Unicode
+  DIAG: CharSet=Unicode
+  DIAG: AsciiCharset='MISSING'
+  SORT-OK: 0 comparisons for 0 items
+Total: 0 P:0 F:0 E:0 S:0
+=== RSAthensRendererTest ===
+  SORT-OK: 0 comparisons for 1 items
+  RUN: testArcCorner
+Total: 1 P:1 F:0 E:0 S:0
+=== RSAttachPointTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testBorderAttachPoint
+  RUN: testCenteredAttachPoint
+  RUN: testHorizontalAttachPoint
+  RUN: testInverted
+  RUN: testVerticalAttachPoint
+Total: 5 P:5 F:0 E:0 S:0
+=== RSBarPlotTest ===
+  SORT-OK: 32 comparisons for 16 items
+  RUN: testBasic
