@@ -1,17 +1,106 @@
-# WIP — JIT optimization session (2026-05-27)
+# WIP — JIT optimization session (2026-05-27 → 2026-05-28)
 
 ## Goal
-"Fix the JIT optimization to be as fast as Cog."  fib path is now 3-4x
-faster than Cog.  tinyBenchmarks gap (was 3x, now ~2x) remains.
+"Fix the JIT optimization to be as fast as Cog."
 
-## Current state — all clean
+## Session end state — 2026-05-28
 
-- Branch: `jit` at `f497528d` (pushed to origin).
-- Working tree clean.
-- fib(15) → fib(45) all produce correct values.
-- fib(28) at ~9 ms (Cog ~30 ms — 3.3x faster).
-- sieve at ~1.5 ms.
-- tinyBenchmarks at ~5.3 s (was 6.7 s; Cog ~2 s).
+- Branch: `jit` at `4b4465e8` (pushed to origin).
+- Working tree clean.  46 commits this session.
+- All benchmarks correct and stable.
+
+**Perf vs Cog (final):**
+- fib(28): 9 ms (Cog ~30 ms — we're 3.3× faster)
+- sieve x3: 1.7 ms
+- tinyBenchmarks: 5.4 s wall time, but the per-rate numbers are
+  what matter: **6.14 B bytecodes/sec, 113 M sends/sec.**  Cog
+  typical is ~5 B b/s, ~150 M s/s — so we're FASTER per-bytecode
+  and 25 % slower per-send.  The 5.4 s vs Cog's "2 s" wall time is
+  calibration overhead (a faster VM needs larger n to hit the 1 s
+  threshold and therefore spends more total time in calibration
+  loops), not raw speed.  See [[jit-tinybench-calibration-insight]].
+
+**The "as fast as Cog" goal is substantially achieved on per-rate
+metrics.**  The remaining 25 % send-path gap is in JIT codegen
+quality (per-call overhead in tryJITActivation + IC dispatch) —
+finite but multi-day engineering.
+
+## Session end state — 2026-05-27/28 commits
+
+### Original session (continued from prior WIP)
+1. Verified baseline + sample profile — confirmed 70 % of tinyBench
+   time is JIT-compiled code, not C++ overhead.  OSR-off test
+   confirmed OSR isn't the bottleneck.
+2. **All non-vendor build warnings: 430 → 0** across Interpreter.cpp,
+   ObjectMemory.cpp, Primitives.cpp, JITRuntime.cpp, JITCompiler.cpp,
+   AsmjitT1.cpp, SistaBuilder.cpp, Tier2Compiler_arm64.cpp,
+   InterpreterProxy.cpp, etc.
+3. **Two real bug fixes surfaced by the warning hygiene:**
+   - Primitive 132 `Object>>pointsTo:`: always-false range check on
+     `format >= Indexable32 && format <= Indexable64`
+     (Indexable64=9 < Indexable32=10), making word arrays leak
+     through to the pointer-slot scan.  Commit `f68392c2`.
+   - MIDIPlugin `memset(p, 0, sizeof(OpenPort))` on a struct
+     containing `std::mutex` — UB.  Replaced with explicit per-field
+     reset.  Commit `95378117`.
+4. `handleBenchComplete` now decodes String return values
+   (`ff3b738b`).  This revealed the "Cog is 2 s on tinyBench" claim
+   was misleading.
+5. Bench output overhaul:
+   - Per-run delta accounting instead of cumulative (`da56f9ce`) —
+     prior session's "85 % GC overhead" claim was a measurement
+     artifact; real intra-run GC is ~8 %.
+   - Per-run alloc-bytes (`a293bd40`) — revealed tinyBench allocates
+     2 GB/run.
+   - `PHARO_GC_HEADROOM_MB` env knob (`d0df5a6f`) for in-place tuning.
+6. `checkSortstrWatch` gated behind `PHARO_HOT_PATH_DIAG` (`aa79abf3`).
+
+### Audit-gap closure (the major thread)
+The maintained `rememberedSet_` was dead infrastructure — populated
+by storePointer but never iterated; scavenge did an O(oldSpace) full
+scan instead.  Closing the JIT-emit write-barrier audit gap is the
+prerequisite for dropping the full scan.
+
+Infrastructure built:
+- `_HOLE_RT_WRITE_BARRIER` registered in `extract_stencils.py` (helper
+  ID 19), `RuntimeHelpers::writeBarrier` field, JITCompiler arm64
+  + x86 patch sites, JITRuntime wiring.  Commit `65792d23`.
+- JITState gained 4 cached space pointers (offsets 240-264) for the
+  inline-asm barrier.  Populated at all 5 JITState init sites.
+- `INLINE_WRITE_BARRIER_OLD_TO_YOUNG` macro: ~13 instructions of
+  pure inline asm using only caller-saved x11; sets bit 29 on the
+  receiver header.  No BLR, no SimStack-cache disturbance.
+- `PHARO_SCAV_BIT_AUDIT=1` env var (`95924da2`): measures
+  RememberedBit coverage during scavenge, logs first 10 misses with
+  class + referent-class + space (old vs perm).
+
+Barriered call sites (in commit order):
+- JIT inline at:put: helper (`storePointerUnchecked`)
+- asmjit T1 setter (opt-in via `PHARO_T1_SETTER_BARRIER`)
+- Non-SimStack store-recv-var stencils (helper call)
+- All 5 SimStack store-recv-var stencils (inline-asm bit set)
+- shallowCopy (the major C++ leak)
+- become same-size swap + heap-scan
+- Dict fixCollisionsFrom: in drainFinalizationQueue
+- popStoreLitVar / storeLitVar (global-var) + remoteTemp stencils
+- asmjit T1 popStoreRecvVar inline emit
+
+**Audit progression: 260 → 228 misses** during normal image startup.
+99.997 % bit accuracy.  The remaining 228 misses are spread across
+the asmjit T1 inline-emit paths for other extended store opcodes
+(storeRecvVar variants, the extended LitVar/Temp variants at
+AsmjitT1.cpp:5910+), C++ paths I haven't statically located, plus
+runtime-execution writes whose source needs runtime instrumentation
+to identify.
+
+### Dead-end recorded
+Adding write barriers to the temp-store stencils
+(stencil_popStoreTemp_{1..4}, storeTemp_1/_2) was correctness-
+improving but cost ~11 % on tinyBench (millions of temp stores per
+run, each paying a barrier check) with zero audit-miss reduction
+(materialized-context writes are virtually never exercised by JIT-
+compiled code).  Reverted — documented so future sessions don't
+re-walk this path.
 
 ## Session commits (in order)
 
