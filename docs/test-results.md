@@ -91,23 +91,69 @@ The micro-benchmarks (fib, sieve, tinyBench) don't exercise:
 So we've been "as fast as Cog" on workloads that systematically
 miss the parts of the VM that don't actually work.
 
+## Root cause traced via probes (2026-05-28)
+
+A series of probe images (`/tmp/probe_initN.st`) narrowed the bug
+chain.  All three SUnit-blocking symptoms reduce to ONE root cause:
+**`SparseLargeTable>>size` (or `at:`) is broken in our VM.**
+
+The dependency chain:
+
+1. **`SparseLargeTable>>size`** — VM either crashes or returns a
+   wrong value.  Probe stops emitting output after `gc class =
+   SparseLargeTable` and before the next `gc size = ...` line,
+   suggesting `size` throws an error that the on:do: handler
+   can't catch (or it hangs and gets killed at the SDL2 display
+   timeout).
+
+2. **`Unicode class>>isLetter:`** uses `(GeneralCategory at:
+   charCode + 1)`.  GeneralCategory is a `SparseLargeTable` class
+   var.  With the table broken, this returns wrong values (or
+   the early-exit `index > GeneralCategory size ifTrue: [^false]`
+   path fires unconditionally and returns false for everything).
+
+3. **`Character>>isLetter`** → `self characterSet isLetter: self`
+   → `Unicode isLetter: self` — always returns false on our VM.
+
+4. **`Symbol>>numArgs`** checks `firstChar isLetter` first.  With
+   `isLetter` broken, falls through to the "not-a-valid-selector"
+   branch and returns `-1` for everything.
+
+5. **`TestCase class>>allTestSelectors`** filters by
+   `numArgs isZero`.  Returns `false` for every selector (`-1` ≠
+   `0`), so the result is empty.
+
+6. **Every test class runs 0 tests.**
+
+Probe data confirming the chain:
+- `$t characterSet = Unicode` ✓ (both VMs)
+- `Unicode global = Unicode` ✓
+- `GeneralCategory class = SparseLargeTable` ✓
+- `gc size = ???` ❌ (output stops here; Cog reports the size)
+- `$t isLetter = false` (ours) vs `true` (Cog)
+- `#testFoo numArgs = -1` (ours) vs `0` (Cog)
+- `#foo: numArgs = -1` (ours) vs `1` (Cog)
+
 ## Next-step priorities
 
-1. **Debug `methodDict` iteration**.  This is the highest-impact
-   single fix — it unblocks the entire SUnit suite.  Drop into
-   lldb, set a breakpoint on the test-class-iteration path, and
-   compare `methodDict do: [:m | ... ]` between Cog and our VM
-   for a known class like `AIAstarTest`.
+1. **Fix `SparseLargeTable>>size`** — single root cause for the
+   entire SUnit blockage.  Probable culprits:
+   - `SparseLargeTable` uses an arrayed slot layout that needs a
+     specific primitive (perhaps `primitive 70` or `primitiveSize`
+     for non-indexable formats).
+   - One of our prims returns the wrong slot count for
+     `IndexableWithFixed` or similar format.
+   - Investigate via lldb: attach, breakpoint on
+     `Interpreter::primitiveSize` (or whichever is dispatched for
+     `SparseLargeTable>>size`), compare result to expected ~17 K
+     (Unicode general-category table covers BMP range).
 
-2. **Character isLetter**.  Find `Character>>isLetter` source,
-   trace what primitive it calls, verify the primitive exists
-   and returns correct values in our `Primitives.cpp`.
+2. **The "selector with wrong number of arguments" error.**
+   Separate but related — appears in scheduler patch, timeout
+   patch, and source decompilation paths.  Likely a method-header
+   arity-encoding bug.
 
-3. **The "selector with wrong number of arguments" error**.
-   This appears multiple times (scheduler, timeout patch, source
-   decompile).  It's likely a single bug surfacing in many
-   places.  Probably in our `compiledMethod>>argumentCount` or
-   selector-classification code.
+3. **`FileReference>>#lines`** — minor; harness has fallback.
 
 ## How to reproduce
 
