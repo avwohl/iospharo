@@ -129,10 +129,51 @@ Probe data confirming the chain:
 - `$t characterSet = Unicode` ✓ (both VMs)
 - `Unicode global = Unicode` ✓
 - `GeneralCategory class = SparseLargeTable` ✓
-- `gc size = ???` ❌ (output stops here; Cog reports the size)
-- `$t isLetter = false` (ours) vs `true` (Cog)
-- `#testFoo numArgs = -1` (ours) vs `0` (Cog)
-- `#foo: numArgs = -1` (ours) vs `1` (Cog)
+- `gc size = 917632` ✓ (both VMs — `size` works fine)
+- `gc at: 117` returns **5** (Cog) vs **0** (ours) ❌ — the actual bug
+- `gc at: 98`  returns **5** (Cog) vs **0** (ours) ❌
+- `(gc instVarAt: 2) = 917632` ✓ — slot reads work
+- `base offset (instVarAt: 1) = SmallInteger` ✓ on both — layout matches
+- `$t isLetter = false` (ours) vs `true` (Cog) — downstream
+- `#testFoo numArgs = -1` (ours) vs `0` (Cog) — downstream
+
+## True root cause: `SparseLargeTable>>at:` returns defaultValue (0)
+
+The `at:` method delegates to `noCheckAt:`:
+
+```smalltalk
+noCheckAt: index
+    | chunkIndex t |
+    chunkIndex := index - base // chunkSize + 1.
+    (chunkIndex > self basicSize or: [chunkIndex < 1]) ifTrue: [^ defaultValue].
+    t := self basicAt: chunkIndex.
+    t ifNil: [^ defaultValue].
+    ^ t at: (index - base + 1 - (chunkIndex - 1 * chunkSize))
+```
+
+SparseLargeTable is **indexable with fixed slots** (instSpec format
+3 — `IndexableWithFixed`).  The four named inst vars (base, size,
+chunkSize, defaultValue) occupy fixed slots; the chunk pointers live
+in the object's indexable slot area.
+
+Our VM returns 0 (defaultValue), meaning one of:
+- `self basicSize` returns wrong value (likely too small or 0)
+- `self basicAt: chunkIndex` returns nil for valid indices
+
+Both depend on our `Primitives.cpp` handling of `IndexableWithFixed`
+format correctly — specifically computing the indexable slot count
+as `slotCount - fixedFields`.  Other primitives we already audited
+(primitiveStringReplace at Primitives.cpp:16319) get this right.
+The `basicAt:`/`basicSize` family may have a bug specifically for
+this format.
+
+## Next step
+
+Add a 1-line probe (in `Interpreter::primitiveSize` or
+`primitiveBasicAt`) that logs receiver classIndex + slotCount +
+fixedFields + result when the receiver is a SparseLargeTable.
+Compare against Cog's expected output (basicSize ≈ 917632 /
+chunkSize ≈ 64 → ~14 K chunks).
 
 ## Next-step priorities
 
