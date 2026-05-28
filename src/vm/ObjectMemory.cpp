@@ -1643,11 +1643,22 @@ GCResult ObjectMemory::scavenge() {
                         Oop clsOop = classAtIndex(cls);
                         std::string cn = clsOop.isObject()
                             ? nameOfClass(clsOop) : std::string("?");
+                        // Also describe the young referent at firstYoungSlot —
+                        // its class is the clue to who created it.
+                        std::string vcn = "?";
+                        if (firstYoungSlot >= 0 && (size_t)firstYoungSlot < cnt) {
+                            Oop v = slots[firstYoungSlot];
+                            if (v.isObject() && v.rawBits() > 0x10000) {
+                                uint32_t vc = v.asObjectPtr()->classIndex();
+                                Oop vcl = classAtIndex(vc);
+                                if (vcl.isObject()) vcn = nameOfClass(vcl);
+                            }
+                        }
                         fprintf(stderr,
                             "[SCAV-MISS #%zu] obj=%p cls=%s(idx=%u) "
-                            "slotCount=%zu firstYoungSlot=%d\n",
+                            "slotCount=%zu firstYoungSlot=%d val.cls=%s\n",
                             auditMissLogCount, (void*)obj, cn.c_str(),
-                            cls, cnt, firstYoungSlot);
+                            cls, cnt, firstYoungSlot, vcn.c_str());
                     }
                 }
                 else auditBitUnsetSafe++;
