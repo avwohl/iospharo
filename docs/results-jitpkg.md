@@ -74,6 +74,17 @@ Both hang our VM with a send/patch storm that stock Cog runs in seconds:
 :2696). A healthy run patches a site once and leaves it; ~700M patches is the
 megamorphic-thrash signature.
 
+Root cause: the IC-fill path (`Interpreter.cpp:19608-19642`, reached from
+`patchJITICAfterSend`) writes the resolved method's J2J entry into the IC
+`extra` slot on every fill, and a fill happens on every IC MISS. Our IC has no
+polymorphic/megamorphic cache (PIC) — a send site that sees many receiver
+classes never "sticks", so each send is a full method lookup plus a re-patch.
+Fuel's run shows 17% IC hit (≈880M misses of 1.06B probes) → ~700M re-patches.
+Cog absorbs megamorphic sites with open PICs + a megamorphic lookup cache; we
+don't, so reflective/megamorphic workloads (Fuel, Reflectivity) degrade from
+fast to effectively-hung. This is an architectural gap (add PICs), not a
+one-line fix — tracked as a follow-up, not fixed in this campaign.
+
 ### 3. STON — fully triaged, 0 JIT bugs
 
 All 9 gfx-suite failures behave IDENTICALLY with JIT on and off (isolation,
@@ -96,6 +107,31 @@ clean image):
   (`7.0e-45 1.7e38 7.0e-45` = integer bit-patterns reinterpreted as float32).
   Same with JIT off, so it's a primitive/interpreter bug in 32-bit word-array
   `at:`/`at:put:` (or literal construction), not the JIT. Needs its own task.
+
+### 4. systime — Delay/scheduler bug breaks `valueWithin:` (timeout) tests
+
+`System-Time-Tests` hangs our VM on the `BlockClosureValueWithinDuration`/
+`valueWithin:` timing tests (each burns the 300s per-test cap). The run log
+shows the cause:
+
+       [DNU] #asInteger not understood by rcvr=nil in #setDelay:forSemaphore: P79
+       [DNU] #< not understood by rcvr=nil in #setDelay:forSemaphore: P79
+       [MUSTBOOL] value_class=UndefinedObject in #setDelay:forSemaphore: rcv_class=DelayWaitTimeout
+       [MUSTBOOL] value_class=UndefinedObject in #ifNotNil: rcv_class=DelaySemaphoreScheduler
+       [DIAG] P80 DelaySemaphoreScheduler>>whileTrue: ip=210
+
+A `nil` (0x300000000) flows where a delay value is expected inside
+`DelayWaitTimeout>>setDelay:forSemaphore:`, so `asInteger`/`<` DNU and the
+timeout never arms — the block waits forever. Cog passes systime 659/0/0. The
+batch run was killed after 3 tests to unblock the queue; needs isolation triage
+(JIT on/off) to confirm whether the nil originates in a JIT'd method or a Delay
+primitive. Captured signature: `/tmp/systime_delay_bug.txt`.
+
+### 5. strings — 0 new bugs (known WideString bug)
+
+All 3 candidates are the already-documented WideString-WriteStream bug
+(WIP.md): `StringTest>>testOnlyLetters`, `testWithInternalLineEndings`,
+`testWithUnixLineEndings`. Same failure JIT on/off; not a JIT bug.
 
 ## Pending isolation triage
 
