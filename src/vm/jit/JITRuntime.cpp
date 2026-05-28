@@ -1105,6 +1105,37 @@ extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
     return 1;
 }
 
+// Pointer-object basicSize helper for fmt 3/4/5/9.  Returns 1 on
+// success with `*out` = untagged indexable size, 0 on bad receiver.
+extern "C" int jit_rt_primsize_ptr(JITState* s, uint64_t rcvBits,
+                                    uint64_t* out) {
+    if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return 0;
+    auto* rh = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
+    uint32_t fmt = (uint32_t)rh->format();
+    size_t slotCount = rh->slotCount();
+
+    // fmt 9: Indexable64 — slotCount IS the indexable size.
+    if (fmt == 9) {
+        *out = (uint64_t)slotCount;
+        return 1;
+    }
+    // fmt 3/4/5: IndexableWithFixed / Weak.
+    if (fmt != 3 && fmt != 4 && fmt != 5) return 0;
+    if (!s || !s->memory) return 0;
+    pharo::ObjectMemory* mem = static_cast<pharo::ObjectMemory*>(s->memory);
+    uint32_t classIdx = rh->classIndex();
+    pharo::Oop classOop = mem->classAtIndex(classIdx);
+    if (!classOop.isObject()) return 0;
+    auto* classHdr = classOop.asObjectPtr();
+    if (classHdr->slotCount() < 3) return 0;
+    pharo::Oop instSpec = classHdr->slotAt(2);
+    if (!instSpec.isSmallInteger()) return 0;
+    size_t fixedFields = (size_t)(instSpec.asSmallInteger() & 0xFFFF);
+    if (fixedFields > slotCount) return 0;
+    *out = (uint64_t)(slotCount - fixedFields);
+    return 1;
+}
+
 // Pointer-object basicAt:put: for fmt 3/4/5.  Returns 1 on success,
 // 0 on OoB / bad receiver / immutable.
 extern "C" int jit_rt_primatput_ptr(JITState* s, uint64_t rcvBits,
@@ -1298,10 +1329,35 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
     if (primKind == 16) {
         // size — return slot count or byte size
         uint64_t size;
-        if (fmt == 2) {
+        if (fmt == 2 || fmt == 9) {
             size = slotCount;
         } else if (fmt >= 16 && fmt <= 23) {
             size = slotCount * 8 - (fmt - 16);
+        } else if (fmt == 3 || fmt == 4 || fmt == 5) {
+            // IndexableWithFixed / Weak: size = slotCount - fixedFields.
+            // Bug was: stencil_primSize and this inline path both fell
+            // through for fmt 3, so basicSize on SparseLargeTable (and
+            // every other fmt-3 class) JIT-compiled to ^0 (the source-
+            // level fallback for "primitive failed").  That made
+            // SparseLargeTable>>at: return defaultValue (0) because
+            // noCheckAt:'s `chunkIndex > self basicSize` test thought
+            // 1 > 0, dropping every Unicode lookup, isLetter, numArgs,
+            // etc.  Interpreter::primitiveSize handled fmt 3 fine —
+            // only the JIT inline path didn't.
+            if (!s || !s->memory) return 0;
+            auto* rh = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
+            uint32_t classIdx = rh->classIndex();
+            pharo::ObjectMemory* mem =
+                static_cast<pharo::ObjectMemory*>(s->memory);
+            pharo::Oop classOop = mem->classAtIndex(classIdx);
+            if (!classOop.isObject()) return 0;
+            auto* classHdr = classOop.asObjectPtr();
+            if (classHdr->slotCount() < 3) return 0;
+            pharo::Oop instSpec = classHdr->slotAt(2);
+            if (!instSpec.isSmallInteger()) return 0;
+            size_t fixedFields = (size_t)(instSpec.asSmallInteger() & 0xFFFF);
+            if (fixedFields > slotCount) return 0;
+            size = slotCount - fixedFields;
         } else {
             static int sizeFailLog = 0;
             if (g_debug.primSizeDebug && ++sizeFailLog <= 20) {
@@ -2171,6 +2227,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
         : &jit_rt_j2j_trace_noop);
     helpers.primAtPtr = reinterpret_cast<void*>(&jit_rt_primat_ptr);
     helpers.primAtPutPtr = reinterpret_cast<void*>(&jit_rt_primatput_ptr);
+    helpers.primSizePtr = reinterpret_cast<void*>(&jit_rt_primsize_ptr);
     helpers.recompileQueue = reinterpret_cast<void*>(&jit_rt_recompile_queue);
     helpers.fillIC = reinterpret_cast<void*>(&jit_rt_fill_ic);
     helpers.writeBarrier = reinterpret_cast<void*>(&jit_rt_setter_write_barrier);

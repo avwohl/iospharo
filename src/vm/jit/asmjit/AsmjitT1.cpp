@@ -79,6 +79,8 @@ extern "C" uint64_t jit_rt_t1_sista_dispatch(void* state, uint64_t fnPtr,
                                               uint64_t nArgs);
 extern "C" void jit_rt_setter_write_barrier(void* state, uint64_t rcvBits,
                                              uint64_t valBits);
+extern "C" int jit_rt_primsize_ptr(void* state, uint64_t rcvBits,
+                                    uint64_t* out);
 extern "C" uint64_t g_t1SistaDispatch_hits;
 extern "C" uint64_t g_t1SistaDispatch_attempts;
 extern "C" uint64_t g_t1MultiSlot_hits = 0;
@@ -2049,11 +2051,23 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         // fmt = (hdr >> 24) & 0x1F
         a.lsr(x6, x4, asmjit::Imm(24));
         a.and_(x6, x6, asmjit::Imm(0x1F));
-        // slotCount = (hdr >> 56) & 0xFF, bail on overflow (255).
+        // slotCount = (hdr >> 56) & 0xFF; if 0xFF read the overflow
+        // word at rcvBits-8 for the real count (large objects ≥ 255
+        // slots, e.g. SparseLargeTable with 901 slots).  Previously
+        // bailed on overflow → basicSize returned 0 via fallthrough.
         a.lsr(x5, x4, asmjit::Imm(56));
         a.and_(x5, x5, asmjit::Imm(0xFF));
-        a.cmp(x5, asmjit::Imm(255));
-        a.b_eq(fail);
+        {
+            asmjit::Label noOverflow = a.new_label();
+            a.cmp(x5, asmjit::Imm(255));
+            a.b_ne(noOverflow);
+            // Overflow: real count is in the 8 bytes before the header.
+            // The high byte is 0xFF (overflow marker); mask it off.
+            a.ldur(x5, ptr(x1, -8));
+            a.lsl(x5, x5, asmjit::Imm(8));
+            a.lsr(x5, x5, asmjit::Imm(8));
+            a.bind(noOverflow);
+        }
 
         if (primIndex == 62) {
             // size — fmt 2 (Array), fmt 10-11 (32-bit WordArray), or 16-23 (byte).
@@ -2084,14 +2098,57 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.ret(x30);
             a.bind(tryBytes);
             // fmt - 16 in [0..7] → byte indexable.
+            asmjit::Label tryFmt9 = a.new_label();
             a.sub(x8, x6, asmjit::Imm(16));
             a.cmp(x8, asmjit::Imm(8));
-            a.b_hs(fail);
+            a.b_hs(tryFmt9);
             // byteSize = slotCount*8 - (fmt & 7)
             a.lsl(x5, x5, asmjit::Imm(3));
             a.and_(x6, x6, asmjit::Imm(0x7));
             a.sub(x5, x5, x6);
             // Tag as SmI.
+            a.lsl(x5, x5, asmjit::Imm(3));
+            a.orr(x5, x5, asmjit::Imm(1));
+            a.str(x5, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            a.bind(tryFmt9);
+            // fmt 9 (Indexable64): size = slotCount.
+            asmjit::Label tryFmt345 = a.new_label();
+            a.cmp(x6, asmjit::Imm(9));
+            a.b_ne(tryFmt345);
+            a.lsl(x5, x5, asmjit::Imm(3));
+            a.orr(x5, x5, asmjit::Imm(1));
+            a.str(x5, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+            // fmt 3/4/5 (IndexableWithFixed / Weak): call helper that
+            // reads fixedFields from the class's instSpec slot.  Without
+            // this branch, SparseLargeTable>>basicSize returned 0 (the
+            // source-level "primitive failed" fallback `^0`) under JIT,
+            // breaking every Unicode classification (isLetter / numArgs /
+            // OpalCompiler arity check) downstream of GeneralCategory.
+            a.bind(tryFmt345);
+            a.sub(x8, x6, asmjit::Imm(3));
+            a.cmp(x8, asmjit::Imm(3));
+            a.b_hs(fail);
+            // Save x0 (state) + LR; call jit_rt_primsize_ptr(state, rcvBits,
+            // &state.returnValue).  Helper writes untagged size to *out
+            // and returns 1 on success.
+            a.sub(sp, sp, asmjit::Imm(16));
+            a.str(x0,  ptr(sp, 0));
+            a.str(x30, ptr(sp, 8));
+            a.add(x2, x0, asmjit::Imm(OFF_RETVAL));
+            a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_primsize_ptr));
+            a.blr(x9);
+            a.mov(x9, x0);   // result (1 = success)
+            a.ldr(x0,  ptr(sp, 0));
+            a.ldr(x30, ptr(sp, 8));
+            a.add(sp, sp, asmjit::Imm(16));
+            a.cbz(x9, fail);
+            a.ldr(x5, ptr(x0, OFF_RETVAL));
             a.lsl(x5, x5, asmjit::Imm(3));
             a.orr(x5, x5, asmjit::Imm(1));
             a.str(x5, ptr(x0, OFF_RETVAL));

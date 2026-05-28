@@ -159,6 +159,7 @@ HOLE_KIND_MAP = {
     "__HOLE_RT_RECOMPILE_QUEUE": "HoleKind::RuntimeHelper",
     "__HOLE_RT_FILL_IC": "HoleKind::RuntimeHelper",
     "__HOLE_RT_WRITE_BARRIER": "HoleKind::RuntimeHelper",
+    "__HOLE_RT_PRIMSIZE_PTR": "HoleKind::RuntimeHelper",
     "__HOLE_RESUME_ADDR": "HoleKind::ResumeAddr",
 }
 
@@ -188,6 +189,7 @@ RUNTIME_HELPER_ID = {
     "__HOLE_RT_RECOMPILE_QUEUE": 17,
     "__HOLE_RT_FILL_IC": 18,
     "__HOLE_RT_WRITE_BARRIER": 19,
+    "__HOLE_RT_PRIMSIZE_PTR": 20,
     "__HOLE_RESUME_ADDR": 0,
 }
 

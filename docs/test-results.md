@@ -175,6 +175,119 @@ fixedFields + result when the receiver is a SparseLargeTable.
 Compare against Cog's expected output (basicSize ≈ 917632 /
 chunkSize ≈ 64 → ~14 K chunks).
 
+## Root cause and fix (2026-05-28)
+
+**Bug:** JIT-compiled `basicSize` returned the source-level fallback
+`^ 0` for any IndexableWithFixed/Weak (fmt 3/4/5) receiver AND for any
+receiver whose header used the overflow slot-count encoding
+(slotCount-byte = 0xFF, real count in the word before the header).
+
+Both gaps were present in **two** JIT paths:
+
+1. `stencil_primSize` (stencils.cpp:3786-3795) — fmt 3/4/5 branch
+   fell through to bytecode body.
+2. `emitPrimProlog_arm64` for prim 62 (AsmjitT1.cpp:2058-2103) — only
+   handled fmt 2 / 10-11 / 16-23 directly, bailed on slotCount==255
+   overflow header, and treated `fail` as "fall through to bytecode
+   body" (= `^ 0`).
+
+For SparseLargeTable, BOTH conditions were true: fmt=3 AND overflow
+header (897 indexable chunks + 4 fixed = 901 slots > 254).
+basicSize JIT-returned 0.  Downstream:
+- `noCheckAt:` checked `chunkIndex > self basicSize` → `1 > 0` true →
+  returned defaultValue (0) for every Unicode lookup.
+- `Unicode>>isLetter:` indexed GeneralCategory → got 0 → returned false.
+- `Character>>isLetter` → false for every char.
+- `Symbol>>numArgs` checked firstChar.isLetter → false → returned -1.
+- `OpalCompiler` arity check (numArgs vs bytecoded args) → mismatch →
+  raised "Attempting to assign selector with wrong number of
+  arguments." for every `compile:classified:` call.
+- SUnit test discovery filtered by `numArgs isZero` → empty for every
+  class → 0 tests run.
+
+**Fix** (commit-pending):
+- New runtime helper `jit_rt_primsize_ptr` (JITRuntime.cpp).  Mirrors
+  the existing `jit_rt_primat_ptr` class-lookup for fmt 3/4/5; for
+  fmt 9 returns slotCount directly.
+- Plumbed through helpers struct (JITCompiler.hpp), extract_stencils.py
+  (hole ID 20), JITCompiler.cpp (4 patch sites).
+- stencil_primSize fmt 3/4/5 branch now calls the helper instead of
+  falling through to `^ 0`.
+- asmjit T1 prim 62 prologue extended: reads overflow word for
+  slotCount==255 receivers, handles fmt 9 inline (size=slotCount),
+  calls the new helper for fmt 3/4/5.
+
+Also extended `jit_rt_array_prim`'s primKind=16 branch to handle fmt
+3/4/5 (the IC-shortcut path); not strictly required for the chunk
+chain but closes the same gap if reached via the IC dispatch.
+
+**Verified:**
+`gc at: 117 = 5` (was 0); `$t isLetter = true` (was false);
+`#testFoo numArgs = 0` (was -1).  Chain healed end-to-end.
+
+## Original narrowing — JIT inline Array>>at: bug (superseded)
+
+Further probes (probe_initN.st, iterations 10-13) collapsed the
+chain to a single root cause:
+
+**`Array>>at:` returns 0 on our VM under JIT.  PHARO_NO_JIT=1
+fixes everything.**
+
+Reproduction (probe13 on `/tmp/harness/Pharo-probe13.image`):
+
+```
+Operation                                     JIT off       JIT on             Cog
+gc basicAt: 1 (returns 1024-slot Array)       Array         Array              Array
+chunk size                                    1024          1024               1024
+chunk at: 1                                   1 OK          hang/crash FAIL    1
+chunk at: 98                                  5 OK          no output  FAIL    5
+chunk instVarAt: 98                           5 OK          no output  FAIL    5
+```
+
+The probe stops emitting output after `chunk size = 1024` with JIT
+on.  The `chunk at: 1` call must be triggering a silent crash or
+hang — not catchable by `on: Error do:` (which suggests SIGSEGV
+or infinite loop, not a Smalltalk exception).
+
+**Likely culprits:**
+
+1. `stencil_primAt` (stencils.cpp:3614) — the JIT inline Array#at:
+   stencil.  Line 3624 reads `slotCount = (header >> 56) & 0xFF`
+   and handles overflow at 3625-3630 for slotCount==255.  Our
+   1024-slot Array DOES have overflow header, so it should hit
+   the overflow path.  Possible bugs:
+   - Overflow word read at `rcvr.bits - 8` if `rcvr.bits` doesn't
+     point at the header for overflow objects in our scheme
+   - Slot pointer `rcvr.bits + 8` if overflow alignment is wrong
+2. asmjit T1 inline `at:` emit (around AsmjitT1.cpp:4356) — may
+   bypass the stencil entirely for plain-Array receivers.
+
+**Why this matters:**
+This bug breaks every Pharo program that uses Arrays with >254
+slots — which is most non-trivial programs.  Including:
+- `SparseLargeTable` (which uses 1024-slot chunks → blocks all
+  Unicode classification → blocks all SUnit)
+- Any indexable collection past the basic case
+- Lots more
+
+This is THE next bug to fix.  The audit-gap work we've been
+chasing is dwarfed in impact by this one JIT correctness issue.
+
+**Diagnostic approach:**
+
+```bash
+# Confirm the bug
+cp /tmp/harness/Pharo-probe13.image /tmp/test.image
+PHARO_NO_JIT=1 ./build/test_load_image /tmp/test.image      # works
+                ./build/test_load_image /tmp/test.image      # fails
+
+# lldb attach + breakpoint on stencil_primAt or the asmjit emit
+# Compare the slotCount it computes against the actual 1024.
+
+# Alternative: add a printf in stencil_primAt that fires for
+# slotCount >= 255 (overflow path).  Run probe13 and inspect.
+```
+
 ## Next-step priorities
 
 1. **Fix `SparseLargeTable>>size`** — single root cause for the

@@ -1436,6 +1436,11 @@ extern "C" int (*_HOLE_RT_PRIMAT_PTR)(JITState* s, uint64_t rcvBits,
 extern "C" int (*_HOLE_RT_PRIMATPUT_PTR)(JITState* s, uint64_t rcvBits,
                                           uint64_t i, uint64_t valBits);
 
+// Pointer-object basicSize helper for fmt 3/4/5/9.  Returns 1 + writes
+// untagged size (caller tags) to *out on success, 0 on bad receiver.
+extern "C" int (*_HOLE_RT_PRIMSIZE_PTR)(JITState* s, uint64_t rcvBits,
+                                         uint64_t* out);
+
 // J2J inline-bump recompile queue helper.  stencil_sendJ2J's inline
 // path bumps callee count on every call; when count crosses threshold
 // (==500), calls this helper with the callee's JITMethod pointer to
@@ -3784,14 +3789,24 @@ extern "C" void stencil_primSize(JITState* s) {
     } else if (fmt == 9) {
         size = slotCount;
     } else if (fmt == 3 || fmt == 4 || fmt == 5) {
-        // Need fixedFieldCount from class — use the helper that the
-        // primAt path already plumbed.  We pass i=1 just to satisfy
-        // its interface; we only care about whether it can compute
-        // indexableSize.  Easier: replicate the lookup inline.
-        // (Keep stencil_primSize self-contained — no helper needed.)
-        // Class lookup via specialObject indices is too complex for
-        // a stencil; fall through to bytecode body which has the
-        // proper fallback (uses self basicSize + class spec).
+        // IndexableWithFixed / Weak: size = slotCount - fixedFields.
+        // Defers to jit_rt_primsize_ptr which reads fixedFields from
+        // the class's instSpec slot.  Falling through to the bytecode
+        // body here was WRONG — for #basicSize the body is the
+        // primitive-failure fallback `^ 0`, which made
+        // SparseLargeTable>>noCheckAt: bail out via its
+        // `chunkIndex > self basicSize` guard and return defaultValue,
+        // cascading through isLetter / numArgs / compiler arity checks.
+        uint64_t out = 0;
+        if (_HOLE_RT_PRIMSIZE_PTR(s, rcvr.bits, &out)) {
+            Oop retVal;
+            retVal.bits = (out << 3) | 1;  // tag SmI
+            J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+            s->returnValue = retVal;
+            s->exitReason = EXIT_RETURN;
+            _HOLE_RT_RETURN(s);
+            return;
+        }
         _HOLE_CONTINUE(s); return;
     } else {
         _HOLE_CONTINUE(s); return;
