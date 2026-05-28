@@ -17,17 +17,20 @@ StringTest.
 
 ## Queue (ordered by ratio of bug-isolation to setup cost)
 
-1. **Roassal3** — visualization engine.  ~3-4 K tests.  Loads Athens
-   + Bloc + layout algorithms transitively, so it's the biggest single
-   surface.  Headless-friendly: tests render `RSCanvas` to `Form`,
-   we can PNG-dump for visual diff.
+1. **Roassal3** — visualization engine.  Pharo 13 ships it
+   preinstalled: 99 test classes, 879 tests (RS-prefixed).  No
+   Metacello required.  Headless-friendly: tests render `RSCanvas` to
+   `Form`, we can PNG-dump for visual diff.
 
-       Metacello new
-         baseline: 'Roassal3';
-         repository: 'github://pharo-graphics/Roassal:v1.x/src';
-         load.
+       "Already in Pharo.image — list:"
+       (Smalltalk globals values select: [:c |
+         c isClass and: [(c inheritsFrom: TestCase) and: [c name beginsWith: 'RS']]])
 
-2. **Athens** — vector-graphics layer (canvas, paint, path, transform).
+2. **Spec2** — Pharo's UI presenter framework.  Preinstalled: 204
+   test classes, 3505 tests (Sp-prefixed).  Largest preinstalled UI
+   surface.  Reuses `setup_fake_gui.st` shims for `openWithSpec`.
+
+3. **Athens** — vector-graphics layer (canvas, paint, path, transform).
    ~300 tests, very focused.  Best for isolating canvas/transform/path
    bugs from the viz layer above.  Loaded transitively by Roassal3, so
    if Roassal3 surfaces Athens failures, run this in isolation.
@@ -37,7 +40,7 @@ StringTest.
          repository: 'github://pharo-graphics/Athens/src';
          load.
 
-3. **Bloc** — newer graphics framework (replacement for Morphic).
+4. **Bloc** — newer graphics framework (replacement for Morphic).
    ~1-2 K tests.  Lower-level than Roassal3 — surfaces VM bugs in
    `Form bitsPerPixel:`, BitBlt blits, glyph layout that the
    higher-level viz suite may mask.
@@ -47,7 +50,7 @@ StringTest.
          repository: 'github://pharo-graphics/Bloc:dev/src';
          load.
 
-4. **PolyMath** — numerical computing + Roassal3 plotting.  ~1 K tests.
+5. **PolyMath** — numerical computing + Roassal3 plotting.  ~1 K tests.
    Stresses FP arithmetic alongside rendering — useful angle on the
    `Float>>cos` JIT skip (commit `5c870c75`) and any other FP
    regressions.
@@ -59,19 +62,32 @@ StringTest.
 
 ## Workflow per package
 
-Same pattern as kernel SUnit:
+For **preinstalled** packages (Roassal3, Spec2), reuse the existing
+`Pharo-ws.image` (already has `SUnitRunner` + `setup_fake_gui.st`
+applied) and just swap the class-name filter file.  Building a
+separate Pharo-<pkg>.image from a clean Pharo.image with WorldMorph
+init enabled triggers a BitBlt SIGSEGV in `bitBltField + 304` during
+graphics-startup before SUnitRunner can fire (see "Known issues"
+below).
+
+    # Preinstalled-package workflow:
+    cp /tmp/<pkg>_test_classes.txt /tmp/sunit_class_names.txt
+    rm -f /tmp/sunit_test_results.txt /tmp/sunit_test_detail.txt
+    ./build/test_load_image /tmp/harness/Pharo-ws.image
+
+For **Metacello-loaded** packages (Athens, Bloc, PolyMath):
 
     # 1. Fresh image
-    cd /tmp/harness && cp Pharo.image Pharo-roassal.image \
-                       && cp Pharo.changes Pharo-roassal.changes
+    cd /tmp/harness && cp Pharo.image Pharo-<pkg>.image \
+                       && cp Pharo.changes Pharo-<pkg>.changes
 
     # 2. Install via stock Cog (Metacello needs network + stable VM)
-    timeout 600 /tmp/harness/pharo /tmp/harness/Pharo-roassal.image eval --save \
-      "Metacello new baseline: 'Roassal3'; \
-        repository: 'github://pharo-graphics/Roassal:v1.x/src'; load"
+    timeout 600 /tmp/harness/pharo /tmp/harness/Pharo-<pkg>.image eval --save \
+      "Metacello new baseline: 'Athens'; \
+        repository: 'github://pharo-graphics/Athens/src'; load"
 
     # 3. Install runner + GUI shims
-    /tmp/harness/pharo /tmp/harness/Pharo-roassal.image eval --save \
+    /tmp/harness/pharo /tmp/harness/Pharo-<pkg>.image eval --save \
       "'$PWD/scripts/pharo-headless-test/setup_fake_gui.st' asFileReference fileIn.
        '$PWD/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn"
 
@@ -114,11 +130,35 @@ Same pattern as kernel SUnit:
   show benign anti-aliasing differences — compare by structural
   similarity (SSIM) not exact bytes.
 
+## Known issues
+
+* **`bitBltField + 304` SIGSEGV on fresh-image WorldMorph startup** —
+  a Roassal-only image with `WorldMorph class>>startUp:` re-enabled
+  crashes in our `bitBltField` C helper with `x19 = 0x8867...`
+  (clearly a garbage pointer).  Workaround: run on the
+  `Pharo-ws.image` snapshot that already has the kernel runner
+  installed but never opened a world.  Root cause TBD — likely a
+  `BitBlt class>>copyBits` overload our VM mis-dispatches when the
+  destination form is the live display surface.
+* **Metacello `Character>>bitShift:` regression** — installing any
+  package from a GitHub repo throws `Instance of Character did not
+  understand #bitShift:` inside `SHA1>>processBuffer:`.  Iceberg
+  computes the SHA1 of a commit blob and treats each char as
+  a `bitShift:` recipient.  Probably an Iceberg/SHA1 expectation
+  that strings stream as `SmallInteger` codepoints, not `Character`.
+  Blocks Athens/Bloc/PolyMath install on the standard Pharo 13 image.
+
 ## Status
 
-Queue tracked in TaskList — tasks #4 (Roassal3), #5 (Athens), #6 (Bloc),
-#7 (PolyMath), #8 (render harness).  Roassal3 is the first
-in-progress.
+Queue tracked in TaskList:
+
+* #4 Roassal3 (in progress)
+* #5 Athens (needs Metacello — blocked by the Iceberg
+  `Character>>bitShift:` regression unless preinstalled)
+* #6 Bloc (same Metacello dependency)
+* #7 PolyMath (same Metacello dependency)
+* #8 PNG render harness (cross-cutting)
+* #9 Spec2 (preinstalled, 204 classes / 3505 tests)
 
 Results land in `docs/results-<package>.md` (one per package, same
 shape as `docs/test-results.md` for kernel SUnit).
