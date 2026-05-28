@@ -2543,10 +2543,16 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // popStoreRecv N (0xC8..0xCF): pop TOS, store into receiver.slot[N].
     // Tests the immutable bit (header bit 23) before writing and bails
     // to interp if set — see the x86 version above for full rationale.
+    //
+    // Audit-gap closure (2026-05-28): after the inline store, emit the
+    // old→young write barrier (set RememberedBit on receiver header
+    // when receiver ∈ oldSpace and value is a heap Oop ∈ newSpace).
+    // Uses x5/x6 as scratch; doesn't disturb x0/x1/x2/x4.
     if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) {
         int n = op - SistaV1::PopStoreRecvBase;
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
+        asmjit::Label barrierSkip = a.new_label();
         a.ldr(x4, ptr(x0, OFF_RECEIVER));
         a.ldr(w5, ptr(x4));                 // low 32 bits of header
         a.tst(w5, asmjit::Imm(0x800000));   // bit 23 = ImmutableBit
@@ -2556,6 +2562,27 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x2, ptr(x0, OFF_SP));
         a.ldr(x1, ptr(x2));
         a.str(x1, ptr(x4, OBJ_SLOT_0 + n * 8));
+        // Inline write barrier.  Skip if value isn't an Oop (tag != 0),
+        // receiver not in oldSpace, or value not in newSpace.  Else set
+        // bit 29 of receiver header (RememberedBit).
+        a.and_(x6, x1, asmjit::Imm(7));
+        a.cbnz(x6, barrierSkip);
+        a.ldr(x6, ptr(x0, 240));            // oldSpaceStart
+        a.cmp(x4, x6);
+        a.b_lo(barrierSkip);
+        a.ldr(x6, ptr(x0, 248));            // oldSpaceEnd
+        a.cmp(x4, x6);
+        a.b_hs(barrierSkip);
+        a.ldr(x6, ptr(x0, 256));            // newSpaceStart
+        a.cmp(x1, x6);
+        a.b_lo(barrierSkip);
+        a.ldr(x6, ptr(x0, 264));            // newSpaceEnd
+        a.cmp(x1, x6);
+        a.b_hs(barrierSkip);
+        a.ldr(x6, ptr(x4));
+        a.orr(x6, x6, asmjit::Imm(1ULL << 29));
+        a.str(x6, ptr(x4));
+        a.bind(barrierSkip);
         a.b(end);
         a.bind(bail);
         a.ldr(x5, ptr(x0, OFF_METHOD));
