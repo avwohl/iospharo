@@ -522,8 +522,10 @@ extern "C" void stencil_popStoreLitVar(JITState* s) {
     Oop value = *(s->sp);
     Oop assoc = s->literals[idx];
     ObjectHeader* obj = asObjectPtr(assoc);
-    // Association value is slot 1
+    // Association value is slot 1.  Associations are typically old
+    // (literal pool stable) while `value` may be young.  Barrier.
     obj->slots()[1] = value;
+    _HOLE_RT_WRITE_BARRIER(s, assoc.bits, value.bits);
     _HOLE_CONTINUE(s);
 }
 
@@ -535,6 +537,7 @@ extern "C" void stencil_storeLitVar(JITState* s) {
     Oop assoc = s->literals[idx];
     ObjectHeader* obj = asObjectPtr(assoc);
     obj->slots()[1] = value;
+    _HOLE_RT_WRITE_BARRIER(s, assoc.bits, value.bits);
     _HOLE_CONTINUE(s);
 }
 
@@ -2913,6 +2916,9 @@ extern "C" void stencil_pushRemoteTemp(JITState* s) {
 
 // Store Temp At k In Temp Vector At j (no pop)
 // Bytecode: 0xFC tempIndex vectorIndex
+// Remote temps live in a heap-allocated TempVector (FullBlockClosure
+// capture).  The vector itself can be old; the stored value can be
+// young.  Barrier.
 extern "C" void stencil_storeRemoteTemp(JITState* s) {
     int packed = OPERAND;
     int tempIndex = packed & 0xFF;
@@ -2922,6 +2928,7 @@ extern "C" void stencil_storeRemoteTemp(JITState* s) {
     Oop tempVector = s->tempBase[vectorIndex];
     ObjectHeader* tvObj = asObjectPtr(tempVector);
     tvObj->slots()[tempIndex] = value;
+    _HOLE_RT_WRITE_BARRIER(s, tempVector.bits, value.bits);
     _HOLE_CONTINUE(s);
 }
 
@@ -2937,6 +2944,7 @@ extern "C" void stencil_popStoreRemoteTemp(JITState* s) {
     Oop tempVector = s->tempBase[vectorIndex];
     ObjectHeader* tvObj = asObjectPtr(tempVector);
     tvObj->slots()[tempIndex] = value;
+    _HOLE_RT_WRITE_BARRIER(s, tempVector.bits, value.bits);
     _HOLE_CONTINUE(s);
 }
 
