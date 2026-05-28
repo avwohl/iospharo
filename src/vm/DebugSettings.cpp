@@ -137,7 +137,19 @@ DebugSettings::DebugSettings() {
     // affected benchFib(N>=17).  See AsmjitT1.cpp inline-J2J emit
     // and deferred.md A6 N+30k.  PHARO_T1_NO_INLINE_J2J=1 opts out
     // entirely (legacy workaround).
-    t1InlineJ2J         = !envPresent("PHARO_T1_NO_INLINE_J2J");
+    //
+    // 2026-05-28: DEFAULT FLIPPED TO OFF.  Inline-J2J's receiver-class
+    // check has a polymorphic-cache poisoning bug: send sites that
+    // see Blocks then layout/scope objects mis-dispatch the
+    // layout-object cull:/do:/value: calls to the BlockClosure method.
+    // Manifests as impossible stack frames like
+    //     LayoutClassScope(BlockClosure)>>cull:
+    // sending value: to a non-block, which DNUs.  SUnit pass rate
+    // jumped from 47% (297/634) to 99.84% (633/634) by setting this
+    // false.  Opt back in via PHARO_T1_INLINE_J2J=1 (bench harness,
+    // bisection).  Re-enable as default once the receiver-class check
+    // in the inline-J2J emit path is audited and fixed.
+    t1InlineJ2J         = envPresent("PHARO_T1_INLINE_J2J");
     // 2026-05-21 (jit-may20 Step 2): pure-J2J gate replaced by warmth
     // gate as the default.  Pure gate (bit-60 check) was too strict —
     // bailed ~96.5% of inline-J2J attempts on fib.  Warmth gate
