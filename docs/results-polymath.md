@@ -51,3 +51,38 @@ deep in C++ primitive code, not JIT-emitted code.  Different bug.
   alphabetically (the one after PMAB3SolverTest) — and find the
   Float send that crashes.
 * Tracks as task #14.
+
+## Investigation log
+
+### Tried: extractFloat canonical-bit guard — made things worse
+
+Added a check in `extractFloat` (`Primitives.cpp:5817`) to fail the
+primitive when `(oop.rawBits() >> 48) != 0` (catching the
+`J2J_ENTRY_BIT` / extras-bits leak).  The float-add SIGSEGV
+disappeared as expected — but the run regressed from 11 PASS to
+3 PASS, with the failure shifting to `sendDoesNotUnderstand+3136`.
+
+The original primitiveFloatAdd crash was acting as a "fail-fast"
+that stopped a corrupt Oop from propagating further; making the
+primitive Failure-out let that Oop flow into Float>>+ Smalltalk
+fallback, which DNU'd, and the DNU dispatch crashed on the same
+corrupt receiver.  Reverted.
+
+### Run is non-deterministic
+
+Three separate runs on the same image produced:
+
+       run        last-good test        crash site
+       1          test 11               primitiveFloatAdd+432
+       2 (guard)  test 3                sendDoesNotUnderstand+3136
+       3 (no guard, 4 classes only) test 3                sendDoesNotUnderstand+3136
+
+Different timing / JIT-warm state changes which call site sees the
+corrupt Oop first.  The underlying bug — the same J2J entry-bit
+family as task #10 — is the same in all runs.
+
+### Conclusion
+
+#14 is not an independent bug — it's the same J2J entry-bit leak
+manifesting in C++ primitive deref instead of JIT-emitted code.
+Fix #10 and #14 should go away.  Closing #14 as a duplicate.
