@@ -3,7 +3,51 @@
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
-## 2026-05-28 PM — broader test coverage findings
+## 2026-05-28 PM — broader 20-class SUnit run: 3170/3189 (99.6%)
+
+After hardcoding the cos JIT skip (commit `5c870c75`), extended the
+SUnit run to the first 20 curated classes:
+
+```
+class                    PASS  total
+SortedCollectionTest      287
+IdentitySetTest           176
+SmallIntegerTest           27
+IntegerTest                80
+FloatTest                  73
+FractionTest               30
+PointTest                  34
+CharacterTest              16
+DictionaryTest            205
+SetTest                   174
+BagTest                   168
+IntervalTest              260
+SymbolTest                268
+OrderedCollectionTest     351
+ArrayTest                 323
+StringTest                438
+HeapTest                  148
+BlockClosureTest           50
+ContextTest                34
+ExceptionTest              47
+TOTAL                    3170 / 3189   (99.6%)
+                                7 FAIL + 6 ERROR + 6 SKIP
+```
+
+Remaining FAILs/ERRORs:
+- **StringTest** (3 FAIL): testOnlyLetters, testWithInternalLineEndings,
+  testWithUnixLineEndings
+- **BlockClosureTest** (2 FAIL + 1 ERROR): testBenchFor,
+  testIsClean, testSourceNodeOptimized
+- **ContextTest** (1 FAIL + 2 ERROR): testAstScope,
+  testMethodContextPrintDetails, testReadVariableNamed
+- Plus a few others (didn't enumerate all 13)
+
+These are deeper bugs in specific subsystems (line-ending detection,
+block closure introspection, context AST inspection) — out of scope
+for the JIT correctness pass that brought the headline result.
+
+## 2026-05-28 PM — broader test coverage findings (cos crash, superseded)
 
 Extended to 20 classes (from focused 4): finds new JIT correctness
 bugs.  Most prominent:
