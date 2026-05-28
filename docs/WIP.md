@@ -1,5 +1,33 @@
 # WIP — JIT optimization session (2026-05-27 → 2026-05-28)
 
+## 2026-05-28 late PM — graphics-test queue kickoff
+
+See `docs/graphics-testing.md` for the full queue and per-package
+instructions, and `docs/results/` for raw run output.
+
+Pharo 13 already ships with most large graphics packages preinstalled
+— no Metacello load needed for Roassal3 (RS, 99/879), Spec2 (Sp,
+204/3505), Bloc (53/642), Athens (10/80), Cairo (7/32), Plot (10/146),
+Chart (4/17).  Only PolyMath needs Metacello, which is blocked on the
+Iceberg `Character>>bitShift:` regression.
+
+* Roassal3 run 1: 32 PASS / 0 FAIL / 3 ERROR / 0 TIMEOUT, then
+  SIGSEGV in JIT-emitted `#inverseTransformPiOrZero:` (fault addr
+  bit 60 = `J2J_ENTRY_BIT` leak; codeStart=`0x10af31130`, offset=2496).
+  Reached 35 of 879 tests.  All 3 ERRORs share the same root cause:
+  `Color>>blue` returning KeyNotFound on the `ColorRegistry`
+  IdentityDictionary — yet an isolated probe shows the dict is
+  populated and `Color blue` works.  So it's a transient corruption
+  later in the run (likely GC of the identity dict).
+* Spec2 in flight: see `docs/results/spec2_inflight.txt`.  High
+  ERROR rate (~50%) expected from UI-shim limitations.
+* Bloc / Athens / Cairo / Plot / Chart queued behind a shell wrapper
+  `scripts/graphics/run_graphics_queue.sh` that swaps the class-name
+  filter file between runs and skips entries whose result file
+  already exists.
+
+
+
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
