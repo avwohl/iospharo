@@ -1,0 +1,149 @@
+=== Stock Cog SUnit run ===
+Classes to run: 16
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/harness/Pharo.image
+Started: 2026-05-28T18:01:43.814146-04:00
+
+=== AIAstarTest ===
+  RUN: testAseBasicCircuit
+  RUN: testAseBasicCircuitBacktrack
+  RUN: testComplexWeightedGraph2
+  RUN: testComplexWeightedGraph2BackTracking
+  RUN: testComplexWeightedGraph3
+  RUN: testComplexWeightedGraph3Backtracking
+  RUN: testSimpleWeightedGraph
+  RUN: testSimpleWeightedGraphBacktracking
+Total: 8 P:8 F:0 E:0 S:0
+
+=== AIBFSTest ===
+  RUN: testAseGraph
+  RUN: testAseSccGraph
+  RUN: testComplexUndirectedGraph
+  RUN: testSimpleGraph
+  RUN: testWithoutCyclesComplexGraph
+Total: 5 P:5 F:0 E:0 S:0
+
+=== AIBellmanFordTest ===
+  RUN: testNegativeUnconnectedWeightedGraph
+  RUN: testNegativeWeightedGraph
+  RUN: testNegativeWeightedGraph2
+  RUN: testNegativeWeightedGraphReconstrucPath
+Total: 4 P:4 F:0 E:0 S:0
+
+=== AIDijkstraTest ===
+  RUN: testAseBasicCircuit
+  RUN: testAseBasicCircuitBacktrack
+  RUN: testComplexWeightedGraph2
+  RUN: testComplexWeightedGraph2BackTracking
+  RUN: testComplexWeightedGraph3
+  RUN: testComplexWeightedGraph3Backtracking
+  RUN: testSimpleWeightedGraph
+  RUN: testSimpleWeightedGraphBacktracking
+Total: 8 P:8 F:0 E:0 S:0
+
+=== AIDinicTest ===
+  RUN: testComplexFlow
+  RUN: testSimpleFlow
+Total: 2 P:2 F:0 E:0 S:0
+
+=== AIGraphAlgorithmTest ===
+  RUN: testAddNodesFromChildrenBlock
+  RUN: testingAddingNodes
+  RUN: testingFindingNodes
+  RUN: testingNodeDictionary
+Total: 4 P:4 F:0 E:0 S:0
+
+=== AIGraphReducerTest ===
+  RUN: testAdjacenciesFor
+  RUN: testComplexCycle
+  RUN: testComplexCycle2
+  RUN: testComplexCycleReferences
+  RUN: testGraphReducingWhenNoCycle
+  RUN: testGraphReducingWhenNoCycleReferences
+  RUN: testMergedNodesNotReferencedInNextNodes
+  RUN: testMergedNodesNotReferencedInNextNodesC2
+  RUN: testMergedNodesNotReferencedInNextNodesForSCG
+  RUN: testNoCycle
+  RUN: testStronglyConnectedGraph
+  RUN: testStronglyConnectedGraphReferences
+Total: 12 P:12 F:0 E:0 S:0
+
+=== AIHitsTest ===
+  RUN: testComplexCycle
+  RUN: testComplexWCycle
+  RUN: testCycle
+  RUN: testGraphForHits
+  RUN: testNestedCycle
+  RUN: testSimple
+  RUN: testSimpleW
+Total: 7 P:7 F:0 E:0 S:0
+
+=== AIKruskalTest ===
+  RUN: testMaxSpanningTreeComplex
+  RUN: testMaxSpanningTreeSimple
+  RUN: testMinSpanningTreeComplex
+  RUN: testMinSpanningTreeComplexDisconnected
+  RUN: testMinSpanningTreeSimple
+Total: 5 P:5 F:0 E:0 S:0
+
+=== AILongestPathInDAGTest ===
+  RUN: testWeightedDAG
+  RUN: testWithoutCyclesComplexWeightedGraph
+Total: 2 P:2 F:0 E:0 S:0
+
+=== AILongestPathInDCGTest ===
+  RUN: testNegativeUnconnectedWeightedGraph
+  RUN: testNegativeWeightedGraph
+  RUN: testNegativeWeightedGraph2
+  RUN: testNegativeWeightedGraphReconstrucPath
+Total: 4 P:4 F:0 E:0 S:0
+
+=== AIPrimTest ===
+  RUN: testMinSpanningTreeComplex2
+  RUN: testMinimumSpanningTreeComplex
+  RUN: testMinimumSpanningTreeSimple
+Total: 3 P:3 F:0 E:0 S:0
+
+=== AIShortestPathInDAGTest ===
+  RUN: testWeightedDAG
+  RUN: testWithoutCyclesComplexWeightedGraph
+Total: 2 P:2 F:0 E:0 S:0
+
+=== AITarjanTest ===
+  RUN: testComplexCycle
+  RUN: testComplexCycle2
+  RUN: testCycle
+  RUN: testNestedCycle
+  RUN: testNoCycle
+  RUN: testStronglyConnectedGraph
+  RUN: testStronglyConnectedGraphWithObjects
+Total: 7 P:7 F:0 E:0 S:0
+
+=== AITopologicalSortingTest ===
+  RUN: testSimpleGraph
+  RUN: testSortStringHierarchy
+  RUN: testSortWithCycle
+  RUN: testSortWithReducedGraph
+  RUN: testWithoutCyclesComplexGraph
+  RUN: testWithoutCyclesMediumGraph
+Total: 6 P:6 F:0 E:0 S:0
+
+=== AIWeightedHitsTest ===
+  RUN: testComplexWeighted
+  RUN: testComplexWeighted2
+  RUN: testComplexWeighted3
+  RUN: testSimpleW
+  RUN: testWithoutCyclesComplexWeightedGraph
+Total: 5 P:5 F:0 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 16
+Pass: 84
+Fail: 0
+Error: 0
+Skip: 0
+Total: 84
+Finished: 2026-05-28T18:01:43.8254-04:00
+
+=== BATCH COMPLETE ===

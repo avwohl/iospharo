@@ -1,0 +1,10 @@
+=== JIT package queue start ===
+regex          PASS=196   FAIL=0    ERROR=0    rc=0   3s  last=
+ston           PASS=153   FAIL=4    ERROR=5    rc=0   18s  last=
+=== JIT package queue start ===
+ast            PASS=597   FAIL=5    ERROR=19   rc=0   43s  last=
+ring           PASS=250   FAIL=35   ERROR=5    rc=0   23s  last=
+=== JIT package queue start ===
+zincenc        PASS=109   FAIL=9    ERROR=2    rc=0   107s  last=
+aigraph        PASS=78    FAIL=0    ERROR=6    rc=0   15s  last=
+numberparser   PASS=36    FAIL=0    ERROR=0    rc=0   2s  last=

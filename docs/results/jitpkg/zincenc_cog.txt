@@ -1,0 +1,175 @@
+=== Stock Cog SUnit run ===
+Classes to run: 12
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/harness/Pharo.image
+Started: 2026-05-28T18:01:43.540544-04:00
+
+=== ZnBase64EncoderTest ===
+  RUN: testCustomAlphabetFullSpectrum
+  RUN: testCustomLineBreaking
+  RUN: testDecodingErrors
+  RUN: testEmpty
+  RUN: testFullAlphabet
+  RUN: testFullSpectrum
+  RUN: testPadding
+  RUN: testQuote
+  RUN: testSimple
+  RUN: testWhitespaceAtEnd
+Total: 10 P:10 F:0 E:0 S:0
+
+=== ZnBufferedReadStreamTest ===
+  RUN: testBack
+  RUN: testBuffering
+  RUN: testPeek
+  RUN: testPositioning
+  RUN: testReadInto
+  RUN: testReadIntoLarger
+  RUN: testReadUpTo
+  RUN: testReadUpToEnd
+  RUN: testSetToEnd
+Total: 9 P:9 F:0 E:0 S:0
+
+=== ZnBufferedReadWriteStreamTest ===
+  RUN: testBuffering
+  RUN: testNextPutAllStartingAt
+  RUN: testPeek
+  RUN: testReadInto
+  RUN: testReadIntoLarger
+  RUN: testReadThenWrite
+  RUN: testReadUpTo
+  RUN: testReadUpToEnd
+  RUN: testWriteThenRead
+  RUN: testWriting
+  RUN: testWritingOverflow
+Total: 11 P:11 F:0 E:0 S:0
+
+=== ZnBufferedStreamByteTest ===
+  RUN: testInt16Aliases
+  RUN: testInt32Aliases
+  RUN: testInt8
+  RUN: testNextIntegerOfSizeSignedBigEndian
+  RUN: testNextIntegerOfSizeSignedBigEndianPut
+Total: 5 P:5 F:0 E:0 S:0
+
+=== ZnBufferedWriteStreamTest ===
+  RUN: testNextPutAllStartingAt
+  RUN: testWriting
+  RUN: testWritingOverflow
+  RUN: testWritingReset
+Total: 4 P:4 F:0 E:0 S:0
+
+=== ZnCRLFReadStreamTest ===
+  RUN: testBasicStream
+  RUN: testDoubleEnding
+  RUN: testPeek
+Total: 3 P:3 F:0 E:0 S:0
+
+=== ZnCharacterEncoderTest ===
+  RUN: testAllByteEncoderDomains
+  RUN: testBeLenient
+  RUN: testByteDecoding
+  RUN: testByteEncoderFromUrl
+  ERROR: testByteEncoderFromUrl (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testCodePointEncodingDecoding
+  RUN: testCodePointStreams
+  RUN: testConvencienceMethods
+  RUN: testDefault
+  RUN: testDetectEncoding
+  RUN: testKnownEncodingIdentifiers
+  RUN: testLatin1Encoder
+  RUN: testLatin2Encoder
+  RUN: testNextPutAllStartingAtToStream
+  RUN: testNullEncoder
+  RUN: testReadIntoStartingAtCountFromStream
+  RUN: testReadIntoStartingAtCountFromStreamAtEnd
+  RUN: testReadIntoStartingAtCountFromStreamWide
+  RUN: testReadIntoStartingAtCountFromStreamWithOffset
+  RUN: testStringEncoding
+  RUN: testUTF16Back
+  RUN: testUTF16EncoderBigEndian
+  RUN: testUTF16EncoderByteOrderMark
+  RUN: testUTF16EncoderLittleEndian
+  RUN: testUTF16EncoderWide1
+  RUN: testUTF32EncoderExampleFromD100
+  RUN: testUTF32EncoderExampleFromD101
+  RUN: testUTF32EncoderExampleFromD99
+  RUN: testUTF32EncoderSimple
+  RUN: testUTF32EncoderWide
+  RUN: testUTF8Back
+  RUN: testUTF8Boundaries
+  RUN: testUTF8ByteOrderMark
+  RUN: testUTF8Encoder
+  RUN: testUTF8EncoderAuto
+  RUN: testUTF8EncoderByteCount
+  RUN: testUTF8EncoderIncomplete
+  RUN: testUTF8EncoderRandom
+  RUN: testUTF8EncoderWide
+  RUN: testUTF8IllegalInput
+  RUN: testUTF8Overlong
+  RUN: testUTF8ReadFaultyInput
+  RUN: testUTF8SurrogateCodePointsShouldFail
+Total: 42 P:41 F:0 E:1 S:0
+
+=== ZnCharacterStreamTest ===
+  RUN: testNextLine
+  RUN: testPeek
+  RUN: testReadStream
+  RUN: testReadStreamManipulation
+  RUN: testReset
+  RUN: testSimpleUTF8ReadStream
+  RUN: testSimpleUTF8WriteStream
+  RUN: testUTF8ReadStreamBack
+  RUN: testUTF8ReadStreamPositioning
+  RUN: testUTF8ReadStreamReadInto
+  RUN: testUpToAll
+  RUN: testUpToAllTwice
+Total: 12 P:12 F:0 E:0 S:0
+
+=== ZnFastLineReaderTest ===
+  RUN: testLinesDo
+  RUN: testNextLine
+Total: 2 P:2 F:0 E:0 S:0
+
+=== ZnNewLineWriterStreamTest ===
+  RUN: testClose
+  RUN: testNextPut
+Total: 2 P:2 F:0 E:0 S:0
+
+=== ZnPercentEncoderTest ===
+  RUN: testDecodePlusAsSpace
+  RUN: testDecodingErrors
+  RUN: testLeadingZero
+  RUN: testNonAscii
+  RUN: testSimple
+  RUN: testStringUrlDecoded
+  RUN: testStringUrlEncoded
+Total: 7 P:7 F:0 E:0 S:0
+
+=== ZnPositionableReadStreamTest ===
+  RUN: testBulkReading
+  RUN: testEmpty
+  RUN: testNestedExcursion
+  RUN: testNew
+  RUN: testPlainExcursion
+  RUN: testPlainNext
+  RUN: testPlainPeek
+  RUN: testPositionErrors
+  RUN: testReadAll
+  RUN: testReadAllLargerBuffer
+  RUN: testSearch
+  RUN: testSearchBinary
+  RUN: testSkipAndBack
+  RUN: testUTF8
+Total: 14 P:14 F:0 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 12
+Pass: 120
+Fail: 0
+Error: 1
+Skip: 0
+Total: 121
+Finished: 2026-05-28T18:01:43.611177-04:00
+
+=== BATCH COMPLETE ===

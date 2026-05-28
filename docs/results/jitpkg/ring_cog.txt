@@ -1,0 +1,403 @@
+=== Stock Cog SUnit run ===
+Classes to run: 32
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/harness/Pharo.image
+Started: 2026-05-28T18:01:42.766365-04:00
+
+=== RGAnnouncementsTest ===
+  RUN: testAnnouncerSuspending
+  RUN: testAnnouncerSuspendingWithStoring
+  RUN: testBehaviorAdded
+  RUN: testBehaviorCommentModified
+  RUN: testBehaviorDefinitionModifiedForCategory
+  RUN: testBehaviorDefinitionModifiedForSuperclass
+  RUN: testBehaviorParentRenamed
+  RUN: testDirectAnnouncement
+  RUN: testUnsubscribe
+Total: 9 P:9 F:0 E:0 S:0
+
+=== RGBackendTest ===
+Total: 0 P:0 F:0 E:0 S:0
+
+=== RGBehaviorTest ===
+  RUN: testBadInstantiation
+  RUN: testBehaviorWithMethodTags
+  RUN: testBehaviorWithProtocols
+  RUN: testInheritsFromUnresolved
+  RUN: testOldDefinition
+  RUN: testResolvingConsistency
+  RUN: testSiblings
+  RUN: testUnresolveSuperclass
+Total: 8 P:8 F:0 E:0 S:0
+
+=== RGClassDescripitonStrategyTest ===
+  RUN: testAllSlots
+  RUN: testClassDescriptionMakeResolved
+  RUN: testClassDescriptionResolvableProperties
+  RUN: testCopyForBehaviorDefinitionPostCopy
+  RUN: testCreationByMethod
+  RUN: testCreationByNamed
+  RUN: testCreationByNamedParent
+  RUN: testCreationByParent
+  RUN: testCreationByUnnamed
+  RUN: testCreationByUnresolved
+  RUN: testCreationByUnresolvedNamed
+  RUN: testDefaultLayout
+  RUN: testDefaultMetaclass
+  RUN: testEmtpyClassVariableString
+  RUN: testInstSize
+  RUN: testInstanceVariablesString
+  RUN: testKindOfSubclass
+  RUN: testLayout
+  RUN: testLayoutSet
+  RUN: testSetInstanceVariables
+  RUN: testSharedPools
+  RUN: testUnresolvedClassGroupCreatorProperties
+  RUN: testUnresolvedClassGroupRoleProperties
+Total: 23 P:23 F:0 E:0 S:0
+
+=== RGClassStrategyTest ===
+  RUN: testCategory
+  RUN: testComment
+  RUN: testCopying
+  RUN: testDefinition
+  RUN: testDefinitionWithSlots
+  RUN: testIncompatibleBehavior
+  RUN: testKind
+  RUN: testPackage
+  RUN: testResolvingConsistency
+  RUN: testStoreString
+Total: 10 P:10 F:0 E:0 S:0
+
+=== RGClassTest ===
+  RUN: testBehavior
+  RUN: testBehaviorWithCategorizedMethods
+  RUN: testBehaviorWithMethods
+  RUN: testBehaviorWithOneMethod
+  RUN: testBehaviorWithProtocols
+  RUN: testBehaviorWithUnategorizedMethod
+  RUN: testBehaviorWithUnategorizedMethods
+  RUN: testClassSide
+  RUN: testClassVariablesCollection
+  RUN: testConversionToTrait
+  RUN: testCopyForBehaviorDefinition
+  RUN: testCopyForBehaviorDefinitionForClass
+  RUN: testCopyForBehaviorDefinitionForClassDescription
+  RUN: testDefinition
+  RUN: testEnsureProtocol
+  RUN: testEnvironmentStubs
+  RUN: testHasMethods
+  RUN: testIsBehavior
+  RUN: testMakeReslolvedResolvesEverything
+  RUN: testNewBehavior
+  RUN: testPrinting
+  RUN: testProtocols
+  RUN: testProtocolsForAllMethods
+  RUN: testProtocolsForAllMethodsForClassWithoutTraits
+  RUN: testSharedPoolsCollection
+  RUN: testTagsCollection
+  RUN: testTagsForMethods
+  RUN: testTagsForMethodsCollection
+  RUN: testTagsForMethodsRemoval
+  RUN: testTesting
+  RUN: testTypes
+Total: 31 P:31 F:0 E:0 S:0
+
+=== RGClassVariableTest ===
+  RUN: testClassVariableImplicitEnvironment
+  RUN: testNewClassVariable
+  RUN: testResolvingConsistency
+Total: 3 P:3 F:0 E:0 S:0
+
+=== RGCommentTest ===
+  RUN: testClass
+  RUN: testImplicitEnvironment
+  RUN: testMakeReslolved
+  RUN: testNewComment
+  RUN: testResolvingConsistency
+  RUN: testTransformations
+Total: 6 P:6 F:0 E:0 S:0
+
+=== RGEnsureTraitTest ===
+  RUN: testClassTrait
+  RUN: testClassTraitIfMetaclassAlreadyExists
+  RUN: testClassTraitIfTraitAlreadyExists
+  RUN: testTrait
+  RUN: testTraitIfClassAlreadyExists
+  RUN: testTraitIfClassTraitAlreadyExists
+Total: 6 P:6 F:0 E:0 S:0
+
+=== RGEnvironmentBackendTest ===
+  RUN: testAST
+  RUN: testCreationOfDefinitions
+  RUN: testDefaultEnvironmentContent
+  RUN: testDefinitionsIdentity
+  RUN: testImplicitEnvironmentContentForClassDefinition
+  RUN: testImplicitEnvironmentContentForMetaclassDefinition
+  RUN: testImplicitEnvironmentContentForMethodDefinition
+  RUN: testReadOnlyErrors
+Total: 8 P:8 F:0 E:0 S:0
+
+=== RGEnvironmentQueryInterfaceTest ===
+  RUN: testCachingBehaviors
+Total: 1 P:1 F:0 E:0 S:0
+
+=== RGEnvironmentTest ===
+  RUN: testBehaviortNamed
+  RUN: testBehaviortNamedIndirect
+  RUN: testCleanUnusedUnreferencedBehaviors
+  RUN: testCleanUnusedUnreferencedPackages
+  RUN: testCompatibility
+  RUN: testDefaultEnvironment
+  RUN: testEnsureClassNamed
+  RUN: testEnvironmentWithNamespace
+  RUN: testFixProtoObjectClassSuperclass
+  RUN: testMerging
+  RUN: testNewEnvironment
+  RUN: testPackageNamed
+  RUN: testReferencedPackages
+  RUN: testTraitNamed
+  RUN: testUnifyClassTrait
+  RUN: testUnifyMetaclass
+  RUN: testUnifyTrait
+  RUN: testUnpackagedPackage
+Total: 18 P:18 F:0 E:0 S:0
+
+=== RGGlobalVariableTest ===
+  RUN: testGlobalVariableImplicitEnvironment
+  RUN: testNewGlobalVariable
+  RUN: testResolvingConsistency
+Total: 3 P:3 F:0 E:0 S:0
+
+=== RGLayoutDefinitionTest ===
+  RUN: testImplicitEnvironment
+  RUN: testIsBitsLayout
+  RUN: testIsBytesLayout
+  RUN: testIsCompiledMethodLayout
+  RUN: testIsEmptyLayout
+  RUN: testIsEphemeronLayout
+  RUN: testIsFixedLayout
+  RUN: testIsImmediateLayout
+  RUN: testIsObjectLayout
+  RUN: testIsPointerLayout
+  RUN: testIsVariableLayout
+  RUN: testIsWeakLayout
+  RUN: testIsWordLayouts
+  RUN: testNewLayouts
+  RUN: testResolvingConsistency
+Total: 15 P:15 F:0 E:0 S:0
+
+=== RGMCTraitCompositionVisitorTest ===
+  RUN: testAlias
+  RUN: testAliasWithMultipleAliases
+  RUN: testClassTrait
+  RUN: testComplexDefinition
+  RUN: testEmpty
+  RUN: testMultipleTraits
+  RUN: testRemovedSelectors
+  RUN: testRemovedSelectorsWithLiteralArray
+  RUN: testRemovedSelectorsWithMultipleSelectors
+  RUN: testSingleTrait
+  RUN: testTwoTraits
+Total: 11 P:11 F:0 E:0 S:0
+
+=== RGMetaclassStrategyTest ===
+  RUN: testCreationByMethod
+  RUN: testIncompatibleBehavior
+  RUN: testKind
+  RUN: testResolvingConsistency
+  RUN: testSetBaseClass
+  RUN: testSharedPools
+  RUN: testStoreString
+  RUN: testTheMetaclass
+Total: 8 P:8 F:0 E:0 S:0
+
+=== RGMetaclassTraitStrategyTest ===
+  RUN: testCreationByMethod
+  RUN: testKind
+  RUN: testResolvingConsistency
+Total: 3 P:3 F:0 E:0 S:0
+
+=== RGMetaclassTraitTest ===
+  RUN: testBehavior
+  RUN: testBehaviorWithCategorizedMethods
+  RUN: testBehaviorWithMethods
+  RUN: testBehaviorWithOneMethod
+  RUN: testBehaviorWithProtocols
+  RUN: testBehaviorWithUnategorizedMethod
+  RUN: testBehaviorWithUnategorizedMethods
+  RUN: testCopyForBehaviorDefinition
+  RUN: testEnsureProtocol
+  RUN: testHasMethods
+  RUN: testImplicitConversionFromClass
+  RUN: testImplicitConversionFromClassProperties
+  RUN: testIsBehavior
+  RUN: testMakeReslolvedResolvesEverything
+  RUN: testMetaclassTraitImplicitEnvironment
+  RUN: testNewBehavior
+  RUN: testNewMetaclassTrait
+  RUN: testProtocols
+Total: 18 P:18 F:0 E:0 S:0
+
+=== RGMethodTest ===
+  RUN: testAST
+  RUN: testFullName
+  RUN: testImplicitEnvironment
+  RUN: testMetaSide
+  RUN: testNewMethod
+  RUN: testNewNamedMethod
+  RUN: testPackages
+  RUN: testRemovePackage
+  RUN: testResolvingConsistency
+  RUN: testSourceCode
+  RUN: testTagsCollection
+Total: 11 P:11 F:0 E:0 S:0
+
+=== RGObjectTest ===
+  RUN: testFullCopy
+  RUN: testNameAccess
+  RUN: testParent
+  RUN: testProperties
+  RUN: testResolveability
+  RUN: testResolvedNameOrNil
+  RUN: testTrivialMethods
+  RUN: testTypes
+  RUN: testUnresolveName
+  RUN: testUnresolvedValue
+Total: 10 P:10 F:0 E:0 S:0
+
+=== RGPackageTest ===
+  RUN: testAddingClass
+  RUN: testAddingPackage
+  RUN: testCategories
+  RUN: testClasses
+  RUN: testDefinedBehaviorsCollection
+  RUN: testDefinedBehaviorsOfUnresolvedPackages
+  RUN: testNewPackage
+  RUN: testPrinting
+  RUN: testResolvingConsistency
+  RUN: testStubPackage
+  RUN: testTagsForClasses
+  RUN: testTagsForClassesCollection
+Total: 12 P:12 F:0 E:0 S:0
+
+=== RGPoolVariableTest ===
+  RUN: testPoolVariableImplicitEnvironment
+  RUN: testResolvingConsistency
+Total: 2 P:2 F:0 E:0 S:0
+
+=== RGReadOnlyBackendTest ===
+  RUN: testReadOnlyErrors
+Total: 1 P:1 F:0 E:0 S:0
+
+=== RGReadOnlyImageBackendTest ===
+  RUN: testBehavior
+  RUN: testBehaviorLocalMethods
+  RUN: testClassComment
+  RUN: testClassTrait
+  RUN: testClassVariable
+  RUN: testDefaultEnvironmentContent
+  RUN: testDefinitionsIdentity
+  RUN: testEmptyLayout
+  RUN: testGlobalVariable
+  RUN: testLayouts
+  RUN: testMethod
+  RUN: testProtocols
+  RUN: testReadOnlyErrors
+  RUN: testSlots
+  RUN: testTrait
+  RUN: testTraitAlias
+  RUN: testTraitComposition
+  RUN: testTraitExclusions
+  RUN: testUnknownSlots
+Total: 19 P:19 F:0 E:0 S:0
+
+=== RGSlotTest ===
+  RUN: testNewSlot
+  RUN: testResolvingConsistency
+  RUN: testResolvingConsistencyUnknown
+  RUN: testSlotsImplicitEnvironment
+  RUN: testUnknownSlot
+Total: 5 P:5 F:0 E:0 S:0
+
+=== RGStampParserTest ===
+  RUN: testAuthor
+  RUN: testTime
+Total: 2 P:2 F:0 E:0 S:0
+
+=== RGTraitAliasTest ===
+  RUN: testAliasesCollection
+  RUN: testImplicitEnvironment
+  RUN: testNewTraitAlias
+  RUN: testResolvingConsistency
+  RUN: testUsedTraits
+Total: 5 P:5 F:0 E:0 S:0
+
+=== RGTraitCompositionTest ===
+  RUN: testGlobalVariablesCollection
+  RUN: testImplicitEnvironment
+  RUN: testNewTraitComposition
+  RUN: testResolvingConsistency
+  RUN: testTransformationsCollection
+  RUN: testUsedTraits
+Total: 6 P:6 F:0 E:0 S:0
+
+=== RGTraitExclusionTest ===
+  RUN: testAliasesCollection
+  RUN: testExclusionsCollection
+  RUN: testImplicitEnvironment
+  RUN: testNewTraitAlias
+  RUN: testNewTraitExlusion
+  RUN: testResolvingConsistency
+  RUN: testUsedTraits
+Total: 7 P:7 F:0 E:0 S:0
+
+=== RGTraitStrategyTest ===
+  RUN: testClassVariablesString
+  RUN: testCreationByMethod
+  RUN: testIncompatibleBehavior
+  RUN: testInstSize
+  RUN: testInstanceVariablesString
+  RUN: testKind
+  RUN: testResolvingConsistency
+  RUN: testSharedPoolNames
+  RUN: testSharedPools
+  RUN: testTrait
+Total: 10 P:10 F:0 E:0 S:0
+
+=== RGTraitTest ===
+  RUN: testBehavior
+  RUN: testBehaviorWithCategorizedMethods
+  RUN: testBehaviorWithMethods
+  RUN: testBehaviorWithOneMethod
+  RUN: testBehaviorWithProtocols
+  RUN: testBehaviorWithUnategorizedMethod
+  RUN: testBehaviorWithUnategorizedMethods
+  RUN: testClassSide
+  RUN: testCopyForBehaviorDefinition
+  RUN: testEnsureProtocol
+  RUN: testHasMethods
+  RUN: testIsBehavior
+  RUN: testMakeReslolvedResolvesEverything
+  RUN: testNewBehavior
+  RUN: testNewTrait
+  RUN: testProtocols
+  RUN: testTraitImplicitEnvironment
+Total: 17 P:17 F:0 E:0 S:0
+
+=== RGUnresolvedValueTest ===
+  RUN: testDefaultValue
+  RUN: testReferencedBehaviors
+Total: 2 P:2 F:0 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 32
+Pass: 290
+Fail: 0
+Error: 0
+Skip: 0
+Total: 290
+Finished: 2026-05-28T18:01:43.113848-04:00
+
+=== BATCH COMPLETE ===

@@ -1,0 +1,375 @@
+=== Stock Cog SUnit run ===
+Classes to run: 12
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/harness/Pharo.image
+Started: 2026-05-28T18:01:34.837322-04:00
+
+=== CoverageDemoTest ===
+  RUN: testCoverageAST
+  RUN: testCoverageControlFlow
+  RUN: testCoverageMethod
+Total: 3 P:3 F:0 E:0 S:0
+
+=== LinkInstallerTest ===
+  RUN: testCallToSuper
+  RUN: testCallToSuperWithArgs
+  RUN: testFindingAnonymousNodes
+  RUN: testLinkOnASTProgramNode
+  RUN: testLinkOnClassVar
+  RUN: testLinkOnClassVarForObject
+  RUN: testLinkOnTempVar
+  RUN: testLinkOnTempVarForObject
+  RUN: testLinkTargetsObjectsByIdentity
+  RUN: testMetaLinkOnOneObject
+  RUN: testMetaLinkWithAnonymousClasses
+  RUN: testMethodModified
+  RUN: testMethodRemoved
+  RUN: testNodesRemovedFromLinkWhenMethodRemoved
+  RUN: testNodesRemovedFromLinkWhenMethodRemovedFromObject
+  RUN: testObjectsAreWeakReferenced
+  RUN: testOneMetaLinkClassAndObjects
+  RUN: testOneMetaLinkManyObjects
+  RUN: testPermaLinkNotInstalledOnObjectIfExistsInClass
+  RUN: testPropagateClassScopedLinks
+  RUN: testPropagateClassScopedLinksOnMethodNode
+  RUN: testPropagateClassScopedLinksRemoval
+  RUN: testPropagateClassScopedLinksRemovalFromMethodNode
+  RUN: testPropagateLinksOnRBProgramNode
+  RUN: testPropagateNewClassScopedLinks
+  RUN: testPropagateNewClassScopedLinksOnMethodNode
+  RUN: testRemovingMetaLinkOnOneObject
+  RUN: testRemovingMethodNodes
+  RUN: testRemovingNodeFromObject
+  RUN: testRemovingNodes
+  RUN: testRemovingNodesWithSuper
+  RUN: testSlotOrVarLinksAddedAfterMethodAddition
+  RUN: testSlotOrVarLinksAddedAfterMethodAdditionForObject
+  RUN: testSlotOrVarLinksRemainAfterMethodModification
+  RUN: testSlotOrVarLinksRemainAfterMethodModificationForObject
+  RUN: testTwoMetaLinksOneObject
+  RUN: testUninstallLink
+  RUN: testUninstallLinkFromNode
+  RUN: testUninstallLinkOnSlotOrVar
+  RUN: testUninstallOneMetaLinkManyObjects
+Total: 40 P:40 F:0 E:0 S:0
+
+=== MetaLinkAnonymousClassBuilderTest ===
+  RUN: testAllSubclassesOfWithSelector
+  RUN: testAnonSubclassesRegistering
+  RUN: testAnonymousClassForObject
+  RUN: testClassAccessFromClassBuilder
+  RUN: testCompileClassAccessorForAnonymousClass
+  RUN: testCompileMethodFromIn
+  RUN: testCompiledMethodsOfSelectorInAnonSubClassesOf
+  RUN: testCompiledMethodsOfSelectorinClasses
+  RUN: testEmptyAnonSubclasses
+  RUN: testMigrateObjectToAnonymousClass
+  RUN: testMigrateObjectToOriginalClass
+  RUN: testNewAnonymousSubclass
+  RUN: testRemoveMethodNodeFromObject
+  RUN: testWeakMigratedObjectsRegistry
+Total: 14 P:14 F:0 E:0 S:0
+
+=== MetaLinkObjectAPITest ===
+  RUN: testLinkClassToAST
+  RUN: testLinkClassToClassVarNamed
+  RUN: testLinkClassToSlotNamed
+  RUN: testLinkClassToSlotNamedUninstall
+  RUN: testLinkClassToTempVarNamed
+  RUN: testLinkObjectToAST
+  RUN: testLinkObjectToClassVarName
+  RUN: testLinkObjectToSlotNamed
+  RUN: testLinkObjectToTempVarName
+  RUN: testLinkToClassVarNameAll
+  RUN: testLinkToClassVarNameReads
+  RUN: testLinkToClassVarNameWrites
+  RUN: testLinkToSlotNamedAll
+  RUN: testLinkToSlotNamedReads
+  RUN: testLinkToSlotNamedWrites
+  RUN: testLinkToTempVarNameAll
+  RUN: testLinkToTempVarNameReads
+  RUN: testLinkToTempVarNameWrites
+Total: 18 P:18 F:0 E:0 S:0
+
+=== MetaLinkRegistryTest ===
+  RUN: testPermaLinksForMethod
+  RUN: testSlotSourcesConsiderClassesHierarchy
+Total: 2 P:2 F:0 E:0 S:0
+
+=== MetaLinkTest ===
+  RUN: testAvailableReifications
+  RUN: testBlockLink
+  RUN: testConditionLink
+  RUN: testControlInstead
+  RUN: testControlLink
+  RUN: testDefintionString
+  RUN: testLinkOption
+  RUN: testLinkOptionsDefault
+  RUN: testOptionFor
+  RUN: testReificationError
+  RUN: testSimpleHaltLink
+Total: 11 P:11 F:0 E:0 S:0
+
+=== OCCacheResetTest ===
+  RUN: testCacheResetPreserveLinks
+Total: 1 P:1 F:0 E:0 S:0
+
+=== ReflectiveMethodTest ===
+  RUN: testASTCacheIsCleanedAfterMetaLinkRemoval
+  RUN: testCreateReflectiveMethod
+  RUN: testCreateReflectiveMethodAndInvalidate
+  RUN: testDestroyTwin
+  RUN: testInvalidate
+  RUN: testInvalidateNoJit
+  RUN: testInvalidateWithLinkCount
+  RUN: testLinkCountTwoLinks
+  RUN: testLinkKeepsExtension
+  RUN: testSetLink
+  RUN: testSetLinkInPrimitive
+  RUN: testSetLinkOnClassVariable
+  RUN: testSetLinkOnClassVariableAndUninstall
+  RUN: testSetLinkOnDynamicArrayArgument
+  RUN: testSetLinkOnGlobalVariable
+  RUN: testSetLinkOnGlobalVariableAndUninstall
+  RUN: testSetLinkOnInstanceVariable
+  RUN: testSetLinkOnInstanceVariableAndUninstall
+  RUN: testSetLinkOnPragma
+  RUN: testSetLinkOnPrimitive
+  RUN: testSetLinkWithPragmaOptions
+  RUN: testSetLinkWithPragmaOptionsPerClass
+Total: 22 P:22 F:0 E:0 S:0
+
+=== ReflectivityControlTest ===
+  RUN: testAfterArray
+  RUN: testAfterAssignment
+  RUN: testAfterBlock
+  RUN: testAfterBlockOptimizedIfTrue
+  RUN: testAfterBlockOptimizedWhileFalseSend
+  RUN: testAfterBlockSequence
+  RUN: testAfterCascade
+  RUN: testAfterClassVariable
+  RUN: testAfterLiteral
+  RUN: testAfterLiteralArray
+  RUN: testAfterMethod
+  RUN: testAfterMethod2
+  RUN: testAfterMethodLevel
+  RUN: testAfterMethodPrimitive
+  RUN: testAfterMethodWithTemps
+  RUN: testAfterSend
+  RUN: testAfterSendWeak
+  RUN: testAfterSequence
+  RUN: testAfterSlot
+  RUN: testAfterSlotWrite
+  RUN: testAfterVariableNode
+  RUN: testBeforeAndAfterSend
+  RUN: testBeforeArray
+  RUN: testBeforeAssignment
+  RUN: testBeforeBlock
+  RUN: testBeforeBlockSequence
+  RUN: testBeforeBlockSequenceNoValue
+  RUN: testBeforeBlockSequenceOptimized
+  RUN: testBeforeCascade
+  RUN: testBeforeClassVariable
+  RUN: testBeforeLiteral
+  RUN: testBeforeLiteralArray
+  RUN: testBeforeMethod
+  RUN: testBeforeMethodPrimitive
+  RUN: testBeforeReturn
+  RUN: testBeforeSend
+  RUN: testBeforeSendInCascade
+  RUN: testBeforeSequence
+  RUN: testBeforeSlot
+  RUN: testBeforeSlotWrite
+  RUN: testBeforeVariable
+  RUN: testBeforeVariableSelf
+  RUN: testConditionDisableEnableNoArguments
+  RUN: testConditionDisableEnableWithArguments
+  RUN: testConditionMetaLevel
+  RUN: testConditionWithArgument
+  RUN: testConditionWithArgument2
+  RUN: testFailingDoubleRWInstead
+  RUN: testFailingDoubleRWInsteadSimplified
+  RUN: testInsteadArray
+  RUN: testInsteadAssign
+  RUN: testInsteadBlock
+  RUN: testInsteadBlockSequence
+  RUN: testInsteadCascade
+  RUN: testInsteadClassVariable
+  RUN: testInsteadLiteral
+  RUN: testInsteadLiteralArray
+  RUN: testInsteadMethod
+  RUN: testInsteadPrimitiveMethod
+  RUN: testInsteadSend
+  RUN: testInsteadSendMultipleSites
+  RUN: testInsteadSequence
+  RUN: testInsteadVariableReadGlobal
+  RUN: testInsteadVariableReadIvar
+  RUN: testInsteadVariableReadTemp
+  RUN: testInsteadVariableWrite
+  RUN: testLinkOneShot
+  RUN: testLinkOptionDisabledLink
+  RUN: testLinkoptionInlineCondition
+  RUN: testLinkoptionInlineMetaObject
+  RUN: testRecursionStopper
+Total: 71 P:71 F:0 E:0 S:0
+
+=== ReflectivityOnStackTest ===
+  RUN: testExecuteWithWaiting
+  RUN: testExecuteWithWaitingWithAfterLinkInstalledAfterExecutionAtInstructionChangeInterruptedMethodManually
+  RUN: testExecuteWithWaitingWithAfterLinkInstalledAfterExecutionAtInstructionChangeMethodManually
+  RUN: testExecuteWithWaitingWithBeforeLinkInstalledAfterExecutionAtInstructionChangeInterruptedMethodManually
+  RUN: testExecuteWithWaitingWithBeforeLinkInstalledAfterExecutionAtInstructionChangeMethodManually
+  RUN: testExecuteWithWaitingWithLinkInstalledAfterExecution
+  RUN: testExecuteWithWaitingWithLinkInstalledAfterExecutionBeforeInstructionChangeInterruptedMethodManually
+  RUN: testExecuteWithWaitingWithLinkInstalledAfterExecutionBeforeInstructionChangeMethodManually
+  RUN: testExecuteWithWaitingWithLinkInstalledAfterExecutionChangeInterruptedMethodManually
+  RUN: testExecuteWithWaitingWithLinkInstalledAfterExecutionChangeMethodManually
+  RUN: testExecuteWithWaitingWithLinkInstalledAfterExecutionOfMethodAfterExecutionOfBlockAfterCreationOfBlockChangeMethodManually
+  RUN: testExecuteWithWaitingWithLinkInstalledAfterExecutionOfMethodBeforeExecutionOfBlockAfterCreationOfBlockChangeMethodManually
+  RUN: testExecuteWithWaitingWithLinkInstalledAfterExecutionOfMethodBeforeExecutionOfBlockBeforeCreationOfBlockChangeMethodManually
+  RUN: testExecuteWithWaitingWithLinkInstalledAfterExecutionOfMethodBeforeExecutionOfEmbeddedBlockAfterCreationChangeMethodManually
+  RUN: testExecuteWithWaitingWithLinkInstalledAfterExecutionOfMethodInInlinedBlockChangeMethodManually
+  RUN: testExecuteWithWaitingWithLinkInstalledBeforeExecution
+  RUN: testExecuteWithWaitingWithLinkInstalledInEmbeddedBlockAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually
+  RUN: testExecuteWithWaitingWithLinkInstalledInOuterMethodAfterExecutionOfMethodAfterExecutionOfEmbeddedBlockChangeMethodManually
+  RUN: testExecuteWithWaitingWithLinksInstalledAfterExecutionOfMethodBeforeExecutionOfOuterAndEmbeddedBlockAfterCreationChangeMethodManually
+  RUN: testExecuteWithWaitingWithTwoLinksInstalledAfterExecutionBeforeAndAfterInstructionChangeInterruptedMethodManually
+  RUN: testExecuteWithWaitingWithTwoLinksInstalledAfterExecutionBeforeAndAfterInstructionChangeMethodManually
+  RUN: testExecuteWithWaitingWithTwoLinksInstalledAfterExecutionChangeInterruptedMethodManually
+  RUN: testExecuteWithWaitingWithTwoLinksInstalledAfterExecutionChangeMethodManually
+Total: 23 P:23 F:0 E:0 S:0
+
+=== ReflectivityReificationTest ===
+  RUN: testAccessTemp
+  RUN: testBlockOperationAfter
+  RUN: testBlockOperationBefore
+  RUN: testBlockOperationInstead
+  RUN: testBlockSequenceArguments
+  RUN: testBlockSequenceArgumentsWithArg
+  RUN: testBlockSequenceArgumentsWithArgAfter
+  RUN: testBlockSequenceArgumentsWithArgAfterInstead
+  RUN: testBlockValueAfter
+  RUN: testLiteralOperationAfter
+  RUN: testLiteralValueAfter
+  RUN: testLiteralValueBefore
+  RUN: testReifyArguments2level
+  RUN: testReifyArrayOperationAfter
+  RUN: testReifyArrayOperationBefore
+  RUN: testReifyArrayOperationInstead
+  RUN: testReifyArrayValue
+  RUN: testReifyAssignmentClassVarOperationAfter
+  RUN: testReifyAssignmentClassVarOperationBefore
+  RUN: testReifyAssignmentClassVarOperationInstead
+  RUN: testReifyAssignmentSlotOperationAfter
+  RUN: testReifyAssignmentSlotOperationBefore
+  RUN: testReifyAssignmentSlotOperationInstead
+  RUN: testReifyAssignmentTempOperationAfter
+  RUN: testReifyAssignmentTempOperationBefore
+  RUN: testReifyAssignmentTempOperationInstead
+  RUN: testReifyByInstanceNotKey
+  RUN: testReifyCascadeValue
+  RUN: testReifyClassVarOperation
+  RUN: testReifyClassVariableClass
+  RUN: testReifyClassVariableContext
+  RUN: testReifyClassVariableEntity
+  RUN: testReifyClassVariableLink
+  RUN: testReifyClassVariableName
+  RUN: testReifyClassVariableObject
+  RUN: testReifyClassVariableValue
+  RUN: testReifyClassVariableVariable
+  RUN: testReifyEntity
+  RUN: testReifyGlobalName
+  RUN: testReifyGlobalOperation
+  RUN: testReifyGlobalValue
+  RUN: testReifyGlobalVariable
+  RUN: testReifyGlobalVariableValue
+  RUN: testReifyIndexAssigmentIvar
+  RUN: testReifyIvarIndex
+  RUN: testReifyIvarName
+  RUN: testReifyIvarValue
+  RUN: testReifyIvarVariable
+  RUN: testReifyLiteralArrayContext
+  RUN: testReifyLiteralArrayOperation
+  RUN: testReifyLiteralArrayValue
+  RUN: testReifyMethod
+  RUN: testReifyMethodArgs
+  RUN: testReifyMethodArgsAfter
+  RUN: testReifyMethodArgsAfter2
+  RUN: testReifyMethodBodyArgsAfter
+  RUN: testReifyMethodBodyArgsBefore
+  RUN: testReifyMethodBodyArgsInstead
+  RUN: testReifyMethodReceiver
+  RUN: testReifyMethodSelector
+  RUN: testReifyMethodThisContext
+  RUN: testReifyMethodThisContextAfter
+  RUN: testReifyMethodValue
+  RUN: testReifyMethodValueNoReturn
+  RUN: testReifyNewValueAssignmentAfter
+  RUN: testReifyNewValueAssignmentBefore
+  RUN: testReifyNode
+  RUN: testReifyObject
+  RUN: testReifyOperationMethod
+  RUN: testReifyOperationMethodAfter
+  RUN: testReifyOperationMethodInstead
+  RUN: testReifyOperationSend
+  RUN: testReifyOperationSendAfter
+  RUN: testReifyOperationSendInstead
+  RUN: testReifyOptionArgsAsArray
+  RUN: testReifyOrigMethod
+  RUN: testReifyReceiverOnSendWithArguments
+  RUN: testReifyReceiverOnSendWithArgumentsAfter
+  RUN: testReifyReturnOperation
+  RUN: testReifyReturnValue
+  RUN: testReifySendAfterMany
+  RUN: testReifySendAll
+  RUN: testReifySendArgsAsArray
+  RUN: testReifySendArguments
+  RUN: testReifySendArguments2
+  RUN: testReifySendArgumentsAfter
+  RUN: testReifySendArgumentsInstead
+  RUN: testReifySendArgumentsInsteadAndBefore
+  RUN: testReifySendArgumentsLevel
+  RUN: testReifySendMethodToExecute
+  RUN: testReifySendOperationInsteadAndBefore
+  RUN: testReifySendReceiver
+  RUN: testReifySendSelector
+  RUN: testReifySendSender
+  RUN: testReifySendThisContext
+  RUN: testReifySendThisContextAfter
+  RUN: testReifySendValue
+  RUN: testReifySlotClass
+  RUN: testReifySlotName
+  RUN: testReifySlotOperation
+  RUN: testReifySlotOperationAfter
+  RUN: testReifySlotOperationInstead
+  RUN: testReifySlotValue
+  RUN: testReifySlotVariable
+  RUN: testReifyTempName
+  RUN: testReifyTempNewValue
+  RUN: testReifyTempOperation
+  RUN: testReifyTempOperationAfter
+  RUN: testReifyTempOperationInstead
+  RUN: testReifyTempValue
+  RUN: testReifyValueAssignmentAfter
+  RUN: testReifyValueAssignmentBefore
+Total: 112 P:112 F:0 E:0 S:0
+
+=== ReflectivityTest ===
+  RUN: testDisableLink
+  RUN: testDisableThenCleanASTCacheThenEnableLink
+  RUN: testDisableThenEnableLink
+  RUN: testDisableThenEnableLinkWithCondition
+  RUN: testTwoLinksUninstallOne
+Total: 5 P:5 F:0 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 12
+Pass: 322
+Fail: 0
+Error: 0
+Skip: 0
+Total: 322
+Finished: 2026-05-28T18:01:41.474337-04:00
+
+=== BATCH COMPLETE ===

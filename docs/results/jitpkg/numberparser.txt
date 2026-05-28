@@ -1,0 +1,67 @@
+=== SUnit Test Run #1 (batch 1-2 of 2051) ===
+
+BATCH-DEBUG: batchClasses size=2 first=NumberParserTest last=NumberParsingTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T20:14:25.452714-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-ERR: Error Missing jumpAheadTo: #else
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout patch error: receiver of "adaptToNumber:andSend:" is nil
+=== NumberParserTest ===
+  SORT-OK: 64 comparisons for 25 items
+  RUN: testCoverage
+  RUN: testFail
+  RUN: testFailParsingGarbage
+  RUN: testFailWithDetails
+  RUN: testFloatFromStreamAsNumber
+  RUN: testFloatFromStreamWithExponent
+  RUN: testFloatGradualUnderflow
+  RUN: testFloatMaxAndMin
+  RUN: testFloatPrintString
+  RUN: testFloatReadError
+  RUN: testFloatReadWithRadix
+  RUN: testFloatmin
+  RUN: testIntegerParseUnderscore
+  RUN: testIntegerReadFrom
+  RUN: testIntegerReadWithRadix
+  RUN: testIntegerWithNegExponentIsAFloat
+  RUN: testIsNumber
+  RUN: testNew
+  RUN: testScaledDecimalWithTrailingZeroes
+  RUN: testScaledDecimalWithoutScaleSpecification
+  RUN: testSqueezingOutNumbers
+  RUN: testUnCategorizedMethods
+  RUN: testcheckForCoverage
+Total: 25 P:23 F:0 E:0 S:0
+=== NumberParsingTest ===
+  SORT-OK: 27 comparisons for 13 items
+  RUN: testFloatFromStreamAsNumber
+  RUN: testFloatFromStreamWithExponent
+  RUN: testFloatFromStringAsNumber
+  RUN: testFloatFromStringWithExponent
+  RUN: testFloatReadWithRadix
+  RUN: testIntegerFromString
+  RUN: testIntegerReadFrom
+  RUN: testIntegerReadWithRadix
+  RUN: testNegativeZero
+  RUN: testNumberReadExactlyError
+  RUN: testNumberReadOnlyDigit
+  RUN: testScaledDecimalWithTrailingZeroes
+  RUN: testScaledDecimalWithoutScaleSpecification
+Total: 13 P:13 F:0 E:0 S:0
+*** BATCH COMPLETED for 2 classes (1-2)
+=== BATCH TOTAL ===
+Run: #1
+Batch: 1-2
+Classes: 2
+Pass: 36
+Fail: 0
+Error: 0
+Skip: 0
+Total: 36
+=== BATCH COMPLETE ===

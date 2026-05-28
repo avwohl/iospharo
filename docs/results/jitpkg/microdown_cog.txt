@@ -1,0 +1,806 @@
+=== Stock Cog SUnit run ===
+Classes to run: 49
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/harness/Pharo.image
+Started: 2026-05-28T18:01:48.48225-04:00
+
+=== MicAnchorBlockTest ===
+  RUN: testHasProperty
+  RUN: testModifyLabel
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+Total: 7 P:7 F:0 E:0 S:0
+
+=== MicAnchorLinkerTest ===
+  RUN: testAnchorIsAttachedToItsTarget
+  RUN: testAnchorIsAttachedToItsTarget2
+  RUN: testHeaderLast
+Total: 3 P:3 F:0 E:0 S:0
+
+=== MicAnnotatedParagraphBlockTest ===
+  RUN: testAnnotatedParagraphBreakingTheParser
+  RUN: testAnnotatedParagraphBreakingTheParser2
+  RUN: testBasicAnnotetedParagraph
+  RUN: testBasicAnnotetedParagraphIgnoreExtraTextInFirstLine
+  RUN: testBasicAnnotetedParagraphWhitoutClosingBracket
+  RUN: testBasicAnnotetedParagraphWithALineBreak
+  RUN: testBasicAnnotetedParagraphWithANonSupportedLabel
+  RUN: testBasicAnnotetedParagraphWithBoldText
+  RUN: testBasicAnnotetedParagraphWithLabelHavingUpperCase
+  RUN: testHasProperty
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+Total: 15 P:15 F:0 E:0 S:0
+
+=== MicArgumentListTest ===
+  RUN: testArguments
+  RUN: testArgumentsAnchorAreTrimmed
+  RUN: testArgumentsAnchorAreTrimmed2
+  RUN: testArgumentsForMath
+  RUN: testCanInstantiate
+  RUN: testDefaultWithEmptyInput
+  RUN: testDefaultWithNoValue
+  RUN: testDefaultWithValue
+  RUN: testEmpty
+  RUN: testFirstTag
+  RUN: testFirstTagWithDelimiter
+  RUN: testHasNonDefaultArguments
+  RUN: testHasNonDefaultArguments_no
+  RUN: testHasNonDefaultArguments_nonDefault
+  RUN: testHasNonDefaultValue
+  RUN: testHasNonDefaultValue_AndSomeArgs
+  RUN: testHasNonDefaultValue_Default
+  RUN: testHasNonDefaultValue_DefaultOverridden
+  RUN: testHasNonDefaultValue_NoDefault
+  RUN: testJustTheArguments
+  RUN: testJustTheArguments_NoDefault
+  RUN: testNameAndArguments
+  RUN: testNameWithDelimiter
+  RUN: testPrintString
+  RUN: testPrintString_AssignDefaultUsingEquals
+  RUN: testPrintString_Empty
+  RUN: testPrintString_defaultValue
+  RUN: testPrintString_oneParam
+  RUN: testPrintString_onlyParams
+  RUN: testSeveralArguments
+Total: 30 P:30 F:0 E:0 S:0
+
+=== MicBlockQuoteBlockTest ===
+  RUN: testBasicQuoteBlock
+  RUN: testBlockquoteBlockInterpretInlineELements
+  RUN: testBlockquoteBlockInterpretInlineELementsOnMultipleLines
+  RUN: testHasProperty
+  RUN: testNotLazy
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testQuoteBlockDoesNotInterpretOtherBlockMarkup
+  RUN: testSanity
+  RUN: testSingleQuoteBlock
+  RUN: testSingleQuoteBlockFollowedByList
+Total: 13 P:13 F:0 E:0 S:0
+
+=== MicCitationBlockTest ===
+  RUN: testCreateTheRightCitationObject
+  RUN: testCreateTheRightCitationObjectWithNonDefaultKey
+  RUN: testCreateTheRightCitationObjectWithoutKey
+  RUN: testDefaultingClassWhenNoTag
+  RUN: testDefaultingClassWhenNoTagAndNoKey
+  RUN: testDefaultingClassWhenNoTagWithNonDefaultKey
+Total: 6 P:6 F:0 E:0 S:0
+
+=== MicCodeBlockTest ===
+  RUN: testBody
+  RUN: testCanConsumeLine
+  RUN: testCaption
+  RUN: testCodeBlockWithNestedCodeBlock
+  RUN: testCodeCreatesInnerText
+  RUN: testFirstTagNoValue
+  RUN: testFirstTagValue
+  RUN: testFirstTagWithValue
+  RUN: testFourBackQuotes
+  RUN: testFourBackQuotesClosedByThreeQuotes
+  RUN: testFourBackQuotesOnMultipleLines
+  RUN: testFourBackQuotesOnMultipleLinesWithText
+  RUN: testFourBackQuotesWithTextAround
+  RUN: testHasBody
+  RUN: testHasBody_not
+  RUN: testHasCaption
+  RUN: testHasLabelFalse
+  RUN: testHasLabelTrue
+  RUN: testHasNOCaption
+  RUN: testHasProperty
+  RUN: testLanguage
+  RUN: testMainExtensionTag
+  RUN: testMainExtensionTag2
+  RUN: testMainExtensionTagForSync
+  RUN: testMainExtensionTagForSyncWithoutLanguage
+  RUN: testMainExtensionTagWithoutLanguage
+  RUN: testNestedCodeBlockOnlyProducesOneCodeBlock
+  RUN: testOpenCanConsumeLine
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+  RUN: testSetLabel
+  RUN: testSingleBlockWithArguments
+  RUN: testSingleBlockWithArgumentsWithFormat
+  RUN: testThreeBackQuotesClosedByFourQuotes
+Total: 37 P:37 F:0 E:0 S:0
+
+=== MicColumnsBlockTest ===
+  RUN: testSimpleColumn
+  RUN: testSimpleColumnWithWidth
+Total: 2 P:2 F:0 E:0 S:0
+
+=== MicCommentTest ===
+  RUN: testCommentAPI
+  RUN: testHasProperty
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+Total: 7 P:7 F:0 E:0 S:0
+
+=== MicEnvironmentBlockTest ===
+  RUN: testEnvironment
+  RUN: testEnvironmentClosingNotEatingClosingCharacter
+  RUN: testEnvironmentIsCreatedWhenTagDoesNotMatch
+  RUN: testEnvironmentWiathArgsWithCorrespondingClassIsCreated
+  RUN: testEnvironmentWithAnyNestedElement
+  RUN: testEnvironmentWithArguments
+  RUN: testEnvironmentWithBrokenMotherNested
+  RUN: testEnvironmentWithBrokenNestedScript
+  RUN: testEnvironmentWithCodeBlock
+  RUN: testEnvironmentWithCorrespondingClassIsCreated
+  RUN: testEnvironmentWithFormat
+  RUN: testEnvironmentWithMultipleLines
+  RUN: testEnvironmentWithNoEmptyBeforeTheEndMarker
+  RUN: testExtensionClassWithSpaceAndArgIsCreated
+  RUN: testHasProperty
+  RUN: testInputFileOnOneLineWithJunkAfter
+  RUN: testInputFileOnOneLineWithJunkSpaceBeforeEnd
+  RUN: testInputFileOnOneLineWithSpaceBeforeJunkAfter
+  RUN: testParagraphEnvironmentParagraph
+  RUN: testParagraphEnvironmentParagraph2
+  RUN: testParagraphEnvironmentParagraph3
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+  RUN: testSecondScriptShouldNotBeChildOfFirst
+  RUN: testSecondScriptShouldNotBeChildOfFirstWhenClosingOnTheSameLine
+Total: 28 P:28 F:0 E:0 S:0
+
+=== MicFigureBlockTest ===
+  RUN: testAlt
+  RUN: testAnchor
+  RUN: testAnchorExpressedUsingLabel
+  RUN: testAnchorInCaption
+  RUN: testArgumentAtIfPresent
+  RUN: testCaption
+  RUN: testFigureAnchorIsNotReified
+  RUN: testFigureCaptionIsReified
+  RUN: testFigureCaptionIsReifiedWithNewFormat
+  RUN: testHasArguments
+  RUN: testHasNoArguments
+  RUN: testHasProperty
+  RUN: testIfArgumentInCaptionIgnoresInURL
+  RUN: testIsNotRelativeFilePathWithUrl
+  RUN: testPrintOn
+  RUN: testPrintOnWithParameters
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+  RUN: testUrlWitMicrodownParameterAndUrlParameters
+  RUN: testUrlWithMicrodownParameters
+  RUN: testUrlWithoutMicrodownParameters2
+Total: 24 P:24 F:0 E:0 S:0
+
+=== MicFileResourceReferenceTest ===
+  RUN: testContents
+  RUN: testContentsInsideSubFolder
+  RUN: testContentsOfDirectory
+  RUN: testContentsSet
+  RUN: testFileReferenceExtensionMethod
+  RUN: testFileReferenceExtensionMethod_dir
+  RUN: testFullName
+  RUN: testIsDirectory
+  RUN: testLoadChildren
+  RUN: testLoadImage
+  RUN: testLoadMicrodown
+  RUN: testLoadNotCorrectImage
+  RUN: testLoadNotCorrectMicrodown
+  RUN: testLoadNotFoundImage
+  RUN: testLoadNotFoundMicrodown
+  RUN: testPath
+Total: 16 P:16 F:0 E:0 S:0
+
+=== MicFootnoteBlockTest ===
+  RUN: testCreateTheRightFootnoteObject
+  RUN: testCreateTheRightFootnoteObjectWithNonDefaultKey
+  RUN: testCreateTheRightFootnoteObjectWithoutKey
+Total: 3 P:3 F:0 E:0 S:0
+
+=== MicFormatBlockTest ===
+  RUN: testBoldAPIToAccessText
+  RUN: testBoldAPIToSetText
+  RUN: testBoldCreatesInnerText
+  RUN: testBoldItalicAPIToAccessText
+  RUN: testBoldWrappedElements
+  RUN: testBoldWrappedWithAccessAPIElements
+  RUN: testHasProperty
+  RUN: testItalicAPIToAccessText
+  RUN: testItalicAPIToSetText
+  RUN: testItalicCreatesInnerText
+  RUN: testItalicWrappedElements
+  RUN: testItalicWrappedWithAccessAPIElements
+  RUN: testMonospaceCreatesInnerText
+  RUN: testMonospaceTextCreatesInnerText
+  RUN: testMonospaceWrappedElements
+  RUN: testPrintingBold
+  RUN: testPrintingBold2
+  RUN: testPrintingItalic
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+Total: 23 P:23 F:0 E:0 S:0
+
+=== MicHTTPResourceReferenceTest ===
+  RUN: testContentsSet
+  RUN: testErrorNonCorrectImage
+  ERROR: testErrorNonCorrectImage (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testErrorNonExistingImage
+  ERROR: testErrorNonExistingImage (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testFullName
+  RUN: testLoadErrorMicrodown
+  ERROR: testLoadErrorMicrodown (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testLoadImage
+  ERROR: testLoadImage (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testLoadMicrodown
+  ERROR: testLoadMicrodown (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testLoadMicrodownResolvesUrlsRelativeToTheParent
+  ERROR: testLoadMicrodownResolvesUrlsRelativeToTheParent (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testLoadNonExistingMicrodown
+  FAIL: testLoadNonExistingMicrodown [Got 'primitive #primNameResolverStatus in NetNameResolver class failed' instead of 'Could not access https://raw.githubusercontent.com/pillar-markup/Microdown/dev/doc/testMicrodown/readmeNOT.md'.]
+Total: 9 P:2 F:1 E:6 S:0
+
+=== MicHeaderBlockTest ===
+  RUN: testCanConsumeLine
+  RUN: testHasProperty
+  RUN: testHeaderAPIToAccessText
+  RUN: testHeaderAPIToSetText
+  RUN: testHeaderCreatesInnerText
+  RUN: testHeaderLevel1
+  RUN: testHeaderLevel1NoSpace
+  RUN: testHeaderLevel4
+  RUN: testHeaderLevel6
+  RUN: testHeaderLevelOutOfRange
+  RUN: testHeaderLongElements
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+Total: 16 P:16 F:0 E:0 S:0
+
+=== MicInlineBlockTest ===
+  RUN: testAllTerminalNodesImplementsAccept
+  RUN: testBlockName
+Total: 2 P:2 F:0 E:0 S:0
+
+=== MicInlineDelimiterTest ===
+  RUN: testAddMe
+  RUN: testMarkupAsRegex
+  RUN: testRawEvaluatedConsistency
+  RUN: testRegexNot
+Total: 4 P:4 F:0 E:0 S:0
+
+=== MicInlineExtenedSyntaxTest ===
+  RUN: testBoldAndItalicAlternatives
+  RUN: testInlineHttp
+  RUN: testInlineHttp_Newline
+  RUN: testInlineHttp_inBold
+  RUN: testInlineHttp_inContext
+  RUN: testInlineHttp_inItalic
+  RUN: testInlineHttp_tab
+  RUN: testInlineHttp_tabAndNewline
+Total: 8 P:8 F:0 E:0 S:0
+
+=== MicInlineParserTest ===
+  RUN: testAnchorReference
+  RUN: testAnchorReference_backSlashed
+  RUN: testAnchorReference_unevaluated
+  RUN: testAnnotation
+  RUN: testAnnotation_backSlashed
+  RUN: testAnnotation_unevaluated
+  RUN: testBold
+  RUN: testBold_BackslashNotNested
+  RUN: testBold_Nested
+  RUN: testBold_UnclompletedNested
+  RUN: testBrokenNestedBlocksHandles
+  RUN: testFigure
+  RUN: testFigure_Refs
+  RUN: testItalic
+  RUN: testItalic_BackslashNotNested
+  RUN: testItalic_Nested
+  RUN: testItalic_UnclompletedNested
+  RUN: testLink
+  RUN: testLink_Refs
+  RUN: testMathInline
+  RUN: testMathInline_backSlashed
+  RUN: testMathInline_unevaluated
+  RUN: testMonospace
+  RUN: testMonospace_backSlashed
+  RUN: testMonospace_unevaluated
+  RUN: testNestedBlocksWithUrl
+  RUN: testRaw
+  RUN: testRaw_backSlashed
+  RUN: testRaw_unevaluated
+  RUN: testStrike
+  RUN: testStrike_BackslashNotNested
+  RUN: testStrike_Nested
+  RUN: testStrike_UnclompletedNested
+  RUN: testText
+  RUN: testText_backSlashed
+  RUN: testText_isEvaluated
+Total: 36 P:36 F:0 E:0 S:0
+
+=== MicInlineSpaceBlockTest ===
+  RUN: testHasProperty
+  RUN: testParagraphWithInlineSpace
+  RUN: testParagraphWithInlineSpaceAndOthers
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+Total: 8 P:8 F:0 E:0 S:0
+
+=== MicInlineTokenStreamTest ===
+  RUN: testBackslash
+  RUN: testBackslash_AnchorReference
+  RUN: testBackslash_InFormattedElements
+  RUN: testBackslash_InMath
+  RUN: testBackslash_InMonospace
+  RUN: testBackslash_InRaw
+  RUN: testTokenize
+  RUN: testTokenize_Annotation
+  RUN: testTokenize_FigureWithURL
+  RUN: testTokenize_InlineSpace
+  RUN: testTokenize_InlineSpaceWithSpaceAround
+  RUN: testTokenize_Text
+  RUN: testTokenize_UrlPart
+  RUN: testTokenize_anchorRefs
+  RUN: testTokenize_bold
+  RUN: testTokenize_figureName
+  RUN: testTokenize_italic
+  RUN: testTokenize_linkName
+  RUN: testTokenize_math
+  RUN: testTokenize_monospace
+  RUN: testTokenize_raw
+  RUN: testTokenize_strike
+Total: 22 P:22 F:0 E:0 S:0
+
+=== MicInputfileBlockTest ===
+  RUN: testMicInputfileIsNotRelativeFilePath
+  RUN: testMicInputfileIsRelativeFilePath
+  RUN: testMicInputfilePath
+  RUN: testMicInputfilePathError
+Total: 4 P:4 F:0 E:0 S:0
+
+=== MicLinkBlockTest ===
+  RUN: testFullName
+  RUN: testHasArguments
+  RUN: testHasProperty
+  RUN: testLinkAPIToAccessText
+  RUN: testLinkBoldAPIToAccessText
+  RUN: testLinkCreatesInnerText
+  RUN: testLinkItalicAPIToAccessText
+  RUN: testOneUrl
+  RUN: testPrintOn
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+  RUN: testTwoUrls
+  RUN: testTwoUrlsWithMicrodownParser
+  RUN: testUrl
+Total: 17 P:17 F:0 E:0 S:0
+
+=== MicMathBlockTest ===
+  RUN: testAnchor
+  RUN: testHasProperty
+  RUN: testMathAnchorIsReified
+  RUN: testMathBlockIsMathBlock
+  RUN: testMathBlockWithBackslashCommands
+  RUN: testMathBlockWithBadClosure
+  RUN: testMathBlockWithParameters
+  RUN: testMathBlockWithParametersAndLatexComment
+  RUN: testMathBlockWithParametersCaption
+  RUN: testMathBlockWithParametersCaptionAndFormatting
+  RUN: testMathBlockWithParametersWithBlank
+  RUN: testMathCaptionIsReified
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+Total: 17 P:17 F:0 E:0 S:0
+
+=== MicMetaDataBlockTest ===
+  RUN: testAtKey
+  RUN: testAtKeyPut
+  RUN: testCorrectJSONMetaDataProducesDictionary
+  RUN: testCorrectMetaDataWithEmptyLinesProduceJSON
+  RUN: testCreatingAnInstanceInitializeTheMetadatDictionary
+  SKIP: testCreatingAnInstanceInitializeTheMetadatDictionary ()
+  RUN: testHasProperty
+  RUN: testIncludesKey
+  RUN: testIsMetaData
+  RUN: testMetaDataDictionaryIsInitializedDuringParseTime
+  RUN: testMetaDataEatsOtherBlocks
+  RUN: testOnlyMetaDataIsMetaData
+  RUN: testParse
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+  RUN: testUncorrectJSONMetaDataProducesDictionaryWithContents
+  RUN: testUncorrectJSONMetaDataProducesDictionaryWithContents2
+  RUN: testUncorrectJSONMetaDataProducesDictionaryWithContents3
+Total: 20 P:19 F:0 E:0 S:1
+
+=== MicMicrodownTextualBuilderTest ===
+  RUN: testAnchor
+  RUN: testAnchorReference
+  RUN: testAnnotated
+  RUN: testAnnotatedWithMultipleLine
+  RUN: testAnnotation
+  RUN: testAnnotationNoArgs
+  RUN: testBold
+  RUN: testCell
+  RUN: testCodeBlock
+  RUN: testCodeBlockCaptionContainsMonospace
+  RUN: testColumns
+  RUN: testColumnsWithChildren
+  RUN: testComment
+  RUN: testEnvironment
+  RUN: testEnvironmentWithBody
+  RUN: testExternalLink
+  RUN: testExternalLinkWithBold
+  RUN: testExternalLinkWithItalic
+  RUN: testExternalLinkWithMonospace
+  RUN: testExternalLinkWithNested
+  RUN: testExternalLinkWithStrike
+  RUN: testFigureInPresenceOfParagraph
+  RUN: testFigureWithBold
+  RUN: testFigureWithParameters
+  RUN: testHeadCell
+  RUN: testHeaderWithItalic
+  RUN: testHorizontalLine
+  RUN: testInputfile
+  RUN: testItalic
+  RUN: testMathBlockCaptionContainsMonospace
+  RUN: testMathInline
+  RUN: testMetaData
+  RUN: testMonospace
+  RUN: testOneColumn
+  RUN: testOrderedListDuring
+  RUN: testParagraph
+  RUN: testQuoteBlock
+  RUN: testRawFormat
+  RUN: testRawParametersWithNotStringAtValue
+  RUN: testSimpleSlide
+  RUN: testStrike
+  RUN: testStrikeInHeader
+  RUN: testUnorderedList
+Total: 43 P:43 F:0 E:0 S:0
+
+=== MicNoteBlockTest ===
+  RUN: testCreateTheRightNoteObject
+  RUN: testCreateTheRightNoteObjectWithNonDefaultKey
+  RUN: testCreateTheRightNoteObjectWithoutKey
+Total: 3 P:3 F:0 E:0 S:0
+
+=== MicOrderedListBlockTest ===
+  RUN: testEmbeddedUnordered
+  RUN: testHasProperty
+  RUN: testNestedLevel
+  RUN: testNestedLevel2
+  RUN: testNotSpawingNewParagraph
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+  RUN: testSingleLevelList2
+  RUN: testSingleLevelList2WithNoIndent
+  RUN: testSingleLevelListWithNormalNumbering
+  RUN: testSingleLevelListWithNormalNumberingWithEmptyLines
+  RUN: testSingleLevelListWithStrangelyNumberedItems
+  RUN: testSpawingNewParagraph
+  RUN: testUnOrderedListAPIToAccessText
+Total: 17 P:17 F:0 E:0 S:0
+
+=== MicParagraphBlockTest ===
+  RUN: testANewLineCreatesANewParagraph
+  RUN: testBoldMultipleLinesWithNewLine
+  RUN: testCanConsumeLine
+  RUN: testCanConsumeLineBasic
+  RUN: testCanConsumeLineOtherBlocks
+  RUN: testHandlingSequenceOfBasicLinesProducesAParagraph
+  RUN: testHasProperty
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+  RUN: testSingleParagraph
+  RUN: testSingleParagraphWithIndentedText
+  RUN: testTwoSingleParagraphs
+Total: 15 P:15 F:0 E:0 S:0
+
+=== MicParserTest ===
+  RUN: testEmpty
+  RUN: testEmptyOnMultipleLines
+  RUN: testIsAListDash
+  RUN: testIsAListNumbered
+  RUN: testIsAListPlus
+  RUN: testIsAListStar
+  RUN: testIsAListStar2
+  RUN: testOnceParsedCurrentShouldBeTheRootblock
+  RUN: testParsingLogic
+Total: 9 P:9 F:0 E:0 S:0
+
+=== MicPharoEvaluatortBlockTest ===
+  RUN: testHasProperty
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+  RUN: testScriptBloc
+Total: 7 P:7 F:0 E:0 S:0
+
+=== MicPharoImageResourceReferenceTest ===
+  RUN: testIcon
+  RUN: testMicrodownImport
+  RUN: testSingleSlash
+Total: 3 P:3 F:0 E:0 S:0
+
+=== MicPharoScriptBlockTest ===
+  RUN: testHasProperty
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+  RUN: testScriptBloc
+Total: 7 P:7 F:0 E:0 S:0
+
+=== MicRawBlockTest ===
+  RUN: testASimpleRawParagaaph
+  RUN: testHasProperty
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testRaw
+  RUN: testSanity
+Total: 8 P:8 F:0 E:0 S:0
+
+=== MicRawParagraphBlockTest ===
+  RUN: testASimpleRawParagraph
+  RUN: testHasProperty
+  RUN: testNotASimpleRawParagraphBecauseNotDeclaredTag
+  RUN: testNotASimpleRawParagraphNoSpaceInFrontToClose
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testRawParagraphCannotBeNested
+  RUN: testSanity
+  RUN: testThereIsNoValidationIfThetagStartWithAKnowHtml
+Total: 11 P:11 F:0 E:0 S:0
+
+=== MicRelativeResourceReferenceTest ===
+  RUN: testIsRelative
+  RUN: testPath
+  RUN: testPrintOn
+  RUN: testRelativePath
+Total: 4 P:4 F:0 E:0 S:0
+
+=== MicResourceReferenceTest ===
+  RUN: testAsMicResourceReference
+  RUN: testAsMicResourceReferenceFromString
+  RUN: testHttpRecognized
+  RUN: testIsDirectory
+  RUN: testParseFullUrl
+  RUN: testPurePathInterpretedAsFile
+  RUN: testPurePathIsRelativeFile
+  RUN: testRelativeFileRecognized
+  RUN: testStringExtensionMethod
+Total: 9 P:9 F:0 E:0 S:0
+
+=== MicResourceSettingsTest ===
+  RUN: testIsCashingResourcesFalse
+  RUN: testIsCashingResourcesTrue
+  FAIL: testIsCashingResourcesTrue [Assertion failed]
+  RUN: testIsOfflineAndResourceFound
+  FAIL: testIsOfflineAndResourceFound [Assertion failed]
+  RUN: testIsOfflineFalse
+  RUN: testIsOfflineTrueAndResourceFound
+  FAIL: testIsOfflineTrueAndResourceFound [Assertion failed]
+  RUN: testIsOfflineTrueAndResourceNotFound
+  RUN: testIsOfflineTrueNotFound
+  RUN: testOnlyOneMethodInMicrodownDefinesSettings
+  RUN: testThereAreTwoSettings
+Total: 9 P:6 F:3 E:0 S:0
+
+=== MicRootBlockTest ===
+  RUN: testHasProperty
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testRootCanConsumeLine
+  RUN: testRootDoesNotHaveMetaDataElement
+  RUN: testRootHasMetaDataElement
+  RUN: testRootWithMetaDataElementHasProperties
+  RUN: testSanity
+Total: 10 P:10 F:0 E:0 S:0
+
+=== MicScriptBlockExtensionTest ===
+  RUN: testExtension
+  RUN: testExtensionWithArguments
+  RUN: testExtensionsAreNotDoneToCodeBlock
+  RUN: testUndefinedExtensionIsCodeblock
+Total: 4 P:4 F:0 E:0 S:0
+
+=== MicSlideBlockTest ===
+  RUN: testHasProperty
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+  RUN: testSlideBlocIsParsed
+  RUN: testSlideBlocTitleIsNotReified
+Total: 8 P:8 F:0 E:0 S:0
+
+=== MicStringExtensionTest ===
+  RUN: testStripNTabs
+  RUN: testWithoutPreTabs
+Total: 2 P:2 F:0 E:0 S:0
+
+=== MicUnknownResourceUriTest ===
+  RUN: testBinaryStream
+  RUN: testContents
+  RUN: testIsCatchAll
+Total: 3 P:3 F:0 E:0 S:0
+
+=== MicUnorderedListBlockTest ===
+  RUN: testEmbeddedOrdered
+  RUN: testEmbeddedOrderedWithFormatting
+  RUN: testHasProperty
+  RUN: testMixing2
+  RUN: testMixingOrderedInsideUnorderedWithParagraph
+  RUN: testNestedLevel
+  RUN: testNestedLevel2
+  RUN: testOrderedListAPIToAccessText
+  RUN: testProperties
+  RUN: testPropertyAt
+  RUN: testPropertyAtIfAbsent
+  RUN: testPropertyAtPut
+  RUN: testSanity
+  RUN: testSingleLevelList
+  RUN: testSingleLevelList2
+  RUN: testSingleLevelList2WithFormatting
+  RUN: testSingleLevelListAllBulletTypes
+  RUN: testSingleLevelListSplitWithEmptyLine
+  RUN: testSingleLevelListSplitWithMultipleEmptyLines
+  RUN: testSingleLevelListStartingWithoutSpaceSplitParagraph
+  RUN: testSingleLevelListStartingWithoutSpaceSplitParagraph2
+  RUN: testSingleLevelListWithItemSpawning
+  RUN: testSingleLevelListWithStar
+  RUN: testSingleLevelMixedList
+  RUN: testTwoLevelList
+Total: 25 P:25 F:0 E:0 S:0
+
+=== MicZincPathResolverTest ===
+  RUN: testVisitFileImage
+  RUN: testVisitHttpImage
+  RUN: testVisitHttpInput
+  RUN: testVisitHttpInput_WithReference
+  RUN: testVisitHttpLink
+Total: 5 P:5 F:0 E:0 S:0
+
+=== MicrodownParserTest ===
+  RUN: testAnchorBlock
+  RUN: testAnchorBlockFollowingEachOther
+  RUN: testAnchorMarkupInsideLine
+  RUN: testAnnotatedBlock
+  RUN: testAnnotatedBlockBackwardCompatible
+  RUN: testAnnotatedBlockBackwardCompatibleOnLongLine
+  RUN: testAnnotatedBlockBackwardCompatibleWithDifferentLabel
+  RUN: testAnnotatedBlockOnMultipleLinesParserLogic
+  RUN: testAnnotatedBlockOnTwoLines
+  RUN: testAnnotatedBlockOnTwoLinesWithFormatting
+  RUN: testAnnotatedBlockTextElements
+  RUN: testAnnotatedBlockWithListParserLogic
+  RUN: testCommentOnMultipleLines
+  RUN: testCommentOnMultipleLinesWithASingleMarkup
+  RUN: testCommentSimple
+  RUN: testCommentedLineMarkupInsideLine
+  RUN: testEnvironmentCitationWithArguments
+  RUN: testEnvironmentEatsNonClosedCodeMarkup
+  RUN: testHandlePrefixTabs
+  RUN: testHeaderLevel4
+  RUN: testHeaderLevel4WithBold
+  RUN: testHorizontalBlock
+  RUN: testHorizontalBlockFollowedByList
+  RUN: testHorizontalLineBlock
+  RUN: testMathBlock
+  RUN: testMathBlockOnMulitpleLines
+  RUN: testMathBlockWithArguments
+  RUN: testParseEmpty
+  RUN: testParseLineWithOneCharacter
+  RUN: testParseLineWithThreeCharacters
+  RUN: testParseLineWithTwoCharacters
+  RUN: testParseText
+  RUN: testPipeEscape
+  RUN: testRBPatternVariableNode
+  RUN: testSimpleTable
+  RUN: testSimpleTableNoError
+  RUN: testSimpleTableWithFormatting
+  RUN: testSimpleTableWithFormattingWithSomeElements
+  RUN: testSimpleTableWithMoreLongRow
+  RUN: testSimpleTableWithShortRow
+  RUN: testTwoCommentBlock
+Total: 41 P:41 F:0 E:0 S:0
+
+=== MicrodownTest ===
+  RUN: testAddedAsChildWhenUsingParent
+  RUN: testExtensionArgumentsAreNotReified
+  RUN: testFigureLabelAreNotReified
+  RUN: testFromFileIfAbsent
+  RUN: testFromFileInAnyElement
+  RUN: testFromFileInRootDocument
+  RUN: testMathCaptionIsReified
+  RUN: testMicrodownSpelledCorrect
+  RUN: testParentBackLinkIsSet
+  RUN: testParentLinkIsKeptOnReplaceBy
+Total: 10 P:10 F:0 E:0 S:0
+
+=== MicrodownVisitorTest ===
+  RUN: testAllVisitMethodsExists
+Total: 1 P:1 F:0 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 49
+Pass: 620
+Fail: 4
+Error: 6
+Skip: 1
+Total: 631
+Finished: 2026-05-28T18:01:48.940653-04:00
+
+=== BATCH COMPLETE ===

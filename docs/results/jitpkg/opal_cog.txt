@@ -1,0 +1,809 @@
+=== Stock Cog SUnit run ===
+Classes to run: 53
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/harness/Pharo.image
+Started: 2026-05-28T18:01:48.022177-04:00
+
+=== MethodMapTest ===
+  RUN: testBlockAndContextSourceNode
+  RUN: testBlockSourceNode
+  RUN: testBlockWithArgAndEnclosedBlockSourceNode
+  RUN: testBlockWithEnclosedBlockSourceNode
+  RUN: testBlockWithTempsSourceNode
+  RUN: testCompiledBlockSourceNode
+  RUN: testConstantBlockIsMappedToBlockNode
+  RUN: testCopiedVarFromDeadContext
+  RUN: testDeadContextSourceNode
+  RUN: testExampleAccessOuterFromCleanBlock
+  RUN: testExampleSimpleTemp
+  RUN: testExampleTempNamedCopying
+  RUN: testExampleTempNamedCopying2
+  RUN: testExampleTempNamedPutCopying
+  RUN: testExampleTempNamedPutCopying2
+  RUN: testExampleTempNamedPutCopying3
+  RUN: testExampleTempNamedPutTempVector
+  RUN: testExampleTempNamedPutTempVector2
+  RUN: testExampleTempNamedTempVector
+  RUN: testExampleTempNamedTempVector2
+  RUN: testExampleTempNamedTempVectorInOptimizedBlock
+  RUN: testExampleTempNamedTempVectorInlinedLoop
+  RUN: testExampleTempNamedTempVectorNestedBlock
+  RUN: testMethodSourceNodeAtInitialPC
+  RUN: testMethodSourceNodeAtPC
+  RUN: testPrimitiveMethodSourceNodeAtInitialPC
+  RUN: testTempNamedTempCopyingNestedBlock
+  RUN: testTempNamedTempCopyingNestedBlock2
+  RUN: testThisContextSourceNode
+  RUN: testThisContextSourceNodeInInlinedMessage
+Total: 30 P:30 F:0 E:0 S:0
+
+=== MethodPragmaTest ===
+  RUN: testAllNamedFromTo
+  RUN: testAllNamedFromToSortedByArgument
+  RUN: testAllNamedFromToSortedUsing
+  RUN: testAllNamedIn
+  RUN: testAllNamedInSortedByArgument
+  RUN: testAllNamedInSortedUsing
+  RUN: testArgumentAt
+  RUN: testArguments
+  RUN: testCompileArray
+  RUN: testCompileBinary
+  RUN: testCompileCharacter
+  RUN: testCompileEmpty
+  RUN: testCompileFull
+  RUN: testCompileNumber
+  RUN: testCompileString
+  RUN: testCompileSymbol
+  RUN: testCompileTemps
+  RUN: testCompileValue
+  RUN: testDoublePragma
+  RUN: testIsPrimitive
+  RUN: testMessage
+  RUN: testMethod
+  RUN: testMethodClass
+  RUN: testMethodSelector
+  RUN: testNumArgs
+  RUN: testPragmaAfterBeforTemp
+  RUN: testPragmaTwoParam
+  RUN: testPragmaUnarayMessage
+  RUN: testPrimitiveNumber
+  RUN: testPrimitivePragmaNumber
+  RUN: testPrimitiveString
+  RUN: testPrimitiveStringModule
+  RUN: testSelector
+  RUN: testSendTo
+  RUN: testSinglePragma
+  RUN: testSourceNode
+  RUN: testWithArgumentsDo
+Total: 37 P:37 F:0 E:0 S:0
+
+=== OCASTAndOrTranslatorTest ===
+  RUN: testAndWithLeftFalseShortcircuitsRight
+  RUN: testAndWithLeftTrueEvaluatesRight
+  RUN: testFalseAndAnythingReturnsFalse
+  RUN: testFalseOrAnythingReturnsAnything
+  RUN: testOrWithLeftFalseEvaluatesRight
+  RUN: testOrWithLeftTrueShortcircuitsRight
+  RUN: testTrueAndAnythingReturnsAnything
+  RUN: testTrueOrAnythingReturnsTrue
+Total: 8 P:8 F:0 E:0 S:0
+
+=== OCASTBasicTranslatorTest ===
+  RUN: testEmptyMethodReturnsReceiver
+  RUN: testInitialInstanceIsEmpty
+  RUN: testSyntaxError
+Total: 3 P:3 F:0 E:0 S:0
+
+=== OCASTBlockTranslatorTest ===
+  RUN: testBlockCapturesVariableNotValue
+  RUN: testBlockExplicitReturn
+  RUN: testBlockWithArgumentReturnsLastExpression
+  RUN: testBlockWithExternalTempReturnsLastExpression
+  RUN: testBlockWithFiveArgumentReturnsLastExpression
+  RUN: testBlockWithFourArgumentReturnsLastExpression
+  RUN: testBlockWithInstanceVariableReturnsLastExpression
+  RUN: testBlockWithLiteralReturnsLastExpression
+  RUN: testBlockWithTempReturnsLastExpression
+  RUN: testBlockWithThreeArgumentReturnsLastExpression
+  RUN: testBlockWithTwoArgumentReturnsLastExpression
+  RUN: testBlockWritesInstanceVariable
+  RUN: testBlocksShareOuterVariables
+  RUN: testEmptyBlockReturnsNil
+  RUN: testNestedBlockWithExternalTempReturnsLastExpression
+  RUN: testOuterBlockTemporaryVariable
+  RUN: testWritesTemporaryVariable
+Total: 17 P:17 F:0 E:0 S:0
+
+=== OCASTCheckerTest ===
+  RUN: testDoubleRemoteAnidatedBlocks
+  RUN: testExampleIfNotNilReturnNil
+  RUN: testExampleInlineBlockCollectionLR3
+  RUN: testExamplePrimitiveErrorCode
+  RUN: testExampleSelf
+  RUN: testExampleSelfReceiver
+  RUN: testExampleSuper
+  RUN: testExampleSuperReceiver
+  RUN: testExampleThisContext
+  RUN: testExampleToDoArgument
+  RUN: testInstanceVar
+  RUN: testNoRemoteBlockArgument
+  RUN: testNoRemoteBlockReturn
+  RUN: testNoRemoteBlockTemp
+  RUN: testNoRemoteMethodTemp
+  RUN: testOptimizedBlockWrittenAfterClosedOverCase1
+  RUN: testOptimizedBlockWrittenAfterClosedOverCase2
+  RUN: testOptimizedBlocksAndSameNameTemps
+  RUN: testReturn1
+  RUN: testSemanticAnalysisOnNonMethodNode
+  RUN: testSingleRemoteDifferentBlocksSameArgumentName
+  RUN: testSingleRemoteMethodArgument
+  RUN: testSingleRemoteTempVar
+  RUN: testsingleRemoteTempVarWhileWithTempNotInlined
+  RUN: testsingleRemoteTempVarWrittenAfterClosedOver
+Total: 25 P:25 F:0 E:0 S:0
+
+=== OCASTClosureAnalyzerTest ===
+  RUN: testArgumentIsRead
+  RUN: testBlockArgumentIsArgumentVariable
+  RUN: testDoubleRemoteAnidatedBlocks
+  RUN: testExampleBlockArgument
+  RUN: testExampleSimpleBlockLocalIf
+  RUN: testExampleSimpleBlockLocalWhile
+  RUN: testExampleSimpleBlockNested
+  RUN: testExampleWhileModificationBefore
+  RUN: testExampleWhileNoModification
+  RUN: testInlinedBlockArgumentIsArgumentVariable
+  RUN: testMethodArgumentIsArgumentVariable
+  RUN: testNestedBlocksRemoteInBlockCase1
+  RUN: testNestedBlocksRemoteInBlockCase2
+  RUN: testNestedBlocksRemoteInBlockCase3
+  RUN: testNoRemoteBlockArgument
+  RUN: testNoRemoteReadInBlock
+  RUN: testNoRemoteReadNestedBlocks
+  RUN: testOptimizedBlockReadInBlock
+  RUN: testOptimizedBlockWriteInBlock
+  RUN: testOptimizedBlockWriteInNestedBlock
+  RUN: testOptimizedBlockWriteInNestedBlockCase2
+  RUN: testOptimizedBlockWriteInNestedBlockCase3
+  RUN: testOptimizedBlockWriteInNestedBlockCase4
+  RUN: testOptimizedBlockWrittenAfterClosedOverCase1
+  RUN: testOptimizedBlockWrittenAfterClosedOverCase2
+  RUN: testSingleRemoteDifferentBlocksSameArgumentName
+  RUN: testSingleRemoteMethodArgument
+  RUN: testSingleRemoteReadNestedBlocks
+  RUN: testSingleRemoteTempVar
+  RUN: testVariableDefintionScopeUpdate
+  RUN: testWrittenAfterClosedOver
+  RUN: testsingleRemoteTempVarWhileWithTempNotInlined
+  RUN: testsingleRemoteTempVarWrittenAfterClosedOver
+Total: 33 P:33 F:0 E:0 S:0
+
+=== OCASTDoubleBranchConditionalTranslatorTest ===
+  RUN: testExamplePrimitiveErrorCode
+  RUN: testExamplePrimitiveErrorCodeModule
+  RUN: testExamplePrimitiveErrorModule
+  RUN: testExamplePrimitiveModuleError
+  RUN: testFalseIfFalseIfTrueEvaluatesFalseBlock
+  RUN: testFalseIfFalseIfTrueReturnsFalseBlockValue
+  RUN: testFalseIfTrueIfFalseEvaluatesFalseBlock
+  RUN: testFalseIfTrueIfFalseReturnsFalseBlockValue
+  RUN: testTrueIfFalseIfTrueEvaluatesTrueBlock
+  RUN: testTrueIfFalseIfTrueReturnsTrueBlockValue
+  RUN: testTrueIfTrueIfFalseEvaluatesTrueBlock
+  RUN: testTrueIfTrueIfFalseReturnsTrueBlockValue
+Total: 12 P:12 F:0 E:0 S:0
+
+=== OCASTLiteralTranslatorTest ===
+  RUN: testLiteralIsInLiteralFrame
+  RUN: testLiteralReturnsAlwaysSameLiteral
+  RUN: testLiteralReturnsLiteral
+Total: 3 P:3 F:0 E:0 S:0
+
+=== OCASTRepeatTranslatorTest ===
+  RUN: testRepeatExecutesBlock
+  RUN: testRepeatWithTempInBlock
+  RUN: testTimesRepeatWithTempInBlock
+Total: 3 P:3 F:0 E:0 S:0
+
+=== OCASTSemanticAnalyzerTest ===
+  RUN: testWhileWithArg
+Total: 1 P:1 F:0 E:0 S:0
+
+=== OCASTSingleBlockTranslatorTest ===
+  RUN: testExamplePrimitiveErrorCode
+  RUN: testExamplePrimitiveErrorCodeModule
+  RUN: testExamplePrimitiveErrorModule
+  RUN: testExamplePrimitiveModuleError
+Total: 4 P:4 F:0 E:0 S:0
+
+=== OCASTSingleBranchConditionalTranslatorTest ===
+  RUN: testFalseIfFalseEvaluatesBlock
+  RUN: testFalseIfFalseEvaluatesBlockWithTempInsideBlock
+  RUN: testFalseIfFalseEvaluatesBlockWithTempOutsideBlock
+  RUN: testFalseIfFalseReturnsBlockValue
+  RUN: testFalseIfFalseReturnsBlockValueWithTempInsideBlock
+  RUN: testFalseIfFalseReturnsBlockValueWithTempOutsideBlock
+  RUN: testFalseIfTrueDoesNotEvaluateBlock
+  RUN: testFalseIfTrueReturnsNil
+  RUN: testNilIfNilEvaluatesBlock
+  RUN: testNilIfNilReturnsBlockValue
+  RUN: testNilIfNotNilDoesNotEvaluateBlock
+  RUN: testNilIfNotNilReturnsNil
+  RUN: testNilIfNotNilWithArgumentDoesNotEvaluateBlock
+  RUN: testNilIfNotNilWithArgumentReturnsNil
+  RUN: testNotNilIfNilDoesNotEvaluateBlock
+  RUN: testNotNilIfNilReturnsReceiver
+  RUN: testNotNilIfNotNilEvaluatesBlock
+  RUN: testNotNilIfNotNilReturnsBlockValue
+  RUN: testNotNilIfNotNilWithArgumentEvaluatesBlock
+  RUN: testNotNilIfNotNilWithArgumentReturnsBlockValue
+  RUN: testTrueIfFalseDoesNotEvaluateBlock
+  RUN: testTrueIfFalseReturnsNil
+  RUN: testTrueIfTrueEvaluateBlock
+  RUN: testTrueIfTrueEvaluateBlockWithTempInsideBlock
+  RUN: testTrueIfTrueEvaluateBlockWithTempOutsideBlock
+  RUN: testTrueIfTrueReturnsBlockValue
+  RUN: testTrueIfTrueReturnsBlockValueWithTempInsideBlock
+  RUN: testTrueIfTrueReturnsBlockValueWithTempOutsideBlock
+Total: 28 P:28 F:0 E:0 S:0
+
+=== OCASTSpecialLiteralTranslatorTest ===
+  RUN: testDynamicLiteralArrayIsNotInLiteralFrame
+  RUN: testDynamicLiteralArrayReturnsAlwaysNewArray
+  RUN: testDynamicLiteralArrayReturnsArray
+  RUN: testDynamicLiteralArrayReturnsEqualsArray
+  RUN: testSpecialLiteralsNotInLiteralFrame
+Total: 5 P:5 F:0 E:0 S:0
+
+=== OCASTTimesRepeatTranslatorTest ===
+  RUN: testNestedTimesRepeat
+  RUN: testSequencedTimesRepeat
+  RUN: testTimesRepeatExecutesBlock
+  RUN: testTimesRepeatReturnsReceiver
+  RUN: testTimesRepeatWithCalculatedArguments
+  RUN: testTimesRepeatWithTempInBlock
+  RUN: testTimesRepeatWithTempOutsideBlock
+Total: 7 P:7 F:0 E:0 S:0
+
+=== OCASTToDoTranslatorTest ===
+  RUN: testToDoExecutesBlock
+  RUN: testToDoReturnsReceiver
+  RUN: testToDoWithCalculatedArguments
+  RUN: testToDoWithTempInBlock
+  RUN: testToDoWithTempOutsideBlock
+Total: 5 P:5 F:0 E:0 S:0
+
+=== OCASTTranslatorMappingForFullBlockClosuresTest ===
+  RUN: testBlockWithParametersASTMapping
+  RUN: testSimpleBlockASTMapping
+Total: 2 P:2 F:0 E:0 S:0
+
+=== OCASTTranslatorTest ===
+  RUN: testExamplePrimitiveErrorCode
+  RUN: testExamplePrimitiveErrorCodeModule
+  RUN: testExamplePrimitiveErrorModule
+  RUN: testExamplePrimitiveModuleError
+Total: 4 P:4 F:0 E:0 S:0
+
+=== OCASTVariableTranslatorTest ===
+  RUN: testAssignArgumentVariable
+  RUN: testAssignClassVariable
+  RUN: testAssignGlobalVariable
+  RUN: testAssignInstanceVariable
+  RUN: testAssignSelfVariable
+  RUN: testAssignSuperVariable
+  RUN: testAssignTemporaryVariable
+  RUN: testAssignThisContextVariable
+  RUN: testPushArgumentVariable
+  RUN: testPushClassVariable
+  RUN: testPushGlobalVariable
+  RUN: testPushInstanceVariable
+  RUN: testPushSelf
+  RUN: testPushSuper
+  RUN: testPushTemporaryVariable
+  RUN: testPushThisContext
+Total: 16 P:16 F:0 E:0 S:0
+
+=== OCASTWhileFalseTranslatorTest ===
+  RUN: testExamplePrimitiveErrorCode
+  RUN: testExamplePrimitiveErrorCodeModule
+  RUN: testExamplePrimitiveErrorModule
+  RUN: testExamplePrimitiveModuleError
+  RUN: testWhileFalseExecutesLeftBlock
+  RUN: testWhileFalseExecutesLeftBlockWithTemp
+  RUN: testWhileFalseExecutesRightBlock
+  RUN: testWhileFalseExecutesRightBlockWithTemp
+  RUN: testWhileFalseReturnsNil
+Total: 9 P:9 F:0 E:0 S:0
+
+=== OCASTWhileTrueTranslatorTest ===
+  RUN: testExamplePrimitiveErrorCode
+  RUN: testExamplePrimitiveErrorCodeModule
+  RUN: testExamplePrimitiveErrorModule
+  RUN: testExamplePrimitiveModuleError
+  RUN: testWhileTrueExecutesLeftBlock
+  RUN: testWhileTrueExecutesLeftBlockWithTemp
+  RUN: testWhileTrueExecutesRightBlock
+  RUN: testWhileTrueExecutesRightBlockWithTemp
+  RUN: testWhileTrueReturnsNil
+Total: 9 P:9 F:0 E:0 S:0
+
+=== OCAnnotationTest ===
+  RUN: testAnnotationAST
+  RUN: testAnnotationBinding
+  RUN: testAnnotationConstexprAST
+  RUN: testAnnotationConstexprIR
+  RUN: testAnnotationIR
+Total: 5 P:5 F:0 E:0 S:0
+
+=== OCArrayLiteralTest ===
+  RUN: testByteArrayBase
+  RUN: testByteArrayEmpty
+  RUN: testByteArrayLiteral
+  RUN: testByteArrayLong
+  RUN: testByteArrayRange
+  RUN: testByteArrayWithinArray
+  RUN: testReservedIdentifiers
+  RUN: testSymbols
+Total: 8 P:8 F:0 E:0 S:0
+
+=== OCBytecodeGeneratorTest ===
+  RUN: testExample
+  RUN: testExample2
+Total: 2 P:2 F:0 E:0 S:0
+
+=== OCBytecodeToASTCacheTest ===
+  RUN: testCachedMethodNode
+  RUN: testFirstBCOffsetTest
+  RUN: testFirstBCOffsetWithBlock
+  RUN: testFirstBCOffsetWithQuickReturn
+  RUN: testFirstBcOffsetForNodeWhenMappedPcsAreEmpty
+  RUN: testFirstBcOffsetForNodeWhenMappedPcsAreNotEmpty
+  RUN: testHigherThanLastBCOffsetAccessTest
+  RUN: testLastBCOffsetTest
+  RUN: testLastBcOffsetForNodeWhenMappedPcsAreEmpty
+  RUN: testLastBcOffsetForNodeWhenMappedPcsAreNotEmpty
+  RUN: testLowerThanFirstBCOffsetAccessTest
+  RUN: testNodeForBCOffsetTest
+  RUN: testNodeForBCOffsetTestFull
+  RUN: testPcsForNode
+Total: 14 P:14 F:0 E:0 S:0
+
+=== OCClosureCompilerTest ===
+  RUN: testDebuggerTempAccess
+  RUN: testInlineBlockCollectionEM1
+  RUN: testInlineBlockCollectionLR1
+  RUN: testInlineBlockCollectionLR2
+  RUN: testInlineBlockCollectionLR3
+  RUN: testInlineBlockCollectionSD1
+  RUN: testOptimizedBlockLocalNilling1
+  RUN: testOptimizedBlockLocalNilling2
+Total: 8 P:8 F:0 E:0 S:0
+
+=== OCClosureTest ===
+  RUN: testActiveHomeClean
+  RUN: testBlockArgument
+  RUN: testBlockTemp
+  RUN: testBlockTemps
+  RUN: testCleanBlockClosure
+  RUN: testConstantBlockClosure
+  RUN: testEmptyBlockOneArgument
+  RUN: testEmptyBlockTwoArguments
+  RUN: testEmptyBlockZeroArguments
+  RUN: testMethodArgument
+  RUN: testMethodTemp
+  RUN: testToDoArgument
+  RUN: testToDoArgumentNotInlined
+  RUN: testToDoInsideTemp
+  RUN: testToDoInsideTempNotInlined
+  RUN: testToDoOutsideTemp
+  RUN: testToDoOutsideTempNotInlined
+  RUN: testWhileModificationAfter
+  RUN: testWhileModificationAfterNotInlined
+  RUN: testWhileModificationBefore
+  RUN: testWhileModificationBeforeNotInlined
+  RUN: testWhileWithTemp
+  RUN: testWhileWithTempIsNil
+  RUN: testWhileWithTempNotInlined
+Total: 24 P:24 F:0 E:0 S:0
+
+=== OCCompilationContextTest ===
+  RUN: testMultipleParseOptionsStoreTheResult
+  RUN: testParseOptionsEmptyResultsInEmptyResult
+  RUN: testParseOptionsMultipleAdds
+  RUN: testParseOptionsMultipleAddsAndRemoveOnceResultsInEmptySet
+  RUN: testParseOptionsRemoveNotAddedResultsInEmptySet
+  RUN: testParseOptionsWithoutDirectiveIsAddition
+Total: 6 P:6 F:0 E:0 S:0
+
+=== OCCompileWithFailureTest ===
+  RUN: testEmptyBlockArg
+  RUN: testEvalSimpleMethodWithError
+  RUN: testParenthesis
+Total: 3 P:3 F:0 E:0 S:0
+
+=== OCCompiledMethodIntegrityTest ===
+  RUN: testBlockTemps
+  RUN: testNotUsedArgument
+  RUN: testPragmas
+  RUN: testPrimitive
+  RUN: testRemoteTempInVector
+  RUN: testUndeclaredVariable
+  RUN: testUndeclaredVariableWhenItIsAlreadyRegistered
+  RUN: testUndeclaredVariableWhenItIsAlreadyRegisteredAsAssociation
+Total: 8 P:8 F:0 E:0 S:0
+
+=== OCCompilerNotifyingTest ===
+  RUN: testAssignmentOfSelf
+  RUN: testDigitTooLargeForARadix
+  RUN: testEmptyCaseStatement
+  RUN: testExpectedExpressionInBraceArray
+  RUN: testExtraneousStatementAfterAReturnInABlock
+  RUN: testInvalidExternalFunctionDeclaration
+  RUN: testInvalidLiteralCharacter
+  RUN: testInvalidPattern
+  RUN: testInvalidPragma
+  RUN: testInvalidPrimitive
+  RUN: testInvalidRadix
+  RUN: testMissingArgumentAfterABinaryMessage
+  RUN: testMissingArgumentAfterAMessageKey
+  RUN: testMissingBlockArgumentName
+  RUN: testMissingExpression
+  RUN: testMissingExpressionAfterAReturn
+  RUN: testMissingMessageAfterACascade
+  RUN: testMissingPeriodSeparatorBetweenStatements
+  RUN: testMissingSeparatorBetweenBlockArgumentAndStatements
+  RUN: testTooLargeAnIntegerInALiteralByteArray
+  RUN: testTooManyArguments
+  RUN: testTooManyTemporaries
+  RUN: testUnmatchedBlockBracket
+  RUN: testUnmatchedBraceArray
+  RUN: testUnmatchedByteArrayBracket
+  RUN: testUnmatchedCommentQuote
+  RUN: testUnmatchedExpressionParenthesis
+  RUN: testUnmatchedLiteralParenthesis
+  RUN: testUnmatchedLocalTempDeclaration
+  RUN: testUnmatchedLocalTempDeclarationInABlock
+  RUN: testUnmatchedStringQuote
+Total: 31 P:31 F:0 E:0 S:0
+
+=== OCCompilerTest ===
+  RUN: testAssignmentOfClassNameBinding
+  RUN: testAssignmentOfGlobalVarBinding
+  RUN: testErrorOrders
+  RUN: testInBlockArgumentInstanceVariableShadowing
+  RUN: testInBlockArgumentPseudoVariableShadowing
+  RUN: testInBlockTempArgumentShadowing
+  RUN: testInBlockTempInstanceVariableShadowing
+  RUN: testInBlockTempShadowing
+  RUN: testInstanceVariableShadowing
+  RUN: testNegativeZero
+  RUN: testNoShadowing
+  RUN: testPseudoVariableShadowing
+  RUN: testScaledDecimalLiterals
+  RUN: testSiblingBlocksInstanceVariableShadowing
+  RUN: testSiblingBlocksTempShadowing
+  RUN: testUndefinedVariable
+  RUN: testUndefinedVariableFrontend
+Total: 17 P:17 F:0 E:0 S:0
+
+=== OCContextTempMappingTest ===
+  RUN: testAccessingArgOfOuterBlockFromAnotherDeepBlock
+  RUN: testAccessingBlockArgumentNoneOptimizedBlock
+  RUN: testAccessingBlockArgumentOptimizedBlock
+  RUN: testAccessingMethodArgFromOptimizedBlockContext
+  RUN: testAccessingMultipleVariablesInVector
+  RUN: testAccessingTempsVectorInBlock
+  RUN: testAccessingTempsVectorInBlock2
+  RUN: testAccessingTempsVectorInBlock3
+  RUN: testAccessingVariablesInBlock
+  RUN: testAccessingVariablesInOptimizedBlock
+  RUN: testAccessingVariablesInOptimizedBlock2
+Total: 11 P:11 F:0 E:0 S:0
+
+=== OCDoItVariableTest ===
+  RUN: testConvertingToDoItVariable
+  RUN: testCreationFromAnotherVariable
+  RUN: testDoItCompilation
+  RUN: testFromInstVarVariable
+  RUN: testFromTempVariable
+  RUN: testReadCompilation
+  RUN: testReadInGivenContextShouldIgnoreIt
+  RUN: testUsingMethods
+  RUN: testWriteCompilation
+  RUN: testWriteInGivenContextShouldIgnoreIt
+Total: 10 P:10 F:0 E:0 S:0
+
+=== OCDoitTest ===
+  RUN: testDoItContextReadGlobal
+  RUN: testDoItContextReadIvar
+  RUN: testDoItContextReadIvarSubclass
+  RUN: testDoItContextReadTemp
+  RUN: testDoItContextReadThisContext
+  RUN: testDoItExtraBindings
+  RUN: testDoItHalt
+  RUN: testDoItHaltBinding
+  RUN: testDoItRequestorEvalError
+  RUN: testDoItRequestorOptimized
+  RUN: testDoItRequestorReadRequestorVar
+  RUN: testDoItRequestorShadow
+  RUN: testDoitContextCheckClass
+Total: 13 P:13 F:0 E:0 S:0
+
+=== OCDynamicASTCompilerPluginTest ===
+  RUN: testCreateAndUseDynamicCompilerPlugin
+  RUN: testCreateDynamicCompilerPluginWithDefaultPriority
+Total: 2 P:2 F:0 E:0 S:0
+
+=== OCEnvironmentScopeTest ===
+  RUN: testCompileWithEnvironment
+  RUN: testCompileWithProductionEnvironment
+Total: 2 P:2 F:0 E:0 S:0
+
+=== OCIRBuilderTest ===
+  RUN: testBuildMethod
+  RUN: testDup
+  RUN: testInstVar
+  RUN: testJumpAheadTo
+  RUN: testJumpAheadToIf
+  RUN: testJumpBackTo
+  RUN: testLiteralArray
+  RUN: testLiteralBoolean
+  RUN: testLiteralCharacter
+  RUN: testLiteralFloat
+  RUN: testLiteralInteger
+  RUN: testLiteralNil
+  RUN: testLiteralString
+  RUN: testLiteralSymbol
+  RUN: testLiteralVariableClass
+  RUN: testLiteralVariableClassVariable
+  RUN: testLiteralVariableGlobale
+  RUN: testPopTop
+  RUN: testPushConsArray
+  RUN: testPushConsArray2
+  RUN: testPushNewArray
+  RUN: testPushSelf
+  RUN: testPushTempArgument
+  RUN: testPushTempTemp
+  RUN: testPushThisContext
+  RUN: testPushThisProcess
+  RUN: testReturnInstVar
+  RUN: testReturnTop
+  RUN: testSendSuper
+  RUN: testStoreIntoVariable
+  RUN: testStoreIvar
+  RUN: testStorePopIntoVariable
+  RUN: testStorePopIvar
+  RUN: testStoreTemp
+Total: 34 P:34 F:0 E:0 S:0
+
+=== OCIRPrinterTest ===
+  RUN: testDup
+  RUN: testInstVar
+  RUN: testJumpAheadTo
+  RUN: testJumpAheadToIf
+  RUN: testJumpBackTo
+  RUN: testLiteralArray
+  RUN: testLiteralVariableClass
+  RUN: testPopTop
+  RUN: testPushConsArray
+  RUN: testPushNewArray
+  RUN: testPushSelf
+  RUN: testPushTempArgument
+  RUN: testPushTempTemp
+  RUN: testPushThisContext
+  RUN: testReturnTop
+  RUN: testSendSuper
+  RUN: testStoreIntoVariable
+  RUN: testStoreTemp
+Total: 18 P:18 F:0 E:0 S:0
+
+=== OCIRTransformTest ===
+  RUN: testAdd
+  RUN: testAddBefore
+  RUN: testAddIntructions
+  RUN: testAddIntructionsBefore
+  RUN: testAddIntructionsBeforeFromLList
+  RUN: testAllInstructions
+  RUN: testAllTempAccessInstructions
+  RUN: testDelete
+  RUN: testReplace
+  RUN: testReplaceInstr
+Total: 10 P:10 F:0 E:0 S:0
+
+=== OCIRVisitorTest ===
+  RUN: testDup
+  RUN: testInstVar
+  RUN: testJumpAheadTo
+  RUN: testJumpAheadToIf
+  RUN: testJumpBackTo
+  RUN: testLiteralArray
+  RUN: testLiteralVariableClass
+  RUN: testPopTop
+  RUN: testPushConsArray
+  RUN: testPushNewArray
+  RUN: testPushSelf
+  RUN: testPushTempArgument
+  RUN: testPushTempTemp
+  RUN: testPushThisContext
+  RUN: testReturnTop
+  RUN: testSendSuper
+  RUN: testStoreIntoVariable
+  RUN: testStoreTemp
+Total: 18 P:18 F:0 E:0 S:0
+
+=== OCIfNotNilTest ===
+  RUN: testIfNilIfNotNil0Arg
+  RUN: testIfNilIfNotNil0ArgAsVar
+  RUN: testIfNilIfNotNil1Arg
+  RUN: testIfNilIfNotNil1ArgAsVar
+  RUN: testIfNotNil0Arg
+  RUN: testIfNotNil0ArgAsVar
+  RUN: testIfNotNil1Arg
+  RUN: testIfNotNil1ArgAsVar
+  RUN: testIfNotNil1ArgWithStatement
+  RUN: testIfNotNilIfNil0Arg
+  RUN: testIfNotNilIfNil0ArgAsVar
+  RUN: testIfNotNilIfNil1Arg
+  RUN: testIfNotNilIfNil1ArgAsVar
+Total: 13 P:13 F:0 E:0 S:0
+
+=== OCLiteralTest ===
+  RUN: testArrayIsLiteral
+  RUN: testByteArrayIsLiteral
+  RUN: testCyclicArrayIsLiteral
+  RUN: testFloatAndIntegerDoNotShareSameEntryEvenIfEqual
+  RUN: testFloatNanIsNotLiteral
+  RUN: testNilIsLiteral
+  RUN: testRandomObjectsOfTheSameClassDoNotShareSameEntryEvenIfEqual
+  RUN: testScaleDecimalsWithDifferentScalesDoNotShareSameEntryEvenIfEqual
+  RUN: testScaledDecimalIsLiteral
+  RUN: testTwoEqualFloatsShareSameLiteralEntry
+  RUN: testTwoEqualIntegersShareSameLiteralEntry
+  RUN: testTwoEqualStringsShareSameLiteralEntry
+  RUN: testTwoEqualSymbolsShareSameLiteralEntry
+  RUN: testWeakArrayIsNotLiteral
+Total: 14 P:14 F:0 E:0 S:0
+
+=== OCNewCompilerWithChangesFunctionalTest ===
+  RUN: testPragma
+Total: 1 P:1 F:0 E:0 S:0
+
+=== OCPerformTest ===
+  RUN: testPerformWithArgsLargeFrame
+  RUN: testPerformWithArgsSmallFrame
+Total: 2 P:2 F:0 E:0 S:0
+
+=== OCScanner2Test ===
+  RUN: testAmbiguousSelector
+  RUN: testLiteralSymbols
+Total: 2 P:2 F:0 E:0 S:0
+
+=== OCScopeTest ===
+  RUN: testHasBindingThatBeginsWithClassVar
+  RUN: testHasBindingThatBeginsWithGlobal
+  RUN: testHasBindingThatBeginsWithSlot
+  RUN: testHasBindingThatBeginsWithTemp
+Total: 4 P:4 F:0 E:0 S:0
+
+=== OCSourceCode2BytecodeTest ===
+  RUN: testDoDup
+  RUN: testDoPop
+  RUN: testPrimAdd
+  RUN: testPrimAt
+  RUN: testPrimAtEnd
+  RUN: testPrimAtPut
+  RUN: testPrimBitAnd
+  RUN: testPrimBitOr
+  RUN: testPrimBitShift
+  RUN: testPrimDivide
+  RUN: testPrimDoWith
+  RUN: testPrimEqual
+  RUN: testPrimGreaterOrEqual
+  RUN: testPrimGreaterThan
+  RUN: testPrimIdentity
+  RUN: testPrimLessOrEqual
+  RUN: testPrimLessThan
+  RUN: testPrimMakePoint
+  RUN: testPrimMod
+  RUN: testPrimMultiply
+  RUN: testPrimNew
+  RUN: testPrimNewWith
+  RUN: testPrimNext
+  RUN: testPrimNextPut
+  RUN: testPrimNotEqual
+  RUN: testPrimPointX
+  RUN: testPrimPointY
+  RUN: testPrimQuo
+  RUN: testPrimSize
+  RUN: testPrimSubtract
+  RUN: testPrimValue
+  RUN: testPrimValueWith
+  RUN: testPushActiveContextBytecode
+  RUN: testPushConstantFalseBytecode
+  RUN: testPushConstantMinusOneBytecode
+  RUN: testPushConstantNilBytecode
+  RUN: testPushConstantOneBytecode
+  RUN: testPushConstantTrueBytecode
+  RUN: testPushConstantTwoBytecode
+  RUN: testPushConstantZeroBytecode
+  RUN: testPushLiteralConstantBytecode
+  RUN: testPushLiteralVariableBytecode
+  RUN: testPushReceiverBytecode
+  RUN: testPushReceiverVariableBytecode
+  RUN: testPushTemporaryVariableBytecode
+  RUN: testReturnFalseBytecode
+  RUN: testReturnNilBytecode
+  RUN: testReturnReceiver
+  RUN: testReturnTopFromMethod
+  RUN: testReturnTrueBytecode
+  RUN: testStoreAndPopLiteralVariableBytecode
+  RUN: testStoreAndPopReceiverVariableBytecode
+  RUN: testStoreAndPopTemporaryVariableBytecode
+  RUN: testStoreIntoLiteralVariableBytecode
+  RUN: testStoreIntoReceiverVariableBytecode
+  RUN: testStoreIntoTemporaryVariableBytecode
+  RUN: testSuperSend
+  RUN: testSuperSendWith
+Total: 58 P:58 F:0 E:0 S:0
+
+=== OCSpecialSelectorTest ===
+  RUN: testOptimisedPlusSpecialSendsMessageDoesNotCaptureSend
+  RUN: testOptimisedValueSpecialSendsMessageDoesNotCaptureSend
+  RUN: testUnoptimisedPlusSpecialSendsMessageCapturesSend
+  RUN: testUnoptimisedValueSpecialSendsMessageCapturesSend
+Total: 4 P:4 F:0 E:0 S:0
+
+=== OCStaticASTCompilerPluginTest ===
+  RUN: testClassWithPluginEnabled
+  RUN: testCreateAndUseStaticCompilerPlugin
+  RUN: testIsAbstract
+  RUN: testTransform
+Total: 4 P:4 F:0 E:0 S:0
+
+=== OCTargetCompilerTest ===
+  RUN: testModifiedReturn
+  RUN: testModifiedReturnFromClass
+  RUN: testRecompiledReturn
+  RUN: testRecompiledReturnFromClass
+Total: 4 P:4 F:0 E:0 S:0
+
+=== OCVariableNodeNameResolutionTest ===
+  RUN: testIsDefinedByBlock
+  RUN: testIsDefinition
+  RUN: testIsDefinitionAfterNameResolution
+Total: 3 P:3 F:0 E:0 S:0
+
+=== OpalCompilerTest ===
+  RUN: testArrayBindingsWithUppercaseNameDoOverwriteGlobals
+  RUN: testArrayBindingsWriteGlobals
+  RUN: testArrayEvaluateWithBindings
+  RUN: testArrayEvaluateWithBindingsReadGlobal
+  RUN: testArrayEvaluateWithBindingsWithUppercaseName
+  RUN: testBindingsWithUppercaseNameDoOverwriteGlobals
+  RUN: testBindingsWriteGlobals
+  RUN: testCompileFromAnalysedAST
+  RUN: testCompileFromText
+  RUN: testCompileSource
+  RUN: testCompileWithNilClass
+  RUN: testCompilerUsingCleanBlockClosureHasBlockAsLiteral
+  RUN: testEvaluateWithBindings
+  RUN: testEvaluateWithBindingsSelfSuperThisContext
+  RUN: testEvaluateWithBindingsWithUppercaseName
+  RUN: testInstall
+  RUN: testInstallException
+  RUN: testInstallRequestor
+  RUN: testShadowPseudoVariable
+Total: 19 P:19 F:0 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 53
+Pass: 633
+Fail: 0
+Error: 0
+Skip: 0
+Total: 633
+Finished: 2026-05-28T18:01:48.270088-04:00
+
+=== BATCH COMPLETE ===

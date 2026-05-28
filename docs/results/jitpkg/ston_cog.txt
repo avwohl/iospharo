@@ -1,0 +1,203 @@
+=== Stock Cog SUnit run ===
+Classes to run: 6
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/harness/Pharo.image
+Started: 2026-05-28T18:01:34.38498-04:00
+
+=== STONCStyleCommentsSkipStreamTest ===
+  RUN: testBlockReading
+  RUN: testCommentInString
+  RUN: testMultiLineComment
+  RUN: testNonComment
+  RUN: testSTON
+  RUN: testSingleLineComment
+Total: 6 P:6 F:0 E:0 S:0
+
+=== STONJSONTest ===
+  RUN: testBooleans
+  RUN: testCircular
+  RUN: testFloats
+  RUN: testIntegers
+  RUN: testLists
+  RUN: testMaps
+  RUN: testNull
+  RUN: testOrderedDictionary
+  RUN: testShared
+  RUN: testStrings
+  RUN: testUnknown
+Total: 11 P:11 F:0 E:0 S:0
+
+=== STONReaderTest ===
+  RUN: testAssociation
+  RUN: testBag
+  RUN: testBoolean
+  RUN: testByteArray
+  RUN: testCharacter
+  RUN: testClass
+  RUN: testClassWithUnderscore
+  RUN: testColor
+  RUN: testColorBackwardsCompatibility
+  RUN: testConvertingNewLines
+  RUN: testDate
+  RUN: testDateAndTime
+  RUN: testDeepStructure
+  RUN: testDictionary
+  RUN: testDictionaryWithComplexKeys
+  RUN: testDictionaryWithIndirectReferenceKeys
+  ERROR: testDictionaryWithIndirectReferenceKeys (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testDictionaryWithReferenceKeys
+  ERROR: testDictionaryWithReferenceKeys (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testDiskFile
+  RUN: testError
+  RUN: testFileReferenceBackwardsCompatibility
+  RUN: testFloat
+  RUN: testFraction
+  RUN: testIdentityDictionary
+  RUN: testIllegalCharacterEscapes
+  RUN: testInteger
+  RUN: testJsonString
+  RUN: testList
+  RUN: testMap
+  RUN: testMetaclass
+  RUN: testMimeType
+  RUN: testMultiple
+  RUN: testNewSymbol
+  RUN: testNil
+  RUN: testNonBMPCharacterDecoding
+  RUN: testNull
+  RUN: testObject
+  RUN: testOrderedCollection
+  RUN: testPoint
+  RUN: testReferenceCycle
+  RUN: testReferenceSharing
+  RUN: testScaledDecimal
+  RUN: testSetWithIndirectReferenceElements
+  ERROR: testSetWithIndirectReferenceElements (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testSetWithReferenceElements
+  ERROR: testSetWithReferenceElements (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testStreaming
+  RUN: testString
+  RUN: testSymbol
+  RUN: testTime
+  RUN: testURL
+  RUN: testUnknownClasses
+  RUN: testUser
+  RUN: testUser2
+  RUN: testWhitespace
+  RUN: testWideSymbol
+  RUN: testZnUrlBackwardsCompatibility
+Total: 54 P:50 F:0 E:4 S:0
+
+=== STONTest ===
+  RUN: testAssociationClass
+  RUN: testClassNameKey
+  RUN: testFromString
+  RUN: testFromStringWithComments
+  RUN: testListClass
+  RUN: testMapClass
+  RUN: testPrettyPrinting
+  RUN: testRoomExitCycles
+  RUN: testToString
+Total: 9 P:9 F:0 E:0 S:0
+
+=== STONWriteReadTest ===
+  RUN: testAlternativeRepresentation
+  RUN: testAssociations
+  RUN: testCharacters
+  RUN: testClasses
+  RUN: testCollections
+  RUN: testCollectionsStructured
+  RUN: testColors
+  RUN: testCustomAssociations
+  RUN: testDatesAndTimes
+  RUN: testDiskFiles
+  RUN: testDomainObject
+  RUN: testEmpty
+  RUN: testFileSystemSupport
+  RUN: testFloats
+  RUN: testFractions
+  RUN: testIdentityCollections
+  RUN: testIntervals
+  RUN: testJsonMode
+  RUN: testKnownObjects
+  ERROR: testKnownObjects (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testMemoryFileReferences
+  RUN: testMimeTypes
+  RUN: testOrderedDictionary
+  RUN: testPrimitives
+  RUN: testScaledDecimals
+  RUN: testSharedColors
+  RUN: testSmallDictionary
+  RUN: testSmallIntegers
+  RUN: testSortedCollections
+  RUN: testSpecialCharacters
+  RUN: testSpecialClassNames
+  RUN: testStrings
+  RUN: testSymbols
+  RUN: testTextAndRunArray
+  RUN: testURLs
+  RUN: testUUIDs
+  ERROR: testUUIDs (PrimitiveFailed: primitive #primNameResolverStatus in NetNameResolver class failed)
+  RUN: testUser
+  RUN: testUser2
+Total: 37 P:35 F:0 E:2 S:0
+
+=== STONWriterTest ===
+  RUN: testAssociation
+  RUN: testBag
+  RUN: testBoolean
+  RUN: testByteArray
+  RUN: testClass
+  RUN: testColor
+  RUN: testCustomNewline
+  RUN: testDate
+  RUN: testDateAndTime
+  RUN: testDictionary
+  RUN: testDictionaryWithComplexKeys
+  RUN: testDiskFile
+  RUN: testDoubleQuotedString
+  RUN: testEmptyArrayPretty
+  RUN: testEmptyDictionaryPretty
+  RUN: testFloat
+  RUN: testFraction
+  RUN: testIdentityDictionary
+  RUN: testInteger
+  RUN: testIsSimpleSymbol
+  RUN: testKeepingNewLines
+  RUN: testList
+  RUN: testMap
+  RUN: testMetaclass
+  RUN: testMimeType
+  RUN: testNil
+  RUN: testNonBMPCharacterEncoding
+  RUN: testNull
+  RUN: testOrderedCollection
+  RUN: testPoint
+  RUN: testReferenceCycle
+  RUN: testReferenceSharing
+  RUN: testReferenceSharingError
+  RUN: testReferenceSharingIgnore
+  RUN: testRestrictedClassesInJsonMode
+  RUN: testScaledDecimal
+  RUN: testString
+  RUN: testSymbol
+  RUN: testSymbolAsString
+  RUN: testTime
+  RUN: testURL
+  RUN: testUser
+  RUN: testUser2
+  RUN: testUser3Nil
+  RUN: testUserNil
+Total: 45 P:45 F:0 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 6
+Pass: 156
+Fail: 0
+Error: 6
+Skip: 0
+Total: 162
+Finished: 2026-05-28T18:01:34.639256-04:00
+
+=== BATCH COMPLETE ===

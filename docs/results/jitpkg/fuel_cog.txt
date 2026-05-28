@@ -1,0 +1,1122 @@
+=== Stock Cog SUnit run ===
+Classes to run: 40
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/harness/Pharo.image
+Started: 2026-05-28T18:01:43.316353-04:00
+
+=== FLBlockClosureSerializationTest ===
+  RUN: testBlockClosureChangeDifferentBytecodesClean
+  ERROR: testBlockClosureChangeDifferentBytecodesClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureChangeDifferentBytecodesConstant
+  ERROR: testBlockClosureChangeDifferentBytecodesConstant (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureChangeDifferentBytecodesFull
+  ERROR: testBlockClosureChangeDifferentBytecodesFull (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureChangeSameBytecodesClean
+  ERROR: testBlockClosureChangeSameBytecodesClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureChangeSameBytecodesConstant
+  ERROR: testBlockClosureChangeSameBytecodesConstant (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureChangeSameBytecodesFull
+  ERROR: testBlockClosureChangeSameBytecodesFull (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureMaterializesClassVariablesCorrectly
+  ERROR: testBlockClosureMaterializesClassVariablesCorrectly (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureRemovedClean
+  ERROR: testBlockClosureRemovedClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureRemovedConstant
+  ERROR: testBlockClosureRemovedConstant (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureRemovedFull
+  ERROR: testBlockClosureRemovedFull (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureWithClassVariableRead
+  ERROR: testBlockClosureWithClassVariableRead (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureWithGlobalVariable
+  ERROR: testBlockClosureWithGlobalVariable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureWithSelfSend
+  ERROR: testBlockClosureWithSelfSend (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureWithTempVariableRead
+  ERROR: testBlockClosureWithTempVariableRead (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureWithThreeArguments
+  ERROR: testBlockClosureWithThreeArguments (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCleanBlockClosure
+  ERROR: testCleanBlockClosure (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNestedBlockClosureClean
+  ERROR: testNestedBlockClosureClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNestedBlockClosureConstant
+  ERROR: testNestedBlockClosureConstant (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 18 P:0 F:0 E:18 S:0
+
+=== FLCompiledMethodSerializationTest ===
+  RUN: testDoIt
+  ERROR: testDoIt (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testInstalled
+  ERROR: testInstalled (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testInstalledModified
+  ERROR: testInstalledModified (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMethodAccessingAClassVariable
+  ERROR: testMethodAccessingAClassVariable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMethodAccessingAClassVariableInADoit
+  ERROR: testMethodAccessingAClassVariableInADoit (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNotInstalled
+  ERROR: testNotInstalled (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 6 P:0 F:0 E:6 S:0
+
+=== FLConfigurationTest ===
+  RUN: testDecorateStreamFactory
+  ERROR: testDecorateStreamFactory (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDecorateStreamFactoryMustAcceptSingleArgument
+  ERROR: testDecorateStreamFactoryMustAcceptSingleArgument (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDecorateStreamFactoryMustBeBlock
+  ERROR: testDecorateStreamFactoryMustBeBlock (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDecorateStreamFactoryWhenStreamFactoryNotSet
+  ERROR: testDecorateStreamFactoryWhenStreamFactoryNotSet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEnvironment
+  ERROR: testEnvironment (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEnvironmentDefault
+  ERROR: testEnvironmentDefault (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEnvironmentHasAtLeastUndefinedObject
+  ERROR: testEnvironmentHasAtLeastUndefinedObject (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEnvironmentWhenAlreadySet
+  ERROR: testEnvironmentWhenAlreadySet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFilePath
+  ERROR: testFilePath (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFilePathWhenStreamFactoryAlreadySet
+  ERROR: testFilePathWhenStreamFactoryAlreadySet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFilePathWrong
+  ERROR: testFilePathWrong (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testOnStream
+  ERROR: testOnStream (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testOnStreamDoesNotCloseStream
+  ERROR: testOnStreamDoesNotCloseStream (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testOnStreamWithReuse
+  ERROR: testOnStreamWithReuse (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testOnStreamWrong
+  ERROR: testOnStreamWrong (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStreamFactory
+  ERROR: testStreamFactory (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStreamFactoryDefault
+  ERROR: testStreamFactoryDefault (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStreamFactoryMustAcceptNoArguments
+  ERROR: testStreamFactoryMustAcceptNoArguments (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStreamFactoryMustBeBlock
+  ERROR: testStreamFactoryMustBeBlock (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStreamFactoryWhenAlreadySet
+  ERROR: testStreamFactoryWhenAlreadySet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStreamFinalizer
+  ERROR: testStreamFinalizer (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStreamFinalizerDefault
+  ERROR: testStreamFinalizerDefault (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStreamFinalizerMustAcceptSingleArgument
+  ERROR: testStreamFinalizerMustAcceptSingleArgument (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStreamFinalizerMustBeBlock
+  ERROR: testStreamFinalizerMustBeBlock (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStreamFinalizerWhenAlreadySet
+  ERROR: testStreamFinalizerWhenAlreadySet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 25 P:0 F:0 E:25 S:0
+
+=== FLContextSerializationTest ===
+  RUN: testContext
+  ERROR: testContext (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testContextThisContext
+  ERROR: testContextThisContext (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testContextWithClosure
+  ERROR: testContextWithClosure (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testContextWithClosureAndSender
+  ERROR: testContextWithClosureAndSender (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testContextWithClosureContextWithOutPointerTesting
+  ERROR: testContextWithClosureContextWithOutPointerTesting (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testContextWithNilPc
+  ERROR: testContextWithNilPc (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testContextWithSender
+  ERROR: testContextWithSender (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testContextWithTemp
+  ERROR: testContextWithTemp (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDoIt
+  ERROR: testDoIt (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 9 P:0 F:0 E:9 S:0
+
+=== FLConvenienceExtensionTest ===
+  RUN: testObjectSerializeOn
+  ERROR: testObjectSerializeOn (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testObjectSerializeToByteArray
+  ERROR: testObjectSerializeToByteArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testObjectSerializeToFileNamed
+  ERROR: testObjectSerializeToFileNamed (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 3 P:0 F:0 E:3 S:0
+
+=== FLCreateClassSerializationTest ===
+  RUN: testAnonymousBehaviorIsSerializable
+  ERROR: testAnonymousBehaviorIsSerializable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testAnonymousObjectIsSerializable
+  ERROR: testAnonymousObjectIsSerializable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCompiledMethodClassBinding
+  ERROR: testCompiledMethodClassBinding (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateBasic
+  ERROR: testCreateBasic (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateByteArrayWithInstance
+  ERROR: testCreateByteArrayWithInstance (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassAndMetaclass
+  ERROR: testCreateClassAndMetaclass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassWithClassSideVariable
+  ERROR: testCreateClassWithClassSideVariable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassWithClassVariable
+  ERROR: testCreateClassWithClassVariable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassWithCreatedTrait
+  ERROR: testCreateClassWithCreatedTrait (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassWithCreatedTraitWithInstanceVariable
+  ERROR: testCreateClassWithCreatedTraitWithInstanceVariable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassWithInstance
+  ERROR: testCreateClassWithInstance (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassWithSharedPool
+  ERROR: testCreateClassWithSharedPool (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassWithSharedPoolAndMethodReferencingAClassVariableOfIt
+  ERROR: testCreateClassWithSharedPoolAndMethodReferencingAClassVariableOfIt (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassWithSharedPoolAndMethodReferencingIt
+  ERROR: testCreateClassWithSharedPoolAndMethodReferencingIt (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassWithVariables
+  ERROR: testCreateClassWithVariables (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateCompiledMethodClass
+  ERROR: testCreateCompiledMethodClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateHierarchy
+  ERROR: testCreateHierarchy (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateHierarchyWithExistingClasses
+  ERROR: testCreateHierarchyWithExistingClasses (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateHierarchyWithSubclassSerializedBeforeSuperclass
+  ERROR: testCreateHierarchyWithSubclassSerializedBeforeSuperclass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateNormalClass
+  ERROR: testCreateNormalClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateSharedPoolClass
+  ERROR: testCreateSharedPoolClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateVariableByteClass
+  ERROR: testCreateVariableByteClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateVariableClass
+  ERROR: testCreateVariableClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateVariableWordClass
+  ERROR: testCreateVariableWordClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWeakClass
+  ERROR: testCreateWeakClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithClassSideInitializeMethod
+  ERROR: testCreateWithClassSideInitializeMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithClassSideMethod
+  ERROR: testCreateWithClassSideMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithClassTrait
+  ERROR: testCreateWithClassTrait (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithClassVariableAccessors
+  ERROR: testCreateWithClassVariableAccessors (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithComment
+  ERROR: testCreateWithComment (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithExternalTrait
+  ERROR: testCreateWithExternalTrait (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithInstance
+  ERROR: testCreateWithInstance (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithInternalTrait
+  ERROR: testCreateWithInternalTrait (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithMethod
+  ERROR: testCreateWithMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithNilEnvironment
+  ERROR: testCreateWithNilEnvironment (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithSmalltalkGlobalsEnvironment
+  ERROR: testCreateWithSmalltalkGlobalsEnvironment (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithSubclass
+  ERROR: testCreateWithSubclass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithTraitOnClassSide
+  ERROR: testCreateWithTraitOnClassSide (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDoesNotCreatePackage
+  ERROR: testDoesNotCreatePackage (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMaterializationDoesNotModifySerializedClass
+  ERROR: testMaterializationDoesNotModifySerializedClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSerializeAnonymousSubclass
+  ERROR: testSerializeAnonymousSubclass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 41 P:0 F:0 E:41 S:0
+
+=== FLCreateTraitSerializationTest ===
+  RUN: testAnonymousBehaviorIsSerializable
+  ERROR: testAnonymousBehaviorIsSerializable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCompiledMethodClassBinding
+  ERROR: testCompiledMethodClassBinding (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateBasic
+  ERROR: testCreateBasic (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithClassSideMethod
+  ERROR: testCreateWithClassSideMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithClassTrait
+  ERROR: testCreateWithClassTrait (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithComment
+  ERROR: testCreateWithComment (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithExternalTrait
+  ERROR: testCreateWithExternalTrait (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithInstance
+  ERROR: testCreateWithInstance (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithInternalTrait
+  ERROR: testCreateWithInternalTrait (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithMethod
+  ERROR: testCreateWithMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateWithTraitOnClassSide
+  ERROR: testCreateWithTraitOnClassSide (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDoesNotCreatePackage
+  ERROR: testDoesNotCreatePackage (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 12 P:0 F:0 E:12 S:0
+
+=== FLDecoderTest ===
+  RUN: testNextEncodedInt24
+  RUN: testNextEncodedInt32
+  RUN: testNextEncodedInt64
+  RUN: testNextEncodedUint16
+  RUN: testNextEncodedUint24
+  RUN: testNextEncodedUint32
+  RUN: testNextEncodedUint64
+  RUN: testNextEncodedUint8
+Total: 8 P:8 F:0 E:0 S:0
+
+=== FLEncoderDecoderTest ===
+  RUN: testSmallIntegerSerializationForAllBitsWith16Bits
+  RUN: testSmallIntegerSerializationForAllBitsWith24Bits
+  RUN: testSmallIntegerSerializationForAllBitsWith32Bits
+  RUN: testSmallIntegerSerializationForAllBitsWith64Bits
+  RUN: testSmallIntegerSerializationForAllBitsWith8Bits
+Total: 5 P:5 F:0 E:0 S:0
+
+=== FLEncoderTest ===
+  RUN: testEncodeInt24
+  RUN: testEncodeInt24Truncated
+  RUN: testEncodeInt32
+  RUN: testEncodeInt32Truncated
+  RUN: testEncodeInt64
+  RUN: testEncodeInt64Truncated
+  RUN: testEncodeUInt8
+  RUN: testEncodeUInt8Truncated
+  RUN: testEncodeUint16
+  RUN: testEncodeUint16Truncated
+  RUN: testEncodeUint24
+  RUN: testEncodeUint24Truncated
+  RUN: testEncodeUint32
+  RUN: testEncodeUint32Truncated
+  RUN: testEncodeUint64
+  RUN: testEncodeUint64Truncated
+Total: 16 P:16 F:0 E:0 S:0
+
+=== FLEphemeronTest ===
+  RUN: testEphemeronSupport
+  ERROR: testEphemeronSupport (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSupportForFinalizationRegistryEntry
+  ERROR: testSupportForFinalizationRegistryEntry (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSupportForWeakKeyAssociation
+  ERROR: testSupportForWeakKeyAssociation (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWeakKeyAssociationMourningBeforeMaterialization
+  ERROR: testWeakKeyAssociationMourningBeforeMaterialization (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWeakKeyAssociationMourningBeforeSerialization
+  ERROR: testWeakKeyAssociationMourningBeforeSerialization (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWeakKeyAssociationWithStrongReference
+  ERROR: testWeakKeyAssociationWithStrongReference (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWeakKeyAssociationWithStrongReferenceInGraph
+  ERROR: testWeakKeyAssociationWithStrongReferenceInGraph (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 7 P:0 F:0 E:7 S:0
+
+=== FLFullBasicSerializationTest ===
+  RUN: testAllRangeOfIntegers
+  ERROR: testAllRangeOfIntegers (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testArray
+  ERROR: testArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testAssociation
+  ERROR: testAssociation (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBag
+  ERROR: testBag (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBitmap
+  ERROR: testBitmap (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testByteArrays
+  ERROR: testByteArrays (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCharacter
+  ERROR: testCharacter (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassGlobalAssociation
+  ERROR: testClassGlobalAssociation (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassSideCompiledMethod
+  ERROR: testClassSideCompiledMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassVariable
+  ERROR: testClassVariable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCollectionElement
+  ERROR: testCollectionElement (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testColor
+  ERROR: testColor (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testColorArray
+  ERROR: testColorArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCompiledMethod
+  ERROR: testCompiledMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testConsiderCustomGlobal
+  ERROR: testConsiderCustomGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testConsiderCustomWideSymbolGlobal
+  ERROR: testConsiderCustomWideSymbolGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testConsiderGlobalAClass
+  ERROR: testConsiderGlobalAClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testConsiderGlobalAnObject
+  ERROR: testConsiderGlobalAnObject (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassWithChangedSuperclassFormat
+  ERROR: testCreateClassWithChangedSuperclassFormat (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCyclicIdentitySet
+  ERROR: testCyclicIdentitySet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCyclicLink
+  ERROR: testCyclicLink (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCyclicLinks
+  ERROR: testCyclicLinks (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCyclicLinksInArray
+  ERROR: testCyclicLinksInArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDate
+  ERROR: testDate (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDateAndTime
+  ERROR: testDateAndTime (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDateAndTimeOffsetNegative
+  ERROR: testDateAndTimeOffsetNegative (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDateOffsets
+  ERROR: testDateOffsets (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDateOffsetsChanging
+  ERROR: testDateOffsetsChanging (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDictionary
+  ERROR: testDictionary (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDontConsiderCustomGlobal
+  ERROR: testDontConsiderCustomGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDuration
+  ERROR: testDuration (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEmptyArray
+  ERROR: testEmptyArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEmptyDictionary
+  ERROR: testEmptyDictionary (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEmptyOrderedCollection
+  ERROR: testEmptyOrderedCollection (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEmptySet
+  ERROR: testEmptySet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testExceptions
+  ERROR: testExceptions (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testExecuteAfterMaterialization
+  ERROR: testExecuteAfterMaterialization (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFalse
+  ERROR: testFalse (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFloat
+  ERROR: testFloat (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFraction
+  ERROR: testFraction (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGlobalClass
+  ERROR: testGlobalClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGlobalMetaclass
+  ERROR: testGlobalMetaclass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGradientFillStyle
+  ERROR: testGradientFillStyle (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testInterval
+  ERROR: testInterval (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLargeNegativeInteger
+  ERROR: testLargeNegativeInteger (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLargePositiveInteger
+  ERROR: testLargePositiveInteger (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLotsOfCharacters
+  ERROR: testLotsOfCharacters (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLotsOfNils
+  ERROR: testLotsOfNils (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMethodDictionaries
+  ERROR: testMethodDictionaries (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMethodDictionary
+  ERROR: testMethodDictionary (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNestedDictionary
+  ERROR: testNestedDictionary (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNil
+  ERROR: testNil (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNotSerializableObject
+  ERROR: testNotSerializableObject (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testOrderedCollection
+  ERROR: testOrderedCollection (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPair
+  ERROR: testPair (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPoint
+  ERROR: testPoint (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testReadStream
+  ERROR: testReadStream (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testRectangle
+  ERROR: testRectangle (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testRecursiveArray
+  ERROR: testRecursiveArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testRemoteString
+  ERROR: testRemoteString (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testRunArray
+  ERROR: testRunArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testScaledDecimal
+  ERROR: testScaledDecimal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSet
+  ERROR: testSet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSetWithCollectionElement
+  ERROR: testSetWithCollectionElement (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSetWithNil
+  ERROR: testSetWithNil (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSharedReferences
+  ERROR: testSharedReferences (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmallInteger
+  ERROR: testSmallInteger (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmallIntegerMaxValue
+  ERROR: testSmallIntegerMaxValue (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmallIntegerMinValue
+  ERROR: testSmallIntegerMinValue (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmallIntegerNegative
+  ERROR: testSmallIntegerNegative (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmallIntegerSerializationForAllBits
+  ERROR: testSmallIntegerSerializationForAllBits (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmalltalkGlobalAssociation
+  ERROR: testSmalltalkGlobalAssociation (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmalltalkGlobals
+  ERROR: testSmalltalkGlobals (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testString
+  ERROR: testString (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStringGlobalsAndClosure
+  ERROR: testStringGlobalsAndClosure (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSymbol
+  ERROR: testSymbol (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSystemEnvironment
+  ERROR: testSystemEnvironment (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testTime
+  ERROR: testTime (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testTrue
+  ERROR: testTrue (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testUUID
+  ERROR: testUUID (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWideAndByteCharacters
+  ERROR: testWideAndByteCharacters (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWideString
+  ERROR: testWideString (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWideStringClassName
+  ERROR: testWideStringClassName (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWideStringGlobal
+  ERROR: testWideStringGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWordArray
+  ERROR: testWordArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWriteStream
+  ERROR: testWriteStream (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 86 P:0 F:0 E:86 S:0
+
+=== FLFullBlockClosureSerializationTest ===
+  RUN: testBlockClosureChangeDifferentBytecodes
+  ERROR: testBlockClosureChangeDifferentBytecodes (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureChangeDifferentBytecodesClean
+  ERROR: testBlockClosureChangeDifferentBytecodesClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureChangeDifferentBytecodesConstant
+  ERROR: testBlockClosureChangeDifferentBytecodesConstant (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureChangeDifferentBytecodesNonClean
+  ERROR: testBlockClosureChangeDifferentBytecodesNonClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureChangeSameBytecodesConstant
+  ERROR: testBlockClosureChangeSameBytecodesConstant (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureRemovedClean
+  ERROR: testBlockClosureRemovedClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureRemovedConstant
+  ERROR: testBlockClosureRemovedConstant (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBlockClosureRemovedFull
+  ERROR: testBlockClosureRemovedFull (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 8 P:0 F:0 E:8 S:0
+
+=== FLFullHeaderSerializationTest ===
+  RUN: testAdditionalObjects
+  ERROR: testAdditionalObjects (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testJustMaterializeHeader
+  ERROR: testJustMaterializeHeader (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPostMaterializationActions
+  ERROR: testPostMaterializationActions (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPostMaterializationActionsMustBeClean
+  ERROR: testPostMaterializationActionsMustBeClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPreMaterializationActions
+  ERROR: testPreMaterializationActions (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPreMaterializationActionsMustBeClean
+  ERROR: testPreMaterializationActionsMustBeClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 6 P:0 F:0 E:6 S:0
+
+=== FLGZippedBasicSerializationTest ===
+  RUN: testAllRangeOfIntegers
+  ERROR: testAllRangeOfIntegers (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testArray
+  ERROR: testArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testAssociation
+  ERROR: testAssociation (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBag
+  ERROR: testBag (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testBitmap
+  ERROR: testBitmap (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testByteArray
+  ERROR: testByteArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testByteArrays
+  ERROR: testByteArrays (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCharacter
+  ERROR: testCharacter (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassSideCompiledMethod
+  ERROR: testClassSideCompiledMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCollectionElement
+  ERROR: testCollectionElement (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testColor
+  ERROR: testColor (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testColorArray
+  ERROR: testColorArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCompiledMethod
+  ERROR: testCompiledMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCompleteBinaryTree
+  ERROR: testCompleteBinaryTree (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testConsiderCustomGlobal
+  ERROR: testConsiderCustomGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testConsiderCustomWideSymbolGlobal
+  ERROR: testConsiderCustomWideSymbolGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCyclicIdentitySet
+  ERROR: testCyclicIdentitySet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCyclicLink
+  ERROR: testCyclicLink (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCyclicLinks
+  ERROR: testCyclicLinks (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCyclicLinksInArray
+  ERROR: testCyclicLinksInArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDate
+  ERROR: testDate (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDateAndTime
+  ERROR: testDateAndTime (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDateAndTimeOffsetNegative
+  ERROR: testDateAndTimeOffsetNegative (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDateOffsets
+  ERROR: testDateOffsets (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDateOffsetsChanging
+  ERROR: testDateOffsetsChanging (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDictionary
+  ERROR: testDictionary (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDontConsiderCustomGlobal
+  ERROR: testDontConsiderCustomGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDuration
+  ERROR: testDuration (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEmptyArray
+  ERROR: testEmptyArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEmptyDictionary
+  ERROR: testEmptyDictionary (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEmptyOrderedCollection
+  ERROR: testEmptyOrderedCollection (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEmptySet
+  ERROR: testEmptySet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testExceptions
+  ERROR: testExceptions (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testExecuteAfterMaterialization
+  ERROR: testExecuteAfterMaterialization (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFalse
+  ERROR: testFalse (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFloat
+  ERROR: testFloat (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFraction
+  ERROR: testFraction (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGlobalClass
+  ERROR: testGlobalClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGlobalMetaclass
+  ERROR: testGlobalMetaclass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGradientFillStyle
+  ERROR: testGradientFillStyle (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testInterval
+  ERROR: testInterval (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLargeNegativeInteger
+  ERROR: testLargeNegativeInteger (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLargePositiveInteger
+  ERROR: testLargePositiveInteger (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLotsOfCharacters
+  ERROR: testLotsOfCharacters (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLotsOfNils
+  ERROR: testLotsOfNils (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMethodDictionary
+  ERROR: testMethodDictionary (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNestedDictionary
+  ERROR: testNestedDictionary (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNil
+  ERROR: testNil (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNotSerializableObject
+  ERROR: testNotSerializableObject (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testOrderedCollection
+  ERROR: testOrderedCollection (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPair
+  ERROR: testPair (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPairs
+  ERROR: testPairs (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPoint
+  ERROR: testPoint (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testReadStream
+  ERROR: testReadStream (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testRectangle
+  ERROR: testRectangle (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testRecursiveArray
+  ERROR: testRecursiveArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testRemoteString
+  ERROR: testRemoteString (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testRunArray
+  ERROR: testRunArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testScaledDecimal
+  ERROR: testScaledDecimal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSet
+  ERROR: testSet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSetWithCollectionElement
+  ERROR: testSetWithCollectionElement (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSetWithNil
+  ERROR: testSetWithNil (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSharedReferences
+  ERROR: testSharedReferences (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmallInteger
+  ERROR: testSmallInteger (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmallIntegerMaxValue
+  ERROR: testSmallIntegerMaxValue (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmallIntegerMinValue
+  ERROR: testSmallIntegerMinValue (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmallIntegerNegative
+  ERROR: testSmallIntegerNegative (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmallIntegerSerializationForAllBits
+  ERROR: testSmallIntegerSerializationForAllBits (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSmalltalkGlobals
+  ERROR: testSmalltalkGlobals (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testString
+  ERROR: testString (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testStringGlobalsAndClosure
+  ERROR: testStringGlobalsAndClosure (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSymbol
+  ERROR: testSymbol (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSystemEnvironment
+  ERROR: testSystemEnvironment (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testTime
+  ERROR: testTime (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testTrue
+  ERROR: testTrue (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testUUID
+  ERROR: testUUID (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWideAndByteCharacters
+  ERROR: testWideAndByteCharacters (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWideString
+  ERROR: testWideString (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWideStringClassName
+  ERROR: testWideStringClassName (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWideStringGlobal
+  ERROR: testWideStringGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWordArray
+  ERROR: testWordArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWriteStream
+  ERROR: testWriteStream (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 82 P:0 F:0 E:82 S:0
+
+=== FLGlobalClassSerializationTest ===
+  RUN: testClassSideMethodNotFoundAfterRemoval
+  ERROR: testClassSideMethodNotFoundAfterRemoval (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassSideMethodPreservesIdentity
+  ERROR: testClassSideMethodPreservesIdentity (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassSideObsolete
+  ERROR: testClassSideObsolete (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassSidePreservesIdentity
+  ERROR: testClassSidePreservesIdentity (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testInstanceOfAnObsoleteClass
+  ERROR: testInstanceOfAnObsoleteClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMethodNotFoundAfterRemoval
+  ERROR: testMethodNotFoundAfterRemoval (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMethodPreservesIdentity
+  ERROR: testMethodPreservesIdentity (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNotFoundAfterRemoval
+  ERROR: testNotFoundAfterRemoval (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNotFoundAfterRename
+  ERROR: testNotFoundAfterRename (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testObsolete
+  ERROR: testObsolete (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPreservesIdentity
+  ERROR: testPreservesIdentity (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 11 P:0 F:0 E:11 S:0
+
+=== FLGlobalEnvironmentTest ===
+  RUN: testClassSideCompiledMethod
+  ERROR: testClassSideCompiledMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCompiledMethod
+  ERROR: testCompiledMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCompiledMethodChanged
+  ERROR: testCompiledMethodChanged (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCompiledMethodChangedConstant
+  ERROR: testCompiledMethodChangedConstant (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCompiledMethodChangedNonClean
+  ERROR: testCompiledMethodChangedNonClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCompiledMethodNotChangedConstant
+  ERROR: testCompiledMethodNotChangedConstant (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testConsiderCustomGlobal
+  ERROR: testConsiderCustomGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testConsiderCustomGlobalNotFound
+  ERROR: testConsiderCustomGlobalNotFound (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDontConsiderCustomGlobal
+  ERROR: testDontConsiderCustomGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGlobalClass
+  ERROR: testGlobalClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGlobalClassNotFound
+  ERROR: testGlobalClassNotFound (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGlobalMetaclass
+  ERROR: testGlobalMetaclass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGlobalMetaclassNotFound
+  ERROR: testGlobalMetaclassNotFound (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 13 P:0 F:0 E:13 S:0
+
+=== FLGlobalSendSerializationTest ===
+  RUN: testBasic
+  ERROR: testBasic (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGlobalNotFound
+  ERROR: testGlobalNotFound (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 2 P:0 F:0 E:2 S:0
+
+=== FLGlobalTraitSerializationTest ===
+  RUN: testClassSideMethodNotFoundAfterRemoval
+  ERROR: testClassSideMethodNotFoundAfterRemoval (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassSideMethodPreservesIdentity
+  ERROR: testClassSideMethodPreservesIdentity (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassSideObsolete
+  ERROR: testClassSideObsolete (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassSidePreservesIdentity
+  ERROR: testClassSidePreservesIdentity (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testCreateClassWithCreatedTraitWithInstanceVariable
+  ERROR: testCreateClassWithCreatedTraitWithInstanceVariable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMethodNotFoundAfterRemoval
+  ERROR: testMethodNotFoundAfterRemoval (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMethodPreservesIdentity
+  ERROR: testMethodPreservesIdentity (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNotFoundAfterRemoval
+  ERROR: testNotFoundAfterRemoval (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNotFoundAfterRename
+  ERROR: testNotFoundAfterRename (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testObsolete
+  ERROR: testObsolete (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPreservesIdentity
+  ERROR: testPreservesIdentity (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 11 P:0 F:0 E:11 S:0
+
+=== FLHashedCollectionSerializationTest ===
+  RUN: testDictionaryRehash
+  ERROR: testDictionaryRehash (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSetRehash
+  ERROR: testSetRehash (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 2 P:0 F:0 E:2 S:0
+
+=== FLHeaderSerializationTest ===
+  RUN: testAdditionalObjects
+  ERROR: testAdditionalObjects (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testJustMaterializeHeader
+  ERROR: testJustMaterializeHeader (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPostMaterializationActions
+  ERROR: testPostMaterializationActions (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPostMaterializationActionsMustBeClean
+  ERROR: testPostMaterializationActionsMustBeClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPreMaterializationActions
+  ERROR: testPreMaterializationActions (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPreMaterializationActionsMustBeClean
+  ERROR: testPreMaterializationActionsMustBeClean (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 6 P:0 F:0 E:6 S:0
+
+=== FLHookedSubstitutionTest ===
+  RUN: testAvoidRecursion
+  ERROR: testAvoidRecursion (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassWithCachedValueByNil
+  ERROR: testClassWithCachedValueByNil (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testObjectByProxyThatBecomesItsContent
+  ERROR: testObjectByProxyThatBecomesItsContent (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testProxyByTarget
+  ERROR: testProxyByTarget (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testProxyByTargetAnalisysIsPropagated
+  ERROR: testProxyByTargetAnalisysIsPropagated (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testProxyByTargetInsideObjectAndAnalisysIsPropagated
+  ERROR: testProxyByTargetInsideObjectAndAnalisysIsPropagated (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testProxyInsideObjectByTarget
+  ERROR: testProxyInsideObjectByTarget (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSpecialObjectsArray
+  ERROR: testSpecialObjectsArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSubstituteByItself
+  ERROR: testSubstituteByItself (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testTransientByNil
+  ERROR: testTransientByNil (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 10 P:0 F:0 E:10 S:0
+
+=== FLIgnoredVariablesTest ===
+  RUN: testAllVariablesIgnored
+  ERROR: testAllVariablesIgnored (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testIgnoredValueIsNotMaterialized
+  ERROR: testIgnoredValueIsNotMaterialized (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testOneIgnoredVariable
+  ERROR: testOneIgnoredVariable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testTwoIgnoredVariables
+  ERROR: testTwoIgnoredVariables (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 4 P:0 F:0 E:4 S:0
+
+=== FLIndexStreamTest ===
+  RUN: testCreation
+  RUN: testNextIndex
+  RUN: testNextIndexPut
+Total: 3 P:3 F:0 E:0 S:0
+
+=== FLLimitingSerializationTest ===
+  RUN: testDepthAndObjectLimit
+  ERROR: testDepthAndObjectLimit (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDepthLimit
+  ERROR: testDepthLimit (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEnableObjectsLimitWarning
+  ERROR: testEnableObjectsLimitWarning (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEnableObjectsLimitWarningWithDepthLimit
+  ERROR: testEnableObjectsLimitWarningWithDepthLimit (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testObjectLimit
+  ERROR: testObjectLimit (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 5 P:0 F:0 E:5 S:0
+
+=== FLMaterializerConvenienceMethodsTest ===
+  RUN: testMaterializeFrom
+  ERROR: testMaterializeFrom (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMaterializeFromByteArray
+  ERROR: testMaterializeFromByteArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMaterializeFromFileNamed
+  ERROR: testMaterializeFromFileNamed (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMaterializeHeaderFrom
+  ERROR: testMaterializeHeaderFrom (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMaterializeHeaderFromByteArray
+  ERROR: testMaterializeHeaderFromByteArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMaterializeHeaderFromFileNamed
+  ERROR: testMaterializeHeaderFromFileNamed (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 6 P:0 F:0 E:6 S:0
+
+=== FLMaterializerTest ===
+  RUN: testDisableMethodChangedWarning
+  ERROR: testDisableMethodChangedWarning (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMaterialize
+  ERROR: testMaterialize (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMaterializeHeader
+  ERROR: testMaterializeHeader (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMaterializeObjectCollection
+  ERROR: testMaterializeObjectCollection (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMaterializeRoot
+  ERROR: testMaterializeRoot (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMigrateClassNamedToClass
+  ERROR: testMigrateClassNamedToClass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMigrateClassNamedToClassMustBeSymbolAndClassOrSymbol
+  ERROR: testMigrateClassNamedToClassMustBeSymbolAndClassOrSymbol (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMigrateClassNamedToClassMustHaveUniqueSource
+  ERROR: testMigrateClassNamedToClassMustHaveUniqueSource (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMigrateClassNamedToClassSourceAndTargetCanBeTheSame
+  ERROR: testMigrateClassNamedToClassSourceAndTargetCanBeTheSame (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMigrateClassNamedToClassVariables
+  ERROR: testMigrateClassNamedToClassVariables (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMigrateClassNamedVariables
+  ERROR: testMigrateClassNamedVariables (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testMigrateClassNamedVariablesMustBeSymbolAndDictionary
+  ERROR: testMigrateClassNamedVariablesMustBeSymbolAndDictionary (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 12 P:0 F:0 E:12 S:0
+
+=== FLMigrationTest ===
+  RUN: testBadDestinationVariableRename
+  ERROR: testBadDestinationVariableRename (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testChangeInSuperclass
+  ERROR: testChangeInSuperclass (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassAndVariableRename
+  ERROR: testClassAndVariableRename (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testClassRename
+  ERROR: testClassRename (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFormatFixedToVariable
+  ERROR: testFormatFixedToVariable (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSuperclassChange
+  ERROR: testSuperclassChange (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testVariableInsertion
+  ERROR: testVariableInsertion (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testVariableOrderChange
+  ERROR: testVariableOrderChange (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testVariableRemoved
+  ERROR: testVariableRemoved (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testVariableRename
+  ERROR: testVariableRename (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 10 P:0 F:0 E:10 S:0
+
+=== FLPluggableSubstitutionTest ===
+  RUN: testAvoidRecursion
+  ERROR: testAvoidRecursion (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLowercaseSomeSymbols
+  ERROR: testLowercaseSomeSymbols (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPrivateExcluded
+  ERROR: testPrivateExcluded (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPrivateExcludedAndWithConflicts
+  ERROR: testPrivateExcludedAndWithConflicts (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSimple
+  ERROR: testSimple (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSubstituteByItself
+  ERROR: testSubstituteByItself (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSubstituteCharacterInPresenceOfSomeCharacter
+  ERROR: testSubstituteCharacterInPresenceOfSomeCharacter (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSubstituteTrueInPresenceOfTheTrueInstance
+  ERROR: testSubstituteTrueInPresenceOfTheTrueInstance (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSubstituteUndefinedObjectInPresenceOfNil
+  ERROR: testSubstituteUndefinedObjectInPresenceOfNil (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testTransientPair
+  ERROR: testTransientPair (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testTransientPairLeft
+  ERROR: testTransientPairLeft (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testUniqueSubstitution
+  ERROR: testUniqueSubstitution (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 12 P:0 F:0 E:12 S:0
+
+=== FLProcessSerializationTest ===
+  RUN: testSerializingShortDelay
+  ERROR: testSerializingShortDelay (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 1 P:0 F:0 E:1 S:0
+
+=== FLSequencedSerializationTest ===
+  RUN: testComplexObjects
+  ERROR: testComplexObjects (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPrimitiveObjects
+  ERROR: testPrimitiveObjects (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 2 P:0 F:0 E:2 S:0
+
+=== FLSerializerConvenienceMethodsTest ===
+  RUN: testSerializeOn
+  ERROR: testSerializeOn (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSerializeToByteArray
+  ERROR: testSerializeToByteArray (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testToFileNamed
+  ERROR: testToFileNamed (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 3 P:0 F:0 E:3 S:0
+
+=== FLSerializerTest ===
+  RUN: testAddPostMaterializationAction
+  ERROR: testAddPostMaterializationAction (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testAddPostMaterializationActionCanAcceptThreeArguments
+  ERROR: testAddPostMaterializationActionCanAcceptThreeArguments (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testAddPostMaterializationActionMustBeBlock
+  ERROR: testAddPostMaterializationActionMustBeBlock (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testAddPostMaterializationActionMustBeCleanBlock
+  ERROR: testAddPostMaterializationActionMustBeCleanBlock (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testAddPreMaterializationAction
+  ERROR: testAddPreMaterializationAction (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testAddPreMaterializationActionCanAcceptTwoArguments
+  ERROR: testAddPreMaterializationActionCanAcceptTwoArguments (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testAddPreMaterializationActionMustBeBlock
+  ERROR: testAddPreMaterializationActionMustBeBlock (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testAddPreMaterializationActionMustBeCleanBlock
+  ERROR: testAddPreMaterializationActionMustBeCleanBlock (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testAtPutAdditionalObject
+  ERROR: testAtPutAdditionalObject (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEnableLimitObjectsException
+  ERROR: testEnableLimitObjectsException (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFullySerializeAllBehaviors
+  ERROR: testFullySerializeAllBehaviors (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFullySerializeAllBehaviorsMustBeCollection
+  ERROR: testFullySerializeAllBehaviorsMustBeCollection (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFullySerializeAllMethods
+  ERROR: testFullySerializeAllMethods (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFullySerializeAllMethodsMustBeCollection
+  ERROR: testFullySerializeAllMethodsMustBeCollection (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFullySerializeBehavior
+  ERROR: testFullySerializeBehavior (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFullySerializeBehaviorMustBeBehavior
+  ERROR: testFullySerializeBehaviorMustBeBehavior (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFullySerializeBehaviorUsesSet
+  ERROR: testFullySerializeBehaviorUsesSet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFullySerializeMethod
+  ERROR: testFullySerializeMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFullySerializeMethodMustBeMethod
+  ERROR: testFullySerializeMethodMustBeMethod (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFullySerializeMethodUsesSet
+  ERROR: testFullySerializeMethodUsesSet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLimitDepthTo
+  ERROR: testLimitDepthTo (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLimitObjectsTo
+  ERROR: testLimitObjectsTo (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLookUpAllInGlobalsMustBeCollection
+  ERROR: testLookUpAllInGlobalsMustBeCollection (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLookUpInGlobalsMustBeGlobal
+  ERROR: testLookUpInGlobalsMustBeGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLookUpInGlobalsSymbolKey
+  ERROR: testLookUpInGlobalsSymbolKey (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLookupAllInGlobals
+  ERROR: testLookupAllInGlobals (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testObject
+  ERROR: testObject (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testObjectCollection
+  ERROR: testObjectCollection (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testObjectCollectionMustBeCollection
+  ERROR: testObjectCollectionMustBeCollection (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testObjectCollectionWhenAlreadySet
+  ERROR: testObjectCollectionWhenAlreadySet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testObjectWhenAlreadySet
+  ERROR: testObjectWhenAlreadySet (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWhenSubstituteBy
+  ERROR: testWhenSubstituteBy (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWhenSubstituteByMustAcceptSingleArgument
+  ERROR: testWhenSubstituteByMustAcceptSingleArgument (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWhenSubstituteByMustBeBlocks
+  ERROR: testWhenSubstituteByMustBeBlocks (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 34 P:0 F:0 E:34 S:0
+
+=== FLSignatureTest ===
+  RUN: testBadSignature
+  ERROR: testBadSignature (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSameSignature
+  ERROR: testSameSignature (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 2 P:0 F:0 E:2 S:0
+
+=== FLSimpleStackTest ===
+  RUN: testCapacity
+  RUN: testGrow
+  RUN: testIsEmpty
+  RUN: testPop
+  RUN: testPush
+Total: 5 P:5 F:0 E:0 S:0
+
+=== FLSingletonTest ===
+  RUN: testSingletonMaterialization
+  ERROR: testSingletonMaterialization (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSingletonMaterializationEnforced
+  ERROR: testSingletonMaterializationEnforced (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSingletonMaterializationEnforcedNoInstance
+  ERROR: testSingletonMaterializationEnforcedNoInstance (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 3 P:0 F:0 E:3 S:0
+
+=== FLSortedCollectionSerializationTest ===
+  RUN: testSortedCollection
+  ERROR: testSortedCollection (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSortedCollectionWithClassVariableChanges
+  ERROR: testSortedCollectionWithClassVariableChanges (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSortedCollectionWithClassVariableReference
+  ERROR: testSortedCollectionWithClassVariableReference (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSortedCollectionWithInstanceVariableReference
+  ERROR: testSortedCollectionWithInstanceVariableReference (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSortedCollectionWithInstanceVariableReferenceChange
+  ERROR: testSortedCollectionWithInstanceVariableReferenceChange (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 5 P:0 F:0 E:5 S:0
+
+=== FLUserGuidesTest ===
+  RUN: testByteArrayStream
+  ERROR: testByteArrayStream (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testConsiderGlobal
+  ERROR: testConsiderGlobal (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDemo
+  ERROR: testDemo (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testFileShortcuts
+  ERROR: testFileShortcuts (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testGZip
+  ERROR: testGZip (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testPluggableSubstitution
+  ERROR: testPluggableSubstitution (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 6 P:0 F:0 E:6 S:0
+
+=== FLVersionTest ===
+  RUN: testDifferentMajor
+  ERROR: testDifferentMajor (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDifferentMinor
+  ERROR: testDifferentMinor (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testDifferentPatch
+  ERROR: testDifferentPatch (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testEquals
+  ERROR: testEquals (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testLessThanOrEqual
+  ERROR: testLessThanOrEqual (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testNotEqual
+  ERROR: testNotEqual (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testSameVersion
+  ERROR: testSameVersion (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 7 P:0 F:0 E:7 S:0
+
+=== FLWeakObjectsTest ===
+  RUN: testAssociationWithWeak
+  ERROR: testAssociationWithWeak (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWeakAndNoStrongReferenceFromGraph
+  ERROR: testWeakAndNoStrongReferenceFromGraph (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWeakWithStrongReferenceFromGraph
+  ERROR: testWeakWithStrongReferenceFromGraph (MessageNotUnderstood: receiver of "asFileReference" is nil)
+  RUN: testWeakWithStrongReferenceFromGraph2
+  ERROR: testWeakWithStrongReferenceFromGraph2 (MessageNotUnderstood: receiver of "asFileReference" is nil)
+Total: 4 P:0 F:0 E:4 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 40
+Pass: 37
+Fail: 0
+Error: 474
+Skip: 0
+Total: 511
+Finished: 2026-05-28T18:01:43.335003-04:00
+
+=== BATCH COMPLETE ===

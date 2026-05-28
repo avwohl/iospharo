@@ -1,0 +1,222 @@
+=== Stock Cog SUnit run ===
+Classes to run: 3
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/harness/Pharo.image
+Started: 2026-05-28T18:01:20.572121-04:00
+
+=== RxExtensionsTest ===
+  RUN: testSplitJoinBoundaryCases
+  RUN: testSplitStringOnRegex
+Total: 2 P:2 F:0 E:0 S:0
+
+=== RxMatcherTest ===
+  RUN: testCaseInsensitive
+  RUN: testCaseSensitive
+  RUN: testCopyReplacingMatches
+  RUN: testCopyTranslatingMatches
+  RUN: testEmptyStringAtBeginningOfLine
+  RUN: testEmptyStringAtBeginningOfWord
+  RUN: testEmptyStringAtEndOfLine
+  RUN: testEmptyStringAtEndOfWord
+  RUN: testEmptyStringAtWordBoundary
+  RUN: testEmptyStringNotAtWordBoundary
+  RUN: testEscapedLineEndings
+  RUN: testHenry001
+  RUN: testHenry002
+  RUN: testHenry003
+  RUN: testHenry004
+  RUN: testHenry005
+  RUN: testHenry006
+  RUN: testHenry007
+  RUN: testHenry008
+  RUN: testHenry009
+  RUN: testHenry010
+  RUN: testHenry011
+  RUN: testHenry012
+  RUN: testHenry013
+  RUN: testHenry014
+  RUN: testHenry015
+  RUN: testHenry016
+  RUN: testHenry017
+  RUN: testHenry018
+  RUN: testHenry019
+  RUN: testHenry020
+  RUN: testHenry021
+  RUN: testHenry022
+  RUN: testHenry023
+  RUN: testHenry024
+  RUN: testHenry025
+  RUN: testHenry026
+  RUN: testHenry027
+  RUN: testHenry028
+  RUN: testHenry029
+  RUN: testHenry030
+  RUN: testHenry031
+  RUN: testHenry032
+  RUN: testHenry033
+  RUN: testHenry034
+  RUN: testHenry035
+  RUN: testHenry036
+  RUN: testHenry037
+  RUN: testHenry038
+  RUN: testHenry039
+  RUN: testHenry040
+  RUN: testHenry041
+  RUN: testHenry042
+  RUN: testHenry043
+  RUN: testHenry044
+  RUN: testHenry045
+  RUN: testHenry046
+  RUN: testHenry047
+  RUN: testHenry048
+  RUN: testHenry049
+  RUN: testHenry050
+  RUN: testHenry051
+  RUN: testHenry052
+  RUN: testHenry053
+  RUN: testHenry054
+  RUN: testHenry055
+  RUN: testHenry056
+  RUN: testHenry057
+  RUN: testHenry058
+  RUN: testHenry059
+  RUN: testHenry060
+  RUN: testHenry061
+  RUN: testHenry062
+  RUN: testHenry063
+  RUN: testHenry064
+  RUN: testHenry065
+  RUN: testHenry066
+  RUN: testHenry067
+  RUN: testHenry068
+  RUN: testHenry069
+  RUN: testHenry070
+  RUN: testHenry071
+  RUN: testHenry072
+  RUN: testHenry073
+  RUN: testHenry074
+  RUN: testHenry075
+  RUN: testHenry076
+  RUN: testHenry077
+  RUN: testHenry078
+  RUN: testHenry079
+  RUN: testHenry080
+  RUN: testHenry081
+  RUN: testHenry082
+  RUN: testHenry083
+  RUN: testHenry084
+  RUN: testHenry085
+  RUN: testHenry086
+  RUN: testHenry087
+  RUN: testHenry088
+  RUN: testHenry089
+  RUN: testHenry090
+  RUN: testHenry091
+  RUN: testHenry092
+  RUN: testHenry093
+  RUN: testHenry094
+  RUN: testHenry095
+  RUN: testHenry096
+  RUN: testHenry097
+  RUN: testHenry098
+  RUN: testHenry099
+  RUN: testHenry100
+  RUN: testHenry101
+  RUN: testHenry102
+  RUN: testHenry103
+  RUN: testHenry104
+  RUN: testHenry105
+  RUN: testHenry106
+  RUN: testHenry107
+  RUN: testHenry108
+  RUN: testHenry109
+  RUN: testHenry110
+  RUN: testHenry111
+  RUN: testHenry112
+  RUN: testHenry113
+  RUN: testHenry114
+  RUN: testHenry115
+  RUN: testHenry116
+  RUN: testHenry117
+  RUN: testHenry118
+  RUN: testHenry119
+  RUN: testHenry120
+  RUN: testHenry121
+  RUN: testHenry122
+  RUN: testHenry123
+  RUN: testHenry124
+  RUN: testHenry125
+  RUN: testHenry126
+  RUN: testHenry127
+  RUN: testHenry128
+  RUN: testHenry129
+  RUN: testHenry130
+  RUN: testHenry131
+  RUN: testHenry132
+  RUN: testHenry133
+  RUN: testHenry134
+  RUN: testHenry135
+  RUN: testHenry136
+  RUN: testHenry137
+  RUN: testLineEndings
+  RUN: testMatches
+  RUN: testMatchesIn
+  RUN: testMatchesInCollect
+  RUN: testMatchesInDo
+  RUN: testMatchesOnStream
+  RUN: testMatchesOnStreamCollect
+  RUN: testMatchesOnStreamDo
+  RUN: testMatchesStream
+  RUN: testMatchingRangesIn
+  RUN: testRegex001
+  RUN: testRegex002
+  RUN: testRegex003
+  RUN: testRegex004
+  RUN: testStringAllRangesOfRegexMatches
+  RUN: testStringAllRegexMatches
+  RUN: testStringAsRegex
+  RUN: testStringAsRegexIgnoringCase
+  RUN: testStringCopyWithRegexMatchesReplacedWith
+  RUN: testStringCopyWithRegexMatchesTranslatedUsing
+  RUN: testStringGreedyMatchesRegex
+  RUN: testStringMatchesRegex
+  RUN: testStringMatchesRegexIgnoringCase
+  RUN: testStringPrefixMatchesRegex
+  RUN: testStringPrefixMatchesRegexIgnoringCase
+  RUN: testStringRegexMatchesCollect
+  RUN: testStringRegexMatchesDo
+  RUN: testSubexpressionCount
+Total: 176 P:176 F:0 E:0 S:0
+
+=== RxParserTest ===
+  RUN: test
+  RUN: testCadrMatching
+  RUN: testCharacterSet
+  RUN: testCharacterSetBinaryNumber
+  RUN: testCharacterSetInversion
+  RUN: testCharacterSetRange
+  RUN: testLookaround
+  RUN: testMatchesInwW
+  RUN: testOrOperator
+  RUN: testQuantifier
+  RUN: testQuantifierSimple
+  RUN: testQuotingOperators
+  RUN: testSimpleMatchesRegex
+  RUN: testSimpleMatchesRegexWithStar
+  RUN: testSpecialCharacterInSetRange
+  RUN: testStarPlusQuestionMark
+  RUN: testStarPrecedence
+  RUN: testTranslatingMatchesUsing
+Total: 18 P:18 F:0 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 3
+Pass: 196
+Fail: 0
+Error: 0
+Skip: 0
+Total: 196
+Finished: 2026-05-28T18:01:20.583216-04:00
+
+=== BATCH COMPLETE ===

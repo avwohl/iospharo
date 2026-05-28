@@ -1,0 +1,311 @@
+=== SUnit Test Run #1 (batch 1-16 of 2051) ===
+
+BATCH-DEBUG: batchClasses size=16 first=AIAstarTest last=AIWeightedHitsTest
+BATCH-DEBUG: batch-file exists=false names-file exists=true
+BATCH-DEADLINE: 2026-05-28T20:14:11.151302-04:00 (maxBatchSeconds=7200)
+MAX-PER-TEST: 300s
+=== DIAGNOSTICS ===
+DIAG: fork+exception TIMEOUT
+DIAG: Unicode isLetter:$t=true isDigit:$5=true
+=== END DIAGNOSTICS ===
+
+SCHED-LOGGER-ERR: Error Missing jumpAheadTo: #else
+SYMTABLE-CHECK: Symbol class found 0 times in symbol tables
+Timeout patch error: proceed for truth.
+=== AIAstarTest ===
+  SORT-OK: 12 comparisons for 8 items
+  RUN: testAseBasicCircuit
+  RUN: testAseBasicCircuitBacktrack
+  RUN: testComplexWeightedGraph2
+  RUN: testComplexWeightedGraph2BackTracking
+  RUN: testComplexWeightedGraph3
+  RUN: testComplexWeightedGraph3Backtracking
+  RUN: testSimpleWeightedGraph
+  RUN: testSimpleWeightedGraphBacktracking
+Total: 8 P:8 F:0 E:0 S:0
+=== AIBFSTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testAseGraph
+  RUN: testAseSccGraph
+  RUN: testComplexUndirectedGraph
+  RUN: testSimpleGraph
+  RUN: testWithoutCyclesComplexGraph
+Total: 5 P:5 F:0 E:0 S:0
+=== AIBellmanFordTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testNegativeUnconnectedWeightedGraph
+  RUN: testNegativeWeightedGraph
+  RUN: testNegativeWeightedGraph2
+  RUN: testNegativeWeightedGraphReconstrucPath
+Total: 4 P:4 F:0 E:0 S:0
+=== AIDijkstraTest ===
+  SORT-OK: 12 comparisons for 8 items
+  RUN: testAseBasicCircuit
+  RUN: testAseBasicCircuitBacktrack
+  RUN: testComplexWeightedGraph2
+  RUN: testComplexWeightedGraph2BackTracking
+  RUN: testComplexWeightedGraph3
+  RUN: testComplexWeightedGraph3Backtracking
+  RUN: testSimpleWeightedGraph
+  RUN: testSimpleWeightedGraphBacktracking
+Total: 8 P:8 F:0 E:0 S:0
+=== AIDinicTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testComplexFlow
+  RUN: testSimpleFlow
+Total: 2 P:2 F:0 E:0 S:0
+=== AIGraphAlgorithmTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testAddNodesFromChildrenBlock
+  RUN: testingAddingNodes
+  RUN: testingFindingNodes
+  RUN: testingNodeDictionary
+Total: 4 P:4 F:0 E:0 S:0
+=== AIGraphReducerTest ===
+  SORT-OK: 24 comparisons for 12 items
+  RUN: testAdjacenciesFor
+  RUN: testComplexCycle
+  RUN: testComplexCycle2
+  RUN: testComplexCycleReferences
+  RUN: testGraphReducingWhenNoCycle
+  RUN: testGraphReducingWhenNoCycleReferences
+  RUN: testMergedNodesNotReferencedInNextNodes
+  RUN: testMergedNodesNotReferencedInNextNodesC2
+  RUN: testMergedNodesNotReferencedInNextNodesForSCG
+  RUN: testNoCycle
+  RUN: testStronglyConnectedGraph
+  RUN: testStronglyConnectedGraphReferences
+Total: 12 P:12 F:0 E:0 S:0
+=== AIHitsTest ===
+  SORT-OK: 11 comparisons for 7 items
+  RUN: testComplexCycle
+  RUN: testComplexWCycle
+  RUN: testCycle
+  RUN: testGraphForHits
+  RUN: testNestedCycle
+  RUN: testSimple
+  RUN: testSimpleW
+Total: 7 P:7 F:0 E:0 S:0
+=== AIKruskalTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testMaxSpanningTreeComplex
+  RUN: testMaxSpanningTreeSimple
+  RUN: testMinSpanningTreeComplex
+  RUN: testMinSpanningTreeComplexDisconnected
+  RUN: testMinSpanningTreeSimple
+Total: 5 P:5 F:0 E:0 S:0
+=== AILongestPathInDAGTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testWeightedDAG
+  RUN: testWithoutCyclesComplexWeightedGraph
+Total: 2 P:2 F:0 E:0 S:0
+=== AILongestPathInDCGTest ===
+  SORT-OK: 4 comparisons for 4 items
+  RUN: testNegativeUnconnectedWeightedGraph
+  RUN: testNegativeWeightedGraph
+  RUN: testNegativeWeightedGraph2
+  RUN: testNegativeWeightedGraphReconstrucPath
+Total: 4 P:4 F:0 E:0 S:0
+=== AIPrimTest ===
+  SORT-OK: 3 comparisons for 3 items
+  RUN: testMinSpanningTreeComplex2
+  ERROR: testMinSpanningTreeComplex2 (Error: No Element in Graph : #(9 5 16))
+    >> AIPrim(AIGraphAlgorithm)>>findNode:
+    >> run	self error: 'Decompilation failed' in AIPrim>>run
+    >> SortedCollection(OrderedCollection)>>do:
+    >> AIPrim>>run
+    >> AIPrimTest>>testMinSpanningTreeComplex2
+    >> AIPrimTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AIPrimTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AIPrimTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AIPrimTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  RUN: testMinimumSpanningTreeComplex
+  ERROR: testMinimumSpanningTreeComplex (Error: No Element in Graph : #($b $c 5))
+    >> AIPrim(AIGraphAlgorithm)>>findNode:
+    >> run	self error: 'Decompilation failed' in AIPrim>>run
+    >> SortedCollection(OrderedCollection)>>do:
+    >> AIPrim>>run
+    >> AIPrimTest>>testMinimumSpanningTreeComplex
+    >> AIPrimTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AIPrimTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AIPrimTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AIPrimTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+  RUN: testMinimumSpanningTreeSimple
+  ERROR: testMinimumSpanningTreeSimple (Error: No Element in Graph : #(3 4 2))
+    >> AIPrim(AIGraphAlgorithm)>>findNode:
+    >> run	self error: 'Decompilation failed' in AIPrim>>run
+    >> SortedCollection(OrderedCollection)>>do:
+    >> AIPrim>>run
+    >> AIPrimTest>>testMinimumSpanningTreeSimple
+    >> AIPrimTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AIPrimTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AIPrimTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AIPrimTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+Total: 3 P:0 F:0 E:3 S:0
+=== AIShortestPathInDAGTest ===
+  SORT-OK: 1 comparisons for 2 items
+  RUN: testWeightedDAG
+  RUN: testWithoutCyclesComplexWeightedGraph
+Total: 2 P:2 F:0 E:0 S:0
+=== AITarjanTest ===
+  SORT-OK: 11 comparisons for 7 items
+  RUN: testComplexCycle
+  ERROR: testComplexCycle (KeyNotFound: key Tarjan Node: $h not found in Dictionary)
+    >> Dictionary>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in Dictionary>>at:
+    >> Dictionary>>at:ifAbsent:
+    >> Dictionary>>at:
+    >> Bag>>occurrencesOf:
+    >> = t1	self error: 'Decompilation failed' in Bag>>=
+    >> [ :arg2 | arg2 ifNotNil: [ arg1 value: arg2 ] ] in Dictionary>>associationsDo:
+    >> Array(SequenceableCollection)>>do:
+    >> Dictionary>>associationsDo:
+    >> Bag>>=
+    >> AITarjanTest(TestAsserter)>>assertCollection:hasSameElements:
+    >> AITarjanTest>>testComplexCycle
+    >> AITarjanTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AITarjanTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AITarjanTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AITarjanTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testComplexCycle2
+  RUN: testCycle
+  RUN: testNestedCycle
+  RUN: testNoCycle
+  RUN: testStronglyConnectedGraph
+  ERROR: testStronglyConnectedGraph (KeyNotFound: key Tarjan Node: $e not found in Dictionary)
+    >> Dictionary>>errorKeyNotFound:
+    >> [ self errorKeyNotFound: arg1 ] in Dictionary>>at:
+    >> Dictionary>>at:ifAbsent:
+    >> Dictionary>>at:
+    >> Bag>>occurrencesOf:
+    >> = t1	self error: 'Decompilation failed' in Bag>>=
+    >> [ :arg2 | arg2 ifNotNil: [ arg1 value: arg2 ] ] in Dictionary>>associationsDo:
+    >> Array(SequenceableCollection)>>do:
+    >> Dictionary>>associationsDo:
+    >> Bag>>=
+    >> AITarjanTest(TestAsserter)>>assertCollection:hasSameElements:
+    >> AITarjanTest>>testStronglyConnectedGraph
+    >> AITarjanTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AITarjanTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AITarjanTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AITarjanTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+  RUN: testStronglyConnectedGraphWithObjects
+  ERROR: testStronglyConnectedGraphWithObjects (Error: No Element in Graph : a DummyTestingPerson)
+    >> AITarjan(AIGraphAlgorithm)>>findNode:
+    >> AITarjanTest>>testStronglyConnectedGraphWithObjects
+    >> AITarjanTest(TestCase)>>performTest
+    >> [			self				setUp;				performTest ] in [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AITarjanTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> [		[			self				setUp;				performTest ] ensure: [ self tearDown ] ] in AITarjanTest(TestCase)>>runCase
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> AITarjanTest(TestCase)>>runCase
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> FullBlockClosure(BlockClosure)>>ensure:
+    >> <Error printing blockClosure in: a CompiledBlock: Error printing the compiledBlock in SUnitRunner class>>runSingleTest:selector:timeout:priority:on:
+    >> [				  self value.				  Processor terminateRealActive ] in FullBlockClosure(BlockClosure)>>newProcess
+    >> on: t1 do: t2	self error: 'Decompilation failed' in on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+    >> FullBlockClosure(BlockClosure)>>on:do:
+    >> on: t1 do: t2	self error: 'Decompilation failed' in Process>>on:do:
+Total: 7 P:4 F:0 E:3 S:0
+=== AITopologicalSortingTest ===
+  SORT-OK: 9 comparisons for 6 items
+  RUN: testSimpleGraph
+  RUN: testSortStringHierarchy
+  RUN: testSortWithCycle
+  RUN: testSortWithReducedGraph
+  RUN: testWithoutCyclesComplexGraph
+  RUN: testWithoutCyclesMediumGraph
+Total: 6 P:6 F:0 E:0 S:0
+=== AIWeightedHitsTest ===
+  SORT-OK: 7 comparisons for 5 items
+  RUN: testComplexWeighted
+  RUN: testComplexWeighted2
+  RUN: testComplexWeighted3
+  RUN: testSimpleW
+  RUN: testWithoutCyclesComplexWeightedGraph
+Total: 5 P:5 F:0 E:0 S:0
+*** BATCH COMPLETED for 16 classes (1-16)
+=== BATCH TOTAL ===
+Run: #1
+Batch: 1-16
+Classes: 16
+Pass: 78
+Fail: 0
+Error: 6
+Skip: 0
+Total: 84
+=== BATCH COMPLETE ===

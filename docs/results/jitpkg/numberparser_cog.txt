@@ -1,0 +1,61 @@
+=== Stock Cog SUnit run ===
+Classes to run: 2
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/harness/Pharo.image
+Started: 2026-05-28T18:01:44.027666-04:00
+
+=== NumberParserTest ===
+  RUN: testCoverage
+  RUN: testFail
+  RUN: testFailParsingGarbage
+  RUN: testFailWithDetails
+  RUN: testFloatFromStreamAsNumber
+  RUN: testFloatFromStreamWithExponent
+  RUN: testFloatGradualUnderflow
+  RUN: testFloatMaxAndMin
+  RUN: testFloatPrintString
+  RUN: testFloatReadError
+  RUN: testFloatReadWithRadix
+  RUN: testFloatmin
+  RUN: testIntegerParseUnderscore
+  RUN: testIntegerReadFrom
+  RUN: testIntegerReadWithRadix
+  RUN: testIntegerWithNegExponentIsAFloat
+  RUN: testIsNumber
+  RUN: testMethodsOfTheClassShouldNotBeRepeatedInItsSuperclasses
+  RUN: testNew
+  RUN: testScaledDecimalWithTrailingZeroes
+  RUN: testScaledDecimalWithoutScaleSpecification
+  RUN: testSqueezingOutNumbers
+  RUN: testTraitExplicitRequirementMethodsMustBeImplementedInTheClassOrInASuperclass
+  RUN: testUnCategorizedMethods
+  RUN: testcheckForCoverage
+Total: 25 P:25 F:0 E:0 S:0
+
+=== NumberParsingTest ===
+  RUN: testFloatFromStreamAsNumber
+  RUN: testFloatFromStreamWithExponent
+  RUN: testFloatFromStringAsNumber
+  RUN: testFloatFromStringWithExponent
+  RUN: testFloatReadWithRadix
+  RUN: testIntegerFromString
+  RUN: testIntegerReadFrom
+  RUN: testIntegerReadWithRadix
+  RUN: testNegativeZero
+  RUN: testNumberReadExactlyError
+  RUN: testNumberReadOnlyDigit
+  RUN: testScaledDecimalWithTrailingZeroes
+  RUN: testScaledDecimalWithoutScaleSpecification
+Total: 13 P:13 F:0 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 2
+Pass: 38
+Fail: 0
+Error: 0
+Skip: 0
+Total: 38
+Finished: 2026-05-28T18:01:44.067758-04:00
+
+=== BATCH COMPLETE ===

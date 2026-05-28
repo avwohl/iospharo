@@ -1,0 +1,16 @@
+regex          cog: Pass=196 Fail=0 Error=0 rc=0 0s
+[done] cog baselines: regex
+ston           cog: Pass=156 Fail=0 Error=6 rc=0 0s
+reflectivity   cog: Pass=322 Fail=0 Error=0 rc=0 7s
+ast            cog: Pass=621 Fail=1 Error=1 rc=0 1s
+ring           cog: Pass=290 Fail=0 Error=0 rc=0 1s
+fuel           cog: Pass=37 Fail=0 Error=474 rc=0 0s
+zincenc        cog: Pass=120 Fail=0 Error=1 rc=0 0s
+aigraph        cog: Pass=84 Fail=0 Error=0 rc=0 0s
+numberparser   cog: Pass=38 Fail=0 Error=0 rc=0 1s
+systime        cog: Pass=659 Fail=0 Error=0 rc=0 3s
+strings        cog: Pass=738 Fail=0 Error=0 rc=0 0s
+opal           cog: Pass=633 Fail=0 Error=0 rc=0 1s
+microdown      cog: Pass=620 Fail=4 Error=6 rc=0 0s
+seq            cog: Pass=1695 Fail=0 Error=0 rc=0 1s
+[done] cog baselines: ston reflectivity ast ring fuel zincenc aigraph numberparser systime strings opal microdown seq
