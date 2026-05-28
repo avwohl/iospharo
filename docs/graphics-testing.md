@@ -152,16 +152,17 @@ For **Metacello-loaded** packages (Athens, Bloc, PolyMath):
 
 Queue tracked in TaskList:
 
-       task  package    classes  tests   preinstalled  status
-       #4    Roassal3   99       879     yes           done — 32 PASS / 3 ERROR / 0 FAIL, then SIGSEGV at test 35
-       #9    Spec2      204      3505    yes           done — 363 PASS / 19 FAIL / 318 ERROR / 2 TIMEOUT at 716/3505 (wall-cap)
-       #6    Bloc       53       642     yes           in progress (queue)
-       #5    Athens     10       80      yes           queued
-       #6b   Cairo      7        32      yes           queued (bundled with Bloc)
-       #12   Plot       10       146     yes           queued (bundled)
-       #12b  Chart      4        17      yes           queued (bundled)
-       #7    PolyMath   —        —       no            blocked on Iceberg SHA1 bug
-       #8    Render     —        —       —             pending (cross-cutting)
+       task  package      classes  tests   preinstalled  status
+       #4    Roassal3     99       879     yes           done — 32 PASS / 3 ERROR / 0 FAIL, then SIGSEGV at test 35
+       #9    Spec2        204      3505    yes           done — 363 PASS / 19 FAIL / 318 ERROR / 2 TIMEOUT at 716/3505 (wall-cap)
+       #5    Athens       8        ~64     yes           in progress (queue)
+       #13   Cairo        2        ~16     yes           queued (bundled)
+       #13   Color/Form   3        ~50     yes           queued (bundled)
+       #13   Morph        5        ~40     yes           queued (bundled)
+       #6    Bloc         0        0       no            deleted — not preinstalled (was substring false-match)
+       #12   Plot/Chart   —        —       n/a           deleted — RS-subset of Roassal3 task #4
+       #7    PolyMath     —        —       no            blocked on Iceberg SHA1 bug
+       #8    Render       —        —       —             pending (cross-cutting)
 
 All preinstalled-package class lists are pre-extracted to
 `/tmp/<pkg>_test_classes.txt`.
