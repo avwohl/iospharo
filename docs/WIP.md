@@ -3,6 +3,42 @@
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
+## 2026-05-28 PM — inline-J2J disabled by default (633/634 = 99.84%!)
+
+Bisection found the `cull:`/`do:`/`value:` dispatch confusion bug:
+`PHARO_T1_NO_INLINE_J2J=1` lifts SUnit from 297/634 (47%) to
+**633/634 (99.84%)** on the focused-4-class run.
+
+Per-class with inline-J2J off:
+
+```
+SmallIntegerTest   27/29   (93%)
+SymbolTest        268/268  (100%, was 48%)
+CharacterTest      15/19   (79%)
+ArrayTest         323/324  (99.7%, was 39%)
+TOTAL             633/634  (99.84%, was 47%)
+```
+
+Flipped `t1InlineJ2J` default to off in DebugSettings.cpp; opt back in
+via `PHARO_T1_INLINE_J2J=1`.  Commit `10aa6c80`.
+
+Trade-off: `fib(28)` goes from 9 ms (inline-J2J fast path) to 96 ms
+(normal IC dispatch).  ~10× slowdown on the tightest recursive
+benchmark, but correctness wins until the inline-J2J receiver-class
+check is audited.
+
+**Theory of the bug** (unverified): inline-J2J's IC dispatch trusts
+the cached entryAddr without re-verifying the receiver class.  Some
+polymorphic call site sees a BlockClosure receiver first, fills the
+IC with `extra` carrying bit 60 (J2J_ENTRY_BIT) + BlockClosure>>cull:'s
+entryAddr.  When a later call passes a non-block (e.g. LayoutClassScope)
+to the same IC site, the slot key check matches (somehow) and
+inline-J2J `br`s to BlockClosure>>cull:'s code with the wrong
+receiver.  Manifests as impossible stack frames.
+
+Worth a follow-up lldb session to confirm and fix the receiver-class
+check; then default can be flipped back on.
+
 ## 2026-05-28 PM — additional fixes and cull: investigation
 
 Extended the dual-path primitive trap fix:
