@@ -3,6 +3,32 @@
 ## Goal
 "Fix the JIT optimization to be as fast as Cog."
 
+## 2026-05-28 PM — JIT basicSize correctness bug fixed (71cc0701)
+
+While running SUnit, found a JIT correctness regression that broke
+**every** Unicode-classification-using path (isLetter / numArgs /
+OpalCompiler arity check / SUnit test discovery / Stream parsing /
+...).  Reported 0/0/0/0/0 for every test class.
+
+Root cause: JIT-compiled `basicSize` returned 0 (source fallback)
+for SparseLargeTable receivers — fmt=3 (IndexableWithFixed) WITH
+slotCount-byte=0xFF (overflow header for >= 255 slots).  Two JIT
+paths had the same gap and BOTH had to be fixed:
+- `stencil_primSize` fmt 3/4/5 branch fell through to bytecode.
+- `emitPrimProlog_arm64` for prim 62 only handled fmt 2/10-11/16-23
+  inline, bailed on overflow header, and fell through on fail.
+
+Fix: added `jit_rt_primsize_ptr` helper (class-table lookup of
+fixedFields for fmt 3/4/5, slotCount-as-size for fmt 9).  Plumbed
+through helpers struct / extract_stencils.py / JITCompiler patch
+sites.  Updated both JIT paths to handle overflow headers and call
+the helper for fmt 3/4/5.  Also extended `jit_rt_array_prim`
+primKind=16 IC-shortcut for symmetry.
+
+Verified: `gc at: 117 = 5` (was 0); `$t isLetter = true`;
+SUnit AIAstarTest passes.  See [[jit-dual-path-primitive-trap]] for
+the debugging lesson.
+
 ## Session end state — 2026-05-28
 
 - Branch: `jit` at `4b4465e8` (pushed to origin).
