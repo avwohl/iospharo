@@ -137,3 +137,34 @@ up reading from a tagged extras word instead of the clean
 3. Either mask bits 56-63 in dispatchCached's `[x5, 8]` load, OR
    fix the IC fill so bit 60 only goes into the `extras` word at
    `[x5, 16]`, never into `icData[1]` at `[x5, 8]`.
+
+## Run 2 — 2026-05-28 16:38 → 16:44 (defensive guards landed)
+
+Commit `b8eead95`.  Defensive guards added at two sites:
+
+* `AsmjitT1.cpp` emit_send (arm64): after the low-3-bit tag check,
+  inspect bits 48-63 of the receiver Oop.  Non-canonical → MISS
+  (route to chain loop).  Two extra arm64 instructions per send.
+* `Interpreter.cpp` `sendDoesNotUnderstand`: when receiver has top
+  bits set, log `[DNU-LEAK]` and push nil instead of dereferencing.
+
+Result on the same 99-class Roassal3 list:
+
+       counter   run 1   run 2
+       PASS      32      51    +19
+       FAIL      0       0
+       ERROR     3       121   +118
+       TIMEOUT   0       0
+       reached   35      172   4.9× more
+       crashed   YES     no    !!
+       DNU-LEAK  n/a     3     all `0x86fe800000000008`
+
+The crash is **gone**.  ERROR count exploded because cascading nil
+returns from the 3 leaked sends fail many downstream assertions in
+plot/chart tests.  The run eventually stalled at RSClusterChartTest
+(suite-specific issue, possibly an infinite loop on the nil result;
+the per-test watchdog should catch it but we killed early).
+
+The leak itself is still upstream — these guards prevent the crash
+but don't stop the bit-60 escape.  Next step: find the IC fill /
+return-value path that emits the polluted Oop.
