@@ -272,6 +272,32 @@ out, so the next step is to catch the FIRST corrupting write (a watchpoint on th
 specific operand/temp slot, set at block entry for the failing edge). Getter-off
 remains the correct shipped mitigation (perf-neutral).
 
+### lldb session #3 — watchpoint (2026-05-29): concrete corruption caught, instruction not pinned
+
+Watchpointed the block's `sp[-1]` slot (where `curEdge first` returns its result),
+trapped at the `#first`-on-tuple send:
+
+- `#first` IS sent on the correct flat tuple (slotCount=3, SmInts) and returns via
+  `returnFromMethod → returnValue → push` — i.e. interpreted.
+- The value `#first` writes back is **`0x8641036085410060`** — a contaminated
+  NON-Oop (bit 63 set; not the SmallInteger element it should be). That is the
+  concrete corruption: interpreted `curEdge first` yields garbage.
+- `#at:` (inside `first`) is handled by the interpreter's IC-cached **prim-60
+  fast-path** (`executePrimitive`), NOT `activateMethod` (the at:-activation trap
+  never fired). `#at:` is ALSO J2J-compiled (`[IC-PATCH] #at: J2J=1
+  extra=0x100e0001084f0a70`, bit 60 = J2J entry).
+- Both `first` and prim-60 are correct in isolation (JIT-off passes), so JIT-ON
+  corrupts shared state (operand stack / frame) that the interpreted `first`
+  reads and returns.
+
+Wall hit: the operand slot is REUSED (every push writes through it), so the
+write-watchpoint is too noisy to isolate the FIRST corrupting write from the many
+transient pushes. Pinning the exact leaking instruction needs a non-noisy target —
+a watchpoint on a stable heap-object slot, or catching the first getter-inline
+that emits a non-heap value without perturbing code size (asmjit instrumentation
+shifts method sizes and masks the bug). That's a further deep pass beyond three
+lldb sessions. Getter-off remains the correct shipped mitigation.
+
 STILL OPEN (task #4):
 - The exact arm64 emit defect (a Heisenbug — adding a trace BLR inflated code
   size, pushing a method past its budget so it bailed to interpreter, masking
