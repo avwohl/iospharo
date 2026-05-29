@@ -754,3 +754,43 @@ loses exactly element-0 when both getter+primAt are active.
 Next (now tractable because deterministic + instrumentation-safe): lldb
 single-step asTuple's JIT under PHARO_DET_SCHED to see the off-by-one in the
 operand-stack base / resume offset.  Mitigation unchanged (t1InlineGetter off).
+
+---
+
+## Reverse-exec tape (PHARO_FINDNODE_WATCH) — 2026-05-29
+
+Built the requested reverse-exec tooling: a deterministic event tape that records,
+for asTuple only, every interp bytecode (framePointer_[1] and [2]), context
+save/resume, tuple build, quick-getter write, J2J return/fallback, and chain
+path-marker (PRIMp / ACTp / J2Jin) into a 400K-entry log, then dumps the timeline
++ the corrupt tuple's full lifecycle at the FIRST corrupt build.  Knob:
+PHARO_FINDNODE_WATCH=1 (g_atRecOn, cached at interpret() entry; zero overhead off).
+All recording sites live in Interpreter.cpp next to the `g_atLog` tape namespace.
+
+The tape pinned the mechanism precisely (sharpening the older "missing write"
+finding):
+
+* The corrupt build's element-0 == from.model, and it is a stale heap object.
+* Comparing a GOOD vs the CORRUPT asTuple activation, frame by frame:
+  - GOOD:    `PRIMp(primIdx=264) → QG(writes from.model) → save@2 → … → build`.
+             model#1 went through the C++ chain (cold IC).
+  - CORRUPT: NO PRIMp / QG / ACTp / J2Jin / RET / J2Jret / J2Jfall before the
+             offset-2 save whose framePointer_[1] is already the stale object.
+* So the corrupt model#1 was handled ENTIRELY in asm (stencil-J2J + the warm
+  inline getter + a stencil bail-to-interp) with zero C++ chain involvement.
+* framePointer_[2] (ctx) is identical between good and corrupt at every offset
+  (to → to.model), so model#2 (offset3, run in INTERP after the bail) is correct.
+  Only model#1 (offset1, run in JIT) loses its result.
+* Net: the warm inline getter lands from.model one slot HIGH (framePointer_+2);
+  interp's pushRcvr2 then overwrites that slot, and framePointer_[1] (the slot
+  E7-83 pops as element-0) keeps a leftover heap object from a prior frame.
+
+So it is an operand-base off-by-one between the JIT and interp views, exercised
+ONLY when a warm-inline-getter method that cannot JIT-resume (numBytecodes=0,
+advertiseResume gated off for send-bearing asmjit-T1 methods) bails to interp
+mid-method.  Cold path (C++ chain executePrimitive) writes the operand by sp, so
+it aligns; the asm path does not.  Confirms the older bisection: needs getter +
+primAt both emitted (code-layout-sensitive), inline getter is the proximate
+writer.  Next: lldb single-step the asmjit stencil bail under PHARO_DET_SCHED to
+read the exact slot index the inline getter writes vs the slot the materialize
+reads.  Mitigation unchanged (t1InlineGetter default-off).

@@ -141,6 +141,49 @@ extern "C" uint64_t g_t1IntArithReturn_hits;
 extern "C" uint64_t g_t1EvenOdd_hits;
 extern "C" uint64_t g_sistaShortcut_evenOdd_hits;
 
+// ── REVERSE-EXEC TAPE for the aigraph asTuple interp-resume seed ───────────
+// The bug is deterministic under PHARO_DET_SCHED, so a complete ordered event
+// tape of asTuple's element-0 slot (fp1) — recorded at every resume / save /
+// bytecode / build — IS the reverse-exec data: dump the whole timeline at the
+// first corrupt build and read backward to the first moment fp1 becomes a
+// (heap) tuple instead of the from.model immediate.  Gated on FINDNODE_WATCH.
+namespace {
+bool     g_atRecOn = false;    // FINDNODE_WATCH, cached at interpret() entry
+uint64_t g_atOop = 0;          // asTuple's CompiledMethod oop (bootstrapped, cold)
+uint8_t* g_atBcBase = nullptr; // asTuple's bytecode[0] address (for cheap ipOff)
+struct AtEv { uint8_t kind; uint8_t op; int ipOff; uint64_t fp1; uint64_t ctx; };
+// kind: 0=bytecode 1=resume(EFC) 2=save(materialize) 3=build(E7)
+constexpr int kAtMax = 400000;
+AtEv* g_atLog = nullptr;       // lazily heap-allocated (avoid huge static)
+uint32_t g_atSeq = 0;
+inline bool atHeap(uint64_t b) { return (b & 7) == 0 && b != 0; }
+inline void atRec(uint8_t kind, uint8_t op, int ipOff, uint64_t fp1, uint64_t ctx) {
+    if (!g_atLog) g_atLog = (AtEv*)calloc(kAtMax, sizeof(AtEv));
+    if (g_atLog && g_atSeq < kAtMax) {
+        AtEv& e = g_atLog[g_atSeq];
+        e.kind = kind; e.op = op; e.ipOff = ipOff; e.fp1 = fp1; e.ctx = ctx;
+    }
+    g_atSeq++;
+}
+// kind 6 = quick getter (executePrimitive 264+N): op=instVarIndex,
+// ipOff=sp-fp (alignment probe), fp1=value written, ctx=receiver.
+inline bool atGetterRecOn() { return g_atRecOn; }
+inline void atRecGetter(uint8_t idx, int spfp, uint64_t val, uint64_t recv) {
+    atRec(6, idx, spfp, val, recv);
+}
+}  // namespace
+
+// kind 11 = JIT inline getter (AsmjitT1 tryGetter): op=slotIdx low8,
+// ipOff=full slotIdx, fp1=value written, ctx=receiver.  Only heap values
+// are recorded (immediates are the uninteresting common case), keeping the
+// tape from flooding with the millions of getters across the whole image.
+// Called from the asmjit-emitted inline getter via a guarded BLR.
+extern "C" void jit_rt_atrec_getter(uint64_t recv, uint64_t extra, uint64_t val) {
+    if (!g_atRecOn) return;
+    if ((val & 7) != 0 || val == 0) return;  // heap only (atHeap)
+    atRec(11, (uint8_t)(extra & 0xFF), (int)(extra & 0xFFFF), val, recv);
+}
+
 // jit-may20b Step 6: per-caller bail-gate histogram dump (defined in
 // AsmjitT1.cpp).  Called from dumpJITStats when PHARO_T1_BAIL_GATE_HISTO=1.
 namespace pharo { namespace jit {
@@ -1822,6 +1865,7 @@ void Interpreter::interpret() {
     volatile int64_t lastRunLoopPumpMs = 0;  // volatile for longjmp safety
     auto runLoopBase = std::chrono::steady_clock::now();
 #endif
+    g_atRecOn = GET_DEBUG_BOOL(PHARO_FINDNODE_WATCH);
 
     // Generational-GC young-gen enabler.  PHARO_YOUNG_GEN=1 opts
     // in to eden allocation + scavenge; default off until the
@@ -2001,6 +2045,10 @@ void Interpreter::interpret() {
         if (__builtin_expect(--checkCountdown_ <= 0, 0)) goto periodic_checks; \
         DISPATCH_NEXT_HOT_PATH_DIAG \
         bytecode = *instructionPointer_++; \
+        if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop) \
+            atRec(0, bytecode, (int)(instructionPointer_ - 1 - g_atBcBase), \
+                  framePointer_ ? framePointer_[1].rawBits() : 0, \
+                  framePointer_ ? framePointer_[2].rawBits() : 0); \
         if constexpr (ENABLE_DEBUG_LOGGING) { \
             recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
             recentBytecodeIdx_++; \
@@ -2033,6 +2081,10 @@ void Interpreter::interpret() {
         if (!running_) { goto cg_exit; }
     }
     bytecode = *instructionPointer_++;
+    if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop)
+        atRec(0, bytecode, (int)(instructionPointer_ - 1 - g_atBcBase),
+              framePointer_ ? framePointer_[1].rawBits() : 0,
+              framePointer_ ? framePointer_[2].rawBits() : 0);
     if constexpr (ENABLE_DEBUG_LOGGING) {
         recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
         recentBytecodeIdx_++;
@@ -5092,6 +5144,55 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 memory_.storePointer(i, array, pop());
         }
         push(array);
+        // REVERSE-EXEC TAPE: record asTuple build (element-0) + dump whole tape
+        // at the 1st corrupt build (element-0 = heap tuple).
+        if (__builtin_expect(g_atRecOn, 0) && arraySize == 3 && popIntoArray
+                && method_.isObject() && memory_.selectorOf(method_) == "asTuple") {
+            if (g_atOop == 0) {
+                g_atOop = method_.rawBits();
+                ObjectHeader* mo = method_.asObjectPtr();
+                Oop hdr = mo->slots()[0];
+                int nLit = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                g_atBcBase = mo->bytes() + (1 + nLit) * 8;
+            }
+            uint64_t e0 = memory_.fetchPointer(0, array).rawBits();
+            atRec(3, 0xE7, -1, e0, array.rawBits());
+            static bool dumped = false;
+            if (!dumped && atHeap(e0)) {
+                dumped = true;
+                uint32_t n = g_atSeq < (uint32_t)kAtMax ? g_atSeq : (uint32_t)kAtMax;
+                static const char* kn[] = {"k","r","s","B"};
+                auto kname = [&](uint8_t kd)->const char* {
+                    return kd == 4 ? "RET" : kd == 6 ? "QG" :
+                           kd == 9 ? "J2Jret" : kd == 10 ? "J2Jfall" :
+                           kd == 11 ? "IG" : kd == 13 ? "PRIMp" :
+                           kd == 14 ? "ACTp" : kd == 15 ? "J2Jin" : kn[kd & 3]; };
+                (void)kname;
+                fprintf(stderr, "\n[ATAPE] reverse-exec tape: %u events; CORRUPT build "
+                    "e0=0x%llx (should be from.model immediate).\n",
+                    g_atSeq, (unsigned long long)e0);
+                fprintf(stderr, "=== last 28 events (the corrupt activation) ===\n");
+                uint32_t lo = (n > 28) ? n - 28 : 0;
+                for (uint32_t i = lo; i < n; i++) {
+                    const AtEv& e = g_atLog[i];
+                    fprintf(stderr, "   #%u %s ip=%d op=0x%02x fp1=0x%llx%s ctx=0x%llx%s\n",
+                        i, kname(e.kind), e.ipOff, e.op,
+                        (unsigned long long)e.fp1, atHeap(e.fp1) ? "(HEAP)" : "",
+                        (unsigned long long)e.ctx, e.fp1 == e0 ? " <==e0" : "");
+                }
+                fprintf(stderr, "=== lifecycle of the corrupt tuple 0x%llx (built where? became fp1 where?) ===\n",
+                    (unsigned long long)e0);
+                for (uint32_t i = 0; i < n; i++) {
+                    const AtEv& e = g_atLog[i];
+                    if (e.fp1 == e0 || e.ctx == e0)
+                        fprintf(stderr, "   #%u %s ip=%d op=0x%02x fp1=0x%llx ctx=0x%llx%s\n",
+                            i, kname(e.kind), e.ipOff, e.op,
+                            (unsigned long long)e.fp1, (unsigned long long)e.ctx,
+                            e.kind == 3 && e.ctx == e0 ? "  <== BUILT here (this tuple's own build)" : "");
+                }
+                fflush(stderr);
+            }
+        }
         break;
     }
 
@@ -14869,6 +14970,18 @@ Oop Interpreter::materializeFrameStack() {
                 // Set stackp to actual number of items saved
                 memory_.storePointer(2, context, Oop::fromSmallInteger(savedCount)); // stackp
 
+                // REVERSE-EXEC TAPE: record asTuple save (fp1 = operand-0 captured).
+                if (__builtin_expect(g_atRecOn, 0) && g_atOop != 0
+                        && method_.isObject() && method_.rawBits() == g_atOop) {
+                    int ipOff = (instructionPointer_ >= methodHdr->bytes())
+                        ? (int)(instructionPointer_ - g_atBcBase) : -1;
+                    uint64_t op0 = operandCount > 0 ? operandBase[0].rawBits() : 0;
+                    atRec(2, (instructionPointer_ >= methodHdr->bytes()
+                              && instructionPointer_ < methodHdr->bytes() + methodHdr->byteSize())
+                             ? *instructionPointer_ : 0xFF,
+                          ipOff, op0, context.rawBits());
+                }
+
                 // Ensure context identity: if this frame has a closure (block context),
                 // update the closure's outerContext to point to the freshly materialized
                 // context for the SAME activation. This guarantees that thisContext home
@@ -16335,6 +16448,22 @@ bool Interpreter::executeFromContext(Oop context) {
         for (int i = numSaved; i < numTemps; i++) {
             push(memory_.nil());
         }
+        // REVERSE-EXEC TAPE: record asTuple resume (op0 = restored element-0).
+        if (__builtin_expect(g_atRecOn, 0) && method_.isObject()) {
+            if (g_atOop == 0 && memory_.selectorOf(method_) == "asTuple") {
+                g_atOop = method_.rawBits();
+                ObjectHeader* mo = method_.asObjectPtr();
+                Oop hdr = mo->slots()[0];
+                int nLit = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                g_atBcBase = mo->bytes() + (1 + nLit) * 8;
+            }
+            if (g_atOop != 0 && method_.rawBits() == g_atOop) {
+                long pc = savedPC.isSmallInteger() ? (long)savedPC.asSmallInteger() : -1;
+                uint64_t op0 = numSaved > 0
+                    ? memory_.fetchPointer(ContextFixedFields + 0, context).rawBits() : 0;
+                atRec(1, 0, (int)pc, op0, context.rawBits());
+            }
+        }
     }
 
     // For block contexts with a closure, restore copied values from the closure.
@@ -16817,6 +16946,11 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
             size_t instVarIndex = static_cast<size_t>(primitiveIndex - 264);
             // receiver is a known-valid heap object — use unchecked access
             Oop value = memory_.fetchPointerUnchecked(instVarIndex, receiver);
+            if (__builtin_expect(atGetterRecOn(), 0)) {
+                int spfp = framePointer_ ? (int)(stackPointer_ - framePointer_) : -1;
+                atRecGetter((uint8_t)(instVarIndex & 0xFF), spfp,
+                            value.rawBits(), receiver.rawBits());
+            }
             *(stackPointer_ - 1) = value;  // Replace stack top
             return PrimitiveResult::Success;
         }
@@ -21387,6 +21521,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 // Inline callee returned — pop frame, resume caller in JIT
                 popFrame();
                 push(state.returnValue);
+                if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop) {
+                    int ipOff = (g_atBcBase && instructionPointer_) ? (int)(instructionPointer_ - g_atBcBase) : -2;
+                    atRec(4, 0xA0, ipOff, state.returnValue.rawBits(),
+                          stackPointer_ ? stackPointer_[0].rawBits() : 0);
+                }
                 chainCallDepth--;
 
                 // Restore locals from interpreter state (set by popFrame)
@@ -21503,6 +21642,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             lastJitReturn_.frameDepth = frameDepth_;
             lastJitReturn_.wasResume = false;
             push(state.returnValue);
+            if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop) {
+                int ipOff = (g_atBcBase && instructionPointer_) ? (int)(instructionPointer_ - g_atBcBase) : -2;
+                atRec(4, 0xA1, ipOff, state.returnValue.rawBits(),
+                      stackPointer_ ? stackPointer_[0].rawBits() : 0);
+            }
             // Bug-14 diagnostic: print the interpreter state we just set
             // up for the caller (post-popFrame, post-push).  Compare to
             // the pre-popFrame state.sp for reset's exit to pinpoint the
@@ -22223,6 +22367,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             && (!gateBailMid || !chainJM->canBailMidMethod)
                             && (inlineStubs || !chainJM->isStubOnEntry)) {
                         // --- Save caller state + precompute resume ---
+                        if (__builtin_expect(g_atRecOn, 0) && g_atOop &&
+                            state.method.rawBits() == g_atOop)
+                            atRec(15, (uint8_t)nArgs, primitiveIndexOf(chainTarget),
+                                  chainTarget.rawBits(), state.sp[-(nArgs + 1)].rawBits());
                         Oop* savedSP = state.sp;
                         Oop savedRecv = state.receiver;
                         Oop* savedTempBase = state.tempBase;
@@ -22469,6 +22617,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             }
 
                             // Pop receiver+args, push return value
+                            if (__builtin_expect(g_atRecOn, 0) && g_atOop &&
+                                savedMethod.rawBits() == g_atOop) {
+                                int spOff = (int)(state.sp - savedTempBase);
+                                atRec(9, (uint8_t)nArgs, spOff, retVal.rawBits(),
+                                      state.sp[-(nArgs + 1)].rawBits());
+                            }
                             state.sp[-(nArgs + 1)] = retVal;
                             state.sp -= nArgs;
 
@@ -22725,6 +22879,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                         // Set up interpreter state from innermost exit frame
                         Oop exitMethod = (state.j2jDepth > 0) ? state.method : chainTarget;
+                        if (__builtin_expect(g_atRecOn, 0) && g_atOop &&
+                            (savedMethod.rawBits() == g_atOop || exitMethod.rawBits() == g_atOop)) {
+                            int spOff = (int)(state.tempBase - savedTempBase);
+                            atRec(10, (uint8_t)state.exitReason, spOff,
+                                  state.returnValue.rawBits(), chainTarget.rawBits());
+                        }
                         method_ = exitMethod;
                         homeMethod_ = exitMethod;
                         receiver_ = state.receiver;
@@ -22759,6 +22919,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // execute their primitive, not fallback bytecodes.
             {
                 int primIdx = primitiveIndexOf(chainTarget);
+                if (__builtin_expect(g_atRecOn, 0) && g_atOop &&
+                    state.method.rawBits() == g_atOop)
+                    atRec(13, (uint8_t)nArgs, primIdx, chainTarget.rawBits(),
+                          stackPointer_ ? stackPointer_[-1].rawBits() : 0);
 
                 if (primIdx > 0) {
                     size_t primCallerDepth = frameDepth_;
@@ -22906,6 +23070,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             {
                 // Fallback: non-JIT target or unsafe prim — use activateMethod
                 size_t callerDepth = frameDepth_;
+                if (__builtin_expect(g_atRecOn, 0) && g_atOop &&
+                    state.method.rawBits() == g_atOop)
+                    atRec(14, (uint8_t)nArgs, primitiveIndexOf(chainTarget),
+                          chainTarget.rawBits(),
+                          framePointer_ ? framePointer_[1].rawBits() : 0);
                 activateMethod(chainTarget, nArgs);
 
                 if (frameDepth_ != callerDepth) {
