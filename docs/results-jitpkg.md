@@ -161,6 +161,30 @@ measured 3662 ms with getter ON and 3662 ms with it OFF — i.e. **perf-neutral*
 (a warm monomorphic getter dispatches about as fast via the normal cached path
 as via the inline spec). So the correctness fix costs ~nothing here.
 
+### lldb root-cause progress (2026-05-28)
+
+Caught the bug under lldb (`PHARO_T1_INLINE_GETTER=1`, 2-class repro, break on
+`sendDoesNotUnderstand` with condition
+`((Interpreter*)$x0)->stackPointer_[-1-(int)$w2].bits_ > 0x400000000`):
+
+       garbage receiver = 0x4758857f0   (the DNU receiver)
+       method_          = 0x30380d5f0   (#asInteger)
+       receiver_        = 0x3037fc300   (valid heap obj)
+       stackPointer_    ≈ 0x479b0eaa8   (live execution stack)
+       operand stack near SP holds the garbage value REPEATED across slots:
+         0x4758857f0, 0x475885808, 0x475885838, 0x475888b10 ...
+
+The garbage values are all **stack-region pointers** (0x475…, same region as the
+execution stack at 0x479…). So the inline-getter IC-probe path **leaks a
+stack/frame pointer onto the Smalltalk operand stack**; it's later loaded as a
+send receiver (tag bits 0 → treated as a heap object), mis-resolved to a bogus
+class, and DNUs. The value repeats across slots — a cascade once the first leak
+lands. NB the VM build is RelWithDebInfo (-O2): lldb can read registers / fields
+/ memory but cannot CALL inlined methods (selectorOf etc.), so decoding the exact
+origin getter needs a Debug (-O0) VM build or machine-level single-stepping of
+the getter inline at its runtime code address (read x1/x2/x6/x7 around
+`ldr x6,[x3,8]; stur x6,[x2,off]`).
+
 STILL OPEN (task #4):
 - The exact arm64 emit defect (a Heisenbug — adding a trace BLR inflated code
   size, pushing a method past its budget so it bailed to interpreter, masking
