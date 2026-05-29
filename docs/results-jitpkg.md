@@ -936,3 +936,15 @@ PHARO_FINDNODE_WATCH tape — bootstrap g_atOop on the relevant selector):
      deterministic, reproduces in isolation; startup #asInteger DNU.
   2. ArrayTest>>testSelfEvaluatingComplexCase — needs the multi-class batch warmup.
 Re-enabling t1InlineGetter (removing the mitigation entirely) is gated on these.
+
+Bisection of the getter-on startup #asInteger DNU (ContextTest, det-sched):
+  baseline getter-on        : DNU=3
+  PHARO_NO_J2J=1            : DNU=3   (no effect)
+  PHARO_T1_NO_INLINE_PRIM_AT=1 : DNU=5  (worse, still present)
+  PHARO_T1_NO_IC_PROBE=1    : DNU=5   (worse, still present)
+Unlike aigraph (which NO_INLINE_PRIM_AT cleanly suppressed), none of J2J / primAt
+/ IC-probe suppress this — a deeper, more fundamental getter re-entry interaction
+(SUnitRunner class>>asInteger: the class lands in an integer slot during
+nextRunNumber startup; SISTA-RING shows getter-like returns #size/#arrayType/
+#delimiter just before).  Pinning it needs the tape bootstrapped on a different
+selector, or lldb.  This is the remaining blocker to re-enabling t1InlineGetter.
