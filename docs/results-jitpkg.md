@@ -557,3 +557,33 @@ Net: this turn's lldb work conclusively relocated the bug from the leaf methods
 misalignment in the JIT-compiled `run`.  Next: instrument run's JIT code — watch
 `curEdge`'s temp slot for the wrong store, walk back to the getter that left SP
 off.  Mitigation unchanged: t1InlineGetter default-OFF.
+
+### 2026-05-29 (correction) — the lldb "innocence" findings above are inconclusive
+
+Honesty correction after attempting to "fix run": the lldb conclusions in the two
+prior entries (first innocent / asTuple innocent / run operand-stack misalignment)
+are NOT reliably proven and should be treated as a working hypothesis only.
+
+Across ~8 probes, the ONLY conditional breakpoint that fired was the broad
+"first returns any heap ptr" — and it caught a *legitimate* `nodes first`
+(returning a node), not the buggy `curEdge first`.  Every breakpoint aimed at the
+actual bug path (first-returns-Array, asTuple's `model`-getter load, asTuple's
+returnTop, the curEdge remote-temp store/load, a write-watchpoint on the tuple
+slot) never fired.  Likely because those instructions are on the block's HOT path
+and a per-hit lldb condition perturbs the fork+warmup timing enough to suppress
+the transient.
+
+What IS reliable (timing-safe C++ diagnostics): findNode: receives `curEdge`'s
+element-1 = a heap object where the MST tests need an immediate; asTuple's input
+`from.model` is a valid SmI; the getter classifier is clean (0 OOB); and the
+inline getter is necessary to trigger the bug (primAt compounds 1 of 3 tests;
+returnsSelf/multislot/J2J/resume/chain are all irrelevant).
+
+Net: the bug is a getter-gated transient that corrupts an edge endpoint in
+`AIPrim>>run`, but the exact faulting instruction is NOT pinned — lldb hot-path
+conditional breakpoints can't catch it without perturbing the timing.  No
+root-cause fix is landed for getter-ON (a non-root-cause change would violate the
+project's no-workaround rule).  `run` works under the shipped mitigation
+(t1InlineGetter default-OFF, perf-neutral; AI-Algorithms-Graph 10/10).  Pinning it
+needs lldb Python-callback breakpoints (deref in Python, minimal per-hit cost) or
+a one-shot cheap C++ capture from the chain-loop resume.
