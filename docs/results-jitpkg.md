@@ -587,3 +587,33 @@ project's no-workaround rule).  `run` works under the shipped mitigation
 (t1InlineGetter default-OFF, perf-neutral; AI-Algorithms-Graph 10/10).  Pinning it
 needs lldb Python-callback breakpoints (deref in Python, minimal per-hit cost) or
 a one-shot cheap C++ capture from the chain-loop resume.
+
+### 2026-05-29 (cont.) — full reliable chain (timing-safe C++), exact instruction blocked by Heisenbug
+
+Pushed the localization to a precise, reproducible chain using only cheap C++
+diagnostics (lldb hot-path breakpoints and even traces perturb this fork+warmup
+transient — PHARO_TRACE_STACK_ORIGIN alone drops ERROR 2→1):
+
+1. findNode: receives `curEdge[1]` = a heap object; the MST `#($b $c 5)` tests
+   need an immediate there.
+2. At `first`'s entry the receiver is a 3-slot Array (curEdge) whose element-1 is
+   ALREADY heap ⇒ **first is innocent** (curEdge[1] corrupt upstream).
+3. That corrupt element-1 is an Array exactly 32 bytes (one 3-slot allocation)
+   before curEdge, with slot0 = a Char ⇒ a STALE recent allocation (the previous
+   tuple), not `from model`.
+4. No size-3 ExitArrayCreate ⇒ asTuple runs interpreted and returns a CORRECT
+   tuple; its input `from.model` is a valid SmI.
+
+⇒ The defect is in the JIT-compiled `edges do:` block: resuming after the
+`edge asTuple` send (→ `curEdge := ...` remote-temp store), it binds `curEdge`
+to a stale operand-stack value instead of asTuple's correct result.  Getter-gated
+— PHARO_T1_INLINE_GETTER=1 enlarges the block's send-site code and shifts the
+bcToCode resume offset (same family as the committed 5e4f8d59 bcToCode fix).
+
+The exact faulting instruction is NOT pinned: the block's curEdge store/load are
+hot (per-edge × per-iteration), so any breakpoint or trace perturbs the timing
+and suppresses the transient (demonstrated).  A non-perturbing pin needs a cold,
+per-call C++ capture at the chain-loop ExitReturn for `asTuple` comparing the
+value pushed onto the block's stack (and the resume SP / re-entry bytecode) vs
+asTuple's returnValue.  No root-cause fix landed for getter-ON; mitigation holds
+(t1InlineGetter default-OFF; AI-Algorithms-Graph 10/10).
