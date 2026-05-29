@@ -6640,8 +6640,33 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     const bool noBcToCode = pharo::g_debug.asmjitT1NoBctocode;
     const bool noNumBc = pharo::g_debug.asmjitT1NoNumbc;
     const bool forceResumeForSends = pharo::g_debug.asmjitT1ForceResumeForSends;
+    // Precompute hasCondJump (conditional jumps emit ExitMustBool mid-body).
+    // Used by BOTH the advertiseResume gate (just below) and canBailMidMethod.
+    bool t1HasCondJump = false;
+    if (isReal) {
+        for (size_t i = 0; i < bcLen; ) {
+            uint8_t op = bc[i];
+            if (SistaV1::isConditionalShortJump(op)) { t1HasCondJump = true; break; }
+            int len = SistaV1::bytecodeLength(op);
+            if (len <= 0 || i + (size_t)len > bcLen) break;
+            i += (size_t)len;
+        }
+    }
     bool advertiseResume = isReal && !noNumBc && !noBcToCode && bcLen > 0;
-    if (numSendSites > 0 && !forceResumeForSends) advertiseResume = false;
+    // 2026-05-29: gate resume on cond-jumps, NOT on sends.  The deferred
+    // "Phase 4b.2 send-resume protocol gap" manifests as mustBeBoolean
+    // cascades, which require conditional jumps.  Send-methods WITHOUT
+    // cond-jumps (e.g. AIWeightedEdge>>asTuple = ^{from model. to model.
+    // weight}) can resume safely; forcing them onto the interp-resume path
+    // (numBytecodes=0) is what triggers the AI-Algorithms-Graph asTuple
+    // operand corruption (asTuple re-runs its build with a stale prior tuple
+    // as element-0 — see docs/results-jitpkg.md).  Cond-jump send-methods
+    // stay non-resumable (the MUSTBOOL risk).  Opt-in via
+    // PHARO_T1_RESUME_SENDS_NO_CONDJUMP=1 while validating.
+    bool resumeSendsNoCondjump = pharo::g_debug.asmjitT1ResumeSendsNoCondjump;
+    if (numSendSites > 0 && !forceResumeForSends
+            && (!resumeSendsNoCondjump || t1HasCondJump))
+        advertiseResume = false;
     jm->numBytecodes      = advertiseResume ? (uint16_t)bcLen : 0;
     jm->numICEntries      = numSendSites;
     jm->bcToCodeTableOffset = advertiseResume ? bcToCodeTableOffset : 0;
@@ -6673,17 +6698,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // (isReal=false) bail with ExitSend on entry — no mid-method bail, so
     // the inline-activate gate doesn't need to block them.
     {
-        bool hasCondJump = false;
-        if (isReal) {
-            for (size_t i = 0; i < bcLen; ) {
-                uint8_t op = bc[i];
-                if (SistaV1::isConditionalShortJump(op)) { hasCondJump = true; break; }
-                int len = SistaV1::bytecodeLength(op);
-                if (len <= 0 || i + (size_t)len > bcLen) break;
-                i += (size_t)len;
-            }
-        }
-        jm->canBailMidMethod = hasCondJump;
+        jm->canBailMidMethod = t1HasCondJump;  // precomputed above
         // F3-NL3: detect non-local return (BlockReturnNil 0x5D /
         // BlockReturnTop 0x5E) at compile time so the BV inline prep
         // can skip the per-call bytecode scan.
@@ -6756,7 +6771,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             g_canSkipJ2JSave_total++;
             if (jm->canSkipJ2JSave) g_canSkipJ2JSave_count++;
         }
-        if (hasCondJump) {
+        if (t1HasCondJump) {
             g_condJumpRealCompiles++;
             if (pharo::g_debug.asmjitT1TraceCond) {
                 fprintf(stderr,

@@ -442,6 +442,7 @@ struct DebugSettings {
     bool a1Trace = false;                          // PHARO_A1_TRACE
     bool asmjitT1BctocodeZero = false;             // PHARO_ASMJIT_T1_BCTOCODE_ZERO
     bool asmjitT1ForceResumeForSends = false;      // PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS
+    bool asmjitT1ResumeSendsNoCondjump = false;    // PHARO_T1_RESUME_SENDS_NO_CONDJUMP: advertise resume for send-methods w/o cond-jumps
     bool asmjitT1HardcodeStub = false;             // PHARO_ASMJIT_T1_HARDCODE_STUB
     bool asmjitT1Log = false;                      // PHARO_ASMJIT_T1_LOG
     bool asmjitT1NoBctocode = false;               // PHARO_ASMJIT_T1_NO_BCTOCODE

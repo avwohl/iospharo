@@ -416,6 +416,7 @@ DebugSettings::DebugSettings() {
     a1Trace                          = envPresent("PHARO_A1_TRACE");
     asmjitT1BctocodeZero             = envPresent("PHARO_ASMJIT_T1_BCTOCODE_ZERO");
     asmjitT1ForceResumeForSends      = envPresent("PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS");
+    asmjitT1ResumeSendsNoCondjump    = envPresent("PHARO_T1_RESUME_SENDS_NO_CONDJUMP");
     asmjitT1HardcodeStub             = envPresent("PHARO_ASMJIT_T1_HARDCODE_STUB");
     asmjitT1Log                      = envPresent("PHARO_ASMJIT_T1_LOG");
     asmjitT1NoBctocode               = envPresent("PHARO_ASMJIT_T1_NO_BCTOCODE");
