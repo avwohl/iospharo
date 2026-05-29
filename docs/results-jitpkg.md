@@ -794,3 +794,28 @@ primAt both emitted (code-layout-sensitive), inline getter is the proximate
 writer.  Next: lldb single-step the asmjit stencil bail under PHARO_DET_SCHED to
 read the exact slot index the inline getter writes vs the slot the materialize
 reads.  Mitigation unchanged (t1InlineGetter default-off).
+
+### Off-by-one CONFIRMED — inline getter writes operandBase[1] not [0] (2026-05-29)
+
+Added an asTuple-only inline-getter write recorder (file-static g_emitGetterTrace
+set in compileViaAsmjit when selectorOf=="asTuple", so the BLR is emitted at just
+asTuple's 2 getter sites — no global code-size bloat, ERROR stays 2).  The helper
+(jit_rt_atrec_getter) reads state.sp/state.tempBase and logs slotOff =
+(sp-8 - tempBase)/8 — the operand slot the getter just wrote.
+
+Result, two back-to-back asTuple model#1 inline-getter writes (different forked
+processes, det-sched):
+  #4100 IG slotOff=0 val=0x39   ← correct: wrote operandBase[0]
+  #4101 IG slotOff=1 val=0x31   ← CORRUPT: wrote operandBase[1]
+  #4102 k@2 framePointer_[1]=<stale heap>  framePointer_[2]=0x31 (the misplaced val)
+  #4103 k@3 framePointer_[2] := to (pushRcvr2 overwrites 0x31; from.model lost)
+
+So the corrupt activation runs asTuple's offset1 getter with OFF_SP one slot too
+HIGH: offset0's pushRcvr1 and the getter both land one slot up, operandBase[0]
+(the slot E7-83 pops as element-0) is never written and keeps a stale heap object.
+Good activations have OFF_SP correct (slotOff=0); QG (cold-chain) path shows
+sp-fp=2 (correct) because executePrimitive writes by the interp stackPointer_,
+which is right.  Both run offset0-1 in JIT (fresh entry), so the off-by-one is in
+asTuple's JIT entry OFF_SP init for the buggy path — process/timing-dependent,
+matching the Heisenbug.  Next: record OFF_SP at asTuple's prologue entry to see
+which entry path leaves it +1.

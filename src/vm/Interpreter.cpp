@@ -173,15 +173,18 @@ inline void atRecGetter(uint8_t idx, int spfp, uint64_t val, uint64_t recv) {
 }
 }  // namespace
 
-// kind 11 = JIT inline getter (AsmjitT1 tryGetter): op=slotIdx low8,
-// ipOff=full slotIdx, fp1=value written, ctx=receiver.  Only heap values
-// are recorded (immediates are the uninteresting common case), keeping the
-// tape from flooding with the millions of getters across the whole image.
-// Called from the asmjit-emitted inline getter via a guarded BLR.
-extern "C" void jit_rt_atrec_getter(uint64_t recv, uint64_t extra, uint64_t val) {
-    if (!g_atRecOn) return;
-    if ((val & 7) != 0 || val == 0) return;  // heap only (atHeap)
-    atRec(11, (uint8_t)(extra & 0xFF), (int)(extra & 0xFFFF), val, recv);
+// kind 11 = JIT inline getter (AsmjitT1 tryGetter, asTuple only): op=write
+// slot index relative to operand base (0 = correct operandBase[0]; nonzero =
+// off-by-one), ipOff=same, fp1=value written, ctx=receiver.  The inline getter
+// wrote val to sp[-1]; operandBase[0] is tempBase (asTuple has 0 temps), so
+// slotOff = (sp-8 - tempBase)/8.  A nonzero slotOff is the misalignment.
+extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val) {
+    if (!g_atRecOn || statep == 0) return;
+    pharo::jit::JITState* st = reinterpret_cast<pharo::jit::JITState*>(statep);
+    int64_t sp = reinterpret_cast<int64_t>(st->sp);
+    int64_t tb = reinterpret_cast<int64_t>(st->tempBase);
+    int slotOff = (int)((sp - 8 - tb) / 8);
+    atRec(11, (uint8_t)(slotOff & 0xFF), slotOff, val, recv);
 }
 
 // jit-may20b Step 6: per-caller bail-gate histogram dump (defined in

@@ -38,6 +38,16 @@
 #include "../../ObjectMemory.hpp"
 #include "../../Interpreter.hpp"
 #include "../../DebugSettings.hpp"
+#include "../../DebugVars.hpp"
+
+// Debug-only inline-getter write recorder for the aigraph investigation
+// (PHARO_FINDNODE_WATCH).  Defined in Interpreter.cpp next to the tape; takes
+// (state, recv, val) so it can read sp/tempBase and compute the write slot.
+extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val);
+// Set true in compileViaAsmjit ONLY when compiling asTuple under
+// FINDNODE_WATCH, so the recorder BLR is emitted at just asTuple's 2 getter
+// sites (no global code bloat).  Read at emit time in the inline getter.
+static bool g_emitGetterTrace = false;
 
 #include <cstdio>
 #include <cstdlib>
@@ -4608,6 +4618,27 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.add(x3, x1, x6, asmjit::a64::lsl(3));
             a.ldr(x6, ptr(x3, 8));                // val = *(recv+slot*8+8)
             a.stur(x6, ptr(x2, rcvrOffsetBytes));  // replace receiver
+            // FINDNODE_WATCH (asTuple only): record (state=x0, recv=x1, val=x6)
+            // so the helper can compute which operand slot we wrote vs tempBase.
+            if (g_emitGetterTrace) {
+                a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
+                a.str(x0,  ptr(asmjit::a64::sp, 0));
+                a.str(x1,  ptr(asmjit::a64::sp, 8));
+                a.str(x2,  ptr(asmjit::a64::sp, 16));
+                a.str(x6,  ptr(asmjit::a64::sp, 24));
+                a.str(x7,  ptr(asmjit::a64::sp, 32));
+                a.str(x30, ptr(asmjit::a64::sp, 40));
+                a.mov(x2, x6);    // arg2 = val (x0=state, x1=recv already in place)
+                a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_atrec_getter));
+                a.blr(x9);
+                a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+                a.ldr(x1,  ptr(asmjit::a64::sp, 8));
+                a.ldr(x2,  ptr(asmjit::a64::sp, 16));
+                a.ldr(x6,  ptr(asmjit::a64::sp, 24));
+                a.ldr(x7,  ptr(asmjit::a64::sp, 32));
+                a.ldr(x30, ptr(asmjit::a64::sp, 40));
+                a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
+            }
             if (nArgs > 0) {
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
@@ -6558,6 +6589,10 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             }
         }
     }
+    // FINDNODE_WATCH: emit the inline-getter write recorder ONLY for asTuple,
+    // so just its 2 getter sites get the BLR (no global code-size bloat).
+    g_emitGetterTrace = GET_DEBUG_BOOL(PHARO_FINDNODE_WATCH)
+        && memory.selectorOf(compiledMethod) == "asTuple";
     if (!emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
                          callerArgCount, callerTempCount,
                          staticJ2JArgCount,
