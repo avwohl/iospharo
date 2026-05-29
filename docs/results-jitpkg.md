@@ -185,6 +185,30 @@ origin getter needs a Debug (-O0) VM build or machine-level single-stepping of
 the getter inline at its runtime code address (read x1/x2/x6/x7 around
 `ldr x6,[x3,8]; stur x6,[x2,off]`).
 
+### SECOND bug found + FIXED: unbound-label garbage bcToCode (2026-05-28)
+
+The Debug (-O0) build of the repro asserted during compilation:
+`asmjit codeholder.h:591 is_bound()` in `emitMethodBytes` →
+`label_offset_from_base`. Root cause: `emitMethodBytes` built the bcToCode table
+by querying `label_offset_from_base(bcLabels[i])` for ALL `i` in `[0,bcLen)`, but
+the emit loop only BINDS `bcLabels[emitSkip..bcLen)`. For primitive methods
+(`emitSkip=3`, the CallPrimitive 0xF8/lo/hi header), `bcLabels[0..2]` are never
+bound → `label_offset_from_base` returns GARBAGE in NDEBUG (asserts in Debug),
+so `bcToCode[0..2]` became bogus JIT re-entry offsets. Fixed (`AsmjitT1.cpp`):
+map the unbound header slots to 0. This is a real latent correctness landmine
+(any primitive method had garbage re-entry offsets for its header indices), but
+it is NOT the aigraph/ring inline-spec bug — those persist after this fix.
+
+### Ring is NON-deterministic (the inline-spec bug is timing-dependent)
+
+After the unbound-label fix, ringmin JIT-on varies run-to-run (40/1, 33/8, …);
+JIT-off and PROBE-OFF are reliably 41/0. So ring's IC-probe inline-spec bug
+(returnsSelf/returnsLiteral) is FLAKY/timing-dependent, unlike aigraph's getter
+bug which is deterministic. This explains the earlier inconsistent spec-disable
+bisections. PROBE-OFF reliably fixes ring but SIGSEGVs ast (separate non-probe
+dispatch bug), and spec-disables are flaky — so ring is not cleanly fixable
+without the inline-spec emit root cause.
+
 STILL OPEN (task #4):
 - The exact arm64 emit defect (a Heisenbug — adding a trace BLR inflated code
   size, pushing a method past its budget so it bailed to interpreter, masking

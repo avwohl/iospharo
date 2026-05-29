@@ -122,3 +122,4 @@ test.txt
 /startup.st
 docs/results/jitpkg/*_run.log
 docs/results/jitpkg/*_clean_*.log
+build-dbg/
