@@ -53,6 +53,30 @@ Clean-image JIT-on-vs-off verdicts (the authoritative JIT-bug test):
 Headline: BOTH aigraph and ring JIT bugs root-cause to the **inline IC probe**
 (`PHARO_T1_NO_IC_PROBE=1` fixes both). See below.
 
+## UPDATE 2026-05-29 — deterministic + propagation pinned (root cause = inline getter)
+
+Built `PHARO_DET_SCHED` (deterministic scheduling, committed 419b0a7a) which turns
+this Heisenbug into a deterministic, instrumentation-safe repro. With timing-safe
+ring captures + in-process `backtrace()` (no MCP lldb this session):
+
+- **Root cause = the inline getter**, proven by deterministic bisection under
+  `PHARO_DET_SCHED=1 PHARO_T1_INLINE_GETTER=1`:
+  `PHARO_T1_NO_INLINE_GETTER=1` → 0 corrupt tuples; `PHARO_T1_NO_INLINE_PRIM_AT=1`
+  → 12→3 (primAt only amplifies).
+- The corrupt `AIWeightedEdge>>asTuple` tuples are built in the **interpreter**
+  (`{from model. to model. weight}`) with **element-0 (`from model`) stale** while
+  element-1/2 are correct. asTuple is **resumed at bytecode offset 2** (skipping the
+  `from model` getter) with its first operand slot (fp[1]) holding a stale leftover.
+- Mechanism: asTuple's frame **bounces between a force-yield save**
+  (`materializeFrameStack ← transferTo ← handleForceYield`) **and a relinquish-resume**
+  (`executeFromContext ← transferTo ← primitiveRelinquishProcessor`) **at offset 2 with
+  fp[1] stale — self-perpetuating across the forked SUnit processes.** The save/resume
+  round-trip is faithful; the staleness is upstream. The first-seeding transition
+  (asTuple first reaching interp offset 2 without fp[1]=from.model) evades every C++
+  capture point — needs MCP lldb single-step (deterministic now). Full chain +
+  inline-`selectorOf` capture recipe in memory `jit_aigraph_fork_arg_corruption.md`.
+- Mitigation holds: `t1InlineGetter` default-OFF, aigraph 10/10 default, perf-neutral.
+
 ## HEADLINE: confirmed JIT correctness bug in aigraph (Prim/Tarjan)
 
 The one unambiguous JIT bug this campaign found. On the **clean** harness image
