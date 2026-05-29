@@ -617,3 +617,30 @@ per-call C++ capture at the chain-loop ExitReturn for `asTuple` comparing the
 value pushed onto the block's stack (and the resume SP / re-entry bytecode) vs
 asTuple's returnValue.  No root-cause fix landed for getter-ON; mitigation holds
 (t1InlineGetter default-OFF; AI-Algorithms-Graph 10/10).
+
+### 2026-05-29 (cold-capture follow-up) — every layer ruled out; rare Heisenbug transient
+
+Did the suggested non-perturbing cold (per-call) C++ captures.  Results ruled out
+each remaining layer:
+
+* asTuple IS JIT-compiled and builds a CORRECT tuple every time — its `E7 83`
+  reaches ExitArrayCreate with element-0 (`from model`) always an immediate,
+  never heap, never changed across the allocation's GC.
+* asTuple returns via **J2J (direct jit-to-jit), not the chain loop** — a capture
+  of asTuple's chain-loop ExitReturn never fired (lastJitReturn is only ever
+  #first/#third).  `first` returns via the chain loop.
+* The J2J return SP is correct — `PHARO_RJ2J_VALIDATE` shows zero `[RJ2J-SPDRIFT]`
+  and does not perturb the bug (ERROR stays 2).
+
+Yet only a small fraction of curEdges get a heap element-1.  So every AGGREGATE
+invariant holds (asTuple output correct, J2J SP correct) but a RARE dynamic event
+(GC/fork/IC timing) still binds the occasional curEdge to a stale recent
+allocation.  Catching that specific rare event requires per-event instrumentation
+that perturbs the fork+warmup timing and suppresses it — demonstrated repeatedly
+across ~15 probes (all lldb bps on the bug path never fired; PHARO_TRACE_STACK_ORIGIN
+drops ERROR 2→1).
+
+This is a genuine Heisenbug-class rare transient; the exact instruction is not
+pinnable with perturbing tools.  No getter-ON fix landed (a non-root-cause change
+would violate the no-workaround rule).  Mitigation holds: t1InlineGetter
+default-OFF (perf-neutral; AI-Algorithms-Graph 10/10).
