@@ -244,6 +244,34 @@ hiding lldb locals, Debug-build line-breakpoint non-resolution, and asmjit
 instrumentation perturbing the bug (code-size → method bails). `build-dbg/` +
 `PHARO_T1_GETTER_CLASSIFY_LOG` are staged for that session.
 
+### lldb session #2 (2026-05-28): localized, not yet pinned
+
+Drove the Debug VM (`build-dbg/`) under lldb + breakable C++ traps. Established:
+
+- The failing `findNode:` send (and the `curEdge first` before it) is
+  **INTERPRETED**, not JIT'd (C++ bt: `interpret → sendSelector → activateMethod`).
+- `curEdge` is the **correct flat array** `#(3 4 2)` (slotCount=3, SmallIntegers)
+  at the moment `#first` is sent — confirmed by a trap on `#first`-on-Array.
+- `SequenceableCollection>>first` (`^self at: 1`, with `at:` a `<70>` special
+  send) is **NOT JIT-compiled** (methodMap lookup = null).
+- The interpreter's inline fast-paths DO apply IC classifications
+  (`Interpreter.cpp` getter@8138, setter@8155, returnsSelf@8180, etc.) — a
+  plausible culprit — but instrumented traps show NONE of them fire for
+  `#first`/`#at:`/`#second`.
+- So `#first` dispatches+activates normally on a correct `curEdge`, yet the
+  interpreted result fed to `findNode:` is the whole array (= `curEdge`).
+
+Conclusion: the interpreter is correct in isolation (JIT-off passes), so JIT-ON
+must be **corrupting shared state** that the interpreted block then reads — i.e.
+an inline-getter (for a node accessor like `model`/`distance`, which DO inline)
+corrupts the operand stack / a temp / a cache, and the corruption surfaces in the
+interpreted `curEdge first`. This is the hardest bug class (JIT corrupting
+interpreter-visible state). The exact corrupting getter + instruction is NOT yet
+pinned — every direct mechanism on the `first`/`at:`/`findNode:` path was ruled
+out, so the next step is to catch the FIRST corrupting write (a watchpoint on the
+specific operand/temp slot, set at block entry for the failing edge). Getter-off
+remains the correct shipped mitigation (perf-neutral).
+
 STILL OPEN (task #4):
 - The exact arm64 emit defect (a Heisenbug — adding a trace BLR inflated code
   size, pushing a method past its budget so it bailed to interpreter, masking
