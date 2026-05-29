@@ -3653,11 +3653,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     } else {
                         a.b_ne(dispatchCached);
                     }
-                    // Heap receiver path
-                    if (g_debug.t1InlineGetter) {
+                    // Heap receiver path.  Arity gates (see below): getter
+                    // 0-arg, setter 1-arg — a stale/racy IC extra must not
+                    // hijack a wrong-arity send.
+                    if (g_debug.t1InlineGetter && nArgs == 0) {
                         a.tbnz(x7, asmjit::Imm(63), tryGetter);
                     }
-                    if (g_debug.t1InlineSetter) {
+                    if (g_debug.t1InlineSetter && nArgs == 1) {
                         a.tbnz(x7, asmjit::Imm(62), trySetter);
                     }
                     if (g_debug.t1InlineReturnsSelf) {
@@ -4484,10 +4486,16 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.tst(x1, asmjit::Imm(0x7));
                     a.b_ne(dispatchCached);
                 }
-                if (g_debug.t1InlineGetter) {
+                // Arity gates: a getter is a 0-arg unary accessor, a setter
+                // a 1-arg mutator.  Emitting the dispatch only at a matching-
+                // arity send-site stops a stale/racy IC extra word from
+                // hijacking a send of the wrong arity (e.g. the nArgs==1
+                // `at:` inside SequenceableCollection>>first taking the 0-arg
+                // getter fast path — AI-Algorithms-Graph `curEdge first`).
+                if (g_debug.t1InlineGetter && nArgs == 0) {
                     a.tbnz(x7, asmjit::Imm(63), tryGetter);
                 }
-                if (g_debug.t1InlineSetter) {
+                if (g_debug.t1InlineSetter && nArgs == 1) {
                     a.tbnz(x7, asmjit::Imm(62), trySetter);
                 }
                 if (g_debug.t1InlineReturnsSelf) {
@@ -4545,10 +4553,16 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b_ne(dispatchCached);
                 }
 
-                if (g_debug.t1InlineGetter) {
+                // Arity gates: a getter is a 0-arg unary accessor, a setter
+                // a 1-arg mutator.  Emitting the dispatch only at a matching-
+                // arity send-site stops a stale/racy IC extra word from
+                // hijacking a send of the wrong arity (e.g. the nArgs==1
+                // `at:` inside SequenceableCollection>>first taking the 0-arg
+                // getter fast path — AI-Algorithms-Graph `curEdge first`).
+                if (g_debug.t1InlineGetter && nArgs == 0) {
                     a.tbnz(x7, asmjit::Imm(63), tryGetter);
                 }
-                if (g_debug.t1InlineSetter) {
+                if (g_debug.t1InlineSetter && nArgs == 1) {
                     a.tbnz(x7, asmjit::Imm(62), trySetter);
                 }
                 if (g_debug.t1InlineReturnsSelf) {

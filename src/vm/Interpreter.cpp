@@ -8655,15 +8655,24 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
     uint8_t bc0 = bytes[bcStart];
     uint8_t bc1 = bytes[bcStart + 1];
 
+    // numArgs from the method header (bits 27:24).  A getter is a 0-arg
+    // unary accessor and a setter is a 1-arg mutator; the bytecode shape
+    // alone is NOT sufficient.  Some multi-arg methods share the shape:
+    // e.g. ConstantBlockClosure>>value:/value:value: is `pushRecvVar 3;
+    // returnTop` (`^ capturedConstant`).  Classifying those as getters
+    // poisoned the inline-getter IC and made the asmjit-T1 getter fast
+    // path hijack multi-arg sends, breaking AI-Algorithms-Graph
+    // (`curEdge first` returned the whole edge tuple).  Gate on numArgs.
+    int numArgs = (int)((headerBits >> 24) & 0x0F);
 
-    // Getter: pushRecvVar N (0x00-0x0F) + returnTop (0x5C)
-    if (bc0 <= 0x0F && bc1 == 0x5C) {
+    // Getter: pushRecvVar N (0x00-0x0F) + returnTop (0x5C), 0-arg only.
+    if (numArgs == 0 && bc0 <= 0x0F && bc1 == 0x5C) {
         info.getterIndex = (int16_t)bc0;
         return info;
     }
 
-    // Getter: extended pushRecvVar (0xE2 N) + returnTop (0x5C)
-    if (bcLen >= 3 && bc0 == 0xE2 && bytes[bcStart + 2] == 0x5C) {
+    // Getter: extended pushRecvVar (0xE2 N) + returnTop (0x5C), 0-arg only.
+    if (numArgs == 0 && bcLen >= 3 && bc0 == 0xE2 && bytes[bcStart + 2] == 0x5C) {
         info.getterIndex = (int16_t)bc1;
         return info;
     }
@@ -8671,13 +8680,13 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
     // Setter: popStoreRecvVar N (0xC8-0xCF) + returnReceiver (0x58)
     // The 1-arg setter: receiver is at stackValue(1), arg at stackValue(0)
     // popStoreRecvVar pops arg and stores in inst var, returnReceiver returns self
-    if (bc0 >= 0xC8 && bc0 <= 0xCF && bc1 == 0x58) {
+    if (numArgs == 1 && bc0 >= 0xC8 && bc0 <= 0xCF && bc1 == 0x58) {
         info.setterIndex = (int16_t)(bc0 - 0xC8);
         return info;
     }
 
-    // Setter: extended (0xF0 N) + returnReceiver (0x58)
-    if (bcLen >= 3 && bc0 == 0xF0 && bytes[bcStart + 2] == 0x58) {
+    // Setter: extended (0xF0 N) + returnReceiver (0x58), 1-arg only.
+    if (numArgs == 1 && bcLen >= 3 && bc0 == 0xF0 && bytes[bcStart + 2] == 0x58) {
         info.setterIndex = (int16_t)bc1;
         return info;
     }
