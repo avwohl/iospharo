@@ -77,6 +77,30 @@ ring captures + in-process `backtrace()` (no MCP lldb this session):
   inline-`selectorOf` capture recipe in memory `jit_aigraph_fork_arg_corruption.md`.
 - Mitigation holds: `t1InlineGetter` default-OFF, aigraph 10/10 default, perf-neutral.
 
+### lldb breakthrough (2026-05-29) — asTuple is RE-RUN with the prior tuple
+
+CLI lldb (codesigned binary; `astuple_stale_save_bp` noinline marker w/ unique
+side effects to defeat identical-code-folding; SmI decode `value<<3|1`) caught the
+1st corrupt build and showed the actual mechanism:
+
+- asTuple is **re-executed on the same edge**: its element-0 slot (fp[1]) holds the
+  edge's CORRECT prior asTuple result — a 3-elem tuple `{from.model, to.model,
+  weight}` — instead of the immediate `from.model`. So the rebuild produces
+  `{prior_tuple, to.model, weight}`; `findNode: curEdge first` then gets the whole
+  tuple → "No Element in Graph".
+- asTuple is LIVE in the interpreter at bytecode offset 2 (pushRcvr2) with fp[1]=the
+  tuple — resumed (`executeFromContext ← transferTo ← relinquish/forceYield`) from a
+  context whose **pc=offset2 (mid-build) but op0=the-built-tuple (post-build)** — an
+  inconsistent context that re-runs the build.
+- The save↔resume round-trip is faithful; asTuple is never frame0 / inner-frame (only
+  the current-frame materialize, which updates pc+op0 atomically). So no instrumented
+  path creates the `{pc=offset2, op0=tuple}` mix — the inconsistency is in the LIVE
+  state (`ip=offset2` yet stack is post-build), arising from asTuple's JIT
+  execution / a JIT-exit that sets `state.ip=offset2` with a post-build operand stack.
+- Next: instrument asTuple's JIT exit (state.ip set after E7-83 / a send) for
+  `ip==offset2 && stack-top heap`, or an ASLR-disabled watchpoint on the reused
+  context's pc/op0 slots. Full chain in memory `jit_aigraph_fork_arg_corruption.md`.
+
 ## HEADLINE: confirmed JIT correctness bug in aigraph (Prim/Tarjan)
 
 The one unambiguous JIT bug this campaign found. On the **clean** harness image
