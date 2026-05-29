@@ -237,6 +237,65 @@ CLI invocation if MCP isn't loaded for some reason:
 Memory: `project_jit_session_2026_05_06.md` documents prior
 lldb-driven JIT debug sessions.
 
+## Debugging timing-sensitive JIT Heisenbugs (`PHARO_DET_SCHED`)
+
+Some JIT correctness bugs only fire under a specific interleaving of the
+forked SUnit test processes. The round-robin preemption is normally driven by
+the **wall-clock heartbeat thread** (`Interpreter.cpp:3814`, sets `forceYield_`
+every ~2 ms). That makes such bugs *Heisenbugs*: any observation overhead — an
+lldb breakpoint, even a cheap `fprintf` trace — shifts the timing and the bug
+vanishes. A full session once burned ~18 probes that all "fixed" the bug merely
+by being attached.
+
+The cure is **deterministic scheduling**. `PHARO_DET_SCHED=1` drives the
+force-yield from the per-1024-bytecode checkpoint (`g_stepNum`,
+`Interpreter.cpp:2637`) instead of the wall clock, and disables the heartbeat
+yield. Scheduling is then identical every run, so the bug reproduces at a FIXED
+point — **and keeps reproducing with instrumentation attached.** Verified: it
+turned the aigraph inline-getter transient (`AIPrimTest` / `AITarjanTest`,
+`Error: No Element in Graph`) from unpinnable into a deterministic, lldb-able
+layout bug. `PHARO_DET_SCHED_QUANTUM=N` widens the yield interval to N×1024
+bytecodes (default 1) if you need a coarser round-robin.
+
+Repro pattern for a timing-sensitive JIT bug:
+
+    printf 'AIPrimTest\n' > /tmp/sunit_class_names.txt
+    PHARO_T1_INLINE_GETTER=1 PHARO_DET_SCHED=1 \
+      ./build/test_load_image /tmp/harness/Pharo-jit.image
+    # ERROR=2 every run; now safe to attach lldb / add traces without
+    # suppressing it. Bisect emit knobs (NO_INLINE_GETTER, T1_NO_INLINE_PRIM_AT,
+    # NO_J2J, ...) deterministically to isolate the interacting specializations.
+
+When you hit "works under the debugger, fails otherwise" on a JIT bug, reach
+for `PHARO_DET_SCHED` FIRST — don't re-derive that the heartbeat is the culprit.
+Full evidence chain: memory `jit_aigraph_fork_arg_corruption.md`,
+`docs/results-jitpkg.md`.
+
+## Debug/control knobs: add them in `debug_vars.h` (one place)
+
+New env-var knobs go in `src/vm/debug_vars.h` — a single X-macro list that is
+the source of truth. The token IS the literal env-var name, used identically at
+declaration, as the env var, and at the fetch site, so there is nothing to keep
+in sync (the older `DebugSettings.hpp` declaration + `DebugSettings.cpp`
+initializer split drifted out of sync; that's what this replaces). To add one:
+
+    // in src/vm/debug_vars.h
+    DEBUG_BOOL(PHARO_MY_FLAG)              // present  => getenv(name) != nullptr
+    DEBUG_INT(PHARO_MY_COUNT, 1)           // atoi if set+non-empty, else default
+    DEBUG_STR(PHARO_MY_PATH)               // value if set+non-empty, else nullptr
+
+Then read it anywhere (after `#include "DebugVars.hpp"`):
+
+    if (GET_DEBUG_BOOL(PHARO_MY_FLAG)) ...
+    int n = GET_DEBUG_INT(PHARO_MY_COUNT);
+
+This still obeys the **no-per-call-`getenv`** rule: all knobs are parsed ONCE at
+static init (`DebugVars.cpp`, `initDebugVars()`), and `GET_DEBUG_*` is just an
+array index. `DebugVars.cpp` is exempted from the CMake getenv-ban alongside
+`DebugSettings.cpp`. Derived/computed knobs (combinations, default-on opt-outs)
+still live in `DebugSettings` for now — `debug_vars.h` is for the simple
+one-env-var-one-knob cases.
+
 ## References
 
 - Sista V1 bytecode spec: `docs/SistaV1-Bytecode-Spec.md` (local copy — online
