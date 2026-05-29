@@ -97,9 +97,21 @@ side effects to defeat identical-code-folding; SmI decode `value<<3|1`) caught t
   path creates the `{pc=offset2, op0=tuple}` mix — the inconsistency is in the LIVE
   state (`ip=offset2` yet stack is post-build), arising from asTuple's JIT
   execution / a JIT-exit that sets `state.ip=offset2` with a post-build operand stack.
-- Next: instrument asTuple's JIT exit (state.ip set after E7-83 / a send) for
-  `ip==offset2 && stack-top heap`, or an ASLR-disabled watchpoint on the reused
-  context's pc/op0 slots. Full chain in memory `jit_aigraph_fork_arg_corruption.md`.
+- **Fresh-context / self-perpetuating finding:** logging every asTuple current-frame
+  save ([ASSAVE]) shows normal saves are offset2→op0=immediate (from.model) and
+  returnTop→op0=heap-tuple (the return value). The CORRUPT save is offset2+op0=tuple,
+  and each corrupt context appears EXACTLY ONCE → it is **fresh-created at offset2 with
+  op0=tuple**, not mutated from a returnTop context. So at creation the live state is
+  `{ip=offset2, fp1=tuple, stackp=1}` — asTuple parked at offset 2 with element-0
+  already a tuple. Nothing between offset-1 (sets fp1=from.model) and the offset-2 save
+  changes fp1, so asTuple ENTERED interp at offset 2 with fp1=tuple (resumed from a
+  prior `{pc=offset2, op0=tuple}` context — itself fresh the same way). The corruption
+  **self-perpetuates with no first cause in any captured path** (8 JIT transitions,
+  all 3 materialize paths, executeFromContext, the save log). The seed is a transient
+  JIT-execution/resume event invisible to per-event C++ capture — resolving it needs
+  reverse-execution (rr, unavailable on macOS arm64) or single-stepping asTuple's first
+  corrupt activation in lldb from its J2J entry (deterministic under DET_SCHED).
+- Full chain + lldb recipes in memory `jit_aigraph_fork_arg_corruption.md`.
 
 ## HEADLINE: confirmed JIT correctness bug in aigraph (Prim/Tarjan)
 
