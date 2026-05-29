@@ -41,6 +41,7 @@ message(STATUS "Crypto support: ${PHARO_WITH_CRYPTO}")
 # VM Core Library
 set(VM_SOURCES
     src/vm/DebugSettings.cpp
+    src/vm/DebugVars.cpp
     src/vm/Profiler.cpp
     src/vm/ObjectMemory.cpp
     src/vm/ImageLoader.cpp
@@ -275,7 +276,7 @@ target_compile_options(PharoVMCore PRIVATE
 # .cpp also keeps the macro from interfering with C-language sources.
 set(_NO_GETENV_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/src/vm/no_getenv.hpp")
 foreach(_src ${VM_SOURCES})
-    if(NOT _src MATCHES "DebugSettings.cpp$" AND _src MATCHES "\\.cpp$")
+    if(NOT _src MATCHES "DebugSettings.cpp$" AND NOT _src MATCHES "DebugVars.cpp$" AND _src MATCHES "\\.cpp$")
         set_source_files_properties("${_src}" PROPERTIES
             COMPILE_OPTIONS "-include${_NO_GETENV_HEADER}")
     endif()

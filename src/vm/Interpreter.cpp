@@ -15,6 +15,7 @@
 #include "Interpreter.hpp"
 #include "../platform/Platform.hpp"
 #include "DebugSettings.hpp"
+#include "DebugVars.hpp"
 #include "Profiler.hpp"
 #include "InterpreterProxy.h"
 #include "FFI.hpp"
@@ -2629,6 +2630,20 @@ void Interpreter::interpret() {
         g_stepNum += 1024;
         g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
 
+        // PHARO_DET_SCHED: deterministic round-robin.  Drive the force-yield
+        // from this bytecode-count checkpoint instead of the wall-clock
+        // heartbeat (see stopHeartbeat path), so scheduling — and any
+        // timing-dependent JIT transient — reproduces identically every run.
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_DET_SCHED), 0)) {
+            static uint64_t detYieldCtr = 0;
+            int q = GET_DEBUG_INT(PHARO_DET_SCHED_QUANTUM);
+            if (q < 1) q = 1;
+            if (++detYieldCtr >= (uint64_t)q) {
+                detYieldCtr = 0;
+                forceYield_.store(true, std::memory_order_release);
+            }
+        }
+
         // Sampling profiler tick (installed by primitiveProfileStart).
         // Counter is "interrupt checks" in Cog terminology — each periodic
         // check here counts as one.  When it hits 0, snapshot active
@@ -3793,7 +3808,10 @@ void Interpreter::startHeartbeat() {
             // Reference VM heartbeat fires every ~2ms (DEFAULT_BEAT_MS = 2 in heartbeat.c)
             // and forces interrupt checks via stackLimit manipulation.
             // Critical for queue contention tests with many same-priority processes.
-            if (tickCount % 2 == 0) {
+            // In deterministic-scheduling mode the force-yield is driven from
+            // the bytecode-count checkpoint instead (periodic_checks), so the
+            // heartbeat must NOT inject wall-clock yields.
+            if (tickCount % 2 == 0 && !GET_DEBUG_BOOL(PHARO_DET_SCHED)) {
                 forceYield_.store(true, std::memory_order_release);
             }
 
