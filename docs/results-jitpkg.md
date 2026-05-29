@@ -496,3 +496,34 @@ iteration (~1041/1048) to pin the exact instruction — impractical in batch lld
 amid the VM's own diagnostic traps + Catalyst noise. **Mitigation stays:
 t1InlineGetter default-OFF (perf-neutral).** Next concrete step recorded in the
 `jit_aigraph_fork_arg_corruption` memory note.
+
+### 2026-05-29 (cont.) — lldb pinned it: `first` is innocent, curEdge[1] is corrupted
+
+Drove lldb on build-dbg via a Python script: a `noinline`
+`pharo_first_codestart_hook(codeStart,size)` (gated PHARO_FINDNODE_WATCH) hands
+the callback first's runtime code address at the bug moment; the callback
+disassembles to first's returnTop `ret` (x1 = the return value there) and arms a
+conditional breakpoint.  Results overturn the earlier "first returns the tuple"
+reading:
+
+* Broad bp `first returns any heap ptr` fires on a LEGIT `nodes first` (returns
+  an AIGraphNode) — at that stop `x1 == receiver[element1]` exactly, so **`first`
+  is correct** (returns curEdge's element 1, not self).
+* A `[FNSTK]` operand-stack dump at the findNode: bug shows
+  **`firstRes == argSlot(sv0)`** — findNode: DOES receive first's result.  That
+  result (curEdge's element 1) is a HEAP object (class 0x33 Array in one run,
+  class 0x14e5 in another — the bug is transient, a different edge corrupts each
+  run).
+* ⇒ **curEdge's element 1 is itself corrupted to a heap value.**  For the MST
+  char/int tests it must be an immediate node-id (`$c`, a SmI); under getter-ON
+  it is a live-but-wrong heap pointer.  `first` / `at:` / `findNode:` are all
+  correct propagators.  The inline getter corrupts the edge-endpoint upstream
+  (building `curEdge = edge asTuple` — an `edge from`/`to` ivar getter, or the
+  tuple element store, returns/stores a heap ptr where an immediate belongs).
+  Matches the original "leaks a stack/frame pointer onto the operand stack".
+
+The corrupted value is a *valid* heap object (not out-of-heap garbage), so the
+getter read a wrong slot/receiver returning an adjacent live object — pinning
+the exact transient edge-field getter is the remaining single-step (scoped in
+the `jit_aigraph_fork_arg_corruption` memory note).  Mitigation unchanged:
+t1InlineGetter default-OFF.
