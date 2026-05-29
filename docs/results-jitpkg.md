@@ -111,6 +111,15 @@ side effects to defeat identical-code-folding; SmI decode `value<<3|1`) caught t
   JIT-execution/resume event invisible to per-event C++ capture — resolving it needs
   reverse-execution (rr, unavailable on macOS arm64) or single-stepping asTuple's first
   corrupt activation in lldb from its J2J entry (deterministic under DET_SCHED).
+- **Structural fact (lldb bcToCode dump):** asTuple's JITMethod has `numBytecodes=0`
+  (the `advertiseResume=false` gate for methods with sends, AsmjitT1.cpp:6643-6647),
+  so `codeOffsetForBC` always returns codeSize → asTuple can NEVER be JIT-resumed and
+  is forced to bail to the interpreter after any JIT exit (and resume via
+  `executeFromContext` on process switches). With the getter inline asTuple builds
+  correctly all-JIT (site=1 ExitArrayCreate); the corrupt builds are the interp-resume
+  path (site=0). `PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1` (make send-methods
+  resumable) HANGS the VM — so that gate protects a broken/slow send-resume path, and
+  can't be used as a fix. The corruption is plausibly a leak from that same machinery.
 - Full chain + lldb recipes in memory `jit_aigraph_fork_arg_corruption.md`.
 
 ## HEADLINE: confirmed JIT correctness bug in aigraph (Prim/Tarjan)
