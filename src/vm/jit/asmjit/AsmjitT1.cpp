@@ -6291,6 +6291,18 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     if (bcToCodeOut) {
         if (real && !pharo::g_debug.asmjitT1BctocodeZero) {
             for (size_t i = 0; i < bcLen; i++) {
+                // The first `emitSkip` bytecodes are the CallPrimitive header
+                // (0xF8 lo hi) — the emit loop starts at bcReal (offset
+                // emitSkip), so bcLabels[0..emitSkip) are NEVER bound.  Calling
+                // label_offset_from_base on an unbound label returns GARBAGE in
+                // the NDEBUG build (asserts is_bound() in Debug) — that garbage
+                // became a bogus bcToCode re-entry offset and, when the VM
+                // resumed into such a method, executed wrong code (observed as
+                // an inline-getter leaking a frame pointer onto the operand
+                // stack -> garbage-receiver DNUs in AI-Algorithms-Graph).  The
+                // CallPrimitive header is not a valid re-entry point, so map it
+                // to 0 like slot 0.  (2026-05-28 root-cause fix.)
+                if (i < (size_t)emitSkip) { bcToCodeOut[i] = 0u; continue; }
                 uint32_t off = (uint32_t)code.label_offset_from_base(bcLabels[i]);
                 // Per contract, slot 0 is conventionally 0 (initial entry
                 // goes through codeStart() directly).
