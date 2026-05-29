@@ -453,3 +453,46 @@ Candidate lists staged at `/tmp/cand/<tag>.txt`:
 * **ring** (40) — Ring metamodel (class/trait/metaclass definitions +
   implicit-environment); smell like gfx live-class-model corruption.
 * opal / microdown / systime / strings / seq — pending batch completion.
+
+## 2026-05-29 — aigraph inline-getter deep dive + a real latent fix
+
+Resumed pinning the AIPrim/AITarjan inline-getter bug. Findings:
+
+* **Debug build (-O0, `build-dbg/`) reproduces** (7 PASS / 3 ERROR on
+  AIPrimTest+AITarjanTest) — usable for lldb (reads locals, calls selectorOf).
+* **Real symptom:** `AIPrim>>run` does `self findNode: curEdge first` and under
+  JIT **`curEdge first` returns the whole edge tuple** (`No Element in Graph :
+  #(4 5 3)` etc.). `first` is `^ self at: 1` (bytecode `4C 51 70 5C`) — not a
+  getter. A gated activateMethod watch on findNode: showed: correct calls have
+  `lastJitReturn=#first retVal=<SmI>`; the 2-of-1048 bug calls (late, after
+  warmup, JIT-compiled caller) have `lastJitReturn=#first retVal=<the Array>` —
+  i.e. **JIT-compiled `first` returns its own receiver**.
+* **Classification is clean:** 751 getter classifications, 0 OOB. Not a bad
+  slotIdx at classify time — purely a runtime transient.
+* **Bisection (release, getter forced on):** getter necessary (off → 0 err);
+  primAt compounds only the Tarjan-object test (3→2, NOT the MST tests);
+  returnsSelf / multislot / J2J / resume / chain knobs irrelevant (NO_RESUME
+  made it worse). So it is pure JIT execution, getter-gated via a LEGIT 0-arg
+  getter elsewhere in run/block (distance/model/previousNode/…).
+
+### Real latent bug found + FIXED (commit f251d009)
+
+`detectTrivialMethod` classified ANY `pushRecvVar N; returnTop` as a getter
+(and `popStoreRecvVar N; returnReceiver` as a setter) on bytecode shape alone,
+without checking the method's arg count. Multi-arg methods share the shape —
+`ConstantBlockClosure>>value:`/`value:value:` is `^ capturedConstant`
+(pushRecvVar 3) — so a 1/2-arg method got a getter bit (63) in the IC extra
+word. The interpreter already guarded its getter fast path on `argCount == 0`
+(Interpreter.cpp ~8138), but asmjit-T1 dispatched `tbnz x7,63` regardless of
+arity. Fixed: numArgs==0 getter / numArgs==1 setter in detectTrivialMethod
+(root) + arity-gate the 3 asmjit IC-probe dispatch sites (defense-in-depth).
+Validated: aigraph 10/10 default; kernel batch (15 core classes) 2249/0/0.
+
+**This is a genuine fix but does NOT close the headline MST bug** — it persists
+with PHARO_T1_INLINE_GETTER=1 (the value: misclassification was benign: the
+getter path handles nArgs>0 correctly). The MST bug remains a rare warmup+fork
+transient (JIT `first` returns self) that needs live single-stepping of the bad
+iteration (~1041/1048) to pin the exact instruction — impractical in batch lldb
+amid the VM's own diagnostic traps + Catalyst noise. **Mitigation stays:
+t1InlineGetter default-OFF (perf-neutral).** Next concrete step recorded in the
+`jit_aigraph_fork_arg_corruption` memory note.
