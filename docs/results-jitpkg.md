@@ -948,3 +948,34 @@ Unlike aigraph (which NO_INLINE_PRIM_AT cleanly suppressed), none of J2J / primA
 nextRunNumber startup; SISTA-RING shows getter-like returns #size/#arrayType/
 #delimiter just before).  Pinning it needs the tape bootstrapped on a different
 selector, or lldb.  This is the remaining blocker to re-enabling t1InlineGetter.
+
+## Getter campaign: #asInteger is a RED HERRING; testJump is the real bug (2026-05-29)
+
+Corrected characterization of the getter-on regressions:
+
+- The startup `#asInteger` DNU is BENIGN and getter-independent: it's the runner's
+  own nextRunNumber, `[file contents asInteger] on: Error do: [:e | 0]`
+  (run_sunit_tests.st:43) — caught and recovered.  Present with getter OFF too
+  (r_sanity count=3).  NOT a getter bug.
+
+- ContextTest>>testJump is the real getter regression: getter-ON -> FAIL 3/3
+  (det-sched, isolated); getter-OFF -> PASS.  (Earlier "no result"/flaky-PASS
+  readings were timeout/ordering artifacts — the dominant deterministic result
+  is FAIL.)  It is a FAIL (assertion), so the JIT'd code runs and returns a wrong
+  value, not a crash.
+
+- Bisection (getter-ON): testJump still FAILs under PHARO_NO_J2J,
+  PHARO_T1_FORCE_SIMPLE, PHARO_T1_NO_BLOCK_RESUME, PHARO_T1_NO_POST_PRIM_RESUME.
+  So it is NOT J2J / re-entry / a complex specialization — it is the inline
+  getter ITSELF returning a wrong value in Context>>jump's path (even minimal
+  JIT).  Distinct from the aigraph re-entry bug (which NO_INLINE_PRIM_AT fixed
+  and which the ExitArrayCreate tier fix resolved).  The re-applied method_-sync
+  guard does NOT fix it either.
+
+  Likely the stale/racy IC-slotIdx hazard called out in AsmjitT1.cpp's
+  arity-gate comment (~4556): the inline getter reads recv->slots[slotIdx] with
+  a slotIdx from a possibly-stale IC extra word -> wrong slot -> wrong value.
+  NEXT: capture the wrong getter (recv, slotIdx, value) on Context>>jump's path
+  with the tape IG recorder (generalize g_atOop bootstrap to an env-var selector)
+  to see which send reads the wrong slot.  ArrayTest>>testSelfEvaluatingComplexCase
+  (warmup-dependent) is the other getter regression to revisit after.
