@@ -6619,6 +6619,19 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     }
     bcToCode[bcLen] = (uint32_t)emitted;
 
+    // FINDNODE_WATCH: dump asTuple's bcToCode table (per-bytecode code offset;
+    // 0 = not a valid JIT re-entry point per codeOffsetForBC contract).
+    if (g_emitGetterTrace) {
+        fprintf(stderr, "[ASTUPLE-BCTOCODE] bcLen=%zu isReal=%d emitted=%zu bc=[",
+                bcLen, (int)isReal, emitted);
+        for (size_t i = 0; i < bcLen; i++)
+            fprintf(stderr, "%02x ", bc[i]);
+        fprintf(stderr, "] codeOff=[");
+        for (size_t i = 0; i <= bcLen; i++)
+            fprintf(stderr, "%u ", bcToCode[i]);
+        fprintf(stderr, "]\n");
+    }
+
     // Count send sites and compute the IC layout.  Each single-byte
     // send opcode (0x70..0xAF) gets one IC site.
     uint16_t numSendSites = 0;

@@ -868,3 +868,42 @@ family (cf 5e4f8d59), exercised when a send-bearing numBytecodes=0 asmjit-T1
 method bails mid-method after offset2.  Next: instrument the JIT→interp bail that
 sets instructionPointer_ for asTuple (which stencil exit, what ip/sp) — the inline
 getter is exonerated.
+
+## ROOT CAUSE + FIX — recompile (tier 1->2) defeats the ExitArrayCreate state.ip sync (2026-05-29)
+
+The ACbuild recorder (logged at the ExitArrayCreate handler for asTuple) gave the
+smoking gun:
+  ACbuild bcOffset=2  instructionPointer_off=2  state.ip_off=5  tier=2
+state.ip was CORRECT (offset5 = the E7 PushArray bytecode, set by the asmjit-T1
+PushArray emit, AsmjitT1.cpp ~5990).  But the ExitArrayCreate handler
+(Interpreter.cpp) only copied state.ip -> instructionPointer_ when
+`state.jitMethod->tier == 1`.  asTuple's tier was 2, so the copy was SKIPPED,
+instructionPointer_ kept the STALE entry value (offset0), the handler's
+`instructionPointer_ += 2` landed at offset2, and asTuple re-ran offset2..5 in
+interp — rebuilding the tuple as {prior-built-array, to.model, weight}.  element-0
+(curEdge first) is then an Array, not a node model => "No Element in Graph".
+
+Why tier==2: asmjit-T1 compiles fresh methods at tier 1 (AsmjitT1.cpp:6739).
+Recompilation (JITCompiler.cpp:1488 compile() -> compileViaAsmjit again, then
+1494 `newMethod->tier = 2`) re-uses the SAME asmjit-T1 codegen (still writes
+state.ip) but bumps tier to 2.  So a hot, recompiled asmjit-T1 method still sets
+state.ip yet fails the `tier == 1` guard.  The discriminator must be the active
+codegen, not tier.
+
+FIX: both ExitArrayCreate handlers (tryJITActivation switch + the JIT-resume
+loop) now gate the `instructionPointer_ = state.ip` sync on `g_debug.useAsmjitT1`
+(true governs ALL compilation -> every JIT method is asmjit-T1 and writes
+state.ip; false = stencil, which does not).  This covers both tier-1 (fresh) and
+tier-2 (recompiled) asmjit-T1 methods.
+
+Verified (AIPrimTest + AITarjanTest, Pharo-jit image):
+  getter ON + det-sched : ERROR 2 -> 0
+  getter ON + wall-clock: ERROR    -> 0  (original Heisenbug condition)
+  default (getter off)  : ERROR    -> 0
+The inline getter is exonerated — it always wrote the correct operand slot
+(model#1 op=0x29 slotOff=0, model#2 op=0x2b slotOff=1).  The t1InlineGetter
+default-off mitigation is no longer required for THIS bug (re-enable is a separate
+change to validate).  Two `tier == 1` method_-sync guards remain (Interpreter.cpp
+~19070 ExitReturn-resume, ~22207 ExitArithOverflow) — same latent class (recompiled
+asmjit-T1 inline-J2J would skip the method_ sync) but a different symptom (wrong
+method_ for super-send / thisContext) with no current repro; left unchanged.

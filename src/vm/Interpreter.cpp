@@ -5185,7 +5185,8 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     return kd == 4 ? "RET" : kd == 6 ? "QG" :
                            kd == 9 ? "J2Jret" : kd == 10 ? "J2Jfall" :
                            kd == 11 ? "IG" : kd == 12 ? "ENTRY" : kd == 13 ? "PRIMp" :
-                           kd == 14 ? "ACTp" : kd == 15 ? "J2Jin" : kn[kd & 3]; };
+                           kd == 14 ? "ACTp" : kd == 15 ? "J2Jin" :
+                           kd == 16 ? "ACbuild" : kn[kd & 3]; };
                 (void)kname;
                 Oop e0oop = Oop::fromRawBits(e0);
                 std::string e0cls = e0oop.isObject() && e0 > 0x10000
@@ -18973,11 +18974,15 @@ void Interpreter::tryJITResumeInCaller() {
         case jit::ExitArrayCreate: {
             // PushArray during resume: allocate array, then continue resume loop.
             //
-            // 2026-05-07 A1 FIX: stencil_pushArray (tier=2) does NOT update
-            // state.ip.  asmjit-T1 (tier=1) DOES — its emit at AsmjitT1.cpp
-            // PushArray case writes state.ip = method + bcOffsetFromMethObj
-            // before exiting.  Sync from state.ip only when tier=1.
-            if (state.jitMethod && state.jitMethod->tier == 1
+            // 2026-05-07 A1 FIX: stencil_pushArray does NOT update state.ip;
+            // asmjit-T1 DOES (its PushArray emit writes state.ip = method +
+            // bcOffsetFromMethObj).  2026-05-29 FIX: gate on useAsmjitT1, NOT
+            // tier — recompile bumps asmjit-T1 to tier 2 (JITCompiler.cpp:1494)
+            // while still emitting state.ip, and the old `tier == 1` check
+            // wrongly excluded those, leaving instructionPointer_ stale (the
+            // aigraph asTuple re-entry corruption; see the matching handler in
+            // tryJITActivation).
+            if (state.jitMethod && g_debug.useAsmjitT1
                     && state.ip != nullptr) {
                 instructionPointer_ = state.ip;
             }
@@ -22101,11 +22106,23 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitArrayCreate: {
             // PushArray exit: allocate array, then resume JIT.
             //
-            // 2026-05-07 A1 FIX: stencil_pushArray (tier=2) does NOT update
-            // state.ip.  asmjit-T1 (tier=1) DOES — its emit at AsmjitT1.cpp
-            // PushArray case writes state.ip = method + bcOffsetFromMethObj
-            // before exiting.  Sync from state.ip only when tier=1.
-            if (state.jitMethod && state.jitMethod->tier == 1
+            // 2026-05-07 A1 FIX: stencil_pushArray does NOT update state.ip;
+            // asmjit-T1 DOES — its emit at AsmjitT1.cpp PushArray case writes
+            // state.ip = method + bcOffsetFromMethObj before exiting.  Sync
+            // from state.ip only for asmjit-T1.
+            //
+            // 2026-05-29 FIX: the discriminator is the active codegen, NOT
+            // tier.  Recompilation re-runs compileViaAsmjit (still asmjit-T1,
+            // still writes state.ip) and then bumps tier 1->2
+            // (JITCompiler.cpp:1494).  The old `tier == 1` check wrongly
+            // EXCLUDED recompiled asmjit-T1 methods (tier 2), so
+            // instructionPointer_ kept the stale entry offset (0); the `+= 2`
+            // below then landed at offset 2, re-running the method from the
+            // middle and rebuilding {prior-result, ...} — the AI-Algorithms-
+            // Graph asTuple corruption (curEdge first => an Array, "No Element
+            // in Graph").  Gate on useAsmjitT1 (governs all compilation) so
+            // both tier-1 and tier-2 asmjit-T1 methods sync state.ip.
+            if (state.jitMethod && g_debug.useAsmjitT1
                     && state.ip != nullptr) {
                 instructionPointer_ = state.ip;
             }
@@ -22130,6 +22147,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Try to resume JIT at next bytecode
             method = method_;  // Refresh: GC may have moved the method
             uint32_t bcOffset = computeCurrentBCOffset();
+            if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop) {
+                int ipOff = (g_atBcBase && instructionPointer_) ? (int)(instructionPointer_ - g_atBcBase) : -2;
+                // fp1 = state.ip offset (asmjit set it to the E7 bytecode);
+                // ctx = state.jitMethod tier (1 = asmjit-T1; the guard at the
+                // top of this handler only copies state.ip when tier==1).
+                int stateIpOff = (g_atBcBase && state.ip) ? (int)(state.ip - g_atBcBase) : -2;
+                int tier = state.jitMethod ? (int)state.jitMethod->tier : -1;
+                atRec(16, (uint8_t)(bcOffset & 0xFF), ipOff,
+                      (uint64_t)stateIpOff, (uint64_t)tier);
+            }
             if (bcOffset == UINT32_MAX) return true;
 
             // Re-setup JIT state for resume.  IMPORTANT for cross-method
