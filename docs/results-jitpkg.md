@@ -527,3 +527,33 @@ getter read a wrong slot/receiver returning an adjacent live object — pinning
 the exact transient edge-field getter is the remaining single-step (scoped in
 the `jit_aigraph_fork_arg_corruption` memory note).  Mitigation unchanged:
 t1InlineGetter default-OFF.
+
+### 2026-05-29 (cont.) — asTuple also innocent; bug is run's operand-stack misalignment
+
+Four more lldb probes (build-dbg, hooks gated PHARO_FINDNODE_WATCH + lldb Python
+driver) walked the corruption further upstream.  `AIWeightedEdge>>asTuple` =
+`^{from model. to model. weight}`; `AIGraphNode>>model` = `^instVar0`.
+
+* asTuple ENTRY: `from.model` is ALWAYS a valid immediate (SmI) — input is fine.
+* Conditional bp after asTuple's inline `model`-getter load on `x6` heap: never
+  fires → the getter returns the correct SmI.
+* Conditional bp at asTuple's returnTop `ret` on built `tuple[1]` heap: never
+  fires → asTuple's OUTPUT tuple is correct `{SmI,SmI,SmI}`.
+* Write-watchpoint on asTuple-output `[T+8]`: never fires → nothing corrupts the
+  result after construction.
+
+Yet at the failing `findNode:`, `first`'s receiver `curEdge` (class 0x33 Array)
+has element-1 = a HEAP object (even a *node*, not the SmI asTuple produces).
+Since asTuple's output T has a correct SmI element-1 and is never written,
+**`curEdge` does not point to T**: the JIT'd `curEdge := edge asTuple` assignment
+(popInto-temp) reads/stores the wrong operand-stack slot, so `curEdge` is bound to
+an unrelated heap object.  ⇒ an inline getter elsewhere in `AIPrim>>run`'s loop
+body leaves run's operand stack misaligned (SP off-by-N), corrupting the
+assignment — exactly the original "leaks a pointer onto the operand stack".
+**first / at: / findNode: / asTuple / model-getter are ALL correct.**
+
+Net: this turn's lldb work conclusively relocated the bug from the leaf methods
+(where prior sessions looked) to a getter-induced operand-stack/return-placement
+misalignment in the JIT-compiled `run`.  Next: instrument run's JIT code — watch
+`curEdge`'s temp slot for the wrong store, walk back to the getter that left SP
+off.  Mitigation unchanged: t1InlineGetter default-OFF.
