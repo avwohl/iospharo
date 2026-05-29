@@ -644,3 +644,34 @@ This is a genuine Heisenbug-class rare transient; the exact instruction is not
 pinnable with perturbing tools.  No getter-ON fix landed (a non-root-cause change
 would violate the no-workaround rule).  Mitigation holds: t1InlineGetter
 default-OFF (perf-neutral; AI-Algorithms-Graph 10/10).
+
+### 2026-05-29 (night) — built the deterministic debugger; bug pinned to getter+primAt layout interaction
+
+The transient was a Heisenbug because the round-robin force-yield came from the
+wall-clock heartbeat thread, so any observation overhead changed scheduling and
+suppressed it.  Built `PHARO_DET_SCHED` (commit 419b0a7a): force-yield is driven
+from the per-1024-bytecode checkpoint instead of wall-clock, making scheduling
+deterministic.  The bug now reproduces WITH instrumentation attached
+(PHARO_TRACE_STACK_ORIGIN keeps ERROR=2; it previously flipped it to 1) — the
+Heisenbug is gone.  (Also added a debug_vars.h X-macro knob system.)
+
+Deterministic bisection (PHARO_DET_SCHED=1, getter on):
+* PHARO_NO_INLINE_GETTER=1   → ERROR=0
+* PHARO_T1_NO_INLINE_PRIM_AT=1 → ERROR=0
+* PHARO_NO_J2J / NO_INLINE_J2J / NO_CHAIN → ERROR=2 (no effect)
+
+So the bug needs BOTH the inline getter AND inline primAt emitted — disabling
+either changes the emit and dodges it: a code-layout-sensitive interaction (same
+family as the committed bcToCode/re-entry fix 5e4f8d59), NOT a J2J issue.
+
+Mechanism (timing-safe C++ capture, now deterministic): AIWeightedEdge>>asTuple
+(`^{from model. to model. weight}`) builds a tuple whose element-0 is a stale
+heap Array, even though from.model is the correct immediate and elements 1-2 are
+correct.  The stale element-0 was returned by no inline getter — it's a MISSING
+WRITE: from.model's result never reaches the operand slot E7-83 pops, which
+retains a leftover (the previous iteration's tuple).  asTuple's JIT operand stack
+loses exactly element-0 when both getter+primAt are active.
+
+Next (now tractable because deterministic + instrumentation-safe): lldb
+single-step asTuple's JIT under PHARO_DET_SCHED to see the off-by-one in the
+operand-stack base / resume offset.  Mitigation unchanged (t1InlineGetter off).
