@@ -907,3 +907,32 @@ change to validate).  Two `tier == 1` method_-sync guards remain (Interpreter.cp
 ~19070 ExitReturn-resume, ~22207 ExitArithOverflow) — same latent class (recompiled
 asmjit-T1 inline-J2J would skip the method_ sync) but a different symptom (wrong
 method_ for super-send / thisContext) with no current repro; left unchanged.
+
+## Getter re-enablement attempt — BLOCKED by further re-entry bugs (2026-05-29)
+
+With the aigraph ExitArrayCreate fix landed, tried flipping t1InlineGetter back
+to default-ON (it was turned off 2026-05-28 solely for the aigraph bug).
+Validated with a clean det-sched diff (deterministic schedule -> any pass->fail
+flip is a real getter regression), batch 0-200:
+  getter OFF: PASS=3441 ERROR=14 FAIL=24
+  getter ON : PASS=3461 ERROR=26 FAIL=23
+Two confirmed regressions (PASS with getter off, broken with it on):
+  - ArrayTest>>testSelfEvaluatingComplexCase : PASS->ERROR (warmup/interaction-
+    dependent — PASSES in isolation, so same multi-class fork-warmup profile as
+    the aigraph bug; a different array/re-entry manifestation).
+  - ContextTest>>testJump : PASS->FAIL, and in isolation getter-on produces NO
+    result + a startup `#asInteger` garbage-receiver DNU (Array>>do: /
+    WorkingSession>>on:do:) — the same garbage-receiver symptom class as aigraph,
+    in a different method.
+The reverted method_-sync guards (gate-on-useAsmjitT1 for 19070 ExitReturn-resume
++ 22207 ExitArithOverflow) do NOT fix either (tested cleanly under det-sched), so
+they stay reverted (unvalidated).  So the getter triggers re-entry corruption
+beyond the ExitArrayCreate defect.  t1InlineGetter stays DEFAULT-OFF, now
+justified by these concrete failures (not the fixed aigraph bug).
+
+NEXT TARGETS (same JIT re-entry / garbage-receiver class, findable with the
+PHARO_FINDNODE_WATCH tape — bootstrap g_atOop on the relevant selector):
+  1. ContextTest>>testJump under PHARO_T1_INLINE_GETTER=1 PHARO_DET_SCHED=1 —
+     deterministic, reproduces in isolation; startup #asInteger DNU.
+  2. ArrayTest>>testSelfEvaluatingComplexCase — needs the multi-class batch warmup.
+Re-enabling t1InlineGetter (removing the mitigation entirely) is gated on these.
