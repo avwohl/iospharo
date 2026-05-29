@@ -209,6 +209,41 @@ bisections. PROBE-OFF reliably fixes ring but SIGSEGVs ast (separate non-probe
 dispatch bug), and spec-disables are flaky — so ring is not cleanly fixable
 without the inline-spec emit root cause.
 
+### Debug session (2026-05-28): precise localization of the aigraph getter bug
+
+Built a Debug (-O0, assertions on) VM (`build-dbg/`) and instrumented the C++
+side (gated by `PHARO_T1_GETTER_CLASSIFY_LOG`). Findings:
+
+- The harness DNUs I first chased (`FileReference>>asInteger` from
+  `SUnitRunner>>nextRunNumber`'s `file contents asInteger`, caught by `on:
+  Error`, then nil-receiver cascade) are largely NOISE, not the test failure.
+- The REAL aigraph failure: `AIPrim>>run`'s `edges do:` block does
+  `fromNode := self findNode: curEdge first`, and `findNode:` receives the WHOLE
+  `curEdge` Array instead of `curEdge first`. Confirmed via an `activateMethod`
+  probe: `findNode:` got `argClass=Array slotCount=3 elems:[0]=3 [1]=4 [2]=2`
+  (the correct edge tuple `{from model. to model. weight}`), frame
+  `AIPrim>>run → SortedCollection>>do: → block`.
+- `curEdge` and `asTuple` are CORRECT (the array is well-formed). So the operand
+  stack is MISALIGNED: the `#first` send effectively returns its receiver
+  (`curEdge`). `#first` (`^self at: 1`) is NOT getter-classified (verified — not
+  in the GCLASSIFY log), yet `PHARO_T1_NO_INLINE_GETTER=1` fixes it — so an
+  inline-getter elsewhere in the warmed code misaligns the operand stack and the
+  misalignment propagates (OFF_SP is threaded through memory per bytecode) to the
+  `findNode:` send.
+- The DNU receiver `0x6a38…` is heap-VALID (isValidHeapAddress=1, cls=5709
+  FileReference) — NOT a raw stack pointer (correcting the earlier read). So
+  it's a valid-but-wrong object surfaced by the misalignment.
+
+Not pinned: the exact arm64 instruction / the specific getter whose inline
+misaligns the stack. The `asTuple` `model`-getter inline maintains OFF_SP
+correctly (curEdge is well-formed), so the culprit is a getter inline at the
+block/method boundary whose net-SP effect is wrong only in that context. Pinning
+it needs live single-stepping of the getter inline at its runtime code address
+(read x1/x2/x6 + OFF_SP before/after) — blocked this session by the -O2 build
+hiding lldb locals, Debug-build line-breakpoint non-resolution, and asmjit
+instrumentation perturbing the bug (code-size → method bails). `build-dbg/` +
+`PHARO_T1_GETTER_CLASSIFY_LOG` are staged for that session.
+
 STILL OPEN (task #4):
 - The exact arm64 emit defect (a Heisenbug — adding a trace BLR inflated code
   size, pushing a method past its budget so it bailed to interpreter, masking
