@@ -43,7 +43,8 @@
 // Debug-only inline-getter write recorder for the aigraph investigation
 // (PHARO_FINDNODE_WATCH).  Defined in Interpreter.cpp next to the tape; takes
 // (state, recv, val) so it can read sp/tempBase and compute the write slot.
-extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val);
+extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val,
+                                    uint64_t bcOff);
 extern "C" void jit_rt_atrec_entry(uint64_t statep);
 // Set true in compileViaAsmjit ONLY when compiling asTuple under
 // FINDNODE_WATCH, so the recorder BLR is emitted at just asTuple's 2 getter
@@ -4643,6 +4644,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x7,  ptr(asmjit::a64::sp, 32));
                 a.str(x30, ptr(asmjit::a64::sp, 40));
                 a.mov(x2, x6);    // arg2 = val (x0=state, x1=recv already in place)
+                a.mov(x3, asmjit::Imm((uint64_t)bcOffsetFromMethObj));  // arg3 = bcOff
                 a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_atrec_getter));
                 a.blr(x9);
                 a.ldr(x0,  ptr(asmjit::a64::sp, 0));

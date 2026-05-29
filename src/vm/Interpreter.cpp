@@ -178,13 +178,16 @@ inline void atRecGetter(uint8_t idx, int spfp, uint64_t val, uint64_t recv) {
 // off-by-one), ipOff=same, fp1=value written, ctx=receiver.  The inline getter
 // wrote val to sp[-1]; operandBase[0] is tempBase (asTuple has 0 temps), so
 // slotOff = (sp-8 - tempBase)/8.  A nonzero slotOff is the misalignment.
-extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val) {
+extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val,
+                                    uint64_t bcOff) {
     if (!g_atRecOn || statep == 0) return;
     pharo::jit::JITState* st = reinterpret_cast<pharo::jit::JITState*>(statep);
     int64_t sp = reinterpret_cast<int64_t>(st->sp);
     int64_t tb = reinterpret_cast<int64_t>(st->tempBase);
     int slotOff = (int)((sp - 8 - tb) / 8);
-    atRec(11, (uint8_t)(slotOff & 0xFF), slotOff, val, recv);
+    // op = bcOffsetFromMethObj low byte (distinguishes model#1 send-site from
+    // model#2's — they differ by 2 bytes); ipOff = slotOff (the misalignment).
+    atRec(11, (uint8_t)(bcOff & 0xFF), slotOff, val, recv);
 }
 
 // kind 12 = asTuple JIT entry (recorded at offset0's emit, before the first

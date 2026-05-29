@@ -841,3 +841,30 @@ offset1 with sp one slot too high), only on the warm path.  The asTuple-only
 recorder can't see it (caller != asTuple).  Next: instrument the inline-J2J send
 emit's callee entryAddr/sp setup (AsmjitT1 ~4360-4443) — find why asTuple's J2J
 entry targets offset1 with depth 2.  Same family as bcToCode/re-entry fix 5e4f8d59.
+
+### CORRECTION — it's a re-entry/bail offset bug, NOT the inline getter (2026-05-29)
+
+Added a getter bytecode-offset (bcOffsetFromMethObj) to the IG recorder to
+distinguish model#1 (send @ offset1, op=0x29) from model#2 (@ offset3, op=0x2b).
+This DISPROVES the off-by-one-getter conclusion: both writes are correct —
+  model#1 (op=0x29): slotOff=0 → operandBase[0]=from.model  ✓
+  model#2 (op=0x2b): slotOff=1 → operandBase[1]=to.model    ✓
+(The earlier "slotOff=1 = corrupt" reading mistook a normal model#2 write.)
+
+The real mechanism, from the corrupt activation:
+  ENTRY depth=0                       fresh entry, correct
+  IG op=0x29 slotOff=0  (model#1)     operandBase[0]=from.model=0x21  ✓
+  IG op=0x2b slotOff=1  (model#2)     operandBase[1]=to.model=0x39    ✓
+  k ip=2  operandBase[0]=<stale Array>  operandBase[1]=0x39  ← INTERP at offset2
+
+So asTuple runs offset0-3 IN JIT (both getters write correctly), then bails to
+interp and RESUMES AT OFFSET2 — backward from offset4 — re-running offset2..5 in
+interp.  At that re-entry operandBase[0] is a stale Array (the JIT's from.model
+0x21 is lost) while operandBase[1] (0x39) survives.  No 's'/'r' tape event for the
+transition → it is a direct JIT→interp bail (not executeFromContext / not my
+materialize), landing at offset2 (asTuple's advertised re-entry point) instead of
+offset4, with operandBase[0] not carried across.  This is the bcToCode/re-entry
+family (cf 5e4f8d59), exercised when a send-bearing numBytecodes=0 asmjit-T1
+method bails mid-method after offset2.  Next: instrument the JIT→interp bail that
+sets instructionPointer_ for asTuple (which stencil exit, what ip/sp) — the inline
+getter is exonerated.
