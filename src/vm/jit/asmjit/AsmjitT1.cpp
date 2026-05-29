@@ -44,6 +44,7 @@
 // (PHARO_FINDNODE_WATCH).  Defined in Interpreter.cpp next to the tape; takes
 // (state, recv, val) so it can read sp/tempBase and compute the write slot.
 extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val);
+extern "C" void jit_rt_atrec_entry(uint64_t statep);
 // Set true in compileViaAsmjit ONLY when compiling asTuple under
 // FINDNODE_WATCH, so the recorder BLR is emitted at just asTuple's 2 getter
 // sites (no global code bloat).  Read at emit time in the inline getter.
@@ -2593,6 +2594,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
     if (op <= 0x0F) {
         int n = op & 0x0F;
+        // FINDNODE_WATCH (asTuple only): at the very first bytecode, record the
+        // entry operand-stack depth (sp-tempBase) — must be 0; nonzero = the
+        // entry left OFF_SP one slot high.
+        if (g_emitGetterTrace && globalIdx == 0) {
+            a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
+            a.str(x0,  ptr(asmjit::a64::sp, 0));
+            a.str(x30, ptr(asmjit::a64::sp, 8));
+            a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_atrec_entry));
+            a.blr(x9);
+            a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+            a.ldr(x30, ptr(asmjit::a64::sp, 8));
+            a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
+        }
         a.ldr(x1, ptr(x0, OFF_RECEIVER));
         a.ldr(x1, ptr(x1, OBJ_SLOT_0 + n * 8));
         emitPushReg(a, x1);

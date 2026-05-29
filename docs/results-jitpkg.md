@@ -819,3 +819,25 @@ which is right.  Both run offset0-1 in JIT (fresh entry), so the off-by-one is i
 asTuple's JIT entry OFF_SP init for the buggy path — process/timing-dependent,
 matching the Heisenbug.  Next: record OFF_SP at asTuple's prologue entry to see
 which entry path leaves it +1.
+
+### Pinned to J2J entry-at-offset1 (2026-05-29)
+
+Added an asTuple-only entry recorder (depth = (sp-tempBase)/8 at offset0's emit)
+and class-of-e0 to the dump.  Findings:
+  - e0 (corrupt element-0) cls = Array (a stale prior tuple), NOT the receiver
+    (receiver = AIWeightedEdge, correct).
+  - Two asTuple activations fire model#1 back-to-back under det-sched:
+      A: ENTRY depth=0  -> IG slotOff=0 (correct, wrote operandBase[0]=from.model)
+      B: (no ENTRY)     -> IG slotOff=1 (corrupt, wrote operandBase[1])
+  - Only 2 ENTRY events all run; the CORRUPT activation B never fires ENTRY —
+    i.e. it does NOT run offset0 in JIT.  It enters JIT directly at offset1 with
+    the operand stack already one slot too deep (depth 2 not 1).  offset0 never
+    runs in interp either (0 'k' op=0x01 events), so B is J2J-entered/resumed at
+    offset1 by its CALLER's stencil, with sp set +1.  The extra slot holds a
+    stale Array from a prior frame -> operandBase[0] -> tuple element-0.
+
+So the off-by-one is in the J2J caller-side entry of asTuple (resume/entry addr =
+offset1 with sp one slot too high), only on the warm path.  The asTuple-only
+recorder can't see it (caller != asTuple).  Next: instrument the inline-J2J send
+emit's callee entryAddr/sp setup (AsmjitT1 ~4360-4443) — find why asTuple's J2J
+entry targets offset1 with depth 2.  Same family as bcToCode/re-entry fix 5e4f8d59.

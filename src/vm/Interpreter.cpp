@@ -187,6 +187,19 @@ extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val
     atRec(11, (uint8_t)(slotOff & 0xFF), slotOff, val, recv);
 }
 
+// kind 12 = asTuple JIT entry (recorded at offset0's emit, before the first
+// push): op/ipOff = (sp - tempBase)/8 — the operand-stack depth at entry, which
+// MUST be 0 (empty stack).  Nonzero = the entry left OFF_SP one slot too high
+// (receiver-not-consumed), the off-by-one root.  fp1=sp, ctx=tempBase.
+extern "C" void jit_rt_atrec_entry(uint64_t statep) {
+    if (!g_atRecOn || statep == 0) return;
+    pharo::jit::JITState* st = reinterpret_cast<pharo::jit::JITState*>(statep);
+    int64_t sp = reinterpret_cast<int64_t>(st->sp);
+    int64_t tb = reinterpret_cast<int64_t>(st->tempBase);
+    int depth = (int)((sp - tb) / 8);
+    atRec(12, (uint8_t)(depth & 0xFF), depth, (uint64_t)sp, (uint64_t)tb);
+}
+
 // jit-may20b Step 6: per-caller bail-gate histogram dump (defined in
 // AsmjitT1.cpp).  Called from dumpJITStats when PHARO_T1_BAIL_GATE_HISTO=1.
 namespace pharo { namespace jit {
@@ -5168,12 +5181,19 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 auto kname = [&](uint8_t kd)->const char* {
                     return kd == 4 ? "RET" : kd == 6 ? "QG" :
                            kd == 9 ? "J2Jret" : kd == 10 ? "J2Jfall" :
-                           kd == 11 ? "IG" : kd == 13 ? "PRIMp" :
+                           kd == 11 ? "IG" : kd == 12 ? "ENTRY" : kd == 13 ? "PRIMp" :
                            kd == 14 ? "ACTp" : kd == 15 ? "J2Jin" : kn[kd & 3]; };
                 (void)kname;
+                Oop e0oop = Oop::fromRawBits(e0);
+                std::string e0cls = e0oop.isObject() && e0 > 0x10000
+                    ? memory_.classNameOf(e0oop) : "imm";
+                std::string rcls = receiver_.isObject() && receiver_.rawBits() > 0x10000
+                    ? memory_.classNameOf(receiver_) : "imm";
                 fprintf(stderr, "\n[ATAPE] reverse-exec tape: %u events; CORRUPT build "
-                    "e0=0x%llx (should be from.model immediate).\n",
-                    g_atSeq, (unsigned long long)e0);
+                    "e0=0x%llx cls=%s (should be from.model immediate); "
+                    "asTuple receiver=0x%llx cls=%s\n",
+                    g_atSeq, (unsigned long long)e0, e0cls.c_str(),
+                    (unsigned long long)receiver_.rawBits(), rcls.c_str());
                 fprintf(stderr, "=== last 28 events (the corrupt activation) ===\n");
                 uint32_t lo = (n > 28) ? n - 28 : 0;
                 for (uint32_t i = lo; i < n; i++) {
