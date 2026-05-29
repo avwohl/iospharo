@@ -19442,6 +19442,14 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                 else if (!skip61 && tmi.returnsSelf)
                     extra = (1ULL << 61);
             }
+            if (g_debug.t1GetterClassifyLog && receiverIsHeap && tmi.getterIndex >= 0) {
+                ObjectHeader* rh = receiver.asObjectPtr();
+                int slots = (int)rh->slotCount();
+                fprintf(stderr, "[GCLASSIFY] #%s getterIdx=%d rcvrClass=%s slots=%d%s\n",
+                        memory_.oopToString(selector).c_str(), (int)tmi.getterIndex,
+                        memory_.classNameOf(receiver).c_str(), slots,
+                        (tmi.getterIndex >= slots ? "  <<< OOB!" : ""));
+            }
             // Multi-slot getter (bit 57): heap-only — relies on
             // recvObj->slotAt() reads, which aren't valid for
             // immediates.  Stencil's `tag == 0` gate enforces this.

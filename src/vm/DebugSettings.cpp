@@ -120,7 +120,16 @@ DebugSettings::DebugSettings() {
     }
     t1ICProbeMin        = envInt("PHARO_T1_IC_PROBE_MIN", -1);
     t1ICProbeMax        = envInt("PHARO_T1_IC_PROBE_MAX", -1);
-    t1InlineGetter      = !envPresent("PHARO_T1_NO_INLINE_GETTER");
+    // 2026-05-28: default OFF (opt-in via PHARO_T1_INLINE_GETTER).  The arm64
+    // inline-getter IC-probe spec produces wrong results under JIT warmup
+    // (AI-Algorithms-Graph: AIPrim/AITarjan deterministically — findNode: gets a
+    // whole edge tuple instead of an endpoint; raw log shows stack-addr/nil
+    // garbage receivers).  It was default-OFF before 2026-05-16 for exactly
+    // these "downstream DNUs"; this reverts that.  Root-cause emit fix tracked
+    // in docs/results-jitpkg.md (needs lldb single-step).  Re-enable to test:
+    // PHARO_T1_INLINE_GETTER=1.  PHARO_T1_NO_INLINE_GETTER still forces off.
+    t1InlineGetter      = envPresent("PHARO_T1_INLINE_GETTER")
+                          && !envPresent("PHARO_T1_NO_INLINE_GETTER");
     t1InlineSetter      = !envPresent("PHARO_T1_NO_INLINE_SETTER");
     t1InlineReturnsSelf = !envPresent("PHARO_T1_NO_INLINE_RETURNS_SELF");
     t1InlineTempReturn  = !envPresent("PHARO_T1_NO_INLINE_TEMP_RETURN");
@@ -427,6 +436,7 @@ DebugSettings::DebugSettings() {
     inlineActivateNoBailMid          = envPresent("PHARO_INLINE_ACTIVATE_NO_BAIL_MID");
     inlineActivateStubs              = envPresent("PHARO_INLINE_ACTIVATE_STUBS");
     inlinePrimDebug                  = envPresent("PHARO_INLINE_PRIM_DEBUG");
+    t1GetterClassifyLog              = envPresent("PHARO_T1_GETTER_CLASSIFY_LOG");
     jitFailReasons                   = envPresent("PHARO_JIT_FAIL_REASONS");
     jitKeepICs                       = envEq1("PHARO_JIT_KEEP_ICS");
     jitStaleLog                      = envEq1("PHARO_JIT_STALE_LOG");

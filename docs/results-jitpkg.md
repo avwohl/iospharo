@@ -143,6 +143,37 @@ the slot index, the cached method/selector, or IC staleness is wrong. (The
 22-bit class key `& 0x3FFFFF` is NOT truncating — image classIndexes are < 2^22 —
 so it is not a key-collision bug.)
 
+### FIX APPLIED 2026-05-28: inline-getter default OFF
+
+`t1InlineGetter` now defaults OFF (`DebugSettings.cpp`; opt back in with
+`PHARO_T1_INLINE_GETTER=1`, `PHARO_T1_NO_INLINE_GETTER` still forces off).
+This reverts the 2026-05-16 enablement of a spec that was OFF for exactly these
+"downstream DNUs".
+
+Result with the new default (clean Pharo-jit image):
+- aigraph: 84 PASS / 0 ERROR (was 78/6), reliable across runs.
+- regex: 196/0/0; ast: 596/5/20 (unchanged, no crash — ast's failures are non-getter).
+- No package regressed: across every package tested this session, getter-off
+  either equals getter-on or fixes (aigraph).
+
+Perf: a getter-heavy micro-bench (50M iters of `p x + p y`, Point accessors)
+measured 3662 ms with getter ON and 3662 ms with it OFF — i.e. **perf-neutral**
+(a warm monomorphic getter dispatches about as fast via the normal cached path
+as via the inline spec). So the correctness fix costs ~nothing here.
+
+STILL OPEN (task #4):
+- The exact arm64 emit defect (a Heisenbug — adding a trace BLR inflated code
+  size, pushing a method past its budget so it bailed to interpreter, masking
+  2 of 3 errors; overflow bails safely, so this is not corruption but it does
+  prove the bug is in the JIT getter inline and is layout-sensitive). Pinning it
+  needs lldb single-stepping with a stack watchpoint on the failing send.
+- Ring's failures are the same IC-probe family but a DIFFERENT spec
+  (returnsSelf/returnsLiteral), and flaky across spec-disables — only
+  whole-probe-off reliably fixes ring, and that SIGSEGVs ast (a separate
+  non-probe-dispatch bug). So ring is NOT fixed by the getter default; it needs
+  the root-cause emit fix. returnsSelf/returnsLiteral were left ON (their perf
+  value is unmeasured and ring's fix needs the deeper work anyway).
+
 CAVEAT on the per-test isolation-triage method: because this bug is warmup+fork
 dependent, isolation repro (one test at a time) mislabels it ARTIFACT. The
 authoritative test is full-suite JIT-on vs JIT-off on the clean image

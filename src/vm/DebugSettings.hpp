@@ -76,7 +76,7 @@ struct DebugSettings {
     // Per-specialization opt-outs (default-on when probe enabled).
     // PHARO_T1_NO_INLINE_GETTER / SETTER / RETURNS_SELF to disable
     // individually — bisect tool for debugging path B regressions.
-    bool t1InlineGetter = true;       // PHARO_T1_NO_INLINE_GETTER inverts
+    bool t1InlineGetter = false;      // default OFF 2026-05-28 (correctness); PHARO_T1_INLINE_GETTER opts in
     bool t1InlineSetter = true;       // PHARO_T1_NO_INLINE_SETTER inverts
     bool t1InlineReturnsSelf = true;  // PHARO_T1_NO_INLINE_RETURNS_SELF inverts
     // jit-may23d W1: inline `^ arg0` (TempReturn) at IC HIT.
@@ -462,6 +462,7 @@ struct DebugSettings {
     bool inlineActivateNoBailMid = false;          // PHARO_INLINE_ACTIVATE_NO_BAIL_MID
     bool inlineActivateStubs = false;              // PHARO_INLINE_ACTIVATE_STUBS
     bool inlinePrimDebug = false;                  // PHARO_INLINE_PRIM_DEBUG
+    bool t1GetterClassifyLog = false;              // PHARO_T1_GETTER_CLASSIFY_LOG (diag)
     bool jitFailReasons = false;                   // PHARO_JIT_FAIL_REASONS
     bool jitKeepICs = false;                       // PHARO_JIT_KEEP_ICS (strict =1)
     bool jitStaleLog = false;                      // PHARO_JIT_STALE_LOG (strict =1)
