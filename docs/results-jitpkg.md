@@ -120,6 +120,16 @@ side effects to defeat identical-code-folding; SmI decode `value<<3|1`) caught t
   path (site=0). `PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1` (make send-methods
   resumable) HANGS the VM — so that gate protects a broken/slow send-resume path, and
   can't be used as a fix. The corruption is plausibly a leak from that same machinery.
+- **CORRECTION:** aigraph default has `J2J-r: 0/0` — it uses NO JIT-resume, so the
+  asTuple corruption is purely the INTERP-resume (executeFromContext/materialize) path,
+  whose save/restore is faithful (seed = a transient, needs reverse-exec). The
+  `PHARO_T1_RESUME_SENDS_NO_CONDJUMP` knob + `#asMutator` startup DNU exercise the
+  SEPARATE JIT-resume protocol gap (Phase 4b.2): asmjit-T1 returns at JITCompiler.cpp:1676
+  before `setBcEntryStates` (2937), so asmjit-T1 methods have NO bcEntryState — tryResume's
+  register-liveness safety check is a no-op for asmjit-T1 (JIT_CALL does restore x0/x19/x20,
+  so the gap is subtler: operand-stack/bcToCode reconstruction). These are related
+  (both send-method resume) but DISTINCT mechanisms — fixing the JIT-resume gap would
+  NOT fix aigraph. The knob is a valid JIT-resume-gap debugging tool, not an aigraph repro.
 - Full chain + lldb recipes in memory `jit_aigraph_fork_arg_corruption.md`.
 
 ## HEADLINE: confirmed JIT correctness bug in aigraph (Prim/Tarjan)
