@@ -1573,3 +1573,41 @@ test gives a clean-looking but meaningless number, as the at:ifPresent: probe di
 Runner-prepped images fail the startup.st preamble ('Decompilation failed'); use a
 never-prepped plain image.  Inline `compile:` with nested quotes is fragile (the
 NlrProbe probe died on OCSyntaxError) — prefer existing methods / a script file.
+
+### det-sched hang — BOTH bugs need the runner; exact test body is clean standalone (2026-05-30)
+
+Decisive clean-room measurement (test_load_image eval, no SUnitRunner, fresh plain
+image, marker-verified, recursion=0):
+
+  EXACT testBlockCannotReturn body —
+    p := [thisContext pc: nil] newProcess.
+    [p suspendedContext method selector = #pc: and: [p suspendedContext sender isDead]]
+       whileFalse: [p step].
+    p suspendedContext method selector
+  -> COMPLETES, returns '#pc:', 15M sends, NO recursion, NO infinite loop.
+
+Also clean standalone (all marker-verified): lookupSelector: #on:do: x200k (bad=0);
+[thisContext] newProcess stepped 6x with forced GC between every step x50 (bad=0,
+reaches BlockClosure>>...terminateRealActive correctly).
+
+CONCLUSION (well-supported now): NEITHER bug 1 (send:to:with:super: recursion) NOR
+bug 2 (whileFalse:[p step] infinite loop) reproduces when the exact test code runs in a
+clean eval — not even with forced GC.  BOTH require the SUnitRunner's cumulative runtime
+state.  What the runner adds that a fresh eval does not (from run_sunit_tests.st):
+  - runs the test body inside a FORKED process at a set priority (forkAt: priority),
+    wrapped in nested on:Error:/on:Exception: handlers + ensure:, with a Delay-based
+    watchdog forked at P60 and a terminate-fork at P60 (runSingleTest:..., lines 662-761);
+  - ~hundreds of prior tests' worth of heap churn / JIT-compiled methods / IC state.
+So the simulator (Context>>step) corruption is triggered by running UNDER a forked,
+preempted, handler-wrapped process — i.e. the reified context the simulator steps is
+itself nested in fork/exception/ensure frames, OR a prior test left JIT/IC/heap state
+that makes send:to:with:super:'s class/selector resolve wrong.
+
+NEXT (instrumentation MUST run under the runner — clean-room eval proven insufficient):
+add a C++ trace in Context>>send:to:with:super:'s C-level path OR in lookupMethod, gated
+to fire only when the recursion depth of send:to:with:super: exceeds ~5, logging the
+computed class oop, classOf(real receiver), selector oop, and aMethod==nil — then run
+testBlockCannotReturn under the runner and read the FIRST divergence.  The earlier
+PHARO_LOOKUP_WATCH already showed internal=FOUND there; the new trace must capture WHICH
+class/selector send:to:with:super: actually passes to lookupSelector: at the moment it
+returns nil (vs what classOf(receiver) says it should be).
