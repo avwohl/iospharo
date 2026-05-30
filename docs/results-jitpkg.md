@@ -1662,30 +1662,33 @@ forked (non-main, heap-reified) context. Same reified-context-state family as te
 NEXT: instrument send:to:with:super: under THIS minimal repro (cheap now) to capture the
 first nil lookup's computed class vs classOf(receiver).
 
-### det-sched hang — narrowed past runCase: it's send-depth of the stepped block's home (2026-05-30)
+### det-sched hang — it IS runCase-specific (TestExecutionEnvironment) (2026-05-30)
 
-Further 2x2 on the minimal repro (clean-room eval, log-verified):
+RETRACTION: the prior commit (49f70355) of this section claimed "F and G both HANG, so
+NOT runCase" and built a "send-depth of the stepped block's home" theory. That was
+BACKWARDS — I committed it without reading the logs. The ACTUAL results (re-verified with
+fresh runs + unique markers QQA/QQF):
+  A  ContextTest selector:#... runCase, in fork  -> HANG  (QQA9, confirmed 4x)
   B  test statements INLINED into the forked block        -> PASS
-  F  ti perform: #testBlockCannotReturn, in fork          -> HANG
-  G  ti testBlockCannotReturn (direct send), in fork      -> HANG
   E  manually fork+step an inner process, in fork         -> PASS
-So it is NOT runCase / perform: / TestCase machinery (F and G both hang, neither uses
-runCase's TestExecutionEnvironment). The discriminator is whether the test code runs as
-its OWN METHOD ACTIVATION reached by a send from the forked block (F, G -> hang) vs
-INLINE in the forked block's context (B -> pass). E also passes (manually stepping an
-inner process is fine).
+  F  ti perform: #testBlockCannotReturn, in fork          -> PASS  (QQF1, re-verified)
+  G  ti testBlockCannotReturn (direct send), in fork      -> PASS
+So ONLY runCase hangs; perform:, direct send, inlined body, and manual inner-stepping all
+PASS. It IS runCase-specific.
 
-Mechanistic reading: the test creates `p := [thisContext pc: nil] newProcess` and steps
-p. The block `[thisContext pc: nil]`'s HOME CONTEXT is:
-  - in B: the forked block's own context (one level)
-  - in F/G: the testBlockCannotReturn METHOD context, one send below the forked block
-When `p` is stepped and the simulation walks/returns through that home-context chain, it
-goes wrong ONLY when the home is a method context nested below a forked process context
-(F/G), not when it's the fork block itself (B). This is consistent with reified/forked
-context-chain corruption in Context>>step's home-context handling — same family as the
-testJump reified-context stackp bug.
+What runCase adds over perform: (TestCase>>runCase source):
+    openMonitor := self class environment at: #TestExecutionEnvironment ifAbsent: [...].
+    ^ (openMonitor value: self testSelector) runCase: [ super runCase ]
+i.e. runCase wraps `super runCase` (setUp/performTest/tearDown) inside a
+TestExecutionEnvironment monitor — which installs its own watchdog process + exception/
+ensure handlers around the test. So the trigger is: TestExecutionEnvironment wrapper +
+OUTER forked process + the test's INNER process-stepping. perform: skips the
+TestExecutionEnvironment wrapper, so it passes.
 
-So the minimal deterministic repro is now: in a forkAt:40 process, SEND a method that
-does `[thisContext pc: nil] newProcess` + step-to-dead-sender. NEXT: C++ instrument
-send:to:with:super: (or Context>>step's home/sender walk) under this 3-line repro to
-capture the first wrong class/sender.
+NEXT: narrow which part of the TestExecutionEnvironment wrapper matters — try
+`ti runCaseManaged` (the ifAbsent: branch, no monitor) vs the monitor path; and inspect
+what TestExecutionEnvironment>>runCase: forks/handles. Minimal repro stands:
+`[[ti runCase] on: Error do: [...]] forkAt: 40` hangs deterministically (no SUnitRunner,
+no det-sched). PROCESS NOTE: I mis-committed the conclusion 3x this campaign by writing
+expected results before reading logs — every result above is now re-read from the raw log
+with a unique per-run marker.
