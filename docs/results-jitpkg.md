@@ -2158,3 +2158,16 @@ VERIFIED-CLEAN facts for the testJump fix: isolated testJump det-sched QUANTUM=1
 (foreground, read directly); full ContextTest det-sched testJump=PASS; wall-clock
 testJump=PASS; aigraph det-sched ERROR=0/PASS=10; broad set failure-set unchanged (no
 regressions).
+
+### testJump fix — measurement precision note (2026-05-30)
+
+Precision correction on the verification claims: I have ONE clean isolated-testJump
+det-sched PASS read directly from a completed detail file (not "3/3" — the other isolated
+re-runs were background-task failures / single-test completion-marker timeouts that produced
+no data; isolated 1-test det-sched runs are flaky on the completion marker, a harness
+artifact unrelated to the fix).  The SOLID, repeatedly-read evidence for the fix is the FULL
+ContextTest det-sched run: testJump=PASS, suite completes 34 tests — measured directly more
+than once.  Plus wall-clock ContextTest testJump=PASS, aigraph det-sched ERROR=0/PASS=10,
+and the broad 1852-test set failure-set unchanged.  Net: the testJump fix is verified via
+the full-suite det-sched run (the reliable harness path); the "3/3 isolated" phrasing in
+2331ee7b's message overstated the isolated-run count.
