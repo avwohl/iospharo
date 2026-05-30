@@ -2256,3 +2256,33 @@ reordering doesn't regress the J2J perf path — neither verifiable under curren
 
 NOT FIXED.  inline-J2J stays default-off.  This is the precise, readable next lead for a
 session with a working test harness.
+
+### inline-J2J residual — dispatch-order hypothesis PARTIALLY UNDERCUT by classifier read (2026-05-30)
+
+Follow-up read tempers the previous entry's "bit 60 checked before 58" hypothesis: the
+COMPILER classifier (JITCompiler.cpp:1314) assigns the specialization via an if/ELSE-IF
+chain — `... else if (extra0 & (1ULL<<58)) ...` with the bit-60/J2J branch at 1369 — so at
+COMPILE time bit 58 (returnsLiteral) and bit 60 (J2J) are MUTUALLY EXCLUSIVE on a given IC
+entry.  If that were the whole story, the dispatch order (60-before-58 at AsmjitT1.cpp:3639/
+3652) could never mis-fire, because no entry has both.
+
+So the real question is RUNTIME: which path set bit 60 on isIdentifier's LIVE IC entry
+despite the compiler classifying it returnsLiteral?  Candidates (all in the IC-FILL path,
+not the compiler): JITRuntime.cpp:1023 / stencils.cpp:1989 megaHit fill does
+`extra = J2J_ENTRY_BIT | (jitEntry & ADDR_MASK)` — a RAW OVERWRITE that does NOT preserve a
+pre-existing bit 58, and (more importantly) could stamp J2J_ENTRY_BIT onto a site whose
+callee is a trivial returnsLiteral method.  That would produce exactly the measured symptom:
+the live IC says "J2J tail-call" for isIdentifier, the tail-call runs but the
+trivial-method callee body doesn't leave a Boolean in the receiver slot, → token reaches
+jumpFalse: → mustBeBoolean.
+
+UNVERIFIED — needs runtime confirmation (dump isIdentifier's live IC extra bits during the
+failing run) which requires a working harness.  This is now a precise, bounded next probe:
+instrument the megaHit / IC-fill path to log when J2J_ENTRY_BIT is stamped onto a method
+whose JITMethod has returnsLiteral classification, gated to OCToken>>isIdentifier.
+
+NET (this turn, code-reading only — NO code changed, docs only): the inline-J2J residual is
+an IC-fill/classification interaction (J2J bit stamped on a trivial returnsLiteral method),
+NOT the returnsLiteral emit (which is correct) and NOT a simple dispatch-order bug (compiler
+keeps 58/60 exclusive).  inline-J2J stays default-off; the three campaign fixes (hasNLR
+e4143199, testJump 2331ee7b, executeFromContext 236f085e) stand.
