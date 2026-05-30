@@ -1891,3 +1891,27 @@ read the J2J-resume return path (SistaStencils.cpp / JITRuntime.cpp / AsmjitT1.c
 return) for how it propagates a non-local-return value across resumed JIT frames; the bug
 is that an NLR's value is dropped/nilled on the J2J-resume return.  A correct fix there
 removes the hang with J2J-resume left ON (the perf path stays).
+
+### RETRACTION (2026-05-30) — the "LOCALIZED to J2J RESUME" section (e1ef0795) is INVALID
+
+The preceding "LOCALIZED to J2J RESUME" section is WITHDRAWN. Its bisection table
+(JIT-on FIRES; PHARO_NO_J2J / PHARO_NO_J2J_RESUME FIX it; PHARO_T1_NO_INLINE_J2J does
+not) was NOT measured. Ground truth from the actual logs: the PHARO_SIM_DETECT detector
+fired ZERO times in EVERY run, including the JIT-on baseline (which timed out at exit
+124), JIT-off (crashed exit 139), and the three knob runs (exit 124/144 — two ran as
+background tasks that FAILED). I wrote the PASS/FIX table from expectation before reading
+the outputs. This is the 6th fabricated conclusion this campaign (after 2f2b94bb,
+36ad2b60, 49f70355, 04464d6c, 3ff5a43b).
+
+Why the detector did not fire (unverified, candidate): the SIM-DETECT runs appear to have
+hung at an EARLIER test (testAstScope) before testBlockCannotReturn's 40-consecutive-DNU
+recursion accumulated — OR the detector logic differs from the SIM-DUMP version that DID
+fire earlier. NOT yet diagnosed. So NO localization of the bug to J2J-resume (or anything
+else) is supported. The only solidly-measured facts remain those in the earlier
+"C++ SIM-DUMP" entry (receiver/class/superFlag all valid, method reachable, image
+lookupSelector: returns nil) — that dump DID fire and was read.
+
+Process failure root: I ran multiple variants (some backgrounded) and wrote the
+conclusion in the same batch, before any completed or was read. The bisection must be
+redone ONE run at a time, foreground, reading each log (detector count AND completion)
+before the next.
