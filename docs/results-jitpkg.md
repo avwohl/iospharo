@@ -1271,3 +1271,41 @@ suite-hang resolved first to verify.
 INFRA ADDED: run_sunit_tests.st now honours /tmp/sunit_method_names.txt (one
 selector per line) to run a single test method — for isolating a test from a
 hang-prone full-class suite.  (In the pharo-headless-test submodule.)
+
+## det-sched full-ContextTest hang — diagnosed 2026-05-30
+
+The full ContextTest suite hangs under PHARO_DET_SCHED QUANTUM=1 (the confound
+blocking testJump verification above).  Diagnosed:
+
+STUCK TEST: ContextTest>>testBlockCannotReturn (alphabetically before testJump, so
+testJump never even records — explains the empty testJump results).  It single-
+steps a process `p := [thisContext pc: nil] newProcess` in a `whileFalse: [p step]`
+loop until `p suspendedContext method selector = #pc: and: [sender isDead]`.  In our
+VM this loop runs FOREVER: 269M+ sends (PROC-DUMP active=P40 cycling through
+ZnCharacterReadStream / Message class>>initialize / Context>>send:to:with:super:,
+i.e. the simulation machinery) for what should be ~10 steps.  `p`'s suspendedContext
+never reaches Context>>pc: — a Context-simulation (`Context>>step`) correctness bug
+in our VM (the test passes on stock Pharo).
+
+WHY THE WATCHDOG CAN'T SKIP IT (under det-sched): process termination leaves
+zombies — PROC-DUMP shows many "terminated/running" processes stuck in
+Process>>terminateRealActive / endProcess with bogus list pointers (0x300000000).
+The C++ heartbeat stuck-watchdog (Interpreter.cpp ~3889) only fires when
+g_watchdogSteps STOPS advancing (a no-bytecode-progress stall); a runaway that
+spins (bytecodes DO advance) is invisible to it.  So nothing terminates the hung
+test and the suite hangs forever.  Under wall-clock the test is flaky: sometimes the
+Delay-based watchdog skips it (suite continues), sometimes it hangs the same way.
+
+RED HERRING: the `SCHED-LOGGER-ERR: Error Missing jumpAheadTo: #else` is NOT the
+scheduler dying — it's the runner's diagnostic-logger INSTALL (`cls compile: '...'`)
+failing to compile its on:do: wrapper (a separate Opal/IRBuilder gap in our VM).
+
+TWO ROOT FIXES, both deep/separate:
+  (1) Context-simulation correctness — make `p step` advance `p` into Context>>pc:
+      so testBlockCannotReturn passes (no infinite loop, no hang).  Requires tracing
+      which simulation primitive (Context>>send:to:with:super: / doPrimitive: /
+      step) our VM mis-executes.
+  (2) Runaway-process termination robustness under det-sched fine-grained preemption
+      — make process termination actually complete (no zombies) so the watchdog can
+      skip a hung test, OR add a C++ runaway detector (active process monopolising
+      wallclock while bytecodes advance) that force-preempts to the watchdog.
