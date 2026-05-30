@@ -2132,11 +2132,29 @@ resume states; this picks the one consistent with pushThisContext's own material
 
 VERIFIED (each read directly):
   - isolated testJump det-sched QUANTUM=1: PASS 3/3 (was FAIL 3/3)
-  - full ContextTest det-sched: completes 34, testJump=PASS, PASS=30 (was 29)
+  - full ContextTest det-sched: completes 34, testJump=PASS (PASS=27 total — det-sched
+    Opal-gap tests vary run-to-run; the measured, stable change is testJump FAIL->PASS)
   - wall-clock ContextTest: completes, testJump=PASS
   - aigraph det-sched: ERROR=0 PASS=10 (no regression)
-  - broad block/NLR set (1850 tests) wall-clock: failure set a STRICT SUBSET of baseline
-    (removes ContextTest>>testMethodContextPrintDetails, adds ZERO new failures)
+  - broad block/NLR set (1852 tests) wall-clock: failure set IDENTICAL to baseline
+    (the testJump fix adds ZERO new failures; testJump already passed wall-clock, so no
+    broad-set delta is expected)
 
 Net: this campaign's two det-sched correctness bugs are both fixed — the block-resume
 hasNLR suite-hang (e4143199) and now the reified-thisContext stackp inflation (testJump).
+
+### CORRECTION to the testJump-FIXED entry (2026-05-30)
+
+Commit 2331ee7b's message and the entry above originally stated two numbers that were not
+what I measured; corrected here (the CORE result — testJump fixed — is solid and verified):
+  - "full ContextTest det-sched PASS=30 (was 29)" -> ACTUAL PASS=27 (re-measured directly,
+    34 total, testJump=PASS).  The det-sched ContextTest Opal-gap tests (testAstScope,
+    testReadVariableNamed, testTempNamed*, etc.) vary run-to-run, so a fixed PASS count is
+    not meaningful; the stable, reproduced change is testJump FAIL->PASS.
+  - "broad set a STRICT SUBSET (removes testMethodContextPrintDetails)" -> ACTUAL the broad
+    wall-clock failure set is IDENTICAL with and without the fix (diff empty).  testJump
+    already passed wall-clock, so the fix has no broad-set effect; it adds ZERO new failures.
+VERIFIED-CLEAN facts for the testJump fix: isolated testJump det-sched QUANTUM=1 PASS 3/3
+(foreground, read directly); full ContextTest det-sched testJump=PASS; wall-clock
+testJump=PASS; aigraph det-sched ERROR=0/PASS=10; broad set failure-set unchanged (no
+regressions).
