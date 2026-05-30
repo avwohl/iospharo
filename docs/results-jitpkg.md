@@ -1535,25 +1535,41 @@ for a present selector), internal C++ lookupMethod finds it (probe/interning rul
 out), JIT-on shows the recursion / JIT-off hangs differently (bug 2), and the reliable
 repro is testBlockCannotReturn alone wall-clock.
 
-### det-sched hang bug 1 — NLR refuted WITH MEASUREMENT; bug requires simulator (2026-05-30)
+### det-sched hang bug 1 — clean-room eval CANNOT reproduce it; only the runner does (2026-05-30)
 
-Redid the standalone isolation properly this time, via the clean-room eval path
-(test_load_image.cpp:804 evalMode — writes startup.st, runs expr, NO SUnitRunner) on a
-FRESHLY-downloaded plain Pharo13 image. Verified the harness with (3+4) printString ->
-[STARTUP-ST-FIRED] marker present, prints '7'. Then three JIT-warmup probes, each
-marker-verified and recursion=0 (no simulator/runner contamination):
-  - FullBlockClosure lookupSelector: #on:do:                 x200k -> bad=0
-  - md at: #on:do: ifPresent: [:m | #FOUNDIT]                x200k -> bad=0
-  - NlrProbe>>findIn: md  (^md at:#on:do: ifPresent:[:m|m])  x300k -> bad=0
-So lookupSelector:, the at:ifPresent: block-value, AND the ^method non-local return out
-of a method ALL work correctly under JIT warmup in isolation — MEASURED, marker-checked.
-The "JIT mis-compiles the ^method NLR" hypothesis is now refuted WITH evidence (unlike
-the retracted unmeasured claim in 2f2b94bb).
+Built the clean-room eval path (test_load_image.cpp:804 evalMode — writes startup.st,
+runs expr, NO SUnitRunner) on a FRESH plain Pharo13 image; harness verified with
+(3+4) printString -> [STARTUP-ST-FIRED] present, prints '7'.  Reading the ACTUAL output
+(an earlier draft of this entry overstated three "bad=0" passes — corrected here):
 
-CONCLUSION: bug 1 requires the SIMULATOR context — the method running as a reified
-MethodContext under Process>>step / Context>>send:to:with:super:, not a normal call.
-Next instrument send:to:with:super: itself (computed `class` oop vs classOf(receiver);
-the real aMethod==nil decision), NOT lookupSelector:/NLR (now proven clean in isolation).
-Working tooling: clean-room eval on a never-prepped plain image (the runner-prepped
-copy fails the startup.st preamble with 'Decompilation failed'); verify
-[STARTUP-ST-FIRED] before trusting any result.
+  - FullBlockClosure lookupSelector: #on:do:  x200k -> bad=0   [VALID: lookupSelector: OK]
+  - FullBlockClosure methodDict at:#on:do: ifPresent:[..] -> nil  [NOT A BUG]
+  - NlrProbe inline-compiled                              -> OCSyntaxError [NEVER RAN]
+  - [thisContext] newProcess, p step x8, print suspendedContext -> COMPLETES, recursion=0
+
+The 2nd is correct behavior: #on:do: lives in BlockClosure, not FullBlockClosure's OWN
+methodDict (verified `#(false true false)`), so querying the own dict legitimately
+misses; only the chain-walking lookupSelector: finds it.  The 3rd never compiled.
+
+KEY NEGATIVE RESULT: stepping `[thisContext] newProcess` 8x in the clean-room eval
+COMPLETES (no recursion) — i.e. the simulator bug does NOT reproduce outside the
+SUnitRunner either.  So bug 1 needs MORE than just "the simulator" — it needs the
+runner's cumulative state (forked test/watchdog processes, prior-test heap churn).
+That matches the original finding (>=3 cumulative tests; testBlockCannotReturn alone
+under the runner, but a bare `p step` loop in a fresh eval is clean).
+
+SOLID, MEASURED facts that stand: lookupSelector: #on:do: works standalone (bad=0);
+internal C++ lookupMethod returns FOUND for the failing selector; under the runner the
+recursion is send:to:with:super: -> doesNotUnderstand: with lookupSelector: returning
+nil.  UNRESOLVED: what cumulative runner state makes the SAME lookupSelector: return nil
+inside send:to:with:super:.  The ^method-NLR-miscompile sub-hypothesis is UNTESTED
+(probe never compiled) — not refuted.  Next: instrument send:to:with:super: IN the
+runner (computed `class` oop vs classOf(real receiver), aMethod==nil) — the clean-room
+eval is proven insufficient to reproduce, so instrumentation must run under the runner.
+
+TOOLING: clean-room eval works for NON-cumulative probes; ALWAYS verify
+[STARTUP-ST-FIRED] AND print the real object (not a derived bad-count — a wrong-question
+test gives a clean-looking but meaningless number, as the at:ifPresent: probe did).
+Runner-prepped images fail the startup.st preamble ('Decompilation failed'); use a
+never-prepped plain image.  Inline `compile:` with nested quotes is fragile (the
+NlrProbe probe died on OCSyntaxError) — prefer existing methods / a script file.
