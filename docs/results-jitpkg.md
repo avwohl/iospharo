@@ -2171,3 +2171,34 @@ than once.  Plus wall-clock ContextTest testJump=PASS, aigraph det-sched ERROR=0
 and the broad 1852-test set failure-set unchanged.  Net: the testJump fix is verified via
 the full-suite det-sched run (the reliable harness path); the "3/3 isolated" phrasing in
 2331ee7b's message overstated the isolated-run count.
+
+### inline-J2J re-evaluation after the cull:-bug fix — catastrophe GONE (2026-05-30)
+
+User asked whether inline-J2J (disabled 2026-05-28 for the "cull: bug catastrophic"
+297/634 mode) would work now that the block-resume hasNLR fix (e4143199) addressed the
+cull:/at:ifPresent: DNU family.  Measured: full SUnit list (134 classes, wall-clock),
+each result read directly from the detail file.
+
+  config                              PASS   FAIL  ERROR  pass-rate
+  inline-J2J OFF (current default)    8521   43    128    98.02%
+  inline-J2J ON + XMETHOD ON          8517   44    130    98.00%
+  inline-J2J ON + XMETHOD ON (run 2)  8518   44    129    98.00%
+  inline-J2J ON + XMETHOD OFF         8503   46    139    97.87%
+
+CATASTROPHE GONE.  The 2026-05-28 comment recorded XMETHOD-off as ~297/634 CLASSES
+(a sub-50%-ish cascade).  Now ALL inline-J2J configs are ~98% — statistically identical
+to default-off.  The cull:-bug catastrophic mode is resolved (consistent with the hasNLR
+block-resume fix, whose mechanism is exactly the at:ifPresent: cull: DNU; not bisected to
+that single commit, but the description matches).
+
+Residual: comparing ON vs OFF failure sets across two ON runs, the ONLY regression present
+in BOTH ON runs is CharacterTest>>testStoreStringAll (the documented 1-test gap, an
+OCParser/JIT mustBeBoolean interaction, NOT the cull: bug).  Everything else
+(ScaledDecimal*, Serializer testCyclicArray, SortedCollection testFoo) flaps between runs =
+flaky/timing, not inline-J2J-caused.  AND testStoreStringAll PASSES in isolation with
+inline-J2J ON — it only fails under full-suite cumulative JIT state.
+
+So inline-J2J is now ~viable: ~98% (= default), 7x fib speedup per the 2026-05-28 comment
+(13ms vs 76ms fib28), with one cumulative-load test gap (testStoreStringAll).  Whether to
+flip the default ON (perf) vs keep it OFF (the "100% pass" directive) is a product call.
+NOT flipped — left default-off pending that decision.
