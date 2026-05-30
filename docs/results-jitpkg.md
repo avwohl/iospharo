@@ -1172,3 +1172,26 @@ confirm the 3 candidates (esp. testAsArrayKeepsIdentity) with multi-run wall-clo
 off-runs).  Getter stays default-off pending that.  Separately, the rare
 force-yield-during-exception-resume materialize stackp bug (testJump's QUANTUM=1
 mechanism) is a real but non-blocking VM bug worth its own fix.
+
+### Getter "regressions" — 4 of 5 debunked (2026-05-29)
+
+Second getter-on wall-clock batch run to test the 3 candidates' consistency:
+  ArrayTest>>testAsArrayKeepsIdentity     : on1=FAIL on2=PASS  -> FLAKY (not getter)
+  SemaphoreTest>>testInCriticalWait       : on1=FAIL on2=PASS  -> FLAKY (not getter)
+  MetaClassTest>>testHasBindingThatBeginsWith : on1=ERROR on2=ERROR, but on2 was an
+      anomalous high-error run (ERR=174, cascade) -> INCONCLUSIVE.
+
+Tally of the original getter "regressions":
+  testJump                         -> det-sched QUANTUM=1 force-yield artifact (busted)
+  testSelfEvaluatingComplexCase    -> det-sched artifact (absent under wall-clock)
+  testAsArrayKeepsIdentity         -> flaky (passes on a 2nd getter-on run)
+  testInCriticalWait               -> flaky
+  testHasBindingThatBeginsWith     -> inconclusive (cascade-run noise)
+
+So 4 of 5 are NOT getter-caused.  The t1InlineGetter mitigation was kept off mostly
+for det-sched artifacts and flaky tests, NOT real bugs — the aigraph ExitArrayCreate
+fix removed the one real deterministic getter bug.  The getter is very likely
+production-safe.  Remaining gate before flipping the default ON: a clean, isolated,
+multi-run confirmation that MetaClassTest>>testHasBindingThatBeginsWith passes with
+the getter on (rule out the lone inconclusive candidate), since wall-clock batch
+flakiness (off-vs-off flips ~9 tests) is too noisy to attribute it.
