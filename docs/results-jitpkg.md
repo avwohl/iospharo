@@ -1082,3 +1082,37 @@ materialize (find the jit_rt_* / chain materialize that builds the Context for a
 inline pushThisContext) and capture stackp for the normal vs read-only run; or trace
 from the getter side (the inline getter's returned value for #stackPtr).  Interp-side
 instrumentation cannot see this path.
+
+### testJump backtrace — stackp set via force-yield materialize + primitiveSetStackPointer; Heisenbug (2026-05-29)
+
+Latched exampleStore's CompiledMethod oop at its immutable store
+(Interpreter::setReceiverInstVar) and dumped a C++ backtrace at every write to
+that context's stackp (slot 2) in ObjectMemory::storePointer.  Results
+(ctx 0xceb0200f8, rcvrImmut=1 — the read-only run):
+
+  stackp=0  <- ObjectMemory::storePointer <- materializeFrameStack <- transferTo
+              <- handleForceYield <- interpret        (a FORCE-YIELD materialize)
+  stackp=1  <- ObjectMemory::storePointer <- primitiveSetStackPointer
+              <- executePrimitive <- tryJITActivation <- activateMethod
+              <- sendSelector <- interpret            (Context stackp: simulation)
+
+So the context's stackp is written by BOTH (a) the force-yield materialize
+(stackp = live operand depth) and (b) primitiveSetStackPointer (Context>>stackp:,
+the SimulationMock context simulation).  The "1 vs 0" the test reads is the
+interleaving of these.  ALSO CONFIRMED: exampleStore's immutable store DOES reach
+setReceiverInstVar (Interpreter.cpp:12042) -> pushes receiver/value/index and
+sends #attemptToAssign:withIndex: -> resumeUnchecked: nil.  So the earlier
+"correction" was wrong: the immutable-store attemptToAssign: path IS on the hot
+path; whether its result leaves the operand stack +1 (pop-variant popStore not
+discarding the send result) is the live suspect, interacting with the force-yield
+materialize timing.
+
+CRUCIAL: testJump PASSES with this instrumentation present and is flaky run-to-run
+even under PHARO_DET_SCHED (PASS once, FAIL 3x on the same binary).  So its
+nondeterminism is NOT solely the g_stepNum force-yield that det-sched controls —
+a residual timing source (GC / wall-clock path det-sched doesn't disable, or the
+force-yield-vs-primitiveSetStackPointer race) survives.  This is the hardest class:
+observation suppresses it.  NEXT: (1) make PHARO_DET_SCHED also pin whatever drives
+this force-yield-vs-stackp: race (widen PHARO_DET_SCHED_QUANTUM, or find the second
+nondeterminism source), so the bug is stable under tracing; (2) then decide between
+the attemptToAssign:-result-not-popped fix and a force-yield-materialize stackp fix.
