@@ -1945,3 +1945,29 @@ JIT-compiled lookupSelector:/at:ifPresent: return nil under det-sched.  Narrow w
 finer asmjit knobs (PHARO_T1_NO_INLINE_BLOCK_VALUE — at:ifPresent: takes a block;
 PHARO_T1_NO_INLINE_GETTER; PHARO_ASMJIT_T1_NO_SENDS_BISECT), one foreground run each,
 reading the detector before the next.  Production wall-clock unaffected (det-sched-only).
+
+### det-sched hang — CORRECTION to the asmjit-T1 claim: JIT-off doesn't reproduce the recursion (but SIGSEGVs separately) (2026-05-30)
+
+CORRECTION to the previous entry (e2c6b2ee): it said "PHARO_NO_ASMJIT_T1 -> detector=0,
+21 tests reached then timed out".  That "21 tests" was stale (from a different run); the
+actual full-suite JIT-off run CRASHED (exit 139, SIGSEGV) BEFORE reaching
+testBlockCannotReturn, so its detector=0 was inconclusive, not a fix.
+
+Redone properly with the ISOLATED trigger (only testBlockCannotReturn) and detector
+threshold lowered to 8 (so it fires before any C-stack overflow), each read from its own
+log:
+  JIT ON  (isolated testBlockCannotReturn)  -> detector=1 (DNU runaway), exit 0 (clean stopVM)
+  JIT OFF (PHARO_NO_ASMJIT_T1, isolated)     -> detector=0, doesNotUnderstand:count=0,
+                                                SIGSEGV (139) in interpret/dispatchBytecode
+So JIT-off does NOT produce the send:to:with:super:->DNU recursion (zero DNU sends); it
+crashes with a DIFFERENT signature.  Net: the DNU-recursion bug IS in the asmjit-T1 JIT
+(JIT-on reproduces it; JIT-off doesn't), and the earlier J2J/resume knobs all still fire
+(ruling J2J out).  The JIT-off SIGSEGV is a separate issue (likely the slow-path /
+executeFromContext recursion on the same pathological test) and NOT the bug under study.
+
+SOLID measured chain now: full ContextTest det-sched hangs at testBlockCannotReturn ->
+send:to:with:super:->#doesNotUnderstand: infinite recursion (lookupSelector: returns nil
+despite valid receiver/class/selector + reachable method, per SIM-DUMP) -> caused by
+asmjit-T1 JIT (not J2J/resume; JIT-off has no recursion).  NEXT: finer asmjit-T1 emit
+knobs on the isolated trigger, one foreground run each, detector read before the next, to
+find WHICH emit makes the compiled lookupSelector:/at:ifPresent: return nil.
