@@ -2053,3 +2053,28 @@ Net real outcome of this campaign: (1) det-sched ContextTest suite-hang FIXED (e
 block-resume hasNLR gate) — suite completes 34 tests, no aigraph regression; (2)
 executeFromContext nil-pc -> cannotReturn: fix (236f085e); (3) testJump det-sched QUANTUM=1
 still FAILS (the original force-yield artifact, unchanged — NOT closed).
+
+### block-resume hasNLR fix — blast-radius / safety verification (2026-05-30)
+
+The hasNLR gate (e4143199) changes block-resume behavior image-wide, so I checked its
+blast radius on a broad block/NLR-heavy set (OrderedCollection, Set, Dictionary, Interval,
+BlockClosure, Exception, Context, SortedCollection, Bag, Array — 1852 tests), wall-clock,
+each result read directly:
+
+  baseline (gate removed):   PASS=1842 FAIL=2 ERROR=6   (8 failures)
+  with fix (hasNLR gate):    PASS=1843 FAIL=2 ERROR=5   (7 failures)
+  full disable (NO_BLOCK_RESUME): PASS=1843 FAIL=2 ERROR=5  (identical to fix)
+
+DIFF baseline-vs-fix: the ONLY change is `ContextTest>>testAstScope` goes ERROR -> (gone);
+the fix removes one failure and introduces ZERO new ones.  The 7 remaining failures are
+identical between the narrow gate and the full PHARO_T1_NO_BLOCK_RESUME disable, and are
+pre-existing Opal/reflection gaps (testTempNamed*/testReadVariableNamed Context reflective
+temp access; testIsClean/testSourceNodeOptimized CompiledBlock AST; testMethodContextPrint
+Details formatting) — unrelated to block-resume.
+
+So the fix is a strict improvement on the broad set (-1 ERROR, +1 PASS, no regressions),
+and the narrow gate is exactly as safe as fully disabling the fast path while preserving it
+for the common NLR-free blocks.  Net campaign result stands: det-sched ContextTest
+suite-hang FIXED (e4143199), aigraph ERROR=0/10, broad set improved by 1, no regressions.
+testJump remains a separate pre-existing det-sched QUANTUM=1 force-yield artifact (FAIL,
+unchanged).
