@@ -1611,3 +1611,25 @@ testBlockCannotReturn under the runner and read the FIRST divergence.  The earli
 PHARO_LOOKUP_WATCH already showed internal=FOUND there; the new trace must capture WHICH
 class/selector send:to:with:super: actually passes to lookupSelector: at the moment it
 returns nil (vs what classOf(receiver) says it should be).
+
+### det-sched hang — fork+preemption alone does NOT reproduce it (2026-05-30)
+
+Tested the next hypothesis: the runner runs the test in a forked, preempted process, so
+maybe fork+preemption is the trigger.  Ran the EXACT testBlockCannotReturn body inside a
+`forkAt: 40` process (main blocks on a Semaphore) under PHARO_DET_SCHED=1, clean-room
+eval:
+    | sema result | sema := Semaphore new.
+    [ | p | p := [thisContext pc: nil] newProcess.
+      [p suspendedContext method selector = #pc: and: [p suspendedContext sender isDead]]
+        whileFalse: [p step].
+      result := p suspendedContext method selector. sema signal ] forkAt: 40.
+    sema wait. result printString
+-> COMPLETES, result '#pc:', marker fired, recursion=0.  Does NOT reproduce.
+
+So fork-at-P40 + det-sched preemption is STILL not enough.  The trigger needs more of the
+runner's state — the leading remaining candidates are (a) the nested
+on:Error:/on:Exception:/ensure: handler frames the runner wraps each test in
+(runSingleTest:, lines 700-729), and/or (b) cumulative prior-test heap/JIT/IC state
+(hundreds of tests before testBlockCannotReturn).  Bisecting these is the next step:
+wrap the forked body in the runner's exact handler nest first (cheaper); if still clean,
+it's cumulative state and only under-runner C++ instrumentation will catch it.
