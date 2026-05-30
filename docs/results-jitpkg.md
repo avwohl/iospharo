@@ -1212,3 +1212,62 @@ PASS under wall-clock and under PHARO_DET_SCHED_QUANTUM>=2.  So for the gold-sta
 det-sched comparison, use PHARO_DET_SCHED_QUANTUM=2 (or wall-clock) to avoid these
 two artifacts.  The underlying force-yield-during-exception-resume stackp bug is a
 real but rare VM bug worth a separate fix (see the backtrace section above).
+
+## force-yield × reified-thisContext stackp inflation (testJump) — 2026-05-30
+
+ROOT CAUSE (precise, backtrace-confirmed).  ContextTest>>testJump fails "Got 1
+instead of 0" under PHARO_DET_SCHED QUANTUM=1 on the *mutable* run of
+SimulationMock>>exampleSend (`instVar1 := 1. self yourself. ^ thisContext copy`),
+NOT the read-only/exception run (that one is correct).  Sequence on the mutable
+exampleSend context:
+  1. pushThisContext materializes it with stackp=0 (correct reification depth)
+     and then pushes the reified self onto its OWN operand stack.
+  2. A force-yield landing in that 1-bytecode window (before `send copy` consumes
+     the self) re-materializes via the frameDepth_==0 path
+     (Interpreter.cpp materializeFrameStack, `numItems = sp-fp-1`) and stores
+     stackp=1 — it counts the reified self on the operand stack.
+  3. The suspend/resume cycle freezes stackp=1, and `thisContext copy` clones it,
+     so `(thisContext copy) stackPtr` reads 1 instead of 0.
+Backtraces: mutable ctx writes = [pushThisContext materialize ->0][force-yield
+materialize 0->1]; read-only ctx ends 0 via prim76/materialize.  At QUANTUM=4 both
+runs end stackp=0 and the test PASSES.  Production wall-clock: testJump PASSES 5/5
+(coarse preemption never lands in the window).  So this is det-sched-only.
+
+THE TENSION (why a clean fix is hard).  The force-yield materialize MUST store
+stackp=1 so the suspended frame can resume: executeFromContext restores the
+reified self as the receiver for `send copy`; stackp=0 there crashes (no receiver).
+But `thisContext copy` wants the reification depth (0).  Same field, two needs.
+
+FOUR FIXES TRIED, ALL REGRESS:
+  (a) shallowCopy: strip the in-flight receiver from the clone's stackp — HANGS
+      (corrupts clones whose top operand isn't a self-reference).
+  (b) shallowCopy: strip ONLY a genuine self-reference top operand — HANGS (the
+      suite forks/continues reified-self context copies that need the full stackp
+      to resume; stripping breaks them).
+  (c) force-yield defer (unbounded) when top-of-stack == activeContext_ — HANGS
+      (starves the round-robin; some process keeps itself on top).
+  (d) force-yield defer (bounded, one-shot) — PRODUCTION-SAFE (wall-clock
+      ContextTest completes, testJump passes) but det-sched end-to-end
+      verification is CONFOUNDED (see below).  Code stashed.
+
+VERIFICATION CONFOUND (the real blocker).  The bug needs the full ContextTest
+suite's *cumulative* bytecode timing to land the force-yield in the window.  But:
+  - the full ContextTest under det-sched QUANTUM=1 HANGS (a separate det-sched
+    instability) — and now hangs before testJump even records;
+  - isolating testJump (new /tmp/sunit_method_names.txt method-filter in the
+    runner) removes the cumulative timing, so testJump PASSES in isolation on both
+    the buggy AND fixed VM — no repro.
+So there is no QUANTUM=1 configuration that both reproduces the bug AND completes.
+
+RECOMMENDED FUTURE FIX (untried — unverifiable this session, so not shipped):
+PC-REWIND in the frameDepth_==0 materialize.  When the top operand == activeContext_
+(reified self), store stackp = numItems-1 (deflated, what copy wants) AND set the
+context's pc back to the pushThisContext bytecode.  On resume, executeFromContext
+re-runs pushThisContext, which re-pushes the self — so the operand is re-derived
+rather than stored.  This satisfies both needs without touching copy (breaks
+continuations) or the scheduler (starves round-robin).  Needs the det-sched
+suite-hang resolved first to verify.
+
+INFRA ADDED: run_sunit_tests.st now honours /tmp/sunit_method_names.txt (one
+selector per line) to run a single test method — for isolating a test from a
+hang-prone full-class suite.  (In the pharo-headless-test submodule.)
