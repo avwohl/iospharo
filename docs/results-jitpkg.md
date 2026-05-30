@@ -979,3 +979,42 @@ Corrected characterization of the getter-on regressions:
   with the tape IG recorder (generalize g_atOop bootstrap to an env-var selector)
   to see which send reads the wrong slot.  ArrayTest>>testSelfEvaluatingComplexCase
   (warmup-dependent) is the other getter regression to revisit after.
+
+### testJump fully pinned — JIT immutable-store-bail / thisContext-materialize stackp (2026-05-29)
+
+Got the actual test source (stock Pharo eval) and the failure value:
+  ContextTest>>testJump -> verifyJumpWithSelector: over #(exampleClosure
+  exampleSend exampleStore).  verifyJumpWithSelector::
+    normalStackp   := (guineaPig perform: selector) stackPtr.
+    guineaPig beReadOnlyObject.
+    [ readOnlyStackp := (guineaPig perform: selector) stackPtr ]
+       on: ModificationForbidden do: [:ex | ex resumeUnchecked: nil].
+    self assert: normalStackp equals: readOnlyStackp.
+  Failure: "Got 1 instead of 0".  Context>>stackPtr is `^ stackp` (a plain
+  slot-2 getter).  SimulationMock>>exampleStore is `instVar1:=1. instVar1:=2.
+  ^ thisContext copy`.
+
+So the two `thisContext copy` materializations capture DIFFERENT stackp (0 vs 1)
+between the normal and the read-only (beReadOnlyObject) run.  In the read-only
+run, `instVar1 := 1` hits the JIT popStoreRecvVar IMMUTABLE-BIT bail
+(AsmjitT1.cpp ~2710: tst bit 23 -> bail EXIT_ARITH_OVERFLOW, value left on stack,
+ip = the popStore) -> interp re-exec -> ModificationForbidden -> resumeUnchecked:
+nil.  That bail/resume path leaves the operand-stack depth at the subsequent
+`^thisContext copy` off-by-one vs the inline-store (normal) run, so the
+materialized context's stackp is 1 instead of 0.
+
+This is NOT a getter wrong-value bug — `stackPtr` reads slot 2 correctly.  The
+inline getter on/off only gates whether exampleStore gets hot enough to JIT-compile
+(getter-on -> JIT -> the popStore bail path runs; getter-off -> interp -> consistent).
+Same materialize family as the aigraph bug (JIT exit leaves operand-stack state the
+interp materialize miscounts).  Ruled out as causes: re-entry knobs (NO_J2J/
+FORCE_SIMPLE/NO_BLOCK_RESUME/NO_POST_PRIM_RESUME), the method_-sync guards, and the
+IC-patch icSelectorBits==0 leak hole (closing it kept 98% IC hit but did NOT fix
+testJump).
+
+NEXT: trace the operand-stack depth across the read-only `instVar1:=1` popStore
+immutable-bail and the following `thisContext copy` (tape or lldb on
+SimulationMock>>exampleStore under PHARO_T1_INLINE_GETTER=1 PHARO_DET_SCHED=1) to
+find where the off-by-one enters — the popStore bail's stack handling vs the interp
+materialize's stackp count.  Fixing it (plus revisiting ArrayTest>>
+testSelfEvaluatingComplexCase) unblocks the t1InlineGetter default-on.
