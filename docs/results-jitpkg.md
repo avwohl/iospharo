@@ -1480,3 +1480,32 @@ corruption.  Next: with the reliable 4-test repro, instrument returnFromMethod
 (Interpreter.cpp:8714) to catch the `^method` NLR from lookupSelector: failing —
 distinguish (a) BlockClosure>>numArgs corrupt -> cull: drops the arg -> ^nil, vs
 (b) the NLR home-context lookup returning wrong after cumulative GC/heap churn.
+
+### det-sched hang — CORRECTION: two simulation failure modes (2026-05-30)
+
+CORRECTION to the prior "JIT ruled out" note — that was wrong.  Decisive isolated
+test (testBlockCannotReturn alone, wall-clock, now a RELIABLE repro — hangs every run,
+recursion=37):
+
+  JIT ON  : the `Context>>send:to:with:super:` recursion (lookupSelector: returns nil
+            though internal=FOUND; stack 16+ deep).  recursion≈37.
+  JIT OFF : NO send:to:with:super: recursion (recursion=0), but STILL hangs — 1.1
+            BILLION sends in 90s.  The outer `whileFalse: [p step]` loop spins forever
+            because the simulation never reaches the loop's exit condition
+            (`p suspendedContext method selector = #pc: and: [sender isDead]`).
+
+So there are TWO bugs, both in our `Context>>step`/`Process>>step` simulation:
+  (1) JIT-CAUSED recursion: with the JIT on, the simulator's lookupSelector: `^method`
+      block-return/NLR fails (returns nil though the method is found) — gone with the
+      JIT off, so it's the JIT's handling of the `^method` non-local return into a
+      JIT-compiled lookupSelector: / cull: / at:ifPresent: chain.
+  (2) DEEPER (JIT-independent): the `[thisContext pc: nil]` simulation never makes the
+      loop condition true — i.e. simulating `thisContext pc: nil` doesn't make the
+      sender's `isDead` (pc isNil) true, OR never steps into Context>>pc: with a dead
+      sender.  So `Context>>step` of an inst-var store / the dead-context transition is
+      mis-simulated.
+
+Reliable repro for BOTH: `testBlockCannotReturn` alone, wall-clock (JIT on → bug 1;
+PHARO_NO_ASMJIT_T1=1 → bug 2).  Either fix removes one mode; both are needed for the
+test to pass.  Distinct from testJump (det-sched-force-yield) — these are
+JIT-NLR (1) and simulation-store (2) correctness bugs.
