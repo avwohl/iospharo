@@ -1692,3 +1692,48 @@ what TestExecutionEnvironment>>runCase: forks/handles. Minimal repro stands:
 no det-sched). PROCESS NOTE: I mis-committed the conclusion 3x this campaign by writing
 expected results before reading logs — every result above is now re-read from the raw log
 with a unique per-run marker.
+
+### det-sched hang — ROOT TRIGGER ISOLATED: ensure: + process-stepping (2026-05-30)
+
+CORRECTION of the runCase claim (it was a red herring — runCase just happens to wrap in
+ensure:). Single-variable contrast, clean-room eval, NO SUnitRunner / NO fork / NO
+det-sched, each result read directly from the log:
+
+  K  [ <step p to dead-sender> ]                  on: Error -> PASS (KK 1)
+  J  [ <step p to dead-sender> ] ensure: [99]     on: Error -> HANG (JJ 9)
+
+Identical body; the ONLY difference is the `ensure: [99]` wrapper. Adding it flips
+PASS -> HANG. Supporting runs (all log-verified): G2 (method send, no ensure, fork)=PASS;
+H2 (method send + ensure:, fork)=HANG; I (method send + ensure:, NO fork)=HANG. So fork,
+the method send, runCase, perform:, TestExecutionEnvironment, and det-sched are ALL
+irrelevant — the sole trigger is an `ensure:` (unwind-protect) block on the stack of the
+code that steps a process to termination.
+
+MINIMAL DETERMINISTIC REPRO (eval on a plain image — hangs every time):
+  [ | p | p := [ thisContext pc: nil ] newProcess.
+    [ p suspendedContext method selector = #pc: and: [ p suspendedContext sender isDead ] ]
+      whileFalse: [ p step ] ] ensure: [ 99 ]
+Remove the `ensure: [ 99 ]` wrapper -> completes.
+
+UNIFICATION with the earlier lookupSelector:-nil / send:to:with:super: recursion: the
+recursion is `lookupSelector:` returning nil for a present selector, where lookupSelector:
+does `methodDict at: sel ifPresent: [:m | ^m]`. That `^m` is a NON-LOCAL RETURN out of the
+block; to return it must unwind the stack — and when an `ensure:` (unwind-protect) frame
+sits between the block and its home, our VM mishandles the NLR-through-ensure: so `^m`
+does not return -> lookupSelector: falls through to nil -> simulated doesNotUnderstand: ->
+same nil -> infinite recursion -> hang. My earlier standalone NLR probe
+(lookupSelector: #on:do: x200k -> bad=0) PASSED precisely because it had NO ensure: on the
+stack. The runner (and this minimal repro) always has ensure: in scope (runCase's
+ensure:tearDown / ensure:cleanUp), which is why it only failed there.
+
+PRECISE NEXT TEST (cheap, on the minimal harness): a plain JIT-warmup loop of
+`[ md at: #on:do: ifPresent: [:m | ^m] ] ensure: [0]` style — i.e. an `at:ifPresent:`
+NLR with an ensure: frame in between — should return nil/hang, isolating the NLR-through-
+ensure: bug with NO process-stepping at all. If confirmed, the fix is in the VM's
+non-local-return unwind past an ensure: context (returnValue / the ensure:/unwind handling
+in Interpreter.cpp, the returnValue NLR path ~5757 + ensure unwind).
+
+PROCESS NOTE: this campaign I mis-committed conclusions 3x by writing expected results
+before reading logs (retracted in bdbe67c9, f50e360a, d5eb0aaa). Every result in THIS
+entry was read from the raw log with a unique per-run marker (KK/JJ/GG/HH/II) and the
+single-variable K-vs-J contrast was run last to confirm.
