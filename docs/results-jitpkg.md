@@ -1309,3 +1309,27 @@ TWO ROOT FIXES, both deep/separate:
       — make process termination actually complete (no zombies) so the watchdog can
       skip a hung test, OR add a C++ runaway detector (active process monopolising
       wallclock while bytecodes advance) that force-preempts to the watchdog.
+
+### det-sched hang — complete root chain (livelock starving the Delay watchdog)
+
+PHARO_XFER_TRACE under the hang: 5.66 MILLION process switches in 25s, a tight
+3-way cycle P60→P40→P80→P60.  Correlated via PROC-DUMP:
+  P40 = the test (ContextTest>>testBlockCannotReturn, looping `p step` forever)
+  P60 = the runner's watchdog (runs Delay>>wait at P60, per run_sunit_tests.st:454)
+  P80 = SUnitRunner main
+P60 and P80 are READY and spinning in "SUnitRunner class>>ifFalse:" — i.e. the
+watchdog's `Delay>>wait` is NOT blocking; it busy-polls.  So:
+  1. testBlockCannotReturn's `p step` simulation loops forever (Context>>step bug);
+  2. the Delay scheduler is dead/starved under det-sched (a known fragility — the
+     runner already tries to restart it, run_sunit_tests.st:428-448), so the
+     watchdog's Delay>>wait can't block-then-fire on the per-test timeout;
+  3. watchdog (P60) + runner (P80) busy-poll, livelocking with the test (P40);
+  4. the 3-way cycle starves any path that could terminate the test → infinite hang.
+Under wall-clock the heartbeat keeps the Delay machinery alive enough that the
+watchdog sometimes fires (flaky skip); under det-sched (heartbeat yield disabled)
+it never recovers.
+
+So the linchpin is the Delay scheduler not surviving det-sched's fine-grained
+preemption.  Fixing EITHER the Context>>step infinite loop (test passes) OR the
+Delay-scheduler/watchdog robustness under det-sched (hung tests get skipped) breaks
+the hang.  Both are deep and independent of the testJump stackp bug above.
