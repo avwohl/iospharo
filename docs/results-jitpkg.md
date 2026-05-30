@@ -1509,3 +1509,24 @@ Reliable repro for BOTH: `testBlockCannotReturn` alone, wall-clock (JIT on → b
 PHARO_NO_ASMJIT_T1=1 → bug 2).  Either fix removes one mode; both are needed for the
 test to pass.  Distinct from testJump (det-sched-force-yield) — these are
 JIT-NLR (1) and simulation-store (2) correctness bugs.
+
+### det-sched hang bug 1 — NLR hypothesis REFUTED; bug requires the simulator (2026-05-30)
+
+Built four standalone JIT-warmup repros (3,000,000 iterations each, methods compiled +
+presence-verified individually) to test the "JIT mis-compiles the ^method NLR out of
+at:ifPresent:" theory WITHOUT the simulator:
+  1. at: #k ifPresent: [:v | ^v]                              -> correct (bad=0)
+  2. whileFalse: over a dict array, NLR out on iteration 3    -> correct (bad=0)
+  3. direct FullBlockClosure lookupSelector: #on:do: in a loop -> correct (bad=0)
+All return the right value after JIT warmup.  So the NLR-out-of-at:ifPresent:, the
+superclass-walk loop, and lookupSelector: itself are NOT broken in isolation.  The
+earlier "JIT NLR" prime suspect (commit f60b6b96 era) is REFUTED.
+
+Bug 1 therefore REQUIRES the simulator's Context>>send:to:with:super: machinery; it
+does not reproduce with a plain JIT-warmed lookupSelector: call.  Remaining
+hypotheses: (a) send:to:with:super: computes class := self objectClass: aReceiver
+(prim 111) and gets a corrupt class in the reified context, so lookupSelector: returns
+nil for the wrong class; (b) the simulated selector is a non-interned duplicate whose
+methodDict hash slot differs; (c) deep-recursion frame corruption.  Next instrument
+send:to:with:super: itself (the computed class oop vs classOf(receiver), and the real
+aMethod==nil decision) — NOT lookupSelector:.
