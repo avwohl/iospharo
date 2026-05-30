@@ -1360,3 +1360,32 @@ Process>>step's evaluate:onBehalfOf: + Context>>step simulation, and (for direct
 deeper multi-path effort.  Infra: re-prep a repro image's runner via an empty class
 list (SUnitRunner skips, eval --save fileIn goes through); compile debug methods with
 the stock VM (our compiler has a `jumpAheadTo: #else` Opal gap), run on ours.
+
+### det-sched hang — DOMINANT path is a simulation method-lookup recursion (2026-05-30)
+
+The executeFromContext nil-pc fix (236f085e) addresses the process-CLEANUP path, but
+the dominant hang is elsewhere and is NOT pc=nil-specific: stepping ANY block to/past
+completion hangs.  Confirmed on a clean image — `[42] newProcess` and
+`[thisContext] newProcess`, stepped 8×, both hang (single steps are fine).
+
+DIAG during the hang: the Smalltalk bytecode simulation `Context>>send:to:with:super:`
+recurses INFINITELY (frame depth 20→39, nested send-after-send), through
+`FullBlockClosure class>>lookupSelector:` and `MethodDictionary>>at:ifPresent:`.
+Mechanism (from Context>>send:to:with:super:):
+  aMethod := class lookupSelector: selector.
+  aMethod == nil ifTrue: [ ^self send: #doesNotUnderstand: to: aReceiver with: ... ].
+When stepping a process toward completion the simulator sends some selector to
+FullBlockClosure (class), our VM's `lookupSelector:` returns nil for it, so the
+simulator simulates `doesNotUnderstand:` — and lookupSelector: returns nil for THAT
+too → infinite recursion.  Stock Pharo finds Object>>doesNotUnderstand: and the
+recursion bottoms out (it reaches #cannotReturn: and terminates at step ~8).
+
+So the dominant det-sched hang is a REFLECTIVE METHOD-LOOKUP bug: our VM's
+`Behavior>>lookupSelector:` / `MethodDictionary>>at:` (the hash-probe `scanFor:`
+path) returns nil for a valid selector when driven from the simulator's
+send:to:with:super:.  This is independent of the testJump stackp bug and of the
+executeFromContext nil-pc fix.  It is the real remaining blocker for a hang-free
+det-sched ContextTest run — a focused method-lookup-in-simulation investigation.
+Tooling note: recompiling debug methods into a prepared image only works when the
+prior run COMPLETED (SUnitRunner skips its startup handler on "previous run
+completed"); after a hang the handler hijacks eval, so re-copy Pharo-jit.image fresh.
