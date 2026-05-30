@@ -120,16 +120,22 @@ DebugSettings::DebugSettings() {
     }
     t1ICProbeMin        = envInt("PHARO_T1_IC_PROBE_MIN", -1);
     t1ICProbeMax        = envInt("PHARO_T1_IC_PROBE_MAX", -1);
-    // 2026-05-28: default OFF (opt-in via PHARO_T1_INLINE_GETTER).  The arm64
-    // inline-getter IC-probe spec produces wrong results under JIT warmup
-    // (AI-Algorithms-Graph: AIPrim/AITarjan deterministically — findNode: gets a
-    // whole edge tuple instead of an endpoint; raw log shows stack-addr/nil
-    // garbage receivers).  It was default-OFF before 2026-05-16 for exactly
-    // these "downstream DNUs"; this reverts that.  Root-cause emit fix tracked
-    // in docs/results-jitpkg.md (needs lldb single-step).  Re-enable to test:
-    // PHARO_T1_INLINE_GETTER=1.  PHARO_T1_NO_INLINE_GETTER still forces off.
-    t1InlineGetter      = envPresent("PHARO_T1_INLINE_GETTER")
-                          && !envPresent("PHARO_T1_NO_INLINE_GETTER");
+    // 2026-05-29: default ON (opt-out via PHARO_T1_NO_INLINE_GETTER).  It was
+    // turned OFF 2026-05-28 for the AI-Algorithms-Graph AIPrim/AITarjan
+    // corruption — but that was NOT a getter bug: the getter always wrote the
+    // correct operand slot.  Root cause was the ExitArrayCreate handlers gating
+    // their state.ip sync on `tier == 1`, which dropped recompiled (tier 2)
+    // asmjit-T1 methods, leaving instructionPointer_ stale so asTuple re-ran
+    // from offset 2 and rebuilt {prior-array, ...}.  Fixed 3d787a78 (gate on
+    // useAsmjitT1).  Re-validation (docs/results-jitpkg.md) showed all 5 of the
+    // det-sched-found "getter regressions" were non-bugs: testJump /
+    // testSelfEvaluatingComplexCase are PHARO_DET_SCHED_QUANTUM=1 force-yield
+    // artifacts (pass under wall-clock and QUANTUM>=2), testAsArrayKeepsIdentity
+    // / testInCriticalWait are flaky (pass on re-run), and
+    // testHasBindingThatBeginsWith ERRORs identically with the getter OFF (a
+    // pre-existing warmup-masked failure).  So the getter is safe again; this
+    // restores the perf optimization.  PHARO_T1_NO_INLINE_GETTER forces off.
+    t1InlineGetter      = !envPresent("PHARO_T1_NO_INLINE_GETTER");
     t1InlineSetter      = !envPresent("PHARO_T1_NO_INLINE_SETTER");
     t1InlineReturnsSelf = !envPresent("PHARO_T1_NO_INLINE_RETURNS_SELF");
     t1InlineTempReturn  = !envPresent("PHARO_T1_NO_INLINE_TEMP_RETURN");

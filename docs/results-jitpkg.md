@@ -1195,3 +1195,20 @@ production-safe.  Remaining gate before flipping the default ON: a clean, isolat
 multi-run confirmation that MetaClassTest>>testHasBindingThatBeginsWith passes with
 the getter on (rule out the lone inconclusive candidate), since wall-clock batch
 flakiness (off-vs-off flips ~9 tests) is too noisy to attribute it.
+
+### t1InlineGetter RE-ENABLED (default ON) — 2026-05-29
+
+Flipped t1InlineGetter to default-ON (opt-out PHARO_T1_NO_INLINE_GETTER) after the
+full re-validation above: the aigraph ExitArrayCreate fix (3d787a78) removed the
+one real deterministic getter bug, and all 5 det-sched-found "regressions" are
+non-bugs (2 QUANTUM=1 force-yield artifacts, 2 flaky, 1 pre-existing).  aigraph
+(AIPrimTest/AITarjanTest) passes ERROR=0 with the getter default-on under both
+det-sched and wall-clock.
+
+CAVEAT for the test harness: with the getter ON, testJump and
+testSelfEvaluatingComplexCase FAIL under PHARO_DET_SCHED with the default
+QUANTUM=1 (the force-yield-during-exception-resume materialize artifact).  They
+PASS under wall-clock and under PHARO_DET_SCHED_QUANTUM>=2.  So for the gold-standard
+det-sched comparison, use PHARO_DET_SCHED_QUANTUM=2 (or wall-clock) to avoid these
+two artifacts.  The underlying force-yield-during-exception-resume stackp bug is a
+real but rare VM bug worth a separate fix (see the backtrace section above).
