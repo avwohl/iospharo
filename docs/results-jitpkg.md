@@ -1737,3 +1737,31 @@ PROCESS NOTE: this campaign I mis-committed conclusions 3x by writing expected r
 before reading logs (retracted in bdbe67c9, f50e360a, d5eb0aaa). Every result in THIS
 entry was read from the raw log with a unique per-run marker (KK/JJ/GG/HH/II) and the
 single-variable K-vs-J contrast was run last to confirm.
+
+### det-sched hang — it is a TWO-FACTOR interaction: Context>>step + ensure: (2026-05-30)
+
+Tested the "NLR-through-ensure:" unification from the previous entry, and REFUTED it.
+Compiled NlrEns>>findWithEnsure: = `[ aDict at: #k ifPresent: [:m | ^m] ] ensure: [0]`
+and drove it 300k times (JIT warmup), NO process-stepping:
+  L  (obj findWithEnsure: d) = 42  x300k  ->  bad=0   [NLR-through-ensure: WORKS]
+So the `^m` NLR out of at:ifPresent: through an ensure: frame is NOT broken by itself.
+
+Therefore the bug is a TWO-FACTOR INTERACTION — each factor alone is clean:
+  K  process-stepping, NO ensure:           -> PASS
+  L  ensure: + NLR, NO process-stepping      -> PASS (bad=0)
+  J  process-stepping + ensure:              -> HANG
+Only Context>>step simulation WITH an `ensure:` frame on the stepping process's stack
+hangs. Neither the simulator nor ensure:/NLR is independently buggy.
+
+So the lookupSelector:-nil recursion happens specifically when the bytecode simulator
+(Context>>step -> send:to:with:super: -> lookupSelector: -> at:ifPresent:[:m|^m]) runs
+while an ensure: context is on the simulating process's stack. The interaction corrupts
+either the simulated context chain or the ^m NLR's unwind in that configuration.
+
+This is the floor of black-box bisection — the minimal deterministic repro is the J
+eval (4 lines, plain image, no runner/fork/det-sched). NEXT (needs C++ instrumentation,
+now cheap on J): trace Context>>step / send:to:with:super: under J and capture how the
+ensure: frame changes the simulated context chain or the ^m unwind vs the passing K case
+(diff the two). Candidate code: the ensure:/unwind-marker handling in returnValue
+(Interpreter.cpp ~5757) and the materialize/sender-walk in Context>>step's path
+(materializeFrameStack), specifically how an unwind-protect context is reified/walked.
