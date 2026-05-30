@@ -1053,3 +1053,32 @@ tape's g_atOop bootstrap to SimulationMock>>exampleStore (env-var selector) and
 record the save/operandCount events.  The immutable-store attemptToAssign:-result
 question (Interpreter.cpp:12038) is worth checking in that trace but is not, on
 its own, the getter-gated cause.
+
+### testJump deeper trace — context materialize is JIT-inline (2026-05-29)
+
+Got exampleStore's bytecode (stock-Pharo symbolic):
+  pushConst 1; popIntoRcvr 0; pushConst 2; popIntoRcvr 0; pushThisContext; send copy; returnTop
+i.e. TWO immutable instance-var stores immediately before pushThisContext.
+exampleClosure (which PASSES) has one popIntoRcvr 0 then closure machinery
+(pushClosure/value/pop) before pushThisContext.
+
+Runtime trace (PHARO_FINDNODE_WATCH, getter-on, det-sched) instrumenting the
+interp PushThisContext handler + four interp context-materialize sites
+(current-frame materialize, activeContext_ stackp-sync, saved-frame loop,
+materializeFrameStack):
+  - exampleClosure / exampleSend: REACH the interp PushThisContext handler with
+    CONSISTENT stackp = 0 for BOTH the normal (immut=0) and read-only (immut=1)
+    runs -> they pass.
+  - exampleStore: does NOT reach the interp PushThisContext handler at all (neither
+    run), and its Context is NOT created by ANY of the four instrumented interp
+    materialize sites.
+
+So exampleStore's `pushThisContext` is handled INLINE in the JIT (a JIT-side
+thisContext materialize, not the AsmjitT1.cpp ~2643 bail-to-interp path), and that
+JIT-inline path computes the divergent stackp (1 vs 0) for the read-only run.  The
+difference from exampleClosure is the back-to-back immutable popStore -> pushThisContext
+with no intervening bytecodes.  NEXT: instrument the JIT-side thisContext
+materialize (find the jit_rt_* / chain materialize that builds the Context for an
+inline pushThisContext) and capture stackp for the normal vs read-only run; or trace
+from the getter side (the inline getter's returned value for #stackPtr).  Interp-side
+instrumentation cannot see this path.
