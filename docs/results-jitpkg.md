@@ -2228,3 +2228,31 @@ returns-literal / trivial-predicate path under tail-call), deferred — not atte
 default-OFF.  Honest correction of this turn's earlier overreach: inline-J2J is NOT
 "~98%/catastrophe-gone" — measured 10-class shows +8 real regressions, all tracing to this
 one predicate-emit bug.
+
+### inline-J2J residual — correction + readable dispatch-order finding (2026-05-30)
+
+CORRECTION to the prior entry: it said the "returnsLiteral emit produces a wrong value."
+Reading the emit (AsmjitT1.cpp ~4769-4851), that is WRONG — the returnsLiteral emit is
+CORRECT: it stores OFF_TRUEOOP / OFF_FALSEOOP / nil / SmI literals at the receiver slot per
+the bits-48-50 kind.  So the bug is NOT the emit.
+
+READABLE FINDING (static, not yet runtime-verified): the IC-HIT dispatch (AsmjitT1.cpp
+3639-3659) checks bit 60 (inline-J2J) at line 3639 BEFORE bit 58 (returnsLiteral) at 3647:
+    3639 tbnz x7, 60, tryInlineJ2J        <- J2J checked first
+    3647 tbnz x7, 58, tryReturnsLiteral
+So IF a trivial `^true`/`^false` predicate like OCToken>>isIdentifier has BOTH bit 60 and
+bit 58 set on its IC entry, the inline-J2J tail-call path wins and the correct
+returnsLiteral path is never reached — which would leave the receiver (the token) in the
+receiver slot, exactly matching the measured symptom (isIdentifier -> token, not Boolean ->
+mustBeBoolean at parseAssignment's jumpFalse:).
+
+HYPOTHESIS (unverified — needs runtime instrumentation + a working harness, both degraded
+now): the classifier sets bit 60 on a method that is also returnsLiteral, and the dispatch
+order then takes the wrong branch.  CANDIDATE FIXES (do NOT apply without verifying which is
+true): (a) reorder dispatch so bit 58 (and other cheap value-returning specializations) are
+checked before bit 60; or (b) make the classifier not set bit 60 when bit 58 is set
+(mutual exclusion).  MUST first verify isIdentifier's IC actually has both bits, and that
+reordering doesn't regress the J2J perf path — neither verifiable under current tooling.
+
+NOT FIXED.  inline-J2J stays default-off.  This is the precise, readable next lead for a
+session with a working test harness.
