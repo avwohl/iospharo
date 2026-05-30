@@ -1661,3 +1661,31 @@ Context>>step / send:to:with:super: simulation goes wrong only when its outer ho
 forked (non-main, heap-reified) context. Same reified-context-state family as testJump.
 NEXT: instrument send:to:with:super: under THIS minimal repro (cheap now) to capture the
 first nil lookup's computed class vs classOf(receiver).
+
+### det-sched hang — narrowed past runCase: it's send-depth of the stepped block's home (2026-05-30)
+
+Further 2x2 on the minimal repro (clean-room eval, log-verified):
+  B  test statements INLINED into the forked block        -> PASS
+  F  ti perform: #testBlockCannotReturn, in fork          -> HANG
+  G  ti testBlockCannotReturn (direct send), in fork      -> HANG
+  E  manually fork+step an inner process, in fork         -> PASS
+So it is NOT runCase / perform: / TestCase machinery (F and G both hang, neither uses
+runCase's TestExecutionEnvironment). The discriminator is whether the test code runs as
+its OWN METHOD ACTIVATION reached by a send from the forked block (F, G -> hang) vs
+INLINE in the forked block's context (B -> pass). E also passes (manually stepping an
+inner process is fine).
+
+Mechanistic reading: the test creates `p := [thisContext pc: nil] newProcess` and steps
+p. The block `[thisContext pc: nil]`'s HOME CONTEXT is:
+  - in B: the forked block's own context (one level)
+  - in F/G: the testBlockCannotReturn METHOD context, one send below the forked block
+When `p` is stepped and the simulation walks/returns through that home-context chain, it
+goes wrong ONLY when the home is a method context nested below a forked process context
+(F/G), not when it's the fork block itself (B). This is consistent with reified/forked
+context-chain corruption in Context>>step's home-context handling — same family as the
+testJump reified-context stackp bug.
+
+So the minimal deterministic repro is now: in a forkAt:40 process, SEND a method that
+does `[thisContext pc: nil] newProcess` + step-to-dead-sender. NEXT: C++ instrument
+send:to:with:super: (or Context>>step's home/sender walk) under this 3-line repro to
+capture the first wrong class/sender.
