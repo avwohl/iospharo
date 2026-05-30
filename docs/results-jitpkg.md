@@ -2078,3 +2078,41 @@ for the common NLR-free blocks.  Net campaign result stands: det-sched ContextTe
 suite-hang FIXED (e4143199), aigraph ERROR=0/10, broad set improved by 1, no regressions.
 testJump remains a separate pre-existing det-sched QUANTUM=1 force-yield artifact (FAIL,
 unchanged).
+
+### testJump — mechanism CONFIRMED at the fd0 materialize (reified-self stackp inflation) (2026-05-30)
+
+With the suite-hang fixed, testJump is now a clean ISOLATED deterministic repro (no full
+suite needed): isolated ContextTest>>testJump FAILS "Got 1 instead of 0" 3/3 under
+PHARO_DET_SCHED QUANTUM=1, and PASSES under wall-clock and QUANTUM=4 (3/3) — confirming
+the force-yield-timing artifact characterization.
+
+CONFIRMED MECHANISM (directly measured, PHARO_TJ_TRACE at the frameDepth_==0 materialize,
+Interpreter.cpp:14612/14631):
+    [TJ] fd0-mat numItems=1 topIsSelf=1 pc=33 ctx=0x...
+The three verifyJumpWithSelector: probes (exampleClosure/exampleSend/exampleStore) all end
+in `^ thisContext copy` with no args/temps.  pushThisContext leaves the reified context on
+its OWN operand stack as the in-flight receiver of the `copy` send.  A force-yield at the
+QUANTUM=1 periodic checkpoint lands in that window and the fd0 materialize computes
+`numItems = sp-fp-1 = 1` — counting the reified self — and stores stackp=1.  `thisContext
+copy` then copies a context with stackp=1, so `(thisContext copy) stackPtr` reads 1 instead
+of 0.  The read-only probe's different timing avoids the window, giving stackp=0 — hence the
+"Got 1 instead of 0" inequality.  TOPISSELF=1 with NUMITEMS=1 at the materialize is the
+exact, measured signature.
+
+THE TENSION (why this is not a one-liner): the stored stackp=1 is CORRECT FOR RESUME — the
+reified self must be restored as the `copy` send's receiver if the process resumes from this
+materialized context.  So the fd0 materialize cannot simply deflate it.
+
+PROPOSED FIX (pc-rewind, NOT yet implemented — needs careful verification):
+when topIsSelf at the fd0 materialize (top operand == activeContext_), store
+stackp = numItems-1 (deflated, the logical depth) AND rewind the stored pc to the
+PushThisContext bytecode (SistaV1::PushThisContext = 0x4C), so on resume pushThisContext
+re-executes and re-pushes the self.  That satisfies BOTH: `thisContext copy` reads the
+deflated stackp, and resume re-derives the self.  RISK: must not break process resume,
+continuations, or other materialized-context consumers (an earlier shallowCopy-side deflate
+attempt hung the suite).  Verify on the isolated testJump repro (fast, deterministic) AND a
+broad fork/exception/continuation set before committing.
+
+STATUS: mechanism confirmed + measured; fix localized but NOT implemented this turn
+(high-regression-risk surgery + degraded tooling).  testJump remains FAIL under det-sched
+QUANTUM=1 (production-invisible: passes wall-clock / QUANTUM>=2).
