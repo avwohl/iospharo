@@ -1036,3 +1036,20 @@ pop-variant immutable store must discard the attemptToAssign: send result (net
 immutable-store-as-send through the same return-handling that pops the result for
 a statement send.  Verify by re-running ContextTest>>testJump getter-on after the
 fix.
+
+CORRECTION to the candidate above: it does NOT fully explain the getter
+dependence.  `setReceiverInstVar`'s immutable path runs in the interpreter
+regardless of t1InlineGetter, so if it unconditionally left +1 then getter-OFF
+(exampleStore in interp) would fail too — but getter-OFF passes.  So the +1 stackp
+is getter-ON-specific, i.e. it arises only when exampleStore is JIT-compiled and
+its `thisContext` is materialized via the JIT path (PushThisContext bail ->
+materialize) rather than the pure-interp path.  Static analysis has not isolated
+where the JIT materialize's stackp diverges from the interp's for the read-only
+run; every hand-traced path so far reconciles to the same depth.  This needs
+RUNTIME tracing (not more static reading): capture state.sp / framePointer_ /
+the materialize's operandCount at `^thisContext copy` for the normal vs read-only
+run under PHARO_T1_INLINE_GETTER=1 PHARO_DET_SCHED=1 — generalize the FINDNODE_WATCH
+tape's g_atOop bootstrap to SimulationMock>>exampleStore (env-var selector) and
+record the save/operandCount events.  The immutable-store attemptToAssign:-result
+question (Interpreter.cpp:12038) is worth checking in that trace but is not, on
+its own, the getter-gated cause.
