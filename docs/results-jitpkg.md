@@ -1915,3 +1915,33 @@ Process failure root: I ran multiple variants (some backgrounded) and wrote the
 conclusion in the same batch, before any completed or was read. The bisection must be
 redone ONE run at a time, foreground, reading each log (detector count AND completion)
 before the next.
+
+### det-sched hang — localized to asmjit-T1 JIT (NOT J2J/resume) — fully measured (2026-05-30)
+
+Redone ONE foreground run at a time, each detector count read from its OWN log before the
+next (PHARO_SIM_DETECT fires once + stopVM at 40 consecutive simulated #doesNotUnderstand:
+sends).  Real runner repro (full ContextTest, PHARO_DET_SCHED):
+  baseline (JIT on)                    detector=1 FIRES
+  PHARO_NO_J2J=1                       detector=1 FIRES   (J2J ruled OUT)
+  PHARO_NO_RESUME_J2J=1                detector=1 FIRES
+  PHARO_NO_RESUME=1                    detector=1 FIRES
+  PHARO_NO_JIT_RESUME_AFTER_RETURN=1   detector=1 FIRES
+  PHARO_T1_NO_INLINE_J2J=1             detector=1 FIRES
+  PHARO_NO_ASMJIT_T1=1 (JIT fully off) detector=0, 21 tests reached then timed out (slow)
+CONCLUSION: every J2J / resume sub-knob STILL fires the detector — the recursion is NOT
+caused by J2J or the resume path.  Only disabling the asmjit-T1 JIT entirely silences it.
+So the bug is in the asmjit-T1 compiled code for the methods on the simulated lookup path
+(send:to:with:super: -> lookupSelector: -> at:ifPresent:), consistent with the SIM-DUMP
+finding (valid receiver/class/selector, method reachable, yet image lookupSelector: nil).
+
+NOTE: this SUPERSEDES and confirms the retraction of the earlier "J2J RESUME" claim
+(e1ef0795, retracted 7e2f1cfb) — and additionally, PHARO_NO_J2J_RESUME used in that
+fabricated run is NOT a real knob (no such env var exists; the real ones are
+PHARO_NO_RESUME_J2J / PHARO_NO_RESUME / PHARO_NO_JIT_RESUME_AFTER_RETURN, all tested here
+and all still FIRE).
+
+NEXT: with the JIT confirmed as the locus, the question is WHICH asmjit-T1 emit makes a
+JIT-compiled lookupSelector:/at:ifPresent: return nil under det-sched.  Narrow with the
+finer asmjit knobs (PHARO_T1_NO_INLINE_BLOCK_VALUE — at:ifPresent: takes a block;
+PHARO_T1_NO_INLINE_GETTER; PHARO_ASMJIT_T1_NO_SENDS_BISECT), one foreground run each,
+reading the detector before the next.  Production wall-clock unaffected (det-sched-only).
