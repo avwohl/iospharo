@@ -23020,7 +23020,27 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                     && (primIdx == 207 || primIdx == 209)) {
                                 blockJM = jitRuntime_.methodMap().lookup(method_.rawBits());
                             }
+                            // 2026-05-30: skip the chain-loop block-resume fast
+                            // path when the resumed method contains a NON-LOCAL
+                            // RETURN (hasNLR).  tryExecute runs the block's JIT
+                            // code in the chain loop sharing the OUTER send's
+                            // icDataPtr/sendArgCount; an NLR (^x) inside — e.g.
+                            // the `[:m | ^m]` argument block of
+                            // MethodDictionary>>at:ifPresent: in lookupSelector: —
+                            // bails and is mis-handled with the stale outer IC,
+                            // returning nil instead of the value.  Under the
+                            // det-sched runner that makes lookupSelector: return
+                            // nil for a present selector -> Context>>send:to:with:
+                            // super: -> doesNotUnderstand: infinite recursion ->
+                            // ContextTest>>testBlockCannotReturn hangs the suite.
+                            // Measured: the failing candidates have hasNLR=1,
+                            // hasSends=0 (so the isStubOnEntry / hasSends guards
+                            // missed them).  PHARO_T1_NO_BLOCK_RESUME (disabling
+                            // the whole fast path) also fixes it with no aigraph
+                            // regression; gating on hasNLR keeps the fast path for
+                            // the common NLR-free blocks.
                             if (blockJM && !blockJM->isStubOnEntry
+                                    && !blockJM->hasNLR
                                     && !g_debug.t1NoBlockResume
                                     && (primIdx == 207 || primIdx == 209)) {
                                 // Block evaluation: instead of bailing, switch

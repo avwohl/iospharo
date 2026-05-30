@@ -1995,3 +1995,39 @@ NEXT: read asmjit-T1's block-compilation NLR/return emit (grep t1NoBlocks usage 
 the gated block-compile path; then the block epilogue / non-local-return emit) and find
 why the `^m` NLR yields nil.  A correct fix removes the hang with block JIT left ON.
 Production wall-clock unaffected (det-sched-only, pathological testBlockCannotReturn).
+
+### det-sched hang — FIXED: block-resume fast path now skips hasNLR blocks (2026-05-30)
+
+FIX committed.  Root cause, localized by disciplined one-foreground-run-at-a-time knob
+bisection (compact PHARO_SIM_DETECT detector: stopVM on 40 consecutive simulated
+#doesNotUnderstand: sends), each result read from its own log before the next:
+
+  - JIT on baseline: detector FIRES (the hang).
+  - Every J2J / resume knob (PHARO_NO_J2J, PHARO_NO_RESUME_J2J, PHARO_NO_RESUME,
+    PHARO_NO_JIT_RESUME_AFTER_RETURN, PHARO_T1_NO_INLINE_J2J): STILL FIRES -> J2J ruled out.
+  - PHARO_T1_NO_INLINE_BLOCK_VALUE / GETTER / IC_PROBE: STILL FIRE -> ruled out.
+  - PHARO_T1_NO_BLOCKS: detector silent, run COMPLETES -> block compilation is the locus.
+  - PHARO_T1_NO_BLOCK_RESUME: silent + completes -> the chain-loop block-RESUME fast path.
+  - Instrumented the block-resume candidates: the failing one has hasNLR=1 (hasSends=0,
+    isStubOnEntry=0) — so the existing isStubOnEntry guard missed it.
+
+Mechanism: the chain-loop block-resume fast path (Interpreter.cpp ~23047) runs a resumed
+block's JIT code via tryExecute while sharing the OUTER send's icDataPtr/sendArgCount.
+When the block contains a NON-LOCAL RETURN (^x) — e.g. the `[:m | ^m]` argument block of
+MethodDictionary>>at:ifPresent: used by Context class>>lookupSelector: — the NLR bails
+and is mis-handled with the stale outer IC, so lookupSelector: returns nil for a PRESENT
+selector.  That drives Context>>send:to:with:super: -> #doesNotUnderstand: -> (lookup nil
+again) -> infinite recursion, hanging ContextTest>>testBlockCannotReturn (and the whole
+det-sched ContextTest suite).  Matches the earlier SIM-DUMP finding (valid receiver/
+class/selector, method reachable, yet image lookupSelector: nil).
+
+FIX: add `&& !blockJM->hasNLR` to the block-resume fast-path guard, routing NLR-containing
+blocks through the interpreter (correct path) while keeping the fast path for the common
+NLR-free blocks.  VERIFIED on the clean binary (no scaffolding):
+  - full ContextTest det-sched: COMPLETES, 34 tests, testBlockCannotReturn=PASS (was: hang)
+  - aigraph det-sched: ERROR=0 PASS=10 (no regression)
+  - full ContextTest wall-clock: completes, testBlockCannotReturn=PASS (30P/3E/1F; the
+    3E/1F are pre-existing — testAstScope Opal isOptimized gap etc., unrelated).
+
+This is the deferred det-sched hang that had blocked the testJump verification confound;
+with it fixed the det-sched ContextTest suite runs to completion.
