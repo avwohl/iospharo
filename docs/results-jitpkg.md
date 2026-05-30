@@ -1971,3 +1971,27 @@ despite valid receiver/class/selector + reachable method, per SIM-DUMP) -> cause
 asmjit-T1 JIT (not J2J/resume; JIT-off has no recursion).  NEXT: finer asmjit-T1 emit
 knobs on the isolated trigger, one foreground run each, detector read before the next, to
 find WHICH emit makes the compiled lookupSelector:/at:ifPresent: return nil.
+
+### det-sched hang — LOCALIZED to asmjit-T1 BLOCK compilation (2026-05-30, fully measured)
+
+Finer asmjit-T1 knob bisection, isolated trigger (only testBlockCannotReturn), detector
+threshold 8, each run read from its own log before the next:
+  baseline JIT-on                detector=1  (fires)
+  PHARO_T1_NO_INLINE_BLOCK_VALUE detector=1  (not it)
+  PHARO_T1_NO_INLINE_GETTER      detector=1  (not it)
+  PHARO_T1_NO_IC_PROBE           detector=1  (not it)
+  PHARO_T1_NO_BLOCKS             detector=0, run COMPLETES   <-- FIXES IT
+So the bug is in asmjit-T1's compilation of BLOCKS.  With block JIT-compilation off, the
+send:to:with:super:->#doesNotUnderstand: recursion does not occur and the test completes.
+
+This finally confirms the long-standing hypothesis with measurement: the simulator runs
+lookupSelector: which does `methodDict at: sel ifPresent: [:m | ^m]` — the `^m` is a
+non-local return out of a BLOCK.  asmjit-T1's compiled block mishandles that NLR (returns
+nil instead of the found method) under the det-sched runner's cumulative state, so
+lookupSelector: falls through to ^nil -> DNU cascade -> infinite recursion -> hang.  Same
+family as testJump (reified-context / control-flow corruption in JIT-compiled code).
+
+NEXT: read asmjit-T1's block-compilation NLR/return emit (grep t1NoBlocks usage to find
+the gated block-compile path; then the block epilogue / non-local-return emit) and find
+why the `^m` NLR yields nil.  A correct fix removes the hang with block JIT left ON.
+Production wall-clock unaffected (det-sched-only, pathological testBlockCannotReturn).
