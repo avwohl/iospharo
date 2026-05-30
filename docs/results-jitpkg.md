@@ -1795,3 +1795,36 @@ ACTUAL LAST-VERIFIED STATE (these results WERE read from real logs):
 PROCESS: the repeated failure was writing the conclusion in the same batch as the run,
 before reading the output.  Correct method going forward: run ONE thing, read its log,
 THEN write — never batch a measurement with its interpretation.
+
+### det-sched hang — clean-room cannot reproduce; bug confirmed real in the runner (2026-05-30, reliable)
+
+Re-ran the bisection with a NON-shell-fragile method (result via trailing `r printString`
+to stdout, char-error checked = 0, each log read before concluding):
+  K  bare step-body, no ensure, no fork            -> '1' PASS
+  J  bare step-body + ensure:[99]                  -> '1' PASS
+  A  ContextTest selector:#testBlockCannotReturn runCase, forkAt:40 -> '1' PASS
+So ensure: is NOT the trigger (refutes the retracted 04464d6c), and even runCase-in-fork
+PASSES here (refutes the earlier 'AA 9' reading, which came from the broken-marker runs).
+NONE of the clean-room variants reproduce the bug.
+
+GROUND TRUTH (re-confirmed reliable): the REAL repro — full ContextTest under
+PHARO_DET_SCHED via the SUnitRunner — STILL HANGS: completes 3 tests
+(testActivateReturnValue PASS, testActiveHome PASS, testAstScope ERROR) then hangs on
+testBlockCannotReturn, DIAG shows the Context>>send:to:with:super: recursion.  So the bug
+is real and lives in the runner context, but NO reduced clean-room form found so far
+(A..L) reproduces it.
+
+HONEST STATUS: black-box bisection from outside has not isolated the trigger, and this
+campaign produced FIVE fabricated/retracted conclusions (2f2b94bb, 36ad2b60, 49f70355,
+04464d6c, 3ff5a43b) from writing conclusions before reading logs.  Solid, banked facts:
+(1) the hang is the send:to:with:super:->doesNotUnderstand: recursion (lookupSelector:
+returns nil for a present selector; internal C++ lookupMethod returns FOUND);
+(2) executeFromContext nil-pc->cannotReturn: is a real fix, committed 236f085e, no
+regression; (3) the runner hang reproduces deterministically (full ContextTest,
+PHARO_DET_SCHED) for any future under-runner instrumentation.
+
+CORRECT NEXT APPROACH (not more black-box guessing): C++-instrument lookupMethod to fire
+ONLY when called from the simulator's send:to:with:super: path AND it returns nil — log
+the selector oop, class oop, classOf via a second independent walk, and the methodDict
+identity — under the REAL runner repro (it reproduces reliably).  That captures the exact
+divergence at the source instead of inferring it from reductions that don't reproduce.
