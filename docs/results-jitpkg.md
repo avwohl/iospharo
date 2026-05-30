@@ -1018,3 +1018,21 @@ SimulationMock>>exampleStore under PHARO_T1_INLINE_GETTER=1 PHARO_DET_SCHED=1) t
 find where the off-by-one enters — the popStore bail's stack handling vs the interp
 materialize's stackp count.  Fixing it (plus revisiting ArrayTest>>
 testSelfEvaluatingComplexCase) unblocks the t1InlineGetter default-on.
+
+CANDIDATE ROOT CAUSE (needs fix-verification): the interp's immutable
+instance-variable store leaves an extra operand on the stack.
+`Interpreter::setReceiverInstVar` (Interpreter.cpp:12038) for an immutable
+receiver does `push(receiver); push(value); push(index+1); sendSelector(
+#attemptToAssign:withIndex:, 2)` and returns — the send's RESULT stays on the
+operand stack.  A pop-variant popStore (e.g. handler ~5389: `value := pop();
+setReceiverInstVar(fullIndex, value)`) therefore has net stack effect 0 (value
+popped, attemptToAssign: result left) instead of -1, whereas the mutable path is
+-1.  So after exampleStore's read-only `instVar1 := 1`, the operand stack is +1
+deep -> the following `^thisContext copy` materializes stackp 1 instead of 0 ->
+testJump "Got 1 instead of 0".  The inline getter only gates whether exampleStore
+JIT-compiles and thus how/when the discrepancy surfaces.  FIX DIRECTION: the
+pop-variant immutable store must discard the attemptToAssign: send result (net
+-1, matching the mutable store and stock Pharo) — likely by routing the
+immutable-store-as-send through the same return-handling that pops the result for
+a statement send.  Verify by re-running ContextTest>>testJump getter-on after the
+fix.
