@@ -1389,3 +1389,35 @@ det-sched ContextTest run — a focused method-lookup-in-simulation investigatio
 Tooling note: recompiling debug methods into a prepared image only works when the
 prior run COMPLETED (SUnitRunner skips its startup handler on "previous run
 completed"); after a hang the handler hijacks eval, so re-copy Pharo-jit.image fresh.
+
+### det-sched hang — narrowed to lookupSelector: returning nil in the simulator (2026-05-30)
+
+Instrumented sendSelector (PHARO_SIM_TRACE, now removed) to log the bytecode
+simulator's `Context>>send:to:with:super:` calls.  On the hanging `[42] newProcess`
+8-step test, the trace is:
+    [SIM] #on:do: -> FullBlockClosure
+    [SIM] #doesNotUnderstand: -> FullBlockClosure   (×∞)
+So the process-startup wraps the block in `on:do:`; simulating that send, our VM's
+`FullBlockClosure lookupSelector: #on:do:` returns nil, so the simulator simulates
+`doesNotUnderstand:` — whose lookup ALSO returns nil → infinite recursion → hang.
+The image hierarchy is CORRECT (verified: FullBlockClosure superclass = BlockClosure,
+`BlockClosure includesSelector: #on:do:` = true, `FullBlockClosure lookupSelector:
+#doesNotUnderstand:` = Object>>#doesNotUnderstand: on stock).  So our VM mis-executes
+the *reflective* `Behavior>>lookupSelector:` in the simulator path even though normal
+sends (internal C++ lookup) work.
+
+  lookupSelector: walks `lookupClass methodDict at: selector ifPresent: [:m | ^m]`,
+  then `lookupClass superclass`.
+  MethodDictionary>>at:ifPresent: = `(array at: (self findElementOrNil: key))
+      ifNotNil: [:value | aBlock cull: value]`.
+
+So the failure is one of: (a) `findElementOrNil:` (the identity-hash probe) MISSES a
+present selector — possibly a symbol-interning issue where the simulated selector is a
+non-canonical #on:do: with a different identityHash than the methodDict key; (b) the
+`^method` NON-LOCAL RETURN through `cull:` + `at:ifPresent:` back to lookupSelector:
+fails in the simulator/forked context (the testJump/aigraph context-corruption theme);
+or (c) the simulated class/methodDict is itself corrupt.  Tie-break test: compare
+`md findElementOrNil: #on:do:` vs a NLR-through-cull: probe in our VM.  This — NOT the
+executeFromContext nil-pc fix (236f085e) — is the dominant det-sched hang.  Tooling
+caveat: the prepared image's recompile is flaky after a hang (SUnitRunner startup
+handler hijacks eval); re-copy Pharo-jit.image fresh between attempts.
