@@ -1116,3 +1116,59 @@ observation suppresses it.  NEXT: (1) make PHARO_DET_SCHED also pin whatever dri
 this force-yield-vs-stackp: race (widen PHARO_DET_SCHED_QUANTUM, or find the second
 nondeterminism source), so the bug is stable under tracing; (2) then decide between
 the attemptToAssign:-result-not-popped fix and a force-yield-materialize stackp fix.
+
+### testJump is a det-sched-QUANTUM=1 ARTIFACT, not a production bug (2026-05-29)
+
+PIVOTAL: testJump's "getter regression" only appears under PHARO_DET_SCHED with the
+default tight quantum.  Stability sweep (clean binary, getter-on, ContextTest):
+  PHARO_DET_SCHED_QUANTUM=1 : FAIL (the original repro)
+  PHARO_DET_SCHED_QUANTUM=2 : PASS PASS PASS
+  PHARO_DET_SCHED_QUANTUM=4 : PASS PASS PASS
+  PHARO_DET_SCHED_QUANTUM=8 : PASS PASS PASS
+And under WALL-CLOCK (production scheduling, no det-sched), getter-on:
+  testJump = PASS PASS PASS PASS PASS  (5/5)
+
+So testJump is NOT a real getter correctness bug — it's a force-yield-timing
+amplification: at QUANTUM=1 a force-yield fires during exampleStore's immutable-
+store exception-resume and the materialize captures the transient stackp (the
+backtrace showed the write coming from primitiveSetStackPointer during the
+resumeUnchecked:-driven Context>>stackp:, racing the force-yield materialize).
+The inline getter merely shifts bytecode timing enough to land the QUANTUM=1
+force-yield on that window.  A wider quantum or real wall-clock scheduling never
+hits it.
+
+CONSEQUENCE: my earlier det-sched batch-diff validation of the getter
+re-enablement OVER-REPORTED — it ran at QUANTUM=1, which manufactures these
+force-yield artifacts.  The aigraph ExitArrayCreate fix addressed the one *real*
+(deterministic, schedule-independent) getter bug.  Re-validating the
+t1InlineGetter re-enablement under WALL-CLOCK (the production-relevant schedule) is
+the correct test; det-sched QUANTUM=1 should NOT be the gate.  (A genuine but
+extremely rare force-yield-during-exception-resume materialize bug still lurks —
+worth a separate fix — but it is not a getter-re-enablement blocker.)
+
+### Wall-clock getter re-validation — det-sched blockers busted; 3 unconfirmed candidates (2026-05-29)
+
+Re-ran the getter-on-vs-off comparison under WALL-CLOCK (batch 0-200) to correct
+the flawed QUANTUM=1 det-sched validation:
+  - testJump and testSelfEvaluatingComplexCase (the two det-sched "regressions")
+    do NOT appear under wall-clock -> CONFIRMED det-sched-QUANTUM=1 force-yield
+    artifacts, not real getter bugs.
+  - BUT wall-clock SUnit is heavily flaky here: an off-vs-off diff (two getter-off
+    runs) flips ~9 tests on its own (BehaviorTest>>testIsReferenced,
+    ContextTest>>testAstScope, IdentityDictionary, ScaledDecimal, SlotTraits, ...),
+    so a single on-vs-off diff cannot cleanly attribute failures to the getter.
+  - 3 candidates had getter-off PASS in BOTH off-runs but getter-on fail once:
+    ArrayTest>>testAsArrayKeepsIdentity (FAIL), MetaClassTest>>testHasBindingThatBeginsWith
+    (ERROR), SemaphoreTest>>testInCriticalWait (FAIL).  Semaphore is classic flaky;
+    the array-identity one is the most suspicious (array + getter, aigraph-adjacent).
+    All UNCONFIRMED — could be flaky-on.
+
+CONCLUSION: the t1InlineGetter mitigation was kept off largely for det-sched
+artifacts that aren't production bugs.  The aigraph ExitArrayCreate fix removed the
+one real deterministic getter bug.  Re-enabling is NOT yet cleanly validated only
+because wall-clock flakiness obscures the signal — the correct next step is to
+confirm the 3 candidates (esp. testAsArrayKeepsIdentity) with multi-run wall-clock
+(getter-on N times vs getter-off N times; real = fails all on-runs, passes all
+off-runs).  Getter stays default-off pending that.  Separately, the rare
+force-yield-during-exception-resume materialize stackp bug (testJump's QUANTUM=1
+mechanism) is a real but non-blocking VM bug worth its own fix.
