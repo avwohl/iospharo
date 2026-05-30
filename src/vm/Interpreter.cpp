@@ -16391,10 +16391,16 @@ bool Interpreter::executeFromContext(Oop context) {
     // Initial PC = (1 + numLiterals) * 8 + 1 = bytecodeStart + 1
     Oop savedPC = memory_.fetchPointer(1, context);
 
-    // Check for HasBeenReturnedFrom sentinel: SmallInteger(-1) means this context
-    // has already returned and cannot be resumed. Send cannotReturn: per spec.
-    if (savedPC.isSmallInteger() && savedPC.asSmallInteger() == -1) {
-        // Context has been returned from — cannot resume.
+    // Dead context — cannot resume; send cannotReturn: per spec.  Two encodings:
+    //  - SmallInteger(-1): the HasBeenReturnedFrom sentinel (already returned from).
+    //  - nil pc: Context>>isDead is literally `^ pc isNil`.  A context whose pc was
+    //    set to nil (e.g. `thisContext pc: nil`) is dead and must NOT be resumed.
+    // Previously a nil pc fell through to the `else` below and RESET the instruction
+    // pointer to the method start, silently re-running the method from the top — an
+    // infinite loop (`[thisContext pc: nil] value` hangs; ContextTest>>testBlockCannotReturn
+    // hangs the whole det-sched suite because terminating/stepping such a context spins).
+    if (savedPC.isNil() ||
+            (savedPC.isSmallInteger() && savedPC.asSmallInteger() == -1)) {
         // Push the context as receiver and the return value as argument,
         // then send cannotReturn: to trigger proper error handling.
         activeContext_ = context;

@@ -1333,3 +1333,30 @@ So the linchpin is the Delay scheduler not surviving det-sched's fine-grained
 preemption.  Fixing EITHER the Context>>step infinite loop (test passes) OR the
 Delay-scheduler/watchdog robustness under det-sched (hung tests get skipped) breaks
 the hang.  Both are deep and independent of the testJump stackp bug above.
+
+### det-sched hang — root narrowed to pc=nil dead contexts (2026-05-30)
+
+Drilled into ContextTest>>testBlockCannotReturn (the suite's hang point).  It does
+`p := [ thisContext pc: nil ] newProcess` then single-steps p.  Captured the EXPECTED
+step trace on the stock VM (compiled a bounded debug method, ran on both VMs via the
+single-method filter):
+  stock: #newProcess → #testBcrDebug(block) → #pc: → #cannotReturn: (terminates @7)
+  ours:  HANGS — even N=1 (one `p step`), even N=0 (just `newProcess` + the test
+         ending), and even `[ thisContext pc: nil ] value` directly.
+So the trigger is **a context whose pc is set to nil** (`Context>>isDead` is literally
+`^ pc isNil`).  Our VM hangs continuing / terminating / simulating such a dead
+context instead of reaching cannotReturn:.  This is also why process termination left
+zombies (terminateRealActive) and why the watchdog couldn't recover.
+
+ONE path fixed: Interpreter.cpp executeFromContext read the context's pc and, when it
+was nil (not a SmallInteger), fell through to RESET instructionPointer_ to the method
+START — silently re-running the method from the top forever.  Now a nil pc (like the
+-1 HasBeenReturnedFrom sentinel) sends cannotReturn:.  Verified no regression (aigraph
+det-sched ERROR=0 PASS=10).  But this path is not the one testBlockCannotReturn takes
+(a DEADCTX probe never fired for it), so the suite still hangs — the remaining hang is
+in the OTHER pc=nil paths: the inline block-continuation after `thisContext pc: nil`,
+Process>>step's evaluate:onBehalfOf: + Context>>step simulation, and (for direct
+`value`) a GUI MorphicRenderLoop spin under the dead Delay scheduler.  Those are a
+deeper multi-path effort.  Infra: re-prep a repro image's runner via an empty class
+list (SUnitRunner skips, eval --save fileIn goes through); compile debug methods with
+the stock VM (our compiler has a `jumpAheadTo: #else` Opal gap), run on ours.
