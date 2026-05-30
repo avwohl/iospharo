@@ -1453,3 +1453,30 @@ state-dependent the same way.  Fixing the context-state corruption would address
 the testJump stackp inflation AND this det-sched simulator hang.  This — not the
 executeFromContext nil-pc fix (236f085e, which fixes a different real pc=nil path) —
 is the dominant det-sched hang.
+
+### det-sched hang — RELIABLE repro + force-yield/JIT ruled out (2026-05-30)
+
+Major narrowing of the simulator lookupSelector:-nil recursion:
+
+RELIABLE REPRO (no longer flaky/det-sched-only): the full ContextTest hangs with the
+recursion 4/4 under WALL-CLOCK and 4/4 with the JIT OFF (PHARO_NO_ASMJIT_T1=1), every
+run, recursion=53 (consistent).  Minimal set: 4 tests via the method filter —
+  testActivateReturnValue, testActiveHome, testAstScope, testBlockCannotReturn
+hang 100%.  Any single test, or any PAIR (e.g. testAstScope+testBlockCannotReturn),
+COMPLETES.  So it needs >=3 cumulative tests; the target test (testBlockCannotReturn)
+in isolation completes.
+
+RULED OUT (this round): force-yield / det-sched (reproduces identically under
+wall-clock), and the JIT (reproduces with asmjit-T1 disabled).  Combined with the
+earlier elimination of the hash-probe and symbol interning (internal lookupMethod —
+same identity-hash probe — returns FOUND), the failure is the INTERPRETED execution
+of the `^method` block-return / NLR in `MethodDictionary>>at:ifPresent:`
+(`[:method | ^method] cull: value`), corrupted by CUMULATIVE state (>=3 tests; GC
+suspected — our VM doesn't log GC so unconfirmed).
+
+So this is NOT the same trigger as testJump after all (that is det-sched-force-yield-
+only; this is wall-clock-reliable and JIT-independent) — though both are context-state
+corruption.  Next: with the reliable 4-test repro, instrument returnFromMethod
+(Interpreter.cpp:8714) to catch the `^method` NLR from lookupSelector: failing —
+distinguish (a) BlockClosure>>numArgs corrupt -> cull: drops the arg -> ^nil, vs
+(b) the NLR home-context lookup returning wrong after cumulative GC/heap churn.
