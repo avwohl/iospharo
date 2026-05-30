@@ -1534,3 +1534,26 @@ the recursion is send:to:with:super: -> doesNotUnderstand: (lookupSelector: retu
 for a present selector), internal C++ lookupMethod finds it (probe/interning ruled
 out), JIT-on shows the recursion / JIT-off hangs differently (bug 2), and the reliable
 repro is testBlockCannotReturn alone wall-clock.
+
+### det-sched hang bug 1 — NLR refuted WITH MEASUREMENT; bug requires simulator (2026-05-30)
+
+Redid the standalone isolation properly this time, via the clean-room eval path
+(test_load_image.cpp:804 evalMode — writes startup.st, runs expr, NO SUnitRunner) on a
+FRESHLY-downloaded plain Pharo13 image. Verified the harness with (3+4) printString ->
+[STARTUP-ST-FIRED] marker present, prints '7'. Then three JIT-warmup probes, each
+marker-verified and recursion=0 (no simulator/runner contamination):
+  - FullBlockClosure lookupSelector: #on:do:                 x200k -> bad=0
+  - md at: #on:do: ifPresent: [:m | #FOUNDIT]                x200k -> bad=0
+  - NlrProbe>>findIn: md  (^md at:#on:do: ifPresent:[:m|m])  x300k -> bad=0
+So lookupSelector:, the at:ifPresent: block-value, AND the ^method non-local return out
+of a method ALL work correctly under JIT warmup in isolation — MEASURED, marker-checked.
+The "JIT mis-compiles the ^method NLR" hypothesis is now refuted WITH evidence (unlike
+the retracted unmeasured claim in 2f2b94bb).
+
+CONCLUSION: bug 1 requires the SIMULATOR context — the method running as a reified
+MethodContext under Process>>step / Context>>send:to:with:super:, not a normal call.
+Next instrument send:to:with:super: itself (computed `class` oop vs classOf(receiver);
+the real aMethod==nil decision), NOT lookupSelector:/NLR (now proven clean in isolation).
+Working tooling: clean-room eval on a never-prepped plain image (the runner-prepped
+copy fails the startup.st preamble with 'Decompilation failed'); verify
+[STARTUP-ST-FIRED] before trusting any result.
