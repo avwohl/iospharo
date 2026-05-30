@@ -1828,3 +1828,38 @@ ONLY when called from the simulator's send:to:with:super: path AND it returns ni
 the selector oop, class oop, classOf via a second independent walk, and the methodDict
 identity — under the REAL runner repro (it reproduces reliably).  That captures the exact
 divergence at the source instead of inferring it from reductions that don't reproduce.
+
+### det-sched hang — C++ SIM-DUMP under the runner: lookup inputs all valid, simulated lookupSelector: still nil (2026-05-30)
+
+Instrumented Context>>send:to:with:super: at the C++ level (PHARO_SIM_DUMP knob, gated,
+now reverted — diagnostic scaffolding) and ran the REAL runner repro (full ContextTest,
+PHARO_DET_SCHED) ONCE, reading each dump before concluding.  The runaway is a repeating
+send:to:with:super: -> #doesNotUnderstand: cascade.  At the dump:
+  - runaway receiver = a GENUINE FullBlockClosure: header classIndex=38 format=3
+    slotCount=6; classOf(receiver) -> FullBlockClosure idx=38 clsOop=0x300016a50 (agrees).
+  - C++ superclass walk from FullBlockClosure finds #doesNotUnderstand: at Object
+    (FullBlockClosure[no] -> BlockClosure[no] -> Object[YES]); lookupMethod -> FOUND.
+  - superFlag = false.  VERIFIED unambiguously: this VM's false=0x8, true=0x10, nil=0x0,
+    so superFlag raw 0x8 IS false (not garbage — I nearly mis-concluded it was corrupt;
+    printing falseObject's rawBits refuted that).  So send:to:with:super: takes the
+    ifFalse branch -> `class := self objectClass: aReceiver` (the correct lookup class).
+
+So at the moment lookupSelector: returns nil: the receiver is a valid FullBlockClosure,
+the lookup class is correct, superFlag is correct, and the method (#doesNotUnderstand:)
+IS reachable per the VM's own lookup.  Yet the image's lookupSelector: returns nil ->
+DNU cascade -> hang.
+
+REMAINING SUSPECTS (each untested, need the next instrumentation round under the runner):
+  (a) prim 111 `objectClass:` returns a WRONG class in the simulated execution (my probe
+      used C++ classOf, NOT the image's prim 111 — these could differ here).
+  (b) the methodDict probe `findElementOrNil:` / `at:ifPresent:` returns nil in
+      execution despite C++ lookupInMethodDict finding the key.
+  (c) the `^method` non-local return out of at:ifPresent: fails to return.
+NEXT: hook prim 111 during the runaway (log its returned class vs C++ classOf), then if
+that agrees, trace the image's lookupSelector: methodDict probe.  CLEAN-ROOM eval still
+does NOT reproduce (A..L all pass) — instrument under the runner.
+
+DELIVERABLE STATE: precise measured diagnosis; NO fix yet.  Banked: executeFromContext
+nil-pc -> cannotReturn: (236f085e, real, no regression); the SIM-DUMP technique
+(C++ probe in send:to:with:super:, gated, fires at dnuRun>=40, stopVM).  Production
+unaffected (det-sched-only, pathological testBlockCannotReturn).
