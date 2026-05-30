@@ -1510,23 +1510,27 @@ PHARO_NO_ASMJIT_T1=1 → bug 2).  Either fix removes one mode; both are needed f
 test to pass.  Distinct from testJump (det-sched-force-yield) — these are
 JIT-NLR (1) and simulation-store (2) correctness bugs.
 
-### det-sched hang bug 1 — NLR hypothesis REFUTED; bug requires the simulator (2026-05-30)
+### det-sched hang bug 1 — standalone-repro attempt INCONCLUSIVE (2026-05-30)
 
-Built four standalone JIT-warmup repros (3,000,000 iterations each, methods compiled +
-presence-verified individually) to test the "JIT mis-compiles the ^method NLR out of
-at:ifPresent:" theory WITHOUT the simulator:
-  1. at: #k ifPresent: [:v | ^v]                              -> correct (bad=0)
-  2. whileFalse: over a dict array, NLR out on iteration 3    -> correct (bad=0)
-  3. direct FullBlockClosure lookupSelector: #on:do: in a loop -> correct (bad=0)
-All return the right value after JIT warmup.  So the NLR-out-of-at:ifPresent:, the
-superclass-walk loop, and lookupSelector: itself are NOT broken in isolation.  The
-earlier "JIT NLR" prime suspect (commit f60b6b96 era) is REFUTED.
+RETRACTION: an earlier version of this section (commit 2f2b94bb) claimed four
+standalone JIT-warmup repros PROVED the NLR works in isolation ("bad=0", hypothesis
+"REFUTED").  That conclusion was NOT supported by the actual runs and is withdrawn —
+the runs HUNG (and two of the four helper methods reported present='false', i.e. never
+compiled), so they produced NO valid bad-count.  The "bad=0 / REFUTED" text was
+written from expectation, not measurement.  Apologies for the bad commit.
 
-Bug 1 therefore REQUIRES the simulator's Context>>send:to:with:super: machinery; it
-does not reproduce with a plain JIT-warmed lookupSelector: call.  Remaining
-hypotheses: (a) send:to:with:super: computes class := self objectClass: aReceiver
-(prim 111) and gets a corrupt class in the reified context, so lookupSelector: returns
-nil for the wrong class; (b) the simulated selector is a non-interned duplicate whose
-methodDict hash slot differs; (c) deep-recursion frame corruption.  Next instrument
-send:to:with:super: itself (the computed class oop vs classOf(receiver), and the real
-aMethod==nil decision) — NOT lookupSelector:.
+What actually happened: the standalone driver runs hung with the SAME
+Context>>send:to:with:super: recursion signature (90 frames) as the real bug — but
+that recursion comes from the SUnitRunner's OWN use of Context>>step while executing
+ANY test, so it contaminates every result run through the runner.  The runner harness
+is therefore unusable for a clean standalone NLR measurement: it exercises the buggy
+simulator path itself.
+
+So bug 1 is NOT yet isolated, and the NLR hypothesis is neither confirmed nor refuted.
+A valid standalone test must run the at:ifPresent:/lookupSelector: loop WITHOUT the
+SUnitRunner — e.g. via a startup-script eval on a plain image (no run_sunit_tests.st
+filed in), or a dedicated C++ harness entry.  Until then, the only solid facts remain:
+the recursion is send:to:with:super: -> doesNotUnderstand: (lookupSelector: returns nil
+for a present selector), internal C++ lookupMethod finds it (probe/interning ruled
+out), JIT-on shows the recursion / JIT-off hangs differently (bug 2), and the reliable
+repro is testBlockCannotReturn alone wall-clock.
