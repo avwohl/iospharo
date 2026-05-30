@@ -2197,3 +2197,34 @@ CharacterTest testStoreStringAll; ContextTest testScopeOptimizedBlock, testSourc
 testSourceNodeExecutedWhenContextIsJustAtStartpc, testSourceNodeOptimizedBlock;
 DictionaryTest testIncludes.  Most are AST/source-node/compiler-path tests — consistent with
 a single underlying JIT-compiler bug (next entry).
+
+### inline-J2J residual bug ROOT — non-Boolean predicate to conditional jump (2026-05-30)
+
+Pinned the inline-J2J regression root (measured: [MUSTBOOL] trace, 32 occurrences, from the
+COMPLETED 10-class ON run; + parseAssignment bytecode disassembly).
+
+EVIDENCE: with inline-J2J ON, OCParser>>parseAssignment hits mustBeBoolean repeatedly:
+  [MUSTBOOL] value_class=OCIdentifierToken / OCSpecialCharacterToken in=#parseAssignment ipOff=32
+parseAssignment bytecode 198-200:
+  198 pushRcvr: 1 (currentToken) / 199 send: isIdentifier / 200 jumpFalse: 205
+So `currentToken isIdentifier` returns the TOKEN ITSELF (an OCIdentifierToken /
+OCSpecialCharacterToken) instead of a Boolean, and the following jumpFalse: gets a
+non-Boolean -> mustBeBoolean.  (The VM correctly raises mustBeBoolean per spec — that's NOT
+the bug; the bug is inline-J2J emitting the wrong VALUE for the predicate send.)
+
+isIdentifier is a trivial predicate (`^false` in OCToken, `^true` in OCIdentifierToken) —
+exactly the inlined returns-literal / trivial-method shape.  Under inline-J2J it returns the
+receiver instead of the boolean literal.  Same class as the testStoreStringAll char-13->0
+wrong-literal corruption: inline-J2J's literal/predicate return emit produces a wrong value.
+
+So the inline-J2J residual is a JIT-CODEGEN wrong-value bug in the inlined trivial-method /
+returns-literal path when reached through the inline-J2J tail-call, NOT a context/NLR bug
+and NOT fixable by the existing gates (PURE_J2J_GATE, XMETHOD, etc., all confirmed no-help).
+This is the real blocker to re-enabling inline-J2J cleanly.
+
+STATUS: root identified and measured; FIX is a focused inline-J2J emit dig (the
+returns-literal / trivial-predicate path under tail-call), deferred — not attempted here
+(tooling degraded: every background run this turn failed exit 144).  inline-J2J stays
+default-OFF.  Honest correction of this turn's earlier overreach: inline-J2J is NOT
+"~98%/catastrophe-gone" — measured 10-class shows +8 real regressions, all tracing to this
+one predicate-emit bug.
