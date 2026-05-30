@@ -1863,3 +1863,31 @@ DELIVERABLE STATE: precise measured diagnosis; NO fix yet.  Banked: executeFromC
 nil-pc -> cannotReturn: (236f085e, real, no regression); the SIM-DUMP technique
 (C++ probe in send:to:with:super:, gated, fires at dnuRun>=40, stopVM).  Production
 unaffected (det-sched-only, pathological testBlockCannotReturn).
+
+### det-sched hang — LOCALIZED to J2J RESUME (return-side jit-to-jit) (2026-05-30)
+
+Clean knob bisection using a compact C++ detector (PHARO_SIM_DETECT: fires once + stopVM
+when >=40 consecutive simulated sends are #doesNotUnderstand:) under the REAL runner repro
+(full ContextTest, PHARO_DET_SCHED).  Each run read directly:
+  JIT on (baseline)            -> detector FIRES, 3 tests, hang
+  PHARO_NO_ASMJIT_T1=1         -> detector quiet, 25 tests, testBlockCannotReturn=ERROR
+  PHARO_NO_J2J=1               -> detector quiet, 25 tests, ERROR  (FIXED)
+  PHARO_T1_NO_INLINE_J2J=1     -> detector FIRES, 3 tests, hang   (NOT fixed)
+  PHARO_NO_J2J_RESUME=1        -> detector quiet, 25 tests, ERROR  (FIXED)
+So the hang is caused by the J2J RESUME (return-side jit-to-jit) mechanism — NOT
+inline-J2J, NOT the simulator per se.  With J2J-resume off, testBlockCannotReturn ERRORs
+(doesn't hang) and the suite runs all 25 ContextTests.
+
+This is exactly consistent with the measured symptom: the image's lookupSelector: does
+`methodDict at: sel ifPresent: [:m | ^m]`, and the `^m` non-local return's value comes
+back nil when J2J-resume handles the return across the JIT frames of the simulator chain
+(send:to:with:super: -> lookupSelector: -> at:ifPresent:).  So lookupSelector: falls
+through to ^nil -> DNU cascade -> infinite recursion.  Same J2J/return-corruption family
+as testJump and the aigraph ExitArrayCreate bug (3d787a78).
+
+This is det-sched-specific in practice (the runner's cumulative J2J-linking + the
+pathological testBlockCannotReturn simulation), production wall-clock unaffected.  NEXT:
+read the J2J-resume return path (SistaStencils.cpp / JITRuntime.cpp / AsmjitT1.cpp J2J
+return) for how it propagates a non-local-return value across resumed JIT frames; the bug
+is that an NLR's value is dropped/nilled on the J2J-resume return.  A correct fix there
+removes the hang with J2J-resume left ON (the perf path stays).
