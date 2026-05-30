@@ -1421,3 +1421,35 @@ or (c) the simulated class/methodDict is itself corrupt.  Tie-break test: compar
 executeFromContext nil-pc fix (236f085e) — is the dominant det-sched hang.  Tooling
 caveat: the prepared image's recompile is flaky after a hang (SUnitRunner startup
 handler hijacks eval); re-copy Pharo-jit.image fresh between attempts.
+
+### det-sched hang — PROVEN root: simulator lookupSelector: nil despite method found (2026-05-30)
+
+Added a lookup-compare watch (PHARO_LOOKUP_WATCH, now removed): at the simulator's
+`Context>>send:to:with:super:`, do our INTERNAL C++ `lookupMethod` of the simulated
+(selector, receiver) and compare.  Caught the recursion under det-sched (full
+ContextTest, cumulative state — reproduces ~1-in-4, flaky like testJump):
+    [LW] #doesNotUnderstand: rcvrCls=FullBlockClosure internal=FOUND   (×∞)
+So our INTERNAL lookup FINDS the method, but the simulator's Smalltalk
+`lookupSelector:` returns nil → it simulates doesNotUnderstand: → also found-but-
+returns-nil → infinite recursion → hang.
+
+RULED OUT: hash probe + symbol interning.  `lookupInMethodDict` (Interpreter.cpp:8630)
+uses the SAME identity-hash open-addressing probe as the image's
+`MethodDictionary>>findElementOrNil:`, and compares keys by IDENTITY ("Symbols are
+interned, so identity comparison suffices").  internal=FOUND ⇒ the selector's identity
+matches a methodDict key ⇒ the Smalltalk identity probe finds it too.
+
+THEREFORE the failure is the BLOCK-RETURN: `MethodDictionary>>at:ifPresent:` is
+`^(array at: (findElementOrNil: key)) ifNotNil: [:v | aBlock cull: v]`, and
+lookupSelector: passes `[:method | ^method]`.  The found method is reached but the
+`^method` NON-LOCAL RETURN (via `cull:` → `value:`) does not return from
+lookupSelector:, which falls through to nil.  Candidate culprits, all context-state:
+BlockClosure>>numArgs corrupt (→ cull: evaluates with no arg → ^nil), or the `^method`
+NLR's home-context lookup failing in the cumulative-state/reified simulator context.
+
+This is the SAME class of bug as testJump (our VM corrupts reified/simulated context
+state — there the stackp, here the block-return/NLR), and it is FLAKY + cumulative-
+state-dependent the same way.  Fixing the context-state corruption would address BOTH
+the testJump stackp inflation AND this det-sched simulator hang.  This — not the
+executeFromContext nil-pc fix (236f085e, which fixes a different real pc=nil path) —
+is the dominant det-sched hang.
