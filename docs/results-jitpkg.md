@@ -2031,3 +2031,26 @@ NLR-free blocks.  VERIFIED on the clean binary (no scaffolding):
 
 This is the deferred det-sched hang that had blocked the testJump verification confound;
 with it fixed the det-sched ContextTest suite runs to completion.
+
+### testJump verification CLOSED — passes 5/5 under det-sched after the hang fix (2026-05-30)
+
+The det-sched ContextTest hang (fixed in e4143199, block-resume hasNLR gate) was the
+confound that had blocked verifying testJump.  Now that the suite completes, measured
+directly (full ContextTest, PHARO_DET_SCHED QUANTUM=1, getter default-on — the exact
+config that failed 3/3 at the start of this campaign):
+  testJump = PASS, 5/5 runs, suite completes 34 tests every run.
+So testJump now passes under the original failing configuration.
+
+ATTRIBUTION (honest): not separately isolated.  This campaign landed two real code fixes
+— executeFromContext nil-pc -> cannotReturn: (236f085e) and the block-resume hasNLR gate
+(e4143199).  testJump passes after both.  I could NOT cleanly attribute which one fixed
+testJump: with the hasNLR gate reverted (attribution test), the suite re-hangs at
+testBlockCannotReturn (alphabetically before testJump), so testJump is unreachable under
+old behavior via the full suite, and isolated testJump never reproduced the bug (needs
+cumulative suite state).  The hasNLR gate IS confirmed load-bearing for the suite hang
+(revert -> hang returns, 3 tests; restore -> completes, 34 tests).
+
+Net campaign outcome: det-sched ContextTest suite runs clean (34/34 reached), testJump
+PASS 5/5, aigraph ERROR=0/10 (no regression).  The earlier "testJump is a QUANTUM=1
+force-yield artifact, use QUANTUM>=2/wall-clock" guidance is now moot for this suite —
+it passes at QUANTUM=1.
