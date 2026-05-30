@@ -2108,3 +2108,35 @@ exampleSend/Store/Closure, capturing the actual top-of-stack oop vs the context 
 read which store writes stackp=1 and what's really on top.  Only after that is a fix
 warranted.  testJump remains FAIL det-sched QUANTUM=1 (production-invisible: passes
 wall-clock/QUANTUM>=2).
+
+### testJump FIXED — reified-thisContext snapshot consistency (2026-05-30)
+
+testJump "Got 1 instead of 0" under det-sched QUANTUM=1 is FIXED.
+
+Mechanism (fully measured via PHARO_TJ2 slot-2 trace + backtrace + per-site tags, read
+directly): the 3 verifyJumpWithSelector: probes end `^ thisContext copy`.  pushThisContext
+(SistaV1 0x52) materializes the context (stackp=N) THEN pushes the context itself onto its
+own operand stack as the receiver of the following `send: copy`.  If a force-yield fires in
+that 1-bytecode window (handleForceYield -> transferTo -> materializeFrameStack, the
+frameDepth_==0 store at Interpreter.cpp:14631), THIS materialize runs AFTER the self-push
+and counts it: numItems = sp-fp-1 = N+1, storing stackp=N+1 — an inconsistent snapshot vs
+pushThisContext's own stackp=N.  `thisContext copy` then clones the inflated stackp, so
+(thisContext copy) stackPtr reads one too many.  Confirmed signature: at the store,
+top==self (topEQself=1), numItems=1, ip at the `send: copy` byte (one past PushThisContext).
+
+Fix (Interpreter.cpp ~14631): at the fd0 materialize, when the top operand IS this context
+AND the just-executed bytecode was PushThisContext, store the DEFLATED stackp (exclude the
+reified self) and rewind the stored pc by one byte to the PushThisContext bytecode, so a
+resume re-executes it and re-pushes the self (resume-correct — both snapshot forms are valid
+resume states; this picks the one consistent with pushThisContext's own materialize).
+
+VERIFIED (each read directly):
+  - isolated testJump det-sched QUANTUM=1: PASS 3/3 (was FAIL 3/3)
+  - full ContextTest det-sched: completes 34, testJump=PASS, PASS=30 (was 29)
+  - wall-clock ContextTest: completes, testJump=PASS
+  - aigraph det-sched: ERROR=0 PASS=10 (no regression)
+  - broad block/NLR set (1850 tests) wall-clock: failure set a STRICT SUBSET of baseline
+    (removes ContextTest>>testMethodContextPrintDetails, adds ZERO new failures)
+
+Net: this campaign's two det-sched correctness bugs are both fixed — the block-resume
+hasNLR suite-hang (e4143199) and now the reified-thisContext stackp inflation (testJump).

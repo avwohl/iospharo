@@ -14628,6 +14628,33 @@ Oop Interpreter::materializeFrameStack() {
                 }
                 numItems = maxItems;
             }
+            // Reified-thisContext snapshot consistency (testJump "Got 1 instead
+            // of 0" under det-sched).  pushThisContext (SistaV1 0x52) leaves the
+            // context ITSELF on its own operand stack as the receiver of the
+            // immediately-following send (e.g. `^ thisContext copy`).
+            // pushThisContext's own materialize ran BEFORE that push, storing
+            // stackp = N.  But if a force-yield fires in the 1-bytecode window
+            // between the push and the consuming send, THIS materialize runs
+            // AFTER the push and counts the reified self, storing stackp = N+1 —
+            // an inconsistent snapshot for the same logical point.  `thisContext
+            // copy` then clones the inflated stackp, so (thisContext copy)
+            // stackPtr reads one too many.  Restore consistency: when the top
+            // operand IS this context and the just-executed bytecode was
+            // PushThisContext, store the DEFLATED stackp (exclude the self) AND
+            // rewind the stored pc to the PushThisContext byte, so a resume
+            // re-executes it and re-pushes the self (resume-correct).
+            {
+                bool topIsSelf = (stackPointer_ > framePointer_ + 1)
+                    && stackPointer_[-1].rawBits() == activeContext_.rawBits();
+                size_t ipOff = (size_t)(instructionPointer_ - methodBytes);
+                if (topIsSelf && numItems >= 1 && ipOff >= 1
+                        && methodBytes[ipOff - 1] == jit::SistaV1::PushThisContext) {
+                    numItems -= 1;  // don't count the reified self
+                    // rewind stored pc by 1 byte to the PushThisContext bytecode
+                    memory_.storePointer(1, activeContext_,
+                                         Oop::fromSmallInteger(pc - 1));
+                }
+            }
             memory_.storePointer(2, activeContext_, Oop::fromSmallInteger(numItems));
 
             // Sync ALL items (temps + expression stack): C++ → context.
