@@ -1633,3 +1633,31 @@ on:Error:/on:Exception:/ensure: handler frames the runner wraps each test in
 (hundreds of tests before testBlockCannotReturn).  Bisecting these is the next step:
 wrap the forked body in the runner's exact handler nest first (cheaper); if still clean,
 it's cumulative state and only under-runner C++ instrumentation will catch it.
+
+### det-sched hang — MINIMAL REPRO ISOLATED: runCase + fork (2026-05-30)
+
+Breakthrough — reproduced WITHOUT SUnitRunner and WITHOUT det-sched. Decisive 2x2,
+clean-room eval on a plain image, each result read directly from the log (1=pass,
+9=timeout/hang), the hang case confirmed 3/3:
+  A  ContextTest selector:#testBlockCannotReturn runCase, forkAt:40, det-sched -> HANG
+  B  bare p-step loop body,                       forkAt:40, det-sched -> PASS
+  C  ...runCase,                                  forkAt:40, WALL-CLOCK -> HANG (3/3)
+  D  ...runCase, NOT forked (main),               det-sched           -> PASS
+Trigger = `testInstance runCase` running in a FORKED process. Not the bare body (B
+passes), not det-sched (C hangs on wall-clock), not unforked (D passes).
+
+MINIMAL REPRO (eval on a fresh plain image, e.g. /tmp/srcx2/Pharo.image):
+  | doneSem r ti | doneSem := Semaphore new. r := 0.
+  ti := ContextTest selector: #testBlockCannotReturn.
+  [[ti runCase. r := 1] on: Error do: [:e | r := 2. doneSem signal]] forkAt: 40.
+  (doneSem waitTimeoutSeconds: 15) ifTrue: [r := 9]. r printString    "-> 9 (hang)"
+
+This collapses the problem from "full ContextTest suite under det-sched" to a 3-line
+eval, no runner, no det-sched, deterministic. The structure: runCase wraps the test in
+TestCase>>performTest (+ TestExecutionEnvironment on:do:/ensure: nest), and the test
+body ITSELF forks+steps an inner process ([thisContext pc: nil] newProcess). So an INNER
+stepped/simulated process is nested inside an OUTER forked test process — and the
+Context>>step / send:to:with:super: simulation goes wrong only when its outer home is a
+forked (non-main, heap-reified) context. Same reified-context-state family as testJump.
+NEXT: instrument send:to:with:super: under THIS minimal repro (cheap now) to capture the
+first nil lookup's computed class vs classOf(receiver).
