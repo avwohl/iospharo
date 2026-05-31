@@ -67,7 +67,11 @@ if [ "${SKIP_LIST:-0}" != "1" ] || [ ! -s "$LIST" ]; then
   echo "[list] generating ordered class-name list -> $LIST"
   "$ROOT/scripts/gen_sunit_class_list.sh" "$IMG" > "$LOGDIR/genlist.log" 2>&1
 fi
-mapfile -t CLASSES < "$LIST"
+# bash 3.2 (macOS) has no mapfile — read into array portably.
+CLASSES=()
+while IFS= read -r line || [ -n "$line" ]; do
+  [ -n "$line" ] && CLASSES+=("$line")
+done < "$LIST"
 N=${#CLASSES[@]}
 echo "[run] $N classes, window=$WINDOW"
 
