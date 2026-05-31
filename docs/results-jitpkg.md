@@ -2342,3 +2342,32 @@ LESSON re-confirmed: gold-standard against a freshly-downloaded image; a re-prep
 throwaway image accumulates damage and produces phantom failures.  The inline-J2J residual
 (testStoreStringAll etc.) remains a genuine unfixed JIT-codegen bug, default-off, for a
 future focused dig.
+
+### default-build clean-image failures are cumulative-state artifacts (2026-05-30)
+
+Investigated the default-build (inline-J2J OFF) failures on the clean image.  20-class
+compiler+kernel set: 2605 PASS / 3 FAIL — the 3 are StringTest testOnlyLetters /
+testWithUnixLineEndings / testWithInternalLineEndings, all showing GARBLED string output
+(wide-char garbage like '݋ 㠛 㴛...' where ASCII 'helloworld' / 'hello\nworld' expected).
+
+But each is a cumulative-state runner artifact, NOT a per-test VM bug (verified, read
+directly):
+  - `'hello world' select: [:c | c isLetter]` in isolation -> ByteString size=10 <helloworld>  CORRECT
+  - testOnlyLetters / testWithUnixLineEndings / testWithInternalLineEndings via
+    `(StringTest selector: #sel) runCase` in ISOLATION (eval, clean image) -> ALL PASS.
+So the operations are correct alone; they garble only after hundreds of prior tests in the
+same runner image.
+
+This matches the earlier 8/8-pass-isolated finding (OCAST/Opal/AIPrim).  Net: the VM's
+per-test correctness on a clean image (default build) is very high; the SUnit-runner failure
+counts are dominated by cross-test state leakage, not discrete VM bugs.  The garbled-string
+symptom under sustained load points at heap/GC corruption of a live string's bytes (or
+format word) during a long run — a real but DIFFUSE issue (cross-test state corruption),
+distinct from the discrete bugs fixed this campaign, and the right target for a dedicated
+GC/long-run-stability investigation rather than per-test fixes.
+
+CAMPAIGN SUMMARY (all clean-image verified): FIXED — det-sched ContextTest suite-hang
+(e4143199), testJump det-sched (2331ee7b), executeFromContext nil-pc (236f085e).  CONFIRMED
+CORRECT default — inline-J2J OFF (real ~12-test regression when on, even on a pristine
+image).  CHARACTERIZED — runner failures are largely cumulative-state artifacts (tests pass
+isolated); remaining real lead is long-run heap/string corruption.
