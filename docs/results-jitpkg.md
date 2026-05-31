@@ -2313,3 +2313,32 @@ ExitSendCached IC-fill, or late-spec bit-setting (noteLateSpecBit).  NOT root-ca
 
 inline-J2J stays default-off.  The three campaign fixes (hasNLR e4143199, testJump 2331ee7b,
 executeFromContext 236f085e) are unaffected and stand.
+
+### inline-J2J — clean-image A/B CONFIRMS it must stay OFF (2026-05-30)
+
+Settled the inline-J2J question on a FRESHLY downloaded clean Pharo 13.1 (NOT the degraded
+Pharo-jit.image), 20-class compiler+kernel set (OCParser/OCAST/OpalCompiler/Context/
+BlockClosure/Character/collections/numerics/AI), each result read directly:
+  OFF (default): 2605 PASS, 3 failures (StringTest line-ending tests only)
+  ON + XMETHOD:  15 failures — the same inline-J2J regression cluster
+    (CharacterTest>>testStoreStringAll; BlockClosureTest testIsClean/testPrintOn/
+     testSourceNodeOptimized; ContextTest testReadVariableNamed/testTempNamed/
+     testTempNamedPut/testScopeOptimizedBlock/testSourceNode*; DictionaryTest testIncludes)
+
+So inline-J2J ON breaks ~12 tests on a PRISTINE image — it is a REAL JIT bug, NOT a
+degraded-image artifact.  (Earlier in this session I drafted a "degraded-image artifact,
+re-enable" conclusion; the clean-image A/B above REFUTES it and it was never committed — the
+batch that would have flipped the default was cancelled before running.  Good: the flip
+would have been wrong.)  inline-J2J correctly stays DEFAULT-OFF.
+
+What IS confirmed real and useful from this: the ContextTest temp-name cluster
+(testTempNamed, testReadVariableNamed, testTempNamedPut, testMethodContextPrintDetails,
+testTempNamedPutShouldReturnAssignedValue) PASSES 5/5 on our VM + clean image with the
+DEFAULT (inline-J2J off) build — confirming those are NOT VM bugs in the shipping config
+(they failed only on the degraded Pharo-jit.image, which had lost OCMethodNode>>scope etc.
+via repeated eval --save prep).
+
+LESSON re-confirmed: gold-standard against a freshly-downloaded image; a re-prepped
+throwaway image accumulates damage and produces phantom failures.  The inline-J2J residual
+(testStoreStringAll etc.) remains a genuine unfixed JIT-codegen bug, default-off, for a
+future focused dig.
