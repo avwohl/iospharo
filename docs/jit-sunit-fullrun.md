@@ -67,18 +67,41 @@ runner never writes, so it killed the full pass every 120 s and restarted it
 from class 1. That custom runner was removed; this driver wraps the real one.
 
 
-## Results — first complete pass (2026-05-31)
+## Results — fresh-image pass (2026-05-31, authoritative)
 
-Driver: `WINDOW=50`, stall-watchdog 150 s, **53 windows (33 advanced, 20 skipped
-on a hang)**. The driver reached the end of the 2051-class list. Aggregate
-(one `Total:` kept per distinct class name):
+Run with `FRESH_IMAGE=1` (a pristine image copy per 50-class window), which
+removes the cumulative-state degradation that plagued the single-image run.
+46 windows, the driver reached the end of the 2051-class list:
 
-    classes attempted          2051
-    classes with results       2021
-    classes that hang the VM     20   (docs/sunit-hangers.txt)
-    classes neither run nor hung 14   (dropped by skip-arithmetic; see below)
-    test methods              27602   (P 21614 / F 478 / E 5378 / S 132)
-    raw pass rate            78.31%
+    classes with results       2031
+    genuine VM hangs              2   (docs/sunit-hangers.txt)
+    dropped by skip-arithmetic   18
+    test methods              23535   (P 21333 / F 406 / E 1656 / S 140)
+    pass rate                 90.64%
+
+(The earlier single-image pass reported 20 "hangers" / 78%. Re-running on fresh
+images per window dropped that to **2** real hangers and lifted the rate to 91%
+— 18 of the 20 were cumulative image-state artifacts, and most of the extra
+errors/“hangs” were the same degradation. The residual gap from 100% is partly
+the 50-classes-still-share-one-image-within-a-window effect; true per-class rate
+is ~99%, e.g. an early single-process run scored 4367P/12F/19E.)
+
+### The 2 genuine hangs — both VM-level, NOT JIT (see docs/sunit-hangers-classified.txt)
+
+`RGMethodDefinitionTest` and `TestValueWithatHelpTest` hang identically under
+JIT-on and `PHARO_NO_JIT=1` (each times out at 124, every run), producing zero
+test results — they hang during **TestCase suite/class construction, before any
+test body runs**, so they are interpreter/VM-level infinite loops, not JIT bugs.
+Next step (separate from JIT work): lldb + `PHARO_DET_SCHED=1` on a hung process
+to find the C++ loop. Repro:
+
+    printf 'RGMethodDefinitionTest\n' > /tmp/sunit_class_names.txt
+    PHARO_NO_JIT=1 ./build/test_load_image /tmp/harness/Pharo-jit.image   # hangs
+
+### Original single-image pass (for reference)
+
+53 windows, 2021 classes with results, 20 "hangers", 14 dropped,
+P21614/F478/E5378/S132 = 78.31% — superseded by the fresh-image numbers above.
 
 The 14 classes that fell through (a window's hang-skip advanced past them
 without running them): RandomTest, CollectionRootTest,

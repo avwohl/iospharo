@@ -1,11 +1,30 @@
-# Isolation classification of the 20 single-image "hangers".
-# Method: run each class alone, JIT-on then PHARO_NO_JIT=1, hard timeout.
-# 124 = timed out (true hang). Verified individually (no concurrent VMs):
-
-GPointTest      JIT 18P/0F/2E   NOJIT 20P/0F/0E   => NOT-a-hang (2 JIT-specific errors)
-GTriangleTest   JIT 7P/0F/0E    NOJIT 7P/0F/0E    => NOT-a-hang
-
-# Remaining 18: classification pending a clean (non-concurrent) per-class run.
-# The decisive test is the FRESH_IMAGE=1 full run (one pristine image copy per
-# window): if a class hangs there too, it is a real bug; if not, the single-image
-# "hang" was cumulative image-state degradation.
+# SUnit "hangers" — classification (2026-05-31)
+#
+# Single-image full run flagged 20 classes as hanging the VM. Re-running with a
+# PRISTINE image per 50-class window (FRESH_IMAGE=1) reproduced only 2 of them:
+# the other 18 were CUMULATIVE IMAGE-STATE ARTIFACTS (one prepped image reused
+# across dozens of VM launches degrades; the hang lands on whatever class runs
+# when it gets too dirty). On a fresh image those 18 run fine.
+#
+# Verified-clean examples (run alone, fresh image): GPointTest (JIT 18P/2E,
+# NOJIT 20P/0E — 2 real JIT-specific errors but NOT a hang), GTriangleTest
+# (7P/7 both modes). StringTest — earlier mislabeled a hang — runs fine on a
+# fresh image (window 0 of the fresh run completed all 51 classes incl. it).
+#
+# GENUINE hangers (reproduce on a fresh image, every run):
+#
+#   RGMethodDefinitionTest    JIT exit=124, NOJIT exit=124  => VM-level, not JIT.
+#       batch header + "=== RGMethodDefinitionTest ===" printed, runs=0 totals=0
+#       => hangs during SUITE CONSTRUCTION (cls suite / resource setup), before
+#          the first test method body.
+#   TestValueWithatHelpTest   JIT exit=124, NOJIT exit=124  => VM-level, not JIT.
+#       batch header printed, class header NOT printed, runs=0
+#       => hangs even earlier, in the per-class preamble (class lookup/init or
+#          suite list build), before its header is emitted.
+#
+# Both reproduce identically with PHARO_NO_JIT=1, so neither is a JIT bug; both
+# are interpreter/VM-level infinite loops in TestCase suite/class setup.
+# Next step (separate from JIT work): attach lldb to a hung process and
+# PHARO_DET_SCHED=1 to find the C++ loop. Repro:
+#   printf 'RGMethodDefinitionTest\n' > /tmp/sunit_class_names.txt
+#   PHARO_NO_JIT=1 ./build/test_load_image /tmp/harness/Pharo-jit.image   # hangs
