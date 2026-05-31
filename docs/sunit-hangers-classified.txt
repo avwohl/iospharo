@@ -51,7 +51,12 @@
 # the +25%-sends default since 2026-05-16).
 
 #
-# UPDATE: even PHARO_DET_SCHED=1 stabilizes only the BASELINE (P22/F9 repeatable);
-# the sub-path knob effects (PROBE_ALWAYS_MISS, HIT_AS_MISS) still flip fix<->bug
-# between runs. Only NO_IC_PROBE is invariant. Conclusion stands: localized to the
-# IC-probe subsystem; finer attribution needs lldb single-step, not knob bisect.
+#
+# UPDATE (corrected): PHARO_DET_SCHED=1 does NOT make RG deterministic — it
+# changes the numbers (DET baseline observed P16/F7/E9, vs wall-clock P22/F9/E1)
+# and DET sub-path knobs are themselves unstable (NO_IC_PROBE and
+# PROBE_ALWAYS_MISS both gave P28/F4 on one DET run; other knobs not captured).
+# Only the wall-clock fact "NO_IC_PROBE fixes baseline P22/F9 -> P31/F1, 3/3" is
+# solid. Knob bisection (wall-clock OR det-sched) cannot localize below "the
+# IC-probe subsystem" for this class. Real next step: lldb single-step on the RG
+# send site, NOT more knob runs.
