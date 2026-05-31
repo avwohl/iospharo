@@ -74,51 +74,56 @@ Measured (re-counted from the combined results file), not extrapolated.
 
 53 windows over all 2051 class names, ONE prepped image reused across every VM
 launch. 2021 classes produced results; P21614 / F478 / E5378 / S132 = **78.3%**.
-Driver flagged 20 classes as "hangs". The rate is depressed by cumulative
-image-state degradation (reused image dirties across 53 launches — the repo's
-known cumulative-state-artifact pattern; E=5378 is its signature).
+Driver flagged 20 classes as "hangs". Rate depressed by cumulative image-state
+degradation (reused image dirties across 53 launches — the repo's known
+cumulative-state-artifact pattern; E=5378 is its signature).
 
 ### Fresh-image pass (partial, INCOMPLETE)
 
 `FRESH_IMAGE=1` (pristine image copy per 50-class window). Killed at ~window 18
 (~900 classes) to free the VM for hang isolation: 857 classes, P15775 / F329 /
-E1539 / S51 = **89.2%** (partial). Even partial it beats the single-image run,
-and windows holding the formerly-"hanging" StringTest etc. completed clean. A
-clean end-to-end fresh-image pass is still TODO.
+E1539 / S51 = **89.2%** (partial). A clean end-to-end fresh-image pass is TODO.
 
-## Hang investigation — the "hangs" are NOT hangs
+## Hang investigation — the "hangs" are not hangs
 
 The driver's stall-watchdog ("no results growth for STALL_SECONDS") is an
-unreliable hang signal. Isolated one at a time on a fresh image (NO concurrent
-VMs — they share /tmp/sunit_* and corrupt each other), every flagged class
-checked so far COMPLETES:
+unreliable hang signal. Verdicts below are confirmed on PRISTINE image copies,
+each class alone, JIT-on then PHARO_NO_JIT=1 sequentially (NO concurrent VMs —
+they share /tmp/sunit_* and corrupt each other). Every flagged class checked
+COMPLETES — none actually hangs:
 
-- **RGMethodDefinitionTest — a real JIT-correctness bug, not a hang.** JIT-off:
-  **32 P / 0 F / 0 E**. JIT-on: **17 P / 13 F / 2 E** — 13 fails + 2 errors only
-  under JIT. Several are the tell-tale "Got X instead of X" shape
-  (testMethodEquality: "Got OrderedCollection>>#size instead of
-  OrderedCollection>>#size" — equal printStrings comparing unequal), plus
-  "Got nil instead of 'Point'/'printing'/'*Collections-arithmetic'" (reflection
-  returning nil under JIT) and two DNU-on-nil errors (#, and #do: sent to nil).
-  Strongest JIT lead from the whole campaign.
-- **GPointTest** — not a hang; JIT 18 P / 2 E vs JIT-off 20 P / 0 E.
-- **GTriangleTest, StringTest** — not hangs; clean both ways.
-- **TestValueWithatHelpTest** — not a hang; completes, 0 concrete tests.
+    class                    JIT-on        JIT-off       verdict
+    GPointTest               18P/0F/2E     20P/0F/0E     JIT BUG (2 errors only under JIT)
+    GTriangleTest            7P/0F/0E      7P/0F/0E      clean
+    RGMethodDefinitionTest   17P/13F/2E    17P/13F/2E    NOT JIT (identical both ways)
+    TestValueWithatHelpTest  completes,0 tests           not a hang
+    StringTest               clean (fresh-image window 0)  artifact
 
-So the "20 hangers" are a mix of cumulative-state artifacts (vanish on a fresh
-image) and JIT-correctness divergences mislabeled as hangs because the
-failing-test exception printout is slow/recursive ("Error printing blockClosure
-in: a CompiledBlock" — itself a JIT CompiledBlock-printing issue). Remaining
-flagged classes (BlockClosuresTestCase, FFICalloutAPITest, Cly*, Sp*,
-RBRefactoringChangeTest, MailMessageTest, GArcTest, ...) still need one-at-a-time
-isolation before any verdict.
+**The one confirmed JIT-correctness bug: GPointTest.** Two tests error ONLY
+under JIT, both "MessageNotUnderstood: receiver ... is nil":
 
-Repro the RGMethodDefinitionTest JIT bug:
+    ERROR: testSetX            (receiver of "setX:setY:" is nil)
+    ERROR: testPolygonClipping (receiver of ... is nil)
 
-    printf 'RGMethodDefinitionTest\n' > /tmp/sunit_class_names.txt
+A receiver that is a valid object under the interpreter is `nil` under JIT — a
+JIT value/slot not materialized correctly. This is the actionable next target.
+
+**RGMethodDefinitionTest is NOT a JIT bug** (an earlier claim that it was came
+from a stale/raced results read — corrected): it fails 13F/2E *identically* with
+JIT off, so its failures are VM/interpreter or image-compat issues in the Ring
+metamodel (e.g. `parentName` reflection returning nil), independent of the JIT.
+
+So the "20 hangers" are: cumulative-state artifacts (vanish on fresh images) +
+classes the watchdog mislabeled while their failing-test exception printout ran
+slow/recursive ("Error printing blockClosure in: a CompiledBlock"). Remaining
+flagged classes still need one-at-a-time isolation.
+
+Repro the GPointTest JIT bug:
+
+    printf 'GPointTest\n' > /tmp/sunit_class_names.txt
     cp /tmp/harness/Pharo-jit.image /tmp/t.image
-    ./build/test_load_image /tmp/t.image                 # 17P/13F/2E (JIT)
-    PHARO_NO_JIT=1 ./build/test_load_image /tmp/t.image  # 32P/0F/0E  (correct)
+    ./build/test_load_image /tmp/t.image                 # 18P/2E (JIT, errors)
+    PHARO_NO_JIT=1 ./build/test_load_image /tmp/t.image  # 20P/0E (correct)
 
 Per-class findings: docs/sunit-hangers-classified.txt. Raw flags: docs/sunit-hangers.txt.
 

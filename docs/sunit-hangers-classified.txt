@@ -1,33 +1,26 @@
-# SUnit "hangers" — classification (2026-05-31)
+# SUnit "hangers" — verdicts confirmed on PRISTINE image copies (2026-05-31)
 #
-# The full-run driver flags a class as a "hanger" when its stall-watchdog fires
-# (no results growth for STALL_SECONDS). That label proved UNRELIABLE: isolating
-# the flagged classes on a pristine image (one at a time, NO concurrent VMs that
-# would share /tmp/sunit_*) shows none checked so far actually hang — the
-# watchdog was tripping on slow / wrong-under-JIT classes and on cumulative
-# image-state degradation in the single-image run.
+# Method: each class alone, fresh image copy, JIT-on then PHARO_NO_JIT=1 in
+# sequence, NO concurrent VMs (they share /tmp/sunit_* and corrupt each other).
+# The driver's stall-watchdog "hang" flag is unreliable — none of these hang.
 #
-# Verified in clean isolation (printf 'X' > /tmp/sunit_class_names.txt; run alone):
+#   class                    JIT-on       JIT-off      verdict
+#   GPointTest               18P/0F/2E    20P/0F/0E    JIT BUG (testSetX, testPolygonClipping
+#                                                       error "receiver ... is nil" only under JIT)
+#   GTriangleTest            7P/0F/0E     7P/0F/0E     clean
+#   RGMethodDefinitionTest   17P/13F/2E   17P/13F/2E   NOT JIT — fails identically both ways
+#                                                       (Ring metamodel / image-compat, not JIT)
+#   TestValueWithatHelpTest  completes, 0 concrete tests            not a hang
+#   StringTest               clean (fresh-image window 0)           cumulative-state artifact
 #
-#   RGMethodDefinitionTest   NOT a hang. Completes both modes.
-#       JIT-on : Total 32  P17 F12 E3
-#       JIT-off: Total 32  P32 F0  E0
-#       => REAL JIT CORRECTNESS BUG (12 fail + 3 err only under JIT). The failing
-#          -test printout also trips "Error printing blockClosure in: a
-#          CompiledBlock" — a JIT CompiledBlock-printing issue. Strongest lead.
-#   GPointTest               NOT a hang. JIT 18P/2E vs NOJIT 20P/0E => JIT-specific errors.
-#   GTriangleTest            NOT a hang. 7P/7 both modes.
-#   StringTest               NOT a hang. Ran clean in fresh-image window 0 (was a
-#                            cumulative-state artifact in the single-image run).
-#   TestValueWithatHelpTest  NOT a hang. Completes; 0 concrete test runs.
+# CONFIRMED JIT BUG: GPointTest — receiver becomes nil under JIT in testSetX
+# (setX:setY:) and testPolygonClipping. Next target.
 #
-# Not yet isolated (still carry the unreliable driver flag): BlockClosuresTestCase,
-# FFICalloutAPITest, ClyBrowserToolValidityTest, CodeSimulationTest, ColorTest,
+# Not yet isolated (still carry the unreliable driver flag — isolate one at a
+# time before any verdict): BlockClosuresTestCase, FFICalloutAPITest,
+# ClyBrowserToolValidityTest, CodeSimulationTest, ColorTest,
 # FileAttributesPluginPrimsTest, MailMessageTest, ManyTestResourceTestCase,
 # RBRefactoringChangeTest, RSKernelDensityTest, SimpleTestResourceTestCase,
-# Sp*Test, TFUFFIDerivedTypeMarshallingInCallbackTest, WindowsStoreTest, GArcTest,
-# FailingTestResourceTestCase. Isolate each before drawing any conclusion.
-#
-# CONCLUSION SO FAR: the "20 hangers" are not 20 hangs. They are a mix of
-# cumulative-state artifacts and JIT-correctness divergences. The actionable JIT
-# bug is RGMethodDefinitionTest (12F/3E under JIT only).
+# SpFontStyleTest, SpLabelPresenterTest, SpMorphicBoxLayoutTest,
+# SpPaginatorMorphTest, TFUFFIDerivedTypeMarshallingInCallbackTest,
+# WindowsStoreTest, GArcTest, FailingTestResourceTestCase.
