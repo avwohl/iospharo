@@ -86,7 +86,19 @@ while [ "$idx" -lt "$N" ]; do
   first="${CLASSES[$idx]}"
   rm -f /tmp/sunit_test_results.txt /tmp/sunit_test_detail.txt /tmp/sunit_run_completed.txt
 
-  "$VM" "$IMG" > "$LOGDIR/win_${idx}.log" 2>&1 &
+  # FRESH_IMAGE=1: run each window on a pristine copy of the prepped image so
+  # cumulative image-state degradation cannot accumulate across windows (that
+  # degradation, not any per-class bug, is what makes late classes "hang" — all
+  # 20 hangers from the single-image run pass cleanly in isolation; see
+  # docs/sunit-hangers-classified.txt).
+  RUNIMG="$IMG"
+  if [ "${FRESH_IMAGE:-0}" = "1" ]; then
+    RUNIMG="/tmp/sunit_win.image"
+    cp "$IMG" "$RUNIMG"
+    [ -f "${IMG%.image}.changes" ] && cp "${IMG%.image}.changes" "/tmp/sunit_win.changes" 2>/dev/null
+  fi
+
+  "$VM" "$RUNIMG" > "$LOGDIR/win_${idx}.log" 2>&1 &
   pid=$!
   t0=$(date +%s); last_change=$t0; psz=-1; reason=running
   while kill -0 "$pid" 2>/dev/null; do
