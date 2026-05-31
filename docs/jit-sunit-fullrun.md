@@ -65,3 +65,32 @@ channel) that the in-image runner was a non-functional stub and that
 first-draft custom driver whose watchdog watched a progress file the real
 runner never writes, so it killed the full pass every 120 s and restarted it
 from class 1. That custom runner was removed; this driver wraps the real one.
+
+## Results — first complete pass (2026-05-31)
+
+Driver: `WINDOW=50`, stall-watchdog 150 s, 43 windows (33 advanced, 9 skipped
+on a hang). Aggregate over the full 2051-class list:
+
+    distinct test classes run   2042
+    tests                       14300   (P 13687 / F 70 / E 434 / S 109)
+    pass rate                   95.72%
+
+Every class in the image was attempted; only the 9 below could not run because
+they hard-hang the VM. They are listed in `docs/sunit-hangers.txt` and skipped
+by the driver so the rest of the suite completes:
+
+    StringTest
+    MethodPropertiesTest
+    ReadStreamTest
+    ReadWriteStreamTest
+    ProtoObjectTest
+    SystemAnnouncerTest
+    PharoBootstrapInitializationTest
+    RGReadWriteStupTest
+    RGClassDefinitionTest
+
+`StringTest` hangs under BOTH JIT-on and `PHARO_NO_JIT=1` (each times out at
+124) — i.e. it is a VM/interpreter-level hang, not JIT-specific. The remaining
+hangers are the next root-cause targets (run one in isolation with
+`printf 'ClassName\n' > /tmp/sunit_class_names.txt` then `test_load_image`,
+under lldb / `PHARO_DET_SCHED=1`).
