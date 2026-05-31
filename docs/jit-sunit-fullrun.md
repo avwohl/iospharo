@@ -81,12 +81,13 @@ on a hang)**. The driver reached the end of the 2051-class list. Aggregate
     raw pass rate            78.31%
 
 The 14 classes that fell through (a window's hang-skip advanced past them
-without running them): CollectionRootTest, CodeSimulationWithHaltTest,
-GPolygonTest, MCPackageLoaderTest, RandomTest, CollectionValueHolderTest,
+without running them): RandomTest, CollectionRootTest,
 OCASTDoubleBlockTranslatorTest, CDBehaviorParserTest, CDClassDefinitionParserTest,
-CDTraitCompositionClassParserTest, TKTWorkerPoolTest, VariableBreakpointTest
-(+2 dup'd across slices). They sit immediately after a hanger in the list;
-re-running just those names in a fresh window picks them up.
+CDTraitCompositionClassParserTest, GPolygonTest, CodeSimulationWithHaltTest,
+CollectionValueHolderTest, MCPackageLoaderTest, TKTWorkerPoolTest,
+VariableBreakpointTest, WatchTest, Win32EnvironmentTest. They sit immediately
+after a hanger in the list; re-running just those names in a fresh window picks
+them up (a future refinement: skip only the hanger, re-queue its slice tail).
 
 **Caveat — the 78% is depressed by cumulative image-state degradation, not by
 that many real failures.** This driver reuses ONE prepped image across all 53
