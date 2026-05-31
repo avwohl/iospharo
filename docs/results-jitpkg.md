@@ -2371,3 +2371,16 @@ CAMPAIGN SUMMARY (all clean-image verified): FIXED — det-sched ContextTest sui
 CORRECT default — inline-J2J OFF (real ~12-test regression when on, even on a pristine
 image).  CHARACTERIZED — runner failures are largely cumulative-state artifacts (tests pass
 isolated); remaining real lead is long-run heap/string corruption.
+
+### StringTest artifact — evidence correction (2026-05-30)
+
+Correcting the evidence basis of the prior entry (the runCase-in-isolation eval I cited
+came back empty due to an eval-quoting error — `Smalltalk at: #R` hit an Undeclared
+variable; I should not have cited it).  Re-ran the underlying operations in isolation with
+the correct eval form (end expression printed to stdout), read directly:
+  'abc98def' onlyLetters                                  -> 'abcdef'   CORRECT
+  ('abc',String cr,'abc') withUnixLineEndings = (...lf...) -> true       CORRECT
+So onlyLetters and withUnixLineEndings ARE correct in isolation on our VM + clean image;
+the garbled-string output appears only inside the full StringTest run (cumulative state).
+The prior entry's CONCLUSION (cumulative-state artifact, not a per-test VM bug) stands and
+is now backed by these two real, directly-read measurements rather than the empty runs.
