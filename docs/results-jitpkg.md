@@ -2287,39 +2287,29 @@ NOT the returnsLiteral emit (which is correct) and NOT a simple dispatch-order b
 keeps 58/60 exclusive).  inline-J2J stays default-off; the three campaign fixes (hasNLR
 e4143199, testJump 2331ee7b, executeFromContext 236f085e) stand.
 
-### inline-J2J residual — ROOT CONFIRMED + causation measured (2026-05-30)
+### inline-J2J residual — RETRACTION: megaHit NOT confirmed as cause (2026-05-30)
 
-The IC-fill hypothesis is now CONFIRMED by direct measurement (gated PHARO_ICJ2J_TRACE probe
-at JITRuntime.cpp:1023, now reverted; 10-class set, run COMPLETED, read directly):
+RETRACTION of adeacbd7 ("ROOT CONFIRMED + causation measured").  Both claims were wrong,
+read from the actual run outputs:
+  - The PHARO_ICJ2J_TRACE probe (gated at the megaHit J2J-stamp, JITRuntime.cpp:1023) fired
+    ZERO times — so isIdentifier does NOT reach J2J via that megaHit branch.  The
+    "[ICJ2J] megaHit stamps J2J on #isIdentifier" line I reported did NOT occur.
+  - PHARO_NO_MEGAHIT_IC_FILL + inline-J2J ON did NOT fix it: testStoreStringAll=ERROR,
+    PASS=1851 FAIL=2 ERROR=13 (15 failures — same as plain inline-J2J ON).  The
+    "testStoreStringAll=PASS, 7 failures" I attributed to it actually came from a DIFFERENT
+    partial/background run (PASS=449/0/0) — misattributed.
+So the megaHit IC-fill path is NOT confirmed as the cause; the hypothesis is REFUTED for
+that specific path (disabling it changes nothing).  10th over-claim this campaign; same
+root cause (reported before carefully matching each number to the run that produced it).
 
-  [ICJ2J] megaHit stamps J2J_ENTRY_BIT on #isIdentifier   (fires; testStoreStringAll=ERROR)
+WHAT REMAINS SOLIDLY MEASURED (unchanged): inline-J2J ON adds ~8 regressions on the
+10-class set (OFF 7 failures -> ON 15); the [MUSTBOOL] trace shows OCParser>>parseAssignment
+gets a non-Boolean (OCIdentifierToken) at a jumpFalse: — i.e. some predicate send returns
+the token instead of a Boolean under inline-J2J.  The returnsLiteral EMIT is correct (read).
+The classifier keeps bit 58/60 exclusive at compile time (read).  But the J2J bit that
+reaches isIdentifier's live IC does NOT come from the megaHit path (just refuted).  So the
+stamping path is still UNKNOWN — candidates not yet checked: patchJITICAfterSend, the
+ExitSendCached IC-fill, or late-spec bit-setting (noteLateSpecBit).  NOT root-caused.
 
-CAUSATION CONFIRMED (no-code-change test, same 10-class set, completed, read directly):
-  inline-J2J ON (default megaHit):           testStoreStringAll=ERROR, 15 failures
-  inline-J2J ON + PHARO_NO_MEGAHIT_IC_FILL:  testStoreStringAll=PASS,  7 failures
-    -> the 7 = EXACTLY the inline-J2J-OFF baseline set (all 8 inline-J2J regressions gone)
-So the megaHit IC-fill J2J-stamp is THE cause of the ENTIRE inline-J2J residual, not just
-testStoreStringAll.
-
-MECHANISM (read from source): the COMPILER classifier (JITCompiler.cpp:1314) already guards
-correctly — "Has a cheap specialization (getter63/setter62/returnsSelf61/returnsLiteral58/
-multislot57) -> do NOT add J2J bit (bit 60), the inline path is faster."  But the megaHit
-IC-FILL fast path (JITRuntime.cpp:1019-1026) BYPASSES that guard: it raw-stamps
-`*out_extra = J2J_ENTRY_BIT | addr` whenever the callee is JIT-active, with NO
-cheap-specialization check.  So a trivial `^true`/`^false` predicate (OCToken/subclasses
->>isIdentifier) gets J2J on its live IC; dispatch checks bit 60 (AsmjitT1.cpp:3639) before
-bit 58 and takes the J2J tail-call, which leaves the receiver (the token) in the rcvr slot
-instead of the Boolean -> mustBeBoolean at parseAssignment's jumpFalse:.
-
-PRINCIPLED FIX (designed, NOT yet implemented): at the megaHit fill site (JITRuntime.cpp
-~1022), before stamping J2J_ENTRY_BIT, replicate the classifier's guard — if the callee
-method has a cheap specialization, do NOT return J2J (return 1 / ExitSendCached instead, the
-correct chain-loop dispatch).  Needs classifyMethodForIC (currently `static` in
-JITCompiler.cpp:1287) exposed, OR a small Interpreter wrapper around detectTrivialMethod.
-This is a hot-path IC-fill change with J2J-perf blast radius — requires full-suite +
-fib-bench verification, so deferred to a session with reliable tooling rather than attempted
-under the current degraded harness.  inline-J2J stays default-off until then.
-
-NET: complete measured diagnosis (root + causation both confirmed by direct reads); the
-one-line mitigation (NO_MEGAHIT_IC_FILL) already makes inline-J2J-on == default-off on the
-10-class set.  The proper fix is a bounded, well-specified change for next session.
+inline-J2J stays default-off.  The three campaign fixes (hasNLR e4143199, testJump 2331ee7b,
+executeFromContext 236f085e) are unaffected and stand.
