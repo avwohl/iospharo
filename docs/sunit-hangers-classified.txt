@@ -60,3 +60,16 @@
 # solid. Knob bisection (wall-clock OR det-sched) cannot localize below "the
 # IC-probe subsystem" for this class. Real next step: lldb single-step on the RG
 # send site, NOT more knob runs.
+
+# --- DETERMINISTIC MINIMAL REPRO (2026-05-31) ---
+# Whole-class RG is flaky, but ONE test in isolation is fully deterministic:
+#   class filter:  RGMethodDefinitionTest   (/tmp/sunit_class_names.txt)
+#   method filter: testClassNameSelectorIsMeta  (/tmp/sunit_method_names.txt)
+#   baseline (probe on):  FAIL 6/6  "Got nil instead of 'Point'"
+#   PHARO_T1_NO_IC_PROBE=1: PASS 3/3
+#   PHARO_T1_NO_INLINE_GETTER=1: FAIL   PHARO_T1_NO_J2J_TRAMP=1: FAIL
+# Test body: method parentName  (= `^ parent name`, an ivar-read getter then #name).
+# Under the IC probe, `parent name` returns nil. IC_HIT_VERIFY reports 0 wrong
+# dispatches => NOT wrong method selection; the inline value/return plumbing on
+# the probe path yields nil for the getter result. This is the clean oracle for
+# the fix: ~5s run, deterministic, single send.
