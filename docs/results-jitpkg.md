@@ -2286,3 +2286,40 @@ an IC-fill/classification interaction (J2J bit stamped on a trivial returnsLiter
 NOT the returnsLiteral emit (which is correct) and NOT a simple dispatch-order bug (compiler
 keeps 58/60 exclusive).  inline-J2J stays default-off; the three campaign fixes (hasNLR
 e4143199, testJump 2331ee7b, executeFromContext 236f085e) stand.
+
+### inline-J2J residual — ROOT CONFIRMED + causation measured (2026-05-30)
+
+The IC-fill hypothesis is now CONFIRMED by direct measurement (gated PHARO_ICJ2J_TRACE probe
+at JITRuntime.cpp:1023, now reverted; 10-class set, run COMPLETED, read directly):
+
+  [ICJ2J] megaHit stamps J2J_ENTRY_BIT on #isIdentifier   (fires; testStoreStringAll=ERROR)
+
+CAUSATION CONFIRMED (no-code-change test, same 10-class set, completed, read directly):
+  inline-J2J ON (default megaHit):           testStoreStringAll=ERROR, 15 failures
+  inline-J2J ON + PHARO_NO_MEGAHIT_IC_FILL:  testStoreStringAll=PASS,  7 failures
+    -> the 7 = EXACTLY the inline-J2J-OFF baseline set (all 8 inline-J2J regressions gone)
+So the megaHit IC-fill J2J-stamp is THE cause of the ENTIRE inline-J2J residual, not just
+testStoreStringAll.
+
+MECHANISM (read from source): the COMPILER classifier (JITCompiler.cpp:1314) already guards
+correctly — "Has a cheap specialization (getter63/setter62/returnsSelf61/returnsLiteral58/
+multislot57) -> do NOT add J2J bit (bit 60), the inline path is faster."  But the megaHit
+IC-FILL fast path (JITRuntime.cpp:1019-1026) BYPASSES that guard: it raw-stamps
+`*out_extra = J2J_ENTRY_BIT | addr` whenever the callee is JIT-active, with NO
+cheap-specialization check.  So a trivial `^true`/`^false` predicate (OCToken/subclasses
+>>isIdentifier) gets J2J on its live IC; dispatch checks bit 60 (AsmjitT1.cpp:3639) before
+bit 58 and takes the J2J tail-call, which leaves the receiver (the token) in the rcvr slot
+instead of the Boolean -> mustBeBoolean at parseAssignment's jumpFalse:.
+
+PRINCIPLED FIX (designed, NOT yet implemented): at the megaHit fill site (JITRuntime.cpp
+~1022), before stamping J2J_ENTRY_BIT, replicate the classifier's guard — if the callee
+method has a cheap specialization, do NOT return J2J (return 1 / ExitSendCached instead, the
+correct chain-loop dispatch).  Needs classifyMethodForIC (currently `static` in
+JITCompiler.cpp:1287) exposed, OR a small Interpreter wrapper around detectTrivialMethod.
+This is a hot-path IC-fill change with J2J-perf blast radius — requires full-suite +
+fib-bench verification, so deferred to a session with reliable tooling rather than attempted
+under the current degraded harness.  inline-J2J stays default-off until then.
+
+NET: complete measured diagnosis (root + causation both confirmed by direct reads); the
+one-line mitigation (NO_MEGAHIT_IC_FILL) already makes inline-J2J-on == default-off on the
+10-class set.  The proper fix is a bounded, well-specified change for next session.
