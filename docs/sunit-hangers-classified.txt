@@ -1,30 +1,33 @@
 # SUnit "hangers" — classification (2026-05-31)
 #
-# Single-image full run flagged 20 classes as hanging the VM. Re-running with a
-# PRISTINE image per 50-class window (FRESH_IMAGE=1) reproduced only 2 of them:
-# the other 18 were CUMULATIVE IMAGE-STATE ARTIFACTS (one prepped image reused
-# across dozens of VM launches degrades; the hang lands on whatever class runs
-# when it gets too dirty). On a fresh image those 18 run fine.
+# The full-run driver flags a class as a "hanger" when its stall-watchdog fires
+# (no results growth for STALL_SECONDS). That label proved UNRELIABLE: isolating
+# the flagged classes on a pristine image (one at a time, NO concurrent VMs that
+# would share /tmp/sunit_*) shows none checked so far actually hang — the
+# watchdog was tripping on slow / wrong-under-JIT classes and on cumulative
+# image-state degradation in the single-image run.
 #
-# Verified-clean examples (run alone, fresh image): GPointTest (JIT 18P/2E,
-# NOJIT 20P/0E — 2 real JIT-specific errors but NOT a hang), GTriangleTest
-# (7P/7 both modes). StringTest — earlier mislabeled a hang — runs fine on a
-# fresh image (window 0 of the fresh run completed all 51 classes incl. it).
+# Verified in clean isolation (printf 'X' > /tmp/sunit_class_names.txt; run alone):
 #
-# GENUINE hangers (reproduce on a fresh image, every run):
+#   RGMethodDefinitionTest   NOT a hang. Completes both modes.
+#       JIT-on : Total 32  P17 F12 E3
+#       JIT-off: Total 32  P32 F0  E0
+#       => REAL JIT CORRECTNESS BUG (12 fail + 3 err only under JIT). The failing
+#          -test printout also trips "Error printing blockClosure in: a
+#          CompiledBlock" — a JIT CompiledBlock-printing issue. Strongest lead.
+#   GPointTest               NOT a hang. JIT 18P/2E vs NOJIT 20P/0E => JIT-specific errors.
+#   GTriangleTest            NOT a hang. 7P/7 both modes.
+#   StringTest               NOT a hang. Ran clean in fresh-image window 0 (was a
+#                            cumulative-state artifact in the single-image run).
+#   TestValueWithatHelpTest  NOT a hang. Completes; 0 concrete test runs.
 #
-#   RGMethodDefinitionTest    JIT exit=124, NOJIT exit=124  => VM-level, not JIT.
-#       batch header + "=== RGMethodDefinitionTest ===" printed, runs=0 totals=0
-#       => hangs during SUITE CONSTRUCTION (cls suite / resource setup), before
-#          the first test method body.
-#   TestValueWithatHelpTest   JIT exit=124, NOJIT exit=124  => VM-level, not JIT.
-#       batch header printed, class header NOT printed, runs=0
-#       => hangs even earlier, in the per-class preamble (class lookup/init or
-#          suite list build), before its header is emitted.
+# Not yet isolated (still carry the unreliable driver flag): BlockClosuresTestCase,
+# FFICalloutAPITest, ClyBrowserToolValidityTest, CodeSimulationTest, ColorTest,
+# FileAttributesPluginPrimsTest, MailMessageTest, ManyTestResourceTestCase,
+# RBRefactoringChangeTest, RSKernelDensityTest, SimpleTestResourceTestCase,
+# Sp*Test, TFUFFIDerivedTypeMarshallingInCallbackTest, WindowsStoreTest, GArcTest,
+# FailingTestResourceTestCase. Isolate each before drawing any conclusion.
 #
-# Both reproduce identically with PHARO_NO_JIT=1, so neither is a JIT bug; both
-# are interpreter/VM-level infinite loops in TestCase suite/class setup.
-# Next step (separate from JIT work): attach lldb to a hung process and
-# PHARO_DET_SCHED=1 to find the C++ loop. Repro:
-#   printf 'RGMethodDefinitionTest\n' > /tmp/sunit_class_names.txt
-#   PHARO_NO_JIT=1 ./build/test_load_image /tmp/harness/Pharo-jit.image   # hangs
+# CONCLUSION SO FAR: the "20 hangers" are not 20 hangs. They are a mix of
+# cumulative-state artifacts and JIT-correctness divergences. The actionable JIT
+# bug is RGMethodDefinitionTest (12F/3E under JIT only).
