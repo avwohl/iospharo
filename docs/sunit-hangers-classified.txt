@@ -1,23 +1,29 @@
-# SUnit "hangers" — verdicts confirmed on PRISTINE image copies (2026-05-31)
+# SUnit "hangers" — verdicts (2026-05-31), 3 runs/side on PRISTINE image copies.
 #
-# Method: each class alone, fresh image copy, JIT-on then PHARO_NO_JIT=1 in
-# sequence, NO concurrent VMs (they share /tmp/sunit_* and corrupt each other).
-# The driver's stall-watchdog "hang" flag is unreliable — none of these hang.
+# Single-class results are NONDETERMINISTIC on this VM (timing-sensitive JIT
+# Heisenbugs; PHARO_DET_SCHED=1 for stable repro). Treat 1-run verdicts as void.
+# The driver's stall-watchdog "hang" flag is unreliable; none of these is a real
+# infinite loop — they complete when run alone.
 #
-#   class                    JIT-on       JIT-off      verdict
-#   GPointTest               18P/0F/2E    20P/0F/0E    JIT BUG (testSetX, testPolygonClipping
-#                                                       error "receiver ... is nil" only under JIT)
-#   GTriangleTest            7P/0F/0E     7P/0F/0E     clean
-#   RGMethodDefinitionTest   17P/13F/2E   17P/13F/2E   NOT JIT — fails identically both ways
-#                                                       (Ring metamodel / image-compat, not JIT)
-#   TestValueWithatHelpTest  completes, 0 concrete tests            not a hang
-#   StringTest               clean (fresh-image window 0)           cumulative-state artifact
+# CONFIRMED JIT-CORRECTNESS BUG (stable 3/3):
+#   RGMethodDefinitionTest   JIT 22P/9F/1E   vs   interp 31P/1F/0E
+#     Root cause = inline IC probe. Knob bisect (3/3 each):
+#       PHARO_T1_NO_IC_PROBE=1      -> 31P/1F  == interpreter  (FIX)
+#       PHARO_T1_NO_INLINE_GETTER=1 -> 22P/9F/1E (no effect)
+#       PHARO_NO_J2J=1              -> 22P/9F/1E (no effect)
+#     => wrong/nil method dispatched via the monomorphic IC (22-bit classIndex
+#        key, AsmjitT1.cpp:1864). Failures: "Got nil instead of 'Point'",
+#        ERROR "receiver of ',' is nil", "Got X instead of X" (unequal-but-equal
+#        printString). Same IC-probe family as aigraph/ring bugs. NEXT FIX.
 #
-# CONFIRMED JIT BUG: GPointTest — receiver becomes nil under JIT in testSetX
-# (setX:setY:) and testPolygonClipping. Next target.
+# FLAKY (timing-sensitive, not a clean codegen diff):
+#   GPointTest   flips: JIT 18P/2E or 0; JIT-off passed once, hung 3/3 later.
 #
-# Not yet isolated (still carry the unreliable driver flag — isolate one at a
-# time before any verdict): BlockClosuresTestCase, FFICalloutAPITest,
+# CLEAN both ways: GTriangleTest (7P/7), StringTest (fresh-image window 0).
+# TestValueWithatHelpTest: completes, 0 concrete tests; not a hang.
+#
+# NOT yet isolated (carry only the unreliable driver flag; isolate 3x/side
+# before any verdict): BlockClosuresTestCase, FFICalloutAPITest,
 # ClyBrowserToolValidityTest, CodeSimulationTest, ColorTest,
 # FileAttributesPluginPrimsTest, MailMessageTest, ManyTestResourceTestCase,
 # RBRefactoringChangeTest, RSKernelDensityTest, SimpleTestResourceTestCase,

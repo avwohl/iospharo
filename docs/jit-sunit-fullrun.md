@@ -68,62 +68,66 @@ from class 1. That custom runner was removed; this driver wraps the real one.
 
 ## Results
 
-Measured (re-counted from the combined results file), not extrapolated.
+Measured, re-counted from the combined results file; per-class verdicts use
+3 runs per side on pristine image copies (single runs proved nondeterministic).
 
-### Single-image pass (complete)
+### Coverage passes
 
-53 windows over all 2051 class names, ONE prepped image reused across every VM
-launch. 2021 classes produced results; P21614 / F478 / E5378 / S132 = **78.3%**.
-Driver flagged 20 classes as "hangs". Rate depressed by cumulative image-state
-degradation (reused image dirties across 53 launches — the repo's known
-cumulative-state-artifact pattern; E=5378 is its signature).
+- Single-image pass (complete): 53 windows, all 2051 class names, ONE reused
+  image. 2021 classes ran; P21614/F478/E5378/S132 = **78.3%**. 20 classes
+  driver-flagged "hangs". Rate depressed by cumulative image-state degradation
+  (E=5378 is its signature).
+- Fresh-image pass (`FRESH_IMAGE=1`, pristine copy per window): PARTIAL — killed
+  at ~window 18 (857 classes) for hang isolation; P15775/F329/E1539/S51 = 89.2%.
+  A clean end-to-end fresh-image pass is still TODO.
 
-### Fresh-image pass (partial, INCOMPLETE)
-
-`FRESH_IMAGE=1` (pristine image copy per 50-class window). Killed at ~window 18
-(~900 classes) to free the VM for hang isolation: 857 classes, P15775 / F329 /
-E1539 / S51 = **89.2%** (partial). A clean end-to-end fresh-image pass is TODO.
-
-## Hang investigation — the "hangs" are not hangs
+## Hang investigation — outcome
 
 The driver's stall-watchdog ("no results growth for STALL_SECONDS") is an
-unreliable hang signal. Verdicts below are confirmed on PRISTINE image copies,
-each class alone, JIT-on then PHARO_NO_JIT=1 sequentially (NO concurrent VMs —
-they share /tmp/sunit_* and corrupt each other). Every flagged class checked
-COMPLETES — none actually hangs:
+unreliable hang flag. **None of the spot-checked "hangers" is a real infinite
+loop — they complete when run alone.** The 20 are a mix of cumulative-state
+artifacts (vanish on a fresh image, e.g. StringTest) and slow/erroring classes
+the watchdog mislabeled.
 
-    class                    JIT-on        JIT-off       verdict
-    GPointTest               18P/0F/2E     20P/0F/0E     JIT BUG (2 errors only under JIT)
-    GTriangleTest            7P/0F/0E      7P/0F/0E      clean
-    RGMethodDefinitionTest   17P/13F/2E    17P/13F/2E    NOT JIT (identical both ways)
-    TestValueWithatHelpTest  completes,0 tests           not a hang
-    StringTest               clean (fresh-image window 0)  artifact
+IMPORTANT: single-class results here are **nondeterministic** — a class can pass,
+error, or time out across identical runs (the repo's known timing-sensitive JIT
+Heisenbugs; use `PHARO_DET_SCHED=1` for stable repro). So verdicts below are from
+3 runs per side; flaky cases are called out.
 
-**The one confirmed JIT-correctness bug: GPointTest.** Two tests error ONLY
-under JIT, both "MessageNotUnderstood: receiver ... is nil":
+### Confirmed JIT-correctness bug: RGMethodDefinitionTest (stable, 3/3)
 
-    ERROR: testSetX            (receiver of "setX:setY:" is nil)
-    ERROR: testPolygonClipping (receiver of ... is nil)
+    JIT-on : Total 32  P22 F9 E1     (3/3 identical)
+    JIT-off: Total 32  P31 F1 E0     (3/3 identical)
 
-A receiver that is a valid object under the interpreter is `nil` under JIT — a
-JIT value/slot not materialized correctly. This is the actionable next target.
+9 failures + 1 error appear ONLY under JIT, every run. Root-caused by knob
+bisection (3/3 each):
 
-**RGMethodDefinitionTest is NOT a JIT bug** (an earlier claim that it was came
-from a stale/raced results read — corrected): it fails 13F/2E *identically* with
-JIT off, so its failures are VM/interpreter or image-compat issues in the Ring
-metamodel (e.g. `parentName` reflection returning nil), independent of the JIT.
+    PHARO_T1_NO_IC_PROBE=1     -> 31P/1F/0E  == interpreter   ** FIX **
+    PHARO_T1_NO_INLINE_GETTER=1-> 22P/9F/1E  (no effect)
+    PHARO_NO_J2J=1            -> 22P/9F/1E  (no effect)
 
-So the "20 hangers" are: cumulative-state artifacts (vanish on fresh images) +
-classes the watchdog mislabeled while their failing-test exception printout ran
-slow/recursive ("Error printing blockClosure in: a CompiledBlock"). Remaining
-flagged classes still need one-at-a-time isolation.
+=> the bug is the **inline IC probe** (`t1ICProbe`, AsmjitT1.cpp:1817+,
+default-on since 2026-05-16), NOT the inline getter or J2J. Failure shapes point
+to a wrong/nil method dispatched via the monomorphic IC: "Got nil instead of
+'Point'", ERROR "receiver of ',' is nil" (in `parentName,'>>',selector`), and
+"Got OrderedCollection class instead of OrderedCollection class" (equal
+printStrings comparing unequal — a wrong object from the IC). The IC key is the
+22-bit classIndex (AsmjitT1.cpp:1864-1865); a stale/colliding slot-0 entry
+dispatches the wrong method. Same IC-probe family as the documented aigraph/ring
+JIT bugs. This is the actionable next fix.
 
-Repro the GPointTest JIT bug:
+Repro:
 
-    printf 'GPointTest\n' > /tmp/sunit_class_names.txt
+    printf 'RGMethodDefinitionTest\n' > /tmp/sunit_class_names.txt
     cp /tmp/harness/Pharo-jit.image /tmp/t.image
-    ./build/test_load_image /tmp/t.image                 # 18P/2E (JIT, errors)
-    PHARO_NO_JIT=1 ./build/test_load_image /tmp/t.image  # 20P/0E (correct)
+    ./build/test_load_image /tmp/t.image                      # 22P/9F/1E (JIT bug)
+    PHARO_T1_NO_IC_PROBE=1 ./build/test_load_image /tmp/t.image  # 31P/1F   (fixed)
 
-Per-class findings: docs/sunit-hangers-classified.txt. Raw flags: docs/sunit-hangers.txt.
+### Flaky (timing-sensitive, NOT a clean codegen bug): GPointTest
+
+Flips across runs: JIT 18P/2E or "0 tests"; JIT-off passed earlier this session
+but hung 3/3 later. Direction-unstable => a `PHARO_DET_SCHED` Heisenbug, not a
+deterministic JIT-vs-interp diff. GTriangleTest/StringTest run clean.
+
+Per-class detail: docs/sunit-hangers-classified.txt. Raw flags: docs/sunit-hangers.txt.
 
