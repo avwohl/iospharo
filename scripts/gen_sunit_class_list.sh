@@ -13,7 +13,7 @@ PHARO="${PHARO:-/tmp/harness/pharo}"
 OUT="${OUT:-/tmp/sunit_all_class_names.txt}"
 cp "$ROOT/scripts/pharo-headless-test/test_classes.txt" /tmp/sunit_test_classes.txt 2>/dev/null
 
-timeout 120 "$PHARO" "$IMG" eval \
+timeout 120 "$PHARO" --headless "$IMG" eval \
 "| seen order curated |
  order := OrderedCollection new. seen := Set new.
  curated := '/tmp/sunit_test_classes.txt' asFileReference exists
