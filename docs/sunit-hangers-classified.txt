@@ -31,23 +31,22 @@
 # SpPaginatorMorphTest, TFUFFIDerivedTypeMarshallingInCallbackTest,
 # WindowsStoreTest, GArcTest, FailingTestResourceTestCase.
 
-# --- RGMethodDefinitionTest root-cause localization (2026-05-31, execution-verified) ---
-# Knob bisect, 3x each, RG alone on pristine image (interp oracle = P31/F1):
-#   baseline (probe on)        P22/F9/E1   BUG
-#   PHARO_T1_NO_IC_PROBE=1      P31/F1/E0   FIXED (== interpreter)
-#   PHARO_T1_NO_INLINE_GETTER=1 P22/F9/E1   no effect
-#   PHARO_T1_NO_INLINE_SETTER=1 P22/F9/E1   no effect
-#   PHARO_T1_NO_INLINE_RETURNS_SELF=1 P22/F9/E1 no effect
-#   getter+setter+rself all off P22/F9/E1   no effect  => NOT the inline specs
-#   PHARO_T1_HIT_AS_MISS=1      P22/F9/E1   no effect
-#   PHARO_T1_PROBE_ALWAYS_MISS=1 P22/F9/E1  no effect  => NOT the probe HIT/dispatch path
-#   PHARO_T1_NO_J2J_TRAMP=1     P22/F9/E1   BUG (consistent)
+# --- RGMethodDefinitionTest root-cause (2026-05-31) ---
+# STABLE (3x each): baseline P22/F9/E1 vs PHARO_T1_NO_IC_PROBE=1 P31/F1/E0 (==interp).
+# So the inline IC probe subsystem is the cause; turning it off is a known-good
+# workaround.
 #
-# Interpreter.cpp: noJ2JTramp = t1NoJ2JTramp || t1ICProbe. The bug correlates
-# EXACTLY with noJ2JTramp==true (the J2J-trampoline-BYPASS path, added 2026-05-16
-# for +25% send perf). NO_IC_PROBE is the only knob that sets noJ2JTramp=false,
-# which restores the trampoline conversion AND matches the interpreter (correct).
-# So: the J2J-trampoline-bypass path is wrong for RG; the conversion path is right.
-# This contradicts the in-code rationale (which says the bypass AVOIDS clobbering
-# icData[2] extras) — needs lldb tracing of the RG send site to resolve, plus
-# full-suite + perf re-validation before changing the default. NOT a 1-line fix.
+# Sub-path localization was attempted but is INCONCLUSIVE: the per-knob results
+# are themselves nondeterministic (PHARO_T1_PROBE_ALWAYS_MISS gave "no effect"
+# on one run and "fixed" on the next; HIT_AS_MISS no effect; inline getter/
+# setter/returnsSelf all off = no effect, so it is NOT the inline specs).
+# Single-run knob bisect cannot localize further here.
+#
+# Source (verified read): Interpreter.cpp:20969
+#   const bool noJ2JTramp = g_debug.t1ICProbe || g_debug.t1NoJ2JTramp;
+# i.e. probe-on bypasses the ExitSendCached->J2JCall trampoline conversion.
+# NEXT STEP (correct tool): PHARO_DET_SCHED=1 + lldb on the RG send site to make
+# the failure deterministic, then trace which send returns the wrong/nil object.
+# Do NOT change the probe default without full-suite + perf re-validation (it is
+# the +25%-sends default since 2026-05-16).
+
