@@ -66,76 +66,59 @@ first-draft custom driver whose watchdog watched a progress file the real
 runner never writes, so it killed the full pass every 120 s and restarted it
 from class 1. That custom runner was removed; this driver wraps the real one.
 
+## Results
 
-## Results — fresh-image pass (2026-05-31, authoritative)
+Measured (re-counted from the combined results file), not extrapolated.
 
-Run with `FRESH_IMAGE=1` (a pristine image copy per 50-class window), which
-removes the cumulative-state degradation that plagued the single-image run.
-46 windows, the driver reached the end of the 2051-class list:
+### Single-image pass (complete)
 
-    classes with results       2031
-    genuine VM hangs              2   (docs/sunit-hangers.txt)
-    dropped by skip-arithmetic   18
-    test methods              23535   (P 21333 / F 406 / E 1656 / S 140)
-    pass rate                 90.64%
+53 windows over all 2051 class names, ONE prepped image reused across every VM
+launch. 2021 classes produced results; P21614 / F478 / E5378 / S132 = **78.3%**.
+Driver flagged 20 classes as "hangs". The rate is depressed by cumulative
+image-state degradation (reused image dirties across 53 launches — the repo's
+known cumulative-state-artifact pattern; E=5378 is its signature).
 
-(The earlier single-image pass reported 20 "hangers" / 78%. Re-running on fresh
-images per window dropped that to **2** real hangers and lifted the rate to 91%
-— 18 of the 20 were cumulative image-state artifacts, and most of the extra
-errors/“hangs” were the same degradation. The residual gap from 100% is partly
-the 50-classes-still-share-one-image-within-a-window effect; true per-class rate
-is ~99%, e.g. an early single-process run scored 4367P/12F/19E.)
+### Fresh-image pass (partial, INCOMPLETE)
 
-### The 2 genuine hangs — both VM-level, NOT JIT (see docs/sunit-hangers-classified.txt)
+`FRESH_IMAGE=1` (pristine image copy per 50-class window). Killed at ~window 18
+(~900 classes) to free the VM for hang isolation: 857 classes, P15775 / F329 /
+E1539 / S51 = **89.2%** (partial). Even partial it beats the single-image run,
+and windows holding the formerly-"hanging" StringTest etc. completed clean. A
+clean end-to-end fresh-image pass is still TODO.
 
-`RGMethodDefinitionTest` and `TestValueWithatHelpTest` hang identically under
-JIT-on and `PHARO_NO_JIT=1` (each times out at 124, every run), producing zero
-test results — they hang during **TestCase suite/class construction, before any
-test body runs**, so they are interpreter/VM-level infinite loops, not JIT bugs.
-Next step (separate from JIT work): lldb + `PHARO_DET_SCHED=1` on a hung process
-to find the C++ loop. Repro:
+## Hang investigation — the "hangs" are NOT hangs
+
+The driver's stall-watchdog ("no results growth for STALL_SECONDS") is an
+unreliable hang signal. Isolated one at a time on a fresh image (NO concurrent
+VMs — they share /tmp/sunit_* and corrupt each other), every flagged class
+checked so far COMPLETES:
+
+- **RGMethodDefinitionTest — a real JIT-correctness bug, not a hang.** JIT-off:
+  **32 P / 0 F / 0 E**. JIT-on: **17 P / 13 F / 2 E** — 13 fails + 2 errors only
+  under JIT. Several are the tell-tale "Got X instead of X" shape
+  (testMethodEquality: "Got OrderedCollection>>#size instead of
+  OrderedCollection>>#size" — equal printStrings comparing unequal), plus
+  "Got nil instead of 'Point'/'printing'/'*Collections-arithmetic'" (reflection
+  returning nil under JIT) and two DNU-on-nil errors (#, and #do: sent to nil).
+  Strongest JIT lead from the whole campaign.
+- **GPointTest** — not a hang; JIT 18 P / 2 E vs JIT-off 20 P / 0 E.
+- **GTriangleTest, StringTest** — not hangs; clean both ways.
+- **TestValueWithatHelpTest** — not a hang; completes, 0 concrete tests.
+
+So the "20 hangers" are a mix of cumulative-state artifacts (vanish on a fresh
+image) and JIT-correctness divergences mislabeled as hangs because the
+failing-test exception printout is slow/recursive ("Error printing blockClosure
+in: a CompiledBlock" — itself a JIT CompiledBlock-printing issue). Remaining
+flagged classes (BlockClosuresTestCase, FFICalloutAPITest, Cly*, Sp*,
+RBRefactoringChangeTest, MailMessageTest, GArcTest, ...) still need one-at-a-time
+isolation before any verdict.
+
+Repro the RGMethodDefinitionTest JIT bug:
 
     printf 'RGMethodDefinitionTest\n' > /tmp/sunit_class_names.txt
-    PHARO_NO_JIT=1 ./build/test_load_image /tmp/harness/Pharo-jit.image   # hangs
+    cp /tmp/harness/Pharo-jit.image /tmp/t.image
+    ./build/test_load_image /tmp/t.image                 # 17P/13F/2E (JIT)
+    PHARO_NO_JIT=1 ./build/test_load_image /tmp/t.image  # 32P/0F/0E  (correct)
 
-### Original single-image pass (for reference)
+Per-class findings: docs/sunit-hangers-classified.txt. Raw flags: docs/sunit-hangers.txt.
 
-53 windows, 2021 classes with results, 20 "hangers", 14 dropped,
-P21614/F478/E5378/S132 = 78.31% — superseded by the fresh-image numbers above.
-
-The 14 classes that fell through (a window's hang-skip advanced past them
-without running them): RandomTest, CollectionRootTest,
-OCASTDoubleBlockTranslatorTest, CDBehaviorParserTest, CDClassDefinitionParserTest,
-CDTraitCompositionClassParserTest, GPolygonTest, CodeSimulationWithHaltTest,
-CollectionValueHolderTest, MCPackageLoaderTest, TKTWorkerPoolTest,
-VariableBreakpointTest, WatchTest, Win32EnvironmentTest. They sit immediately
-after a hanger in the list; re-running just those names in a fresh window picks
-them up (a future refinement: skip only the hanger, re-queue its slice tail).
-
-**Caveat — the 78% is depressed by cumulative image-state degradation, not by
-that many real failures.** This driver reuses ONE prepped image across all 53
-VM launches, and after a skipped window it re-runs an overlapping slice on a
-progressively dirtier image (E=5378 ≈ 19% is the signature of the
-"cumulative-state artifact" this repo repeatedly documents elsewhere). The true
-per-class rate is much higher: the earlier single-process run scored
-4367 P / 12 F / 19 E (99.3%) over its first ~360 classes before it hit the
-StringTest-area hang. Getting a clean per-class pass rate needs fresh-image
-isolation per class (future work); this pass's value is **coverage** — every
-class was attempted and the VM-hanging ones are now enumerated.
-
-### The 20 classes that hard-hang the VM (skipped to let the suite finish)
-
-    RGMethodDefinitionTest        ColorTest                    RSKernelDensityTest
-    BlockClosuresTestCase         FileAttributesPluginPrimsTest SimpleTestResourceTestCase
-    FFICalloutAPITest             MailMessageTest              SpFontStyleTest
-    GPointTest                    ManyTestResourceTestCase     SpLabelPresenterTest
-    GTriangleTest                 RBRefactoringChangeTest      SpMorphicBoxLayoutTest
-    ClyBrowserToolValidityTest    CodeSimulationTest           SpPaginatorMorphTest
-    TFUFFIDerivedTypeMarshallingInCallbackTest                 WindowsStoreTest
-
-These are the next root-cause targets. Reproduce one in isolation:
-
-    printf 'GPointTest\n' > /tmp/sunit_class_names.txt
-    ./build/test_load_image /tmp/harness/Pharo-jit.image      # hangs (~150s no output)
-    PHARO_NO_JIT=1 ./build/test_load_image /tmp/harness/Pharo-jit.image
-    # JIT-on hang + JIT-off pass  => JIT bug; both hang => VM/interpreter.
