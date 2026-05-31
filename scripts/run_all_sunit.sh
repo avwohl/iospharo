@@ -4,44 +4,49 @@
 #   scripts/run_all_sunit.sh [image]
 #
 # Drives the project's canonical in-image runner
-# (scripts/pharo-headless-test/run_sunit_tests.st) over its batch-range
-# mechanism (/tmp/sunit_batch.txt) so that EVERY concrete TestCase subclass
-# (~2051 classes / ~14600 tests) gets a chance to run, even though a single
-# class can hard-hang the VM (the in-image per-test watchdog does not catch
-# every hang; the monolithic run stalls partway).
+# (scripts/pharo-headless-test/run_sunit_tests.st) so that EVERY concrete
+# TestCase subclass (~2051 classes / ~14600 tests) gets a chance to run, even
+# though a single class can hard-hang the VM and the monolithic run stalls
+# partway (the in-image per-test watchdog does not catch every hang).
 #
-# Unlike scripts/run_all_tests.sh (which curls a fresh image from the network
-# each batch), this works fully offline against a local prepped image.
+# IMPORTANT: the runner's batch-RANGE mechanism (/tmp/sunit_batch.txt) does NOT
+# work on our VM — the integer-parse path hits a ByteString DNU, so batchClasses
+# silently defaults to all 2051 and every window re-runs from class 1. The
+# class-NAMES filter (/tmp/sunit_class_names.txt, read via #lines) DOES work.
+# So this driver feeds each window an explicit slice of class NAMES taken from
+# a pre-generated ordered list (/tmp/sunit_all_class_names.txt). Regenerate that
+# list with scripts/gen_sunit_class_list.sh if the image's test set changes.
 #
-# Strategy: run a window [start, start+WINDOW-1]; a fresh VM process per
-# window gives per-window isolation. A STALL-based watchdog kills a window
-# only when /tmp/sunit_test_results.txt stops growing for STALL_SECONDS.
-# After each window we count completed classes (Total: lines); if the window
-# stalled, the class right after the last completed one is the hanger — it is
-# recorded in /tmp/sunit_hangers.txt and skipped, and the run continues. So
-# only genuine hangers are dropped; nothing else is lost.
+# Per window: fresh VM process for isolation; STALL-based watchdog kills it only
+# when /tmp/sunit_test_results.txt stops growing for STALL_SECONDS (a clean
+# window exits early via the run_completed marker). After each window we count
+# completed classes (Total: lines); a window that completed fewer than it was
+# given stalled on the next one — that class is the hanger: recorded in
+# /tmp/sunit_hangers.txt and skipped. So only genuine hangers are dropped.
 #
 # Outputs:
 #   /tmp/sunit_all_results.txt   concatenation of every window's results
 #   /tmp/sunit_all_detail.txt    concatenation of every window's detail
 #   /tmp/sunit_hangers.txt       classes that hung the VM (one per line)
-#   /tmp/sunit_all_summary.txt   final aggregate P/F/E/S + hanger list
+#   /tmp/sunit_all_summary.txt   final aggregate P/F/E/S + hanger count
 #
 # Env: WINDOW (default 50), STALL_SECONDS (150), POLL (5),
-#      HARD_CAP per-window ceiling seconds (1200), MAX_CLASSES safety (2200),
+#      HARD_CAP per-window ceiling seconds (1200),
+#      LIST (default /tmp/sunit_all_class_names.txt),
 #      PHARO (stock pharo CLI, default /tmp/harness/pharo),
-#      SKIP_PREP=1 to reuse an already-prepped image.
+#      SKIP_PREP=1 to reuse an already-prepped image,
+#      SKIP_LIST=1 to reuse an existing class-name list.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMG="${1:-/tmp/harness/Pharo-jit.image}"
 VM="$ROOT/build/test_load_image"
 PHARO="${PHARO:-/tmp/harness/pharo}"
 RUNNER="$ROOT/scripts/pharo-headless-test/run_sunit_tests.st"
+LIST="${LIST:-/tmp/sunit_all_class_names.txt}"
 WINDOW="${WINDOW:-50}"
 STALL_SECONDS="${STALL_SECONDS:-150}"
 POLL="${POLL:-5}"
 HARD_CAP="${HARD_CAP:-1200}"
-MAX_CLASSES="${MAX_CLASSES:-2200}"
 
 LOGDIR=/tmp/sunit_logs; mkdir -p "$LOGDIR"
 ALL_RES=/tmp/sunit_all_results.txt
@@ -58,21 +63,30 @@ if [ "${SKIP_PREP:-0}" != "1" ]; then
   echo "[prep] exit=$?"
 fi
 
-: > "$ALL_RES"; : > "$ALL_DET"; : > "$HANGERS"
-start=1; total=0; window_no=0
+if [ "${SKIP_LIST:-0}" != "1" ] || [ ! -s "$LIST" ]; then
+  echo "[list] generating ordered class-name list -> $LIST"
+  "$ROOT/scripts/gen_sunit_class_list.sh" "$IMG" > "$LOGDIR/genlist.log" 2>&1
+fi
+mapfile -t CLASSES < "$LIST"
+N=${#CLASSES[@]}
+echo "[run] $N classes, window=$WINDOW"
 
-while [ "$start" -le "$MAX_CLASSES" ]; do
-  window_no=$((window_no + 1))
-  end=$((start + WINDOW - 1))
-  echo "$start $end" > /tmp/sunit_batch.txt
+: > "$ALL_RES"; : > "$ALL_DET"; : > "$HANGERS"
+idx=0
+while [ "$idx" -lt "$N" ]; do
+  # write next WINDOW names to the names filter
+  : > /tmp/sunit_class_names.txt
+  end=$((idx + WINDOW)); [ "$end" -gt "$N" ] && end="$N"
+  given=$((end - idx))
+  for ((j=idx; j<end; j++)); do printf '%s\n' "${CLASSES[$j]}" >> /tmp/sunit_class_names.txt; done
+  first="${CLASSES[$idx]}"
   rm -f /tmp/sunit_test_results.txt /tmp/sunit_test_detail.txt /tmp/sunit_run_completed.txt
 
-  "$VM" "$IMG" > "$LOGDIR/win_${start}.log" 2>&1 &
+  "$VM" "$IMG" > "$LOGDIR/win_${idx}.log" 2>&1 &
   pid=$!
   t0=$(date +%s); last_change=$t0; psz=-1; reason=running
   while kill -0 "$pid" 2>/dev/null; do
-    sleep "$POLL"
-    now=$(date +%s)
+    sleep "$POLL"; now=$(date +%s)
     [ -f /tmp/sunit_run_completed.txt ] && { reason=completed; kill -9 "$pid" 2>/dev/null; break; }
     sz=$(wc -c < /tmp/sunit_test_results.txt 2>/dev/null | tr -d ' '); sz=${sz:-0}
     if [ "$sz" != "$psz" ]; then psz=$sz; last_change=$now; fi
@@ -84,23 +98,19 @@ while [ "$start" -le "$MAX_CLASSES" ]; do
   norm /tmp/sunit_test_results.txt >> "$ALL_RES"
   norm /tmp/sunit_test_detail.txt  >> "$ALL_DET"
   c=$(norm /tmp/sunit_test_results.txt | grep -c '^Total:'); c=${c:-0}
-  [ "$total" = "0" ] && total=$(norm /tmp/sunit_test_results.txt | sed -n 's/.*of \([0-9]*\) ).*/\1/p' | head -1)
-  [ -z "$total" ] && total=0
-  hanger=$(norm /tmp/sunit_test_results.txt | grep '^=== ' | grep -v 'SUnit Test Run' | tail -1 | sed 's/^=== //; s/ ===.*//')
 
-  if [ -f /tmp/sunit_run_completed.txt ] || [ "$reason" = "completed" ] || [ "$c" -ge "$WINDOW" ]; then
-    echo "win=$window_no [$start-$end] reason=$reason completed=$c -> advance"
-    start=$((end + 1))
+  if [ "$c" -ge "$given" ]; then
+    echo "win@$idx [$first +$given] reason=$reason completed=$c -> advance"
+    idx="$end"
   else
-    # stalled/crashed after $c completed: the (c+1)-th class in the window hung
-    echo "win=$window_no [$start-$end] reason=$reason completed=$c HANGER=${hanger:-?} (idx $((start + c)))"
-    [ -n "$hanger" ] && echo "$hanger" >> "$HANGERS"
-    start=$((start + c + 1))
+    hanger="${CLASSES[$((idx + c))]}"
+    echo "win@$idx [$first +$given] reason=$reason completed=$c HANGER=$hanger -> skip"
+    printf '%s\n' "$hanger" >> "$HANGERS"
+    idx=$((idx + c + 1))
   fi
-  if [ "$total" -gt 0 ] && [ "$start" -gt "$total" ]; then echo "reached total=$total"; break; fi
 done
+rm -f /tmp/sunit_class_names.txt
 
-# aggregate
 awk '/^Total:/{for(i=1;i<=NF;i++){if($i~/^P:/){split($i,a,":");p+=a[2]}
   if($i~/^F:/){split($i,a,":");f+=a[2]} if($i~/^E:/){split($i,a,":");e+=a[2]}
   if($i~/^S:/){split($i,a,":");s+=a[2]}}}
