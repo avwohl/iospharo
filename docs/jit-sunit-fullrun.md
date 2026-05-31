@@ -74,10 +74,19 @@ on a hang)**. The driver reached the end of the 2051-class list. Aggregate
 (one `Total:` kept per distinct class name):
 
     classes attempted          2051
-    classes with results       2048
+    classes with results       2021
     classes that hang the VM     20   (docs/sunit-hangers.txt)
-    test methods              27631   (P 21643 / F 478 / E 5378 / S 132)
-    raw pass rate            78.32%
+    classes neither run nor hung 14   (dropped by skip-arithmetic; see below)
+    test methods              27602   (P 21614 / F 478 / E 5378 / S 132)
+    raw pass rate            78.31%
+
+The 14 classes that fell through (a window's hang-skip advanced past them
+without running them): CollectionRootTest, CodeSimulationWithHaltTest,
+GPolygonTest, MCPackageLoaderTest, RandomTest, CollectionValueHolderTest,
+OCASTDoubleBlockTranslatorTest, CDBehaviorParserTest, CDClassDefinitionParserTest,
+CDTraitCompositionClassParserTest, TKTWorkerPoolTest, VariableBreakpointTest
+(+2 dup'd across slices). They sit immediately after a hanger in the list;
+re-running just those names in a fresh window picks them up.
 
 **Caveat — the 78% is depressed by cumulative image-state degradation, not by
 that many real failures.** This driver reuses ONE prepped image across all 53
