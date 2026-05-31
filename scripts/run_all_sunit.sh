@@ -87,10 +87,10 @@ while [ "$idx" -lt "$N" ]; do
   rm -f /tmp/sunit_test_results.txt /tmp/sunit_test_detail.txt /tmp/sunit_run_completed.txt
 
   # FRESH_IMAGE=1: run each window on a pristine copy of the prepped image so
-  # cumulative image-state degradation cannot accumulate across windows (that
-  # degradation, not any per-class bug, is what makes late classes "hang" — all
-  # 20 hangers from the single-image run pass cleanly in isolation; see
-  # docs/sunit-hangers-classified.txt).
+  # cumulative image-state degradation cannot accumulate across windows. The
+  # single-image run's "hangers" are suspected cumulative-state artifacts (the
+  # two verified so far, GPointTest/GTriangleTest, run fine in isolation); this
+  # mode is the decisive test. See docs/sunit-hangers-classified.txt.
   RUNIMG="$IMG"
   if [ "${FRESH_IMAGE:-0}" = "1" ]; then
     RUNIMG="/tmp/sunit_win.image"

@@ -1,1 +1,11 @@
-RGMethodDefinitionTest BlockClosuresTestCase FFICalloutAPITest GPointTest GTriangleTest ClyBrowserToolValidityTest CodeSimulationTest ColorTest FileAttributesPluginPrimsTest MailMessageTest ManyTestResourceTestCase RBRefactoringChangeTest RSKernelDensityTest SimpleTestResourceTestCase SpFontStyleTest SpLabelPresenterTest SpMorphicBoxLayoutTest SpPaginatorMorphTest TFUFFIDerivedTypeMarshallingInCallbackTest WindowsStoreTest JIT exit=1   [] | NOJIT exit=1   [] => NOT-a-hang
+# Isolation classification of the 20 single-image "hangers".
+# Method: run each class alone, JIT-on then PHARO_NO_JIT=1, hard timeout.
+# 124 = timed out (true hang). Verified individually (no concurrent VMs):
+
+GPointTest      JIT 18P/0F/2E   NOJIT 20P/0F/0E   => NOT-a-hang (2 JIT-specific errors)
+GTriangleTest   JIT 7P/0F/0E    NOJIT 7P/0F/0E    => NOT-a-hang
+
+# Remaining 18: classification pending a clean (non-concurrent) per-class run.
+# The decisive test is the FRESH_IMAGE=1 full run (one pristine image copy per
+# window): if a class hangs there too, it is a real bug; if not, the single-image
+# "hang" was cumulative image-state degradation.
