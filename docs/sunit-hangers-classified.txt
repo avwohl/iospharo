@@ -50,3 +50,8 @@
 # Do NOT change the probe default without full-suite + perf re-validation (it is
 # the +25%-sends default since 2026-05-16).
 
+#
+# UPDATE: even PHARO_DET_SCHED=1 stabilizes only the BASELINE (P22/F9 repeatable);
+# the sub-path knob effects (PROBE_ALWAYS_MISS, HIT_AS_MISS) still flip fix<->bug
+# between runs. Only NO_IC_PROBE is invariant. Conclusion stands: localized to the
+# IC-probe subsystem; finer attribution needs lldb single-step, not knob bisect.
