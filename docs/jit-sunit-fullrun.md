@@ -1,77 +1,67 @@
 # Full-coverage SUnit run under JIT
 
 Goal: run **every** concrete `TestCase` subclass in a clean Pharo 13 image
-under the JIT VM (`test_load_image`), to completion, recording per-class
-results — and survive any class that hard-hangs or segfaults the VM.
+under the JIT VM (`test_load_image`), recording per-class results, even though
+a single class can hard-hang the VM.
 
-In a clean image: ~2092 concrete (non-abstract) `TestCase` subclasses,
-~14593 test methods (`TestCase allSubclasses reject: isAbstract`, summed
-`testSelectors size`).
+Clean image: ~2051 concrete (non-abstract) `TestCase` subclasses discovered by
+the runner, ~14600 test methods.
 
-## Two runners
+## The in-image runner already works
 
-### In-image runner (submodule, canonical)
+`scripts/pharo-headless-test/run_sunit_tests.st` (submodule, ~818 lines) is the
+canonical runner: it discovers all non-abstract `TestCase` subclasses, supports
+batch ranges (`/tmp/sunit_batch.txt` = "`start end`" indices) and a class/method
+filter, has per-test watchdogs and a scheduler-death logger, and registers a
+`SessionManager` startup handler so `test_load_image` auto-runs it on resume.
+The SparseLargeTable/Unicode bug that once made every test report 0/0 is fixed
+(`DIAG: Unicode isLetter:$t=true`).
 
-`scripts/pharo-headless-test/run_sunit_tests.st` (~818 lines) is the mature,
-heavily-tuned harness: dynamic discovery of all non-abstract `TestCase`
-subclasses, batch ranges (`/tmp/sunit_batch.txt`), class/method filters,
-per-test watchdogs, a scheduler-death exception logger, Morphic-process
-suspension, and a wall-clock batch deadline. It registers a `SessionManager`
-startup handler so `test_load_image` auto-runs it on image resume.
+A single launch writes per-test detail to `/tmp/sunit_test_results.txt`
+(CR-delimited — normalise with `tr '\r' '\n'`) and `/tmp/sunit_test_detail.txt`,
+and a `/tmp/sunit_run_completed.txt` marker when its batch finishes.
 
-Limitation: everything runs **inside one VM process**. A class that segfaults
-the VM, or a hard hang the in-image Delay-based watchdog can't interrupt
-(the Delay scheduler itself is buggy on this VM — see the systime
-`valueWithin:` note), takes the whole run down with it. Its `/tmp` completion
-marker then short-circuits the next launch (`SUnitRunner: previous run
-completed, skipping auto-restart`).
+## Why a driver is still needed
 
-### External crash-resilient driver (this work)
+A monolithic run of all 2051 classes **stalls partway** — some class hard-hangs
+the VM in a way the in-image per-test watchdog cannot interrupt (observed: the
+run froze with no output for >90 s during a `testAverageWith*` class, ~4404
+tests in). After the hang nothing more runs.
 
-`scripts/run_all_sunit.st` + `scripts/run_all_sunit.sh` add a layer the
-in-image runner can't provide: **forward progress across hard VM crashes**,
-driven entirely from the shell.
+`scripts/run_all_tests.sh` is the project's batch-relaunch driver for exactly
+this, but it `curl`s a fresh image from the network each batch and uses
+`/tmp/Pharo.image` + `/tmp/pharo` — it does not fit an offline run against a
+local prepped image.
 
-- `run_all_sunit.st` redefines `SUnitRunner` with a minimal, durable loop.
-  Class list = curated order (`/tmp/sunit_test_classes.txt`) first, then every
-  remaining concrete `TestCase` subclass sorted by name. Optional restriction
-  via `/tmp/sunit_class_names.txt`.
-- State lives in `/tmp` so progress survives a crash:
-      sunit_done.txt        classes whose result is durably recorded
-      sunit_blacklist.txt   classes that crashed/hung the VM (skipped)
-      sunit_current.txt     class currently running (crash marker)
-      sunit_test_detail.txt per-class `CLS <name> P p F f E e S s` + FAIL/ERR lines
-      sunit_test_results.txt final totals
-      sunit_ALL_DONE.txt    sentinel: every class processed
-  Each class's result is appended+flushed *before* moving on, so a crash on
-  class N loses nothing already recorded.
-- On each launch, `runAllTests` blacklists the previous crasher (named in
-  `sunit_current.txt` but never recorded in `sunit_done.txt`), then runs every
-  class not in done|blacklist.
-- `run_all_sunit.sh` relaunches the VM until `sunit_ALL_DONE.txt` appears or
-  `MAXITERS` is spent. Watchdog is **stall-based**: a launch is killed only
-  when `sunit_done.txt` stops growing for `STALL_SECONDS` (default 120) — a
-  slow-but-progressing run is never wrongly blacklisted; only a genuinely
-  stuck class trips it.
-- Idempotent `SessionManager` registration (`unregisterClassNamed:` first) so
-  `startUp:` fires exactly once per launch.
+## Offline driver: `scripts/run_all_sunit.sh`
 
-Run it:
+Drives the canonical in-image runner over its batch-range mechanism, fully
+offline, with a fresh VM process per window for isolation:
 
-    SKIP_PREP=0 STALL_SECONDS=120 MAXITERS=150 \
+    SKIP_PREP=0 WINDOW=50 STALL_SECONDS=150 \
       scripts/run_all_sunit.sh /tmp/harness/Pharo-jit.image
-    # resume after interruption (keeps done/blacklist):
-    SKIP_PREP=1 scripts/run_all_sunit.sh /tmp/harness/Pharo-jit.image --resume
 
-Verified: `startUp:` fires once, a 2-class filter records correct totals
-(`classes 2 passed 59`), `ALL_DONE` sentinel written. A full run blacklists
-classes that hang the VM and continues past them.
+- Runs window `[start, start+WINDOW-1]`; a STALL-based watchdog kills a window
+  only when `/tmp/sunit_test_results.txt` stops growing for `STALL_SECONDS`
+  (a clean window exits early via the `run_completed` marker).
+- After each window it counts completed classes (`Total:` lines). If the window
+  stalled, the class right after the last completed one is the hanger: it is
+  appended to `/tmp/sunit_hangers.txt` and skipped (`start += completed + 1`),
+  so only genuine hangers are dropped and the run continues to the end.
+- Outputs: `/tmp/sunit_all_results.txt`, `/tmp/sunit_all_detail.txt`,
+  `/tmp/sunit_hangers.txt`, `/tmp/sunit_all_summary.txt` (aggregate P/F/E/S +
+  hanger count).
 
-## Known hard-hang under JIT
+This is the tool that gets *all* SUnit tests to run under the JIT: every class
+is attempted; the handful that hang the VM are isolated in `sunit_hangers.txt`
+for follow-up root-causing rather than blocking the whole suite.
 
-- `LinkedListTest` — observed to hang the JIT VM (no forward progress for
-  >120 s; blacklisted by the driver). Classification (JIT-on vs JIT-off in
-  isolation) is the next step. Repro:
-      printf 'LinkedListTest\n' > /tmp/sunit_class_names.txt
-      ./build/test_load_image /tmp/harness/Pharo-jit.image    # hangs
-      PHARO_NO_JIT=1 ./build/test_load_image /tmp/harness/Pharo-jit.image
+## History note
+
+Earlier in this work I mis-concluded (from a transiently garbled tool-output
+channel) that the in-image runner was a non-functional stub and that
+`LinkedListTest` hangs the VM. Both were wrong: the runner is the mature
+818-line harness, and the apparent `LinkedListTest` "hang" was an artifact of a
+first-draft custom driver whose watchdog watched a progress file the real
+runner never writes, so it killed the full pass every 120 s and restarted it
+from class 1. That custom runner was removed; this driver wraps the real one.

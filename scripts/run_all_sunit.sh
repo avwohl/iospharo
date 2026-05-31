@@ -1,94 +1,111 @@
 #!/bin/bash
-# Full-coverage crash-resilient SUnit driver for the custom VM.
+# Offline full-coverage SUnit driver for the custom VM.
 #
-#   scripts/run_all_sunit.sh [image] [--resume]
+#   scripts/run_all_sunit.sh [image]
 #
-# Runs EVERY concrete TestCase subclass under the JIT VM. Relaunches the VM
-# after each crash/hang; the crasher is blacklisted (named in sunit_current.txt
-# but absent from sunit_done.txt) so progress always advances. Finishes when
-# /tmp/sunit_ALL_DONE.txt appears or MAXITERS launches are spent.
+# Drives the project's canonical in-image runner
+# (scripts/pharo-headless-test/run_sunit_tests.st) over its batch-range
+# mechanism (/tmp/sunit_batch.txt) so that EVERY concrete TestCase subclass
+# (~2051 classes / ~14600 tests) gets a chance to run, even though a single
+# class can hard-hang the VM (the in-image per-test watchdog does not catch
+# every hang; the monolithic run stalls partway).
 #
-# Watchdog is STALL-BASED, not a fixed timeout: a launch is killed only when
-# /tmp/sunit_done.txt stops growing for STALL_SECONDS. A slow-but-progressing
-# run is never penalised; only a genuinely stuck class (hard hang or soft
-# infinite loop) trips the watchdog and gets blacklisted.
+# Unlike scripts/run_all_tests.sh (which curls a fresh image from the network
+# each batch), this works fully offline against a local prepped image.
 #
-# Env: MAXITERS (default 120), STALL_SECONDS (default 150), POLL (default 5),
-#      HARD_CAP per-launch ceiling seconds (default 3600),
-#      PHARO (stock pharo CLI for prep, default /tmp/harness/pharo),
+# Strategy: run a window [start, start+WINDOW-1]; a fresh VM process per
+# window gives per-window isolation. A STALL-based watchdog kills a window
+# only when /tmp/sunit_test_results.txt stops growing for STALL_SECONDS.
+# After each window we count completed classes (Total: lines); if the window
+# stalled, the class right after the last completed one is the hanger — it is
+# recorded in /tmp/sunit_hangers.txt and skipped, and the run continues. So
+# only genuine hangers are dropped; nothing else is lost.
+#
+# Outputs:
+#   /tmp/sunit_all_results.txt   concatenation of every window's results
+#   /tmp/sunit_all_detail.txt    concatenation of every window's detail
+#   /tmp/sunit_hangers.txt       classes that hung the VM (one per line)
+#   /tmp/sunit_all_summary.txt   final aggregate P/F/E/S + hanger list
+#
+# Env: WINDOW (default 50), STALL_SECONDS (150), POLL (5),
+#      HARD_CAP per-window ceiling seconds (1200), MAX_CLASSES safety (2200),
+#      PHARO (stock pharo CLI, default /tmp/harness/pharo),
 #      SKIP_PREP=1 to reuse an already-prepped image.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMG="${1:-/tmp/harness/Pharo-jit.image}"
 VM="$ROOT/build/test_load_image"
 PHARO="${PHARO:-/tmp/harness/pharo}"
-MAXITERS="${MAXITERS:-120}"
+RUNNER="$ROOT/scripts/pharo-headless-test/run_sunit_tests.st"
+WINDOW="${WINDOW:-50}"
 STALL_SECONDS="${STALL_SECONDS:-150}"
 POLL="${POLL:-5}"
-HARD_CAP="${HARD_CAP:-3600}"
-RESUME=0
-[ "${2:-}" = "--resume" ] && RESUME=1
+HARD_CAP="${HARD_CAP:-1200}"
+MAX_CLASSES="${MAX_CLASSES:-2200}"
 
-LOGDIR=/tmp/sunit_logs
-mkdir -p "$LOGDIR"
-
-count() { wc -l < "$1" 2>/dev/null | tr -d ' '; }
+LOGDIR=/tmp/sunit_logs; mkdir -p "$LOGDIR"
+ALL_RES=/tmp/sunit_all_results.txt
+ALL_DET=/tmp/sunit_all_detail.txt
+HANGERS=/tmp/sunit_hangers.txt
+SUMMARY=/tmp/sunit_all_summary.txt
+norm() { tr '\r' '\n' < "$1" 2>/dev/null; }
 
 if [ "${SKIP_PREP:-0}" != "1" ]; then
-  echo "[prep] filing in runner into $IMG (--save)"
+  echo "[prep] filing canonical runner into $IMG (--save)"
+  cp "$ROOT/scripts/pharo-headless-test/test_classes.txt" /tmp/sunit_test_classes.txt 2>/dev/null
   timeout 180 "$PHARO" "$IMG" eval --save \
-    "'$ROOT/scripts/run_all_sunit.st' asFileReference fileIn" \
-    > "$LOGDIR/prep.log" 2>&1
+    "'$RUNNER' asFileReference fileIn" > "$LOGDIR/prep.log" 2>&1
   echo "[prep] exit=$?"
 fi
 
-if [ "$RESUME" != "1" ]; then
-  echo "[reset] clearing run state"
-  rm -f /tmp/sunit_done.txt /tmp/sunit_blacklist.txt /tmp/sunit_current.txt \
-        /tmp/sunit_test_detail.txt /tmp/sunit_test_results.txt \
-        /tmp/sunit_ALL_DONE.txt /tmp/sunit_startup_error.txt
-fi
+: > "$ALL_RES"; : > "$ALL_DET"; : > "$HANGERS"
+start=1; total=0; window_no=0
 
-i=0
-while [ $i -lt $MAXITERS ]; do
-  i=$((i + 1))
-  "$VM" "$IMG" > "$LOGDIR/launch_$i.log" 2>&1 &
+while [ "$start" -le "$MAX_CLASSES" ]; do
+  window_no=$((window_no + 1))
+  end=$((start + WINDOW - 1))
+  echo "$start $end" > /tmp/sunit_batch.txt
+  rm -f /tmp/sunit_test_results.txt /tmp/sunit_test_detail.txt /tmp/sunit_run_completed.txt
+
+  "$VM" "$IMG" > "$LOGDIR/win_${start}.log" 2>&1 &
   pid=$!
-
-  start=$(date +%s)
-  last_done=$(count /tmp/sunit_done.txt); [ -z "$last_done" ] && last_done=0
-  last_change=$start
+  t0=$(date +%s); last_change=$t0; psz=-1; reason=running
   while kill -0 "$pid" 2>/dev/null; do
     sleep "$POLL"
     now=$(date +%s)
-    cur=$(count /tmp/sunit_done.txt); [ -z "$cur" ] && cur=0
-    if [ "$cur" != "$last_done" ]; then
-      last_done=$cur; last_change=$now
-    fi
-    if [ $((now - last_change)) -ge "$STALL_SECONDS" ]; then
-      echo "  [watchdog] stalled ${STALL_SECONDS}s at done=$cur, killing launch $i"
-      kill -9 "$pid" 2>/dev/null
-      break
-    fi
-    if [ $((now - start)) -ge "$HARD_CAP" ]; then
-      echo "  [watchdog] hard cap ${HARD_CAP}s, killing launch $i"
-      kill -9 "$pid" 2>/dev/null
-      break
-    fi
+    [ -f /tmp/sunit_run_completed.txt ] && { reason=completed; kill -9 "$pid" 2>/dev/null; break; }
+    sz=$(wc -c < /tmp/sunit_test_results.txt 2>/dev/null | tr -d ' '); sz=${sz:-0}
+    if [ "$sz" != "$psz" ]; then psz=$sz; last_change=$now; fi
+    if [ $((now - last_change)) -ge "$STALL_SECONDS" ]; then reason=stalled; kill -9 "$pid" 2>/dev/null; break; fi
+    if [ $((now - t0)) -ge "$HARD_CAP" ]; then reason=hardcap; kill -9 "$pid" 2>/dev/null; break; fi
   done
   wait "$pid" 2>/dev/null
-  rc=$?
 
-  done=$(count /tmp/sunit_done.txt); bl=$(count /tmp/sunit_blacklist.txt)
-  cur=$(cat /tmp/sunit_current.txt 2>/dev/null | tr -cd '[:print:]')
-  echo "iter=$i rc=$rc done=${done:-0} blacklist=${bl:-0} current=${cur:-none}"
-  if [ -f /tmp/sunit_ALL_DONE.txt ]; then
-    echo "ALL_DONE after $i launches"
-    break
+  norm /tmp/sunit_test_results.txt >> "$ALL_RES"
+  norm /tmp/sunit_test_detail.txt  >> "$ALL_DET"
+  c=$(norm /tmp/sunit_test_results.txt | grep -c '^Total:'); c=${c:-0}
+  [ "$total" = "0" ] && total=$(norm /tmp/sunit_test_results.txt | sed -n 's/.*of \([0-9]*\) ).*/\1/p' | head -1)
+  [ -z "$total" ] && total=0
+  hanger=$(norm /tmp/sunit_test_results.txt | grep '^=== ' | grep -v 'SUnit Test Run' | tail -1 | sed 's/^=== //; s/ ===.*//')
+
+  if [ -f /tmp/sunit_run_completed.txt ] || [ "$reason" = "completed" ] || [ "$c" -ge "$WINDOW" ]; then
+    echo "win=$window_no [$start-$end] reason=$reason completed=$c -> advance"
+    start=$((end + 1))
+  else
+    # stalled/crashed after $c completed: the (c+1)-th class in the window hung
+    echo "win=$window_no [$start-$end] reason=$reason completed=$c HANGER=${hanger:-?} (idx $((start + c)))"
+    [ -n "$hanger" ] && echo "$hanger" >> "$HANGERS"
+    start=$((start + c + 1))
   fi
+  if [ "$total" -gt 0 ] && [ "$start" -gt "$total" ]; then echo "reached total=$total"; break; fi
 done
 
-echo "=== summary ==="
-cat /tmp/sunit_test_results.txt 2>/dev/null || echo "(no results file)"
-echo "blacklist ($(count /tmp/sunit_blacklist.txt) classes):"
-cat /tmp/sunit_blacklist.txt 2>/dev/null || echo "(none)"
+# aggregate
+awk '/^Total:/{for(i=1;i<=NF;i++){if($i~/^P:/){split($i,a,":");p+=a[2]}
+  if($i~/^F:/){split($i,a,":");f+=a[2]} if($i~/^E:/){split($i,a,":");e+=a[2]}
+  if($i~/^S:/){split($i,a,":");s+=a[2]}}}
+  END{printf "classes_run=%d  P=%d F=%d E=%d S=%d  total=%d\n",NR,p,f,e,s,p+f+e+s}' \
+  "$ALL_RES" > "$SUMMARY"
+echo "hangers=$(wc -l < "$HANGERS" | tr -d ' ')" >> "$SUMMARY"
+echo "=== summary ==="; cat "$SUMMARY"
+echo "=== hangers ==="; cat "$HANGERS"
