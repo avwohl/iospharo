@@ -65,3 +65,33 @@ NEXT: get a deterministic single-method repro (the SUnit method-filter
 /tmp/sunit_method_names.txt is ignored by the runner; need another isolation
 path) then trace the returnTop that yields self. Then the fix is in the
 interpreter's method-return path, verifiable against Cog as oracle.
+
+## UPDATE (2026-06-01): deterministic harness overturns the SystemEnvironmentTest verdict
+
+Built `run_one_test.st` (shared headless repo) + `scripts/run_one_test.sh` to run
+ONE method in true isolation on both VMs. Result for the test I had called a VM bug:
+
+    COG   : PASS SystemEnvironmentTest>>testCollectThenSelectOnEmpty
+    OURS* : PASS SystemEnvironmentTest>>testCollectThenSelectOnEmpty   (* = interp)
+
+So the test **passes on our VM in isolation** — same as Cog. The 138
+`NonBooleanReceiver` errors are therefore NOT a per-method VM bug: they are a
+**full-suite harness-interaction artifact**. Inside run_sunit_tests.st the test
+classes trigger Iceberg package-change announcements (the harness installs GUI /
+Morphic / package machinery), and `IceSystemEventListener>>handlePackagesChange:`
+mis-evaluates only under that accumulated shared state. Run alone, no listener
+fires, and the boolean is correct.
+
+This corrects the previous section: SystemEnvironmentTest is NOT a fixable VM
+primitive bug. It is a harness/shared-state effect — the same class of issue as
+the suite's cumulative-state errors. The cross-VM comparison earlier (217/0/0 on
+Cog vs 138E ours) compared `cls suite run` on Cog (no harness side effects) vs our
+FULL harness — not apples to apples. The apples-to-apples single-method run is
+PASS/PASS.
+
+LESSON: to call something a VM bug, run the SAME isolation on both VMs.
+`scripts/run_one_test.sh` is that tool. Re-triage the other "VM bug" candidates
+(TraitTest etc.) with it before assuming a primitive gap. The genuinely
+VM-specific, reproducible bug found this campaign remains the JIT IC-probe /
+inline-primAt(size) one (RGMethodDefinitionTest) — but note even that should be
+re-checked with run_one_test once a single failing RG method can be isolated.
