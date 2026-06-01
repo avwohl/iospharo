@@ -122,3 +122,31 @@
 # stable oracle (baseline P22/F9 vs NO_IC_PROBE P31/F1). Deferred: this is a
 # 1000-line perf-critical emit with ~25 default-on specializations and
 # nondeterministic verification; a blind edit is unsafe in this session.
+
+# --- RG IC-probe bug: SPEC-localized to inline primAt/size (2026-06-01) ---
+# Spec knob bisect (3/3 confirmed): PHARO_T1_NO_INLINE_PRIM_AT=1 -> P31/F1 (==interp);
+# every other spec (multislot, retLit, tempRet, evenOdd, intCmp, setter,
+# returnsSelf, getter) leaves it broken P22/F9. So the culprit is the inline
+# primAt family (t1InlinePrimAt gates at:/at:put:/size/identityHash).
+# Prim counters on RG: at=37379 atPut=10511 size=30567 (getter/setter/retSelf=0).
+# Opcode bisect already pinned the 0-ARG path (Send0 0x80-0x87) => the implicated
+# 0-arg inline is **size** (primKind 16, AsmjitT1.cpp:5559-5619) or identityHash.
+#
+# CORRECTION to an earlier theory: the inline `size` does NOT miscompute by
+# skipping fixedFields. The runtime helper (JITRuntime.cpp:1108-1136) returns raw
+# slotCount for fmt 2 AND fmt 9 (those formats have zero fixed fields); only
+# fmt 3/4/5 subtract fixedFields, and the inline correctly BAILS on 3/4/5
+# (5602-5604 byte-range check sends non-2/9/10/11/16-23 to dispatchCachedRestoreX5).
+# So the inline size is format-correct. The bug is therefore NOT size value
+# computation — more likely the bail/SP-restore path (dispatchCachedRestoreX5
+# stashes x5=icDataPtr then size clobbers x5) or a primKind misclassification
+# routing a non-size 0-arg getter into tryPrimSize. Confirmed reproducible
+# handle: PHARO_T1_NO_INLINE_PRIM_AT=1 is a tighter workaround than NO_IC_PROBE
+# (keeps the IC probe + all other inline specs; only disables at/atPut/size).
+#
+# NEXT (clean session, requires rebuild): add a trap in the inline tryPrimSize /
+# tryPrimAt bail path (or compare the IC-classified primKind vs the cached
+# method's real primitive index) to catch the misroute; OR ship
+# PHARO_T1_NO_INLINE_PRIM_AT as the mitigation if a bench check shows it is
+# perf-neutral. Not edited this session (hot 1000-line emit, nondeterministic
+# verify, unreliable tool channel — same risk noted before).
