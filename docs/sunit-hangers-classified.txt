@@ -99,3 +99,26 @@
 # the IC extras word + the value actually stored to TOS, comparing probe-on vs
 # NO_IC_PROBE. Needs an AsmjitT1.cpp diagnostic emit — clean session, the file
 # read fine this turn so it's now safe to edit.
+
+# --- RG IC-probe bug: opcode-localized (2026-06-01) ---
+# Bisected with PHARO_T1_IC_PROBE_MIN/MAX (probe only opcodes in [min,max]):
+#   full probe          : P22/F9/E1  BUG
+#   probe 0x70-0x7F only : P31/F1     OK   (SpecialSend)
+#   probe 0x90-0x9F only : P31/F1     OK   (Send1, 1-arg)
+#   probe 0xA0-0xAF only : P31/F1     OK   (Send2, 2-arg)
+#   probe 0x80-0x8F only : HANG(124)       (Send0, 0-arg) <-- culprit family
+#   probe 0x88-0x8F only : P31/F1     OK
+#   probe 0x80-0x87 only : HANG(124)       <-- narrowed: first 8 Send0 opcodes
+# => The IC-probe bug is in the 0-arg send path (Send0, literal index 0-7).
+# RG's failures are all unary getters (parent name, parentName, etc.), consistent.
+# NOTE: t1InlineGetter is default OFF (DebugSettings.hpp:79), so it is NOT the
+# inline-getter emit; the faulty 0-arg path is dispatchCached or an inline-prim/
+# spec branch in the ARM64 send emit (AsmjitT1.cpp:3399+). THIS machine is arm64
+# — the x86 emit (AsmjitT1.cpp:1817-2014) is dead code here; ignore it.
+# Probing 0x80-0x87 in ISOLATION hangs (vs full-probe just fails), so the fault
+# also interacts with IC-fill of the other ranges — a moving target.
+# A correct fix needs to identify WHICH spec branch in the arm64 0-arg path
+# mishandles the value, then edit that branch and rebuild+verify against the
+# stable oracle (baseline P22/F9 vs NO_IC_PROBE P31/F1). Deferred: this is a
+# 1000-line perf-critical emit with ~25 default-on specializations and
+# nondeterministic verification; a blind edit is unsafe in this session.
