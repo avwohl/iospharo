@@ -140,3 +140,47 @@ First 8 kernel candidates classified:
     testReadVariableNamed, testTempNamed
 So even among kernel candidates, most "failures" are image/env (fail on Cog too);
 the StringTest/isLetter + WideString ones are the genuine VM bugs to fix.
+
+## DEEP DIVE: testOnlyLetters fails only via compiled-method execution (2026-06-01)
+
+Confirmed apples-to-apples (identical probe, same image, our VM vs Cog):
+    (StringTest selector: #testOnlyLetters) run
+      Cog : failCount=0  (PASS)
+      OURS: failCount=1  (FAIL)   -- interp (PHARO_NO_JIT=1) AND JIT both fail
+
+But EVERY constituent operation is correct on our VM when run directly:
+  - all 5 `onlyLetters` results correct: abc98def->abcdef, '012 345'->'', etc.
+  - all 5 equality asserts true: ('abc98def' onlyLetters = 'abcdef') = true
+  - printString of every result clean: 'abcdef', '' (no corruption)
+  - assert:equals: called manually on a fresh TestCase: all PASS (lit-lit, ol-lit, empty)
+  - setUp: ok
+
+The failure appears ONLY when the **compiled testOnlyLetters bytecode** runs via
+performTest/runCase. The TestFailure message is `Got '<corrupt>'` where <corrupt>
+is raw oop words (tag-3 Character oops + a SmallFloat-tagged word 0x8bdd), i.e.
+`assert:equals:` saw a CORRUPT actual value — even though the identical
+`onlyLetters` call in a fresh frame returns the correct String (verified: right
+after the failure, `'abc98def' onlyLetters` still prints `abcdef`).
+
+bytecode (numLits=11): for each of 5 asserts:
+    self; pushConstant: <input>; send: onlyLetters; pushConstant: <expected>;
+    send: assert:equals:; pop
+
+=> This is an INTERPRETER method-execution bug (reproduces with JIT off): in this
+specific compiled-method frame, the value returned by `onlyLetters` (or left on
+the stack between `send: onlyLetters` and `send: assert:equals:`) is corrupted —
+a stale/wrong oop on the operand stack. The same send in an isolated frame is
+fine. Classic "returns wrong object on the stack" / frame-stack-slot corruption,
+not a String/isLetter/select: primitive defect (all of those are correct).
+
+This is a REAL, isolated, deterministic VM bug (COG PASS / OURS FAIL, same image,
+single method, both JIT and interp). It is NOT the same class as the
+SystemEnvironmentTest harness artifact: here the failure reproduces via a bare
+`(X selector: #m) run` with no full-suite harness.
+
+NEXT: trace the operand stack across `send: onlyLetters -> send: assert:equals:`
+in the testOnlyLetters frame (PHARO_SLOT_TRIPWIRE / SP-corrupt traces, or lldb on
+the assert:equals: entry comparing arg vs the value onlyLetters returned). The
+corrupt word 0x8bdd recurring is a fingerprint to grep for. Repro:
+  (deterministic, ~5s) install a probe class or use scripts/run_one_test.sh
+  COG=1 NOJIT=1 scripts/run_one_test.sh 'StringTest>>testOnlyLetters'  (OURS:FAIL)
