@@ -372,3 +372,40 @@ NEXT (focused lldb session, per CLAUDE.md JIT/sentinel workflow):
      leading hypothesis (data correct, only the runner's unwind miscomputes).
   This is THE "long-run heap corruption" lead; it is exception/context-machinery
   specific, not string/heap-data corruption (that was the WideString bug, fixed).
+
+## ROOT CAUSE: young-gen SCAVENGE mishandles a root (2026-06-01)
+
+The cumulative-state corruption (CDNormalClassParserTest suite degrading on
+re-run) is a SCAVENGE bug. One-flag confirmation on the deterministic repro
+(CDNormalClassParserTest suite run 5x in one image, PHARO_NO_JIT=1):
+
+    baseline                 : iter1-3 P16F0, iter4 P15F1, iter5 P14F2  (degrades)
+    PHARO_YG_NO_SCAVENGE=1   : iter1-5 ALL P16F0                        (BUG GONE)
+    PHARO_GC_HEADROOM_MB=2048: iter1 P15F1 already                      (faster; full-GC
+                               headroom is irrelevant — confirms it's young-gen
+                               scavenge, not full GC)
+
+=> Young-generation scavenge moves (or collects) a young object while a live
+reference to it is not updated/scanned — a MISSED SCAVENGE ROOT. The stale/dead
+pointer surfaces in the SUnit runner's exception-handling path (TestResult>>
+runCase: on:do:/ensure: around setUp/performTest/tearDown), recording a spurious
+failure even though the test data and assertions are correct (inline checks pass,
+bare performTest passes; only the runCase wrapper miscomputes).
+
+This is almost certainly the general "long-run heap corruption" lead and explains
+the broad cumulative-state-artifact class across the full suite (tests pass
+isolated, fail in-batch) — accumulated allocations eventually trigger a scavenge
+at a point where the missed root matters. Note memory jit_remembered_set_dead:
+scavenge does an O(oldSpace) full scan instead of using the (dead) remembered
+set, so the missed root is likely a NON-oldSpace, non-stack root the scavenger
+forgets (e.g. a handler/marker context, an ensure: block, a VM-held temp, or a
+special-objects/root-table entry).
+
+NEXT: audit the scavenge root set (ObjectMemory scavenge / collectYoungSpace).
+Enumerate every root source it scans (active stack/contexts, old-space scan,
+special objects, JIT/IC tables, VM-held registers like newMethod_/method_/
+the exception handler chain) and find the one category of live young object it
+fails to forward. The runCase exception machinery points at handler/ensure
+contexts as the likely missed root. Repro for the fix loop (deterministic):
+    PB probe: CDNormalClassParserTest suite run 5x; expect 5x P16F0 once fixed.
+    PHARO_NO_JIT=1 (no PHARO_YG_NO_SCAVENGE) ./build/test_load_image IMG
