@@ -61,19 +61,6 @@
 # IC-probe subsystem" for this class. Real next step: lldb single-step on the RG
 # send site, NOT more knob runs.
 
-# --- DETERMINISTIC MINIMAL REPRO (2026-05-31) ---
-# Whole-class RG is flaky, but ONE test in isolation is fully deterministic:
-#   class filter:  RGMethodDefinitionTest   (/tmp/sunit_class_names.txt)
-#   method filter: testClassNameSelectorIsMeta  (/tmp/sunit_method_names.txt)
-#   baseline (probe on):  FAIL 6/6  "Got nil instead of 'Point'"
-#   PHARO_T1_NO_IC_PROBE=1: PASS 3/3
-#   PHARO_T1_NO_INLINE_GETTER=1: FAIL   PHARO_T1_NO_J2J_TRAMP=1: FAIL
-# Test body: method parentName  (= `^ parent name`, an ivar-read getter then #name).
-# Under the IC probe, `parent name` returns nil. IC_HIT_VERIFY reports 0 wrong
-# dispatches => NOT wrong method selection; the inline value/return plumbing on
-# the probe path yields nil for the getter result. This is the clean oracle for
-# the fix: ~5s run, deterministic, single send.
-
 # --- lldb-session outcome (2026-05-31) ---
 # RG does NOT hang (completes ~5s), so "attach to hung pid" is N/A. Used the VM's
 # own instruments instead:
@@ -89,3 +76,26 @@
 # DictionaryTest 205/205 unchanged vs baseline (non-regressing on kernel). BUT
 # NO_IC_PROBE disables the +25%-sends optimization, so a default-flip needs the
 # full bench suite, not spot-checks — NOT done; do not flip the default yet.
+
+# --- CORRECTION (2026-05-31): single-method isolation does NOT work ---
+# The runner's /tmp/sunit_method_names.txt filter is IGNORED here — every run
+# executed all 32 RGMethodDefinitionTest methods (Total: 32), so any earlier
+# "single test X FAILs N/N" note was wrong (never actually isolated). The real
+# deterministic repro is the WHOLE class:
+#   baseline (probe on):   P22/F9/E1   (5/5 runs identical)
+#   PHARO_T1_NO_IC_PROBE=1: P31/F1/E0   (3/3 runs identical)
+# (the 1 residual fail, testArgumentNamesExistingMethod "Given Collections do
+#  not match", is present both ways => not JIT.)
+#
+# What IS established (all measured this session):
+#  - IC_HIT_VERIFY: 0 sel/key mismatches => NOT wrong method selection.
+#  - Inline getter/setter/returnsSelf all OFF: still fails => not those specs.
+#  - NO_IC_PROBE non-regressing on kernel: OrderedCollectionTest 351/351,
+#    DictionaryTest 204/1 (same both ways), SmallIntegerTest, FloatTest unchanged.
+#  - The asmjit inline-getter emit (AsmjitT1.cpp:1924-1941) reads correct:
+#    slot load `mov rdx,[rax+rdx*8+8]` then store to sp[-1-nArgs]. The fault is
+#    NOT obviously in that block.
+# NEXT: instrument the probe path to dump, for the failing `parent name` send,
+# the IC extras word + the value actually stored to TOS, comparing probe-on vs
+# NO_IC_PROBE. Needs an AsmjitT1.cpp diagnostic emit — clean session, the file
+# read fine this turn so it's now safe to edit.
