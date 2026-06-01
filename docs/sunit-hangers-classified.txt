@@ -73,3 +73,19 @@
 # dispatches => NOT wrong method selection; the inline value/return plumbing on
 # the probe path yields nil for the getter result. This is the clean oracle for
 # the fix: ~5s run, deterministic, single send.
+
+# --- lldb-session outcome (2026-05-31) ---
+# RG does NOT hang (completes ~5s), so "attach to hung pid" is N/A. Used the VM's
+# own instruments instead:
+#  - PHARO_T1_IC_HIT_VERIFY=1: 0 wrong dispatches => NOT method-selection.
+#  - PHARO_T1_TRACE_HIT: caps at 40 log lines, too coarse to catch the late
+#    `parent name` send.
+# Pinpointing the faulty asmjit emit needs editing AsmjitT1.cpp send-emit (the
+# inline-getter result store / probe-path return plumbing). Deferred: source
+# reads of AsmjitT1.cpp:1920-1990 and Interpreter.cpp:21975-22015 came back
+# corrupted this session (collapsed bodies, stray braces), so a blind emit edit
+# is unsafe. Do it in a clean session.
+# Workaround blast-radius spot-check (NO_IC_PROBE): OrderedCollectionTest 379/379,
+# DictionaryTest 205/205 unchanged vs baseline (non-regressing on kernel). BUT
+# NO_IC_PROBE disables the +25%-sends optimization, so a default-flip needs the
+# full bench suite, not spot-checks — NOT done; do not flip the default yet.
