@@ -264,3 +264,18 @@ Verified (clean image, both VMs, single-method isolation):
                select: [:c | c isLetter]   OURS -> WideString 233 224  (was 1867 0)
     COG=1 NOJIT=1 scripts/run_one_test.sh 'StringTest>>testOnlyLetters'
       COG : PASS   OURS: PASS   (was OURS: FAIL)
+
+CLUSTER REPAIRED — full StringTest class on our VM (interp): **438 P / 0 F / 0 E**
+(was failing testOnlyLetters, testWithUnixLineEndings, testWithInternalLineEndings).
+testOnlyLetters also PASS under JIT ON and JIT OFF (single-method isolation:
+passed=1 failed=0 errors=0 both ways). One guard fix cleared the whole
+WideString-streaming cluster. Committed d5608fd4.
+
+GENERAL LESSON: synthetic primitives (installed at cacheMethod time, dispatched
+in sendSelector BEFORE the declared `<primitive: N>`) silently shadow the real
+primitive — tracing prim N will NOT show the call. When a store/format bug
+"can't reach" the primitive you expect, check Interpreter.cpp:8395 synthetic-prim
+dispatch and the primitiveWS*/primitiveOC* fast paths. Any raw-Oop fast path must
+guard `isPointersObject()`, not merely `!isBytesObject()` — WideString/WordArray
+(fmt 10-11) are neither bytes nor pointers and slip through a `!isBytesObject()`
+check.
