@@ -184,3 +184,48 @@ the assert:equals: entry comparing arg vs the value onlyLetters returned). The
 corrupt word 0x8bdd recurring is a fingerprint to grep for. Repro:
   (deterministic, ~5s) install a probe class or use scripts/run_one_test.sh
   COG=1 NOJIT=1 scripts/run_one_test.sh 'StringTest>>testOnlyLetters'  (OURS:FAIL)
+
+## ROOT CAUSE: WriteStream on WideString is broken (2026-06-01)
+
+testOnlyLetters fails because it asserts on a WideString case
+(literal[6] = '012 àôüÖ ẞ 345', codepoints 233,224,244,252,214,7838).
+Drilled with deterministic probes to a ONE-LINE repro:
+
+    (WideString with: 233 asCharacter with: 224 asCharacter) select: [:c | c isLetter]
+      Cog  -> WideString (233 224)
+      OURS -> WideString (1867 0)        <- 1867 = (233<<3)|3 = the Character OOP!
+
+So select: stores the raw 64-bit Character OOP across two 32-bit slots instead of
+the codepoint. Narrowed the mechanism — it is NOT isLetter, at:put:, copyFrom:,
+or comma, all of which are correct on WideString:
+
+    isLetter(233/224/...) = true          (correct)
+    WideString at:put: (ws at:i)          -> 233,224   (correct)
+    ws copyFrom: 1 to: 2                   -> 233,224   (correct)
+    ws , otherWide                         -> correct
+    WideString>>select: / WriteStream:     -> CORRUPT
+
+The culprit is **WriteStream on a WideString** (select: builds via a WriteStream):
+
+    | s | s := WriteStream on: (WideString new: 0).
+    (WideString with: 233 asCharacter with: 224 asCharacter) do: [:c | s nextPut: c].
+    s contents
+      Cog  -> WideString (233 224)
+      OURS -> ByteString  (233 0)         <- WRONG class AND truncated/corrupt
+
+=> On our VM, a WriteStream built on a WideString collapses to a ByteString and
+mis-stores wide characters. select: (Collection>>select: uses a species
+WriteStream) inherits this, so any String operation that filters/streams a
+WideString (select:, collect:, reject:, onlyLetters, withUnixLineEndings, etc.)
+corrupts. This is the underlying defect behind the StringTest COGPASS-OURSFAIL
+cluster (testOnlyLetters, testWith{Unix,Internal}LineEndings) and likely many
+other WideString-touching failures across the suite.
+
+LIKELY FIX SITE: WriteStream's grow / pastEndPut: path on a non-byte (32-bit)
+backing collection — the VM primitive it uses (new:/species/at:put:-past-end or
+the grow that allocates a ByteString instead of preserving WideString format).
+The `species`/`new:` returned WideString correctly in isolation, so the bug is in
+WriteStream's grow allocating/replacing with the wrong format, or pastEndPut:
+storing into a byte buffer. Reproduce + verify the fix with the one-liner above
+(expect OURS -> WideString 233 224), then re-run:
+    COG=1 NOJIT=1 scripts/run_one_test.sh 'StringTest>>testOnlyLetters'  (expect OURS: PASS)
