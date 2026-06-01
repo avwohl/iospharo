@@ -445,3 +445,37 @@ NEXT (lldb, per CLAUDE.md "lldb is available"): repro under
   gcTempOop_/forEachRoot, or reload it after the allocation). The
   PHARO_SCAV_DANGLE_CHECK diagnostic stays as a reusable tool (proved the heap
   side is clean).
+
+## Ruled out (negative results, narrowing to runner control-flow) — 2026-06-01
+
+Black-box probing on the deterministic repro has now eliminated every
+object-level corruption hypothesis. Scavenge at a safe point does NOT corrupt
+the test objects:
+  - identityHash STABLE across scavenge: probe allocated 200 Arrays, recorded
+    hashes, churned 50x5000 young allocs + GC, re-checked: 0/200 changed,
+    IdentitySet still finds all. (So not a hash-instability / Set-bucket bug.)
+  - NO identity split: held a CDNormalClassParserTest's fresh classDefinition +
+    slotNode across 8 rounds of forced scavenge (240K young allocs/round);
+    `slotNode parent == classDefinition` stayed TRUE every round, same
+    identityHash. (So scavenge does not duplicate/diverge the AST.)
+  - afterGC IP restoration CLEAN: no GC-VERIFY-FAIL fires during the repro.
+  - heap pointer-consistent post-scavenge (PHARO_SCAV_DANGLE_CHECK = 0 dangles).
+  - scavenge fires at a clean BYTECODE BOUNDARY (Interpreter.cpp:2794, top of
+    step() loop), not mid-primitive — needsScavenge_ is a deferred flag set in
+    allocate() (ObjectMemory.cpp:2372) and consumed at the safe point.
+
+=> The spurious failure is recorded by TestResult>>runCase: (a real TestFailure
+is caught by its `on: failure do:`), yet bare `t setUp; t performTest` never
+raises and the asserted objects are provably intact across scavenge. So the
+corruption is in the RUNNER's exception/control-flow path when a scavenge fires
+DURING `run` (the extra allocation in run/TestResult triggers the safe-point
+scavenge that the bare performTest path doesn't). The remaining suspect is the
+exception machinery (handler context / ensure: / signal-return) interacting with
+a safe-point scavenge — NOT any heap object corruption.
+
+NEXT (lldb, the only remaining tool): break ObjectMemory::scavenge(); filter to
+the scavenge that fires while a CDNormalClassParserTest method or
+TestResult>>runCase: is on the C++ frame stack (inspect method_ selector); single
+-step the subsequent assert/exception dispatch and compare control flow vs a
+non-scavenge run. Repro: PHARO_NO_JIT=1 ./build/test_load_image /tmp/gc.image
+(PB probe: CDNormalClassParserTest suite run 5x; iter2+ = F2 deterministic).
