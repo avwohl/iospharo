@@ -409,3 +409,39 @@ fails to forward. The runCase exception machinery points at handler/ensure
 contexts as the likely missed root. Repro for the fix loop (deterministic):
     PB probe: CDNormalClassParserTest suite run 5x; expect 5x P16F0 once fixed.
     PHARO_NO_JIT=1 (no PHARO_YG_NO_SCAVENGE) ./build/test_load_image IMG
+
+## CORRECTION + refinement: it's an UNROOTED C++ LOCAL, not a missed heap root (2026-06-01)
+
+Added a post-scavenge diagnostic (PHARO_SCAV_DANGLE_CHECK, ObjectMemory.cpp
+scavenge()): before eden reset, scan all of old+perm space AND the format-9
+roots pointerSlotsOf() skips (hiddenRoots, freeLists, class-table pages) AND the
+forEachRoot set, for any Oop still pointing into eden. Result on the repro:
+**ZERO dangling pointers**, while the corruption is present (suite iter2+ = F2).
+
+So the earlier "missed scavenge root" hypothesis is WRONG — the HEAP is fully
+pointer-consistent after every scavenge. Re-reading PHARO_YG_NO_SCAVENGE: it does
+NOT disable scavenge, it only skips the PER-SAFE-POINT trigger ("Pre-compact
+scavenge still runs inside fullGC"). So the fix-by-flag works because it changes
+WHEN scavenge runs, not whether.
+
+REFINED ROOT CAUSE: scavenge firing at a per-safe-point moment while a
+primitive/bytecode handler holds an UNROOTED C++ local Oop / ObjectHeader*
+(not enumerated by forEachRoot) across the allocation that triggers it. The move
+tenures the object and updates all HEAP references, but the C++ stack local keeps
+the stale young address and is used after eden reset -> corruption. This:
+  - is invisible to a heap+forEachRoot dangle scan (stale ptr is a C++ local),
+  - accumulates / is timing-sensitive (only bites when the trigger aligns with
+    the in-flight unrooted local; eden fullness after the bestNodeFor cluster
+    shifts the trigger into the runCase/parse path),
+  - is clean under fullGC-time scavenge (VM at a safe boundary, no unrooted local).
+
+NEXT (lldb, per CLAUDE.md "lldb is available"): repro under
+  PHARO_NO_JIT=1 ./build/test_load_image /tmp/gc.image   (gc.image = PB probe
+  running CDNormalClassParserTest suite 5x; iter2+ = F2 deterministically).
+  Break in ObjectMemory::scavenge(); when it fires during the 2nd+ suite run,
+  walk the C++ call stack to find the in-flight primitive/bytecode handler, and
+  inspect its locals for an Oop/ObjectHeader* pointing into [edenStart_,
+  edenFree_). That local is the unrooted reference to fix (root it via
+  gcTempOop_/forEachRoot, or reload it after the allocation). The
+  PHARO_SCAV_DANGLE_CHECK diagnostic stays as a reusable tool (proved the heap
+  side is clean).

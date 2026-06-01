@@ -35,6 +35,7 @@
 DEBUG_BOOL(PHARO_DET_SCHED)
 DEBUG_INT(PHARO_DET_SCHED_QUANTUM, 1)   // × the 1024-bytecode checkpoint
 DEBUG_BOOL(PHARO_FINDNODE_WATCH)        // aigraph curEdge corruption capture
+DEBUG_BOOL(PHARO_SCAV_DANGLE_CHECK)     // post-scavenge: log pointers still aimed into eden (missed roots)
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT

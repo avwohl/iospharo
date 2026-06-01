@@ -12,6 +12,7 @@
 
 #include "ObjectMemory.hpp"
 #include "Interpreter.hpp"
+#include "DebugVars.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
@@ -1722,6 +1723,80 @@ GCResult ObjectMemory::scavenge() {
         if (it != forward.end()) {
             nilObject_ = Oop::fromObject(it->second);
             Oop::setNilBits(nilObject_.rawBits());
+        }
+    }
+
+    // DIAGNOSTIC (PHARO_SCAV_DANGLE_CHECK): before eden is reset, scan all
+    // live memory for any Oop still pointing into eden.  Each such pointer is
+    // a MISSED ROOT — either it holds a now-stale pointer to a tenured object
+    // (in `forward`) or a use-after-free to an object about to vanish.  This
+    // pinpoints the scavenge root-set gap behind the cumulative-state
+    // corruption (see docs/vm-compat-bugs.md).
+    if (GET_DEBUG_BOOL(PHARO_SCAV_DANGLE_CHECK)) {
+        static int dangScav = 0;
+        int sid = ++dangScav;
+        size_t dangCount = 0;
+        auto reportSlot = [&](const char* where, ObjectHeader* holder, Oop v) {
+            uint8_t* hp = reinterpret_cast<uint8_t*>(v.asObjectPtr());
+            if (hp < edenStart_ || hp >= edenFree_) return;
+            dangCount++;
+            if (dangCount > 15) return;
+            bool tenured = forward.find(v.asObjectPtr()) != forward.end();
+            std::string hcls = "?";
+            if (holder) {
+                Oop hc = classAtIndex(holder->classIndex());
+                if (hc.isObject()) hcls = nameOfClass(hc);
+            }
+            std::string vcls = "?";
+            if (v.rawBits() > 0x10000) {
+                Oop vc = classAtIndex(v.asObjectPtr()->classIndex());
+                if (vc.isObject()) vcls = nameOfClass(vc);
+            }
+            fprintf(stderr,
+                "[SCAV-DANGLE-%d] %s holder=%s val.cls=%s %s\n",
+                sid, where, hcls.c_str(), vcls.c_str(),
+                tenured ? "(TENURED-but-not-updated)" : "(USE-AFTER-FREE)");
+        };
+        // Scan old + perm space objects.
+        auto scanLive = [&](uint8_t* a, uint8_t* b, const char* tag) {
+            ObjectScanner sc(a, b);
+            while (ObjectHeader* obj = sc.next()) {
+                size_t np = pointerSlotsOf(obj);
+                Oop* sl = obj->slots();
+                size_t cnt = obj->slotCount();
+                for (size_t i = 0; i < np && i < cnt; ++i)
+                    if (sl[i].isObject()) reportSlot(tag, obj, sl[i]);
+            }
+        };
+        scanLive(oldSpaceStart_, oldSpaceFree_, "old");
+        if (permSpaceStart_ && permSpaceEnd_ > permSpaceStart_)
+            scanLive(permSpaceStart_, permSpaceEnd_, "perm");
+        // Format-9 (Indexable64) roots whose slots pointerSlotsOf() treats as
+        // NON-pointers and thus the scans above (and scavenge itself) skip:
+        // hiddenRoots, freeLists, and the class-table pages.  Scan ALL their
+        // slots as raw Oops for eden pointers — this is the prime suspect for
+        // the scavenge missed-root.
+        auto scanAllSlots = [&](Oop holderOop, const char* tag) {
+            if (!holderOop.isObject() || holderOop.rawBits() <= 0x10000) return;
+            ObjectHeader* h = holderOop.asObjectPtr();
+            size_t cnt = h->slotCount();
+            Oop* sl = h->slots();
+            for (size_t i = 0; i < cnt; ++i) reportSlot(tag, h, sl[i]);
+        };
+        scanAllSlots(hiddenRootsObj_, "hiddenRoots(fmt9)");
+        scanAllSlots(freeListsObj_, "freeLists(fmt9)");
+        for (size_t i = 0; i < classTablePages_.size(); ++i)
+            scanAllSlots(classTablePages_[i], "classTablePage(fmt9)");
+        // Scan VM register/stack/frame roots (the forEachRoot set).
+        if (interpreter_) {
+            interpreter_->forEachRoot([&](Oop& o) {
+                if (o.isObject()) reportSlot("vm-root", nullptr, o);
+            });
+        }
+        if (dangCount > 0) {
+            fprintf(stderr,
+                "[SCAV-DANGLE-%d] TOTAL %zu dangling young pointer(s) after scavenge\n",
+                sid, dangCount);
         }
     }
 
