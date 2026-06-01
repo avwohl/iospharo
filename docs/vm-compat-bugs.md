@@ -95,3 +95,48 @@ LESSON: to call something a VM bug, run the SAME isolation on both VMs.
 VM-specific, reproducible bug found this campaign remains the JIT IC-probe /
 inline-primAt(size) one (RGMethodDefinitionTest) — but note even that should be
 re-checked with run_one_test once a single failing RG method can be isolated.
+
+## CONFIRMED VM bug: StringTest>>testOnlyLetters (2026-06-01)
+
+Deterministic, both VMs, single-method isolation (run_one_test on the clean
+image /tmp/harness/Pharo-clean.image):
+
+    COG : PASS StringTest>>testOnlyLetters
+    OURS: FAIL StringTest>>testOnlyLetters    (PHARO_NO_JIT=1, interpreter)
+
+This is a REAL VM bug (passes Cog, fails ours, same image, one method, isolated).
+Not JIT-specific (reproduced interp-only). `String>>onlyLetters` is
+`^ self select: [:c | c isLetter]`, so the defect is in our `Character>>isLetter`
+(Unicode classification) or `String>>select:`.
+
+Cog reference: `'abc98def' onlyLetters = 'abcdef'`; `$8 isLetter=false`,
+`$a isLetter=true`. The test asserts digits/spaces are dropped:
+  'abc98def' onlyLetters = 'abcdef'
+  'abc 98 12 def' onlyLetters = 'abcdef'
+  '012  345' onlyLetters = ''
+If our VM keeps a digit or drops a letter, one isLetter class is wrong. The
+Unicode path (GeneralCategory SparseLargeTable) was fixed once for the
+SUnit-blocking bug (docs/image_issues style); this is a residual classification
+error for some character(s) in the test's input.
+
+Sibling COGPASS-OURSFAIL leads (same StringTest, not yet drilled):
+  testWithUnixLineEndings, testWithInternalLineEndings — both include WideString
+  cases (WideString with: 403 asCharacter ...), the known WideString-family weak
+  spot; likely a separate WideString bug, not the same isLetter one.
+
+NEXT: probe `'abc98def' onlyLetters` on our VM to see the exact wrong char
+(prep was flaky this session — the stock-pharo --save intermittently hangs/errs,
+unrelated to the VM bug). Then fix isLetter for that codepoint and verify with
+  COG=1 NOJIT=1 scripts/run_one_test.sh 'StringTest>>testOnlyLetters'
+expecting OURS: PASS.
+
+## Triage status (kernel candidates, scripts/triage_one_tests.sh)
+
+First 8 kernel candidates classified:
+  COGPASS-OURSFAIL (real VM bugs): StringTest testOnlyLetters,
+    testWithInternalLineEndings, testWithUnixLineEndings
+  BOTHFAIL (image/env, out of scope): BlockClosureTest testIsClean,
+    testSourceNodeOptimized; ContextTest testMethodContextPrintDetails,
+    testReadVariableNamed, testTempNamed
+So even among kernel candidates, most "failures" are image/env (fail on Cog too);
+the StringTest/isLetter + WideString ones are the genuine VM bugs to fix.
