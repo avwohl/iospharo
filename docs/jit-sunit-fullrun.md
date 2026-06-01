@@ -82,18 +82,27 @@ over-extrapolation from the first ~360 kernel classes; the kernel passes ~99%,
 but the broader image (reflectivity, serialization, tooling, graphics, network)
 has many genuine errors. Coverage is the real achievement: every class attempted.
 
-### The errors are VM/image-compat, NOT JIT (spot-checked, JIT vs interpreter)
+### The errors are mostly REAL VM bugs (vs Cog), NOT image/environment
 
-    class                       JIT-on          PHARO_NO_JIT=1
-    ReflectivityReificationTest 60P/16F/36E      78P/2F/32E
-    SystemEnvironmentTest       128P/1F/88E      79P/0F/138E   (interp WORSE)
-    ZnClientTest                1P/48E           2P/47E        (network: none in sandbox)
+CORRECTION (2026-06-01): an earlier draft called these a "VM-compat ceiling" and
+"not fixable". That was wrong — I had only compared JIT vs our-own-interpreter,
+which cannot distinguish our-VM bugs from image issues. Compared against **stock
+Cog (Pharo 10.3.9) on the SAME image**, many pass on Cog and fail on ours:
 
-The top error-contributing classes fail ~equally under the plain interpreter,
-so they are primitive/feature/environment gaps (missing features, no network,
-reflective-instrumentation), not JIT codegen bugs. The 78% is a VM-compatibility
-ceiling, not a JIT regression. (Numbers also vary run-to-run — these classes are
-nondeterministic — but the shared bulk of errors is the point.)
+    class                        Cog            our VM (interp)   verdict
+    SystemEnvironmentTest        217P/0F/0E     79P/0F/138E       OUR VM BUG
+    TraitTest                    54P/0F/0E      (errors)          OUR VM BUG
+    ReflectivityReificationTest  81P/2F/29E     60P/16F/36E       partly ours
+    ReflectivityControlTest      44P/2F/25E     ~71E              partly ours
+    StDebuggerTest               3P/1F/58E      ~57E              ~Cog too (debugger/UI)
+    ZnClientTest                 3P/4F/43E      1P/48E            ~Cog too (network)
+
+The single failing test `SystemEnvironmentTest>>testCollectThenSelectOnEmpty`
+run directly on Cog: 1 run, 0 errors. On our VM: NonBooleanReceiver. So these are
+genuine fixable VM defects (a boolean is mis-evaluated inside an Iceberg event
+listener that fires as a harness side effect), not environment gaps. Only a
+subset (network ZnClient, UI StDebugger) also fail on Cog and are out of scope.
+The 78% is therefore NOT a fixed ceiling — fixing the VM bugs would raise it.
 
 ### Classes the driver flagged (watchdog stalls, not necessarily hangs)
 
