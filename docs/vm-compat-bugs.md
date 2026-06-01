@@ -229,3 +229,38 @@ WriteStream's grow allocating/replacing with the wrong format, or pastEndPut:
 storing into a byte buffer. Reproduce + verify the fix with the one-liner above
 (expect OURS -> WideString 233 224), then re-run:
     COG=1 NOJIT=1 scripts/run_one_test.sh 'StringTest>>testOnlyLetters'  (expect OURS: PASS)
+
+## FIXED (2026-06-01): synthetic WriteStream>>nextPut: corrupted WideString
+
+The above "LIKELY FIX SITE" guesses (grow/species/pastEndPut:) were all WRONG —
+the real culprit was a missing format guard in the **synthetic-primitive**
+`primitiveWSNextPut` (Primitives.cpp), our inlined C fast path for
+`WriteStream>>nextPut:` (installed at cacheMethod time, dispatched BEFORE the
+declared prim 64, so it never showed up tracing prim 64).
+
+Chain that found it: `at:put:` on the WideString never reached prim 64
+(primitiveStringAtPut) — verified by entry-trace, prim 64 fired 8873× but ONLY
+for ByteString, never fmt 10/11. The store went through the synthetic
+`WriteStream>>nextPut:` path (sendSelector's `primIdx==0 && cached->primitive`
+synthetic-prim dispatch, Interpreter.cpp:8395).
+
+`primitiveWSNextPut` does `memory_.storePointer(pos, coll, arg)` — a raw-Oop
+store, valid ONLY for Array-backed (pointer) WriteStreams (the `Array
+streamContents:` bench fast path it was written for). It bailed for
+`isBytesObject()` (ByteString) but NOT for WideString/WordArray (fmt 10-11, which
+are neither bytes nor pointers). So it stored the raw Character Oop 1867
+(=(233<<3)|3) into the 32-bit word instead of the codepoint 233.
+
+FIX: replace the `isBytesObject()` bail with `!isPointersObject()` — only genuine
+pointer Arrays take the fast path; WideString/WordArray/ByteString all fall
+through to their real `at:put:` method (prim 64 etc., which extract the codepoint).
+
+Also hardened prim 60/61 (`primitiveAtPut`) format-10/11 branch to accept a
+Character value (store its codepoint), matching Cog — so a direct
+`wideString basicAt: i put: aChar` no longer raises "Improper store".
+
+Verified (clean image, both VMs, single-method isolation):
+    one-liner: (WideString with: 233 asCharacter with: 224 asCharacter)
+               select: [:c | c isLetter]   OURS -> WideString 233 224  (was 1867 0)
+    COG=1 NOJIT=1 scripts/run_one_test.sh 'StringTest>>testOnlyLetters'
+      COG : PASS   OURS: PASS   (was OURS: FAIL)

@@ -2270,11 +2270,24 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
 
     // 32-bit word objects (format 10-11): WideString, WordArray
     if (fmtVal >= 10 && fmtVal <= 11) {
-        if (!value.isSmallInteger()) {
-            return PrimitiveResult::Failure;
-        }
-        int64_t wordValue = value.asSmallInteger();
-        if (wordValue < 0 || wordValue > 0xFFFFFFFF) {
+        // WideString stores Characters; WordArray stores SmallIntegers.  The
+        // generic at:put: must accept a Character (storing its codepoint) as
+        // well as a SmallInteger — Cog's primitive does, and WriteStream /
+        // select: / collect: on a WideString go through this store.  Rejecting
+        // Character here forced the Smalltalk fallback, which raised "Improper
+        // store into indexable object" (or, via the pointer path, wrote the raw
+        // 64-bit Character oop across two 32-bit slots — the `1867,0`-for-`233`
+        // corruption seen in StringTest>>testOnlyLetters).
+        uint64_t wordValue;
+        if (value.isSmallInteger()) {
+            int64_t sv = value.asSmallInteger();
+            if (sv < 0 || sv > 0xFFFFFFFF) {
+                return PrimitiveResult::Failure;
+            }
+            wordValue = static_cast<uint64_t>(sv);
+        } else if (value.isCharacter()) {
+            wordValue = value.asCharacter();   // codepoint fits in 32 bits
+        } else {
             return PrimitiveResult::Failure;
         }
         size_t numElements = header->slotCount() * 2 - (fmtVal - 10);
@@ -3555,12 +3568,20 @@ PrimitiveResult Interpreter::primitiveWSNextPut(int argCount) {
     }
 
     ObjectHeader* collObj = collOop.asObjectPtr();
-    // Bounds check (defense in depth — should be implied by pos < writeLimit).
-    if ((size_t)pos >= collObj->slotCount()) {
+    // This fast path stores `arg` as a raw Oop via storePointer, so it is
+    // ONLY valid for genuine pointer (Array-like) collections.  Bail for
+    // every non-pointer backing store and let the real method run:
+    //   - ByteString / ByteArray (fmt 16-23): need Character→byte conversion
+    //   - WideString / WordArray (fmt 10-11): 32-bit word objects; storing
+    //     the raw Character Oop here wrote 1867 (=(233<<3)|3) instead of the
+    //     codepoint 233 — the StringTest>>testOnlyLetters corruption.  These
+    //     must route to prim 64 (primitiveStringAtPut) which extracts the
+    //     codepoint.
+    if (!collObj->isPointersObject()) {
         return PrimitiveResult::Failure;
     }
-    // Byte collections (strings) can't store arbitrary Oops; bail.
-    if (collObj->isBytesObject()) {
+    // Bounds check (defense in depth — should be implied by pos < writeLimit).
+    if ((size_t)pos >= collObj->slotCount()) {
         return PrimitiveResult::Failure;
     }
 
