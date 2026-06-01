@@ -319,3 +319,56 @@ sequence and bisect which earlier class/test poisons a known-isolated-pass test
 (e.g. run [poison-candidate, CDNormalClassParserTest] pairs and see which pairing
 flips CD to F:2). That isolates the corrupting operation the way the WideString
 bug was isolated.
+
+## NARROWED: the cumulative-state corruption (CDNormalClassParserTest) — 2026-06-01
+
+Drilled the cumulative-state artifact to a deterministic, Cog-divergent VM bug.
+
+DETERMINISTIC REPRO (stable; minimized probes perturb it — use this one):
+  Run `CDNormalClassParserTest suite run` repeatedly in ONE image instance.
+    iter 1: P16 F0   (pass)
+    iter 2..N: P14 F2  — fails testSlotNodesHaveParentReference +
+                         testClassNameNodeHaveParentReference
+  Cog: stays P16 F0 every iteration (4x verified). => REAL our-VM bug.
+  Reproduces under PHARO_NO_JIT=1 (interp) AND PHARO_DET_SCHED=1.
+
+WHAT IT IS NOT (ruled out):
+  - NOT data corruption. Inline checks of the exact assertions
+    (`slotNode parent == classDefinition`, `classDefinition children includes:
+    slotNode`) done in a fresh probe method ALWAYS pass, even on the poisoned
+    image. The AST/parse result is correct.
+  - NOT the parser. Double-parse identity probe: both parses produce fresh
+    nodes with correct parent pointers.
+  - NOT a single test. The 2 failing tests, run individually via
+    `(X selector: #sel) run` repeatedly, pass every time.
+  - NOT bare execution. `t setUp. t performTest` (no runner wrapper) PASSES
+    on the poisoned state.
+
+WHAT TRIGGERS IT: running the `testBestNodeFor*` cluster (each does
+  `classDefinition bestNodeFor: aSelection`) accumulates state; after ~3-5 such
+  runs, the next `(X selector: #testSlot) run` records a SPURIOUS failure.
+  The flip point varies run-to-run (timing-sensitive Heisenbug; minimizing
+  perturbs it — hence use the suite-2x repro, not the minimized sequence).
+
+NARROWED LOCUS: the failure is introduced by the SUnit runner's execution path
+  — `TestCase>>run` -> `TestResult>>runCase:` (nested `on: failure do:` /
+  `on: error do:` + `ensure:` around setUp/performTest/tearDown) — NOT by the
+  test assertions. Bare `performTest` passes; the runCase exception-handling
+  wrapper records a failure that isn't real. So the bug is in the VM's
+  exception / NLR / ensure: / handler-context machinery degrading after
+  accumulated operations (cf. memories jit_forceyield_reified_thiscontext,
+  jit_sim_lookupselector_nlr_recursion — same family).
+
+NEXT (focused lldb session, per CLAUDE.md JIT/sentinel workflow):
+  1. Repro: install PB probe that runs `CDNormalClassParserTest suite run` twice,
+     under PHARO_NO_JIT=1 PHARO_DET_SCHED=1. 2nd run = deterministic F2.
+  2. The spurious failure comes through TestResult>>runCase:'s
+     `on: TestResult failure do:` / `on: error do:`. Breakpoint the
+     exception-signal / handler-lookup path (Interpreter exception machinery)
+     during the 2nd suite run; compare handler-context state vs the 1st run.
+  3. Suspect: a stale handler/marker context, a corrupted ensure: block, or a
+     GC-moved handler context after accumulated allocations. Check whether
+     forcing GC (or huge GC headroom) shifts the flip — GC-moved context is the
+     leading hypothesis (data correct, only the runner's unwind miscomputes).
+  This is THE "long-run heap corruption" lead; it is exception/context-machinery
+  specific, not string/heap-data corruption (that was the WideString bug, fixed).
