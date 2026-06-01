@@ -279,3 +279,43 @@ dispatch and the primitiveWS*/primitiveOC* fast paths. Any raw-Oop fast path mus
 guard `isPointersObject()`, not merely `!isBytesObject()` — WideString/WordArray
 (fmt 10-11) are neither bytes nor pointers and slip through a `!isBytesObject()`
 check.
+
+## Full-suite re-measurement after WideString fix (2026-06-01)
+
+Run on the now-healthy harness (after deleting the poisoned /tmp/harness/startup.st
+and clearing run-state). Our VM, interp (PHARO_NO_JIT=1), 12s/test cap, in two
+parts (skipping the unkillable-hang class BehaviorWithCompilerTest at ~357):
+
+    part1 (classes 1-356):  P=10409 F=87  E=208 S=18   (361 class-headers)
+    part2 (classes 358-475): P=6536  F=4   E=66  S=7    (119 class-headers)
+    COMBINED: 480 classes, 17310 tests, P=16945 F=91 E=274 S=25 => 97.9% pass
+
+Zero regressions; StringTest 438/438 (WideString fix holds).
+
+KEY FINDING: the 91 batch FAILures cluster in class-definition/metamodel tests
+(CD*ClassParserTest family ~12 classes each F:2; Slot*; RG* Ring; OpalCompiler;
+OCClassBuilder). But EVERY batch failure drilled so far PASSES IN ISOLATION:
+  - CharacterTest 19/19 isolated (batch showed 16/19)
+  - CollectionArithmeticTest>>testAverageIfEmpty isolated PASS (#() average
+    correctly raises CollectionIsEmpty; batch "hang" was exitSuccess/harness)
+  - CDNormalClassParserTest 16/16 isolated (batch showed F:2)
+  - DurationTest isolated (batch 69/71)
+All four are COGPASS (Cog runs the full class clean) and OURS-PASS-ISOLATED.
+
+=> The remaining batch failures are CUMULATIVE-STATE ARTIFACTS, not individual
+per-test VM bugs. State from earlier tests corrupts later ones on our VM (Cog
+does not exhibit this to the same degree). This confirms the documented lead:
+the real remaining bug is long-run heap/string corruption, NOT a list of
+fixable per-test defects. Drilling individual batch-failing tests is futile —
+they pass alone. The WideString synthetic-prim fix (d5608fd4) was one concrete
+instance of such a string-corruption root cause.
+
+Full completion is blocked by a small set of unkillable-hang CLASSES (blocked
+processes the Smalltalk watchdog can't preempt): BehaviorWithCompilerTest>>
+testContinuationExample2, StopwatchTest, ScheduleTest (latter hangs on Cog too).
+
+NEXT (real lead): hunt the cumulative-state corruption directly — run a long
+sequence and bisect which earlier class/test poisons a known-isolated-pass test
+(e.g. run [poison-candidate, CDNormalClassParserTest] pairs and see which pairing
+flips CD to F:2). That isolates the corrupting operation the way the WideString
+bug was isolated.
