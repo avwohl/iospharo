@@ -1,4 +1,15 @@
-RGMethodDefinitionTest
+SplitJoinTest
+ScheduleTest
+OCClosureCompilerTest
+CDClassDefinitionParserTest
+PackageTest
 GArcTest
-FailingTestResourceTestCase
+GRayTest
 FileAttributesPluginPrimsTest
+ManyTestResourceTestCase
+SocketStreamTest
+SpFontStyleTest
+SpTreeAdapterSingleSelectionTest
+SpTreeTableAdapterMultipleSelectionTest
+StDebuggerToolbarCommandTreeBuilderTest
+TimespanDoSpanAYearTest

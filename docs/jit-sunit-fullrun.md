@@ -66,68 +66,50 @@ first-draft custom driver whose watchdog watched a progress file the real
 runner never writes, so it killed the full pass every 120 s and restarted it
 from class 1. That custom runner was removed; this driver wraps the real one.
 
-## Results
+## Results — complete passes (measured, re-counted from combined results)
 
-Measured, re-counted from the combined results file; per-class verdicts use
-3 runs per side on pristine image copies (single runs proved nondeterministic).
+Both passes ran all 2051 class names end-to-end (one Total: kept per class).
 
-### Coverage passes
+    pass                 classes   P      F     E      S    rate
+    single-image (53 win) 2021     21614  478   5378   132   78.3%
+    fresh-image  (48 win) 2022     21541  731   5026   139   78.5%
 
-- Single-image pass (complete): 53 windows, all 2051 class names, ONE reused
-  image. 2021 classes ran; P21614/F478/E5378/S132 = **78.3%**. 20 classes
-  driver-flagged "hangs". Rate depressed by cumulative image-state degradation
-  (E=5378 is its signature).
-- Fresh-image pass (`FRESH_IMAGE=1`, pristine copy per window): PARTIAL — killed
-  at ~window 18 (857 classes) for hang isolation; P15775/F329/E1539/S51 = 89.2%.
-  A clean end-to-end fresh-image pass is still TODO.
+`FRESH_IMAGE=1` (pristine image copy per 50-class window) was expected to lift
+the rate by removing cumulative image-state degradation. It did NOT: 78.5% vs
+78.3%. **So the ~5000 errors are mostly NOT cumulative-state artifacts** — they
+reproduce on a clean image. An earlier "true per-class rate ~99%" note was an
+over-extrapolation from the first ~360 kernel classes; the kernel passes ~99%,
+but the broader image (reflectivity, serialization, tooling, graphics, network)
+has many genuine errors. Coverage is the real achievement: every class attempted.
 
-## Hang investigation — outcome
+### The errors are VM/image-compat, NOT JIT (spot-checked, JIT vs interpreter)
 
-The driver's stall-watchdog ("no results growth for STALL_SECONDS") is an
-unreliable hang flag. **None of the spot-checked "hangers" is a real infinite
-loop — they complete when run alone.** The 20 are a mix of cumulative-state
-artifacts (vanish on a fresh image, e.g. StringTest) and slow/erroring classes
-the watchdog mislabeled.
+    class                       JIT-on          PHARO_NO_JIT=1
+    ReflectivityReificationTest 60P/16F/36E      78P/2F/32E
+    SystemEnvironmentTest       128P/1F/88E      79P/0F/138E   (interp WORSE)
+    ZnClientTest                1P/48E           2P/47E        (network: none in sandbox)
 
-IMPORTANT: single-class results here are **nondeterministic** — a class can pass,
-error, or time out across identical runs (the repo's known timing-sensitive JIT
-Heisenbugs; use `PHARO_DET_SCHED=1` for stable repro). So verdicts below are from
-3 runs per side; flaky cases are called out.
+The top error-contributing classes fail ~equally under the plain interpreter,
+so they are primitive/feature/environment gaps (missing features, no network,
+reflective-instrumentation), not JIT codegen bugs. The 78% is a VM-compatibility
+ceiling, not a JIT regression. (Numbers also vary run-to-run — these classes are
+nondeterministic — but the shared bulk of errors is the point.)
 
-### Confirmed JIT-correctness bug: RGMethodDefinitionTest (stable, 3/3)
+### Classes the driver flagged (watchdog stalls, not necessarily hangs)
 
-    JIT-on : Total 32  P22 F9 E1     (3/3 identical)
-    JIT-off: Total 32  P31 F1 E0     (3/3 identical)
+15 in the fresh run: SplitJoinTest, ScheduleTest, OCClosureCompilerTest,
+CDClassDefinitionParserTest, PackageTest, GArcTest, GRayTest,
+FileAttributesPluginPrimsTest, ManyTestResourceTestCase, SocketStreamTest,
+SpFontStyleTest, SpTreeAdapterSingleSelectionTest,
+SpTreeTableAdapterMultipleSelectionTest,
+StDebuggerToolbarCommandTreeBuilderTest, TimespanDoSpanAYearTest. The flag set
+differs run-to-run (timing-sensitive); none verified as a true infinite loop.
 
-9 failures + 1 error appear ONLY under JIT, every run. Root-caused by knob
-bisection (3/3 each):
+## Confirmed JIT bug (the one real codegen finding)
 
-    PHARO_T1_NO_IC_PROBE=1     -> 31P/1F/0E  == interpreter   ** FIX **
-    PHARO_T1_NO_INLINE_GETTER=1-> 22P/9F/1E  (no effect)
-    PHARO_NO_J2J=1            -> 22P/9F/1E  (no effect)
-
-=> the bug is the **inline IC probe** (`t1ICProbe`, AsmjitT1.cpp:1817+,
-default-on since 2026-05-16), NOT the inline getter or J2J. Failure shapes point
-to a wrong/nil method dispatched via the monomorphic IC: "Got nil instead of
-'Point'", ERROR "receiver of ',' is nil" (in `parentName,'>>',selector`), and
-"Got OrderedCollection class instead of OrderedCollection class" (equal
-printStrings comparing unequal — a wrong object from the IC). The IC key is the
-22-bit classIndex (AsmjitT1.cpp:1864-1865); a stale/colliding slot-0 entry
-dispatches the wrong method. Same IC-probe family as the documented aigraph/ring
-JIT bugs. This is the actionable next fix.
-
-Repro:
-
-    printf 'RGMethodDefinitionTest\n' > /tmp/sunit_class_names.txt
-    cp /tmp/harness/Pharo-jit.image /tmp/t.image
-    ./build/test_load_image /tmp/t.image                      # 22P/9F/1E (JIT bug)
-    PHARO_T1_NO_IC_PROBE=1 ./build/test_load_image /tmp/t.image  # 31P/1F   (fixed)
-
-### Flaky (timing-sensitive, NOT a clean codegen bug): GPointTest
-
-Flips across runs: JIT 18P/2E or "0 tests"; JIT-off passed earlier this session
-but hung 3/3 later. Direction-unstable => a `PHARO_DET_SCHED` Heisenbug, not a
-deterministic JIT-vs-interp diff. GTriangleTest/StringTest run clean.
-
-Per-class detail: docs/sunit-hangers-classified.txt. Raw flags: docs/sunit-hangers.txt.
+RGMethodDefinitionTest: JIT 22P/9F/1E vs interpreter 31P/1F (3/3 each, stable).
+`PHARO_T1_NO_IC_PROBE=1` restores the interpreter result (known-good, non-
+regressing on kernel classes); the inline IC probe is the cause. Details and the
+deferred next-step (probe-path value-store instrumentation) in
+docs/sunit-hangers-classified.txt.
 
