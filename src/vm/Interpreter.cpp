@@ -6327,6 +6327,20 @@ terminate_process:
 void Interpreter::returnFromMethod() {
     Oop value = pop();
 
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SCAV_DANGLE_CHECK), 0)) {
+        std::string sel = memory_.selectorOf(method_);
+        if (sel == "classDefinitionNode") {
+            fprintf(stderr,
+                "[RETMETH] classDefinitionNode methodCls=%s rcvr-cls=%s returnVal-cls=%s sameAsRcvr=%d sp-top-1-cls=%s\n",
+                classNameOfMethod(method_).c_str(),
+                memory_.classNameOf(receiver_).c_str(),
+                (value.isObject() && value.rawBits() > 0x10000) ? memory_.classNameOf(value).c_str() : "imm",
+                (value.rawBits() == receiver_.rawBits()) ? 1 : 0,
+                (stackPointer_ > stackBase_ && (stackPointer_-1)->isObject() && (stackPointer_-1)->rawBits() > 0x10000)
+                    ? memory_.classNameOf(*(stackPointer_-1)).c_str() : "?");
+        }
+    }
+
     // PHARO_T1_TRACE_HIT diagnostic: trace sortStructs:into: activation
     // + each return until first MUSTBOOL.
     if (__builtin_expect(g_debug.t1TraceHit, 0)) {
