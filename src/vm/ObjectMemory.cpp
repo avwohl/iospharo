@@ -1944,9 +1944,15 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     // jit-may23b R71: phase timing.
     const bool timeGCPhases = g_debug.timeGCPhases;
     auto readTSC = []() -> uint64_t {
+#if defined(__aarch64__)
         uint64_t t;
-        asm volatile("mrs %0, cntvct_el0" : "=r"(t));
+        asm volatile("mrs %0, cntvct_el0" : "=r"(t));   // ARM virtual cycle counter
         return t;
+#elif defined(__x86_64__) || defined(__i386__)
+        return __builtin_ia32_rdtsc();                  // x86 time-stamp counter
+#else
+        return (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count();
+#endif
     };
     uint64_t tPrepGCStart = timeGCPhases ? readTSC() : 0;
 
