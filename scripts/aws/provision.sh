@@ -81,8 +81,13 @@ EXISTING=$(aws ec2 describe-instances \
               "Name=instance-state-name,Values=pending,running" \
     --query 'Reservations[].Instances[].InstanceId' --output text)
 if [ -n "$EXISTING" ]; then
-    echo "An instance is already running for $PROJECT_TAG: $EXISTING"
-    note INSTANCE_ID "$EXISTING"
+    # Reuse the running box.  Set the shell vars (not just note them) so the
+    # wait/IP/SSH steps below don't hit an unbound var under `set -u`.
+    INSTANCE_ID="$(echo "$EXISTING" | awk '{print $1}')"
+    INSTANCE_TYPE_USED="existing"
+    LIFECYCLE="existing"
+    echo "An instance is already running for $PROJECT_TAG: $INSTANCE_ID"
+    note INSTANCE_ID "$INSTANCE_ID"
 else
     # --- 7. Launch: spot across types x AZs, then on-demand as last resort ---
     BDM="[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_VOLUME_GB},\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]"
