@@ -18,13 +18,19 @@ echo "== identity OK =="
 : >"$STATE_FILE"
 note() { echo "$1=$2" >>"$STATE_FILE"; echo "  $1=$2"; }
 
-# --- 1. S3 bucket (private, versioned) --------------------------------------
-if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
-    aws s3api create-bucket --bucket "$BUCKET" --region "$AWS_DEFAULT_REGION" >/dev/null
+# --- 1. S3 bucket (private, versioned) — lives in its own home region -------
+BREGION="${BUCKET_REGION:-$AWS_DEFAULT_REGION}"
+if ! aws s3api head-bucket --bucket "$BUCKET" --region "$BREGION" 2>/dev/null; then
+    if [ "$BREGION" = "us-east-1" ]; then
+        aws s3api create-bucket --bucket "$BUCKET" --region "$BREGION" >/dev/null
+    else
+        aws s3api create-bucket --bucket "$BUCKET" --region "$BREGION" \
+            --create-bucket-configuration "LocationConstraint=$BREGION" >/dev/null
+    fi
+    aws s3api put-public-access-block --bucket "$BUCKET" --region "$BREGION" --public-access-block-configuration \
+        BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+    aws s3api put-bucket-versioning --bucket "$BUCKET" --region "$BREGION" --versioning-configuration Status=Enabled
 fi
-aws s3api put-public-access-block --bucket "$BUCKET" --public-access-block-configuration \
-    BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled
 note BUCKET "$BUCKET"
 
 # --- 2. IAM role + instance profile -----------------------------------------
