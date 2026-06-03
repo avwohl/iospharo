@@ -63,6 +63,10 @@ extern "C" uint64_t jit_rt_sista_basic_size(void* state,
 extern "C" uint64_t jit_rt_sista_basic_at(void* state,
                                             uint64_t recvBits,
                                             uint64_t idxBits);
+extern "C" uint64_t jit_rt_sista_block_create(void* state,
+                                                uint64_t litIndex,
+                                                uint64_t numCopied,
+                                                uint64_t flags);
 
 namespace pharo {
 namespace sista {
@@ -735,6 +739,121 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     return bail(v.id);
                 cc.bind(cont);
                 regFor[v.id] = result;
+                break;
+            }
+
+            // ---- SmallInt even/odd check (deopts to interp on miss) ----
+            // literal: bit0 = kind (0=even,1=odd); bits 16+ = bcOffset.
+            // masked = rcv & 9 → 1 means even (val low bit 0), 9 means odd.
+            case Op::kPrimEvenOddCheck: {
+                if (v.operands.size() != 1) return bail(v.id);
+                auto itRcv = regFor.find(v.operands[0]);
+                if (itRcv == regFor.end()) return bail(v.id);
+                int kind = (int)(v.literal & 1);
+                uint32_t bcOffset = (uint32_t)((v.literal >> 16) & 0xFFFFFFFFu);
+                Label deopt = cc.new_label();
+                Label cont  = cc.new_label();
+                Gp tag = cc.new_gp64("eo_tag");
+                cc.mov(tag, itRcv->second); cc.and_(tag, Imm(7));
+                cc.cmp(tag, Imm(1)); cc.jne(deopt);    // not SmallInt → deopt
+                Gp masked = cc.new_gp64("eo_mask");
+                cc.mov(masked, itRcv->second); cc.and_(masked, Imm(9));
+                cc.cmp(masked, Imm(kind == 0 ? 1 : 9));
+                Gp dst = cc.new_gp64("eo_dst");
+                cc.mov(dst, ptr(state, OFF_FALSEOOP));
+                Label skip = cc.new_label();
+                cc.jne(skip);
+                cc.mov(dst, ptr(state, OFF_TRUEOOP));
+                cc.bind(skip);
+                cc.jmp(cont);
+                cc.bind(deopt);
+                if (!emitDeopt(v, bcOffset, /*stackBase=*/0)) return bail(v.id);
+                cc.bind(cont);
+                regFor[v.id] = dst;
+                break;
+            }
+
+            // ---- TempVector slot load/store (constant offsets — RA-safe) ----
+            // literal: high 32 = tempIdxOfVec, low 32 = indexInVec.
+            case Op::kLoadTempInVec: {
+                uint32_t tempIdx = (uint32_t)(v.literal >> 32);
+                uint32_t slot    = (uint32_t)(v.literal & 0xFFFFFFFFu);
+                Gp vec = cc.new_gp64("vec");
+                cc.mov(vec, ptr(tempBaseHoisted, (int)tempIdx * 8));
+                Gp dst = cc.new_gp64("vec_slot");
+                cc.mov(dst, ptr(vec, 8 + (int)slot * 8));
+                regFor[v.id] = dst;
+                break;
+            }
+            case Op::kStoreTempInVec: {
+                if (v.operands.size() != 1) return bail(v.id);
+                auto it = regFor.find(v.operands[0]);
+                if (it == regFor.end()) return bail(v.id);
+                uint32_t tempIdx = (uint32_t)(v.literal >> 32);
+                uint32_t slot    = (uint32_t)(v.literal & 0xFFFFFFFFu);
+                Gp vec = cc.new_gp64("vec");
+                cc.mov(vec, ptr(tempBaseHoisted, (int)tempIdx * 8));
+                // No write barrier (SmI accumulator pattern only — mirrors arm64).
+                cc.mov(ptr(vec, 8 + (int)slot * 8), it->second);
+                break;
+            }
+
+            // ---- Interval marker: nothing to lower (the counted-loop op
+            //      reads start/stop directly).  Silent skip, mirrors arm64. ----
+            case Op::kInterval:
+                break;
+
+            // ---- Block creation via helper (PushFullBlock) ----
+            // literal: bits0-15 litIndex, bits16-23 flags, bits32+ bcOffset.
+            // operands = consumed IR-stack snapshot (pushed to interp stack).
+            case Op::kBlockCreate: {
+                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                bool useHelper = !pharo::g_debug.sistaBlockBail;
+                uint32_t litIndex = (uint32_t)(v.literal & 0xFFFFu);
+                uint32_t flags    = (uint32_t)((v.literal >> 16) & 0xFFu);
+                uint64_t bcOffset = v.literal >> 32;
+                Gp sp = cc.new_gp64("bc_sp"); cc.mov(sp, ptr(state, OFF_SP));
+                for (size_t opIdx = 0; opIdx < v.operands.size(); opIdx++) {
+                    auto it = regFor.find(v.operands[opIdx]);
+                    if (it == regFor.end()) return bail(v.id);
+                    cc.mov(ptr(sp, (int)opIdx * 8), it->second);
+                }
+                cc.add(sp, Imm((int)v.operands.size() * 8));
+                cc.mov(ptr(state, OFF_SP), sp);
+                if (useHelper) {
+                    Gp argLit = cc.new_gp64("blockLitIdx"); cc.mov(argLit, Imm((uint64_t)litIndex));
+                    Gp argFlags = cc.new_gp64("blockFlags"); cc.mov(argFlags, Imm((uint64_t)flags));
+                    Gp argNumCopied = cc.new_gp64("blockNumCopied");
+                    cc.mov(argNumCopied, Imm((uint64_t)(flags & 0x3Fu)));
+                    Gp fnReg = cc.new_gp64("blockHelper");
+                    cc.mov(fnReg, Imm((uint64_t)&jit_rt_sista_block_create));
+                    InvokeNode* inv = nullptr;
+                    Error e = cc.invoke(Out(inv), fnReg,
+                        FuncSignature::build<uint64_t, void*, uint64_t, uint64_t, uint64_t>());
+                    if (e != kErrorOk || !inv) return bail(v.id);
+                    inv->set_arg(0, state);
+                    inv->set_arg(1, argLit);
+                    inv->set_arg(2, argNumCopied);
+                    inv->set_arg(3, argFlags);
+                    Gp dst = cc.new_gp64("block"); inv->set_ret(0, dst);
+                    regFor[v.id] = dst;
+                    break;
+                }
+                // bail-to-interpreter path (PHARO_SISTA_BLOCK_BAIL=1).
+                Gp ipReg = cc.new_gp64("bc_ip");
+                if (bytecodeBase) {
+                    uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase)
+                                + static_cast<uint32_t>(bcOffset);
+                    cc.mov(ipReg, Imm((uint64_t)a));
+                } else { cc.mov(ipReg, Imm(bcOffset)); }
+                cc.mov(ptr(state, OFF_IP), ipReg);
+                Gp argc = cc.new_gp32("bc_argc"); cc.mov(argc, Imm(0));
+                cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
+                Gp z = cc.new_gp64("bc_z"); cc.xor_(z, z);
+                cc.mov(ptr(state, OFF_ICDATAPTR), z);
+                Gp ex = cc.new_gp32("bc_ex"); cc.mov(ex, Imm(EXIT_SEND));
+                cc.mov(ptr(state, OFF_EXIT), ex);
+                cc.ret();
                 break;
             }
 
