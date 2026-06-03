@@ -60,6 +60,9 @@ extern "C" uint64_t jit_rt_sista_alloc_array(void* state,
                                                uint64_t size);
 extern "C" uint64_t jit_rt_sista_basic_size(void* state,
                                               uint64_t recvBits);
+extern "C" uint64_t jit_rt_sista_basic_at(void* state,
+                                            uint64_t recvBits,
+                                            uint64_t idxBits);
 
 namespace pharo {
 namespace sista {
@@ -479,13 +482,18 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
-            // ---- Inline Array at: (fast path fmt=2; deopts otherwise) ----
+            // ---- Array at: via barrier-safe helper, deopt-on-zero ----
             // operands: [rcv, idx, deoptStackBelow...].  literal = bcOffset.
-            // Port of arm64 kPrimAt: 1-based SmallInt index; slot at
-            // [rcv + i*8] (8-byte header at offset 0).  A slotCount byte of
-            // 0xFF means overflow — the real count is in the 8 bytes before
-            // the header (low 56 bits).  Deopt pushes deoptStackBelow then
-            // rcv, idx and re-runs the at: send (argCount=1).
+            // jit_rt_sista_basic_at(state, rcv, idx) returns the element Oop,
+            // or 0 on miss (non-Array / OOB / non-SmI index — or a nil element,
+            // whose oop is 0, which just deopts and lets the interp return nil).
+            // Deopt pushes deoptStackBelow then rcv, idx and re-runs at: (argc 1).
+            //
+            // NB: an inline scale-3 indexed load (mov dst,[rcv+i*8]) crashed
+            // asmjit's register allocator (BaseRAPass::build_liveness null-deref
+            // at compile time — atput's scaled *store* is fine, only the indexed
+            // *load* tripped it).  The helper avoids the indexed load.  Re-inline
+            // once that asmjit RA issue is understood.
             case Op::kPrimAt: {
                 if (pharo::g_debug.sistaNoLowerAt) return bail(v.id);
                 if (v.operands.size() < 2) return bail(v.id);
@@ -493,45 +501,19 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 auto itIdx = regFor.find(v.operands[1]);
                 if (itRcv == regFor.end() || itIdx == regFor.end())
                     return bail(v.id);
-                Gp rcv = itRcv->second;
-                Gp idx = itIdx->second;
+                Gp fnReg = cc.new_gp64("atHelper");
+                cc.mov(fnReg, Imm((uint64_t)&jit_rt_sista_basic_at));
+                InvokeNode* inv = nullptr;
+                Error e = cc.invoke(Out(inv), fnReg,
+                    FuncSignature::build<uint64_t, void*, uint64_t, uint64_t>());
+                if (e != kErrorOk || !inv) return bail(v.id);
+                inv->set_arg(0, state);
+                inv->set_arg(1, itRcv->second);
+                inv->set_arg(2, itIdx->second);
                 Gp dst = cc.new_gp64("at");
-                Label deoptL = cc.new_label();
-                Label okL    = cc.new_label();
-
-                // rcv must be a pointer object (low 3 bits == 0) and a real addr.
-                Gp rcvTag = cc.new_gp64("aTag");
-                cc.mov(rcvTag, rcv); cc.and_(rcvTag, Imm(7));
-                cc.cmp(rcvTag, Imm(0)); cc.jne(deoptL);
-                cc.cmp(rcv, Imm(0x10000)); cc.jb(deoptL);
-                // idx must be a SmallInt (tag == 1).
-                Gp idxTag = cc.new_gp64("aIdxTag");
-                cc.mov(idxTag, idx); cc.and_(idxTag, Imm(7));
-                cc.cmp(idxTag, Imm(1)); cc.jne(deoptL);
-                // header; fmt = (hdr>>24)&0x1F must be 2 (Array).
-                Gp hdr = cc.new_gp64("aHdr"); cc.mov(hdr, ptr(rcv));
-                Gp fmt = cc.new_gp64("aFmt"); cc.mov(fmt, hdr);
-                cc.shr(fmt, Imm(24)); cc.and_(fmt, Imm(0x1F));
-                cc.cmp(fmt, Imm(2)); cc.jne(deoptL);
-                // slotCount = hdr>>56; 0xFF => overflow count at [rcv-8] (56 bits).
-                Gp sc = cc.new_gp64("aSc"); cc.mov(sc, hdr); cc.shr(sc, Imm(56));
-                Label scOk = cc.new_label();
-                cc.cmp(sc, Imm(0xFF)); cc.jne(scOk);
-                {
-                    Gp ov = cc.new_gp64("aSv"); cc.mov(ov, ptr(rcv, -8));
-                    cc.shl(ov, Imm(8)); cc.shr(ov, Imm(8));
-                    cc.mov(sc, ov);
-                }
-                cc.bind(scOk);
-                // i = idx>>3 (untag); bounds 1 <= i <= sc.
-                Gp i = cc.new_gp64("aI"); cc.mov(i, idx); cc.sar(i, Imm(3));
-                cc.cmp(i, Imm(1)); cc.jl(deoptL);
-                cc.cmp(i, sc);     cc.jg(deoptL);
-                // dst = [rcv + i*8]  (scale-3 indexed load).
-                cc.mov(dst, ptr(rcv, i, 3));
-                cc.jmp(okL);
-
-                cc.bind(deoptL);
+                inv->set_ret(0, dst);
+                Label noDeopt = cc.new_label();
+                cc.cmp(dst, Imm(0)); cc.jne(noDeopt);   // nonzero element → ok
                 {
                     Gp sp = cc.new_gp64("sp_az"); cc.mov(sp, ptr(state, OFF_SP));
                     int dBSize = static_cast<int>(v.operands.size()) - 2;
@@ -540,8 +522,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         if (opIt == regFor.end()) return bail(v.id);
                         cc.mov(ptr(sp, k * 8), opIt->second);
                     }
-                    cc.mov(ptr(sp, dBSize * 8), rcv);
-                    cc.mov(ptr(sp, (dBSize + 1) * 8), idx);
+                    cc.mov(ptr(sp, dBSize * 8), itRcv->second);
+                    cc.mov(ptr(sp, (dBSize + 1) * 8), itIdx->second);
                     cc.add(sp, Imm((dBSize + 2) * 8));
                     cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("ip_az");
@@ -562,7 +544,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(ptr(state, OFF_EXIT), ex);
                     cc.ret();
                 }
-                cc.bind(okL);
+                cc.bind(noDeopt);
                 regFor[v.id] = dst;
                 break;
             }
