@@ -59,7 +59,19 @@ if [ ! -f "$HARNESS/Pharo.image" ]; then
     (cd "$HARNESS" && curl -sL https://get.pharo.org/64/130 | bash)
 fi
 echo "=== smoke test: test_load_image ==="
-timeout 120 ./build/test_load_image "$HARNESS/Pharo.image" 2>&1 | tail -40 || \
-    echo "smoke test returned non-zero (expected while x86 JIT is WIP)"
+SMOKE=/home/ubuntu/smoke-result.txt
+{
+    echo "host=$(uname -m) cpus=$(nproc) date=$(date -u +%Y%m%dT%H%M%SZ)"
+    echo "binary: $(file ./build/test_load_image)"
+    echo "--- test_load_image output (90s cap) ---"
+    timeout 90 ./build/test_load_image "$HARNESS/Pharo.image" 2>&1 | tail -45
+    echo "--- exit: ${PIPESTATUS[0]} ---"
+} 2>&1 | tee "$SMOKE"
+
+# Capture the build + smoke result to S3 so it survives a spot reclaim.
+S3="s3://${BUCKET:-iospharo-build-670060058357}/x64-builder/smoke"
+ts=$(date -u +%Y%m%dT%H%M%SZ)
+aws s3 cp "$SMOKE" "$S3/result-${ts}.txt" --no-progress 2>/dev/null || true
+[ -f build/build.log ] && aws s3 cp build/build.log "$S3/build-${ts}.log" --no-progress 2>/dev/null || true
 
 echo "clone-and-build.sh complete; built on $(uname -m) / $(nproc) cpus"
