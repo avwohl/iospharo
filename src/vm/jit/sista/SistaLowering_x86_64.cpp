@@ -69,12 +69,28 @@ namespace {
 struct LowerStats {
     std::atomic<size_t> ok{0};
     std::atomic<size_t> bail{0};
+    // Per-op bail histogram (indexed by Op enum) — shows which unported ops
+    // dominate the bails, so the port targets the real bottleneck.
+    std::atomic<size_t> bailByOp[256]{};
+    void bailOp(uint8_t op) {
+        bailByOp[op].fetch_add(1, std::memory_order_relaxed);
+    }
     void tick() {
         size_t total = ok.load() + bail.load();
         if ((total & 63) == 0) {
             fprintf(stderr,
                     "[SISTA-x86] lower OK=%zu bail=%zu (total=%zu)\n",
                     ok.load(), bail.load(), total);
+        }
+        // Coarser cadence: dump the bail histogram so the last line printed
+        // approximates the final tally (no clean dtor to hook).
+        if ((total & 255) == 0 && total > 0) {
+            fprintf(stderr, "[SISTA-BAILHISTO]");
+            for (int i = 0; i < 256; i++) {
+                size_t n = bailByOp[i].load();
+                if (n) fprintf(stderr, " %s=%zu", name(static_cast<Op>(i)), n);
+            }
+            fprintf(stderr, "\n");
         }
     }
 };
@@ -204,6 +220,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     auto bail = [&](uint32_t vid) -> CompiledFn {
         if (failedAtValue) *failedAtValue = vid;
         g_lowerStats.bail.fetch_add(1, std::memory_order_relaxed);
+        g_lowerStats.bailOp(static_cast<uint8_t>(method.valueAt(vid).op));
         g_lowerStats.tick();
         return nullptr;
     };
