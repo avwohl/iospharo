@@ -60,13 +60,19 @@ if [ ! -f "$HARNESS/Pharo.image" ]; then
 fi
 echo "=== smoke test: test_load_image ==="
 SMOKE=/home/ubuntu/smoke-result.txt
+# The smoke exit is informational, not pass/fail: a headless image that never
+# self-quits makes `timeout` return 124, and the VM may exit non-zero while x86
+# JIT work is in progress.  Disable set -e/pipefail around it so a non-zero
+# exit doesn't abort the script before the S3 upload below.
+set +e +o pipefail
 {
     echo "host=$(uname -m) cpus=$(nproc) date=$(date -u +%Y%m%dT%H%M%SZ)"
     echo "binary: $(file ./build/test_load_image)"
     echo "--- test_load_image output (90s cap) ---"
     timeout 90 ./build/test_load_image "$HARNESS/Pharo.image" 2>&1 | tail -45
-    echo "--- exit: ${PIPESTATUS[0]} ---"
+    echo "--- exit: ${PIPESTATUS[0]} (124=timeout/headless-no-quit — both fine) ---"
 } 2>&1 | tee "$SMOKE"
+set -e -o pipefail
 
 # Capture the build + smoke result to S3 so it survives a spot reclaim.
 S3="s3://${BUCKET:-iospharo-build-670060058357}/x64-builder/smoke"
