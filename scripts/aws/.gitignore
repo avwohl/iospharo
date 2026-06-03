@@ -1,0 +1,4 @@
+state.env
+*.pem
+*-deploy
+*-deploy.pub
