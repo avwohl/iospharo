@@ -226,6 +226,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     (void)oldVersion;
     if (pharo::g_debug.t2X86Trace) fprintf(stderr, "[T2-x86] compile entry: method=%p\n",
                        (void*)compiledMethod.rawBits());
+    const bool trace = pharo::g_debug.t2X86Trace;  // gates the [T2-x86] bail/match traces below
     if (!runtime_) {
         if (!initialize()) {
             compilationsFailed_++;
