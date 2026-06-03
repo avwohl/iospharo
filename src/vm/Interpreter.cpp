@@ -6327,7 +6327,7 @@ terminate_process:
 void Interpreter::returnFromMethod() {
     Oop value = pop();
 
-    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SCAV_DANGLE_CHECK), 0)) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RETMETH_TRACE), 0)) {
         std::string sel = memory_.selectorOf(method_);
         if (sel == "classDefinitionNode") {
             fprintf(stderr,
@@ -8240,6 +8240,27 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // === GLOBAL METHOD CACHE: 2-way set-associative ===
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
 
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RETMETH_TRACE), 0)) {
+        std::string selStr = memory_.oopToString(selector);
+        if (selStr == "classDefinitionNode") {
+            std::string rCls = memory_.classNameOf(rcvr);
+            std::string mCls = cached ? classNameOfMethod(cached->method) : "miss";
+            int prim = cached ? cached->primitiveIndex : -1;
+            int retSelf = cached ? (int)cached->returnsSelf : -1;
+            int acc = cached ? (int)cached->accessorIndex : -2;
+            int set = cached ? (int)cached->setterIndex : -2;
+            int lit = cached ? (int)cached->returnsLiteralKind : -1;
+            int sp = cached ? (cached->primitive != nullptr ? 1 : 0) : -1;
+            fprintf(stderr,
+                "[SEND-CDN] rcvr=0x%llx rcvr-cls=%s rcvrCls-oop=0x%llx mth-oop=0x%llx "
+                "cached=%s mthCls=%s prim=%d retSelf=%d accIdx=%d setIdx=%d litK=%d synthPrim=%d\n",
+                (unsigned long long)rcvr.rawBits(), rCls.c_str(),
+                (unsigned long long)rcvrClass.rawBits(),
+                cached ? (unsigned long long)cached->method.rawBits() : 0ULL,
+                cached ? "yes" : "no", mCls.c_str(), prim, retSelf, acc, set, lit, sp);
+        }
+    }
+
     if (__builtin_expect(cached != nullptr, 1)) {
 #if PHARO_JIT_ENABLED
         // Count ALL sends for JIT compilation, not just activateMethod calls
@@ -8338,6 +8359,17 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         // Identity fast path: returnReceiver (yourself, asXxx identity methods)
         // Just pop args and leave receiver
         if (cached->returnsSelf && argCount == 0) {
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RETMETH_TRACE), 0)) {
+                std::string selStr = memory_.oopToString(selector);
+                if (selStr == "classDefinitionNode") {
+                    fprintf(stderr,
+                        "[RETSELF-FAST] sel=#%s rcvr-cls=%s cached_method_cls=%s cached_method=0x%llx\n",
+                        selStr.c_str(),
+                        memory_.classNameOf(rcvr).c_str(),
+                        classNameOfMethod(cached->method).c_str(),
+                        (unsigned long long)cached->method.rawBits());
+                }
+            }
 #if PHARO_JIT_ENABLED
             patchJITICAfterSend(cached->method, rcvr, selector);
 #endif
@@ -8474,6 +8506,15 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 #if PHARO_JIT_ENABLED
         patchJITICAfterSend(cached->method, rcvr, selector);
 #endif
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RETMETH_TRACE), 0)) {
+            std::string selStr = memory_.oopToString(selector);
+            if (selStr == "classDefinitionNode") {
+                fprintf(stderr,
+                    "[SEND-CDN-ACT] activating method=%s>>0x%llx\n",
+                    classNameOfMethod(cached->method).c_str(),
+                    (unsigned long long)cached->method.rawBits());
+            }
+        }
         activateMethod(cached->method, argCount);
         return;
     }

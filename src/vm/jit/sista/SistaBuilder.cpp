@@ -12,6 +12,7 @@
 #include "SistaBuilder.hpp"
 #include "../SistaV1.hpp"
 #include "../../DebugSettings.hpp"
+#include "../../DebugVars.hpp"
 #include "../../ObjectMemory.hpp"
 
 #include <algorithm>
@@ -6115,6 +6116,25 @@ private:
         g_calleeLiftDepth--;
         if (cr != LiftResult::kOk) return false;
 
+        bool dbgCDN = false;
+        if (GET_DEBUG_BOOL(PHARO_RETMETH_TRACE)) {
+            std::string sel = g_currentBuildMemory->selectorOf(calleeOop);
+            if (sel == "classDefinitionNode") {
+                dbgCDN = true;
+                fprintf(stderr,
+                    "[CDN-INLINE] tryInlineConstReturn: callee=#%s "
+                    "calleeIR.size=%zu nArgs=%u bcOff=%u\n",
+                    sel.c_str(), calleeIR.values.size(), nArgs, bcOffset);
+                for (size_t i = 0; i < calleeIR.values.size() && i < 6; ++i) {
+                    const auto& vv = calleeIR.values[i];
+                    fprintf(stderr,
+                        "[CDN-INLINE]   v%zu: op=%d lit=0x%llx nOps=%zu\n",
+                        i, (int)vv.op, (unsigned long long)vv.literal,
+                        vv.operands.size());
+                }
+            }
+        }
+
         // Receiver value at stack_[size - nArgs - 1] — used by
         // kLoadReceiver substitution and kGuardClass.
         uint32_t recvId = stack_[stack_.size() - nArgs - 1];
@@ -6145,7 +6165,36 @@ private:
                 case Op::kLoadFalseOop: inlineOp = Op::kLoadFalseOop; inlineTy = Type::kOopBool; break;
                 case Op::kConstantOop:  inlineOp = Op::kConstantOop;  inlineTy = Type::kOop;
                                          inlineLit = v0.literal; break;
-                case Op::kLoadReceiver: inlineOp = Op::kLoadReceiver; inlineTy = Type::kOop; break;
+                case Op::kLoadReceiver: {
+                    // 2-value `^ self` (e.g. prim 256 returnSelf).  The inlined
+                    // value is the INLINED SEND's receiver (top of caller's
+                    // stack pre-send = recvId), NOT the outer compiled
+                    // method's receiver.  Emitting kLoadReceiver here would
+                    // load whatever Self the lowering sees, which is the
+                    // outer method's receiver — wrong when the inlined
+                    // callee is reached at a non-self send-site (e.g.
+                    // `parent classDefinitionNode` returning sn instead of cd
+                    // because outer method's self IS sn).  Mirror the kLoadTemp
+                    // pattern: emit guard + reuse recvId directly.
+                    std::vector<uint32_t> guardOps;
+                    guardOps.reserve(stack_.size() + 1);
+                    guardOps.push_back(recvId);
+                    for (uint32_t s : stack_) guardOps.push_back(s);
+                    uint64_t guardLit = (hit->classOop & 0x3FFFFFu)
+                                      | (static_cast<uint64_t>(bcOffset) << 32);
+                    out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                                  std::move(guardOps), guardLit);
+                    for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+                    stack_.push_back(recvId);
+                    g_inlinesEmitted++;
+                    g_totalHintsConsumed++;
+                    if (dbgCDN) {
+                        fprintf(stderr,
+                            "[CDN-INLINE] EMIT-SELF-FIX inlined ^self -> recvId=%u\n",
+                            recvId);
+                    }
+                    return true;
+                }
                 case Op::kLoadTemp: {
                     // 2-value parameter-passthrough: `^ arg` where the
                     // method body is `pushTemp N; returnTop`.  Inlined
@@ -7804,6 +7853,12 @@ private:
         for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
         stack_.push_back(inlineId);
 
+        if (dbgCDN) {
+            fprintf(stderr,
+                "[CDN-INLINE] EMIT-COMMON inlineOp=%d inlineTy=%d inlineLit=0x%llx inlineOps=%zu\n",
+                (int)inlineOp, (int)inlineTy,
+                (unsigned long long)inlineLit, inlineOps.size());
+        }
         g_inlinesEmitted++;
         g_totalHintsConsumed++;
         return true;

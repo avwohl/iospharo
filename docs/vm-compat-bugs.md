@@ -479,3 +479,65 @@ TestResult>>runCase: is on the C++ frame stack (inspect method_ selector); singl
 -step the subsequent assert/exception dispatch and compare control flow vs a
 non-scavenge run. Repro: PHARO_NO_JIT=1 ./build/test_load_image /tmp/gc.image
 (PB probe: CDNormalClassParserTest suite run 5x; iter2+ = F2 deterministic).
+
+## RESOLVED — Sista 2-value `^self` inliner loaded the wrong receiver (2026-06-02)
+
+The cumulative-state corruption is NOT scavenge, NOT an unrooted C++ local, NOT
+exception/control-flow machinery. It is a Sista IR-builder bug in the inline-const
+-return path (`tryInlineConstReturn`, src/vm/jit/sista/SistaBuilder.cpp).
+
+REPRO (1-shot, no suite needed). `^parent classDefinitionNode` on a CDSlotNode
+whose `parent` is a CDClassDefinitionNode returns `self` (the CDSlotNode) instead
+of `parent classDefinitionNode` (the CDClassDefinitionNode) on the 2nd+ invocation.
+Round 1 is correct because Sista has no IC hint yet; rounds 2+ are wrong because
+Sista compiles CDNode>>classDefinitionNode and mis-inlines the inner `parent
+classDefinitionNode` send.
+
+THE BUG. In tryInlineConstReturn, a 2-value callee `[kLoadReceiver, kReturn(v0)]`
+(e.g. CDBehaviorDefinitionNode>>classDefinitionNode = `<primitive: 256>` returnSelf)
+was inlined by setting `inlineOp = Op::kLoadReceiver` and falling through to the
+common emit at the end of the function.  The common emit creates a new `kLoadReceiver`
+IR value with no operands — and SistaLowering implements that as "load the current
+compiled method's receiver".  When the callee is reached at an arbitrary send-site
+(here `parent classDefinitionNode` inside CDNode>>classDefinitionNode), the "current
+compiled method's receiver" is the OUTER method's self (= sn), NOT the value pushed
+before the inlined send (= parent).  So the inlined body returns sn instead of cd.
+
+The other 2-value cases (kLoadTrueOop / kLoadFalseOop / kConstantOop) are
+load-constants and are inlined correctly regardless of receiver context.  Only
+kLoadReceiver is context-sensitive and was being handled context-blindly.
+
+FIX (commit `<this commit>`).  Move the kLoadReceiver case out of the common
+emit and into a kLoadTemp-style direct stack passthrough: emit kGuardClass on the
+inlined send's receiver, then push `recvId` (the simulated stack slot for the
+inlined send's receiver) directly.  `^self` of a sub-send now correctly returns
+the sub-send's receiver, not the outer method's self.  Same shape as the kLoadTemp
+branch already there for `^arg`.
+
+VERIFIED.  /tmp/cn.image PB probe: 8/8 correct under both PHARO_NO_JIT=1 (interp +
+Sista) and the full JIT+Sista path.  PHARO_NO_SISTA=1 / PHARO_SISTA_NO_INLINE_CONST=1
+also produce 8/8 (they sidestep the buggy inliner).
+
+WHY THE EARLIER HYPOTHESES WERE WRONG.
+  - "Scavenge missed root":  the FAILURE-pattern of a scavenge missed-root mimicked
+    exactly what we saw (degrades on re-run; PHARO_YG_NO_SCAVENGE=1 hides it).
+    But there was no missed heap root — the Sista compile is TRIGGERED by
+    accumulated activations crossing its compile threshold, which happens to
+    coincide with scavenge timing.  Once Sista's miscompile is installed, every
+    subsequent invocation through it returns the wrong value, regardless of GC.
+    PHARO_YG_NO_SCAVENGE=1 "fixed" it only because deferring the scavenge also
+    deferred eviction of the JIT method-map / sista cache that the compile
+    relies on, hiding the buggy compile in many runs.
+  - "Unrooted C++ local":  same story — the dangle scan was clean because there
+    was no dangling pointer.  The corruption was in JIT-emitted code, not the heap.
+  - "Runner exception/control-flow":  the spurious test failure surfaces in
+    runCase: only because runCase: invokes the (mis-inlined) classDefinitionNode
+    assertion through its `on:do:` wrapper after enough activations to trigger
+    the Sista compile.  Bare `performTest` passes because it hits the assertion
+    BEFORE the Sista threshold (no compile yet).
+
+LESSON.  Heisenbugs that appear to be GC/scheduling bugs can be JIT-compiler bugs
+that share the timing surface area (compile thresholds, IC-fill epoch, ramp-up
+allocations).  Bisect with PHARO_NO_SISTA=1, PHARO_SISTA_NO_INLINE_CONST=1,
+PHARO_NO_JIT=1, PHARO_YG_NO_SCAVENGE=1 — the difference between which flag(s)
+fix it pinpoints the layer (Sista IR / JIT / GC / scheduler).
