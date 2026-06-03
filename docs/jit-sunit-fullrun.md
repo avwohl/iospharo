@@ -122,3 +122,78 @@ regressing on kernel classes); the inline IC probe is the cause. Details and the
 deferred next-step (probe-path value-store instrumentation) in
 docs/sunit-hangers-classified.txt.
 
+## Full 2051-class run with Sista inliner fix (2026-06-03)
+
+Post-`4b446bf4` (Sista 2-value `^self` inliner) + `0a293966` (watchdog skips
+IDLE) re-baseline using `scripts/run_all_sunit.sh`. The driver runs each window
+of 50 classes in a fresh `test_load_image` subprocess with STALL=150s and
+HARD_CAP=1200s, so VM-level hangs in one test class can't poison the next
+window.
+
+Class list source: `gen_sunit_class_list.sh` from a clean cogfresh image →
+`/tmp/sunit_all_class_names.txt` (2051 entries — every concrete `TestCase`
+subclass, curated `test_classes.txt` first then alphabetical).
+
+Wall time: 7h05m (one m1-class Mac, JIT + Sista on, default settings, no env
+overrides). 56 windows total.
+
+    classes_covered = 2011
+    tests_run       = 27522
+    P=22063  F=374  E=4952  S=133
+    pass_rate       = 80.16%
+
+26 classes deterministically lock the VM (driver kills the subprocess, advances
+past). The hanger set forms three dense clusters and one long tail:
+
+  - graphics  (G*): GEllipseTest, GMatrixTest, GRayTest, GRectangleTest,
+                    GVectorTest
+  - Roassal   (RS*): RSDSMTest, RSInspectorShapeTest, RSKernelDensityTest,
+                     RSRoassalTest, RSSVGTest
+  - Spec UI   (Sp*/Sy*): SpMorphicScrollableAdapterTest, SliderTest,
+                         SycMethodNameEditorTest-area
+  - misc:     SplitJoinTest, CollectionArithmeticTest, CDVariableClassParserTest,
+              BlockClosuresTestCase, EpFileOutModificationsTest, FLMigrationTest,
+              FileAttributesPluginPrimsTest, MetaLinkAnonymousClassBuilderTest,
+              ReleaseTest, SimpleTestResourceTestCase, TKTWorkerPoolTest,
+              TableLayoutTest, UnlimitedInstanceVariableSlotTest, ZnChunkedStreamTest
+
+Full hanger list: `/tmp/sunit_hangers.txt`. Window-by-window outcomes:
+`/tmp/sunit_driver.log`. Per-class results: `/tmp/sunit_all_results.txt` (54 MB).
+Per-test detail: `/tmp/sunit_all_detail.txt`.
+
+### What the run did NOT do — Cog comparison
+
+The Cog full-suite baseline measured earlier on the same morning used the
+curated `test_classes.txt` (565 classes), not the auto-generated 2051-list, so
+the two cannot be cleanly diffed. To make a true post-fix vs Cog comparison,
+Cog needs re-running against `/tmp/sunit_all_class_names.txt` with the same
+subprocess driver. Tracked separately.
+
+### What the run did show vs prior baselines
+
+CDNormalClassParserTest 16/16 and SystemEnvironmentTest 199/217 (formerly
+79P/138E, now Cog-parity), both first verified on the targeted 21-class re-run
+(commit `97d0f4db`), reproduce here at the same numbers in their respective
+windows — confirming the Sista inliner fix's impact at full-suite scale.
+
+### The watchdog patch in this run
+
+The earlier overnight attempt (pre-`0a293966`) emitted
+`[VM-TIMEOUT] Process … at P10 stuck for 600s+ — terminating` every 10 minutes
+when the IDLE process at priority 10 was legitimately sitting in
+`primitiveRelinquishProcessor`. This run had ZERO P10 timeout noise; the
+watchdog now gates on `prio > 10`. Real stuck low-/normal-priority processes
+still fire — the driver's STALL-watchdog catches them externally regardless.
+
+### Open: in-image per-test timeout doesn't always recover
+
+`run_sunit_tests.st`'s 300s per-test timeout (`relinquishProcessorForMicroseconds:`
+polling + force-kill via `testProcess suspend` + `terminate` fork) successfully
+fires on most timeouts (`TIMEOUT: ...` entries appear in the log), but
+some tests leave the scheduler in a state where post-timeout cleanup itself
+blocks indefinitely. That's why the 26 hangers exist — without subprocess
+isolation each one would freeze the whole run. Fixing the in-image
+recovery path is the next lever for raising effective throughput per VM
+instance; the watchdog fix `0a293966` only addresses misleading diagnostics,
+not the underlying deadlock.
+
