@@ -21,6 +21,19 @@
 #ifndef PHARO_NO_GETENV_HPP
 #define PHARO_NO_GETENV_HPP
 
+// This header is force-included (-include) BEFORE each VM .cpp's own includes.
+// A bare `#define getenv X` here breaks the C++ standard library on libstdc++
+// (x86_64 Linux): glibc's <stdlib.h> declares the renamed symbol, then
+// libstdc++'s <cstdlib> does a literal `using ::getenv;` that no longer
+// resolves ("'getenv' has not been declared in '::'").  libc++ (macOS) happens
+// to tolerate it, but it is not portable.
+//
+// Fix: pull in the real declarations FIRST so the standard-library headers
+// compile cleanly, then poison.  Re-includes of these headers from the .cpp hit
+// their include guards, so only user call sites see the poison macro.
+#include <cstdlib>
+#include <stdlib.h>
+
 #define getenv NEVER_CALL_GETENV_DIRECTLY_USE_DEBUGSETTINGS
 
 #endif  // PHARO_NO_GETENV_HPP
