@@ -2922,7 +2922,13 @@ void Interpreter::interpret() {
                     startupGracePeriod_ = false;
                     if (trackedProcess_.rawBits() == currentActive.rawBits())
                         trackedProcess_ = Oop::nil();
-                } else if (!startupGracePeriod_ && prio < 79) {
+                } else if (!startupGracePeriod_ && prio < 79 && prio > 10) {
+                    // Skip the IDLE process (prio 10).  Idle legitimately sits in
+                    // primitiveRelinquishProcessor when nothing else is runnable —
+                    // tracking + "terminating" it generates noise (wakeHighestPriority
+                    // returns nil because that's why idle was running in the first
+                    // place) and re-fires every 10 min in a loop.  Real stuck non-
+                    // idle processes still fire; this only excludes idle.
                     if (currentActive.rawBits() != trackedProcess_.rawBits()) {
                         trackedProcess_ = currentActive;
                         cumulativeMs_ = 0;
@@ -4425,7 +4431,11 @@ bool Interpreter::step() {
                 if (trackedProcess_.rawBits() == currentActive.rawBits()) {
                     trackedProcess_ = Oop::nil();  // stop tracking
                 }
-            } else if (!startupGracePeriod_ && prio < 79) {
+            } else if (!startupGracePeriod_ && prio < 79 && prio > 10) {
+                // Skip IDLE (prio 10) — see twin site above; idle sitting in
+                // primitiveRelinquishProcessor is normal, and "terminating" it
+                // has no effect (wakeHighestPriority returns nil) so it loops
+                // every 10 min until killed externally.
                 if (currentActive.rawBits() != trackedProcess_.rawBits()) {
                     // New low-priority process — start fresh tracking
                     trackedProcess_ = currentActive;
