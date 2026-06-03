@@ -442,6 +442,41 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
+            // ---- Monomorphic-inline class guard (deopts on miss) ----
+            // operand[0] = receiver; operand[1..N] = simulated stack at deopt.
+            // literal lo22 = expectedClassIndex; literal hi32 = bcOffset.
+            // Port of the arm64 kGuardClass: object receivers have low 3 bits
+            // == 0 (immediates miss); the Spur header's low 22 bits are the
+            // classIndex.  Miss reuses emitDeopt with stackBase=1 (operand[0]
+            // is the receiver, not part of the spilled stack) — identical to
+            // the arm64 push-operand[1..N] deopt.
+            case Op::kGuardClass: {
+                if (v.operands.empty()) return bail(v.id);
+                auto itRcv = regFor.find(v.operands[0]);
+                if (itRcv == regFor.end()) return bail(v.id);
+                uint32_t expectedIdx = static_cast<uint32_t>(v.literal & 0x3FFFFF);
+                uint32_t bcOffset    = static_cast<uint32_t>(v.literal >> 32);
+                Label cont = cc.new_label();
+                Label miss = cc.new_label();
+                // Tag check: (rcv & 7) != 0 → immediate (non-object) → miss.
+                Gp tag = cc.new_gp64("gc_tag");
+                cc.mov(tag, itRcv->second);
+                cc.and_(tag, Imm(7));
+                cc.cmp(tag, Imm(0));
+                cc.jne(miss);
+                // classIndex = header.low22; compare to expected.
+                Gp idx = cc.new_gp64("gc_idx");
+                cc.mov(idx, ptr(itRcv->second, 0));
+                cc.and_(idx, Imm(0x3FFFFF));
+                cc.cmp(idx, Imm(expectedIdx));
+                cc.je(cont);
+                cc.bind(miss);
+                if (!emitDeopt(v, bcOffset, /*stackBase=*/1)) return bail(v.id);
+                cc.bind(cont);
+                regFor[v.id] = itRcv->second;   // hit: receiver passthrough
+                break;
+            }
+
             // ---- Integer compares (kPrim<cmp>Int) ----
             case Op::kPrimLtInt:
             case Op::kPrimLeInt:
