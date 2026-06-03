@@ -17,8 +17,9 @@ now=$(date +%s)
 active=0
 # logged-in users (ssh)
 [ "$(who | wc -l)" -gt 0 ] && active=1
-# meaningful processes
-if pgrep -x -f 'cmake|cc1plus|make|ninja|clang|cc1|gcc|node|claude|test_load_image|git' >/dev/null 2>&1; then
+# meaningful processes (NB: -f matches full cmdline; do NOT combine with -x,
+# which would require the whole cmdline to equal the alternation and never match)
+if pgrep -f 'cmake|cc1plus|make|ninja|clang|cc1plus|gcc|node|claude|test_load_image|git ' >/dev/null 2>&1; then
     active=1
 fi
 # load average
