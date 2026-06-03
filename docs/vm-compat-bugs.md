@@ -518,6 +518,10 @@ VERIFIED.  /tmp/cn.image PB probe: 8/8 correct under both PHARO_NO_JIT=1 (interp
 Sista) and the full JIT+Sista path.  PHARO_NO_SISTA=1 / PHARO_SISTA_NO_INLINE_CONST=1
 also produce 8/8 (they sidestep the buggy inliner).
 
+Original cumulative-state symptom (CDNormalClassParserTest suite run 5x in one image):
+  pre-fix : iter1-3 P16 F0, iter4 P15 F1, iter5 P14 F2 (degrades)
+  post-fix: iter1-5 ALL P16 F0  (clean — both PHARO_NO_JIT=1 and full JIT+Sista)
+
 WHY THE EARLIER HYPOTHESES WERE WRONG.
   - "Scavenge missed root":  the FAILURE-pattern of a scavenge missed-root mimicked
     exactly what we saw (degrades on re-run; PHARO_YG_NO_SCAVENGE=1 hides it).
