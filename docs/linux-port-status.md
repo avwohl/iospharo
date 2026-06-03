@@ -46,9 +46,13 @@ helper).  Not an x86 gap.  The real x86 gaps were small: guard_class (43),
 prim_at (21).
 
 Ported to x86 (all on origin/jit-x86): kGuardClass, kPrimAt, kPrimSize,
-kPrimAtPut, kPrimAdd/Sub/MulFloat.  guard_class + prim_at verified via the
-startup run (OK 934→998, no crash).  Per-op disable gates added for bisection:
-PHARO_SISTA_NO_LOWER_{AT,SIZE,ATPUT,FLOAT}.
+kPrimAtPut, kPrimAdd/Sub/MulFloat, kPrimEvenOddCheck, kLoadTempInVec,
+kStoreTempInVec, kInterval (no-op marker), kBlockCreate.  Verified no-crash with
+all ops on across ArrayTest/OrderedCollectionTest/FloatTest/IntervalTest under
+PHARO_SISTA_DISPATCH=1 (guard_class+prim_at also startup-verified, OK 934→998).
+Per-op disable gates for bisection: PHARO_SISTA_NO_LOWER_{AT,SIZE,ATPUT,FLOAT}.
+
+ALL non-loop Sista ops are now ported.  Only the counted-loop fusions remain.
 
 Crash fixed: the inline kPrimAt scale-3 indexed LOAD (`mov dst,[rcv+i*8]`)
 crashed asmjit's register allocator (BaseRAPass::build_liveness null-deref) at
@@ -62,10 +66,20 @@ SHA-256-manifest snapshots for bit-level state diffing.
 
 ## Known WIP / deferred
 
-    Sista x86: remaining ops   kPrimEvenOddCheck, kBlockCreate, kInterval,
-                            kLoadTempInVec/kStoreTempInVec, the 9 kCountedLoop*
-                            fusions — low/zero startup frequency; port from the
-                            arm64 sibling for full structural parity.
+    Sista x86: counted-loop   The only remaining unported ops: the 9
+    fusions                 kCountedLoop* variants (Do, InjectInto, Collect,
+                            Select, ArrayDoAccum, IntervalDo, IntervalDoAccum,
+                            IntervalInjectInto, WhileTrueAccum) — arm64
+                            SistaLowering_arm64.cpp:2128-3450.  Each iterates
+                            via the basicSize/basicAt helpers (RA-safe) but
+                            INLINES the block body through a whitelist of ops
+                            (per-iteration emit threading block-local temps
+                            through registers) — ~150 lines each, ~1000 total.
+                            A shared "emit whitelisted block body" helper would
+                            make porting all 9 tractable.  Low/zero startup
+                            frequency (1-3 bails); methods bail safely to
+                            tier-1 without them.  A dedicated effort, not a
+                            quick port.
     store_ivar plain stores The 92%-dominant bail.  Routing plain bytecode ivar
                             stores through jit_rt_store_inst_var (as setter-inline
                             does) would lift the compile rate ~52%→~99% on BOTH
