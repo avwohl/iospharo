@@ -34,6 +34,7 @@
  */
 #include "SistaLowering.hpp"
 #include "../../DebugSettings.hpp"
+#include "../../DebugVars.hpp"   // GET_DEBUG_BOOL — per-op x86 Sista disable knobs
 
 #if PHARO_JIT_ENABLED
 
@@ -499,7 +500,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // *load* tripped it).  The helper avoids the indexed load.  Re-inline
             // once that asmjit RA issue is understood.
             case Op::kPrimAt: {
-                if (pharo::g_debug.sistaNoLowerAt) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_AT)) return bail(v.id);
                 if (v.operands.size() < 2) return bail(v.id);
                 auto itRcv = regFor.find(v.operands[0]);
                 auto itIdx = regFor.find(v.operands[1]);
@@ -558,7 +559,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // returns a SmI size Oop, or 0 on a guard miss → deopt (push
             // receiver, argCount=0, re-run the size send at v.literal).
             case Op::kPrimSize: {
-                if (pharo::g_debug.sistaNoLowerSize) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SIZE)) return bail(v.id);
                 if (v.operands.size() != 1) return bail(v.id);
                 auto itRcv = regFor.find(v.operands[0]);
                 if (itRcv == regFor.end()) return bail(v.id);
@@ -606,7 +607,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // short-lived Array receivers).  result = val.  Deopt pushes
             // deoptStackBelow then rcv,idx,val; argCount=2.
             case Op::kPrimAtPut: {
-                if (pharo::g_debug.sistaNoLowerAtPut) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_ATPUT)) return bail(v.id);
                 if (v.operands.size() < 3) return bail(v.id);
                 auto itRcv = regFor.find(v.operands[0]);
                 auto itIdx = regFor.find(v.operands[1]);
@@ -691,7 +692,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             case Op::kPrimAddFloat:
             case Op::kPrimSubFloat:
             case Op::kPrimMulFloat: {
-                if (pharo::g_debug.sistaNoLowerFloat) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_FLOAT)) return bail(v.id);
                 if (noArith || noArithMath) return bail(v.id);
                 if (v.operands.size() < 2) return bail(v.id);
                 auto ita = regFor.find(v.operands[0]);
@@ -854,6 +855,199 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Gp ex = cc.new_gp32("bc_ex"); cc.mov(ex, Imm(EXIT_SEND));
                 cc.mov(ptr(state, OFF_EXIT), ex);
                 cc.ret();
+                break;
+            }
+
+            // ---- Counted-loop fusion: `coll do: [block]` (inlined body) ----
+            // literal: bits0-31 blockSlot, bits32-47 vecSlot, bit48 hasCapture.
+            // operands[0]=rcv (+[1]=vec when capture).  Iterates i=1..basicSize,
+            // inlining a whitelisted block body.  Element load computes the slot
+            // ADDRESS in a GP reg then does a single-register load (RA-safe: a
+            // 2-register indexed load crashes asmjit's RA — see kPrimAt).  do:
+            // returns the receiver.  Port of arm64 kCountedLoopDo.
+            case Op::kCountedLoopDo: {
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
+                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                bool doHasCapture = ((v.literal >> 48) & 1) != 0;
+                size_t expectedOps = doHasCapture ? 2u : 1u;
+                if (v.operands.size() != expectedOps) return bail(v.id);
+                auto itRcv = regFor.find(v.operands[0]);
+                if (itRcv == regFor.end()) return bail(v.id);
+                Gp rcvReg = itRcv->second;
+                Gp doVecReg; uint32_t doVecSlot = 0;
+                if (doHasCapture) {
+                    auto itVec = regFor.find(v.operands[1]);
+                    if (itVec == regFor.end()) return bail(v.id);
+                    doVecReg = itVec->second;
+                    doVecSlot = (uint32_t)((v.literal >> 32) & 0xFFFF);
+                }
+                uint32_t blockSlot = (uint32_t)(v.literal & 0xFFFFFFFFu);
+                if (blockSlot >= method.inlinedBlocks.size()
+                    || !method.inlinedBlocks[blockSlot]) return bail(v.id);
+                const Method& blockIR = *method.inlinedBlocks[blockSlot];
+                if (blockIR.blocks.size() != 1) return bail(v.id);
+                const uint32_t blockNumArgs = 1;
+                // Whitelist (mirrors arm64): side-effecting / unsupported ops bail.
+                for (const auto& bv : blockIR.values) {
+                    switch (bv.op) {
+                    case Op::kLoadTemp: case Op::kLoadReceiver: case Op::kLoadInstVar:
+                    case Op::kLoadTrueOop: case Op::kLoadFalseOop: case Op::kConstantOop:
+                    case Op::kLoadLiteral: case Op::kReturn: case Op::kPrimTagCheckInt:
+                    case Op::kPrimAddInt: case Op::kPrimSubInt: case Op::kPrimMulInt:
+                    case Op::kPrimAddFloat: case Op::kPrimSubFloat: case Op::kPrimMulFloat:
+                        break;
+                    case Op::kStoreTemp:
+                        if (bv.operands.size() != 1 || bv.literal < blockNumArgs)
+                            return bail(v.id);
+                        break;
+                    case Op::kLoadTempInVec: case Op::kStoreTempInVec:
+                        if (!doHasCapture) return bail(v.id);
+                        break;
+                    default: return bail(v.id);
+                    }
+                }
+                uint32_t deoptBC = 0;
+                for (const auto& fp : method.framepoints)
+                    if (fp.valueId == v.id) { deoptBC = fp.bcOffset; break; }
+                auto loopDeopt = [&](Gp savedRcv, uint32_t bc) {
+                    Gp sp = cc.new_gp64("loop_dz_sp"); cc.mov(sp, ptr(state, OFF_SP));
+                    cc.mov(ptr(sp, 0), savedRcv);
+                    if (doHasCapture) { cc.mov(ptr(sp, 8), doVecReg); cc.add(sp, Imm(16)); }
+                    else cc.add(sp, Imm(8));
+                    cc.mov(ptr(state, OFF_SP), sp);
+                    Gp ipReg = cc.new_gp64("loop_dz_ip");
+                    if (bytecodeBase) {
+                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
+                        cc.mov(ipReg, Imm((uint64_t)a));
+                    } else cc.mov(ipReg, Imm((uint64_t)bc));
+                    cc.mov(ptr(state, OFF_IP), ipReg);
+                    Gp argc = cc.new_gp32("loop_dz_argc"); cc.mov(argc, Imm(0));
+                    cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
+                    Gp z = cc.new_gp64("loop_dz_z"); cc.xor_(z, z);
+                    cc.mov(ptr(state, OFF_ICDATAPTR), z);
+                    Gp ex = cc.new_gp32("loop_dz_ex"); cc.mov(ex, Imm(EXIT_SEND));
+                    cc.mov(ptr(state, OFF_EXIT), ex);
+                    cc.ret();
+                };
+                // size = basicSize(rcv); deopt on 0.
+                Gp sizeFn = cc.new_gp64("loop_szfn");
+                cc.mov(sizeFn, Imm((uint64_t)&jit_rt_sista_basic_size));
+                InvokeNode* sizeInv = nullptr;
+                if (cc.invoke(Out(sizeInv), sizeFn,
+                        FuncSignature::build<uint64_t, void*, uint64_t>()) != kErrorOk
+                    || !sizeInv) return bail(v.id);
+                sizeInv->set_arg(0, state); sizeInv->set_arg(1, rcvReg);
+                Gp sizeReg = cc.new_gp64("loop_size"); sizeInv->set_ret(0, sizeReg);
+                Label sizeOk = cc.new_label();
+                cc.cmp(sizeReg, Imm(0)); cc.jne(sizeOk);
+                loopDeopt(rcvReg, deoptBC); cc.bind(sizeOk);
+                // fmt == 2 (Array).
+                Gp loopHdr = cc.new_gp64("loop_hdr"); cc.mov(loopHdr, ptr(rcvReg));
+                Gp loopFmt = cc.new_gp64("loop_fmt"); cc.mov(loopFmt, loopHdr);
+                cc.shr(loopFmt, Imm(24)); cc.and_(loopFmt, Imm(0x1F));
+                cc.cmp(loopFmt, Imm(2)); Label loopFmtOk = cc.new_label();
+                cc.je(loopFmtOk); loopDeopt(rcvReg, deoptBC); cc.bind(loopFmtOk);
+                Gp iReg = cc.new_gp64("loop_i"); cc.mov(iReg, Imm(9));  // SmI(1)
+                Gp accReg; int doVecSlotByteOff = 8 + (int)doVecSlot * 8;
+                if (doHasCapture) {
+                    Gp tagV = cc.new_gp64("do_tagV"); cc.mov(tagV, doVecReg);
+                    cc.and_(tagV, Imm(7)); cc.cmp(tagV, Imm(0));
+                    Label vOk = cc.new_label(); cc.je(vOk); loopDeopt(rcvReg, deoptBC); cc.bind(vOk);
+                    accReg = cc.new_gp64("do_acc"); cc.mov(accReg, ptr(doVecReg, doVecSlotByteOff));
+                    Gp tagA = cc.new_gp64("do_tagA"); cc.mov(tagA, accReg);
+                    cc.and_(tagA, Imm(7)); cc.cmp(tagA, Imm(1));
+                    Label aOk = cc.new_label(); cc.je(aOk); loopDeopt(rcvReg, deoptBC); cc.bind(aOk);
+                }
+                bool blockUsesElement = false;
+                for (const auto& bv : blockIR.values)
+                    if (bv.op == Op::kLoadTemp && bv.literal == 0) { blockUsesElement = true; break; }
+                Label loopHead = cc.new_label(); Label loopExit = cc.new_label();
+                cc.cmp(iReg, sizeReg); cc.ja(loopExit);   // iReg > size → exit
+                cc.bind(loopHead);
+                Gp eachReg = cc.new_gp64("loop_each");
+                if (blockUsesElement) {
+                    // addr = rcv + (iReg - 1)  [iReg-1 == i*8]; single-reg load.
+                    Gp addr = cc.new_gp64("loop_addr"); cc.mov(addr, iReg);
+                    cc.sub(addr, Imm(1)); cc.add(addr, rcvReg);
+                    cc.mov(eachReg, ptr(addr));
+                }
+                std::unordered_map<uint32_t, Gp> blockRegs;
+                std::unordered_map<uint32_t, Gp> blockLocalTemp;
+                bool blockBailed = false;
+                for (const auto& bv : blockIR.values) {
+                    switch (bv.op) {
+                    case Op::kLoadTemp: {
+                        uint32_t idx = (uint32_t)bv.literal;
+                        if (idx == 0) blockRegs[bv.id] = eachReg;
+                        else { auto bit = blockLocalTemp.find(idx);
+                               if (bit == blockLocalTemp.end()) blockBailed = true;
+                               else blockRegs[bv.id] = bit->second; }
+                        break;
+                    }
+                    case Op::kStoreTemp: {
+                        if (bv.operands.empty()) { blockBailed = true; break; }
+                        auto sit = blockRegs.find(bv.operands[0]);
+                        if (sit == blockRegs.end()) { blockBailed = true; break; }
+                        Gp d = cc.new_gp64("blk_loc"); cc.mov(d, sit->second);
+                        blockLocalTemp[(uint32_t)bv.literal] = d;
+                        break;
+                    }
+                    case Op::kLoadTrueOop: { Gp r = cc.new_gp64("blk_true"); cc.mov(r, ptr(state, OFF_TRUEOOP)); blockRegs[bv.id] = r; break; }
+                    case Op::kLoadFalseOop: { Gp r = cc.new_gp64("blk_false"); cc.mov(r, ptr(state, OFF_FALSEOOP)); blockRegs[bv.id] = r; break; }
+                    case Op::kConstantOop: { Gp r = cc.new_gp64("blk_const"); cc.mov(r, Imm(bv.literal)); blockRegs[bv.id] = r; break; }
+                    case Op::kLoadLiteral: { Gp r = cc.new_gp64("blk_lit"); cc.mov(r, ptr(litBaseHoisted, (int)((uint32_t)bv.literal * 8))); blockRegs[bv.id] = r; break; }
+                    case Op::kLoadReceiver: { Gp r = cc.new_gp64("blk_recv"); cc.mov(r, ptr(state, OFF_RECEIVER)); blockRegs[bv.id] = r; break; }
+                    case Op::kLoadInstVar: {
+                        if (bv.operands.empty()) { blockBailed = true; break; }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) { blockBailed = true; break; }
+                        Gp d = cc.new_gp64("blk_ivar");
+                        cc.mov(d, ptr(it->second, 8 + (int)bv.literal * 8));
+                        blockRegs[bv.id] = d; break;
+                    }
+                    case Op::kPrimTagCheckInt: {
+                        if (bv.operands.empty()) { blockBailed = true; break; }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) { blockBailed = true; break; }
+                        blockRegs[bv.id] = it->second; break;
+                    }
+                    case Op::kPrimAddInt: case Op::kPrimSubInt: case Op::kPrimMulInt: {
+                        if (bv.operands.size() < 2) { blockBailed = true; break; }
+                        auto ia = blockRegs.find(bv.operands[0]);
+                        auto ib = blockRegs.find(bv.operands[1]);
+                        if (ia == blockRegs.end() || ib == blockRegs.end()) { blockBailed = true; break; }
+                        Gp tA = cc.new_gp64("blk_tagA"); cc.mov(tA, ia->second);
+                        cc.and_(tA, Imm(7)); cc.cmp(tA, Imm(1));
+                        Label tAok = cc.new_label(); cc.je(tAok); loopDeopt(rcvReg, deoptBC); cc.bind(tAok);
+                        Gp tB = cc.new_gp64("blk_tagB"); cc.mov(tB, ib->second);
+                        cc.and_(tB, Imm(7)); cc.cmp(tB, Imm(1));
+                        Label tBok = cc.new_label(); cc.je(tBok); loopDeopt(rcvReg, deoptBC); cc.bind(tBok);
+                        Gp d = cc.new_gp64("blk_arith");
+                        if (bv.op == Op::kPrimAddInt) { cc.mov(d, ia->second); cc.add(d, ib->second); cc.sub(d, Imm(1)); }
+                        else if (bv.op == Op::kPrimSubInt) { cc.mov(d, ia->second); cc.sub(d, ib->second); cc.add(d, Imm(1)); }
+                        else { Gp au = cc.new_gp64("blk_au"); cc.mov(au, ia->second); cc.sar(au, Imm(3));
+                               Gp bu = cc.new_gp64("blk_bu"); cc.mov(bu, ib->second); cc.sar(bu, Imm(3));
+                               cc.imul(au, bu); cc.shl(au, Imm(3)); cc.or_(au, Imm(1)); cc.mov(d, au); }
+                        blockRegs[bv.id] = d; break;
+                    }
+                    case Op::kLoadTempInVec: { blockRegs[bv.id] = accReg; break; }
+                    case Op::kStoreTempInVec: {
+                        if (bv.operands.empty()) { blockBailed = true; break; }
+                        auto sit = blockRegs.find(bv.operands[0]);
+                        if (sit == blockRegs.end()) { blockBailed = true; break; }
+                        cc.mov(accReg, sit->second); break;
+                    }
+                    case Op::kReturn: break;
+                    default: blockBailed = true; break;
+                    }
+                    if (blockBailed) break;
+                }
+                if (blockBailed) return bail(v.id);
+                cc.add(iReg, Imm(8));                      // i += 1 (SmI)
+                cc.cmp(iReg, sizeReg); cc.jbe(loopHead);   // iReg <= size → loop
+                cc.bind(loopExit);
+                if (doHasCapture) cc.mov(ptr(doVecReg, doVecSlotByteOff), accReg);
+                regFor[v.id] = rcvReg;
                 break;
             }
 
