@@ -477,6 +477,93 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
+            // ---- Inline Array at: (fast path fmt=2; deopts otherwise) ----
+            // operands: [rcv, idx, deoptStackBelow...].  literal = bcOffset.
+            // Port of arm64 kPrimAt: 1-based SmallInt index; slot at
+            // [rcv + i*8] (8-byte header at offset 0).  A slotCount byte of
+            // 0xFF means overflow — the real count is in the 8 bytes before
+            // the header (low 56 bits).  Deopt pushes deoptStackBelow then
+            // rcv, idx and re-runs the at: send (argCount=1).
+            case Op::kPrimAt: {
+                if (v.operands.size() < 2) return bail(v.id);
+                auto itRcv = regFor.find(v.operands[0]);
+                auto itIdx = regFor.find(v.operands[1]);
+                if (itRcv == regFor.end() || itIdx == regFor.end())
+                    return bail(v.id);
+                Gp rcv = itRcv->second;
+                Gp idx = itIdx->second;
+                Gp dst = cc.new_gp64("at");
+                Label deoptL = cc.new_label();
+                Label okL    = cc.new_label();
+
+                // rcv must be a pointer object (low 3 bits == 0) and a real addr.
+                Gp rcvTag = cc.new_gp64("aTag");
+                cc.mov(rcvTag, rcv); cc.and_(rcvTag, Imm(7));
+                cc.cmp(rcvTag, Imm(0)); cc.jne(deoptL);
+                cc.cmp(rcv, Imm(0x10000)); cc.jb(deoptL);
+                // idx must be a SmallInt (tag == 1).
+                Gp idxTag = cc.new_gp64("aIdxTag");
+                cc.mov(idxTag, idx); cc.and_(idxTag, Imm(7));
+                cc.cmp(idxTag, Imm(1)); cc.jne(deoptL);
+                // header; fmt = (hdr>>24)&0x1F must be 2 (Array).
+                Gp hdr = cc.new_gp64("aHdr"); cc.mov(hdr, ptr(rcv));
+                Gp fmt = cc.new_gp64("aFmt"); cc.mov(fmt, hdr);
+                cc.shr(fmt, Imm(24)); cc.and_(fmt, Imm(0x1F));
+                cc.cmp(fmt, Imm(2)); cc.jne(deoptL);
+                // slotCount = hdr>>56; 0xFF => overflow count at [rcv-8] (56 bits).
+                Gp sc = cc.new_gp64("aSc"); cc.mov(sc, hdr); cc.shr(sc, Imm(56));
+                Label scOk = cc.new_label();
+                cc.cmp(sc, Imm(0xFF)); cc.jne(scOk);
+                {
+                    Gp ov = cc.new_gp64("aSv"); cc.mov(ov, ptr(rcv, -8));
+                    cc.shl(ov, Imm(8)); cc.shr(ov, Imm(8));
+                    cc.mov(sc, ov);
+                }
+                cc.bind(scOk);
+                // i = idx>>3 (untag); bounds 1 <= i <= sc.
+                Gp i = cc.new_gp64("aI"); cc.mov(i, idx); cc.sar(i, Imm(3));
+                cc.cmp(i, Imm(1)); cc.jl(deoptL);
+                cc.cmp(i, sc);     cc.jg(deoptL);
+                // dst = [rcv + i*8]  (scale-3 indexed load).
+                cc.mov(dst, ptr(rcv, i, 3));
+                cc.jmp(okL);
+
+                cc.bind(deoptL);
+                {
+                    Gp sp = cc.new_gp64("sp_az"); cc.mov(sp, ptr(state, OFF_SP));
+                    int dBSize = static_cast<int>(v.operands.size()) - 2;
+                    for (int k = 0; k < dBSize; k++) {
+                        auto opIt = regFor.find(v.operands[2 + k]);
+                        if (opIt == regFor.end()) return bail(v.id);
+                        cc.mov(ptr(sp, k * 8), opIt->second);
+                    }
+                    cc.mov(ptr(sp, dBSize * 8), rcv);
+                    cc.mov(ptr(sp, (dBSize + 1) * 8), idx);
+                    cc.add(sp, Imm((dBSize + 2) * 8));
+                    cc.mov(ptr(state, OFF_SP), sp);
+                    Gp ipReg = cc.new_gp64("ip_az");
+                    if (bytecodeBase) {
+                        uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
+                                       + static_cast<uint32_t>(v.literal);
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm(v.literal));
+                    }
+                    cc.mov(ptr(state, OFF_IP), ipReg);
+                    Gp argc = cc.new_gp32("argc_az");
+                    cc.mov(argc, Imm(1));
+                    cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
+                    Gp z = cc.new_gp64("z_az"); cc.xor_(z, z);
+                    cc.mov(ptr(state, OFF_ICDATAPTR), z);
+                    Gp ex = cc.new_gp32("ex_az"); cc.mov(ex, Imm(EXIT_SEND));
+                    cc.mov(ptr(state, OFF_EXIT), ex);
+                    cc.ret();
+                }
+                cc.bind(okL);
+                regFor[v.id] = dst;
+                break;
+            }
+
             // ---- Integer compares (kPrim<cmp>Int) ----
             case Op::kPrimLtInt:
             case Op::kPrimLeInt:
