@@ -545,3 +545,33 @@ that share the timing surface area (compile thresholds, IC-fill epoch, ramp-up
 allocations).  Bisect with PHARO_NO_SISTA=1, PHARO_SISTA_NO_INLINE_CONST=1,
 PHARO_NO_JIT=1, PHARO_YG_NO_SCAVENGE=1 — the difference between which flag(s)
 fix it pinpoints the layer (Sista IR / JIT / GC / scheduler).
+
+BROADER IMPACT (2026-06-03).  The same fix dramatically improves other classes
+where `^self` method bodies (prim 256 returnSelf or `^self`) were being
+inlined at non-self send-sites.  Targeted 21-class re-run on /tmp/harness/Pharo.image
+with the fix (JIT+Sista default):
+
+    class                              pre-fix         post-fix       Cog baseline
+    CDNormalClassParserTest            cumulative-F2   16/16 P        16/16 P
+    SystemEnvironmentTest              79P/138E        199P/3F/15E    205P/3F/9E
+    TraitTest                          (errors)        32P/1F/21E     40P/4F/10E
+    RGMethodDefinitionTest             23P/8F/1E      23P/8F/1E      23P/8F/1E
+                                       (separate JIT IC-probe bug;     (matches our
+                                        unaffected by inliner fix)     post-fix —
+                                                                       same issue
+                                                                       on Cog too)
+    all 17 other CD/RG/OC classes      mixed           clean (P==Total) clean
+    --
+    targeted batch totals              ~half passing   464 P / 12 F / 37 E / 513
+
+The SystemEnvironmentTest jump (79→199 P) is the biggest single-class delta
+and confirms the fix wasn't specific to the CD parser geometry — `^self` is
+the most common method-body shape in Pharo (prim 256 returnSelf is the
+default for many superclass methods that act as "do nothing" hooks; subclasses
+override).  Any method that activates such an inherited `^self` through Sista's
+inline path at a non-self send-site was miscompiled the same way.
+
+Residual TraitTest delta vs Cog (32 vs 40 P) and RGMethodDefinitionTest at
+23 P are PRE-EXISTING, NOT caused by the inliner fix (RGMethodDefinitionTest's
+JIT IC-probe bug is documented in docs/jit-sunit-fullrun.md and fixed by
+PHARO_T1_NO_IC_PROBE=1).
