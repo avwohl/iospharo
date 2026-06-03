@@ -487,6 +487,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // the header (low 56 bits).  Deopt pushes deoptStackBelow then
             // rcv, idx and re-runs the at: send (argCount=1).
             case Op::kPrimAt: {
+                if (pharo::g_debug.sistaNoLowerAt) return bail(v.id);
                 if (v.operands.size() < 2) return bail(v.id);
                 auto itRcv = regFor.find(v.operands[0]);
                 auto itIdx = regFor.find(v.operands[1]);
@@ -571,6 +572,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // returns a SmI size Oop, or 0 on a guard miss → deopt (push
             // receiver, argCount=0, re-run the size send at v.literal).
             case Op::kPrimSize: {
+                if (pharo::g_debug.sistaNoLowerSize) return bail(v.id);
                 if (v.operands.size() != 1) return bail(v.id);
                 auto itRcv = regFor.find(v.operands[0]);
                 if (itRcv == regFor.end()) return bail(v.id);
@@ -618,6 +620,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // short-lived Array receivers).  result = val.  Deopt pushes
             // deoptStackBelow then rcv,idx,val; argCount=2.
             case Op::kPrimAtPut: {
+                if (pharo::g_debug.sistaNoLowerAtPut) return bail(v.id);
                 if (v.operands.size() < 3) return bail(v.id);
                 auto itRcv = regFor.find(v.operands[0]);
                 auto itIdx = regFor.find(v.operands[1]);
@@ -690,6 +693,66 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
                 cc.bind(okL);
                 regFor[v.id] = dst;
+                break;
+            }
+
+            // ---- SmallFloat binary arith (SSE; deopt fallback) ----
+            // Port of arm64 kPrimAdd/Sub/MulFloat.  operands: [a, b,
+            // deoptStack...].  Spur SmallFloat (low3==5) decode: shifted=bits>>3
+            // (<=1 is the ±0 sentinel → deopt); double = ror(shifted+offset, 1).
+            // op in xmm; encode = rol(bits,1)-offset (underflow/overflow→deopt);
+            // result = (bits<<3)|5.  Deopt = emitDeopt(stackBase=2).
+            case Op::kPrimAddFloat:
+            case Op::kPrimSubFloat:
+            case Op::kPrimMulFloat: {
+                if (pharo::g_debug.sistaNoLowerFloat) return bail(v.id);
+                if (noArith || noArithMath) return bail(v.id);
+                if (v.operands.size() < 2) return bail(v.id);
+                auto ita = regFor.find(v.operands[0]);
+                auto itb = regFor.find(v.operands[1]);
+                if (ita == regFor.end() || itb == regFor.end())
+                    return bail(v.id);
+                Gp regA = ita->second, regB = itb->second;
+                Label deopt = cc.new_label();
+                Label cont  = cc.new_label();
+                const uint64_t OFFSET = 0x7000000000000000ULL;
+                // Tag check: low3 == 5 for both.
+                Gp tag = cc.new_gp64("fp_tag");
+                cc.mov(tag, regA); cc.and_(tag, Imm(7)); cc.cmp(tag, Imm(5)); cc.jne(deopt);
+                cc.mov(tag, regB); cc.and_(tag, Imm(7)); cc.cmp(tag, Imm(5)); cc.jne(deopt);
+                Gp offset = cc.new_gp64("fp_off"); cc.mov(offset, Imm(OFFSET));
+                // Decode a -> dA.
+                Gp shA = cc.new_gp64("fp_shA"); cc.mov(shA, regA); cc.shr(shA, Imm(3));
+                cc.cmp(shA, Imm(1)); cc.jbe(deopt);          // ±0 sentinel
+                cc.add(shA, offset); cc.ror(shA, Imm(1));
+                Vec dA = cc.new_xmm("fp_dA"); cc.movq(dA, shA);
+                // Decode b -> dB.
+                Gp shB = cc.new_gp64("fp_shB"); cc.mov(shB, regB); cc.shr(shB, Imm(3));
+                cc.cmp(shB, Imm(1)); cc.jbe(deopt);
+                cc.add(shB, offset); cc.ror(shB, Imm(1));
+                Vec dB = cc.new_xmm("fp_dB"); cc.movq(dB, shB);
+                // dR = dA op dB.
+                Vec dR = cc.new_xmm("fp_dR"); cc.movsd(dR, dA);
+                switch (v.op) {
+                    case Op::kPrimAddFloat: cc.addsd(dR, dB); break;
+                    case Op::kPrimSubFloat: cc.subsd(dR, dB); break;
+                    case Op::kPrimMulFloat: cc.mulsd(dR, dB); break;
+                    default: break;
+                }
+                // Encode: bits = rol(doubleBits,1) - offset; range-check; tag.
+                Gp result = cc.new_gp64("fp_res"); cc.movq(result, dR);
+                cc.rol(result, Imm(1));
+                cc.cmp(result, offset); cc.jb(deopt);        // exp underflow
+                cc.sub(result, offset);
+                Gp limit = cc.new_gp64("fp_lim"); cc.mov(limit, Imm(0x1FFFFFFFFFFFFFFFULL));
+                cc.cmp(result, limit); cc.ja(deopt);         // exp overflow
+                cc.shl(result, Imm(3)); cc.or_(result, Imm(5));
+                cc.jmp(cont);
+                cc.bind(deopt);
+                if (!emitDeopt(v, static_cast<uint32_t>(v.literal), /*stackBase=*/2))
+                    return bail(v.id);
+                cc.bind(cont);
+                regFor[v.id] = result;
                 break;
             }
 
