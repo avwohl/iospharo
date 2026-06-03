@@ -29,10 +29,12 @@ if [ -d "$REPO/.git" ]; then
     git -c safe.directory="$REPO" status -sb > "/home/ubuntu/notes/status-${ts}.txt" 2>/dev/null || true
 
     # Commit WIP on the work branch and push.  Uses the deploy key in
-    # ~/.ssh/iospharo-x64-deploy (configured via ~/.ssh/config Host github-x64).
-    if ! git -c safe.directory="$REPO" diff --quiet || \
-       ! git -c safe.directory="$REPO" diff --cached --quiet; then
-        git -c safe.directory="$REPO" add -A
+    # ~/.ssh/iospharo-x64-deploy (configured via ~/.ssh/config Host github.com).
+    git -c safe.directory="$REPO" add -A
+    # Drop submodule-pointer drift — `submodule update` can leave the asmjit /
+    # pharo-headless-test gitlinks slightly off, which is noise, not real work.
+    git -c safe.directory="$REPO" reset -q -- third_party/asmjit scripts/pharo-headless-test 2>/dev/null || true
+    if ! git -c safe.directory="$REPO" diff --cached --quiet; then
         git -c safe.directory="$REPO" \
             -c user.name="iospharo-x64-builder" \
             -c user.email="builder@iospharo.local" \

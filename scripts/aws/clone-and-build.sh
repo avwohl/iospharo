@@ -45,8 +45,12 @@ fi
 git submodule update --init --recursive
 
 # --- build the x64 VM --------------------------------------------------------
+# Default to LTO OFF: a ~3-5 min build comfortably finishes inside a spot
+# lifetime (a full LTO build is ~15 min — long enough to get reclaimed
+# mid-link), and the x86 JIT dev loop doesn't need an LTO-optimized binary.
+# Override with PHARO_DISABLE_LTO= (empty) for a release-grade build.
 mkdir -p build
-PHARO_DISABLE_LTO="${PHARO_DISABLE_LTO:-}" ./scripts/build-linux.sh 2>&1 | tee build/build.log
+PHARO_DISABLE_LTO="${PHARO_DISABLE_LTO-1}" ./scripts/build-linux.sh 2>&1 | tee build/build.log
 
 # --- smoke test against a fresh Pharo image ---------------------------------
 HARNESS=/home/ubuntu/harness
