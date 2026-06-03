@@ -88,7 +88,7 @@ struct LowerStats {
             fprintf(stderr, "[SISTA-BAILHISTO]");
             for (int i = 0; i < 256; i++) {
                 size_t n = bailByOp[i].load();
-                if (n) fprintf(stderr, " %s=%zu", name(static_cast<Op>(i)), n);
+                if (n) fprintf(stderr, " %s=%zu", OpInfo::name(static_cast<Op>(i)), n);
             }
             fprintf(stderr, "\n");
         }
