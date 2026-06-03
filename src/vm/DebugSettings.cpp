@@ -528,6 +528,10 @@ DebugSettings::DebugSettings() {
     sistaNoLowerBranch               = envPresent("PHARO_SISTA_NO_LOWER_BRANCH");
     sistaNoLowerFuse                 = envPresent("PHARO_SISTA_NO_LOWER_FUSE");
     sistaNoLowerSends                = envPresent("PHARO_SISTA_NO_LOWER_SENDS");
+    sistaNoLowerAt                   = envPresent("PHARO_SISTA_NO_LOWER_AT");
+    sistaNoLowerSize                 = envPresent("PHARO_SISTA_NO_LOWER_SIZE");
+    sistaNoLowerAtPut                = envPresent("PHARO_SISTA_NO_LOWER_ATPUT");
+    sistaNoLowerFloat                = envPresent("PHARO_SISTA_NO_LOWER_FLOAT");
     sistaNoRemoteTemp                = envPresent("PHARO_SISTA_NO_REMOTE_TEMP");
     sistaNoRemoteTempRead            = envPresent("PHARO_SISTA_NO_REMOTE_TEMP_READ");
     sistaNoRemoteTempWrite           = envPresent("PHARO_SISTA_NO_REMOTE_TEMP_WRITE");
