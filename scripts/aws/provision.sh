@@ -110,6 +110,9 @@ else
 
     INSTANCE_ID=""; INSTANCE_TYPE_USED=""; LIFECYCLE=""
     # Pass 1: spot — every candidate type across every default subnet (AZ).
+    # Skipped when FORCE_ONDEMAND=1: this fresh account's spot is reclaimed
+    # ~every 10 min even at 16 vCPU, which kills multi-minute verification runs.
+    if [ "${FORCE_ONDEMAND:-0}" != "1" ]; then
     for TYPE in $INSTANCE_TYPE $INSTANCE_TYPE_FALLBACKS; do
         for SUBNET in $SUBNETS; do
             echo "trying spot $TYPE in $SUBNET ..."
@@ -123,9 +126,12 @@ else
             # else InsufficientInstanceCapacity / transient => next subnet.
         done
     done
-    # Pass 2: on-demand last resort (fits the 16-vCPU on-demand quota).
+    fi  # end FORCE_ONDEMAND guard
+    # Pass 2: on-demand (last resort after spot, or the direct path when
+    # FORCE_ONDEMAND=1).  Fits the 16-vCPU on-demand quota.
     if [ -z "$INSTANCE_ID" ] && [ "${ALLOW_ONDEMAND:-1}" = "1" ]; then
-        echo "spot unavailable in all types/AZs — falling back to ON-DEMAND"
+        [ "${FORCE_ONDEMAND:-0}" = "1" ] && echo "FORCE_ONDEMAND=1 — launching on-demand" \
+                                        || echo "spot unavailable in all types/AZs — falling back to ON-DEMAND"
         for TYPE in $INSTANCE_TYPE $INSTANCE_TYPE_FALLBACKS; do
             for SUBNET in $SUBNETS; do
                 echo "trying on-demand $TYPE in $SUBNET ..."
