@@ -58,6 +58,8 @@ extern "C" uint64_t jit_rt_sista_special_call_send(void* state,
                                                     uint64_t nArgs);
 extern "C" uint64_t jit_rt_sista_alloc_array(void* state,
                                                uint64_t size);
+extern "C" uint64_t jit_rt_sista_basic_size(void* state,
+                                              uint64_t recvBits);
 
 namespace pharo {
 namespace sista {
@@ -556,6 +558,133 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     Gp z = cc.new_gp64("z_az"); cc.xor_(z, z);
                     cc.mov(ptr(state, OFF_ICDATAPTR), z);
                     Gp ex = cc.new_gp32("ex_az"); cc.mov(ex, Imm(EXIT_SEND));
+                    cc.mov(ptr(state, OFF_EXIT), ex);
+                    cc.ret();
+                }
+                cc.bind(okL);
+                regFor[v.id] = dst;
+                break;
+            }
+
+            // ---- basicSize via helper, deopt-on-zero ----
+            // Port of arm64 kPrimSize: jit_rt_sista_basic_size(state, rcv)
+            // returns a SmI size Oop, or 0 on a guard miss → deopt (push
+            // receiver, argCount=0, re-run the size send at v.literal).
+            case Op::kPrimSize: {
+                if (v.operands.size() != 1) return bail(v.id);
+                auto itRcv = regFor.find(v.operands[0]);
+                if (itRcv == regFor.end()) return bail(v.id);
+                Gp fnReg = cc.new_gp64("sizeHelper");
+                cc.mov(fnReg, Imm((uint64_t)&jit_rt_sista_basic_size));
+                InvokeNode* inv = nullptr;
+                Error e = cc.invoke(Out(inv), fnReg,
+                    FuncSignature::build<uint64_t, void*, uint64_t>());
+                if (e != kErrorOk || !inv) return bail(v.id);
+                inv->set_arg(0, state);
+                inv->set_arg(1, itRcv->second);
+                Gp dst = cc.new_gp64("size");
+                inv->set_ret(0, dst);
+                Label noDeopt = cc.new_label();
+                cc.cmp(dst, Imm(0)); cc.jne(noDeopt);   // nonzero → skip deopt
+                {
+                    Gp sp = cc.new_gp64("sp_sz"); cc.mov(sp, ptr(state, OFF_SP));
+                    cc.mov(ptr(sp, 0), itRcv->second);
+                    cc.add(sp, Imm(8));
+                    cc.mov(ptr(state, OFF_SP), sp);
+                    Gp ipReg = cc.new_gp64("ip_sz");
+                    if (bytecodeBase) {
+                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase)
+                                    + static_cast<uint32_t>(v.literal);
+                        cc.mov(ipReg, Imm((uint64_t)a));
+                    } else { cc.mov(ipReg, Imm(v.literal)); }
+                    cc.mov(ptr(state, OFF_IP), ipReg);
+                    Gp argc = cc.new_gp32("argc_sz");
+                    cc.mov(argc, Imm(0)); cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
+                    Gp z = cc.new_gp64("z_sz"); cc.xor_(z, z);
+                    cc.mov(ptr(state, OFF_ICDATAPTR), z);
+                    Gp ex = cc.new_gp32("ex_sz"); cc.mov(ex, Imm(EXIT_SEND));
+                    cc.mov(ptr(state, OFF_EXIT), ex);
+                    cc.ret();
+                }
+                cc.bind(noDeopt);
+                regFor[v.id] = dst;
+                break;
+            }
+
+            // ---- Inline Array at:put: (fast path fmt=2; deopts otherwise) ----
+            // operands: [rcv, idx, val, deoptStackBelow...].  literal=bcOffset.
+            // Port of arm64 kPrimAtPut: same guards as kPrimAt + immutable-bit
+            // check; DIRECT store (no GC barrier — matches arm64/T1, safe for
+            // short-lived Array receivers).  result = val.  Deopt pushes
+            // deoptStackBelow then rcv,idx,val; argCount=2.
+            case Op::kPrimAtPut: {
+                if (v.operands.size() < 3) return bail(v.id);
+                auto itRcv = regFor.find(v.operands[0]);
+                auto itIdx = regFor.find(v.operands[1]);
+                auto itVal = regFor.find(v.operands[2]);
+                if (itRcv == regFor.end() || itIdx == regFor.end()
+                    || itVal == regFor.end()) return bail(v.id);
+                Gp rcv = itRcv->second;
+                Gp idx = itIdx->second;
+                Gp val = itVal->second;
+                Gp dst = cc.new_gp64("atPut");
+                Label deoptL = cc.new_label();
+                Label okL    = cc.new_label();
+                Gp rcvTag = cc.new_gp64("apTag");
+                cc.mov(rcvTag, rcv); cc.and_(rcvTag, Imm(7));
+                cc.cmp(rcvTag, Imm(0)); cc.jne(deoptL);
+                cc.cmp(rcv, Imm(0x10000)); cc.jb(deoptL);
+                Gp idxTag = cc.new_gp64("apIdxTag");
+                cc.mov(idxTag, idx); cc.and_(idxTag, Imm(7));
+                cc.cmp(idxTag, Imm(1)); cc.jne(deoptL);
+                Gp hdr = cc.new_gp64("apHdr"); cc.mov(hdr, ptr(rcv));
+                Gp fmt = cc.new_gp64("apFmt"); cc.mov(fmt, hdr);
+                cc.shr(fmt, Imm(24)); cc.and_(fmt, Imm(0x1F));
+                cc.cmp(fmt, Imm(2)); cc.jne(deoptL);
+                // immutable bit (1<<23) set → deopt.
+                Gp immb = cc.new_gp64("apImm"); cc.mov(immb, hdr);
+                cc.and_(immb, Imm(1ULL << 23));
+                cc.cmp(immb, Imm(0)); cc.jne(deoptL);
+                Gp sc = cc.new_gp64("apSc"); cc.mov(sc, hdr); cc.shr(sc, Imm(56));
+                Label scOk = cc.new_label();
+                cc.cmp(sc, Imm(0xFF)); cc.jne(scOk);
+                {
+                    Gp ov = cc.new_gp64("apSv"); cc.mov(ov, ptr(rcv, -8));
+                    cc.shl(ov, Imm(8)); cc.shr(ov, Imm(8)); cc.mov(sc, ov);
+                }
+                cc.bind(scOk);
+                Gp i = cc.new_gp64("apI"); cc.mov(i, idx); cc.sar(i, Imm(3));
+                cc.cmp(i, Imm(1)); cc.jl(deoptL);
+                cc.cmp(i, sc);     cc.jg(deoptL);
+                cc.mov(ptr(rcv, i, 3), val);     // [rcv + i*8] = val
+                cc.mov(dst, val);                // result = val
+                cc.jmp(okL);
+                cc.bind(deoptL);
+                {
+                    Gp sp = cc.new_gp64("sp_ap"); cc.mov(sp, ptr(state, OFF_SP));
+                    int dBSize = static_cast<int>(v.operands.size()) - 3;
+                    for (int k = 0; k < dBSize; k++) {
+                        auto opIt = regFor.find(v.operands[3 + k]);
+                        if (opIt == regFor.end()) return bail(v.id);
+                        cc.mov(ptr(sp, k * 8), opIt->second);
+                    }
+                    cc.mov(ptr(sp, dBSize * 8), rcv);
+                    cc.mov(ptr(sp, (dBSize + 1) * 8), idx);
+                    cc.mov(ptr(sp, (dBSize + 2) * 8), val);
+                    cc.add(sp, Imm((dBSize + 3) * 8));
+                    cc.mov(ptr(state, OFF_SP), sp);
+                    Gp ipReg = cc.new_gp64("ip_ap");
+                    if (bytecodeBase) {
+                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase)
+                                    + static_cast<uint32_t>(v.literal);
+                        cc.mov(ipReg, Imm((uint64_t)a));
+                    } else { cc.mov(ipReg, Imm(v.literal)); }
+                    cc.mov(ptr(state, OFF_IP), ipReg);
+                    Gp argc = cc.new_gp32("argc_ap");
+                    cc.mov(argc, Imm(2)); cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
+                    Gp z = cc.new_gp64("z_ap"); cc.xor_(z, z);
+                    cc.mov(ptr(state, OFF_ICDATAPTR), z);
+                    Gp ex = cc.new_gp32("ex_ap"); cc.mov(ex, Imm(EXIT_SEND));
                     cc.mov(ptr(state, OFF_EXIT), ex);
                     cc.ret();
                 }
