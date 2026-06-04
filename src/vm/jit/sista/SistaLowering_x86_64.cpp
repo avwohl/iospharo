@@ -46,6 +46,11 @@
 #include <unordered_map>
 #include <vector>
 
+// Per-fusion EMIT counters (defined in SistaRuntime.cpp).  Incremented at the
+// successful inline-emit point to distinguish "fusion fired" from "bailed".
+extern "C" uint64_t g_sistaEmit_countedLoopDo;
+extern "C" uint64_t g_sistaEmit_countedLoopInjectInto;
+
 // Sista runtime helpers.  Defined in src/vm/jit/JITRuntime.cpp.
 extern "C" uint64_t jit_rt_store_inst_var(void* state,
                                             uint64_t recvBits,
@@ -1048,7 +1053,6 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.bind(loopExit);
                 if (doHasCapture) cc.mov(ptr(doVecReg, doVecSlotByteOff), accReg);
                 regFor[v.id] = rcvReg;
-                extern "C" uint64_t g_sistaEmit_countedLoopDo;
                 g_sistaEmit_countedLoopDo++;
                 break;
             }
@@ -1215,7 +1219,6 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.cmp(iReg, sizeReg); cc.jbe(injHead);
                 cc.bind(injExit);
                 regFor[v.id] = accReg;   // inject:into: returns the accumulator
-                extern "C" uint64_t g_sistaEmit_countedLoopInjectInto;
                 g_sistaEmit_countedLoopInjectInto++;
                 break;
             }
