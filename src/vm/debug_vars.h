@@ -53,6 +53,10 @@ DEBUG_BOOL(PHARO_SISTA_NO_WHILETRUE_TODO)      // OPT-OUT (default ON): admit th
                                                // counter back-edge so a real Interval `do:`
                                                // (no inlined counter) never matches.  Set this
                                                // to disable if a deopt-storm is observed.
+DEBUG_BOOL(PHARO_SISTA_DUMP_NODES)             // dump each method's asmjit node graph to
+                                               // stderr right BEFORE finalize() (the RA pass).
+                                               // The LAST graph printed before a build_liveness
+                                               // crash is the culprit method.
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT

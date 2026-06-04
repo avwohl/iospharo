@@ -331,9 +331,33 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         // No match — fall through to block 0 (entry).
     }
 
+    // Reachability prune (mirrors the x86 lowerer).  asmjit's RA pass
+    // null-derefs when its remove_unreachable_code step strips a dead block
+    // (observed crashing on x86; arm64 happens to tolerate it today, but
+    // handing the RA unreachable blocks is fragile and the dead code is pure
+    // waste).  Block id == index (blockAt returns blocks[id]); entry is
+    // block 0.  BFS the successor graph from 0; skip everything unreachable.
+    std::vector<char> blockReachable(method.blocks.size(), 0);
+    if (!method.blocks.empty()) {
+        std::vector<uint32_t> work;
+        work.push_back(0);
+        blockReachable[0] = 1;
+        while (!work.empty()) {
+            uint32_t bid = work.back(); work.pop_back();
+            for (uint32_t s : method.blocks[bid].successors) {
+                if (s < blockReachable.size() && !blockReachable[s]) {
+                    blockReachable[s] = 1;
+                    work.push_back(s);
+                }
+            }
+        }
+    }
+
     // Walk blocks in ID order.  The builder orders blocks by source
     // bytecode offset, so block 0 is entry.
     for (const Block& b : method.blocks) {
+        if (b.id >= blockReachable.size() || !blockReachable[b.id])
+            continue;   // unreachable/dead block — don't emit (see above)
         cc.bind(blockLabels[b.id]);
 
         // Compare→branch fusion: if the block ends in

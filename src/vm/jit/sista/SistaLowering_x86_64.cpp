@@ -35,6 +35,7 @@
 #include "SistaLowering.hpp"
 #include "../../DebugSettings.hpp"
 #include "../../DebugVars.hpp"   // GET_DEBUG_BOOL — per-op x86 Sista disable knobs
+#include <asmjit/core/formatter.h>  // PHARO_SISTA_DUMP_NODES: pre-finalize IR dump
 
 #if PHARO_JIT_ENABLED
 
@@ -215,14 +216,21 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // PHARO_SISTA_ASMJIT_LOG=1: dump every emitted method's asmjit IR
     // and final machine code to stderr.  Useful to inspect codegen
     // when chasing miscompiles.
+    // PHARO_SISTA_DUMP_NODES also attaches a logger so the RA-pass trace
+    // (CFG/liveness, gated by the diagnostic options below) is printed.
     static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
-        if (pharo::g_debug.sistaAsmjitLog)
+        if (pharo::g_debug.sistaAsmjitLog || GET_DEBUG_BOOL(PHARO_SISTA_DUMP_NODES))
             return new asmjit::FileLogger(stderr);
         return nullptr;
     }();
     if (asmjitLogger) code.set_logger(asmjitLogger);
 
     Compiler cc(&code);
+    // PHARO_SISTA_DUMP_NODES: turn on the RA diagnostic trace so the
+    // register-allocator prints [build_cfg_*]/[build_liveness] per function;
+    // the LAST function traced before a build_liveness crash is the culprit.
+    if (GET_DEBUG_BOOL(PHARO_SISTA_DUMP_NODES))
+        cc.add_diagnostic_options(asmjit::DiagnosticOptions::kRADebugAll);
     FuncNode* fn = cc.add_func(FuncSignature::build<void, void*>());
     Gp state = cc.new_gp64("state");
     fn->set_arg(0, state);
@@ -319,8 +327,35 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         return true;
     };
 
+    // Reachability prune.  asmjit's RA pass (BaseRAPass::build_liveness)
+    // null-derefs on x86 when its remove_unreachable_code step strips a dead
+    // block: the stripped block keeps degenerate (null) live-bit storage and
+    // the liveness walk dereferences it (rapass.cpp build_liveness).  We must
+    // not hand asmjit unreachable blocks.  Block id == index into blocks[]
+    // (blockAt returns blocks[id]); execution enters at block 0 (the prologue
+    // falls into it).  BFS the successor graph from 0; skip everything else.
+    // Reachable blocks never branch to an unreachable successor, so dropping
+    // them is safe for the fall-through (b.id+1) optimisation below.
+    std::vector<char> blockReachable(method.blocks.size(), 0);
+    if (!method.blocks.empty()) {
+        std::vector<uint32_t> work;
+        work.push_back(0);
+        blockReachable[0] = 1;
+        while (!work.empty()) {
+            uint32_t bid = work.back(); work.pop_back();
+            for (uint32_t s : method.blocks[bid].successors) {
+                if (s < blockReachable.size() && !blockReachable[s]) {
+                    blockReachable[s] = 1;
+                    work.push_back(s);
+                }
+            }
+        }
+    }
+
     // Walk blocks in ID order (builder emits them in source-bytecode order).
     for (const Block& b : method.blocks) {
+        if (b.id >= blockReachable.size() || !blockReachable[b.id])
+            continue;   // unreachable/dead block — don't emit (see above)
         cc.bind(blockLabels[b.id]);
 
         // Compare-into-branch fusion: if block ends with kPrimXxxInt
@@ -2767,6 +2802,20 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     }
 
     cc.end_func();
+
+    // PHARO_SISTA_DUMP_NODES: dump the asmjit node graph BEFORE finalize()
+    // (which runs the RA pass).  When a method trips an RA crash inside
+    // build_liveness, the LAST graph printed here is the culprit.
+    if (GET_DEBUG_BOOL(PHARO_SISTA_DUMP_NODES)) {
+        asmjit::String sb;
+        asmjit::FormatOptions fo;
+        asmjit::Formatter::format_node_list(sb, fo, &cc);
+        fprintf(stderr,
+            "\n[SISTA-DUMP-NODES] blocks=%zu values=%zu ===\n%s\n[SISTA-DUMP-END]\n",
+            method.blocks.size(), method.values.size(), sb.data());
+        fflush(stderr);
+    }
+
     cc.finalize();
 
     CompiledFn out = nullptr;
