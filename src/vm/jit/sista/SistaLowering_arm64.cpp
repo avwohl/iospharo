@@ -3541,7 +3541,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Label loopHead = cc.new_label();
                 Label loopExit = cc.new_label();
                 cc.cmp(iReg, stopReg);
-                cc.b_hi(loopExit);
+                cc.b_gt(loopExit);   // SIGNED: SmI bounds may be negative
                 cc.bind(loopHead);
 
                 // Inline block body.  temp 0 = acc → accReg,
@@ -3777,7 +3777,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // i += SmI(1) = i + 8; fused cmp+b.ls back-edge.
                 cc.add(iReg, iReg, Imm(8));
                 cc.cmp(iReg, stopReg);
-                cc.b_ls(loopHead);
+                cc.b_le(loopHead);   // SIGNED
 
                 cc.bind(loopExit);
 
@@ -3903,7 +3903,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Label loopHead = cc.new_label();
                 Label loopExit = cc.new_label();
                 cc.cmp(iReg, stopReg);
-                cc.b_hi(loopExit);
+                cc.b_gt(loopExit);   // SIGNED: SmI bounds may be negative
                 cc.bind(loopHead);
 
                 // Inline block body.  temp 0 = each → iReg.
@@ -4044,7 +4044,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // i += 8 (SmI(1) tag-preserving); fused cmp+b.ls back-edge.
                 cc.add(iReg, iReg, Imm(8));
                 cc.cmp(iReg, stopReg);
-                cc.b_ls(loopHead);
+                cc.b_le(loopHead);   // SIGNED
                 cc.bind(loopExit);
 
                 // Result placeholder: startReg.  do:'s caller usually
@@ -4468,7 +4468,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Label loopHead = cc.new_label();
                 Label loopExit = cc.new_label();
                 cc.cmp(iReg, stopReg);
-                cc.b_hi(loopExit);
+                cc.b_gt(loopExit);   // SIGNED: SmI bounds may be negative
                 cc.bind(loopHead);
 
                 // accReg = accReg <arith> iReg, tag-preserving SmI.
@@ -4493,7 +4493,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // the integer field is +8 in the encoded Oop (preserves tag).
                 cc.add(iReg, iReg, Imm(8));
                 cc.cmp(iReg, stopReg);
-                cc.b_ls(loopHead);
+                cc.b_le(loopHead);   // SIGNED
 
                 cc.bind(loopExit);
 
