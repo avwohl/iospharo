@@ -54,6 +54,7 @@ extern "C" uint64_t g_sistaEmit_countedLoopArrayDoAccum;
 extern "C" uint64_t g_sistaEmit_countedLoopIntervalDoAccum;
 extern "C" uint64_t g_sistaEmit_countedLoopIntervalInjectInto;
 extern "C" uint64_t g_sistaEmit_countedLoopArrayCollect;
+extern "C" uint64_t g_sistaEmit_countedLoopWhileTrueAccum;
 
 // Sista runtime helpers.  Defined in src/vm/jit/JITRuntime.cpp.
 extern "C" uint64_t jit_rt_store_inst_var(void* state,
@@ -1807,6 +1808,89 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.bind(loopExit);
                 regFor[v.id] = resultReg;   // collect: returns the new Array
                 g_sistaEmit_countedLoopArrayCollect++;
+                break;
+            }
+
+            // ---- Counted-loop fusion: `n timesRepeat: [outer := outer OP c]` ----
+            // Closed-form (NO loop): outer += (limit - countInit + 1) * c;
+            // count := limit + 1.  Replaces N iterations with ~8 instructions.
+            // Core x86 port: const c ∈ {0,1}, non-series only (the arithmetic-
+            // series shape needs a 128-bit signed multiply for its overflow
+            // check — bail to tier-1).  Mirrors arm64 :4504.  Deopt resets IP
+            // to deoptBC with temps unchanged (we store only after all checks).
+            case Op::kCountedLoopWhileTrueAccum: {
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
+                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                uint32_t accumTempIdx = (uint32_t)(v.literal & 0xFF);
+                uint32_t arithCode    = (uint32_t)((v.literal >> 8) & 0xF);
+                int8_t   constValue   = (int8_t)((v.literal >> 12) & 0xFF);
+                uint32_t limitLitIdx  = (uint32_t)((v.literal >> 20) & 0xFF);
+                uint32_t countTempIdx = (uint32_t)((v.literal >> 28) & 0xFF);
+                int8_t   countInit    = (int8_t)((v.literal >> 36) & 0xFF);
+                uint32_t deoptBC      = (uint32_t)((v.literal >> 44) & 0xFFFF);
+                bool     isSeries     = (bool)((v.literal >> 60) & 1);
+                bool     isNoAccum    = (bool)((v.literal >> 61) & 1);
+                if (isSeries) return bail(v.id);   // 128-bit smul overflow → defer
+                auto wtDeopt = [&]() {
+                    Gp ipReg = cc.new_gp64("wt_dz_ip");
+                    if (bytecodeBase) {
+                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
+                        cc.mov(ipReg, Imm((uint64_t)a));
+                    } else cc.mov(ipReg, Imm((uint64_t)deoptBC));
+                    cc.mov(ptr(state, OFF_IP), ipReg);
+                    Gp argc = cc.new_gp32("wt_dz_argc"); cc.mov(argc, Imm(0));
+                    cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
+                    Gp z = cc.new_gp64("wt_dz_z"); cc.xor_(z, z);
+                    cc.mov(ptr(state, OFF_ICDATAPTR), z);
+                    Gp ex = cc.new_gp32("wt_dz_ex"); cc.mov(ex, Imm(EXIT_SEND));
+                    cc.mov(ptr(state, OFF_EXIT), ex);
+                    cc.ret();
+                };
+                Gp tempBase = cc.new_gp64("wt_tb"); cc.mov(tempBase, ptr(state, OFF_TEMPBASE));
+                Gp litBase = cc.new_gp64("wt_lb"); cc.mov(litBase, ptr(state, OFF_LITERALS));
+                Gp accumReg = cc.new_gp64("wt_acc");
+                if (isNoAccum) {
+                    uint64_t accumInitOop = ((uint64_t)((int64_t)countInit) << 3) | 1ULL;
+                    cc.mov(accumReg, Imm(accumInitOop));
+                } else {
+                    cc.mov(accumReg, ptr(tempBase, (int)accumTempIdx * 8));
+                    Gp tg = cc.new_gp64("wt_tagA"); cc.mov(tg, accumReg);
+                    cc.and_(tg, Imm(7)); cc.cmp(tg, Imm(1));
+                    Label aOk = cc.new_label(); cc.je(aOk); wtDeopt(); cc.bind(aOk);
+                }
+                Gp limitReg = cc.new_gp64("wt_lim");
+                cc.mov(limitReg, ptr(litBase, (int)limitLitIdx * 8));
+                Gp tl = cc.new_gp64("wt_tagL"); cc.mov(tl, limitReg);
+                cc.and_(tl, Imm(7)); cc.cmp(tl, Imm(1));
+                Label lOk = cc.new_label(); cc.je(lOk); wtDeopt(); cc.bind(lOk);
+                // itersOop (tagged) = limit - (countInit-1)*8.
+                int64_t adjust = ((int64_t)countInit - 1) * 8;
+                Gp itersOop = cc.new_gp64("wt_it"); cc.mov(itersOop, limitReg);
+                if (adjust != 0) {
+                    Gp adj = cc.new_gp64("wt_adj"); cc.mov(adj, Imm((int64_t)adjust));
+                    cc.sub(itersOop, adj);
+                }
+                Gp newAccum = cc.new_gp64("wt_new");
+                if (constValue == 0) {
+                    cc.mov(newAccum, accumReg);
+                } else if (constValue == 1) {
+                    cc.mov(newAccum, accumReg);
+                    if (arithCode == 0) { cc.add(newAccum, itersOop); cc.sub(newAccum, Imm(1)); }
+                    else { cc.sub(newAccum, itersOop); cc.add(newAccum, Imm(1)); }
+                    // Overflow: valid SmI → bits above 60 are all-0 or all-1.
+                    Gp ov = cc.new_gp64("wt_ov"); cc.mov(ov, newAccum); cc.sar(ov, Imm(60));
+                    cc.cmp(ov, Imm(0)); Label ovOk = cc.new_label(); cc.je(ovOk);
+                    cc.cmp(ov, Imm(-1)); cc.je(ovOk); wtDeopt(); cc.bind(ovOk);
+                } else {
+                    return bail(v.id);   // pre-pass restricts const to {0,1}
+                }
+                cc.mov(ptr(tempBase, (int)accumTempIdx * 8), newAccum);
+                // count temp = limit + 1 (tagged +8).
+                Gp newCount = cc.new_gp64("wt_nc"); cc.mov(newCount, limitReg);
+                cc.add(newCount, Imm(8));
+                cc.mov(ptr(tempBase, (int)countTempIdx * 8), newCount);
+                regFor[v.id] = limitReg;   // placeholder (END pop discards)
+                g_sistaEmit_countedLoopWhileTrueAccum++;
                 break;
             }
 
