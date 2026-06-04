@@ -1,5 +1,59 @@
 # Pharo SUnit Suite — VM Compatibility Status
 
+## 2026-06-04 full-suite run: custom VM vs stock Cog
+
+**Setup:** full discovery run (every non-abstract `TestCase` subclass — the
+2026-04 no-skip policy), Pharo 13 image. Stock Cog (`~/stockpharo/pharo`,
+`run_sunit_cog.st`) on the x64 box vs the clean C++ VM (`test_load_image`,
+`run_sunit_tests.st`). Custom-VM arm64 = local build; x86 = AWS box.
+
+**Stock Cog — COMPLETES the full suite (baseline):**
+
+```
+  classes  2045
+  pass     27815      fail 38   error 83   skip 128
+  total    28064      pass rate 99.1%
+```
+
+**Custom VM — CANNOT complete the full suite.** Individual pathological tests
+run away (a Sista miscompile turns a finite loop infinite) and the per-test
+watchdog cannot terminate them: a tight JIT loop has no preemption-safe point,
+so `process terminate` never unwinds (the "stuck terminate" failure mode). The
+batch wall-clock deadline (2 h) is the only backstop. Where each config stalls:
+
+```
+  arm64, Sista ON   80 / 2045 classes, then HANGS on
+                    CollectionArithmeticTest>>testRunningAverage
+                    (Cog passes that class 20/20 instantly → Sista miscompile)
+  arm64, Sista OFF  stalls at IntegerTest (class 7) — tier-1/runaway test
+  x86,   Sista ON   DNU at startup, 0 tests: SUnitRunner>>nextRunNumber does
+                    [file contents asInteger] but asInteger is sent to the
+                    SUnitRunner class (self) — an inlined-block wrong-receiver
+                    miscompile (x86 analog of the arm64 fix 4b446bf4)
+```
+
+**Δcog on the 80 classes the custom VM (Sista) DID complete** (4405 tests):
+
+```
+  pass 4306   fail 12   error 80   skip 6   timeout 1     (97.8% of the 4405)
+  93 tests pass on Cog but not here: 80 error, 12 fail, 1 timeout
+```
+
+Regression clusters (delta file `*.delta-vs-cog.txt`): collection
+`testReject` / `testCopyWithout*` (Bag/Dictionary/Heap/DoubleLinkedList/…
+errors — likely one shared `reject:`/`copyWithout:` root cause),
+`BecomeTest>>testBecome*IdentityHash` (become+identityHash, fails),
+class-introspection (`BehaviorTest`/`ClassHierarchyTest` testAllReferencesTo /
+testSubclasses errors), `IntegerTest>>testReciprocalModulo` (timeout).
+
+**Bottom line:** Cog runs the whole suite at 99.1%; the custom VM's full-suite
+coverage is gated by non-preemptible runaway tests (Sista miscompiles), not by
+the asmjit RA crash fixed earlier (bb158a7f — bench-validated, orthogonal). The
+next lever for custom-VM SUnit coverage is (a) a preemptible-loop interrupt
+check so the watchdog can kill runaway tests, and (b) fixing the Sista
+miscompiles that turn finite loops infinite (testRunningAverage) and the x86
+inlined-block wrong-receiver bug (nextRunNumber).
+
 ## 2026-05-28 first end-to-end run
 
 **Setup:** `scripts/pharo-headless-test/` harness, fresh Pharo 13
