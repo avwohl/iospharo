@@ -38,6 +38,19 @@ DEBUG_BOOL(PHARO_FINDNODE_WATCH)        // aigraph curEdge corruption capture
 DEBUG_BOOL(PHARO_SCAV_DANGLE_CHECK)     // post-scavenge: log pointers still aimed into eden (missed roots)
 DEBUG_BOOL(PHARO_RETMETH_TRACE)         // returnFromMethod trace for classDefinitionNode (scavenge "returns-receiver" bug)
 
+// ── x86_64 Sista lowering: per-op disable knobs for crash bisection ──
+// One build → toggle any op off via its env var to isolate a miscompile.
+DEBUG_BOOL(PHARO_SISTA_NO_LOWER_AT)            // kPrimAt
+DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SIZE)          // kPrimSize
+DEBUG_BOOL(PHARO_SISTA_NO_LOWER_ATPUT)         // kPrimAtPut
+DEBUG_BOOL(PHARO_SISTA_NO_LOWER_FLOAT)         // kPrimAdd/Sub/MulFloat
+DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)  // kCountedLoop* fusions
+DEBUG_BOOL(PHARO_SISTA_LOWER_SELECT)           // OPT-IN (default off):
+                                               // kCountedLoopArraySelect is
+                                               // ported but unverified (the
+                                               // builder rarely emits it), so
+                                               // it bails unless this is set.
+
 #undef DEBUG_BOOL
 #undef DEBUG_INT
 #undef DEBUG_STR

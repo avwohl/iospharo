@@ -46,9 +46,13 @@ helper).  Not an x86 gap.  The real x86 gaps were small: guard_class (43),
 prim_at (21).
 
 Ported to x86 (all on origin/jit-x86): kGuardClass, kPrimAt, kPrimSize,
-kPrimAtPut, kPrimAdd/Sub/MulFloat.  guard_class + prim_at verified via the
-startup run (OK 934→998, no crash).  Per-op disable gates added for bisection:
-PHARO_SISTA_NO_LOWER_{AT,SIZE,ATPUT,FLOAT}.
+kPrimAtPut, kPrimAdd/Sub/MulFloat, kPrimEvenOddCheck, kLoadTempInVec,
+kStoreTempInVec, kInterval (no-op marker), kBlockCreate.  Verified no-crash with
+all ops on across ArrayTest/OrderedCollectionTest/FloatTest/IntervalTest under
+PHARO_SISTA_DISPATCH=1 (guard_class+prim_at also startup-verified, OK 934→998).
+Per-op disable gates for bisection: PHARO_SISTA_NO_LOWER_{AT,SIZE,ATPUT,FLOAT}.
+
+ALL non-loop Sista ops are now ported.  Only the counted-loop fusions remain.
 
 Crash fixed: the inline kPrimAt scale-3 indexed LOAD (`mov dst,[rcv+i*8]`)
 crashed asmjit's register allocator (BaseRAPass::build_liveness null-deref) at
@@ -60,12 +64,56 @@ Verification harness: `scripts/aws/sunit-sista-verify.sh` runs an SUnit subset
 with/without Sista and diffs; `validate_smalltalk_image` (separate repo) can
 SHA-256-manifest snapshots for bit-level state diffing.
 
-## Known WIP / deferred
+## Counted-loop fusions — verification harness + status (2026-06-04)
 
-    Sista x86: remaining ops   kPrimEvenOddCheck, kBlockCreate, kInterval,
-                            kLoadTempInVec/kStoreTempInVec, the 9 kCountedLoop*
-                            fusions — low/zero startup frequency; port from the
-                            arm64 sibling for full structural parity.
+Box stability and a fast correctness harness unblocked this (see
+`sista-x86-port` memory).  Box: the AWS instance has NO SWAP, so a runaway
+fusion OOM-killed sshd ("box lost", ssh 255).  Fixed with a 16 G swapfile +
+`scripts/aws/box-safe-run.sh` (runs the VM in a systemd transient service:
+MemoryMax=8G MemorySwapMax=0 CPUQuota=400% RuntimeMaxSec — cgroup-kills a
+runaway, never the box).  Harness:
+`scripts/pharo-headless-test/sista_loop_bench.st` runs each idiom in a hot
+400k-iter loop via dedicated helper methods, checks a known answer, writes
+/tmp/sista_bench.txt, then quits (no scheduler hang, ~30 s).  Per-fusion EMIT
+counters (`g_sistaEmit_countedLoop*`, printed under PHARO_SISTA_BAIL_LOG=1)
+prove the fusion FIRED vs bailed to tier-1.
+
+Run: prep a fresh image with stock pharo `eval --save` fileIn of the bench .st,
+then `rm -f /tmp/sista_bench_done.txt` and
+`box-safe-run.sh sfuse 120 PHARO_SISTA_DISPATCH=1 PHARO_SISTA_BAIL_LOG=1 -- ./build/test_load_image .../Pharo-bench.image`.
+
+PORTED + VERIFIED-CORRECT on x86 (fusion fired + answer correct, EMIT counter):
+    kCountedLoopInjectInto          inject_array=55       EMIT>0
+    kCountedLoopArrayDoAccum        do_array=55           EMIT>0
+    kCountedLoopIntervalDoAccum     do_interval=5050      EMIT>0
+    kCountedLoopIntervalInjectInto  inject_interval=5050  EMIT>0
+    kCountedLoopArrayCollect        collect_array         EMIT>0  (allocates result)
+    kCountedLoopWhileTrueAccum      timesrepeat=1000      EMIT>0  (closed-form, c∈{0,1})
+    kCountedLoopDo                  (no-crash only; non-accum do:, not on bench)
+All 7 bench checks PASS together with all fusions on; box stable throughout.
+
+PORTED but GATED OFF (opt-in, unverified):
+    kCountedLoopArraySelect   arm64:4702  arr select:[...]  dynamic-size result.
+       Ported (generic predicate path, alloc + compact-store + array_shrink)
+       and FIXES an arm64 off-by-one: arm64 stores the k-th kept element at
+       `result + writeIdx*8` (writeIdx 0-based) → first kept lands at byte
+       offset 0 (the HEADER); the correct slot is `result + 8 + writeIdx*8`.
+       jit_rt_sista_array_shrink only rewrites the header slot-count (no shift),
+       so arm64's trimmed array is wrong — a likely latent arm64 bug (select
+       rarely fires there).  The x86 path COMPILES + is crash-clean but the
+       bench never triggered it (the builder needs select: as a special Send1
+       with a specific block shape — `[:e|e>5]`/`[:e|e even]` weren't admitted),
+       so it stays UNVERIFIED.  Gated behind PHARO_SISTA_LOWER_SELECT (default
+       OFF → bails to tier-1) until its trigger shape is matched and verified.
+
+REMAINING (1) — deferred:
+    kCountedLoopIntervalDo    arm64:3783  (1 to:n) do:[...]  non-accumulating.
+       Block body does sends / at:put: (no register accumulator); returns the
+       interval — not cleanly verifiable by a known-output bench.  Lower value.
+The WhileTrueAccum arithmetic-series shape (`s := s + i`) is also deferred: its
+overflow check needs a 128-bit signed multiply (arm64 smulh) — x86 one-operand
+imul into RDX:RAX is awkward under asmjit's Compiler RA.  Bails to tier-1.
+Methods bail safely to tier-1 without any of these.
     store_ivar plain stores The 92%-dominant bail.  Routing plain bytecode ivar
                             stores through jit_rt_store_inst_var (as setter-inline
                             does) would lift the compile rate ~52%→~99% on BOTH

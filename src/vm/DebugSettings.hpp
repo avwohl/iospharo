@@ -547,10 +547,8 @@ struct DebugSettings {
     bool sistaNoLowerBranch = false;               // PHARO_SISTA_NO_LOWER_BRANCH
     bool sistaNoLowerFuse = false;                 // PHARO_SISTA_NO_LOWER_FUSE
     bool sistaNoLowerSends = false;                // PHARO_SISTA_NO_LOWER_SENDS
-    bool sistaNoLowerAt = false;                   // PHARO_SISTA_NO_LOWER_AT
-    bool sistaNoLowerSize = false;                 // PHARO_SISTA_NO_LOWER_SIZE
-    bool sistaNoLowerAtPut = false;                // PHARO_SISTA_NO_LOWER_ATPUT
-    bool sistaNoLowerFloat = false;                // PHARO_SISTA_NO_LOWER_FLOAT
+    // NB: per-op x86 Sista disable knobs (AT/SIZE/ATPUT/FLOAT/COUNTED_LOOP)
+    // live in debug_vars.h (the single-source X-macro system), not here.
     bool sistaNoRemoteTemp = false;                // PHARO_SISTA_NO_REMOTE_TEMP
     bool sistaNoRemoteTempRead = false;            // PHARO_SISTA_NO_REMOTE_TEMP_READ
     bool sistaNoRemoteTempWrite = false;           // PHARO_SISTA_NO_REMOTE_TEMP_WRITE
