@@ -82,21 +82,33 @@ Run: prep a fresh image with stock pharo `eval --save` fileIn of the bench .st,
 then `rm -f /tmp/sista_bench_done.txt` and
 `box-safe-run.sh sfuse 120 PHARO_SISTA_DISPATCH=1 PHARO_SISTA_BAIL_LOG=1 -- ./build/test_load_image .../Pharo-bench.image`.
 
-PORTED + VERIFIED-CORRECT on x86 (fusion fired + answer correct):
-    kCountedLoopInjectInto          inject_array=55     EMIT=1
-    kCountedLoopArrayDoAccum        do_array=55         EMIT=7
-    kCountedLoopIntervalDoAccum     do_interval=5050    EMIT=2
-    kCountedLoopIntervalInjectInto  inject_interval=5050 EMIT=1
+PORTED + VERIFIED-CORRECT on x86 (fusion fired + answer correct, EMIT counter):
+    kCountedLoopInjectInto          inject_array=55       EMIT>0
+    kCountedLoopArrayDoAccum        do_array=55           EMIT>0
+    kCountedLoopIntervalDoAccum     do_interval=5050      EMIT>0
+    kCountedLoopIntervalInjectInto  inject_interval=5050  EMIT>0
+    kCountedLoopArrayCollect        collect_array         EMIT>0  (allocates result)
+    kCountedLoopWhileTrueAccum      timesrepeat=1000      EMIT>0  (closed-form, c∈{0,1})
     kCountedLoopDo                  (no-crash only; non-accum do:, not on bench)
+All 7 bench checks PASS together with all fusions on; box stable throughout.
 
-REMAINING (4) — arm64 SistaLowering_arm64.cpp line:
-    kCountedLoopArrayCollect    5473   arr collect:[...]  (allocates result Array)
-    kCountedLoopArraySelect     4702   arr select:[...]   (dynamic-size result; 771 ln)
-    kCountedLoopIntervalDo      3783   (1 to:n) do:[...]   non-accum (270 ln)
-    kCountedLoopWhileTrueAccum  4504   n timesRepeat: math (198 ln)
-The Collect/Select pair allocate result collections (need the alloc helper +
-GC-safe element stores) — more involved than the accumulator loops above.
-Methods bail safely to tier-1 without them (low startup frequency).
+REMAINING (2) — the two hardest, deferred:
+    kCountedLoopArraySelect   arm64:4702  arr select:[...]  dynamic-size result.
+       DEFERRED + arm64 BUG FOUND: arm64's select stores the k-th selected
+       element at `result + writeIdx*8` (writeIdx 0-based) → first selected
+       lands at byte offset 0 (the HEADER), off-by-one-slot vs Collect's
+       `result + i*8`.  jit_rt_sista_array_shrink only rewrites the header
+       slot-count (doesn't shift), so the trimmed array is wrong.  Likely a
+       latent arm64 bug (select fusion rarely/never fires there).  An x86 port
+       must use `result + 8 + writeIdx*8` AND handle the `e even`/compare
+       predicate representation.  See docs/deferred.md.
+    kCountedLoopIntervalDo    arm64:3783  (1 to:n) do:[...]  non-accumulating.
+       Block body does sends / at:put: (no register accumulator); returns the
+       interval — not cleanly verifiable by a known-output bench.  Lower value.
+The WhileTrueAccum arithmetic-series shape (`s := s + i`) is also deferred: its
+overflow check needs a 128-bit signed multiply (arm64 smulh) — x86 one-operand
+imul into RDX:RAX is awkward under asmjit's Compiler RA.  Bails to tier-1.
+Methods bail safely to tier-1 without any of these.
     store_ivar plain stores The 92%-dominant bail.  Routing plain bytecode ivar
                             stores through jit_rt_store_inst_var (as setter-inline
                             does) would lift the compile rate ~52%→~99% on BOTH
