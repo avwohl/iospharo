@@ -2506,6 +2506,29 @@ public:
                                     // left), so the IR op's deopt-stack
                                     // assumption (push back the limit)
                                     // doesn't match for to:do:.
+                                    //
+                                    // OPT-IN re-enable (PHARO_SISTA_WHILETRUE_TODO,
+                                    // default OFF): the to:do: pre-loop is
+                                    //   pushConstant START (0x50/0x51),
+                                    //   ExtStoreTemp loopT (0xF5 <idx>)
+                                    // leaving START on the stack.  The fusion's
+                                    // deopt resumes at preLoopStart (re-runs the
+                                    // pre-loop, re-creating START), so the
+                                    // "push back the limit" concern doesn't apply
+                                    // to the resume-at-preLoopStart lowering; the
+                                    // placeholder result is discarded by the END
+                                    // pop, so START-vs-LIMIT is unobservable.
+                                    // Used to verify the series fold FIRES (prod
+                                    // default OFF to avoid the Interval-do: perf
+                                    // regression).
+                                    else if (!preLoopOk
+                                        && GET_DEBUG_BOOL(PHARO_SISTA_WHILETRUE_TODO)
+                                        && (p0 == 0x50 || p0 == 0x51)
+                                        && p1 == jit::SistaV1::ExtStoreTemp
+                                        && p2 == (uint8_t)loopTemp) {
+                                        preLoopOk = true;
+                                        countInit = (p0 == 0x51) ? 1 : 0;
+                                    }
                                 }
                                 // END pop at i+4.
                                 bool endPopOk = (i + 4 < len_
