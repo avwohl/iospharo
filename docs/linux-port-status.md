@@ -66,7 +66,7 @@ SHA-256-manifest snapshots for bit-level state diffing.
 
 ## Known WIP / deferred
 
-    Sista x86: counted-loop   The only remaining unported ops: the 9
+    Sista x86: counted-loop   kCountedLoopDo ported (no-crash verified).  8 of the 9
     fusions                 kCountedLoop* variants (Do, InjectInto, Collect,
                             Select, ArrayDoAccum, IntervalDo, IntervalDoAccum,
                             IntervalInjectInto, WhileTrueAccum) — arm64
