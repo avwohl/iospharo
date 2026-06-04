@@ -72,6 +72,9 @@ extern "C" uint64_t jit_rt_sista_complete_array_collect(
     uint64_t startIdx,
     uint64_t constBits,
     uint64_t arithCode);
+// Per-fusion EMIT counter (defined in SistaRuntime.cpp; also used by the x86
+// lowerer).  Incremented at successful select emit to confirm the fusion fired.
+extern "C" uint64_t g_sistaEmit_countedLoopArraySelect;
 
 namespace pharo {
 namespace sista {
@@ -5109,6 +5112,10 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 std::unordered_map<uint32_t, Gp> blockRegs;
                 bool sawReturn = false;
                 Gp newElemReg;
+                // Implicit-return (subLiftAsBlockReturnLocal) select/collect
+                // blocks have no explicit kReturn — the last reg-producing
+                // value is the result.  Track it for that case.
+                Gp lastReg; bool haveLastReg = false;
                 for (const auto& bv : blockIR.values) {
                     switch (bv.op) {
                     case Op::kLoadTemp: {
@@ -5408,7 +5415,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         if (failedAtValue) *failedAtValue = v.id;
                         return nullptr;
                     }
+                    {
+                        auto lr_ = blockRegs.find(bv.id);
+                        if (lr_ != blockRegs.end()) { lastReg = lr_->second; haveLastReg = true; }
+                    }
                     if (sawReturn) break;
+                }
+                if (!sawReturn && haveLastReg) {
+                    // Implicit-return block (no kReturn): last value is result.
+                    newElemReg = lastReg; sawReturn = true;
                 }
                 if (!sawReturn) {
                     if (failedAtValue) *failedAtValue = v.id;
@@ -5474,6 +5489,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
                 // select:'s result is the new (now trimmed) Array.
                 regFor[v.id] = resultReg;
+                g_sistaEmit_countedLoopArraySelect++;
                 break;
             }
             case Op::kCountedLoopArrayCollect: {
@@ -5876,6 +5892,10 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 std::unordered_map<uint32_t, Gp> blockRegs;
                 bool sawReturn = false;
                 Gp newElemReg;
+                // Implicit-return (subLiftAsBlockReturnLocal) select/collect
+                // blocks have no explicit kReturn — the last reg-producing
+                // value is the result.  Track it for that case.
+                Gp lastReg; bool haveLastReg = false;
                 for (const auto& bv : blockIR.values) {
                     switch (bv.op) {
                     case Op::kLoadTemp: {
@@ -6175,7 +6195,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         if (failedAtValue) *failedAtValue = v.id;
                         return nullptr;
                     }
+                    {
+                        auto lr_ = blockRegs.find(bv.id);
+                        if (lr_ != blockRegs.end()) { lastReg = lr_->second; haveLastReg = true; }
+                    }
                     if (sawReturn) break;
+                }
+                if (!sawReturn && haveLastReg) {
+                    // Implicit-return block (no kReturn): last value is result.
+                    newElemReg = lastReg; sawReturn = true;
                 }
                 if (!sawReturn) {
                     if (failedAtValue) *failedAtValue = v.id;
