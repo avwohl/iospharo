@@ -15,22 +15,35 @@
   total    28064      pass rate 99.1%
 ```
 
-**Custom VM — CANNOT complete the full suite.** Individual pathological tests
-run away (a Sista miscompile turns a finite loop infinite) and the per-test
-watchdog cannot terminate them: a tight JIT loop has no preemption-safe point,
-so `process terminate` never unwinds (the "stuck terminate" failure mode). The
-batch wall-clock deadline (2 h) is the only backstop. Where each config stalls:
+**Custom VM — CANNOT complete the full suite.** Where each config stalls:
 
 ```
-  arm64, Sista ON   80 / 2045 classes, then HANGS on
-                    CollectionArithmeticTest>>testRunningAverage
-                    (Cog passes that class 20/20 instantly → Sista miscompile)
-  arm64, Sista OFF  stalls at IntegerTest (class 7) — tier-1/runaway test
+  arm64, Sista ON   ~80 / 2045 classes, then hangs in CollectionArithmeticTest
+  arm64, Sista OFF  stalls at IntegerTest (class 7)
   x86,   Sista ON   DNU at startup, 0 tests: SUnitRunner>>nextRunNumber does
                     [file contents asInteger] but asInteger is sent to the
                     SUnitRunner class (self) — an inlined-block wrong-receiver
                     miscompile (x86 analog of the arm64 fix 4b446bf4)
 ```
+
+**The CollectionArithmeticTest hang is NOT a JIT/Sista bug — corrected
+2026-06-04.** Originally mislabelled a "Sista miscompile of testRunningAverage".
+Investigation (eval-mode repro + runCase) disproved that:
+- Every test in the class — testRunningAverage, …WithSubsetSize1…, testStdev,
+  testRunningMax/Min — PASSES when run directly via `(Class selector: sel)
+  runCase`, under Sista, in a warm VM. The test *logic* is correct.
+- The full-suite run hangs in the pure INTERPRETER too (`PHARO_NO_JIT=1`), at a
+  *different* test (testStdev-ish) — so it is timing-dependent and not JIT.
+- No WhileTrueAccum fold fires on this path (CAND counter = 0).
+- At the hang only the idle process (P10) is runnable → a **scheduler
+  DEADLOCK**, not a runaway loop.
+The hang is in the SUnit **runner's** per-test fork + Delay-based watchdog
+machinery (`run_sunit_tests.st`) deadlocking against our VM's process
+scheduler / Delay timer — not in the tests or the JIT. The earlier 4.7e9-step
+"spin" was the watchdog/heartbeat cycling, not the test computing. Real fix
+target: the VM scheduler / Delay-timer interaction under the runner's fork +
+watchdog load (a base-VM scheduler issue), or a runner that avoids the
+deadlock-prone fork/watchdog for tests that don't actually hang.
 
 **Δcog on the 80 classes the custom VM (Sista) DID complete** (4405 tests):
 
