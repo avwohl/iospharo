@@ -64,22 +64,39 @@ Verification harness: `scripts/aws/sunit-sista-verify.sh` runs an SUnit subset
 with/without Sista and diffs; `validate_smalltalk_image` (separate repo) can
 SHA-256-manifest snapshots for bit-level state diffing.
 
-## Known WIP / deferred
+## Counted-loop fusions — verification harness + status (2026-06-04)
 
-    Sista x86: counted-loop   kCountedLoopDo ported (no-crash verified).  8 of the 9
-    fusions                 kCountedLoop* variants (Do, InjectInto, Collect,
-                            Select, ArrayDoAccum, IntervalDo, IntervalDoAccum,
-                            IntervalInjectInto, WhileTrueAccum) — arm64
-                            SistaLowering_arm64.cpp:2128-3450.  Each iterates
-                            via the basicSize/basicAt helpers (RA-safe) but
-                            INLINES the block body through a whitelist of ops
-                            (per-iteration emit threading block-local temps
-                            through registers) — ~150 lines each, ~1000 total.
-                            A shared "emit whitelisted block body" helper would
-                            make porting all 9 tractable.  Low/zero startup
-                            frequency (1-3 bails); methods bail safely to
-                            tier-1 without them.  A dedicated effort, not a
-                            quick port.
+Box stability and a fast correctness harness unblocked this (see
+`sista-x86-port` memory).  Box: the AWS instance has NO SWAP, so a runaway
+fusion OOM-killed sshd ("box lost", ssh 255).  Fixed with a 16 G swapfile +
+`scripts/aws/box-safe-run.sh` (runs the VM in a systemd transient service:
+MemoryMax=8G MemorySwapMax=0 CPUQuota=400% RuntimeMaxSec — cgroup-kills a
+runaway, never the box).  Harness:
+`scripts/pharo-headless-test/sista_loop_bench.st` runs each idiom in a hot
+400k-iter loop via dedicated helper methods, checks a known answer, writes
+/tmp/sista_bench.txt, then quits (no scheduler hang, ~30 s).  Per-fusion EMIT
+counters (`g_sistaEmit_countedLoop*`, printed under PHARO_SISTA_BAIL_LOG=1)
+prove the fusion FIRED vs bailed to tier-1.
+
+Run: prep a fresh image with stock pharo `eval --save` fileIn of the bench .st,
+then `rm -f /tmp/sista_bench_done.txt` and
+`box-safe-run.sh sfuse 120 PHARO_SISTA_DISPATCH=1 PHARO_SISTA_BAIL_LOG=1 -- ./build/test_load_image .../Pharo-bench.image`.
+
+PORTED + VERIFIED-CORRECT on x86 (fusion fired + answer correct):
+    kCountedLoopInjectInto          inject_array=55     EMIT=1
+    kCountedLoopArrayDoAccum        do_array=55         EMIT=7
+    kCountedLoopIntervalDoAccum     do_interval=5050    EMIT=2
+    kCountedLoopIntervalInjectInto  inject_interval=5050 EMIT=1
+    kCountedLoopDo                  (no-crash only; non-accum do:, not on bench)
+
+REMAINING (4) — arm64 SistaLowering_arm64.cpp line:
+    kCountedLoopArrayCollect    5473   arr collect:[...]  (allocates result Array)
+    kCountedLoopArraySelect     4702   arr select:[...]   (dynamic-size result; 771 ln)
+    kCountedLoopIntervalDo      3783   (1 to:n) do:[...]   non-accum (270 ln)
+    kCountedLoopWhileTrueAccum  4504   n timesRepeat: math (198 ln)
+The Collect/Select pair allocate result collections (need the alloc helper +
+GC-safe element stores) — more involved than the accumulator loops above.
+Methods bail safely to tier-1 without them (low startup frequency).
     store_ivar plain stores The 92%-dominant bail.  Routing plain bytecode ivar
                             stores through jit_rt_store_inst_var (as setter-inline
                             does) would lift the compile rate ~52%→~99% on BOTH
