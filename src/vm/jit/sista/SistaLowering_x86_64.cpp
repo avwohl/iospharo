@@ -1444,7 +1444,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // iReg = start; loop i = start..stop (SmI step +8 = +1 untagged).
                 Gp iReg = cc.new_gp64("ivacc_i"); cc.mov(iReg, startReg);
                 Label loopHead = cc.new_label(); Label loopExit = cc.new_label();
-                cc.cmp(iReg, stopReg); cc.ja(loopExit);
+                cc.cmp(iReg, stopReg); cc.jg(loopExit);   // SIGNED: SmI bounds may be negative
                 cc.bind(loopHead);
                 if (arithCode == 0) { cc.add(accReg, iReg); cc.sub(accReg, Imm(1)); }
                 else if (arithCode == 1) { cc.sub(accReg, iReg); cc.add(accReg, Imm(1)); }
@@ -1454,7 +1454,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.imul(au, bu); cc.shl(au, Imm(3)); cc.or_(au, Imm(1));
                     cc.mov(accReg, au);
                 }
-                cc.add(iReg, Imm(8)); cc.cmp(iReg, stopReg); cc.jbe(loopHead);
+                cc.add(iReg, Imm(8)); cc.cmp(iReg, stopReg); cc.jle(loopHead);   // SIGNED
                 cc.bind(loopExit);
                 cc.mov(ptr(vecReg, slotByteOff), accReg);   // commit s
                 regFor[v.id] = startReg;   // placeholder (next bc discards)
@@ -1528,7 +1528,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // iReg = start; loop i = start..stop (SmI step +8 = +1 untagged).
                 Gp iReg = cc.new_gp64("ivd_i"); cc.mov(iReg, startReg);
                 Label loopHead = cc.new_label(); Label loopExit = cc.new_label();
-                cc.cmp(iReg, stopReg); cc.ja(loopExit);
+                cc.cmp(iReg, stopReg); cc.jg(loopExit);   // SIGNED: SmI bounds may be negative
                 cc.bind(loopHead);
                 // Inline block body (temp0 = e = iReg).  Result discarded.
                 std::unordered_map<uint32_t, Gp> blockRegs;
@@ -1584,7 +1584,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     if (ivdBailed) break;
                 }
                 if (ivdBailed) return bail(v.id);
-                cc.add(iReg, Imm(8)); cc.cmp(iReg, stopReg); cc.jbe(loopHead);
+                cc.add(iReg, Imm(8)); cc.cmp(iReg, stopReg); cc.jle(loopHead);   // SIGNED
                 cc.bind(loopExit);
                 regFor[v.id] = startReg;   // do: returns the receiver (placeholder)
                 g_sistaEmit_countedLoopIntervalDo++;
@@ -1664,7 +1664,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Gp accReg = cc.new_gp64("ivi_acc"); cc.mov(accReg, initReg0);
                 Gp iReg = cc.new_gp64("ivi_i"); cc.mov(iReg, startReg);
                 Label injHead = cc.new_label(); Label injExit = cc.new_label();
-                cc.cmp(iReg, stopReg); cc.ja(injExit);
+                cc.cmp(iReg, stopReg); cc.jg(injExit);   // SIGNED: SmI bounds may be negative
                 cc.bind(injHead);
                 std::unordered_map<uint32_t, Gp> blockRegs;
                 std::unordered_map<uint32_t, Gp> blockLocalTemp;
@@ -1738,7 +1738,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
                 if (injBailed) return bail(v.id);
                 cc.add(iReg, Imm(8));
-                cc.cmp(iReg, stopReg); cc.jbe(injHead);
+                cc.cmp(iReg, stopReg); cc.jle(injHead);   // SIGNED
                 cc.bind(injExit);
                 regFor[v.id] = accReg;   // inject:into: returns the accumulator
                 g_sistaEmit_countedLoopIntervalInjectInto++;

@@ -5554,6 +5554,19 @@ private:
 
             // Return-top: ^ <TOS>; terminator, pops stack.
             if (op == jit::SistaV1::ReturnTop) {
+                // When sub-lifting a counted-loop splice block
+                // (blockReturnAsLocalReturn_), ReturnTop is a genuine NON-LOCAL
+                // return (`^expr` escaping the home method) — NOT the implicit
+                // block-end (BlockReturnTop/Nil, handled above as a discardable
+                // local kReturn).  The splice lowerings treat kReturn as a
+                // no-op block-end, which would SILENTLY DROP the NLR (wrong
+                // value + the home method fails to terminate).  So bail: the
+                // fusion isn't formed and the block runs via tier-1, where the
+                // NLR works.  (Matches the documented intent at setBlockReturn
+                // AsLocalReturn: "NLR cases ... are still caught".)
+                if (blockReturnAsLocalReturn_) {
+                    return bailToInterpreter(1);
+                }
                 if (stack_.empty()) {
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
                     return LiftResult::kMalformedMethod;
