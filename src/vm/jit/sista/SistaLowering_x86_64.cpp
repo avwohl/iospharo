@@ -2072,6 +2072,43 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         cc.mov(d, ptr(state, OFF_TRUEOOP)); cc.bind(skip);
                         blockRegs[bv.id] = d; break;
                     }
+                    case Op::kSendUnspeculated: {
+                        // Per-iteration real send (e.g. `e even`, `e > 5` — the
+                        // select predicate is a send, NOT inlined arith).  Push
+                        // operands to the interp stack, call jit_rt_sista_call_send,
+                        // get the boolean.  Mirrors arm64 :5330.  NOTE: like arm64,
+                        // rcv/result are NOT reloaded after the call — this is safe
+                        // only for allocation-free predicate sends (no GC); an
+                        // allocating predicate is a shared arm64+x86 limitation.
+                        if (bv.operands.empty()) { selBailed = true; break; }
+                        uint32_t selIdx = (uint32_t)(bv.literal & 0xFFFFu);
+                        uint32_t nArgs  = (uint32_t)((bv.literal >> 16) & 0xFFu);
+                        Gp sendSp = cc.new_gp64("sel_send_sp"); cc.mov(sendSp, ptr(state, OFF_SP));
+                        bool opMissing = false;
+                        for (size_t opIdx = 0; opIdx < bv.operands.size(); opIdx++) {
+                            auto opIt = blockRegs.find(bv.operands[opIdx]);
+                            if (opIt == blockRegs.end()) { opMissing = true; break; }
+                            cc.mov(ptr(sendSp, (int)opIdx * 8), opIt->second);
+                        }
+                        if (opMissing) { selBailed = true; break; }
+                        cc.add(sendSp, Imm((int)bv.operands.size() * 8));
+                        cc.mov(ptr(state, OFF_SP), sendSp);
+                        Gp selReg = cc.new_gp64("sel_send_sel");
+                        cc.mov(selReg, ptr(litBaseHoisted, (int)(selIdx * 8)));
+                        Gp nArgsReg = cc.new_gp64("sel_send_n"); cc.mov(nArgsReg, Imm((uint64_t)nArgs));
+                        Gp sendFn = cc.new_gp64("sel_send_fn");
+                        cc.mov(sendFn, Imm((uint64_t)&jit_rt_sista_call_send));
+                        InvokeNode* sendInv = nullptr;
+                        if (cc.invoke(Out(sendInv), sendFn,
+                                FuncSignature::build<uint64_t, void*, uint64_t, uint64_t>()) != kErrorOk
+                            || !sendInv) { selBailed = true; break; }
+                        sendInv->set_arg(0, state); sendInv->set_arg(1, selReg);
+                        sendInv->set_arg(2, nArgsReg);
+                        Gp sendResult = cc.new_gp64("sel_send_res"); sendInv->set_ret(0, sendResult);
+                        Label sendOk = cc.new_label();
+                        cc.cmp(sendResult, Imm(0)); cc.jne(sendOk); selDeopt(); cc.bind(sendOk);
+                        blockRegs[bv.id] = sendResult; break;
+                    }
                     case Op::kReturn: {
                         if (bv.operands.size() != 1) { selBailed = true; break; }
                         auto it = blockRegs.find(bv.operands[0]);
