@@ -108,8 +108,9 @@ state.  arm64 already had the lowering (3786) but no emit counter — added one.
 
 IntervalDo adversarial review (4 skeptic lenses + per-finding verify) found 3
 real, shared/both-arch bugs in the interval fusions (all pre-existed in arm64;
-the x86 interval ports faithfully inherited them).  Two FIXED + verified on both
-arches (bench guards neg_do/neg_inject/neg_intervaldo=9, nlr_first=1):
+the x86 interval ports faithfully inherited them).  ALL THREE now FIXED + verified
+on both arches (15/15 bench checks PASS; guards neg_do/neg_inject/neg_intervaldo=9,
+nlr_first=1, ivdo_deopt=42, ivinject_deopt=18446744073709551622):
   A (critical): the 3 interval fusions (IntervalDo/IntervalDoAccum/Interval
      InjectInto) compared TAGGED SmI loop bounds with UNSIGNED branches (ja/jbe
      x86, b_hi/b_ls arm64) → a negative lower bound encodes huge-unsigned so it
@@ -120,14 +121,15 @@ arches (bench guards neg_do/neg_inject/neg_intervaldo=9, nlr_first=1):
      lifted to a discardable kReturn → the NLR was silently dropped.  Fixed in
      SistaBuilder: ReturnTop bails the fusion when sub-lifting (tier-1 handles
      the NLR), matching the documented intent.  Affects all block-bearing fusions.
-  B (major, DEFERRED): on a TAKEN deopt the interval fusions rebuild [start,stop]
-     but resume at the PushFullBlock offset, where the elided `to:` send means
-     `do:` is sent to a SmI → DNU/stack corruption.  LATENT (only fires on a
-     non-SmI bound or non-SmI block-arith operand in a discarded do: — rare),
-     pre-existing on arm64.  Correct fix = record the fusion framepoint at the
-     `to:` offset (per-variant: IntervalDo to:=pfb-1, DoAccum/InjectInto differ
-     by the intervening PushTemp), which needs deopt-path verification — a
-     focused follow-up.  Disable any counted loop via PHARO_SISTA_NO_LOWER_COUNTED_LOOP.
+  B (major): on a TAKEN deopt IntervalDo/IntervalInjectInto rebuilt [start,stop]
+     but resumed at the PushFullBlock offset — the elided `to:` send was never
+     re-run, so `do:`/`inject:` went to the bare bound (e.g. "LargePositiveInteger
+     >> #do:" DNU / stack corruption).  Reproduced on the pre-fix build via a
+     LargeInteger interval bound (forces the entry deopt).  Fixed in SistaBuilder:
+     record the fusion framepoint at the kInterval marker's framepoint offset (=
+     the `to:` offset), robust across block shapes; the array InjectInto sibling
+     keeps bcOffset (real receiver, no elision).  IntervalDoAccum already did this
+     (bcOffset-2).
 
 ArraySelect VERIFIED on BOTH arches (2026-06-04, EMIT=2, select_array=
 #(2 4 6 8 10) / select_gt=#(6 7 8 9 10) correct).  Getting there fixed THREE
