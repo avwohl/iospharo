@@ -15,16 +15,28 @@
   total    28064      pass rate 99.1%
 ```
 
-**Custom VM — CANNOT complete the full suite.** Where each config stalls:
+**Custom VM (arm64, Sista ON) — now reaches 560 classes, then hits a SECOND
+blocker.** Two distinct deadlocks gate full-suite completion; the first is FIXED:
 
 ```
-  arm64, Sista ON   ~80 / 2045 classes, then hangs in CollectionArithmeticTest
-  arm64, Sista OFF  stalls at IntegerTest (class 7)
-  x86,   Sista ON   DNU at startup, 0 tests: SUnitRunner>>nextRunNumber does
-                    [file contents asInteger] but asInteger is sent to the
-                    SUnitRunner class (self) — an inlined-block wrong-receiver
-                    miscompile (x86 analog of the arm64 fix 4b446bf4)
+  blocker #1 (FIXED)  Sista HELPER_SENDS broke the Context sender chain so a
+                      forked test's unhandled error skipped its ensure: →
+                      doneSem deadlock. Hung at ~80 classes
+                      (CollectionArithmeticTest). Fix: HELPER_SENDS default-off
+                      (below). Unblocked 80 → 511 classes (6×).
+  blocker #2 (OPEN)   At ~511 classes (PackageAndMethodsTest, after a run of
+                      mass-erroring Package* tests) a 4096-deep Context>>copyTo:
+                      overflow during error-handling stack-freeze terminates the
+                      process and leaves the Delay/timer scheduler PERMANENTLY
+                      DEAD → only-idle (P10) deadlock. See "Blocker #2" below.
 ```
+
+After fixing #1, the run was completed in two passes — 511 classes before the
+#2 wedge, then a resume on the 62 remaining curated classes (clean, no wedge) —
+for **560 unique classes / 12,691 tests** of custom-VM coverage. Other configs
+(for the record): arm64 Sista OFF stalls earlier at IntegerTest (class 7); x86
+Sista ON still DNUs at startup (SUnitRunner>>nextRunNumber inlined-block
+wrong-receiver miscompile, the x86 analog of arm64 fix 4b446bf4, not yet ported).
 
 **The CollectionArithmeticTest hang is NOT a JIT/Sista bug — corrected
 2026-06-04.** Originally mislabelled a "Sista miscompile of testRunningAverage".
@@ -90,27 +102,79 @@ IntegerTest) completes with **1298 pass / 0 fail / 29 error / 4 skip, no hang**;
 the Sista loop bench is unchanged at 19/19 (the counted-loop fusions / to:do:
 WhileTrueAccum / kPrimAt work don't use HELPER_SENDS).
 
-**Δcog on the 80 classes the custom VM (Sista) DID complete** (4405 tests):
+**Blocker #2 (OPEN 2026-06-04): the timer/Delay scheduler dies permanently after
+a 4096-deep `Context>>copyTo:` stack-overflow.** ~60 min into the full run (class
+~511, `PackageAndMethodsTest`, right after a run of mass-erroring `Package*`
+tests), a forked test process ran `Context>>freeze` → `freezeUpTo:` → `copyTo:`,
+which recursed **4096 frames** down a freshly-materialized sender chain (`freeze`
+materializes the full stack, then recursive `copyTo:` walks it). At `fd=4096` the
+VM's frame-depth guard (`Interpreter.hpp:617 StackOverflowLimit`) fired
+`handleStackOverflow` → `terminateAndSwitchProcess`. **That termination left the
+P80 Delay/timer-scheduler process dead — `timerSemaphore_` stays nil, only P10
+idle is runnable, total deadlock.** The C++ recovery (`Interpreter.cpp:3598`,
+`[DELAY-DEATH]`/`[DELAY-RECOVERY]`) only RE-SIGNALS the timing semaphore, which
+wakes a stuck-but-alive scheduler but cannot revive a DEAD one — 918 failed
+attempts over 76 min, and the runner's own 2h batch-deadline abort can't fire
+because it needs the dead timer to advance. Distinct from blocker #1 (sender
+chains) — this is the terminate→switch / scheduler-death path. NOT reproducible
+synthetically (4 negative eval-mode repros: plain overflow→terminate does not
+wedge the timer; our VM keeps suspended frames C++-side so `copyTo:` on a
+suspended/`thisContext` chain doesn't recurse deep). Needs the ~1h full-run state
+under lldb; candidate fixes (clean state on terminate→switch; iterative
+`copyTo:`; C++ restart of the dead scheduler; signal-instead-of-terminate on
+overflow like Cog) are in the `timer-scheduler-wedge` memory.
+
+**Δcog on the 560 classes the custom VM (Sista) DID complete** (12,691 tests,
+`scripts/classify-sunit.py /tmp/results_cog_full.txt <combined>`):
 
 ```
-  pass 4306   fail 12   error 80   skip 6   timeout 1     (97.8% of the 4405)
-  93 tests pass on Cog but not here: 80 error, 12 fail, 1 timeout
+  custom  pass 11639   fail 159   error 866   skip 20   timeout 7   (91.7%)
+  vs cog: 1031 tests pass on Cog but not here  (865 error, 159 fail, 7 timeout)
+          +15153 cog-tests not run here (the ~1485 classes past the #2 wedge)
 ```
 
-Regression clusters (delta file `*.delta-vs-cog.txt`): collection
-`testReject` / `testCopyWithout*` (Bag/Dictionary/Heap/DoubleLinkedList/…
-errors — likely one shared `reject:`/`copyWithout:` root cause),
-`BecomeTest>>testBecome*IdentityHash` (become+identityHash, fails),
-class-introspection (`BehaviorTest`/`ClassHierarchyTest` testAllReferencesTo /
-testSubclasses errors), `IntegerTest>>testReciprocalModulo` (timeout).
+Regression clusters (delta file `*.delta-vs-cog.txt`), by count of cog-pass
+tests failing here:
 
-**Bottom line:** Cog runs the whole suite at 99.1%; the custom VM's full-suite
-coverage is gated by non-preemptible runaway tests (Sista miscompiles), not by
-the asmjit RA crash fixed earlier (bb158a7f — bench-validated, orthogonal). The
-next lever for custom-VM SUnit coverage is (a) a preemptible-loop interrupt
-check so the watchdog can kill runaway tests, and (b) fixing the Sista
-miscompiles that turn finite loops infinite (testRunningAverage) and the x86
-inlined-block wrong-receiver bug (nextRunNumber).
+```
+  SystemEnvironmentTest 96, PackageTest 41, PackageOrganizerTest 30,
+  PackageAndClassesTest 25, PackageOnModelTest 19, PackageAndMethodsTest 16,
+  PackageAnnouncementsTest 11
+      → ONE shared root cause: `#SystemOrganization not found in
+        SystemEnvironment` (KeyNotFound). The headless image's
+        SystemOrganization/PackageOrganizer isn't fully set up — an
+        ENVIRONMENT-setup gap, not VM correctness. ~250+ of the 1031.
+  TraitTest 35, ClassDescriptionProtocolsTest 37, TraitPureBehaviorTest 19,
+  SlotMigrationTest 17, SlotIntegrationTest 15, TraitCompositionTest 13,
+  ClassAnnotationTest 14, SlotAnnouncementsTest 13
+      → trait/slot/class-description reflection; partly the same
+        class-organization gap, partly real reflection differences.
+  OCASTSingleBranchConditionalTranslatorTest 26, EFMessageExpressionTest 24
+      → OpalCompiler AST translation.
+  WeakIdentityValueDictionaryTest 14, WeakIdentityKeyDictionaryTest 10
+      → weak/finalization. HeapTest 14, BagTest 12 → collections.
+  7 timeouts (all watchdog-killed at 80s, known-slow): IntegerTest +
+  LargePositiveIntegerTest testReciprocalModulo, RandomTest testDistribution,
+  SHA256Test testFips180Example3, OCSimpleFormatterTest testCoreSystem,
+  OCCodeReparatorTest testDeclareInstVar.
+```
+
+157 distinct classes have at least one regression; the Package/SystemEnvironment
+cluster (a single environment-setup gap) accounts for the largest share.
+
+**Bottom line:** Cog runs the whole suite at 99.1%. The custom VM now reaches
+**560 classes / 12,691 tests at 91.7%** (6× the prior 80-class stall) after the
+HELPER_SENDS fix (blocker #1). Full completion is now gated by **blocker #2**
+(the timer/Delay-scheduler-death on a 4096-deep `copyTo:` overflow), which is
+distinct from and orthogonal to the asmjit RA crash fixed earlier (bb158a7f —
+bench-validated). Of the 1031 cog-pass regressions, the largest single share
+(~250+) is one environment-setup gap (`#SystemOrganization` missing in the
+headless image's `SystemEnvironment`), not a VM defect. Next levers for custom-VM
+SUnit coverage: (a) fix blocker #2 (see the `timer-scheduler-wedge` memory — best
+debugged by reproducing the ~1h full-run state under lldb); (b) seed
+`SystemOrganization`/`PackageOrganizer` in the test image to clear the
+Package/SystemEnvironment cluster; (c) port the x86 inlined-block wrong-receiver
+fix (nextRunNumber, 4b446bf4).
 
 ## 2026-05-28 first end-to-end run
 
