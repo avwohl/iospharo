@@ -29,6 +29,7 @@ extern "C" uint64_t g_sistaEmit_countedLoopArrayCollect = 0;
 extern "C" uint64_t g_sistaEmit_countedLoopWhileTrueAccum = 0;
 extern "C" uint64_t g_sistaEmit_countedLoopArraySelect = 0;
 extern "C" uint64_t g_sistaEmit_countedLoopIntervalDo = 0;
+extern "C" uint64_t g_sistaEmit_whileTrueSeries = 0;  // WhileTrueAccum series shape
 
 Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
                                        const std::vector<InlineHint>* hints,
