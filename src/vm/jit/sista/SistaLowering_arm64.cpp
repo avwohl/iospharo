@@ -76,6 +76,7 @@ extern "C" uint64_t jit_rt_sista_complete_array_collect(
 // lowerer).  Incremented at successful emit to confirm the fusion fired.
 extern "C" uint64_t g_sistaEmit_countedLoopArraySelect;
 extern "C" uint64_t g_sistaEmit_countedLoopIntervalDo;
+extern "C" uint64_t g_sistaEmit_whileTrueSeries;
 
 namespace pharo {
 namespace sista {
@@ -4663,6 +4664,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.b_eq(ovOk);
                     emitDeopt();
                     cc.bind(ovOk);
+                    g_sistaEmit_whileTrueSeries++;
                 } else if (constValue == 0) {
                     cc.mov(newAccum, accumReg);
                 } else if (constValue == 1) {

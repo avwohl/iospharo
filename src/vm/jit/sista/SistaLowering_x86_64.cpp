@@ -57,6 +57,7 @@ extern "C" uint64_t g_sistaEmit_countedLoopArrayCollect;
 extern "C" uint64_t g_sistaEmit_countedLoopWhileTrueAccum;
 extern "C" uint64_t g_sistaEmit_countedLoopArraySelect;
 extern "C" uint64_t g_sistaEmit_countedLoopIntervalDo;
+extern "C" uint64_t g_sistaEmit_whileTrueSeries;
 
 // Sista runtime helpers.  Defined in src/vm/jit/JITRuntime.cpp.
 extern "C" uint64_t jit_rt_store_inst_var(void* state,
@@ -1965,7 +1966,6 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 uint32_t deoptBC      = (uint32_t)((v.literal >> 44) & 0xFFFF);
                 bool     isSeries     = (bool)((v.literal >> 60) & 1);
                 bool     isNoAccum    = (bool)((v.literal >> 61) & 1);
-                if (isSeries) return bail(v.id);   // 128-bit smul overflow → defer
                 auto wtDeopt = [&]() {
                     Gp ipReg = cc.new_gp64("wt_dz_ip");
                     if (bytecodeBase) {
@@ -2006,7 +2006,34 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.sub(itersOop, adj);
                 }
                 Gp newAccum = cc.new_gp64("wt_new");
-                if (constValue == 0) {
+                if (isSeries) {
+                    // Arithmetic series (`1 to: limit do: [:i | s := s <arith> i]`):
+                    //   newAccum = accum ± (limit*(limit+1)/2)*8  (tag-preserving).
+                    // Guard 0 <= limitUnt < 2^30 (UNSIGNED cmp catches negatives too)
+                    // so the low-64 product is EXACT (limit*(limit+1) < 2^60) and
+                    // delta*8 can't overflow 64-bit; beyond that the folded sum would
+                    // exceed SmI range anyway → deopt.  This avoids a wide signed
+                    // multiply (arm64's smulh) — RA-risky on asmjit's x86 Compiler —
+                    // and deopts in the same valid-SmI window.
+                    Gp limitUnt = cc.new_gp64("wt_lu"); cc.mov(limitUnt, limitReg);
+                    cc.sar(limitUnt, Imm(3));
+                    Gp lchk = cc.new_gp64("wt_lchk"); cc.mov(lchk, limitUnt);
+                    cc.cmp(lchk, Imm(0x40000000));   // 2^30
+                    Label limOk = cc.new_label(); cc.jb(limOk); wtDeopt(); cc.bind(limOk);
+                    Gp limitP1 = cc.new_gp64("wt_lp1"); cc.mov(limitP1, limitUnt);
+                    cc.add(limitP1, Imm(1));
+                    Gp prod = cc.new_gp64("wt_prod"); cc.mov(prod, limitUnt);
+                    cc.imul(prod, limitP1);          // limit*(limit+1), exact (< 2^60)
+                    cc.shr(prod, Imm(1));            // delta = prod/2 (product is even)
+                    cc.shl(prod, Imm(3));            // delta*8 (tag-aligned)
+                    cc.mov(newAccum, accumReg);
+                    if (arithCode == 0) cc.add(newAccum, prod);
+                    else cc.sub(newAccum, prod);
+                    Gp ov = cc.new_gp64("wt_sov"); cc.mov(ov, newAccum); cc.sar(ov, Imm(60));
+                    cc.cmp(ov, Imm(0)); Label sovOk = cc.new_label(); cc.je(sovOk);
+                    cc.cmp(ov, Imm(-1)); cc.je(sovOk); wtDeopt(); cc.bind(sovOk);
+                    g_sistaEmit_whileTrueSeries++;
+                } else if (constValue == 0) {
                     cc.mov(newAccum, accumReg);
                 } else if (constValue == 1) {
                     cc.mov(newAccum, accumReg);
