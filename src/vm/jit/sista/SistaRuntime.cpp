@@ -197,7 +197,12 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
          || v.op == Op::kCountedLoopArrayDoAccum
          || v.op == Op::kCountedLoopIntervalDoAccum
          || v.op == Op::kCountedLoopArrayCollect
+         || v.op == Op::kCountedLoopArraySelect
          || v.op == Op::kCountedLoopWhileTrueAccum) {
+            // NB: kCountedLoopArraySelect was missing here — that omission made
+            // select methods hit the hasSend&&!hasSplice gate below and bail as
+            // sendNoSplice BEFORE lowering, on BOTH arches (so arm64's select
+            // lowering was dead code).  Adding it lets select reach the lowerer.
             hasSplice = true;
         }
         // 2026-05-06: gate only Do/ArrayDoAccum.  ArrayCollect has its

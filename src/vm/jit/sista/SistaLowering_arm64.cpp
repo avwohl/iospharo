@@ -5429,10 +5429,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.cmp(newElemReg, sel_trueOop);
                     Label sel_skip = cc.new_label();
                     cc.b_ne(sel_skip);
-                    // newElemReg == trueOop → store eachReg at
-                    // result[writeIdxReg * 8].
+                    // newElemReg == trueOop → store eachReg at slot writeIdx.
+                    // Slot writeIdx (0-based) lives at result + 8 + writeIdx*8
+                    // (the header occupies offset 0).  The old offset
+                    // `result + writeIdx*8` put the first kept element on the
+                    // header — off-by-one-slot vs Collect's convention; since
+                    // jit_rt_sista_array_shrink only rewrites the slot-count
+                    // (no element shift), the trimmed array was wrong.
                     Gp sel_storeOff = cc.new_gp64("sel_storeOff");
                     cc.lsl(sel_storeOff, writeIdxReg, Imm(3));
+                    cc.add(sel_storeOff, sel_storeOff, Imm(8));
                     cc.str(eachReg, ptr(resultReg, sel_storeOff));
                     cc.add(writeIdxReg, writeIdxReg, Imm(1));
                     cc.bind(sel_skip);

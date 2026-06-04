@@ -1910,11 +1910,18 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // `result + writeIdx*8` (first kept element lands on the header);
             // the correct slot writeIdx is `result + 8 + writeIdx*8`.
             case Op::kCountedLoopArraySelect: {
-                // OPT-IN only: this path is ported (and fixes the arm64 off-by-8)
-                // but UNVERIFIED — the builder rarely emits kCountedLoopArraySelect
-                // and the bench never triggered it.  Bail unless explicitly
-                // enabled so an unverified codegen path can't run in production.
-                if (!GET_DEBUG_BOOL(PHARO_SISTA_LOWER_SELECT)) return bail(v.id);
+                // VERIFIED 2026-06-04 (countedLoopArraySelect EMIT>0,
+                // select_array=#(2 4 6 8 10) / select_gt=#(6 7 8 9 10) PASS).
+                // The predicate lifts to a per-iteration kSendUnspeculated
+                // (e.g. `e even`, `e > 5`), handled in the block-body switch.
+                // Stores kept SOURCE elements at result+8+writeIdx*8 (the
+                // correct slot — arm64's result+writeIdx*8 was off by one slot,
+                // fixed separately).  GC caveat (shared with arm64): rcv/result
+                // are not reloaded after the per-iter send, so an *allocating*
+                // predicate that triggers a scavenge could move them — safe for
+                // the usual allocation-free predicates (compares, even/odd,
+                // type tests).  Disable all counted loops via
+                // PHARO_SISTA_NO_LOWER_COUNTED_LOOP if needed.
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
                 if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
                 if (v.operands.size() != 1) return bail(v.id);   // core: no capture
@@ -1995,6 +2002,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 std::unordered_map<uint32_t, Gp> blockRegs;
                 bool sawReturn = false, selBailed = false;
                 Gp predReg;
+                // Select blocks are lifted in implicit-return mode
+                // (subLiftAsBlockReturnLocal) — the LAST value is the predicate
+                // result, with no explicit kReturn op.  Track the last
+                // reg-producing value so we can use it when no kReturn appears.
+                Gp lastReg; bool haveLastReg = false;
                 for (const auto& bv : blockIR.values) {
                     switch (bv.op) {
                     case Op::kLoadTemp: {
@@ -2072,6 +2084,43 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         cc.mov(d, ptr(state, OFF_TRUEOOP)); cc.bind(skip);
                         blockRegs[bv.id] = d; break;
                     }
+                    case Op::kSendUnspeculated: {
+                        // Per-iteration real send (e.g. `e even`, `e > 5` — the
+                        // select predicate is a send, NOT inlined arith).  Push
+                        // operands to the interp stack, call jit_rt_sista_call_send,
+                        // get the boolean.  Mirrors arm64 :5330.  NOTE: like arm64,
+                        // rcv/result are NOT reloaded after the call — this is safe
+                        // only for allocation-free predicate sends (no GC); an
+                        // allocating predicate is a shared arm64+x86 limitation.
+                        if (bv.operands.empty()) { selBailed = true; break; }
+                        uint32_t selIdx = (uint32_t)(bv.literal & 0xFFFFu);
+                        uint32_t nArgs  = (uint32_t)((bv.literal >> 16) & 0xFFu);
+                        Gp sendSp = cc.new_gp64("sel_send_sp"); cc.mov(sendSp, ptr(state, OFF_SP));
+                        bool opMissing = false;
+                        for (size_t opIdx = 0; opIdx < bv.operands.size(); opIdx++) {
+                            auto opIt = blockRegs.find(bv.operands[opIdx]);
+                            if (opIt == blockRegs.end()) { opMissing = true; break; }
+                            cc.mov(ptr(sendSp, (int)opIdx * 8), opIt->second);
+                        }
+                        if (opMissing) { selBailed = true; break; }
+                        cc.add(sendSp, Imm((int)bv.operands.size() * 8));
+                        cc.mov(ptr(state, OFF_SP), sendSp);
+                        Gp selReg = cc.new_gp64("sel_send_sel");
+                        cc.mov(selReg, ptr(litBaseHoisted, (int)(selIdx * 8)));
+                        Gp nArgsReg = cc.new_gp64("sel_send_n"); cc.mov(nArgsReg, Imm((uint64_t)nArgs));
+                        Gp sendFn = cc.new_gp64("sel_send_fn");
+                        cc.mov(sendFn, Imm((uint64_t)&jit_rt_sista_call_send));
+                        InvokeNode* sendInv = nullptr;
+                        if (cc.invoke(Out(sendInv), sendFn,
+                                FuncSignature::build<uint64_t, void*, uint64_t, uint64_t>()) != kErrorOk
+                            || !sendInv) { selBailed = true; break; }
+                        sendInv->set_arg(0, state); sendInv->set_arg(1, selReg);
+                        sendInv->set_arg(2, nArgsReg);
+                        Gp sendResult = cc.new_gp64("sel_send_res"); sendInv->set_ret(0, sendResult);
+                        Label sendOk = cc.new_label();
+                        cc.cmp(sendResult, Imm(0)); cc.jne(sendOk); selDeopt(); cc.bind(sendOk);
+                        blockRegs[bv.id] = sendResult; break;
+                    }
                     case Op::kReturn: {
                         if (bv.operands.size() != 1) { selBailed = true; break; }
                         auto it = blockRegs.find(bv.operands[0]);
@@ -2080,7 +2129,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     }
                     default: selBailed = true; break;
                     }
-                    if (selBailed || sawReturn) break;
+                    if (selBailed) break;
+                    auto lr = blockRegs.find(bv.id);
+                    if (lr != blockRegs.end()) { lastReg = lr->second; haveLastReg = true; }
+                    if (sawReturn) break;
+                }
+                // Implicit-return fallback: no explicit kReturn → the last
+                // reg-producing value is the predicate boolean.
+                if (!selBailed && !sawReturn && haveLastReg) {
+                    predReg = lastReg; sawReturn = true;
                 }
                 if (selBailed || !sawReturn) return bail(v.id);
                 // If predicate true, store eachReg at slot writeIdx (= result +
