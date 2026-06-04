@@ -1910,6 +1910,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // `result + writeIdx*8` (first kept element lands on the header);
             // the correct slot writeIdx is `result + 8 + writeIdx*8`.
             case Op::kCountedLoopArraySelect: {
+                // OPT-IN only: this path is ported (and fixes the arm64 off-by-8)
+                // but UNVERIFIED — the builder rarely emits kCountedLoopArraySelect
+                // and the bench never triggered it.  Bail unless explicitly
+                // enabled so an unverified codegen path can't run in production.
+                if (!GET_DEBUG_BOOL(PHARO_SISTA_LOWER_SELECT)) return bail(v.id);
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
                 if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
                 if (v.operands.size() != 1) return bail(v.id);   // core: no capture

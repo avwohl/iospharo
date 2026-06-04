@@ -92,16 +92,21 @@ PORTED + VERIFIED-CORRECT on x86 (fusion fired + answer correct, EMIT counter):
     kCountedLoopDo                  (no-crash only; non-accum do:, not on bench)
 All 7 bench checks PASS together with all fusions on; box stable throughout.
 
-REMAINING (2) — the two hardest, deferred:
+PORTED but GATED OFF (opt-in, unverified):
     kCountedLoopArraySelect   arm64:4702  arr select:[...]  dynamic-size result.
-       DEFERRED + arm64 BUG FOUND: arm64's select stores the k-th selected
-       element at `result + writeIdx*8` (writeIdx 0-based) → first selected
-       lands at byte offset 0 (the HEADER), off-by-one-slot vs Collect's
-       `result + i*8`.  jit_rt_sista_array_shrink only rewrites the header
-       slot-count (doesn't shift), so the trimmed array is wrong.  Likely a
-       latent arm64 bug (select fusion rarely/never fires there).  An x86 port
-       must use `result + 8 + writeIdx*8` AND handle the `e even`/compare
-       predicate representation.  See docs/deferred.md.
+       Ported (generic predicate path, alloc + compact-store + array_shrink)
+       and FIXES an arm64 off-by-one: arm64 stores the k-th kept element at
+       `result + writeIdx*8` (writeIdx 0-based) → first kept lands at byte
+       offset 0 (the HEADER); the correct slot is `result + 8 + writeIdx*8`.
+       jit_rt_sista_array_shrink only rewrites the header slot-count (no shift),
+       so arm64's trimmed array is wrong — a likely latent arm64 bug (select
+       rarely fires there).  The x86 path COMPILES + is crash-clean but the
+       bench never triggered it (the builder needs select: as a special Send1
+       with a specific block shape — `[:e|e>5]`/`[:e|e even]` weren't admitted),
+       so it stays UNVERIFIED.  Gated behind PHARO_SISTA_LOWER_SELECT (default
+       OFF → bails to tier-1) until its trigger shape is matched and verified.
+
+REMAINING (1) — deferred:
     kCountedLoopIntervalDo    arm64:3783  (1 to:n) do:[...]  non-accumulating.
        Block body does sends / at:put: (no register accumulator); returns the
        interval — not cleanly verifiable by a known-output bench.  Lower value.

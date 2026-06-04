@@ -45,6 +45,11 @@ DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SIZE)          // kPrimSize
 DEBUG_BOOL(PHARO_SISTA_NO_LOWER_ATPUT)         // kPrimAtPut
 DEBUG_BOOL(PHARO_SISTA_NO_LOWER_FLOAT)         // kPrimAdd/Sub/MulFloat
 DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)  // kCountedLoop* fusions
+DEBUG_BOOL(PHARO_SISTA_LOWER_SELECT)           // OPT-IN (default off):
+                                               // kCountedLoopArraySelect is
+                                               // ported but unverified (the
+                                               // builder rarely emits it), so
+                                               // it bails unless this is set.
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT
