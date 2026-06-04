@@ -3712,7 +3712,16 @@ private:
                                   Type::kOop,
                                   std::move(ops),
                                   /*literal=*/blockSlot);
-                            recordFramepoint(vid, bcOffset);
+                            // Deopt must resume at the to: send (where the
+                            // kInterval marker was created), NOT at this
+                            // PushFullBlock — to: is elided, so resuming here
+                            // sends do: to the bare bound → DNU.  The kInterval
+                            // marker's framepoint holds the to: offset.  (Same
+                            // as kCountedLoopIntervalDoAccum's bcOffset-2.)
+                            uint32_t ivToOff = bcOffset;
+                            for (const auto& fp : out_.framepoints)
+                                if (fp.valueId == rcv) { ivToOff = fp.bcOffset; break; }
+                            recordFramepoint(vid, ivToOff);
                             stack_.push_back(vid);
                             pendingExtA_ = 0;
                             pendingExtB_ = 0;
@@ -3842,7 +3851,20 @@ private:
                                   std::move(ops),
                                   /*literal=*/blockSlot);
                         }
-                        recordFramepoint(vid, bcOffset);
+                        if (rcvIsInterval) {
+                            // Interval case: deopt must resume at the to: send
+                            // (the kInterval marker's framepoint), not this
+                            // PushFullBlock — to: is elided, so resuming here
+                            // sends inject:into: to the bare bound → DNU.  The
+                            // array case (else) has a real receiver on the
+                            // stack and correctly resumes at bcOffset.
+                            uint32_t ivToOff = bcOffset;
+                            for (const auto& fp : out_.framepoints)
+                                if (fp.valueId == rcv) { ivToOff = fp.bcOffset; break; }
+                            recordFramepoint(vid, ivToOff);
+                        } else {
+                            recordFramepoint(vid, bcOffset);
+                        }
                         stack_.push_back(vid);
                         pendingExtA_ = 0;
                         pendingExtB_ = 0;
