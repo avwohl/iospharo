@@ -22,6 +22,7 @@ extern "C" uint64_t g_sistaBail_lowerFail     = 0;
 // Distinguishes "fusion fired" from "bailed to tier-1" in correctness checks.
 extern "C" uint64_t g_sistaEmit_countedLoopDo         = 0;
 extern "C" uint64_t g_sistaEmit_countedLoopInjectInto = 0;
+extern "C" uint64_t g_sistaEmit_countedLoopArrayDoAccum = 0;
 
 Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
                                        const std::vector<InlineHint>* hints,
