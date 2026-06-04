@@ -45,6 +45,12 @@ DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SIZE)          // kPrimSize
 DEBUG_BOOL(PHARO_SISTA_NO_LOWER_ATPUT)         // kPrimAtPut
 DEBUG_BOOL(PHARO_SISTA_NO_LOWER_FLOAT)         // kPrimAdd/Sub/MulFloat
 DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)  // kCountedLoop* fusions (incl. select)
+DEBUG_BOOL(PHARO_SISTA_WHILETRUE_TODO)         // OPT-IN (default off): also admit the
+                                               // to:do:-style pre-loop (counter init +
+                                               // storeIntoTemp, START left on stack) into
+                                               // the WhileTrueAccum recognizer.  Rolled
+                                               // back in prod (perf regression on Interval
+                                               // do:); used to verify the series fold fires.
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT
