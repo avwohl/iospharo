@@ -126,6 +126,8 @@ extern "C" uint64_t g_sistaBail_sendNoSplice;
 extern "C" uint64_t g_sistaBail_bailOnlyPrim;
 extern "C" uint64_t g_sistaBail_bailOnlySel;
 extern "C" uint64_t g_sistaBail_lowerFail;
+extern "C" uint64_t g_sistaEmit_countedLoopDo;
+extern "C" uint64_t g_sistaEmit_countedLoopInjectInto;
 extern "C" uint64_t g_sistaSelfRec_hits;
 extern "C" uint64_t g_bcFloatArith_hits;
 extern "C" uint64_t g_bcArithBail_hits;
@@ -1777,6 +1779,10 @@ void Interpreter::dumpJITStats() {
             (unsigned long long)g_sistaBail_bailOnlyPrim,
             (unsigned long long)g_sistaBail_bailOnlySel,
             (unsigned long long)g_sistaBail_lowerFail);
+        fprintf(stderr,
+            "  sista fusion EMITs: countedLoopDo=%llu countedLoopInjectInto=%llu\n",
+            (unsigned long long)g_sistaEmit_countedLoopDo,
+            (unsigned long long)g_sistaEmit_countedLoopInjectInto);
     }
     if (g_debug.primProfile) {
         // Sort primitive call counts descending and print top 30.

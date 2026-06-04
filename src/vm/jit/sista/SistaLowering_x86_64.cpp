@@ -1048,6 +1048,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.bind(loopExit);
                 if (doHasCapture) cc.mov(ptr(doVecReg, doVecSlotByteOff), accReg);
                 regFor[v.id] = rcvReg;
+                extern "C" uint64_t g_sistaEmit_countedLoopDo;
+                g_sistaEmit_countedLoopDo++;
                 break;
             }
 
@@ -1213,6 +1215,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.cmp(iReg, sizeReg); cc.jbe(injHead);
                 cc.bind(injExit);
                 regFor[v.id] = accReg;   // inject:into: returns the accumulator
+                extern "C" uint64_t g_sistaEmit_countedLoopInjectInto;
+                g_sistaEmit_countedLoopInjectInto++;
                 break;
             }
 
