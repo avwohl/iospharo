@@ -1910,11 +1910,18 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // `result + writeIdx*8` (first kept element lands on the header);
             // the correct slot writeIdx is `result + 8 + writeIdx*8`.
             case Op::kCountedLoopArraySelect: {
-                // OPT-IN only: this path is ported (and fixes the arm64 off-by-8)
-                // but UNVERIFIED — the builder rarely emits kCountedLoopArraySelect
-                // and the bench never triggered it.  Bail unless explicitly
-                // enabled so an unverified codegen path can't run in production.
-                if (!GET_DEBUG_BOOL(PHARO_SISTA_LOWER_SELECT)) return bail(v.id);
+                // VERIFIED 2026-06-04 (countedLoopArraySelect EMIT>0,
+                // select_array=#(2 4 6 8 10) / select_gt=#(6 7 8 9 10) PASS).
+                // The predicate lifts to a per-iteration kSendUnspeculated
+                // (e.g. `e even`, `e > 5`), handled in the block-body switch.
+                // Stores kept SOURCE elements at result+8+writeIdx*8 (the
+                // correct slot — arm64's result+writeIdx*8 was off by one slot,
+                // fixed separately).  GC caveat (shared with arm64): rcv/result
+                // are not reloaded after the per-iter send, so an *allocating*
+                // predicate that triggers a scavenge could move them — safe for
+                // the usual allocation-free predicates (compares, even/odd,
+                // type tests).  Disable all counted loops via
+                // PHARO_SISTA_NO_LOWER_COUNTED_LOOP if needed.
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
                 if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
                 if (v.operands.size() != 1) return bail(v.id);   // core: no capture
@@ -1995,6 +2002,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 std::unordered_map<uint32_t, Gp> blockRegs;
                 bool sawReturn = false, selBailed = false;
                 Gp predReg;
+                // Select blocks are lifted in implicit-return mode
+                // (subLiftAsBlockReturnLocal) — the LAST value is the predicate
+                // result, with no explicit kReturn op.  Track the last
+                // reg-producing value so we can use it when no kReturn appears.
+                Gp lastReg; bool haveLastReg = false;
                 for (const auto& bv : blockIR.values) {
                     switch (bv.op) {
                     case Op::kLoadTemp: {
@@ -2117,7 +2129,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     }
                     default: selBailed = true; break;
                     }
-                    if (selBailed || sawReturn) break;
+                    if (selBailed) break;
+                    auto lr = blockRegs.find(bv.id);
+                    if (lr != blockRegs.end()) { lastReg = lr->second; haveLastReg = true; }
+                    if (sawReturn) break;
+                }
+                // Implicit-return fallback: no explicit kReturn → the last
+                // reg-producing value is the predicate boolean.
+                if (!selBailed && !sawReturn && haveLastReg) {
+                    predReg = lastReg; sawReturn = true;
                 }
                 if (selBailed || !sawReturn) return bail(v.id);
                 // If predicate true, store eachReg at slot writeIdx (= result +
