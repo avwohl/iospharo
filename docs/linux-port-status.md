@@ -149,9 +149,21 @@ real bugs (all shared / both-arch):
   slot-count, so the old offset gave wrong arrays — now correct.
 
 REMAINING (0) — all 9 counted-loop fusions ported + verified on both arches.
-The WhileTrueAccum arithmetic-series shape (`s := s + i`) is still deferred: its
-overflow check needs a 128-bit signed multiply (arm64 smulh) — x86 one-operand
-imul into RDX:RAX is awkward under asmjit's Compiler RA.  Bails to tier-1.
+
+WhileTrueAccum arithmetic-series shape (`s := s + i` → s += limit*(limit+1)/2)
+now IMPLEMENTED + VERIFIED on both arches (2026-06-04).  x86 avoids arm64's
+smulh (a wide signed multiply, RA-risky on asmjit's x86 Compiler): it guards
+`limit < 2^30` with one UNSIGNED compare (so limit*(limit+1) < 2^60 → the low-64
+imul is exact and delta*8 can't overflow), then the final asr-60 SmI-range check
+deopts where the folded sum would exceed SmI — the same valid-fold window arm64
+allows, no wide multiply.  Verification gotcha: the series recognizer only
+matched the timesRepeat:-style pre-loop (LIMIT on stack), and the to:do: form
+(`1 to:N do:[:i|s:=s+i]`, which leaves START on the stack) was rolled back in
+2026-05 for an Interval-do: PERF regression.  Re-enabled behind a default-OFF
+knob PHARO_SISTA_WHILETRUE_TODO purely to verify firing: with it on, seriesSum
+fires the fold (whileTrueSeries=1) and yields 5050 on BOTH arches, all 16 bench
+checks PASS, no crash.  Prod default stays OFF (avoids the perf regression); the
+fold itself is now verified-correct-when-triggered.
 Methods bail safely to tier-1 without any of these.
     store_ivar plain stores The 92%-dominant bail.  Routing plain bytecode ivar
                             stores through jit_rt_store_inst_var (as setter-inline
