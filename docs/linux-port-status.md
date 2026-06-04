@@ -60,6 +60,21 @@ COMPILE time on collection tests — found via lldb + per-op env bisection.
 (atput's scaled STORE is fine; only the indexed load tripped it.)  kPrimAt now
 routes through the jit_rt_sista_basic_at helper (deopt-on-zero, like kPrimSize).
 
+KNOWN ISSUE — kPrimAt build_liveness crash RETURNED on x86 (2026-06-04, NOT
+fixed): running the sista_loop_bench under PHARO_SISTA_DISPATCH=1 segfaults
+(rc=139) in asmjit BaseRAPass::build_liveness() during Sista lowering.  3-way
+env bisect pins it to kPrimAt: enabling ONLY kPrimAt (NO_LOWER_{SIZE,ATPUT,FLOAT}=1)
+crashes; enabling only any of size/atput/float does NOT.  This is a REGRESSION —
+the array bench (select_array/collect_array, which use at:) passed on x86 at
+035acdfb.  The helper-routing fix is still present (no scaled-index load in the
+kPrimAt case), and kPrimSize is structurally identical yet does NOT crash, so the
+crash is a new liveness-analysis failure, not the old indexed-load.  Likely
+introduced by a shared-scaffold change between 035acdfb and 4b7abcdd (IntervalDo /
+review-fix / series commits).  Workaround for x86 bench runs: PHARO_SISTA_NO_LOWER_AT=1.
+Orthogonal to the WhileTrueAccum/to:do: work (that crashes too with all
+counted-loop fusions OFF; verified via the at-disabled series bench).  TODO: lldb
+the box, diff the kPrimAt vs kPrimSize emitted node graph, find the malformed CFG.
+
 Verification harness: `scripts/aws/sunit-sista-verify.sh` runs an SUnit subset
 with/without Sista and diffs; `validate_smalltalk_image` (separate repo) can
 SHA-256-manifest snapshots for bit-level state diffing.
@@ -156,14 +171,31 @@ smulh (a wide signed multiply, RA-risky on asmjit's x86 Compiler): it guards
 `limit < 2^30` with one UNSIGNED compare (so limit*(limit+1) < 2^60 → the low-64
 imul is exact and delta*8 can't overflow), then the final asr-60 SmI-range check
 deopts where the folded sum would exceed SmI — the same valid-fold window arm64
-allows, no wide multiply.  Verification gotcha: the series recognizer only
-matched the timesRepeat:-style pre-loop (LIMIT on stack), and the to:do: form
-(`1 to:N do:[:i|s:=s+i]`, which leaves START on the stack) was rolled back in
-2026-05 for an Interval-do: PERF regression.  Re-enabled behind a default-OFF
-knob PHARO_SISTA_WHILETRUE_TODO purely to verify firing: with it on, seriesSum
-fires the fold (whileTrueSeries=1) and yields 5050 on BOTH arches, all 16 bench
-checks PASS, no crash.  Prod default stays OFF (avoids the perf regression); the
-fold itself is now verified-correct-when-triggered.
+allows, no wide multiply.  The series recognizer originally only matched the
+timesRepeat:-style pre-loop (LIMIT on stack); the to:do: form
+(`1 to:N do:[:i|s:=s+i]`, which leaves START on the stack via ExtStoreTemp) was
+rolled back in 2026-05 for a claimed Interval-do: PERF regression (4ms→1087ms).
+
+**ENABLED BY DEFAULT (2026-06-04).** The to:do: pre-loop is now admitted into the
+WhileTrueAccum recognizer by default, behind opt-out `PHARO_SISTA_NO_WHILETRUE_TODO`
+(replaces the old opt-in `PHARO_SISTA_WHILETRUE_TODO`).  Root cause of the original
+regression: the OLD deopt resumed at the wrong bytecode → corrupt stack →
+re-deopt churn.  The current resume-at-preLoopStart lowering re-runs the pre-loop
+(re-creating START), and `bodyOk` still requires the canonical accum arith, so a
+general `1 to:n do:` body (array access, sends) never folds — only foldable
+accumulations do.  A deopt counter `g_sistaDeopt_whileTrueAccum` (bumped in the
+x86 wtDeopt and arm64 emitDeopt, printed under PHARO_SISTA_BAIL_LOG) makes any
+deopt-storm observable.
+
+Verified BOTH arches (2026-06-04): all bench checks PASS; the to:do: series fold
+fires (whileTrueSeries=3: seriesSum, bigSeriesSum, overflowSeries).  An overflowing
+series (accum = SmI max → fold's runtime range check fails) deopts EXACTLY 8 times
+then the existing sistaBailCounter_ blacklist (threshold 8) Sista-blacklists the
+method → it runs at tier-1 (NOT interpreter) — counter freezes at 8 despite 50000
+calls, i.e. the storm self-heals.  Wall-clock (arm64, series bench): fold ON =
+41.7s vs recognizer OFF = 79.0s → enabling the fold is ~1.9× FASTER, not a
+regression (bigSeriesSum's 100000-iter loop folds to closed-form).  x86 verified
+via the same series bench with kPrimAt lowering disabled (see KNOWN ISSUE below).
 Methods bail safely to tier-1 without any of these.
     store_ivar plain stores The 92%-dominant bail.  Routing plain bytecode ivar
                             stores through jit_rt_store_inst_var (as setter-inline
