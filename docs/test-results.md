@@ -65,26 +65,30 @@ blocks → the "deadlock". PROC-DUMP corroborates: ~52 leaked terminated process
 with corrupt `myList=0x300000000` (termination cleanup incomplete on this path).
 The DIAG timer was healthy/armed throughout — NOT delay-scheduler death.
 
-**Fix attempts 2026-06-04 (none worked — bug is deeper):** the image path is
-`UnhandledError>>defaultAction` → `unhandledErrorAction` → `Process>>handleError:`
-→ errorHandler (`NonInteractiveUIManager`) → `quitFrom:withMessage:` →
-`ensure:[exitFailure]`. Stock Pharo would exit there; our VM neither exits nor
-unwinds (the forked process ends at `Process>>endProcess` with its `ensure:`
-skipped). Probes that DO unwind: normal completion; explicit `[...terminate]
-ensure:`; and `on: UnhandledError do: [:e | Processor activeProcess terminate]`.
-But patching `Process>>handleError: ^ self terminate` FIRES the terminate
-(`[TERM] terminateCurrentProcess … method=#runCase`) yet **still skips the
-ensure:** — so our VM's `terminate`/unwind does not run `ensure:` blocks when
-invoked from the `handleError:` (mid-signal) context (the `[TERM-P]` diag flags
-these as "exception/NLR walk hit the top of the sender chain", corrupt-sender
-sentinel `0x300000000` = uninitialized old-space base). A runner catch-all
-`on: Exception do:` made it worse (intercepts SUnit's internal resumable
-exceptions). **Real fix (TODO):** fix the VM's process-termination UNWIND
-machinery so `terminate` runs `ensure:`/`ifCurtailed:` from all contexts (not
-just from an explicit exception handler) — best with lldb on the live
-termination (the corrupt-sender `0x300000000` is the lead). Diagnostics:
-`PHARO_PROC_DUMP=1`, the 10s stuck-process DIAG (DIAG-TIMER/DIAG-QUEUE), and the
-`[TERM-P]` sender-chain dump.
+**FIXED 2026-06-04 — root cause was Sista HELPER_SENDS.** The escaping exception
+is `CollectionIsEmpty` (raised by `Collection>>average` on an empty collection in
+the running/average tests). It IS an `Error`, so the runner's `on: Error do:`
+*should* catch it — but its signaler stack is only 2 frames (`sum` ← `average`)
+with `average`'s **sender = nil** (`0x300000000` is just `nil`, the first special
+object — the earlier "corrupt sender" was a red herring). The broken sender chain
+came from **HELPER_SENDS** (Sista helper-send activations): a helper-send
+activation leaves a broken Context sender chain, so exception **handler search
+cannot reach the enclosing `on: Error`/`should:raise:` handler** → the exception
+goes unhandled → the forked test process is abandoned without running its
+`ensure: [doneSem signal]` → the watchdog loops to its deadline and the runner
+blocks. Confirmed by bisect: `PHARO_NO_SISTA_HELPER_SENDS=1` makes the hanging
+class pass **20/20 on both interpreter and Sista**; default (HELPER_SENDS on)
+hangs both. The materializeFrameStack cycle-break (`0x300000000`/sender=nil) is a
+timing-dependent symptom of the same broken chains, not the cause.
+
+**Fix:** HELPER_SENDS is now **default-off** (`DebugSettings.cpp`:
+`noSistaHelperSends = !envEq1("PHARO_SISTA_HELPER_SENDS")`), opt back in with
+`PHARO_SISTA_HELPER_SENDS=1`. Disabled until the helper-send activation reifies a
+correct sender chain. Validated: CollectionArithmeticTest 20/20; an 8-class
+diverse subset (incl. the previously-hanging CollectionArithmeticTest +
+IntegerTest) completes with **1298 pass / 0 fail / 29 error / 4 skip, no hang**;
+the Sista loop bench is unchanged at 19/19 (the counted-loop fusions / to:do:
+WhileTrueAccum / kPrimAt work don't use HELPER_SENDS).
 
 **Δcog on the 80 classes the custom VM (Sista) DID complete** (4405 tests):
 

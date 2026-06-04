@@ -472,8 +472,19 @@ DebugSettings::DebugSettings() {
     noSistaDoSplice                  = envPresent("PHARO_NO_SISTA_DO_SPLICE");
     sistaDoSpliceNoHint              = envEq1("PHARO_SISTA_DO_SPLICE_NO_HINT");
     noSistaDoAccumResume             = envPresent("PHARO_NO_SISTA_DOACCUM_RESUME");
-    noSistaHelperSends               = envPresent("PHARO_NO_SISTA_HELPER_SENDS");
-    noSistaHelperSendsStrict         = envEq1("PHARO_NO_SISTA_HELPER_SENDS");
+    // 2026-06-04: HELPER_SENDS is now DEFAULT-OFF.  A Sista helper-send
+    // activation leaves a broken Context sender chain, so exception handler
+    // search cannot find an enclosing handler: an unhandled error in a forked
+    // process (e.g. a SUnit test raising CollectionIsEmpty past its on:Error
+    // handler) escapes, the process is abandoned WITHOUT running its ensure:,
+    // and any waiter on a semaphore that ensure: would signal deadlocks (the
+    // SUnit full-suite hang — CollectionArithmeticTest etc.).  Confirmed:
+    // PHARO_NO_SISTA_HELPER_SENDS=1 made the hanging class pass 20/20 on both
+    // the interpreter and Sista; default-on hung both.  Disabled until the
+    // helper-send activation reifies a correct sender chain.  Re-enable with
+    // PHARO_SISTA_HELPER_SENDS=1.
+    noSistaHelperSends               = !envEq1("PHARO_SISTA_HELPER_SENDS");
+    noSistaHelperSendsStrict         = !envEq1("PHARO_SISTA_HELPER_SENDS");
     noSistaInjectResume              = envPresent("PHARO_NO_SISTA_INJECT_RESUME");
     noSistaInlineArithIVar           = envPresent("PHARO_NO_SISTA_INLINE_ARITHIVAR");
     noSistaInlineIdentityEq          = envPresent("PHARO_NO_SISTA_INLINE_IDENTITY_EQ");
