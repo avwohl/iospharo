@@ -51,6 +51,7 @@
 extern "C" uint64_t g_sistaEmit_countedLoopDo;
 extern "C" uint64_t g_sistaEmit_countedLoopInjectInto;
 extern "C" uint64_t g_sistaEmit_countedLoopArrayDoAccum;
+extern "C" uint64_t g_sistaEmit_countedLoopIntervalDoAccum;
 
 // Sista runtime helpers.  Defined in src/vm/jit/JITRuntime.cpp.
 extern "C" uint64_t jit_rt_store_inst_var(void* state,
@@ -1369,6 +1370,86 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.bind(afterCommit);
                 regFor[v.id] = rcvReg;   // do: returns the receiver
                 g_sistaEmit_countedLoopArrayDoAccum++;
+                break;
+            }
+
+            // ---- Counted-loop fusion: `(start to: stop) do: [:e|s:=s<arith>e]` ----
+            // Closure-accum over an Interval; iterates SmI integers start..stop
+            // directly (no basicAt, no fmt check, no resume helper).  operands:
+            // [0]=start, [1]=stop (SmI Oops), [2]=vecRef.  literal: slot|arith.
+            // Mirrors arm64 (SistaLowering_arm64.cpp:4348).  Deopt rebuilds
+            // [start, stop] and resumes at to:'s bytecode; vec[slot] uncommitted
+            // until success, so re-running do: from scratch is correct.
+            case Op::kCountedLoopIntervalDoAccum: {
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
+                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (v.operands.size() != 3) return bail(v.id);
+                auto itStart = regFor.find(v.operands[0]);
+                auto itStop  = regFor.find(v.operands[1]);
+                auto itVec   = regFor.find(v.operands[2]);
+                if (itStart == regFor.end() || itStop == regFor.end()
+                    || itVec == regFor.end()) return bail(v.id);
+                Gp startReg = itStart->second;
+                Gp stopReg  = itStop->second;
+                Gp vecReg   = itVec->second;
+                uint32_t slot      = (uint32_t)(v.literal & 0xFF);
+                uint32_t arithCode = (uint32_t)((v.literal >> 8) & 0xFF);
+                int slotByteOff = 8 + (int)slot * 8;
+                uint32_t deoptBC = 0;
+                for (const auto& fp : method.framepoints)
+                    if (fp.valueId == v.id) { deoptBC = fp.bcOffset; break; }
+                auto ivDeopt = [&]() {
+                    Gp sp = cc.new_gp64("ivacc_dz_sp"); cc.mov(sp, ptr(state, OFF_SP));
+                    cc.mov(ptr(sp, 0), startReg); cc.mov(ptr(sp, 8), stopReg);
+                    cc.add(sp, Imm(16)); cc.mov(ptr(state, OFF_SP), sp);
+                    Gp ipReg = cc.new_gp64("ivacc_dz_ip");
+                    if (bytecodeBase) {
+                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
+                        cc.mov(ipReg, Imm((uint64_t)a));
+                    } else cc.mov(ipReg, Imm((uint64_t)deoptBC));
+                    cc.mov(ptr(state, OFF_IP), ipReg);
+                    Gp argc = cc.new_gp32("ivacc_dz_argc"); cc.mov(argc, Imm(0));
+                    cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
+                    Gp z = cc.new_gp64("ivacc_dz_z"); cc.xor_(z, z);
+                    cc.mov(ptr(state, OFF_ICDATAPTR), z);
+                    Gp ex = cc.new_gp32("ivacc_dz_ex"); cc.mov(ex, Imm(EXIT_SEND));
+                    cc.mov(ptr(state, OFF_EXIT), ex);
+                    cc.ret();
+                };
+                // start, stop must be SmI; vecRef must be a heap object.
+                Gp tS = cc.new_gp64("ivacc_tS"); cc.mov(tS, startReg);
+                cc.and_(tS, Imm(7)); cc.cmp(tS, Imm(1));
+                Label sOk = cc.new_label(); cc.je(sOk); ivDeopt(); cc.bind(sOk);
+                Gp tT = cc.new_gp64("ivacc_tT"); cc.mov(tT, stopReg);
+                cc.and_(tT, Imm(7)); cc.cmp(tT, Imm(1));
+                Label tOk = cc.new_label(); cc.je(tOk); ivDeopt(); cc.bind(tOk);
+                Gp tV = cc.new_gp64("ivacc_tV"); cc.mov(tV, vecReg);
+                cc.and_(tV, Imm(7)); cc.cmp(tV, Imm(0));
+                Label vOk = cc.new_label(); cc.je(vOk); ivDeopt(); cc.bind(vOk);
+                // accReg = vec[slot]; must be SmI.
+                Gp accReg = cc.new_gp64("ivacc_acc");
+                cc.mov(accReg, ptr(vecReg, slotByteOff));
+                Gp tA = cc.new_gp64("ivacc_tA"); cc.mov(tA, accReg);
+                cc.and_(tA, Imm(7)); cc.cmp(tA, Imm(1));
+                Label aOk = cc.new_label(); cc.je(aOk); ivDeopt(); cc.bind(aOk);
+                // iReg = start; loop i = start..stop (SmI step +8 = +1 untagged).
+                Gp iReg = cc.new_gp64("ivacc_i"); cc.mov(iReg, startReg);
+                Label loopHead = cc.new_label(); Label loopExit = cc.new_label();
+                cc.cmp(iReg, stopReg); cc.ja(loopExit);
+                cc.bind(loopHead);
+                if (arithCode == 0) { cc.add(accReg, iReg); cc.sub(accReg, Imm(1)); }
+                else if (arithCode == 1) { cc.sub(accReg, iReg); cc.add(accReg, Imm(1)); }
+                else {
+                    Gp au = cc.new_gp64("ivacc_au"); cc.mov(au, accReg); cc.sar(au, Imm(3));
+                    Gp bu = cc.new_gp64("ivacc_bu"); cc.mov(bu, iReg); cc.sar(bu, Imm(3));
+                    cc.imul(au, bu); cc.shl(au, Imm(3)); cc.or_(au, Imm(1));
+                    cc.mov(accReg, au);
+                }
+                cc.add(iReg, Imm(8)); cc.cmp(iReg, stopReg); cc.jbe(loopHead);
+                cc.bind(loopExit);
+                cc.mov(ptr(vecReg, slotByteOff), accReg);   // commit s
+                regFor[v.id] = startReg;   // placeholder (next bc discards)
+                g_sistaEmit_countedLoopIntervalDoAccum++;
                 break;
             }
 
