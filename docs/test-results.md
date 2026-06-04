@@ -38,12 +38,40 @@ Investigation (eval-mode repro + runCase) disproved that:
 - At the hang only the idle process (P10) is runnable → a **scheduler
   DEADLOCK**, not a runaway loop.
 The hang is in the SUnit **runner's** per-test fork + Delay-based watchdog
-machinery (`run_sunit_tests.st`) deadlocking against our VM's process
-scheduler / Delay timer — not in the tests or the JIT. The earlier 4.7e9-step
-"spin" was the watchdog/heartbeat cycling, not the test computing. Real fix
-target: the VM scheduler / Delay-timer interaction under the runner's fork +
-watchdog load (a base-VM scheduler issue), or a runner that avoids the
-deadlock-prone fork/watchdog for tests that don't actually hang.
+machinery (`run_sunit_tests.st`) — not in the tests or the JIT.
+
+**Root cause pinned 2026-06-04: a forked process that hits an UNHANDLED ERROR
+terminates WITHOUT running its `ensure:`/unwind blocks.** Minimal repro on our
+VM (eval mode):
+
+```
+  | sem ran | sem := Semaphore new. ran := false.
+  [[nil fooBarBaz] ensure: [ran := true. sem signal]] fork.
+  sem waitTimeoutSeconds: 3        "→ ran=false, sem never signals (TIMEOUT)"
+```
+
+Explicit `[...terminate] ensure: [...]` DOES unwind (ran=true), and normal
+completion + caught errors unwind too — only the unhandled-error termination
+path skips unwind. In the runner, each test is
+`[[testInstance runCase] on: TestFailure/Deprecation/TestSkipped/Error ...]
+ensure: [testDone := true. doneSem signal]`; a watchdog (P60) loops
+`relinquishProcessorForMicroseconds:` until `testDone`, and the runner waits on
+`doneSem`. When a test raises something that escapes those handlers (a non-Error
+exception, a 2nd error inside the Error handler's signalerContext/printString
+walk, or a mishandled Deprecation resume), the test process terminates via the
+unhandled-error path → its `ensure:` is skipped → `testDone` stays false +
+`doneSem` never signals → the watchdog loops to its ≤300s deadline and the runner
+blocks → the "deadlock". PROC-DUMP corroborates: ~52 leaked terminated processes
+with corrupt `myList=0x300000000` (termination cleanup incomplete on this path).
+The DIAG timer was healthy/armed throughout — NOT delay-scheduler death.
+
+**Fix (not yet done):** make the unhandled-error process-termination path run
+unwind (ensure:/ifCurtailed:) blocks the way `Process>>terminate` does. Since
+explicit `terminate` already unwinds correctly on our VM, the gap is that the
+unhandled-error default action isn't reaching that unwind — determine VM-level
+(Interpreter exception/unwind) vs image-level (headless UnhandledError
+defaultAction / UIManager). Diagnostics: `PHARO_PROC_DUMP=1` (all processes +
+myList), the 10s stuck-process DIAG (DIAG-TIMER, DIAG-QUEUE).
 
 **Δcog on the 80 classes the custom VM (Sista) DID complete** (4405 tests):
 
