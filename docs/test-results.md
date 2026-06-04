@@ -65,13 +65,26 @@ blocks → the "deadlock". PROC-DUMP corroborates: ~52 leaked terminated process
 with corrupt `myList=0x300000000` (termination cleanup incomplete on this path).
 The DIAG timer was healthy/armed throughout — NOT delay-scheduler death.
 
-**Fix (not yet done):** make the unhandled-error process-termination path run
-unwind (ensure:/ifCurtailed:) blocks the way `Process>>terminate` does. Since
-explicit `terminate` already unwinds correctly on our VM, the gap is that the
-unhandled-error default action isn't reaching that unwind — determine VM-level
-(Interpreter exception/unwind) vs image-level (headless UnhandledError
-defaultAction / UIManager). Diagnostics: `PHARO_PROC_DUMP=1` (all processes +
-myList), the 10s stuck-process DIAG (DIAG-TIMER, DIAG-QUEUE).
+**Fix attempts 2026-06-04 (none worked — bug is deeper):** the image path is
+`UnhandledError>>defaultAction` → `unhandledErrorAction` → `Process>>handleError:`
+→ errorHandler (`NonInteractiveUIManager`) → `quitFrom:withMessage:` →
+`ensure:[exitFailure]`. Stock Pharo would exit there; our VM neither exits nor
+unwinds (the forked process ends at `Process>>endProcess` with its `ensure:`
+skipped). Probes that DO unwind: normal completion; explicit `[...terminate]
+ensure:`; and `on: UnhandledError do: [:e | Processor activeProcess terminate]`.
+But patching `Process>>handleError: ^ self terminate` FIRES the terminate
+(`[TERM] terminateCurrentProcess … method=#runCase`) yet **still skips the
+ensure:** — so our VM's `terminate`/unwind does not run `ensure:` blocks when
+invoked from the `handleError:` (mid-signal) context (the `[TERM-P]` diag flags
+these as "exception/NLR walk hit the top of the sender chain", corrupt-sender
+sentinel `0x300000000` = uninitialized old-space base). A runner catch-all
+`on: Exception do:` made it worse (intercepts SUnit's internal resumable
+exceptions). **Real fix (TODO):** fix the VM's process-termination UNWIND
+machinery so `terminate` runs `ensure:`/`ifCurtailed:` from all contexts (not
+just from an explicit exception handler) — best with lldb on the live
+termination (the corrupt-sender `0x300000000` is the lead). Diagnostics:
+`PHARO_PROC_DUMP=1`, the 10s stuck-process DIAG (DIAG-TIMER/DIAG-QUEUE), and the
+`[TERM-P]` sender-chain dump.
 
 **Δcog on the 80 classes the custom VM (Sista) DID complete** (4405 tests):
 
