@@ -58,6 +58,7 @@ extern "C" uint64_t g_sistaEmit_countedLoopWhileTrueAccum;
 extern "C" uint64_t g_sistaEmit_countedLoopArraySelect;
 extern "C" uint64_t g_sistaEmit_countedLoopIntervalDo;
 extern "C" uint64_t g_sistaEmit_whileTrueSeries;
+extern "C" uint64_t g_sistaDeopt_whileTrueAccum;
 
 // Sista runtime helpers.  Defined in src/vm/jit/JITRuntime.cpp.
 extern "C" uint64_t jit_rt_store_inst_var(void* state,
@@ -1979,6 +1980,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(ptr(state, OFF_ICDATAPTR), z);
                     Gp ex = cc.new_gp32("wt_dz_ex"); cc.mov(ex, Imm(EXIT_SEND));
                     cc.mov(ptr(state, OFF_EXIT), ex);
+                    // Bump the runtime deopt counter so a deopt-storm (fold
+                    // bails every call → full-loop interp) is observable.
+                    Gp dcAddr = cc.new_gp64("wt_dc_addr");
+                    cc.mov(dcAddr, Imm((uint64_t)(uintptr_t)&g_sistaDeopt_whileTrueAccum));
+                    Gp dcVal = cc.new_gp64("wt_dc_val"); cc.mov(dcVal, ptr(dcAddr));
+                    cc.add(dcVal, Imm(1)); cc.mov(ptr(dcAddr), dcVal);
                     cc.ret();
                 };
                 Gp tempBase = cc.new_gp64("wt_tb"); cc.mov(tempBase, ptr(state, OFF_TEMPBASE));

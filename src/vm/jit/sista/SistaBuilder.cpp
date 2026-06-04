@@ -2507,8 +2507,8 @@ public:
                                     // assumption (push back the limit)
                                     // doesn't match for to:do:.
                                     //
-                                    // OPT-IN re-enable (PHARO_SISTA_WHILETRUE_TODO,
-                                    // default OFF): the to:do: pre-loop is
+                                    // DEFAULT ON (opt-out PHARO_SISTA_NO_WHILETRUE_TODO):
+                                    // the to:do: pre-loop is
                                     //   pushConstant START (0x50/0x51),
                                     //   ExtStoreTemp loopT (0xF5 <idx>)
                                     // leaving START on the stack.  The fusion's
@@ -2517,12 +2517,16 @@ public:
                                     // "push back the limit" concern doesn't apply
                                     // to the resume-at-preLoopStart lowering; the
                                     // placeholder result is discarded by the END
-                                    // pop, so START-vs-LIMIT is unobservable.
-                                    // Used to verify the series fold FIRES (prod
-                                    // default OFF to avoid the Interval-do: perf
-                                    // regression).
+                                    // pop, so START-vs-LIMIT is unobservable.  The
+                                    // original 4ms→1087ms regression came from the
+                                    // old deopt resuming at the wrong BC (corrupt
+                                    // stack → re-deopt churn); resume-at-preLoopStart
+                                    // fixes that root cause.  bodyOk below still
+                                    // requires the canonical accum arith, so a
+                                    // general `1 to:n do:` body (array access, sends)
+                                    // never matches — only foldable accumulations do.
                                     else if (!preLoopOk
-                                        && GET_DEBUG_BOOL(PHARO_SISTA_WHILETRUE_TODO)
+                                        && !GET_DEBUG_BOOL(PHARO_SISTA_NO_WHILETRUE_TODO)
                                         && (p0 == 0x50 || p0 == 0x51)
                                         && p1 == jit::SistaV1::ExtStoreTemp
                                         && p2 == (uint8_t)loopTemp) {

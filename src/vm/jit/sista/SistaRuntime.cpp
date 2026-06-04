@@ -30,6 +30,9 @@ extern "C" uint64_t g_sistaEmit_countedLoopWhileTrueAccum = 0;
 extern "C" uint64_t g_sistaEmit_countedLoopArraySelect = 0;
 extern "C" uint64_t g_sistaEmit_countedLoopIntervalDo = 0;
 extern "C" uint64_t g_sistaEmit_whileTrueSeries = 0;  // WhileTrueAccum series shape
+// Runtime deopt counter for WhileTrueAccum (incremented in the emitted deopt
+// path).  Detects deopt-storms (fold deopts every call → full-loop interp).
+extern "C" uint64_t g_sistaDeopt_whileTrueAccum = 0;
 
 Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
                                        const std::vector<InlineHint>* hints,

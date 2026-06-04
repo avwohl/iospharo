@@ -136,6 +136,7 @@ extern "C" uint64_t g_sistaEmit_countedLoopWhileTrueAccum;
 extern "C" uint64_t g_sistaEmit_countedLoopArraySelect;
 extern "C" uint64_t g_sistaEmit_countedLoopIntervalDo;
 extern "C" uint64_t g_sistaEmit_whileTrueSeries;
+extern "C" uint64_t g_sistaDeopt_whileTrueAccum;
 extern "C" uint64_t g_sistaSelfRec_hits;
 extern "C" uint64_t g_bcFloatArith_hits;
 extern "C" uint64_t g_bcArithBail_hits;
@@ -1803,6 +1804,8 @@ void Interpreter::dumpJITStats() {
             (unsigned long long)g_sistaEmit_countedLoopArraySelect,
             (unsigned long long)g_sistaEmit_countedLoopIntervalDo,
             (unsigned long long)g_sistaEmit_whileTrueSeries);
+        fprintf(stderr, "  sista DEOPTs: whileTrueAccum=%llu\n",
+            (unsigned long long)g_sistaDeopt_whileTrueAccum);
     }
     if (g_debug.primProfile) {
         // Sort primitive call counts descending and print top 30.

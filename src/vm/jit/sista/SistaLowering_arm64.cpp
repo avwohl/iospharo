@@ -77,6 +77,7 @@ extern "C" uint64_t jit_rt_sista_complete_array_collect(
 extern "C" uint64_t g_sistaEmit_countedLoopArraySelect;
 extern "C" uint64_t g_sistaEmit_countedLoopIntervalDo;
 extern "C" uint64_t g_sistaEmit_whileTrueSeries;
+extern "C" uint64_t g_sistaDeopt_whileTrueAccum;
 
 namespace pharo {
 namespace sista {
@@ -4556,6 +4557,14 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     Gp exitR = cc.new_gp32("wt_dz_exit");
                     cc.mov(exitR, Imm(EXIT_SEND));
                     cc.str(exitR, ptr(state, OFF_EXIT));
+                    // Bump the runtime deopt counter so a deopt-storm (fold
+                    // bails every call → full-loop interp) is observable.
+                    Gp dcAddr = cc.new_gp64("wt_dc_addr");
+                    cc.mov(dcAddr, Imm((uint64_t)(uintptr_t)&g_sistaDeopt_whileTrueAccum));
+                    Gp dcVal = cc.new_gp64("wt_dc_val");
+                    cc.ldr(dcVal, ptr(dcAddr));
+                    cc.add(dcVal, dcVal, Imm(1));
+                    cc.str(dcVal, ptr(dcAddr));
                     cc.ret();
                 };
 
