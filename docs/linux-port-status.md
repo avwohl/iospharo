@@ -60,20 +60,26 @@ COMPILE time on collection tests — found via lldb + per-op env bisection.
 (atput's scaled STORE is fine; only the indexed load tripped it.)  kPrimAt now
 routes through the jit_rt_sista_basic_at helper (deopt-on-zero, like kPrimSize).
 
-KNOWN ISSUE — kPrimAt build_liveness crash RETURNED on x86 (2026-06-04, NOT
-fixed): running the sista_loop_bench under PHARO_SISTA_DISPATCH=1 segfaults
-(rc=139) in asmjit BaseRAPass::build_liveness() during Sista lowering.  3-way
-env bisect pins it to kPrimAt: enabling ONLY kPrimAt (NO_LOWER_{SIZE,ATPUT,FLOAT}=1)
-crashes; enabling only any of size/atput/float does NOT.  This is a REGRESSION —
-the array bench (select_array/collect_array, which use at:) passed on x86 at
-035acdfb.  The helper-routing fix is still present (no scaled-index load in the
-kPrimAt case), and kPrimSize is structurally identical yet does NOT crash, so the
-crash is a new liveness-analysis failure, not the old indexed-load.  Likely
-introduced by a shared-scaffold change between 035acdfb and 4b7abcdd (IntervalDo /
-review-fix / series commits).  Workaround for x86 bench runs: PHARO_SISTA_NO_LOWER_AT=1.
-Orthogonal to the WhileTrueAccum/to:do: work (that crashes too with all
-counted-loop fusions OFF; verified via the at-disabled series bench).  TODO: lldb
-the box, diff the kPrimAt vs kPrimSize emitted node graph, find the malformed CFG.
+FIXED (2026-06-04, bb158a7f) — x86 build_liveness crash on UNREACHABLE BLOCKS.
+The sista_loop_bench segfaulted (rc=139) in asmjit BaseRAPass::build_liveness()
+during Sista lowering.  Root cause (NOT the kPrimAt emission, which is byte-
+identical across the window, and NOT the old indexed-load): asmjit's
+remove_unreachable_code step strips a dead block's instructions, leaving
+degenerate (null) live-bit storage, and the liveness walk then derefs it.  The
+Sista builder emits unreachable/dead blocks (orphaned `jmp` tails, empty
+fall-through chains) and the lowerer bound a label + code for EVERY block, so
+asmjit got the unreachable blocks.  kPrimAt was only the bisect GATE: a method
+bails wholesale to tier-1 if any op fails to lower, so before the recent fusion
+ports a method with both `at:` and these dead blocks bailed and never reached
+finalize(); porting more fusions made such methods fully lowerable and exposed
+the latent bug.  Root-caused with the new PHARO_SISTA_DUMP_NODES knob (dumps each
+method's asmjit node graph before finalize() + enables the RA kRADebugAll trace)
++ gdb (fault at `mov (%r11)`, r11 = block live-bits = 0, right after the
+`[remove_unreachable_code]` log line).  Fix: BFS the successor graph from the
+entry (block 0) and skip emitting any unreachable block; applied to both lowerers
+(arm64 tolerated the dead blocks but it's fragile + wasteful).  Verified: x86 full
+array bench 19/19 PASS (lower OK 132->305), arm64 full bench 19/19 PASS (no
+regression).
 
 Verification harness: `scripts/aws/sunit-sista-verify.sh` runs an SUnit subset
 with/without Sista and diffs; `validate_smalltalk_image` (separate repo) can
