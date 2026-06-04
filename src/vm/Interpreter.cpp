@@ -134,6 +134,7 @@ extern "C" uint64_t g_sistaEmit_countedLoopIntervalInjectInto;
 extern "C" uint64_t g_sistaEmit_countedLoopArrayCollect;
 extern "C" uint64_t g_sistaEmit_countedLoopWhileTrueAccum;
 extern "C" uint64_t g_sistaEmit_countedLoopArraySelect;
+extern "C" uint64_t g_sistaEmit_countedLoopIntervalDo;
 extern "C" uint64_t g_sistaSelfRec_hits;
 extern "C" uint64_t g_bcFloatArith_hits;
 extern "C" uint64_t g_bcArithBail_hits;
@@ -1789,7 +1790,8 @@ void Interpreter::dumpJITStats() {
             "  sista fusion EMITs: countedLoopDo=%llu countedLoopInjectInto=%llu "
             "countedLoopArrayDoAccum=%llu countedLoopIntervalDoAccum=%llu "
             "countedLoopIntervalInjectInto=%llu countedLoopArrayCollect=%llu "
-            "countedLoopWhileTrueAccum=%llu countedLoopArraySelect=%llu\n",
+            "countedLoopWhileTrueAccum=%llu countedLoopArraySelect=%llu "
+            "countedLoopIntervalDo=%llu\n",
             (unsigned long long)g_sistaEmit_countedLoopDo,
             (unsigned long long)g_sistaEmit_countedLoopInjectInto,
             (unsigned long long)g_sistaEmit_countedLoopArrayDoAccum,
@@ -1797,7 +1799,8 @@ void Interpreter::dumpJITStats() {
             (unsigned long long)g_sistaEmit_countedLoopIntervalInjectInto,
             (unsigned long long)g_sistaEmit_countedLoopArrayCollect,
             (unsigned long long)g_sistaEmit_countedLoopWhileTrueAccum,
-            (unsigned long long)g_sistaEmit_countedLoopArraySelect);
+            (unsigned long long)g_sistaEmit_countedLoopArraySelect,
+            (unsigned long long)g_sistaEmit_countedLoopIntervalDo);
     }
     if (g_debug.primProfile) {
         // Sort primitive call counts descending and print top 30.

@@ -72,9 +72,10 @@ extern "C" uint64_t jit_rt_sista_complete_array_collect(
     uint64_t startIdx,
     uint64_t constBits,
     uint64_t arithCode);
-// Per-fusion EMIT counter (defined in SistaRuntime.cpp; also used by the x86
-// lowerer).  Incremented at successful select emit to confirm the fusion fired.
+// Per-fusion EMIT counters (defined in SistaRuntime.cpp; also used by the x86
+// lowerer).  Incremented at successful emit to confirm the fusion fired.
 extern "C" uint64_t g_sistaEmit_countedLoopArraySelect;
+extern "C" uint64_t g_sistaEmit_countedLoopIntervalDo;
 
 namespace pharo {
 namespace sista {
@@ -4051,6 +4052,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // operations on a SmI start value will deopt at their
                 // own bytecodes.
                 regFor[v.id] = startReg;
+                g_sistaEmit_countedLoopIntervalDo++;
                 break;
             }
             case Op::kCountedLoopArrayDoAccum: {
