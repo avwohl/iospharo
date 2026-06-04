@@ -89,22 +89,26 @@ PORTED + VERIFIED-CORRECT on x86 (fusion fired + answer correct, EMIT counter):
     kCountedLoopIntervalInjectInto  inject_interval=5050  EMIT>0
     kCountedLoopArrayCollect        collect_array         EMIT>0  (allocates result)
     kCountedLoopWhileTrueAccum      timesrepeat=1000      EMIT>0  (closed-form, c∈{0,1})
+    kCountedLoopArraySelect         select_array=#(2 4 6 8 10) EMIT>0  (per-iter send predicate)
     kCountedLoopDo                  (no-crash only; non-accum do:, not on bench)
-All 7 bench checks PASS together with all fusions on; box stable throughout.
+All 8 bench checks PASS together with all fusions on; box stable throughout.
 
-PORTED but GATED OFF (opt-in, unverified):
-    kCountedLoopArraySelect   arm64:4702  arr select:[...]  dynamic-size result.
-       Ported (generic predicate path, alloc + compact-store + array_shrink)
-       and FIXES an arm64 off-by-one: arm64 stores the k-th kept element at
-       `result + writeIdx*8` (writeIdx 0-based) → first kept lands at byte
-       offset 0 (the HEADER); the correct slot is `result + 8 + writeIdx*8`.
-       jit_rt_sista_array_shrink only rewrites the header slot-count (no shift),
-       so arm64's trimmed array is wrong — a likely latent arm64 bug (select
-       rarely fires there).  The x86 path COMPILES + is crash-clean but the
-       bench never triggered it (the builder needs select: as a special Send1
-       with a specific block shape — `[:e|e>5]`/`[:e|e even]` weren't admitted),
-       so it stays UNVERIFIED.  Gated behind PHARO_SISTA_LOWER_SELECT (default
-       OFF → bails to tier-1) until its trigger shape is matched and verified.
+ArraySelect VERIFIED on BOTH arches (2026-06-04, EMIT=2, select_array=
+#(2 4 6 8 10) / select_gt=#(6 7 8 9 10) correct).  Getting there fixed THREE
+real bugs (all shared / both-arch):
+  (1) kCountedLoopArraySelect was missing from the hasSplice allowlist
+      (SistaRuntime.cpp) → select methods bailed as sendNoSplice before lowering,
+      so select was DEAD on both arches.
+  (2) the select PREDICATE lifts to a per-iteration kSendUnspeculated (`e even`,
+      `e > 5` are sends, not inlined arith) — both lowerers now run the per-iter
+      send via jit_rt_sista_call_send.  GC caveat: rcv/result aren't reloaded
+      after the send, so an *allocating* predicate could move them (safe for the
+      usual allocation-free predicates; shared with arm64's existing design).
+  (3) select blocks are lifted in implicit-return mode (no explicit kReturn —
+      last value is the predicate); both lowerers now use the last block value.
+  Plus the arm64 store off-by-one: was `result + writeIdx*8` (first kept element
+  on the HEADER); now `result + 8 + writeIdx*8`.  shrink only rewrites the
+  slot-count, so the old offset gave wrong arrays — now correct.
 
 REMAINING (1) — deferred:
     kCountedLoopIntervalDo    arm64:3783  (1 to:n) do:[...]  non-accumulating.
