@@ -90,8 +90,44 @@ PORTED + VERIFIED-CORRECT on x86 (fusion fired + answer correct, EMIT counter):
     kCountedLoopArrayCollect        collect_array         EMIT>0  (allocates result)
     kCountedLoopWhileTrueAccum      timesrepeat=1000      EMIT>0  (closed-form, c∈{0,1})
     kCountedLoopArraySelect         select_array=#(2 4 6 8 10) EMIT>0  (per-iter send predicate)
-    kCountedLoopDo                  (no-crash only; non-accum do:, not on bench)
-All 8 bench checks PASS together with all fusions on; box stable throughout.
+    kCountedLoopIntervalDo          interval_do=5050      EMIT>0  (non-accum, effect-free block)
+    kCountedLoopDo                  (no-crash only; non-accum array do:, not on bench)
+All 9 bench checks PASS together with all fusions on; box stable throughout.
+
+ALL 9 counted-loop fusions are now ported.  IntervalDo (the last) is VERIFIED on
+BOTH arches (2026-06-04, EMIT=1, interval_do=5050).  It is the non-accumulating
+`(start to: stop) do: [:e | <pure arith>]` — the builder admits only side-effect-
+free blocks (loads + int arith + tag-check; NO sends, NO stores, no capture) and
+only when the do: result is discarded (Pop/ReturnReceiver follows), so the block
+result is dead and the fusion returns a startReg placeholder.  No GC hazard (no
+send/alloc in the loop).  Loop scaffold is identical to the verified
+IntervalDoAccum.  Because the block is effect-free its per-iteration value is
+unobservable; the bench (intervalDoNop:) runs the dead IntervalDo loop then an
+accumulating loop and returns 5050, proving the fused loop ran without corrupting
+state.  arm64 already had the lowering (3786) but no emit counter — added one.
+
+IntervalDo adversarial review (4 skeptic lenses + per-finding verify) found 3
+real, shared/both-arch bugs in the interval fusions (all pre-existed in arm64;
+the x86 interval ports faithfully inherited them).  Two FIXED + verified on both
+arches (bench guards neg_do/neg_inject/neg_intervaldo=9, nlr_first=1):
+  A (critical): the 3 interval fusions (IntervalDo/IntervalDoAccum/Interval
+     InjectInto) compared TAGGED SmI loop bounds with UNSIGNED branches (ja/jbe
+     x86, b_hi/b_ls arm64) → a negative lower bound encodes huge-unsigned so it
+     ran 0 iterations (e.g. (-3 to:5) do: → 0, not 9), and (-5 to:-1) could
+     near-infinite-loop.  Fixed: signed branches (jg/jle, b_gt/b_le).  Array
+     siblings compare non-negative sizes → correctly left unsigned.
+  C (major): an explicit `^expr` (ReturnTop) inside a sub-lifted splice block was
+     lifted to a discardable kReturn → the NLR was silently dropped.  Fixed in
+     SistaBuilder: ReturnTop bails the fusion when sub-lifting (tier-1 handles
+     the NLR), matching the documented intent.  Affects all block-bearing fusions.
+  B (major, DEFERRED): on a TAKEN deopt the interval fusions rebuild [start,stop]
+     but resume at the PushFullBlock offset, where the elided `to:` send means
+     `do:` is sent to a SmI → DNU/stack corruption.  LATENT (only fires on a
+     non-SmI bound or non-SmI block-arith operand in a discarded do: — rare),
+     pre-existing on arm64.  Correct fix = record the fusion framepoint at the
+     `to:` offset (per-variant: IntervalDo to:=pfb-1, DoAccum/InjectInto differ
+     by the intervening PushTemp), which needs deopt-path verification — a
+     focused follow-up.  Disable any counted loop via PHARO_SISTA_NO_LOWER_COUNTED_LOOP.
 
 ArraySelect VERIFIED on BOTH arches (2026-06-04, EMIT=2, select_array=
 #(2 4 6 8 10) / select_gt=#(6 7 8 9 10) correct).  Getting there fixed THREE
@@ -110,11 +146,8 @@ real bugs (all shared / both-arch):
   on the HEADER); now `result + 8 + writeIdx*8`.  shrink only rewrites the
   slot-count, so the old offset gave wrong arrays — now correct.
 
-REMAINING (1) — deferred:
-    kCountedLoopIntervalDo    arm64:3783  (1 to:n) do:[...]  non-accumulating.
-       Block body does sends / at:put: (no register accumulator); returns the
-       interval — not cleanly verifiable by a known-output bench.  Lower value.
-The WhileTrueAccum arithmetic-series shape (`s := s + i`) is also deferred: its
+REMAINING (0) — all 9 counted-loop fusions ported + verified on both arches.
+The WhileTrueAccum arithmetic-series shape (`s := s + i`) is still deferred: its
 overflow check needs a 128-bit signed multiply (arm64 smulh) — x86 one-operand
 imul into RDX:RAX is awkward under asmjit's Compiler RA.  Bails to tier-1.
 Methods bail safely to tier-1 without any of these.
