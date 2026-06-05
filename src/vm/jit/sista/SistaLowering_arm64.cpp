@@ -145,7 +145,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         int hi = GET_DEBUG_INT(PHARO_SISTA_BAIL_INLINE_HI);
         bool logIdx = GET_DEBUG_BOOL(PHARO_SISTA_LOG_INLINE_IDX);
         int keepOnly0 = GET_DEBUG_INT(PHARO_SISTA_KEEP_INLINE_IDX);
-        if (hi >= 0 || logIdx || keepOnly0 >= 0) {
+        // Stable keep-by-oop: the compile-order index is wall-clock unstable, so
+        // isolate a single inline method by its (deterministic) method oop.
+        uint64_t keepOop = 0;
+        if (const char* ks = GET_DEBUG_STR(PHARO_SISTA_KEEP_METHOD_OOP))
+            keepOop = strtoull(ks, nullptr, 0);
+        if (hi >= 0 || logIdx || keepOnly0 >= 0 || keepOop != 0) {
             bool hasInline = false;
             for (const Value& sv : method.values)
                 if (sv.op == Op::kGuardClass) { hasInline = true; break; }
@@ -163,6 +168,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
                 int keepOnly = GET_DEBUG_INT(PHARO_SISTA_KEEP_INLINE_IDX);
                 if (keepOnly >= 0 && idx != keepOnly) {
+                    if (failedAtValue) *failedAtValue = 0;
+                    return nullptr;
+                }
+                if (keepOop != 0
+                    && method.compiledMethodOop.rawBits() != keepOop) {
                     if (failedAtValue) *failedAtValue = 0;
                     return nullptr;
                 }
