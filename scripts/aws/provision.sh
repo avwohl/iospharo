@@ -180,11 +180,23 @@ timeout 900 ssh -i "$PEM" -o StrictHostKeyChecking=accept-new ubuntu@"$PUBIP" \
 # --- 11. Deploy key: generate, register with GitHub, ship to box ------------
 DKEY="$HOME/.ssh/${KEY_NAME}-deploy"
 [ -f "$DKEY" ] || ssh-keygen -t ed25519 -N "" -C "$DEPLOY_KEY_TITLE" -f "$DKEY"
-# Re-register so the registered pubkey always matches our local private key.
-EXIST_KEY_ID=$(gh repo deploy-key list --repo avwohl/iospharo --json id,title \
-    -q ".[] | select(.title==\"$DEPLOY_KEY_TITLE\") | .id" 2>/dev/null || true)
-[ -n "$EXIST_KEY_ID" ] && gh repo deploy-key delete "$EXIST_KEY_ID" --repo avwohl/iospharo || true
-gh repo deploy-key add "$DKEY.pub" --repo avwohl/iospharo --title "$DEPLOY_KEY_TITLE" --allow-write
+# Register the deploy key with GitHub — but ONLY if an identical one isn't
+# already registered.  The local key is reused (generated once above), so on
+# repeat provisions the registered pubkey already matches; the old unconditional
+# delete+re-add just spammed the repo admin with a "deploy key added" email
+# every run for no benefit.
+LOCAL_BLOB=$(cut -d' ' -f2 "$DKEY.pub")
+MATCH_ID=$(gh repo deploy-key list --repo avwohl/iospharo --json id,title,key \
+    -q ".[] | select(.title==\"$DEPLOY_KEY_TITLE\" and (.key | contains(\"$LOCAL_BLOB\"))) | .id" 2>/dev/null || true)
+if [ -n "$MATCH_ID" ]; then
+    echo "deploy key already registered (id $MATCH_ID) and matches local — skipping re-add"
+else
+    # Missing or stale: drop any same-title key, then add the current one.
+    OLD_ID=$(gh repo deploy-key list --repo avwohl/iospharo --json id,title \
+        -q ".[] | select(.title==\"$DEPLOY_KEY_TITLE\") | .id" 2>/dev/null || true)
+    [ -n "$OLD_ID" ] && gh repo deploy-key delete "$OLD_ID" --repo avwohl/iospharo || true
+    gh repo deploy-key add "$DKEY.pub" --repo avwohl/iospharo --title "$DEPLOY_KEY_TITLE" --allow-write
+fi
 scp -i "$PEM" -o StrictHostKeyChecking=accept-new "$DKEY" ubuntu@"$PUBIP":/home/ubuntu/.ssh/iospharo-x64-deploy
 
 # --- 12. Ship on-instance scripts + env, enable units -----------------------
