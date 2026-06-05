@@ -162,6 +162,12 @@ namespace {
 bool     g_atRecOn = false;    // FINDNODE_WATCH, cached at interpret() entry
 uint64_t g_atOop = 0;          // asTuple's CompiledMethod oop (bootstrapped, cold)
 uint8_t* g_atBcBase = nullptr; // asTuple's bytecode[0] address (for cheap ipOff)
+// PHARO_TRACE_EXTENT_SEL: trace every bytecode within the dynamic extent of a
+// method whose selector matches the knob (the method + everything it calls).
+const char* g_traceExtentSel = nullptr;  // target selector (knob), cached at interpret() entry
+bool        g_traceExtentActive = false; // currently inside the matched method's extent
+size_t      g_traceExtentDepth = 0;      // frameDepth_ at extent entry (for relative depth)
+size_t      g_traceExtentLines = 0;      // per-extent line counter (reset on entry, capped)
 struct AtEv { uint8_t kind; uint8_t op; int ipOff; uint64_t fp1; uint64_t ctx; };
 // kind: 0=bytecode 1=resume(EFC) 2=save(materialize) 3=build(E7)
 constexpr int kAtMax = 400000;
@@ -2003,12 +2009,40 @@ void Interpreter::dumpTimerWedgeState() {
     fprintf(stderr, "[WEDGE] ==== end one-shot dump ====\n\n");
 }
 
+// PHARO_TRACE_EXTENT_SEL: log one line per bytecode executed within the dynamic
+// extent of the matched method (relative depth, current method selector, opcode,
+// top-of-stack class). Disarms when frameDepth_ falls below the entry depth.
+// Used to diff a passing vs failing execution of the same method (blocker #4).
+void Interpreter::traceExtentBytecode(uint8_t bc) {
+    if (frameDepth_ < g_traceExtentDepth) {
+        fprintf(stderr, "[ORGTRACE] <<< LEAVE extent at fd=%zu (lines=%zu)\n",
+                frameDepth_, g_traceExtentLines);
+        g_traceExtentActive = false;
+        return;
+    }
+    if (++g_traceExtentLines > 250000) {
+        if (g_traceExtentLines == 250001)
+            fprintf(stderr, "[ORGTRACE] line cap hit (extent too large)\n");
+        return;
+    }
+    Oop t = stackValue(0);
+    const char* tcls;
+    std::string tbuf;
+    if (t.isSmallInteger()) tcls = "SmallInt";
+    else if (t.isNil()) tcls = "nil";
+    else if (t.isObject() && memory_.isValidPointer(t)) { tbuf = memory_.classNameOf(t); tcls = tbuf.c_str(); }
+    else tcls = "imm";
+    fprintf(stderr, "[ORGBC d=%zu %s 0x%02x tos=%s]\n",
+            frameDepth_ - g_traceExtentDepth, memory_.selectorOf(method_).c_str(), bc, tcls);
+}
+
 void Interpreter::interpret() {
 #if __APPLE__
     volatile int64_t lastRunLoopPumpMs = 0;  // volatile for longjmp safety
     auto runLoopBase = std::chrono::steady_clock::now();
 #endif
     g_atRecOn = GET_DEBUG_BOOL(PHARO_FINDNODE_WATCH);
+    g_traceExtentSel = GET_DEBUG_STR(PHARO_TRACE_EXTENT_SEL);
 
     // Generational-GC young-gen enabler.  PHARO_YOUNG_GEN=1 opts
     // in to eden allocation + scavenge; default off until the
@@ -2192,6 +2226,7 @@ void Interpreter::interpret() {
             atRec(0, bytecode, (int)(instructionPointer_ - 1 - g_atBcBase), \
                   framePointer_ ? framePointer_[1].rawBits() : 0, \
                   framePointer_ ? framePointer_[2].rawBits() : 0); \
+        if (__builtin_expect(g_traceExtentActive, 0)) traceExtentBytecode(bytecode); \
         if constexpr (ENABLE_DEBUG_LOGGING) { \
             recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
             recentBytecodeIdx_++; \
@@ -2944,7 +2979,7 @@ void Interpreter::interpret() {
         // After ~5M bytecodes, signal the timer semaphore that was deferred
         // during headless startup. By now CommandLineUIManager should be
         // installed and MorphicRenderLoop disabled.
-        if (__builtin_expect(timerSignalDeferred_ && g_stepNum > 5000000, 0)) {
+        if (__builtin_expect(timerSignalDeferred_ && g_stepNum > 25000000, 0)) {
             timerSignalDeferred_ = false;
             if (!lastKnownTimerSemaphore_.isNil()) {
                 fprintf(stderr, "[STARTUP] Firing deferred timer semaphore signal (step %llu)\n", g_stepNum);
@@ -8874,6 +8909,9 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
 }
 
 MethodCacheEntry* Interpreter::probeCache(Oop selector, Oop classOop) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NO_METHOD_CACHE), 0)) {
+        return nullptr;  // bisect knob: force full lookup every send
+    }
     uint64_t selBits = selector.rawBits();
     uint64_t clsBits = classOop.rawBits();
     size_t mask = MethodCacheSize - 1;
@@ -9616,6 +9654,19 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // PHARO_TRACE_EXTENT_SEL: arm the bytecode-extent trace when entering a
+    // method whose selector matches the knob. The extent (this method + every
+    // method it calls) is then traced per-bytecode in DISPATCH_NEXT until
+    // frameDepth_ falls back below the entry depth.
+    if (__builtin_expect(g_traceExtentSel != nullptr && !g_traceExtentActive, 0)
+            && method.isObject() && method.rawBits() > 0x10000
+            && memory_.selectorOf(method) == g_traceExtentSel) {
+        g_traceExtentActive = true;
+        g_traceExtentDepth = frameDepth_;
+        g_traceExtentLines = 0;
+        fprintf(stderr, "[ORGTRACE] >>> ENTER extent #%s at fd=%zu rcvr=%s\n",
+                g_traceExtentSel, frameDepth_, memory_.classNameOf(receiver_).c_str());
+    }
     // Diagnostic: count activations of `value:` and CompiledBlock targets.
     if (g_debug.traceValueAct && method.isObject()
             && method.rawBits() > 0x10000) {
@@ -19524,6 +19575,50 @@ static uint8_t inlinePrimKind(int primIndex) {
 std::vector<sista::InlineHint>
 Interpreter::extractInlineHintsForMethod(Oop method) {
     std::vector<sista::InlineHint> hints;
+    // Stale-inline-hint validation (default ON; opt out with
+    // PHARO_SISTA_NO_VALIDATE_HINTS).  An IC slot caches (classKey ->
+    // resolvedMethod) observed at runtime.  When a class is redefined /
+    // removed or a method recompiled (heavy in the SystemEnvironment /
+    // Package SUnit region), the IC isn't always re-keyed, leaving a STALE
+    // pair whose resolvedMethod no longer matches classKey's current
+    // dispatch.  Sista's speculative inliner (tryInlineConstReturn) lifts
+    // that stale method and inlines a body with the WRONG ivar index /
+    // constant, guarded only by class index — silent value corruption that
+    // surfaces far away (e.g. `SystemEnvironment new organization` →
+    // KeyNotFound / NonBooleanReceiver after a few test runs).  Guard:
+    // re-resolve the cached method's selector in classKey's class; drop the
+    // hint when it positively resolves to a DIFFERENT method.
+    const bool validateHints = GET_DEBUG_BOOL(PHARO_SISTA_VALIDATE_HINTS);
+    auto hintFresh = [&](uint64_t classKey, uint64_t methodBits) -> bool {
+        if (!validateHints) return true;
+        if (methodBits == 0) return false;
+        Oop m0 = Oop::fromRawBits(methodBits);
+        if (!m0.isObject() || !memory_.isValidPointer(m0)) return false;
+        Oop cls = memory_.classAtIndex((uint32_t)(classKey & 0x3FFFFFu));
+        if (!cls.isObject() || cls.isNil()) return false;
+        size_t numLits = memory_.numLiteralsOf(m0);
+        if (numLits < 2) return true;  // can't extract selector — keep
+        Oop sel = memory_.fetchPointer(numLits - 1, m0);
+        if (memory_.oopToString(sel).empty()) {
+            // AdditionalMethodState: real selector is slot 1.
+            if (sel.isObject() && sel.rawBits() >= 0x10000
+                    && sel.asObjectPtr()->slotCount() >= 2) {
+                sel = sel.asObjectPtr()->slotAt(1);
+            }
+        }
+        if (memory_.oopToString(sel).empty()) return true;  // unknown — keep
+        Oop resolved = lookupMethod(sel, cls);
+        // STALE only when we positively resolve to a different method.
+        if (resolved.isObject() && !resolved.isNil() && resolved != m0) {
+            if (GET_DEBUG_BOOL(PHARO_SISTA_ICR_LOG)) {
+                fprintf(stderr, "[HINT-STALE] drop classIdx=%u sel=#%s cached=0x%llx now=0x%llx\n",
+                        (uint32_t)(classKey & 0x3FFFFFu), memory_.oopToString(sel).c_str(),
+                        (unsigned long long)methodBits, (unsigned long long)resolved.rawBits());
+            }
+            return false;
+        }
+        return true;
+    };
     auto* jm = jitRuntime_.methodMap().lookup(method.rawBits());
     // jit-may25 Session E: gather hints from BOTH JIT IC and interp-side
     // table.  Previously the fallback to interpHints only fired when
@@ -19543,7 +19638,7 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
             for (const auto& h : hints) {
                 if (h.bcOffset == e.bcOff) { already = true; break; }
             }
-            if (!already) {
+            if (!already && hintFresh(e.classKey, e.targetMethod)) {
                 hints.push_back({e.bcOff, e.classKey, e.targetMethod});
             }
         }
@@ -19596,7 +19691,7 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
         if (emit) {
             uint16_t bcOff = (sendBCs && sendIdx < sendBCs->size())
                 ? (*sendBCs)[sendIdx] : UINT16_MAX;
-            if (bcOff != UINT16_MAX) {
+            if (bcOff != UINT16_MAX && hintFresh(classKey0, method0)) {
                 hints.push_back({bcOff, classKey0, method0});
             }
         }

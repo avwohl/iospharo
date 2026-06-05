@@ -456,12 +456,28 @@ uint32_t ObjectMemory::registerClass(Oop classOop) {
         ObjectHeader* hdr = classOop.asObjectPtr();
         uint32_t hash = hdr->identityHash();
         if (hash != 0 && hash < classTable_.size()) {
+            if (GET_DEBUG_BOOL(PHARO_CTCHECK)) {
+                Oop prev = classTable_[hash];
+                if (prev.isObject() && !prev.isNil() && prev != classOop) {
+                    fprintf(stderr, "[CTOVERWRITE-reuse] idx=%u old=0x%llx new=0x%llx (class reused its hash, displacing a live entry)\n",
+                            hash, (unsigned long long)prev.rawBits(), (unsigned long long)classOop.rawBits());
+                }
+            }
             classTable_[hash] = classOop;
             assignedIdx = hash;
         } else {
             // No hash yet — assign new index and set the hash to match
             uint32_t index = nextClassIndex_++;
             if (index < classTable_.size()) {
+                if (GET_DEBUG_BOOL(PHARO_CTCHECK)) {
+                    Oop prev = classTable_[index];
+                    if (prev.isObject() && !prev.isNil() && prev != classOop) {
+                        fprintf(stderr, "[CTOVERWRITE-seq] idx=%u old=0x%llx new=0x%llx nextClassIndex_now=%u (sequential alloc hit a LIVE slot!)\n",
+                                index, (unsigned long long)prev.rawBits(), (unsigned long long)classOop.rawBits(), nextClassIndex_);
+                    } else {
+                        fprintf(stderr, "[CTASSIGN] idx=%u new=0x%llx\n", index, (unsigned long long)classOop.rawBits());
+                    }
+                }
                 classTable_[index] = classOop;
                 hdr->setIdentityHash(index);
             }
@@ -3114,6 +3130,69 @@ void ObjectMemory::markClassTablePages() {
             // are already marked via classTable_ in forEachMemoryRoot.
             page->setMarked(true);
         }
+    }
+}
+
+void ObjectMemory::dumpClassTableConsistency(const char* when) {
+    // 1) Class-table self-consistency: every live entry should be an object,
+    //    and (Spur invariant) its identityHash should equal its index.
+    size_t liveEntries = 0, hashMismatch = 0, badEntry = 0, maxUsed = 0;
+    for (size_t i = 8; i < classTable_.size(); ++i) {
+        Oop e = classTable_[i];
+        if (!e.isObject() || e.isNil()) continue;
+        liveEntries++;
+        maxUsed = i;
+        if (!isValidPointer(e)) { badEntry++; continue; }
+        uint32_t h = e.asObjectPtr()->identityHash();
+        if (h != i) hashMismatch++;
+    }
+    // 2) Orphaned instances: walk the heap; for each object, classOf requires
+    //    classTable_[classIndex] to be a live class.  Count objects whose
+    //    class slot is nil/invalid (classOf would return garbage → corruption).
+    size_t scanned = 0, orphan = 0;
+    uint32_t firstOrphanIdx = 0;
+    Oop o = firstObject();
+    Oop prevObj = Oop::nil();
+    const char* stopReason = "reached-free-ptr";
+    uint8_t* freePtr = oldSpaceFree_;
+    while (o.isObject() && scanned < 50000000) {
+        scanned++;
+        uint8_t* op = reinterpret_cast<uint8_t*>(o.rawBits());
+        if (op >= freePtr) { stopReason = "reached-free-ptr"; break; }
+        uint32_t ci = o.asObjectPtr()->classIndex();
+        if (ci != 0) {
+            Oop cls = (ci < classTable_.size()) ? classTable_[ci] : Oop::nil();
+            if (!cls.isObject() || cls.isNil() || !isValidPointer(cls)) {
+                if (orphan == 0) firstOrphanIdx = ci;
+                orphan++;
+            }
+        }
+        Oop nxt = objectAfter(o);
+        if (!nxt.isObject()) { stopReason = "objectAfter-not-object"; break; }
+        if (nxt.rawBits() == o.rawBits()) { stopReason = "objectAfter-same-addr"; break; }
+        uint8_t* np = reinterpret_cast<uint8_t*>(nxt.rawBits());
+        if (np < op) { stopReason = "objectAfter-went-backward"; break; }
+        prevObj = o;
+        o = nxt;
+    }
+    // If we stopped before the free pointer, the last object we were ON (o) is
+    // suspect: its header (size/format) likely derailed objectAfter.
+    uint8_t* stopAddr = reinterpret_cast<uint8_t*>(o.rawBits());
+    bool earlyStop = (stopAddr < freePtr);
+    fprintf(stderr, "[CTCHECK %s] nextClassIndex_=%u liveEntries=%zu maxUsedIdx=%zu "
+                    "hashMismatch=%zu badEntry=%zu | heapScanned=%zu orphanInstances=%zu firstOrphanClassIdx=%u"
+                    " | stop=%s earlyStop=%d\n",
+            when, nextClassIndex_, liveEntries, maxUsed, hashMismatch, badEntry,
+            scanned, orphan, firstOrphanIdx, stopReason, (int)earlyStop);
+    if (earlyStop && o.isObject()) {
+        ObjectHeader* h = o.asObjectPtr();
+        uint64_t raw = *reinterpret_cast<uint64_t*>(h);
+        fprintf(stderr, "[CTCHECK %s]   DERAIL at obj=0x%llx hdrRaw=0x%016llx classIdx=%u fmt=%d slotCount=%zu marked=%d"
+                        " | prevObj=0x%llx prevClassIdx=%u\n",
+                when, (unsigned long long)o.rawBits(), (unsigned long long)raw,
+                h->classIndex(), (int)h->format(), h->slotCount(), (int)h->isMarked(),
+                (unsigned long long)prevObj.rawBits(),
+                prevObj.isObject() ? prevObj.asObjectPtr()->classIndex() : 0);
     }
 }
 

@@ -261,6 +261,9 @@ public:
     /// Get the runtime size of the class table (number of valid indices).
     size_t classTableSize() const { return classTable_.size(); }
 
+    /// Diagnostic: dump class-table self-consistency + orphaned-instance count.
+    void dumpClassTableConsistency(const char* when);
+
     /// Set the class object at a given index
     void setClassAtIndex(uint32_t index, Oop classOop) {
         if (index < classTable_.size()) {

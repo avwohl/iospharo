@@ -7921,6 +7921,17 @@ private:
                 (int)inlineOp, (int)inlineTy,
                 (unsigned long long)inlineLit, inlineOps.size());
         }
+        if (GET_DEBUG_BOOL(PHARO_SISTA_ICR_LOG) && g_currentBuildMemory) {
+            std::string sel = g_currentBuildMemory->selectorOf(calleeOop);
+            uint32_t cidx = (unsigned)(hit->classOop & 0x3FFFFFu);
+            Oop guardCls = g_currentBuildMemory->classAtIndex(cidx);
+            std::string gName = guardCls.isObject()
+                ? g_currentBuildMemory->nameOfClass(guardCls) : std::string("<nil>");
+            fprintf(stderr,
+                "[ICR-EMIT] callee=#%s shapeSize=%zu inlineOp=%d inlineLit=0x%llx clsIdx=%u guardCls=%s\n",
+                sel.c_str(), calleeIR.values.size(), (int)inlineOp,
+                (unsigned long long)inlineLit, cidx, gName.c_str());
+        }
         g_inlinesEmitted++;
         g_totalHintsConsumed++;
         return true;

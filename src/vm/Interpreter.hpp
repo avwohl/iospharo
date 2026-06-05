@@ -220,6 +220,7 @@ public:
     void dumpProcessQueues();
     void dumpTimerWedgeState();  // one-shot at first [DELAY-DEATH]; see timer-scheduler-wedge
     bool maybeTerminateStuckProcess();  // guarded terminateStuck_; protects Delay scheduler
+    void traceExtentBytecode(uint8_t bc);  // PHARO_TRACE_EXTENT_SEL per-bytecode trace
     void dumpCurrentMethod();
     void dumpJITStats();
 

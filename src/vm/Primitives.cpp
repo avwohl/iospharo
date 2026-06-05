@@ -14,6 +14,7 @@
  */
 
 #include "Interpreter.hpp"
+#include "DebugVars.hpp"
 #include "ImageLoader.hpp"
 #include "ImageWriter.hpp"
 #include "FFI.hpp"
@@ -8224,6 +8225,9 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
 
 // Primitive 89: Flush the method cache
 PrimitiveResult Interpreter::primitiveFlushCache(int argCount) {
+    if (GET_DEBUG_BOOL(PHARO_CTCHECK)) {
+        memory_.dumpClassTableConsistency("on-flushCache");
+    }
     flushMethodCache();
     flushJITCaches();
     primitiveSuccess(stackTop());
