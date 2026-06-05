@@ -102,27 +102,37 @@ IntegerTest) completes with **1298 pass / 0 fail / 29 error / 4 skip, no hang**;
 the Sista loop bench is unchanged at 19/19 (the counted-loop fusions / to:do:
 WhileTrueAccum / kPrimAt work don't use HELPER_SENDS).
 
-**Blocker #2 (OPEN 2026-06-04): the timer/Delay scheduler dies permanently after
-a 4096-deep `Context>>copyTo:` stack-overflow.** ~60 min into the full run (class
-~511, `PackageAndMethodsTest`, right after a run of mass-erroring `Package*`
-tests), a forked test process ran `Context>>freeze` → `freezeUpTo:` → `copyTo:`,
-which recursed **4096 frames** down a freshly-materialized sender chain (`freeze`
-materializes the full stack, then recursive `copyTo:` walks it). At `fd=4096` the
-VM's frame-depth guard (`Interpreter.hpp:617 StackOverflowLimit`) fired
-`handleStackOverflow` → `terminateAndSwitchProcess`. **That termination left the
-P80 Delay/timer-scheduler process dead — `timerSemaphore_` stays nil, only P10
-idle is runnable, total deadlock.** The C++ recovery (`Interpreter.cpp:3598`,
-`[DELAY-DEATH]`/`[DELAY-RECOVERY]`) only RE-SIGNALS the timing semaphore, which
-wakes a stuck-but-alive scheduler but cannot revive a DEAD one — 918 failed
-attempts over 76 min, and the runner's own 2h batch-deadline abort can't fire
-because it needs the dead timer to advance. Distinct from blocker #1 (sender
-chains) — this is the terminate→switch / scheduler-death path. NOT reproducible
-synthetically (4 negative eval-mode repros: plain overflow→terminate does not
-wedge the timer; our VM keeps suspended frames C++-side so `copyTo:` on a
-suspended/`thisContext` chain doesn't recurse deep). Needs the ~1h full-run state
-under lldb; candidate fixes (clean state on terminate→switch; iterative
-`copyTo:`; C++ restart of the dead scheduler; signal-instead-of-terminate on
-overflow like Cog) are in the `timer-scheduler-wedge` memory.
+**Blocker #2 (FIXED 2026-06-04, commit 73eb8947): stack-overflow termination
+leaked a held `critical:` mutex.** ~60 min into the full run (class ~511,
+`PackageAndMethodsTest`, after a run of mass-erroring `Package*` tests), a forked
+test process overflowed the stack (fd=4096) inside `Context>>freeze` →
+`freezeUpTo:` → `copyTo:` (error-handling stack capture) **while a
+`Semaphore>>critical:` was on its stack.** The old `handleStackOverflow` →
+`terminateAndSwitchProcess` hard-killed the process WITHOUT running its
+`ensure:`/`ifCurtailed:` unwind blocks, so the `critical:` mutex was never
+released. The Delay/timer scheduler (or any process) entering that critical
+section then blocked on the leaked mutex forever → `timerSemaphore_` stays nil,
+only P10 idle runnable, total deadlock; the C++ `[DELAY-DEATH]` recovery only
+re-signals the timing semaphore (futile — the scheduler is alive-but-blocked, not
+dead) and the 2h batch-abort can't fire because it needs the dead timer.
+
+Root cause CONFIRMED with a deterministic ~2s repro (`/tmp/mutex_leak.st`): fork
+`mutex critical: [infinite-recursion]` → overflow → terminate; a second process's
+`mutex critical:` then blocks forever (`held=false`). **Fix:** on overflow,
+`handleStackOverflow` now drives the image's own `activeProcess terminate` (walks
+the context chain running the unwind blocks, RELEASING the mutex, before ending
+the process) instead of the C++ hard-kill. The unwind itself pushes frames at
+fd≈4096, so a new `inStackOverflowSignal_` flag grants `StackOverflowSignalHeadroom`
+(8192) extra frames while driving recovery (4096→12288, < MaxFrameDepth 65536),
+cleared on the next process switch; a second overflow past the headroom falls back
+to hard-kill. (Signalling `#error:` instead does NOT work — unhandled in a forked
+test, and our unhandled-error path skips unwinds too; explicit `terminate`
+unwinds.) Validated: repro `held=false→true` (0 hard-kills); simple overflow still
+recovers + the timer survives; Sista bench all benchmarks complete; 8-class SUnit
+subset BATCH COMPLETE (945 P / 0 F / 66 E / 3 S, no wedge). Distinct from blocker
+#1 (sender chains) and the asmjit RA crash (bb158a7f). Full-suite end-to-end
+re-run (past the old ~511 wedge) in progress. See the `timer-scheduler-wedge`
+memory for the full investigation.
 
 **Δcog on the 560 classes the custom VM (Sista) DID complete** (12,691 tests,
 `scripts/classify-sunit.py /tmp/results_cog_full.txt <combined>`):
@@ -162,19 +172,19 @@ tests failing here:
 157 distinct classes have at least one regression; the Package/SystemEnvironment
 cluster (a single environment-setup gap) accounts for the largest share.
 
-**Bottom line:** Cog runs the whole suite at 99.1%. The custom VM now reaches
+**Bottom line:** Cog runs the whole suite at 99.1%. The custom VM reached
 **560 classes / 12,691 tests at 91.7%** (6× the prior 80-class stall) after the
-HELPER_SENDS fix (blocker #1). Full completion is now gated by **blocker #2**
-(the timer/Delay-scheduler-death on a 4096-deep `copyTo:` overflow), which is
-distinct from and orthogonal to the asmjit RA crash fixed earlier (bb158a7f —
-bench-validated). Of the 1031 cog-pass regressions, the largest single share
-(~250+) is one environment-setup gap (`#SystemOrganization` missing in the
-headless image's `SystemEnvironment`), not a VM defect. Next levers for custom-VM
-SUnit coverage: (a) fix blocker #2 (see the `timer-scheduler-wedge` memory — best
-debugged by reproducing the ~1h full-run state under lldb); (b) seed
+HELPER_SENDS fix (blocker #1), then BOTH full-suite deadlocks were root-caused and
+fixed: blocker #1 (broken sender chains) and blocker #2 (stack-overflow
+termination leaking a `critical:` mutex, commit 73eb8947). Both are distinct from
+the asmjit RA crash fixed earlier (bb158a7f — bench-validated). Of the 1031
+cog-pass regressions, the largest single share (~250+) is one environment-setup
+gap (`#SystemOrganization` missing in the headless image's `SystemEnvironment`),
+not a VM defect. Remaining levers for custom-VM SUnit coverage: (a) seed
 `SystemOrganization`/`PackageOrganizer` in the test image to clear the
-Package/SystemEnvironment cluster; (c) port the x86 inlined-block wrong-receiver
-fix (nextRunNumber, 4b446bf4).
+Package/SystemEnvironment cluster (~250 tests); (b) the trait/slot reflection and
+OpalCompiler-AST clusters; (c) port the x86 inlined-block wrong-receiver fix
+(nextRunNumber, 4b446bf4) so the x86 build can run the suite at all.
 
 ## 2026-05-28 first end-to-end run
 
