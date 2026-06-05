@@ -5,6 +5,44 @@ This is the consolidated list of bugs in the standard Pharo 13 image
 that we need to patch locally for our VM to work the same way as
 stock Cog.  See also `docs/deferred.md` for VM-side issues.
 
+## `Context >> copyTo:` is recursive — overflows on deep stacks (timer-scheduler-wedge)
+
+**Symptom:** the full SUnit suite deadlocked at ~class 511 (after a run of
+mass-erroring `Package*` tests) with only the idle process runnable and the
+Delay/timer scheduler never re-arming (`[DELAY-DEATH]` recovery looping
+forever). The VM log showed a stack overflow at `fd=4096` inside
+`Context>>freeze` → `freezeUpTo:` → `copyTo:` (4094+ `#copyTo:` frames) while
+capturing a `SubscriptOutOfBounds` signaler context.
+
+**Cause:** stock Pharo's `Context>>copyTo:` copies the sender chain
+**recursively**:
+
+       copyTo: aContext
+           self == aContext ifTrue: [ ^ nil ].
+           tmp1 := self copy.
+           self sender ifNotNil: [ tmp1 privSender: (self sender copyTo: aContext) ].
+           ^ tmp1
+
+So freezing/copying a deep stack (e.g. an error signalled ~4000 frames deep)
+recurses ~chain-deep and overflows our VM's frame stack at the
+`StackOverflowLimit` (4096). Stock Cog tolerates much deeper VM stacks, so it
+never trips. The overflow *termination* then skipped the process's
+`ensure:`/`ifCurtailed:` unwind blocks, LEAKING any held `Semaphore>>critical:`
+mutex — and the Delay/timer scheduler subsequently blocked on that leaked mutex
+forever. Two-part defect: the recursion (image) + the unwind-skipping
+termination (VM).
+
+**Patch (image):** `scripts/pharo-headless-test/run_sunit_tests.st` replaces
+`copyTo:` with an **iterative** copy (identical result, no recursion) so no deep
+stack overflows during freeze/copy. Verified: a 5000-deep recursion that errors
+is now caught cleanly with 0 overflows; normal catch + `ensure:`/`ifCurtailed:`
+unwinding unaffected.
+
+**Patch (VM, defense-in-depth):** commit `73eb8947` — `handleStackOverflow` now
+drives `activeProcess terminate` (runs the unwind blocks, releasing held
+mutexes) instead of a C++ hard-kill, with frame headroom. Covers genuine
+infinite recursion that overflows even without the recursive `copyTo:`.
+
 ## `Character >>` numeric coercion missing — blocks Metacello load
 
 **Symptom:** any Metacello fetch of a non-preinstalled package fails
