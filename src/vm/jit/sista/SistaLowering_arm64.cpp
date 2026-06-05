@@ -421,6 +421,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
         for (uint32_t vid : b.values) {
             const Value& v = method.valueAt(vid);
+            // Bisect: PHARO_SISTA_ARM_BAIL_OP=<opNum> fails lowering of that op
+            // so any method containing it bails to the interpreter — localizes
+            // a downstream miscompiled op (blocker #4).
+            {
+                int bailOp = GET_DEBUG_INT(PHARO_SISTA_ARM_BAIL_OP);
+                if (bailOp >= 0 && (int)v.op == bailOp) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+            }
             switch (v.op) {
             case Op::kLoadReceiver: {
                 Gp dst = cc.new_gp64("recv");

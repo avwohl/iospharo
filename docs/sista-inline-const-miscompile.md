@@ -208,6 +208,33 @@ array access (kPrimAt/kPrimSize), the hash modulo (kPrim*Int), conditionals
 (kBranchIfFalse), and especially the FRAMEPOINT/deopt of a downstream
 kSendUnspeculated whose live-value stack now includes an inlined value.
 
+## arm64 per-op bail bisection (2026-06-05): the bug is in COMPLETE methods
+
+Added PHARO_SISTA_ARM_BAIL_OP=<opNum>: fails arm64 lowering of that Op so any
+method containing it bails to the interpreter.  Run against the repro:
+
+    BAIL_OP=21 kGuardClass  => 12/12 PASS   (no inline-bearing method compiles)
+    BAIL_OP=17 kReturn      => 12/12 PASS   (no FULLY-COMPILED method runs)
+    BAIL_OP=2  kLoadReceiver=> 12/12 PASS   (likely frequency: all buggy methods use self)
+    BAIL_OP=11 kLoadInstVar => P,P,P,F      (delay — frequency)
+    BAIL_OP={at,size,atput,identityEq/Neq,branch*,sends,storeIvar,*Int arith/cmp,
+             phi,framestate,loadLiteral,inlineSend,blockValue,allocArray,...}
+                            => P,P,F        (NO effect)
+
+kReturn=17 is the sharp one: a method reaches kReturn only when the lift COMPLETES
+(no mid-method bail), which requires inlining all its const-return sends.  So the
+buggy methods are exactly the FULLY-COMPILED, inline-bearing ones — and the defect
+is NOT any single op (bailing each downstream op individually does nothing).  It is
+a holistic miscompile of the complete compiled method that the inline enabled.
+
+NEXT: identify the specific complete inline-bearing method in the dict path
+(findElementOrNil:/scanFor:/at:put: family), dump its IR (PHARO_SISTA_DUMP_NODES)
+and lowering, and find what goes wrong in the post-inline region — candidates: temp
+/ block-local tracking after an inlined value, or a control-flow merge (phi) /
+deopt framepoint that the inline subtly perturbs.  EXCLUDE_SELS bisection needs the
+FULL cross-run set of complete inline methods (a single-run ICR_LOG misses methods
+that only compile by run 3).
+
 ## Older lead (now lower priority): non-getter VALUE shapes
 
 Audit the VALUE emitted by the non-getter shapes for the case where it differs
