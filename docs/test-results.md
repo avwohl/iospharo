@@ -15,8 +15,8 @@
   total    28064      pass rate 99.1%
 ```
 
-**Custom VM (arm64, Sista ON) — now reaches 560 classes, then hits a SECOND
-blocker.** Two distinct deadlocks gate full-suite completion; the first is FIXED:
+**Custom VM (arm64, Sista ON) — BOTH full-suite deadlocks are now FIXED; the
+run is bounded only by a wall-clock cap, no longer by any wedge.**
 
 ```
   blocker #1 (FIXED)  Sista HELPER_SENDS broke the Context sender chain so a
@@ -24,19 +24,24 @@ blocker.** Two distinct deadlocks gate full-suite completion; the first is FIXED
                       doneSem deadlock. Hung at ~80 classes
                       (CollectionArithmeticTest). Fix: HELPER_SENDS default-off
                       (below). Unblocked 80 → 511 classes (6×).
-  blocker #2 (OPEN)   At ~511 classes (PackageAndMethodsTest, after a run of
-                      mass-erroring Package* tests) a 4096-deep Context>>copyTo:
-                      overflow during error-handling stack-freeze terminates the
-                      process and leaves the Delay/timer scheduler PERMANENTLY
-                      DEAD → only-idle (P10) deadlock. See "Blocker #2" below.
+  blocker #2 (FIXED)  At ~511 classes a deep recursive Context>>copyTo: (freezing
+                      an error's signalerContext on a ~4000-deep call chain)
+                      overflowed at fd=4096; the overflow termination skipped
+                      ensure:/ifCurtailed: and LEAKED a held critical: mutex, so
+                      the Delay/timer scheduler blocked on it forever → only-idle
+                      deadlock. Two-part fix (commits 73eb8947 + submodule
+                      c2cbfa6). See "Blocker #2" below.
 ```
 
-After fixing #1, the run was completed in two passes — 511 classes before the
-#2 wedge, then a resume on the 62 remaining curated classes (clean, no wedge) —
-for **560 unique classes / 12,691 tests** of custom-VM coverage. Other configs
-(for the record): arm64 Sista OFF stalls earlier at IntegerTest (class 7); x86
-Sista ON still DNUs at startup (SUnitRunner>>nextRunNumber inlined-block
-wrong-receiver miscompile, the x86 analog of arm64 fix 4b446bf4, not yet ported).
+With both fixes, the full run **sails past the old ~511 wedge to 836 classes /
+17,125 tests** before the runner's 2h batch deadline aborts it (0 DELAY-DEATH, 0
+overflow hard-kills end-to-end) — i.e. the remaining limit is wall-clock time,
+not a deadlock. (The error-heavy Package/Trait/System clusters each emit 25-frame
+stack traces, so the run averages ~7 classes/min; the full 2051-class discovery
+would need a higher `SUnitMaxBatchSeconds`.) Other configs (for the record):
+arm64 Sista OFF stalls earlier at IntegerTest (class 7); x86 Sista ON still DNUs
+at startup (SUnitRunner>>nextRunNumber inlined-block wrong-receiver miscompile,
+the x86 analog of arm64 fix 4b446bf4, not yet ported).
 
 **The CollectionArithmeticTest hang is NOT a JIT/Sista bug — corrected
 2026-06-04.** Originally mislabelled a "Sista miscompile of testRunningAverage".
@@ -118,30 +123,57 @@ dead) and the 2h batch-abort can't fire because it needs the dead timer.
 
 Root cause CONFIRMED with a deterministic ~2s repro (`/tmp/mutex_leak.st`): fork
 `mutex critical: [infinite-recursion]` → overflow → terminate; a second process's
-`mutex critical:` then blocks forever (`held=false`). **Fix:** on overflow,
-`handleStackOverflow` now drives the image's own `activeProcess terminate` (walks
-the context chain running the unwind blocks, RELEASING the mutex, before ending
-the process) instead of the C++ hard-kill. The unwind itself pushes frames at
-fd≈4096, so a new `inStackOverflowSignal_` flag grants `StackOverflowSignalHeadroom`
-(8192) extra frames while driving recovery (4096→12288, < MaxFrameDepth 65536),
-cleared on the next process switch; a second overflow past the headroom falls back
-to hard-kill. (Signalling `#error:` instead does NOT work — unhandled in a forked
-test, and our unhandled-error path skips unwinds too; explicit `terminate`
-unwinds.) Validated: repro `held=false→true` (0 hard-kills); simple overflow still
-recovers + the timer survives; Sista bench all benchmarks complete; 8-class SUnit
-subset BATCH COMPLETE (945 P / 0 F / 66 E / 3 S, no wedge). Distinct from blocker
-#1 (sender chains) and the asmjit RA crash (bb158a7f). Full-suite end-to-end
-re-run (past the old ~511 wedge) in progress. See the `timer-scheduler-wedge`
-memory for the full investigation.
+`mutex critical:` then blocks forever (`held=false`).
 
-**Δcog on the 560 classes the custom VM (Sista) DID complete** (12,691 tests,
-`scripts/classify-sunit.py /tmp/results_cog_full.txt <combined>`):
+**Fix — TWO parts, both needed:**
+
+1. **VM (commit 73eb8947):** on overflow, `handleStackOverflow` drives the
+   image's own `activeProcess terminate` (walks the context chain running the
+   unwind blocks, RELEASING the mutex, before ending the process) instead of the
+   C++ hard-kill. The unwind itself pushes frames at fd≈4096, so a new
+   `inStackOverflowSignal_` flag grants `StackOverflowSignalHeadroom` (8192) extra
+   frames while driving recovery, cleared on the next process switch; a second
+   overflow past the headroom falls back to hard-kill. (Signalling `#error:`
+   instead does NOT work — unhandled in a forked test, and our unhandled-error
+   path skips unwinds too; explicit `terminate` unwinds.)
+2. **Image (submodule commit c2cbfa6, `run_sunit_tests.st`):** part 1 ALONE was
+   INSUFFICIENT — the full run still wedged at fd=12288 because the
+   terminate-unwind ITSELF re-triggered a deep `freeze→copyTo:` (a secondary
+   `SubscriptOutOfBounds`), re-overflowing past the headroom → hard-kill fallback
+   → leaked the mutex again. Root cause: stock `Context>>copyTo:` copies the
+   sender chain RECURSIVELY (`tmp1 privSender: (self sender copyTo: aContext)`),
+   so ANY freeze/copy of a deep stack recurses ~chain-deep and overflows. Got the
+   exact source via `(Context>>#copyTo:) decompile` (no .sources) and replaced it
+   with an ITERATIVE copy — so the overflow never happens in the first place.
+   (See `docs/image_issues.md`.)
+
+Together they're robust: iterative `copyTo:` prevents overflow on bounded deep
+stacks (the actual trigger); the VM terminate fix releases mutexes for genuine
+infinite recursion that still overflows. Validated: mutex repro `held=false→true`;
+iterative-copyTo: eval (5000-deep recursion that errors caught cleanly, 0
+overflows; normal catch + ensure: unaffected); simple overflow recovers + timer
+survives; Sista bench completes; 8-class subset BATCH COMPLETE (no wedge).
+**End-to-end CONFIRMED:** the full run reached 836 classes / 17,125 tests with 0
+DELAY-DEATH and 0 overflow hard-kills (vs the old ~511 wedge), bounded only by the
+2h batch deadline. Distinct from blocker #1 (sender chains) and the asmjit RA
+crash (bb158a7f). See the `timer-scheduler-wedge` memory for the full
+investigation.
+
+**Δcog on the 836 classes the custom VM (Sista, both fixes) reached before the 2h
+cap** (17,125 tests, `scripts/classify-sunit.py /tmp/results_cog_full.txt
+/tmp/results_custom_fixed.txt`):
 
 ```
-  custom  pass 11639   fail 159   error 866   skip 20   timeout 7   (91.7%)
-  vs cog: 1031 tests pass on Cog but not here  (865 error, 159 fail, 7 timeout)
-          +15153 cog-tests not run here (the ~1485 classes past the #2 wedge)
+  custom  pass 15307   fail 213   error 1573   skip 24   timeout 8   (89.4%)
+  vs cog: 1776 tests pass on Cog but not here  (1559 error, 209 fail, 8 timeout)
+          +10742 cog-tests not run here (the ~1215 classes past the 2h time cap)
 ```
+
+(For reference, the earlier wedge-limited two-pass run reached only 560 classes /
+12,691 tests / 1031 regressions — the jump to 836 is the blocker-#2 fix taking
+effect. The regression CLUSTERS below are from that 560-class snapshot but hold
+proportionally; the dominant `#SystemOrganization` env-gap grows with the added
+Package/System classes.)
 
 Regression clusters (delta file `*.delta-vs-cog.txt`), by count of cog-pass
 tests failing here:
