@@ -258,6 +258,35 @@ continues past the inlined send.  NEXT: dump the Sista IR + asmjit nodes of one
 small complete inline method (e.g. collectionSpecies) and diff the post-inline
 region against the same method compiled WITHOUT the inline (NO_INLINE_CONST).
 
+## Culprit methods isolated (2026-06-05)
+
+PHARO_SISTA_KEEP_INLINE_IDX=<idx> compiles ONLY that inline method (bails the
+rest).  Isolating each of the 41:
+  - ProtocolAnnouncement>>classAffected  (`^ self classReorganized`, a getter
+    forwarder; classReorganized = ivar 2) → P,P,F when ISOLATED = the run-3
+    (primary) culprit.
+  - SystemEnvironment>>organization:  (`anOrganization environment: self.  ^ self
+    at: #SystemOrganization put: anOrganization`; inlines the `environment:`
+    setter) → P,P,P,F isolated.  Directly in the failing path.
+  - The other ~39 inline methods isolate CLEAN.
+
+Both culprits look CORRECT on inspection (the getter forwarder inlines to
+kLoadInstVar(self, 2); the setter inlines to kStoreInstVar(anOrganization, self, …)
+which the lowering handles with the operand receiver, not OFF_RECEIVER).  And
+kVerifyInline reported no value mismatch for either.  So the miscompile is at the
+asmjit/lowering level of these complete methods, not the inline value.
+
+CAVEAT — index instability: the compile-order index (s_inlineMethodIdx in the
+lowering) shifts run-to-run because method warm-up/compile ordering is driven by
+the wall-clock heartbeat.  Stabilize with PHARO_DET_SCHED=1 before trusting a
+specific idx↔method mapping, OR bail by method oop/selector.
+
+NEXT: with PHARO_DET_SCHED=1 (stable order), KEEP-isolate classAffected and dump
+its asmjit code (PHARO_SISTA_ASMJIT_LOG / DUMP_NODES) — compare the post-guard
+region against the same method built with NO_INLINE_CONST to find the exact
+mislowered instruction.  Toolkit knobs: KEEP_INLINE_IDX, BAIL_INLINE_LO/HI,
+LOG_INLINE_IDX, ARM_BAIL_OP, GUARD_ALWAYS_DEOPT, VERIFY_INLINE.
+
 ## Older lead (now lower priority): non-getter VALUE shapes
 
 Audit the VALUE emitted by the non-getter shapes for the case where it differs

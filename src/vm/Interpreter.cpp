@@ -10066,8 +10066,9 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             inlineHints.empty() ? nullptr : &inlineHints);
         if (fn) hits++;
         if (fn && GET_DEBUG_BOOL(PHARO_SISTA_LOG_INLINE_IDX)) {
-            fprintf(stderr, "[COMPILED] oop=0x%llx sel=#%s\n",
+            fprintf(stderr, "[COMPILED] oop=0x%llx cls=%s sel=#%s\n",
                     (unsigned long long)method.rawBits(),
+                    classNameOfMethod(method).c_str(),
                     memory_.selectorOf(method).c_str());
         }
         // Optional inline-hint observability: PHARO_SISTA_INLINE_STATS=1

@@ -144,7 +144,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     {
         int hi = GET_DEBUG_INT(PHARO_SISTA_BAIL_INLINE_HI);
         bool logIdx = GET_DEBUG_BOOL(PHARO_SISTA_LOG_INLINE_IDX);
-        if (hi >= 0 || logIdx) {
+        int keepOnly0 = GET_DEBUG_INT(PHARO_SISTA_KEEP_INLINE_IDX);
+        if (hi >= 0 || logIdx || keepOnly0 >= 0) {
             bool hasInline = false;
             for (const Value& sv : method.values)
                 if (sv.op == Op::kGuardClass) { hasInline = true; break; }
@@ -157,6 +158,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
                 int lo = GET_DEBUG_INT(PHARO_SISTA_BAIL_INLINE_LO);
                 if (hi >= 0 && idx >= lo && idx < hi) {
+                    if (failedAtValue) *failedAtValue = 0;
+                    return nullptr;
+                }
+                int keepOnly = GET_DEBUG_INT(PHARO_SISTA_KEEP_INLINE_IDX);
+                if (keepOnly >= 0 && idx != keepOnly) {
                     if (failedAtValue) *failedAtValue = 0;
                     return nullptr;
                 }
