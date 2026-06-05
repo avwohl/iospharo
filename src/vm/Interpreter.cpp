@@ -1908,6 +1908,101 @@ void Interpreter::dumpProcessQueues() {
     fprintf(stderr, "=== End Process Dump ===\n\n");
 }
 
+// One-shot diagnostic fired at the FIRST [DELAY-DEATH] detection. Dumps enough
+// to decide whether the Delay/timer scheduler is DEAD (terminated/gone) or just
+// STUCK (still queued on the timing semaphore), plus what every other process is
+// blocked on — so the timer-scheduler-wedge (blocker #2) can be root-caused in a
+// single full-suite run instead of repeated ~1h lldb sessions.
+void Interpreter::dumpTimerWedgeState() {
+    Oop nilO = memory_.nil();
+    fprintf(stderr, "\n[WEDGE] ==== timer-scheduler-wedge one-shot dump ====\n");
+    fprintf(stderr, "[WEDGE] timerSemaphore_=0x%llx lastKnownTimerSemaphore_=0x%llx "
+            "nextWakeupUsec_=%lld timerWasArmed_=%d recoveryAttempts=%d\n",
+            (unsigned long long)timerSemaphore_.rawBits(),
+            (unsigned long long)lastKnownTimerSemaphore_.rawBits(),
+            (long long)nextWakeupUsec_, (int)timerWasArmed_,
+            schedulerRecoveryAttempts_);
+
+    // Walk the timing semaphore's wait list: a LIVE Delay scheduler waiting to be
+    // re-signaled appears here; an EMPTY list means it's dead/gone (the smoking
+    // gun for "re-signal recovery is futile").
+    Oop sem = lastKnownTimerSemaphore_;
+    if (sem.isObject() && sem.rawBits() != nilO.rawBits() && memory_.isValidPointer(sem)) {
+        Oop excess = memory_.fetchPointer(SemaphoreExcessSignalsIndex, sem);
+        Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, sem);
+        fprintf(stderr, "[WEDGE] timingSem 0x%llx excessSignals=%lld firstWaiter=0x%llx\n",
+                (unsigned long long)sem.rawBits(),
+                excess.isSmallInteger() ? excess.asSmallInteger() : -1,
+                (unsigned long long)first.rawBits());
+        int w = 0;
+        Oop p = first;
+        while (p.isObject() && p.rawBits() != nilO.rawBits() && w < 16) {
+            Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, p);
+            Oop susp = memory_.fetchPointer(ProcessSuspendedContextIndex, p);
+            std::string topSel = "(nil)";
+            if (susp.isObject() && susp.rawBits() != nilO.rawBits() && memory_.isValidPointer(susp)) {
+                Oop mth = memory_.fetchPointer(3, susp);
+                if (mth.isObject() && memory_.isValidPointer(mth)) topSel = memory_.selectorOf(mth);
+            }
+            fprintf(stderr, "[WEDGE]   waiter[%d] proc=0x%llx P%lld top=#%s\n",
+                    w, (unsigned long long)p.rawBits(),
+                    prioOop.isSmallInteger() ? prioOop.asSmallInteger() : -1, topSel.c_str());
+            p = memory_.fetchPointer(ProcessNextLinkIndex, p);
+            w++;
+        }
+        if (w == 0) fprintf(stderr, "[WEDGE]   (timing semaphore wait list EMPTY -> scheduler not waiting here = likely DEAD)\n");
+    }
+
+    // Full process-table enumeration (same logic as PHARO_PROC_DUMP): priority,
+    // state (ACTIVE / terminated-or-running / on-sem / ready), the list each is
+    // queued on, and its suspended-context top frame.
+    Oop active = getActiveProcess();
+    uint32_t processClsIdx = 0;
+    if (active.isObject() && active.rawBits() > 0x10000) processClsIdx = active.asObjectPtr()->classIndex();
+    fprintf(stderr, "[WEDGE] active=0x%llx (Process clsIdx=%u)\n",
+            (unsigned long long)active.rawBits(), processClsIdx);
+    size_t procCount = 0;
+    try {
+        Oop o = memory_.firstObject();
+        while (o.isObject() && o.rawBits() != 0 && procCount <= 256) {
+            ObjectHeader* h = o.asObjectPtr();
+            if (processClsIdx != 0 && h->classIndex() == processClsIdx) {
+                procCount++;
+                Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, o);
+                int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
+                Oop myList = memory_.fetchPointer(ProcessMyListIndex, o);
+                Oop susp = memory_.fetchPointer(ProcessSuspendedContextIndex, o);
+                std::string listCls = "?", state, topSel = "(nil)", topCls = "?";
+                if (!myList.isObject() || myList.rawBits() == nilO.rawBits()) {
+                    state = (o.rawBits() == active.rawBits()) ? "ACTIVE" : "term/run";
+                    listCls = "-";
+                } else {
+                    listCls = memory_.classNameOf(myList);
+                    state = (listCls == "Semaphore") ? "on-sem"
+                          : ((listCls == "ProcessList" || listCls == "LinkedList") ? "ready" : "on-list");
+                }
+                if (susp.isObject() && susp.rawBits() != nilO.rawBits() && memory_.isValidPointer(susp)) {
+                    Oop mth = memory_.fetchPointer(3, susp);
+                    if (mth.isObject() && memory_.isValidPointer(mth)) topSel = memory_.selectorOf(mth);
+                    Oop rcvr = memory_.fetchPointer(5, susp);
+                    if (rcvr.isSmallInteger()) topCls = "SmallInteger";
+                    else if (rcvr.isNil()) topCls = "nil";
+                    else if (rcvr.isObject() && memory_.isValidPointer(rcvr)) topCls = memory_.classNameOf(rcvr);
+                }
+                fprintf(stderr, "[WEDGE] P%d proc=0x%llx %-8s list=0x%llx(%s) susp=0x%llx top=%s>>%s\n",
+                        prio, (unsigned long long)o.rawBits(), state.c_str(),
+                        (unsigned long long)myList.rawBits(), listCls.c_str(),
+                        (unsigned long long)susp.rawBits(), topCls.c_str(), topSel.c_str());
+            }
+            o = memory_.objectAfter(o);
+        }
+    } catch (...) {
+        fprintf(stderr, "[WEDGE] (process enumeration failed)\n");
+    }
+    fprintf(stderr, "[WEDGE] total processes=%zu\n", procCount);
+    fprintf(stderr, "[WEDGE] ==== end one-shot dump ====\n\n");
+}
+
 void Interpreter::interpret() {
 #if __APPLE__
     volatile int64_t lastRunLoopPumpMs = 0;  // volatile for longjmp safety
@@ -3606,6 +3701,15 @@ void Interpreter::checkTimerSemaphore() {
                           << "s ago but scheduler never re-armed."
                           << " Recovery attempt #" << (schedulerRecoveryAttempts_ + 1)
                           << std::endl;
+
+                // One-shot wedge diagnostic (first detection only): dump the
+                // timing-semaphore wait list + full process table so we can see
+                // whether the Delay scheduler process is DEAD (gone/terminated)
+                // or merely STUCK (still on the timing semaphore), and what the
+                // SUnit runner/watchdog are blocked on. See timer-scheduler-wedge.
+                if (schedulerRecoveryAttempts_ == 0) {
+                    dumpTimerWedgeState();
+                }
 
                 // Recovery: re-signal the last known timer semaphore.
                 // If the scheduler process is still alive but stuck waiting,
@@ -9441,13 +9545,45 @@ void Interpreter::terminateAndSwitchProcess() {
 }
 
 void Interpreter::handleStackOverflow(int argCount) {
-    // Stack overflow — terminate this process and switch to the next one.
-    // This is correct VM behavior: a runaway process should not kill the
-    // entire VM. The scheduler continues with other processes.
-    // Pop args+receiver that the send bytecode already pushed
+    // Stack overflow (frameDepth_ hit StackOverflowLimit). Pop the args+receiver
+    // the failed send already pushed, restoring the caller's operand stack.
     popN(argCount + 1);
 
-    terminateAndSwitchProcess();
+    // If we OVERFLOW AGAIN while already signaling the overflow error, the error
+    // handler / unwind is itself too deep — give up and hard-terminate as a last
+    // resort (this process is genuinely unrecoverable).
+    if (inStackOverflowSignal_) {
+        inStackOverflowSignal_ = false;
+        terminateAndSwitchProcess();
+        return;
+    }
+
+    // ROOT-CAUSE FIX for the timer-scheduler-wedge (blocker #2): a C++ hard-kill
+    // (terminateAndSwitchProcess) abandons the process WITHOUT running its
+    // ensure:/ifCurtailed: unwind blocks, so any held `critical:` mutex is LEAKED
+    // (a later process, e.g. the Delay/timer scheduler, then blocks on it forever).
+    // Instead, drive the image's own `Process>>terminate`, which walks the context
+    // chain running the unwind blocks (releasing the mutex) before ending the
+    // process. (Signalling #error: doesn't suffice: it goes unhandled in a forked
+    // test and our unhandled-error path skips unwinds too.) An explicit terminate
+    // unwinds correctly. StackOverflowSignalHeadroom gives terminate room to run.
+    Oop termSel = memory_.lookupSymbol("terminate");
+    Oop activeProc = getActiveProcess();
+    if (!termSel.isObject() || termSel.isNil() ||
+        !activeProc.isObject() || activeProc.isNil()) {
+        // #terminate or the active process unavailable — fall back to hard-kill.
+        terminateAndSwitchProcess();
+        return;
+    }
+    inStackOverflowSignal_ = true;
+    static int overflowSignalLog = 0;
+    if (overflowSignalLog++ < 5) {
+        fprintf(stderr, "[OVERFLOW] driving Process>>terminate to unwind (fd=%zu) "
+                "instead of hard-kill — releases held critical: mutexes\n", frameDepth_);
+    }
+    // `activeProcess terminate` — runs the process's unwind blocks then ends it.
+    push(activeProc);
+    sendSelector(termSel, 0);
 }
 
 // ===== METHOD ACTIVATION =====
@@ -11348,8 +11484,16 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         }
     }
     // Graceful stack overflow: StackOverflowLimit < MaxFrameDepth, so this
-    // catches both infinite recursion (soft) and hard overflow.
-    if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
+    // catches both infinite recursion (soft) and hard overflow. Hot path is the
+    // single compare below; only while DRIVING the overflow-recovery terminate
+    // (rare) do we raise the limit by StackOverflowSignalHeadroom so the image's
+    // ensure:/ifCurtailed: unwind machinery can run above the soft limit. The flag
+    // is cleared on the ensuing process switch (executeFromContext) — terminate
+    // always switches, so no process keeps running with it set.
+    size_t overflowLimit = StackOverflowLimit;
+    if (__builtin_expect(inStackOverflowSignal_, 0))
+        overflowLimit += StackOverflowSignalHeadroom;
+    if (__builtin_expect(frameDepth_ >= overflowLimit, 0)) {
         static int overflowLog = 0;
         if (overflowLog++ < 3) {
             fprintf(stderr, "[OVERFLOW] fd=%zu pushing #%s (argCount=%d)\n",
@@ -16275,6 +16419,7 @@ bool Interpreter::executeFromContext(Oop context) {
         g_sigsegvRecoveryEnabled = 0;
         stackPointer_ = stackBase_;
         frameDepth_ = 0;
+        inStackOverflowSignal_ = false;
         return false;
     }
     g_sigsegvRecoveryEnabled = 1;
@@ -16285,6 +16430,7 @@ bool Interpreter::executeFromContext(Oop context) {
     // The context object stores the Smalltalk stack state, which we'll restore below
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
+    inStackOverflowSignal_ = false;  // fresh process never inherits overflow-signal headroom
     currentFrameMaterializedCtx_ = memory_.nil();
 
     // Reset bytecode extension registers - they are per-bytecode-sequence state

@@ -218,6 +218,7 @@ public:
     void interpret();
     void stopVM(const char* reason);
     void dumpProcessQueues();
+    void dumpTimerWedgeState();  // one-shot at first [DELAY-DEATH]; see timer-scheduler-wedge
     void dumpCurrentMethod();
     void dumpJITStats();
 
@@ -615,6 +616,12 @@ private:
     };
     static constexpr size_t MaxFrameDepth = 65536;
     static constexpr size_t StackOverflowLimit = 4096;  // Graceful overflow limit — catch infinite recursion fast
+    // Extra frame budget granted WHILE signaling a stack-overflow error, so the
+    // image's exception machinery + ensure:/ifCurtailed: unwinds can run above
+    // the soft limit (4096+8192=12288, still well under MaxFrameDepth). Without
+    // this the #error: send re-hits the guard and we'd hard-kill again, leaking
+    // any held critical: mutex -> timer-scheduler-wedge (blocker #2).
+    static constexpr size_t StackOverflowSignalHeadroom = 8192;
 
     // J2J save frame — stencil-to-stencil call state saved during J2J execution.
     // Used by the ASM trampoline and chain loop J2J path.
@@ -993,6 +1000,12 @@ private:
     // periodic-check code can read it without #if PHARO_JIT_ENABLED
     // guards everywhere.
     bool inSyncSend_ = false;
+    // True while handleStackOverflow is driving a Smalltalk #error: signal so the
+    // image can unwind (ensure:/ifCurtailed:) instead of a C++ hard-kill. Grants
+    // StackOverflowSignalHeadroom extra frames; cleared on process switch
+    // (executeFromContext) and lazily once frameDepth_ falls back below the soft
+    // limit. See timer-scheduler-wedge memory / blocker #2.
+    bool inStackOverflowSignal_ = false;
     Oop trackedProcess_ = Oop::nil();
     std::chrono::steady_clock::time_point trackStartTime_{};
     int64_t cumulativeMs_ = 0;
