@@ -6178,6 +6178,11 @@ private:
         g_calleeLiftDepth--;
         if (cr != LiftResult::kOk) return false;
 
+        // Bisect: do the probe-lift above but never emit an inline.  If the
+        // bug persists with this set, the recursive probe-lift side effect is
+        // the cause; if it disappears, the inline emission is.
+        if (GET_DEBUG_BOOL(PHARO_SISTA_ICR_PROBE_ONLY)) return false;
+
         bool dbgCDN = false;
         if (GET_DEBUG_BOOL(PHARO_RETMETH_TRACE)) {
             std::string sel = g_currentBuildMemory->selectorOf(calleeOop);
@@ -7894,6 +7899,30 @@ private:
             return false;
         }
 
+        if (GET_DEBUG_BOOL(PHARO_SISTA_ICR_NO_COMMON)) return false;  // bisect: skip common-emit shapes only
+        // Soundness check for getter inlines: the inlined ivar index must be
+        // within the GUARDED class's instance layout.  If a hint pairs a class
+        // with a getter lifted from a wider-layout class, the guarded receiver
+        // would be read OUT OF BOUNDS (adjacent object / garbage) — silent
+        // corruption.  Bail to the unspeculated send in that case.
+        if (inlineOp == Op::kLoadInstVar && g_currentBuildMemory) {
+            Oop gc = g_currentBuildMemory->classAtIndex(hit->classOop & 0x3FFFFFu);
+            if (gc.isObject() && gc.asObjectPtr()->slotCount() >= 3) {
+                Oop spec = gc.asObjectPtr()->slotAt(2);
+                if (spec.isSmallInteger()) {
+                    size_t fixed = (size_t)(spec.asSmallInteger() & 0xFFFF);
+                    if ((uint64_t)inlineLit >= fixed) {
+                        if (GET_DEBUG_BOOL(PHARO_SISTA_ICR_LOG)) {
+                            fprintf(stderr, "[ICR-OOB] bail: ivar=%llu >= fixed=%zu clsIdx=%u\n",
+                                    (unsigned long long)inlineLit, fixed,
+                                    (unsigned)(hit->classOop & 0x3FFFFFu));
+                        }
+                        return false;
+                    }
+                }
+            }
+        }
+
         // Emit kGuardClass.  Operands: receiver, then full simulated
         // stack (so deopt can re-push everything for the interpreter).
         // Literal: lo32 = expectedClassIdx, hi32 = bcOffset.
@@ -7927,9 +7956,12 @@ private:
             Oop guardCls = g_currentBuildMemory->classAtIndex(cidx);
             std::string gName = guardCls.isObject()
                 ? g_currentBuildMemory->nameOfClass(guardCls) : std::string("<nil>");
+            std::string outerSel = selfMethodBits_
+                ? g_currentBuildMemory->selectorOf(Oop::fromRawBits(selfMethodBits_))
+                : std::string("?");
             fprintf(stderr,
-                "[ICR-EMIT] callee=#%s shapeSize=%zu inlineOp=%d inlineLit=0x%llx clsIdx=%u guardCls=%s\n",
-                sel.c_str(), calleeIR.values.size(), (int)inlineOp,
+                "[ICR-EMIT] outer=#%s callee=#%s shapeSize=%zu inlineOp=%d inlineLit=0x%llx clsIdx=%u guardCls=%s\n",
+                outerSel.c_str(), sel.c_str(), calleeIR.values.size(), (int)inlineOp,
                 (unsigned long long)inlineLit, cidx, gName.c_str());
         }
         g_inlinesEmitted++;

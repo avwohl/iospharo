@@ -97,21 +97,46 @@ The image never sends `flushCache` (prim 89) for `compile:`/`removeFromSystem`
 keys on the class OOP and never returns wrong methods here; the optimized tiers
 bake speculative inlines into compiled code that the IC flush does NOT recompile.
 
+## Localization (2026-06-05, deeper dive — ruled out more)
+
+- NOT the recursive callee-lift state: `Builder::build` constructs a FRESH lifter
+  per call operating on the passed `out`, so the outer build's `out_`/`stack_`/
+  `currentBlock_` are isolated; the only shared globals (g_currentBuildMemory,
+  g_currentBuildHints, g_calleeLiftDepth, g_buildStartBcOffset) are all saved/
+  restored.
+- NOT the probe-lift side effect: `PHARO_SISTA_ICR_PROBE_ONLY=1` (do the recursive
+  probe-lift but NEVER emit an inline) → 12/12 PASS. So the bug is in the EMITTED
+  IR, not the probe-lift.
+- NOT an out-of-bounds getter: added a soundness check (the inlined ivar index
+  must be < the guarded class's instance field count); it never fires here, and
+  the failure persists. Getter inlines are layout-consistent (right class,
+  in-bounds ivar). The check is kept as a defensive hardening.
+- Shape bisection is TIMING-CONFOUNDED: disabling a SUBSET of emissions
+  (`ICR_NO_GETTER` / `ICR_NO_COMMON`) only DELAYS the failure (run3→run4) — it
+  shifts the per-method compile schedule rather than removing the cause. Only
+  disabling ALL emissions (`NO_INLINE_CONST` or `ICR_PROBE_ONLY`) fully fixes it.
+  So the failure scales with the NUMBER of inline emissions, consistent with a
+  data-dependent bug in the SHARED emission mechanism (the `kGuardClass` emission
+  + `stack_` pop/push + deopt framepoint that every emitting shape performs),
+  manifesting probabilistically across the compiled-with-inline methods.
+
 ## Next step (the real fix)
 
-Audit the recursive callee-lift in `tryInlineConstReturn`
-(`SistaBuilder.cpp:6140+`): the inner `Builder::build(calleeOop, *g_currentBuildMemory,
-calleeIR, &calleeFailedAt)` and whether it fully saves/restores the OUTER build's
-state (member `out_`, `stack_`, `currentBlock_`, framepoints, and the globals
-`g_currentBuildMemory`, `g_calleeLiftDepth`, `g_currentBuildHints` — note the
-`ClearOuterHints` RAII covers only hints). A leak of inner-build state into the
-outer method's IR would corrupt the outer method's compiled code exactly as
-observed. Resetting the Sista cache at arbitrary `flushJITCaches` points is NOT
-safe (it runs mid-execution with live Sista frames) — it made run 1 fail.
+Audit the SHARED emission tail of `tryInlineConstReturn` (the `kGuardClass`
+emission + `stack_` manipulation + deopt re-push at `SistaBuilder.cpp:~7900`, and
+the per-shape direct emits at 6258/6289/6512/6615/6877/7309). Leading suspect: the
+`kGuardClass` deopt captures the simulated `stack_` to re-push at `bcOffset` on a
+guard miss; if that captured stack does not exactly match the interpreter's
+operand stack at `bcOffset` for some shape/site (extra/missing/speculated entry),
+a deopt leaves a corrupt stack → the observed KeyNotFound / NonBooleanReceiver.
+Verify by dumping the IR (`PHARO_SISTA_DUMP_NODES`) of a method that takes a
+direct-emit inline and checking the guard's deopt operand list against the live
+interpreter stack at that bcOffset. NOTE: bisection is timing-confounded — use
+IR inspection, not flag bisection, from here.
 
 Interim correctness option: default `tryInlineConstReturn` off
-(`sistaNoInlineConst`) and the T1 IC probe off until the recursive-lift bug is
-fixed — at a perf cost on accessor-heavy code.
+(`sistaNoInlineConst`) and the T1 IC probe off until the emission bug is fixed —
+at a perf cost on accessor-heavy code.
 
 ## Diagnostics added this session (all opt-in, zero-cost when off)
 
