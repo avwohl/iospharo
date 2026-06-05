@@ -36,6 +36,7 @@ DEBUG_BOOL(PHARO_DET_SCHED)
 DEBUG_INT(PHARO_DET_SCHED_QUANTUM, 1)   // × the 1024-bytecode checkpoint
 DEBUG_BOOL(PHARO_FINDNODE_WATCH)        // aigraph curEdge corruption capture
 DEBUG_BOOL(PHARO_SCAV_DANGLE_CHECK)     // post-scavenge: log pointers still aimed into eden (missed roots)
+DEBUG_BOOL(PHARO_HEAP_CHECK)            // post-fullGC: walk all objects, flag pointer slots aimed at out-of-heap/free/garbage targets
 DEBUG_BOOL(PHARO_RETMETH_TRACE)         // returnFromMethod trace for classDefinitionNode (scavenge "returns-receiver" bug)
 
 // ── x86_64 Sista lowering: per-op disable knobs for crash bisection ──

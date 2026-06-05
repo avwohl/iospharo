@@ -1918,6 +1918,52 @@ void ObjectMemory::sweepGC() {
     sweepTime_ += ms;
 }
 
+bool ObjectMemory::checkHeapIntegrity(const char* when) {
+    size_t scanned = 0, badSlots = 0, badObjs = 0;
+    const size_t maxClass = classTable_.size();
+    Oop o = firstObject();
+    while (o.isObject() && o.rawBits() != 0) {
+        ObjectHeader* h = o.asObjectPtr();
+        // Validate the holder's own class first.
+        uint32_t hci = h->classIndex();
+        bool holderBad = false;
+        size_t nptr = 0;
+        if (hci == 0 || hci >= maxClass) {
+            holderBad = true;  // free chunk / garbage header — skip slot scan
+        } else {
+            nptr = pointerSlotsOf(h);
+            for (size_t i = 0; i < nptr; ++i) {
+                Oop v = h->slotAt(i);
+                if (!v.isObject()) continue;          // immediate (SmallInt/Char/Float) or nil-bits
+                if (v.isNil()) continue;
+                bool ok = isValidPointer(v);
+                const char* why = "out-of-heap(dangling)";
+                if (ok) {
+                    uint32_t tci = v.asObjectPtr()->classIndex();
+                    if (tci == 0 || tci >= maxClass) { ok = false; why = "invalid-class(free/garbage)"; }
+                }
+                if (!ok) {
+                    if (badSlots < 12) {
+                        fprintf(stderr, "[HEAPCHECK %s] CORRUPT holder=0x%llx cls=%u fmt=%u slot[%zu]=0x%llx -> %s\n",
+                                when, (unsigned long long)o.rawBits(), hci, (unsigned)h->format(),
+                                i, (unsigned long long)v.rawBits(), why);
+                    }
+                    ++badSlots;
+                }
+            }
+        }
+        if (holderBad) ++badObjs;
+        ++scanned;
+        Oop next = objectAfter(o);
+        if (!next.isObject() || next.rawBits() == o.rawBits()) break;
+        o = next;
+        if (scanned > 5000000) { fprintf(stderr, "[HEAPCHECK %s] scan cap hit\n", when); break; }
+    }
+    fprintf(stderr, "[HEAPCHECK %s] scanned=%zu corruptSlots=%zu badHeaderObjs=%zu => %s\n",
+            when, scanned, badSlots, badObjs, (badSlots == 0) ? "CLEAN" : "CORRUPT");
+    return badSlots == 0;
+}
+
 GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     auto start = std::chrono::steady_clock::now();
     GCResult result{0, 0, 0};
@@ -2009,6 +2055,9 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     rebuildFreeListAfterCompact();
 
     // Post-compaction stale pointer check (disabled — verified clean, too expensive for production)
+    if (GET_DEBUG_BOOL(PHARO_HEAP_CHECK)) {
+        checkHeapIntegrity("post-fullGC");
+    }
 
     // 6. Update nil bits if nil moved
     if (nilObject_.isObject()) {
