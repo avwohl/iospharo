@@ -219,6 +219,7 @@ public:
     void stopVM(const char* reason);
     void dumpProcessQueues();
     void dumpTimerWedgeState();  // one-shot at first [DELAY-DEATH]; see timer-scheduler-wedge
+    bool maybeTerminateStuckProcess();  // guarded terminateStuck_; protects Delay scheduler
     void dumpCurrentMethod();
     void dumpJITStats();
 

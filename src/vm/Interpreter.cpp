@@ -2984,7 +2984,7 @@ void Interpreter::interpret() {
         // -- Terminate stuck process (set by watchdog, rare) --
         if (__builtin_expect(terminateStuck_.load(std::memory_order_acquire), 0)) {
             terminateStuck_.store(false, std::memory_order_relaxed);
-            terminateAndSwitchProcess();
+            maybeTerminateStuckProcess();  // protects the Delay scheduler etc.
         }
 
         // -- cannotReturn: deadline --
@@ -4844,8 +4844,7 @@ skip_yield:
     // VM safety: terminate a process that the watchdog flagged as stuck
     if (terminateStuck_.load(std::memory_order_acquire)) {
         terminateStuck_.store(false, std::memory_order_relaxed);
-        terminateAndSwitchProcess();
-        return running_;
+        if (maybeTerminateStuckProcess()) return running_;  // protects Delay scheduler etc.
     }
 
     uint8_t bytecode = fetchByte();
@@ -9542,6 +9541,34 @@ void Interpreter::terminateAndSwitchProcess() {
     Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, nextProcess);
     memory_.storePointer(ProcessSuspendedContextIndex, nextProcess, memory_.nil());
     executeFromContext(newContext);
+}
+
+// The heartbeat "VM seems stuck" watchdog (sets terminateStuck_ when bytecode
+// steps stop advancing) terminates whatever process is ACTIVE when the flag is
+// processed. That is too blunt: the Delay/timer scheduler legitimately BLOCKS in
+// DelayMicrosecondTicker>>waitForUserSignalled:orExpired: when no Delays are
+// pending (no bytecode steps → looks "stuck"), so the watchdog would kill it and
+// wedge the timer for the whole VM (blocker #3 / timer-scheduler-wedge). Restrict
+// the kill to test-level processes (priority 11..49): never the idle process
+// (P10) and never system/infrastructure processes (P50+, which includes the
+// Delay scheduler and SUnit runner at timingPriority 80). A genuinely stuck
+// high-priority test is handled by the runner's own per-test watchdog, which
+// targets the specific test process rather than "whatever is active".
+// Returns true if a process was terminated (and the active process switched).
+bool Interpreter::maybeTerminateStuckProcess() {
+    Oop ap = getActiveProcess();
+    int pri = safeProcessPriority(ap);
+    if (pri >= 11 && pri < 50) {
+        terminateAndSwitchProcess();
+        return true;
+    }
+    static int stuckGuardLog = 0;
+    if (stuckGuardLog++ < 10) {
+        fprintf(stderr, "[STUCK-GUARD] VM-stuck watchdog NOT terminating active "
+                "P%d #%s (protected: idle / system / Delay-scheduler)\n",
+                pri, memory_.selectorOf(method_).c_str());
+    }
+    return false;
 }
 
 void Interpreter::handleStackOverflow(int argCount) {
