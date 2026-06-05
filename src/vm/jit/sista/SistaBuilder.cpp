@@ -5713,6 +5713,7 @@ private:
     // emits land there).
     bool canSpliceMultiBlock(const Method& innerIR,
                               const std::vector<uint32_t>& innerArgIds) {
+        if (GET_DEBUG_BOOL(PHARO_SISTA_NO_SPLICE)) return false;  // bisect: disable multi-block splice
         if (innerIR.values.empty()) return false;
         if (innerIR.blocks.empty()) return false;
         // IR-validity: every kBranch / kBranchIfTrue / kBranchIfFalse
@@ -7930,15 +7931,43 @@ private:
         guardOps.reserve(stack_.size() + 1);
         guardOps.push_back(recvId);
         for (uint32_t s : stack_) guardOps.push_back(s);
-        uint64_t guardLit = (hit->classOop & 0x3FFFFFu)
+        // Reliable selective-deopt bisection (no timing confound — IR structure
+        // unchanged): force THIS common-emit guard to always miss (→ real send)
+        // when PHARO_SISTA_DEOPT_COMMON is set, or when PHARO_SISTA_DEOPT_OP
+        // matches this shape's inlineOp.  Uses class index 0x3FFFFF (no real
+        // class has it).  Pins which non-getter VALUE shape is wrong.
+        uint64_t guardClsBits = hit->classOop & 0x3FFFFFu;
+        {
+            int deoptOp = GET_DEBUG_INT(PHARO_SISTA_DEOPT_OP);
+            if (GET_DEBUG_BOOL(PHARO_SISTA_DEOPT_COMMON)
+                || (deoptOp >= 0 && (int)inlineOp == deoptOp)) {
+                guardClsBits = 0x3FFFFFull;
+            }
+        }
+        uint64_t guardLit = guardClsBits
                           | (static_cast<uint64_t>(bcOffset) << 32);
         out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
                       std::move(guardOps), guardLit);
 
         // Emit the inlined value.
-        uint32_t inlineId = out_.newValue(currentBlock_, inlineOp,
-                                           inlineTy, std::move(inlineOps),
-                                           inlineLit);
+        uint32_t inlineId;
+        if (inlineOp == Op::kLoadReceiver) {
+            // Chained self-forwarder shapes (`^ self foo` where foo is
+            // `^ self`, and the depth-3 / 3-value variants set at 6393,
+            // 6409, 6704) ultimately return the INLINED SEND's receiver,
+            // not the outer compiled method's self.  A bare kLoadReceiver
+            // lowers to OFF_RECEIVER (the outer method's receiver), which
+            // is WRONG at any non-self send-site (e.g. `parent
+            // classDefinitionNode`).  Reuse recvId directly — identical to
+            // the 2-value direct-^self fix (6235-6263) and the multi-block
+            // splice substitution (inner kLoadReceiver -> outer recvId).
+            // The kGuardClass above already proved recvId hit->classOop.
+            inlineId = recvId;
+        } else {
+            inlineId = out_.newValue(currentBlock_, inlineOp,
+                                     inlineTy, std::move(inlineOps),
+                                     inlineLit);
+        }
 
         // Pop rcvr+args, push the inlined value.
         for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();

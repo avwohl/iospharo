@@ -136,6 +136,41 @@ timing-confounded, unlike the emission-disabling knobs). Conclusions:
   value: kConstantOop (const), kLoadTrue/FalseOop (bool), kLoadReceiver (`^self`),
   kLoadTemp (`^arg`), kLoadLiteral, or a chained shape's final inner value.
 
+## Multi-agent audit (2026-06-05) — found a real ORTHOGONAL bug, not #4
+
+A 10-agent adversarial review of every emission shape ran. Its *headline*
+("blocker #4 is not the inliner") is WRONG — it repeated the refuted
+"NO_JIT disables Sista" mistake and never tested NO_JIT + NO_INLINE_CONST. That
+combo was re-verified 12/12 PASS this session, alongside GUARD_ALWAYS_DEOPT and
+NO_SISTA — so #4 IS the inliner, definitively.
+
+But the audit DID find + (we) fix one real latent defect: the chained
+self-forwarder shapes (SistaBuilder.cpp 6393/6409/6704) set
+`inlineOp = kLoadReceiver` and fall through to the common emit, which lowered a
+bare kLoadReceiver to `OFF_RECEIVER` (the OUTER method's self) instead of the
+send-site receiver `recvId`. Fixed at the common-emit tail (special-case
+kLoadReceiver → recvId, mirroring the 2-value direct-^self fix at 6235-6263 and
+commit 4b446bf4). This is a genuine wrong-value-on-HIT bug — but it does NOT move
+the blocker-#4 repro (verified P,P,F with it applied). KEEP it on its own merits.
+
+Candidates that are NOT #4 (empirically ruled out, reliable since a value/struct
+fix doesn't change the speculation mix): kLoadReceiver fix (applied, no change);
+the kLoadTemp `^arg` literal forwarder @7155 (that code is actually CORRECT — the
+value is the caller's arg/literal, `v1.literal` indexes it right); the multi-block
+splice (PHARO_SISTA_NO_SPLICE → still P,P,F, so the splice's deopt-stack asymmetry
+at 6005-6071 is latent, not #4).
+
+**Bisection is fundamentally confounded** for this bug: any PARTIAL disable/deopt
+(NO_GETTER, NO_COMMON, DEOPT_COMMON, DEOPT_OP=11, NO_SPLICE) only DELAYS the
+failure (run3→run4) because it changes the speculation MIX → shifts per-method
+warmup/compile schedule. Only ALL-off (NO_INLINE_CONST / GUARD_ALWAYS_DEOPT /
+NO_SISTA) is clean. So the exact shape CANNOT be pinned by flag bisection. The
+two reliable techniques left: (1) apply a candidate value-fix and re-run perrun
+(a correct value fix can't be confounded); (2) RUNTIME value-verification — at
+each guard HIT, compute the inlined value AND the real send result and trap on
+mismatch (catches the exact wrong inline without changing the mix). (2) is the
+definitive next step.
+
 ## Next step (the real fix)
 
 Audit the VALUE emitted by the non-getter shapes for the case where it differs
