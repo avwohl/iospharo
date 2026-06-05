@@ -136,6 +136,34 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         return nullptr;
     }
 
+    // Bisect (blocker #4): assign each INLINE-bearing method (one with a
+    // kGuardClass) a stable compile-order index; bail those in
+    // [PHARO_SISTA_BAIL_INLINE_LO, PHARO_SISTA_BAIL_INLINE_HI) to the
+    // interpreter.  Binary-search the range to localize the single buggy
+    // complete inline method, then PHARO_SISTA_LOG_INLINE_IDX prints idx+selector.
+    {
+        int hi = GET_DEBUG_INT(PHARO_SISTA_BAIL_INLINE_HI);
+        bool logIdx = GET_DEBUG_BOOL(PHARO_SISTA_LOG_INLINE_IDX);
+        if (hi >= 0 || logIdx) {
+            bool hasInline = false;
+            for (const Value& sv : method.values)
+                if (sv.op == Op::kGuardClass) { hasInline = true; break; }
+            if (hasInline) {
+                static int s_inlineMethodIdx = 0;
+                int idx = s_inlineMethodIdx++;
+                if (logIdx) {
+                    fprintf(stderr, "[INLINE-METHOD] idx=%d methodOop=0x%llx\n",
+                            idx, (unsigned long long)method.compiledMethodOop.rawBits());
+                }
+                int lo = GET_DEBUG_INT(PHARO_SISTA_BAIL_INLINE_LO);
+                if (hi >= 0 && idx >= lo && idx < hi) {
+                    if (failedAtValue) *failedAtValue = 0;
+                    return nullptr;
+                }
+            }
+        }
+    }
+
     CodeHolder code;
     code.init(runtime_->environment(), runtime_->cpu_features());
 

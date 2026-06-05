@@ -235,6 +235,29 @@ deopt framepoint that the inline subtly perturbs.  EXCLUDE_SELS bisection needs 
 FULL cross-run set of complete inline methods (a single-run ICR_LOG misses methods
 that only compile by run 3).
 
+## Method-level localization (2026-06-05): SYSTEMIC across complete inline methods
+
+Added PHARO_SISTA_BAIL_INLINE_LO/HI (bail inline-bearing methods by compile-order
+index) + PHARO_SISTA_LOG_INLINE_IDX (logs [INLINE-METHOD] idx+oop in the lowering
+and [COMPILED] oop+selector at the compile site).  41 inline-bearing methods
+compile across the repro; bailing ALL → 12/12 PASS.  But bailing [0,21) fails at
+run 3 and [21,41) fails at run 4 — BOTH halves contain buggy methods, so it is
+NOT one culprit.  The 41 methods are DIVERSE (isSimulatedStyle, hasIcon, isDead,
+collectionSpecies×3, properties:, basename, closed, position, packageName,
+fullPath, organization:, ...) — UI, collection, and package methods alike.
+
+⇒ The miscompile is SYSTEMIC: essentially ANY method that completes compilation
+with an inline runs wrong.  Combined with the earlier facts (inline VALUE correct
+via kVerifyInline; GUARD_ALWAYS_DEOPT fixes; bailing each downstream op does not),
+the defect is in the GUARD-HIT continuation of a completed compiled method — the
+post-inline compiled code is wrong in a way that is (a) not the inline value, (b)
+not any single op's lowering, (c) not the deopt path (always-deopt is correct).
+Prime remaining suspects: a register/liveness issue introduced by the kGuardClass
+hot path, or a framepoint/temp-tracking subtlety that only bites once the lift
+continues past the inlined send.  NEXT: dump the Sista IR + asmjit nodes of one
+small complete inline method (e.g. collectionSpecies) and diff the post-inline
+region against the same method compiled WITHOUT the inline (NO_INLINE_CONST).
+
 ## Older lead (now lower priority): non-getter VALUE shapes
 
 Audit the VALUE emitted by the non-getter shapes for the case where it differs

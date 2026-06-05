@@ -10065,6 +10065,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         sista::Lowering::CompiledFn fn = sista->compile(method, memory_,
             inlineHints.empty() ? nullptr : &inlineHints);
         if (fn) hits++;
+        if (fn && GET_DEBUG_BOOL(PHARO_SISTA_LOG_INLINE_IDX)) {
+            fprintf(stderr, "[COMPILED] oop=0x%llx sel=#%s\n",
+                    (unsigned long long)method.rawBits(),
+                    memory_.selectorOf(method).c_str());
+        }
         // Optional inline-hint observability: PHARO_SISTA_INLINE_STATS=1
         // dumps cumulative counters every 100 compile attempts to stderr.
         // Used to size Phase 4 work — if hints-consumed is tiny vs
