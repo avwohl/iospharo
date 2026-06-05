@@ -171,7 +171,44 @@ each guard HIT, compute the inlined value AND the real send result and trap on
 mismatch (catches the exact wrong inline without changing the mix). (2) is the
 definitive next step.
 
-## Next step (the real fix)
+## MAJOR REFRAME (2026-06-05): the inline VALUE is correct — the bug is
+## compiled code DOWNSTREAM of the inline
+
+Built runtime value-verification: a new `kVerifyInline` IR op
+(PHARO_SISTA_VERIFY_INLINE) wraps every 0-arg const-return inline so the lowering
+does the REAL send (outer selector resolved in the actual receiver's class),
+logs `[INLINE-MISMATCH]` when it differs from the speculated value, and uses the
+REAL value. New op + `jit_rt_sista_verify_inline` helper (JITRuntime.cpp,
+saves/restores sp) + arm64 lowering + builder `wrapVerify` at common + all 13
+direct-emit sites.
+
+Result on the repro: only ONE mismatch in the whole run (`#accessMode` on
+WorkingSession — a real but unrelated stale-getter defect, NOT in the test path),
+and using the correct value for EVERY 0-arg inline does NOT fix blocker #4 — it
+fails with the IDENTICAL symptom (run 3 NonBooleanReceiver). So:
+
+**The speculative inline VALUE is correct. The inline is only an ENABLER.** When
+`tryInlineConstReturn` inlines a const-return send, the lifter CONTINUES past it
+(otherwise the lift terminates and bails at that send — SistaBuilder.cpp:4661).
+So disabling the inline (NO_INLINE_CONST) or forcing it to deopt
+(GUARD_ALWAYS_DEOPT) both make everything FROM that send onward run in the
+INTERPRETER — which is correct. Keeping the inline (even with a verified-correct
+value) keeps the post-send code running in COMPILED form — which is buggy.
+
+⇒ The real defect is a miscompiled op/sequence in the Sista lowering that is only
+REACHED in compiled form when an inline extends the compiled region past a
+const-return send. It is NOT the inline itself. (This also explains why every
+inline-shape bisection was confounded — the inline is incidental.)
+
+NOTE: the x86-only PHARO_SISTA_NO_LOWER_* knobs do NOT affect the arm64 lowering,
+so they can't bisect this. Next: find the buggy downstream op by (a) adding an
+arm64 per-op bail knob, or (b) auditing the lowering of the ops that appear right
+after const-return sends in the dict path (findElementOrNil:/scanFor:/at:put:) —
+array access (kPrimAt/kPrimSize), the hash modulo (kPrim*Int), conditionals
+(kBranchIfFalse), and especially the FRAMEPOINT/deopt of a downstream
+kSendUnspeculated whose live-value stack now includes an inlined value.
+
+## Older lead (now lower priority): non-getter VALUE shapes
 
 Audit the VALUE emitted by the non-getter shapes for the case where it differs
 from the real send's result for the guarded class. Suspects, by likelihood:

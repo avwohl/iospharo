@@ -80,6 +80,7 @@ bool producesOop(Op op) {
     case Op::kAllocArray:
     case Op::kInterval:
     case Op::kPhi:
+    case Op::kVerifyInline:
         return true;
     default:
         return false;
@@ -107,6 +108,7 @@ bool mayCallBack(Op op) {
     case Op::kCountedLoopBodyExec:      // tag-check / class-guard deopts
     case Op::kAllocArray:               // alloc may GC
     case Op::kPrimTagCheckInt:  // miss deopts
+    case Op::kVerifyInline:     // does the real send + may deopt
         return true;
     default:
         return false;
@@ -149,6 +151,7 @@ const char* name(Op op) {
     case Op::kNonLocalReturn:   return "nlr";
     case Op::kSendUnspeculated: return "send";
     case Op::kSendCallHelper:   return "send_helper";
+    case Op::kVerifyInline:     return "verify_inline";
     case Op::kSendInlineSelf:   return "send_inline_self";
     case Op::kGuardClass:       return "guard_class";
     case Op::kInlineSend:       return "inline_send";

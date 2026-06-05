@@ -4653,9 +4653,18 @@ private:
                 // and the lift terminates here, so the loop body's
                 // backward jump never lifts into Sista — defeating the
                 // per-bc compile.
+                {
+                size_t stkBefore = stack_.size();
                 if (tryInlineConstReturn(nArgs, bcOffset)) {
+                    if (GET_DEBUG_BOOL(PHARO_SISTA_CHECK_STACK)) {
+                        long want = (long)stkBefore - (long)nArgs;
+                        if ((long)stack_.size() != want)
+                            fprintf(stderr, "[ICR-STACKBAL] specSend bcOff=%u nArgs=%u before=%zu after=%zu want=%ld\n",
+                                    bcOffset, nArgs, stkBefore, stack_.size(), want);
+                    }
                     ip++;  // SpecialSend is 1 byte.
                     continue;
+                }
                 }
 
                 // Default path: bail-and-exit, same as before.
@@ -4783,9 +4792,18 @@ private:
                 //
                 // Gated behind PHARO_SISTA_INLINE_CONST=1 until we have
                 // soak time on the deopt path under load.
+                {
+                size_t stkBefore = stack_.size();
                 if (tryInlineConstReturn(nArgs, bcOffset)) {
+                    if (GET_DEBUG_BOOL(PHARO_SISTA_CHECK_STACK)) {
+                        long want = (long)stkBefore - (long)nArgs;
+                        if ((long)stack_.size() != want)
+                            fprintf(stderr, "[ICR-STACKBAL] regSend bcOff=%u nArgs=%u before=%zu after=%zu want=%ld\n",
+                                    bcOffset, nArgs, stkBefore, stack_.size(), want);
+                    }
                     ip++;
                     continue;
+                }
                 }
 
                 detectDoBlockPattern(nArgs, bcOffset);
@@ -6207,6 +6225,36 @@ private:
         // kLoadReceiver substitution and kGuardClass.
         uint32_t recvId = stack_[stack_.size() - nArgs - 1];
 
+        // Runtime inline-value verifier (PHARO_SISTA_VERIFY_INLINE, blocker #4):
+        // wrap a 0-arg inline's speculated value so the lowering does the REAL
+        // send (outer selector resolved in the actual receiver's class) and
+        // logs any mismatch, then uses the real value.  Used at every emit
+        // site (common + direct).  No-op unless the knob is set; 0-arg only.
+        auto wrapVerify = [&](uint32_t speculatedId) -> uint32_t {
+            if (nArgs != 0 || !GET_DEBUG_BOOL(PHARO_SISTA_VERIFY_INLINE)
+                    || !g_currentBuildMemory) return speculatedId;
+            size_t nl = g_currentBuildMemory->numLiteralsOf(calleeOop);
+            Oop selOop = (nl >= 2)
+                ? g_currentBuildMemory->fetchPointer(nl - 1, calleeOop)
+                : Oop::nil();
+            if (!(selOop.isObject()
+                  && !g_currentBuildMemory->oopToString(selOop).empty()))
+                return speculatedId;
+            uint32_t selIdx = UINT32_MAX;
+            for (size_t i = 0; i < out_.literals.size(); i++)
+                if (out_.literals[i].rawBits() == selOop.rawBits()) {
+                    selIdx = (uint32_t)i; break;
+                }
+            if (selIdx == UINT32_MAX) {
+                selIdx = (uint32_t)out_.literals.size();
+                out_.literals.push_back(selOop);
+            }
+            uint64_t vlit = ((uint64_t)selIdx & 0xFFFFFFFFu)
+                          | ((uint64_t)(bcOffset & 0xFFFFu) << 48);
+            return out_.newValue(currentBlock_, Op::kVerifyInline, Type::kOop,
+                                 {speculatedId, recvId}, vlit);
+        };
+
         // Two recognized shapes:
         //
         //   2 values: kLoad{TrueOop,FalseOop,ConstantOop,Receiver}
@@ -6253,7 +6301,7 @@ private:
                     out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
                                   std::move(guardOps), guardLit);
                     for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-                    stack_.push_back(recvId);
+                    stack_.push_back(wrapVerify(recvId));
                     g_inlinesEmitted++;
                     g_totalHintsConsumed++;
                     if (dbgCDN) {
@@ -6289,7 +6337,7 @@ private:
                     out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
                                   std::move(guardOps), guardLit);
                     for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-                    stack_.push_back(argId);
+                    stack_.push_back(wrapVerify(argId));
                     g_inlinesEmitted++;
                     g_totalHintsConsumed++;
                     return true;
@@ -6525,7 +6573,7 @@ private:
                                               {}, innerInlineLit);
                 }
                 for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-                stack_.push_back(resultId);
+                stack_.push_back(wrapVerify(resultId));
                 g_inlinesEmitted++;
                 g_totalHintsConsumed++;
                 return true;
@@ -6636,7 +6684,7 @@ private:
                                                         innerInlineTy,
                                                         {}, innerInlineLit);
                 for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-                stack_.push_back(innerInlineId);
+                stack_.push_back(wrapVerify(innerInlineId));
                 g_inlinesEmitted++;
                 g_totalHintsConsumed++;
                 return true;
@@ -6814,7 +6862,7 @@ private:
                         // currentBlock_ now = continuation block.
                         for (uint32_t i = 0; i < nArgs + 1; i++)
                             stack_.pop_back();
-                        stack_.push_back(mbResult);
+                        stack_.push_back(wrapVerify(mbResult));
                         g_inlinesEmitted++;
                         g_multiBlockSplices++;
                         // NOTE: do NOT set hasMultiBlockSplice here.  TICR's
@@ -6915,7 +6963,7 @@ private:
                         cv5.op, Type::kOopSmallInt,
                         std::move(arithOps), tagDeoptLit);
                     for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-                    stack_.push_back(arithId);
+                    stack_.push_back(wrapVerify(arithId));
                     g_inlinesEmitted++;
                     g_totalHintsConsumed++;
                     return true;
@@ -7226,7 +7274,7 @@ private:
                               /*operands=*/{recvId, argId},
                               /*literal=*/(v2.literal | (1ULL << 63)));
                 for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-                stack_.push_back(argId);  // returns the assigned value
+                stack_.push_back(wrapVerify(argId));  // returns the assigned value
                 g_inlinesEmitted++;
                 g_totalHintsConsumed++;
                 return true;
@@ -7330,7 +7378,7 @@ private:
                                                    innerInlineTy,
                                                    {}, innerInlineLit);
                 for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-                stack_.push_back(resultId);
+                stack_.push_back(wrapVerify(resultId));
                 g_inlinesEmitted++;
                 g_totalHintsConsumed++;
                 return true;
@@ -7409,7 +7457,7 @@ private:
                           /*operands=*/{recvId, argId},
                           /*literal=*/(v2.literal | (1ULL << 63)));
             for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-            stack_.push_back(resultId);
+            stack_.push_back(wrapVerify(resultId));
             g_inlinesEmitted++;
             g_totalHintsConsumed++;
             return true;
@@ -7517,7 +7565,7 @@ private:
                                                 {ai7TaggedIvar, ai7TaggedArg},
                                                 /*literal=*/0);
             for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-            stack_.push_back(ai7Result);
+            stack_.push_back(wrapVerify(ai7Result));
             g_inlinesEmitted++;
             g_totalHintsConsumed++;
             return true;
@@ -7602,7 +7650,7 @@ private:
                                                 {ai5Tagged, ai5Const},
                                                 /*literal=*/0);
             for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-            stack_.push_back(ai5Result);
+            stack_.push_back(wrapVerify(ai5Result));
             g_inlinesEmitted++;
             g_totalHintsConsumed++;
             return true;
@@ -7700,7 +7748,7 @@ private:
                                                 {ai6Tagged, ai6Const},
                                                 /*literal=*/0);
             for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-            stack_.push_back(ai6Result);
+            stack_.push_back(wrapVerify(ai6Result));
             g_inlinesEmitted++;
             g_totalHintsConsumed++;
             static int ai6Count = 0;
@@ -7872,7 +7920,7 @@ private:
                                             /*literal=*/0);
             // Pop receiver+args, push the inlined result.
             for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-            stack_.push_back(aiOp2);
+            stack_.push_back(wrapVerify(aiOp2));
             g_inlinesEmitted++;
             g_totalHintsConsumed++;
             static int aivCount = 0;
@@ -7969,9 +8017,10 @@ private:
                                      inlineLit);
         }
 
-        // Pop rcvr+args, push the inlined value.
+        // Pop rcvr+args, push the inlined value (verified under the knob).
+        uint32_t resultId = wrapVerify(inlineId);
         for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-        stack_.push_back(inlineId);
+        stack_.push_back(resultId);
 
         if (dbgCDN) {
             fprintf(stderr,

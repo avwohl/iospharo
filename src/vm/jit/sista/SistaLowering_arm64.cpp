@@ -41,6 +41,10 @@ extern "C" uint64_t jit_rt_sista_basic_at_put(void* state,
 extern "C" uint64_t jit_rt_sista_call_send(void* state,
                                              uint64_t selBits,
                                              uint64_t nArgs);
+extern "C" uint64_t jit_rt_sista_verify_inline(void* state,
+                                                uint64_t speculatedBits,
+                                                uint64_t selBits,
+                                                uint64_t nArgs);
 extern "C" uint64_t jit_rt_sista_special_call_send(void* state,
                                                     uint64_t ssIdx,
                                                     uint64_t nArgs);
@@ -1470,6 +1474,63 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
                 cc.bind(noDeopt);
                 regFor[v.id] = dst;
+                break;
+            }
+            case Op::kVerifyInline: {
+                // Diagnostic (PHARO_SISTA_VERIFY_INLINE): operand[0]=speculated
+                // inlined value, operand[1..]=rcvr(+args).  Push rcvr+args to
+                // interp.sp, invoke jit_rt_sista_verify_inline(state,
+                // speculated, sel, nArgs) which does the REAL send, restores sp,
+                // logs any mismatch, and returns the real value.
+                using namespace asmjit::a64;
+                if (v.operands.size() < 2) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                uint32_t selIdx = (uint32_t)(v.literal & 0xFFFFFFFFu);
+                uint32_t nArgsV = (uint32_t)((v.literal >> 32) & 0xFFFFu);
+                Gp vsp = cc.new_gp64("vsp");
+                cc.ldr(vsp, ptr(state, OFF_SP));
+                for (size_t opIdx = 1; opIdx < v.operands.size(); opIdx++) {
+                    auto opIt = regFor.find(v.operands[opIdx]);
+                    if (opIt == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    cc.str(opIt->second,
+                           ptr(vsp, static_cast<int>(opIdx - 1) * 8));
+                }
+                cc.add(vsp, vsp,
+                       Imm(static_cast<int>(v.operands.size() - 1) * 8));
+                cc.str(vsp, ptr(state, OFF_SP));
+                auto specIt = regFor.find(v.operands[0]);
+                if (specIt == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp vsel = cc.new_gp64("vsel");
+                cc.ldr(vsel,
+                       ptr(litBaseHoisted, static_cast<int>(selIdx) * 8));
+                Gp vnargs = cc.new_gp64("vnargs");
+                cc.mov(vnargs, Imm((uint64_t)nArgsV));
+                Gp vfn = cc.new_gp64("vfn");
+                cc.mov(vfn, Imm((uint64_t)&jit_rt_sista_verify_inline));
+                Gp vdst = cc.new_gp64("vdst");
+                asmjit::InvokeNode* vinv = nullptr;
+                asmjit::Error verr = cc.invoke(
+                    asmjit::Out(vinv), vfn,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t, uint64_t, uint64_t>());
+                if (verr != asmjit::kErrorOk || !vinv) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                vinv->set_arg(0, state);
+                vinv->set_arg(1, specIt->second);
+                vinv->set_arg(2, vsel);
+                vinv->set_arg(3, vnargs);
+                vinv->set_ret(0, vdst);
+                regFor[v.id] = vdst;
                 break;
             }
             case Op::kSendCallHelperSpecial: {

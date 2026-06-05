@@ -383,6 +383,16 @@ enum class Op : uint8_t {
     // temps, which stack slots.  Emitted at every potential deopt site
     // and consumed by the deopt-reconstruction runtime.
     kFrameState,          // operands: method oop, bc offset, temps..., stack...  -> FrameState
+
+    // --- Diagnostic: runtime inline value verification (blocker #4) ---
+    // Under PHARO_SISTA_VERIFY_INLINE only.  operand[0] = the speculated
+    // inlined value; operand[1..] = receiver (+args) of the original send.
+    // Lowers to a helper that does the REAL send and logs when the real
+    // result differs from the speculated value, then returns the REAL value
+    // (so execution is correct under the knob and mismatches are logged).
+    // literal layout matches kSendCallHelper: lo32=selIdx, 32-47=nArgs,
+    // 48-63=bcOffset.
+    kVerifyInline,        // operands: speculated, rcvr, args...            -> Oop
 };
 
 // ===== Value types =====

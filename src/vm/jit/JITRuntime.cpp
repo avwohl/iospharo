@@ -1908,6 +1908,40 @@ extern "C" uint64_t jit_rt_sista_call_send(JITState* state,
     return state->interp->jitSistaCallSend(state, selBits, nArgs);
 }
 
+// Diagnostic (blocker #4, PHARO_SISTA_VERIFY_INLINE): the caller pushed
+// [rcvr, args...] at state->sp, exactly as for jit_rt_sista_call_send.  Do the
+// REAL send, compare its result against the speculated inlined value, log any
+// mismatch (this catches a wrong speculative inline VALUE that flag-bisection
+// cannot localize), and return the REAL value so execution stays correct.
+extern "C" uint64_t jit_rt_sista_verify_inline(JITState* state,
+                                                uint64_t speculatedBits,
+                                                uint64_t selBits,
+                                                uint64_t nArgs) {
+    if (!state || !state->interp) return speculatedBits;
+    // Caller pushed [rcvr, arg0..arg_{nArgs-1}] starting at origSp.
+    Oop* origSp = state->sp - (1 + (long)nArgs);
+    Oop rcvr = origSp[0];
+    uint64_t realBits = jit_rt_sista_call_send(state, selBits, nArgs);
+    // Undo the push + the send's net stack effect — the inline is SSA, the
+    // real result lives only in our return value.
+    state->sp = origSp;
+    uint64_t result = (realBits != 0) ? realBits : speculatedBits;
+    if (realBits != 0 && realBits != speculatedBits) {
+        auto* mem = reinterpret_cast<ObjectMemory*>(state->memory);
+        std::string sel = "?", rcls = "?";
+        Oop selOop = Oop::fromRawBits(selBits);
+        if (mem) {
+            sel = mem->oopToString(selOop);
+            rcls = mem->classNameOf(rcvr);
+        }
+        fprintf(stderr,
+            "[INLINE-MISMATCH] sel=#%s rcvrCls=%s speculated=0x%llx real=0x%llx\n",
+            sel.c_str(), rcls.c_str(),
+            (unsigned long long)speculatedBits, (unsigned long long)realBits);
+    }
+    return result;
+}
+
 // SpecialSend (0x70-0x7F) variant of the helper-send.  Selector lives
 // in the global SpecialSelectorsArray, slot (ssIdx + 16) * 2.
 // Resolves the selector once per call and routes through the same
