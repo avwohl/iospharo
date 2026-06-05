@@ -120,19 +120,38 @@ bake speculative inlines into compiled code that the IC flush does NOT recompile
   + `stack_` pop/push + deopt framepoint that every emitting shape performs),
   manifesting probabilistically across the compiled-with-inline methods.
 
+## DECISIVE (2026-06-05): it's the guard-HIT inlined VALUE, not the deopt
+
+`PHARO_SISTA_GUARD_ALWAYS_DEOPT=1` (lowering makes every `kGuardClass` compare
+against an impossible class index, so EVERY speculative inline misses → deopts to
+the real unspeculated send) → 6/6 PASS, deterministically. This is a RELIABLE
+oracle (it keeps the IR structure / compile schedule identical, so it is NOT
+timing-confounded, unlike the emission-disabling knobs). Conclusions:
+- The deopt reconstruction (stack re-push + ip resume) is CORRECT. The earlier
+  "deopt stack capture" hypothesis is REFUTED.
+- The bug is the INLINED VALUE used on a guard HIT (when the receiver IS the
+  guarded class). For some shape, the value emitted does not equal what the real
+  send returns for that class.
+- Plain getters (kLoadInstVar) are proven correct, so the culprit is a NON-GETTER
+  value: kConstantOop (const), kLoadTrue/FalseOop (bool), kLoadReceiver (`^self`),
+  kLoadTemp (`^arg`), kLoadLiteral, or a chained shape's final inner value.
+
 ## Next step (the real fix)
 
-Audit the SHARED emission tail of `tryInlineConstReturn` (the `kGuardClass`
-emission + `stack_` manipulation + deopt re-push at `SistaBuilder.cpp:~7900`, and
-the per-shape direct emits at 6258/6289/6512/6615/6877/7309). Leading suspect: the
-`kGuardClass` deopt captures the simulated `stack_` to re-push at `bcOffset` on a
-guard miss; if that captured stack does not exactly match the interpreter's
-operand stack at `bcOffset` for some shape/site (extra/missing/speculated entry),
-a deopt leaves a corrupt stack → the observed KeyNotFound / NonBooleanReceiver.
-Verify by dumping the IR (`PHARO_SISTA_DUMP_NODES`) of a method that takes a
-direct-emit inline and checking the guard's deopt operand list against the live
-interpreter stack at that bcOffset. NOTE: bisection is timing-confounded — use
-IR inspection, not flag bisection, from here.
+Audit the VALUE emitted by the non-getter shapes for the case where it differs
+from the real send's result for the guarded class. Suspects, by likelihood:
+  - kLoadReceiver `^self`/yourself direct emit (SistaBuilder.cpp ~6230-6258): it
+    pushes `recvId` (= stack_[size-nArgs-1]); verify recvId is the inlined send's
+    receiver for every call shape, not the outer method's self.
+  - kLoadTemp `^arg` (~6260-6290) and the literal/temp arg-forwarders
+    (~7090-7161): verify the substituted arg/literal index.
+  - kConstantOop const-return: verify the literal Oop is read from the correct
+    callee literal slot (a wrong literal index would return a wrong constant).
+  - chained inner const values (6628 / 7000s).
+RELIABLE bisection tool: GUARD_ALWAYS_DEOPT can be made SELECTIVE (tag the guard
+with the inlineOp in free bits 22-31 of guardLit and force-deopt only chosen
+shapes) — same structure, no timing confound. Then confirm the fix with
+scripts/repro/blocker4-perrun.st (PHARO_NO_JIT=1, expect all-PASS).
 
 Interim correctness option: default `tryInlineConstReturn` off
 (`sistaNoInlineConst`) and the T1 IC probe off until the emission bug is fixed —

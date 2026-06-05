@@ -3,6 +3,7 @@
  */
 #include "SistaLowering.hpp"
 #include "../../DebugSettings.hpp"
+#include "../../DebugVars.hpp"
 
 #if PHARO_JIT_ENABLED
 
@@ -744,11 +745,18 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // 4096 covers ~all classIndexes seen in image bench code
                 // (well below the 22-bit Spur cap).  Avoid the materialize
                 // mov when the imm fits.
-                if (expectedIdx <= 0xFFF) {
-                    cc.cmp(idx, Imm(expectedIdx));
+                // Bisect knob PHARO_SISTA_GUARD_ALWAYS_DEOPT: compare against an
+                // impossible class index (> 22-bit cap) so the guard ALWAYS
+                // misses → every speculative inline deopts to the real send.
+                // If the bug disappears under this, the inlined VALUE (guard-hit)
+                // was wrong; if it persists, the deopt reconstruction is.
+                uint32_t cmpIdx = GET_DEBUG_BOOL(PHARO_SISTA_GUARD_ALWAYS_DEOPT)
+                                  ? 0xFFFFFFu : expectedIdx;
+                if (cmpIdx <= 0xFFF) {
+                    cc.cmp(idx, Imm(cmpIdx));
                 } else {
                     Gp expected = cc.new_gp64("exp");
-                    cc.mov(expected, Imm((uint64_t)expectedIdx));
+                    cc.mov(expected, Imm((uint64_t)cmpIdx));
                     cc.cmp(idx, expected);
                 }
                 cc.b_eq(contLabel);
