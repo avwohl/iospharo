@@ -4595,8 +4595,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             a.cmp(x6, asmjit::Imm(16));
                             a.b_eq(tryPrimSize);
                         }
-                        a.cmp(x6, asmjit::Imm(20));
-                        a.b_eq(tryPrimIdentityHash);
+                        if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_IDH)) {
+                            a.cmp(x6, asmjit::Imm(20));
+                            a.b_eq(tryPrimIdentityHash);
+                        }
                     }
                 }
                 a.b(dispatchCached);
@@ -4663,8 +4665,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             a.cmp(x6, asmjit::Imm(16));
                             a.b_eq(tryPrimSize);
                         }
-                        a.cmp(x6, asmjit::Imm(20));
-                        a.b_eq(tryPrimIdentityHash);
+                        if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_IDH)) {
+                            a.cmp(x6, asmjit::Imm(20));
+                            a.b_eq(tryPrimIdentityHash);
+                        }
                     }
                 }
                 a.b(dispatchCached);
@@ -5720,14 +5724,38 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b(dispatchCached);
             }
 
-            // === Inline identityHash (primKind 20, nArgs=0, heap receiver) ===
-            // identityHash = (header >> 8) & 0x3FFFFF (22-bit hash field).
-            // Tag as SmI and store.
+            // === Inline basicIdentityHash (primKind 20 = inlinePrimKind(75),
+            //     nArgs=0, heap receiver) ===
+            // prim 75 returns the RAW 22-bit identity hash from the header.
+            // (Object>>identityHash is `^self basicIdentityHash bitShift: 8`, a
+            //  separate non-primitive method — NOT what gets inlined here.)
+            //
+            // Blocker #4 root cause: this VM relocated the header identity-hash
+            // field for ASLR.  Stock Spur keeps the hash at bits 8-29; this VM
+            // puts it at bits 32-53 (ObjectHeader::HashShift == 32, classIndex
+            // moved to bits 0-21).  This stencil was ported from the stock layout
+            // and shifted by 8, so it extracted bits 8-29 = a mix of the classIndex
+            // high bits and the format nibble — IDENTICAL for every object of the
+            // same class.  So every ByteSymbol got the SAME bogus "hash", which is
+            // why distinct test symbols collided to one slot (the "wrong AND shared
+            // across distinct symbols, impossible normally" signature).  The real
+            // primitive reads bits 32-53 correctly, so a store via this inline and
+            // a lookup via the real prim disagreed → KeyNotFound; timing-dependent
+            // on which path each took → the Heisenbug.
+            //
+            // Fix: read the hash from HashShift (32), matching
+            // ObjectHeader::identityHash().  Use the named constants so the shift
+            // can never silently drift from the header layout again.  Also bail to
+            // the real primitive when the field is 0: the hash is assigned lazily
+            // (identityHashOf calls generateHash() / registerClass() on a 0 field
+            // and stores it back), which this inline read cannot do.
             if (nArgs == 0 && g_debug.t1InlinePrimAt) {
                 a.bind(tryPrimIdentityHash);
                 a.ldr(x4, ptr(x1));                  // header
-                a.lsr(x4, x4, asmjit::Imm(8));
-                a.and_(x4, x4, asmjit::Imm(0x3FFFFF));
+                a.lsr(x4, x4, asmjit::Imm(pharo::ObjectHeader::IdentityHashShift));
+                a.and_(x4, x4, asmjit::Imm(pharo::ObjectHeader::IdentityHashFieldMask));
+                a.cbz(x4, dispatchCached);           // 0 = unhashed: let the real
+                                                     // prim assign (x5 untouched).
                 // Blocker #4 trace: log (receiver, raw hash). Catches the inline
                 // identityHash reading a STALE/wrong receiver x1.
                 if (GET_DEBUG_BOOL(PHARO_T1_TRACE_MOD)) {
@@ -5748,13 +5776,6 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x2, ptr(asmjit::a64::sp, 24));
                     a.ldr(x4, ptr(asmjit::a64::sp, 32));
                     a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
-                }
-                // Blocker #4 test: Object>>identityHash returns basicIdentityHash
-                // << 8 (scaled), but this inline returns the RAW 22-bit hash.
-                // PHARO_T1_IDH_SCALE=1 applies the <<8 to test if scanFor: needs
-                // the scaled value (the inline mismatching the real identityHash).
-                if (GET_DEBUG_BOOL(PHARO_T1_IDH_SCALE)) {
-                    a.lsl(x4, x4, asmjit::Imm(8));
                 }
                 a.lsl(x4, x4, asmjit::Imm(3));
                 a.orr(x4, x4, asmjit::Imm(0x1));

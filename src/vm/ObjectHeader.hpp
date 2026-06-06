@@ -145,6 +145,14 @@ private:
     static constexpr uint64_t GreyBit = 1ULL << 31;        // Bit 31 (standard Spur)
 
 public:
+    // Public mirror of the identity-hash field layout (private constants
+    // above are the source of truth).  Exposed so the JIT inline
+    // basicIdentityHash stencil (jit/asmjit/AsmjitT1.cpp) can reference the
+    // real field position instead of a hardcoded shift — a stock-Spur >>8
+    // literal there once read classIndex+format bits as the "hash" (blocker #4).
+    static constexpr uint64_t IdentityHashShift = HashShift;            // 32
+    static constexpr uint64_t IdentityHashFieldMask = HashMask >> HashShift;  // 0x3FFFFF
+
     // ===== SLOT COUNT =====
 
     /// Get the number of pointer slots in this object.
