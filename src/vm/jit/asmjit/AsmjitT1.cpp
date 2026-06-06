@@ -92,7 +92,8 @@ extern "C" uint64_t jit_rt_t1_sista_dispatch(void* state, uint64_t fnPtr,
 extern "C" void jit_rt_setter_write_barrier(void* state, uint64_t rcvBits,
                                              uint64_t valBits);
 extern "C" void jit_rt_sync_globals(void* state);
-extern "C" void jit_rt_trace_mod(int64_t a, int64_t b, int64_t result);
+extern "C" void jit_rt_trace_mod(int64_t a, int64_t b, int64_t result, void* state);
+extern "C" void jit_rt_trace_idh(uint64_t recvBits, int64_t rawHash, void* state);
 extern "C" void jit_rt_verify_inline_at(void* state, uint64_t rcvBits,
                                         uint64_t idxBits, uint64_t inlineVal);
 extern "C" void jit_rt_check_setter_bounds(void* state, uint64_t rcvBits,
@@ -3335,7 +3336,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.str(x2,  ptr(asmjit::a64::sp, 24));
             a.str(x4,  ptr(asmjit::a64::sp, 32));
             a.str(x7,  ptr(asmjit::a64::sp, 40));
-            // args: x0=a, x1=b, x2=result
+            // args: x0=a, x1=b, x2=result, x3=state (x0 holds state before moves)
+            a.mov(x3, x0);
             a.mov(x0, x1);
             a.mov(x1, x4);
             a.mov(x2, x7);
@@ -5726,6 +5728,27 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x4, ptr(x1));                  // header
                 a.lsr(x4, x4, asmjit::Imm(8));
                 a.and_(x4, x4, asmjit::Imm(0x3FFFFF));
+                // Blocker #4 trace: log (receiver, raw hash). Catches the inline
+                // identityHash reading a STALE/wrong receiver x1.
+                if (GET_DEBUG_BOOL(PHARO_T1_TRACE_MOD)) {
+                    a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
+                    a.str(x0, ptr(asmjit::a64::sp, 0));
+                    a.str(x30, ptr(asmjit::a64::sp, 8));
+                    a.str(x1, ptr(asmjit::a64::sp, 16));
+                    a.str(x2, ptr(asmjit::a64::sp, 24));
+                    a.str(x4, ptr(asmjit::a64::sp, 32));
+                    a.mov(x3, x0);                   // arg3 = state
+                    a.mov(x0, x1);                   // arg0 = recv
+                    a.mov(x1, x4);                   // arg1 = rawHash
+                    a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_trace_idh));
+                    a.blr(x9);
+                    a.ldr(x0, ptr(asmjit::a64::sp, 0));
+                    a.ldr(x30, ptr(asmjit::a64::sp, 8));
+                    a.ldr(x1, ptr(asmjit::a64::sp, 16));
+                    a.ldr(x2, ptr(asmjit::a64::sp, 24));
+                    a.ldr(x4, ptr(asmjit::a64::sp, 32));
+                    a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
+                }
                 // Blocker #4 test: Object>>identityHash returns basicIdentityHash
                 // << 8 (scaled), but this inline returns the RAW 22-bit hash.
                 // PHARO_T1_IDH_SCALE=1 applies the <<8 to test if scanFor: needs

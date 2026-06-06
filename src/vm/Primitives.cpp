@@ -2928,6 +2928,20 @@ PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
 
     uint32_t hash = memory_.identityHashOf(rcvr);
 
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_TRACE_MOD), 0)) {
+        std::string str = rcvr.isObject() && rcvr.rawBits() > 0x10000
+            ? memory_.oopToString(rcvr) : std::string();
+        // Log prim-75 for test-key symbols + the caller method.
+        if (str.find("DefinedIn") != std::string::npos || str == "SystemOrganization") {
+            static size_t pn = 0;
+            if (pn < 200) { pn++;
+                fprintf(stderr, "[PRIM75] rcvr=%s(%s) rawHash=%u caller=#%s\n",
+                        memory_.classNameOf(rcvr).c_str(), str.substr(0,16).c_str(),
+                        hash, memory_.selectorOf(method_).c_str());
+            }
+        }
+    }
+
     popN(argCount + 1);
     push(Oop::fromSmallInteger(hash));
     return PrimitiveResult::Success;

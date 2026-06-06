@@ -1278,18 +1278,46 @@ extern "C" void jit_rt_check_setter_bounds(JITState* s, uint64_t rcvBits,
     }
 }
 
+// Blocker #4 trace: inline identityHash receiver + raw hash.
+extern "C" void jit_rt_trace_idh(uint64_t recvBits, int64_t rawHash, JITState* s) {
+    static size_t n = 0;
+    if (n >= 4000) return;
+    if (!s || !s->memory) return;
+    auto* mem = static_cast<pharo::ObjectMemory*>(s->memory);
+    pharo::Oop r = pharo::Oop::fromRawBits(recvBits);
+    std::string cn = mem->classNameOf(r);
+    std::string str = mem->oopToString(r);
+    if (str.find("DefinedIn") != std::string::npos || str == "SystemOrganization") {
+        n++;
+        fprintf(stderr, "[IDH-INLINE] recv=%s(%s) recvBits=0x%llx rawHash=%lld\n",
+                cn.c_str(), str.substr(0,16).c_str(), (unsigned long long)recvBits, (long long)rawHash);
+    }
+}
+
 // Blocker #4 trace: log inline \\ (modulo) operands+result when the dividend is
 // hash-sized (>1e6).  scanFor:'s probe start is (key hash \\ array size)+1; this
 // reveals whether the hash dividend or the size divisor is wrong at the actual
 // JIT computation.  a,b,result are UNTAGGED integers.
-extern "C" void jit_rt_trace_mod(int64_t a, int64_t b, int64_t result) {
+extern "C" void jit_rt_trace_mod(int64_t a, int64_t b, int64_t result, JITState* s) {
     static size_t n = 0;
-    // Small divisor (hash-table-size-like) with a large-ish dividend = a
-    // hash-probe `key hash \\ tableSize`.
-    if (a > 100000 && n < 50000) {
+    if ((b==11||b==7||b==5||b==13||b==17) && n < 50000) {
         n++;
-        fprintf(stderr, "[MOD-inline] %lld \\\\ %lld = %lld\n",
-                (long long)a, (long long)b, (long long)result);
+        // Read the executing JIT method's selector + arg0 (scanFor:'s anObject).
+        std::string sel = "?", recv = "?", arg = "?";
+        if (s && s->memory && s->method.isObject()) {
+            auto* mem = static_cast<pharo::ObjectMemory*>(s->memory);
+            sel = mem->selectorOf(s->method);
+            recv = mem->classNameOf(s->receiver);
+            if (s->tempBase) {
+                pharo::Oop a0 = s->tempBase[0];
+                if (a0.isSmallInteger())
+                    arg = "SmI:" + std::to_string(a0.asSmallInteger());
+                else { arg = mem->classNameOf(a0) + ":" + mem->oopToString(a0).substr(0,16); }
+            }
+        }
+        fprintf(stderr, "[MOD-inline] %lld \\\\ %lld = %lld  meth=#%s recvCls=%s arg0=%s\n",
+                (long long)a, (long long)b, (long long)result,
+                sel.c_str(), recv.c_str(), arg.c_str());
     }
 }
 

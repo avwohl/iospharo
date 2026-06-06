@@ -7458,10 +7458,10 @@ void Interpreter::arithmeticSend(int which) {
                             result += b;
                         }
                         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_TRACE_MOD), 0)
-                                && b >= 2 && b <= 64 && a > 1000
-                                && memory_.selectorOf(method_) == "scanFor:") {
+                                && b >= 2 && b <= 64
+                                && memory_.classNameOf(receiver_) == "SystemEnvironment") {
                             static size_t mn = 0;
-                            if (mn < 400) { mn++;
+                            if (mn < 4000) { mn++;
                                 // receiver_ = the dict; find its array ivar's real size
                                 long realSz = -1;
                                 if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
@@ -7475,15 +7475,21 @@ void Interpreter::arithmeticSend(int which) {
                                         }
                                     }
                                 }
-                                // scanFor:'s arg0 (anObject) = the key being scanned
-                                if (realSz == 11) {
-                                    Oop t0 = temporary(0);
-                                    Oop a0 = argument(0);
+                                Oop t0 = temporary(0);
+                                std::string ks = memory_.oopToString(t0);
+                                // a = anObject identityHash (scaled). Compare with
+                                // temporary(0)'s CURRENT header hash (raw<<8).
+                                long curRaw = (long)memory_.identityHashOf(t0);
+                                long curScaled = curRaw << 8;
+                                if (curScaled != a) {
+                                    // a != anObject's hash. Whose hash IS a? Check
+                                    // the dict (receiver_) and a few candidates.
+                                    long dictScaled = (long)memory_.identityHashOf(receiver_) << 8;
                                     fprintf(stderr,
-                                        "[MOD-scanFor] hash=%lld finish=%lld res=%lld | temp0=%s(%s) arg0=%s(%s)\n",
-                                        (long long)a, (long long)b, (long long)result,
-                                        memory_.classNameOf(t0).c_str(), memory_.oopToString(t0).substr(0,20).c_str(),
-                                        memory_.classNameOf(a0).c_str(), memory_.oopToString(a0).substr(0,20).c_str());
+                                        "[MOD-SE-MISMATCH] key=%s a=%lld a>>8=%lld | t0scaled=%ld dictScaled=%ld %s\n",
+                                        ks.substr(0,16).c_str(), (long long)a, (long long)(a>>8),
+                                        curScaled, dictScaled,
+                                        (dictScaled==a) ? "<<<a IS THE DICT's hash!" : "");
                                 }
                             }
                         }

@@ -123,12 +123,44 @@ scanFor:'s chained inline prims run back-to-back in JIT — it corrupts state
 (stack/temp/control-flow), not any single prim's value, which is why value-level
 tracing can't pin it.
 
-OPEN: the exact instruction needs lldb single-step of the JIT-compiled scanFor: on a
-failing (warm) run — the divergence is runtime-state dependent and non-deterministic,
-so static asm dumps and value traces look correct.  Robust correctness-preserving
-fix: `PHARO_T1_NO_INLINE_PRIM_AT=1` (routes scanFor:'s size/at:/identityHash sends
-through the verified-correct C++ chain; keeps getter/setter/returns-self and all
-non-prim inline specs).  Cheaper than the existing `PHARO_T1_NO_IC_PROBE=1`.
+### PINNED: scanFor:'s `anObject identityHash` returns a wrong SCALED value (2026-06-06)
+
+Trace `[MOD-SE]` (interp `\\` where receiver is SystemEnvironment) + `[PRIM75]` +
+`[IDH-INLINE]` nailed the corrupted value:
+  - SystemEnvironment uses `IdentityDictionary>>scanFor:` → `(anObject identityHash
+    \\ finish)+1`.  identityHash here is the SCALED value (= basicIdentityHash << 8).
+  - For #A1DefinedInX the `\\` dividend `a` is USUALLY 1044807680 (correct =
+    4081280<<8) but INTERMITTENTLY 343936000 (= 1343500<<8) — and that wrong value
+    343936000 is SHARED across A1/B1/A2/B2 (impossible for distinct symbols).
+    343936000%11 vs 1044807680%11 give different slots → A1 placed at slot 2 (fail)
+    vs 5 (pass).
+  - Yet at the same moment temporary(0) (anObject) IS #A1DefinedInX and
+    `identityHashOf(it)` = 4081280 (CORRECT, stable), and prim 75 (`[PRIM75]`)
+    returns 4081280 for A1 every time, and the inline identityHash
+    (tryPrimIdentityHash) is NOT used for A1 (no `[IDH-INLINE]`).
+
+So the symbol header, the raw hash, and prim 75 are ALL correct — only the SCALED
+identityHash value flowing into scanFor:'s `\\` is intermittently wrong (1343500<<8),
+shared across keys.  i.e. the corruption is in deriving/propagating the scaled
+identityHash (the `<<8` scaling + the inline/J2J continuation between prim 75 and the
+modulo), producing a STALE shared value — NOT in any single prim's correctness.
+This is consistent with the non-deterministic continuation-interaction conclusion and
+with NO_INLINE_PRIM_AT fixing it (it reroutes scanFor:'s prim sends through C++,
+collapsing the corrupting inline continuation).
+
+HEISENBUG CONFIRMED (the hard limit): the `a=343936000` mismatch reproduces under
+LIGHT tracing (MOD-SE + the JIT `\\` BLR), but adding MORE trace BLRs (PRIM75 in
+prim 75, IDH-INLINE in tryPrimIdentityHash) PERTURBS the timing enough that the test
+PASSES (0 fail, 0 mismatch).  So any instrumentation strong enough to capture the
+corrupting INSTRUCTION masks the bug — and lldb breakpoints (heavier still) would
+mask it too.  This is the fundamental reason the instruction-level pin is blocked:
+the corruption lives in a timing-sensitive inline/J2J continuation window that
+collapses under observation.  The value-level root cause IS pinned (anObject
+identityHash → wrong shared 343936000), and the fix is proven.
+
+Robust fix: `PHARO_T1_NO_INLINE_PRIM_AT=1` (routes scanFor:'s size/at:/identityHash
+sends through the verified-correct C++ chain; keeps getter/setter/returns-self and
+all non-prim inline specs).  Cheaper than `PHARO_T1_NO_IC_PROBE=1`.
 
 --- earlier (2026-06-06) characterization below ---
 
