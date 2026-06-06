@@ -6187,6 +6187,20 @@ private:
         Method calleeIR;
         uint32_t calleeFailedAt = UINT32_MAX;
         Oop calleeOop = Oop::fromRawBits(hit->targetMethod);
+        // Arg-count guard (blocker #4): the hint's targetMethod MUST take exactly
+        // nArgs arguments.  A stale / mis-mapped IC hint can pair this send-site
+        // with a DIFFERENT-arity method — e.g. the 2-arg `self at:#X put:y` send
+        // in SystemEnvironment>>organization: getting a 1-arg method's hint, which
+        // then inlines as a 1-arg `^arg foo` arg-forwarder and SKIPS the real
+        // at:put: store (the fresh env never gets #SystemOrganization → KeyNotFound).
+        // The callee's numArgs is bits 24-27 of its method header SmallInteger.
+        {
+            Oop calleeHdr = g_currentBuildMemory->fetchPointer(0, calleeOop);
+            if (!calleeHdr.isSmallInteger()) return false;
+            uint32_t calleeNumArgs =
+                (uint32_t)((calleeHdr.asSmallInteger() >> 24) & 0x0F);
+            if (calleeNumArgs != nArgs) return false;
+        }
         g_calleeLiftDepth++;
         LiftResult cr;
         {
@@ -6196,6 +6210,41 @@ private:
         }
         g_calleeLiftDepth--;
         if (cr != LiftResult::kOk) return false;
+
+        // Tail-send guard (blocker #4 root cause): when the probe-lift terminates
+        // at a kSendUnspeculated, the shape recognizers below treat the callee as
+        // a `^ X foo` TAIL-forwarder and inline it as the inner send's result.
+        // But a COMPLEX method lifts to a PREFIX that ends at its FIRST send
+        // (the lift bails there) — e.g. SystemEnvironment>>at:put: lifts to a
+        // 2-value [load, send] prefix.  Inlining that as `^ X foo` DROPS the rest
+        // of the method (at:put:'s real store) → the fresh env never gets
+        // #SystemOrganization → KeyNotFound.  Only accept it when that send is
+        // genuinely the method's TAIL (sits within the last few bytecodes, i.e.
+        // send + returnTop), not an early send of a longer method.
+        if (!calleeIR.values.empty()
+                && calleeIR.values.back().op == Op::kSendUnspeculated
+                && calleeOop.isObject()) {
+            uint32_t sendBcOff =
+                (uint32_t)(calleeIR.values.back().literal >> 24);
+            Oop chdr = g_currentBuildMemory->fetchPointer(0, calleeOop);
+            if (!chdr.isSmallInteger()) return false;
+            uint32_t numLits = (uint32_t)(chdr.asSmallInteger() & 0x7FFF);
+            size_t totalBytes = calleeOop.asObjectPtr()->byteSize();
+            size_t slotBytes = (size_t)(1 + numLits) * 8;
+            size_t bcSize = (totalBytes > slotBytes)
+                          ? (totalBytes - slotBytes) : 0;
+            // Tail send sits within the last ~5 bytes (send up to 3-4 bytes +
+            // returnTop).  Anything earlier means the method continues past it.
+            if ((size_t)sendBcOff + 5 < bcSize) return false;
+        }
+
+        if (GET_DEBUG_BOOL(PHARO_SISTA_ICR_LOG) && g_currentBuildMemory) {
+            fprintf(stderr,
+                "[ICR-ATTEMPT] outer=#%s callee=#%s nArgs=%u clsIdx=%u calleeIRsize=%zu\n",
+                g_currentBuildMemory->selectorOf(Oop::fromRawBits(selfMethodBits_)).c_str(),
+                g_currentBuildMemory->selectorOf(calleeOop).c_str(),
+                nArgs, (unsigned)(hit->classOop & 0x3FFFFFu), calleeIR.values.size());
+        }
 
         // Bisect: do the probe-lift above but never emit an inline.  If the
         // bug persists with this set, the recursive probe-lift side effect is
