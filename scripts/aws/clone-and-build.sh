@@ -40,9 +40,23 @@ else
     git checkout -B "$WORK_BRANCH" "$BASE_BRANCH"
 fi
 
-# Submodules (asmjit, pharo-headless-test) are public HTTPS — init them so the
-# cmake add_subdirectory(third_party/asmjit) sees a populated tree.
-git submodule update --init --recursive
+# Submodules.  third_party/asmjit is REQUIRED (cmake add_subdirectory needs a
+# populated tree).  scripts/pharo-headless-test is only the SUnit harness (.st
+# files) and is OPTIONAL for building — its gitlink is sometimes an unpushed
+# commit, so a plain `--init --recursive` aborts on it and (worse) leaves asmjit
+# half-initialized.  Init asmjit explicitly with a clean-retry, and never let the
+# optional harness submodule fail the build.
+if ! git submodule update --init third_party/asmjit 2>&1 \
+        || [ ! -f third_party/asmjit/asmjit/core/virtmem.cpp ]; then
+    echo "asmjit submodule incomplete — forcing clean re-init"
+    git submodule deinit -f third_party/asmjit 2>/dev/null || true
+    rm -rf .git/modules/third_party/asmjit third_party/asmjit
+    git submodule update --init third_party/asmjit
+fi
+[ -f third_party/asmjit/asmjit/core/virtmem.cpp ] \
+    || { echo "FATAL: asmjit did not populate"; exit 1; }
+git submodule update --init scripts/pharo-headless-test 2>/dev/null \
+    || echo "WARN: pharo-headless-test submodule unavailable (SUnit harness only) — build proceeds"
 
 # --- build the x64 VM --------------------------------------------------------
 # Default to LTO OFF: a ~3-5 min build comfortably finishes inside a spot
