@@ -29,8 +29,8 @@ REGIONS="${REGIONS:-${AWS_DEFAULT_REGION:-us-east-2}}"
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 
 now=$(date -u +%s)
-start_iso=$(python3 -c "import datetime,sys;print((datetime.datetime.utcnow()-datetime.timedelta(minutes=int(sys.argv[1]))).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$LOOKBACK_MIN")
-end_iso=$(python3 -c "import datetime;print(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'))")
+start_iso=$(python3 -c "import datetime,sys;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=int(sys.argv[1]))).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$LOOKBACK_MIN")
+end_iso=$(python3 -c "import datetime;print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")
 
 reaped=0; kept=0
 for REGION in $REGIONS; do
