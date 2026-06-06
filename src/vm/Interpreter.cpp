@@ -19723,6 +19723,18 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
 // activates the wrong method.  Re-resolve the cached method's selector in the
 // receiver's LIVE class; on mismatch use the fresh method.  Diagnostic-gated by
 // PHARO_T1_VALIDATE_IC; `tag` identifies which dispatch handler called us.
+void Interpreter::syncGlobalsFromJITState(jit::JITState& s) {
+#if PHARO_JIT_ENABLED
+    stackPointer_ = s.sp;
+    instructionPointer_ = s.ip;
+    receiver_ = s.receiver;
+    framePointer_ = s.tempBase - 1;
+    if (s.method.isObject()) { method_ = s.method; homeMethod_ = s.method; }
+#else
+    (void)s;
+#endif
+}
+
 Oop Interpreter::validateICTarget(const char* tag, Oop cached, Oop* sp,
                                   int sendArgCount) {
     static size_t reach = 0, mism = 0;

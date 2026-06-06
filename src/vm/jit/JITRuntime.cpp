@@ -1278,6 +1278,14 @@ extern "C" void jit_rt_check_setter_bounds(JITState* s, uint64_t rcvBits,
     }
 }
 
+// Blocker #4 test: sync C++ interpreter globals from the JITState at an inline-
+// spec continuation point.
+extern "C" void jit_rt_sync_globals(JITState* s) {
+    if (s && s->interp) {
+        static_cast<pharo::Interpreter*>(s->interp)->syncGlobalsFromJITState(*s);
+    }
+}
+
 extern "C" void jit_rt_setter_write_barrier(JITState* s,
                                              uint64_t rcvBits,
                                              uint64_t valBits) {

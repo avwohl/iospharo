@@ -91,6 +91,7 @@ extern "C" uint64_t jit_rt_t1_sista_dispatch(void* state, uint64_t fnPtr,
                                               uint64_t nArgs);
 extern "C" void jit_rt_setter_write_barrier(void* state, uint64_t rcvBits,
                                              uint64_t valBits);
+extern "C" void jit_rt_sync_globals(void* state);
 extern "C" void jit_rt_verify_inline_at(void* state, uint64_t rcvBits,
                                         uint64_t idxBits, uint64_t inlineVal);
 extern "C" void jit_rt_check_setter_bounds(void* state, uint64_t rcvBits,
@@ -4559,8 +4560,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.cmp(x6, asmjit::Imm(15));
                         a.b_eq(tryPrimAtPut);
                     } else {  // nArgs == 0
-                        a.cmp(x6, asmjit::Imm(16));
-                        a.b_eq(tryPrimSize);
+                        if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_SIZE)) {
+                            a.cmp(x6, asmjit::Imm(16));
+                            a.b_eq(tryPrimSize);
+                        }
                         a.cmp(x6, asmjit::Imm(20));
                         a.b_eq(tryPrimIdentityHash);
                     }
@@ -4623,8 +4626,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.cmp(x6, asmjit::Imm(15));
                         a.b_eq(tryPrimAtPut);
                     } else {  // nArgs == 0
-                        a.cmp(x6, asmjit::Imm(16));
-                        a.b_eq(tryPrimSize);
+                        if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_SIZE)) {
+                            a.cmp(x6, asmjit::Imm(16));
+                            a.b_eq(tryPrimSize);
+                        }
                         a.cmp(x6, asmjit::Imm(20));
                         a.b_eq(tryPrimIdentityHash);
                     }
@@ -5434,6 +5439,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             if (nArgs == 1 && g_debug.t1InlinePrimAt) {
                 asmjit::Label tryByteAt = a.new_label();
                 a.bind(tryPrimAt);
+                // Blocker #4 layout-vs-execution test: emit N behavior-neutral
+                // NOPs at the inline-at entry.  If this layout shift alone masks
+                // the bug, the "fixes" are layout artifacts (→ memory-corruption
+                // hunt); if not, the inline-at execution is genuinely the cause.
+                for (int nn = 0; nn < GET_DEBUG_INT(PHARO_T1_AT_NOPS); nn++) a.nop();
                 emitIncPrimCounter((uint64_t)&g_primAt_hits);
                 // Stash icDataPtr to memory so bails restore it via
                 // dispatchCachedRestoreX5 (x5 gets clobbered with slotCount).
@@ -5795,6 +5805,42 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.ret(x30);
 
             a.bind(endOfSend);
+            // Blocker #4 test (PHARO_T1_INLINE_SYNC): inline-spec continuations
+            // reach here having updated OFF_SP but NOT OFF_SENDARGCOUNT / OFF_IP
+            // (unlike dispatchCached/miss).  A subsequent exit or GC that reads
+            // those stale fields could corrupt.  Sync them to this send's values
+            // before falling through to the next bytecode.  bits: 1=sendArgCount
+            // 2=ip(send offset).
+            if (int sy = GET_DEBUG_INT(PHARO_T1_INLINE_SYNC)) {
+                if (sy & 1) {
+                    a.mov(w3, asmjit::Imm(nArgs));
+                    a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
+                }
+                if (sy & 2) {
+                    a.ldr(x6, ptr(x0, OFF_METHOD));
+                    a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
+                    a.str(x6, ptr(x0, OFF_IP));
+                }
+                if (sy & 4) {
+                    a.ldr(x6, ptr(x0, OFF_ICDATAPTR));
+                    a.ldr(x6, ptr(x6, 8));        // icData[1] = cached method
+                    a.str(x6, ptr(x0, OFF_CACHED_TARGET));
+                }
+            }
+            // Blocker #4 test (PHARO_T1_SYNC_GLOBALS): sync C++ interpreter
+            // globals from the JITState at the inline-spec continuation, so any
+            // C++ code reached before the next exit (e.g. a deferred scavenge)
+            // sees current stack/frame/receiver/method, not JIT-entry-stale.
+            if (GET_DEBUG_BOOL(PHARO_T1_SYNC_GLOBALS)) {
+                a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
+                a.str(x0,  ptr(asmjit::a64::sp, 0));
+                a.str(x30, ptr(asmjit::a64::sp, 8));
+                a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_sync_globals));
+                a.blr(x9);
+                a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+                a.ldr(x30, ptr(asmjit::a64::sp, 8));
+                a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
+            }
             return true;
         }
 

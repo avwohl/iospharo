@@ -21,6 +21,45 @@ send + returnTop); otherwise bail.  + arg-count guard (callee numArgs == nArgs).
 Repro `scripts/repro/blocker4-perrun.st` PHARO_NO_JIT=1 → 12/12 PASS x3; correctness
 (fib/sum/dict/sort) unaffected.
 
+## T1 variant — CONCLUSIVE localization (2026-06-06, lldb-track deep-dive)
+
+CONFIRMED MECHANISM: a hashed-collection entry is MISPLACED — stored INTACT in the
+backing `array` but at a HASH-UNREACHABLE slot.  Caught with an on:KeyNotFound
+inspector: at failure the key's association is `linearFound=true` (present in the
+array) but `hashFound=false` (the hash probe hits nil first).  Example: #A1DefinedInX
+hashes to slot 3 but sits at slot 2, while its probe 3→4→5→6 finds nil at 6 → A1
+should be at slot 6 but is stuck at 2.  Because the assoc is INTACT, GC did NOT drop
+it — this REFUTES all GC/scavenge/root-scan hypotheses (incl. the audit's #1; the
+forEachRoot→currentJITState_->sp change was a verified no-op).
+
+CULPRIT (by elimination, all PASS-counted on the det-sched repro): the inline `at:`
+READ continuation.  `PHARO_T1_NO_INLINE_PRIM_AT=1` (disables inline at:+at:put:+size)
+→ PASS=6.  `PHARO_T1_NO_INLINE_PRIM_ATPUT=1` (at:put: only) → FAIL.
+`PHARO_T1_NO_INLINE_SIZE=1` (size only) → FAIL.  at:put:+size both disabled, at: kept
+→ FAIL.  So the at: read is the sole differentiator.  But the at: READ VALUE is
+correct (recompute = 0 mismatches), and behaviour-neutral NOPs at the at: entry do
+NOT mask it (PHARO_T1_AT_NOPS=20/60 still FAIL) — so it is the at:-read CONTINUATION
+*execution* (staying in-stencil rather than exiting EXIT_SEND_CACHED to C++), NOT
+codegen layout and NOT the read value.  It is GENERAL across methods: the inline-at
+callers are SequenceableCollection indexers (do:, fixCollisionsFrom:, swap:with:,
+first, indexOf:startingAt:ifAbsent:, …); skipping any ONE (PHARO_T1_SKIP_SELECTORS,
+verified effective) just shifts the victim — only disabling inline-at globally fixes.
+
+REFUTED (empirically, each a no-fix or breaks-the-eval, NOT a layout artifact):
+stale OFF_SENDARGCOUNT/OFF_IP/OFF_CACHED_TARGET at the continuation
+(PHARO_T1_INLINE_SYNC=1/2/3/7); C++-global desync at the continuation
+(PHARO_T1_SYNC_GLOBALS — breaks); GC root underscan (forEachRoot live-sp — no-op);
+inline-setter OOB (PHARO_T1_SETTER_BOUNDS — 0 events); dispatch mis-route
+(NO_INLINE_GETTER/SETTER/RETURNS_SELF — no fix); classIndex reuse (CTCHECK 0);
+J2J / IC-fill / method-cache / megacache.
+
+OPEN: the exact instruction-level reason the in-stencil at:-read continuation makes a
+hash-probe/rehash loop settle on a wrong slot.  Robust correctness-preserving fixes:
+`PHARO_T1_NO_INLINE_PRIM_AT=1` (most surgical: keeps every other inline spec),
+`PHARO_T1_HIT_FORCE_DISPATCH=1`, or the existing `PHARO_T1_NO_IC_PROBE=1`.
+
+--- earlier (2026-06-06) characterization below ---
+
 ## REMAINING: the JIT-tier (T1) variant  (2026-06-06 deep characterization)
 
 The real suite runs JIT+Sista; with the Sista fix, JIT-on still alternates P,F,P,F.

@@ -1111,6 +1111,9 @@ public:
     //   if position < writeLimit: position++; collection[position] := arg; ^arg
     //   else: PrimitiveFailure (caller activates the full method for grow)
     PrimitiveResult primitiveWSNextPut(int argCount);
+    /// Blocker #4 test: sync C++ interpreter globals from a live JITState (def
+    /// in Interpreter.cpp where jit::JITState is fully visible).
+    void syncGlobalsFromJITState(jit::JITState& s);
 private:
 
     // ===== CACHES =====

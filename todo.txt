@@ -1,0 +1,17 @@
+this project (branch) added JIT to this smalltalk.
+First we added arm then x64.
+then back to arm for a redesign.
+Now it is is time to go back to x86
+In ~/.ssh/aws.txt is an aws IAM with admain access
+create an aws s3 private bucket iospharo (or some such name)
+Create a spot instance.  16gb or 32gb ram, you pick
+install claude and or any build tools you need
+make a script of what is installed so for future spot instances you can
+to get back up to speed.
+checkout this repo and build this jit vm with x64
+as this spot instance may be claimed at any preserve the current
+state and notes to the s3 bucket and or git.
+Anouther process claude is doing sunit tests on arm and debugging
+so merge before pushing to the jit branch
+if the spot instance is idle for half an hour delete it, set a job to do this somewhere
+
