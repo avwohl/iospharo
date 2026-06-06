@@ -43,11 +43,19 @@ for REGION in $REGIONS; do
     rows=$(aws ec2 describe-instances --region "$REGION" \
         --filters "Name=tag:Project,Values=iospharo-*" \
                   "Name=instance-state-name,Values=running" \
-        --query 'Reservations[].Instances[].[InstanceId,LaunchTime,Tags[?Key==`Name`]|[0].Value]' \
+        --query 'Reservations[].Instances[].[InstanceId,LaunchTime,Tags[?Key==`Name`]|[0].Value,Tags[?Key==`Reap`]|[0].Value]' \
         --output text 2>/dev/null)
     [ -z "$rows" ] && continue
-    while IFS=$'\t' read -r IID LAUNCH NAME; do
+    while IFS=$'\t' read -r IID LAUNCH NAME REAPTAG; do
         [ -n "$IID" ] || continue
+        # Reap=skip exempts a box from CPU-idle reaping. Required for boxes
+        # running genuinely-low-CPU-but-active work — e.g. the SUnit suite runs
+        # at ~4% CPU (fork/Delay/watchdog-bound) and was once false-reaped here.
+        # Such boxes self-terminate via the on-box (process-based) idle-shutdown.
+        if [ "$REAPTAG" = "skip" ]; then
+            echo "keep   $IID ($NAME) [$REGION]: Reap=skip (exempt)"
+            kept=$((kept+1)); continue
+        fi
         launch_s=$(python3 -c "import datetime,sys;print(int(datetime.datetime.strptime(sys.argv[1].replace('+00:00','Z'),'%Y-%m-%dT%H:%M:%S%z').timestamp()))" "$LAUNCH" 2>/dev/null || echo "$now")
         age_min=$(( (now - launch_s) / 60 ))
         if [ "$age_min" -lt "$GRACE_MIN" ]; then
