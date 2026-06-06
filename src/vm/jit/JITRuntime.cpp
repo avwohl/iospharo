@@ -7,6 +7,7 @@
 #include "JITRuntime.hpp"
 #include "PlatformJIT.hpp"
 #include "../DebugSettings.hpp"
+#include "../DebugVars.hpp"
 #include "../ObjectMemory.hpp"
 #include "../Interpreter.hpp"
 #include "sista/SistaRuntime.hpp"
@@ -14,6 +15,7 @@
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
+#include <set>
 
 // Defined in Interpreter.cpp; nullptr until Sista hook fires for the
 // first time.  JITRuntime peeks at it to skip counting methods Sista
@@ -1223,6 +1225,56 @@ extern "C" void jit_rt_verify_inline_at(JITState* s, uint64_t rcvBits,
             mism, reach, (unsigned long long)rcvBits, (long long)i,
             (unsigned long long)slotCount,
             (unsigned long long)inlineVal, (unsigned long long)correct);
+    }
+    // Log the DISTINCT caller methods that do inline at: on small arrays
+    // (blocker #4 culprit-hunt).  Gated separately so it can be left on.
+    if (s && s->memory && GET_DEBUG_BOOL(PHARO_T1_LOG_AT_CALLERS)) {
+        static std::set<std::string> seen;
+        auto* mem = static_cast<pharo::ObjectMemory*>(s->memory);
+        pharo::Oop meth = s->method;
+        std::string sel = mem->selectorOf(meth);
+        pharo::Oop rcvClassOop = mem->classOf(pharo::Oop::fromRawBits(rcvBits));
+        std::string rcls = mem->nameOfClass(rcvClassOop);
+        std::string key = sel + " | rcvCls=" + rcls
+            + " | slots=" + std::to_string(slotCount);
+        if (seen.insert(key).second) {
+            fprintf(stderr, "[INLINE-AT-CALLER] caller=#%s %s\n",
+                    sel.c_str(), key.c_str());
+        }
+    }
+}
+
+// Blocker #4 diagnostic: detect an inline-setter store whose slot index is
+// OUT OF BOUNDS for the receiver's actual slot count (a wild heap write that
+// would clobber an adjacent object).  The inline setter has no bounds check;
+// a stale/wrong IC slot index would corrupt the heap.  Logs (does not fix).
+extern "C" void jit_rt_check_setter_bounds(JITState* s, uint64_t rcvBits,
+                                           uint64_t slotIdx, uint64_t valBits) {
+    static size_t reach = 0, oob = 0;
+    reach++;
+    if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return;
+    uint64_t header = *reinterpret_cast<uint64_t*>(rcvBits);
+    uint64_t slotCount = (header >> 56) & 0xFF;
+    if (slotCount == 255) {
+        uint64_t raw = *reinterpret_cast<uint64_t*>(rcvBits - 8);
+        slotCount = (raw << 8) >> 8;
+    }
+    if (slotIdx >= slotCount && oob < 60) {
+        oob++;
+        const char* cn = "?";
+        if (s && s->memory) {
+            auto* mem = static_cast<pharo::ObjectMemory*>(s->memory);
+            static thread_local std::string nm;
+            nm = mem->classNameOf(pharo::Oop::fromRawBits(rcvBits));
+            cn = nm.c_str();
+        }
+        fprintf(stderr,
+            "[SETTER-OOB #%zu/%zu] rcv=0x%llx rcvCls=%s slotIdx=%llu "
+            "slotCount=%llu val=0x%llx (WILD WRITE to recv+0x%llx)\n",
+            oob, reach, (unsigned long long)rcvBits, cn,
+            (unsigned long long)slotIdx, (unsigned long long)slotCount,
+            (unsigned long long)valBits,
+            (unsigned long long)((slotIdx + 1) * 8));
     }
 }
 

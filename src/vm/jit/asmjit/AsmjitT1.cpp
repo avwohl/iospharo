@@ -93,6 +93,8 @@ extern "C" void jit_rt_setter_write_barrier(void* state, uint64_t rcvBits,
                                              uint64_t valBits);
 extern "C" void jit_rt_verify_inline_at(void* state, uint64_t rcvBits,
                                         uint64_t idxBits, uint64_t inlineVal);
+extern "C" void jit_rt_check_setter_bounds(void* state, uint64_t rcvBits,
+                                           uint64_t slotIdx, uint64_t valBits);
 extern "C" int jit_rt_primsize_ptr(void* state, uint64_t rcvBits,
                                     uint64_t* out);
 extern "C" int jit_rt_primat_ptr(void* state, uint64_t rcvBits,
@@ -4682,6 +4684,30 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             a.and_(x6, x7, asmjit::Imm(0xFFFF));
             a.ldur(x3, ptr(x2, -8));               // arg = sp[-1]
+            // PHARO_T1_SETTER_BOUNDS=1: log inline-setter stores whose slot
+            // index is OOB for the receiver (wild heap write).  x1=recv,
+            // x6=slotIdx, x3=arg.  Save the regs we still need after the call.
+            if (GET_DEBUG_BOOL(PHARO_T1_SETTER_BOUNDS)) {
+                a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(64));
+                a.str(x0,  ptr(asmjit::a64::sp, 0));
+                a.str(x30, ptr(asmjit::a64::sp, 8));
+                a.str(x1,  ptr(asmjit::a64::sp, 16));
+                a.str(x2,  ptr(asmjit::a64::sp, 24));
+                a.str(x3,  ptr(asmjit::a64::sp, 32));
+                a.str(x7,  ptr(asmjit::a64::sp, 40));
+                // args: x0=state(already), x1=recv(already), x2=slotIdx, x3=val(already)
+                a.mov(x2, x6);
+                a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_check_setter_bounds));
+                a.blr(x9);
+                a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+                a.ldr(x30, ptr(asmjit::a64::sp, 8));
+                a.ldr(x1,  ptr(asmjit::a64::sp, 16));
+                a.ldr(x2,  ptr(asmjit::a64::sp, 24));
+                a.ldr(x3,  ptr(asmjit::a64::sp, 32));
+                a.ldr(x7,  ptr(asmjit::a64::sp, 40));
+                a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(64));
+                a.and_(x6, x7, asmjit::Imm(0xFFFF)); // recompute slotIdx
+            }
             a.add(x4, x1, x6, asmjit::a64::lsl(3));
             a.str(x3, ptr(x4, 8));
             if (nArgs > 0) {
