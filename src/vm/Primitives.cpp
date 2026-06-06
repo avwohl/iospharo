@@ -2146,10 +2146,46 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
             if (ks.find("DefinedIn") != std::string::npos
                     || ks == "SystemOrganization") {
                 std::string caller = memory_.selectorOf(method_);
+                // Replicate String>>stringHash: in C++ to get the CORRECT hash
+                // for this key, then the correct probe-start for the array — so
+                // we can see if scanFor: used a wrong hash (slot != expected).
+                {
+                    ObjectHeader* kh = k.asObjectPtr();
+                    if (kh && kh->isBytesObject()) {
+                        size_t n = kh->byteSize();
+                        const uint8_t* by = kh->bytes();
+                        uint64_t h = 13312ull & 0x0FFFFFFFull;  // ByteString hash
+                        for (size_t pos = 0; pos < n; pos++) {
+                            h = h + by[pos];
+                            uint64_t low = h & 16383;
+                            h = (0x260Dull*low + (((0x260Dull*(h/16384) + 0x65ull*low) & 16383) * 16384)) & 0x0FFFFFFFull;
+                        }
+                        size_t sz = header->slotCount();
+                        long long expStart = (long long)(h % sz) + 1;
+                        fprintf(stderr,
+                            "[HASHCHK] key=#%s cHash=%llu cHash%%%zu=%llu expStart=%lld actualSlot=%lld\n",
+                            ks.c_str(), (unsigned long long)h, sz,
+                            (unsigned long long)(h % sz), expStart, (long long)idx);
+                    }
+                }
+                // Occupancy bitmap of the array BEFORE this store: '.'=nil,
+                // 'X'=occupied.  Reveals whether the scan returned a slot past
+                // available nil slots (a broken probe).
+                std::string occ;
+                size_t sc = header->slotCount();
+                for (size_t si = 0; si < sc && si < 64; si++) {
+                    Oop s = header->slotAt(si);
+                    if (s.rawBits() == 0 || s.isNil()) { occ += "."; continue; }
+                    if (!s.isObject() || s.rawBits() < 0x10000) { occ += "?"; continue; }
+                    if (!memory_.isValidObject(s)) { occ += "!"; continue; }  // garbage ptr
+                    std::string cn = memory_.classNameOf(s);
+                    occ += cn.empty() ? "X" : cn.substr(0, 3);
+                    occ += " ";
+                }
                 fprintf(stderr,
-                    "[DICT-STORE] key=#%s -> arr=0x%llx size=%zu slot=%lld caller=#%s\n",
+                    "[DICT-STORE] key=#%s -> arr=0x%llx size=%zu slot=%lld caller=#%s occ=[%s]\n",
                     ks.c_str(), (unsigned long long)rcvr.rawBits(),
-                    header->slotCount(), (long long)idx, caller.c_str());
+                    header->slotCount(), (long long)idx, caller.c_str(), occ.c_str());
             }
         }
     }

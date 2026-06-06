@@ -73,12 +73,30 @@ C++ exit, diverges from the round-trip path.  Layout shifts (PHARO_T1_AT_NOPS) d
 mask it (they shift the victim, never clean-PASS) — so NO_INLINE_PRIM_AT's clean
 PASS=6 is a real fix, not a layout artifact.
 
-OPEN: the exact instruction-level divergence in the back-to-back inline-prim
-continuation (needs lldb single-step of a failing `noCheckAdd:` rehash).  Robust
-correctness-preserving fix: `PHARO_T1_NO_INLINE_PRIM_AT=1` (routes the rehash's
-size/at:/at:put: through the verified-correct C++ chain; keeps getter/setter/
-returns-self and all non-prim inline specs).  Cheaper than the existing
-`PHARO_T1_NO_IC_PROBE=1` (which disables the whole IC probe).
+ROOT CAUSE (2026-06-06, traced to the instruction-adjacent level):
+`Dictionary>>scanFor:` IS JIT-real-compiled (T1-COMPILE: oop 0x3003037c0,
+bcLen 90, canBail=0 — NOT the stub I earlier assumed).  During the dict's 5→11
+grow, `noCheckAdd:` → `findElementOrNil:` → `scanFor:` computes the probe start
+`start := (anObject hash \\ array size) + 1` and probes for the first nil.  A
+C++-replicated stringHash (jit_rt HASHCHK trace) proves the key's hash is CORRECT
+and CONSISTENT (#A1DefinedInX = 123758516, %11 = 2 → expStart 3), and the array is
+empty (occ all-nil) and really size 11 — yet scanFor: returns slot 5 or 2 (NEVER 3),
+NON-DETERMINISTICALLY per run.  So scanFor:'s START computation is miscomputed: not
+the hash (correct), not the size (NO_INLINE_SIZE doesn't change it), not the at:
+read value (correct).  It is the inline-PRIM CONTINUATION inside the JIT-compiled
+scanFor:: when its `array size` / `anObject hash` / `array at:` sends take the WARM
+inline-prim path (vs the cold C++ dispatchCached path), the back-to-back inline-prim
+continuation corrupts the `(hash \\ size)+1` result.  Path selection depends on IC
+warmth, which varies run-to-run → the non-determinism.  Entry lands at a hash-
+unreachable slot → KeyNotFound.
+
+OPEN: the exact instruction in scanFor:'s JIT code (the `hash → \\ → +` /
+probe region) that diverges on the warm inline path — a static asm dump looks
+correct because the divergence is runtime-state (IC-warmth) dependent, so it needs
+lldb single-step of scanFor: on a failing (warm) run.  Robust correctness-preserving
+fix: `PHARO_T1_NO_INLINE_PRIM_AT=1` (forces scanFor:'s size/at:/hash sends through
+the verified-correct C++ chain; keeps getter/setter/returns-self and all non-prim
+inline specs).  Cheaper than the existing `PHARO_T1_NO_IC_PROBE=1`.
 
 --- earlier (2026-06-06) characterization below ---
 
