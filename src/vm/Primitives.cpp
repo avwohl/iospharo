@@ -2132,6 +2132,28 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
 
     size_t arrayIndex = static_cast<size_t>(idx - 1);
 
+    // Blocker #4 trace: log placement of test-key associations into a dict
+    // array.  Reveals the exact slot each Association lands at + array size,
+    // so we can see when/why A1DefinedInX is misplaced.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_TRACE_DICT_STORE), 0)
+            && !header->isBytesObject() && value.isObject()
+            && value.rawBits() > 0x10000
+            && memory_.isValidObject(value)) {
+        ObjectHeader* vh = value.asObjectPtr();
+        if (!vh->isBytesObject() && vh->slotCount() >= 2) {
+            Oop k = vh->slotAt(0);
+            std::string ks = memory_.oopToString(k);
+            if (ks.find("DefinedIn") != std::string::npos
+                    || ks == "SystemOrganization") {
+                std::string caller = memory_.selectorOf(method_);
+                fprintf(stderr,
+                    "[DICT-STORE] key=#%s -> arr=0x%llx size=%zu slot=%lld caller=#%s\n",
+                    ks.c_str(), (unsigned long long)rcvr.rawBits(),
+                    header->slotCount(), (long long)idx, caller.c_str());
+            }
+        }
+    }
+
     if (header->isBytesObject()) {
         // Diagnostic: PHARO_IMPROPER_STORE_TRACE=1 logs the caller method +
         // raw-value bits when a bytes-object at:put: fails.  Helps narrow

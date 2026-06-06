@@ -53,10 +53,32 @@ inline-setter OOB (PHARO_T1_SETTER_BOUNDS — 0 events); dispatch mis-route
 (NO_INLINE_GETTER/SETTER/RETURNS_SELF — no fix); classIndex reuse (CTCHECK 0);
 J2J / IC-fill / method-cache / megacache.
 
-OPEN: the exact instruction-level reason the in-stencil at:-read continuation makes a
-hash-probe/rehash loop settle on a wrong slot.  Robust correctness-preserving fixes:
-`PHARO_T1_NO_INLINE_PRIM_AT=1` (most surgical: keeps every other inline spec),
-`PHARO_T1_HIT_FORCE_DISPATCH=1`, or the existing `PHARO_T1_NO_IC_PROBE=1`.
+PINPOINTED THE SITE (DICT-STORE trace, PHARO_T1_TRACE_DICT_STORE): the misplaced
+entry is placed by `HashedCollection>>grow` → `Dictionary>>noCheckAdd:`
+(`array at: (findElementOrNil: key) put: assoc`) during the dict's 5→11 rehash.
+A1DefinedInX lands at slot 2 on FAILING runs vs slot 5 on PASSING runs — i.e. the
+rehash places it NON-DETERMINISTICALLY at a hash-unreachable slot.  Symbol hash is
+verified CONSISTENT (200k calls, 0 variance) and the fmt-2 at: value is correct, so
+it is neither a hash miscompile nor a wrong read value — it is the inline-prim
+CONTINUATION inside the rehash loop.
+
+REFINED CULPRIT: it needs ALL of inline at:+at:put:+size disabled together to fix:
+  NO_INLINE_PRIM_AT (all three, shared t1InlinePrimAt gate) → PASS=6.
+  at:put:+size off / at:-read off / size off / at:put: off (any SUBSET) → still FAIL.
+So the rehash loop chains inline size→at:→…→at:put: with NO C++ exit between them,
+and the continuation corrupts unless EVERY prim in the loop is routed through the
+C++ chain (each exit being a re-sync point).  This is the "dispatch-protocol resume"
+family: the in-stencil inline-prim continuation, run back-to-back in a loop without a
+C++ exit, diverges from the round-trip path.  Layout shifts (PHARO_T1_AT_NOPS) do NOT
+mask it (they shift the victim, never clean-PASS) — so NO_INLINE_PRIM_AT's clean
+PASS=6 is a real fix, not a layout artifact.
+
+OPEN: the exact instruction-level divergence in the back-to-back inline-prim
+continuation (needs lldb single-step of a failing `noCheckAdd:` rehash).  Robust
+correctness-preserving fix: `PHARO_T1_NO_INLINE_PRIM_AT=1` (routes the rehash's
+size/at:/at:put: through the verified-correct C++ chain; keeps getter/setter/
+returns-self and all non-prim inline specs).  Cheaper than the existing
+`PHARO_T1_NO_IC_PROBE=1` (which disables the whole IC probe).
 
 --- earlier (2026-06-06) characterization below ---
 

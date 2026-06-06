@@ -4546,8 +4546,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.lsr(x6, x7, asmjit::Imm(48));
                     a.and_(x6, x6, asmjit::Imm(0x1F));
                     if (nArgs == 1) {
-                        a.cmp(x6, asmjit::Imm(14));
-                        a.b_eq(tryPrimAt);
+                        if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_AT_READ)) {
+                            a.cmp(x6, asmjit::Imm(14));
+                            a.b_eq(tryPrimAt);
+                        }
                         // jit-may20b Step 10: primKind 18 = basicNew:.
                         // Routes to a runtime helper that calls
                         // primitiveNewWithArg directly, bypassing the
@@ -4615,8 +4617,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.lsr(x6, x7, asmjit::Imm(48));
                     a.and_(x6, x6, asmjit::Imm(0x1F));
                     if (nArgs == 1) {
-                        a.cmp(x6, asmjit::Imm(14));
-                        a.b_eq(tryPrimAt);
+                        if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_AT_READ)) {
+                            a.cmp(x6, asmjit::Imm(14));
+                            a.b_eq(tryPrimAt);
+                        }
                         // jit-may20b Step 10: primKind 18 = basicNew:.
                         if (g_debug.t1InlinePrimBasicNew) {
                             a.cmp(x6, asmjit::Imm(18));
