@@ -28,6 +28,10 @@ IDS=$(aws ec2 describe-instances \
 if [ -n "$IDS" ]; then
     echo "terminating: $IDS"
     aws ec2 terminate-instances --instance-ids $IDS >/dev/null
+    # Clean up each box's server-side idle failsafe alarm (idle-alarm.sh).
+    for id in $IDS; do
+        aws cloudwatch delete-alarms --alarm-names "iospharo-idle-terminate-$id" >/dev/null 2>&1 || true
+    done
     aws ec2 wait instance-terminated --instance-ids $IDS
 fi
 [ "$INSTANCE_ONLY" -eq 1 ] && { echo "instance-only teardown done"; exit 0; }

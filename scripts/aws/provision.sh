@@ -169,6 +169,12 @@ PUBIP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
 note PUBLIC_IP "$PUBIP"
 echo "instance $INSTANCE_ID @ $PUBIP"
 
+# --- 8b. Server-side idle failsafe: CloudWatch low-CPU -> terminate ----------
+# Independent of the box's own idle-shutdown timer (which can be disabled and
+# silently let an idle box run for days — see reap.sh / idle-alarm.sh notes).
+bash "$HERE/idle-alarm.sh" "$INSTANCE_ID" "$AWS_DEFAULT_REGION" || \
+    echo "WARN: could not arm idle alarm (continuing)"
+
 # --- 9. Wait for SSH ---------------------------------------------------------
 echo "waiting for SSH ..."
 for i in $(seq 1 40); do
