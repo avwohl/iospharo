@@ -1,7 +1,45 @@
 # Blocker #4 root cause: speculative-inline miscompile in the optimized tiers
 
-Status: ROOT-CAUSED + deterministically reproducible, NOT yet fixed.
-Date: 2026-06-05.
+Status: SISTA VARIANT FIXED (commit 5f1e8504); a separate JIT-tier (T1 IC/J2J)
+variant remains. Date: 2026-06-05.
+
+## RESOLUTION of the Sista variant (the deterministic, primary one)
+
+`tryInlineConstReturn` probe-lifted a COMPLEX method (e.g.
+SystemEnvironment>>at:put:), which bails at its own first send and so lifts to a
+2-value [load, send] PREFIX; the `^ X foo` tail-forwarder shape inlined that prefix
+as the inner send's result, SILENTLY DROPPING the rest of the method (at:put:'s
+real store).  In SystemEnvironment>>organization: this meant
+`^ self at:#SystemOrganization put: anOrganization` returned a value without ever
+storing → the fresh env never got #SystemOrganization → KeyNotFound (and
+NonBooleanReceiver elsewhere from analogous drops).  Found by dumping the isolated
+method's asmjit (it stored `environment:` then returned `[state+128]` with no
+at:put: store) + [ICR-ATTEMPT] logging (`callee=#at:put: calleeIRsize=2`).
+FIX (SistaBuilder.cpp): a probe-lift ending in kSendUnspeculated is only a valid
+tail-forwarder if that send is the method's TAIL (within the last ~5 bytecodes:
+send + returnTop); otherwise bail.  + arg-count guard (callee numArgs == nArgs).
+Repro `scripts/repro/blocker4-perrun.st` PHARO_NO_JIT=1 → 12/12 PASS x3; correctness
+(fib/sum/dict/sort) unaffected.
+
+## REMAINING: the JIT-tier (T1) variant
+
+The real suite runs JIT+Sista; with the Sista fix, JIT-on still alternates P,F,P,F
+and `PHARO_T1_NO_IC_PROBE=1` fixes it cleanly (JIT+Sista 12/12).  It is a SEPARATE
+mechanism — NONDETERMINISTIC (symptoms vary: KeyNotFound #A1DefinedInX,
+MessageNotUnderstood "extending:scope:host: receiver is nil"), in the J2J / IC
+dispatch (`t1ICProbe` at Interpreter.cpp:21337 toggles the J2J trampoline vs direct
+ExitSendCached handling).  The ExitSendCached handler (Interpreter.cpp:19214)
+validates `cachedTarget` is a CompiledMethod but NOT that it's still the correct
+method for the receiver; `upgradeICToJ2J` caches a direct code pointer.  Under the
+test's heavy class-create/recompile/remove churn this looks like a stale IC/J2J
+entry surviving across testAddTag runs (the alternating pass/fail fits run-N state
+corrupting run-N+1).  Mostly deterministic under PHARO_DET_SCHED=1 (even runs fail).
+NEXT: isolate which J2J/IC entry goes stale (the dispatch-protocol resume bug
+family — cf. the sortStructs:into: history referenced at Interpreter.cpp:21333),
+and either invalidate on method mutation or re-validate cachedTarget against the
+live lookup.
+
+--- ORIGINAL investigation notes below ---
 
 ## Summary
 
