@@ -91,6 +91,8 @@ extern "C" uint64_t jit_rt_t1_sista_dispatch(void* state, uint64_t fnPtr,
                                               uint64_t nArgs);
 extern "C" void jit_rt_setter_write_barrier(void* state, uint64_t rcvBits,
                                              uint64_t valBits);
+extern "C" void jit_rt_verify_inline_at(void* state, uint64_t rcvBits,
+                                        uint64_t idxBits, uint64_t inlineVal);
 extern "C" int jit_rt_primsize_ptr(void* state, uint64_t rcvBits,
                                     uint64_t* out);
 extern "C" int jit_rt_primat_ptr(void* state, uint64_t rcvBits,
@@ -3532,6 +3534,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             if (g_debug.t1ProbeAlwaysMiss) {
                 a.b(miss);                     // diagnostic: never take HIT
             }
+            // PHARO_T1_HIT_FORCE_DISPATCH=1: on IC HIT, skip ALL inline-spec
+            // dispatch (getter/setter/prim/J2J) and go straight to the plain
+            // cached dispatch.  Isolates "a spec corrupts" (this PASSES) from
+            // "the common dispatchCached path corrupts" (this still FAILS).
+            // x5 = icDataPtr here, which dispatchCached needs.  (blocker #4)
+            if (GET_DEBUG_BOOL(PHARO_T1_HIT_FORCE_DISPATCH)) {
+                a.b(dispatchCached);
+            }
 
             // x7 = extras
             a.ldr(x7, ptr(x5, 16));
@@ -5426,6 +5436,28 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.lsl(x4, x4, asmjit::Imm(3));
                 a.add(x6, x1, x4);
                 a.ldr(x4, ptr(x6));                  // val = recv[idx*8]
+                // PHARO_T1_VERIFY_AT=1: recompute the read in C++ and log any
+                // mismatch (blocker #4 inline-at diagnostic).  x1=recv, x3=idx
+                // (tagged), x4=inline result.  Save caller-saved regs we need.
+                if (GET_DEBUG_BOOL(PHARO_T1_VERIFY_AT)) {
+                    a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
+                    a.str(x0,  ptr(asmjit::a64::sp, 0));
+                    a.str(x30, ptr(asmjit::a64::sp, 8));
+                    a.str(x1,  ptr(asmjit::a64::sp, 16));
+                    a.str(x2,  ptr(asmjit::a64::sp, 24));
+                    a.str(x4,  ptr(asmjit::a64::sp, 32));
+                    a.mov(x1, x1);                   // arg1 = recv (already)
+                    a.mov(x2, x3);                   // arg2 = idx (tagged)
+                    a.mov(x3, x4);                   // arg3 = inline result
+                    a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_verify_inline_at));
+                    a.blr(x9);
+                    a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+                    a.ldr(x30, ptr(asmjit::a64::sp, 8));
+                    a.ldr(x1,  ptr(asmjit::a64::sp, 16));
+                    a.ldr(x2,  ptr(asmjit::a64::sp, 24));
+                    a.ldr(x4,  ptr(asmjit::a64::sp, 32));
+                    a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
+                }
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
@@ -5473,7 +5505,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Mirrors stencils.cpp:1546-1554.  Also gates on immutable
             // flag (bit 23 of header).
             // sp layout before send: [..., recv, idx, val]  (val at sp[-1])
-            if (nArgs == 2 && g_debug.t1InlinePrimAt) {
+            if (nArgs == 2 && g_debug.t1InlinePrimAt
+                    && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_PRIM_ATPUT)) {
                 asmjit::Label tryByteAtPut = a.new_label();
                 a.bind(tryPrimAtPut);
                 emitIncPrimCounter((uint64_t)&g_primAtPut_hits);

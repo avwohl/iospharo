@@ -1193,6 +1193,39 @@ extern "C" {
     size_t g_setterBarrier_remembered = 0;  // actually marked
 }
 
+// Blocker #4 diagnostic: verify an inline at: read against the correct value.
+// Called from the inline at: path (PHARO_T1_VERIFY_AT=1) with the receiver,
+// tagged index, and the value the inline asm computed.  Recomputes the read in
+// C++ and logs any mismatch.  Pure observation — does NOT change the result.
+extern "C" void jit_rt_verify_inline_at(JITState* s, uint64_t rcvBits,
+                                        uint64_t idxBits, uint64_t inlineVal) {
+    static size_t reach = 0, mism = 0;
+    reach++;
+    if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return;
+    if ((idxBits & 7) != 1) return;
+    uint64_t header = *reinterpret_cast<uint64_t*>(rcvBits);
+    uint64_t fmt = (header >> 24) & 0x1F;
+    if (fmt != 2) return;
+    uint64_t slotCount = (header >> 56) & 0xFF;
+    if (slotCount == 255) {
+        uint64_t raw = *reinterpret_cast<uint64_t*>(rcvBits - 8);
+        slotCount = (raw << 8) >> 8;
+    }
+    int64_t i = (int64_t)idxBits >> 3;
+    if (i < 1 || (uint64_t)i > slotCount) return;
+    uint64_t correct =
+        reinterpret_cast<uint64_t*>(rcvBits + 8)[i - 1];
+    if (correct != inlineVal && mism < 40) {
+        mism++;
+        fprintf(stderr,
+            "[INLINE-AT-MISMATCH #%zu/%zu] rcv=0x%llx idx=%lld "
+            "slotCount=%llu inline=0x%llx correct=0x%llx\n",
+            mism, reach, (unsigned long long)rcvBits, (long long)i,
+            (unsigned long long)slotCount,
+            (unsigned long long)inlineVal, (unsigned long long)correct);
+    }
+}
+
 extern "C" void jit_rt_setter_write_barrier(JITState* s,
                                              uint64_t rcvBits,
                                              uint64_t valBits) {

@@ -19225,6 +19225,11 @@ void Interpreter::tryJITResumeInCaller() {
                 inJITResume_ = false;
                 return;
             }
+            if (GET_DEBUG_BOOL(PHARO_T1_VALIDATE_IC) && state.sendArgCount >= 0) {
+                cached = validateICTarget("RESUME", cached, state.sp,
+                                          state.sendArgCount);
+                state.cachedTarget = cached;
+            }
             jitICHits_++;
             countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;
@@ -19708,6 +19713,47 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
     // haven't been observed yet return zero hints.
     addInterpHints();
     return hints;
+}
+
+// Stale-IC dispatch guard (blocker #4 T1 variant).  An IC entry keyed on the
+// receiver's classIndex can dispatch a STALE method: under the test's heavy
+// class-create/recompile/remove churn a classIndex slot can be freed and reused
+// for a *different* class, so an IC entry that was filled for the old class hits
+// for the new one (same index → same key → no key/selector mismatch) but
+// activates the wrong method.  Re-resolve the cached method's selector in the
+// receiver's LIVE class; on mismatch use the fresh method.  Diagnostic-gated by
+// PHARO_T1_VALIDATE_IC; `tag` identifies which dispatch handler called us.
+Oop Interpreter::validateICTarget(const char* tag, Oop cached, Oop* sp,
+                                  int sendArgCount) {
+    static size_t reach = 0, mism = 0;
+    reach++;
+    Oop rcvr = sp[-(sendArgCount + 1)];
+    size_t nl = memory_.numLiteralsOf(cached);
+    Oop sel = (nl >= 2) ? memory_.fetchPointer(nl - 1, cached) : Oop::nil();
+    // The last literal may be the method's selector directly, or an
+    // Association/AdditionalMethodState whose key is the selector.
+    if (sel.isObject() && sel.rawBits() > 0x10000
+        && !sel.asObjectPtr()->isBytesObject()
+        && sel.asObjectPtr()->slotCount() >= 2) {
+        sel = sel.asObjectPtr()->slotAt(1);
+    }
+    if (memory_.oopToString(sel).empty()) return cached;
+    Oop rcvrClass = memory_.classOf(rcvr);
+    Oop fresh = lookupMethod(sel, rcvrClass);
+    if (fresh.isObject() && !fresh.isNil() && fresh != cached) {
+        mism++;
+        if (mism <= 40) {
+            fprintf(stderr,
+                "[IC-STALE-DISPATCH %s #%zu/%zu] sel=#%s rcvrCls=%s "
+                "cached=0x%llx fresh=0x%llx\n",
+                tag, mism, reach, memory_.oopToString(sel).c_str(),
+                memory_.classNameOf(rcvr).c_str(),
+                (unsigned long long)cached.rawBits(),
+                (unsigned long long)fresh.rawBits());
+        }
+        return fresh;
+    }
+    return cached;
 }
 
 void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {
@@ -22309,6 +22355,55 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 instructionPointer_ = state.ip;
                 stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
                 return false;
+            }
+            if (GET_DEBUG_BOOL(PHARO_T1_VALIDATE_IC) && state.sendArgCount >= 0) {
+                cached = validateICTarget("CHAIN", cached, state.sp,
+                                          state.sendArgCount);
+                state.cachedTarget = cached;
+            }
+            // Controlled experiment (blocker #4 T1): the IC-HIT path skips the
+            // cold path's bookkeeping (pendingICPatch_ setup, cacheMethod,
+            // megaCacheAdd).  Replay selected pieces to find which skipped work
+            // the corruption depends on.  Gated by PHARO_T1_HIT_COLD_SIDE bits:
+            //   1 = clear pendingICPatch_   2 = set pendingICPatch_ like cold
+            //   4 = cacheMethod             8 = megaCacheAdd
+            if (int hcs = GET_DEBUG_INT(PHARO_T1_HIT_COLD_SIDE)) {
+                int nArgsH = state.sendArgCount;
+                Oop rcvrH = state.sp[-(nArgsH + 1)];
+                if (hcs & 1) pendingICPatch_ = nullptr;
+                if (hcs & 2) {
+                    pendingICPatch_ = state.icDataPtr;
+                    pendingICSendArgCount_ = nArgsH;
+                    pendingICOwnerMethod_ = state.method;
+                }
+                if ((hcs & 4) && rcvrH.isObject()) {
+                    size_t nlH = memory_.numLiteralsOf(cached);
+                    Oop selH = (nlH >= 2) ? memory_.fetchPointer(nlH - 1, cached)
+                                          : Oop::nil();
+                    if (selH.isObject())
+                        cacheMethod(selH, memory_.classOf(rcvrH), cached);
+                }
+                if (hcs & 8) {
+                    uint64_t tagH = rcvrH.rawBits() & 0x7;
+                    uint64_t megaKeyH = (tagH == 0 && rcvrH.rawBits() >= 0x10000)
+                        ? (uint64_t)rcvrH.asObjectPtr()->classIndex()
+                        : (tagH != 0 ? (tagH | 0x80000000ULL) : 0);
+                    if (megaKeyH != 0) {
+                        size_t nlH = memory_.numLiteralsOf(cached);
+                        Oop selH = (nlH >= 2)
+                            ? memory_.fetchPointer(nlH - 1, cached) : Oop::nil();
+                        uint64_t jitAddrH = 0;
+                        auto* jmH = jitRuntime_.methodMap().lookup(cached.rawBits());
+                        if (jmH) {
+                            bool hasPrimH = (jmH->methodHeader >> 16) & 1;
+                            if (!hasPrimH || jmH->hasPrimPrologue)
+                                jitAddrH = (uint64_t)jmH->codeStart();
+                        }
+                        if (selH.isObject())
+                            jitRuntime_.megaCacheAdd(selH.rawBits(), megaKeyH,
+                                                     cached.rawBits(), jitAddrH);
+                    }
+                }
             }
             jitICHits_++;
             countICHitDbg(state.icDataPtr);

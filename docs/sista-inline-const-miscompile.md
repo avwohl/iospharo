@@ -21,23 +21,63 @@ send + returnTop); otherwise bail.  + arg-count guard (callee numArgs == nArgs).
 Repro `scripts/repro/blocker4-perrun.st` PHARO_NO_JIT=1 → 12/12 PASS x3; correctness
 (fib/sum/dict/sort) unaffected.
 
-## REMAINING: the JIT-tier (T1) variant
+## REMAINING: the JIT-tier (T1) variant  (2026-06-06 deep characterization)
 
-The real suite runs JIT+Sista; with the Sista fix, JIT-on still alternates P,F,P,F
-and `PHARO_T1_NO_IC_PROBE=1` fixes it cleanly (JIT+Sista 12/12).  It is a SEPARATE
-mechanism — NONDETERMINISTIC (symptoms vary: KeyNotFound #A1DefinedInX,
-MessageNotUnderstood "extending:scope:host: receiver is nil"), in the J2J / IC
-dispatch (`t1ICProbe` at Interpreter.cpp:21337 toggles the J2J trampoline vs direct
-ExitSendCached handling).  The ExitSendCached handler (Interpreter.cpp:19214)
-validates `cachedTarget` is a CompiledMethod but NOT that it's still the correct
-method for the receiver; `upgradeICToJ2J` caches a direct code pointer.  Under the
-test's heavy class-create/recompile/remove churn this looks like a stale IC/J2J
-entry surviving across testAddTag runs (the alternating pass/fail fits run-N state
-corrupting run-N+1).  Mostly deterministic under PHARO_DET_SCHED=1 (even runs fail).
-NEXT: isolate which J2J/IC entry goes stale (the dispatch-protocol resume bug
-family — cf. the sortStructs:into: history referenced at Interpreter.cpp:21333),
-and either invalidate on method mutation or re-validate cachedTarget against the
-live lookup.
+The real suite runs JIT+Sista; with the Sista fix, JIT-on still alternates P,F,P,F.
+DETERMINISTIC under `PHARO_DET_SCHED=1` (even runs fail, `KeyNotFound #A1DefinedInX`
+or `#SystemOrganization`).  At failure `Smalltalk globals includesKey: #A1DefinedInX`
+is FALSE — a globals entry was never stored or was misplaced (a DROPPED/MISPLACED
+DICTIONARY STORE, same *symptom* class as the Sista variant but a different
+*mechanism*).
+
+What it is NOT (ruled out by deterministic bisection, each PASS=6/FAIL=3 counted by
+actual PASS lines — note `grep -c FAIL`==0 is NOT a pass, some configs suppress the
+eval's output entirely → count PASS lines):
+  - NOT stale-method dispatch: `PHARO_T1_VALIDATE_IC` re-resolves the cached IC
+    method in the receiver's live class at BOTH ExitSendCached handlers
+    (Interpreter.cpp `validateICTarget`, tags RESUME@19214 + CHAIN@22341) → 0
+    mismatches.  The dispatched method is always correct.
+  - NOT classIndex reuse: `PHARO_CTCHECK` shows 0 `[CTOVERWRITE-reuse]` events.
+  - NOT scavenge / a missing write barrier: `PHARO_YG_NO_SCAVENGE=1` still fails;
+    `PHARO_SCAV_DANGLE_CHECK` logs nothing.  (Remembered set is dead code — scavenge
+    full-scans old space, so missed barriers are tolerated.)
+  - NOT preemption frequency: `PHARO_DET_SCHED_QUANTUM=10000` still fails.
+  - NOT J2J / IC-fill / method-cache / megacache / cold-path bookkeeping:
+    `PHARO_NO_J2J`, `PHARO_NO_IC_FILL`, `PHARO_NO_METHOD_CACHE`, `PHARO_NO_CHAIN`,
+    and replaying the cold path's pendingICPatch_/cacheMethod/megaCacheAdd into the
+    hit handler (`PHARO_T1_HIT_COLD_SIDE`=1/2/4/8/15) all still fail.
+
+What it IS — the IC-HIT inline-spec CONTINUATION path:
+  - `PHARO_T1_PROBE_ALWAYS_MISS=1` (emit probe, force every send cold) → PASS=6.
+  - `PHARO_T1_HIT_FORCE_DISPATCH=1` (IC hits, but skip ALL inline-spec dispatch and
+    go straight to dispatchCached → EXIT_SEND_CACHED → C++) → PASS=6.
+  - `PHARO_T1_NO_INLINE_PRIM_AT=1` → PASS=6, but `PHARO_T1_NO_INLINE_PRIM_ATPUT=1`
+    (at:put: only) → FAIL.  So the inline `at:` READ path is the differentiator,
+    NOT the write.
+  - But the inline `at:` VALUE is CORRECT: `PHARO_T1_VERIFY_AT=1` recomputes each
+    inline-at read in C++ (jit_rt_verify_inline_at) → 0 `[INLINE-AT-MISMATCH]`, and
+    the bug still reproduces.  So `at:` is the trigger, not the corrupter: disabling
+    it just forces a round-trip to C++ that AVOIDS a downstream continuation bug.
+
+Synthesis: when an IC-hit inline spec (the hot `array at: index` in a `scanFor:` /
+`findElementOrNil:` loop) is serviced IN-STENCIL and execution CONTINUES inline
+(rather than exiting EXIT_SEND_CACHED to the C++ chain loop), some downstream
+control-flow in the scan loop is corrupted — `scanFor:` returns a wrong slot index,
+so `at:put:` updates/inserts at the wrong slot and a later lookup at the correct
+slot finds nil → KeyNotFound.  The globals dict array is 15287 slots (>255) so its
+own inline `at:` always bails; the corrupting scan is on a SMALLER collection whose
+miscompile cascades to the globals miss.  This is the "dispatch-protocol resume bug
+family" (cf. sortStructs:into:, the hasNLR chain-loop block-resume fix at
+Interpreter.cpp:~23469).  Layout-sensitive: any perturbation shifts the victim
+(#A1DefinedInX ↔ #SystemOrganization).
+
+Mitigations, best→worst (all keep correctness): `PHARO_T1_HIT_FORCE_DISPATCH=1`
+(keeps fast IC dispatch, drops only the inline-spec continuation) is cheaper than
+the existing `PHARO_T1_NO_IC_PROBE=1` (drops the whole probe → full lookup/send).
+NEXT: disassemble the compiled small-collection `scanFor:` (capstone installed;
+`PHARO_T1_DUMP_SEL=scanFor:` writes /tmp/jit_scanFor_*.bin) and find the wrong
+loop-continuation after the inline-at stencil; or lldb-trace `scanFor:`'s returned
+index vs a C++ recompute on the deterministic repro.
 
 --- ORIGINAL investigation notes below ---
 

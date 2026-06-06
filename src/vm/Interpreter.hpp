@@ -1284,6 +1284,9 @@ public:
     // Patch the inline cache after the interpreter resolves a send.
     // Called from sendSelector() after method lookup succeeds.
     void patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector);
+    // Re-resolve a cached IC method against the receiver's live class; returns
+    // the fresh method on mismatch (stale-IC dispatch guard, blocker #4 T1).
+    Oop validateICTarget(const char* tag, Oop cached, Oop* sp, int sendArgCount);
 
     // Phase 4 monomorphic inlining: read T1's IC table for this method
     // and return its monomorphic entries as Sista InlineHints.  Empty

@@ -192,7 +192,17 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         return nullptr;
     }();
     if (asmjitLogger) {
-        code.set_logger(asmjitLogger);
+        // When PHARO_SISTA_KEEP_METHOD_OOP is set, only dump that one method.
+        uint64_t dumpOop = 0;
+        if (const char* ks = GET_DEBUG_STR(PHARO_SISTA_KEEP_METHOD_OOP))
+            dumpOop = strtoull(ks, nullptr, 0);
+        if (dumpOop == 0
+            || method.compiledMethodOop.rawBits() == dumpOop) {
+            fprintf(stderr, "[ASMDUMP-METHOD oop=0x%llx nvalues=%zu]\n",
+                    (unsigned long long)method.compiledMethodOop.rawBits(),
+                    method.values.size());
+            code.set_logger(asmjitLogger);
+        }
     }
 
     // PHARO_SISTA_NO_LOWER_BODY=1 — bisect: emit a function that
