@@ -8,7 +8,8 @@
 #   ./scripts/aws/teardown.sh --instance-only
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-source "$HERE/config.env"
+# CONFIG_FILE=scripts/aws/config-arm.env ./teardown.sh tears down the arm64 box.
+source "${CONFIG_FILE:-$HERE/config.env}"
 source "$HERE/load-creds.sh"
 
 DEL_BUCKET=0; INSTANCE_ONLY=0

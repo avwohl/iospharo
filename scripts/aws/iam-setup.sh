@@ -5,7 +5,9 @@
 # on the (ephemeral, possibly-reclaimed) box.  Idempotent.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-source "$HERE/config.env"
+# Honor CONFIG_FILE (set by provision.sh / the operator) so an arm64 run
+# (config-arm.env) creates its own role/profile, not the x86 one.
+source "${CONFIG_FILE:-$HERE/config.env}"
 
 trust='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
 

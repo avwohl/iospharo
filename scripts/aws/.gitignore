@@ -1,4 +1,5 @@
 state.env
+state-arm.env
 *.pem
 *-deploy
 *-deploy.pub

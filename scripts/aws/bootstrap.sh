@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # bootstrap.sh — runs ONCE as root via cloud-init user-data on a fresh
-# Ubuntu 24.04 (x86_64) spot instance.  Installs everything needed to build
-# the iospharo x64 JIT VM and run Claude Code, plus the spot-preservation and
+# Ubuntu 24.04 spot instance (x86_64 OR arm64/Graviton — this script is
+# arch-agnostic: the AWS CLI download keys off `uname -m`, and every apt
+# package below is multi-arch).  Installs everything needed to build the
+# iospharo JIT VM and run Claude Code, plus the spot-preservation and
 # idle-shutdown machinery.  It does NOT clone the repo — that happens in
 # clone-and-build.sh once the deploy key has been delivered.
 #
@@ -26,7 +28,7 @@ apt-get install -y --no-install-recommends \
 
 # --- AWS CLI v2 (for S3 sync + self-terminate via instance profile) ----------
 if ! command -v aws >/dev/null 2>&1; then
-    arch=$(uname -m)   # x86_64
+    arch=$(uname -m)   # x86_64 on Intel/AMD, aarch64 on Graviton — both published
     curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${arch}.zip" -o /tmp/awscliv2.zip
     (cd /tmp && unzip -q -o awscliv2.zip && ./aws/install --update)
     rm -rf /tmp/aws /tmp/awscliv2.zip

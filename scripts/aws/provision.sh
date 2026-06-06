@@ -8,7 +8,9 @@
 # written to scripts/aws/state.env.  Tear everything down with teardown.sh.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-source "$HERE/config.env"
+# CONFIG_FILE selects the build target: config.env (x86_64, default) or
+# config-arm.env (arm64 Graviton).  e.g. CONFIG_FILE=scripts/aws/config-arm.env ./provision.sh
+source "${CONFIG_FILE:-$HERE/config.env}"
 source "$HERE/load-creds.sh"
 
 aws sts get-caller-identity >/dev/null
@@ -69,10 +71,15 @@ aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
 note SG_ID "$SG_ID"
 note SSH_CIDR "$MYIP"
 
-# --- 5. Latest Ubuntu 24.04 x86_64 AMI via SSM public parameter -------------
+# --- 5. Latest Ubuntu 24.04 AMI via SSM public parameter --------------------
+# Arch from $ARCH (config): amd64 (x86_64, default) | arm64 (Graviton).  The
+# Canonical SSM parameter path differs only by that one component.
+SSM_ARCH="${ARCH:-amd64}"
+case "$SSM_ARCH" in amd64|arm64) ;; *) echo "bad ARCH=$SSM_ARCH (want amd64|arm64)" >&2; exit 1;; esac
 AMI_ID=$(aws ssm get-parameter \
-    --name /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id \
+    --name "/aws/service/canonical/ubuntu/server/24.04/stable/current/${SSM_ARCH}/hvm/ebs-gp3/ami-id" \
     --query 'Parameter.Value' --output text)
+note AMI_ARCH "$SSM_ARCH"
 note AMI_ID "$AMI_ID"
 
 # --- 6. Already running? ----------------------------------------------------
