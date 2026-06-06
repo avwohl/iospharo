@@ -1,7 +1,48 @@
 # Blocker #4 root cause: speculative-inline miscompile in the optimized tiers
 
-Status: SISTA VARIANT FIXED (commit 5f1e8504); a separate JIT-tier (T1 IC/J2J)
-variant remains. Date: 2026-06-05.
+Status: BOTH VARIANTS FIXED. Sista variant: commit 5f1e8504. T1 JIT variant:
+commit dd0ccaf5 (2026-06-06). Date: 2026-06-06.
+
+## RESOLUTION of the T1 variant (the IC-hit inline-prim one) — commit dd0ccaf5
+
+ROOT CAUSE: the asmjit-T1 inline `basicIdentityHash` stencil (primKind 20 =
+`inlinePrimKind(75)`) read the identity hash with `(header >> 8) & 0x3FFFFF` —
+stock Spur's bit-8 hash position. This VM relocated the hash field to bits 32-53
+for ASLR (`ObjectHeader::HashShift == 32`; classIndex moved to bits 0-21). So the
+inline extracted bits 8-29 = classIndex-high + format nibble, IDENTICAL for every
+object of a given class. Every ByteSymbol therefore returned the SAME bogus
+"hash" — exactly the "wrong AND shared across distinct symbols (impossible
+normally)" signature observed earlier. `IdentityDictionary>>scanFor:` sends
+`anObject identityHash` (= `^self basicIdentityHash bitShift: 8`); the inner
+`basicIdentityHash` is what gets inlined. A store via this inline and a lookup via
+the real primitive (reads bits 32-53 correctly) disagreed → KeyNotFound;
+timing-dependent on which path each took → the Heisenbug that resisted lldb/trace
+(instrumentation shifted IC/JIT warmup so the buggy path wasn't taken).
+
+HOW IT WAS PINNED: added a per-prim disable knob `PHARO_T1_NO_INLINE_IDH` (the one
+stencil with no individual knob — the earlier `PHARO_T1_NO_INLINE_PRIM_AT` fix
+worked only because it ALSO disabled identityHash, which masked the culprit and
+mis-attributed it to the inline at: read below). With the new knob: IDH disabled
+alone → 24/24 PASS; baseline → 5/30. `IDH_SCALE` (<<8) and a bail-on-zero both
+FAILED to fix — neither addresses wrong BITS — which led to checking ObjectHeader's
+actual layout and finding the >>8 vs >>32 mismatch.
+
+FIX (AsmjitT1.cpp): read the hash from `ObjectHeader::IdentityHashShift` (32) via
+newly-public named constants (so the shift can't silently drift from the header
+layout again), and bail to the real primitive on a 0 field (the hash is assigned
+lazily by `identityHashOf` → generateHash/registerClass, which the inline cannot
+do).
+
+VERIFIED (PHARO_NO_SISTA=1 PHARO_DET_SCHED=1, default knobs): testAddTag perrun
+114/114 PASS (was ~28%); and 1257/1257 PASS / 0 fail across the identity/hash
+suites — PackageOnModelTest 19, IdentityDictionaryTest 206, IdentitySetTest 176,
+WeakIdentityKeyDictionaryTest 209, SymbolTest 268, DictionaryTest 205, SetTest 174;
+300/300 distinct identityHash values (was collapsed to 1); JIT healthy (9.2M
+sends, 0 stale IC).
+
+NOTE: the "T1 variant — CONCLUSIVE localization" section below (inline at: read)
+was a MIS-ATTRIBUTION — it lacked a per-identityHash knob, so disabling the at:
+group masked the bug and pointed at at:. Kept for history; superseded by the above.
 
 ## RESOLUTION of the Sista variant (the deterministic, primary one)
 
