@@ -90,13 +90,45 @@ continuation corrupts the `(hash \\ size)+1` result.  Path selection depends on 
 warmth, which varies run-to-run → the non-determinism.  Entry lands at a hash-
 unreachable slot → KeyNotFound.
 
-OPEN: the exact instruction in scanFor:'s JIT code (the `hash → \\ → +` /
-probe region) that diverges on the warm inline path — a static asm dump looks
-correct because the divergence is runtime-state (IC-warmth) dependent, so it needs
-lldb single-step of scanFor: on a failing (warm) run.  Robust correctness-preserving
-fix: `PHARO_T1_NO_INLINE_PRIM_AT=1` (forces scanFor:'s size/at:/hash sends through
-the verified-correct C++ chain; keeps getter/setter/returns-self and all non-prim
-inline specs).  Cheaper than the existing `PHARO_T1_NO_IC_PROBE=1`.
+### Trace-instrumentation findings (2026-06-06, PHARO_T1_TRACE_MOD etc.)
+
+Added gated traces to record scanFor:'s actual computation (PHARO_T1_TRACE_MOD:
+[MOD-inline]/[MOD-C++]/[MOD-interp]/[MOD-scanFor]; PHARO_T1_TRACE_DICT_STORE: occ
+bitmap + HASHCHK; IDHASH-GEN in identityHashOf; PHARO_T1_IDH_SCALE).  Results, which
+CORRECT earlier assumptions and narrow it further:
+  - The probe hash is `IdentityDictionary>>scanFor:` → `(anObject identityHash \\
+    finish)+1` — identityHash, NOT stringHash (my earlier HASHCHK used the wrong
+    hash).  SystemEnvironment uses IdentityDictionary>>scanFor:.
+  - `Object>>identityHash` = basicIdentityHash << 8 (scaled): A1 basicIdentityHash
+    4073496, identityHash 1042814976.  The inline `identityHash` (AsmjitT1
+    tryPrimIdentityHash, primKind 20 via inlinePrimKind(75)) returns the RAW 22-bit
+    value, but `PHARO_T1_IDH_SCALE=1` (apply the <<8) does NOT fix it — so scanFor:
+    uses the scaled identityHash METHOD (not the raw inline), and this isn't it.
+  - `finish` ALWAYS equals the array's real slotCount ([MOD-scanFor]) — size is
+    correct, never stale.
+  - Each test-key symbol's identityHash is generated EXACTLY ONCE (IDHASH-GEN
+    count=1) — symbols' header hashes are stable, not corrupted by a wild write.
+  - A1's misplaced entry is placed by `grow → noCheckAdd:` into an EMPTY 11-slot
+    array (occ all-nil) at slot 5 (pass) vs 2 (fail), per run — but A1's specific
+    scanFor: modulo does NOT appear in [MOD-interp] (only an unrelated size-11
+    IdentityDictionary's does), implying A1's scanFor: runs JIT for these calls.
+  - basicIdentityHash is assigned fresh PER PROCESS (generateHash LCG), so
+    cross-process hash values don't transfer — only in-process measurement counts.
+
+Net: every individual input (hash value, scaling, size, at: value) is correct in
+isolation, yet only the GLOBAL inline-prim disable (NO_INLINE_PRIM_AT = at:+at:put:
++size+identityHash via the shared t1InlinePrimAt gate) fixes it; no single
+component's disable does.  This is a non-deterministic CONTINUATION INTERACTION when
+scanFor:'s chained inline prims run back-to-back in JIT — it corrupts state
+(stack/temp/control-flow), not any single prim's value, which is why value-level
+tracing can't pin it.
+
+OPEN: the exact instruction needs lldb single-step of the JIT-compiled scanFor: on a
+failing (warm) run — the divergence is runtime-state dependent and non-deterministic,
+so static asm dumps and value traces look correct.  Robust correctness-preserving
+fix: `PHARO_T1_NO_INLINE_PRIM_AT=1` (routes scanFor:'s size/at:/identityHash sends
+through the verified-correct C++ chain; keeps getter/setter/returns-self and all
+non-prim inline specs).  Cheaper than the existing `PHARO_T1_NO_IC_PROBE=1`.
 
 --- earlier (2026-06-06) characterization below ---
 

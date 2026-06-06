@@ -92,6 +92,7 @@ extern "C" uint64_t jit_rt_t1_sista_dispatch(void* state, uint64_t fnPtr,
 extern "C" void jit_rt_setter_write_barrier(void* state, uint64_t rcvBits,
                                              uint64_t valBits);
 extern "C" void jit_rt_sync_globals(void* state);
+extern "C" void jit_rt_trace_mod(int64_t a, int64_t b, int64_t result);
 extern "C" void jit_rt_verify_inline_at(void* state, uint64_t rcvBits,
                                         uint64_t idxBits, uint64_t inlineVal);
 extern "C" void jit_rt_check_setter_bounds(void* state, uint64_t rcvBits,
@@ -3322,6 +3323,32 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.bind(noAdjust);
         // Result is in x7 (rem) for \\ or x6 (quot) for //.  Retag.
         asmjit::a64::Gp result = (op == 0x6A) ? x7 : x6;
+        // Blocker #4 trace (PHARO_T1_TRACE_MOD): log operands+result of \\ when
+        // the dividend is hash-sized — reveals if scanFor:'s (hash \\ size) gets
+        // a wrong hash or size at the actual JIT computation.  x1=a, x4=b (both
+        // untagged), result=x6/x7.  Preserve them across the BLR.
+        if (op == 0x6A && GET_DEBUG_BOOL(PHARO_T1_TRACE_MOD)) {
+            a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
+            a.str(x0,  ptr(asmjit::a64::sp, 0));
+            a.str(x30, ptr(asmjit::a64::sp, 8));
+            a.str(x1,  ptr(asmjit::a64::sp, 16));
+            a.str(x2,  ptr(asmjit::a64::sp, 24));
+            a.str(x4,  ptr(asmjit::a64::sp, 32));
+            a.str(x7,  ptr(asmjit::a64::sp, 40));
+            // args: x0=a, x1=b, x2=result
+            a.mov(x0, x1);
+            a.mov(x1, x4);
+            a.mov(x2, x7);
+            a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_trace_mod));
+            a.blr(x9);
+            a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+            a.ldr(x30, ptr(asmjit::a64::sp, 8));
+            a.ldr(x1,  ptr(asmjit::a64::sp, 16));
+            a.ldr(x2,  ptr(asmjit::a64::sp, 24));
+            a.ldr(x4,  ptr(asmjit::a64::sp, 32));
+            a.ldr(x7,  ptr(asmjit::a64::sp, 40));
+            a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
+        }
         a.lsl(x1, result, asmjit::Imm(3));
         // Verify retag didn't overflow SmI (61 bits signed).
         a.asr(x5, x1, asmjit::Imm(3));
@@ -5699,6 +5726,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x4, ptr(x1));                  // header
                 a.lsr(x4, x4, asmjit::Imm(8));
                 a.and_(x4, x4, asmjit::Imm(0x3FFFFF));
+                // Blocker #4 test: Object>>identityHash returns basicIdentityHash
+                // << 8 (scaled), but this inline returns the RAW 22-bit hash.
+                // PHARO_T1_IDH_SCALE=1 applies the <<8 to test if scanFor: needs
+                // the scaled value (the inline mismatching the real identityHash).
+                if (GET_DEBUG_BOOL(PHARO_T1_IDH_SCALE)) {
+                    a.lsl(x4, x4, asmjit::Imm(8));
+                }
                 a.lsl(x4, x4, asmjit::Imm(3));
                 a.orr(x4, x4, asmjit::Imm(0x1));
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));

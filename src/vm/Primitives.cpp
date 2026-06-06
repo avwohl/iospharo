@@ -1341,6 +1341,15 @@ PrimitiveResult Interpreter::primitiveMod(int argCount) {
         if (rem != 0 && ((a < 0) != (b < 0))) {
             rem += b;
         }
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_TRACE_MOD), 0)
+                && true) {
+            static size_t cn = 0;
+            if (cn < 400) { cn++;
+                fprintf(stderr, "[MOD-C++] %lld \\\\ %lld = %lld caller=#%s\n",
+                        (long long)a, (long long)b, (long long)rem,
+                        memory_.selectorOf(method_).c_str());
+            }
+        }
         if (rem >= Oop::smallIntegerMin() && rem <= Oop::smallIntegerMax()) {
             primitiveSuccess(Oop::fromSmallInteger(rem));
             return PrimitiveResult::Success;

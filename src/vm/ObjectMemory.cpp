@@ -1450,6 +1450,19 @@ uint32_t ObjectMemory::identityHashOf(Oop obj) {
     // Non-class object — assign a random hash via LCG.
     hash = generateHash();
     header->setIdentityHash(hash);
+    // Blocker #4: detect REGENERATION of a symbol's identityHash (its header
+    // hash was 0 — either never set, or ZEROED by a wild write).  Log per-symbol
+    // counts; a test-key symbol regenerating >1 time = its header was corrupted.
+    if (GET_DEBUG_BOOL(PHARO_T1_TRACE_MOD) && header->isBytesObject()) {
+        size_t n = header->byteSize();
+        const uint8_t* by = header->bytes();
+        std::string s((const char*)by, n < 40 ? n : 40);
+        if (s.find("DefinedIn") != std::string::npos
+                || s == "SystemOrganization") {
+            fprintf(stderr, "[IDHASH-GEN] sym=%s obj=0x%llx newHash=%u\n",
+                    s.c_str(), (unsigned long long)obj.rawBits(), hash);
+        }
+    }
     return hash;
 }
 

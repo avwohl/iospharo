@@ -7457,6 +7457,36 @@ void Interpreter::arithmeticSend(int which) {
                         if (result != 0 && ((result ^ b) < 0)) {
                             result += b;
                         }
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_TRACE_MOD), 0)
+                                && b >= 2 && b <= 64 && a > 1000
+                                && memory_.selectorOf(method_) == "scanFor:") {
+                            static size_t mn = 0;
+                            if (mn < 400) { mn++;
+                                // receiver_ = the dict; find its array ivar's real size
+                                long realSz = -1;
+                                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                                    ObjectHeader* dh = receiver_.asObjectPtr();
+                                    for (size_t sv = 0; sv < dh->slotCount() && sv < 4; sv++) {
+                                        Oop iv = dh->slotAt(sv);
+                                        if (iv.isObject() && iv.rawBits() > 0x10000
+                                                && !iv.asObjectPtr()->isBytesObject()) {
+                                            realSz = (long)iv.asObjectPtr()->slotCount();
+                                            break;
+                                        }
+                                    }
+                                }
+                                // scanFor:'s arg0 (anObject) = the key being scanned
+                                if (realSz == 11) {
+                                    Oop t0 = temporary(0);
+                                    Oop a0 = argument(0);
+                                    fprintf(stderr,
+                                        "[MOD-scanFor] hash=%lld finish=%lld res=%lld | temp0=%s(%s) arg0=%s(%s)\n",
+                                        (long long)a, (long long)b, (long long)result,
+                                        memory_.classNameOf(t0).c_str(), memory_.oopToString(t0).substr(0,20).c_str(),
+                                        memory_.classNameOf(a0).c_str(), memory_.oopToString(a0).substr(0,20).c_str());
+                                }
+                            }
+                        }
                         popN(2);
                         push(Oop::fromSmallInteger(result));
                         return;

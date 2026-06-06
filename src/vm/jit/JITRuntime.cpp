@@ -1278,6 +1278,21 @@ extern "C" void jit_rt_check_setter_bounds(JITState* s, uint64_t rcvBits,
     }
 }
 
+// Blocker #4 trace: log inline \\ (modulo) operands+result when the dividend is
+// hash-sized (>1e6).  scanFor:'s probe start is (key hash \\ array size)+1; this
+// reveals whether the hash dividend or the size divisor is wrong at the actual
+// JIT computation.  a,b,result are UNTAGGED integers.
+extern "C" void jit_rt_trace_mod(int64_t a, int64_t b, int64_t result) {
+    static size_t n = 0;
+    // Small divisor (hash-table-size-like) with a large-ish dividend = a
+    // hash-probe `key hash \\ tableSize`.
+    if (a > 100000 && n < 50000) {
+        n++;
+        fprintf(stderr, "[MOD-inline] %lld \\\\ %lld = %lld\n",
+                (long long)a, (long long)b, (long long)result);
+    }
+}
+
 // Blocker #4 test: sync C++ interpreter globals from the JITState at an inline-
 // spec continuation point.
 extern "C" void jit_rt_sync_globals(JITState* s) {
