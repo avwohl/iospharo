@@ -19,6 +19,11 @@
 #   REGIONS="us-east-2"   space-separated regions to sweep
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Project region MUST be set before load-creds.sh (which otherwise defaults
+# AWS_DEFAULT_REGION to us-east-1 — the wrong region; our boxes are in us-east-2,
+# so a bare cron run would sweep an empty region and silently reap nothing).
+: "${AWS_DEFAULT_REGION:=us-east-2}"
+export AWS_DEFAULT_REGION
 [ -n "${AWS_ACCESS_KEY_ID:-}" ] || source "$HERE/load-creds.sh" >/dev/null 2>&1 || true
 
 IDLE_CPU="${IDLE_CPU:-5}"
