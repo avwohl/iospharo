@@ -98,7 +98,12 @@ if [ -n "$EXISTING" ]; then
 else
     # --- 7. Launch: spot across types x AZs, then on-demand as last resort ---
     BDM="[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_VOLUME_GB},\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]"
-    TAGS="ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=Project,Value=$PROJECT_TAG}]"
+    # REAP_SKIP=1 tags the box Reap=skip so the CPU-idle reaper leaves it alone
+    # (for low-CPU-but-active work like the SUnit suite ~4% CPU); such a box
+    # relies on the on-box, process-based idle-shutdown instead.
+    REAP_TAG=""
+    [ "${REAP_SKIP:-0}" = "1" ] && REAP_TAG=",{Key=Reap,Value=skip}"
+    TAGS="ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=Project,Value=$PROJECT_TAG}${REAP_TAG}]"
     VTAGS="ResourceType=volume,Tags=[{Key=Project,Value=$PROJECT_TAG}]"
     SPOT_MARKET='MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}'
     SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
@@ -172,8 +177,14 @@ echo "instance $INSTANCE_ID @ $PUBIP"
 # --- 8b. Server-side idle failsafe: CloudWatch low-CPU -> terminate ----------
 # Independent of the box's own idle-shutdown timer (which can be disabled and
 # silently let an idle box run for days — see reap.sh / idle-alarm.sh notes).
-bash "$HERE/idle-alarm.sh" "$INSTANCE_ID" "$AWS_DEFAULT_REGION" || \
-    echo "WARN: could not arm idle alarm (continuing)"
+# REAP_SKIP=1 boxes are exempt (the CPU-idle alarm has the same blind spot as the
+# reaper for low-CPU-but-active work); they rely on the on-box idle-shutdown.
+if [ "${REAP_SKIP:-0}" = "1" ]; then
+    echo "REAP_SKIP=1 -> not arming CloudWatch idle-alarm (on-box idle-shutdown governs)"
+else
+    bash "$HERE/idle-alarm.sh" "$INSTANCE_ID" "$AWS_DEFAULT_REGION" || \
+        echo "WARN: could not arm idle alarm (continuing)"
+fi
 
 # --- 9. Wait for SSH ---------------------------------------------------------
 echo "waiting for SSH ..."
