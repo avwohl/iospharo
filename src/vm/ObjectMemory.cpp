@@ -1592,6 +1592,8 @@ GCResult ObjectMemory::scavenge() {
         // new space have cache keys that go stale post-scavenge
         // (their new-space oops are reclaimed when scavenge ends).
         // Opt-in via PHARO_SISTA_REKEY_AFTER_GC=1.
+        // The Sista rekey machinery is JIT-only; compiled out when JIT is off.
+#if PHARO_JIT_ENABLED
         if (g_debug.sistaRekeyAfterGC) {
             interpreter_->rekeySistaCacheViaForwarders(
                 [&forward](uint64_t oldBits) -> uint64_t {
@@ -1612,6 +1614,7 @@ GCResult ObjectMemory::scavenge() {
                     return oldBits;
                 });
         }
+#endif  // PHARO_JIT_ENABLED — Sista cache rekey (scavenge)
     }
 
     // Roots: memory (class table, special objects, etc.)
@@ -3618,6 +3621,8 @@ void ObjectMemory::updatePointersAfterCompact() {
         // breaks with "Message not understood: ByteString >>
         // #encodeString:" — investigation deferred.  The default
         // path falls back to reset() in recoverSistaAfterGC below.
+        // The Sista rekey machinery is JIT-only; compiled out when JIT is off.
+#if PHARO_JIT_ENABLED
         if (g_debug.sistaRekeyAfterGC) {
             interpreter_->rekeySistaCacheViaForwarders(
                 [&resolveForward](uint64_t oldBits) -> uint64_t {
@@ -3628,6 +3633,7 @@ void ObjectMemory::updatePointersAfterCompact() {
                     return n.rawBits();
                 });
         }
+#endif  // PHARO_JIT_ENABLED — Sista cache rekey (compact)
     }
 
     // Note: hiddenRootsObj page pointer slots are NOT updated here.

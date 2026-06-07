@@ -195,6 +195,9 @@ inline void atRecGetter(uint8_t idx, int spfp, uint64_t val, uint64_t recv) {
 // off-by-one), ipOff=same, fp1=value written, ctx=receiver.  The inline getter
 // wrote val to sp[-1]; operandBase[0] is tempBase (asTuple has 0 temps), so
 // slotOff = (sp-8 - tempBase)/8.  A nonzero slotOff is the misalignment.
+// JIT-only: dereferences jit::JITState and is called only from JIT'd code
+// (AsmjitT1.cpp). Compiled out when the JIT is disabled (iOS/Catalyst builds).
+#if PHARO_JIT_ENABLED
 extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val,
                                     uint64_t bcOff) {
     if (!g_atRecOn || statep == 0) return;
@@ -219,6 +222,7 @@ extern "C" void jit_rt_atrec_entry(uint64_t statep) {
     int depth = (int)((sp - tb) / 8);
     atRec(12, (uint8_t)(depth & 0xFF), depth, (uint64_t)sp, (uint64_t)tb);
 }
+#endif  // PHARO_JIT_ENABLED — jit_rt_atrec_* helpers
 
 // jit-may20b Step 6: per-caller bail-gate histogram dump (defined in
 // AsmjitT1.cpp).  Called from dumpJITStats when PHARO_T1_BAIL_GATE_HISTO=1.
@@ -19759,17 +19763,15 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
 // activates the wrong method.  Re-resolve the cached method's selector in the
 // receiver's LIVE class; on mismatch use the fresh method.  Diagnostic-gated by
 // PHARO_T1_VALIDATE_IC; `tag` identifies which dispatch handler called us.
-void Interpreter::syncGlobalsFromJITState(jit::JITState& s) {
 #if PHARO_JIT_ENABLED
+void Interpreter::syncGlobalsFromJITState(jit::JITState& s) {
     stackPointer_ = s.sp;
     instructionPointer_ = s.ip;
     receiver_ = s.receiver;
     framePointer_ = s.tempBase - 1;
     if (s.method.isObject()) { method_ = s.method; homeMethod_ = s.method; }
-#else
-    (void)s;
-#endif
 }
+#endif
 
 Oop Interpreter::validateICTarget(const char* tag, Oop cached, Oop* sp,
                                   int sendArgCount) {

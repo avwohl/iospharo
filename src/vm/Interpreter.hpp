@@ -1113,7 +1113,9 @@ public:
     PrimitiveResult primitiveWSNextPut(int argCount);
     /// Blocker #4 test: sync C++ interpreter globals from a live JITState (def
     /// in Interpreter.cpp where jit::JITState is fully visible).
+#if PHARO_JIT_ENABLED
     void syncGlobalsFromJITState(jit::JITState& s);
+#endif
 private:
 
     // ===== CACHES =====
