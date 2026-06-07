@@ -467,7 +467,16 @@ DebugSettings::DebugSettings() {
     noOSRRecompile                   = envPresent("PHARO_NO_OSR_RECOMPILE");
     noQueueCompile                   = envPresent("PHARO_NO_QUEUE_COMPILE");
     noRetLit                         = envPresent("PHARO_NO_RETLIT");
-    noSistaCollect                   = envPresent("PHARO_NO_SISTA_COLLECT");
+    // DEFAULT-OFF (2026-06-07): the collect:/select: splice elides
+    // `recv select: [block]` into kCountedLoopArraySelect, but its deopt/bail
+    // back to the interpreter mis-reconstructs the send stack (the spliced-away
+    // block is not restored as the arg) -> `Collection>>reject:` sends #select:
+    // to a FullBlockClosure -> MNU.  This broke reject:/copyWithout: across ~12
+    // collection classes (~100+ SUnit errors; e.g. BagTest 12, HeapTest 14),
+    // all of which pass with the splice off.  Disabled by default until the
+    // deopt reconstruction is fixed; opt back in with PHARO_SISTA_COLLECT=1.
+    // (Same correctness-over-a-broken-Sista-opt pattern as HELPER_SENDS.)
+    noSistaCollect                   = !envEq1("PHARO_SISTA_COLLECT");
     noSistaCollectResume             = envPresent("PHARO_NO_SISTA_COLLECT_RESUME");
     noSistaDoSplice                  = envPresent("PHARO_NO_SISTA_DO_SPLICE");
     sistaDoSpliceNoHint              = envEq1("PHARO_SISTA_DO_SPLICE_NO_HINT");
