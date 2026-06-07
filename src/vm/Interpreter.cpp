@@ -2006,6 +2006,71 @@ void Interpreter::dumpTimerWedgeState() {
         fprintf(stderr, "[WEDGE] (process enumeration failed)\n");
     }
     fprintf(stderr, "[WEDGE] total processes=%zu\n", procCount);
+    // Find the Delay back-half timing-runner: walk EVERY process's full context
+    // chain for #runBackendLoopAtTimingPriority. Tells us definitively whether the
+    // runner is ALIVE (and where its top is) or GONE (terminated) — the suspected
+    // wedge root.
+    try {
+        Oop o2 = memory_.firstObject();
+        bool foundRunner = false;
+        size_t pc2 = 0;
+        while (o2.isObject() && o2.rawBits() != 0 && pc2 <= 300) {
+            ObjectHeader* h = o2.asObjectPtr();
+            if (processClsIdx != 0 && h->classIndex() == processClsIdx) {
+                pc2++;
+                Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, o2);
+                if (o2.rawBits() == active.rawBits()) ctx = activeContext_;
+                int depth = 0;
+                std::string topSel;
+                while (ctx.isObject() && ctx.rawBits() > 0x10000 &&
+                       memory_.isValidPointer(ctx) && depth < 60) {
+                    Oop mth = memory_.fetchPointer(3, ctx);
+                    if (mth.isObject() && memory_.isValidPointer(mth)) {
+                        std::string s = memory_.selectorOf(mth);
+                        if (depth == 0) topSel = s;
+                        if (s == "runBackendLoopAtTimingPriority") {
+                            Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, o2);
+                            fprintf(stderr, "[WEDGE] *** TIMER-RUNNER ALIVE: proc=0x%llx "
+                                    "P%lld top=#%s (runner at chain depth %d) ***\n",
+                                    (unsigned long long)o2.rawBits(),
+                                    prioOop.isSmallInteger() ? prioOop.asSmallInteger() : -1,
+                                    topSel.c_str(), depth);
+                            // Dump the full chain from top to the runner frame.
+                            Oop c2 = (o2.rawBits() == active.rawBits())
+                                ? activeContext_
+                                : memory_.fetchPointer(ProcessSuspendedContextIndex, o2);
+                            for (int d2 = 0; d2 <= depth && c2.isObject()
+                                    && c2.rawBits() > 0x10000
+                                    && memory_.isValidPointer(c2); d2++) {
+                                Oop m2 = memory_.fetchPointer(3, c2);
+                                std::string rc = "?";
+                                Oop r2 = memory_.fetchPointer(5, c2);
+                                if (r2.isObject() && r2.rawBits() > 0x10000
+                                        && memory_.isValidPointer(r2))
+                                    rc = memory_.classNameOf(r2);
+                                std::string ms = (m2.isObject()
+                                        && memory_.isValidPointer(m2))
+                                    ? memory_.selectorOf(m2) : "?";
+                                fprintf(stderr, "[WEDGE]   chain[%d] %s>>%s\n",
+                                        d2, rc.c_str(), ms.c_str());
+                                c2 = memory_.fetchPointer(0, c2);
+                            }
+                            foundRunner = true;
+                            break;
+                        }
+                    }
+                    ctx = memory_.fetchPointer(0, ctx);  // sender
+                    depth++;
+                }
+            }
+            o2 = memory_.objectAfter(o2);
+        }
+        if (!foundRunner)
+            fprintf(stderr, "[WEDGE] *** TIMER-RUNNER GONE: no process has "
+                    "#runBackendLoopAtTimingPriority in its chain (runner TERMINATED) ***\n");
+    } catch (...) {
+        fprintf(stderr, "[WEDGE] (timer-runner search failed)\n");
+    }
     // Dump the scheduler's quiescentProcessLists (schedLists) per-priority so we
     // can tell whether a "ready" process's myList IS one of these (findable by
     // wakeHighestPriority) or an ORPHANED ProcessList (invisible -> wedge root).
