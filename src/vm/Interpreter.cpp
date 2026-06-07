@@ -12594,6 +12594,19 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             if (wn++ < 8) {
                 Oop topPc = activeContext_.isObject()
                     ? memory_.fetchPointer(1, activeContext_) : Oop::nil();
+                // Read the selector symbol's actual bytes (selectorOf expects a
+                // METHOD and returns "?" for a symbol). Tells us if the selector
+                // is a valid message (→ receiver-nil bug) or garbage (→ ip/stack).
+                std::string selStr; std::string selCls = "?";
+                if (selector.isObject() && selector.rawBits() > 0x10000
+                        && memory_.isValidPointer(selector)) {
+                    selCls = memory_.classNameOf(selector);
+                    size_t n = memory_.byteSizeOf(selector);
+                    for (size_t i = 0; i < n && i < 40; i++)
+                        selStr += (char)memory_.fetchByte(i, selector);
+                }
+                fprintf(stderr, "[WEDGE-NIL] selBytes='%s' selCls=%s\n",
+                        selStr.c_str(), selCls.c_str());
                 fprintf(stderr, "[WEDGE-NIL #%d] nil DNU sel=0x%llx(#%s) argc=%d "
                         "topCtxPc=0x%llx — real ctx chain:\n",
                         wn, (unsigned long long)selector.rawBits(),
