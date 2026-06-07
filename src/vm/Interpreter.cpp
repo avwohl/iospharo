@@ -14903,9 +14903,11 @@ void Interpreter::terminateCurrentProcess() {
         // PHARO_T1_XMETHOD_LOG=1: dump the JIT xmethod ring buffer
         // (last 64 cross-method inline-J2J fires).  Useful for
         // correlating a TERM with the just-prior xmethod sequence.
+#if PHARO_JIT_ENABLED
         if (g_debug.t1XmethodLog) {
             jit_rt_xmethod_dump_trace();
         }
+#endif
         // 2026-05-09 A4 diag: PHARO_TERM_BT=1 walks additional frames
         // for finding the C++ origin of the terminate call.  Used in
         // the A4 deep-dive (commit 42422729) to identify the
