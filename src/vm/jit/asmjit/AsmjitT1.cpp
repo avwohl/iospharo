@@ -2472,7 +2472,13 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.cmp(x4, x6);
         a.b_hi(fail);                         // exp overflow
         a.lsl(x4, x4, asmjit::Imm(3));
-        a.orr(x4, x4, asmjit::Imm(5));        // SmallFloatTag
+        // SmallFloatTag (5).  NOTE: `orr xN, xN, #5` is NOT a valid AArch64
+        // bitmask immediate (5=0b101 is two non-contiguous 1-bits), so asmjit
+        // silently emits nothing and the result keeps tag 0 — a corrupt
+        // SmallFloat that the VM later mis-reads as a heap pointer.  After
+        // `lsl #3` the low 3 bits are 0, so `add #5` (a valid ADD-immediate)
+        // sets the tag identically.
+        a.add(x4, x4, asmjit::Imm(5));        // SmallFloatTag
         a.str(x4, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -3011,7 +3017,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // Inline SmallFloat + / - at the bytecode level (op 0x60 / 0x61).
         // Reached when the SmI fast-path fails.  Both operands must have
         // tag 5 and non-zero shifted bits (i.e. not ±0).
-        if (op == 0x60 || op == 0x61) {
+        if ((op == 0x60 || op == 0x61) && !GET_DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT)) {
             using namespace asmjit::a64;
             asmjit::Label notFloat = a.new_label();
             a.and_(x5, x1, asmjit::Imm(0x7));
@@ -3054,7 +3060,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.cmp(x5, x7);
             a.b_hi(notFloat);
             a.lsl(x5, x5, asmjit::Imm(3));
-            a.orr(x5, x5, asmjit::Imm(5));
+            // SmallFloatTag (5).  `orr #5` is not a valid AArch64 bitmask
+            // immediate (asmjit drops it → tag 0 corruption); after `lsl #3`
+            // the low 3 bits are 0 so `add #5` sets the tag identically.
+            a.add(x5, x5, asmjit::Imm(5));
             a.str(x5, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             a.str(x2, ptr(x0, OFF_SP));
