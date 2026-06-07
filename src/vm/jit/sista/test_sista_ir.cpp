@@ -1315,7 +1315,12 @@ int main() {
         Lowering::CompiledFn fn = lowering.lower(lifted, &failed, fakeBase);
         check(fn != nullptr, "lower with bytecodeBase succeeds");
 
-        // FakeState with an ip slot at offset 48.
+        // FakeState with ip @48 and method @64 (OFF_METHOD).  The bytecodeBase
+        // lowering path recomputes bytecodes_start from state.method at runtime
+        // (GC-safe; jit-may22b Step 1 replaced the baked bytecodeBase pointer),
+        // so the fake state MUST supply a valid method whose slot 0 is the SmI
+        // header (numLits).  The resulting ip is method-relative, not
+        // fakeBase-relative.
         struct FakeStateWithIp {
             void*    sp;
             uint64_t receiver;
@@ -1323,23 +1328,34 @@ int main() {
             void*    tempBase;
             uint8_t  padA[16];
             uint8_t* ip;              // offset 48
-            uint8_t  padB[20];
+            uint8_t  padB[8];
+            void*    method;          // offset 64 (OFF_METHOD)
+            uint8_t  padC[4];
             int      exitReason;      // 76
             uint64_t returnValue;
-            uint8_t  padC[256];
+            uint8_t  padD[256];
         };
         static_assert(offsetof(FakeStateWithIp, ip) == 48, "ip offset");
+        static_assert(offsetof(FakeStateWithIp, method) == 64, "method offset");
+        static_assert(offsetof(FakeStateWithIp, exitReason) == 76, "exitReason offset");
 
+        // Fake method object: [0]=ObjectHeader, [1]=slot0 = SmI(0) (numLits=0),
+        // [2..]=bytecodes.  bytecodes_start = method + 16 + numLits*8.
+        // SmI(0) encodes as (0<<3)|1 = 1 in this VM's low-bit oop tagging.
+        uint64_t fakeMethod[3] = {0, 1 /* SmI(0): numLits=0 */, 0};
         uint64_t stack[4] = {0};
         FakeStateWithIp state{};
         state.sp       = &stack[0];
         state.receiver = 0xABCD;
+        state.method   = fakeMethod;
         fn(&state);
+        (void)fakeBase;
 
         check(state.exitReason == 2, "exit = ExitSend");
-        // state.ip should now be fakeBase + bcOffset (=1, the send byte).
-        check(state.ip == (fakeBase + 1),
-              "state.ip = bytecodeBase + send bcOffset");
+        // ip = bytecodes_start (method + 16 + numLits*8) + send bcOffset (=1).
+        const uint8_t* bcStart = reinterpret_cast<const uint8_t*>(&fakeMethod[2]);
+        check(state.ip == (bcStart + 1),
+              "state.ip = state.method bytecodes_start + send bcOffset");
         std::cout << "--- round-trip bytecodeBase: state.ip=0x"
                   << std::hex << (uint64_t)state.ip << std::dec << "\n";
     }
