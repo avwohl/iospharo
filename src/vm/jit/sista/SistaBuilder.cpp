@@ -8121,11 +8121,20 @@ private:
             // plausible heap object Oop (low bits clear, address-like).
             if ((h.targetMethod & 0x7) != 0) break;
             if (h.targetMethod < 0x10000) break;
+            Oop calleeOop = Oop::fromRawBits(h.targetMethod);
+            // HARDEN (full-suite SIGSEGV fix): the cheap checks above are not
+            // enough — a flag-encoded non-Oop IC value can be low-bits-clear and
+            // address-like yet point outside the heap (or mid-object). Probe-lift
+            // is MEASUREMENT-ONLY, so it must never deref a bogus pointer. Only
+            // proceed for a verified LIVE CompiledMethod; otherwise Builder::build
+            // reads a header off a wild pointer -> the non-deterministic crash in
+            // recordFramepoint seen on the Graviton full-suite run.
+            if (!g_currentBuildMemory->isValidObject(calleeOop)) break;
+            if (calleeOop.asObjectPtr()->format() < ObjectFormat::CompiledMethod) break;
             g_calleeLiftAttempts++;
             g_calleeLiftDepth++;
             Method calleeIR;
             uint32_t calleeFailedAt = UINT32_MAX;
-            Oop calleeOop = Oop::fromRawBits(h.targetMethod);
             LiftResult cr;
             {
                 ClearOuterHints g;
