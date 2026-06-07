@@ -3739,7 +3739,9 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                             && bc[5] == 0xFC
                             && bc[1] == bc[6]   // same slot N
                             && bc[2] == bc[7]   // same temp M
-                            && (bc[8] == 0x5C || bc[8] == 0x5E)) {
+                            && bc[8] == 0x5E) {  // local block return ONLY
+                                                 // (0x5C = ^ non-local return,
+                                                 // must NOT be inlined here)
                         int slotN = bc[1];
                         int tempM = bc[2];
                         // Closure slot 3+ holds copied values; tempM=0
@@ -3828,7 +3830,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                         // a CompiledMethod-shaped object.
                         if (bc[0] == 0x40 && bc[1] == 0x41
                                 && bc[2] >= 0x60 && bc[2] <= 0x6F
-                                && (bc[3] == 0x5C || bc[3] == 0x5E)) {
+                                && bc[3] == 0x5E) {  // local return ONLY (not ^ 0x5C)
                             int op = bc[2] - 0x60;
                             int64_t av = a.asSmallInteger();
                             int64_t bv = b.asSmallInteger();
@@ -3920,7 +3922,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                         if (bc[0] == 0x40 && bc[1] == 0x41
                                 && bc[2] >= 0x80 && bc[2] <= 0x8F
                                 && bc[3] == 0x60   // ArithSend + only for now
-                                && (bc[4] == 0x5C || bc[4] == 0x5E)) {
+                                && bc[4] == 0x5E) {  // local return ONLY (not ^ 0x5C)
                             int litIdx = bc[2] - 0x80;
                             if (litIdx < numLits) {
                                 Oop sel = memory_.fetchPointerUnchecked(
@@ -3999,7 +4001,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                             && obc[6] == 0xFC
                             && obc[2] == obc[7]   // same slot
                             && obc[3] == obc[8]   // same temp
-                            && (obc[9] == 0x5C || obc[9] == 0x5E)) {
+                            && obc[9] == 0x5E) {  // local return ONLY (not ^ 0x5C)
                         int litIdx = obc[5] - 0xA0;
                         if (litIdx < outerNumLits) {
                             Oop outerSel = memory_.fetchPointerUnchecked(
@@ -4055,8 +4057,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                                                                         && bbBc[1] == 0x41
                                                                         && bbBc[2] >= 0x60
                                                                         && bbBc[2] <= 0x6F
-                                                                        && (bbBc[3] == 0x5C
-                                                                            || bbBc[3] == 0x5E)) {
+                                                                        && bbBc[3] == 0x5E) {  // local return ONLY (not ^ 0x5C)
                                                                     if (nextValue.isSmallInteger()
                                                                             && each.isSmallInteger()) {
                                                                         int innerOp = bbBc[2] - 0x60;
@@ -4106,8 +4107,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                                                                         && bbBc[2] >= 0x80
                                                                         && bbBc[2] <= 0x8F
                                                                         && bbBc[3] == 0x60
-                                                                        && (bbBc[4] == 0x5C
-                                                                            || bbBc[4] == 0x5E)) {
+                                                                        && bbBc[4] == 0x5E) {  // local return ONLY (not ^ 0x5C)
                                                                     int innerLitIdx = bbBc[2] - 0x80;
                                                                     if (innerLitIdx < bbNumLits
                                                                             && nextValue.isSmallFloat()
@@ -4184,7 +4184,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                     // 0x80-0x8F = Send0 (N = low 4 bits, index 0-15).
                     if (bc[0] == 0x40
                             && bc[1] >= 0x80 && bc[1] <= 0x8F
-                            && (bc[2] == 0x5C || bc[2] == 0x5E)) {
+                            && bc[2] == 0x5E) {  // local return ONLY (not ^ 0x5C)
                         int litIdx = bc[1] - 0x80;
                         if (litIdx < numLits) {
                             Oop sel = memory_.fetchPointerUnchecked(
@@ -4233,7 +4233,7 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
                         if (bc[0] == 0x40
                                 && bc[1] >= 0x20 && bc[1] <= 0x3F
                                 && bc[2] >= 0x60 && bc[2] <= 0x6F
-                                && (bc[3] == 0x5C || bc[3] == 0x5E)) {
+                                && bc[3] == 0x5E) {  // local return ONLY (not ^ 0x5C)
                             int litIdx = bc[1] - 0x20;
                             if (litIdx < numLits) {
                                 Oop lit = memory_.fetchPointerUnchecked(
