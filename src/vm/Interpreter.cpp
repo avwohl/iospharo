@@ -1934,6 +1934,7 @@ void Interpreter::pinLiveJITMethodsAcrossProcesses() {
     // -> broad nil/value corruption that kills the Delay subsystem and wedges the
     // whole SUnit suite. Pin every JIT method referenced by ANY process's
     // suspendedContext sender chain so eviction can't touch it.
+#if PHARO_JIT_ENABLED
     jit::MethodMap& map = jitRuntime_.methodMap();
     jit::CodeZone& zone = jitRuntime_.codeZone();
     Oop active = getActiveProcess();
@@ -1969,6 +1970,8 @@ void Interpreter::pinLiveJITMethodsAcrossProcesses() {
         }
         o = memory_.objectAfter(o);
     }
+#endif  // PHARO_JIT_ENABLED — JIT-disabled builds never reach the LRU eviction
+        // path (JITCompiler.cpp) that calls this, so the body is a no-op there.
 }
 
 void Interpreter::dumpTimerWedgeState() {
