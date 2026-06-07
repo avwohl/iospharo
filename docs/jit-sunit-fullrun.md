@@ -197,3 +197,37 @@ recovery path is the next lever for raising effective throughput per VM
 instance; the watchdog fix `0a293966` only addresses misleading diagnostics,
 not the underlying deadlock.
 
+
+## 2026-06-07: two fixes unblock the full headless run
+
+Two independent root-cause fixes, both required for the suite to run end-to-end:
+
+1. **NLR block-inline fast-path bug** (`Primitives.cpp`, commit 542747d1).
+   `primitiveFullClosureValue`'s ~8 block-inline fast paths accepted `0x5C`
+   (ReturnTop = `^` non-local return) as if it were `0x5E` (BlockReturnTop =
+   local block return), silently turning `^`-from-a-block into a local return.
+   This corrupted `on:do:` / `ensure:` / `ifCurtailed:` and every helper that
+   relies on `^` from a passed-in block — i.e. the entire SUnit error/failure
+   handling stack. JIT-independent (reproduces with `PHARO_NO_JIT=1`). Fix:
+   the fast paths now require the LOCAL terminator `0x5E` only; `^`-blocks fall
+   through to the correct general `activateBlock` NLR path. Bench blocks
+   (accumulators/comparators, all `0x5E`) are unaffected. Symptoms it fixed:
+   `[:s | ^ s+1000] value: 42` returned 0 not 1042; `FileReference>>contents`
+   returned `self`.
+
+2. **Headless render-loop startup wedge** (runner submodule, commit ad111f8,
+   bumped into the parent by 35c27b21). The custom VM's headless resume restarts
+   the saved WorldMorph `MorphicRenderLoop` at pri-80; with no display it
+   busy-spins `WorldState>>drawWorld:`, hits Morphic DNUs
+   (`SpStyleEnvironmentColorProxy>>isTransparent`), starves the pri-80 Delay
+   scheduler and the scheduler dies (`timerSem=nil`) → only-idle deadlock BEFORE
+   any test runs. The runner's existing morphic-suspension lived ~111 lines into
+   `runAllTests` (after class-list/batch setup) — too late, since the C++
+   deferred-timer bootstrap fires at step 25M. Fix: moved the suspension to the
+   first action of `SUnitRunner class>>startUp:`. Must re-prep the image after
+   this change (stock headless `eval --save` fileIn).
+
+After both fixes (fresh stock-headless-prepped Pharo 13 image): the suite starts
+cleanly and runs, watchdog timeouts recover without wedging (e.g. 1 TIMEOUT at
+~class 37 was handled and the run continued). 3-class smoke = 685 pass / 0 fail.
+Full-suite measurement in progress.
