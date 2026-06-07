@@ -2374,6 +2374,11 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 if (!next || next <= fp) break;
                 fp = next;
             }
+            // (3) SUSPENDED processes' Smalltalk stacks — a process other than the
+            // active one (e.g. the Delay timer runner parked on its semaphore) may
+            // have JIT methods live in its suspendedContext chain. Evicting those
+            // corrupts the process's code on resume (the full-suite wedge root).
+            interp_.pinLiveJITMethodsAcrossProcesses();
         };
         struct UnpinAll {
             CodeZone& z;

@@ -1919,6 +1919,54 @@ void Interpreter::dumpProcessQueues() {
 // STUCK (still queued on the timing semaphore), plus what every other process is
 // blocked on — so the timer-scheduler-wedge (blocker #2) can be root-caused in a
 // single full-suite run instead of repeated ~1h lldb sessions.
+void Interpreter::pinLiveJITMethodsAcrossProcesses() {
+    // ROOT FIX for the full-suite wedge: the CodeZone LRU eviction
+    // (JITCompiler::pinLiveMethods) only pins the ACTIVE process's native-stack
+    // JIT methods + the J2J pool. It does NOT pin JIT methods live in SUSPENDED
+    // processes' Smalltalk stacks. When the 16MB code zone fills and eviction runs
+    // during a compile, it can free a method that a suspended process (e.g. the
+    // Delay timer runner, parked on its timing semaphore) will resume into; the
+    // freed space is reused, so the suspended process then executes corrupted code
+    // -> broad nil/value corruption that kills the Delay subsystem and wedges the
+    // whole SUnit suite. Pin every JIT method referenced by ANY process's
+    // suspendedContext sender chain so eviction can't touch it.
+    jit::MethodMap& map = jitRuntime_.methodMap();
+    jit::CodeZone& zone = jitRuntime_.codeZone();
+    Oop active = getActiveProcess();
+    if (!active.isObject() || active.rawBits() < 0x10000) return;
+    uint32_t procClsIdx = active.asObjectPtr()->classIndex();
+    if (procClsIdx == 0) return;
+
+    auto pinChain = [&](Oop ctx) {
+        for (int d = 0; d < 256 && ctx.isObject() && ctx.rawBits() > 0x10000
+                 && memory_.isValidPointer(ctx); d++) {
+            Oop mth = memory_.fetchPointer(3, ctx);   // Context>>method (CompiledMethod/Block)
+            if (mth.isObject() && mth.rawBits() > 0x10000) {
+                jit::JITMethod* jm = map.lookup(mth.rawBits());
+                if (jm && zone.contains(jm)) jm->pinned = true;
+            }
+            ctx = memory_.fetchPointer(0, ctx);       // sender
+        }
+    };
+
+    // Active process: its live frames are in activeContext_ (the native-stack walk
+    // in pinLiveMethods covers the executing JIT frames; this covers materialized
+    // caller contexts).
+    if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000)
+        pinChain(activeContext_);
+
+    // Every Process instance in the heap: pin its suspendedContext chain.
+    Oop o = memory_.firstObject();
+    size_t guard = 0;
+    while (o.isObject() && o.rawBits() != 0 && ++guard < 16000000) {
+        ObjectHeader* h = o.asObjectPtr();
+        if (h->classIndex() == procClsIdx && o.rawBits() != active.rawBits()) {
+            pinChain(memory_.fetchPointer(ProcessSuspendedContextIndex, o));
+        }
+        o = memory_.objectAfter(o);
+    }
+}
+
 void Interpreter::dumpTimerWedgeState() {
     Oop nilO = memory_.nil();
     fprintf(stderr, "\n[WEDGE] ==== timer-scheduler-wedge one-shot dump ====\n");

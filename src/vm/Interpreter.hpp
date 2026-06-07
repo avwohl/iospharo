@@ -219,6 +219,10 @@ public:
     void stopVM(const char* reason);
     void dumpProcessQueues();
     void dumpTimerWedgeState();  // one-shot at first [DELAY-DEATH]; see timer-scheduler-wedge
+    // Pin every JIT method live in ANY process's Smalltalk stack (incl. SUSPENDED
+    // processes like the Delay timer runner), so CodeZone LRU eviction can't free
+    // a method a suspended process will resume into. Called during evictLRU.
+    void pinLiveJITMethodsAcrossProcesses();
     bool maybeTerminateStuckProcess();  // guarded terminateStuck_; protects Delay scheduler
     void traceExtentBytecode(uint8_t bc);  // PHARO_TRACE_EXTENT_SEL per-bytecode trace
     void dumpCurrentMethod();
