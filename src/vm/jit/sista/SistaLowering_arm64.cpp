@@ -993,7 +993,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 //   = 1 → val low bit = 0 → even.
                 //   = 9 → val low bit = 1 → odd.
                 Gp masked = cc.new_gp64("eo_mask");
-                cc.and_(masked, itRcv->second, Imm(9));
+                // 9 (0b1001) is not a valid AArch64 bitmask immediate (two
+                // non-contiguous 1-bits); materialize it and use register-form
+                // `and` so the mask is actually applied.
+                Gp nine = cc.new_gp64("eo_nine");
+                cc.mov(nine, Imm(9));
+                cc.and_(masked, itRcv->second, nine);
                 Gp expected = cc.new_gp64("eo_expected");
                 cc.mov(expected, Imm(kind == 0 ? 1 : 9));
                 cc.cmp(masked, expected);
@@ -1316,7 +1321,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.cmp(result, limit);
                 cc.b_hi(deopt);                    // exp overflow
                 cc.lsl(result, result, Imm(3));
-                cc.orr(result, result, Imm(5));    // SmallFloatTag
+                // SmallFloatTag (5).  `orr #5` is not a valid AArch64 bitmask
+                // immediate (5=0b101, two non-contiguous 1-bits); after `lsl #3`
+                // the low 3 bits are 0 so `add #5` sets the tag identically with
+                // a valid ADD-immediate.  See AsmjitT1.cpp same fix.
+                cc.add(result, result, Imm(5));    // SmallFloatTag
 
                 cc.b(cont);
                 cc.bind(deopt);

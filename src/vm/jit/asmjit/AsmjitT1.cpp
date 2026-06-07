@@ -5144,8 +5144,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.and_(x4, x1, asmjit::Imm(0x7));
                 a.cmp(x4, asmjit::Imm(1));
                 a.b_ne(dispatchCached);
-                // x4 = bits & 9.
-                a.and_(x4, x1, asmjit::Imm(9));
+                // x4 = bits & 9.  NOTE: 9 (0b1001) is not a valid AArch64
+                // bitmask immediate (two non-contiguous 1-bits) — `and #9`
+                // would be silently dropped by asmjit, leaving x4 = full oop.
+                // Materialize 9 in a scratch reg and use the register form.
+                a.mov(x6, asmjit::Imm(9));
+                a.and_(x4, x1, x6);
                 // Extract kind from bit 48.
                 a.lsr(x6, x7, asmjit::Imm(48));
                 a.and_(x6, x6, asmjit::Imm(1));
@@ -5851,7 +5855,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.cmp(x4, x6);
                 a.b_hi(dispatchCachedRestoreX5);     // overflow
                 a.lsl(x4, x4, asmjit::Imm(3));
-                a.orr(x4, x4, asmjit::Imm(5));        // SmallFloatTag
+                // SmallFloatTag (5).  `orr #5` is not a valid AArch64 bitmask
+                // immediate (asmjit drops it → tag 0 corruption); after `lsl #3`
+                // the low 3 bits are 0 so `add #5` sets the tag identically.
+                a.add(x4, x4, asmjit::Imm(5));        // SmallFloatTag
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
