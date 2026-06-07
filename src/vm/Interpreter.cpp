@@ -12534,6 +12534,46 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     const int MAX_DNU_DEPTH = 10;
 
+    // DIAG (PHARO_TRACE_DELAY_NIL): the full-suite wedge is `1000 * nil` in
+    // tickAfterMilliseconds: (nil = a Delay's millisecondDelayDuration). When the
+    // tell-tale `adaptToInteger:andSend:` DNU fires, dump the sender chain's Delay
+    // receiver + its first ivars from MEMORY — if the ivar is nil there, setDelay:
+    // STORED nil (asInteger miscompile); if it holds a number, the READ miscompiled.
+    if (GET_DEBUG_BOOL(PHARO_TRACE_DELAY_NIL)) {
+        std::string dnuSel = memory_.selectorOf(selector);
+        if (dnuSel == "adaptToInteger:andSend:" || dnuSel == "adaptToFraction:andSend:") {
+            fprintf(stderr, "[DELAY-NIL] DNU #%s rcvr=0x%llx — walking senders:\n",
+                    dnuSel.c_str(),
+                    (unsigned long long)stackValue(argCount).rawBits());
+            for (size_t fi = 1; fi <= 12 && fi <= frameDepth_; fi++) {
+                SavedFrame& sf = savedFrames_[frameDepth_ - fi];
+                std::string ssel = (sf.savedMethod.isObject()
+                        && memory_.isValidPointer(sf.savedMethod))
+                    ? memory_.selectorOf(sf.savedMethod) : "?";
+                Oop rcv = sf.savedReceiver;
+                std::string rcls = (rcv.isObject() && rcv.rawBits() > 0x10000
+                        && memory_.isValidPointer(rcv)) ? memory_.classNameOf(rcv)
+                    : (rcv.isSmallInteger() ? "SmI" : "imm/nil");
+                fprintf(stderr, "[DELAY-NIL]  [-%zu] %s>>%s rcvr=0x%llx",
+                        fi, rcls.c_str(), ssel.c_str(),
+                        (unsigned long long)rcv.rawBits());
+                if (rcv.isObject() && rcv.rawBits() > 0x10000
+                        && memory_.isValidPointer(rcv)) {
+                    int n = (int)rcv.asObjectPtr()->slotCount();
+                    fprintf(stderr, " ivars[");
+                    for (int s = 0; s < n && s < 8; s++) {
+                        Oop iv = memory_.fetchPointer(s, rcv);
+                        fprintf(stderr, "%s%d=0x%llx%s", s ? " " : "", s,
+                                (unsigned long long)iv.rawBits(),
+                                iv.isNil() ? "(nil)" : (iv.isSmallInteger() ? "(SmI)" : ""));
+                    }
+                    fprintf(stderr, "]");
+                }
+                fprintf(stderr, "\n");
+            }
+        }
+    }
+
     // Defensive: if the receiver is a non-canonical Oop (top 16 bits set),
     // it's a JIT classifier-bit leak — see task #10 and the matching guard
     // in AsmjitT1.cpp's emit_send.  The JIT-side guard routes corrupt

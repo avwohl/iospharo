@@ -76,6 +76,7 @@ DEBUG_BOOL(PHARO_HEADLESS)               // force headless: skip Metal test surf
 DEBUG_BOOL(PHARO_NO_DELAY_RECOVERY)      // diagnose full-suite wedge: skip checkTimerSemaphore death-recovery re-signal (suspected to over-signal timingSemaphore and desync the DelaySemaphoreScheduler front/back handshake)
 DEBUG_BOOL(PHARO_TRACE_DELAY_SUSPEND)    // diagnose full-suite wedge: log when a Delay-handshake process (schedule:/wait/runTimerEventLoop) is suspended/terminated mid-handshake
 DEBUG_BOOL(PHARO_TRACE_IDLE_YIELD)        // diagnose full-suite wedge: log handleForceYield reschedule decision when idle (P10) is active (does it transfer to a ready higher-pri process?)
+DEBUG_BOOL(PHARO_TRACE_DELAY_NIL)        // diagnose full-suite wedge: at the `1000 * nil` MNU, dump the Delay sender chain + ivars to find store-vs-read of millisecondDelayDuration
 DEBUG_BOOL(PHARO_RETMETH_TRACE)         // returnFromMethod trace for classDefinitionNode (scavenge "returns-receiver" bug)
 
 // ── x86_64 Sista lowering: per-op disable knobs for crash bisection ──
