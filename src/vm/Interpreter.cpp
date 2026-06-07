@@ -12582,6 +12582,41 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     const int MAX_DNU_DEPTH = 10;
 
+    // DIAG (PHARO_TRACE_WEDGE_NIL): the full-suite wedge is a T1 miscompute that
+    // produces a NIL where an object should be, surfacing as a DNU on nil. When a
+    // DNU's receiver is nil, dump the REAL Smalltalk context chain (activeContext_
+    // sender walk — NOT savedFrames_, which the corruption may itself have broken)
+    // to pinpoint the method+selector that yielded the nil.
+    if (GET_DEBUG_BOOL(PHARO_TRACE_WEDGE_NIL)) {
+        Oop rcv = stackValue(argCount);
+        if (rcv.isNil()) {
+            static int wn = 0;
+            if (wn++ < 8) {
+                Oop topPc = activeContext_.isObject()
+                    ? memory_.fetchPointer(1, activeContext_) : Oop::nil();
+                fprintf(stderr, "[WEDGE-NIL #%d] nil DNU sel=0x%llx(#%s) argc=%d "
+                        "topCtxPc=0x%llx — real ctx chain:\n",
+                        wn, (unsigned long long)selector.rawBits(),
+                        memory_.selectorOf(selector).c_str(), argCount,
+                        (unsigned long long)topPc.rawBits());
+                Oop ctx = activeContext_;
+                for (int d = 0; d < 16 && ctx.isObject() && ctx.rawBits() > 0x10000
+                         && memory_.isValidPointer(ctx); d++) {
+                    Oop mth = memory_.fetchPointer(3, ctx);
+                    Oop r2  = memory_.fetchPointer(5, ctx);
+                    std::string ms = (mth.isObject() && memory_.isValidPointer(mth))
+                        ? memory_.selectorOf(mth) : "?";
+                    std::string rc = (r2.isObject() && r2.rawBits() > 0x10000
+                                      && memory_.isValidPointer(r2))
+                        ? memory_.classNameOf(r2)
+                        : (r2.isSmallInteger() ? "SmI" : (r2.isNil() ? "nil" : "imm"));
+                    fprintf(stderr, "[WEDGE-NIL]   ctx[%d] %s>>%s\n", d, rc.c_str(), ms.c_str());
+                    ctx = memory_.fetchPointer(0, ctx);
+                }
+            }
+        }
+    }
+
     // DIAG (PHARO_TRACE_DELAY_NIL): the full-suite wedge is `1000 * nil` in
     // tickAfterMilliseconds: (nil = a Delay's millisecondDelayDuration). When the
     // tell-tale `adaptToInteger:andSend:` DNU fires, dump the sender chain's Delay
