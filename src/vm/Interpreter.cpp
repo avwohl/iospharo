@@ -12607,6 +12607,41 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 }
                 fprintf(stderr, "[WEDGE-NIL] selBytes='%s' selCls=%s\n",
                         selStr.c_str(), selCls.c_str());
+                // Dump the watchdog block context's temp slots to locate the
+                // TempVector that holds (the now-nil) testProcess, so its slot
+                // ADDRESS can be watchpointed (lldb disables ASLR -> stable addr).
+                if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000
+                        && memory_.isValidPointer(activeContext_)) {
+                    int nc = (int)activeContext_.asObjectPtr()->slotCount();
+                    for (int s = 5; s < nc && s < 28; s++) {
+                        Oop t = memory_.fetchPointer(s, activeContext_);
+                        if (t.isObject() && t.rawBits() > 0x10000
+                                && memory_.isValidPointer(t)) {
+                            int tn = (int)t.asObjectPtr()->slotCount();
+                            if (tn >= 1 && tn <= 12) {
+                                // candidate TempVector — dump its slots + addresses
+                                bool hasNil = false;
+                                for (int k = 0; k < tn; k++)
+                                    if (memory_.fetchPointer(k, t).isNil()) hasNil = true;
+                                if (hasNil) {
+                                    fprintf(stderr, "[WEDGE-NIL]   ctxTemp[%d] vec=0x%llx "
+                                            "cls=%s slots=%d:\n", s,
+                                            (unsigned long long)t.rawBits(),
+                                            memory_.classNameOf(t).c_str(), tn);
+                                    for (int k = 0; k < tn; k++) {
+                                        Oop sv = memory_.fetchPointer(k, t);
+                                        // slot address = obj + header(8) + k*8
+                                        uint64_t slotAddr = t.rawBits() + 8 + (uint64_t)k * 8;
+                                        fprintf(stderr, "[WEDGE-NIL]     slot[%d]@0x%llx = 0x%llx%s\n",
+                                                k, (unsigned long long)slotAddr,
+                                                (unsigned long long)sv.rawBits(),
+                                                sv.isNil() ? " (nil)" : "");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 fprintf(stderr, "[WEDGE-NIL #%d] nil DNU sel=0x%llx(#%s) argc=%d "
                         "topCtxPc=0x%llx — real ctx chain:\n",
                         wn, (unsigned long long)selector.rawBits(),
