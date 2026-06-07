@@ -3751,7 +3751,8 @@ void Interpreter::checkTimerSemaphore() {
                 // this will wake it up so it can re-arm the timer.
                 // No attempt limit — keep trying indefinitely. A dead Delay
                 // scheduler deadlocks the entire system (watchdogs use Delay).
-                if (!lastKnownTimerSemaphore_.isNil()) {
+                if (!lastKnownTimerSemaphore_.isNil()
+                        && !GET_DEBUG_BOOL(PHARO_NO_DELAY_RECOVERY)) {
                     schedulerRecoveryAttempts_++;
                     if (schedulerRecoveryAttempts_ <= 3) {
                         std::cout << "[DELAY-RECOVERY] Re-signaling timer semaphore 0x"
