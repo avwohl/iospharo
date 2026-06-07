@@ -2006,6 +2006,30 @@ void Interpreter::dumpTimerWedgeState() {
         fprintf(stderr, "[WEDGE] (process enumeration failed)\n");
     }
     fprintf(stderr, "[WEDGE] total processes=%zu\n", procCount);
+    // Dump the scheduler's quiescentProcessLists (schedLists) per-priority so we
+    // can tell whether a "ready" process's myList IS one of these (findable by
+    // wakeHighestPriority) or an ORPHANED ProcessList (invisible -> wedge root).
+    try {
+        Oop schedAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+        Oop sched = memory_.fetchPointer(1, schedAssoc);
+        Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, sched);
+        if (schedLists.isObject() && memory_.isValidPointer(schedLists)) {
+            int maxPri = (int)schedLists.asObjectPtr()->slotCount();
+            fprintf(stderr, "[WEDGE] schedLists=0x%llx slots=%d (non-empty lists:)\n",
+                    (unsigned long long)schedLists.rawBits(), maxPri);
+            for (int pri = maxPri; pri >= 1; pri--) {
+                Oop pl = memory_.fetchPointer(pri - 1, schedLists);
+                if (!pl.isObject() || pl.rawBits() == nilO.rawBits()) continue;
+                Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, pl);
+                bool empty = (!first.isObject() || first.rawBits() == nilO.rawBits());
+                fprintf(stderr, "[WEDGE]   schedLists[P%d]=0x%llx first=0x%llx%s\n",
+                        pri, (unsigned long long)pl.rawBits(),
+                        (unsigned long long)first.rawBits(), empty ? " (EMPTY)" : "");
+            }
+        }
+    } catch (...) {
+        fprintf(stderr, "[WEDGE] (schedLists dump failed)\n");
+    }
     fprintf(stderr, "[WEDGE] ==== end one-shot dump ====\n\n");
 }
 
@@ -3631,6 +3655,20 @@ void Interpreter::handleForceYield() {
                     }
                 }
             }
+        }
+    }
+
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_IDLE_YIELD), 0)
+            && activePriority <= 10) {
+        static int idleYieldLog = 0;
+        if (idleYieldLog++ < 40) {
+            int np = (nextProcess.isObject() && nextProcess.rawBits() > 0x10000)
+                ? safeProcessPriority(nextProcess) : -999;
+            fprintf(stderr, "[IDLE-YIELD] active=P%d next=0x%llx nextPri=%d "
+                    "willTransfer=%d\n",
+                    activePriority, (unsigned long long)nextProcess.rawBits(), np,
+                    (nextProcess.isObject() && nextProcess.rawBits() != nilObj.rawBits()
+                     && nextProcess.rawBits() != activeProcess.rawBits()) ? 1 : 0);
         }
     }
 

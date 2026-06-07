@@ -4430,6 +4430,38 @@ PrimitiveResult Interpreter::primitiveSuspend(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // DIAG (PHARO_TRACE_DELAY_SUSPEND): catch a Delay-handshake process being
+    // suspended/terminated mid-handshake — the suspected full-suite-wedge root.
+    // Low volume: only logs when the suspended process's top context is a
+    // schedule/Delay-critical method.
+    if (GET_DEBUG_BOOL(PHARO_TRACE_DELAY_SUSPEND)) {
+        Oop susp = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
+        if (susp.isObject() && susp.rawBits() > 0x10000) {
+            Oop mth = memory_.fetchPointer(3, susp);  // Context method
+            if (mth.isObject() && mth.rawBits() > 0x10000 &&
+                memory_.isValidPointer(mth)) {
+                std::string sel = memory_.selectorOf(mth);
+                if (sel == "schedule:" || sel == "scheduleAtTimingPriority" ||
+                    sel == "unschedule:" || sel == "unscheduleAtTimingPriority" ||
+                    sel == "wait" || sel == "runTimerEventLoop" ||
+                    sel == "runBackendLoopAtTimingPriority" ||
+                    sel == "waitForUserSignalled:orExpired:" ||
+                    sel == "startTimerEventLoop" || sel == "restartTimerEventLoop" ||
+                    sel == "suspendAtTimingPriority" || sel == "runTimingPriorityLoop") {
+                    Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, process);
+                    int prio = prioOop.isSmallInteger() ?
+                        (int)prioOop.asSmallInteger() : -1;
+                    std::string actSel = memory_.selectorOf(method_);
+                    fprintf(stderr,
+                        "[DELAY-SUSPEND] suspending P%d proc=0x%llx top=#%s "
+                        "by-active-running=#%s\n",
+                        prio, (unsigned long long)process.rawBits(),
+                        sel.c_str(), actSel.c_str());
+                }
+            }
+        }
+    }
+
     // Remove from its current list
     removeProcessFromList(process, myList);
 
