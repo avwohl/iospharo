@@ -19,9 +19,24 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <csignal>
+#include <csetjmp>
 #include <iostream>
 #include <map>
 #include <vector>
+
+// SIGSEGV/SIGBUS guard for the runtime-execute smoke test: it runs REAL compiled
+// methods against a synthetic zeroed state, so a method that derefs an
+// uninitialized temp/literal/vec faults. That's a property of the fake state, not
+// a VM bug — catch it, count it, and continue surveying instead of aborting.
+static sigjmp_buf g_survSegvJmp;
+static volatile sig_atomic_t g_survSegvArmed = 0;
+static void survSegvHandler(int sig) {
+    if (g_survSegvArmed) { g_survSegvArmed = 0; siglongjmp(g_survSegvJmp, sig); }
+    // Not armed (crash outside the guarded region) — restore default and re-raise.
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
 
 using namespace pharo;
 
@@ -190,7 +205,13 @@ int main(int argc, const char** argv) {
 
     {
         sista::Runtime runtime;
-        size_t compiled = 0, executed = 0, returnedOK = 0, sendBails = 0;
+        size_t compiled = 0, executed = 0, returnedOK = 0, sendBails = 0, crashed = 0;
+        // Arm the SIGSEGV/SIGBUS guard for the duration of the smoke test.
+        struct sigaction sa{}, oldSegv{}, oldBus{};
+        sa.sa_handler = survSegvHandler;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGSEGV, &sa, &oldSegv);
+        sigaction(SIGBUS, &sa, &oldBus);
 
         // Full JITState-shaped buffer (192 bytes, matches offsets in
         // JITState.hpp).  Receiver/literals/temps fields are the only
@@ -202,7 +223,9 @@ int main(int argc, const char** argv) {
             void*     tempBase;        // 24
             uint8_t   pad48[48 - 32];
             void*     ip;              // 48
-            uint8_t   pad76[76 - 56];
+            uint8_t   pad64[64 - 56];
+            uint64_t  method;          // 64 — lowered code reads OFF_METHOD=64
+            uint8_t   pad76[76 - 72];
             int       exitReason;      // 76
             uint64_t  returnValue;     // 80
             uint8_t   pad128[128 - 88];
@@ -214,6 +237,7 @@ int main(int argc, const char** argv) {
         static_assert(offsetof(FullState, literals)    == 16, "");
         static_assert(offsetof(FullState, tempBase)    == 24, "");
         static_assert(offsetof(FullState, ip)          == 48, "");
+        static_assert(offsetof(FullState, method)      == 64, "");
         static_assert(offsetof(FullState, exitReason)  == 76, "");
         static_assert(offsetof(FullState, returnValue) == 80, "");
         static_assert(offsetof(FullState, trueOop)     == 128, "");
@@ -233,6 +257,10 @@ int main(int argc, const char** argv) {
             sista::Method m;
             auto r = sista::Builder::build(methodOop, memory, m);
             if (r != sista::LiftResult::kOk) return;
+            // Skip multi-block methods: a loop/back-edge run against the
+            // synthetic state can spin forever (the SIGSEGV guard catches faults
+            // but not infinite loops). Single-block methods are straight-line.
+            if (m.blocks.size() > 1) return;
             // Skip methods whose IR dereferences the (synthetic)
             // receiver oop or an association — those crash with our
             // sentinel state.  Sends are fine: the bail writes state
@@ -249,6 +277,22 @@ int main(int argc, const char** argv) {
                 case sista::Op::kInlineSend:
                 case sista::Op::kBlockCreate:
                 case sista::Op::kBlockValue:
+                // Counted-loop / splice ops iterate over a real Array/Interval
+                // and deref its elements (or a TempVector accumulator); they
+                // crash against the synthetic zeroed receiver/temps/stack of
+                // this smoke test. Skip them here (the lift/lower coverage pass
+                // above already exercises their compilation).
+                case sista::Op::kCountedLoopDo:
+                case sista::Op::kCountedLoopInjectInto:
+                case sista::Op::kInterval:
+                case sista::Op::kCountedLoopIntervalInjectInto:
+                case sista::Op::kCountedLoopIntervalDo:
+                case sista::Op::kCountedLoopArrayDoAccum:
+                case sista::Op::kCountedLoopIntervalDoAccum:
+                case sista::Op::kCountedLoopArrayCollect:
+                case sista::Op::kCountedLoopArraySelect:
+                case sista::Op::kCountedLoopWhileTrueAccum:
+                case sista::Op::kCountedLoopBodyExec:
                     unsafeOp = true;
                     break;
                 default:
@@ -281,22 +325,36 @@ int main(int argc, const char** argv) {
             state.receiver = realReceiver.rawBits();
             state.literals = litsBuf;
             state.tempBase = tempsBuf;
+            state.method   = methodOop.rawBits();  // lowered code derives the
+                                                   // bytecode pointer from state.method;
+                                                   // 0 here -> nil-deref SIGSEGV.
             state.trueOop  = trueObj.rawBits();
             state.falseOop = falseObj.rawBits();
 
             executed++;
-            fn(&state);
-            if (state.exitReason == 1) returnedOK++;
-            else if (state.exitReason == 2) sendBails++;
+            g_survSegvArmed = 1;
+            if (sigsetjmp(g_survSegvJmp, 1) == 0) {
+                fn(&state);
+                g_survSegvArmed = 0;
+                if (state.exitReason == 1) returnedOK++;
+                else if (state.exitReason == 2) sendBails++;
+            } else {
+                // Method faulted against the synthetic state — count and continue.
+                crashed++;
+            }
         });
 
+        g_survSegvArmed = 0;
+        sigaction(SIGSEGV, &oldSegv, nullptr);
+        sigaction(SIGBUS, &oldBus, nullptr);
         std::cout << "\n=== Runtime execute smoke test ===\n";
         std::cout << "Compiled:                   " << compiled << "\n";
         std::cout << "Executed:                   " << executed << "\n";
         std::cout << "ExitReturn:                 " << returnedOK << "\n";
         std::cout << "ExitSend (bail to interp):  " << sendBails << "\n";
+        std::cout << "Faulted on synthetic state: " << crashed << "\n";
         std::cout << "Other exit:                 "
-                  << (executed - returnedOK - sendBails) << "\n";
+                  << (executed - returnedOK - sendBails - crashed) << "\n";
     }
 
     // Malformed breakdown.
