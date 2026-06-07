@@ -45,6 +45,7 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #include "ObjCExceptionGuard.h"
 #endif
 #include <thread>
+#include <set>
 #include <fstream>
 #include <iostream>
 #include <sys/resource.h>
@@ -27473,6 +27474,14 @@ PrimitiveResult Interpreter::primitiveFileExists(int argCount) {
 }
 
 // FileAttributesPlugin>>primitiveOpendir
+// Registry of DIR* handles we actually opened via primitiveOpendir.  The handle
+// is handed to the image as raw bytes; readdir/closedir/rewinddir must NOT trust
+// an arbitrary bytes object (a String, a stale/double-closed handle) as a DIR*,
+// or they SIGSEGV inside libc (e.g. FileAttributesPluginPrimsTest passing a
+// bogus handle crashed closedir on string bytes).  Validating against this set
+// turns those into a graceful primitive Failure.  Single-threaded VM: no lock.
+static std::set<DIR*> g_openDirHandles;
+
 // Stack: receiver, pathString -> ExternalAddress (DIR* wrapped in bytes object) or nil
 PrimitiveResult Interpreter::primitiveOpendir(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
@@ -27510,6 +27519,7 @@ PrimitiveResult Interpreter::primitiveOpendir(int argCount) {
     // Store the DIR* pointer in the bytes
     ObjectHeader* resultHdr = result.asObjectPtr();
     memcpy(resultHdr->bytes(), &dir, sizeof(void*));
+    g_openDirHandles.insert(dir);  // register as a valid handle
 
     popN(2);  // pop arg + receiver
     push(result);
@@ -27538,7 +27548,8 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
     // Extract the DIR* pointer
     DIR* dir = nullptr;
     memcpy(&dir, dirHdr->bytes(), sizeof(void*));
-    if (!dir) return PrimitiveResult::Failure;
+    // Only operate on a handle we actually opened — never deref arbitrary bytes.
+    if (!dir || g_openDirHandles.count(dir) == 0) return PrimitiveResult::Failure;
 
     errno = 0;
     struct dirent* entry = nullptr;
@@ -27693,12 +27704,14 @@ PrimitiveResult Interpreter::primitiveClosedir(int argCount) {
     // Extract and close the DIR* pointer
     DIR* dir = nullptr;
     memcpy(&dir, dirHdr->bytes(), sizeof(void*));
-    if (dir) {
-        closedir(dir);
-        // Zero out the pointer to prevent double-close
-        void* null = nullptr;
-        memcpy(dirHdr->bytes(), &null, sizeof(void*));
-    }
+    // Only close a handle we actually opened (guards bogus/stale/double-close —
+    // closedir on arbitrary bytes SIGSEGVs inside libc).
+    if (!dir || g_openDirHandles.count(dir) == 0) return PrimitiveResult::Failure;
+    closedir(dir);
+    g_openDirHandles.erase(dir);
+    // Zero out the pointer to prevent double-close
+    void* null = nullptr;
+    memcpy(dirHdr->bytes(), &null, sizeof(void*));
 
     pop();  // pop arg, leave receiver
     return PrimitiveResult::Success;
@@ -27719,7 +27732,8 @@ PrimitiveResult Interpreter::primitiveRewinddir(int argCount) {
 
     DIR* dir = nullptr;
     memcpy(&dir, dirHdr->bytes(), sizeof(void*));
-    if (!dir) return PrimitiveResult::Failure;
+    // Only operate on a handle we actually opened.
+    if (!dir || g_openDirHandles.count(dir) == 0) return PrimitiveResult::Failure;
 
     rewinddir(dir);
 
