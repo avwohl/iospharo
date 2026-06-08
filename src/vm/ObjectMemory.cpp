@@ -27,6 +27,11 @@ namespace pharo {
 
 extern uint64_t g_stepNum;
 
+// Base address of the (resize-once, never-reallocated) class table, captured at
+// init so the JIT `class` inline-prim can index it directly. See
+// AsmjitT1.cpp tryPrimClass and memory/vm-speed-lever-dispatch.
+uint64_t g_classTableBase = 0;
+
 // ===== CONSTRUCTION / INITIALIZATION =====
 
 ObjectMemory::ObjectMemory() = default;
@@ -104,6 +109,10 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
 
     // Initialize class table
     classTable_.resize(config.classTableSize, Oop::nil());
+    // Capture the stable base for the JIT `class` inline-prim. classTable_ is
+    // resized exactly once here and never reallocated (setClassAtIndex only
+    // writes within bounds), so this pointer is valid for the VM's lifetime.
+    g_classTableBase = reinterpret_cast<uint64_t>(classTable_.data());
 
     // Zero perm space and new space (old space is mmap'd with MAP_ANONYMOUS,
     // which provides zero-filled pages lazily — no memset needed)

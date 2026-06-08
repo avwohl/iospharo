@@ -231,3 +231,39 @@ After both fixes (fresh stock-headless-prepped Pharo 13 image): the suite starts
 cleanly and runs, watchdog timeouts recover without wedging (e.g. 1 TIMEOUT at
 ~class 37 was handled and the run continued). 3-class smoke = 685 pass / 0 fail.
 Full-suite measurement in progress.
+
+## 2026-06-08 — gap reassessment (the gap is mostly already closed + VM-speed)
+
+A clean full run (Pharo-final2, fake GUI, WSNextPut fix) reached ~663 classes at
+~98% pass before dying. Investigating the named gaps from the earlier 252-pass
+analysis:
+
+- **Debugger (ED*, ~63): FIXED** earlier (WSNextPut / `format()==Indexable`).
+- **Fuel FLCreateClassSerializationTest (~33, the biggest Fuel bucket): ALREADY
+  PASSES 41/41** — closed by the WSNextPut/NLR fixes. Memory's "8 vs 41" is stale.
+- **Fuel WideString/WideSymbol (3 tests): NOT a gap** — they're in
+  `FLBasicSerializationTest>>expectedFailures` (known Fuel limits;
+  `Smalltalk globals at: aWideString put:` legitimately errors "Only symbols
+  accepted"). Fail on Cog too. (Caveat: both runners use bare `runCase`, which
+  does not honor the `expectedFailures` METHOD — fair, both fail them.)
+- **Fuel FLBlockClosure block-materialization (~5): real bug**, not yet fixed —
+  materialized block's `sourceNode` returns an `OCReturnNode` (wrong AST node) so
+  `BlockClosure>>isClean` (`^self sourceNode isClean`) DNUs. Hard to repro in pure
+  eval (the eval DoIt confounds it into `FLMethodChanged: DoIt changed bytecodes`);
+  needs runner-context or lldb.
+- **Epicea (Ep*, ~20): a concurrency RACE, not a JIT codegen bug** — OmDeferrer
+  forks a pri-40 background flush process that preempts the non-atomic
+  `OmBlockFileStore>>entriesDo:` (file-read then buffer-read) and loses an entry.
+  JIT scheduling timing exposes it (NO_JIT/DET_SCHED correct, JIT wrong); explicit
+  `store flush` before read fixes it. Not cleanly fixable VM-side.
+- **VM-speed timeouts (the dominant remaining bucket):** e.g. the full run dies at
+  ClyNotebookPageRecyclerTest — FreeType/FFI text composition where every
+  `platformLongAt:` hits uncached `FFIArchitecture>>forCurrentArchitecture`
+  (8490/sec on our VM vs ~100x faster on Cog). Pathological slowness, not a loop.
+
+**Bottom line:** the easy/medium gaps (~96 passes: debugger + FLCreateClass) are
+already closed. The remaining gap to >= Cog is dominated by (a) the 10-100x
+VM-speed deficit (timeout failures) and (b) run-survivability (one slow/hanging
+test kills the whole run before measurement completes), plus a couple of hard
+bugs (Epicea race, block-materialization). Highest-leverage next work is
+run-completion / VM performance, not grinding individual test correctness.

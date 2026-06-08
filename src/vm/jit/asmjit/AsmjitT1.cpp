@@ -139,6 +139,7 @@ extern "C" uint64_t g_inlineJ2J_bail_gate = 0;  // pure-J2J gate failed (a calle
 extern "C" uint64_t g_primAt_hits         = 0;  // tryPrimAt inline fired
 extern "C" uint64_t g_primAtPut_hits      = 0;  // tryPrimAtPut inline fired
 extern "C" uint64_t g_primSize_hits       = 0;  // tryPrimSize inline fired
+extern "C" uint64_t g_primClass_hits      = 0;  // tryPrimClass inline fired
 extern "C" uint64_t g_primBitOp_hits      = 0;  // bitAnd/bitOr/bitXor fired
 extern "C" uint64_t g_primFloatOp_hits    = 0;  // SmallFloat send-site fired
 extern "C" uint64_t g_bcFloatArith_hits   = 0;  // 0x60/0x61 SmallFloat bytecode fired
@@ -3500,6 +3501,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tryPrimMul = a.new_label();  // F5 R80: SmI mul via IC
             asmjit::Label tryPrimEq = a.new_label();   // F5 R81: == via IC
             asmjit::Label tryPrimIdentityHash = a.new_label();
+            asmjit::Label tryPrimClass = a.new_label();
             asmjit::Label tryPrimAt = a.new_label();
             asmjit::Label tryPrimAtPut = a.new_label();
             asmjit::Label tryPrimSize = a.new_label();
@@ -4608,6 +4610,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             a.cmp(x6, asmjit::Imm(20));
                             a.b_eq(tryPrimIdentityHash);
                         }
+                        if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_CLASS)) {
+                            a.cmp(x6, asmjit::Imm(24));
+                            a.b_eq(tryPrimClass);
+                        }
                     }
                 }
                 a.b(dispatchCached);
@@ -4677,6 +4683,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_IDH)) {
                             a.cmp(x6, asmjit::Imm(20));
                             a.b_eq(tryPrimIdentityHash);
+                        }
+                        if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_CLASS)) {
+                            a.cmp(x6, asmjit::Imm(24));
+                            a.b_eq(tryPrimClass);
                         }
                     }
                 }
@@ -5796,6 +5806,35 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.b(endOfSend);
             } else {
                 a.bind(tryPrimIdentityHash);
+                a.b(dispatchCached);
+            }
+
+            // === Inline `class` (primKind 24 = inlinePrimKind(111), nArgs=0,
+            //     heap receiver) ===
+            // classOf(heapObj) = classTable_[header.classIndex()].  classIndex
+            // is bits 0-21 (ObjectHeader::ClassIndexMask); the class table is a
+            // flat, resize-once-never-reallocated array whose base is captured
+            // in g_classTableBase (ObjectMemory.cpp).  No bounds check needed
+            // (classIndex is a 22-bit field; the table has 2^22 entries).  No
+            // forwarding/immediate handling needed: the IC class-match already
+            // excludes forwarded/immediate receivers — the same invariant the
+            // size/identityHash inlines above rely on.  The result is a tagged
+            // class oop (no SmI tagging).
+            if (nArgs == 0 && g_debug.t1InlinePrimAt
+                    && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_CLASS)) {
+                a.bind(tryPrimClass);
+                emitIncPrimCounter((uint64_t)&g_primClass_hits);
+                a.ldr(x4, ptr(x1));                  // header
+                a.and_(x4, x4, asmjit::Imm(pharo::ObjectHeader::ClassIndexMask));
+                a.lsl(x4, x4, asmjit::Imm(3));       // classIndex * 8 (entry size)
+                a.mov(x5, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+                a.ldr(x5, ptr(x5));                  // x5 = class table base
+                a.add(x5, x5, x4);                   // &classTable[classIndex]
+                a.ldr(x5, ptr(x5));                  // x5 = class oop
+                a.stur(x5, ptr(x2, rcvrOffsetBytes));
+                a.b(endOfSend);
+            } else {
+                a.bind(tryPrimClass);
                 a.b(dispatchCached);
             }
 

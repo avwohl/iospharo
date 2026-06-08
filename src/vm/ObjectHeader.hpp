@@ -112,13 +112,15 @@ struct ObjectFlags {
 };
 
 class ObjectHeader {
-private:
-    uint64_t header_;
-
+public:
     // CORRECT Spur 64-bit field positions and masks
-    // classIndex: bits 0-21 (22 bits)
+    // classIndex: bits 0-21 (22 bits). Public so the JIT `class` inline-prim
+    // (AsmjitT1.cpp tryPrimClass) can use the named constant, never a literal.
     static constexpr uint64_t ClassIndexMask = 0x3FFFFFULL;       // Bits 0-21
     static constexpr uint64_t ClassIndexShift = 0;
+
+private:
+    uint64_t header_;
 
     // format: bits 24-28 (5 bits)
     static constexpr uint64_t FormatMask = 0x1FULL << 24;         // Bits 24-28

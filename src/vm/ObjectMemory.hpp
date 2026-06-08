@@ -49,6 +49,10 @@ namespace pharo {
 // Forward declaration
 class Interpreter;
 
+// Stable base of the class table, captured once at init (ObjectMemory.cpp).
+// Used by the JIT `class` inline-prim (AsmjitT1.cpp tryPrimClass).
+extern uint64_t g_classTableBase;
+
 /// Linear scanner for iterating objects in a heap region.
 /// Follows the Spur reference implementation's two-step pattern:
 ///   1. objectStartingAt_: if byte7==0xFF, skip 8 (overflow word → header)

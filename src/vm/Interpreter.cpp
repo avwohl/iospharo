@@ -112,6 +112,7 @@ extern "C" uint64_t g_inlineJ2J_dbg_dispatch;
 extern "C" uint64_t g_primAt_hits;
 extern "C" uint64_t g_primAtPut_hits;
 extern "C" uint64_t g_primSize_hits;
+extern "C" uint64_t g_primClass_hits;
 extern "C" uint64_t g_primBitOp_hits;
 extern "C" uint64_t g_primFloatOp_hits;
 extern "C" uint64_t g_primBasicNew_hits;
@@ -1714,6 +1715,7 @@ void Interpreter::dumpJITStats() {
                            + g_primFloatOp_hits + g_primBasicNew_hits
                            + g_primBasicNew_bails;
         if (primTotal > 0 || g_t1MultiSlot_hits > 0
+                || g_primClass_hits > 0
                 || g_t1ReturnsLiteral_hits > 0
                 || g_t1TempReturn_hits > 0
                 || g_t1IntCmpReturn_hits > 0
@@ -1723,7 +1725,7 @@ void Interpreter::dumpJITStats() {
                 || g_t1InlineSetter_hits > 0
                 || g_t1ReturnsSelf_hits > 0) {
             fprintf(stderr,
-                "  inline-prim: at=%llu atPut=%llu size=%llu bitOp=%llu "
+                "  inline-prim: at=%llu atPut=%llu size=%llu class=%llu bitOp=%llu "
                 "floatOp=%llu bcFloat=%llu bcArithBail=%llu remoteTemp=%llu "
                 "basicNew=%llu/%llu basicNew0=%llu sistaSelfRec=%llu/%llu "
                 "multiSlot=%llu retLit=%llu "
@@ -1733,6 +1735,7 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_primAt_hits,
                 (unsigned long long)g_primAtPut_hits,
                 (unsigned long long)g_primSize_hits,
+                (unsigned long long)g_primClass_hits,
                 (unsigned long long)g_primBitOp_hits,
                 (unsigned long long)g_primFloatOp_hits,
                 (unsigned long long)g_bcFloatArith_hits,
@@ -19896,6 +19899,7 @@ static uint8_t inlinePrimKind(int primIndex) {
     case 71: return 18;  // new: (basicNew:)
     case 16: return 19;  // bitXor (added 2026-05-18 for asmjit-T1 inline)
     case 75: return 20;  // identityHash (header bits 8-29 → SmI)
+    case 111: return 24; // class (classTable[classIndex]) — JIT inline tryPrimClass
     case 541: return 21; // SmallFloat>>+
     case 542: return 22; // SmallFloat>>-
     case 549: return 23; // SmallFloat>>*
