@@ -6865,7 +6865,20 @@ void Interpreter::returnFromMethod() {
                     }
                 }
 
-                while (ctx.isObject() && !ctx.isNil() && searchDepth < 200) {
+                // NLR home disambiguation (nlr-nested-valuewithexit-bug): the
+                // dynamic sender-chain search below matches by method-oop and
+                // picks the INNERMOST activation — WRONG when the home method is
+                // on the stack more than once (nested valueWithExit / recursion).
+                // The active closure's outerContext IS the exact lexical home
+                // context; prefer it when its method is the home method.
+                if (closure_.isObject() && !closure_.isNil()) {
+                    Oop oc = memory_.fetchPointer(0, closure_);
+                    if (oc.isObject() && !oc.isNil() && oc.rawBits() > 0x10000 &&
+                        memory_.fetchPointer(3, oc).rawBits() == homeMethodOop.rawBits()) {
+                        homeCtx = oc;
+                    }
+                }
+                while (homeCtx.isNil() && ctx.isObject() && !ctx.isNil() && searchDepth < 200) {
                     Oop ctxMethod = memory_.fetchPointer(3, ctx);
                     if (ctxMethod.rawBits() == homeMethodOop.rawBits()) {
                         homeCtx = ctx;
@@ -7185,7 +7198,18 @@ void Interpreter::returnFromBlock() {
             Oop ctx = activeContext_;
             Oop homeCtx = Oop::nil();
             int depth = 0;
-            while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+            // NLR home disambiguation (nlr-nested-valuewithexit-bug): prefer the
+            // closure's outerContext (exact lexical home) over the dynamic
+            // sender-chain method-oop match, which picks the innermost activation
+            // — wrong when the home method is on the stack more than once.
+            {
+                Oop oc = memory_.fetchPointer(0, closure_);
+                if (oc.isObject() && !oc.isNil() && oc.rawBits() > 0x10000 &&
+                    memory_.fetchPointer(3, oc).rawBits() == homeMethod.rawBits()) {
+                    homeCtx = oc;
+                }
+            }
+            while (homeCtx.isNil() && ctx.isObject() && !ctx.isNil() && depth < 200) {
                 Oop ctxMethod = memory_.fetchPointer(3, ctx);
                 if (ctxMethod.rawBits() == homeMethod.rawBits()) {
                     homeCtx = ctx;
