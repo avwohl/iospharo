@@ -6865,15 +6865,34 @@ void Interpreter::returnFromMethod() {
                     }
                 }
 
+                // NLR home disambiguation (nlr-nested-valuewithexit-bug): the
+                // method-oop match picks the INNERMOST home-method context — wrong
+                // when the home method is on the stack more than once (nested
+                // valueWithExit). Prefer the context whose IDENTITY == the closure's
+                // outerContext (the exact lexical home), but ONLY if it is actually
+                // IN this dynamic chain AND is the home method (an escaped block's
+                // outerContext off the chain would corrupt the unwind). Fall back to
+                // the method-oop nearest match.
+                Oop och = Oop::nil();
+                if (closure_.isObject() && !closure_.isNil()) {
+                    och = memory_.fetchPointer(0, closure_);
+                    if (!(och.isObject() && !och.isNil() && och.rawBits() > 0x10000)) och = Oop::nil();
+                }
+                Oop fallbackCtx = Oop::nil();
                 while (ctx.isObject() && !ctx.isNil() && searchDepth < 200) {
                     Oop ctxMethod = memory_.fetchPointer(3, ctx);
-                    if (ctxMethod.rawBits() == homeMethodOop.rawBits()) {
-                        homeCtx = ctx;
+                    if (!och.isNil() && ctx.rawBits() == och.rawBits()
+                        && ctxMethod.rawBits() == homeMethodOop.rawBits()) {
+                        homeCtx = ctx;  // exact lexical home, in-chain, home method
                         break;
+                    }
+                    if (fallbackCtx.isNil() && ctxMethod.rawBits() == homeMethodOop.rawBits()) {
+                        fallbackCtx = ctx;
                     }
                     ctx = memory_.fetchPointer(0, ctx);
                     searchDepth++;
                 }
+                if (homeCtx.isNil()) homeCtx = fallbackCtx;
 
                 if (homeCtx.isObject() && !homeCtx.isNil()) {
                     // Found home context! Do context-based NLR
@@ -7185,15 +7204,26 @@ void Interpreter::returnFromBlock() {
             Oop ctx = activeContext_;
             Oop homeCtx = Oop::nil();
             int depth = 0;
+            // NLR home disambiguation (nlr-nested-valuewithexit-bug): prefer the
+            // chain context whose IDENTITY == the closure's outerContext (exact
+            // lexical home), in-chain + home method, over the method-oop nearest.
+            Oop och = memory_.fetchPointer(0, closure_);
+            if (!(och.isObject() && !och.isNil() && och.rawBits() > 0x10000)) och = Oop::nil();
+            Oop fallbackCtx = Oop::nil();
             while (ctx.isObject() && !ctx.isNil() && depth < 200) {
                 Oop ctxMethod = memory_.fetchPointer(3, ctx);
-                if (ctxMethod.rawBits() == homeMethod.rawBits()) {
+                if (!och.isNil() && ctx.rawBits() == och.rawBits()
+                    && ctxMethod.rawBits() == homeMethod.rawBits()) {
                     homeCtx = ctx;
                     break;
+                }
+                if (fallbackCtx.isNil() && ctxMethod.rawBits() == homeMethod.rawBits()) {
+                    fallbackCtx = ctx;
                 }
                 ctx = memory_.fetchPointer(0, ctx);
                 depth++;
             }
+            if (homeCtx.isNil()) homeCtx = fallbackCtx;
 
             if (homeCtx.isObject() && !homeCtx.isNil()) {
                 // Check for unwind (ensure:) contexts between here and home
@@ -11442,7 +11472,25 @@ void Interpreter::activateBlock(Oop block, int argCount) {
             }
         }
 
-        for (size_t i = frameDepth_; i > 0; i--) {
+        // NLR home disambiguation (nlr-nested-valuewithexit-bug): when the home
+        // method is on the stack more than once (nested valueWithExit), the
+        // method-oop search below takes the INNERMOST match — the wrong home.
+        // Prefer the HOME-METHOD frame whose materialized context IS the closure's
+        // outerContext (the exact home). REQUIRE savedMethod==homeMethodOop too, so
+        // a coincidental context match on a non-home frame can't fire (that
+        // false-positive regressed DateAndTime in an earlier attempt).
+        if (outerContext.isObject() && !outerContext.isNil() && outerContext.rawBits() > 0x10000) {
+            for (size_t i = frameDepth_; i > 0; i--) {
+                Oop mc = savedFrames_[i - 1].materializedContext;
+                if (mc.isObject() && !mc.isNil() && mc.rawBits() == outerContext.rawBits()
+                    && savedFrames_[i - 1].savedMethod.rawBits() == homeMethodOop.rawBits()) {
+                    homeFrame = i - 1;
+                    break;
+                }
+            }
+        }
+
+        for (size_t i = frameDepth_; homeFrame == SIZE_MAX && i > 0; i--) {
             Oop savedMethod = savedFrames_[i - 1].savedMethod;
 
             // Match primary home, then fallback home (for shared CompiledBlocks).
