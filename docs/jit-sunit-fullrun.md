@@ -267,33 +267,3 @@ VM-speed deficit (timeout failures) and (b) run-survivability (one slow/hanging
 test kills the whole run before measurement completes), plus a couple of hard
 bugs (Epicea race, block-materialization). Highest-leverage next work is
 run-completion / VM performance, not grinding individual test correctness.
-
-## 2026-06-08 update — the gap is COVERAGE, and a real FFI hotspot fix
-
-Re-measured with classify-sunit.py (cog 1785 classes/25526 P; custom 691
-classes/14800 P). **On the overlap the custom VM is only 14 behind cog** (1 err,
-2 fail, 11 timeout). The headline gap is that the custom run stops after 691
-classes (last = ClyNotebookPageRecyclerTest) and never attempts the other ~1100
-classes cog ran. So ">= cog passes" is gated by RUN COMPLETION, not failing tests.
-
-Fixed one real single-hotspot: `FFIArchitecture forCurrentArchitecture` is now
-memoized in run_sunit_tests.st (`(self allSubclasses detect: #isActive)
-uniqueInstance` was recomputed on EVERY `ByteArray>>platform*At:` FFI read) —
-~156x on that op (50k calls 8.13s->0.052s). Submodule 2ae3bb2, main 5608633e.
-
-But a multi-sample stack profile of the killer Cly test (cache active) shows NO
-single hot loop: time is spread across Morphic scrollbar relayout, Calypso
-reflective class/package queries (extendedClasses/packageForBehavior:/
-flattenClasses/includesClass:), and FreeType glyph caching. So the Cly/GUI tests
-have no equivalent single fix — it is general VM speed. The recurring offender is
-reflective class enumeration (allSubclasses & friends), which both
-forCurrentArchitecture and the Calypso browser-item queries hammer; a fast
-VM-level subclass/instance enumeration would help broadly. Run-completion lever:
-batched runs (one process per ~50-class chunk via /tmp/sunit_class_names.txt) +
-shorter timeout scale (/tmp/run_full_batched.sh, master list /tmp/master_classes.txt).
-
-Also fixed the eval harness this session (main d931cacb): the eval-mode startup
-preamble (`Process allInstances do:`) had no error handler and its intermittent
-JIT-timing DNU (#do: on a FullBlockClosure, ~40% of JIT-on runs, suppressed by
-PHARO_DET_SCHED — a startup concurrency race) was silently aborting EVERY eval
-doit, which had confounded all synthetic eval micro-benchmarks.
