@@ -11442,7 +11442,24 @@ void Interpreter::activateBlock(Oop block, int argCount) {
             }
         }
 
-        for (size_t i = frameDepth_; i > 0; i--) {
+        // NLR home disambiguation (nlr-nested-valuewithexit-bug): when the home
+        // METHOD is on the stack more than once (recursion / nested valueWithExit),
+        // matching by method-oop alone takes the INNERMOST match — the WRONG home.
+        // The closure's outerContext (slot 0) identifies the EXACT home activation.
+        // If a saved frame's materialized context IS that outerContext, that is the
+        // true home; match it first. Falls back to the method-oop search below.
+        if (outerContext.isObject() && !outerContext.isNil()) {
+            for (size_t i = frameDepth_; i > 0; i--) {
+                Oop mc = savedFrames_[i - 1].materializedContext;
+                if (mc.isObject() && !mc.isNil() &&
+                    mc.rawBits() == outerContext.rawBits()) {
+                    homeFrame = i - 1;
+                    break;
+                }
+            }
+        }
+
+        for (size_t i = frameDepth_; homeFrame == SIZE_MAX && i > 0; i--) {
             Oop savedMethod = savedFrames_[i - 1].savedMethod;
 
             // Match primary home, then fallback home (for shared CompiledBlocks).
