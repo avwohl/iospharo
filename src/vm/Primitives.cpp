@@ -3651,16 +3651,28 @@ PrimitiveResult Interpreter::primitiveWSNextPut(int argCount) {
     }
 
     ObjectHeader* collObj = collOop.asObjectPtr();
-    // This fast path stores `arg` as a raw Oop via storePointer, so it is
-    // ONLY valid for genuine pointer (Array-like) collections.  Bail for
-    // every non-pointer backing store and let the real method run:
+    // This fast path stores `arg` as a raw Oop into slot `pos` via
+    // storePointer, which is ONLY correct for a PURE INDEXABLE pointer object
+    // (ObjectFormat::Indexable, e.g. Array) — one with ZERO fixed named ivars,
+    // so the 0-based at:put: index maps directly to object slot `pos`.
+    //
+    // Must bail for everything else and let the real WriteStream>>nextPut:
+    // method run (`collection at: position put: arg`, which dispatches to the
+    // collection's own at:put:):
     //   - ByteString / ByteArray (fmt 16-23): need Character→byte conversion
     //   - WideString / WordArray (fmt 10-11): 32-bit word objects; storing
     //     the raw Character Oop here wrote 1867 (=(233<<3)|3) instead of the
-    //     codepoint 233 — the StringTest>>testOnlyLetters corruption.  These
-    //     must route to prim 64 (primitiveStringAtPut) which extracts the
-    //     codepoint.
-    if (!collObj->isPointersObject()) {
+    //     codepoint 233 — the StringTest>>testOnlyLetters corruption.
+    //   - FixedSize (fmt 1, e.g. Text: ivars string+runs): slot `pos` is a
+    //     NAMED ivar, not indexable. `WriteStream on: Text` would store the
+    //     character into the Text's `runs`/`string` ivar instead of the
+    //     backing string's byte — corrupting the Text (the EDEmergency-
+    //     Debugger composeStackText `Character>>copyFrom:to:` crash) and any
+    //     printString-on-Text path. Text>>at:put: delegates to `string`.
+    //   - IndexableWithFixed (fmt 3): index would need a fixed-field offset.
+    // Restricting to fmt==Indexable (pure Array) covers the bench
+    // WriteStream-on-Array fast path with no false positives.
+    if (collObj->format() != ObjectFormat::Indexable) {
         return PrimitiveResult::Failure;
     }
     // Bounds check (defense in depth — should be implied by pos < writeLimit).
