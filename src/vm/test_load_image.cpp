@@ -857,10 +857,12 @@ int main(int argc, char* argv[]) {
               << "        ifTrue: [morphic := true].\n"
               << "      walk := walk sender. depth := depth + 1].\n"
               << "    (morphic and: [p ~~ active])\n"
-              << "      ifTrue: [[p suspend] on: Error do: [:e |]]]] value.\n"
+              << "      ifTrue: [[p suspend] on: Error do: [:e |]]]]\n"
+              << "  on: Error do: [:e | Stdio stderr nextPutAll: '[PREAMBLE-ERR] ', e printString; lf; flush].\n"
               << "[\n"
               << "  result := OpalCompiler new evaluate: '" << escaped << "'.\n"
               << "  Stdio stdout nextPutAll: result printString; lf; flush.\n"
+              << "  Stdio stderr nextPutAll: 'EVAL-RESULT=', result printString; lf; flush.\n"
               << "] on: Error do: [:e |\n"
               << "  Stdio stderr nextPutAll: 'Error: ', e printString; lf; flush].\n"
               << "Smalltalk exitSuccess.\n";
