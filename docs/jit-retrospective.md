@@ -657,3 +657,31 @@ Evidence is reproducible: PHARO_T1_INLINE_J2J=1 PHARO_DET_SCHED=1 PHARO_J2J_STAC
 ./build-opt/test_load_image /tmp/harness/Pharo.image eval "3+4"  -> the [DNU-JIT] space=YOUNG/eden
 classIndex=0 ... line. Diagnostics (J2JSCAN knob, DNU-FRAME dump, receiver-header dump) are committed,
 gated, and default-off.
+
+## CORRECTION (2026-06-09, same day): it is NOT a GC bug — RETRACTING the stack-map conclusion
+
+The "GC-unsafe native frames / stack maps" conclusion above is WRONG. Three further tests, each gated and
+reproducible, rule out GC entirely:
+ 1. forEachRoot already covers the live operand stack, j2jPool_ receivers, and currentJITState_ oops; I
+    added a walk-extension to also cover currentJITState_->sp above stackPointer_ — counter g_j2jGcGapHits
+    stayed 0 (the gap never existed). Reverted.
+ 2. PHARO_SCAV_DANGLE_CHECK (scans old/perm/fmt9/forEachRoot for post-scavenge eden pointers): TOTAL 0
+    dangling young pointers across the whole run. No missed root in any scanned location.
+ 3. DECISIVE A/B: enlarge the harness eden to 768 MB so the short `3+4` eval never fills it. Result:
+    scavengesSoFar=0 at the DNU and the #extent crash STILL happens with the same YOUNG/eden classIndex=0
+    receiver. With ZERO scavenges, eden is never reset, so an eden address whose header is all-zero
+    (hdr=0 slot0=0) is NEVER-WRITTEN, memset-initialised eden memory. The receiver was never a valid
+    object — it is a JIT-COMPUTED WILD ADDRESS that merely lands in the unallocated eden range.
+
+So the corruption is a pure JIT-CODEGEN bug under global inline-J2J: some operation computes/propagates a
+wrong value (wrong operand-stack slot, off-by-N sp accounting, or a bad inline-J2J return-value placement)
+that happens to be an eden-range pointer. This vindicates the EARLIER "operand-stack/sp desync" framing
+(see the "PURE-JIT operand-level" section above) and discards the GC detour — though that detour was a
+productive elimination: it definitively excludes GC (g_j2jGcGapHits=0, dangle TOTAL 0, scavengesSoFar=0
+with the bug present), so the search space is now strictly "where does inline-J2J place the wrong value."
+
+NEXT (non-speculative): lldb pinpoint. Under disable-aslr + DET_SCHED the DNU is at a fixed point. At the
+DNU, read the receiver slot address S (= state->sp - (nArgs+1)*8) and the wild value R; restart, set a
+WATCHPOINT on S, and the LAST native PC to write R into S is the offending inline-J2J emit (a send-return
+value placement or an sp-relative store). That emit site is the fix. The stack-map work is NOT the fix and
+should not be started.

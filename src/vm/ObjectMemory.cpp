@@ -1505,7 +1505,9 @@ uint32_t ObjectMemory::generateHash() {
 
 // ===== GARBAGE COLLECTION =====
 
+uint64_t g_scavengeCount = 0;  // total scavenges (A/B diagnostic)
 GCResult ObjectMemory::scavenge() {
+    g_scavengeCount++;
     // Copying scavenge: tenure all reachable young objects to old
     // space, reset eden.  Unreachable young objects vanish when
     // eden is reset.

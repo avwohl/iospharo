@@ -12961,6 +12961,14 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             fprintf(stderr, "[DNU] #%d: #%s not understood by rcvr=0x%llx argCount=%d fd=%zu in #%s P%d\n",
                     dnuLogCount, selName.c_str(), (unsigned long long)rcvr.rawBits(), argCount, frameDepth_,
                     memory_.selectorOf(method_).c_str(), pri);
+            if (dnuLogCount == 1) {
+                // A/B evidence: with a 768MB eden this prints scavengesSoFar=0,
+                // i.e. the garbage receiver appears with ZERO scavenges -> it is
+                // a JIT-computed wild eden-range address, NOT a GC stale pointer.
+                extern uint64_t g_scavengeCount;
+                fprintf(stderr, "[DNU] scavengesSoFar=%llu\n",
+                        (unsigned long long)g_scavengeCount);
+            }
 
             // PHARO_J2J_STACK_SCAN: global-inline-J2J corruption provenance.
             // The garbage receiver never appears at a 1024-bc checkpoint (it is
