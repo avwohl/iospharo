@@ -2,6 +2,20 @@
 
 2026-06-08
 
+## jit: negative-cache failed initial block compiles (op_value re-queue thrash)
+
+Sibling of the recompile thrash, found by a JIT retry-thrash audit.  A block
+whose `compiler_->compile()` bails is never inserted into `methodMap_`, so
+`jit_t1_block_value`'s lookup stays null and re-queues it via
+`queueInitialCompile` on every value; the dedup only covers the in-flight ring,
+so each safe-point drain re-runs the full asmjit T1 pipeline on the same
+un-compilable hot block, forever (the method path is self-limited by the
+count-map; blocks bypass it).  Fix `5ca05aa3`: `initialCompileFailed_` negative
+cache, early-return in queue + insert on compile-fail in drain, cleared in
+`recoverAfterGC` (one fresh attempt per GC).  The audit refuted all other
+retry-prone paths (tier-2 Sista already negative-caches every exit; megacache
+eviction is a cheap O(1) overwrite; IC-spec runs once per recompile).
+
 ## build: dev cmake build was silently -O0 — ~9x slower SUnit measurement
 
 `CMakeLists` set no default `CMAKE_BUILD_TYPE`, and PharoVMCore's
