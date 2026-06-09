@@ -443,3 +443,59 @@ Confirms the victim; the receiver (stackValue(0) = TOS) and the corrupting upstr
 symbolic member access (this->stackPointer_) → needs the debug-info repair (clean rebuild so the binary's
 debug map has no duplicate/skewed-timestamp entries) before lldb can compute the slot address + set a
 hardware watchpoint. That is the concrete first task of the next session; everything up to it is done.
+
+## THE CORE FINDING (2026-06-09): the from-scratch fork rests on a FALSE premise
+
+Owner's question: "Cog stores type info in HIGH bits (breaks iOS ASLR); we run Cog images and Cog's JIT
+works on them — why reinvent a JIT instead of porting Cogit with different type-info storage?"
+
+Verified answer (8-agent workflow + 3 adversarial critics + hand-checked against the repo):
+
+PREMISE IS FACTUALLY WRONG, and the project's OWN files prove it:
+ - docs/programmers-overview.md ("OOP encoding"): "Standard Spur uses high address bits for tag encoding.
+   iOS ASLR randomizes those bits, so this VM moves tags to the low 3 bits." FALSE.
+ - src/ios/cointerp-cpp.c (the repo's OWN Cog reference): smallIntegerTag()=1, characterTag()=2,
+   smallFloatTag()=4, tagMask()=0x7, identityHashFullWordShift()=32 — ALL LOW-bit immediate tags on
+   8-byte-aligned object pointers (tag 000). Spur CHOSE low-bit tags precisely to allow single-bit tests
+   in Cogit. There were never high bits for ASLR to clobber.
+ - This VM's ObjectHeader is byte-for-byte stock Spur (identityHash at bit 32 included).
+ - The ENTIRE divergence from Spur is TWO relabeled immediate tags, swizzled at load
+   (ImageLoader.cpp ~430-446): Character 010->011, SmallFloat 100->101. SmallInteger and object pointers
+   pass through UNCHANGED.
+ - The fork commit c62ccfa4 ("Move oop encoding from high bits to low bits for iOS/ISO compatibility")
+   birthed the clean-C++ VM on this premise; the one genuinely-ASLR-relevant idea (space bits in the
+   pointer) was tried and REVERTED (a534aa52, range-checks instead). Net encoding = stock Spur + 2 tags.
+
+OWNER IS RIGHT IN SPIRIT: Cogit is built to absorb exactly this. CogObjectRepresentation ("the object
+used to generate object accesses") has per-layout subclasses (ForSqueakV3 / ForSpur / For64BitSpur); the
+register allocator, IC/PIC, trampolines stay representation-agnostic. Eliot Miranda's V3->Spur port
+(which even changed the IC key from class-pointer to 22-bit classIndex) proves a representation swap is
+bounded. The hand-JIT INDEPENDENTLY re-derived Cog's Spur design — it keys its IC on classIndex
+(JITRuntime.cpp:1011-1017), exactly Cog's Spur key.
+
+BUT the literal "port Cogit with different type-info storage" answer is NO — because the encoding was
+NEVER the blocker. The hand-JIT already matches Spur's representation; its open bugs are FRAME / operand-
+stack desyncs, not encoding mismatches. A Cogit source-port buys nothing the hand-JIT lacks, while
+importing the Slang/VMMaker toolchain + the cost of re-marrying Cog's machine-code frame ABI to this VM's
+divergent hand-written frame model (savedFrames_/chain-loop).
+
+THE TWO REAL BLOCKERS (neither is encoding):
+ 1. iOS forbids JIT for any App Store app. MAP_JIT needs com.apple.security.cs.allow-jit, which Apple
+    grants only to Safari/system processes; iospharo/iospharo.entitlements is an empty <dict/>. So NO JIT
+    (ported or hand-written) ships on iOS — the iOS product is necessarily interpreter-only. This is the
+    real reason "why not Cog on iOS," and it applies to ANY JIT, so it never argued for a from-scratch one.
+ 2. For the Catalyst/desktop speedup the JIT branch actually pursues: the C++ VM divorced itself from
+    VMMaker, so a Cogit port would have to bridge Cog's generated frame/ABI to this runtime.
+
+THE FUNDAMENTAL STRATEGIC MISTAKE (answers todo.txt's "fundamental lack of understanding"): the whole
+architecture forked on a misread of Spur's tag encoding (high vs low bits), conflating "encoding is
+incompatible" (false) with "Cog's JIT can't run on iOS" (true, but for the entitlement reason). The most
+reusable proven asset in the ecosystem (Cogit) was bypassed with ZERO commits/docs evaluating it. The
+~2-month waste is the from-scratch JIT *design*, not the C++ interpreter (which was needed for iOS anyway).
+
+CONSTRUCTIVE PATH (not a Cogit source-port): finish the existing JIT as a Cog-SHAPED one on Catalyst —
+the native call/return lever (inline-J2J) already exists and gives ~6x on fib; the blocker is the
+FreeType/Morphic startup corruption. The de-risking step the prior 6 rounds SKIPPED: route EVERY bit-60
+fill through one gated chokepoint (the SKIP/ONLY filters miss the JITRuntime megaCache + jit_rt_ic_fill
+paths — THAT is why bisection kept failing), then binary-search the 171 callees. Honest caveats: still
+multi-session, a residual ~2x remains after, and the iOS product's real lever is interpreter throughput.
