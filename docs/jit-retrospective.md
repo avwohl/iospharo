@@ -527,3 +527,21 @@ megahit-propagated (caller->callee) the C++ log misses, then bisect to the singl
 and/or (2) with PHARO_NO_MEGAHIT_IC_FILL=1 suppressing the corruption, attack the residual livelock
 (the send-resume runaway) — fixing both yields default-on global inline-J2J. Still multi-session; the
 machine was thermally throttled this session so perf deltas (the residual ~2x vs Cog) weren't measurable.
+
+## Cog-shaped work (cont.): the megahit-bit-60 hypothesis is REFUTED — it's an IC/timing interaction
+
+Added J2J_LOG_FILL logging to the megahit fill (jit_rt_fill_ic): under global inline-J2J + DET_SCHED it
+logged ZERO bit-60 fills before the crash. So the megaCache megahit path does NOT propagate the J2J
+corruptor (it overwhelmingly fills non-J2J cached entries). Yet PHARO_NO_MEGAHIT_IC_FILL=1 still flips
+the outcome (#extent crash -> hang). Reconciliation: disabling the megahit fill changes WHICH sites
+re-miss and go through the full C++ send/fill path (which DOES set bit-60 for J2J-eligible callees),
+i.e. it changes IC-fill state/timing — it is not a bit-60 propagation bug. Combined with the earlier
+failures (re-resolve, unsafePrim/banned, all gating axes), this confirms the corruption is a
+CONTEXT-DEPENDENT IC/timing interaction in the live FreeType/Morphic startup, exactly the class the
+retrospective named — not isolable by black-box knobs or targeted fill-path fixes.
+
+So the genuine remaining path is interactive lldb (watchpoint on the corrupted receiver slot at the
+#extent DNU, traced back to the writing instruction under DET_SCHED), which this session found is
+blocked by the build's debug-map gap (locals unreadable; clean-rebuild for complete debug info is the
+prerequisite). All experimental fill-path changes were reverted; the chokepoint analysis, the megahit
+localization, and this refutation are the durable results. Multi-session.
