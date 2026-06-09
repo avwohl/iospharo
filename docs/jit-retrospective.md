@@ -218,6 +218,52 @@ PHARO_T1_RESUME_ONLY_SEL); the corruption is specific to the inline-J2J emit, no
 Net: enabling inline-J2J correctly = understanding/threading ALL its gates AND fixing the
 non-self-recursive corruption (copyBits) — genuinely multi-session.
 
+## inline-J2J ENGAGEMENT GATE MAP (verified 2026-06-09, supersedes the "multi-gated" note above)
+
+Mapped via workflow (3 parallel readers + synthesis + adversarial verify) and hand-verified +
+empirically confirmed. CORRECTION to the note above: engagement does NOT need many knobs — the
+earlier 2-site experiment failed due to an unwired g_t1InlineJ2JActive isolation WRAPPER (now
+reverted), not because the gates are unreachable. PHARO_T1_INLINE_J2J=1 alone DOES engage inline-J2J
+(empirically: inline-J2J hits=1237 during startup; and the repo's own 633/634 SUnit / 13ms fib28 =
+the engagement). The real barrier is CORRECTNESS, not engagement.
+
+The complete AND-chain — ALL must hold for the direct caller->callee branch to fire at a send site:
+
+  COMPILE-EMIT (at JIT-compile of the caller):
+    E0  op is a Phase-4 send                                  [AsmjitT1.cpp:3444]   structural
+    E1  g_debug.t1ICProbe ON (whole IC-probe block wraps J2J) [DebugSettings.hpp:73] default ON; opt-out PHARO_T1_NO_IC_PROBE  <-- synthesis MISSED this; verified
+    E2  g_debug.t1InlineJ2J ON -> emits tbnz x7,#60           [AsmjitT1.cpp:3621-3622,3692; DebugSettings.cpp:174] default OFF; flip PHARO_T1_INLINE_J2J=1  <-- THE primary blocker
+    E3  same flag emits the return-prelude J2J pop            [AsmjitT1.cpp:2782-2792]
+    E4  callerJM reg provenance (x11 if xmethod else x19)     [AsmjitT1.cpp:3455-3459]
+  IC-LIFECYCLE (runtime, BEFORE the recursive send; gated by !g_debug.noJ2J = default ON, NOT by t1InlineJ2J):
+    L1  callee JIT-compiled (codeStart exists)                [Interpreter.cpp:20796]
+    L2  caller IC slot extra==0 then gets bit60(J2J_ENTRY) + bit56(SELF_REC) via 1 C++ round-trip [Interpreter.cpp:20934->20940,20958; also fill path 20639]  <-- extra==0 precondition: synthesis MISSED
+    L3  canJITActivate true: no active materialize-bail unwind [Interpreter.hpp:1236; t1AllowNestedJitBail default false]
+  RUNTIME-TAKE (each send):
+    R1  IC slot-0 key == receiver class                        [AsmjitT1.cpp:3541-3570]
+    R2  extras x7 != 0                                          [3600]
+    R3  bit 60 set -> tryInlineJ2J                              [3692]
+    R4  no precedence-bit divert (59/55/primKinds)             [3628-3689] (none for bytecode-only fib)
+    R5  self-rec discriminator bit56 (self-rec passes both xmethod on/off; cross-method needs xmethod + leaf sub-gates 3951-3971) [3945 / 4007]
+    R6  saveless gate skipped (t1CanSkipJ2JSave default OFF)    [4033]
+    R7  warm/pure caller-IC gate NOT emitted (BOTH default OFF) [4177-4211; DebugSettings.cpp:199,210]  <-- both default OFF; "warm default-on" comment is STALE
+    R8  J2J save-stack not full                                 [4253-4259]
+    R9  push 56B save, j2jDepth++ (x20), g_inlineJ2J_hits++, br x9 -> callee entry [4374,4518,4521]
+  RETURN-SIDE:
+    T1  j2jDepth>j2jEntryDepth -> pop save, tail-call resumeAddr(=post-send). entry baseline seeded in Interpreter.cpp (19329 etc.), NOT TrampolineAsm.S as one map claimed.
+
+  DEFAULT BLOCKERS (why it's off): only E2/E3 (t1InlineJ2J default OFF). Everything else holds by
+  default for self-rec fib. So `PHARO_T1_INLINE_J2J=1` is sufficient to ENGAGE.
+
+  THE ACTUAL BARRIER (correctness, not engagement): global PHARO_T1_INLINE_J2J=1 miscompiles — a
+  garbage receiver (rcvr cls=0) surfaces as `#extent` DNU inside BitBlt copyBits during startup.
+  EMPIRICALLY: skipping copyBits via PHARO_J2J_SKIP_SELECTORS does NOT stop the crash -> the
+  corrupting method is UPSTREAM, not copyBits itself; the bug is NOT selector-localized. Same
+  cond-jump+J2J operand class as the resume desync. Isolation knobs (J2J_SKIP_SELECTORS skips a
+  comma-list; there is no inverse "only-this-selector" knob) can't cleanly confine it -> a working
+  inverse-isolation (emit J2J for ONE method, correctly threaded through every compile path) is the
+  prerequisite for a clean benchFib repro, then lldb the operand corruption.
+
 REVISED PLAN (native-call lever): it is a CORRECTNESS fix, not a rewrite.
   1. Map ALL inline-J2J engagement gates (warm/pure/bit-60/xmethod/j2jDepth) first, then build a
      working per-method isolation; get a minimal, non-graphics, deterministic repro of the inline-J2J
