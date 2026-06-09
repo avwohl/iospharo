@@ -406,6 +406,7 @@ struct DebugSettings {
     const char* jitSkipSelectors = nullptr;        // PHARO_JIT_SKIP_SELECTORS
     const char* jitNoSimStackSelectors = nullptr;  // PHARO_JIT_NO_SIMSTACK_SELECTORS
     const char* j2jSkipSelectors = nullptr;        // PHARO_J2J_SKIP_SELECTORS
+    const char* j2jOnlySelectors = nullptr;        // PHARO_J2J_ONLY_SELECTORS (inverse skip: fill J2J bit ONLY for these selectors)
     const char* jitDumpBCPre = nullptr;            // JIT_DUMP_BC_PRE
     const char* jitDumpBCPost = nullptr;           // JIT_DUMP_BC_POST
     const char* jitDumpHex = nullptr;              // JIT_DUMP_HEX

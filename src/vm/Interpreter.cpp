@@ -20326,6 +20326,35 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         }
     }
 
+    // DEBUG: Inverse skip (PHARO_J2J_ONLY_SELECTORS) — fill the J2J entry bit
+    // ONLY for the listed selectors; skip every other selector.  Confines
+    // inline-J2J ENGAGEMENT to a controlled method (its IC never gains bit 60
+    // otherwise, so its sends never take the inline-J2J branch) WITHOUT
+    // enabling inline-J2J during startup — the emit may be globally on
+    // (PHARO_T1_INLINE_J2J=1) but is harmless without bit 60.
+    {
+        const char* onlyEnv = g_debug.j2jOnlySelectors;
+        if (onlyEnv && *onlyEnv) {
+            std::string sel;
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* sh = selector.asObjectPtr();
+                if (sh->isBytesObject() && sh->byteSize() < 80) {
+                    sel = std::string((char*)sh->bytes(), sh->byteSize());
+                }
+            }
+            bool found = false;
+            const char* p = onlyEnv;
+            while (*p) {
+                const char* end = p;
+                while (*end && *end != ',') end++;
+                if ((size_t)(end - p) == sel.size() &&
+                    std::memcmp(p, sel.data(), sel.size()) == 0) { found = true; break; }
+                p = (*end == ',') ? end + 1 : end;
+            }
+            if (!found) return;
+        }
+    }
+
     // Verify the IC belongs to this send by checking that the IC's stored
     // selector matches the send's selector. If they don't match, the
     // pendingICPatch_ was stale (set by a different send in a nested JIT
@@ -20790,6 +20819,36 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 }
                 p = (*end == ',') ? end + 1 : end;
             }
+        }
+    }
+
+    // DEBUG: Inverse skip (PHARO_J2J_ONLY_SELECTORS) — upgrade J2J bit ONLY for
+    // the listed selectors (see the matching block in the fill path).
+    {
+        const char* onlyEnv = g_debug.j2jOnlySelectors;
+        if (onlyEnv && *onlyEnv) {
+            std::string sel;
+            uint64_t icSelBits = icData[18];
+            if (icSelBits != 0 && icSelBits > 0x10000) {
+                Oop sOop = Oop::fromRawBits(icSelBits);
+                if (sOop.isObject()) {
+                    ObjectHeader* sh = sOop.asObjectPtr();
+                    if (sh->isBytesObject() && sh->byteSize() < 80) {
+                        sel = std::string((char*)sh->bytes(), sh->byteSize());
+                    }
+                }
+            }
+            if (sel.empty()) sel = memory_.selectorOf(cachedMethod);
+            bool found = false;
+            const char* p = onlyEnv;
+            while (*p) {
+                const char* end = p;
+                while (*end && *end != ',') end++;
+                if ((size_t)(end - p) == sel.size() &&
+                    std::memcmp(p, sel.data(), sel.size()) == 0) { found = true; break; }
+                p = (*end == ',') ? end + 1 : end;
+            }
+            if (!found) return;
         }
     }
 

@@ -373,6 +373,7 @@ DebugSettings::DebugSettings() {
     jitSkipSelectors       = envStr("PHARO_JIT_SKIP_SELECTORS");
     jitNoSimStackSelectors = envStr("PHARO_JIT_NO_SIMSTACK_SELECTORS");
     j2jSkipSelectors       = envStr("PHARO_J2J_SKIP_SELECTORS");
+    j2jOnlySelectors       = envStr("PHARO_J2J_ONLY_SELECTORS");
     jitDumpBCPre           = envStr("JIT_DUMP_BC_PRE");
     jitDumpBCPost          = envStr("JIT_DUMP_BC_POST");
     jitDumpHex             = envStr("JIT_DUMP_HEX");
