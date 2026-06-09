@@ -499,3 +499,31 @@ FreeType/Morphic startup corruption. The de-risking step the prior 6 rounds SKIP
 fill through one gated chokepoint (the SKIP/ONLY filters miss the JITRuntime megaCache + jit_rt_ic_fill
 paths — THAT is why bisection kept failing), then binary-search the 171 callees. Honest caveats: still
 multi-session, a residual ~2x remains after, and the iOS product's real lever is interpreter throughput.
+
+## Cog-shaped work, session 2026-06-09 (cont.): corruption localized to the megaCache megahit fill
+
+Pursuing global inline-J2J (the native-call lever) by completing the bit-60-fill chokepoint and
+bisecting. New, verified findings (all under PHARO_DET_SCHED=1):
+ - The ONLY two LIVE C++ bit-60 fill sites are patchJITICAfterSend + upgradeICToJ2J (both already honor
+   j2jSkipSelectors/j2jOnlySelectors). JITRuntime.cpp:1025 (jit_rt_ic_miss) is DEAD CODE. So PHARO_J2J_
+   ONLY_SELECTORS (whitelist) is the COMPLETE C++-fill chokepoint; PHARO_J2J_SKIP (blacklist) is not
+   (misses unresolved/uncaptured selectors) — which is why earlier SKIP-based bisection failed.
+ - But ONLY=ALL(172 captured callees) does NOT crash (startup=1, 12903 J2J hits) while GLOBAL crashes.
+   The delta is the THIRD fill path: jit_rt_fill_ic (the mega-cache "megahit" IC fill, gated by
+   PHARO_NO_MEGAHIT_IC_FILL). It propagates bit-60 from the megaCache to IC sites WITHOUT going through
+   the logged/filtered C++ paths, so the corruptor's IC gets bit-60 via this uncovered route (and isn't
+   in the 172 captured fills).
+ - DECISIVE: global inline-J2J + PHARO_NO_MEGAHIT_IC_FILL=1 REMOVES the copyBits #extent DNU (DNU 0) —
+   confirming the megahit fill is the corruption vector — but then HANGS (exit 124, a separate livelock,
+   likely the send-resume runaway). So there are TWO layered bugs: (a) megahit-fed corruption, (b) a
+   livelock exposed once (a) is suppressed.
+ - The corruption is NOT in the megahit fill's own validation: adding (i) re-resolve of the entry from
+   the callee's current JITMethod (stale-address guard) and (ii) the unsafePrim/isJ2JBanned checks that
+   the C++ paths apply BOTH failed to remove #extent (reverted). So the corruption is in WHAT a
+   megahit-filled IC ENGAGES, not in the fill's address/prim/ban correctness.
+
+CONCRETE NEXT STEPS (next session): (1) add J2JFILL-style logging to jit_rt_fill_ic to capture the
+megahit-propagated (caller->callee) the C++ log misses, then bisect to the single corruptor selector;
+and/or (2) with PHARO_NO_MEGAHIT_IC_FILL=1 suppressing the corruption, attack the residual livelock
+(the send-resume runaway) — fixing both yields default-on global inline-J2J. Still multi-session; the
+machine was thermally throttled this session so perf deltas (the residual ~2x vs Cog) weren't measurable.
