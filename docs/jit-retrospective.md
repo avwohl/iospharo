@@ -545,3 +545,33 @@ So the genuine remaining path is interactive lldb (watchpoint on the corrupted r
 blocked by the build's debug-map gap (locals unreadable; clean-rebuild for complete debug info is the
 prerequisite). All experimental fill-path changes were reverted; the chokepoint analysis, the megahit
 localization, and this refutation are the durable results. Multi-session.
+
+## Cog-shaped work: lldb UNBLOCKED + corruption concretely characterized (2026-06-09)
+
+TOOLING REPAIR (the prerequisite the prior sessions lacked): lldb expr was failing ("use of
+undeclared identifier 'pharo'") because the binary's debug map had a duplicate/future-timestamp object
+that dsymutil skipped. FIX RECIPE (now works): force a relink (`rm build-opt/test_load_image && cmake
+--build build-opt`) then `dsymutil build-opt/test_load_image -o /tmp/tli.dSYM`; in lldb:
+`settings set target.disable-aslr true` (stable addresses across runs), `target symbols add <dSYM>`,
+function breakpoint `pharo::Interpreter::sendDoesNotUnderstand` (the line bp doesn't bind). expr can
+READ fields and call lookup-able funcs but NOT inlined members (selectorOf fails "Couldn't look up
+symbols"); use register-cast field reads: `p/x ((pharo::Interpreter*)$x0)->stackPointer_` etc. ($x0 =
+this; args also in x1=selector, w2=argCount at +0). A duplicate future-timestamped .o still gets skipped
+(harmless for Interpreter type info) — a full clean rebuild would remove the warning entirely.
+
+CORRUPTION CHARACTERIZED (global inline-J2J + DET_SCHED, at the #extent DNU in copyBits):
+  stackBase_=0x683b0e950, sp=0x683b0ef00, fp=0x683b0ee80  (Smalltalk stack = [base, base+1MB))
+  method_=0x30092ff20 (copyBits CM, valid heap oop)   inJITResume_=false   j2jPoolCursor_=0
+  receiver (*(sp-1)) = 0x6800f3d70  -> a RAW pointer ~60MB BELOW stackBase_, NOT a heap oop and NOT in
+  the Smalltalk stack.  Operand slots sp[-1..-3] all hold such raw pointers (0x6800f3d70/3d88/3dd0).
+CONCLUSIONS:
+ - The "garbage receiver" is a raw non-oop pointer (FFI/FreeType ExternalAddress / Form-bits class of
+   address), not a Smalltalk frame pointer and not heap.  DNU-STACK context = FreeType glyph rendering
+   (ExternalAddress class>>allocate:bytesDuring: -> ... -> copyBits).
+ - j2jPoolCursor_=0 at the DNU => no J2J call is mid-flight; the corruption is RESIDUAL — an earlier
+   inline-J2J transition left the operand stack/sp mis-balanced, so copyBits indexes the wrong slot
+   (a raw FFI pointer) as its receiver.  This is a stack-balance (sp off-by-N) desync, matching the
+   retrospective's "operand-stack desync" class, now concrete.
+NEXT (now feasible with working lldb): with disable-aslr, set a watchpoint on the receiver slot OR
+single-step the copyBits/FreeType path under inline-J2J to find the transition that leaves sp off; that
+transition is the fix site.  The send-resume / J2J save-restore sp accounting is the prime suspect.
