@@ -20691,10 +20691,20 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                 // SELF_REC_BIT (bit 56): pendingICOwnerMethod_ holds the
                 // caller's CM oop at this point.  See upgradeICToJ2J for
                 // the asmjit-T1 inline-J2J use.
-                if (pendingICOwnerMethod_.isObject()
-                        && pendingICOwnerMethod_.rawBits()
-                            == resolvedMethod.rawBits()) {
+                bool selfRecFill = pendingICOwnerMethod_.isObject()
+                        && pendingICOwnerMethod_.rawBits() == resolvedMethod.rawBits();
+                if (selfRecFill) {
                     extra |= (1ULL << 56);
+                }
+                if (GET_DEBUG_BOOL(PHARO_J2J_LOG_FILL)) {
+                    static int n = 0;
+                    if (++n <= 4000) {
+                        std::string callerSel = pendingICOwnerMethod_.isObject()
+                            ? memory_.selectorOf(pendingICOwnerMethod_) : "?";
+                        fprintf(stderr, "[J2JFILL] %s -> %s%s\n", callerSel.c_str(),
+                                memory_.selectorOf(resolvedMethod).c_str(),
+                                selfRecFill ? " SELFREC" : "");
+                    }
                 }
                 jitJ2JDirectPatches_++;
             }
@@ -21020,6 +21030,16 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                     }
                 }
                 icData[e * 3 + 2] = newExtra;
+                if ((newExtra & (1ULL << 60)) && GET_DEBUG_BOOL(PHARO_J2J_LOG_FILL)) {
+                    static int n = 0;
+                    if (++n <= 4000) {
+                        std::string callerSel = callerMethod.isObject()
+                            ? memory_.selectorOf(callerMethod) : "?";
+                        fprintf(stderr, "[J2JFILL] %s -> %s%s (upgrade)\n", callerSel.c_str(),
+                                memory_.selectorOf(cachedMethod).c_str(),
+                                (newExtra & (1ULL << 56)) ? " SELFREC" : "");
+                    }
+                }
                 jitJ2JDirectPatches_++;
                 // Late-spec re-recompile accounting (see JITRuntime::
                 // noteLateSpecBit).  callerMethod's IC just gained a

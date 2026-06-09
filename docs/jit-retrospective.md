@@ -355,6 +355,33 @@ STATUS vs /goal "as fast as Cog": breakthrough delivered + committed (inline-J2J
 fib, first JIT-beats-interp, pessimism overturned). Global enablement = the FreeType/Morphic corruption
 (lldb, multi-session) + the residual ~2x. Path fully characterized; goal is multi-session.
 
+## /goal round 3: corruption involves MULTIPLE fill paths + emit/trampoline interdependence
+
+Added PHARO_J2J_LOG_FILL (logs every IC bit-60 fill/upgrade caller->callee). Under global inline-J2J
++ DET_SCHED before the crash: 2179 fills, 171 distinct callee selectors, 351 distinct callers — broad,
+ending in the WorldMorph render loop (displayWorld/doOneCycle/processEvents) that drives FreeType/copyBits.
+
+Bisection attempts (all DET_SCHED-deterministic, no rebuild needed):
+ - PHARO_J2J_SKIP_SELECTORS = ALL 171 captured callees → STILL crashes. So the corruptor's IC gets bit-60
+   via a fill path the Interpreter-side skip-list does NOT cover — JITRuntime has other bit-60 setters
+   (megaCache JITRuntime.cpp:1025, jit_rt_ic_fill) that ignore j2jSkipSelectors/j2jOnlySelectors.
+ - PHARO_T1_INLINE_J2J=1 + PHARO_NO_J2J=1 (emit on, ZERO fills, J2JFILL=0) → STILL crashes. But this is
+   CONFOUNDED: NO_J2J also disables the trampoline-J2J infrastructure the emit's bail paths rely on, so
+   it's not a clean emit-alone test. (ONLY_SELECTORS=benchFib — normal j2jEnabled, emit on, fill only
+   benchFib — DOES work, so the emit is not broken under normal config.)
+
+CONCLUSION: the inline-J2J emit, the (multiple) bit-60 fill paths, and the trampoline-J2J machinery are
+interdependent; no single runtime knob isolates the corruptor, because the skip/only filters cover only
+2 of the bit-60 fill sites. Cracking it needs EITHER (a) routing every bit-60 fill path (incl.
+JITRuntime megaCache/ic_fill) through one gated chokepoint so bisection is complete, THEN binary-search
+the 171 callees; OR (b) interactive lldb on the live DET_SCHED startup, watchpoint on the corrupted
+stack slot at the #extent DNU walked back to the writing transition. Both multi-session.
+
+REALISTIC SCOPE: "whole VM as fast as Cog" = global inline-J2J (this corruption fix) + the residual ~2x
+per-call overhead + matching Cog's optimizer breadth across all bytecodes. That is a multi-month effort
+(consistent with the project's own 2-month history). The committed breakthrough (inline-J2J ~6x on fib,
+near-Cog, pessimism overturned) is the foundation; parity is sustained future work.
+
 REVISED PLAN (native-call lever): it is a CORRECTNESS fix, not a rewrite.
   1. Map ALL inline-J2J engagement gates (warm/pure/bit-60/xmethod/j2jDepth) first, then build a
      working per-method isolation; get a minimal, non-graphics, deterministic repro of the inline-J2J
