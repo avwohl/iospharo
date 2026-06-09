@@ -825,6 +825,38 @@ the dead-block emission is confirmed as the corruptor. FIX (preserves the optimi
 blocks OUT-OF-LINE (past dispatchCached/endOfSend). The PHARO_T1_NO_J2J_BRANCH knob (whole-block gate)
 gives a clean inline-J2J build meanwhile.
 
+## ROOT CAUSE + FIX (2026-06-09): unvalidated dispatch-A-only inline specs (bits 51-58)
+
+A 3-agent workflow mapped the if(inlineJ2J) send-emit control flow and resolved it: `if (inlineJ2J)`
+(AsmjitT1.cpp:3635) closes at 4666 with `} else {`. The inline-spec ROUTING is TRIPLICATED and the copies
+are NOT identical:
+  (a) dispatch-A (3710-3780): in-block, taken when bit-60 is CLEAR. Routes getter(63)/setter(62)/
+      returnsSelf(61) AND the "extra" specs bit-58 returnsLiteral, bit-57 multiSlot, bit-54 tempReturn,
+      bit-53 intCmpReturn, bit-52 intArithReturn, bit-51 evenOdd — but NOT at:/at:put:/size/class.
+  (b) j2jBail dispatch (4584-4665): in-block, after a J2J bail. getter/setter/returnsSelf + at:/size/class.
+  (c) else/false-path (4666-4739): inlineJ2J=false (DEFAULT, validated). Same as (b).
+The branches to the bit-51..58 "extra" specs exist ONLY in dispatch-A (a); the validated default path (c)
+and the j2jBail path (b) NEVER route to them. So those six specs were NEVER exercised before inline-J2J
+(which itself never worked), i.e. UNVALIDATED — and they are buggy: tryMultiSlot (bit 57) reads two
+receiver slots and writes a tagged result back to the receiver stack slot (`stur x6,[x2,rcvrOffset]`); for
+the multi-slot accessor #extent it writes a WILD value -> the long-standing global-inline-J2J #extent
+crash. The set also produces a NonBooleanReceiver/mustBeBoolean (a conditional gets a non-boolean).
+
+Confirmed by bisection (reproducible, eval "3+4"):
+  PHARO_T1_INLINE_J2J=1                                          -> #extent crash
+  + gate whole if(inlineJ2J) block (PHARO_T1_NO_J2J_BRANCH=1)    -> CLEAN 3+4=7  (removes dispatch-A)
+  + PHARO_T1_NO_INLINE_MULTISLOT=1 only                          -> no #extent, but mustBeBoolean remains
+  + disable all six (multiSlot/returnsLiteral/temp/intCmp/intArith/evenOdd) -> CLEAN 3+4=7
+The earlier "all_specs_off" tests had NOT included multiSlot, which is why they kept crashing.
+
+FIX (committed): flip those six specs to DEFAULT-OFF (opt-in) in DebugSettings — they are reachable only
+via inline-J2J's dispatch-A, so this has ZERO effect on the shipped (inline-J2J-off) VM, and it makes
+global inline-J2J CORRECT. Validated: PHARO_T1_INLINE_J2J=1 (no other knobs, with AND without DET_SCHED)
+-> exit 0, no #extent, no mustBeBoolean, EVAL-RESULT=7; compute A/B matches default exactly (20 factorial
+loop = 486580401635328000000000; gcd loop = 233310). The J2J call/save/return mechanism itself is SOUND —
+five months chasing it was the wrong place. Re-enable a spec only after validating/fixing its emit
+(start with multiSlot's receiver-slot write and the boolean-returning intCmp/evenOdd).
+
 ### Correction to the branch-range hypothesis (same session): asmjit errors ARE checked
 
 emitMethodBytes checks asmjit errors: `code.flatten()` (AsmjitT1.cpp:6626) and `copy_flattened_data`

@@ -138,13 +138,23 @@ DebugSettings::DebugSettings() {
     t1InlineGetter      = !envPresent("PHARO_T1_NO_INLINE_GETTER");
     t1InlineSetter      = !envPresent("PHARO_T1_NO_INLINE_SETTER");
     t1InlineReturnsSelf = !envPresent("PHARO_T1_NO_INLINE_RETURNS_SELF");
-    t1InlineTempReturn  = !envPresent("PHARO_T1_NO_INLINE_TEMP_RETURN");
-    t1InlineIntCmpReturn = !envPresent("PHARO_T1_NO_INLINE_INT_CMP_RETURN");
-    t1InlineIntArithReturn = !envPresent("PHARO_T1_NO_INLINE_INT_ARITH_RETURN");
-    t1InlineEvenOdd     = !envPresent("PHARO_T1_NO_INLINE_EVEN_ODD");
+    // 2026-06-09: these six "extra" inline specializations (IC-extra bits
+    // 51-58) are routed ONLY by the inline-J2J send-emit's dispatch-A
+    // (AsmjitT1.cpp ~3718-3762); the validated default/j2jBail dispatch paths
+    // never branch to them, so they were NEVER exercised before inline-J2J
+    // (which itself never worked) and are UNVALIDATED + buggy: tryMultiSlot
+    // writes a wild receiver slot -> the long-standing global-inline-J2J
+    // #extent crash; the set also produces mustBeBoolean (non-boolean to a
+    // conditional). Flipped to DEFAULT-OFF (opt-in) so global inline-J2J is
+    // correct (eval 3+4 = 7, no #extent, no mustBeBoolean). Re-enable a spec
+    // only after validating its emit. See docs/jit-retrospective.md.
+    t1InlineTempReturn  = envPresent("PHARO_T1_INLINE_TEMP_RETURN");
+    t1InlineIntCmpReturn = envPresent("PHARO_T1_INLINE_INT_CMP_RETURN");
+    t1InlineIntArithReturn = envPresent("PHARO_T1_INLINE_INT_ARITH_RETURN");
+    t1InlineEvenOdd     = envPresent("PHARO_T1_INLINE_EVEN_ODD");
     sistaNoShortcutEvenOdd = envPresent("PHARO_SISTA_NO_SHORTCUT_EVEN_ODD");
-    t1InlineMultiSlot   = !envPresent("PHARO_T1_NO_INLINE_MULTISLOT");
-    t1InlineReturnsLiteral = !envPresent("PHARO_T1_NO_INLINE_RETURNS_LITERAL");
+    t1InlineMultiSlot   = envPresent("PHARO_T1_INLINE_MULTISLOT");
+    t1InlineReturnsLiteral = envPresent("PHARO_T1_INLINE_RETURNS_LITERAL");
     // 2026-05-21 (A6 iter N+30k): default-ON.  The pure-J2J gate
     // (PHARO_T1_NO_PURE_J2J_GATE=1 to disable) prevents inline-J2J
     // from firing when any IC site lacks bit 60 (J2J_ENTRY_BIT),

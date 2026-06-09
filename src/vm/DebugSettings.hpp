@@ -81,27 +81,27 @@ struct DebugSettings {
     bool t1InlineReturnsSelf = true;  // PHARO_T1_NO_INLINE_RETURNS_SELF inverts
     // jit-may23d W1: inline `^ arg0` (TempReturn) at IC HIT.
     // PHARO_T1_NO_INLINE_TEMP_RETURN=1 disables.  Uses IC bit 54.
-    bool t1InlineTempReturn = true;
+    bool t1InlineTempReturn = false;  // default-off: dispatch-A-only, unvalidated (see DebugSettings.cpp)
     // jit-may23d W2: inline `^ self cmp arg0` (IntCmpReturn) at IC HIT.
     // PHARO_T1_NO_INLINE_INT_CMP_RETURN=1 disables.  Uses IC bit 53.
-    bool t1InlineIntCmpReturn = true;
+    bool t1InlineIntCmpReturn = false;  // default-off: dispatch-A-only, unvalidated
     // jit-may23d W3: inline `^ self op arg0` (IntArithReturn) at IC HIT.
     // PHARO_T1_NO_INLINE_INT_ARITH_RETURN=1 disables.  Uses IC bit 52.
-    bool t1InlineIntArithReturn = true;
+    bool t1InlineIntArithReturn = false;  // default-off: dispatch-A-only, unvalidated
     // jit-may23d W6: inline Integer>>even/odd at IC HIT.  Pattern is
     // `^ (self bitAnd: 1) = 0` (even) or `... = 1` (odd).
     // PHARO_T1_NO_INLINE_EVEN_ODD=1 disables.  Uses IC bit 51.
-    bool t1InlineEvenOdd = true;
+    bool t1InlineEvenOdd = false;  // default-off: dispatch-A-only, unvalidated
     // jit-may23d W7: shortcut for #even/#odd in Sista's call_send
     // helper.  PHARO_SISTA_NO_SHORTCUT_EVEN_ODD=1 disables.
     bool sistaNoShortcutEvenOdd = false;
     // jit-may22b multi-slot: inline bit-57 pattern
     // (^ self[A] op1 self[B] op2 const).  Common for
     // OrderedCollection>>size.  PHARO_T1_NO_INLINE_MULTISLOT=1 opt-out.
-    bool t1InlineMultiSlot = true;
+    bool t1InlineMultiSlot = false;  // default-off: dispatch-A-only, writes wild #extent receiver (unvalidated)
     // jit-may22b returnsLiteral: inline bit-58 pattern
     // (^ nil/true/false/0/1).  Saves a method activation per IC HIT.
-    bool t1InlineReturnsLiteral = true;
+    bool t1InlineReturnsLiteral = false;  // default-off: dispatch-A-only, unvalidated
     // Inline-J2J emit (self-recursive case): tail-call callee's JIT entry
     // directly instead of round-tripping through the chain loop.  12× win
     // on benchFib.  Default-on 2026-05-17, default-OFF 2026-05-20 after
