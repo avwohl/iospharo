@@ -249,6 +249,20 @@ Lret_after_restore:
     cbz     x7,  Lret_null_resume
 
     // BLR to resumeAddr. Stencils clobber x0-x17, x19, x20, x30.
+    //
+    // SEND-RESUME FIX (2026-06-09): x7 is a MID-METHOD entry
+    // (codeStart + bcToCode[bcOffset]) into the caller, which BYPASSES the
+    // codeStart prologue that hoists x19=state.jitMethod and x20=j2jDepthInc.
+    // The just-returned callee clobbered both (its own prologue set x19 to the
+    // callee's jitMethod; stencils used x20).  Without restoring them, the
+    // resumed caller's IC-HIT path dereferences a STALE jitMethod (x19) → wrong
+    // icBuffer → "DNU on garbage class indices" / mustBeBoolean cascades — the
+    // long-deferred "Phase 4b.2 send-resume protocol gap".  state.jitMethod was
+    // restored to the caller's (x11) at line ~222, so reload from it; mirrors
+    // pharo_jit_osr_resume, which does the identical reload for the C++ resume
+    // path.  This is what makes resume-after-send safe for send-methods.
+    ldr     x19, [x21, #JS_JITMETHOD]
+    ldr     x20, [x21, #JS_J2J_DEPTH_INC]
     mov     x0,  x21
     blr     x7
     b       Ltramp_loop

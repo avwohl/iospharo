@@ -6973,6 +6973,16 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     if (numSendSites > 0 && !forceResumeForSends
             && (!resumeSendsNoCondjump || t1HasCondJump))
         advertiseResume = false;
+    // DEBUG ISOLATION (PHARO_T1_RESUME_ONLY_SEL): force send-resume ON for a
+    // single selector so the resume protocol can be exercised/validated on one
+    // controlled method (e.g. benchFib) WITHOUT enabling it during startup.
+    // Wins over the send-gate above; still requires a real, bc-bearing method.
+    {
+        const char* resumeOnlySel = GET_DEBUG_STR(PHARO_T1_RESUME_ONLY_SEL);
+        if (resumeOnlySel && isReal && !noNumBc && !noBcToCode && bcLen > 0
+                && memory.selectorOf(compiledMethod) == resumeOnlySel)
+            advertiseResume = true;
+    }
     jm->numBytecodes      = advertiseResume ? (uint16_t)bcLen : 0;
     jm->numICEntries      = numSendSites;
     jm->bcToCodeTableOffset = advertiseResume ? bcToCodeTableOffset : 0;
