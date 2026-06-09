@@ -402,6 +402,27 @@ inspect the corrupted stack slot at the #extent DNU, set a watchpoint on it, re-
 transition that writes the garbage. That is the only remaining path; it cannot be done via one-shot
 batch commands.
 
+## /goal round 5: lldb path needs a debug-info repair first (de-risked for next session)
+
+Attempted the interactive-lldb root-cause this session. Findings that unblock the next one:
+ - The crash is a HEISENBUG: reproduces under lldb ONLY with PHARO_DET_SCHED=1 (wall-clock timing hides it).
+ - A LINE breakpoint at Interpreter.cpp:12927 does NOT bind in RelWithDebInfo ("no locations"); a FUNCTION
+   breakpoint `pharo::Interpreter::sendDoesNotUnderstand` DOES bind and stops at the #extent DNU (DNU #1).
+ - BUT locals/`expr`/method-calls FAIL ("unable to load debug map object file"; "undeclared identifier
+   argCount"). `dsymutil` builds a dSYM but skips an object with a corrupt FUTURE timestamp (2028-03-06),
+   leaving a debug-info gap — so symbolic inspection of sendDoesNotUnderstand's locals still fails.
+ - WORKAROUND for next session: read args from REGISTERS at function entry (AAPCS: x0=this, x1=selector
+   Oop, w2=argCount), or fix the bad .o timestamp (touch/clean-rebuild) so dsymutil emits complete debug
+   info, THEN: break at the DNU, read the corrupted receiver slot address, set a hardware watchpoint on it,
+   re-run under DET_SCHED, and catch the inline-J2J transition that writes the garbage.
+
+NET (whole /goal session): the corruption that blocks GLOBAL inline-J2J is in the CORE inline-J2J path
+(prim-dispatch, gating, and fill-path bisection all ruled out), is context-dependent in the live
+FreeType/Morphic startup, and needs interactive lldb that is itself blocked by a build debug-info gap.
+This is multi-session. The committed breakthrough — inline-J2J ~6x on fib (near Cog), pessimism
+overturned — stands; "whole VM as fast as Cog" remains a multi-month continuation, now fully de-risked
+and scoped.
+
 REVISED PLAN (native-call lever): it is a CORRECTNESS fix, not a rewrite.
   1. Map ALL inline-J2J engagement gates (warm/pure/bit-60/xmethod/j2jDepth) first, then build a
      working per-method isolation; get a minimal, non-graphics, deterministic repro of the inline-J2J
