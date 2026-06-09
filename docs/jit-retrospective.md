@@ -825,6 +825,36 @@ the dead-block emission is confirmed as the corruptor. FIX (preserves the optimi
 blocks OUT-OF-LINE (past dispatchCached/endOfSend). The PHARO_T1_NO_J2J_BRANCH knob (whole-block gate)
 gives a clean inline-J2J build meanwhile.
 
+## Cog-speed (2026-06-09): why the custom VM is ~35x slower, and the levers
+
+benchFib timing (Time millisecondsToRun: [32 benchFib], JIT-warmed, startup-isolated; r=7049155):
+  custom interpreted (benchFib fails to JIT-compile)  ~600 ms
+  custom JIT, trampoline-J2J (default)                 ~835 ms   (!! SLOWER than interpreting)
+  custom JIT + inline-J2J                              ~100 ms
+  stock Cog                                              18 ms
+Findings:
+ 1. The dominant reason the custom VM is slow is that HOT METHODS FAIL TO JIT-COMPILE and run interpreted.
+    Two causes, both fixed/raised here:
+    (a) per-method emit buffer was `bcLen*512+512` — too small (send bytecodes emit ~900 B each), so
+        send-heavy methods overflowed and FAILED (844/run). Fixed: 1536 B/bytecode + grow-and-retry
+        (AsmjitT1.cpp ~6850). Buffer overflows -> 0.
+    (b) the 16 MB code zone FILLS (the asmjit-T1 emit is ~6 KB/method vs Cog's ~hundreds of B), so methods
+        compiled late (benchFib during an eval) can't allocate. Raised the zone to 64 MB (JITConfig.hpp)
+        so they compile. benchFib then 600ms(interp) -> 100ms(JIT+inline-J2J).
+ 2. The DEFAULT JIT (trampoline-J2J) is WORSE than the interpreter for tight recursion (835 > 600): the
+    JIT->C++->JIT round-trip per recursive send costs more than interpreting. inline-J2J (direct native
+    branch) fixes it -> 100 ms, an 8x speedup over trampoline-J2J. So inline-J2J (now correct, this
+    session) is REQUIRED for the JIT to help recursion; the default trampoline path is a dead end for it.
+ 3. Remaining gap after inline-J2J: 100 ms vs Cog 18 ms = ~5.6x. That is per-call codegen overhead — the
+    custom JIT's send sequence (IC-probe + inline-spec dispatch + J2J save/branch/return-prelude, all
+    emitted INLINE at every send) is far heavier than Cog's compact native call. This also causes the
+    ~6 KB/method bloat that fills the zone.
+LEVERS toward Cog parity (in order): (i) make inline-J2J default-on after broad validation (SUnit+GUI) —
+it's the single biggest win for recursive/send-heavy code; (ii) COMPACT the per-send emit (move the
+IC-probe + dispatch out-of-line into shared trampolines like Cog, so each send site is a short call) —
+this both shrinks methods (16 MB suffices, no zone bump needed) AND cuts the 5.6x per-call gap;
+(iii) hot-method-aware eviction so hot methods displace cold ones in a full zone.
+
 ## ROOT CAUSE + FIX (2026-06-09): unvalidated dispatch-A-only inline specs (bits 51-58)
 
 A 3-agent workflow mapped the if(inlineJ2J) send-emit control flow and resolved it: `if (inlineJ2J)`

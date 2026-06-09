@@ -72,8 +72,16 @@ enum class OS : uint8_t {
 
 // ===== CODE ZONE SIZING =====
 
-// Default machine code zone size (16 MB, same as Cog)
-static constexpr size_t DefaultCodeZoneSize = 16 * 1024 * 1024;
+// Default machine code zone size. Cog uses 16 MB and FITS because its codegen
+// is compact (~hundreds of B/method); this VM's asmjit-T1 emits ~6 KB/method
+// (verbose per-send IC-probe + inline-spec dispatch + J2J machinery), so 16 MB
+// fills after ~2700 methods and HOT methods compiled late (e.g. benchFib during
+// an eval, after startup) fail to allocate -> run interpreted -> the ~35x Cog
+// gap. Raised to 64 MB so hot methods compile (validated: benchFib 600ms interp
+// -> 103ms JIT+inline-J2J). PROPER fix (follow-up): compact the per-send emit
+// (out-of-line dispatch like Cog) and/or hot-method-aware eviction so 16 MB
+// suffices. See docs/jit-retrospective.md "Cog-speed".
+static constexpr size_t DefaultCodeZoneSize = 64 * 1024 * 1024;
 
 // Minimum code zone (1 MB)
 static constexpr size_t MinCodeZoneSize = 1 * 1024 * 1024;

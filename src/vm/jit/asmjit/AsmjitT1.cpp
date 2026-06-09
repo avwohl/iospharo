@@ -6847,9 +6847,16 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // bytes.  Inline-J2J emit (PHARO_T1_INLINE_J2J=1) adds ~200 bytes per
     // send site.  Raised from 128 to 512 bytes/bytecode (2026-05-17) to
     // accommodate inline-J2J + per-bail counters + return prelude.
-    size_t cap = bcLen * 512 + 512;
-    if (cap > 65536) cap = 65536;
-    if (bcLen * 512 + 512 > cap) {
+    // 2026-06-09: the 512 B/bytecode estimate was TOO SMALL — each send
+    // bytecode emits the full IC-probe + inline-spec dispatch (~900 B/bytecode
+    // observed), so send-heavy methods (incl. benchFib) overflowed the buffer
+    // and FAILED to compile (emitMethodBytes returns false at code_size>outCap)
+    // -> ran interpreted -> the ~35x Cog gap on recursive sends. The buffer is
+    // transient (freed after the code-zone copy; it does NOT consume the 16 MB
+    // code zone, which is sized by the actual code_size), so size it generously
+    // and grow-and-retry on the rare overflow rather than failing the compile.
+    size_t cap = bcLen * 1536 + 4096;
+    if (cap > 1048576) {            // genuinely huge method (>~680 bytecodes)
         g_failed++; g_failedBcOther++;
         return nullptr;
     }
@@ -6897,11 +6904,23 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // so just its 2 getter sites get the BLR (no global code-size bloat).
     g_emitGetterTrace = GET_DEBUG_BOOL(PHARO_FINDNODE_WATCH)
         && memory.selectorOf(compiledMethod) == "asTuple";
-    if (!emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
-                         callerArgCount, callerTempCount,
-                         staticJ2JArgCount,
-                         buf.data(), cap, &emitted, &isReal,
-                         bcToCode.data())) {
+    bool emitOk = emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
+                         callerArgCount, callerTempCount, staticJ2JArgCount,
+                         buf.data(), cap, &emitted, &isReal, bcToCode.data());
+    // Grow-and-retry on buffer overflow (emitMethodBytes returns false when
+    // code_size > outCap).  The transient buffer is freed after the code-zone
+    // copy, so doubling it is cheap; failing instead would lose a real method
+    // to the interpreter (the ~35x Cog gap).  Re-emit is clean (fresh
+    // CodeHolder per call).  Bounded so a genuinely-too-big method still bails.
+    while (!emitOk && cap < 1048576) {
+        cap *= 2;
+        buf.assign(cap, 0);
+        std::fill(bcToCode.begin(), bcToCode.end(), 0);
+        emitOk = emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
+                         callerArgCount, callerTempCount, staticJ2JArgCount,
+                         buf.data(), cap, &emitted, &isReal, bcToCode.data());
+    }
+    if (!emitOk) {
         g_failed++; g_failedBcOther++;
         return nullptr;
     }
