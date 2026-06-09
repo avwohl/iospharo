@@ -685,3 +685,33 @@ DNU, read the receiver slot address S (= state->sp - (nArgs+1)*8) and the wild v
 WATCHPOINT on S, and the LAST native PC to write R into S is the offending inline-J2J emit (a send-return
 value placement or an sp-relative store). That emit site is the fix. The stack-map work is NOT the fix and
 should not be started.
+
+## lldb session (2026-06-09): confirmed + anchors + lead (watchpoint mechanics pending)
+
+Confirmed via lldb (function bp `Interpreter::sendDoesNotUnderstand`; LINE bps don't bind — debug-map gap):
+ - Selector bytes at the DNU = "extent". argCount=0. method_ = copyBits:from:at:clippingBox:rule:fill...
+ - Native bt is shallow (sendDoesNotUnderstand <- sendSelector <- interpret <- main): the #extent send is
+   dispatched by the C++ interpreter loop; the Smalltalk chain lives in the Oop stack / savedFrames_, not
+   the native stack. So the receiver was pushed earlier (JIT or interp) then the C++ send loaded it.
+ - Per-run anchors (one run): stackBase_=0x59db0e950 sp=0x59db0ef00 newSpaceStart_=0x598c00000
+   newSpaceEnd_=0x59ac00000 receiver R=0x59a0f3d70 (IN eden, ~22MB in). Receiver slot S = sp-8.
+   DETERMINISTIC OFFSETS (stable across runs under DET_SCHED): S-stackBase_ = 0x5A8 (181 oops up);
+   R-newSpaceStart_ = 0x14F3D70.  NOTE: absolute bases VARY per run (aligned_alloc; disable-aslr does NOT
+   pin them) — anchor any watchpoint to a runtime-read base + the fixed offset, never a hardcoded address.
+ - LEAD: at the DNU, lastJitReturn = #min: (0x30037c540) retVal=SmallInt 0; B5 ring shows the recent J2J
+   returns are tiny copyBits clip-math sends (#min:/#max:/#size/#depth/#over) all with spΔ=0. The wild
+   receiver is a POINTER to zeroed eden, not SmallInt 0 — but the copyBits clip-rect inline-J2J return
+   path (#min:/#max:) is the prime suspect for an sp/slot desync that strands a stale slot as the receiver.
+
+WATCHPOINT MECHANICS — still to land (the only blocker to the exact PC):
+ - Recipe: break `interpret` (--skip-prologue false so x0=this), read $sb=this->stackBase_ and
+   $ns=this->memory_.newSpaceStart_, set S=$sb+0x5A8, watchpoint -s8 on S, condition (robust, address-
+   independent): `*S>0x100000 && (*S&7)==0 && *(unsigned long long*)(*S)==0` (slot holds a pointer to a
+   ZERO header = the wild-value signature; no valid receiver matches). Then continue -> the stop PC is the
+   writing emit.
+ - GOTCHA observed: in lldb batch mode the wp stops ONCE on an early write of 0 BEFORE `watchpoint modify
+   -c` attaches (the condition is applied a command too late), then `continue` runs to the DNU without re-
+   stopping. Either (a) attach the condition atomically (single python-scripted watchpoint command that
+   auto-continues unless the zero-header test passes), or (b) verify the 0x5A8 slot offset is actually
+   where the receiver gets WRITTEN this run (it may be copied via a different depth), or watch a small slot
+   RANGE. This is pure lldb-batch plumbing, not a new unknown about the bug.
