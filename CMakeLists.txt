@@ -9,6 +9,20 @@ else()
     project(PharoVM LANGUAGES C CXX ASM)
 endif()
 
+# Default build type.  Without this, a configure that omits -DCMAKE_BUILD_TYPE
+# leaves CMAKE_BUILD_TYPE empty, and since PharoVMCore's target_compile_options
+# add no -O flag, the VM compiles at -O0.  That made the dev build (and every
+# `build/test_load_image` SUnit run / AWS-box sweep) ~9x slower on reflective /
+# interpreter-heavy code than the -O2 shipping xcframework — turning CPU-bound
+# tests into spurious watchdog TIMEOUTs and skewing the SUnit-vs-Cog comparison.
+# RelWithDebInfo (-O2 -g) keeps symbols for the lldb JIT-debugging workflow.
+# For clean single-stepping, configure with -DCMAKE_BUILD_TYPE=Debug explicitly.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
+        "Build type (default RelWithDebInfo = -O2 -g)" FORCE)
+    message(STATUS "CMAKE_BUILD_TYPE not set — defaulting to RelWithDebInfo (-O2 -g)")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
