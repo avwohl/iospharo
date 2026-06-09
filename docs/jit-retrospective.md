@@ -798,6 +798,35 @@ blocks ~800B/site bloat every method -> faster code-zone fill -> an eviction/lay
 decisive test: gate the ENTIRE if(inlineJ2J) block (not just the tbnz) so the send emit is byte-identical
 to default, then re-enable its sub-parts one at a time.
 
+## BREAKTHROUGH (2026-06-09 cont.): isolated to the if(inlineJ2J) send-emit block — clean A/B
+
+Did the cheapest decisive test: extended PHARO_T1_NO_J2J_BRANCH to gate the ENTIRE `if (inlineJ2J)` block
+at AsmjitT1.cpp:3634 (J2J precedence checks + dispatch-A + the dead tryInlineJ2J/j2jBail blocks). Result,
+reproducible:
+  INLINE_J2J=1                        -> #extent crash (control)
+  INLINE_J2J=1 + NO_J2J_BRANCH=1      -> CLEAN, EVAL-RESULT=7   (whole block skipped)
+  default                             -> CLEAN, EVAL-RESULT=7
+It COMPILED with the block skipped -> the inline-spec bodies (tryGetter/tryPrimAt/...) and dispatchCached
+live AFTER the block (shared), so the block contains only: J2J checks (sub-knob-gated off) + dispatch-A
++ the dead tryInlineJ2J(3804..)/j2jBail(4582..) blocks.
+
+So the corruptor is the SEND-EMIT BLOCK, definitively (not fill, not prelude, not push, not specs). With
+specs off, dispatch-A reduces to `tst x1,#7; b_ne dispatchCached; b dispatchCached` — trivial, can't
+corrupt. => PRIME SUSPECT: the DEAD tryInlineJ2J/j2jBail block emission (3804..4744, ~900 lines of
+instructions) bloats the code between dispatch-A and its forward branch targets (dispatchCached@5969,
+spec bodies). ARM64 conditional branches have SHORT range (b.cond ±1MB, tbz/cbz/tbnz ±32KB); if a
+cond-branch in the IC-probe/dispatch-A to a now-far label exceeds range, asmjit may mis-encode/silently
+drop it (cf. memory asmjit-arm64-invalid-logical-imm: asmjit SILENTLY drops invalid encodings). That is a
+per-method, deterministic, layout-dependent corruption — fits all evidence.
+
+NEXT (precise): (1) gate ONLY the dead tryInlineJ2J/j2jBail region (3804..~4744; labels tryInlineJ2J/
+j2jBail are referenced only by the now-gated branches + internally, so removing them is safe) — if CLEAN,
+the dead-block bloat is confirmed. (2) Check compileViaAsmjit's handling of asmjit finalize/emit errors
+(kErrorInvalidDisplacement) — if errors are ignored rather than bailing to stub, that's the silent
+corruption. FIX (preserves the optimization): emit the dead J2J blocks OUT-OF-LINE (past dispatchCached/
+endOfSend) so they don't bloat the inline cond-branch spans, or ensure out-of-range cond-branches bail to
+stub. The PHARO_T1_NO_J2J_BRANCH knob (whole-block gate) gives a clean inline-J2J build meanwhile.
+
  TESTED (3): added prim-bit + isStubOnEntry + canBailMidMethod gates to the self-rec path (x19=callerJM
  ==calleeJM for self-rec): DNU PERSISTS. So the corrupting self-rec method is CLEAN — no prim, no
  mid-method bail, no stub. That is exactly the fib/factorial shape that's supposed to work.

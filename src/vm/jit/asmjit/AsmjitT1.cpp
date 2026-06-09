@@ -3630,7 +3630,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // recursive sends.  MVP: self-recursive only (caller == callee).
             // Mirrors stencils.cpp:1733-1877's `j2j_direct_call:` block.
             // See deferred.md A6 for full design.
-            const bool inlineJ2J = g_debug.t1InlineJ2J;
+            const bool inlineJ2J = g_debug.t1InlineJ2J
+                && !GET_DEBUG_BOOL(PHARO_T1_NO_J2J_BRANCH);  // TEST: NO_J2J_BRANCH now gates the WHOLE block
             if (inlineJ2J) {
                 asmjit::Label tryInlineJ2J = a.new_label();
                 asmjit::Label j2jBail      = a.new_label();
@@ -3701,12 +3702,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 // Bit 60 set → try inline J2J; works for any receiver tag
                 // (SmI receivers benefit too, unlike inline-getter/setter).
-                // PHARO_T1_NO_J2J_BRANCH: bisect — skip this branch so bit-60
-                // hits fall through to normal dispatch (isolates branch/bail
-                // detour from the bit-60 fill as the corruptor).
-                if (!GET_DEBUG_BOOL(PHARO_T1_NO_J2J_BRANCH)) {
-                    a.tbnz(x7, asmjit::Imm(60), tryInlineJ2J);
-                }
+                a.tbnz(x7, asmjit::Imm(60), tryInlineJ2J);
 
                 // (fall through to existing inline-spec dispatch)
                 // Inline specializations need heap receiver for getter/setter,
