@@ -150,6 +150,17 @@ extern "C" uint64_t g_bcRemoteTemp_hits   = 0;  // 0xFB/0xFC/0xFD inline fired
 extern "C" uint64_t g_inlineJ2J_dbg_caller_method = 0;
 extern "C" uint64_t g_inlineJ2J_dbg_callee_method = 0;
 extern "C" uint64_t g_inlineJ2J_dbg_extra         = 0;
+
+// PHARO_T1_LOG_SELFREC_PUSH: ring of caller(=callee) CompiledMethod oops at
+// each self-rec inline-J2J save-push, to NAME the method whose save/return
+// desyncs.  Resolved to selectors at the #extent DNU (see Interpreter.cpp).
+extern "C" uint64_t g_selfRecPushRing[256] = {0};
+extern "C" uint32_t g_selfRecPushIdx = 0;
+extern "C" void jit_rt_log_selfrec_push(pharo::jit::JITState* s) {
+    if (!s) return;
+    g_selfRecPushRing[g_selfRecPushIdx & 255] = s->method.rawBits();
+    g_selfRecPushIdx++;
+}
 // Cross-method bisection counter + limit.  At runtime, bail when
 // g_xmethod_count > g_xmethod_max.  Limit set from
 // PHARO_T1_INLINE_J2J_XMETHOD_MAX env var (default UINT64_MAX = no limit).
@@ -2782,6 +2793,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     const bool inlineJ2J = g_debug.t1InlineJ2J;
     auto emitJ2JReturnPreludeIfEnabled = [&]() {
         if (!inlineJ2J) return;
+        if (GET_DEBUG_BOOL(PHARO_T1_NO_J2J_RETPRELUDE)) return;  // bisect knob
         asmjit::Label normalReturn = a.new_label();
         // Check current j2jDepth > j2jEntryDepth (this method pushed a save).
         // Without entry-depth gate, chain-loop-activated methods would
@@ -3689,7 +3701,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 // Bit 60 set → try inline J2J; works for any receiver tag
                 // (SmI receivers benefit too, unlike inline-getter/setter).
-                a.tbnz(x7, asmjit::Imm(60), tryInlineJ2J);
+                // PHARO_T1_NO_J2J_BRANCH: bisect — skip this branch so bit-60
+                // hits fall through to normal dispatch (isolates branch/bail
+                // detour from the bit-60 fill as the corruptor).
+                if (!GET_DEBUG_BOOL(PHARO_T1_NO_J2J_BRANCH)) {
+                    a.tbnz(x7, asmjit::Imm(60), tryInlineJ2J);
+                }
 
                 // (fall through to existing inline-spec dispatch)
                 // Inline specializations need heap receiver for getter/setter,
@@ -4248,6 +4265,39 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.b(j2jBailSelf2);
                     a.bind(gateDone);
                     emitBailGateLog(1);
+                }
+
+                // PHARO_T1_LOG_SELFREC_PUSH: record caller(=callee) CM oop into
+                // the ring so the #extent DNU dump can NAME the self-recursive
+                // method whose save/return desyncs.  x0=state already.  Save
+                // x0-x15 + x30 (the bail-gate-log save set) around the blr;
+                // x19/x20 are callee-saved per AAPCS.  DET_SCHED makes the
+                // extra instructions harmless to scheduling.
+                if (GET_DEBUG_BOOL(PHARO_T1_LOG_SELFREC_PUSH)) {
+                    using namespace asmjit::a64;
+                    a.sub(sp, sp, asmjit::Imm(144));
+                    a.stp(x0, x1,   ptr(sp, 0));
+                    a.stp(x2, x3,   ptr(sp, 16));
+                    a.stp(x4, x5,   ptr(sp, 32));
+                    a.stp(x6, x7,   ptr(sp, 48));
+                    a.stp(x8, x9,   ptr(sp, 64));
+                    a.stp(x10, x11, ptr(sp, 80));
+                    a.stp(x12, x13, ptr(sp, 96));
+                    a.stp(x14, x15, ptr(sp, 112));
+                    a.str(x30,      ptr(sp, 128));
+                    // x0 = state (unchanged from entry); call logger.
+                    a.mov(x16, asmjit::Imm((uint64_t)&jit_rt_log_selfrec_push));
+                    a.blr(x16);
+                    a.ldp(x0, x1,   ptr(sp, 0));
+                    a.ldp(x2, x3,   ptr(sp, 16));
+                    a.ldp(x4, x5,   ptr(sp, 32));
+                    a.ldp(x6, x7,   ptr(sp, 48));
+                    a.ldp(x8, x9,   ptr(sp, 64));
+                    a.ldp(x10, x11, ptr(sp, 80));
+                    a.ldp(x12, x13, ptr(sp, 96));
+                    a.ldp(x14, x15, ptr(sp, 112));
+                    a.ldr(x30,      ptr(sp, 128));
+                    a.add(sp, sp, asmjit::Imm(144));
                 }
 
                 // Check save stack space.  cursor (offset 144) and limit

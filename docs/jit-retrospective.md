@@ -762,6 +762,42 @@ Read the full self-rec save-push (AsmjitT1.cpp ~4253-4515) + return prelude (~27
  (3) is the strongest untested lead: add those same guards (prim-bit / canBailMidMethod / isStubOnEntry /
  numICEntries) to the self-rec path and see if the DNU vanishes.
 
+## MAJOR REFRAME (2026-06-09 cont.): the corruptor is a COMPILE-TIME emit effect, NOT the J2J mechanism
+
+Named the methods, then bisected the inline-J2J emit itself. Decisive chain (all PHARO_T1_INLINE_J2J=1 +
+DET_SCHED, eval "3+4", watching the #extent DNU; added gated knobs PHARO_T1_LOG_SELFREC_PUSH /
+PHARO_T1_NO_J2J_BRANCH / PHARO_T1_NO_J2J_RETPRELUDE + a self-rec push ring + scavengesSoFar/DNU dump):
+
+ - LOG_SELFREC_PUSH (xmethod OFF): self-rec inline-J2J pushes = 0, yet #extent still crashes. The
+   inline-J2J counters confirm: hits=0, bail_self=141669 (every bit-60 IC-hit BAILS via the
+   bit-56-not-set route). So in xmethod-off mode inline-J2J does ZERO pushes — the push/save/return
+   mechanism is NOT exercised, yet it crashes.
+ - LOG_SELFREC_PUSH (xmethod ON): 5174 pushes, last methods #findElementOrNil:/#numerator:denominator:/
+   #memCopy:to:size: — but these are CROSS-METHOD (xmethod) pushes, incidental: xmethod-off has 0 and
+   still crashes, so the pushes are not causal.
+ - NO_J2J_BRANCH (skip the `tbnz x7,#60 -> tryInlineJ2J` send-site branch): still crashes.
+ - NO_J2J_RETPRELUDE (skip the per-method J2J return-prelude epilog): still crashes.
+ - NO_J2J (j2jEnabled=false -> the bit-60 FILL is disabled, so NO bit-60 IC entries ever exist) +
+   INLINE_J2J=1: still crashes — while NO_J2J alone is CLEAN (=7). So bit-60 entries are not needed.
+ - TRUE MINIMAL: INLINE_J2J=1 + NO_J2J + NO_J2J_BRANCH + NO_J2J_RETPRELUDE + all inline-specs off
+   (getter/at/size/at:put:/class/idh/float): STILL CRASHES.
+
+CONCLUSION: merely COMPILING methods with t1InlineJ2J=1 corrupts, independent of the bit-60 fill, the
+bit-60 branch, the return prelude, every inline-spec, and any runtime J2J push/activation. All the
+t1InlineJ2J_Env gates in Interpreter.cpp (20255/21410) and JITCompiler.cpp (1522/1592/1635/2891) are
+fib-only diagnostic logging — not behavioral. So the corruptor is the inline-J2J EMIT STRUCTURE itself:
+the `if (inlineJ2J)` block at AsmjitT1.cpp:3634 reshapes every Phase4 send's emit (it emits "dispatch-A"
++ the dead tryInlineJ2J/j2jBail blocks inside the probe path) in a way that miscompiles even when none of
+the J2J paths are taken. This OVERTURNS the entire prior framing (5 months spent on the J2J save/return
+mechanism — the wrong place).
+
+NEXT-SESSION ENTRY POINT: diff the emitted code for a send with inlineJ2J=true vs =false (PHARO_ASMJIT_T1_LOG=1
+on a tiny method, or careful brace analysis of the if(inlineJ2J) at 3634 vs the non-J2J dispatch) to find
+the one structural divergence; OR test the code-bloat/eviction hypothesis (the dead tryInlineJ2J/j2jBail
+blocks ~800B/site bloat every method -> faster code-zone fill -> an eviction/layout bug). The cheapest
+decisive test: gate the ENTIRE if(inlineJ2J) block (not just the tbnz) so the send emit is byte-identical
+to default, then re-enable its sub-parts one at a time.
+
  TESTED (3): added prim-bit + isStubOnEntry + canBailMidMethod gates to the self-rec path (x19=callerJM
  ==calleeJM for self-rec): DNU PERSISTS. So the corrupting self-rec method is CLEAN — no prim, no
  mid-method bail, no stub. That is exactly the fib/factorial shape that's supposed to work.

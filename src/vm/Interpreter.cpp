@@ -89,6 +89,8 @@ extern "C" uint64_t g_inlineJ2J_bail_gate;
 extern "C" uint64_t g_inlineJ2J_dbg_caller_method;
 extern "C" uint64_t g_inlineJ2J_dbg_callee_method;
 extern "C" uint64_t g_inlineJ2J_dbg_extra;
+extern "C" uint64_t g_selfRecPushRing[256];
+extern "C" uint32_t g_selfRecPushIdx;
 extern "C" uint64_t g_canSkipJ2JSave_count;
 extern "C" uint64_t g_canSkipJ2JSave_total;
 extern "C" uint64_t g_canSkipJ2JSave_ic_hits;
@@ -12968,6 +12970,22 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 extern uint64_t g_scavengeCount;
                 fprintf(stderr, "[DNU] scavengesSoFar=%llu\n",
                         (unsigned long long)g_scavengeCount);
+                // PHARO_T1_LOG_SELFREC_PUSH: name the self-recursive methods
+                // whose inline-J2J save-push ran just before this crash.
+                if (GET_DEBUG_BOOL(PHARO_T1_LOG_SELFREC_PUSH)) {
+                    uint32_t total = g_selfRecPushIdx;
+                    fprintf(stderr, "[DNU] self-rec inline-J2J pushes=%u; last 24 (most recent last):\n",
+                            total);
+                    uint32_t n = total < 24 ? total : 24;
+                    for (uint32_t k = n; k >= 1; --k) {
+                        uint64_t bits = g_selfRecPushRing[(total - k) & 255];
+                        Oop m = Oop::fromRawBits(bits);
+                        fprintf(stderr, "[DNU]   selfrec[-%u] method=0x%llx #%s\n",
+                                k - 1, (unsigned long long)bits,
+                                (m.isObject() && bits > 0x10000)
+                                    ? memory_.selectorOf(m).c_str() : "?");
+                    }
+                }
             }
 
             // PHARO_J2J_STACK_SCAN: global-inline-J2J corruption provenance.
