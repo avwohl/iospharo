@@ -821,11 +821,22 @@ per-method, deterministic, layout-dependent corruption — fits all evidence.
 
 NEXT (precise): (1) gate ONLY the dead tryInlineJ2J/j2jBail region (3804..~4744; labels tryInlineJ2J/
 j2jBail are referenced only by the now-gated branches + internally, so removing them is safe) — if CLEAN,
-the dead-block bloat is confirmed. (2) Check compileViaAsmjit's handling of asmjit finalize/emit errors
-(kErrorInvalidDisplacement) — if errors are ignored rather than bailing to stub, that's the silent
-corruption. FIX (preserves the optimization): emit the dead J2J blocks OUT-OF-LINE (past dispatchCached/
-endOfSend) so they don't bloat the inline cond-branch spans, or ensure out-of-range cond-branches bail to
-stub. The PHARO_T1_NO_J2J_BRANCH knob (whole-block gate) gives a clean inline-J2J build meanwhile.
+the dead-block emission is confirmed as the corruptor. FIX (preserves the optimization): emit the dead J2J
+blocks OUT-OF-LINE (past dispatchCached/endOfSend). The PHARO_T1_NO_J2J_BRANCH knob (whole-block gate)
+gives a clean inline-J2J build meanwhile.
+
+### Correction to the branch-range hypothesis (same session): asmjit errors ARE checked
+
+emitMethodBytes checks asmjit errors: `code.flatten()` (AsmjitT1.cpp:6626) and `copy_flattened_data`
+(6673) both `return false` (-> bail to interp stub, CORRECT) on any error. So an out-of-range conditional
+branch would bail to a stub, NOT silently corrupt — and the dead blocks are only ~KBs anyway (well within
+tbz/cbz ±32KB). So the "silent asmjit mis-encode from bloat" theory is WRONG. The corruptor is a
+LOGIC/STRUCTURAL divergence: the dispatch emitted INSIDE the if(inlineJ2J) block differs from the shared/
+non-block dispatch that runs when the block is gated (and is correct). Whether the inline-spec bodies +
+dispatchCached are duplicated inside vs shared after the block is still unresolved (brace analysis of
+3634's close was inconclusive by grep). REFINED NEXT STEP: determine where `if (inlineJ2J)` (3634) closes
+(is dispatchCached@5969 inside it or after?), then DIFF the in-block dispatch path against the shared
+one — the divergence is the bug. The (1) dead-region gate above is still the cheapest first cut.
 
  TESTED (3): added prim-bit + isStubOnEntry + canBailMidMethod gates to the self-rec path (x19=callerJM
  ==calleeJM for self-rec): DNU PERSISTS. So the corrupting self-rec method is CLEAN — no prim, no
