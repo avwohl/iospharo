@@ -575,3 +575,21 @@ CONCLUSIONS:
 NEXT (now feasible with working lldb): with disable-aslr, set a watchpoint on the receiver slot OR
 single-step the copyBits/FreeType path under inline-J2J to find the transition that leaves sp off; that
 transition is the fix site.  The send-resume / J2J save-restore sp accounting is the prime suspect.
+
+## Cog-shaped work: corruption is PURE-JIT operand-level (not a C++-boundary return value)
+
+Added a localizer at tryJITResumeInCaller (the JIT->C++ send-return boundary): under global inline-J2J +
+DET_SCHED, validate the TOS return value via memory_.isValidObject; log the first invalid one. RESULT:
+it fired ZERO times before the #extent crash. So the corrupt value NEVER appears as a return value at a
+C++ boundary — copyBits sends #extent to an operand that was mis-positioned DURING JIT machine-code
+execution (a wrong push or sp position), residual by the DNU (j2jPoolCursor_=0). The corruption lives
+entirely inside JIT-emitted execution and does not surface at tryJITResumeInCaller. (Check reverted.)
+
+Ruled out this session, cumulatively: megahit-bit-60 propagation (0 bit-60 megahit fills), stale megahit
+address, unsafePrim/isJ2JBanned at the megahit fill, and now C++-send-return-value corruption. The bug is
+a pure-JIT operand-stack/sp desync in the FreeType FFI path. CONCRETE next options (all feasible now that
+lldb works): (1) a frame-operand SCAN at the per-1024-bytecode checkpoint (flag any operand slot above fp
+that is a pointer but not a valid heap object -> catches it within 1024 bytecodes of the bad push, with
+method context); (2) complete the bit-60 chokepoint (re-add the megahit SKIP/ONLY+log filter) so ONLY=ALL
+reproduces, then bisect the callees; (3) single-step the JIT execution of the FreeType/copyBits methods
+under disable-aslr watching sp + the operand slot. The frame-scan (1) is the cheapest decisive localizer.
