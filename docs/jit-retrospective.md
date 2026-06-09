@@ -206,10 +206,23 @@ wrong receiver or non-Boolean. Strong hypothesis: ONE shared root cause (SP/oper
 the cond-jump boundary across a J2J save/restore or resume). Fixing it would unblock BOTH inline-J2J
 (fib ~6x, near Cog -> fib A/B PASSES) AND general send-resume.
 
+UPDATE 2026-06-09 (same session, after the x19/x20 commit 4e61de95): attempted to isolate inline-J2J
+to one selector (a 2-site g_t1InlineJ2JActive gate over g_debug.t1InlineJ2J reads in emitOne_arm64).
+RESULT: insufficient — inline-J2J did NOT engage (benchFib timing unchanged: fib30 ~208ms isolated vs
+~204 default vs ~172 interp). inline-J2J's actual call-inlining is gated by SEVERAL interacting
+conditions (warm gate, pure gate, IC bit-60 / J2J_ENTRY_BIT, xmethod, the j2jDepth machinery), not the
+two sites a simple knob flips. The incomplete knob was reverted; only the committed x19/x20 fix +
+PHARO_T1_RESUME_ONLY_SEL remain. Also re-confirmed: the trampoline resume path is CORRECT for
+non-self-recursive J2J + cond-jump (a jtest->jbar+ifTrue:ifFalse: repro returns correct results under
+PHARO_T1_RESUME_ONLY_SEL); the corruption is specific to the inline-J2J emit, not trampoline resume.
+Net: enabling inline-J2J correctly = understanding/threading ALL its gates AND fixing the
+non-self-recursive corruption (copyBits) — genuinely multi-session.
+
 REVISED PLAN (native-call lever): it is a CORRECTNESS fix, not a rewrite.
-  1. Get a minimal, non-graphics, deterministic repro of the inline-J2J garbage-receiver / non-Boolean
-     bug (isolate inline-J2J to one selector like the resume knob; or drive CharacterTest>>testStoreStringAll;
-     use PHARO_DET_SCHED for any timing component).
+  1. Map ALL inline-J2J engagement gates (warm/pure/bit-60/xmethod/j2jDepth) first, then build a
+     working per-method isolation; get a minimal, non-graphics, deterministic repro of the inline-J2J
+     garbage-receiver / non-Boolean bug (or drive CharacterTest>>testStoreStringAll; PHARO_DET_SCHED
+     for any timing component).
   2. lldb the cond-jump + J2J boundary: confirm the SP/operand desync, find whether the cond-jump's
      boolean-pop or the J2J save/restore mis-accounts by a slot.
   3. Fix the shared root cause; gate on (a) fib A/B (JIT < interp, approaching 13ms) AND (b) the
