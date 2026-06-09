@@ -845,10 +845,18 @@ Findings:
     JIT->C++->JIT round-trip per recursive send costs more than interpreting. inline-J2J (direct native
     branch) fixes it -> 100 ms, an 8x speedup over trampoline-J2J. So inline-J2J (now correct, this
     session) is REQUIRED for the JIT to help recursion; the default trampoline path is a dead end for it.
- 3. Remaining gap after inline-J2J: 100 ms vs Cog 18 ms = ~5.6x. That is per-call codegen overhead — the
-    custom JIT's send sequence (IC-probe + inline-spec dispatch + J2J save/branch/return-prelude, all
-    emitted INLINE at every send) is far heavier than Cog's compact native call. This also causes the
-    ~6 KB/method bloat that fills the zone.
+ 3. Remaining gap after inline-J2J: ~80-100 ms vs Cog 18 ms = ~4.5-5.6x. CHARACTERIZED: it is NOT
+    arithmetic — benchFib's SmallInt </+/- ARE inlined (Phase-3 emit, 0x60-0x67 fast path; bcArithBail
+    only ~1079 of millions). It is the inline-J2J recursive-CALL sequence: ~11 ns/call (82ms/7M calls) vs
+    Cog ~2.6 ns/call. Each inline-J2J self-rec call emits IC-probe + dispatch-A + a 56-byte J2JSave push
+    (callee-state setup: receiver/tempBase/ip/sp + nil-fill) + direct branch + the return-prelude
+    (pop save, send-return semantics, tail-call) — far more instructions than Cog's machine-code call.
+    The saveless path (PHARO_T1_CAN_SKIP_J2J_SAVE) does NOT engage for benchFib (fires=0). This per-call
+    bloat is also what makes methods ~6 KB (fills the 16 MB zone, cause 1b above).
+    => The Cog-parity lever is STREAMLINING the inline-J2J call sequence (fewer instructions/call: e.g.
+    skip the IC-probe for proven-monomorphic self-rec sites; make the saveless path engage; shrink the
+    save/restore). CAUTION: this path was just made correct this session (the 6-spec fix) — change it
+    carefully with the benchFib A/B + correctness checks each step.
 LEVERS toward Cog parity (in order): (i) make inline-J2J default-on after broad validation (SUnit+GUI) —
 it's the single biggest win for recursive/send-heavy code; (ii) COMPACT the per-send emit (move the
 IC-probe + dispatch out-of-line into shared trampolines like Cog, so each send site is a short call) —
