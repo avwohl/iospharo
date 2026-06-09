@@ -298,6 +298,32 @@ NEXT (global enablement): bisect WHICH startup selector's inline-J2J setup corru
 PHARO_J2J_SKIP_SELECTORS until the crash flips, then lldb that one method's tryInlineJ2J setup
 (AsmjitT1.cpp 3623-3945, the precedence/calleeJM/state code that runs before the branch).
 
+## /goal "as fast as Cog" — progress + the corruption is CONTEXT-DEPENDENT (2026-06-09)
+
+Toward global inline-J2J (the path to broad Cog-class speed). Findings this round:
+ - Gating inline-J2J to self-rec at the EMIT (tbnz#60 entry) or routing cross-method bit-60 to
+   dispatchCached did NOT stop the startup crash. The crash needs only bit-60 ICs present globally +
+   the inline-J2J emit on; it is NOT in the taken branch, NOT in tryInlineJ2J setup, NOT high-arg
+   (high-arg sends aren't Phase-4 sends, never inline-J2J'd).
+ - Used the existing xmethod engagement log (PHARO_T1_INLINE_J2J_XMETHOD_LOG=1) under global
+   inline-J2J: the first cross-method engagement before the crash is findElementOrNil: -> scanFor:
+   (HashedCollection; scanFor: numLits=7, no prim). Promising lead.
+ - BUT scanFor: inline-J2J reproduces CORRECTLY in isolation (PHARO_J2J_ONLY_SELECTORS=scanFor: under
+   a Set#includes: workload: 12359 hits, correct results, no crash). As do jsumr:/jack:/jtest/jm5.
+ - CONCLUSION: the corruption does NOT reproduce in any synthetic single-method/single-pair workload.
+   It is a CONTEXT-DEPENDENT, multi-method-interaction / heap-state (GC/become:/collision) bug that
+   only manifests in the full live startup — the "whole-system entanglement" the retrospective named.
+   It needs lldb on the live startup (capture the J2J save chain + the corrupted stack slot at the
+   #extent DNU, Interpreter.cpp:12927, and walk back to the engaged transition that wrote it), NOT
+   more synthetic isolation. lldb MCP is not registered this session; CLI lldb is the tool.
+
+STATUS vs the /goal: the BREAKTHROUGH is delivered + committed — inline-J2J (allow-list) gives ~6x on
+fib (30ms vs 171ms interp; Cog ~15ms), correct, overturning the "structural / can't beat interp"
+pessimism. Remaining to "as fast as Cog": (1) fix the context-dependent cross-method corruption for
+GLOBAL enablement (lldb, multi-session); (2) close the residual ~2x (fib 30ms vs Cog 15ms) — even
+global inline-J2J is ~2x off Cog, so Cog-parity needs further work beyond inline-J2J. This is a
+multi-session goal; the path is now precisely characterized.
+
 REVISED PLAN (native-call lever): it is a CORRECTNESS fix, not a rewrite.
   1. Map ALL inline-J2J engagement gates (warm/pure/bit-60/xmethod/j2jDepth) first, then build a
      working per-method isolation; get a minimal, non-graphics, deterministic repro of the inline-J2J
