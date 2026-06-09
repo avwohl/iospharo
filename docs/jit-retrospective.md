@@ -625,6 +625,23 @@ return-value, or megahit bug. It is a missing GC-root/safepoint guarantee for in
 That is also exactly why every speculative gate this session failed to fix it and why the A/B
 (inline-J2J ON corrupts, trampoline default works) holds — the trampoline IS the safepoint.
 
+WHICH untraced location (elimination, all by code inspection of forEachRoot @ Interpreter.hpp:3262+):
+ - Operand stack [stackBase_,stackPointer_): TRACED, and jitBasicNew syncs stackPointer_=state->sp
+   before primitiveNew (Interpreter.cpp:14288) so the scavenge sees the live JIT frame's operands. RULED OUT.
+ - J2JSave.receiver in j2jPool_: TRACED (forEachRoot visits j2jPool_[i].receiver for i in
+   [0,j2jPoolCursor_); the reserved-slice cursor at tryJITActivation:21670 covers all live saves). RULED OUT.
+ - JITState.simTOS/simNOS (cached TOS/NOS): NOT traced by forEachRoot — but grep shows ZERO emit usages,
+   they are vestigial fields. RULED OUT.
+ - currentJITState_->{method,returnValue,cachedTarget}: TRACED when currentJITState_ is set. RULED OUT.
+ => The ONLY remaining holder that inline-J2J uses differently from the (working) trampoline path and that
+   forEachRoot cannot see is the NATIVE REGISTER FILE. inline-J2J's entire benefit is keeping the
+   receiver / live oops in callee-saved registers (x19-x28) across the direct native br/blr to the callee,
+   instead of spilling to the Oop stack the way the trampoline does. The callee preserves x19-x28 per the
+   AArch64 ABI (spilled into the callee's NATIVE C-stack prologue area), so a caller's young oop survives
+   the call in registers/native-stack — invisible to forEachRoot. When a deep callee allocates and a
+   scavenge fires, that young oop is not forwarded; on return the stale value is used as the #extent
+   receiver. This is the textbook precise-relocating-GC-meets-JIT safepoint problem.
+
 THE FIX (substantial, the real Cog-shaped work): inline-J2J must be GC-safe at every point that can
 trigger a scavenge. Two standard approaches:
   (a) Spill-before-safepoint: before any inline allocation / call that can scavenge, spill all live
