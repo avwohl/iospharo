@@ -324,6 +324,37 @@ GLOBAL enablement (lldb, multi-session); (2) close the residual ~2x (fib 30ms vs
 global inline-J2J is ~2x off Cog, so Cog-parity needs further work beyond inline-J2J. This is a
 multi-session goal; the path is now precisely characterized.
 
+## /goal round 2: no black-box gate works; the crash is in the FreeType/Morphic startup (lldb-confirmed)
+
+Every gating hypothesis to make GLOBAL inline-J2J survive startup FAILED (all reverted):
+ - gate inline-J2J entry (tbnz#60) to self-rec only: still crashes.
+ - route cross-method bit-60 entries to dispatchCached: still crashes.
+ - SELF-REC-ONLY bit-60 FILL (cross-method ICs never get bit60): STILL crashes — and crucially with
+   hits=0 during startup, which means a SELF-RECURSIVE startup method's inline-J2J corrupts too. So
+   "self-rec only" is NOT a safe subset: benchFib/jsumr:/jack: self-rec are correct, but some startup
+   self-rec shape (FreeType/Morphic) is not. No simple bit56/bit60 gate isolates the corruptor.
+
+lldb (CLI, PHARO_DET_SCHED=1 to defeat the Heisenbug — confirmed: the crash reproduces deterministically
+under lldb only with DET_SCHED) captured the crash context — it is the FreeType/Morphic font-rendering
+startup, NOT a benchmark path:
+   OrderedCollection>>do: <- PluggableMenuSpec>>asMenuItemMorphFrom:isLast: <- ToggleMenuItemMorph>>
+   contents:/fitContents/measureContents <- LogicalFont/FreeTypeFont>>widthOfString: <- glyphOf:... <-
+   FreeTypeCache>>atFont:...ifAbsentPut: <- ... <- #copyBits:from:at:clippingBox:rule:fillColor:map: (DNU
+   #extent on a garbage receiver, cls=0). SISTA-RING (last 32 dispatches) = #size/#max:/#arrayType/#depth
+   returns — HashedCollection + geometry. (The breakpoint at Interpreter.cpp:12927 did NOT bind in
+   RelWithDebInfo — "no locations"; next lldb pass must use a function breakpoint or address.)
+
+CONCLUSION: the corruption is a context-dependent inline-J2J miscompile in the live FreeType/Morphic
+startup that no static/black-box gate isolates and no synthetic workload reproduces. Root-causing needs
+an interactive lldb session on the live startup (working breakpoint at the DNU or at the corrupting J2J
+transition; capture the j2jPool_ save chain + the corrupted stack slot; identify the exact startup method
++ shape). That is multi-session. PLUS: even global inline-J2J leaves fib ~36ms vs Cog ~15ms (~2x), so
+"as fast as Cog" needs that residual closed too.
+
+STATUS vs /goal "as fast as Cog": breakthrough delivered + committed (inline-J2J allow-list = ~6x on
+fib, first JIT-beats-interp, pessimism overturned). Global enablement = the FreeType/Morphic corruption
+(lldb, multi-session) + the residual ~2x. Path fully characterized; goal is multi-session.
+
 REVISED PLAN (native-call lever): it is a CORRECTNESS fix, not a rewrite.
   1. Map ALL inline-J2J engagement gates (warm/pure/bit-60/xmethod/j2jDepth) first, then build a
      working per-method isolation; get a minimal, non-graphics, deterministic repro of the inline-J2J
