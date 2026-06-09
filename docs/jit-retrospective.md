@@ -433,3 +433,13 @@ REVISED PLAN (native-call lever): it is a CORRECTNESS fix, not a rewrite.
   3. Fix the shared root cause; gate on (a) fib A/B (JIT < interp, approaching 13ms) AND (b) the
      copyBits startup path AND CharacterTest both clean, then flip inline-J2J + send-resume default-on.
 The x19/x20 trampoline fix is the first correct piece of this and stays in tree.
+
+## /goal round 6: lldb register data captured (next-session starting point)
+
+Read args via REGISTERS at the sendDoesNotUnderstand breakpoint (works without debug info, unlike
+expr/frame-variable which the debug-map gap blocks): at the #extent crash, x0=this=0xb71400000,
+x1=selector=0x300058f98 (the #extent Symbol), w2=argCount=0 — so the failing send is UNARY `<form> extent`.
+Confirms the victim; the receiver (stackValue(0) = TOS) and the corrupting upstream write still require
+symbolic member access (this->stackPointer_) → needs the debug-info repair (clean rebuild so the binary's
+debug map has no duplicate/skewed-timestamp entries) before lldb can compute the slot address + set a
+hardware watchpoint. That is the concrete first task of the next session; everything up to it is done.
