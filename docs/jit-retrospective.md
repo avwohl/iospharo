@@ -264,6 +264,40 @@ The complete AND-chain — ALL must hold for the direct caller->callee branch to
   inverse-isolation (emit J2J for ONE method, correctly threaded through every compile path) is the
   prerequisite for a clean benchFib repro, then lldb the operand corruption.
 
+## inline-J2J ENGAGED + fib A/B PASSED + corruption narrowed (2026-06-09, committed 660c1473)
+
+Built PHARO_J2J_ONLY_SELECTORS (inverse of SKIP: fill J2J bit60 ONLY for listed callee selectors)
+at both fill sites. With PHARO_T1_INLINE_J2J=1 (emit global; harmless without bit60) it confines
+ENGAGEMENT to one method, dodging the startup crash. RESULTS:
+
+  fib30 (clean): interpreter ~210ms · default-JIT ~191ms · inline-J2J(benchFib) ~30-34ms · Cog ~15ms
+  => JIT beats interpreter ~6x on fib, CORRECT (val 2178309; #(55 6765 75025 832040)), startup intact,
+     inline-J2J hits=28M, zero bails.  FIRST TIME THE JIT BEATS THE INTERPRETER ON FIB.
+
+This OVERTURNS the "fib A/B fails on architecture" finding: the per-send cost is NOT the wall —
+inline-J2J's direct native call/return wins ~6x.  The architecture can win; inline-J2J is off-by-default
+only because of a CORRECTNESS corruption (not an architectural limit).
+
+Corruption characterized (toward GLOBAL enablement):
+ - Self-recursive inline-J2J is CORRECT across shapes: benchFib, jsumr: (1-arg+cond-jump, 9.2M hits),
+   jack: (Ackermann, nested cond-jumps, 1.8M hits) — all correct. The bug is NOT in self-rec.
+ - Cross-method (xmethod) inline-J2J only ENGAGES for narrow callee shapes (leaf gates 3951-3971:
+   no prim, numICEntries==0, not stub, no cond-jump); arithmetic/cond-jump callees bail_self.
+ - The corruption is in the inline-J2J SETUP path (runs when bit60 set + emit on, BEFORE the taken
+   branch — confirmed: when global+SELFREC_ONLY crashed, hits=0, so NO branch was taken yet). It is
+   SHAPE-DEPENDENT (benchFib's setup is fine; copyBits-path shapes corrupt), NOT self-rec-vs-cross:
+   a SELFREC_ONLY gate (bail all cross-method) did NOT prevent the startup crash (reverted).
+ - copyBits is the VICTIM, not the corruptor: engaging inline-J2J for ONLY the copyBits send
+   (PHARO_J2J_ONLY_SELECTORS=copyBits...) does NOT crash; the corrupting send is a DIFFERENT upstream
+   selector during startup graphics (also: SKIP copyBits didn't stop the global crash).
+ - Safe-subset mechanism = the ONLY_SELECTORS allow-list (engage inline-J2J for curated hot/recursive
+   selectors), NOT a general self-rec gate.
+
+NEXT (global enablement): bisect WHICH startup selector's inline-J2J setup corrupts — capture the
+~1237 engaged selectors under global inline-J2J, binary-search by disabling halves via
+PHARO_J2J_SKIP_SELECTORS until the crash flips, then lldb that one method's tryInlineJ2J setup
+(AsmjitT1.cpp 3623-3945, the precedence/calleeJM/state code that runs before the branch).
+
 REVISED PLAN (native-call lever): it is a CORRECTNESS fix, not a rewrite.
   1. Map ALL inline-J2J engagement gates (warm/pure/bit-60/xmethod/j2jDepth) first, then build a
      working per-method isolation; get a minimal, non-graphics, deterministic repro of the inline-J2J
