@@ -715,3 +715,27 @@ WATCHPOINT MECHANICS — still to land (the only blocker to the exact PC):
    auto-continues unless the zero-header test passes), or (b) verify the 0x5A8 slot offset is actually
    where the receiver gets WRITTEN this run (it may be copied via a different depth), or watch a small slot
    RANGE. This is pure lldb-batch plumbing, not a new unknown about the bug.
+
+## Emit-knob bisection (2026-06-09): bug is the IRREDUCIBLE inline-J2J save/return core
+
+All runs: PHARO_T1_INLINE_J2J=1 PHARO_DET_SCHED=1 + the knob, eval "3+4", looking for the #extent DNU.
+  xmethod off (PHARO_T1_NO_INLINE_J2J_XMETHOD=1)             -> DNU PERSISTS
+  all inline-specs off (NO_INLINE_GETTER+AT_READ+SIZE+       -> DNU PERSISTS
+      PRIM_ATPUT+CLASS+IDH + NO_BC_FLOAT)
+  no recompile bump (PHARO_NO_J2J_INLINE_BUMP=1)             -> DNU PERSISTS
+  can-skip-j2j-save (PHARO_T1_CAN_SKIP_J2J_SAVE=1)           -> DNU PERSISTS
+  MINIMAL: xmethod off + all specs off (pure self-rec core)  -> DNU PERSISTS
+=> The corruption is NOT any specialization (getter/at/size/at:put:/class/identityHash/float), NOT the
+   cross-method (xmethod) path, NOT the recompile bump, NOT the saveless variant. It reproduces in the
+   MINIMAL self-recursive-only inline-J2J configuration. So the bug is the irreducible core: the J2J
+   save-push + direct br + return-prelude. (The earlier #min: lastJitReturn is a red herring — with xmethod
+   off, cross-method #min: bails to dispatchCached, yet the bug persists; the wild receiver is a RESIDUAL
+   operand-stack desync, consistent with the original "operand-stack desync" framing.)
+
+FIX TARGET (precise): the normalJ2J self-rec save-push (AsmjitT1.cpp, the `normalJ2J` path bound ~4155,
+after the saveless block) and the J2J RETURN PRELUDE stencil that pops the J2JSave and applies send-return
+semantics (new_sp = caller_sp - nArgs*8; retval stored at new_sp-8 — see the analogous saveless code at
+~4143-4146). The suspect is the sp / tempBase / extras(callerTempCount-nArgs) accounting for the menu/
+copyBits method shapes: an off-by-N there leaves a stale slot that later surfaces as a wild receiver.
+NEXT: read that save-push + return-prelude emit for the sp accounting; compare the J2JSave.sp restore vs
+the trampoline (working) path's; or lldb-break the J2J return prelude and diff state->sp before/after.
