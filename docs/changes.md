@@ -1,5 +1,40 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-06-08
+
+## build: dev cmake build was silently -O0 — ~9x slower SUnit measurement
+
+`CMakeLists` set no default `CMAKE_BUILD_TYPE`, and PharoVMCore's
+`target_compile_options` add no `-O` flag, so a configure that omitted
+`-DCMAKE_BUILD_TYPE` compiled the VM at **-O0**.  That is what
+`build/test_load_image` (the SUnit runner's VM) and every AWS-box sweep used —
+so all custom-vs-Cog SUnit numbers were measured on a VM running ~9× too slow
+on reflective / interpreter-heavy code vs production Cog (the JIT'd hot loops
+were already fast; the interpreter + runtime helpers that dominate the
+megamorphic timeout tail ran unoptimized).  Found by `sample`ing a slow test —
+trivial header accessors (`Oop::isObject`, `slotCount`, …) dominated the
+profile as out-of-line `DYLD-STUB` calls.  Reflective-suite A/B (direct eval):
+`ClassQueryTest` 20.0s→2.8s (7.3×), `SystemNavigationTest` 75.1s→10.2s (7.4×,
+was right at the 80s watchdog).  `SystemNavigationTest` at 75s on -O0 is exactly
+a spurious-timeout candidate; -O2 → 10s passes.  Fix `fc9fedcf`: default
+`CMAKE_BUILD_TYPE=RelWithDebInfo` (-O2 -g; keeps symbols for the lldb workflow).
+Shipping xcframework already used -O2, so unaffected.
+
+## jit: stop recompile-fail thrash (negative-cache profile-guided recompile)
+
+A method whose initial T1 compile succeeds but whose profile-guided recompile
+(`compile()` with the old JITMethod for IC data) bails was re-recompiled on
+EVERY activation: `recompile()` restores the old T1 method (tier/IC unchanged),
+so the trigger re-fires → full asmjit pipeline → bail → restore → forever.  Two
+sites: `maybeRecompileForOSR` (tier-1 branch was unconditional, hot path) and
+`tryExecute`'s execCount≥recompileAt promotion.  On reflective/Fuel workloads
+this saturated profiles with codegen — `sample`: 1945 asmjit vs 580 interp,
+~40 failed-compiles/1000-sends, code zone pinned full.  Fix `0f6f3bf8`:
+`kRecompileFailed` bit in JITMethodStats.flags (heap-side, no W^X flip), set on
+null recompile, gates both triggers.  After: 21 asmjit vs 1196 interp (93×
+less codegen), failed/1000-sends 40→~0.1 (plateaus).  Correct by construction
+(recompile is pure optimization): test_class_table 51/51, fib(36)=48315633.
+
 2026-04-19
 
 ## scheduler: relinquishProcessor yields to ready processes BEFORE sleeping
