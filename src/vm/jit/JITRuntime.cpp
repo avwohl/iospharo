@@ -2639,6 +2639,16 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
     if (jm->numICEntries == 0) return false;
+    // Negative cache: a prior profile-guided recompile of this JITMethod
+    // already bailed (compile() early-exit on the IC-specialized path).
+    // Without this the tier-1 branch below re-attempts the FULL asmjit
+    // recompile pipeline on every OSR check — bail → restore old →
+    // re-enter — running compileViaAsmjit forever (the dominant codegen
+    // thrash on reflective/Fuel workloads: ~asmjit-saturated profiles,
+    // 40 failed-compiles/1000-sends).  Flag lives in the heap-side stats
+    // table (no W^X flip).  Reset naturally if the method is evicted and
+    // freshly tier-1 compiled (new stats).
+    if (jm->stats && (jm->stats->flags & kRecompileFailed)) return false;
     // Tier gate.  T1 → unconditional recompile (the original OSR-recompile
     // path).  T2 → only allowed for the late-spec one-shot path: caller
     // must have crossed kLateSpecRecompileThreshold and not yet been
@@ -2734,6 +2744,12 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
             newJM->stats->flags |= kLateSpecRecompiledOnce;
             newJM->stats->lateSpecCount = 0;
         }
+    } else if (jm->stats) {
+        // Recompile bailed and recompile() restored the old method
+        // (tier/IC unchanged) — mark it so we never re-run the asmjit
+        // pipeline for this method again.  See the negative-cache guard
+        // above.
+        jm->stats->flags |= kRecompileFailed;
     }
     return newJM != nullptr;
 }
@@ -3375,7 +3391,8 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // sets tier=2).  Future PR may bump executionCount from J2J paths;
     // == would miss those.
     if (jm->stats && jm->stats->executionCount >= (uint32_t)g_debug.recompileAt &&
-        jm->tier == 1 && jm->numICEntries > 0 && !isSplice) {
+        jm->tier == 1 && jm->numICEntries > 0 && !isSplice &&
+        !(jm->stats->flags & kRecompileFailed)) {
         if (compiler_) {
             if (g_debug.jitTraceRecompile) {
                 std::string sel = interp_->memory().selectorOf(compiledMethod);
@@ -3394,6 +3411,16 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
                     compiledMethod.rawBits(),
                     reinterpret_cast<uint64_t>(newJM->codeStart()));
                 jm = newJM;
+            } else {
+                // Profile-guided recompile bailed (compile() early-exit on
+                // the IC-specialized path) and recompile() restored the old
+                // T1 method (still tier==1, numICEntries>0).  Without this
+                // flag the trigger above re-fires on EVERY subsequent
+                // activation, re-running the full asmjit pipeline → bail →
+                // restore, forever (~5000 failed compiles/sec, asmjit
+                // codegen dominating reflective/Fuel workloads).  The flag
+                // lives in the heap-side stats table (no W^X flip needed).
+                jm->stats->flags |= kRecompileFailed;
             }
         }
     }

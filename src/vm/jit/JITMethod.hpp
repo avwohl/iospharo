@@ -140,6 +140,7 @@ struct JITMethodStats {
                                  // is queued for a one-shot re-recompile so
                                  // applyICSpecialization can pick up the new bits.
     uint8_t  flags;              // bit 0 = LATE_SPEC_RECOMPILED_ONCE (one-shot cap)
+                                 // bit 1 = RECOMPILE_FAILED (don't retry recompile)
 };
 static_assert(sizeof(JITMethodStats) == 12, "JITMethodStats layout");
 
@@ -150,6 +151,13 @@ static_assert(sizeof(JITMethodStats) == 12, "JITMethodStats layout");
 // to trip the threshold; plain J2J fills need ≥2 to avoid noise.
 static constexpr uint8_t kLateSpecRecompileThreshold = 2;
 static constexpr uint8_t kLateSpecRecompiledOnce     = 0x01;
+// bit 1: the profile-guided recompile (compile() with `old` for IC data) bailed.
+// Set when recompile() returns null so tryExecute's recompile trigger doesn't
+// re-attempt the full asmjit pipeline on every subsequent activation — a method
+// whose initial T1 compile succeeded but whose profile-guided recompile bails
+// would otherwise re-run compile() (early-bail → compilationsFailed_++) forever
+// (~5000/sec asmjit thrash on reflective/Fuel workloads).
+static constexpr uint8_t kRecompileFailed            = 0x02;
 
 // ===== JIT METHOD HEADER =====
 //
