@@ -382,6 +382,26 @@ per-call overhead + matching Cog's optimizer breadth across all bytecodes. That 
 (consistent with the project's own 2-month history). The committed breakthrough (inline-J2J ~6x on fib,
 near-Cog, pessimism overturned) is the foundation; parity is sustained future work.
 
+## /goal round 4: prim-dispatch ruled out; black-box exhausted; corruption is in the CORE inline-J2J path
+
+Tested (global inline-J2J + DET_SCHED, runtime knobs, no rebuild): disabling EACH inline-prim dispatch
+(NO_INLINE_AT_READ, NO_INLINE_PRIM_ATPUT, NO_INLINE_SIZE, NO_INLINE_IDH, NO_INLINE_CLASS) AND ALL of them
+together — startup STILL crashes (#extent in copyBits) every time. So the corruption is NOT in the
+bit-60-entry-vs-primKind mis-dispatch; it is in the CORE inline-J2J path (the tryInlineJ2J setup, the
+J2J save/return, or the inline-J2J-augmented IC probe).
+
+EVERY black-box bisection axis is now exhausted, all failing to isolate the corruptor while preserving
+engagement: (a) self-rec-only / cross-method gating at emit AND at bit-60 fill; (b) routing cross-method
+bit-60 to dispatchCached; (c) SKIP/ONLY selector filters (incomplete — multiple uncovered JITRuntime
+fill paths); (d) disabling all inline-prim dispatches. The corruption is context-dependent (no synthetic
+workload reproduces it), in the live FreeType/Morphic startup, in the core inline-J2J machinery.
+
+DEFINITIVE NEXT STEP (multi-session, not black-box): interactive lldb on the DET_SCHED startup — function
+breakpoint at Interpreter::sendDoesNotUnderstand (the line bp at :12927 doesn't bind in RelWithDebInfo),
+inspect the corrupted stack slot at the #extent DNU, set a watchpoint on it, re-run, and catch the J2J
+transition that writes the garbage. That is the only remaining path; it cannot be done via one-shot
+batch commands.
+
 REVISED PLAN (native-call lever): it is a CORRECTNESS fix, not a rewrite.
   1. Map ALL inline-J2J engagement gates (warm/pure/bit-60/xmethod/j2jDepth) first, then build a
      working per-method isolation; get a minimal, non-graphics, deterministic repro of the inline-J2J
