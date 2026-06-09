@@ -739,3 +739,41 @@ semantics (new_sp = caller_sp - nArgs*8; retval stored at new_sp-8 — see the a
 copyBits method shapes: an off-by-N there leaves a stale slot that later surfaces as a wild receiver.
 NEXT: read that save-push + return-prelude emit for the sp accounting; compare the J2JSave.sp restore vs
 the trampoline (working) path's; or lldb-break the J2J return prelude and diff state->sp before/after.
+
+### Deeper dive (2026-06-09): more eliminations — bug is in the GENUINE self-rec save/return arithmetic
+
+Read the full self-rec save-push (AsmjitT1.cpp ~4253-4515) + return prelude (~2782-2899) and tested:
+ - FORCE staticJ2JArgCount=-1 (always dynamic per-save sendArgCount, the always-correct nArgs path):
+   DNU PERSISTS -> the uniform-arity prescan optimization is NOT the bug.
+ - SELF-REC GUARD: in the xmethod-off branch, recompute calleeJM=entryAddr-sizeof(JITMethod) and bail if
+   != callerJM (x19) before taking the no-update self-rec fast path: DNU PERSISTS -> bit-56 is correctly
+   tagged (caller really == callee); not a self-rec mis-tag; the callee genuinely IS the caller.
+ So the corruption is in the GENUINE self-recursive save/branch/return for some startup method shape.
+ The emit arithmetic READS correct: tempBase=caller_sp-nArgs*8; nil-fill [nArgs..callerTempCount); new
+ sp=caller_sp+(callerTempCount-nArgs)*8; return prelude pops save.sendArgCount and writes retval at
+ new_sp-8. Internally consistent, and benchFib-style self-rec works — so it's a SUBTLE interaction with a
+ shape the benchmarks don't exercise (many temps? a block? a primitive-bearing self-recursive method? a
+ method whose callerTempCount header field is mis-read?).
+ STILL-STANDING SUSPECTS: (1) callerTempCount = (headerBits>>18)&0x3F — verify mask/shift vs the actual
+ Spur header layout for the offending method; a wrong tempCount mis-sizes the nil-fill / new sp. (2) the
+ save-full / pure-J2J-gate bail leaving partial state. (3) a method that is BOTH self-recursive AND has a
+ primitive or mid-method bail (the self-rec path, unlike xmethod, does NOT check methodHeader prim-bit /
+ canBailMidMethod / isStubOnEntry — see the xmethod gates at ~3952-3963 that the self-rec path SKIPS).
+ (3) is the strongest untested lead: add those same guards (prim-bit / canBailMidMethod / isStubOnEntry /
+ numICEntries) to the self-rec path and see if the DNU vanishes.
+
+ TESTED (3): added prim-bit + isStubOnEntry + canBailMidMethod gates to the self-rec path (x19=callerJM
+ ==calleeJM for self-rec): DNU PERSISTS. So the corrupting self-rec method is CLEAN — no prim, no
+ mid-method bail, no stub. That is exactly the fib/factorial shape that's supposed to work.
+ TRIED to discriminate "is base self-rec J2J broken at all?" via a heavy factorial loop
+ (`1 to: 200000 do: [:i | s := s + 20 factorial]`, factorial is self-recursive): DEFAULT returns the
+ correct large integer; inline-J2J #extent-crashes DURING STARTUP before the eval expression ever runs.
+ So the crash is in the Morphic/FreeType STARTUP menu build's self-recursion and PREEMPTS any eval — I
+ can't A/B base self-rec in isolation because startup always builds the menu first.
+ NET (cumulative elimination this session): NOT GC; NOT any inline-spec; NOT xmethod; NOT the recompile
+ bump; NOT can-skip-save; NOT the staticJ2JArgCount uniform-arity optimization; NOT a bit-56 self-rec
+ mis-tag; NOT a prim/stub/canBailMidMethod self-rec method. It IS a clean self-recursive method in the
+ startup path whose genuine inline-J2J save/branch/return desyncs the operand stack, leaving a wild
+ eden-range receiver. NEXT-SESSION ENTRY POINT: log each self-rec inline-J2J push's caller-method
+ selector (add a gated counter at the push ~AsmjitT1.cpp:4384) to NAME the corrupting method(s) just
+ before the #extent DNU, then read/lldb that one method's J2J save+return with its exact shape.
