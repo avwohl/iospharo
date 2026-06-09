@@ -2509,6 +2509,13 @@ static size_t g_initialCompileQueueDropped = 0;
 void JITRuntime::queueInitialCompile(Oop compiledMethod) {
     uint64_t methBits = compiledMethod.rawBits();
     if (methBits == 0) return;
+    // Negative cache: a prior drain already tried to compile this method/block
+    // and compiler_->compile() bailed.  Don't re-queue — re-running the asmjit
+    // T1 pipeline every drain on an un-compilable hot block is the dominant
+    // block-path codegen thrash (the op_value fast path re-queues on every
+    // value since a failed block is never inserted into methodMap_).  Cleared
+    // per-GC so a genuinely-changed method (post-compaction) gets one retry.
+    if (initialCompileFailed_.count(methBits)) return;
     size_t head = g_initialCompileQueueHead;
     if (head < kInitialCompileQueueSize) {
         for (size_t i = 0; i < head; i++) {
@@ -2584,7 +2591,12 @@ size_t JITRuntime::drainInitialCompileQueue() {
             g_initialCompileQueueDrained++;
             continue;
         }
-        compiler_->compile(method);
+        if (!compiler_->compile(method)) {
+            // Compile bailed (unsupported bytecode/prim, etc.) — record so
+            // queueInitialCompile won't re-submit it every drain.  See the
+            // initialCompileFailed_ comment in JITRuntime.hpp.
+            initialCompileFailed_.insert(methBits);
+        }
         processed++;
         g_initialCompileQueueDrained++;
 
@@ -4012,6 +4024,14 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
         }
         m = m->nextInZone;
     }
+
+    // Initial-compile-failed negative cache: keys are compiledMethod/Block oop
+    // bits that compaction moved.  Unlike countMap_/methodMap_ these are NOT
+    // walked by forEachRoot, so they'd be stale (risking a false-match that
+    // skips a now-compilable method).  Just clear it: a failing block gets one
+    // fresh compile attempt after each GC, then is re-cached — bounded, vs the
+    // per-drain thrash this prevents between GCs.
+    initialCompileFailed_.clear();
 
     // Count map: keys were updated in-place by forEachRoot during compaction,
     // but hash positions are stale (same issue as methodMap and megaCache).

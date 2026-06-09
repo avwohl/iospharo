@@ -21,6 +21,7 @@
 #include "Tier2Compiler.hpp"
 #include "../Oop.hpp"
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <cstdint>
 
@@ -300,6 +301,18 @@ private:
     // (GC-stable). Used by tryResume to reject resume at register-reading
     // (_N) stencil offsets to avoid entering with garbage in x19-x22.
     std::unordered_map<JITMethod*, std::vector<uint8_t>> bcEntryStates_;
+
+    // Negative cache for initial-compile failures, keyed by compiledMethod/
+    // compiledBlock oop bits.  Without it, a BLOCK whose compiler_->compile()
+    // bails (unsupported bytecode/prim) is never inserted into methodMap_, so
+    // the op_value fast path's lookup stays null and re-queues the block on
+    // every value — re-running the full asmjit T1 pipeline each safe-point
+    // drain, forever (the method path is self-limited by the count-map; blocks
+    // bypass it via queueInitialCompile).  Same bug class as the recompile
+    // thrash fixed by kRecompileFailed.  Keys go stale on compaction, so it is
+    // cleared in recoverAfterGC — a failing block then gets exactly one fresh
+    // attempt per GC (bounded), never per-drain.
+    std::unordered_set<uint64_t> initialCompileFailed_;
 
     // T2 monomorphic IC slot pool (128KB, bump-allocated per compilation)
     T2ICSlot t2ICPool_[MaxT2ICSlots] = {};
