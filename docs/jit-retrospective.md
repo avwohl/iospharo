@@ -593,3 +593,50 @@ that is a pointer but not a valid heap object -> catches it within 1024 bytecode
 method context); (2) complete the bit-60 chokepoint (re-add the megahit SKIP/ONLY+log filter) so ONLY=ALL
 reproduces, then bisect the callees; (3) single-step the JIT execution of the FreeType/copyBits methods
 under disable-aslr watching sp + the operand slot. The frame-scan (1) is the cheapest decisive localizer.
+
+## ROOT CAUSE FOUND (2026-06-09): inline-J2J native frames are not GC-safe across a scavenge
+
+The frame-scan (option 1) and a provenance dump at the #extent DNU OVERTURN the earlier "raw FFI pointer /
+sp off-by-N desync" characterization. The actual mechanism, proven by direct evidence:
+
+  PHARO_J2J_STACK_SCAN at the 1024-bytecode checkpoint flagged ZERO non-heap pointers across ~50,000
+  whole-stack scans -> the garbage is NEVER on the C++-visible operand stack at a checkpoint.
+  Provenance dump at the #extent DNU (classify every fp[] slot):
+    - EVERY operand slot is heapobj/smallint; NONE are *GARBAGE*.
+    - receiver 0x6960f3d70 reports inHeap=1 / "IN HEAP (valid pointer)".
+    - header at that address: space=YOUNG/eden  classIndex=0 format=0  hdr=0x0 slot0=0x0 slot1=0x0.
+  i.e. the receiver is a VALID pointer into eden whose object has been ZEROED. Eden is only zeroed by a
+  scavenge reset. So `each` (a live do:-loop element, hence young) was alive pre-scavenge; a scavenge
+  fired mid-loop during the allocation-heavy menu/FreeType glyph build (DNU-JIT chain:
+  do: -> asMenuItemMorphFrom:isLast: -> ... -> copyBits..., many <<JIT>> frames); the scavenge moved/
+  reclaimed the element and reset eden, but the inline-J2J-held pointer was NOT updated, so it now aims
+  at the zeroed old eden slot -> classIndex 0 -> DNU.
+
+Why the pointer wasn't updated: forEachRoot (Interpreter.hpp:~3262) DOES walk the full live Oop stack
+[stackBase_, stackPointer_) and savedFrames_. So at the moment of the scavenge the live young pointer
+was NOT in that root set — it lived in a NATIVE register / inline-J2J native frame slot that
+stackPointer_ did not yet cover. The trampoline-J2J path (default, WORKS) spills caller state to the
+Oop stack / records a savedFrames_ entry before crossing into the allocator safepoint; the direct
+inline-J2J branch SKIPS that spill. Post-scavenge the stale register value is spilled to the Oop stack
+and surfaces at the #extent send. This is the classic precise-GC-meets-JIT SAFEPOINT problem.
+
+This explains EVERYTHING the gating/ABI hypotheses could not: it is not an operand-ordering, sp-balance,
+return-value, or megahit bug. It is a missing GC-root/safepoint guarantee for inline-J2J native frames.
+That is also exactly why every speculative gate this session failed to fix it and why the A/B
+(inline-J2J ON corrupts, trampoline default works) holds — the trampoline IS the safepoint.
+
+THE FIX (substantial, the real Cog-shaped work): inline-J2J must be GC-safe at every point that can
+trigger a scavenge. Two standard approaches:
+  (a) Spill-before-safepoint: before any inline allocation / call that can scavenge, spill all live
+      young oops to the Oop stack and sync stackPointer_, so forEachRoot covers them (cheap, conservative,
+      what the trampoline effectively does). Identify the inline-J2J allocation/safepoint sites and emit
+      the spill there.
+  (b) Stack maps: emit a per-call-site descriptor of which native registers/slots hold live oops, and
+      have the scavenger walk inline-J2J frames using it (this is what Cog's machine-code frames +
+      mapStackPagesFromTo: do). More work, zero steady-state overhead.
+  (a) is the pragmatic next step to make global inline-J2J correct; (b) is the long-term Cog-shaped form.
+
+Evidence is reproducible: PHARO_T1_INLINE_J2J=1 PHARO_DET_SCHED=1 PHARO_J2J_STACK_SCAN=1
+./build-opt/test_load_image /tmp/harness/Pharo.image eval "3+4"  -> the [DNU-JIT] space=YOUNG/eden
+classIndex=0 ... line. Diagnostics (J2JSCAN knob, DNU-FRAME dump, receiver-header dump) are committed,
+gated, and default-off.

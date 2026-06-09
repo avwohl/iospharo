@@ -3021,6 +3021,40 @@ void Interpreter::interpret() {
             }
         }
 
+        // PHARO_J2J_STACK_SCAN: global-inline-J2J corruption localizer.  Walk
+        // the live operand stack and flag the first slot holding a value that
+        // LOOKS like an object pointer (bit0==0, >=0x10000) but is NOT a valid
+        // heap object.  Frame metadata (savedIP/savedFP) lives in the separate
+        // savedFrames_ vector, so the Oop stack [stackBase_,stackPointer_)
+        // holds only operands/args/temps — a non-heap pointer here is the raw
+        // FFI-region value the inline-J2J desync leaves in copyBits's receiver
+        // slot.  Under DET_SCHED this fires at a fixed g_stepNum, so it pins
+        // the corrupting push within one checkpoint window.
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_J2J_STACK_SCAN), 0)) {
+            static int scanReports = 0;
+            if (scanReports < 25 && stackPointer_ > stackBase_) {
+                for (Oop* s = stackBase_; s < stackPointer_; ++s) {
+                    Oop v = *s;
+                    if (v.isObject() && v.rawBits() >= 0x10000 &&
+                        !memory_.isValidPointer(v)) {
+                        ++scanReports;
+                        fprintf(stderr,
+                            "[J2JSCAN #%d] step=%llu slot=%ld/%ld val=0x%llx "
+                            "method=#%s fd=%zu sp=%p base=%p\n",
+                            scanReports,
+                            (unsigned long long)g_stepNum,
+                            (long)(s - stackBase_),
+                            (long)(stackPointer_ - stackBase_),
+                            (unsigned long long)v.rawBits(),
+                            memory_.selectorOf(method_).c_str(),
+                            frameDepth_, (void*)stackPointer_,
+                            (void*)stackBase_);
+                        break;  // one report per checkpoint
+                    }
+                }
+            }
+        }
+
         // Sampling profiler tick (installed by primitiveProfileStart).
         // Counter is "interrupt checks" in Cog terminology — each periodic
         // check here counts as one.  When it hits 0, snapshot active
@@ -12928,6 +12962,34 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     dnuLogCount, selName.c_str(), (unsigned long long)rcvr.rawBits(), argCount, frameDepth_,
                     memory_.selectorOf(method_).c_str(), pri);
 
+            // PHARO_J2J_STACK_SCAN: global-inline-J2J corruption provenance.
+            // The garbage receiver never appears at a 1024-bc checkpoint (it is
+            // produced in JIT-native code and consumed by this send within ~1
+            // bytecode).  The DNU is the one C++ site that sees it.  Dump the
+            // raw current-frame slots classified as heap-obj / immediate /
+            // GARBAGE so we can tell whether ONLY the receiver slot is bad (a
+            // return-value / arg-passing ABI desync) or several slots are bad
+            // (frame or heap corruption).  First DNU only.
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_J2J_STACK_SCAN), 0) && dnuLogCount == 1
+                && framePointer_ && stackPointer_ > framePointer_) {
+                long n = stackPointer_ - framePointer_;
+                if (n > 40) n = 40;
+                fprintf(stderr, "[DNU-FRAME] fp=%p sp=%p depth=%ld  (slot: kind value)\n",
+                        (void*)framePointer_, (void*)stackPointer_,
+                        (long)(stackPointer_ - framePointer_));
+                for (long i = 0; i < n; i++) {
+                    Oop v = framePointer_[i];
+                    const char* kind;
+                    if (v.isSmallInteger())      kind = "smallint";
+                    else if (!v.isObject())      kind = "immed";
+                    else if (v.rawBits() < 0x10000) kind = "lowbits";
+                    else if (memory_.isValidPointer(v)) kind = "heapobj";
+                    else                         kind = "*GARBAGE*";
+                    fprintf(stderr, "[DNU-FRAME]   fp[%ld] %-9s 0x%llx\n",
+                            i, kind, (unsigned long long)v.rawBits());
+                }
+            }
+
             bool suspiciousRcvr = false;
             if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                 ObjectHeader* rH = rcvr.asObjectPtr();
@@ -12993,8 +13055,31 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                         (unsigned long long)cStart, (unsigned long long)cEnd);
                 if (rv >= sBase && rv < sTop)
                     fprintf(stderr, "[DNU-JIT]   -> IN INTERPRETER STACK (offset %lld slots)\n", (long long)((rv - sBase) / 8));
-                else if (inHeap)
+                else if (inHeap) {
                     fprintf(stderr, "[DNU-JIT]   -> IN HEAP (valid pointer)\n");
+                    // Decisive stale-pointer test: dump the header + first slot
+                    // at the receiver address.  zeroed header => freed/reused
+                    // (eden after scavenge); slot0 a heap pointer => Spur
+                    // forwarder we failed to follow.  Plus which space it's in.
+                    ObjectHeader* rh = rcvr.asObjectPtr();
+                    const char* space = memory_.isYoungObject(rh) ? "YOUNG/eden"
+                                      : memory_.isOldObject(rh)   ? "old"
+                                      : memory_.isPermObject(rh)  ? "perm" : "?";
+                    uint64_t* w = reinterpret_cast<uint64_t*>(rh);
+                    fprintf(stderr, "[DNU-JIT]   space=%s classIndex=%u format=%d "
+                            "hdr=0x%llx slot0=0x%llx slot1=0x%llx\n",
+                            space, rh->classIndex(), (int)rh->format(),
+                            (unsigned long long)w[0], (unsigned long long)w[1],
+                            (unsigned long long)w[2]);
+                    Oop slot0 = rh->slots()[0];
+                    if (slot0.isObject() && slot0.rawBits() >= 0x10000
+                        && memory_.isValidPointer(slot0))
+                        fprintf(stderr, "[DNU-JIT]   slot0 is a VALID heap pointer "
+                                "-> receiver is likely a FORWARDER we didn't follow\n");
+                    else
+                        fprintf(stderr, "[DNU-JIT]   slot0 not a heap pointer "
+                                "-> receiver location FREED/ZEROED (stale after scavenge)\n");
+                }
                 else if (rv >= cStart && rv < cEnd)
                     fprintf(stderr, "[DNU-JIT]   -> IN JIT CODE ZONE\n");
                 else
