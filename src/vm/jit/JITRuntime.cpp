@@ -2850,6 +2850,14 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
         rewriteIcEntriesAfterRecompile(
             compiledMethod.rawBits(),
             reinterpret_cast<uint64_t>(newJM->codeStart()));
+        // PMS §7 event 3, eager warm-IC link pass: recompile copies the
+        // old icBuffer, so warm bit-60 slot-0 entries never miss again
+        // and the §6 hooks never fire — without this pass, recompiled
+        // (= the hottest) methods would NEVER link.
+        if (newJM->patchMap()) {
+            for (uint32_t i = 0; i < newJM->numICEntries; i++)
+                linkSendSite(newJM, i);
+        }
         if (lateSpec && newJM->stats) {
             // Cap to one re-recompile per method, ever.  Reset count
             // so any further spec-bit additions don't keep re-flagging
@@ -2899,13 +2907,20 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
     // Monomorphic evidence: slots 1-5 empty.  (Later poly fill does NOT
     // unlink — slot-0's class keeps the fast path; others take Lprobe.)
     for (int e = 1; e < 6; e++) {
-        if (slots[e * 3] != 0) { patchStats_.refusedGate++; return false; }
+        if (slots[e * 3] != 0) {
+            // Poly evidence appearing later does NOT unlink (slot-0's
+            // class keeps the fast path) — but a not-yet-linked site
+            // with poly evidence never links.
+            patchStats_.refusedGate++;
+            return (map[siteIdx].flags & 1) != 0;
+        }
     }
     constexpr uint64_t kJ2JBit   = 1ULL << 60;
     constexpr uint64_t kBVBit    = 1ULL << 59;
     constexpr uint64_t kRetLit   = 1ULL << 58;
     constexpr uint64_t kSistaBit = 1ULL << 55;
     if (!(extras & kJ2JBit) || (extras & (kBVBit | kRetLit | kSistaBit))) {
+        unlinkSendSite(jm, siteIdx);   // derive: slot 0 no longer linkable
         patchStats_.refusedGate++;
         return false;
     }
@@ -2913,6 +2928,7 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
     // with the unlinked sentinel.
     if ((key >> 32) != 0
         || (uint16_t)(key >> 16) == kImpossibleKeyHi16) {
+        unlinkSendSite(jm, siteIdx);
         patchStats_.refusedGate++;
         return false;
     }
@@ -2927,7 +2943,8 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
         || callee->canBailMidMethod
         || ((callee->methodHeader >> 16) & 1)      // has-primitive bit
         || (maxIC >= 0 && callee->numICEntries > (uint32_t)maxIC)) {
-        patchStats_.refusedGate++;
+        unlinkSendSite(jm, siteIdx);   // derive: callee gate fails (incl.
+        patchStats_.refusedGate++;     // tier change at recompile, event 3)
         return false;
     }
     // Selector cross-check (Cog's sanity check): caller's per-site
@@ -2936,6 +2953,7 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
     if (const uint64_t* sba = jm->selBitsArray()) {
         if (sba[siteIdx] != 0 && callee->selectorOop != 0
             && sba[siteIdx] != callee->selectorOop) {
+            unlinkSendSite(jm, siteIdx);
             patchStats_.refusedGate++;
             return false;
         }
@@ -2968,6 +2986,7 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
     // word (movk x14 at T+28, nArgs in imm16 bits 12-15).
     uint8_t siteNArgs = (uint8_t)(decodeMovImm16(wPack) >> 12);
     if (callee->argCount != siteNArgs) {
+        unlinkSendSite(jm, siteIdx);
         patchStats_.refusedGate++;
         return false;
     }
@@ -2977,6 +2996,7 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
     int64_t tailDelta = (int64_t)entry
                       - (int64_t)(code + rec.tailBranchOffset);
     if (!branchInRange(tailDelta)) {
+        unlinkSendSite(jm, siteIdx);
         patchStats_.refusedReach++;
         return false;
     }
@@ -3017,15 +3037,118 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
         flushICache(code + rec.keyMovzOffset, 20);
         flushICache(code + rec.tailOffset,
                     rec.tailBranchOffset + 4 - rec.tailOffset);
+        // rec lives in the patch map, IN MAP_JIT — its flags write must
+        // stay inside this write window (crashed as a W^X write fault
+        // when placed after the scope, 2026-06-10).
+        if (!wasLinked) rec.flags |= 1u;
     }
     if (!wasLinked) {
-        rec.flags |= 1u;
         numPatchedSites_++;
         patchStats_.links++;
     } else {
         patchStats_.relinks++;
     }
     return true;
+}
+
+void JITRuntime::rederiveSiteForICData(uint64_t callerMethodBits,
+                                       uint64_t* icData) {
+    if (!icData || callerMethodBits <= 0x10000) return;
+    JITMethod* jm = methodMap_.lookup(callerMethodBits);
+    if (!jm || !jm->icBuffer || jm->numICEntries == 0 || !jm->patchMap())
+        return;
+    ptrdiff_t off = reinterpret_cast<uint8_t*>(icData) - jm->icZoneStart();
+    if (off < 0) return;
+    size_t siteOff = (size_t)off - ((size_t)off % IC_BYTES_PER_SITE);
+    uint32_t siteIdx = (uint32_t)(siteOff / IC_BYTES_PER_SITE);
+    if (siteIdx >= jm->numICEntries) return;
+    linkSendSite(jm, siteIdx);
+}
+
+size_t JITRuntime::verifyAllPatchedSites(bool failHard) {
+    size_t bad = 0;
+    JITMethod* m = codeZone_.firstMethod();
+    while (m) {
+        if (SendSitePatch* map = m->patchMap()) {
+            for (uint32_t i = 0; i < m->numICEntries; i++) {
+                SendSitePatch& rec = map[i];
+                if (!(rec.flags & 1)) continue;
+                uint8_t* code = m->codeStart();
+                uint32_t w0 = 0, w1 = 0, w6 = 0;
+                std::memcpy(&w0, code + rec.keyMovzOffset, 4);
+                std::memcpy(&w1, code + rec.keyMovzOffset + 4, 4);
+                std::memcpy(&w6, code + rec.tailBranchOffset, 4);
+                uint64_t patchedKey = (uint64_t)decodeMovImm16(w0)
+                                    | ((uint64_t)decodeMovImm16(w1) << 16);
+                uint64_t* slots = reinterpret_cast<uint64_t*>(m->icSiteAt(i));
+                uint64_t key = slots[0], methodBits = slots[1], extras = slots[2];
+                constexpr uint64_t kBad = (1ULL<<59)|(1ULL<<58)|(1ULL<<55);
+                JITMethod* callee = methodBits ? methodMap_.lookup(methodBits)
+                                               : nullptr;
+                uint8_t* w6Target = code + rec.tailBranchOffset
+                                  + decodeBDelta(w6);
+                bool ok = patchedKey == key            // linked-over-zeroed
+                       && methodBits != 0              //   slot = FAILURE
+                       && (extras & (1ULL << 60))
+                       && !(extras & kBad)
+                       && callee
+                       && reinterpret_cast<uint64_t>(w6Target)
+                              == entryAddrFor(callee);
+                if (!ok) {
+                    bad++;
+                    fprintf(stderr, "[PMS-VERIFY] MIRROR DRIFT jm=%p site=%u "
+                            "patchedKey=0x%llx slotKey=0x%llx method=0x%llx "
+                            "extras=0x%llx callee=%p w6Target=%p\n",
+                            (void*)m, i,
+                            (unsigned long long)patchedKey,
+                            (unsigned long long)key,
+                            (unsigned long long)methodBits,
+                            (unsigned long long)extras,
+                            (void*)callee, (void*)w6Target);
+                    if (failHard) std::abort();
+                }
+            }
+        }
+        m = m->nextInZone;
+    }
+    return bad;
+}
+
+void JITRuntime::unlinkEverything() {
+    if (numPatchedSites_ == 0) return;
+    // One outer write window for the whole walk — the per-site scopes
+    // inside unlinkSendSite see shadow==W and skip their flips.
+    ScopedPatchWriteAccess w(codeZone_.zoneStart(), 0);
+    JITMethod* m = codeZone_.firstMethod();
+    while (m) {
+        if (m->patchMap()) {
+            for (uint32_t i = 0; i < m->numICEntries; i++)
+                unlinkSendSite(m, i);
+        }
+        m = m->nextInZone;
+    }
+}
+
+void JITRuntime::unlinkSitesTargeting(JITMethod* callee) {
+    if (numPatchedSites_ == 0 || !callee) return;
+    uint8_t* lo = callee->codeStart();
+    uint8_t* hi = lo + callee->codeSize;
+    ScopedPatchWriteAccess w(codeZone_.zoneStart(), 0);
+    JITMethod* m = codeZone_.firstMethod();
+    while (m) {
+        if (SendSitePatch* map = m->patchMap()) {
+            for (uint32_t i = 0; i < m->numICEntries; i++) {
+                SendSitePatch& rec = map[i];
+                if (!(rec.flags & 1) || rec.tailBranchOffset == 0) continue;
+                uint32_t w6 = 0;
+                std::memcpy(&w6, m->codeStart() + rec.tailBranchOffset, 4);
+                uint8_t* target = m->codeStart() + rec.tailBranchOffset
+                                + decodeBDelta(w6);
+                if (target >= lo && target < hi) unlinkSendSite(m, i);
+            }
+        }
+        m = m->nextInZone;
+    }
 }
 
 // One W1 store + ranged icache flush; always safe (the impossible key
@@ -3042,8 +3165,8 @@ void JITRuntime::unlinkSendSite(JITMethod* jm, uint32_t siteIdx) {
         uint32_t insn = encodeMovkW6Hi(kImpossibleKeyHi16);
         std::memcpy(code + rec.keyMovzOffset + 4, &insn, 4);
         flushICache(code + rec.keyMovzOffset + 4, 4);
+        rec.flags &= ~1u;   // patch map is in MAP_JIT — write in-window
     }
-    rec.flags &= ~1u;
     if (numPatchedSites_ > 0) numPatchedSites_--;
     patchStats_.unlinks++;
 }
@@ -3070,6 +3193,7 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
             for (uint32_t i = 0; i < m->numICEntries; i++) {
                 uint64_t* slots = reinterpret_cast<uint64_t*>(
                     icStart + i * IC_BYTES_PER_SITE);
+                bool slot0Rewritten = false;
                 for (int e = 0; e < 6; e++) {
                     if (slots[e * 3 + 1] == methodBits) {
                         uint64_t extra = slots[e * 3 + 2];
@@ -3078,10 +3202,17 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
                                   | (newEntryAddr & kJ2JAddrMask);
                             slots[e * 3 + 2] = extra;
                             slotsRewritten++;
+                            if (e == 0) slot0Rewritten = true;
                         } else {
                             slotsWithJ2J++;
                         }
                     }
+                }
+                // PMS §7 event 3: slot-0's callee was recompiled —
+                // re-derive (re-patches W3-W6 to the new entry, or
+                // unlinks on tier change / gate fail).
+                if (slot0Rewritten) {
+                    rederiveSiteForICData(m->compiledMethodOop, slots);
                 }
             }
         }
@@ -3132,7 +3263,12 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
             // skip per-call counter bumps (avoiding the T1-vs-Sista
             // race) without an unordered_set probe per send.
             JITMethod* jm = methodMap_.lookup(m.rawBits());
-            if (jm) jm->isSpliceTarget = true;
+            if (jm) {
+                jm->isSpliceTarget = true;
+                // PMS §7 event 8: callers may have linked to this
+                // callee BEFORE it became a splice target.
+                unlinkSitesTargeting(jm);
+            }
             return;
         }
     }
@@ -3678,7 +3814,10 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     bool isSplice = sistaRuntimeForGCHook_
                  && sistaRuntimeForGCHook_->hasSplice(compiledMethod);
     // Cache splice flag on JITMethod for stencil-side bump skip.
-    if (isSplice) jm->isSpliceTarget = true;
+    if (isSplice) {
+        jm->isSpliceTarget = true;
+        unlinkSitesTargeting(jm);   // PMS §7 event 8
+    }
     // Use >= rather than == so methods whose executionCount jumps past
     // the threshold in one go still trigger recompile.  The `tier == 1`
     // check ensures recompile only fires once per method (recompile
@@ -4128,6 +4267,11 @@ void JITRuntime::dumpICHistogram() const {
 void JITRuntime::flushCaches() {
     if (!initialized_) return;
 
+    // PMS §7 event 5: every linked site mirrors an IC slot 0 that this
+    // function is about to zero — unlink first (early-out when no
+    // links keeps this path flip-free, as before PMS).
+    unlinkEverything();
+
     // Clear mega cache
     std::memset(megaCache_, 0, sizeof(megaCache_));
 
@@ -4191,6 +4335,22 @@ void JITRuntime::rebuildMethodMap() {
 
 void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     if (!initialized_) return;
+
+    // PMS §7 event 1: full GC flushes every IC below — unlink all
+    // patched sites first (KEEP PERMANENTLY for v1: re-linking is
+    // driven by the §6 hooks as ICs re-fill; the "keys are GC-stable
+    // so keep links" optimization rests on classIndex stability, an
+    // accident of the monotonic class table — see design §13 Q4).
+    unlinkEverything();
+    if (GET_DEBUG_BOOL(PHARO_T1_PATCH_VERIFY)) {
+        // Post-event-1 invariant: nothing may remain linked.
+        if (numPatchedSites_ != 0) {
+            fprintf(stderr, "[PMS-VERIFY] %zu sites still linked after "
+                    "unlinkEverything\n", numPatchedSites_);
+            std::abort();
+        }
+        verifyAllPatchedSites(true);
+    }
 
     // Flush all IC entries: GC compaction moves method and selector oops.
     // forEachRoot visits IC slots, but there are edge cases (recompiled

@@ -151,6 +151,26 @@ public:
     bool linkSendSite(JITMethod* jm, uint32_t siteIdx);
     // One W1 store + ranged icache flush; always safe.
     void unlinkSendSite(JITMethod* jm, uint32_t siteIdx);
+    // §6 trigger entry point: resolve the owner JM from the caller's
+    // CompiledMethod oop (ownership-guard pattern — never trust the raw
+    // icData pointer), floor the pointer to its site base (poly-walk
+    // can hand a mid-site pointer), and re-derive the site's link state
+    // from heap IC slot 0.  Safe to call after ANY slot-0 write/zero.
+    void rederiveSiteForICData(uint64_t callerMethodBits, uint64_t* icData);
+    // §7 event 1/5: unlink every linked site (one outer write window;
+    // nested per-site scopes are flip-free via the W^X shadow).
+    // numPatchedSites_==0 early-out preserves the flip-free property
+    // of flush paths when no links exist.
+    void unlinkEverything();
+    // §7 event 8 (Sista splice) / event 4 helper: unlink every linked
+    // site whose patched W6 targets the given method's code range.
+    void unlinkSitesTargeting(JITMethod* callee);
+    // §10 mirror check (PHARO_T1_PATCH_VERIFY): every linked site's
+    // decoded patch words must equal heap IC slot 0 + the callee's
+    // current entry.  A linked-over-zeroed slot is a FAILURE (a zeroer
+    // skipped its unlink hook).  Returns the number of violations
+    // (hard-fails via abort when failHard).
+    size_t verifyAllPatchedSites(bool failHard);
     size_t numPatchedSites() const { return numPatchedSites_; }
 
     // PMS telemetry (PHARO_T1_PATCH_STATS).

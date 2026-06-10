@@ -1778,6 +1778,21 @@ void Interpreter::dumpJITStats() {
     }
     jit::Tier2Compiler::dumpBailStats();
     {
+        auto& ps = jitRuntime_.patchStats_;
+        if (ps.links || ps.refusedGate || ps.refusedNoMap) {
+            fprintf(stderr,
+                "  PMS: linked-now=%zu links=%llu relinks=%llu unlinks=%llu "
+                "refused gate=%llu reach=%llu nomap=%llu\n",
+                jitRuntime_.numPatchedSites(),
+                (unsigned long long)ps.links,
+                (unsigned long long)ps.relinks,
+                (unsigned long long)ps.unlinks,
+                (unsigned long long)ps.refusedGate,
+                (unsigned long long)ps.refusedReach,
+                (unsigned long long)ps.refusedNoMap);
+        }
+    }
+    {
         uint64_t total = g_inlineJ2J_hits + g_inlineJ2J_bail_zero
                        + g_inlineJ2J_bail_full + g_inlineJ2J_bail_self;
         if (total > 0) {
@@ -21052,6 +21067,12 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                 fprintf(stderr, "[IC-PATCH-DBG] DUP #%s key=0x%llx slot=%d (IC already has)\n",
                         sel.c_str(), (unsigned long long)lookupKey, e);
             }
+            // PMS §6 dup-key re-warm: covers an IC that survived (e.g.
+            // across recompile copy) while the patch was unlinked.
+            if (e == 0) {
+                jitRuntime_.rederiveSiteForICData(
+                    pendingICOwnerMethod_.rawBits(), icData);
+            }
             return;
         }
     }
@@ -21380,6 +21401,11 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             icData[e * 3 + 2] = extra;
             jitICPatches_++;
             dbgPatched++;
+            // PMS §6: slot-0 write -> re-derive the patched site.
+            if (e == 0) {
+                jitRuntime_.rederiveSiteForICData(
+                    pendingICOwnerMethod_.rawBits(), icData);
+            }
             // Late-spec re-recompile accounting (mirrors upgradeICToJ2J).
             // patchJITICAfterSend is the cold-IC fill path — when an IC
             // slot fills here on a tier=2 caller, the new classification
@@ -21710,6 +21736,14 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                         jitRuntime_.noteLateSpecBit(callerJM, newExtra);
                     }
                 }
+                // PMS §6: slot-0 extras write -> re-derive.  Owner is
+                // resolved via methodMap AT THIS POINT (after any eager
+                // compile above may have evicted/recompiled it), so the
+                // hook itself cannot act on a stale owner.
+                if (e == 0 && callerMethod.isObject()) {
+                    jitRuntime_.rederiveSiteForICData(
+                        callerMethod.rawBits(), icData);
+                }
             }
             return;
         }
@@ -21855,6 +21889,11 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         icData[firstEmpty * 3] = lookupKey;
         icData[firstEmpty * 3 + 1] = cachedMethod.rawBits();
         icData[firstEmpty * 3 + 2] = newExtra;
+        // PMS §6: slot-0 fill -> re-derive (owner via methodMap, post
+        // any eager compile).
+        if (firstEmpty == 0 && callerMethod.isObject()) {
+            jitRuntime_.rederiveSiteForICData(callerMethod.rawBits(), icData);
+        }
         if (newExtra & (1ULL << 60)) jitJ2JDirectPatches_++;
         jitICPatches_++;
         // Late-spec re-recompile accounting — see fill of existing-empty
@@ -23584,11 +23623,44 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
                 // Stale IC — invalidate and fall back to normal send
                 jitICStale_++;
-                if (state.icDataPtr) {
-                    for (int e = 0; e < 6; e++) {
-                        state.icDataPtr[e * 3] = 0;
-                        state.icDataPtr[e * 3 + 1] = 0;
-                        state.icDataPtr[e * 3 + 2] = 0;
+                // GUARDED stale-IC zeroing (PMS §6 + pre-existing bug
+                // fix, design §14 #1): the old code wrote 18 words
+                // through the RAW state.icDataPtr — (a) write-after-free
+                // if the owner was evicted/recompiled (buffer reused by
+                // another method), (b) under PHARO_T1_IC_POLY_WALK the
+                // probe advances the pointer by 24/48 on a slot-1/2 hit,
+                // so the zeroing started mid-site and clobbered the
+                // site's selectorBits/hitCount + the NEXT site's first
+                // key.  Resolve the owner via methodMap, validate the
+                // pointer against its CURRENT icBuffer, floor to the
+                // site base, and re-derive the patched site after.
+                if (state.icDataPtr && state.method.isObject()
+                        && state.method.rawBits() > 0x10000) {
+                    if (auto* ownJM = jitRuntime_.methodMap().lookup(
+                            state.method.rawBits())) {
+                        if (ownJM->icBuffer && ownJM->numICEntries > 0) {
+                            ptrdiff_t off =
+                                reinterpret_cast<uint8_t*>(state.icDataPtr)
+                                - ownJM->icZoneStart();
+                            if (off >= 0) {
+                                size_t siteOff = (size_t)off
+                                    - ((size_t)off % jit::IC_BYTES_PER_SITE);
+                                uint32_t siteIdx = (uint32_t)(
+                                    siteOff / jit::IC_BYTES_PER_SITE);
+                                if (siteIdx < ownJM->numICEntries) {
+                                    uint64_t* site =
+                                        reinterpret_cast<uint64_t*>(
+                                            ownJM->icSiteAt(siteIdx));
+                                    for (int e = 0; e < 6; e++) {
+                                        site[e * 3] = 0;
+                                        site[e * 3 + 1] = 0;
+                                        site[e * 3 + 2] = 0;
+                                    }
+                                    jitRuntime_.rederiveSiteForICData(
+                                        state.method.rawBits(), site);
+                                }
+                            }
+                        }
                     }
                 }
                 instructionPointer_ = state.ip;

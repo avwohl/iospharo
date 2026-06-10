@@ -2438,6 +2438,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                     for (uint32_t i = 0; i < im->numICEntries; i++) {
                         uint64_t* slots = reinterpret_cast<uint64_t*>(
                             icStart + i * IC_BYTES_PER_SITE);
+                        bool slot0Scrubbed = false;
                         for (uint32_t e = 0; e < IC_ENTRIES_PER_SITE; e++) {
                             uint64_t extra = slots[e * 3 + 2];
                             if (!(extra & J2J_BIT)) continue;
@@ -2445,9 +2446,20 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             for (auto& r : evictedRanges) {
                                 if (addr >= r.start && addr < r.end) {
                                     slots[e * 3 + 2] = 0;
+                                    if (e == 0) slot0Scrubbed = true;
                                     break;
                                 }
                             }
+                        }
+                        // PMS §7 event 4: a linked site's callee was
+                        // just evicted — its slot-0 extra was scrubbed;
+                        // re-derive (unlinks: bit 60 now clear).  Ships
+                        // with linking, NOT later: eviction is zone-
+                        // pressure-driven and doesn't wait for links
+                        // to age.
+                        if (slot0Scrubbed) {
+                            interp_.jitRuntime().rederiveSiteForICData(
+                                im->compiledMethodOop, slots);
                         }
                     }
                 }
@@ -2476,6 +2488,16 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 }
                 m = next;
             }
+            // PMS §7 event 4 full-flush + pre-existing-hole fix (design
+            // §14 #2): surviving (pinned) methods' J2J extras and the
+            // megaCache's jitEntry fields still point into the freed
+            // zone space — before PMS they survived until the next
+            // fullGC/flushCaches as latent stale code addresses; with
+            // linked sites they would be live wrong-execution.  One
+            // flushCaches() call clears megaCache + all surviving ICs
+            // (selBits preserved) + unlinks every patched site.
+            interp_.jitRuntime().flushCaches();
+
             // compact() only resets bump pointer when zone is empty of live
             // methods.  With pinned survivors present, skip compact and let
             // allocate() use the free list.
