@@ -4119,6 +4119,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // resumeAddr points directly at endOfSend (skip the
                     // afterSend `b endOfSend` indirection).
                     a.adr(x2, endOfSend);
+                    emitSyncSpToState(a);  // sp-residency: helper reads state.sp
                     a.mov(x9, asmjit::Imm((uint64_t)
                         &jit_rt_inline_block_value_prep));
                     a.blr(x9);
@@ -5446,6 +5447,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x30, ptr(asmjit::a64::sp, 8));
                 a.mov(x2, x3);  // x2 = value (helper arg 2)
                 // x0 already = state, x1 already = receiver.
+                emitSyncSpToState(a);  // sp-residency: helper reads state.sp
                 a.mov(x9, asmjit::Imm(
                     (uint64_t)&jit_rt_setter_write_barrier));
                 a.blr(x9);
