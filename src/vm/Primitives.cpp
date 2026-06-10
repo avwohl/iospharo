@@ -15,6 +15,7 @@
 
 #include "Interpreter.hpp"
 #include "DebugVars.hpp"
+#include "ShadowSlots.hpp"
 #include "ImageLoader.hpp"
 #include "ImageWriter.hpp"
 #include "FFI.hpp"
@@ -325,6 +326,13 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
     // Per official Spur VM: twoWay: true, copyHash: false
     if (argCount != 1) {
         return PrimitiveResult::Failure;
+    }
+    // Shadow-slot detector: two-way become swaps contents/identities
+    // outside the tracked write paths — drop the table (the first
+    // suite deployment's only mismatch family was exactly this
+    // signature: adjacent Points with cleanly swapped slot values).
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {
+        shadowClear();
     }
 
     Oop toArrayOop = stackValue(0);
