@@ -4094,22 +4094,38 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             // xlog helper signature uses x12 = callerCM.
                             a.ldr(x12, ptr(x11, 0));
                         }
-                        a.sub(sp, sp, asmjit::Imm(80));
-                        a.stp(x0, x7,   ptr(sp, 0));
-                        a.stp(x9, x10,  ptr(sp, 16));
-                        a.stp(x11, x12, ptr(sp, 32));
-                        a.stp(x13, x30, ptr(sp, 48));
+                        // Save the FULL caller-saved set.  The old save
+                        // set (x0,x7,x9-x13,x30) let the blr clobber
+                        // x1-x6 — x1 is the send RECEIVER and x2+ are
+                        // args, so enabling this logger corrupted every
+                        // logged call (instant crash in the callee's IC
+                        // probe with x1=0).  That made every historical
+                        // XMETHOD_LOG debugging session "confirm" that
+                        // xmethod corrupts state.  Fixed 2026-06-10.
+                        a.sub(sp, sp, asmjit::Imm(128));
+                        a.stp(x0, x1,   ptr(sp, 0));
+                        a.stp(x2, x3,   ptr(sp, 16));
+                        a.stp(x4, x5,   ptr(sp, 32));
+                        a.stp(x6, x7,   ptr(sp, 48));
+                        a.stp(x8, x9,   ptr(sp, 64));
+                        a.stp(x10, x11, ptr(sp, 80));
+                        a.stp(x12, x13, ptr(sp, 96));
+                        a.str(x30,      ptr(sp, 112));
                         a.mov(x1, x10);
                         a.mov(x2, x11);
                         a.mov(x3, x13);
                         a.mov(x4, x12);
                         a.mov(x5, asmjit::Imm((uint64_t)&jit_rt_xmethod_log));
                         a.blr(x5);
-                        a.ldp(x0, x7,   ptr(sp, 0));
-                        a.ldp(x9, x10,  ptr(sp, 16));
-                        a.ldp(x11, x12, ptr(sp, 32));
-                        a.ldp(x13, x30, ptr(sp, 48));
-                        a.add(sp, sp, asmjit::Imm(80));
+                        a.ldp(x0, x1,   ptr(sp, 0));
+                        a.ldp(x2, x3,   ptr(sp, 16));
+                        a.ldp(x4, x5,   ptr(sp, 32));
+                        a.ldp(x6, x7,   ptr(sp, 48));
+                        a.ldp(x8, x9,   ptr(sp, 64));
+                        a.ldp(x10, x11, ptr(sp, 80));
+                        a.ldp(x12, x13, ptr(sp, 96));
+                        a.ldr(x30,      ptr(sp, 112));
+                        a.add(sp, sp, asmjit::Imm(128));
                     }
                     a.bind(sameMethodSkipUpdate);
                 } else {
