@@ -74,12 +74,16 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   lldb watchpoint on g_xgate_bail_cap in the PASS run -> fire #26705 is
   caller=#handle:offset: (CM 0x300976370) callee=#initializeHandle:offset:
   (CM 0x300976530, bcLen=10, 2 args, >=1 IC site) — FFI ExternalAddress
-  family.  HYPOTHESIS: the inline-J2J push's callee setup assumes
-  callee.tempCount == compile-time callerTempCount (true for self-rec,
-  the saveless block says so explicitly) -> wrong state.sp/nil-fill for
-  cross callees with differing temp counts; leaf callees usually have 0
-  extra temps so the validated config dodges it.  VERIFY at the
-  callee-setup emit (AsmjitT1 ~4560-4660: tempBase/sp/nil-fill).
+  family.  RULED OUT at the fire (lldb raw-memory checks): tempCount setup (the
+  xmethod path reads callee JM[35] dynamically; offsets 34/35 verified
+  vs offsetof) and stale bcStartCache (JM[104] == compiledMethodOop+40,
+  consistent -> CM had not moved by fire #26705).  NEXT: single-step
+  the callee's FIRST mid-method C++ exit (its send sites are cold ->
+  ExitSendCached) and its return path — the corruption mechanism lives
+  in that exit/materialize/resume sequence, since leaf callees (which
+  never exit mid-method) are immune.  Callee initializeHandle:offset:
+  stores into receiver ivars (write-barrier path) — check the
+  popStoreRecvVar interaction with a J2J-entered frame too.
   ALSO FOUND: PHARO_T1_INLINE_J2J_XMETHOD_LOG's emit wrapper does NOT
   save x1-x6 across its blr -> the LOGGER ITSELF corrupts the receiver
   (instant crash in callee #header) — likely the origin of the
