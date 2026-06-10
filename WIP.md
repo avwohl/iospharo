@@ -198,9 +198,24 @@ under load is the canary).
     with the callee's exit state -> C++ materializes as if save-push.
     Full scope, no bisect gates: 3/3 clean startups, 0 DNUs; 10x cfib
     420ms vs 440 save-push; benchFib + battery correct.
-    NEXT: x25-x28 register diet (callee-saved regs instead of the
-    96-byte stash) to widen the ~5% win, then 60-class suite A/B ->
-    default-on for leaf sites.  Bisect gates (MIN_COMPILE / MAX_ARGS /
+    REGISTER DIET VERDICT (3-agent audit, 2026-06-10): NOT VIABLE as a
+    local change.  T1 emits use none of x22/x25-x27 (free there), but
+    TrampolineAsm.S PINS ALL of x21-x28 across its BLRs into JIT code
+    (x22=save base, x25=localCalls, x26=localReturns — LOAD-BEARING:
+    checkCountdown_ -= (calls+returns)*10 — x27=overflow limit,
+    x28=nilOop).  A diet register set inside a trampoline-entered
+    caller corrupts the loop state it RETs back into; saving/restoring
+    around the blr re-adds the eliminated memory ops (net zero).  A
+    true win needs trampoline re-homing (counters -> frame slots,
+    x27 -> recompute from x22+imm) freeing x25-x27 zone-wide + adding
+    them to JIT_CALL clobbers — ~+4 mem ops per trampoline round-trip
+    (NOT cold: all non-leaf J2J) for -6 per leaf call.  Marginal and
+    risky; SUBSUMED by the register-resident state.sp project (the
+    structural fix for the ~55-instr-vs-Cog-12 per-call gap).  Audit
+    artifact: workflows task w5s5eg5y3 output.
+    Default-on gate: full-suite A/B on the Graviton box (in flight at
+    write time — default config 12674/12724 = 99.6%%; saveless run +
+    per-test diff pending).  Bisect gates (MIN_COMPILE / MAX_ARGS /
     NO_EXTRAS) remain for future shape isolation.
 - docs/jit-retrospective.md "Cog-speed MAP" numbers now stale for
   cross-method; tight-loop 2x-faster-than-Cog and self-rec 6x still hold.
