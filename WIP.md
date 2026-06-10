@@ -32,11 +32,23 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   showed save TRAFFIC is only ~5% — the 5x is the per-bytecode
   state-memory round-trips (every push/pop = ldr+str of OFF_SP plus
   the operand store).  REGISTER-RESIDENT state.sp is confirmed as THE
-  structural lever.  Plan: Phase 0 free x25/x26 (telemetry counters ->
-  plain memory increments outside the pinned set) + x27 (recompute);
-  Phase 1 x25 := sp in the trampoline contract, T1 emit uses it,
-  sync to OFF_SP at every exit/BLR boundary (the sp-depth instrument
-  validates every step); Phase 2 same for x86.
+  structural lever.
+  **Phase 0 DONE (62b4461f):** x25/x26 freed from the trampoline
+  pinned set (counters -> frame slots [sp,#120]/[sp,#128], frame
+  144B); validated (bench unchanged, counters flow, 5/5 det reps).
+  **Phase 1 (NEXT SESSION, fresh context required):** x25 := state.sp
+  mirror.  Contract changes: (a) trampoline loads x25 = [x21+JS_SP]
+  before EVERY blr into JIT code and treats it live-out (stores back
+  on each return-to-loop); (b) JIT_CALL macro pre-loads x25 like
+  x19/x20 and adds it to the clobber list; (c) T1 emit: every
+  `ldr xN, [x0, OFF_SP]` -> use x25; every `str xN, [x0, OFF_SP]` ->
+  `mov x25, xN` AND keep the memory store ONLY at exit boundaries
+  (every bail/ret site must `str x25, [x0, OFF_SP]` first — sweep all
+  `EXIT_*` emit sites, ~50); (d) C++ helpers called via BLR from JIT
+  code that READ/WRITE state.sp (jit_rt_*) need sync around the BLR.
+  VALIDATE each sub-step with: eval smoke, benchFib, PHARO_SP_DEPTH_
+  CHECK healthy run (0 mismatches), DictionaryTest single-class,
+  200-class suite.  Phase 2: mirror on x86 (rsi/r13 candidate).
 Branch: `jit`. Build: `cmake --build build-opt` (optimized; the plain `build/` is -O0).
 Test VM: `./build-opt/test_load_image /tmp/harness/Pharo.image eval "<expr>"`.
 Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
