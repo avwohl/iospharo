@@ -4242,11 +4242,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.sub(x10, x9, asmjit::Imm((int)sizeof(JITMethod)));
                     // Eδ.2b (2026-05-24): count IC HITs where callee
                     // qualifies for canSkipJ2JSave (offset 49 in JM).
-                    // Tells us how often the future saveless path
-                    // would fire vs. compile-time "20.2% of methods
-                    // qualify".  Emit 5 instrs unconditionally in
-                    // xmethod-on / counters-on builds.
-                    {
+                    // Counters-on builds ONLY: xmethod went default-on
+                    // (2026-06-10), so the old `xmethod || counters`
+                    // gate silently put this 7-instr global RMW on
+                    // every production inline-J2J hit (2.4M/cfib run,
+                    // shared cache line across all call sites).  The
+                    // measurement it served is settled (~50% qualify).
+                    if (inlineJ2JCounters) {
                         asmjit::Label skipCount = a.new_label();
                         a.ldrb(w14, ptr(x10, (int)offsetof(JITMethod, canSkipJ2JSave)));   // canSkipJ2JSave byte
                         a.cbz(w14, skipCount);
