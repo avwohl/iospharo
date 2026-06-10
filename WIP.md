@@ -49,28 +49,33 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   admission (MAX_IC sweep is FLAT on microbenches but untested at
   suite scale) and via patched sites (which inline the dispatch too).
   MAX_IC sweep on cfib: flat (31-34ms) — its callee already inlines.
-- **SEND-FLOW ACCOUNTING on cfib (build-opt, V2) — CORRECTED with a
-  bare-startup baseline (`eval "1+1"`):**
-  - The C++ IC-miss traffic (1.73M lookups, noICData=689K) is ALL
-    image startup — baseline shows 1.72M/687K with no cfib at all.
-    The cfib loop adds ~zero C++ misses.  noICData = ExitSend with
-    null icDataPtr (inline-stencil bails/T2) — startup-only, ignore.
-  - Loop traffic: 9.0M asm IC probes hit; 4.82M took dispatch-A
-    inline-J2J, 2.49M xmethod J2J fires (saveless fired 2.42M) —
-    ~81% of IC hits stay fully inline.
-  - The other **4.75M loop sends take the TRAMPOLINE-ASM hop, not a
-    C++ hop**: jitJ2JStencilCalls_ aggregates the trampoline's in-asm
-    localCalls counter (Ltramp_call) — exit JIT epilogue -> trampoline
-    loop -> Lresume_check -> pack V2 save -> branch to callee.  Tens
-    of cycles, C-free, but >> a direct call.  Gate-bail feeders:
-    extra_no_bit60=722K (callee has no J2J entry bit), bail_self=282K,
-    xmethod bails 282K (prim=106K numic=142K b47=15K b46=20K).
-  - So the 3.5x decomposes into: per-send IC-probe dependent-load
-    latency (even inline path), the dispatch tbnz chain, and ~40% of
-    sends paying the trampoline-hop path.  Cog does ALL of these as
-    patched-immediate cmp + direct bl.  The patched-IC design must
-    collapse all three.  Design workflow in flight:
-    docs/patched-ic-design.md incoming.
+- **SEND-FLOW ACCOUNTING on cfib (build-opt, V2) — FINAL, after a
+  bare-startup baseline (`eval "1+1"`) and counter-source reads:**
+  - Startup-vs-loop subtraction: ALL C++ IC-miss traffic (1.73M
+    lookups, noICData=689K) and ALL gate bails (extra_no_bit60=722K,
+    bail_self=282K, xmethod prim/numic bails) are IMAGE STARTUP.
+    The loop adds ~zero of any of them.
+  - **The cfib loop runs 100% inline in machine code**: 7.14M loop
+    sends, all IC-hit — 4.75M dispatch-A inline-J2J (the two cfib
+    self-recursive sites) + 2.38M xmethod inline-J2J (incc).  The
+    "5M J2J stencil calls" are NOT trampoline hops: the inline
+    dispatch-A call sequence itself bumps j2jTotalCalls (x20 dual
+    depth+totalCalls increment, AsmjitT1.cpp ~5092), and
+    jitJ2JStencilCalls_ aggregates that counter at exit.  Two false
+    leads killed: no C++ hop, no trampoline hop.
+  - **So the 3.5x is pure per-send cost of the inline machinery**:
+    (1) IC probe = 3 dependent loads (icBuffer ptr -> entry -> cmp)
+    before any decision; (2) the extras/tbnz dispatch chain;
+    (3) the J2J call sequence: V2 save pack (movk+2xstp), cursor
+    ldr/str, depth ldr/add/str (~15-20 insns with 2 read-modify-write
+    latency chains); (4) **returns are computed `br`, which defeats
+    the return-address-stack predictor — Cog uses real bl/ret pairs**
+    (likely the dominant per-call cycle cost: ~7M branch-mispredict-
+    prone returns in the loop).  Cog's equivalent: patched-immediate
+    cmp + direct bl, frame built in callee, predicted ret.
+  - The patched-IC design must collapse (1)+(2) into cmp-imm + direct
+    branch AND should make calls bl/ret-paired so returns predict.
+    Design workflow in flight: docs/patched-ic-design.md incoming.
 
 ## CHECKPOINT 2026-06-11 — sp-residency LIVE; gap = 3.5x
 
