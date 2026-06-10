@@ -14,10 +14,19 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
       cfib(30)         42 -> 29 ms   (Cog  8;  5.3x -> 3.6x)
       sfib(30)         54 -> 41 ms   (Cog 12;  4.5x -> 3.4x)
       benchFib(28)x10 128 -> 87 ms   (Cog 25;  5.1x -> 3.5x)
-- Remaining levers toward parity, in order: (a) tempBase residency
-  (x26 is free! same sweep pattern, tempBase is the #2 hot field);
+- Remaining levers toward parity (UPDATED after the x26 experiment):
+  (a) tempBase residency: **TRIED AND MEASURED NET-NEGATIVE** (~25%
+  regression: 13 read sites vs an exit-sync tax on every send bail;
+  infrastructure kept at PHARO_T1_TB_IN_X26=0, full writeup in the
+  commit).  Residency pays only for per-bytecode-WRITTEN fields.
   (b) per-method emit bloat (~6KB/method; SHA timeout = zone
-  exhaustion); (c) IC-probe shortening; (d) x86 Phase 2.
+  exhaustion; smaller code = better i-cache, suite-wide);
+  (c) IC-probe shortening (the probe is ~10 instr per send before
+  dispatch — compare Cog's ~3-instr monomorphic check);
+  (d) the remaining per-send sequence: with sp resident the next
+  costs are the save push/pop (slot-reservation design for
+  with-sends saveless) and the dispatch chain;
+  (e) x86 Phase 2 (mirror the x25 sweep with r13/rbx).
 
 ## CHECKPOINT 2026-06-10 EOD — correctness floor reached; gap = 5x
 
