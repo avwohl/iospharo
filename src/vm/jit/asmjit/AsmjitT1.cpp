@@ -4333,18 +4333,76 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // blr to callee entry.  x9 already holds entryAddr.
                     a.blr(x9);
 
-                    // DIAGNOSTIC: the post-blr code assumes the callee
-                    // exited with EXIT_RETURN.  If a leaf can exit any
-                    // other way (yield-class check, unconsidered bail),
-                    // the OFF_RETVAL read below is garbage — trap loudly
-                    // instead of corrupting (brk lands in the SIGSEGV-
-                    // style crash handler with pc = this stub).
+                    // Non-EXIT_RETURN recovery.  canSkipJ2JSave callees
+                    // CAN still bail mid-method: the flag excludes only
+                    // cond-jump bailers, but any SmI arithmetic emits an
+                    // ExitArithOverflow bail (confirmed via brk trap —
+                    // exit 6 fired at startup scale; the controlled
+                    // cfib->incc site just never overflowed).  Recovery:
+                    // retroactively build the pool save this call elided
+                    // (exactly what the save-push path would have written)
+                    // and RET with the callee's exit state — the C++ bail
+                    // handler then materializes the chain as if the call
+                    // had used the save-push path all along.
                     {
                         asmjit::Label exitOk = a.new_label();
                         a.ldr(w14, ptr(x0, OFF_EXIT));
                         a.cmp(w14, asmjit::Imm(EXIT_RETURN));
                         a.b_eq(exitOk);
-                        a.brk(asmjit::Imm(0xDEAD & 0xFFFF));
+                        // -- cold path: build the retro-save --
+                        // Pool space check: if full, trap (would have
+                        // bailed at the save-push too; ~impossible).
+                        a.ldp(x14, x15, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                        a.cmp(x14, x15);
+                        asmjit::Label haveRoom = a.new_label();
+                        a.b_lo(haveRoom);
+                        a.brk(asmjit::Imm(0xDEAE & 0xFFFF));
+                        a.bind(haveRoom);
+                        // save.{sp,receiver} from stash[0,8]
+                        a.ldp(x4, x5, ptr(sp, 0));
+                        a.stp(x4, x5, ptr_post(x14, 56));   // cursor += 56
+                        // save.tempBase from stash[16]; save.ip = post-send
+                        // ip = callerCM + bcOffsetFromMethObj + 1 (the
+                        // stash ip is the stale state.ip, NOT post-send).
+                        a.ldr(x4, ptr(sp, 16));
+                        if (crossSaveless) {
+                            a.ldr(x5, ptr(sp, 48));         // caller CM
+                        } else {
+                            a.ldr(x5, ptr(x19, 0));         // callerJM->CM (self-rec: x19 convention)
+                        }
+                        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj + 1));
+                        a.stp(x4, x5, ptr(x14, -40));       // tempBase + ip
+                        // save.jitMethod (caller) + save.resumeAddr
+                        if (crossSaveless) {
+                            a.ldr(x4, ptr(sp, 56));         // caller jitMethod
+                        } else {
+                            a.mov(x4, x19);
+                        }
+                        a.adr(x5, endOfSend);
+                        a.stp(x4, x5, ptr(x14, -24));
+                        // save.sendArgCount
+                        if (nArgs == 0) {
+                            a.str(wzr, ptr(x14, -8));
+                        } else {
+                            a.mov(w4, asmjit::Imm(nArgs));
+                            a.str(w4, ptr(x14, -8));
+                        }
+                        // Commit cursor; bump depth (+totalCalls via x20).
+                        a.str(x14, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                        a.ldr(x4, ptr(x0, OFF_J2J_DEPTH));
+                        a.add(x4, x4, asmjit::a64::x20);
+                        a.str(x4, ptr(x0, OFF_J2J_DEPTH));
+                        // Restore the caller's entryDepth (the pin would
+                        // otherwise fence the retro-save from the C++
+                        // materialize accounting).
+                        a.ldr(w4, ptr(sp, 40));
+                        a.str(w4, ptr(x0, OFF_J2J_ENTRY_DEPTH));
+                        // Unwind the machine stash and propagate the bail
+                        // to the caller's caller (trampoline/tryExecute)
+                        // with the CALLEE's exit state intact.
+                        a.ldr(x30, ptr(sp, 32));
+                        a.add(sp, sp, asmjit::Imm(stashSize));
+                        a.ret(x30);
                         a.bind(exitOk);
                     }
 
