@@ -170,7 +170,24 @@ DebugSettings::DebugSettings() {
     // user's "fix the existing fails" directive.  Opt back in via
     // PHARO_T1_INLINE_J2J=1 + PHARO_T1_INLINE_J2J_XMETHOD=1 for
     // bench harnesses that need fib-style perf.
-    t1InlineJ2J         = envPresent("PHARO_T1_INLINE_J2J");
+    //
+    // 2026-06-10: DEFAULT-ON (lever (e)).  The opt-in era's two blockers
+    // are both root-caused and fixed:
+    //   - the xmethod gate off-by-one (dd0fa6f2) — read hasNLR as
+    //     canBailMidMethod, bouncing ~every real cross-method callee to
+    //     the trampoline AND letting stubs through (the state-corruption
+    //     lore);
+    //   - the stale state.j2jDepth after materializeJ2J (24175466) — the
+    //     50%-startup sortBlock corruption at full fire volume.
+    // Validation: 60-class SUnit A/B default-vs-INLINE_J2J per-test
+    // identical (4130/4140 both; only two known-flaky timing/termination
+    // tests flipped, one each way; the historical blocker
+    // CharacterTest>>testStoreStringAll PASSES now); 10/10 + 6/6 clean
+    // startups; cfib(30) 344ms -> 41ms (Cog 8ms); benchFib(30) 296ms ->
+    // 35ms; eval battery matches Cog values.  Opt out via
+    // PHARO_T1_NO_INLINE_J2J=1 (PHARO_T1_INLINE_J2J=1 still accepted as
+    // a no-op for old scripts/harnesses).
+    t1InlineJ2J         = !envPresent("PHARO_T1_NO_INLINE_J2J");
     // 2026-05-21 (jit-may20 Step 2): pure-J2J gate replaced by warmth
     // gate as the default.  Pure gate (bit-60 check) was too strict —
     // bailed ~96.5% of inline-J2J attempts on fib.  Warmth gate
