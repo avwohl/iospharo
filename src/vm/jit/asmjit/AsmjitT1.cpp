@@ -182,6 +182,70 @@ extern "C" uint64_t g_canSkipJ2JSave_ic_hits = 0;
 // (callee qualified AND IC hit reached the saveless emit).
 extern "C" uint64_t g_canSkipJ2JSave_fires = 0;
 extern "C" uint64_t g_xmethod_max   = UINT64_MAX;
+
+// Store-provenance ring (PHARO_T1_STORE_RING).  Every JIT receiver-ivar
+// store logs (receiver, value, slot, callerJM) here; at DNU time the
+// interpreter scans the ring for the corrupted oop (as stored VALUE or
+// as store TARGET) — catches the corrupting WRITE instead of its
+// downstream symptom.  Built for the J2J ivar-store corruption hunt
+// (WIP.md 2026-06-10): the symptom is a layout knife-edge, so the
+// detector must work on whatever layout it runs in.
+struct StoreRingEntry {
+    uint64_t recv;
+    uint64_t value;
+    uint64_t jm;       // JITMethod* of the storing method
+    uint64_t slot;
+};
+static constexpr size_t kStoreRingSize = 1 << 16;  // 64K entries, 2MB
+extern "C" StoreRingEntry g_storeRing[kStoreRingSize];
+StoreRingEntry g_storeRing[kStoreRingSize] = {};
+extern "C" uint64_t g_storeRingIdx = 0;
+
+extern "C" void jit_rt_store_ring(uint64_t state, uint64_t recv,
+                                  uint64_t value, uint64_t slot,
+                                  uint64_t jm) {
+    (void)state;
+    StoreRingEntry& e = g_storeRing[g_storeRingIdx++ & (kStoreRingSize - 1)];
+    e.recv = recv;
+    e.value = value;
+    e.jm = jm;
+    e.slot = slot;
+}
+
+// Emit a knob-gated call to jit_rt_store_ring at a receiver-ivar store
+// site.  Convention at the call point: x4 = receiver, x1 = value (both
+// store emits use these).  Saves the FULL caller-saved set across the
+// blr (the XMETHOD_LOG x1-x6 clobber lesson, 928df628).
+static void emitStoreRingLog(asmjit::a64::Assembler& a, int slotIdx) {
+    using namespace asmjit::a64;
+    if (!GET_DEBUG_BOOL(PHARO_T1_STORE_RING)) return;
+    a.sub(sp, sp, asmjit::Imm(144));
+    a.stp(x0, x1,   ptr(sp, 0));
+    a.stp(x2, x3,   ptr(sp, 16));
+    a.stp(x4, x5,   ptr(sp, 32));
+    a.stp(x6, x7,   ptr(sp, 48));
+    a.stp(x8, x9,   ptr(sp, 64));
+    a.stp(x10, x11, ptr(sp, 80));
+    a.stp(x12, x13, ptr(sp, 96));
+    a.stp(x14, x15, ptr(sp, 112));
+    a.str(x30,      ptr(sp, 128));
+    a.mov(x2, x1);                          // value
+    a.mov(x1, x4);                          // receiver
+    a.mov(x3, asmjit::Imm(slotIdx));
+    a.ldr(x4, ptr(x0, 56));                 // state.jitMethod (OFF_JITMETHOD)
+    a.mov(x16, asmjit::Imm((uint64_t)&jit_rt_store_ring));
+    a.blr(x16);
+    a.ldp(x0, x1,   ptr(sp, 0));
+    a.ldp(x2, x3,   ptr(sp, 16));
+    a.ldp(x4, x5,   ptr(sp, 32));
+    a.ldp(x6, x7,   ptr(sp, 48));
+    a.ldp(x8, x9,   ptr(sp, 64));
+    a.ldp(x10, x11, ptr(sp, 80));
+    a.ldp(x12, x13, ptr(sp, 96));
+    a.ldp(x14, x15, ptr(sp, 112));
+    a.ldr(x30,      ptr(sp, 128));
+    a.add(sp, sp, asmjit::Imm(144));
+}
 // Per-gate bail counters for the cross-method (xmethod) inline-J2J
 // gate chain.  Only bumped when PHARO_T1_INLINE_J2J is set (the
 // inlineJ2JCounters emit gate), same as the other bail counters.
@@ -2759,6 +2823,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x2, ptr(x0, OFF_SP));
         a.ldr(x1, ptr(x2));
         a.str(x1, ptr(x4, OBJ_SLOT_0 + n * 8));
+        emitStoreRingLog(a, n);
         // Inline write barrier.  Skip if value isn't an Oop (tag != 0),
         // receiver not in oldSpace, or value not in newSpace.  Else set
         // bit 29 of receiver header (RememberedBit).
@@ -5092,6 +5157,37 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             a.add(x4, x1, x6, asmjit::a64::lsl(3));
             a.str(x3, ptr(x4, 8));
+            // Store-provenance ring hook (PHARO_T1_STORE_RING) — this
+            // site's convention differs from the bytecode store emits
+            // (x1=recv, x3=value, x6=dynamic slotIdx), so inline the
+            // call instead of using emitStoreRingLog.
+            if (GET_DEBUG_BOOL(PHARO_T1_STORE_RING)) {
+                a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(144));
+                a.stp(x0, x1,   ptr(asmjit::a64::sp, 0));
+                a.stp(x2, x3,   ptr(asmjit::a64::sp, 16));
+                a.stp(x4, x5,   ptr(asmjit::a64::sp, 32));
+                a.stp(x6, x7,   ptr(asmjit::a64::sp, 48));
+                a.stp(x8, x9,   ptr(asmjit::a64::sp, 64));
+                a.stp(x10, x11, ptr(asmjit::a64::sp, 80));
+                a.stp(x12, x13, ptr(asmjit::a64::sp, 96));
+                a.stp(x14, x15, ptr(asmjit::a64::sp, 112));
+                a.str(x30,      ptr(asmjit::a64::sp, 128));
+                a.mov(x2, x3);                      // value
+                a.mov(x3, x6);                      // slotIdx
+                a.ldr(x4, ptr(x0, 56));             // state.jitMethod
+                a.mov(x16, asmjit::Imm((uint64_t)&jit_rt_store_ring));
+                a.blr(x16);
+                a.ldp(x0, x1,   ptr(asmjit::a64::sp, 0));
+                a.ldp(x2, x3,   ptr(asmjit::a64::sp, 16));
+                a.ldp(x4, x5,   ptr(asmjit::a64::sp, 32));
+                a.ldp(x6, x7,   ptr(asmjit::a64::sp, 48));
+                a.ldp(x8, x9,   ptr(asmjit::a64::sp, 64));
+                a.ldp(x10, x11, ptr(asmjit::a64::sp, 80));
+                a.ldp(x12, x13, ptr(asmjit::a64::sp, 96));
+                a.ldp(x14, x15, ptr(asmjit::a64::sp, 112));
+                a.ldr(x30,      ptr(asmjit::a64::sp, 128));
+                a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(144));
+            }
             if (nArgs > 0) {
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 a.str(x2, ptr(x0, OFF_SP));
@@ -6792,6 +6888,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
                     }
                     a.str(a64::x1, a64::ptr(a64::x4, OBJ_SLOT_0 + idx * 8));
+                    emitStoreRingLog(a, idx);
                     a.b(end);
                     a.bind(bail);
                     a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));

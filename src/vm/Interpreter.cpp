@@ -285,6 +285,10 @@ extern "C" uint64_t g_xgate_bail_numic;
 extern "C" uint64_t g_xgate_bail_b47;
 extern "C" uint64_t g_xgate_bail_b46;
 extern "C" uint64_t g_xgate_bail_cap;
+// Store-provenance ring (AsmjitT1.cpp) — layout must match StoreRingEntry.
+struct StoreRingEntryView { uint64_t recv, value, jm, slot; };
+extern "C" StoreRingEntryView g_storeRing[];
+extern "C" uint64_t g_storeRingIdx;
 
 namespace pharo {
 
@@ -12971,6 +12975,39 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 #if PHARO_JIT_ENABLED
                 // Correlate DNU with recent Sista dispatches.
                 sistaRingDump(selName.c_str(), this);
+                // Store-provenance: scan the JIT ivar-store ring for the
+                // DNU receiver — as a stored VALUE (who planted this oop
+                // somewhere) and as a store TARGET (who wrote into it).
+                if (GET_DEBUG_BOOL(PHARO_T1_STORE_RING)) {
+                    uint64_t rb = stackValue(argCount).rawBits();
+                    uint64_t n = g_storeRingIdx;
+                    uint64_t lo = n > 65536 ? n - 65536 : 0;
+                    int printed = 0;
+                    for (uint64_t k = n; k > lo && printed < 12; k--) {
+                        StoreRingEntryView& e = g_storeRing[(k - 1) & 65535];
+                        if (e.value != rb && e.recv != rb) continue;
+                        printed++;
+                        std::string jmSel = "?";
+                        auto* jm = reinterpret_cast<jit::JITMethod*>(e.jm);
+                        if (jm) {
+                            Oop cm = Oop::fromRawBits(jm->compiledMethodOop);
+                            if (cm.isObject() && cm.rawBits() > 0x10000)
+                                jmSel = memory_.selectorOf(cm);
+                        }
+                        fprintf(stderr,
+                            "[STORE-RING] age=%llu %s recv=0x%llx slot=%llu "
+                            "value=0x%llx by #%s\n",
+                            (unsigned long long)(n - k),
+                            e.value == rb ? "VALUE-MATCH" : "TARGET-MATCH",
+                            (unsigned long long)e.recv,
+                            (unsigned long long)e.slot,
+                            (unsigned long long)e.value, jmSel.c_str());
+                    }
+                    if (!printed)
+                        fprintf(stderr, "[STORE-RING] no entries match DNU "
+                                "receiver 0x%llx in last 64K stores\n",
+                                (unsigned long long)rb);
+                }
 #endif
             }
             Oop rcvr = stackValue(argCount);
