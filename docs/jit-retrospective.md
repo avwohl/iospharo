@@ -825,6 +825,31 @@ the dead-block emission is confirmed as the corruptor. FIX (preserves the optimi
 blocks OUT-OF-LINE (past dispatchCached/endOfSend). The PHARO_T1_NO_J2J_BRANCH knob (whole-block gate)
 gives a clean inline-J2J build meanwhile.
 
+## Cog-speed MAP (2026-06-09): the gap is CROSS-METHOD send activation
+
+Multi-pattern A/B, custom (inline-J2J) vs stock Cog (Time millisecondsToRun:, warmed):
+  tight inlined loop (s := s + i, 20M)        custom 25ms  vs Cog 50ms   -> custom 2x FASTER
+  self-recursion (benchFib 30)                custom 30ms  vs Cog  5ms   -> 6x slower
+  +1 cross-method call/node (cfib 30)         custom 344ms vs Cog  8ms   -> ~43x slower
+The custom JIT BEATS Cog on inlined arithmetic/loops and is only 6x on self-recursive sends (inline-J2J
+self-rec works). The ENTIRE Cog gap for real code is CROSS-METHOD SEND throughput: adding ONE cross-method
+call per node (cfib's `incc`/`h1`/`h2`) jumps custom 30ms -> 344ms (~90 ns per cross-method send) while Cog
+stays ~8ms. Diagnosis: those cross-method sends get NO bit-60 J2J fill (PHARO_J2J_LOG_FILL: fills-to-h2=0
+across 1.3M calls) -> they fall to the ~90 ns trampoline-activation path (JIT->C++->JIT). Yet cross-method
+J2J DOES engage for ~4026 (caller,callee) pairs at startup, so it is not globally broken — it just fails
+to engage for these (runtime-compiled helper, or Sista-intercepted, or IC patched-before-callee-compiled
+and never upgraded to bit-60). NOT classification (a non-classified no-sends helper `^self+1+1` also gets
+0 fills) and NOT the numICEntries gate (these helpers have no sends).
+=> THE Cog-parity lever is broadening CROSS-METHOD inline-J2J so most cross-method sends take the direct
+   branch instead of the trampoline activation: (a) UPGRADE an IC to bit-60 when the callee compiles after
+   the IC was patched (re-patch / check-on-hit) — likely the dominant cause here; (b) reconcile the
+   Sista (J2J-s) vs J2J (bit-60) dispatch so a cross-method send isn't stuck on the slow Sista/activation
+   path; (c) relax the numICEntries==0 cross-method gate to admit callees-with-sends (needs nested-save
+   correctness work — CAREFUL, this is the path just made correct). NEXT-SESSION: instrument
+   patchJITICAfterSend / upgradeICToJ2J to see why cfib->incc never reaches the bit-60 fill, then fix the
+   IC-upgrade timing — that should turn the ~43x cross-method case toward the 6x self-rec case.
+Loops/arith already beat Cog, so closing cross-method sends is the whole ballgame for "as fast as cog".
+
 ## Cog-speed (2026-06-09): why the custom VM is ~35x slower, and the levers
 
 benchFib timing (Time millisecondsToRun: [32 benchFib], JIT-warmed, startup-isolated; r=7049155):
