@@ -1,6 +1,27 @@
 # WIP — JIT Cog-speed: inline-J2J DEFAULT-ON (2026-06-09/10)
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
+
+## CHECKPOINT 2026-06-10 EOD — correctness floor reached; gap = 5x
+
+- **Suite: 2-3/8459 (~99.97%), ZERO stable fails** (only known
+  environmental flickers: WeakAnnouncer/WeakIdentityKey GC-flakes,
+  FIFOQueue load-flake, SHA256 64MB-zone timeout).  All-time best;
+  the historical 12-15 stable-fail floor is GONE (swallowed-block-NLR
+  fix).
+- **PHARO_T1_XMETHOD_MAX_IC default = 1** (lever c flipped): callees
+  WITH sends now inline-J2J by default.  60-rep det catch loop clean.
+- **Head-to-head, build-opt vs stock Cog (same image, same benches):**
+      cfib(30)  leaf-callee     42 ms vs  8 ms   5.3x
+      sfib(30)  send-callee     54 ms vs 12 ms   4.5x
+      benchFib(28) x10         128 ms vs 25 ms   5.1x
+  Was 43x on cross-method sends at session start; with-send callees
+  were ~60x.  The remaining ~5x is UNIFORM per-call overhead, not a
+  pathology: next levers = register-resident state.sp (trampoline
+  re-homing audit DONE, x25/x26 -> frame slots, x27 recompute, then
+  JIT_CALL clobber update), per-method emit bloat (~6KB/method ->
+  zone exhaustion: SHA timeout), then the full-2045-class suite
+  survivability run on build-opt.
 Branch: `jit`. Build: `cmake --build build-opt` (optimized; the plain `build/` is -O0).
 Test VM: `./build-opt/test_load_image /tmp/harness/Pharo.image eval "<expr>"`.
 Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
