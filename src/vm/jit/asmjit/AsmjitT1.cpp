@@ -4065,20 +4065,28 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     } else {
                         a.cbnz(w4, j2jBailSelf2);
                     }
-                    a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_count));
-                    a.ldr(x15, ptr(x14));
-                    a.add(x15, x15, asmjit::Imm(1));
-                    a.str(x15, ptr(x14));
-                    a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_max));
-                    a.ldr(x14, ptr(x14));
-                    a.cmp(x15, x14);
-                    if (inlineJ2JCounters) {
-                        asmjit::Label ok = a.new_label();
-                        a.b_ls(ok);
-                        emitGateBail((uint64_t)&g_xgate_bail_cap);
-                        a.bind(ok);
-                    } else {
-                        a.b_hi(j2jBailSelf2);
+                    // Fire counting + cap check: only emitted when a cap
+                    // is set (PHARO_T1_INLINE_J2J_XMETHOD_MAX >= 0) or
+                    // counters are on.  Production default (uncapped, no
+                    // counters) pays nothing — was 2 loads + add + store
+                    // + cmp on EVERY cross-method fire (~3.7M/run).
+                    if (g_debug.t1InlineJ2JXmethodMax >= 0
+                            || inlineJ2JCounters) {
+                        a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_count));
+                        a.ldr(x15, ptr(x14));
+                        a.add(x15, x15, asmjit::Imm(1));
+                        a.str(x15, ptr(x14));
+                        a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_max));
+                        a.ldr(x14, ptr(x14));
+                        a.cmp(x15, x14);
+                        if (inlineJ2JCounters) {
+                            asmjit::Label ok = a.new_label();
+                            a.b_ls(ok);
+                            emitGateBail((uint64_t)&g_xgate_bail_cap);
+                            a.bind(ok);
+                        } else {
+                            a.b_hi(j2jBailSelf2);
+                        }
                     }
                     // E2 2026-05-24: cross-method state.{jitMethod,method,
                     // literals,argCount} update RELOCATED to after the
