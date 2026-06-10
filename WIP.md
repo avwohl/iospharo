@@ -104,6 +104,27 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   cascade dup'd it -> nextPutAll: DNU on ByteString.  Earlier variants
   (`,` to StdioStream) = the same class with the wrong object appearing
   one send earlier.  VALUES wrong at CORRECT depth at every check.
+  **DICTIONARY BUG KILLED — SWALLOWED NLR IN T1-COMPILED BLOCKS — AND
+  THE SUITE IS AT AN ALL-TIME BEST: 3/8459 (all three known
+  environmental: FIFOQueue contention load-flake, SHA256 64MB-zone
+  timeout, WeakAnnouncer GC-flake).  ZERO stable correctness fails.**
+  Root cause: the T1 emit treated 0x58-0x5C inside CompiledBlocks as
+  plain EXIT_RETURNs — `^x` in a hot block became a block-local
+  return.  Dictionary>>includes:'s do:-block fell through to ^false
+  once compiled.  Repro chain that cracked it: suite-pair diff ->
+  single-class (fails with NO knobs; batch passed = context) ->
+  NO_JIT passes -> STUB_ONLY passes -> skip-all-blocks passes ->
+  block-pair bisect -> eval 2-test repro (test0CopyTest primes,
+  testIncludes fails) -> stepwise assert replication (b=false with
+  anySatisfy true!) -> includes: source = `do: [... ^true]` -> the
+  0x5C emit.  Fix: block compiles bail 0x58-0x5C to interp like
+  0x5D/0x5E (both arms); jm->isBlock also fixed (was hardcoded
+  false).  The earlier "sortBlock pair" attribution was an artifact
+  of attempt-index landscapes — the mechanism was always the
+  includes:-block itself going hot.
+  incs prize re-confirmed on this binary: 491 -> 57ms at MAX_IC=1.
+  IN FLIGHT: MAX_IC=1 200-class suite — if clean, the lever-(c)
+  default flip is UNGATED.
   **DICTIONARY REPRO CHAIN (supersedes the MAX_IC attribution!):**
   single-class DictionaryTest>>testIncludes FAILS with NO KNOBS AT ALL
   (the suite-pair MAX_IC attribution was run-context coincidence: batch
