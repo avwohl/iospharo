@@ -159,6 +159,26 @@ static constexpr uint8_t kLateSpecRecompiledOnce     = 0x01;
 // (~5000/sec asmjit thrash on reflective/Fuel workloads).
 static constexpr uint8_t kRecompileFailed            = 0x02;
 
+// ===== PMS SEND-SITE PATCH MAP RECORD =====
+//
+// Patched-monomorphic-send bookkeeping (docs/patched-ic-design.md §9).
+// One record per IC site, in-zone after selBitsArray.  All other
+// per-site link state is derived (heap IC slot 0 + decoding the patched
+// words) — this record is the only second artifact, and it is
+// write-once at compile except `flags`.
+struct SendSitePatch {
+    uint32_t keyMovzOffset;    // code offset of W0 (key movz); W1=+4, cmp=+8,
+                               // b.ne=+12, W2=+16.  0 = site not patchable
+                               // (emit fell back to the legacy shape)
+    uint32_t tailOffset;       // T: start of the linked-J2J tail (W3=+0,
+                               // W4=+4, W5=+8).  0 = no tail emitted
+    uint32_t tailBranchOffset; // W6: the terminal direct `b` (varies with
+                               // the nil-fill shape)
+    uint32_t flags;            // bit 0 = linked (link truth readable
+                               // without disassembly); rest telemetry
+};
+static_assert(sizeof(SendSitePatch) == 16, "SendSitePatch layout");
+
 // ===== JIT METHOD HEADER =====
 //
 // Lives at the start of each compiled method's allocation in the code zone.
@@ -247,7 +267,13 @@ struct JITMethod {
     // Offset from codeStart() to uint64_t[numICEntries] array.  Zero if
     // the method has no send sites.
     uint32_t  selBitsArrayOffset;
-    uint32_t  _pad_76;            // padding to 8-byte alignment for stats pointer
+    // --- PMS patch map (docs/patched-ic-design.md §9) ---
+    // Offset from codeStart() to SendSitePatch[numICEntries], in-zone
+    // after selBitsArray (same lifetime: written during compile's W
+    // window, read-only after, NOT GC-visited — no oops).  Zero if the
+    // method has no patchable sites.  Reuses the old _pad_76 padding —
+    // zero layout growth.
+    uint32_t  patchMapOffset;
 
     // --- Mutable stats (side-table) ---
     // Lives in regular heap so writes don't require W^X flips.
@@ -325,6 +351,18 @@ struct JITMethod {
     const uint64_t* selBitsArray() const {
         if (selBitsArrayOffset == 0) return nullptr;
         return reinterpret_cast<const uint64_t*>(codeStart() + selBitsArrayOffset);
+    }
+
+    // PMS per-site patch map (docs/patched-ic-design.md §9).
+    // numICEntries records; offsets come from asmjit labels ONLY —
+    // never fixed-offset arithmetic (debug emit knobs shift layout).
+    SendSitePatch* patchMap() {
+        if (patchMapOffset == 0) return nullptr;
+        return reinterpret_cast<SendSitePatch*>(codeStart() + patchMapOffset);
+    }
+    const SendSitePatch* patchMap() const {
+        if (patchMapOffset == 0) return nullptr;
+        return reinterpret_cast<const SendSitePatch*>(codeStart() + patchMapOffset);
     }
 
     // Pointer to the bcToCode re-entry table

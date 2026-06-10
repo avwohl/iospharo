@@ -49,13 +49,27 @@ extern "C" void pharo_pthread_jit_write_protect_np(int)
     __asm("_pthread_jit_write_protect_np");
 #endif
 
+// Thread-local shadow of the last mode set through these wrappers
+// (1 = executable, 0 = writable).  Accurate because EVERY flip in the
+// VM goes through makeWritable/makeExecutable.  Exists so a nested
+// write scope (the PMS patcher inside a compile/eviction window) can
+// RESTORE the mode it entered with instead of force-flipping to X and
+// SIGBUSing the outer window's next emit store.  A depth counter was
+// rejected: the codebase has deliberate unmatched defensive force-X
+// calls (Interpreter.cpp), so "last call wins" must keep working.
+static thread_local int g_wxShadowMode = 1;
+
+int currentWXShadowMode() { return g_wxShadowMode; }
+
 bool makeWritable(void* /*ptr*/, size_t /*bytes*/) {
 #if defined(__arm64__)
     pharo_pthread_jit_write_protect_np(0);
+    g_wxShadowMode = 0;
     return true;
 #else
     // x86_64 macOS: MAP_JIT not required; use page-level mprotect
     // (rare path — Apple Silicon is the production target).
+    g_wxShadowMode = 0;
     return true;
 #endif
 }
@@ -63,8 +77,10 @@ bool makeWritable(void* /*ptr*/, size_t /*bytes*/) {
 bool makeExecutable(void* /*ptr*/, size_t /*bytes*/) {
 #if defined(__arm64__)
     pharo_pthread_jit_write_protect_np(1);
+    g_wxShadowMode = 1;
     return true;
 #else
+    g_wxShadowMode = 1;
     return true;
 #endif
 }

@@ -5,6 +5,7 @@
  */
 
 #include "JITRuntime.hpp"
+#include "SendSitePatcher.hpp"
 #include "J2JSaveLayout.h"
 #include "PlatformJIT.hpp"
 #include "../DebugSettings.hpp"
@@ -957,6 +958,17 @@ extern "C" void jit_rt_fill_ic(JITState* s, uint64_t* icData,
     if (g_debug.noMegahitICFill) return;
     if (!icData || methodBits == 0) return;
     if (!s || !s->interp) return;
+    // PMS TRIPWIRE (design §6.1): this helper writes IC slot 0 with NO
+    // link hook.  It is dead today (the emit never calls it).  If it is
+    // ever reactivated while sites are linked, the patch mirror goes
+    // stale -> silent wrong execution.  Reactivation must add a
+    // linkSendSite call with the ownership-guard pattern first.
+    if (s->interp->jitRuntime().numPatchedSites() > 0) {
+        fprintf(stderr, "[PMS] FATAL: jit_rt_fill_ic called with %zu linked "
+                "sites and no link hook — see docs/patched-ic-design.md §6.1\n",
+                s->interp->jitRuntime().numPatchedSites());
+        std::abort();
+    }
     JITRuntime* jr = &s->interp->jitRuntime();
     if (!jr) return;
     constexpr uint64_t BLOCK_VALUE_BIT = 1ULL << 59;
@@ -2424,6 +2436,13 @@ JITRuntime::~JITRuntime() {
 bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     if (initialized_) return true;
 
+#if defined(__aarch64__)
+    // PMS patch encoders: cross-validate against asmjit once at
+    // startup (aborts on mismatch — a wrong patch encoder is silent
+    // code corruption).  docs/patched-ic-design.md §4.
+    sendSitePatcherSelfCheck();
+#endif
+
     // Bug 11b layer 5 sentinel: hand-coded JM_SIZE in TrampolineAsm.S
     // (an `.S` file — can't use `sizeof`) MUST equal the real
     // sizeof(JITMethod).  If layout drifts, every asm trampoline
@@ -2846,6 +2865,39 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
         jm->stats->flags |= kRecompileFailed;
     }
     return newJM != nullptr;
+}
+
+// ===== PMS — patched monomorphic send sites (docs/patched-ic-design.md) =====
+// B0 skeleton: gates + bookkeeping shape only; the actual patch writes
+// land in B2 alongside the COMPLETE §7 invalidation matrix (linking is
+// not deferrable past first patch — see the design's B2 rationale).
+bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
+    if (!jm || siteIdx >= jm->numICEntries) return false;
+    SendSitePatch* map = jm->patchMap();
+    if (!map) { patchStats_.refusedNoMap++; return false; }
+    SendSitePatch& rec = map[siteIdx];
+    if (rec.keyMovzOffset == 0 || rec.tailOffset == 0) {
+        patchStats_.refusedNoMap++;
+        return false;
+    }
+    if (GET_DEBUG_BOOL(PHARO_T1_PATCHED_SENDS_NOLINK)) return false;
+    // B2: link predicate (design §5), pre-patch opcode asserts (§4.3),
+    // ScopedPatchWriteAccess window, W1-last store order, ranged
+    // flushes, counters.
+    patchStats_.refusedGate++;
+    return false;
+}
+
+void JITRuntime::unlinkSendSite(JITMethod* jm, uint32_t siteIdx) {
+    if (!jm || siteIdx >= jm->numICEntries) return;
+    SendSitePatch* map = jm->patchMap();
+    if (!map) return;
+    SendSitePatch& rec = map[siteIdx];
+    if (!(rec.flags & 1)) return;   // not linked
+    // B2: W1 := impossible-key store + ranged icache flush.
+    rec.flags &= ~1u;
+    if (numPatchedSites_ > 0) numPatchedSites_--;
+    patchStats_.unlinks++;
 }
 
 // Rewrite J2J entry-addr bits in every IC site whose methodBits matches the

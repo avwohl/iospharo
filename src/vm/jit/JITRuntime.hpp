@@ -138,6 +138,28 @@ public:
     void rewriteIcEntriesAfterRecompile(uint64_t methodBits,
                                         uint64_t newEntryAddr);
 
+    // ===== PMS — patched monomorphic send sites (docs/patched-ic-design.md) =====
+    // The single shared entry-address computation (design §4 step 2):
+    // used by both linkSendSite and rewriteIcEntriesAfterRecompile
+    // callers so the two can never drift.
+    static uint64_t entryAddrFor(JITMethod* jm) {
+        return reinterpret_cast<uint64_t>(jm->codeStart());
+    }
+    // Idempotent: derive the site's link state from heap IC slot 0 and
+    // patch/unlink accordingly.  Returns true if the site is linked on
+    // exit.  B0: skeleton (gates only, no patching) — no callers yet.
+    bool linkSendSite(JITMethod* jm, uint32_t siteIdx);
+    // One W1 store + ranged icache flush; always safe.
+    void unlinkSendSite(JITMethod* jm, uint32_t siteIdx);
+    size_t numPatchedSites() const { return numPatchedSites_; }
+
+    // PMS telemetry (PHARO_T1_PATCH_STATS).
+    struct PatchStats {
+        uint64_t links = 0, relinks = 0, unlinks = 0;
+        uint64_t refusedGate = 0, refusedReach = 0, refusedNoMap = 0;
+    };
+    PatchStats patchStats_;
+
     // Flush all inline caches and mega cache (called on become:, GC, method changes)
     void flushCaches();
 
@@ -296,6 +318,7 @@ private:
     MethodMap   methodMap_;
     JITCompiler* compiler_ = nullptr;
     Tier2Compiler* tier2Compiler_ = nullptr;
+    size_t numPatchedSites_ = 0;   // PMS: early-out for unlink walks
     Interpreter* interp_ = nullptr;
     bool        initialized_ = false;
     uint32_t    fullBlockClosureClassIndex_ = 0;

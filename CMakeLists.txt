@@ -72,6 +72,7 @@ set(VM_SOURCES
     src/vm/jit/CodeZone.cpp
     src/vm/jit/JITCompiler.cpp
     src/vm/jit/JITRuntime.cpp
+    src/vm/jit/SendSitePatcher.cpp
     src/vm/jit/TrampolineAsm.S
     src/vm/jit/asmjit/AsmjitT1.cpp
     src/vm/jit/sista/SistaIR.cpp

@@ -55,6 +55,8 @@ void freeCodeMemory(void* ptr, size_t bytes) {
     if (ptr) munmap(ptr, bytes);
 }
 
+int currentWXShadowMode() { return 1; }  // RWX platform: never in W-only mode
+
 bool makeWritable(void* /*ptr*/, size_t /*bytes*/) {
     // No-op: pages are already RWX from mmap.  This is the entire
     // win we're chasing — every per-call W^X flip on Mac becomes

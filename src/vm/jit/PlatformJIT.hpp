@@ -68,6 +68,35 @@ private:
     size_t size_;
 };
 
+// Nesting-safe write scope for the PMS patcher (docs/patched-ic-design.md
+// §4.1).  linkSendSite can run INSIDE a compile/eviction window that
+// already holds W mode (CodeZone::allocate -> ... -> finalize); a plain
+// ScopedWriteAccess destructor would force-flip the thread back to X
+// and the outer window's next emit store SIGBUSes.  This scope restores
+// the mode it ENTERED with, using the platform shadow (a depth counter
+// was rejected — the VM has deliberate unmatched defensive force-X
+// calls whose "last call wins" semantics must keep working).  icache
+// flushes are the caller's job (ranged, per touched words — never
+// whole-zone) and are mode-independent.
+class ScopedPatchWriteAccess {
+public:
+    explicit ScopedPatchWriteAccess(void* ptr, size_t size)
+        : enteredExecutable_(pharo::platform::currentWXShadowMode() == 1)
+    {
+        if (enteredExecutable_) makeWritable(ptr, size);
+    }
+
+    ~ScopedPatchWriteAccess() {
+        if (enteredExecutable_) makeExecutable(nullptr, 0);
+    }
+
+    ScopedPatchWriteAccess(const ScopedPatchWriteAccess&) = delete;
+    ScopedPatchWriteAccess& operator=(const ScopedPatchWriteAccess&) = delete;
+
+private:
+    bool enteredExecutable_;
+};
+
 } // namespace jit
 } // namespace pharo
 

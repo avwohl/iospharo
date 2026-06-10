@@ -55,6 +55,12 @@ void freeCodeMemory(void* ptr, size_t bytes);
 // On Windows: VirtualProtect to PAGE_READWRITE (all threads).
 bool makeWritable(void* ptr, size_t bytes);
 
+// Thread-local shadow of the last W^X mode set via makeWritable/
+// makeExecutable on this thread (1 = X, 0 = W).  For nested write
+// scopes that must restore-on-exit instead of force-X.  See
+// apple_shared.cpp for why this is a shadow, not a depth counter.
+int currentWXShadowMode();
+
 // Toggle the calling thread's view of [ptr, ptr+bytes) to executable.
 // Mirror of makeWritable — see notes there.
 bool makeExecutable(void* ptr, size_t bytes);
