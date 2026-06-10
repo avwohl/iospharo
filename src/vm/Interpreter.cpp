@@ -227,24 +227,72 @@ extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val
 // Reports are capped; provenance: receiver class, slotIdx, extra word,
 // the caller JITMethod and its selector.
 extern "C" void jit_rt_verify_getter(uint64_t statep, uint64_t recv,
-                                     uint64_t val, uint64_t extra) {
+                                     uint64_t val, uint64_t extra,
+                                     uint64_t entryPtr) {
     using pharo::Oop;
     if (!statep || !recv || (recv & 7) != 0 || recv < 0x10000) return;
     auto* st = reinterpret_cast<pharo::jit::JITState*>(statep);
     pharo::ObjectHeader* ro = Oop::fromRawBits(recv).asObjectPtr();
     uint64_t slotIdx = extra & 0xFFFF;
-    if (slotIdx < ro->slotCount()) return;
+    const char* why = nullptr;
+    uint64_t key = 0, methodBits = 0;
+    int prim = -1;
+    if (entryPtr) {
+        const uint64_t* e = reinterpret_cast<const uint64_t*>(entryPtr);
+        key = e[0];
+        methodBits = e[1];
+        // v2: full re-derivation.
+        // (1) entry key must be the live receiver's classIndex;
+        if (key != ro->classIndex()) {
+            why = "KEY!=recvClass";
+        } else if (methodBits > 0x10000 && (methodBits & 7) == 0) {
+            // (2) classification slotIdx must match the cached method's
+            // quick-prim index (getter classification source:
+            // upgradeICToJ2J/fill = primIdx-264).
+            Oop mOop = Oop::fromRawBits(methodBits);
+            if (mOop.isObject() && st->interp) {
+                prim = st->interp->primitiveIndexOf(mOop);
+                bool ok = false;
+                if (prim >= 264 && prim <= 519) {
+                    // Quick-prim getter classification source.
+                    ok = (uint64_t)(prim - 264) == slotIdx;
+                } else {
+                    // Bytecode-shape source: pushRecvVar N + returnTop
+                    // (or the ExtPushRecvVar variant for N >= 16).
+                    pharo::ObjectHeader* mo = mOop.asObjectPtr();
+                    Oop hdr = mo->slotAt(0);
+                    if (hdr.isSmallInteger()) {
+                        size_t nl = (size_t)(hdr.asSmallInteger() & 0x7FFF);
+                        const uint8_t* bc = mo->bytes() + (1 + nl) * 8;
+                        namespace SV1 = pharo::jit::SistaV1;
+                        if (SV1::isPushRecvVar(bc[0])) {
+                            ok = (uint64_t)(bc[0] - SV1::PushRecvVarBase)
+                                     == slotIdx
+                                 && bc[1] == SV1::ReturnTop;
+                        } else if (bc[0] == SV1::ExtPushRecvVar) {
+                            ok = bc[1] == slotIdx
+                                 && bc[2] == SV1::ReturnTop;
+                        }
+                    }
+                }
+                if (!ok) why = "classification-mismatch";
+            }
+        }
+    }
+    if (!why && slotIdx >= ro->slotCount()) why = "slotIdx>=slotCount";
+    if (!why) return;
     static int vgReports = 0;
     if (++vgReports > 20) return;
     auto* jm = reinterpret_cast<pharo::jit::JITMethod*>(
         reinterpret_cast<uintptr_t>(st->jitMethod) & ~uintptr_t(1));
     fprintf(stderr,
-            "[VERIFY-GETTER #%d] slotIdx=%llu >= slotCount=%llu "
-            "recv=0x%llx cls=%u extra=0x%llx val=0x%llx callerJM=%p "
-            "callerCM=0x%llx\n",
-            vgReports, (unsigned long long)slotIdx,
-            (unsigned long long)ro->slotCount(),
-            (unsigned long long)recv, ro->classIndex(),
+            "[VERIFY-GETTER #%d] %s slotIdx=%llu slotCount=%llu prim=%d "
+            "key=%llu recvCls=%u recv=0x%llx methodBits=0x%llx "
+            "extra=0x%llx val=0x%llx callerJM=%p callerCM=0x%llx\n",
+            vgReports, why, (unsigned long long)slotIdx,
+            (unsigned long long)ro->slotCount(), prim,
+            (unsigned long long)key, ro->classIndex(),
+            (unsigned long long)recv, (unsigned long long)methodBits,
             (unsigned long long)extra, (unsigned long long)val,
             (void*)jm,
             (unsigned long long)(jm ? jm->compiledMethodOop : 0));

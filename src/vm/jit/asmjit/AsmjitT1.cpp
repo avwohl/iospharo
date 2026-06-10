@@ -48,7 +48,8 @@ extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val
                                     uint64_t bcOff);
 extern "C" void jit_rt_atrec_entry(uint64_t statep);
 extern "C" void jit_rt_verify_getter(uint64_t statep, uint64_t recv,
-                                     uint64_t val, uint64_t extra);
+                                     uint64_t val, uint64_t extra,
+                                     uint64_t entryPtr);
 // Set true in compileViaAsmjit ONLY when compiling asTuple under
 // FINDNODE_WATCH, so the recorder BLR is emitted at just asTuple's 2 getter
 // sites (no global code bloat).  Read at emit time in the inline getter.
@@ -5181,6 +5182,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x30, ptr(asmjit::a64::sp, 40));
                 a.mov(x2, x6);    // arg2 = val (x0=state, x1=recv in place)
                 a.mov(x3, x7);    // arg3 = the IC extra word
+                a.mov(x4, x5);    // arg4 = matched IC entry base
+                                  // (x5 = icDataPtr from the probe; live
+                                  // along the dispatch chain — see the
+                                  // HIT_FORCE_DISPATCH comment ~3728)
                 a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_verify_getter));
                 a.blr(x9);
                 a.ldr(x0,  ptr(asmjit::a64::sp, 0));
