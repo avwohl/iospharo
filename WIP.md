@@ -49,6 +49,31 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   VALIDATE each sub-step with: eval smoke, benchFib, PHARO_SP_DEPTH_
   CHECK healthy run (0 mismatches), DictionaryTest single-class,
   200-class suite.  Phase 2: mirror on x86 (rsi/r13 candidate).
+  **Phase-1 design notes (worked out 2026-06-10 EOD — saves the next
+  session the re-derivation):**
+  - AAPCS is ALREADY handled: the trampoline saves/restores x25 at
+    [sp,#48] (kept in Phase 0), and JIT_CALL declaring x25 in its
+    clobber list makes the C++ compiler save the interpreter's x25
+    around the asm.  No JIT-side stash slot needed.
+  - Trampoline sync points: load `x25 = [x21+JS_SP]` immediately
+    BEFORE each blr into JIT code; store `x25 -> [x21+JS_SP]`
+    immediately AFTER each blr returns to the loop (the loop's own
+    paths read JS_SP from memory and must see the callee's final sp).
+    Grep TrampolineAsm.S for `blr` — a handful of sites.
+  - Inline-J2J br chains stay coherent for free ONCE THE EMIT IS
+    FULLY MIGRATED: caller and callee share x25 across the br/return
+    like a real machine register — that IS the win (no OFF_SP
+    traffic at call boundaries at all).
+  - **MIGRATION TRAP: the emit canNOT migrate bytecode-by-bytecode.**
+    An unmigrated emit writes OFF_SP only -> x25 goes stale for the
+    next migrated emit.  The sweep must convert ALL OFF_SP reads/
+    writes in emitOne_arm64 + the send-site emit + preludes in ONE
+    change, with `str x25, [x0, OFF_SP]` added at every exit site
+    (every `EXIT_*` store + ret — grep OFF_EXIT for the full list)
+    and around every BLR to a C++ helper that touches state.sp
+    (jit_rt_* with sp side effects: block_value_prep, sista helpers).
+    Do it on a branch with the dev build; the sp-depth instrument
+    catches any missed site within one healthy startup (765K checks).
 Branch: `jit`. Build: `cmake --build build-opt` (optimized; the plain `build/` is -O0).
 Test VM: `./build-opt/test_load_image /tmp/harness/Pharo.image eval "<expr>"`.
 Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
