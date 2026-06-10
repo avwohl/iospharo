@@ -2,6 +2,29 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11c — V2 suite-clean after findMethodByPC fix
+
+- **V2's ONE real suite regression found+fixed**: the quiet suite gate
+  came back 2 fails (vs 6 in the bench-contaminated run): WeakAnnouncer
+  (known flake) + BehaviorTest>>testAllReferencesTo TIMEOUT — the
+  latter deterministic (repro'd single-class), NEW vs both V1
+  baselines.  Root cause: V2 resolves every save's caller via
+  codeZone.findMethodByPC(resumeAddr) (both C++ chain-loop pops + the
+  eviction pinner), and findMethodByPC was a LINEAR walk over every
+  zone method ("for crash diagnostics") — reflective workloads
+  (allReferencesTo: = system-wide scan, heavy interp/JIT crossing)
+  paid O(methods) per pop.  Same trap as the old "defensive
+  findMethodByPC scan was 93% of tryResume CPU" note.
+- **Fix (committed)**: binary search over a lazily-rebuilt
+  address-sorted snapshot (pcIndex_) of the already address-ordered
+  method list; dirty flag in linkMethod/freeMethod/initialize/destroy
+  (evictLRU only mutates via freeMethod; compact() needs empty list).
+- Validated: BehaviorTest 43/43 PASS (was TIMEOUT); cfib 28-29ms,
+  benchFib x10 80ms — equal-or-better.  Full suite gate re-running.
+- LESSON for the patched-IC work: anything on the per-send or per-pop
+  path must be O(1)/O(log n) in zone size; grep callers of any zone
+  walk before putting it on a hot path.
+
 ## CHECKPOINT 2026-06-11b — J2JSave V2 FLIPPED; lever re-ranked to PATCHED ICs
 
 - **PHARO_J2J_SAVE_V2 = 1 SHIPPED**: the packed 32-byte save protocol
