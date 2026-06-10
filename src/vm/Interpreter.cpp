@@ -22725,11 +22725,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 if (g_debug.t1J2JReceiverSync) {
                     receiver_ = save.receiver;
                 }
-                // Derive literals/argCount/ip from save.jitMethod — see
-                // docs/jit-j2j-reduction-plan.md.  The old self-recursive
-                // marker bit is gone.
+                // Derive literals/argCount/ip from the caller identity —
+                // V1: save.jitMethod; V2: zone lookup via resumeAddr (the
+                // packed save carries no jitMethod).
                 {
+#if PHARO_J2J_SAVE_V2
+                    auto* savedJM = jitRuntime_.codeZone().findMethodByPC(
+                        reinterpret_cast<uint64_t>(save.resumeAddr));
+#else
                     auto* savedJM = save.jitMethod;
+#endif
                     state.jitMethod = savedJM;
                     state.literals = reinterpret_cast<Oop*>(savedJM->literals());
                     state.argCount = savedJM->argCount;
@@ -22740,11 +22745,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                 }
 
-                // Pop receiver+args, push return value
+#if !PHARO_J2J_SAVE_V2
+                // Pop receiver+args, push return value (V2: the resume
+                // site does this with static offsets, retval in x1).
                 // Stack layout: sp[-(nArgs+1)]=receiver, sp[-nArgs]=arg1, ..., sp[-1]=TOS
                 // sp points to next free slot. Replace receiver with retVal, adjust down.
                 state.sp[-(save.sendArgCount + 1)] = retVal;
                 state.sp -= save.sendArgCount;
+#endif
 
                 // Bug-14 diagnostic: log every trampoline J2J-return —
                 // method being returned TO (caller), nArgs popped, retVal,
