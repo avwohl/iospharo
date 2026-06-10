@@ -104,6 +104,15 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   cascade dup'd it -> nextPutAll: DNU on ByteString.  Earlier variants
   (`,` to StdioStream) = the same class with the wrong object appearing
   one send earlier.  VALUES wrong at CORRECT depth at every check.
+  catch19 (verify-on-fire v1, bounds check only): CAUGHT rep 2 with
+  ZERO [VERIFY-GETTER] flags — the poisoned slotIdx is IN-BOUNDS
+  (wrong-but-small index, e.g. ivar 2 instead of 0 -> wrong object,
+  no bounds trip).  v2 NEEDED: full re-derivation in the helper —
+  expected slotIdx from the IC entry's METHOD slot (entry base reg:
+  see the probe emit at AsmjitT1 ~5011-5088 where x7=extra is loaded;
+  pass the entry pointer as arg4) -> primitiveIndexOf(methodBits)-264
+  vs extra&0xFFFF; ALSO compare entry key vs recv classIndex.  Any
+  mismatch = the poisoned entry with full provenance.
   catch16/17/18 (ExtJump fix, pendingICPatch GC-clear, icBuffer
   ownership guard — all real bugs, all committed): residual STILL
   reproduces (~rep 6-16).  GETTER CLASSIFICATION MACHINERY now fully
