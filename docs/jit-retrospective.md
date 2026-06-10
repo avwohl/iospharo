@@ -825,7 +825,27 @@ the dead-block emission is confirmed as the corruptor. FIX (preserves the optimi
 blocks OUT-OF-LINE (past dispatchCached/endOfSend). The PHARO_T1_NO_J2J_BRANCH knob (whole-block gate)
 gives a clean inline-J2J build meanwhile.
 
-## Cog-speed MAP (2026-06-09): the gap is CROSS-METHOD send activation
+## Cog-speed MAP UPDATE (2026-06-09 session 2): cross-method gap SOLVED for leaf callees
+
+The MAP below was right about WHERE the gap was (cross-method sends) but wrong about WHY.
+The "0 bit-60 fills" observation was a PHARO_J2J_LOG_FILL 4000-line cap artifact — the IC
+fill always worked.  The real blockers, both fixed (commits dd0fa6f2 + 24175466):
+  1. The xmethod gate chain read JITMethod bytes 47/46 as isStubOnEntry/canBailMidMethod;
+     real layout 46=hasNLR 47=canBailMidMethod 48=isStubOnEntry.  Since t1NlrTailOnly
+     (default ON) sets hasNLR for every method containing a return opcode, the misread
+     gate bailed ~every real cross-method callee to the trampoline.  (And stubs slipped
+     through the never-checked real stub byte = the old "xmethod corrupts state" lore.)
+  2. At full fire volume, materializeJ2J left state.j2jDepth stale -> ExitBlockCreate
+     skipped the sp resync -> ~50% startup corruption (SettingTree sortBlock DNU).
+     Fixed; 10/10 clean startups.
+Result: cfib(30) 344ms -> 41ms (Cog 8ms): 43x -> ~5x; benchFib 35ms; values match Cog.
+Remaining cross-method coverage gap: callees with prims / sends (numICEntries>0) /
+conditional jumps (canBailMidMethod) still bail to the trampoline — e.g. an
+`incs ^(self+1) max: 0` callee benches 503ms.  Lever (c) = admitting those
+(PHARO_T1_XMETHOD_MAX_IC knob) is NOT yet correct: deterministic repro
+DET_SCHED+MAX_IC=1 -> silent eval loss.  See WIP.md for the full state.
+
+## Cog-speed MAP (2026-06-09, SUPERSEDED — premise corrections above): the gap is CROSS-METHOD send activation
 
 Multi-pattern A/B, custom (inline-J2J) vs stock Cog (Time millisecondsToRun:, warmed):
   tight inlined loop (s := s + i, 20M)        custom 25ms  vs Cog 50ms   -> custom 2x FASTER

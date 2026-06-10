@@ -59,6 +59,19 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
 - Residual xmethod bails (cfib run): bail_prim=105K (prim-bearing callees),
   bail_numic=237K (callees with sends — lever (c), needs nested-save
   correctness), bail_b47/stub+canBail ~17K. Each bail = slow trampoline.
+  ALSO: any callee with conditional jumps has canBailMidMethod=1 -> b46
+  bail (e.g. Number>>max: = 1.35M bails in the incs bench) — relaxing
+  that is part of the same nested-correctness project.
+- **Lever (c) status (PHARO_T1_XMETHOD_MAX_IC=N knob, commit 1238b606):**
+  N>=1 (admit callees with sends) still corrupts after the j2jDepth fix
+  AND after j2jEntryDepth hardening at 4 JIT_CALL sites.  DETERMINISTIC
+  REPRO: `PHARO_T1_INLINE_J2J=1 PHARO_T1_XMETHOD_MAX_IC=1 PHARO_DET_SCHED=1`
+  -> 4/4 runs lose the eval silently (clean exit, no DNU, no EVAL-RESULT);
+  without DET_SCHED: intermittent startup DNUs (#do: in OpalCompiler
+  evaluate / #key in WorkingSession startup), runs recover.  Control:
+  DET_SCHED+leaf-only is clean.  Next session: lldb the deterministic
+  repro; the send-bearing-callee bench is incs '^(self+1) max: 0' in a
+  cfib loop (503ms today vs 41ms leaf — the lever-(c) prize).
 - The xmethod fire path still bumps g_xmethod_count + cap-check per fire
   (2 ld + add + st + cmp); could be emitted only when a cap is set.
 - J2J-s (stencil_sendJ2J out-of-line) handles 2.4M calls/run — dispatch-A
@@ -70,6 +83,17 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   extension noted in the Eδ.2c comment.
 - docs/jit-retrospective.md "Cog-speed MAP" numbers now stale for
   cross-method; tight-loop 2x-faster-than-Cog and self-rec 6x still hold.
+- **First-compile fail thrash (suite-scale):** SUnit batch shows 698K
+  failed compile attempts vs 5.8K successes — initialCompileFailed_
+  (the first-compile negative cache, JITRuntime.cpp ~4045) is CLEARED on
+  every recoverAfterGC (i.e. every scavenge), so each failing method
+  re-runs the asmjit pipeline once per GC.  Same family as the fixed
+  kRecompileFailed thrash (memory jit-recompile-fail-thrash).  Fix
+  sketch: make it a key-array visited by forEachRoot (like countMap_)
+  + rehash in recoverAfterGC, instead of clear; or remap through the
+  scavenge forwarding table.  Measure cost share first (failed-compile
+  bail reasons breakdown: compilationsFailed_ bump sites
+  JITCompiler.cpp 1542-1701).
 
 ## Workflow artifacts (multi-agent investigation maps, this session)
 
