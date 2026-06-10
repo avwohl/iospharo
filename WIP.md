@@ -35,7 +35,39 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   guard stays default-on).
   CONCLUSION: probe micro-cuts are exhausted on this core; the send-
   path gap is the save push/prelude (slot-reservation design) and
-  the dispatch chain — plus suite-wide wins from emit-size (i-cache).  BUT instruction-count says the BIGGER
+  the dispatch chain — plus suite-wide wins from emit-size (i-cache).
+  **J2JSAVE V2 DESIGN (worked out 2026-06-11 — SUPERSEDES
+  slot-reservation as the next send-path lever; simpler AND faster,
+  no GC-sentinel or C++-interleave hazards because the save is always
+  complete):** move statically-known work from the save/prelude to
+  the per-site RESUME CONTINUATION (which knows nArgs, callerJM, and
+  its own method context at EMIT time):
+  - save shrinks 56 -> 32 bytes {sp, receiver, tempBase, resumeAddr}
+    = 2 stp push (from ~12 instr to ~6);
+  - DROP sendArgCount: the resume code does the arg pop with a
+    STATIC immediate (sub x25, #nArgs*8) — also retires the
+    staticJ2JArgCount fold class of bugs permanently;
+  - DROP jitMethod: the resume code re-establishes state.jitMethod/
+    method/literals/argCount from EMIT-TIME immediates (movz/movk
+    of callerJM; 3-4 instr per site, i-cache for prelude latency);
+  - DROP ip: materialize derives it from resumeAddr ->
+    findMethodByPC(zone) -> jm + a 16-bit bcOffset packed in the
+    resumeAddr slot's low bits? NO — simpler: materialize uses
+    resumeAddr->jm (zone binary search, rare path) and the existing
+    bcToCode table INVERSE (codeToBc) or store bcOffset in the
+    spare 16 bits of the tempBase slot (stack addrs fit 48 bits);
+  - retval moves to x1 REGISTER end-to-end (prelude already has it;
+    the resume writes it with the static-offset stur — Cog-style);
+  - prelude becomes: pop 2 ldps + cursor/depth-- + br resumeAddr
+    (~7 instr from ~14).
+  Estimated: ~10-12 instr off every J2J call+return pair (~40% of
+  the remaining per-send cost).  Same execution pattern: V2 behind a
+  build switch, both protocols compiled, batches green, flip last.
+  Consumers to convert: push emits (generic + xmethod + retro-stub),
+  prelude, TrampolineAsm push/pop paths, C++ pops (2 chain loops),
+  materializeJ2JSaveIntoFrame, prepareForGC/afterGC pool walk,
+  forEachRoot save.receiver visit (offset changes), J2JSave struct +
+  JSV_* asm constants + the sp-depth save checker.  BUT instruction-count says the BIGGER
   per-send cost is the J2J save push (~12 instr) + return prelude
   (~14): the slot-reservation saveless design (reserve the pool slot
   with a cursor bump at call, fill retroactively on bail — fixes the
