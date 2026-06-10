@@ -2266,6 +2266,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         return;
     }
@@ -2314,6 +2315,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x5, ptr(x0, OFF_RETVAL));
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             a.bind(tryWords);
             // fmt 10-11: 32-bit indexable (WordArray, IntegerArray).
@@ -2328,6 +2330,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x5, ptr(x0, OFF_RETVAL));
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             a.bind(tryBytes);
             // fmt - 16 in [0..7] → byte indexable.
@@ -2345,6 +2348,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x5, ptr(x0, OFF_RETVAL));
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             a.bind(tryFmt9);
             // fmt 9 (Indexable64): size = slotCount.
@@ -2356,6 +2360,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x5, ptr(x0, OFF_RETVAL));
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             // fmt 3/4/5 (IndexableWithFixed / Weak): call helper that
             // reads fixedFields from the class's instSpec slot.  Without
@@ -2387,6 +2392,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x5, ptr(x0, OFF_RETVAL));
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             a.bind(fail);
             return;
@@ -2417,6 +2423,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x4, ptr(x0, OFF_RETVAL));
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             a.bind(tryWordsAt);
             // fmt 10-11: 32-bit indexable (WordArray, IntegerArray).
@@ -2441,6 +2448,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x7, ptr(x0, OFF_RETVAL));
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             a.bind(tryBytesAt);
             a.sub(x8, x6, asmjit::Imm(16));
@@ -2465,6 +2473,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x7, ptr(x0, OFF_RETVAL));
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             // fmt 3/4/5/9 (IndexableWithFixed / Weak / Indexable64) — call
             // jit_rt_primat_ptr helper.  Same dual-path trap as basicSize:
@@ -2501,6 +2510,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
                 // *out (already tagged for SmI / pointer).  Set EXIT_RETURN.
                 a.mov(w3, asmjit::Imm(EXIT_RETURN));
                 a.str(w3, ptr(x0, OFF_EXIT));
+                emitSyncSpToState(a);
                 a.ret(x30);
             }
             a.bind(fail);
@@ -2528,6 +2538,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x9, ptr(x0, OFF_RETVAL));   // return value
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             a.bind(tryWordsAtPut);
             // fmt 10-11: 32-bit indexable (WordArray, IntegerArray).
@@ -2561,6 +2572,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x9, ptr(x0, OFF_RETVAL));   // return value
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             a.bind(tryBytesAtPut);
             a.sub(x8, x6, asmjit::Imm(16));
@@ -2588,6 +2600,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x9, ptr(x0, OFF_RETVAL));
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             // fmt 3/4/5 — call jit_rt_primatput_ptr helper.  Same dual-
             // path trap as basicSize/at:.
@@ -2623,6 +2636,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
                 a.str(x9, ptr(x0, OFF_RETVAL));
                 a.mov(w3, asmjit::Imm(EXIT_RETURN));
                 a.str(w3, ptr(x0, OFF_EXIT));
+                emitSyncSpToState(a);
                 a.ret(x30);
             }
             a.bind(fail);
@@ -2692,6 +2706,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.str(x4, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         a.bind(fail);
         return;
@@ -2725,6 +2740,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         a.bind(fail);
         return;
@@ -2741,6 +2757,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         a.bind(fail);
         return;
@@ -2757,6 +2774,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         a.bind(fail);
         return;
@@ -2769,6 +2787,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         a.bind(fail);
         return;
@@ -2799,6 +2818,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
     a.str(x1, ptr(x0, OFF_RETVAL));
     a.mov(w3, asmjit::Imm(EXIT_RETURN));
     a.str(w3, ptr(x0, OFF_EXIT));
+    emitSyncSpToState(a);
     a.ret(x30);
 
     a.bind(fail);
@@ -2895,6 +2915,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         return true;
     }
@@ -2909,6 +2930,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         return true;
     }
@@ -2974,6 +2996,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         a.bind(end);
         return true;
@@ -3116,6 +3139,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
     };
     auto emitReturnImm = [&](uint64_t imm) {
@@ -3124,6 +3148,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
     };
     // NON-LOCAL RETURN: 0x58-0x5C inside a CompiledBlock returns from
@@ -3137,6 +3162,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         return true;
     }
@@ -3153,6 +3179,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         return true;
     }
@@ -3384,6 +3411,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
 
         a.bind(end);
@@ -3414,6 +3442,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         a.bind(end);
         return true;
@@ -3454,6 +3483,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         a.bind(end);
         return true;
@@ -3512,6 +3542,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         a.bind(end);
         return true;
@@ -3603,6 +3634,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         a.bind(end);
         return true;
@@ -3619,6 +3651,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.str(x5, ptr(x0, OFF_IP));
             a.mov(w3, asmjit::Imm(EXIT_SEND));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
             return true;
         }
@@ -3663,6 +3696,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_MUST_BOOL));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         return true;
     }
@@ -4450,7 +4484,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     //   [72] = caller state.argCount (32-bit, zext)
                     const int stashSize = crossSaveless ? 96 : 48;
                     a.sub(sp, sp, asmjit::Imm(stashSize));
-                    a.ldp(x4, x5, ptr(x0, OFF_SP));      // x4=sp x5=recv
+                    emitLoadSp(a, x4);                   // x4=sp (sweep: was ldp sp+recv)
+                    a.ldr(x5, ptr(x0, OFF_RECEIVER)); // x5=recv
                     a.stp(x4, x5, ptr(sp, 0));
                     a.ldr(x6, ptr(x0, OFF_TEMPBASE));
                     a.ldr(x12, ptr(x0, OFF_IP));
@@ -4626,6 +4661,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         // with the CALLEE's exit state intact.
                         a.ldr(x30, ptr(sp, 32));
                         a.add(sp, sp, asmjit::Imm(stashSize));
+                        emitSyncSpToState(a);
                         a.ret(x30);
                         a.bind(exitOk);
                     }
@@ -4823,7 +4859,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 //   original [x6, 0]   -> post-index advance to x6+56
                 //   original [x6, 16]  -> ptr(x6, -40)  (x6+56-40 = x6+16)
                 //   original [x6, 40]  -> ptr(x6, -16)  (x6+56-16 = x6+40)
-                a.ldp(x15, x4, ptr(x0, OFF_SP));   // sp + receiver
+                emitLoadSp(a, x15);                // sp (sweep: was ldp sp+recv)
+                a.ldr(x4, ptr(x0, OFF_RECEIVER)); // receiver
                 a.stp(x15, x4, ptr_post(x6, 56));  // [old x6, 0]; x6 += 56
                 a.ldr(x15, ptr(x0, OFF_TEMPBASE));
                 if (g_debug.t1J2JPostSendIp) {
@@ -6532,6 +6569,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.str(x6, ptr(x0, OFF_CACHED_TARGET));
             a.mov(w3, asmjit::Imm(EXIT_SEND_CACHED));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
 
             // === Miss === (emits deferred state setup)
@@ -6544,6 +6582,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.str(x6, ptr(x0, OFF_IP));
             a.mov(w3, asmjit::Imm(EXIT_SEND));
             a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(x30);
 
             a.bind(endOfSend);
@@ -6595,6 +6634,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x6, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_SEND));
         a.str(w3, ptr(x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(x30);
         return true;
     }
@@ -6844,6 +6884,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
                 a.mov(a64::w3, Imm(EXIT_ARRAY_CREATE));
                 a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                emitSyncSpToState(a);
                 a.ret(a64::x30);
                 a.bind(bcLabels[globalIdx + 1]);
                 i += 1;
@@ -6863,6 +6904,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
                 a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
                 a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                emitSyncSpToState(a);
                 a.ret(a64::x30);
                 // Bind labels for all bytes consumed.  Loop's ++ skips
                 // the prefix opcode; we explicitly skip the rest.
@@ -6885,6 +6927,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
                 a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
                 a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                emitSyncSpToState(a);
                 a.ret(a64::x30);
                 a.bind(bcLabels[globalIdx + 1]);
                 i += 1;
@@ -6968,6 +7011,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
                 a.mov(a64::w3, Imm(EXIT_BLOCK_CREATE));
                 a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                emitSyncSpToState(a);
                 a.ret(a64::x30);
                 a.bind(bcLabels[globalIdx + 1]);
                 a.bind(bcLabels[globalIdx + 2]);
@@ -7086,6 +7130,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
                     a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
                     a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                    emitSyncSpToState(a);
                     a.ret(a64::x30);
                     a.bind(end);
                 }
@@ -7114,6 +7159,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
                     a.mov(a64::w3, Imm(EXIT_SEND));
                     a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                    emitSyncSpToState(a);
                     a.ret(a64::x30);
                     a.bind(bcLabels[globalIdx + 1]);
                     i++;
@@ -7153,6 +7199,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
                     a.mov(a64::w3, Imm(EXIT_MUST_BOOL));
                     a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                    emitSyncSpToState(a);
                     a.ret(a64::x30);
                 }
                 // Bind operand byte's label to current PC so any
@@ -7179,11 +7226,13 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 || bcReal[bcRealLen-1] > SistaV1::ReturnTop) {
             a.mov(a64::w1, Imm(EXIT_SEND));
             a.str(a64::w1, a64::ptr(a64::x0, OFF_EXIT));
+            emitSyncSpToState(a);
             a.ret(a64::x30);
         }
     } else {
         a.mov(a64::w1, Imm(EXIT_SEND));
         a.str(a64::w1, a64::ptr(a64::x0, OFF_EXIT));
+        emitSyncSpToState(a);
         a.ret(a64::x30);
     }
 #endif
