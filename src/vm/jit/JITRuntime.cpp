@@ -2379,10 +2379,18 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
         }
     }
 
-    // Initialize code zone
-    if (!codeZone_.initialize()) {
-        fprintf(stderr, "[JIT] Failed to initialize code zone\n");
-        return false;
+    // Initialize code zone.  PHARO_CODE_ZONE_MB overrides the 64MB
+    // default — SUnit-suite workloads fill 64MB at ~14.6K methods
+    // (~6KB/method T1 emit, lever (d)); once full, late-hot methods run
+    // interpreted (e.g. the SHA256Test TIMEOUT).
+    {
+        size_t zoneSize = DefaultCodeZoneSize;
+        int mb = GET_DEBUG_INT(PHARO_CODE_ZONE_MB);
+        if (mb > 0) zoneSize = (size_t)mb * 1024 * 1024;
+        if (!codeZone_.initialize(zoneSize)) {
+            fprintf(stderr, "[JIT] Failed to initialize code zone\n");
+            return false;
+        }
     }
 
     // Initialize method map
