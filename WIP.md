@@ -22,6 +22,21 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   JIT_CALL clobber update), per-method emit bloat (~6KB/method ->
   zone exhaustion: SHA timeout), then the full-2045-class suite
   survivability run on build-opt.
+- **Saveless-extension ceiling experiment (PHARO_T1_SAVELESS_FORCE_SEL,
+  knob kept):** forcing the saveless path for fib-shaped callees
+  (sends + cond-jumps) CRASHES immediately — the recovery stub's
+  retro-append is out of order once the callee pushes its own saves,
+  exactly as the ordering analysis predicted.  Extending saveless to
+  with-send callees REQUIRES the slot-reservation design (bump cursor
+  at call, fill on bail).  BUT: the leaf A/B (423 vs 447 ms) already
+  showed save TRAFFIC is only ~5% — the 5x is the per-bytecode
+  state-memory round-trips (every push/pop = ldr+str of OFF_SP plus
+  the operand store).  REGISTER-RESIDENT state.sp is confirmed as THE
+  structural lever.  Plan: Phase 0 free x25/x26 (telemetry counters ->
+  plain memory increments outside the pinned set) + x27 (recompute);
+  Phase 1 x25 := sp in the trampoline contract, T1 emit uses it,
+  sync to OFF_SP at every exit/BLR boundary (the sp-depth instrument
+  validates every step); Phase 2 same for x86.
 Branch: `jit`. Build: `cmake --build build-opt` (optimized; the plain `build/` is -O0).
 Test VM: `./build-opt/test_load_image /tmp/harness/Pharo.image eval "<expr>"`.
 Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.

@@ -7743,9 +7743,33 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         // return cleanly; the gate also catches them via numICEntries
         // checks elsewhere, but mark them false here so callers
         // requesting a saveless call route correctly to the stub path).
+        // PHARO_T1_SAVELESS_FORCE_SEL: ceiling EXPERIMENT knob — force
+        // the saveless call path for methods whose selector is in the
+        // comma list.  UNSOUND in general (the recovery stub
+        // retro-appends the elided save at the cursor, which is out of
+        // order when the callee pushed its own saves before bailing) —
+        // use only on bench selectors to measure how much of the
+        // per-call gap is J2J save traffic.  (The global force crashes
+        // startup, as predicted by the ordering analysis.)
+        bool forceSaveless = false;
+        if (const char* fsel = GET_DEBUG_STR(PHARO_T1_SAVELESS_FORCE_SEL)) {
+            std::string sel = memory.selectorOf(compiledMethod);
+            const char* p = fsel;
+            while (*p) {
+                const char* end = p;
+                while (*end && *end != ',') end++;
+                if ((size_t)(end - p) == sel.size()
+                        && std::memcmp(p, sel.data(), sel.size()) == 0) {
+                    forceSaveless = true;
+                    break;
+                }
+                p = (*end == ',') ? end + 1 : end;
+            }
+        }
         jm->canSkipJ2JSave = isReal
-                              && !jm->canBailMidMethod
-                              && jm->numICEntries == 0;
+                              && (forceSaveless
+                                  || (!jm->canBailMidMethod
+                                      && jm->numICEntries == 0));
         if (isReal) {
             g_canSkipJ2JSave_total++;
             if (jm->canSkipJ2JSave) g_canSkipJ2JSave_count++;
