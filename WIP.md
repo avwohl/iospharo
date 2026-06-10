@@ -104,6 +104,17 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   cascade dup'd it -> nextPutAll: DNU on ByteString.  Earlier variants
   (`,` to StdioStream) = the same class with the wrong object appearing
   one send earlier.  VALUES wrong at CORRECT depth at every check.
+  catch13/14 VERDICT (KNIFE-EDGE-CONTROLLED): **PHARO_T1_NO_INLINE_GETTER
+  -> 30/30 PASS; same-length DUMMY var (PHARO_T1_NO_INLINE_GETTEX) ->
+  FAILED at rep 8 — the bit-63 INLINE GETTER emit is the corruptor
+  route, NOT layout luck.**  Next: root-cause the getter staleness —
+  audit every IC extra-word writer (jit_rt_fill_ic rewrites extras
+  fresh ✓; check patchJITICAfterSend / upgradeICToJ2J /
+  applyICSpecialization for partial writes), and the getter emit's
+  ivar-index/receiver assumptions under xmethod (MAX_IC=1).  Suspect
+  family: recoverAfterGC's selective IC clear PRESERVES upper-16 extra
+  flags (bit 63 + classification) while zeroing key/method — sound only
+  if every refill path fully rewrites the extra word.
   catch12 VERDICT: **PHARO_NO_JIT -> 30/30 PASS (same env) — the
   residual is JIT-SIDE.**  A JIT-executed send (the `Stdio stderr`
   class-side accessor, xmethod-admitted at MAX_IC=1) returns the WRONG
