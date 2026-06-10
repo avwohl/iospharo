@@ -3879,20 +3879,25 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // Heap receiver path.  Arity gates (see below): getter
                     // 0-arg, setter 1-arg — a stale/racy IC extra must not
                     // hijack a wrong-arity send.
-                    // PHARO_T1_NO_GETTER_IN_J2J: bisect knob — disable
-                    // ONLY this dispatch-A-side entry into the shared
-                    // tryGetter label (the plain-probe entries stay on).
-                    // tryGetter assumes x2 == SP and x1 == receiver; the
-                    // dispatch-A path runs inline-prim/J2J attempts
-                    // between the block entry (which sets them) and this
-                    // tbnz — a bail path that clobbers x2/x1 makes the
-                    // getter write its result through garbage (the
-                    // MAX_IC=1 wrong-object residual: disabling only
-                    // this entry cured 30/30).  FIX: re-establish the
-                    // contract from state before taking the branch —
-                    // 2 ldrs on the getter-hit path only.
+                    // Dispatch-A-side getter entry: DEFAULT OFF
+                    // (opt-in via PHARO_T1_GETTER_IN_J2J for debugging).
+                    // CONTROLLED BISECT (catch22/23, 2026-06-10): with
+                    // this branch emitted, the MAX_IC=1 config corrupts
+                    // (~5-20%/layout, wrong values at correct depth);
+                    // with it removed, 30/30 clean while the plain-probe
+                    // getter entries stay on; a same-length dummy env
+                    // var does NOT cure (not layout luck).  Re-loading
+                    // x2/x1 from state before the branch REDUCED but did
+                    // not eliminate the failures (catch24 rep 31) — the
+                    // dispatch-A bail paths leave more than registers
+                    // inconsistent (suspect: partial state commits, e.g.
+                    // state.ip = callee bcStart in the J2J callee-setup
+                    // before a late bail).  Until that is root-caused,
+                    // getter-classified sends on this path take
+                    // dispatchCached — a path they were already on after
+                    // the J2J bail; benchFib/cfib are unaffected.
                     if (g_debug.t1InlineGetter && nArgs == 0
-                            && !GET_DEBUG_BOOL(PHARO_T1_NO_GETTER_IN_J2J)) {
+                            && GET_DEBUG_BOOL(PHARO_T1_GETTER_IN_J2J)) {
                         asmjit::Label notGetter63 = a.new_label();
                         a.tbz(x7, asmjit::Imm(63), notGetter63);
                         a.ldr(x2, ptr(x0, OFF_SP));
