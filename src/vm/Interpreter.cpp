@@ -14964,7 +14964,7 @@ void Interpreter::terminateCurrentProcess() {
                                 termSel == "aboutToReturn:through:");
         if (highPri || exceptionalTerm) {
             fprintf(stderr, "[TERM-P%lld] PROCESS TERMINATING via #%s\n",
-                    pri.isSmallInteger() ? pri.asSmallInteger() : -1L,
+                    pri.isSmallInteger() ? (long long)pri.asSmallInteger() : -1LL,
                     termSel.c_str());
             // 2026-05-08 A3 diag: dump method oop + class for the
             // terminating method.  When the bug fires (sender=0x300000000
@@ -14975,7 +14975,7 @@ void Interpreter::terminateCurrentProcess() {
                     ? classNameOfMethod(method_) : "?";
                 fprintf(stderr, "[TERM-P%lld]   method oop=0x%llx class=%s "
                         "activeContext=0x%llx frameDepth=%zu\n",
-                        pri.isSmallInteger() ? pri.asSmallInteger() : -1L,
+                        pri.isSmallInteger() ? (long long)pri.asSmallInteger() : -1LL,
                         (unsigned long long)method_.rawBits(),
                         termCls.c_str(),
                         (unsigned long long)activeContext_.rawBits(),
@@ -15042,7 +15042,7 @@ void Interpreter::terminateCurrentProcess() {
                             len++;
                             if (len > 200) break;
                         } while (c.rawBits() != slow.rawBits());
-                        fprintf(stderr, "[TERM-P%lld] Cycle length: %d\n", pri.asSmallInteger(), len);
+                        fprintf(stderr, "[TERM-P%lld] Cycle length: %d\n", (long long)pri.asSmallInteger(), len);
                         break;
                     }
                 }
@@ -15053,7 +15053,7 @@ void Interpreter::terminateCurrentProcess() {
                     for (; len < 500 && c.isObject() && !c.isNil(); len++)
                         c = memory_.fetchPointer(0, c);
                     fprintf(stderr, "[TERM-P%lld] Sender chain length: %d (terminated=%s)\n",
-                            pri.asSmallInteger(), len, c.isNil() ? "nil" : "non-nil/limit");
+                            (long long)pri.asSmallInteger(), len, c.isNil() ? "nil" : "non-nil/limit");
                 }
             }
         }

@@ -126,8 +126,12 @@ if(PHARO_WITH_CRYPTO)
     list(APPEND PLUGIN_C_SOURCES
         src/vm/plugins/DSAPrims.c
         src/vm/plugins/SqueakSSL.c
-        src/vm/plugins/sqMacSSL.c
     )
+    # sqMacSSL is Darwin-only (TargetConditionals.h / Security.framework);
+    # Linux boxes (AWS arm sweeps) build with crypto but without it.
+    if(APPLE)
+        list(APPEND PLUGIN_C_SOURCES src/vm/plugins/sqMacSSL.c)
+    endif()
 endif()
 
 # Mark all plugin sources as C language and set include paths
