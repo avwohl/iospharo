@@ -4333,6 +4333,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // blr to callee entry.  x9 already holds entryAddr.
                     a.blr(x9);
 
+                    // DIAGNOSTIC: the post-blr code assumes the callee
+                    // exited with EXIT_RETURN.  If a leaf can exit any
+                    // other way (yield-class check, unconsidered bail),
+                    // the OFF_RETVAL read below is garbage — trap loudly
+                    // instead of corrupting (brk lands in the SIGSEGV-
+                    // style crash handler with pc = this stub).
+                    {
+                        asmjit::Label exitOk = a.new_label();
+                        a.ldr(w14, ptr(x0, OFF_EXIT));
+                        a.cmp(w14, asmjit::Imm(EXIT_RETURN));
+                        a.b_eq(exitOk);
+                        a.brk(asmjit::Imm(0xDEAD & 0xFFFF));
+                        a.bind(exitOk);
+                    }
+
                     // === Post-return: restore caller state ===
                     a.ldp(x4, x5, ptr(sp, 0));     // saved sp + receiver
                     a.ldp(x6, x12, ptr(sp, 16));   // saved tempBase + ip

@@ -201,11 +201,17 @@ under load is the canary).
     register/machine-sp discipline differs from the tryExecute entry
     the controlled site used), or a callee exit the post-blr code
     ignores — it ASSUMES EXIT_RETURN; if any leaf can exit otherwise
-    the OFF_RETVAL read is garbage.  NEXT (cheap, likely decisive):
-    verify OFF_EXIT == EXIT_RETURN in the post-blr (1 ldr + cmp,
-    branch to a bail stub that re-routes to the normal path
-    otherwise); also try gating saveless emit off inside block
-    compiles (isBlock at emit time).
+    the OFF_RETVAL read is garbage.  CONFIRMED via brk trap (exit=133
+    SIGTRAP in the failing config): leaf callees DO exit with
+    non-EXIT_RETURN reasons at scale — THE at-scale bug.  WHICH exit
+    reason: read OFF_EXIT at the trap under lldb next session.  THE
+    FIX: a cold recovery stub at the trap site that retroactively
+    builds the pool save from the sp-stash (sp,recv,tempBase,ip,
+    jitMethod=stash, resumeAddr=our endOfSend, sendArgCount=nArgs),
+    bumps j2jDepth/cursor, restores entryDepth + machine sp, and
+    rets — C++ then materializes normally, exactly as if the call had
+    used the save-push path.  After that + the x25-x28 register diet,
+    saveless can default-on for leaf sites.
 - docs/jit-retrospective.md "Cog-speed MAP" numbers now stale for
   cross-method; tight-loop 2x-faster-than-Cog and self-rec 6x still hold.
 - **First-compile fail thrash: FIXED (c79b97ab + 9dbe6a49).**  All
