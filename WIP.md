@@ -2,6 +2,44 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11d — cfib DISASSEMBLED: the gap named instruction-by-instruction
+
+- Tooling: `PHARO_T1_DUMP_SEL=cfib` dumps emitted bytes to
+  /tmp/jit_cfib_1.bin; disassemble with python3+capstone (recipe in
+  the session transcript; /tmp/cfib_disasm.txt).  cfib: 18 bytecodes
+  -> ~1550 instructions / 6.3KB (the known bloat, quantified).
+- **Per-bytecode tax (the NEW second lever)**: every push is 5 insns
+  (`ldr; mov x2,x25; str; add; mov x25,x2`) and adjacent bytecodes
+  round-trip operands through memory (push then immediate ldur back
+  for the compare) — a naive stack machine with no TOS register
+  caching.  Store-to-load forwarding (~4-5cy) sits on the critical
+  path of every bytecode; this is the naive-Cogit vs
+  **StackToRegisterMappingCogit** gap (reference impl in
+  ~/src/pharo-vm).  Fixed the shared helper (emitPushReg = 1
+  post-index store now); the 35 inline copies + real TOS caching =
+  the simStack design, AFTER patched-ICs.
+- **Per-send tax (validates the patched-IC lever)**: the xmethod
+  inline-J2J send is ~90 insns: icDataPtr 2-load chain, receiver tag
+  tests + header classIndex extract, key cmp, extras decode chain,
+  then EIGHT JITMethod-header gate loads (numIC/canBail/hasNLR/
+  isXmethod/prim...) re-validating per SEND what Cog settles ONCE at
+  patch time, then ~25 insns of machine-stack state stash around the
+  blr, then the retro-save push + entryDepth dance on return.  The
+  V2 return path is ~20 insns.  Patched monomorphic sites collapse
+  the probe+gates to cmp-imm + direct branch.
+- **Found+fixed a production hot-path telemetry counter**: the Eδ.2b
+  canSkipJ2JSave ic-hits counter (7 insns + shared-global RMW) was
+  emitted on EVERY inline-J2J hit because its gate said `xmethod ||
+  counters` and xmethod went default-on.  Now counters-only.  When a
+  knob flips default-ON, AUDIT what its emit-gates drag in.
+- Microbench scale anchor (scripts/rasbench): bare cfib-shaped
+  control flow + side-stack saves = 4ms; + IC probe & RMW sim = +0.3
+  ns/call.  Cog full bench = 8ms.  Ours = 29ms.  The probe/RMW alone
+  doesn't explain the gap — the LENGTH of the real sequences above
+  (with their 10-15 dependent loads per send) does.
+- Bench numbers this checkpoint are contaminated (design workflow
+  running concurrently) — re-baseline when quiet.
+
 ## CHECKPOINT 2026-06-11c — V2 suite-clean after findMethodByPC fix
 
 - **V2's ONE real suite regression found+fixed**: the quiet suite gate
