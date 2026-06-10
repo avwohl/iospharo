@@ -37,8 +37,16 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   ns/call.  Cog full bench = 8ms.  Ours = 29ms.  The probe/RMW alone
   doesn't explain the gap — the LENGTH of the real sequences above
   (with their 10-15 dependent loads per send) does.
-- Bench numbers this checkpoint are contaminated (design workflow
-  running concurrently) — re-baseline when quiet.
+- **QUIET RE-BASELINE (suite done, harness free): today's emit fixes
+  moved the gap 3.5x -> ~3.0x**: cfib 24-25 ms (was 29; Cog 8),
+  benchFib x10 76 (was 87; Cog 25), sfib 35 (was 41; Cog 12).
+  Suite gate on the changes: 3/8459, all documented environmental.
+  The win is mostly the Eδ.2b counter removal — a shared-global RMW
+  (serializing store-load on ONE address from every send site) is
+  REAL cost even on the OoO core; pure instruction-count cuts are
+  not.  Refines the "micro-structure is free" lesson: shared-memory
+  serialization and dependent loads matter, register/mov chatter
+  doesn't.
 
 ## CHECKPOINT 2026-06-11c — V2 suite-clean after findMethodByPC fix
 
