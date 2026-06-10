@@ -67,7 +67,18 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   prelude, TrampolineAsm push/pop paths, C++ pops (2 chain loops),
   materializeJ2JSaveIntoFrame, prepareForGC/afterGC pool walk,
   forEachRoot save.receiver visit (offset changes), J2JSave struct +
-  JSV_* asm constants + the sp-depth save checker.  BUT instruction-count says the BIGGER
+  JSV_* asm constants + the sp-depth save checker.
+  BATCH 0 DONE (J2JSaveLayout.h shared header + static_asserts;
+  switch at 0).  CONTRACT DETAIL for batch 1+ (discovered sizing the
+  C++ pops): under V2 the RESUME SITE does the arg-pop and expects
+  the RETVAL IN x1 — so the C++ chain-loop pops that JIT_CALL a
+  resumeAddr need a JIT_RESUME_CALL macro variant that passes
+  x1 = retval live-in (the plain JIT_CALL only pre-loads
+  x19/x20/x25).  The trampoline's Ltramp_return already has retval
+  in x17/x1-adjacent flow — re-check its hand-off.  Batch order:
+  (1) struct V2 variant + C++ pops + JIT_RESUME_CALL, (2) materialize
+  + GC walks (resumeAddr->jm zone lookup), (3) emit push/prelude/
+  resume-site continuations, (4) trampoline, (5) checker, (6) flip.  BUT instruction-count says the BIGGER
   per-send cost is the J2J save push (~12 instr) + return prelude
   (~14): the slot-reservation saveless design (reserve the pool slot
   with a cursor bump at call, fill retroactively on bail — fixes the
