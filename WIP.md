@@ -2,6 +2,31 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11b — J2JSave V2 FLIPPED; lever re-ranked to PATCHED ICs
+
+- **PHARO_J2J_SAVE_V2 = 1 SHIPPED**: the packed 32-byte save protocol
+  is live end-to-end (emit push/prelude/continuation/retro-stub,
+  trampoline call/return/null-resume, all C++ producers/consumers,
+  eviction pinner).  Validated: sp-depth 1.83M+76K checks 0
+  mismatches, DictionaryTest 0 fails, suite gate in flight.
+- **MEASURED: V2 is perf-NEUTRAL on the -O2 build** (cfib 29-30,
+  sfib 40, benchFib x10 87-90 — within noise of V1; the dev -O0 build
+  shows the real -25% instruction win, which the M-series OoO core
+  fully hides at -O2).  Third independent instruction-count-is-free
+  result (leak guard, x26, V2).  KEEPING V2: structurally better
+  (fold-bug class impossible, GC-stable saves, half the pool traffic).
+- **THE REMAINING 3.5x, FINAL DIAGNOSIS**: (a) microbench gap =
+  IC-probe LOAD LATENCY (icBuffer ldr -> entry ldr -> cmp dependent
+  chain ~12+ cycles vs Cog's patched-immediate class check) — the fix
+  is **Cog-style PATCHED MONOMORPHIC SITES** (bake expected-class +
+  target into the instruction stream, patch on first fill; needs a
+  post-zone-copy patch pass — the same infrastructure the baked-IC
+  idea needed); (b) suite/real-workload gap = the 22.6% inline-J2J
+  catch rate (77% of sends round-trip through C++) — raise via
+  admission (MAX_IC sweep is FLAT on microbenches but untested at
+  suite scale) and via patched sites (which inline the dispatch too).
+  MAX_IC sweep on cfib: flat (31-34ms) — its callee already inlines.
+
 ## CHECKPOINT 2026-06-11 — sp-residency LIVE; gap = 3.5x
 
 - **PHARO_T1_SP_IN_X25 = 1 SHIPPED**: state.sp is register-resident in
