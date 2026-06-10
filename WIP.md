@@ -21,8 +21,21 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   commit).  Residency pays only for per-bytecode-WRITTEN fields.
   (b) per-method emit bloat (~6KB/method; SHA timeout = zone
   exhaustion; smaller code = better i-cache, suite-wide);
-  (c) IC-probe shortening (the probe is ~10 instr per send before
-  dispatch — compare Cog's ~3-instr monomorphic check);
+  (c) IC-probe shortening — ANALYZED (emit at ~3830): the slot-0
+  monomorphic path is ~12 instr: jm(hoisted, free) -> ldr icBuffer ->
+  add siteOffset -> tag-test -> classifier-leak guard (lsr+cbnz, 2
+  instr, removable once task#10 bit leaks are confirmed dead) ->
+  ldr header -> and classIndex -> ldr entry key -> cmp+b.  Cog is ~4
+  because the expected class + target are PATCHED INTO the code.
+  Cheap cuts: (i) bake icBuffer+siteOffset as movz+movk immediates
+  (3 indep instr vs ldr+add dependent load — latency win; lifetime is
+  sound: icBuffer outlives the code, recompile emits new code);
+  (ii) drop the leak guard.  BUT instruction-count says the BIGGER
+  per-send cost is the J2J save push (~12 instr) + return prelude
+  (~14): the slot-reservation saveless design (reserve the pool slot
+  with a cursor bump at call, fill retroactively on bail — fixes the
+  ordering problem that blocks with-send callees) is the main
+  remaining send-path lever.
   (d) the remaining per-send sequence: with sp resident the next
   costs are the save push/pop (slot-reservation design for
   with-sends saveless) and the dispatch chain;
