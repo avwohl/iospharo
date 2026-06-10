@@ -2,6 +2,33 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11e — PMS design COMPLETE + B0 LANDED; resume at B1
+
+- **docs/patched-ic-design.md is the working plan** (synthesized by an
+  11-agent workflow; every adversarial-review finding resolved, §15
+  traceability).  Batches B0-B6 in §11, each with binary gates.
+- **B0 SHIPPED** (commit "PMS B0"): knobs (PHARO_T1_PATCHED_SENDS
+  family in debug_vars.h), SendSitePatch map (+patchMapOffset in the
+  old _pad_76), SendSitePatcher encoders (asmjit-cross-validated at
+  startup), entryAddrFor, link/unlink skeletons + counters,
+  ScopedPatchWriteAccess (restores ENTERED W^X mode via a platform
+  thread-local shadow — depth counter rejected, the VM has deliberate
+  unmatched defensive force-X calls), jit_rt_fill_ic tripwire.
+  Gate passed: selfcheck, eval, cfib 30ms, DictionaryTest 205/205.
+- **NEXT = B1**: emit the §2 site shape behind PHARO_T1_PATCHED_SENDS
+  (impossible key movz/movk + cmp + patched-b head; tail skeleton
+  behind the V2 packing gate; Lprobe/LmissNoX5 cold restructure;
+  patch-map fill from asmjit labels next to the g_resumeOverridesPtr
+  pushes; no-BL-in-patched-range emit assert).  Gate: knob-off emit
+  byte-identical (hash a method corpus), shape-on overhead < 2-3%
+  within-binary, 60-class SUnit A/B identical, DET_SCHED AIPrim clean.
+- Then B2 = linking + the COMPLETE §7 invalidation matrix in ONE batch
+  (9 events; §6 trigger enumeration; §14 pre-existing bugs #1/#2 fixed
+  in the same commits they touch).
+- Current bench state (quiet, post emit-fixes): cfib 24-25 ms,
+  benchFib x10 76, sfib 35 (Cog 8/25/12) = ~3.0x.  Suite 3/8459
+  (all documented environmental).
+
 ## CHECKPOINT 2026-06-11d — cfib DISASSEMBLED: the gap named instruction-by-instruction
 
 - Tooling: `PHARO_T1_DUMP_SEL=cfib` dumps emitted bytes to
