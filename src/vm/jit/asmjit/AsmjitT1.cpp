@@ -54,6 +54,16 @@ extern "C" void jit_rt_verify_getter(uint64_t statep, uint64_t recv,
 // FINDNODE_WATCH, so the recorder BLR is emitted at just asTuple's 2 getter
 // sites (no global code bloat).  Read at emit time in the inline getter.
 static bool g_emitGetterTrace = false;
+// True while compiling a CompiledBlock (set per-compile in
+// compileViaAsmjit, same single-threaded pattern as g_emitGetterTrace).
+// Method-style returns 0x58-0x5C INSIDE a block are NON-LOCAL returns:
+// the emit must bail to interp (like 0x5D/0x5E) so the home-context
+// unwind runs.  The old emit treated 0x5C as a plain EXIT_RETURN,
+// silently converting `^x` inside a hot block into a block-local
+// return — Dictionary>>includes: (`self do: [:e | x = e ifTrue:
+// [^true]]. ^false`) returned false on present elements once its do:
+// block compiled (DictionaryTest>>testIncludes 2-test repro).
+static bool g_emitIsBlock = false;
 
 #include <cstdio>
 #include <cstdlib>
@@ -1607,6 +1617,17 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.bind(end);
         return true;
     }
+    // NON-LOCAL RETURN: 0x58-0x5C inside a CompiledBlock returns from
+    // the HOME method, not the block — bail to interp (mirrors the
+    // arm64 gate; see g_emitIsBlock).
+    if (g_emitIsBlock && SistaV1::isReturn(op)) {
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.ret();
+        return true;
+    }
     // returnReceiver: returnValue = receiver; exitReason = ExitReturn; ret.
     if (op == SistaV1::ReturnReceiver) {
         a.mov(rax, ptr(rdi, OFF_RECEIVER));
@@ -3058,6 +3079,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(w3, ptr(x0, OFF_EXIT));
         a.ret(x30);
     };
+    // NON-LOCAL RETURN: 0x58-0x5C inside a CompiledBlock returns from
+    // the HOME method, not the block.  Bail to interp (same shape as
+    // the 0x5D/0x5E handler) so commonReturn's home-context walk runs.
+    // Plain EXIT_RETURN here would return from the block's own frame —
+    // the swallowed-NLR bug (see g_emitIsBlock comment).
+    if (g_emitIsBlock && SistaV1::isReturn(op)) {
+        a.ldr(x5, ptr(x0, OFF_METHOD));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        return true;
+    }
     if (op == SistaV1::ReturnReceiver) { emitReturnPtr(OFF_RECEIVER); return true; }
     if (op == 0x59) { emitReturnPtr(OFF_TRUEOOP);  return true; }
     if (op == 0x5A) { emitReturnPtr(OFF_FALSEOOP); return true; }
@@ -7270,6 +7305,10 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     //                                     to bisect partner blocks).
     //   PHARO_T1_BLOCKS_TRACE=1         — log every block compile with
     //                                     bcLen + first 16 bytecodes.
+    // Per-compile block flag for the emit's NLR gate (0x58-0x5C inside
+    // a block bail to interp) and for jm->isBlock below.
+    g_emitIsBlock =
+        methObj->classIndex() == interp.compiledBlockClassIndex();
     {
         uint32_t cls = methObj->classIndex();
         if (cls == interp.compiledBlockClassIndex()) {
@@ -7592,7 +7631,9 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // SmI fast path inline and rets on success; on failure falls
     // through to the bytecode emit.
     jm->hasPrimPrologue   = (primIdx > 0);
-    jm->isBlock           = false;
+    // Was hardcoded false — T1-compiled blocks were invisible to every
+    // isBlock consumer (chain-loop block-resume gate, MAT_LOG).
+    jm->isBlock           = g_emitIsBlock;
     jm->pinned            = false;
     jm->hasSends          = false;
     jm->hasHeapWrites     = false;
