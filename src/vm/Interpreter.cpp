@@ -18237,6 +18237,14 @@ void Interpreter::prepareForGC() {
             }
         }
     }
+    // Drop any pending IC patch: it pairs a raw IC-slot pointer with
+    // pre-GC assumptions (owner method position, receiver class of a
+    // send that hasn't been patched yet).  After motion those can pair
+    // a foreign site with a stale classification — the inline-getter
+    // IC-poisoning family.  A dropped patch just re-derives on the
+    // next send; zero correctness cost.
+    pendingICPatch_ = nullptr;
+    pendingICOwnerMethod_ = Oop::nil();
     gcPrepared_ = true;
 }
 
@@ -20587,6 +20595,43 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         return; }
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
+
+    // OWNERSHIP GUARD (2026-06-10): pendingICPatch_ is a raw pointer
+    // into the owner JITMethod's heap-side icBuffer.  freeMethod
+    // (recompile, eviction) frees that buffer with the patch still
+    // pending — writing through it is a write-after-free into whatever
+    // reused the allocation (often another method's icBuffer), poisoning
+    // an unrelated site's classification (the inline-getter wrong-slot
+    // family).  Validate the pointer against the owner's CURRENT
+    // icBuffer; on any mismatch, drop the patch (re-derives next send).
+    {
+        jit::JITMethod* ownJM =
+            (pendingICOwnerMethod_.isObject()
+             && pendingICOwnerMethod_.rawBits() > 0x10000)
+            ? jitRuntime_.methodMap().lookup(pendingICOwnerMethod_.rawBits())
+            : nullptr;
+        bool ok = false;
+        if (ownJM && ownJM->numICEntries > 0 && ownJM->icBuffer) {
+            uint8_t* icStart = ownJM->icZoneStart();
+            ptrdiff_t off = reinterpret_cast<uint8_t*>(icData) - icStart;
+            ok = off >= 0
+                && (off % jit::IC_BYTES_PER_SITE) == 0
+                && (size_t)(off / jit::IC_BYTES_PER_SITE) < ownJM->numICEntries;
+        }
+        if (!ok) {
+            static size_t dbgStalePending = 0;
+            dbgStalePending++;
+            if (patchDbg && dbgStalePending <= 10) {
+                fprintf(stderr,
+                        "[IC-PATCH-DBG] STALE pending slot dropped (#%zu): "
+                        "icData=%p owner=0x%llx jm=%p\n",
+                        dbgStalePending, (void*)icData,
+                        (unsigned long long)pendingICOwnerMethod_.rawBits(),
+                        (void*)ownJM);
+            }
+            return;
+        }
+    }
 
     // jit-may22b Step 11: trivial-forwarder collapse.
     // If the resolved method's body is exactly `^ self foo: anInteger`
