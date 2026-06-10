@@ -19920,7 +19920,8 @@ void Interpreter::tryJITResumeInCaller() {
                     spAtLastJ2JCall = state.sp;
                     spLastNArgs = 0;  // resume isn't a call — no args to pop
                     spLastSite = "Return-resume";
-                    JIT_CALL(save.resumeAddr, &state);
+                    JIT_RESUME_CALL(save.resumeAddr, &state,
+                                    retVal.rawBits());
                     validateState("post-Return-resume", nullptr);
                 }
 
@@ -22758,7 +22759,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
 
                 // exitReason NOT cleared — stencils only write it, never read.
-                JIT_CALL(save.resumeAddr, &state);
+                JIT_RESUME_CALL(save.resumeAddr, &state, retVal.rawBits());
             }
 
             // No checkCountdown_ check here: nothing inside the loop body

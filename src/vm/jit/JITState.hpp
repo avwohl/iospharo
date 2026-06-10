@@ -314,6 +314,36 @@ typedef void (*StencilFunc)(JITState*);
           "memory","cc" \
     ); \
 } while(0)
+// JIT_RESUME_CALL: like JIT_CALL but passes the J2J return value
+// live-in via x1.  Under the V1 save protocol the resume code ignores
+// x1 (the C++ pop already wrote the retval to the stack slot), so this
+// is behavior-identical; under V2 (J2JSaveLayout.h) the per-site resume
+// continuation writes x1 to the stack itself with a static offset —
+// the C++ pops must use THIS macro so V2 receives the value.
+#ifdef __aarch64__
+#define JIT_RESUME_CALL(entry_ptr, state_ptr, retval_bits) do { \
+    _JIT_CALL_PRE(); \
+    void* _jit_e = reinterpret_cast<void*>(entry_ptr); \
+    void* _jit_s = reinterpret_cast<void*>(state_ptr); \
+    uint64_t _jit_rv = (retval_bits); \
+    asm volatile( \
+        "mov x0, %[s]\n\t" \
+        "mov x1, %[rv]\n\t" \
+        "ldr x20, [x0, #208]\n\t" \
+        "ldr x19, [x0, #56]\n\t" \
+        "ldr x25, [x0, #0]\n\t" \
+        "blr %[e]\n\t" \
+        "str x25, [%[s], #0]" \
+        : \
+        : [s] "r"(_jit_s), [e] "r"(_jit_e), [rv] "r"(_jit_rv) \
+        : "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10","x11", \
+          "x12","x13","x14","x15","x16","x17","x19","x20","x21","x22", \
+          "x25","x30", \
+          "memory","cc" \
+    ); \
+} while(0)
+#endif
+
 #else
 // NOTE: must fully qualify ::pharo::jit::JITState — this macro is invoked
 // from member functions of pharo::Interpreter (Interpreter.cpp), where
@@ -323,6 +353,9 @@ typedef void (*StencilFunc)(JITState*);
     _JIT_CALL_PRE(); \
     ((void(*)(::pharo::jit::JITState*))(entry_ptr))(state_ptr); \
 } while(0)
+// x86: V2 not ported yet — resume calls ignore the retval parameter.
+#define JIT_RESUME_CALL(entry_ptr, state_ptr, retval_bits) \
+    JIT_CALL(entry_ptr, state_ptr)
 #endif
 
 } // namespace jit
