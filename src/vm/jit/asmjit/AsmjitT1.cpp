@@ -6704,11 +6704,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.stur(x1, ptr(x2, -8));
             emitStoreSp(a, x2);
             if (xmethod) {
-                // Cross-method return: re-establish the CALLER's method
-                // context from emit-time immediates (self-rec callers
-                // never change it; this branch only exists when xmethod
-                // could have cross-called).
-                a.mov(x19, asmjit::Imm(reinterpret_cast<uint64_t>(jmSelf)));
+                // Cross-method return: re-establish the CALLER's (= this
+                // method's) context.  Self-identify PC-relatively: the
+                // JITMethod header immediately precedes codeStart() in
+                // the zone allocation, and codeStartLabel is bound at
+                // machine-code offset 0 — no emit-time address needed.
+                a.adr(x19, codeStartLabel);
+                a.sub(x19, x19, asmjit::Imm((int)sizeof(JITMethod)));
                 a.str(x19, ptr(x0, OFF_JITMETHOD));
                 a.ldr(x12, ptr(x19, 0));
                 a.str(x12, ptr(x0, OFF_METHOD));
@@ -6817,6 +6819,13 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // bcLabels; only resume machinery lands on the continuation).
     std::vector<std::pair<uint32_t, asmjit::Label>> resumeOverrides;
     (void)resumeOverrides;
+    // V2 self-identification anchor: a label at machine-code offset 0.
+    // The resume continuation derives its own JITMethod* PC-relatively
+    // (adr codeStart; sub #sizeof(JITMethod)) — the header immediately
+    // precedes codeStart() in the zone allocation.  No patch pass, no
+    // save field, works before the JITMethod address exists.
+    asmjit::Label codeStartLabel;
+    (void)codeStartLabel;
     if (err != kErrorOk) return false;
 
     // PHARO_ASMJIT_T1_LOG=1 — dump asmjit asm to stderr per compile.
@@ -6953,6 +6962,9 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     }
 #elif defined(__aarch64__) || defined(_M_ARM64)
     a64::Assembler a(&code);
+    // V2 self-identification anchor: code offset 0.
+    codeStartLabel = a.new_label();
+    a.bind(codeStartLabel);
     if (real) {
         bcLabels.reserve(bcLen);
         for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
