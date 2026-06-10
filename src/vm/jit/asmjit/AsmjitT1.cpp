@@ -3101,6 +3101,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldr(x6, ptr(x4, JSV_TEMPBASE));  // tempBase
         emitStoreTempBase(a, x6);
         a.ldr(x8, ptr(x4, JSV_RESUMEADDR));  // resumeAddr (always needed)
+#if PHARO_J2J_SAVE_V2
+        // V2 prelude tail: x5 = caller sp (restore the residency
+        // mirror), mask the packed resume address, clear the exit, br.
+        // Arg pop + retval write + (xmethod) context re-establishment
+        // all happen at the resumeAfterCall continuation; x1 already
+        // holds the retval from the return op.
+        emitStoreSp(a, x5);
+        a.and_(x8, x8, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
+        a.str(wzr, ptr(x0, OFF_EXIT));
+        a.br(x8);
+        a.bind(normalReturn);
+    };
+#else
         // sendArgCount: if all J2J sends in this method have the same
         // nArgs (compile-time uniform), the return prelude can use the
         // value as an immediate, skipping the load + lsl/sub in the
@@ -3178,6 +3191,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
         a.bind(normalReturn);
     };
+#endif  // PHARO_J2J_SAVE_V2 (prelude tail)
 
     auto emitReturnPtr = [&](int srcOff) {
         a.ldr(x1, ptr(x0, srcOff));
@@ -3822,6 +3836,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label j2jBailHeap = a.new_label();
             asmjit::Label j2jBailHeap2 = a.new_label();
             asmjit::Label endOfSend = a.new_label();
+#if PHARO_J2J_SAVE_V2
+            asmjit::Label resumeAfterCall = a.new_label();
+#endif
 
             emitLoadSp(a, x2);
             int rcvrOffsetBytes = -8 * (nArgs + 1);
@@ -4896,7 +4913,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // resumeAddr points DIRECTLY at endOfSend (skipping the
                 // prior afterSend bind which just did `b endOfSend`).
                 // Saves 1 branch per J2J return — 7.4M returns on fib(28).
+#if PHARO_J2J_SAVE_V2
+                a.adr(x14, resumeAfterCall);
+#else
                 a.adr(x14, endOfSend);
+#endif
 
                 // Push J2J save (56 bytes).  Uses ldp/stp for adjacent
                 // state fields: sp+receiver (offsets 0/8) loaded with
@@ -6667,6 +6688,38 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             emitSyncSpToState(a);
             a.ret(x30);
 
+#if PHARO_J2J_SAVE_V2
+            // V2 resume continuation: every call-return lander (the V2
+            // prelude's br, the trampoline's resume blr, JIT_RESUME_CALL)
+            // arrives HERE with the retval in x1 and the recv+args still
+            // on the stack; pop them with the STATIC count and write the
+            // retval — the work the V1 prelude did dynamically.
+            // Inline-spec fallthroughs jump directly to endOfSend below
+            // and never execute this block (label split; jumps to the
+            // post-send bytecode keep bcLabels and skip it too — the
+            // resumeOverrides table points only resume machinery here).
+            a.bind(resumeAfterCall);
+            emitLoadSp(a, x2);
+            if (nArgs > 0) a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+            a.stur(x1, ptr(x2, -8));
+            emitStoreSp(a, x2);
+            if (xmethod) {
+                // Cross-method return: re-establish the CALLER's method
+                // context from emit-time immediates (self-rec callers
+                // never change it; this branch only exists when xmethod
+                // could have cross-called).
+                a.mov(x19, asmjit::Imm(reinterpret_cast<uint64_t>(jmSelf)));
+                a.str(x19, ptr(x0, OFF_JITMETHOD));
+                a.ldr(x12, ptr(x19, 0));
+                a.str(x12, ptr(x0, OFF_METHOD));
+                a.add(x12, x12, asmjit::Imm(16));
+                a.str(x12, ptr(x0, OFF_LITERALS));
+                a.mov(w12, asmjit::Imm(callerArgCount));
+                a.str(w12, ptr(x0, OFF_ARGCOUNT));
+            }
+            resumeOverrides.emplace_back((uint32_t)globalIdx + 1,
+                                         resumeAfterCall);
+#endif
             a.bind(endOfSend);
             // Blocker #4 test (PHARO_T1_INLINE_SYNC): inline-spec continuations
             // reach here having updated OFF_SP but NOT OFF_SENDARGCOUNT / OFF_IP
@@ -6759,6 +6812,11 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     Environment env = Environment::host();
     CodeHolder code;
     Error err = code.init(env);
+    // V2 resume overrides: (postSendBcOff, continuation label) —
+    // applied to bcToCode after assembly (jumps keep the plain
+    // bcLabels; only resume machinery lands on the continuation).
+    std::vector<std::pair<uint32_t, asmjit::Label>> resumeOverrides;
+    (void)resumeOverrides;
     if (err != kErrorOk) return false;
 
     // PHARO_ASMJIT_T1_LOG=1 — dump asmjit asm to stderr per compile.
@@ -7353,6 +7411,15 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 // Per contract, slot 0 is conventionally 0 (initial entry
                 // goes through codeStart() directly).
                 bcToCodeOut[i] = (i == 0) ? 0u : off;
+            }
+            // V2: resume machinery (codeOffsetForBC consumers) lands on
+            // the post-send continuation, not the next bytecode's label
+            // (which forward jumps keep using).
+            for (auto& ov : resumeOverrides) {
+                if (ov.first < bcLen) {
+                    bcToCodeOut[ov.first] = (uint32_t)
+                        code.label_offset_from_base(ov.second);
+                }
             }
         } else {
             // Stub-only OR zeroBcToCode: no per-bytecode entry points.
