@@ -172,11 +172,26 @@ under load is the canary).
     startup across default+DET+MAX_IC=1+NOJB configs — writer coverage
     complete for exercised paths.  CAVEAT: those configs also showed
     no DNUs in the instrument's layout, so absence-of-mismatch is not
-    yet absence-of-corruption.  Deployment: suite-scale run in flight;
-    if symptoms occur with ZERO mismatches -> the corruption is in
-    TEMP/STACK slots, not ivars (next instrument: shadow the frame
-    temps — transient keying needed) or in the inline-getter bit-63
-    IC read path (not yet verified — add emitShadowReadVerify there).
+    yet absence-of-corruption.
+  - **SUITE-SCALE VERDICT (200 classes): IVAR SLOTS EXONERATED.**
+    974M tracked stores / 199M verified reads / exactly 4 mismatches —
+    all the two-way-become family (prim 128 now clears the table; the
+    only untracked writer found).  No ivar ever changed via an
+    untracked path at scale.  (Suite 38 fails/6 timeouts vs 13/1
+    uninstrumented = the ~4x instrumentation slowdown on
+    timing-sensitive tests, not corruption.)
+  - **REFRAME: the corruption class is STACK-FRAME SP-DESYNC, not heap
+    stores.**  All victims in the original evidence were TEMPS
+    (mergeFirst's `by` arg, OpalCompiler do: receiver), and both
+    mechanisms actually root-caused (stale j2jDepth sp-resync skip;
+    saveless return hijack) were sp desyncs that shift operand/temp
+    slots.  NEXT INSTRUMENT: per-bcOffset expected-stack-depth table
+    (computable at T1 compile from the bytecode stack effects) +
+    verification of (state.sp - state.tempBase) at every JIT
+    exit/resume boundary — catches the desync AT the boundary that
+    produces it, with the method+bcOffset in hand.  The existing
+    spAtLastJ2JCall/dispatchTraceLeak machinery in the chain loop is
+    prior art for the check sites.
   - hasRecvFieldWrite now computed by T1 (commit 0bc7d7f9) — flag is
     real even though the gate experiment was inconclusive.
   Recipe (reusable): DET_SCHED makes the failure a deterministic
