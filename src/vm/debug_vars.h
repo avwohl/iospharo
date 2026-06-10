@@ -138,6 +138,8 @@ DEBUG_BOOL(PHARO_SISTA_DUMP_NODES)             // dump each method's asmjit node
                                                // The LAST graph printed before a build_liveness
                                                // crash is the culprit method.
 
+DEBUG_BOOL(PHARO_T1_LEAK_GUARD_OFF)      // emit-time: drop the 2-instr IC-probe defensive check for classifier-bit leaks in receivers (task #10 — root-caused since); suite-validate before defaulting
+
 #undef DEBUG_BOOL
 #undef DEBUG_INT
 #undef DEBUG_STR
