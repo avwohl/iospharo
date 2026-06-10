@@ -4690,6 +4690,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         // save.{sp,receiver} from stash[0,8]
                         a.ldp(x4, x5, ptr(sp, 0));
                         a.stp(x4, x5, ptr_post(x14, JSV_SIZE));   // cursor += save size
+#if PHARO_J2J_SAVE_V2
+                        // V2 retro-save: tempBase + packed resume.
+                        // The resume continuation is this site's
+                        // resumeAfterCall; pack bcOff|nArgs via movk
+                        // exactly like the normal push.
+                        a.ldr(x4, ptr(sp, 16));            // tempBase
+                        a.adr(x5, resumeAfterCall);
+                        {
+                            uint32_t resumeBcOff = (uint32_t)globalIdx + 1;
+                            uint16_t packed16 = (uint16_t)
+                                (((nArgs & 0xF) << 12) | (resumeBcOff & 0xFFF));
+                            a.movk(x5, packed16, 48);
+                        }
+                        a.stp(x4, x5, ptr(x14, -16));      // tempBase + packedResume
+#else
                         // save.tempBase from stash[16]; save.ip = post-send
                         // ip = callerCM + bcOffsetFromMethObj + 1 (the
                         // stash ip is the stale state.ip, NOT post-send).
@@ -4716,6 +4731,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             a.mov(w4, asmjit::Imm(nArgs));
                             a.str(w4, ptr(x14, -8));
                         }
+#endif  // PHARO_J2J_SAVE_V2 (retro-save)
                         // Commit cursor; bump depth (+totalCalls via x20).
                         a.str(x14, ptr(x0, OFF_J2J_SAVE_CURSOR));
                         a.ldr(x4, ptr(x0, OFF_J2J_DEPTH));
