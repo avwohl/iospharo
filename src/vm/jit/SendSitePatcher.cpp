@@ -68,6 +68,15 @@ void sendSitePatcherSelfCheck() {
           encodeMovkX10Hi(0x9ABC),
           asmjitWord([](Assembler& a) { a.movk(x10, asmjit::Imm(0x9ABC), 32); }));
 
+    check("movk x14 lsl48 (pack-word decoder)",
+          0xF2E0000Eu | (uint32_t(0x100B) << 5),
+          asmjitWord([](Assembler& a) { a.movk(x14, asmjit::Imm(0x100B), 48); }));
+    if (!isMovkX14Pack(0xF2E0000Eu | (uint32_t(0x100B) << 5))
+        || decodeMovImm16(0xF2E0000Eu | (uint32_t(0x100B) << 5)) != 0x100B) {
+        std::fprintf(stderr, "[PMS-SELFCHECK] FATAL: pack-word decoder failed\n");
+        std::abort();
+    }
+
     // B: known-good vectors from the ARM ARM (imm26 two's complement).
     check("b +0", encodeB(0),  0x14000000u);
     check("b +4", encodeB(4),  0x14000001u);

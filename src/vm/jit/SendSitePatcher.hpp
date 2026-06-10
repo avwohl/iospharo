@@ -74,6 +74,9 @@ constexpr uint32_t encodeB(int64_t byteDelta) {
 // design §4 step 3: verify every word about to be overwritten) =====
 
 inline bool isMovzW6(uint32_t insn)    { return (insn & 0xFFE0001Fu) == 0x52800006u; }
+// movk x14, #imm16, lsl 48 — the tail's V2 packed-resume word at T+28;
+// linkSendSite decodes the site's nArgs from it for the arity gate.
+inline bool isMovkX14Pack(uint32_t insn) { return (insn & 0xFFE0001Fu) == 0xF2E0000Eu; }
 inline bool isMovkW6Hi(uint32_t insn)  { return (insn & 0xFFE0001Fu) == 0x72A00006u; }
 inline bool isMovzX10(uint32_t insn)   { return (insn & 0xFFE0001Fu) == 0xD280000Au; }
 inline bool isMovkX10Mid(uint32_t insn){ return (insn & 0xFFE0001Fu) == 0xF2A0000Au; }

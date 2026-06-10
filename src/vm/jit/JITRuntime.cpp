@@ -2868,9 +2868,9 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
 }
 
 // ===== PMS — patched monomorphic send sites (docs/patched-ic-design.md) =====
-// B0 skeleton: gates + bookkeeping shape only; the actual patch writes
-// land in B2 alongside the COMPLETE §7 invalidation matrix (linking is
-// not deferrable past first patch — see the design's B2 rationale).
+// linkSendSite: idempotent — derive the site's link state from heap IC
+// slot 0 (the single source of truth) and patch the site accordingly.
+// Every writer/zeroer of slot 0 must end by calling this (design §6).
 bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
     if (!jm || siteIdx >= jm->numICEntries) return false;
     SendSitePatch* map = jm->patchMap();
@@ -2881,20 +2881,168 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
         return false;
     }
     if (GET_DEBUG_BOOL(PHARO_T1_PATCHED_SENDS_NOLINK)) return false;
-    // B2: link predicate (design §5), pre-patch opcode asserts (§4.3),
-    // ScopedPatchWriteAccess window, W1-last store order, ranged
-    // flushes, counters.
-    patchStats_.refusedGate++;
-    return false;
+    // The debug probe knobs change Lprobe's semantics; never link while
+    // they're active so they keep meaning what they mean (design §2.3).
+    if (g_debug.t1ProbeAlwaysMiss
+        || GET_DEBUG_BOOL(PHARO_T1_HIT_FORCE_DISPATCH)) return false;
+
+    // ===== Link predicate (design §5) =====
+    uint64_t* slots = reinterpret_cast<uint64_t*>(jm->icSiteAt(siteIdx));
+    uint64_t key        = slots[0];
+    uint64_t methodBits = slots[1];
+    uint64_t extras     = slots[2];
+    if (key == 0 || methodBits == 0) {
+        // Empty slot 0: derive-to-unlinked.
+        unlinkSendSite(jm, siteIdx);
+        return false;
+    }
+    // Monomorphic evidence: slots 1-5 empty.  (Later poly fill does NOT
+    // unlink — slot-0's class keeps the fast path; others take Lprobe.)
+    for (int e = 1; e < 6; e++) {
+        if (slots[e * 3] != 0) { patchStats_.refusedGate++; return false; }
+    }
+    constexpr uint64_t kJ2JBit   = 1ULL << 60;
+    constexpr uint64_t kBVBit    = 1ULL << 59;
+    constexpr uint64_t kRetLit   = 1ULL << 58;
+    constexpr uint64_t kSistaBit = 1ULL << 55;
+    if (!(extras & kJ2JBit) || (extras & (kBVBit | kRetLit | kSistaBit))) {
+        patchStats_.refusedGate++;
+        return false;
+    }
+    // The key must fit the head's 32-bit compare and must not collide
+    // with the unlinked sentinel.
+    if ((key >> 32) != 0
+        || (uint16_t)(key >> 16) == kImpossibleKeyHi16) {
+        patchStats_.refusedGate++;
+        return false;
+    }
+    // Callee gates — the per-send gate loads, evaluated ONCE here.
+    JITMethod* callee = methodMap_.lookup(methodBits);
+    int maxIC = GET_DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC);
+    if (!callee
+        || callee->state != MethodState::Compiled
+        || callee->tier != 1                       // NEVER relink across tiers
+        || callee->isSpliceTarget                  // §7 event 8
+        || callee->isStubOnEntry
+        || callee->canBailMidMethod
+        || ((callee->methodHeader >> 16) & 1)      // has-primitive bit
+        || (maxIC >= 0 && callee->numICEntries > (uint32_t)maxIC)) {
+        patchStats_.refusedGate++;
+        return false;
+    }
+    // Selector cross-check (Cog's sanity check): caller's per-site
+    // selector vs the callee's.  Both raw Symbol bits; skip if either
+    // is unset (post-GC zeroed sba is recovered lazily).
+    if (const uint64_t* sba = jm->selBitsArray()) {
+        if (sba[siteIdx] != 0 && callee->selectorOop != 0
+            && sba[siteIdx] != callee->selectorOop) {
+            patchStats_.refusedGate++;
+            return false;
+        }
+    }
+
+    uint8_t* code = jm->codeStart();
+    uint32_t w0 = 0, w1 = 0, w2 = 0, w3 = 0, w4 = 0, w5 = 0, w6 = 0, wPack = 0;
+    std::memcpy(&w0, code + rec.keyMovzOffset, 4);
+    std::memcpy(&w1, code + rec.keyMovzOffset + 4, 4);
+    std::memcpy(&w2, code + rec.keyMovzOffset + 16, 4);
+    std::memcpy(&w3, code + rec.tailOffset, 4);
+    std::memcpy(&w4, code + rec.tailOffset + 4, 4);
+    std::memcpy(&w5, code + rec.tailOffset + 8, 4);
+    std::memcpy(&w6, code + rec.tailBranchOffset, 4);
+    std::memcpy(&wPack, code + rec.tailOffset + 28, 4);
+    // Pre-patch opcode asserts (design §4 step 3): every word we are
+    // about to overwrite must be the opcode class the emit put there.
+    // Hard-fail on mismatch — patch-map drift is silent code corruption
+    // if allowed to proceed.
+    if (!isMovzW6(w0) || !isMovkW6Hi(w1) || !isB(w2)
+        || !isMovzX10(w3) || !isMovkX10Mid(w4) || !isMovkX10Hi(w5)
+        || !isB(w6) || !isMovkX14Pack(wPack)) {
+        fprintf(stderr, "[PMS] FATAL: patch-word opcode mismatch jm=%p "
+                "site=%u w0=%08X w1=%08X w2=%08X w3=%08X w4=%08X w5=%08X "
+                "w6=%08X pack=%08X\n",
+                (void*)jm, siteIdx, w0, w1, w2, w3, w4, w5, w6, wPack);
+        std::abort();
+    }
+    // Arity gate: the site's nArgs is baked into the packed V2 resume
+    // word (movk x14 at T+28, nArgs in imm16 bits 12-15).
+    uint8_t siteNArgs = (uint8_t)(decodeMovImm16(wPack) >> 12);
+    if (callee->argCount != siteNArgs) {
+        patchStats_.refusedGate++;
+        return false;
+    }
+    // Reach: |calleeEntry - W6 pc| must fit imm26.  Refuse-to-link on
+    // failure, NEVER assert-and-continue (design §5).
+    uint64_t entry = entryAddrFor(callee);
+    int64_t tailDelta = (int64_t)entry
+                      - (int64_t)(code + rec.tailBranchOffset);
+    if (!branchInRange(tailDelta)) {
+        patchStats_.refusedReach++;
+        return false;
+    }
+    int64_t w2Delta = (int64_t)rec.tailOffset
+                    - (int64_t)(rec.keyMovzOffset + 16);
+
+    // Idempotency early-out: already linked to this key + target.
+    bool wasLinked = (rec.flags & 1) != 0;
+    if (wasLinked
+        && decodeMovImm16(w0) == (uint16_t)(key & 0xFFFF)
+        && decodeMovImm16(w1) == (uint16_t)(key >> 16)
+        && decodeBDelta(w6) == tailDelta) {
+        return true;
+    }
+
+    // ===== Patch (design §4 step 4) =====
+    // Order contract: the key-hi word (W1) is ALWAYS the last word that
+    // can make the fast path reachable.  If currently linked to a
+    // different target, kill the key FIRST so no fetch can see a stale
+    // tail mid-update.
+    {
+        ScopedPatchWriteAccess w(code + rec.keyMovzOffset, 0);
+        auto put = [&](uint32_t off, uint32_t insn) {
+            std::memcpy(code + off, &insn, 4);
+        };
+        if (wasLinked) {
+            put(rec.keyMovzOffset + 4, encodeMovkW6Hi(kImpossibleKeyHi16));
+        }
+        uint64_t jmBits = reinterpret_cast<uint64_t>(callee);
+        put(rec.tailOffset,      encodeMovzX10((uint16_t)(jmBits & 0xFFFF)));
+        put(rec.tailOffset + 4,  encodeMovkX10Mid((uint16_t)((jmBits >> 16) & 0xFFFF)));
+        put(rec.tailOffset + 8,  encodeMovkX10Hi((uint16_t)((jmBits >> 32) & 0xFFFF)));
+        put(rec.tailBranchOffset, encodeB(tailDelta));
+        put(rec.keyMovzOffset,    encodeMovzW6((uint16_t)(key & 0xFFFF)));
+        put(rec.keyMovzOffset + 16, encodeB(w2Delta));
+        put(rec.keyMovzOffset + 4,  encodeMovkW6Hi((uint16_t)(key >> 16)));   // COMMIT
+        // Ranged flushes only — never whole-zone (design §4).
+        flushICache(code + rec.keyMovzOffset, 20);
+        flushICache(code + rec.tailOffset,
+                    rec.tailBranchOffset + 4 - rec.tailOffset);
+    }
+    if (!wasLinked) {
+        rec.flags |= 1u;
+        numPatchedSites_++;
+        patchStats_.links++;
+    } else {
+        patchStats_.relinks++;
+    }
+    return true;
 }
 
+// One W1 store + ranged icache flush; always safe (the impossible key
+// makes W2/the tail unreachable regardless of their contents).
 void JITRuntime::unlinkSendSite(JITMethod* jm, uint32_t siteIdx) {
     if (!jm || siteIdx >= jm->numICEntries) return;
     SendSitePatch* map = jm->patchMap();
     if (!map) return;
     SendSitePatch& rec = map[siteIdx];
     if (!(rec.flags & 1)) return;   // not linked
-    // B2: W1 := impossible-key store + ranged icache flush.
+    uint8_t* code = jm->codeStart();
+    {
+        ScopedPatchWriteAccess w(code + rec.keyMovzOffset + 4, 4);
+        uint32_t insn = encodeMovkW6Hi(kImpossibleKeyHi16);
+        std::memcpy(code + rec.keyMovzOffset + 4, &insn, 4);
+        flushICache(code + rec.keyMovzOffset + 4, 4);
+    }
     rec.flags &= ~1u;
     if (numPatchedSites_ > 0) numPatchedSites_--;
     patchStats_.unlinks++;
