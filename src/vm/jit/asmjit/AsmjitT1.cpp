@@ -4029,7 +4029,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // bailing.  Catches ~12K cold-start polymorphic DUPs per
             // bench-suite cold-start (jit-may20b Step 8.3 analysis)
             // that previously paid a JIT→C++→JIT round-trip.
-            // Opt-out via PHARO_T1_NO_IC_POLY_WALK=1.
+            // OPT-IN via PHARO_T1_IC_POLY_WALK=1 (DebugSettings.cpp; an
+            // older comment here claimed an opt-out knob that does not
+            // exist — design §14 #4).
             asmjit::Label probeDone = a.new_label();
             if (g_debug.t1ICPolyWalk) {
                 asmjit::Label slot1Hit = a.new_label();
