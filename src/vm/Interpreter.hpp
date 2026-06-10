@@ -649,7 +649,15 @@ public:
         jit::JITMethod* jitMethod;// 32  (pair with resumeAddr)
         uint8_t* resumeAddr;      // 40  Precomputed JIT code to resume at
         int sendArgCount;         // 48
-        int _pad;                 // 52  (alignment)
+        int ipOffset;             // 52  prepareForGC stash: `ip` as an
+                                  //     offset into the pushing method's
+                                  //     bytecodes (-1 = not derivable).
+                                  //     afterGC rebuilds the raw ip from
+                                  //     it — GC moves CompiledMethods and
+                                  //     forEachRoot only updates the
+                                  //     receiver Oop, not raw ip.  Never
+                                  //     written by emitted code (the push
+                                  //     stores only bytes 0-51).
     };
     static_assert(sizeof(J2JSave) == 56, "J2JSave should be 56 bytes after reduction");
 #endif

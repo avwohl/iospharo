@@ -17958,6 +17958,48 @@ void Interpreter::prepareForGC() {
     } else {
         jitStateIpOffset_ = 0;
     }
+
+    // J2J pool saves hold raw `ip` pointers into their pushing method's
+    // bytecodes (the postSendIp resume point).  forEachRoot updates
+    // save.receiver, but a GC that moves the CompiledMethod leaves
+    // save.ip stale — the popped/materialized caller then resumes
+    // interpretation at a misaligned address inside the (moved) method
+    // and produces valid-looking wrong values.  Root cause of the
+    // 2026-06-09 cross-method inline-J2J startup corruption (SettingTree
+    // mergeSort #value:value: DNU, ~50% of startups once xmethod fired
+    // at full scale).  Round-trip ip through an offset like every other
+    // ip-holder above.  Live bound: when the GC fires from inside JIT
+    // execution (allocation helper), the in-JIT cursor is ahead of the
+    // synced C++ cursor — use whichever covers more.
+    {
+        int liveSaves = (int)j2jPoolCursor_;
+        if (currentJITState_ && currentJITState_->j2jSaveCursor) {
+            uint8_t* poolBytes = reinterpret_cast<uint8_t*>(j2jPool_.data());
+            ptrdiff_t n = (currentJITState_->j2jSaveCursor - poolBytes)
+                          / (ptrdiff_t)sizeof(J2JSave);
+            if (n > liveSaves && n <= (ptrdiff_t)MaxJ2JPoolSize)
+                liveSaves = (int)n;
+        }
+        for (int i = 0; i < liveSaves; i++) {
+            J2JSave& s = j2jPool_[i];
+            s.ipOffset = -1;
+            jit::JITMethod* jm = s.jitMethod;
+            if (!jm && currentJITState_) {
+                // Self-rec pushes (xmethod-off emit) skip the jitMethod
+                // store; all such saves belong to the running method.
+                jm = reinterpret_cast<jit::JITMethod*>(
+                    currentJITState_->jitMethod);
+            }
+            if (!jm || !s.ip) continue;
+            Oop m = Oop::fromRawBits(jm->compiledMethodOop);
+            if (!m.isObject() || m.rawBits() <= 0x10000) continue;
+            ObjectHeader* mo = m.asObjectPtr();
+            uint8_t* bytes = mo->bytes();
+            if (s.ip >= bytes && s.ip < bytes + mo->byteSize()) {
+                s.ipOffset = (int)(s.ip - bytes);
+            }
+        }
+    }
 #endif
 
     // Sync materialized context temps with C++ stack.
@@ -18078,6 +18120,35 @@ void Interpreter::afterGC() {
         ObjectHeader* methObj = currentJITState_->method.asObjectPtr();
         currentJITState_->ip = methObj->bytes() + jitStateIpOffset_;
         currentJITState_->literals = methObj->slots() + 1;
+    }
+
+    // Rebuild J2J pool saves' raw ip from the offsets stashed in
+    // prepareForGC (see the matching walk there).  jm->compiledMethodOop
+    // was updated by forEachRoot's code-zone walk, so bytes() now points
+    // at the method's post-GC location.
+    {
+        int liveSaves = (int)j2jPoolCursor_;
+        if (currentJITState_ && currentJITState_->j2jSaveCursor) {
+            uint8_t* poolBytes = reinterpret_cast<uint8_t*>(j2jPool_.data());
+            ptrdiff_t n = (currentJITState_->j2jSaveCursor - poolBytes)
+                          / (ptrdiff_t)sizeof(J2JSave);
+            if (n > liveSaves && n <= (ptrdiff_t)MaxJ2JPoolSize)
+                liveSaves = (int)n;
+        }
+        for (int i = 0; i < liveSaves; i++) {
+            J2JSave& s = j2jPool_[i];
+            if (s.ipOffset < 0) continue;
+            jit::JITMethod* jm = s.jitMethod;
+            if (!jm && currentJITState_) {
+                jm = reinterpret_cast<jit::JITMethod*>(
+                    currentJITState_->jitMethod);
+            }
+            if (!jm) continue;
+            Oop m = Oop::fromRawBits(jm->compiledMethodOop);
+            if (!m.isObject() || m.rawBits() <= 0x10000) continue;
+            s.ip = m.asObjectPtr()->bytes() + s.ipOffset;
+            s.ipOffset = -1;
+        }
     }
 #endif
 
@@ -21398,6 +21469,41 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
     Oop nil = memory_.nil();
 
+    // Diagnostic (PHARO_J2J_MAT_LOG): log every J2J-save materialize and
+    // flag saves whose ip does not lie inside saveJM's bytecode range —
+    // the signature of a stale save.jitMethod (x11-liveness bug in the
+    // xmethod save-push emit).
+    if (GET_DEBUG_BOOL(PHARO_J2J_MAT_LOG)) {
+        bool ipInRange = false;
+        ObjectHeader* mo = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
+        if (mo && save.ip >= mo->bytes() && save.ip < mo->bytes() + mo->byteSize()) {
+            ipInRange = true;
+        }
+        // resumeAddr comes from an `adr endOfSend` in the REAL pushing
+        // method's code; save.jitMethod comes from a register assumed
+        // live across the whole dispatch emit.  If they disagree, the
+        // register was stale — a consistent ip/jitMethod pair can't
+        // catch that (both derive from the same register).
+        bool resumeInRange = save.resumeAddr == nullptr
+            || (save.resumeAddr >= saveJM->codeStart()
+                && save.resumeAddr < saveJM->codeStart() + saveJM->codeSize);
+        static int matLog = 0;
+        if (++matLog <= 200 || !ipInRange || !resumeInRange
+                || saveJM->isBlock) {
+            fprintf(stderr,
+                "[J2J-MAT #%d] site=%s saveJM=%p sel=#%s recvClass=%s "
+                "argc(saveJM)=%d sendArgs=%d ip=%p%s %s%s\n",
+                matLog, siteTag, (void*)saveJM,
+                memory_.selectorOf(saveMethod).c_str(),
+                save.receiver.isObject() && save.receiver.rawBits() >= 0x10000
+                    ? memory_.classNameOf(save.receiver).c_str() : "(imm)",
+                (int)saveJM->argCount, save.sendArgCount, (void*)save.ip,
+                saveJM->isBlock ? " BLOCK-SAVE <<<" : "",
+                ipInRange ? "ip-OK" : "IP-OUT-OF-RANGE <<<",
+                resumeInRange ? "" : " RESUME-MISMATCH <<<");
+        }
+    }
+
     frame.savedIP = save.ip;
     // Use CompiledMethod's actual byteSize.  saveJM->numBytecodes is 0
     // for AsmjitT1 methods with send sites (advertiseResume gate at
@@ -22472,6 +22578,17 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             }
         }
         chainCallDepth += state.j2jDepth;
+        // The saves are now SavedFrames — clear the live-chain marker.
+        // Without this, later `state.j2jDepth > 0` checks (the
+        // ExitBlockCreate/ExitArrayCreate sp-resync skips at ~23267/
+        // ~23361) fire on already-consumed saves and resume JIT with a
+        // stale state.sp: the freshly created closure sits above sp,
+        // the next JIT push overwrites it, and the shifted operand
+        // becomes the "block" — the 2026-06-09 xmethod-at-scale
+        // SettingTree mergeSort #value:value: startup corruption.
+        // enableJ2J re-bases the cursor before every re-entry.
+        state.j2jDepth = 0;
+        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(stateSaves);
         if (state.jitMethod) {
             state.method = Oop::fromRawBits(
                 state.jitMethod->compiledMethodOop);
