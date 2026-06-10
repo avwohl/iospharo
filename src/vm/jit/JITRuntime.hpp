@@ -155,6 +155,11 @@ public:
     // Call AFTER forEachRoot has updated compiledMethodOop in JITMethod headers.
     void recoverAfterGC(ObjectMemory& memory);
 
+    // Rebuild MethodMap keys from GC-updated compiledMethodOop bits.
+    // Called by recoverAfterGC (full GC) AND Interpreter::afterGC(false)
+    // (per-scavenge) — see the definition for the bug this fixes.
+    void rebuildMethodMap();
+
     // Access to subsystems
     CodeZone&     codeZone()   { return codeZone_; }
     MethodMap&    methodMap()  { return methodMap_; }

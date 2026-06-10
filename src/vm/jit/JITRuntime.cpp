@@ -3904,6 +3904,28 @@ void JITRuntime::flushT2ICs() {
     }
 }
 
+// Rebuild the MethodMap from each JITMethod's (GC-updated)
+// compiledMethodOop.  Needed after ANY object motion: full GC calls it
+// from recoverAfterGC; the per-SCAVENGE caller is Interpreter::afterGC
+// (false) — without it, a scavenge that moves a young CompiledMethod
+// leaves the map keyed by the OLD oop bits, so lookups with the new
+// oop MISS.  That miss broke the 2026-04-28 patchJITICAfterSend
+// foreign-site guard (selBitsArray recovery path), letting a stale
+// pendingICPatch_ poison a different send site's IC with a wrong-slot
+// inline-getter classification — the MAX_IC=1 wrong-object residual
+// (controlled bisect: NO_INLINE_GETTER cures, dummy var doesn't).
+void JITRuntime::rebuildMethodMap() {
+    if (!initialized_) return;
+    methodMap_.clear();
+    JITMethod* m = codeZone_.firstMethod();
+    while (m) {
+        if (m->state == MethodState::Compiled) {
+            methodMap_.insert(m->compiledMethodOop, m);
+        }
+        m = m->nextInZone;
+    }
+}
+
 void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     if (!initialized_) return;
 
@@ -4035,14 +4057,7 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     // Rebuild MethodMap — keys are compiledMethodOop bits which were updated
     // in-place by forEachRoot during updatePointersAfterCompact, but the
     // MethodMap hash table still has the old key values.
-    methodMap_.clear();
-    JITMethod* m = codeZone_.firstMethod();
-    while (m) {
-        if (m->state == MethodState::Compiled) {
-            methodMap_.insert(m->compiledMethodOop, m);
-        }
-        m = m->nextInZone;
-    }
+    rebuildMethodMap();
 
     // Initial-compile-failed negative cache: keys were GC-updated in place
     // by forEachRoot (visited next to countMap_), but their hash positions

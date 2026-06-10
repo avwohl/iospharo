@@ -18336,6 +18336,17 @@ void Interpreter::afterGC(bool fullGC) {
         flushMethodCache();
         recoverJITAfterGC();
     }
+#if PHARO_JIT_ENABLED
+    else {
+        // Scavenge: methodMap keys are raw oop bits — rebuild so
+        // lookups with moved methods' NEW oops hit.  Without this the
+        // patchJITICAfterSend foreign-site guard (selBitsArray
+        // recovery) silently failed open after any scavenge that moved
+        // a young method — the inline-getter IC poisoning behind the
+        // MAX_IC=1 wrong-object residual.
+        jitRuntime_.rebuildMethodMap();
+    }
+#endif
     gcPrepared_ = false;
 }
 
