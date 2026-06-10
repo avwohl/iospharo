@@ -172,10 +172,21 @@ under load is the canary).
 - J2J-s (stencil_sendJ2J out-of-line) handles 2.4M calls/run — dispatch-A
   inline-J2J only covers sites in recompiled (tier-2) callers? Verify
   coverage; tier-1-only callers may never get the inline emit.
-- Self-rec saveless path (PHARO_T1_CAN_SKIP_J2J_SAVE) exists but is
-  self-rec-only; cross-method saveless for canSkipJ2JSave callees (incc
-  qualifies) would shave the save-push cost — needs the state-update
-  extension noted in the Eδ.2c comment.
+- Saveless path (PHARO_T1_CAN_SKIP_J2J_SAVE): cross-method extension
+  LANDED (07bc40c9) but SIGSEGVs when enabled — and the prior self-rec
+  version had NEVER fired even once (self-rec canSkip callees don't
+  exist: canSkip needs numIC==0, self-rec needs a self-send).  The whole
+  saveless path is unexercised territory.  Crash signature: a normally-
+  activated method's IC probe with x1=0 — some receiver slot zeroed
+  upstream.  NEXT: audit the codeStart ENTRY CONVENTION (what JIT_CALL /
+  the asm trampoline load into registers before entering JIT code —
+  x19=jitMethod, x20=j2jDepthInc, x28=nil?, x1..x3?) vs what the
+  saveless blr provides; the asm trampoline's Lcall_enter_callee is the
+  reference.  Prize: replaces 56B pool-save + prelude pop with an
+  sp-stash + machine call/ret for leaf callees (incc!) — the next big
+  per-call cost cut toward the ~5x cfib gap (per-call sequence ~55
+  instrs vs Cog ~12; the structural endgame is register-resident
+  state.sp a la Cog/SimStack).
 - docs/jit-retrospective.md "Cog-speed MAP" numbers now stale for
   cross-method; tight-loop 2x-faster-than-Cog and self-rec 6x still hold.
 - **First-compile fail thrash: FIXED (c79b97ab + 9dbe6a49).**  All
