@@ -104,8 +104,22 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   cascade dup'd it -> nextPutAll: DNU on ByteString.  Earlier variants
   (`,` to StdioStream) = the same class with the wrong object appearing
   one send earlier.  VALUES wrong at CORRECT depth at every check.
-  IN FLIGHT: catch12 = same config + PHARO_NO_JIT (30 reps) — decides
-  JIT-side vs interp/GC-side.  Catch logs: /tmp/catch11_FAIL.log.
+  catch12 VERDICT: **PHARO_NO_JIT -> 30/30 PASS (same env) — the
+  residual is JIT-SIDE.**  A JIT-executed send (the `Stdio stderr`
+  class-side accessor, xmethod-admitted at MAX_IC=1) returns the WRONG
+  OBJECT with correct sp.  PRIME SUSPECTS (wrong value, right depth):
+  the IC-hit INLINE specializations that produce a result WITHOUT
+  calling — TRIVIAL_BITS (63/62/61/57), RETURNS_LITERAL (58), and the
+  bit-63 inline getter (stats show getter=325K fires in failing runs;
+  retLit=0).  These read CACHED values/slot addresses from IC extras —
+  a stale cached value = exactly this symptom.  NEXT (catch13): bisect
+  with the spec knobs on the failing config — PHARO_T1_NO_INLINE_GETTER
+  and the trivial/retLit opt-outs (see debug_vars.h / DebugSettings) —
+  one knob per 30-rep catch loop; the knob that cures it names the
+  emit.  Then root-cause that emit's staleness (likely: IC extras not
+  GC-visited for the cached-value bits, the SAME hazard class as the
+  megaCache — young value cached in a non-root location).
+  Catch logs: /tmp/catch11_FAIL.log.
   NOTE: all catch reps run in /tmp/harness on Pharo-base.image; evals
   share /tmp/harness/startup.st — NEVER run a second eval there while
   a catch loop is live (use /tmp/harness2).
