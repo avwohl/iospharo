@@ -2390,10 +2390,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.str(x0,  ptr(sp, 0));
             a.str(x30, ptr(sp, 8));
             a.add(x2, x0, asmjit::Imm(OFF_RETVAL));
+            emitSyncSpToState(a);  // sp-residency: helper reads state.sp
             a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_primsize_ptr));
             a.blr(x9);
             a.mov(x9, x0);   // result (1 = success)
             a.ldr(x0,  ptr(sp, 0));
+            emitReloadSpFromState(a);  // sp-residency: helper may have changed state.sp
             a.ldr(x30, ptr(sp, 8));
             a.add(sp, sp, asmjit::Imm(16));
             a.cbz(x9, fail);
@@ -2510,10 +2512,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
                 a.str(x30, ptr(sp, 8));
                 a.mov(x2, x4);                   // x2 = idx
                 a.add(x3, x0, asmjit::Imm(OFF_RETVAL));
+                emitSyncSpToState(a);  // sp-residency: helper reads state.sp
                 a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_primat_ptr));
                 a.blr(x9);
                 a.mov(x9, x0);
                 a.ldr(x0,  ptr(sp, 0));
+                emitReloadSpFromState(a);  // sp-residency: helper may have changed state.sp
                 a.ldr(x30, ptr(sp, 8));
                 a.add(sp, sp, asmjit::Imm(16));
                 a.cbz(x9, fail);
@@ -2633,10 +2637,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
                 a.str(x30, ptr(sp, 8));
                 a.mov(x2, x4);
                 a.mov(x3, x9);                   // valBits (already loaded)
+                emitSyncSpToState(a);  // sp-residency: helper reads state.sp
                 a.mov(x10, asmjit::Imm((uint64_t)&jit_rt_primatput_ptr));
                 a.blr(x10);
                 a.mov(x10, x0);
                 a.ldr(x0,  ptr(sp, 0));
+                emitReloadSpFromState(a);  // sp-residency: helper may have changed state.sp
                 a.ldr(x30, ptr(sp, 8));
                 a.add(sp, sp, asmjit::Imm(16));
                 a.cbz(x10, fail);
@@ -5379,6 +5385,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.str(x7,  ptr(asmjit::a64::sp, 40));
                 // args: x0=state(already), x1=recv(already), x2=slotIdx, x3=val(already)
                 a.mov(x2, x6);
+                emitSyncSpToState(a);  // sp-residency: helper reads state.sp
                 a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_check_setter_bounds));
                 a.blr(x9);
                 a.ldr(x0,  ptr(asmjit::a64::sp, 0));
@@ -5474,11 +5481,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Arg 3 (x3) = nArgs.
             a.mov(x3, asmjit::Imm((uint64_t)nArgs));
 
+            emitSyncSpToState(a);  // sp-residency: helper reads state.sp
             a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_t1_sista_dispatch));
             a.blr(x9);
             // x0 = 1 on success, 0 on bail.
             a.mov(x9, x0);
             a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+            emitReloadSpFromState(a);  // sp-residency: helper may have changed state.sp
             a.ldr(x30, ptr(asmjit::a64::sp, 8));
             a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
             {
@@ -5927,12 +5936,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
                 a.str(x0,  ptr(asmjit::a64::sp, 0));
                 a.str(x30, ptr(asmjit::a64::sp, 8));
+                emitSyncSpToState(a);  // sp-residency: helper reads state.sp
                 a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_basic_new_with_arg));
                 a.blr(x9);
                 // x0 = 1 on success, 0 on failure.  Move to x9 before
                 // restoring x0 = state.
                 a.mov(x9, x0);
                 a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+                emitReloadSpFromState(a);  // sp-residency: helper may have changed state.sp
                 a.ldr(x30, ptr(asmjit::a64::sp, 8));
                 a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
                 {
@@ -5961,10 +5972,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
                 a.str(x0,  ptr(asmjit::a64::sp, 0));
                 a.str(x30, ptr(asmjit::a64::sp, 8));
+                emitSyncSpToState(a);  // sp-residency: helper reads state.sp
                 a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_basic_new));
                 a.blr(x9);
                 a.mov(x9, x0);
                 a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+                emitReloadSpFromState(a);  // sp-residency: helper may have changed state.sp
                 a.ldr(x30, ptr(asmjit::a64::sp, 8));
                 a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
                 {
@@ -6627,6 +6640,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
                 a.str(x0,  ptr(asmjit::a64::sp, 0));
                 a.str(x30, ptr(asmjit::a64::sp, 8));
+                emitSyncSpToState(a);  // sp-residency: helper reads state.sp
                 a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_sync_globals));
                 a.blr(x9);
                 a.ldr(x0,  ptr(asmjit::a64::sp, 0));
