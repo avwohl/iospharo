@@ -2236,6 +2236,17 @@ static inline void emitSyncSpToState(asmjit::a64::Assembler& a) {
 #endif
     (void)a;
 }
+// After a BLR to a helper that may CHANGE state.sp (sista dispatch,
+// anything that can run Smalltalk / trigger materialize), reload the
+// mirror.  Caller must have restored x0 = state first (every BLR
+// wrapper in this file stashes/restores x0 around the call).
+static inline void emitReloadSpFromState(asmjit::a64::Assembler& a) {
+#if PHARO_T1_SP_IN_X25
+    a.ldr(asmjit::a64::x25,
+          asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
+#endif
+    (void)a;
+}
 
 void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
     using namespace asmjit::a64;
