@@ -49,6 +49,29 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   VALIDATE each sub-step with: eval smoke, benchFib, PHARO_SP_DEPTH_
   CHECK healthy run (0 mismatches), DictionaryTest single-class,
   200-class suite.  Phase 2: mirror on x86 (rsi/r13 candidate).
+  **SWEEP STATUS (batches 1-2 COMMITTED GREEN at switch=0):** all
+  arm64 OFF_SP accesses in the T1 emit now flow through
+  emitLoadSp/emitStoreSp (84 sed-batch + emitPushReg + 2 ldp pairs);
+  emitSyncSpToState (no-op at 0) sits before all 47 arm64 rets.
+  Validated per batch: eval, benchFib, sp-depth 1.82M checks clean.
+  **REMAINING BEFORE FLIPPING PHARO_T1_SP_IN_X25=1:**
+  (1) BLR-site audit inside the T1 emit: helpers that READ state.sp
+      need emitSyncSpToState before the BLR (block_value_prep,
+      verify_getter already syncs?, atrec); helpers that can CHANGE
+      state.sp need an x25 RELOAD after (jit_rt_t1_sista_dispatch —
+      a Sista splice runs arbitrary code!, basicNew/basicAt push?).
+      grep `blr` in the emit for the full list.
+  (2) **TIER-INTERACTION CONSTRAINT (discovered in the sweep): x25
+      residency is an asmjit-T1-only contract.**  Stencil-compiled
+      methods + Sista splices/lowered code keep sp in memory.  br
+      transitions between T1 code and foreign JIT code MUST sync:
+      bit-60 direct calls into a STENCIL-compiled JITMethod (both
+      claim tier 1 — check whether the stencil compiler still
+      produces methods at all on this branch), and Sista kSendInline
+      BRs.  Either sync at those brs or verify they cannot occur.
+  (3) Enable the three marked writebacks (TrampolineAsm.S x2 +
+      osr_resume) and the JIT_CALL post-blr store.
+  (4) Validation ladder per WIP; then measure fib/cfib vs Cog 8/25ms.
   **Phase-1 design notes (worked out 2026-06-10 EOD — saves the next
   session the re-derivation):**
   - AAPCS is ALREADY handled: the trampoline saves/restores x25 at
