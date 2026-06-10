@@ -1085,8 +1085,15 @@ int main(int argc, char* argv[]) {
         // Run bytecode steps for testing
         std::cout << "\n=== Execution Test ===" << std::endl;
         auto execStart = std::chrono::steady_clock::now();
-        // Use long execution for any command-line mode, short for GUI-only
-        long long totalSteps = !imageArgs.empty() ? 60000000000LL : 60000000000LL;
+        // Use long execution for any command-line mode, short for GUI-only.
+        // PHARO_MAX_STEPS overrides — the optimized build burns the 60G
+        // default in ~4-5 min of busy-idle, which silently kills SUnit
+        // suite runs (the runner produces output only near batch end).
+        long long totalSteps = 60000000000LL;
+        if (const char* ms = GET_DEBUG_STR(PHARO_MAX_STEPS)) {
+            long long v = strtoll(ms, nullptr, 10);
+            if (v > 0) totalSteps = v;
+        }
         std::cout << "Running up to " << totalSteps << " bytecode steps..." << std::endl;
         if (!imageArgs.empty()) {
             std::cout << "Image args:";
