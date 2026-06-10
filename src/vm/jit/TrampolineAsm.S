@@ -118,16 +118,21 @@
 
     .globl SYMBOL(pharo_jit_j2j_trampoline)
 SYMBOL(pharo_jit_j2j_trampoline):
-    // Stack frame (128 bytes):
+    // Stack frame (144 bytes):
     //   [sp, #0]:   x29 (old fp),  x30 (lr)
     //   [sp, #16]:  x21,           x22
     //   [sp, #32]:  x23,           x24
-    //   [sp, #48]:  x25,           x26
+    //   [sp, #48]:  x25,           x26     (ABI save only — see below)
     //   [sp, #64]:  x27,           x28
     //   [sp, #80]:  x19,           x20     (stencils clobber; must preserve caller's)
     //   [sp, #96]:  frameDepthPtr, callsCountPtr
     //   [sp, #112]: returnsPtr,    (pad)
-    stp     x29, x30, [sp, #-128]!
+    //   [sp, #120]: localCalls,    localReturns   (was x25/x26 — sp-residency
+    //                                              Phase 0 freed those registers;
+    //                                              x25 is reserved as the
+    //                                              register-resident state.sp
+    //                                              mirror in Phase 1)
+    stp     x29, x30, [sp, #-144]!
     mov     x29, sp
     stp     x21, x22, [sp, #16]
     stp     x23, x24, [sp, #32]
@@ -142,16 +147,18 @@ SYMBOL(pharo_jit_j2j_trampoline):
     //   x22 = save stack base (unchanging)
     //   x23 = save cursor (base + j2jDepth*72)
     //   x24 = localFrameDepth
-    //   x25 = localCalls
-    //   x26 = localReturns
+    //   x25 = FREE (reserved: Phase-1 register-resident state.sp)
+    //   x26 = FREE
     //   x27 = save base + MAX_J2J_BYTES (overflow comparison limit)
     //   x28 = nilOop bits
+    //   localCalls/localReturns live at [sp,#120]/[sp,#128] (telemetry;
+    //   +2 instr per call/return is paid once per TRAMPOLINE hop, vs
+    //   the register they free saving ~2 instr per BYTECODE in Phase 1)
     mov     x21, x0
     mov     x22, x1
     mov     x23, x1                   // cursor = base (j2jDepth = 0)
     ldr     x24, [x2]                 // localFrameDepth = *frameDepthInOut
-    mov     x25, xzr                  // localCalls = 0
-    mov     x26, xzr                  // localReturns = 0
+    stp     xzr, xzr, [sp, #120]      // localCalls = localReturns = 0
     mov     x27, #MAX_J2J_BYTES       // 18432 fits in movz (16-bit immediate)
     add     x27, x1, x27
     mov     x28, x5                   // nil Oop bits
@@ -196,7 +203,9 @@ Ltramp_return:
     sub     x1, x23, #JSV_SIZE        // &save (what we're about to pop)
     bl      SYMBOL(pharo_jit_b5_tramp_ret)
 
-    add     x26, x26, #1              // localReturns++
+    ldr     x9, [sp, #128]            // localReturns++ (frame slot — x26 freed)
+    add     x9, x9, #1
+    str     x9, [sp, #128]
     sub     x23, x23, #JSV_SIZE       // pop save slot; now points to just-popped
     // Sync state.j2jSaveCursor — same defensive rationale as Ltramp_call.
     str     x23, [x21, #JS_J2J_SAVE_CURSOR]
@@ -282,7 +291,9 @@ Ltramp_call:
     cmp     x23, x27
     b.hs    Lcall_save_overflow
 
-    add     x25, x25, #1                   // localCalls++
+    ldr     x9, [sp, #120]                 // localCalls++ (frame slot — x25 freed)
+    add     x9, x9, #1
+    str     x9, [sp, #120]
 
     // Advance IP past send bytecode BEFORE saving it. Stencils set
     // state.ip = bcStart + bcOffset (pointing TO the send). We must
@@ -458,9 +469,11 @@ Ltramp_exit:
     ldr     x0,  [sp, #96]                 // frameDepthInOut
     str     x24, [x0]
     ldr     x0,  [sp, #104]                // callsCountOut
-    str     x25, [x0]
+    ldr     x9,  [sp, #120]                // localCalls (frame slot)
+    str     x9,  [x0]
     ldr     x0,  [sp, #112]                // returnsCountOut
-    str     x26, [x0]
+    ldr     x9,  [sp, #128]                // localReturns (frame slot)
+    str     x9,  [x0]
 
     // Restore callee-saved registers
     ldp     x19, x20, [sp, #80]
@@ -468,7 +481,7 @@ Ltramp_exit:
     ldp     x25, x26, [sp, #48]
     ldp     x23, x24, [sp, #32]
     ldp     x21, x22, [sp, #16]
-    ldp     x29, x30, [sp], #128
+    ldp     x29, x30, [sp], #144
     ret
 
 // extern "C" void pharo_jit_osr_resume(JITState* state, void* entry);
