@@ -19320,9 +19320,15 @@ void Interpreter::tryJITResumeInCaller() {
                 std::string callerSel = "?";
                 if (j2jPoolCursor_ > 0) {
                     J2JSave& saved = j2jPool_[j2jPoolCursor_ - 1];
-                    if (saved.jitMethod) {
+#if PHARO_J2J_SAVE_V2
+                    jit::JITMethod* savedJM = jitRuntime_.codeZone()
+                        .findMethodByPC(reinterpret_cast<uint64_t>(saved.addr()));
+#else
+                    jit::JITMethod* savedJM = saved.jitMethod;
+#endif
+                    if (savedJM) {
                         Oop callerCM = Oop::fromRawBits(
-                            saved.jitMethod->compiledMethodOop);
+                            savedJM->compiledMethodOop);
                         if (callerCM.isObject())
                             callerSel = memory_.selectorOf(callerCM);
                     }
@@ -19750,8 +19756,6 @@ void Interpreter::tryJITResumeInCaller() {
                     save.sp = state.sp;
                     save.receiver = state.receiver;
                     save.tempBase = state.tempBase;
-                    save.ip = state.ip;
-                    save.sendArgCount = nArgs;
 
                     bool selfRecursive = (callerJM == calleeJM);
                     int callerNumLits =
@@ -19761,28 +19765,42 @@ void Interpreter::tryJITResumeInCaller() {
                             .asObjectPtr();
                     uint8_t* callerBCStart =
                         callerMethObj->bytes() + (1 + callerNumLits) * 8;
-
+                    (void)selfRecursive;
+#if !PHARO_J2J_SAVE_V2
+                    save.ip = state.ip;
+                    save.sendArgCount = nArgs;
                     // literals/argCount/bcStart are derived from
                     // save.jitMethod on return (see J2J_INLINE_RETURN).
-                    // The self-recursive marker is obsolete.
-                    (void)selfRecursive;
                     save.jitMethod = callerJM;
+#endif
 
                     // Precompute resume JIT code address
                     {
                         uint32_t bcOff =
                             static_cast<uint32_t>(state.ip - callerBCStart);
+                        uint8_t* resume = nullptr;
                         // Safety: refuse register-reading entry offsets —
                         // see JITRuntime::tryResume / deferred.md A1.
-                        if (jitRuntime_.getBcEntryState(callerJM, bcOff) != 0) {
-                            save.resumeAddr = nullptr;
-                        } else {
+                        if (jitRuntime_.getBcEntryState(callerJM, bcOff) == 0) {
                             uint32_t codeOff = callerJM->codeOffsetForBC(bcOff);
-                            save.resumeAddr =
+                            resume =
                                 (codeOff == 0 || codeOff >= callerJM->codeSize)
                                     ? nullptr
                                     : callerJM->codeStart() + codeOff;
                         }
+#if PHARO_J2J_SAVE_V2
+                        // Pack addr | bcOff<<48 | nArgs<<60 (bcOff must
+                        // fit 12 bits — methods that large don't get V2
+                        // resume packing; null = materialize-only).
+                        save.resumeAddr =
+                            (resume && bcOff <= 0xFFF && nArgs <= 15)
+                                ? (reinterpret_cast<uint64_t>(resume)
+                                   | (static_cast<uint64_t>(bcOff) << 48)
+                                   | (static_cast<uint64_t>(nArgs) << 60))
+                                : 0;
+#else
+                        save.resumeAddr = resume;
+#endif
                     }
 
                     // Stack overflow check
@@ -19934,8 +19952,20 @@ void Interpreter::tryJITResumeInCaller() {
                     state.sp -= save.sendArgCount;
 #endif
 
-                    if (__builtin_expect(save.resumeAddr == nullptr, 0)) {
-                        state.ip = save.ip;
+#if PHARO_J2J_SAVE_V2
+                    uint8_t* resumeTo = save.addr();
+                    // V2 null-resume / bail ip: derive from the packed
+                    // bcOffset against the (GC-fresh) caller bytecodes.
+                    uint8_t* derivedIp =
+                        state.jitMethod
+                            ? state.jitMethod->bcStart() + save.bcOff()
+                            : nullptr;
+#else
+                    uint8_t* resumeTo = save.resumeAddr;
+                    uint8_t* derivedIp = save.ip;
+#endif
+                    if (__builtin_expect(resumeTo == nullptr, 0)) {
+                        state.ip = derivedIp;
                         state.exitReason = jit::ExitReturn;
                         break;
                     }
@@ -19943,16 +19973,15 @@ void Interpreter::tryJITResumeInCaller() {
                     // SAFETY: same stack-headroom check as J2JCall path.
                     if ((uintptr_t)state.sp + 4096 * sizeof(Oop) >=
                         (uintptr_t)(stack_.data() + MaxStackDepth)) {
-                        state.ip = save.ip;
+                        state.ip = derivedIp;
                         state.exitReason = jit::ExitStackOverflow;
                         break;
                     }
-                    validateState("pre-Return-resume", save.jitMethod);
+                    validateState("pre-Return-resume", state.jitMethod);
                     spAtLastJ2JCall = state.sp;
                     spLastNArgs = 0;  // resume isn't a call — no args to pop
                     spLastSite = "Return-resume";
-                    JIT_RESUME_CALL(save.resumeAddr, &state,
-                                    retVal.rawBits());
+                    JIT_RESUME_CALL(resumeTo, &state, retVal.rawBits());
                     validateState("post-Return-resume", nullptr);
                 }
 
