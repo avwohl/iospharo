@@ -189,29 +189,19 @@ under load is the canary).
     x25-x28 across the blr, shrink the stash to {x30, entryDepth} +
     cross fields, and skip the OFF_RECEIVER/TEMPBASE/IP restores
     (write-back from regs).  Target: beat the ~23-op save-push.
-  - FULL-SCOPE enablement floods 210-230 startup DNUs — a SECOND shape
-    bug.  PHARO_T1_SAVELESS_MAX_ARGS=N added (compile-time nArgs gate):
-    MAX_ARGS=0 at full scope -> dnu=0, no crash, but the eval is STILL
-    silently lost -> even the 0-arg shape breaks at scale (the
-    controlled cfib->incc site differs how?).  SUB-BISECT RESULTS
-    (PHARO_T1_SAVELESS_NO_EXTRAS runtime gate added): 0-arg AND
-    tempCount==nArgs at full scope STILL fails (10 DNUs) — nil-fill
-    and arg-math both EXONERATED.  Remaining suspects: the CALLER side
-    (block callers; callers entered via the asm trampoline whose
-    register/machine-sp discipline differs from the tryExecute entry
-    the controlled site used), or a callee exit the post-blr code
-    ignores — it ASSUMES EXIT_RETURN; if any leaf can exit otherwise
-    the OFF_RETVAL read is garbage.  CONFIRMED via brk trap (exit=133
-    SIGTRAP in the failing config): leaf callees DO exit with
-    non-EXIT_RETURN reasons at scale — THE at-scale bug.  WHICH exit
-    reason: read OFF_EXIT at the trap under lldb next session.  THE
-    FIX: a cold recovery stub at the trap site that retroactively
-    builds the pool save from the sp-stash (sp,recv,tempBase,ip,
-    jitMethod=stash, resumeAddr=our endOfSend, sendArgCount=nArgs),
-    bumps j2jDepth/cursor, restores entryDepth + machine sp, and
-    rets — C++ then materializes normally, exactly as if the call had
-    used the save-push path.  After that + the x25-x28 register diet,
-    saveless can default-on for leaf sites.
+  - **COMPLETE (a978a7f6)**: the at-scale bug was ExitArithOverflow
+    bails — ANY SmI arith in a leaf can bail; canSkipJ2JSave only
+    excluded cond-jump bailers (confirmed exit=6 via brk trap; the
+    controlled cfib->incc site just never overflowed).  The non-return
+    RECOVERY STUB retro-builds the elided pool save (post-send ip from
+    callerCM + compile-time bcOffset; resumeAddr=endOfSend) and RETs
+    with the callee's exit state -> C++ materializes as if save-push.
+    Full scope, no bisect gates: 3/3 clean startups, 0 DNUs; 10x cfib
+    420ms vs 440 save-push; benchFib + battery correct.
+    NEXT: x25-x28 register diet (callee-saved regs instead of the
+    96-byte stash) to widen the ~5% win, then 60-class suite A/B ->
+    default-on for leaf sites.  Bisect gates (MIN_COMPILE / MAX_ARGS /
+    NO_EXTRAS) remain for future shape isolation.
 - docs/jit-retrospective.md "Cog-speed MAP" numbers now stale for
   cross-method; tight-loop 2x-faster-than-Cog and self-rec 6x still hold.
 - **First-compile fail thrash: FIXED (c79b97ab + 9dbe6a49).**  All
