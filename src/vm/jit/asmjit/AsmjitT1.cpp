@@ -92,7 +92,10 @@ static std::vector<std::pair<uint32_t, asmjit::Label>>* g_resumeOverridesPtr
 // written into the in-zone SendSitePatch map by the caller.
 struct PatchSiteLabels {
     uint32_t siteIdx;
-    asmjit::Label keyMovz;   // W0 (W1=+4, cmp=+8, b.ne=+12, W2=+16)
+    asmjit::Label keyMovz;    // W0 (W1=+4, cmp=+8, b.ne=+12, W2=+16)
+    asmjit::Label tail;       // T  (W3=+0, W4=+4, W5=+8); valid iff hasTail
+    asmjit::Label tailBranch; // W6 (terminal direct b)
+    bool hasTail = false;
 };
 static std::vector<PatchSiteLabels>* g_patchLabelsPtr = nullptr;
 
@@ -3920,14 +3923,101 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.cmp(w4, w6);
                 a.b_ne(Lprobe);
                 a.b(Lprobe);                                // W2: -> b T when linked
+                asmjit::Label tailL = a.new_label();
+                asmjit::Label tailBranchL = a.new_label();
+                bool hasTail = false;
+#if PHARO_J2J_SAVE_V2
+                // PMS B1b: linked-J2J tail skeleton (design §2.2).
+                // Between unconditional branches — reachable ONLY via a
+                // patched W2 (key matched), with the head's contract:
+                // x0=state x1=receiver x2=spCopy(caller sp) x25=sp.
+                // Mirrors the generic xmethod J2J body with calleeJM
+                // from patched immediates (W3-W5): the per-send gate
+                // loads were evaluated ONCE at link time in C++ and do
+                // not exist here.  Same V2 packing gate as the generic
+                // emit; sites that fail it keep tailOffset=0 (head
+                // patchable but never linkable — linkSendSite refuses).
+                {
+                    uint32_t resumeBcOff = (uint32_t)globalIdx + 1;
+                    if (resumeBcOff <= 0xFFFu && nArgs <= 0xF) {
+                        hasTail = true;
+                        a.bind(tailL);
+                        a.movz(x10, 0);            // W3: calleeJM lo16
+                        a.movk(x10, 0, 16);        // W4: calleeJM mid16
+                        a.movk(x10, 0, 32);        // W5: calleeJM hi16
+                        static_assert(OFF_J2J_SAVE_LIMIT == OFF_J2J_SAVE_CURSOR + 8,
+                                      "cursor/limit adjacency required for ldp fold");
+                        a.ldp(x6, x14, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                        a.cmp(x6, x14);
+                        a.b_hs(Lprobe);            // pool full -> generic full-bail path
+                        a.adr(x14, resumeAfterCall);
+                        {
+                            uint16_t packed16 = (uint16_t)(
+                                ((nArgs & 0xF) << 12) | (resumeBcOff & 0xFFF));
+                            a.movk(x14, packed16, 48);
+                        }
+                        // V2 packed save push (record layout bit-identical
+                        // to the generic push above).
+                        emitLoadSp(a, x15);
+                        a.ldr(x4, ptr(x0, OFF_RECEIVER));
+                        a.stp(x15, x4, ptr_post(x6, JSV_SIZE));
+                        emitLoadTempBase(a, x15);
+                        a.stp(x15, x14, ptr(x6, -16));
+                        // Callee state from the patched calleeJM — all
+                        // level-1 loads off an immediate.  offsetof ONLY
+                        // (the JM-byte-offset off-by-one lesson).
+                        a.ldr(x13, ptr(x10, (int)offsetof(JITMethod, compiledMethodOop)));
+                        a.str(x10, ptr(x0, OFF_JITMETHOD));
+                        a.str(x13, ptr(x0, OFF_METHOD));
+                        a.add(x13, x13, asmjit::Imm(16));
+                        a.str(x13, ptr(x0, OFF_LITERALS));
+                        a.mov(w13, asmjit::Imm(nArgs));
+                        a.str(w13, ptr(x0, OFF_ARGCOUNT));
+                        a.str(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                        a.ldr(x13, ptr(x0, OFF_J2J_DEPTH));
+                        a.add(x13, x13, asmjit::a64::x20);
+                        a.str(x13, ptr(x0, OFF_J2J_DEPTH));
+                        a.str(x1, ptr(x0, OFF_RECEIVER));
+                        a.sub(x13, x2, asmjit::Imm(nArgs * 8));
+                        emitStoreTempBase(a, x13);
+                        a.ldr(x14, ptr(x10, (int)offsetof(JITMethod, bcStartCache)));
+                        a.str(x14, ptr(x0, OFF_IP));
+                        // Dynamic nil-fill: callee tempCount is a link-time
+                        // unknown (any gate-passing callee may link here).
+                        a.ldrb(w15, ptr(x10, (int)offsetof(JITMethod, tempCount)));
+                        asmjit::Label tInitLoop = a.new_label();
+                        asmjit::Label tInitDone = a.new_label();
+                        a.add(x14, x13, asmjit::Imm(nArgs * 8));
+                        a.lsl(w15, w15, asmjit::Imm(3));
+                        a.add(x15, x13, x15);
+                        a.mov(x4, asmjit::Imm(nilBits));
+                        a.bind(tInitLoop);
+                        a.cmp(x14, x15);
+                        a.b_hs(tInitDone);
+                        a.str(x4, ptr(x14));
+                        a.add(x14, x14, asmjit::Imm(8));
+                        a.b(tInitLoop);
+                        a.bind(tInitDone);
+                        emitStoreSp(a, x15);
+                        a.bind(tailBranchL);
+                        a.b(Lprobe);               // W6: -> b calleeEntry when linked
+                    }
+                }
+#endif
                 a.bind(LmissNoX5);
                 emitMaterializeX5();
                 a.b(miss);
                 a.bind(Lprobe);
                 emitMaterializeX5();
-                if (g_patchLabelsPtr)
-                    g_patchLabelsPtr->push_back(
-                        {(uint32_t)siteIdx, keyMovz});
+                if (g_patchLabelsPtr) {
+                    PatchSiteLabels pl;
+                    pl.siteIdx = (uint32_t)siteIdx;
+                    pl.keyMovz = keyMovz;
+                    pl.tail = tailL;
+                    pl.tailBranch = tailBranchL;
+                    pl.hasTail = hasTail;
+                    g_patchLabelsPtr->push_back(pl);
+                }
             }
 
             a.ldr(x6, ptr(x5));               // icData[0] key
@@ -7528,9 +7618,14 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             if (pl.siteIdx >= patchRecordCount) continue;
             patchRecords[pl.siteIdx].keyMovzOffset =
                 (uint32_t)code.label_offset_from_base(pl.keyMovz);
-            // tailOffset/tailBranchOffset stay 0 until the B1b tail
-            // skeleton lands — keyMovz alone means "head patchable,
-            // never linkable" (linkSendSite refuses on tailOffset==0).
+            if (pl.hasTail) {
+                patchRecords[pl.siteIdx].tailOffset =
+                    (uint32_t)code.label_offset_from_base(pl.tail);
+                patchRecords[pl.siteIdx].tailBranchOffset =
+                    (uint32_t)code.label_offset_from_base(pl.tailBranch);
+            }
+            // tailOffset==0 (packing-gate fail / stub) = head patchable
+            // but never linkable (linkSendSite refuses).
         }
     }
     g_patchLabelsPtr = nullptr;
@@ -8220,6 +8315,44 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         uint32_t* tbl = reinterpret_cast<uint32_t*>(
             jm->codeStart() + bcToCodeTableOffset);
         for (size_t i = 0; i <= bcLen; i++) tbl[i] = bcToCode[i];
+    }
+    // PMS invariant 4 (design §2/§4.2): no BL/BLR may immediately
+    // precede a patch word — no native return address may point AT a
+    // patched word (what makes patch-while-frames-live safe).  Scan the
+    // emitted bytes once per compile; abort loudly on violation (an
+    // emit-shape regression, not a runtime condition).
+    if (patchMapOffset != 0) {
+        auto isCall = [](uint32_t insn) {
+            return (insn & 0xFC000000u) == 0x94000000u      // BL
+                || (insn & 0xFFFFFC1Fu) == 0xD63F0000u;     // BLR
+        };
+        auto wordAt = [&](uint32_t off) {
+            uint32_t w = 0;
+            if (off >= 4 && off + 4 <= emitted) std::memcpy(&w, buf.data() + off - 4, 4);
+            return w;
+        };
+        for (const auto& rec : patchRecords) {
+            uint32_t patchOffs[8]; int n = 0;
+            if (rec.keyMovzOffset) {
+                patchOffs[n++] = rec.keyMovzOffset;          // W0
+                patchOffs[n++] = rec.keyMovzOffset + 4;      // W1
+                patchOffs[n++] = rec.keyMovzOffset + 16;     // W2
+            }
+            if (rec.tailOffset) {
+                patchOffs[n++] = rec.tailOffset;             // W3
+                patchOffs[n++] = rec.tailOffset + 4;         // W4
+                patchOffs[n++] = rec.tailOffset + 8;         // W5
+                patchOffs[n++] = rec.tailBranchOffset;       // W6
+            }
+            for (int i = 0; i < n; i++) {
+                if (isCall(wordAt(patchOffs[i]))) {
+                    fprintf(stderr, "[PMS] FATAL: BL/BLR precedes patch word "
+                            "at emit offset %u — invariant 4 violated\n",
+                            patchOffs[i]);
+                    std::abort();
+                }
+            }
+        }
     }
     // PMS B1: write the resolved patch map (design §9).  Defensive
     // clamp: the pre-emit and layout send-site scans are the same loop,
