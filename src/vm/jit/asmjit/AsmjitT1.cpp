@@ -7250,6 +7250,24 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 }
             }
             jm->hasNLR = nlr;
+            // Mark receiver-ivar-storing methods.  The legacy stencil
+            // compiler sets hasRecvFieldWrite per-stencil; the asmjit
+            // path left it permanently false.  Consumed by the
+            // PHARO_J2J_NO_HEAPWRITE_CALLEES bisect gate (J2J fills) —
+            // the 2026-06-10 J2J corruption class is ivar stores in
+            // J2J-called code (initializeHandle:offset:).
+            if (isReal) {
+                for (size_t i = 0; i < bcLen; i++) {
+                    uint8_t op = bc[i];
+                    if ((op >= SistaV1::PopStoreRecvBase
+                            && op <= SistaV1::PopStoreRecvLast)
+                        || op == SistaV1::ExtPopStoreRecv
+                        || op == SistaV1::ExtStoreRecv) {
+                        jm->hasRecvFieldWrite = true;
+                        break;
+                    }
+                }
+            }
         }
         // g_debug.t1ForceBailMid (set by PHARO_T1_FORCE_BAIL_MID or
         // PHARO_T1_FORCE_SIMPLE) — force canBailMidMethod on every

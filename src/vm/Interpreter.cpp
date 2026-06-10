@@ -20892,6 +20892,12 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                     }
                 }
             }
+            if (GET_DEBUG_BOOL(PHARO_J2J_NO_HEAPWRITE_CALLEES)
+                    && target->hasRecvFieldWrite) {
+                // Bisect gate: exclude ivar-storing callees from bit-60
+                // (the 2026-06-10 J2J corruption class).
+                unsafePrim = true;
+            }
             if (!unsafePrim && !isJ2JBanned(resolvedMethod.rawBits())) {
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                 // Preserve primKind bits (52:48) already set above
@@ -21164,6 +21170,10 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
 
     if (!target || !target->isExecutable()) return;
     if (isJ2JBanned(cachedMethod.rawBits())) return;
+    // Bisect gate (see patchJITICAfterSend): exclude ivar-storing
+    // callees from bit-60 J2J.
+    if (GET_DEBUG_BOOL(PHARO_J2J_NO_HEAPWRITE_CALLEES)
+            && target->hasRecvFieldWrite) return;
 
     // Check unsafe prim: has primitive but no JIT prologue.
     // Quick primitives (256-519) are trivial — handle them via existing
@@ -21512,13 +21522,19 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
             || (save.resumeAddr >= saveJM->codeStart()
                 && save.resumeAddr < saveJM->codeStart() + saveJM->codeSize);
         static int matLog = 0;
-        if (++matLog <= 200 || !ipInRange || !resumeInRange
+        ++matLog;
+        std::string matSel = memory_.selectorOf(saveMethod);
+        // PHARO_J2J_MAT_SEL: substring filter that logs MATCHING saves
+        // uncapped (the corruption window sits past the 200-line cap).
+        const char* selFilter = GET_DEBUG_STR(PHARO_J2J_MAT_SEL);
+        bool selMatch = selFilter && matSel.find(selFilter) != std::string::npos;
+        if (matLog <= 200 || selMatch || !ipInRange || !resumeInRange
                 || saveJM->isBlock) {
             fprintf(stderr,
                 "[J2J-MAT #%d] site=%s saveJM=%p sel=#%s recvClass=%s "
                 "argc(saveJM)=%d sendArgs=%d ip=%p%s %s%s\n",
                 matLog, siteTag, (void*)saveJM,
-                memory_.selectorOf(saveMethod).c_str(),
+                matSel.c_str(),
                 save.receiver.isObject() && save.receiver.rawBits() >= 0x10000
                     ? memory_.classNameOf(save.receiver).c_str() : "(imm)",
                 (int)saveJM->argCount, save.sendArgCount, (void*)save.ip,
