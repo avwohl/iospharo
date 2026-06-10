@@ -32,7 +32,25 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   gates green (knob-off structurally identical, knob-on correct +
   tail disasm-verified, Dictionary 205/205, DET_SCHED 10/10, zero
   within-binary overhead, +198 B/site knob-on).
-- **NEXT = B2 — linking live + the COMPLETE §7 matrix, ONE batch.**
+- **B2 SHIPPED AND GREEN (2026-06-10)**: linking LIVE.  All §6
+  triggers + §7 events wired (commit "PMS B2"); linkSendSite is
+  pure-derive; batch walks one-window via the W^X shadow.  GATES:
+  knob-on 200-class suite **1/8459** (only the ProcessTerminate
+  flake; BETTER than knob-off baseline) with PATCH_VERIFY silent;
+  5x forced-GC storm, Integer-redefinition storm (immediate effect),
+  1MB-zone eviction storm — all correct, verify clean; sieve 97 (off
+  102), sort 449; cfib within-binary A/B: LINKING 30-33 vs NOLINK
+  34-36 (~-10%, below the 15-30% hope — the tail still pays the full
+  V2 save push; saveless tail variant is the B5 upside).  Startup:
+  ~1.4K links, ~290 live.  Crash lesson recorded: the patch map is
+  IN MAP_JIT — rec.flags writes must stay inside the write window.
+- **NEXT**: B3 soak (full-suite batched run >= the 836-class
+  watermark, -O0 AND RelWithDebInfo, per-test diff vs knob-off) ->
+  B4 default-ON flip (PHARO_T1_NO_PATCHED_SENDS opt-out) -> B5
+  saveless/self-rec tail variants (the perf upside) + MAX_IC widening
+  via link-time gates -> B6 prim-111 #class classifier (the o-class
+  suite-scale lever, mostly orthogonal).
+- (was) **B2 plan — kept for reference:**
   Implementation order inside the batch:
   1. linkSendSite body: §5 predicate (incl. extras bits 60 set /
      59,58,55 clear; callee gates via methodMap; reach check
