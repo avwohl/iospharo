@@ -838,14 +838,14 @@ size_t computeLiveLength(const uint8_t* bc, size_t bcLen) {
         } else if (op == SistaV1::ExtJump
                 || op == SistaV1::ExtJumpTrue
                 || op == SistaV1::ExtJumpFalse) {
-            // Long jump operand is a signed 8-bit byte at bc[i+1].
-            // Target = (i + 2) + offset.  We don't track ExtB
-            // prefix state here so prefixed long jumps may have a
-            // larger effective offset; for those rare cases, fall
+            // Naked long-jump operand is UNSIGNED (forward 0-255);
+            // the sign lives in an ExtendB prefix.  We don't track
+            // ExtB prefix state here so prefixed long jumps may have
+            // a larger effective offset; for those rare cases, fall
             // back to the pessimistic "could jump past bcLen".
+            // Target = (i + 2) + offset.
             if (i + 1 < bcLen) {
-                int8_t offset = static_cast<int8_t>(bc[i + 1]);
-                int tgt = static_cast<int>(i) + 2 + offset;
+                int tgt = static_cast<int>(i) + 2 + bc[i + 1];
                 if (tgt > maxBranchTarget) maxBranchTarget = tgt;
             } else {
                 maxBranchTarget = (int)bcLen;
@@ -1218,8 +1218,10 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
                 traceFail(i, op, "long-jump-truncated");
                 return false;
             }
-            int8_t offset = static_cast<int8_t>(bc[i + 1]);
-            int target = static_cast<int>(i) + 2 + offset;
+            // Naked long-jump operand is UNSIGNED (forward 0-255); the
+            // sign lives in an ExtendB prefix, which the pre-scan
+            // routes to the interp-bail bundle path.
+            int target = static_cast<int>(i) + 2 + bc[i + 1];
             // Allow out-of-range targets (unreachable trailer bytes).
             (void)target;
             i += 1;  // skip offset byte (loop will increment by 1 more)
@@ -6955,14 +6957,18 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 i++;
                 continue;
             }
-            // Long jumps 0xED/0xEE/0xEF: 2-byte opcode + signed 8-bit
-            // offset.  Handled in the main loop so we can read the
-            // operand byte without changing emitOne_arm64's signature.
-            // Target = (globalIdx + 2) + offset.
+            // Long jumps 0xED/0xEE/0xEF (NAKED — the prefix bundle
+            // handler above bails ExtendB+ExtJump to the interp).
+            // Per the interp/spec the operand byte is UNSIGNED with the
+            // sign carried by extB; a naked long jump is always forward
+            // 0-255.  The old int8 read miscompiled operands >= 128
+            // (forward 128-255 byte jumps) into a branch to a wrong
+            // EARLIER label — wrong-position execution that is locally
+            // depth-consistent.  Target = (globalIdx + 2) + offset.
             if (op == SistaV1::ExtJump
                     || op == SistaV1::ExtJumpTrue
                     || op == SistaV1::ExtJumpFalse) {
-                int8_t offset = static_cast<int8_t>(bcReal[i + 1]);
+                int offset = static_cast<int>(bcReal[i + 1]);
                 int target = globalIdx + 2 + offset;
                 // Out-of-range target = unreachable trailer byte; emit a bail.
                 if (target < 0 || target >= (int)bcLabels.size()) {
