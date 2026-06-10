@@ -56,6 +56,7 @@ message(STATUS "Crypto support: ${PHARO_WITH_CRYPTO}")
 set(VM_SOURCES
     src/vm/DebugSettings.cpp
     src/vm/DebugVars.cpp
+    src/vm/ShadowSlots.cpp
     src/vm/Profiler.cpp
     src/vm/ObjectMemory.cpp
     src/vm/ImageLoader.cpp

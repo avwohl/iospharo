@@ -16,6 +16,7 @@
 #include "../platform/Platform.hpp"
 #include "DebugSettings.hpp"
 #include "DebugVars.hpp"
+#include "ShadowSlots.hpp"
 #include "Profiler.hpp"
 #include "InterpreterProxy.h"
 #include "FFI.hpp"
@@ -1774,6 +1775,13 @@ void Interpreter::dumpJITStats() {
         fprintf(stderr, "  xmethod inline-J2J fires=%llu\n",
                 (unsigned long long)g_xmethod_count);
     }
+    if (GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS)) {
+        fprintf(stderr,
+                "  shadow-slots: stores=%llu checks=%llu mismatches=%llu\n",
+                (unsigned long long)g_shadowStores,
+                (unsigned long long)g_shadowChecks,
+                (unsigned long long)g_shadowMismatches);
+    }
     if (g_xgate_enter > 0) {
         fprintf(stderr,
                 "  xmethod gates: enter=%llu bail_prim=%llu bail_numic=%llu "
@@ -2443,9 +2451,15 @@ void Interpreter::interpret() {
 
     // ====== FAST INLINE HANDLERS ======
 
-    op_pushRecvVar:
-        push(memory_.fetchPointerUnchecked(bytecode & 0x0F, receiver_));
+    op_pushRecvVar: {
+        Oop srv = memory_.fetchPointerUnchecked(bytecode & 0x0F, receiver_);
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {
+            shadowVerify(receiver_.rawBits(), (uint64_t)(bytecode & 0x0F),
+                         srv.rawBits(), "interp-fastPushRecvVar");
+        }
+        push(srv);
         DISPATCH_NEXT();
+    }
 
     op_pushLitVar:
         pushLiteralVariable(bytecode - 0x10);
@@ -6041,6 +6055,12 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
 void Interpreter::pushReceiverVariable(int index) {
     Oop result = memory_.fetchPointerUnchecked(index, receiver_);
+    // Shadow-slot detector: verify the read against the last tracked
+    // write (PHARO_SHADOW_SLOTS).
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {
+        shadowVerify(receiver_.rawBits(), (uint64_t)index,
+                     result.rawBits(), "interp-pushRecvVar");
+    }
     push(result);
 }
 
@@ -18159,7 +18179,12 @@ void Interpreter::afterGC() {
         currentJITState_->literals = methObj->slots() + 1;
     }
 
-    // Rebuild J2J pool saves' raw ip from the offsets stashed in
+    // Shadow-slot detector: rehash (keys were GC-updated in place).
+    if (GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS)) {
+        shadowRehashAfterGC();
+    }
+
+    // Rebuild J2J pool saves. raw ip from the offsets stashed in
     // prepareForGC (see the matching walk there).  jm->compiledMethodOop
     // was updated by forEachRoot's code-zone walk, so bytes() now points
     // at the method's post-GC location.

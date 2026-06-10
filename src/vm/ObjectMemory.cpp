@@ -1062,6 +1062,10 @@ void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
     }
 
     header->slotAtPut(index, value);
+    // Shadow-slot detector (PHARO_SHADOW_SLOTS): track the write.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {
+        shadowStore(obj.rawBits(), index, value.rawBits(), 2);
+    }
 }
 
 uint8_t ObjectMemory::fetchByte(size_t index, Oop obj) const {
@@ -1377,6 +1381,11 @@ bool ObjectMemory::become(Oop obj1, Oop obj2) {
 }
 
 bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
+    // Shadow-slot detector: identities are about to swap arbitrarily —
+    // the (object, slot) keys cannot be remapped, so drop the table.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {
+        shadowClear();
+    }
     if (!obj1.isObject() || !obj2.isObject()) {
         return false;
     }

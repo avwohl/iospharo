@@ -39,6 +39,7 @@
 #include "../../Interpreter.hpp"
 #include "../../DebugSettings.hpp"
 #include "../../DebugVars.hpp"
+#include "../../ShadowSlots.hpp"
 
 // Debug-only inline-getter write recorder for the aigraph investigation
 // (PHARO_FINDNODE_WATCH).  Defined in Interpreter.cpp next to the tape; takes
@@ -205,11 +206,57 @@ extern "C" void jit_rt_store_ring(uint64_t state, uint64_t recv,
                                   uint64_t value, uint64_t slot,
                                   uint64_t jm) {
     (void)state;
-    StoreRingEntry& e = g_storeRing[g_storeRingIdx++ & (kStoreRingSize - 1)];
-    e.recv = recv;
-    e.value = value;
-    e.jm = jm;
-    e.slot = slot;
+    if (GET_DEBUG_BOOL(PHARO_T1_STORE_RING)) {
+        StoreRingEntry& e =
+            g_storeRing[g_storeRingIdx++ & (kStoreRingSize - 1)];
+        e.recv = recv;
+        e.value = value;
+        e.jm = jm;
+        e.slot = slot;
+    }
+    if (GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS)) {
+        pharo::shadowStore(recv, slot, value, jm);
+    }
+}
+
+// Shadow-slot verify for JIT ivar reads.  Receiver read from the state
+// (OFF_RECEIVER) so the emit hook only needs the value + slot.
+extern "C" void jit_rt_shadow_verify(uint64_t state, uint64_t value,
+                                     uint64_t slot) {
+    uint64_t recv = *reinterpret_cast<uint64_t*>(
+        reinterpret_cast<uint8_t*>(state) + 8);  // OFF_RECEIVER
+    pharo::shadowVerify(recv, slot, value, "jit-pushRecvVar");
+}
+
+// Emit the knob-gated verify call after an ivar-read emit.  Convention:
+// x1 = just-loaded value; slot is compile-time.  Full caller-saved
+// save/restore (the 928df628 lesson).
+static void emitShadowReadVerify(asmjit::a64::Assembler& a, int slotIdx) {
+    using namespace asmjit::a64;
+    if (!GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS)) return;
+    a.sub(sp, sp, asmjit::Imm(144));
+    a.stp(x0, x1,   ptr(sp, 0));
+    a.stp(x2, x3,   ptr(sp, 16));
+    a.stp(x4, x5,   ptr(sp, 32));
+    a.stp(x6, x7,   ptr(sp, 48));
+    a.stp(x8, x9,   ptr(sp, 64));
+    a.stp(x10, x11, ptr(sp, 80));
+    a.stp(x12, x13, ptr(sp, 96));
+    a.stp(x14, x15, ptr(sp, 112));
+    a.str(x30,      ptr(sp, 128));
+    a.mov(x2, asmjit::Imm(slotIdx));        // slot (x1 = value already)
+    a.mov(x16, asmjit::Imm((uint64_t)&jit_rt_shadow_verify));
+    a.blr(x16);
+    a.ldp(x0, x1,   ptr(sp, 0));
+    a.ldp(x2, x3,   ptr(sp, 16));
+    a.ldp(x4, x5,   ptr(sp, 32));
+    a.ldp(x6, x7,   ptr(sp, 48));
+    a.ldp(x8, x9,   ptr(sp, 64));
+    a.ldp(x10, x11, ptr(sp, 80));
+    a.ldp(x12, x13, ptr(sp, 96));
+    a.ldp(x14, x15, ptr(sp, 112));
+    a.ldr(x30,      ptr(sp, 128));
+    a.add(sp, sp, asmjit::Imm(144));
 }
 
 // Emit a knob-gated call to jit_rt_store_ring at a receiver-ivar store
@@ -218,7 +265,8 @@ extern "C" void jit_rt_store_ring(uint64_t state, uint64_t recv,
 // blr (the XMETHOD_LOG x1-x6 clobber lesson, 928df628).
 static void emitStoreRingLog(asmjit::a64::Assembler& a, int slotIdx) {
     using namespace asmjit::a64;
-    if (!GET_DEBUG_BOOL(PHARO_T1_STORE_RING)) return;
+    if (!GET_DEBUG_BOOL(PHARO_T1_STORE_RING)
+            && !GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS)) return;
     a.sub(sp, sp, asmjit::Imm(144));
     a.stp(x0, x1,   ptr(sp, 0));
     a.stp(x2, x3,   ptr(sp, 16));
@@ -2712,6 +2760,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         }
         a.ldr(x1, ptr(x0, OFF_RECEIVER));
         a.ldr(x1, ptr(x1, OBJ_SLOT_0 + n * 8));
+        emitShadowReadVerify(a, n);
         emitPushReg(a, x1);
         return true;
     }
@@ -5161,7 +5210,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // site's convention differs from the bytecode store emits
             // (x1=recv, x3=value, x6=dynamic slotIdx), so inline the
             // call instead of using emitStoreRingLog.
-            if (GET_DEBUG_BOOL(PHARO_T1_STORE_RING)) {
+            if (GET_DEBUG_BOOL(PHARO_T1_STORE_RING)
+                    || GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS)) {
                 a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(144));
                 a.stp(x0, x1,   ptr(asmjit::a64::sp, 0));
                 a.stp(x2, x3,   ptr(asmjit::a64::sp, 16));
@@ -6811,6 +6861,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 if (op == SistaV1::ExtPushRecvVar) {
                     a.ldr(a64::x1, a64::ptr(a64::x0, OFF_RECEIVER));
                     a.ldr(a64::x1, a64::ptr(a64::x1, OBJ_SLOT_0 + idx * 8));
+                    emitShadowReadVerify(a, idx);
                     a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
                     a.str(a64::x1, a64::ptr(a64::x2));
                     a.add(a64::x2, a64::x2, asmjit::Imm(8));

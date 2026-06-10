@@ -58,6 +58,8 @@
 #define PHARO_INTERPRETER_HPP
 
 #include "DebugSettings.hpp"
+#include "DebugVars.hpp"
+#include "ShadowSlots.hpp"
 #include "ObjectMemory.hpp"
 #include "ImageLoader.hpp"
 #include "../platform/EventQueue.hpp"
@@ -3390,6 +3392,21 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
             if (key != 0) {
                 Oop& keyOop = *reinterpret_cast<Oop*>(&key);
                 visitor(keyOop);
+            }
+        }
+
+        // Shadow-slot detector (PHARO_SHADOW_SLOTS): entry obj keys and
+        // tracked values are oops — GC must update them or every moved
+        // object would false-positive on its next verified read.
+        // Positions rehash in afterGC.
+        if (GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS)) {
+            for (size_t i = 0; i < kShadowSize; i++) {
+                ShadowEntry& e = g_shadowSlots[i];
+                if (e.obj == 0) continue;
+                visitor(*reinterpret_cast<Oop*>(&e.obj));
+                // Values can be immediates — visitor implementations
+                // skip non-objects themselves.
+                visitor(*reinterpret_cast<Oop*>(&e.value));
             }
         }
 

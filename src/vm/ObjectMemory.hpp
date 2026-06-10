@@ -36,6 +36,8 @@
 
 #include "Oop.hpp"
 #include "ObjectHeader.hpp"
+#include "DebugVars.hpp"
+#include "ShadowSlots.hpp"
 #include <array>
 #include <vector>
 #include <cstdint>
@@ -419,6 +421,11 @@ public:
             rememberObject(obj);
         }
         header->slotAtPut(index, value);
+        // Shadow-slot detector (PHARO_SHADOW_SLOTS) — track the write so
+        // verify-on-read doesn't false-positive on interpreter/C++ stores.
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {
+            shadowStore(obj.rawBits(), index, value.rawBits(), 2);
+        }
     }
 
     /// Fetch a byte from a byte object
