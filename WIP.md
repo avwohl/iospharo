@@ -140,6 +140,12 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
      writes it and non-eval runs EXECUTE the stale one -> evaluates the
      old expr and quits the image seconds after startup (0 SUnitRunner
      lines, "Test Complete" almost immediately).
+  3. /tmp/sunit_batch.txt is 1-BASED (`1 60`, not `0 60`): index 0 makes
+     the runner's copyFrom:to: raise, SessionManager swallows it, and the
+     run is silent — the error appears ONLY in <imagedir>/PharoDebug.log
+     (always check that file when a runner run is silent).
+  4. The optimized build burns the 60G step budget in ~4-5 min; set
+     PHARO_MAX_STEPS=2000000000000 for suite runs (knob added 0a48a0e1).
 - EVAL-RESULT prints to stderr — capture with 2>&1.
 - grep -o "ms=..." matches the arg echo first; grep EVAL-RESULT first.
 - New env knobs -> src/vm/debug_vars.h (DEBUG_BOOL + GET_DEBUG_BOOL).
