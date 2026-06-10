@@ -66,7 +66,7 @@ static bool g_emitGetterTrace = false;
 //     migration is all-or-nothing at runtime; this flag makes it
 //     incremental at the SOURCE level — each converted batch commits
 //     green with the flag at 0).
-#define PHARO_T1_SP_IN_X25 0
+#define PHARO_T1_SP_IN_X25 1
 // (the emitLoadSp/emitStoreSp/emitSyncSpToState helpers live next to
 //  emitPushReg, after the asmjit headers are in scope)
 // True while compiling a CompiledBlock (set per-compile in

@@ -279,7 +279,7 @@ Lret_after_restore:
     ldr     x25, [x21, #JS_SP]
     mov     x0,  x21
     blr     x7
-    // TODO(sp-residency sweep): str x25, [x21, #JS_SP] here.
+    str     x25, [x21, #JS_SP]        // sp-residency: x25 live-out from JIT code
     b       Ltramp_loop
 
 Lret_null_resume:
@@ -440,7 +440,7 @@ Lcall_enter_callee:
     ldr     x25, [x21, #JS_SP]
     mov     x0,  x21                       // JITState* arg
     blr     x7
-    // TODO(sp-residency sweep): str x25, [x21, #JS_SP] here.
+    str     x25, [x21, #JS_SP]        // sp-residency: x25 live-out from JIT code
     b       Ltramp_loop
 
 
@@ -518,12 +518,12 @@ SYMBOL(pharo_jit_osr_resume):
     mov     x29, sp
     ldr     x19, [x0, #JS_JITMETHOD]
     ldr     x20, [x0, #JS_J2J_DEPTH_INC]
-    // sp-residency Phase 1 (contract half): x25 = state.sp live-in.
+    // sp-residency: x25 = state.sp live-in/live-out.
+    str     x0,  [sp, #40]            // stash state for the writeback
     ldr     x25, [x0, #JS_SP]
     blr     x1                         // call JIT'd code
-    // TODO(sp-residency sweep): writeback x25 -> JS_SP here (needs the
-    // state pointer preserved across the blr — stash x0 in a frame
-    // slot when the sweep lands).
+    ldr     x9,  [sp, #40]
+    str     x25, [x9, #JS_SP]         // writeback BEFORE restoring caller's x25
     ldr     x25, [sp, #32]            // restore x25 for our caller
     ldp     x19, x20, [sp, #16]       // restore x19/x20 for our caller
     ldp     x29, x30, [sp], #48

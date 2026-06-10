@@ -303,7 +303,9 @@ typedef void (*StencilFunc)(JITState*);
         /* until the T1 emit sweep maintains it (unmigrated code    */ \
         /* updates memory; a stale-x25 writeback would corrupt sp). */ \
         "ldr x25, [x0, #0]\n\t" \
-        "blr %[e]" \
+        "blr %[e]\n\t" \
+        /* sp-residency live-out: JIT code maintained x25; publish it */ \
+        "str x25, [%[s], #0]" \
         : \
         : [s] "r"(_jit_s), [e] "r"(_jit_e) \
         : "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10","x11", \
