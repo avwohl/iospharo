@@ -18253,6 +18253,11 @@ void Interpreter::prepareForGC() {
             if (n > liveSaves && n <= (ptrdiff_t)MaxJ2JPoolSize)
                 liveSaves = (int)n;
         }
+#if !PHARO_J2J_SAVE_V2
+        // V1: save.ip is a raw pointer into the (movable) CompiledMethod
+        // — stash it as an offset for afterGC to rebuild.  V2 carries a
+        // packed bcOffset instead of a pointer: GC-stable by
+        // construction, nothing to do.
         for (int i = 0; i < liveSaves; i++) {
             J2JSave& s = j2jPool_[i];
             s.ipOffset = -1;
@@ -18272,6 +18277,7 @@ void Interpreter::prepareForGC() {
                 s.ipOffset = (int)(s.ip - bytes);
             }
         }
+#endif
     }
 #endif
 
@@ -18429,6 +18435,7 @@ void Interpreter::afterGC(bool fullGC) {
                 liveSaves = (int)n;
         }
         for (int i = 0; i < liveSaves; i++) {
+#if !PHARO_J2J_SAVE_V2
             J2JSave& s = j2jPool_[i];
             if (s.ipOffset < 0) continue;
             jit::JITMethod* jm = s.jitMethod;
@@ -18441,6 +18448,7 @@ void Interpreter::afterGC(bool fullGC) {
             if (!m.isObject() || m.rawBits() <= 0x10000) continue;
             s.ip = m.asObjectPtr()->bytes() + s.ipOffset;
             s.ipOffset = -1;
+#endif  // V2: packed bcOffset is GC-stable — nothing to rebuild
         }
     }
 #endif
