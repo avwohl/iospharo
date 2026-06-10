@@ -82,8 +82,23 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   Batch 2 edits: dual J2JSave struct (V2 = 4 fields/32B), materialize
   unpack path, gate the GC pool walks + .ipOffset uses (2 sites),
   then batch 3 = the emit (push/prelude/resume continuations).
-  2a DONE (GC walks gated).  2b DONE (dual struct; V2 = 32B packed
-  with addr()/bcOff()/nArgs() accessors).  **STRAGGLER ENUMERATION
+  2a-2d DONE (GC walks; dual struct; all 17 C++ stragglers).  3a DONE
+  (emit layout constants via JSV_*).  3b DONE (V2 packed push emit:
+  movk-pack + 2 stps = 5 instr, compiles at V2=1 only).
+  **V2 KEYSTONE for the prelude/resume batch (3c) — LABEL SPLIT:**
+  endOfSend is ALSO the merge point for inline-spec fallthroughs
+  (getter/setter/prims), which pop their own args and don't carry x1
+  — the V2 resume continuation (static arg-pop + stur x1) MUST live
+  at a NEW label `resumeAfterCall` placed JUST BEFORE endOfSend and
+  falling into it.  Then: (i) the push's `adr x14, endOfSend` becomes
+  `adr x14, resumeAfterCall`; (ii) bcToCode[postSendOff] must map to
+  resumeAfterCall (NOT the next bytecode's label) so the C++
+  JIT_RESUME_CALL/trampoline landers — which now all provide x1 —
+  take the pop+write path too; (iii) the V2 prelude tail is:
+  emitStoreSp(x5)=caller sp -> and x8,#addrMask -> str wzr,OFF_EXIT ->
+  br x8 (no sendArgCount load, no jitMethod restores); (iv) xmethod
+  sites additionally re-establish jitMethod/method/literals/argCount
+  at resumeAfterCall from emit-time immediates (skip for self-rec).  **STRAGGLER ENUMERATION
   DONE (V2=1 local build): exactly 17 error lines, ALL in
   Interpreter.cpp** — 19323/19325 (early J2J region), 19753-19782
   (the rj2j C++ push site: needs the V2 packed write), 19937-19950
