@@ -24,15 +24,40 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   binary — all 60 differing words were mov/movk immediates, the
   correct check), knob-on cfib(28)=1028457, DictionaryTest 205/205,
   unlinked overhead <=3% within-binary, DET_SCHED AIPrim 10/10.
-- **NEXT = B1b**: the linked-J2J tail skeleton (§2.2) — per-site, out
-  of the fall-through path, only when the V2 packing gate passes
-  (reuse the exact gate at the xmethod J2J emit ~4965-4970); shape
-  mirrors today's xmethod body with calleeJM from patched movz/movk
-  x10 (W3-W5) and terminal patched direct b (W6); record
-  tailOffset/tailBranchOffset labels into the patch map; add the
-  no-BL-in-patched-range post-emit scan.  The tail is UNREACHABLE in
-  B1b (W2 still says b Lprobe).  Same gates as B1a + per-site
-  emitted-bytes stat (zone-growth baseline, design §13 Q2).
+- **B1b SHIPPED (B1 COMPLETE)** (commit 26a8ec83): §2.2 tail skeleton
+  per site (W3-W5 calleeJM immediates, cursor ldp + b.hs Lprobe,
+  packed V2 resume, save push, callee state off immediate x10,
+  dynamic nil-fill, W6 placeholder) + tail offsets in the patch map +
+  the invariant-4 no-BL-precedes-patch-word scan per compile.  All
+  gates green (knob-off structurally identical, knob-on correct +
+  tail disasm-verified, Dictionary 205/205, DET_SCHED 10/10, zero
+  within-binary overhead, +198 B/site knob-on).
+- **NEXT = B2 — linking live + the COMPLETE §7 matrix, ONE batch.**
+  Implementation order inside the batch:
+  1. linkSendSite body: §5 predicate (incl. extras bits 60 set /
+     59,58,55 clear; callee gates via methodMap; reach check
+     refuse-on-fail), §4-step-3 pre-patch opcode asserts (decoders in
+     SendSitePatcher.hpp), ScopedPatchWriteAccess window, W1-LAST
+     store order, ranged sys_icache_invalidate (head words + tail
+     words only), counters + numPatchedSites_.
+  2. unlinkSendSite: W1 := impossible store + ranged flush.
+  3. §6 triggers in Interpreter.cpp: patchJITICAfterSend (both
+     paths, wrote-slot-0 flag), upgradeICToJ2J (both fills +
+     POST-compile() owner re-validation), chain-loop zeroing hook
+     (ownership guard + floor-to-site — fixes §14 bug #1).
+  4. §7 events: 1 recoverAfterGC unlinkEverything (+ stale W^X
+     comments update), 3 recompile re-patch via entryAddrFor +
+     UNLINK on tier change + eager warm-IC link pass at recompile
+     finalize, 4 eviction scrub off patch maps + fix §14 #2 (extras
+     + megaCache.jitEntry on the full-flush path), 5 flushCaches
+     unlinkEverything early-out, 8 splice-set unlink hooks
+     (JITRuntime.cpp 2935/3481), 9 = trigger 3 above.
+  5. PHARO_T1_PATCH_VERIFY walk (§10: linked-over-zeroed = FAIL).
+  Gate (§11 B2): B1 suite + forced-fullGC bench loop + redefinition
+  storm + 1MB-zone eviction storm + PATCH_VERIFY clean + counters
+  nonzero + within-binary cfib A/B (link vs NOLINK, expect 15-30%
+  send-dense) + sieve x100 / sort 100K sentinels + lldb disassemble
+  of a freshly linked site.
 - B1a result-check trap: an early "r=1" failure was an OUTPUT-CAPTURE
   artifact (truncated stream), not a real miscompile — verify with
   `(28 cfib) printString` and the full EVAL-RESULT line before
