@@ -130,6 +130,32 @@ under load is the canary).
   GOTCHA: PHARO_J2J_ONLY_SELECTORS kills ALL IC fills for other
   selectors (0% IC hit rate) — runs under it DNU with ANY selector and
   are NOT a valid minimal repro.
+  **EPISTEMOLOGY (2026-06-10, READ BEFORE TRUSTING ANY A/B ON THIS BUG):**
+  the DNU-visibility is a LAYOUT KNIFE-EDGE: adding ANY env var (even
+  AAAA=1, or byte-length-matched pads) makes the default+DET 7-DNU
+  baseline go silent.  DebugSettings copies env strings at static init,
+  so env content shifts allocation layout deterministically; the
+  corrupt write lands in slack on most layouts.  CONSEQUENTLY:
+  - POISONED (layout mirage): the heap-write-callee gate "cure"
+    (PHARO_J2J_NO_HEAPWRITE_CALLEES — byte-matched pad cures equally),
+    the skip-selector bisect convergence on initializeHandle:offset:
+    (env length shrank monotonically with the candidate halving), the
+    SCAV_DANGLE_CHECK "cure".
+  - STILL VALID: the 7-DNU baseline itself (stable across reruns,
+    exact env); cap=26682-pass vs 26683-fail (identical env length —
+    ONE extra cross-method inline fire flips the severe outcome);
+    NO_J2J_BRANCH keeping 7 DNUs DESPITE its env-length change (the
+    corruption fires broadly; behavior knobs re-land it visibly).
+  - The corruption is REAL and present in the shipping default config;
+    wall-clock scheduling + layout luck hide it (200-class suites
+    clean).  Next instrument must catch the WRITE, not the symptom:
+    e.g. a shadow-copy diff of a victim object class (OpalCompiler
+    collections / Form extents), or hardware watchpoints on a victim
+    slot after a first deterministic run locates it, or an
+    interpreter-vs-JIT differential replay.  Hold env BYTES constant
+    (pad to fixed total) in ALL future A/Bs on this bug.
+  - hasRecvFieldWrite now computed by T1 (commit 0bc7d7f9) — flag is
+    real even though the gate experiment was inconclusive.
   Recipe (reusable): DET_SCHED makes the failure a deterministic
   function of the fire cap -> binary-search the cap (~20 runs), then
   watchpoint the cap-bail counter in the LAST PASSING run; x10=calleeJM
