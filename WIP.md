@@ -15,13 +15,28 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   thread-local shadow — depth counter rejected, the VM has deliberate
   unmatched defensive force-X calls), jit_rt_fill_ic tripwire.
   Gate passed: selfcheck, eval, cfib 30ms, DictionaryTest 205/205.
-- **NEXT = B1**: emit the §2 site shape behind PHARO_T1_PATCHED_SENDS
-  (impossible key movz/movk + cmp + patched-b head; tail skeleton
-  behind the V2 packing gate; Lprobe/LmissNoX5 cold restructure;
-  patch-map fill from asmjit labels next to the g_resumeOverridesPtr
-  pushes; no-BL-in-patched-range emit assert).  Gate: knob-off emit
-  byte-identical (hash a method corpus), shape-on overhead < 2-3%
-  within-binary, 60-class SUnit A/B identical, DET_SCHED AIPrim clean.
+- **B1a SHIPPED** (commit "PMS B1a"): the §2.1 head shape + Lprobe/
+  LmissNoX5 restructure + patch-map plumbing (labels -> post-flatten
+  offsets -> in-zone SendSitePatch map), PHARO_T1_EMIT_HASH harness.
+  tailOffset=0 everywhere — heads exist, nothing can link.  Gates
+  passed: knob-off emit STRUCTURALLY identical (the byte-identity gate
+  must classify diffs: baked global-counter ADDRESSES differ per
+  binary — all 60 differing words were mov/movk immediates, the
+  correct check), knob-on cfib(28)=1028457, DictionaryTest 205/205,
+  unlinked overhead <=3% within-binary, DET_SCHED AIPrim 10/10.
+- **NEXT = B1b**: the linked-J2J tail skeleton (§2.2) — per-site, out
+  of the fall-through path, only when the V2 packing gate passes
+  (reuse the exact gate at the xmethod J2J emit ~4965-4970); shape
+  mirrors today's xmethod body with calleeJM from patched movz/movk
+  x10 (W3-W5) and terminal patched direct b (W6); record
+  tailOffset/tailBranchOffset labels into the patch map; add the
+  no-BL-in-patched-range post-emit scan.  The tail is UNREACHABLE in
+  B1b (W2 still says b Lprobe).  Same gates as B1a + per-site
+  emitted-bytes stat (zone-growth baseline, design §13 Q2).
+- B1a result-check trap: an early "r=1" failure was an OUTPUT-CAPTURE
+  artifact (truncated stream), not a real miscompile — verify with
+  `(28 cfib) printString` and the full EVAL-RESULT line before
+  debugging emit.
 - Then B2 = linking + the COMPLETE §7 invalidation matrix in ONE batch
   (9 events; §6 trigger enumeration; §14 pre-existing bugs #1/#2 fixed
   in the same commits they touch).
