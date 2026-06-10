@@ -21908,7 +21908,18 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     SavedFrame& frame, J2JSave& save, jit::JITMethod* fallbackJM,
     const char* siteTag)
 {
+#if PHARO_J2J_SAVE_V2
+    // V2: the caller identity derives from the packed resume address;
+    // the materialize-only sentinel (resumeAddr == 0) falls back like
+    // the V1 null-jitMethod case.
+    jit::JITMethod* saveJM = save.resumeAddr
+        ? jitRuntime_.codeZone().findMethodByPC(
+              reinterpret_cast<uint64_t>(save.addr()))
+        : nullptr;
+    // V2 ip: derived below once saveJM is known (bcStart + bcOff).
+#else
     jit::JITMethod* saveJM = save.jitMethod;
+#endif
     if (!saveJM) {
         // asmjit-T1's self-recursive push skips writing save.jitMethod
         // (xmethod-off path).  All such saves reference the SAME method
@@ -21926,6 +21937,15 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     }
     Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
     Oop nil = memory_.nil();
+#if PHARO_J2J_SAVE_V2
+    uint8_t* saveIp = save.resumeAddr
+        ? saveJM->bcStart() + save.bcOff()
+        : saveJM->bcStart();
+    int saveNArgs = save.resumeAddr ? (int)save.nArgs() : 0;
+#else
+    uint8_t* saveIp = save.ip;
+    int saveNArgs = save.sendArgCount;
+#endif
 
     // Diagnostic (PHARO_J2J_MAT_LOG): log every J2J-save materialize and
     // flag saves whose ip does not lie inside saveJM's bytecode range —
@@ -21934,7 +21954,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     if (GET_DEBUG_BOOL(PHARO_J2J_MAT_LOG)) {
         bool ipInRange = false;
         ObjectHeader* mo = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
-        if (mo && save.ip >= mo->bytes() && save.ip < mo->bytes() + mo->byteSize()) {
+        if (mo && saveIp >= mo->bytes() && saveIp < mo->bytes() + mo->byteSize()) {
             ipInRange = true;
         }
         // resumeAddr comes from an `adr endOfSend` in the REAL pushing
@@ -21942,9 +21962,15 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
         // live across the whole dispatch emit.  If they disagree, the
         // register was stale — a consistent ip/jitMethod pair can't
         // catch that (both derive from the same register).
+#if PHARO_J2J_SAVE_V2
+        bool resumeInRange = save.resumeAddr == 0
+            || (save.addr() >= saveJM->codeStart()
+                && save.addr() < saveJM->codeStart() + saveJM->codeSize);
+#else
         bool resumeInRange = save.resumeAddr == nullptr
             || (save.resumeAddr >= saveJM->codeStart()
                 && save.resumeAddr < saveJM->codeStart() + saveJM->codeSize);
+#endif
         static int matLog = 0;
         ++matLog;
         std::string matSel = memory_.selectorOf(saveMethod);
@@ -21961,7 +21987,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
                 matSel.c_str(),
                 save.receiver.isObject() && save.receiver.rawBits() >= 0x10000
                     ? memory_.classNameOf(save.receiver).c_str() : "(imm)",
-                (int)saveJM->argCount, save.sendArgCount, (void*)save.ip,
+                (int)saveJM->argCount, saveNArgs, (void*)saveIp,
                 saveJM->isBlock ? " BLOCK-SAVE <<<" : "",
                 ipInRange ? "ip-OK" : "IP-OUT-OF-RANGE <<<",
                 resumeInRange ? "" : " RESUME-MISMATCH <<<");
@@ -21974,13 +22000,13 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     // loss / wrong-receiver DNUs) — invisible to per-send checks because
     // each send is depth-consistent AT the wrong offset.
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)) {
-        jit::spDepthCheckJ2JSave(saveJM->compiledMethodOop, save.ip,
+        jit::spDepthCheckJ2JSave(saveJM->compiledMethodOop, saveIp,
                                  save.sp, save.tempBase,
-                                 saveJM->tempCount, save.sendArgCount,
+                                 saveJM->tempCount, saveNArgs,
                                  &memory_, siteTag);
     }
 
-    frame.savedIP = save.ip;
+    frame.savedIP = saveIp;
     // Use CompiledMethod's actual byteSize.  saveJM->numBytecodes is 0
     // for AsmjitT1 methods with send sites (advertiseResume gate at
     // AsmjitT1.cpp:6415), which would set bytecodeEnd_ = bcStart and
@@ -21996,7 +22022,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     frame.savedActiveContext = activeContext_;
     frame.materializedContext = nil;
     frame.savedFP = save.tempBase - 1;
-    frame.materializedRetSlot = save.sp - (save.sendArgCount + 1);
+    frame.materializedRetSlot = save.sp - (saveNArgs + 1);
     frame.savedArgCount = saveJM->argCount;
     frame.homeFrameDepth = SIZE_MAX;
     materializedFrameCount_++;
