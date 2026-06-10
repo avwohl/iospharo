@@ -43,7 +43,8 @@ struct JITMethod;
 struct JITState {
     // --- Hot fields (accessed every bytecode) ---
 
-    Oop* sp;                  // offset 0:  Stack pointer (points to TOS)
+    Oop* sp;                  // offset 0:  Stack pointer (one-past-TOS: TOS = sp[-1],
+                              //            matching Interpreter::stackTop())
     Oop  receiver;            // offset 8:  Current 'self'
     Oop* literals;            // offset 16: Literal frame (slot 1 of CompiledMethod)
     Oop* tempBase;            // offset 24: Base of temps/args in the stack

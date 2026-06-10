@@ -68,6 +68,7 @@ set(VM_SOURCES
     src/vm/plugins/SocketPlugin.cpp
     src/platform/EventQueue.cpp
     src/platform/MotionData.cpp
+    src/vm/jit/BcDepthMap.cpp
     src/vm/jit/CodeZone.cpp
     src/vm/jit/JITCompiler.cpp
     src/vm/jit/JITRuntime.cpp

@@ -7329,6 +7329,22 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             }
         }
     }
+    // SOUNDNESS GATE (2026-06-10, found by PHARO_SP_DEPTH_CHECK): the
+    // fold assumes every save this method's return prelude pops was
+    // pushed by THIS method's own send sites — true only for pure
+    // self-recursion.  Under xmethod cross-method dispatch (and
+    // inline-block-value), the CALLEE's prelude pops a save pushed by
+    // the CALLER's send site, whose nArgs is unknowable here: a callee
+    // whose own sites are uniform 0-arg folded the sp-adjust to zero
+    // while popping a 2-arg caller save -> sp left high by exactly
+    // nArgs, retval in an arg slot (the deterministic MAX_IC=1 silent
+    // startup-loss; first [SP-DEPTH] hit = handle:offset: delta=2).
+    // Every push site writes save.sendArgCount correctly, so the
+    // dynamic load-from-save path is always sound — force it whenever
+    // a cross-method route could pop this method's prelude.
+    if (g_debug.t1InlineJ2JXmethod || g_debug.t1InlineBlockValue) {
+        staticJ2JArgCount = -1;
+    }
     // FINDNODE_WATCH: emit the inline-getter write recorder ONLY for asTuple,
     // so just its 2 getter sites get the BLR (no global code-size bloat).
     g_emitGetterTrace = GET_DEBUG_BOOL(PHARO_FINDNODE_WATCH)

@@ -23,6 +23,7 @@
 #include "jit/TrampolineAsm.hpp"
 #include "jit/Tier2Compiler.hpp"
 #include "jit/SistaV1.hpp"
+#include "jit/BcDepthMap.hpp"
 #include "jit/sista/SistaRuntime.hpp"
 #include "jit/sista/SistaBuilder.hpp"
 #include "plugins/sqMemoryAccess.h"
@@ -1782,6 +1783,7 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_shadowChecks,
                 (unsigned long long)g_shadowMismatches);
     }
+    jit::spDepthStatsDump();
     if (g_xgate_enter > 0) {
         fprintf(stderr,
                 "  xmethod gates: enter=%llu bail_prim=%llu bail_numic=%llu "
@@ -11012,6 +11014,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 fprintf(stderr, "]\n");
             }
 
+            jit::spDepthCheck(sstate, "activateMethod-sista");
             switch (sstate.exitReason) {
             case jit::ExitReturn: {
                 sistaReturns++;
@@ -18901,6 +18904,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         stackPointer_ = sstate.sp;
         instructionPointer_ = sstate.ip;
 
+        jit::spDepthCheck(sstate, "perBcSista-backjump");
         switch (sstate.exitReason) {
         case jit::ExitReturn: {
             // Sista ran past the loop and returned.  Pop frame, push
@@ -19376,6 +19380,7 @@ void Interpreter::tryJITResumeInCaller() {
             while (state.exitReason == jit::ExitSendCached ||
                    state.exitReason == jit::ExitYield ||
                    (state.exitReason == jit::ExitReturn && rj2jDepth > 0)) {
+                jit::spDepthCheck(state, "tryJITResume-chain");
 
                 // SAFE-POINT BAIL: bail to interpreter when checkCountdown_
                 // expired and chain is at a Return-with-saves boundary.
@@ -19731,6 +19736,7 @@ void Interpreter::tryJITResumeInCaller() {
 
         j2jPoolCursor_ = rj2jBase;
 
+        jit::spDepthCheck(state, "tryJITResume-exit");
         switch (state.exitReason) {
         case jit::ExitReturn:
             // Bug-14 diagnostic (tryResume path)
@@ -22181,6 +22187,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         while ((state.exitReason == jit::ExitJ2JCall && !noJ2JTramp) ||
                (state.exitReason == jit::ExitSendCached && !noJ2JTramp) ||
                (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
+            jit::spDepthCheck(state, "tryJITActivation-chain");
 
             // --- ExitSendCached → ExitJ2JCall conversion ---
             if (state.exitReason == jit::ExitSendCached) {
@@ -22576,6 +22583,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (j2jMaterialized) {
         // state.ip / state.sp were already synced to interpreter by materialization.
         // Handle the exit reason that caused the J2J trampoline to bail.
+        jit::spDepthCheck(state, "j2jMaterialized-exit");
         switch (state.exitReason) {
         case jit::ExitReturn:
             // Bug-14 diagnostic (materialized J2J exit)
@@ -22761,6 +22769,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // Handle exit reason
         Oop chainTarget;  // Set by ExitSend/ExitSendCached/ExitJ2JCall, used by shared chain code after switch
         bool ipAlreadyAdvanced = false;  // ExitJ2JCall: stencil already advanced IP past send
+        jit::spDepthCheck(state, "tryJITActivation-exit");
         switch (state.exitReason) {
         case jit::ExitReturn: {
             // Bug-14 diagnostic: PHARO_B5_TRACE=1 logs where JIT landed on
@@ -24604,6 +24613,7 @@ jit_loop_exit:
     // The loop exited (chain limit or countdown expired) with an
     // unprocessed exit reason in state.  Process it now so the
     // interpreter state is consistent.
+    jit::spDepthCheck(state, "postChain-exit");
     switch (state.exitReason) {
     case jit::ExitReturn: {
         // Honor materializedRetSlot (see the chainCallDepth>0 pop above).
