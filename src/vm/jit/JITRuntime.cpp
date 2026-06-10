@@ -2934,7 +2934,10 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
     }
     // Callee gates — the per-send gate loads, evaluated ONCE here.
     JITMethod* callee = methodMap_.lookup(methodBits);
-    int maxIC = GET_DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC);
+    // §13 Q3: the link gate may use a wider IC cap than the per-call
+    // xmethod gate — link-time gating made the cap nearly free.
+    int maxIC = GET_DEBUG_INT(PHARO_T1_PATCH_MAX_IC);
+    if (maxIC < 0) maxIC = GET_DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC);
     if (!callee
         || callee->state != MethodState::Compiled
         || callee->tier != 1                       // NEVER relink across tiers

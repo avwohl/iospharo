@@ -149,6 +149,7 @@ DEBUG_BOOL(PHARO_T1_PATCH_STATS)          // link/unlink/refusal counter dump
 DEBUG_INT(PHARO_T1_PATCH_MIN, -1)         // site-index bisect window lo (link only sites >= MIN)
 DEBUG_INT(PHARO_T1_PATCH_MAX, -1)         // site-index bisect window hi (link only sites <= MAX; -1 = no cap)
 DEBUG_BOOL(PHARO_T1_EMIT_HASH)            // print FNV-1a of emitted bytes per compile (byte-identity gate harness)
+DEBUG_INT(PHARO_T1_PATCH_MAX_IC, -1)      // design §13 Q3: numICEntries cap for the LINK predicate only (-1 = use PHARO_T1_XMETHOD_MAX_IC); linked sites evaluate gates once in C++, so the cap can widen past the per-call gate's without re-emitting
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT
