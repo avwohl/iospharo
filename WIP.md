@@ -27,10 +27,15 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   instr, removable once task#10 bit leaks are confirmed dead) ->
   ldr header -> and classIndex -> ldr entry key -> cmp+b.  Cog is ~4
   because the expected class + target are PATCHED INTO the code.
-  Cheap cuts: (i) bake icBuffer+siteOffset as movz+movk immediates
-  (3 indep instr vs ldr+add dependent load — latency win; lifetime is
-  sound: icBuffer outlives the code, recompile emits new code);
-  (ii) drop the leak guard.  BUT instruction-count says the BIGGER
+  Cheap cuts: (i) bake icBuffer+siteOffset as movz+movk immediates —
+  BLOCKED as a quick win: icBuffer is allocated by CodeZone AFTER the
+  emit (would need a patch pass);
+  (ii) drop the leak guard — TRIED, measured NEUTRAL on Apple Silicon
+  (dual-issues under load latency; knob PHARO_T1_LEAK_GUARD_OFF kept,
+  guard stays default-on).
+  CONCLUSION: probe micro-cuts are exhausted on this core; the send-
+  path gap is the save push/prelude (slot-reservation design) and
+  the dispatch chain — plus suite-wide wins from emit-size (i-cache).  BUT instruction-count says the BIGGER
   per-send cost is the J2J save push (~12 instr) + return prelude
   (~14): the slot-reservation saveless design (reserve the pool slot
   with a cursor bump at call, fill retroactively on bail — fixes the
