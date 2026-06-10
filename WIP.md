@@ -94,7 +94,14 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   `adr x14, resumeAfterCall`; (ii) bcToCode[postSendOff] must map to
   resumeAfterCall (NOT the next bytecode's label) so the C++
   JIT_RESUME_CALL/trampoline landers — which now all provide x1 —
-  take the pop+write path too; (iii) the V2 prelude tail is:
+  take the pop+write path too — **CORRECTION (flip-saving, found
+  implementing 3c): do NOT re-bind bcLabels[postSendOff] at
+  resumeAfterCall — forward JUMPS targeting the post-send bytecode
+  use that label and would land on the continuation and double-pop.
+  Collect vector<pair<bcOff, Label>> resumeOverrides during the emit
+  and apply when filling bcToCode after assembly: jumps keep the
+  plain label, only resume machinery gets the continuation offset**;
+  (iii) the V2 prelude tail is:
   emitStoreSp(x5)=caller sp -> and x8,#addrMask -> str wzr,OFF_EXIT ->
   br x8 (no sendArgCount load, no jitMethod restores); (iv) xmethod
   sites additionally re-establish jitMethod/method/literals/argCount
