@@ -149,7 +149,22 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   RECEIVER CLOSURE at runtime rather than from cached bits.
   (PHARO_NO_BLOCK_BIT alone does NOT cure — the consuming path may be
   elsewhere, e.g. OSR/tryJITActivation on CompiledBlock or the
-  primitiveFullClosureValue JIT fast path.)  Repro: printf 'DictionaryTest\n' >
+  primitiveFullClosureValue JIT fast path.)
+  RULED OUT by inspection/experiment: value-family J2J + compile skips
+  (both FAIL), BV-prep helper (re-derives per-closure, default-off),
+  MethodMap collisions (lookup validates value->compiledMethodOop),
+  jump-to-end-sentinel (bcLabels.size()==bcLen, OOR jumps bail).
+  PAIR REQUIREMENT BIDIRECTIONAL: ONLY-193 passes, ONLY-387 passes,
+  both FAIL.  TEST SEMANTICS: testIncludes asserts
+  `newDict includes: o2` with o1=2@3, o2=2@3 (equal non-identical
+  Points; o1 stored, o2 probed) — Point equality evaluated inside
+  Dictionary includes:'s iteration block.  NEXT SESSION: instrument
+  the assert (run `2@3 = 2@3`-via-includes: minimal eval with both
+  blocks warmed), or per-block execute-counters to see WHICH of the
+  two named blocks runs during testIncludes (neither obviously
+  belongs to includes:! — if NEITHER runs during the test, the
+  corruption happened EARLIER, during fixture/compile time, and
+  persisted in a global), then lldb the first wrong comparison.  Repro: printf 'DictionaryTest\n' >
   /tmp/sunit_class_names.txt; run build/test_load_image Pharo.image;
   grep testIncludes /tmp/sunit_test_detail.txt (30 s, deterministic,
   no env knobs needed; JIT-off/STUB_ONLY/skip-all-blocks all PASS).
