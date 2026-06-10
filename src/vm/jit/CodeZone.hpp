@@ -342,6 +342,17 @@ public:
             // Just return 0; caller should free all methods first.
             return 0;
         }
+        // PMS (docs/patched-ic-design.md §8): an empty zone can have no
+        // linked sites; if anyone relaxes the empty-zone gate above,
+        // patched sites would dangle into reset memory.  Tripwire so
+        // the gate stays honest (numPatchedSites lives in JITRuntime;
+        // the zone-local proxy is methodCount_ == 0, asserted here).
+        // methodCount_ must be 0 when firstMethod_ is null:
+        if (methodCount_ != 0) {
+            fprintf(stderr, "[CodeZone] FATAL: compact() with methodCount=%zu "
+                    "but empty method list — bookkeeping drift\n", methodCount_);
+            std::abort();
+        }
 
         size_t reclaimed = freeListBytes_;
 
