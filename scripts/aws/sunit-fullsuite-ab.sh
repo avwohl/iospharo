@@ -69,8 +69,12 @@ diff <(sort "$OUT/detail_default.txt" 2>/dev/null | awk -F'\t' '{print $2, $3, $
      <(sort "$OUT/detail_saveless.txt" 2>/dev/null | awk -F'\t' '{print $2, $3, $4}') \
      > "$OUT/ab_diff.txt" && echo "PER-TEST IDENTICAL" || head -40 "$OUT/ab_diff.txt"
 
-# Optional S3 upload (instance role grants access when configured).
-if command -v aws >/dev/null 2>&1 && [ -n "${BUCKET:-}" ]; then
-    aws s3 cp --recursive "$OUT" "s3://$BUCKET/results/$(date +%Y%m%d-%H%M)/" || true
+# S3 upload — REQUIRED, not optional: the idle-shutdown unit terminates
+# the box ~30 min after the run and ~/results is lost (learned 2026-06-10:
+# a completed full-suite A/B evaporated).  The bucket name is stable for
+# this account; instance-profile credentials grant access on the box.
+BUCKET="${BUCKET:-iospharo-build-670060058357}"
+if command -v aws >/dev/null 2>&1; then
+    aws s3 cp --recursive "$OUT" "s3://$BUCKET/sunit-arm/ab-$(date +%Y%m%d-%H%M)/" || echo "!! S3 upload failed — copy ~/results off-box before idle shutdown"
 fi
 echo "== DONE =="
