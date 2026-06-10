@@ -87,6 +87,14 @@ static bool g_emitIsBlock = false;
 static asmjit::Label g_codeStartLabel;
 static std::vector<std::pair<uint32_t, asmjit::Label>>* g_resumeOverridesPtr
     = nullptr;
+// PMS B1 (docs/patched-ic-design.md §9): per-site patch-word labels,
+// recorded by the send emit, resolved to code offsets after flatten,
+// written into the in-zone SendSitePatch map by the caller.
+struct PatchSiteLabels {
+    uint32_t siteIdx;
+    asmjit::Label keyMovz;   // W0 (W1=+4, cmp=+8, b.ne=+12, W2=+16)
+};
+static std::vector<PatchSiteLabels>* g_patchLabelsPtr = nullptr;
 
 #include <cstdio>
 #include <cstdlib>
@@ -102,6 +110,7 @@ static std::vector<std::pair<uint32_t, asmjit::Label>>* g_resumeOverridesPtr
 #include <asmjit/x86.h>
 #elif defined(__aarch64__) || defined(_M_ARM64)
 #include <asmjit/a64.h>
+#include "../SendSitePatcher.hpp"  // PMS: kImpossibleKeyHi16 (B1 emit)
 #else
 #error "Unsupported architecture for AsmjitT1"
 #endif
@@ -3790,23 +3799,6 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // separately (e.g., for save.jitMethod under xmethod-on, or
         // the bcStartCache load which is done lazily there).
         // For xmethod-on, state.jitMethod can change so reload.
-        asmjit::a64::Gp jmReg = asmjit::a64::x19;
-        if (g_debug.t1InlineJ2JXmethod) {
-            a.ldr(x11, ptr(x0, OFF_JITMETHOD));
-            jmReg = x11;
-        }
-        a.ldr(x5, ptr(jmReg, (int)offsetof(JITMethod, icBuffer)));
-        // Skip the add when siteIdx == 0 (the first send in the method
-        // — x5 already points at the right place).  Saves 1 instr at
-        // the first send site of every JIT-compiled method.
-        if (siteIdx != 0) {
-            a.add(x5, x5, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
-        }
-
-        // Deferred state setup: inline-spec paths skip the state
-        // store entirely.  dispatchCached / miss / non-probe paths
-        // emit it inline.  Mirrors x86 commit c4d325eb.
-
         bool probeThis = g_debug.t1ICProbe;
         if (probeThis) {
             int icMin = g_debug.t1ICProbeMin;
@@ -3814,6 +3806,29 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             if (icMin >= 0 && (int)op < icMin) probeThis = false;
             if (icMax >= 0 && (int)op > icMax) probeThis = false;
         }
+        // PMS B1 (docs/patched-ic-design.md §2): under the patched-sends
+        // shape the icDataPtr chain below moves into the per-site cold
+        // block (Lprobe) — the hot head never touches x5/x11.
+        const bool patchedShape =
+            GET_DEBUG_BOOL(PHARO_T1_PATCHED_SENDS) && probeThis;
+        auto emitMaterializeX5 = [&]() {
+            asmjit::a64::Gp jmReg = asmjit::a64::x19;
+            if (g_debug.t1InlineJ2JXmethod) {
+                a.ldr(x11, ptr(x0, OFF_JITMETHOD));
+                jmReg = x11;
+            }
+            a.ldr(x5, ptr(jmReg, (int)offsetof(JITMethod, icBuffer)));
+            // Skip the add when siteIdx == 0 (the first send in the
+            // method — x5 already points at the right place).
+            if (siteIdx != 0) {
+                a.add(x5, x5, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
+            }
+        };
+        if (!patchedShape) emitMaterializeX5();
+
+        // Deferred state setup: inline-spec paths skip the state
+        // store entirely.  dispatchCached / miss / non-probe paths
+        // emit it inline.  Mirrors x86 commit c4d325eb.
         if (probeThis) {
             // See x86 version for the protocol; this is the ARM64 mirror
             // with the inline-getter / inline-setter / returnsSelf
@@ -3874,9 +3889,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // (emit-time knob; the leaks it guarded — task #10 J2J/getter
             // classifier bits in receivers — have been root-caused since;
             // suite-validate before making this the default).
+            asmjit::Label LmissNoX5 = a.new_label();   // PMS: leak-guard edge
+            asmjit::Label Lprobe    = a.new_label();   // PMS: in-site generic probe
             if (!GET_DEBUG_BOOL(PHARO_T1_LEAK_GUARD_OFF)) {
                 a.lsr(x4, x1, asmjit::Imm(48));
-                a.cbnz(x4, miss);
+                a.cbnz(x4, patchedShape ? LmissNoX5 : miss);
             }
             a.ldr(w4, ptr(x1));               // low 32 bits of header
             a.and_(w4, w4, asmjit::Imm(0x3FFFFF));
@@ -3884,6 +3901,34 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.bind(imm);
             a.orr(w4, w4, asmjit::Imm(0x80000000U));
             a.bind(haveKey);
+
+            if (patchedShape) {
+                // PMS head (design §2.1): patched key compare + patched
+                // direct branch.  W0/W1 carry kImpossibleKeyHi16 until
+                // linkSendSite patches them; W2 says `b Lprobe` so both
+                // match (impossible) and mismatch take the generic
+                // probe — knob-on-unlinked behavior == today's + 5
+                // inert ALU instructions.  Register contracts at the
+                // labels: Lprobe/LmissNoX5 require x0=state x1=receiver
+                // x2=spCopy x4=lookupKey x25=sp; they materialize x5.
+                // FORBIDDEN FOREVER: any change that makes W2 reachable
+                // without a key match.
+                asmjit::Label keyMovz = a.new_label();
+                a.bind(keyMovz);
+                a.movz(w6, 0);                              // W0: key lo16
+                a.movk(w6, kImpossibleKeyHi16, 16);         // W1: key hi16 (commit/unlink word)
+                a.cmp(w4, w6);
+                a.b_ne(Lprobe);
+                a.b(Lprobe);                                // W2: -> b T when linked
+                a.bind(LmissNoX5);
+                emitMaterializeX5();
+                a.b(miss);
+                a.bind(Lprobe);
+                emitMaterializeX5();
+                if (g_patchLabelsPtr)
+                    g_patchLabelsPtr->push_back(
+                        {(uint32_t)siteIdx, keyMovz});
+            }
 
             a.ldr(x6, ptr(x5));               // icData[0] key
             a.cmp(x4, x6);
@@ -6845,7 +6890,9 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                      int staticJ2JArgCount,
                      uint8_t* out, size_t outCap,
                      size_t* outSize, bool* isReal,
-                     uint32_t* bcToCodeOut) {
+                     uint32_t* bcToCodeOut,
+                     SendSitePatch* patchRecords = nullptr,
+                     uint32_t patchRecordCount = 0) {
     using namespace asmjit;
 
     Environment env = Environment::host();
@@ -6859,6 +6906,9 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // V2 self-identification anchor + overrides wiring (file-scope
     // statics: the send emit lives in emitOne_arm64).
     g_resumeOverridesPtr = &resumeOverrides;
+    // PMS B1: per-site patch-word labels (resolved after flatten).
+    std::vector<PatchSiteLabels> patchLabels;
+    g_patchLabelsPtr = patchRecords ? &patchLabels : nullptr;
     if (err != kErrorOk) return false;
 
     // PHARO_ASMJIT_T1_LOG=1 — dump asmjit asm to stderr per compile.
@@ -7472,6 +7522,19 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         }
         // bcToCodeOut[bcLen] is set by the caller to the emitted size.
     }
+    // PMS B1: resolve patch-word labels to final code offsets.
+    if (patchRecords) {
+        for (auto& pl : patchLabels) {
+            if (pl.siteIdx >= patchRecordCount) continue;
+            patchRecords[pl.siteIdx].keyMovzOffset =
+                (uint32_t)code.label_offset_from_base(pl.keyMovz);
+            // tailOffset/tailBranchOffset stay 0 until the B1b tail
+            // skeleton lands — keyMovz alone means "head patchable,
+            // never linkable" (linkSendSite refuses on tailOffset==0).
+        }
+    }
+    g_patchLabelsPtr = nullptr;
+
     size_t total = code.code_size();
     if (total == 0 || total > outCap) {
         std::fprintf(stderr,
@@ -7766,9 +7829,22 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // so just its 2 getter sites get the BLR (no global code-size bloat).
     g_emitGetterTrace = GET_DEBUG_BOOL(PHARO_FINDNODE_WATCH)
         && memory.selectorOf(compiledMethod) == "asTuple";
+    // PMS B1: pre-size the patch-record buffer with the same send-site
+    // scan the payload layout uses below (the two counts MUST agree —
+    // they index the same IC-site space).
+    std::vector<SendSitePatch> patchRecords;
+    if (GET_DEBUG_BOOL(PHARO_T1_PATCHED_SENDS)) {
+        uint16_t nSites = 0;
+        for (size_t i = 0; i < bcLen; i++)
+            if (isPhase4SendOp(bc[i])) nSites++;
+        patchRecords.resize(nSites);   // value-init: all-zero records
+    }
+    SendSitePatch* patchRecPtr =
+        patchRecords.empty() ? nullptr : patchRecords.data();
     bool emitOk = emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
                          callerArgCount, callerTempCount, staticJ2JArgCount,
-                         buf.data(), cap, &emitted, &isReal, bcToCode.data());
+                         buf.data(), cap, &emitted, &isReal, bcToCode.data(),
+                         patchRecPtr, (uint32_t)patchRecords.size());
     // Grow-and-retry on buffer overflow (emitMethodBytes returns false when
     // code_size > outCap).  The transient buffer is freed after the code-zone
     // copy, so doubling it is cheap; failing instead would lose a real method
@@ -7778,13 +7854,27 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         cap *= 2;
         buf.assign(cap, 0);
         std::fill(bcToCode.begin(), bcToCode.end(), 0);
+        std::fill(patchRecords.begin(), patchRecords.end(), SendSitePatch{});
         emitOk = emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
                          callerArgCount, callerTempCount, staticJ2JArgCount,
-                         buf.data(), cap, &emitted, &isReal, bcToCode.data());
+                         buf.data(), cap, &emitted, &isReal, bcToCode.data(),
+                         patchRecPtr, (uint32_t)patchRecords.size());
     }
     if (!emitOk) {
         g_failed++; g_failedBcOther++;
         return nullptr;
+    }
+    // PMS B1 gate harness: FNV-1a over the emitted bytes, printed per
+    // compile.  Diff a corpus knob-off before/after an emit change to
+    // prove byte-identity (design §12.1).
+    if (GET_DEBUG_BOOL(PHARO_T1_EMIT_HASH)) {
+        uint64_t h = 1469598103934665603ull;
+        for (size_t i = 0; i < emitted; i++) {
+            h ^= buf[i]; h *= 1099511628211ull;
+        }
+        fprintf(stderr, "[EMIT-HASH] %s %zu 0x%016llx\n",
+                memory.selectorOf(compiledMethod).c_str(), emitted,
+                (unsigned long long)h);
     }
     bcToCode[bcLen] = (uint32_t)emitted;
 
@@ -7825,7 +7915,18 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         (bcToCodeTableOffset + bcToCodeTableSize + 7u) & ~7u;
     uint32_t selBitsArraySize    =
         (uint32_t)(numSendSites * sizeof(uint64_t));
-    uint32_t payloadSize = selBitsArrayOffset + selBitsArraySize;
+    // PMS B1: SendSitePatch[numSendSites] after selBitsArray (design §9).
+    // Emitted only under the knob; isReal gating matches the records
+    // (stub emits push no labels, records stay zero = unpatchable).
+    uint32_t patchMapOffset = 0;
+    uint32_t patchMapSize   = 0;
+    if (!patchRecords.empty() && isReal && numSendSites > 0) {
+        patchMapOffset = (selBitsArrayOffset + selBitsArraySize + 7u) & ~7u;
+        patchMapSize   = (uint32_t)(numSendSites * sizeof(SendSitePatch));
+    }
+    uint32_t payloadSize = patchMapOffset
+        ? patchMapOffset + patchMapSize
+        : selBitsArrayOffset + selBitsArraySize;
 
     // Allocate the JITMethod with full payload + IC sites.  CodeZone
     // calloc()s a heap-side icBuffer of numSendSites*IC_BYTES_PER_SITE.
@@ -7915,6 +8016,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     jm->bcToCodeTableOffset = advertiseResume ? bcToCodeTableOffset : 0;
     jm->selBitsArrayOffset =
         numSendSites > 0 ? selBitsArrayOffset : 0;
+    jm->patchMapOffset = patchMapOffset;   // PMS B1 (0 = no map)
     jm->tier              = 1;
     // hasPrimPrologue = true means the chain loop's inline-activation
     // path (Interpreter.cpp:18731-18732) will activate this method
@@ -8118,6 +8220,18 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         uint32_t* tbl = reinterpret_cast<uint32_t*>(
             jm->codeStart() + bcToCodeTableOffset);
         for (size_t i = 0; i <= bcLen; i++) tbl[i] = bcToCode[i];
+    }
+    // PMS B1: write the resolved patch map (design §9).  Defensive
+    // clamp: the pre-emit and layout send-site scans are the same loop,
+    // but never index past the in-zone allocation if they ever drift.
+    if (patchMapOffset != 0) {
+        auto* pmap = reinterpret_cast<SendSitePatch*>(
+            jm->codeStart() + patchMapOffset);
+        size_t n = patchRecords.size() < (size_t)numSendSites
+                 ? patchRecords.size() : (size_t)numSendSites;
+        for (size_t i = 0; i < n; i++) pmap[i] = patchRecords[i];
+        for (size_t i = n; i < (size_t)numSendSites; i++)
+            pmap[i] = SendSitePatch{};
     }
     // Write selBitsArray (per-send selector Symbol Oop).  Used by
     // jit_rt_ic_miss after GC to recover the selector when the

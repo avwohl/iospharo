@@ -148,6 +148,7 @@ DEBUG_BOOL(PHARO_T1_PATCH_VERIFY)         // post-GC mirror check: decoded patch
 DEBUG_BOOL(PHARO_T1_PATCH_STATS)          // link/unlink/refusal counter dump
 DEBUG_INT(PHARO_T1_PATCH_MIN, -1)         // site-index bisect window lo (link only sites >= MIN)
 DEBUG_INT(PHARO_T1_PATCH_MAX, -1)         // site-index bisect window hi (link only sites <= MAX; -1 = no cap)
+DEBUG_BOOL(PHARO_T1_EMIT_HASH)            // print FNV-1a of emitted bytes per compile (byte-identity gate harness)
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT
