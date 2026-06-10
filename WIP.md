@@ -68,13 +68,19 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
     before any decision; (2) the extras/tbnz dispatch chain;
     (3) the J2J call sequence: V2 save pack (movk+2xstp), cursor
     ldr/str, depth ldr/add/str (~15-20 insns with 2 read-modify-write
-    latency chains); (4) **returns are computed `br`, which defeats
-    the return-address-stack predictor — Cog uses real bl/ret pairs**
-    (likely the dominant per-call cycle cost: ~7M branch-mispredict-
-    prone returns in the loop).  Cog's equivalent: patched-immediate
-    cmp + direct bl, frame built in callee, predicted ret.
-  - The patched-IC design must collapse (1)+(2) into cmp-imm + direct
-    branch AND should make calls bl/ret-paired so returns predict.
+    latency chains); (4) returns are computed `br` (no RAS pairing).
+  - **(4) RAS-defeat hypothesis REFUTED by standalone microbench**
+    (/tmp/rasbench): fib(30)-shaped recursion, bl/ret vs br-call +
+    side-stack-save + indirect-br-return (exact V2 return shape):
+    ratio 0.98-1.13x — the M-series indirect predictor handles the
+    alternating return targets near-perfectly.  br control flow is
+    FINE; do NOT redesign J2J around bl/ret.  (4th independent
+    "micro-structure is free, dependent loads aren't" result.)
+  - Same microbench, absolute scale: the bare cfib control-flow
+    skeleton (2.7M calls + side-stack saves) = ~4 ms.  Cog full
+    benchmark = 8 ms, ours = 29 ms.  The ~25 ms over skeleton is the
+    per-send IC-probe dependent loads + dispatch chain + prelude work
+    — i.e., (1)+(2) dominate, exactly what patched-IC sites remove.
     Design workflow in flight: docs/patched-ic-design.md incoming.
 
 ## CHECKPOINT 2026-06-11 — sp-residency LIVE; gap = 3.5x
