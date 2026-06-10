@@ -104,6 +104,21 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   cascade dup'd it -> nextPutAll: DNU on ByteString.  Earlier variants
   (`,` to StdioStream) = the same class with the wrong object appearing
   one send earlier.  VALUES wrong at CORRECT depth at every check.
+  **RESIDUAL KILLED (catch22-25, controlled):** the corruptor is the
+  DISPATCH-A-SIDE entry into the shared tryGetter label (AsmjitT1
+  ~3880).  Bisect: disabling only that tbnz -> 30/30 clean; same-length
+  dummy env var -> fail rep 1 (real, not layout).  x2/x1 contract
+  reload REDUCED (fail rep 31) but didn't eliminate -> the dispatch-A
+  bail paths leave MORE than registers inconsistent (suspect: partial
+  state commits, e.g. state.ip = callee bcStart at the J2J callee-setup
+  ~4392 before a late bail).  FIX SHIPPED: that entry is DEFAULT OFF
+  (opt-in PHARO_T1_GETTER_IN_J2J); getter sends on that path take
+  dispatchCached (they were already on a bail path).  VALIDATION:
+  80-rep catch25 on the full failing config -> ZERO failures.
+  PROPER ROOT-CAUSE (later): audit dispatch-A bail paths for partial
+  state commits; verify-getter v1/v2/v3 (all clean) prove the IC
+  entries were never poisoned — it was always execution-state, which is
+  why every entry-validity instrument stayed silent.
   catch19 (verify-on-fire v1, bounds check only): CAUGHT rep 2 with
   ZERO [VERIFY-GETTER] flags — the poisoned slotIdx is IN-BOUNDS
   (wrong-but-small index, e.g. ivar 2 instead of 0 -> wrong object,
