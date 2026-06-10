@@ -16,6 +16,16 @@ namespace pharo {
 
 namespace {
 
+// ============================ FROZEN ============================
+// DO NOT ADD envPresent()/envInt()/envStr() CALL SITES.  This file is
+// the LEGACY knob surface; the CMake configure step counts envPresent
+// call sites and FAILS the build if the count grows (see the
+// "envPresent RATCHET" block in CMakeLists.txt).  New knobs — including
+// default-ON opt-outs — go in src/vm/debug_vars.h (DEBUG_BOOL/INT/STR)
+// and are read with GET_DEBUG_*() at the use site.  envPresent here was
+// the slow workaround for the project's getenv ban; frozen 2026-06-10.
+// ================================================================
+//
 // Present and non-empty (any value including "0" counts as set).
 // Most call sites historically used `getenv("X") != nullptr`, which
 // also treats empty string as set.  Preserve that by only requiring
@@ -104,7 +114,10 @@ DebugSettings::DebugSettings() {
     t1ForceSimple       = envPresent("PHARO_T1_FORCE_SIMPLE");
     t1ForceBailMid      = t1ForceSimple || envPresent("PHARO_T1_FORCE_BAIL_MID");
     t1TraceCompile      = envPresent("PHARO_T1_TRACE_COMPILE");
-    t1CanSkipJ2JSave    = envPresent("PHARO_T1_CAN_SKIP_J2J_SAVE");
+    // Saveless leaf-call path (Eδ.2d): DEFAULT-ON 2026-06-10, knob lives
+    // in debug_vars.h (PHARO_T1_NO_CAN_SKIP_J2J_SAVE, read via
+    // GET_DEBUG_BOOL at the emit site).  The t1CanSkipJ2JSave field is
+    // gone — see debug_vars.h for the validation summary.
     t1NoBlockResume     = t1ForceSimple || envPresent("PHARO_T1_NO_BLOCK_RESUME");
     t1NoPostPrimResume  = t1ForceSimple || envPresent("PHARO_T1_NO_POST_PRIM_RESUME");
     {
@@ -184,10 +197,10 @@ DebugSettings::DebugSettings() {
     // tests flipped, one each way; the historical blocker
     // CharacterTest>>testStoreStringAll PASSES now); 10/10 + 6/6 clean
     // startups; cfib(30) 344ms -> 41ms (Cog 8ms); benchFib(30) 296ms ->
-    // 35ms; eval battery matches Cog values.  Opt out via
-    // PHARO_T1_NO_INLINE_J2J=1 (PHARO_T1_INLINE_J2J=1 still accepted as
-    // a no-op for old scripts/harnesses).
-    t1InlineJ2J         = !envPresent("PHARO_T1_NO_INLINE_J2J");
+    // 35ms; eval battery matches Cog values.
+    // KNOB MOVED to debug_vars.h (PHARO_T1_NO_INLINE_J2J, read via
+    // GET_DEBUG_BOOL at the emit sites) per the no-new-envPresent rule;
+    // the t1InlineJ2J field is gone.
     // 2026-05-21 (jit-may20 Step 2): pure-J2J gate replaced by warmth
     // gate as the default.  Pure gate (bit-60 check) was too strict —
     // bailed ~96.5% of inline-J2J attempts on fib.  Warmth gate

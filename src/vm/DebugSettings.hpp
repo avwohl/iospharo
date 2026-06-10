@@ -58,7 +58,7 @@ struct DebugSettings {
     bool t1ForceSimple = false;       // PHARO_T1_FORCE_SIMPLE (enables all three below)
     bool t1ForceBailMid = false;      // PHARO_T1_FORCE_BAIL_MID — force canBailMidMethod=true
     bool t1TraceCompile = false;      // PHARO_T1_TRACE_COMPILE — log every successful asmjit-T1 compile
-    bool t1CanSkipJ2JSave = false;    // PHARO_T1_CAN_SKIP_J2J_SAVE — emit saveless blr path at IC HIT inline-J2J when callee's canSkipJ2JSave bit is set
+    // t1CanSkipJ2JSave REMOVED — knob moved to debug_vars.h (PHARO_T1_NO_CAN_SKIP_J2J_SAVE).
     bool t1NoBlockResume = false;     // PHARO_T1_NO_BLOCK_RESUME — skip chain-loop block-resume tryExecute
     bool t1NoPostPrimResume = false;  // PHARO_T1_NO_POST_PRIM_RESUME — skip post-prim tryResume
     // Inline IC probe in JIT send emit (DEFAULT-OFF until correctness
@@ -93,7 +93,7 @@ struct DebugSettings {
     // pure-J2J gate (AsmjitT1.cpp ~3343) that runtime-checks ALL of
     // caller's IC sites have bit 60 before allowing inline-J2J to fire.
     // PHARO_T1_NO_INLINE_J2J=1 to disable.  See deferred.md A6 N+30k.
-    bool t1InlineJ2J = true;
+    // t1InlineJ2J REMOVED — knob moved to debug_vars.h (PHARO_T1_NO_INLINE_J2J).
     // Pure-J2J gate (AsmjitT1 inline-J2J self-rec emit): runtime-loop
     // that bails inline-J2J unless ALL of caller's IC sites have
     // J2J_ENTRY_BIT.  Shipped default-ON in A6 N+30k as a safety net

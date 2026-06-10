@@ -2803,7 +2803,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // When off, the ldr+cbz is still emitted but j2jDepth is always 0
     // so we fall through to normal-return — tiny overhead, zero
     // semantic change.
-    const bool inlineJ2J = g_debug.t1InlineJ2J;
+    const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J);
     auto emitJ2JReturnPreludeIfEnabled = [&]() {
         if (!inlineJ2J) return;
         if (GET_DEBUG_BOOL(PHARO_T1_NO_J2J_RETPRELUDE)) return;  // bisect knob
@@ -3643,7 +3643,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // recursive sends.  MVP: self-recursive only (caller == callee).
             // Mirrors stencils.cpp:1733-1877's `j2j_direct_call:` block.
             // See deferred.md A6 for full design.
-            const bool inlineJ2J = g_debug.t1InlineJ2J
+            const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
                 && !GET_DEBUG_BOOL(PHARO_T1_NO_J2J_BRANCH);  // TEST: NO_J2J_BRANCH now gates the WHOLE block
             if (inlineJ2J) {
                 asmjit::Label tryInlineJ2J = a.new_label();
@@ -4167,7 +4167,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // bail wrong-result bug the warm gate guards against.
                 // Skipping the gate for these saves the gate-loop cost
                 // and enables saveless emit in default config.
-                if (g_debug.t1CanSkipJ2JSave
+                if (!GET_DEBUG_BOOL(PHARO_T1_NO_CAN_SKIP_J2J_SAVE)
                         && (int64_t)g_t1CompileSeq2
                                >= GET_DEBUG_INT(PHARO_T1_SAVELESS_MIN_COMPILE)
                         && nArgs <= GET_DEBUG_INT(PHARO_T1_SAVELESS_MAX_ARGS)) {

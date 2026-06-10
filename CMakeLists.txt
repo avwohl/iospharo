@@ -300,6 +300,32 @@ foreach(_src ${VM_SOURCES})
     endif()
 endforeach()
 
+# envPresent RATCHET (2026-06-10).  DebugSettings.cpp is exempt from the
+# getenv poison above, and `envPresent(...)` lines there became the slow
+# workaround for the ban — sessions kept adding knobs to DebugSettings
+# instead of debug_vars.h (the actual mechanism: X-macro list, parsed
+# once, read via GET_DEBUG_BOOL/INT/STR).  The legacy call sites are
+# FROZEN at the count below; the configure step FAILS if the count
+# grows.  New knobs — including default-ON opt-outs like
+# PHARO_T1_NO_INLINE_J2J — go in src/vm/debug_vars.h, ALWAYS.
+# (Converting legacy lines to debug_vars.h and LOWERING this number is
+# encouraged.)
+set(_ENVPRESENT_FROZEN_COUNT 250)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/vm/DebugSettings.cpp" _dbgsettings_content)
+string(REGEX MATCHALL "envPresent\\(\"" _envpresent_hits "${_dbgsettings_content}")
+list(LENGTH _envpresent_hits _envpresent_count)
+if(_envpresent_count GREATER ${_ENVPRESENT_FROZEN_COUNT})
+    message(FATAL_ERROR
+        "DebugSettings.cpp has ${_envpresent_count} envPresent() call sites; "
+        "the frozen baseline is ${_ENVPRESENT_FROZEN_COUNT}.  Do NOT add "
+        "knobs to DebugSettings.cpp — add a DEBUG_BOOL/DEBUG_INT/DEBUG_STR "
+        "entry to src/vm/debug_vars.h and read it with GET_DEBUG_*() at the "
+        "use site instead (see CLAUDE.md and the debug_vars.h header).")
+elseif(_envpresent_count LESS ${_ENVPRESENT_FROZEN_COUNT})
+    message(STATUS "envPresent count ${_envpresent_count} < frozen ${_ENVPRESENT_FROZEN_COUNT} — "
+        "nice, lower _ENVPRESENT_FROZEN_COUNT in CMakeLists.txt to lock it in")
+endif()
+
 # LTO for JIT performance — enables cross-TU inlining of pushFrameForJIT
 # into j2j_call (2ms improvement on fib(28): 19ms → 17ms).
 # Disabled for xcframework builds: xcodebuild -create-xcframework rejects

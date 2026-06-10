@@ -292,9 +292,19 @@ Then read it anywhere (after `#include "DebugVars.hpp"`):
 This still obeys the **no-per-call-`getenv`** rule: all knobs are parsed ONCE at
 static init (`DebugVars.cpp`, `initDebugVars()`), and `GET_DEBUG_*` is just an
 array index. `DebugVars.cpp` is exempted from the CMake getenv-ban alongside
-`DebugSettings.cpp`. Derived/computed knobs (combinations, default-on opt-outs)
-still live in `DebugSettings` for now — `debug_vars.h` is for the simple
-one-env-var-one-knob cases.
+`DebugSettings.cpp`.
+
+**`DebugSettings.cpp` is FROZEN (2026-06-10): never add `envPresent`/`envInt`/
+`envStr` lines there** — that was the slow workaround for the getenv ban, and
+the CMake configure step now counts `envPresent(` call sites and FAILS the
+build if the count grows (the "envPresent RATCHET" in CMakeLists.txt).  ALL
+new knobs go in `debug_vars.h`, including default-ON opt-outs: declare
+`DEBUG_BOOL(PHARO_NO_FOO)` and write `!GET_DEBUG_BOOL(PHARO_NO_FOO)` at the
+use site (see `PHARO_T1_NO_INLINE_J2J` for the pattern).  Combination knobs
+(A||B): compute at the use site from the individual `GET_DEBUG_*` reads, or as
+a function-local `static const bool` derived from them.  Converting legacy
+`DebugSettings` lines to `debug_vars.h` and lowering the frozen count is
+welcome.
 
 ## References
 
