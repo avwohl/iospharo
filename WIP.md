@@ -85,12 +85,17 @@ under load is the canary).
   -> 4/4 runs lose the eval silently (clean exit, no DNU, no EVAL-RESULT;
   [STARTUP-ST-FIRED] never appears -> the corruption drops the startup
   action from SessionManager's startup list, no error raised);
-  **CULPRIT PINNED (2026-06-10):** deterministic bisect on
-  PHARO_T1_INLINE_J2J_XMETHOD_MAX (pass at 26704, fail at 26705) +
-  lldb watchpoint on g_xgate_bail_cap in the PASS run -> fire #26705 is
-  caller=#handle:offset: (CM 0x300976370) callee=#initializeHandle:offset:
-  (CM 0x300976530, bcLen=10, 2 args, >=1 IC site) — FFI ExternalAddress
-  family.  RULED OUT at the fire (lldb raw-memory checks): tempCount setup (the
+  **BISECT CAVEAT (2026-06-10, supersedes the 'culprit pinned' claim):**
+  the cap-bisect boundary is NOT call-identity-stable — capping changes
+  inline-vs-trampoline charge counts downstream, so the boundary fire
+  shifts with the binary (26705 = handle:offset:->initializeHandle:offset:
+  on one build; 26683 = reset->resetTo: — a LEAF pair! — on the next).
+  A leaf boundary proves the bisect finds a scheduling-sensitivity
+  point, not the corruptor.  The corruptor is some 1-IC-callee fire
+  (leaf-only is clean), identity unknown.  The watchpoint recipe still
+  gives a deterministic stop + live registers at any chosen fire count,
+  and `expr *(unsigned long long*)&g_xmethod_max = -1` at the stop
+  un-caps live so the boundary call can be single-stepped.  RULED OUT at the fire (lldb raw-memory checks): tempCount setup (the
   xmethod path reads callee JM[35] dynamically; offsets 34/35 verified
   vs offsetof) and stale bcStartCache (JM[104] == compiledMethodOop+40,
   consistent -> CM had not moved by fire #26705).  NEXT: single-step
@@ -100,11 +105,17 @@ under load is the canary).
   never exit mid-method) are immune.  Callee initializeHandle:offset:
   stores into receiver ivars (write-barrier path) — check the
   popStoreRecvVar interaction with a J2J-entered frame too.
-  ALSO FOUND: PHARO_T1_INLINE_J2J_XMETHOD_LOG's emit wrapper does NOT
-  save x1-x6 across its blr -> the LOGGER ITSELF corrupts the receiver
-  (instant crash in callee #header) — likely the origin of the
-  historical "xmethod corrupts state, lldb-only" lore.  Fix the wrapper
-  before trusting any XMETHOD_LOG run.
+  LOGGER FIXED (928df628): the XMETHOD_LOG wrapper now saves x0-x13+x30
+  (was clobbering x1-x6 = receiver+args -> every logged call corrupted,
+  the origin of the "xmethod corrupts state" lore).  XMETHOD_LOG is now
+  SAFE: the failing config runs under it without crashing, reproduces
+  the genuine silent-eval-loss, and dumps the last-64-fires ring at
+  exit.  Next session: combine lldb stop (watchpoint/breakpoint at a
+  chosen point) + ring dump + per-fire fprintf (first 64 only — lift
+  the cap in jit_rt_xmethod_log if full enumeration is needed) to
+  enumerate the 1-IC-callee fires and bisect by callee selector via
+  PHARO_J2J_SKIP_SELECTORS (fill-path skip list, Interpreter.cpp
+  ~20908).
   Recipe (reusable): DET_SCHED makes the failure a deterministic
   function of the fire cap -> binary-search the cap (~20 runs), then
   watchpoint the cap-bail counter in the LAST PASSING run; x10=calleeJM
