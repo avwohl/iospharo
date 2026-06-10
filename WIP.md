@@ -116,11 +116,18 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   20035) -> WRONG RECEIVER fetched -> wrong class lookupKey -> getter
   classification poisoned onto an unrelated class.
   NEXT INSTRUMENT (decisive): verify-on-fire — knob-gated BLR in the
-  T1 inline-getter emit (arm64 twin of the x86 block at ~2080) calling
-  a C++ helper that re-derives (recv class -> selector via selBitsArray
-  -> lookup -> quick-prim classify) and compares slotIdx + re-read
-  value; mismatch prints the IC entry + both classifications.  Catches
-  the misfire with full provenance wherever it happens.
+  T1 inline-getter emit calling a C++ helper that re-derives (recv
+  class -> selector via selBitsArray -> lookup -> quick-prim classify)
+  and compares slotIdx + re-read value; mismatch prints the IC entry +
+  both classifications.  IMPLEMENTATION SHORTCUT: the arm64 getter emit
+  (AsmjitT1 ~5135-5172) ALREADY has the exact BLR scaffolding — the
+  FINDNODE_WATCH g_emitGetterTrace block (sp-48 save of
+  x0/x1/x2/x6/x7/x30, BLR jit_rt_atrec_getter(state, recv, val,
+  bcOffsetFromMethObj), restore).  Clone it under a new knob
+  (PHARO_VERIFY_GETTER), pass x7 (the extra word, already saved at
+  sp+32) so the helper has slotIdx; helper mirrors
+  jit_rt_atrec_getter's plumbing to find the site selector from
+  state.jitMethod's selBitsArray.
   catch15 (methodMap-rebuild-per-scavenge fix in): CAUGHT at rep 25 —
   the patchJITICAfterSend guard hole was REAL (fix committed, sound)
   but the getter poisoning has ANOTHER path.  NEXT hygiene candidates:
