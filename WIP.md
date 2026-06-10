@@ -49,19 +49,28 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   admission (MAX_IC sweep is FLAT on microbenches but untested at
   suite scale) and via patched sites (which inline the dispatch too).
   MAX_IC sweep on cfib: flat (31-34ms) — its callee already inlines.
-- **SEND-FLOW ACCOUNTING on cfib (build-opt, V2, telemetry knob):**
-  ~9M IC hits -> 4.83M took dispatch-A inline-J2J (94.5% of inline
-  ATTEMPTS) but **~5M sends still exited to the trampoline**
-  (Ltramp_call count; returns 51K only — returns flow through the
-  inline prelude).  I.e. ~half of IC-HIT sends fail the dispatch-A
-  gate chain after the hit (extra_no_bit60=723K + xmethod gate bails
-  280K + the rest never reach the gate) and pay the C++ hop.  The hop
-  itself is cheap (~6ns amortized) — the gap is DISTRIBUTED: probe
-  load-latency + the long dispatch tbnz chain + hop, ~3.5x of Cog's
-  patched-immediate + direct-call.  This is exactly what the
-  patched-IC design must collapse: ONE compare + ONE direct branch
-  for the monomorphic case (no icBuffer loads, no dispatch chain).
-  Design workflow in flight: docs/patched-ic-design.md incoming.
+- **SEND-FLOW ACCOUNTING on cfib (build-opt, V2) — CORRECTED with a
+  bare-startup baseline (`eval "1+1"`):**
+  - The C++ IC-miss traffic (1.73M lookups, noICData=689K) is ALL
+    image startup — baseline shows 1.72M/687K with no cfib at all.
+    The cfib loop adds ~zero C++ misses.  noICData = ExitSend with
+    null icDataPtr (inline-stencil bails/T2) — startup-only, ignore.
+  - Loop traffic: 9.0M asm IC probes hit; 4.82M took dispatch-A
+    inline-J2J, 2.49M xmethod J2J fires (saveless fired 2.42M) —
+    ~81% of IC hits stay fully inline.
+  - The other **4.75M loop sends take the TRAMPOLINE-ASM hop, not a
+    C++ hop**: jitJ2JStencilCalls_ aggregates the trampoline's in-asm
+    localCalls counter (Ltramp_call) — exit JIT epilogue -> trampoline
+    loop -> Lresume_check -> pack V2 save -> branch to callee.  Tens
+    of cycles, C-free, but >> a direct call.  Gate-bail feeders:
+    extra_no_bit60=722K (callee has no J2J entry bit), bail_self=282K,
+    xmethod bails 282K (prim=106K numic=142K b47=15K b46=20K).
+  - So the 3.5x decomposes into: per-send IC-probe dependent-load
+    latency (even inline path), the dispatch tbnz chain, and ~40% of
+    sends paying the trampoline-hop path.  Cog does ALL of these as
+    patched-immediate cmp + direct bl.  The patched-IC design must
+    collapse all three.  Design workflow in flight:
+    docs/patched-ic-design.md incoming.
 
 ## CHECKPOINT 2026-06-11 — sp-residency LIVE; gap = 3.5x
 
