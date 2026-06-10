@@ -165,6 +165,8 @@ extern "C" void jit_rt_log_selfrec_push(pharo::jit::JITState* s) {
 // g_xmethod_count > g_xmethod_max.  Limit set from
 // PHARO_T1_INLINE_J2J_XMETHOD_MAX env var (default UINT64_MAX = no limit).
 extern "C" uint64_t g_xmethod_count = 0;
+// Monotonic T1 compile counter for the saveless MIN_COMPILE bisect gate.
+extern "C" uint64_t g_t1CompileSeq2;
 // Eδ.2a (2026-05-24): count of methods compiled with canSkipJ2JSave=true.
 // Bumped at AsmjitT1.cpp compileMethod when the flag is set on a real
 // (non-stub) method.  Read by JIT stats dump.
@@ -4165,7 +4167,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // bail wrong-result bug the warm gate guards against.
                 // Skipping the gate for these saves the gate-loop cost
                 // and enables saveless emit in default config.
-                if (g_debug.t1CanSkipJ2JSave) {
+                if (g_debug.t1CanSkipJ2JSave
+                        && (int64_t)g_t1CompileSeq2
+                               >= GET_DEBUG_INT(PHARO_T1_SAVELESS_MIN_COMPILE)) {
                     asmjit::Label normalJ2J = a.new_label();
                     // Eδ.2d (2026-06-10): saveless now covers CROSS-METHOD
                     // leaf callees too (xmethod-on builds).  Cross needs
@@ -4218,6 +4222,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x12, ptr(x0, OFF_IP));
                     a.stp(x6, x12, ptr(sp, 16));
                     a.str(x30, ptr(sp, 32));
+                    // Pin j2jEntryDepth = j2jDepth across the call.  The
+                    // callee's return prelude pops a pending save and
+                    // TAIL-JUMPS whenever depth > entryDepth — with a
+                    // caller mid-J2J-chain (e.g. cfib's self-rec saves
+                    // pending) that hijacks the return past our post-blr
+                    // restore, leaking the sp-stash on every call until
+                    // the stack guard page (the Eδ.2d launch crash).
+                    // Saved entryDepth lives in the stash pad slot [40].
+                    a.ldr(w14, ptr(x0, OFF_J2J_DEPTH));
+                    a.ldr(w15, ptr(x0, OFF_J2J_ENTRY_DEPTH));
+                    a.str(w15, ptr(sp, 40));
+                    a.str(w14, ptr(x0, OFF_J2J_ENTRY_DEPTH));
                     if (crossSaveless) {
                         a.ldr(x6, ptr(x0, OFF_METHOD));
                         a.ldr(x12, ptr(x0, OFF_JITMETHOD));
@@ -4311,6 +4327,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldp(x4, x5, ptr(sp, 0));     // saved sp + receiver
                     a.ldp(x6, x12, ptr(sp, 16));   // saved tempBase + ip
                     a.ldr(x30, ptr(sp, 32));
+                    // Restore the caller's j2jEntryDepth (pinned above).
+                    a.ldr(w14, ptr(sp, 40));
+                    a.str(w14, ptr(x0, OFF_J2J_ENTRY_DEPTH));
                     a.str(x5, ptr(x0, OFF_RECEIVER));
                     a.str(x6, ptr(x0, OFF_TEMPBASE));
                     a.str(x12, ptr(x0, OFF_IP));
@@ -6860,10 +6879,16 @@ size_t g_failedSkipSel    = 0;
 size_t g_failedBlock      = 0;
 size_t g_failedBcOther    = 0;
 
+// Monotonic compile counter — used by the PHARO_T1_SAVELESS_MIN_COMPILE
+// bisect gate (saveless emit only in compiles with seq >= N, so startup
+// methods can be excluded while a controlled late-compiled site fires).
+extern "C" uint64_t g_t1CompileSeq2 = 0;
+
 JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                              ObjectMemory& memory, Interpreter& interp,
                              Oop compiledMethod) {
     (void)interp;
+    g_t1CompileSeq2++;
 
     if (!compiledMethod.isObject() || compiledMethod.rawBits() < 0x10000) {
         g_failed++; g_failedBadHeader++;
