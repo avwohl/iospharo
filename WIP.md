@@ -190,9 +190,15 @@ under load is the canary).
     cross fields, and skip the OFF_RECEIVER/TEMPBASE/IP restores
     (write-back from regs).  Target: beat the ~23-op save-push.
   - FULL-SCOPE enablement floods 210-230 startup DNUs — a SECOND shape
-    bug (suspects: nArgs>0 retval/sp math, temp-bearing callees'
-    dynamic nil-fill, block callers).  Bisect with MIN_COMPILE +
-    selector skips; the unary-leaf shape is proven.
+    bug.  PHARO_T1_SAVELESS_MAX_ARGS=N added (compile-time nArgs gate):
+    MAX_ARGS=0 at full scope -> dnu=0, no crash, but the eval is STILL
+    silently lost -> even the 0-arg shape breaks at scale (the
+    controlled cfib->incc site differs how? suspects: 0-arg callees
+    WITH temps (the dynamic nil-fill loop never ran at the controlled
+    site — incc has 0 temps), and BLOCK callers whose
+    receiver/tempBase conventions differ).  Next sub-bisect: gate on
+    callee tempCount==nArgs (skip nil-fill shapes) via a runtime ldrb
+    compare, then block-caller exclusion (isBlock at emit time).
 - docs/jit-retrospective.md "Cog-speed MAP" numbers now stale for
   cross-method; tight-loop 2x-faster-than-Cog and self-rec 6x still hold.
 - **First-compile fail thrash: FIXED (c79b97ab + 9dbe6a49).**  All

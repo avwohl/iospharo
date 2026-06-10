@@ -4169,7 +4169,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // and enables saveless emit in default config.
                 if (g_debug.t1CanSkipJ2JSave
                         && (int64_t)g_t1CompileSeq2
-                               >= GET_DEBUG_INT(PHARO_T1_SAVELESS_MIN_COMPILE)) {
+                               >= GET_DEBUG_INT(PHARO_T1_SAVELESS_MIN_COMPILE)
+                        && nArgs <= GET_DEBUG_INT(PHARO_T1_SAVELESS_MAX_ARGS)) {
                     asmjit::Label normalJ2J = a.new_label();
                     // Eδ.2d (2026-06-10): saveless now covers CROSS-METHOD
                     // leaf callees too (xmethod-on builds).  Cross needs
