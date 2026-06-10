@@ -279,6 +279,12 @@ static inline void pharo_jit_b5_dump_ring(const char*) {}
 
 extern "C" void jit_rt_xmethod_dump_trace();
 extern "C" uint64_t g_xmethod_count;
+extern "C" uint64_t g_xgate_enter;
+extern "C" uint64_t g_xgate_bail_prim;
+extern "C" uint64_t g_xgate_bail_numic;
+extern "C" uint64_t g_xgate_bail_b47;
+extern "C" uint64_t g_xgate_bail_b46;
+extern "C" uint64_t g_xgate_bail_cap;
 
 namespace pharo {
 
@@ -1763,6 +1769,17 @@ void Interpreter::dumpJITStats() {
     if (g_xmethod_count > 0) {
         fprintf(stderr, "  xmethod inline-J2J fires=%llu\n",
                 (unsigned long long)g_xmethod_count);
+    }
+    if (g_xgate_enter > 0) {
+        fprintf(stderr,
+                "  xmethod gates: enter=%llu bail_prim=%llu bail_numic=%llu "
+                "bail_b47=%llu bail_b46=%llu bail_cap=%llu\n",
+                (unsigned long long)g_xgate_enter,
+                (unsigned long long)g_xgate_bail_prim,
+                (unsigned long long)g_xgate_bail_numic,
+                (unsigned long long)g_xgate_bail_b47,
+                (unsigned long long)g_xgate_bail_b46,
+                (unsigned long long)g_xgate_bail_cap);
     }
     // Stencil-side write barrier: hits from stencil_popStoreRecvVar /
     // stencil_storeRecvVar.  Same counters as the asmjit-T1 setter

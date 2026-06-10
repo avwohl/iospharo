@@ -180,6 +180,17 @@ extern "C" uint64_t g_canSkipJ2JSave_ic_hits = 0;
 // (callee qualified AND IC hit reached the saveless emit).
 extern "C" uint64_t g_canSkipJ2JSave_fires = 0;
 extern "C" uint64_t g_xmethod_max   = UINT64_MAX;
+// Per-gate bail counters for the cross-method (xmethod) inline-J2J
+// gate chain.  Only bumped when PHARO_T1_INLINE_J2J is set (the
+// inlineJ2JCounters emit gate), same as the other bail counters.
+// g_xgate_enter counts entries into the gate chain (= bit-60 IC hits
+// whose extra lacks SELF_REC_BIT).
+extern "C" uint64_t g_xgate_enter      = 0;
+extern "C" uint64_t g_xgate_bail_prim  = 0;  // methodHeader bit 16 (hasPrim)
+extern "C" uint64_t g_xgate_bail_numic = 0;  // numICEntries != 0
+extern "C" uint64_t g_xgate_bail_b47   = 0;  // JM byte 47 != 0
+extern "C" uint64_t g_xgate_bail_b46   = 0;  // JM byte 46 != 0
+extern "C" uint64_t g_xgate_bail_cap   = 0;  // count > g_xmethod_max
 
 // Compact xmethod trace.  Stores per-fire data in a buffer, prints
 // at process exit via atexit registration.  Avoids in-loop fprintf
@@ -3902,7 +3913,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // xmethod-on / counters-on builds.
                     {
                         asmjit::Label skipCount = a.new_label();
-                        a.ldrb(w14, ptr(x10, 49));   // canSkipJ2JSave byte
+                        a.ldrb(w14, ptr(x10, (int)offsetof(JITMethod, canSkipJ2JSave)));   // canSkipJ2JSave byte
                         a.cbz(w14, skipCount);
                         a.mov(x14, asmjit::Imm(
                             (uint64_t)&g_canSkipJ2JSave_ic_hits));
@@ -3933,7 +3944,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // CM loads only happen in the debug branch.
                 if (inlineJ2JCounters) {
                     a.ldr(x12, ptr(callerJMReg2, 0));    // caller's CM oop
-                    a.ldr(x13, ptr(x10, 0));    // callee's CM oop
+                    a.ldr(x13, ptr(x10, (int)offsetof(JITMethod, compiledMethodOop)));    // callee's CM oop
                     a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_caller_method));
                     a.str(x12, ptr(x14));
                     a.mov(x14, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_callee_method));
@@ -3942,10 +3953,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(x7, ptr(x14));
                 }
 
-                // CROSS-METHOD ATTEMPT (PHARO_T1_INLINE_J2J_XMETHOD=1 opt-in).
-                // Default OFF — known to corrupt state.  Opt-in for lldb
-                // debugging only.  PHARO_T1_INLINE_J2J_XMETHOD_MAX=N
-                // bisection-limits the number of cross-method fires.
+                // CROSS-METHOD inline-J2J.  Default ON (opt-out via
+                // PHARO_T1_NO_INLINE_J2J_XMETHOD=1; see DebugSettings.cpp).
+                // The historical "known to corrupt state" reputation
+                // traced to the JM-offset bug fixed 2026-06-09 below:
+                // the gate chain read byte 47 as isStubOnEntry (real:
+                // canBailMidMethod) and byte 46 as canBailMidMethod
+                // (real: hasNLR), so stub-on-entry callees slipped
+                // through (save leak -> state corruption) while nearly
+                // all real returning callees were rejected.
+                // PHARO_T1_INLINE_J2J_XMETHOD_MAX=N bisection-limits
+                // the number of cross-method fires (default: unlimited).
                 const bool xmethod = g_debug.t1InlineJ2JXmethod;
                 if (g_debug.t1InlineJ2JXmethodMax >= 0) {
                     g_xmethod_max = (uint64_t)g_debug.t1InlineJ2JXmethodMax;
@@ -3959,21 +3977,78 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // Cross-method gates use callee's methodHeader,
                     // numICEntries, isStubOnEntry, canBailMidMethod.
                     if (!inlineJ2JCounters) {
-                        a.ldr(x13, ptr(x10, 0));   // callee CM (for state.method)
+                        a.ldr(x13, ptr(x10, (int)offsetof(JITMethod, compiledMethodOop)));   // callee CM (for state.method)
                     }
-                    a.ldr(x4, ptr(x10, 16));            // methodHeader (decoded)
-                    a.tbnz(x4, asmjit::Imm(16), j2jBailSelf2);  // has prim → bail
+                    // Per-gate bail counters (emitted only when
+                    // inlineJ2JCounters; production emit unchanged).
+                    // emitIncCounter clobbers x14/x15 — both scratch here.
+                    auto emitGateBail = [&](uint64_t counterAddr) {
+                        // Branch target that bumps the per-gate counter
+                        // then bails.  Caller emits the inverted-condition
+                        // branch around it.
+                        emitIncCounter(counterAddr);
+                        a.b(j2jBailSelf2);
+                    };
+                    emitIncCounter((uint64_t)&g_xgate_enter);
+                    a.ldr(x4, ptr(x10, (int)offsetof(JITMethod, methodHeader)));            // methodHeader (decoded)
+                    if (inlineJ2JCounters) {
+                        asmjit::Label ok = a.new_label();
+                        a.tbz(x4, asmjit::Imm(16), ok);
+                        emitGateBail((uint64_t)&g_xgate_bail_prim);
+                        a.bind(ok);
+                    } else {
+                        a.tbnz(x4, asmjit::Imm(16), j2jBailSelf2);  // has prim → bail
+                    }
                     // JITMethod::numICEntries at offset 28 (uint16).
-                    a.ldrh(w4, ptr(x10, 28));
-                    a.cbnz(w4, j2jBailSelf2);
-                    // isStubOnEntry at JM[47] — stubs never invoke return
+                    a.ldrh(w4, ptr(x10, (int)offsetof(JITMethod, numICEntries)));
+                    if (inlineJ2JCounters) {
+                        asmjit::Label ok = a.new_label();
+                        a.cbz(w4, ok);
+                        emitGateBail((uint64_t)&g_xgate_bail_numic);
+                        a.bind(ok);
+                    } else {
+                        a.cbnz(w4, j2jBailSelf2);
+                    }
+                    // isStubOnEntry — stubs never invoke the return
                     // prelude → save would leak.
-                    a.ldrb(w4, ptr(x10, 47));
-                    a.cbnz(w4, j2jBailSelf2);
-                    // canBailMidMethod at JM[46] — mid-method bails
-                    // corrupt caller frame via inline-activate path.
-                    a.ldrb(w4, ptr(x10, 46));
-                    a.cbnz(w4, j2jBailSelf2);
+                    //
+                    // OFFSET BUG FIXED 2026-06-09: this gate chain used
+                    // raw offsets 47/46 believing them to be
+                    // isStubOnEntry/canBailMidMethod.  Real layout:
+                    // 46=hasNLR 47=canBailMidMethod 48=isStubOnEntry.
+                    // Consequences of the off-by-one: (a) the 46-read hit
+                    // hasNLR, which the default-ON t1NlrTailOnly scan
+                    // sets for EVERY method containing a return opcode
+                    // 0x58-0x5C — so virtually all real cross-method
+                    // callees bailed (574K/930K in the cfib bench, the
+                    // entire 43x-vs-Cog cross-method send gap); (b) the
+                    // real isStubOnEntry byte was never checked, so
+                    // stub-on-entry callees (hasNLR=false: the nlr scan
+                    // is skipped for non-isReal) passed every gate and
+                    // were inline-J2J-called — the likely source of the
+                    // historical "xmethod corrupts state" failures.
+                    a.ldrb(w4, ptr(x10,
+                        (int)offsetof(JITMethod, isStubOnEntry)));
+                    if (inlineJ2JCounters) {
+                        asmjit::Label ok = a.new_label();
+                        a.cbz(w4, ok);
+                        emitGateBail((uint64_t)&g_xgate_bail_b47);
+                        a.bind(ok);
+                    } else {
+                        a.cbnz(w4, j2jBailSelf2);
+                    }
+                    // canBailMidMethod — mid-method bails corrupt the
+                    // caller frame via the inline-activate path.
+                    a.ldrb(w4, ptr(x10,
+                        (int)offsetof(JITMethod, canBailMidMethod)));
+                    if (inlineJ2JCounters) {
+                        asmjit::Label ok = a.new_label();
+                        a.cbz(w4, ok);
+                        emitGateBail((uint64_t)&g_xgate_bail_b46);
+                        a.bind(ok);
+                    } else {
+                        a.cbnz(w4, j2jBailSelf2);
+                    }
                     a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_count));
                     a.ldr(x15, ptr(x14));
                     a.add(x15, x15, asmjit::Imm(1));
@@ -3981,7 +4056,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.mov(x14, asmjit::Imm((uint64_t)&g_xmethod_max));
                     a.ldr(x14, ptr(x14));
                     a.cmp(x15, x14);
-                    a.b_hi(j2jBailSelf2);
+                    if (inlineJ2JCounters) {
+                        asmjit::Label ok = a.new_label();
+                        a.b_ls(ok);
+                        emitGateBail((uint64_t)&g_xgate_bail_cap);
+                        a.bind(ok);
+                    } else {
+                        a.b_hi(j2jBailSelf2);
+                    }
                     // E2 2026-05-24: cross-method state.{jitMethod,method,
                     // literals,argCount} update RELOCATED to after the
                     // save-full check (line ~3843), because that bail
@@ -4059,7 +4141,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     if (!needCalleeJM) {
                         a.sub(x10, x9, asmjit::Imm((int)sizeof(JITMethod)));
                     }
-                    a.ldrb(w14, ptr(x10, 49));  // canSkipJ2JSave byte
+                    a.ldrb(w14, ptr(x10, (int)offsetof(JITMethod, canSkipJ2JSave)));  // canSkipJ2JSave byte
                     a.cbz(w14, normalJ2J);
 
                     // === SAVELESS PATH ===
@@ -4408,7 +4490,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // of the same value (callee == caller); cost is 4
                 // extra stores per push.
                 if (xmethod) {
-                    a.ldr(x13, ptr(x10, 0));      // x13 = calleeCM
+                    a.ldr(x13, ptr(x10, (int)offsetof(JITMethod, compiledMethodOop)));      // x13 = calleeCM
                     a.str(x10, ptr(x0, OFF_JITMETHOD));
                     a.str(x13, ptr(x0, OFF_METHOD));
                     a.add(x13, x13, asmjit::Imm(16));
@@ -7092,8 +7174,15 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         // not-quite-real frame, breaking nested-block semantics).  The
         // bisect showed nested-closure-creating blocks are the source
         // of the ZnByteEncoder DNU under tail-only loosening.
-        // Gated by PHARO_T1_NLR_TAIL_ONLY=1 (default OFF still — even
-        // with the 0xF9/0xFA guard, bench-suite needs validation).
+        // Gated by t1NlrTailOnly — default ON since Session H Phase 5
+        // (2026-05-25, see DebugSettings.cpp; opt-out via
+        // PHARO_T1_NO_NLR_TAIL_ONLY=1).  NOTE: in tail-only mode this
+        // scan sets hasNLR for ANY method containing a return opcode
+        // 0x58-0x5C — i.e. virtually every real method.  hasNLR is a
+        // BLOCK-VALUE-inline gate; do not treat it as a method-level
+        // "has non-local return" flag (the 2026-06-09 xmethod gate
+        // off-by-one read it as canBailMidMethod and rejected nearly
+        // all cross-method inline-J2J callees).
         {
             bool nlr = false;
             if (isReal) {

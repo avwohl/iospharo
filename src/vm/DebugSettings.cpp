@@ -236,7 +236,14 @@ DebugSettings::DebugSettings() {
     // and runs 10000/10000 OK).
     // Opt out via PHARO_T1_NO_INLINE_J2J_XMETHOD=1.
     t1InlineJ2JXmethod  = !envPresent("PHARO_T1_NO_INLINE_J2J_XMETHOD");
-    t1InlineJ2JXmethodMax = envInt("PHARO_T1_INLINE_J2J_XMETHOD_MAX", 30000);
+    // 2026-06-09: default cap 30000 -> unlimited (-1).  The cap was a
+    // bisection leftover; with the JM-offset gate fix (AsmjitT1
+    // cross-method gates read the real canBailMidMethod/isStubOnEntry
+    // bytes now) cross-method inline-J2J fires ~3.8M times in a cfib
+    // bench run, and a 30000 cap silently re-routes everything after
+    // the first 30000 calls back to the slow path (357ms vs 39ms).
+    // The knob remains for bisection.
+    t1InlineJ2JXmethodMax = envInt("PHARO_T1_INLINE_J2J_XMETHOD_MAX", -1);
     t1XmethodLog        = envPresent("PHARO_T1_XMETHOD_LOG");
     // Session H Phase 5 (2026-05-25): default-FLIP to leaf-only BV
     // inline.  Previous default (NonLeaf=ON) allowed BV inline for
