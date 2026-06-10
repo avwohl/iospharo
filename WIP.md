@@ -38,9 +38,28 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   receiver), or desync confined to unmappable methods (~10%) /
   uncheckable exits (ExitReturn/J2JCall).  Per-run variance under
   DET_SCHED = ASLR slide is part of the knife-edge (lldb's no-ASLR
-  hides it).  NEXT: STORE_RING on the failing config (DNU-time
-  provenance scan), then extend checkable exits (ExitJ2JCall via
-  send-length backscan; ExitReturn via callee-frame check).
+  hides it).
+- **RESIDUAL DIAGNOSED + FIX BUILT (catch2 anatomy -> stale
+  bcStartCache):** the caught DNU shows `#,` sent to a StdioStream — the
+  receiver one slot below (the 'EVAL-RESULT=' string) was REPLACED by a
+  wrong VALUE at CONSISTENT depth, with adjacent duplicated slots and
+  scavengesSoFar=3.  Wrong-values-at-right-depth = a materialized frame
+  resumed at a WRONG-BUT-IN-RANGE bytecode offset: JITMethod::
+  bcStartCache (used by the xmethod inline-J2J emit for state.ip,
+  AsmjitT1 4392/4873) is set once at compile from compiledMethodOop and
+  NEVER refreshed — a scavenge moving the CompiledMethod (fresh eden
+  DoIt / OpalCompiler infra) leaves it at the old address; sp-depth
+  validates ip-vs-sp CONSISTENCY so it stays clean at a wrong ip.
+  FIX: refresh bcStartCache in forEachRoot's JIT-zone walk (zone already
+  writable there; idempotent across mark/update phases; covers scavenge
+  + fullGC).  This was also "latent suspect #2" from the 3-agent map —
+  yesterday's lldb only ruled it out at ONE fire.  Validation: catch3
+  40-rep loop on the fixed binary (in flight), then 200-class suites
+  default + MAX_IC=1.
+- **Lever (c) PRIZE CONFIRMED on the fold-fixed binary**: incs-shape
+  bench (callee with a send: `sfib ... incs`, `incs ^self incc`)
+  default 370-378ms vs MAX_IC=1 **51-52ms (7.3x)** — raising MAX_IC
+  is the next big cross-method win once the residual is confirmed dead.
 
 ## Headline: inline-J2J is DEFAULT-ON (lever e, commit after 0a48a0e1).
 DEFAULT config now: cfib(30) 344ms -> 44ms (Cog 8), benchFib(30) 296ms -> 32ms
