@@ -2,6 +2,23 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11 — sp-residency LIVE; gap = 3.5x
+
+- **PHARO_T1_SP_IN_X25 = 1 SHIPPED**: state.sp is register-resident in
+  x25 across all JIT execution (full contract: live-in at every entry,
+  maintained by every emit site, synced at 47 rets + 10 audited BLRs,
+  live-out at every blr return).  Validated: sp-depth 1.82M checks 0
+  mismatches, DictionaryTest 0 fails, **200-class suite 2/8459 (both
+  known environmental — correctness floor holds)**.
+- **Head-to-head (build-opt vs stock Cog), the flip's effect:**
+      cfib(30)         42 -> 29 ms   (Cog  8;  5.3x -> 3.6x)
+      sfib(30)         54 -> 41 ms   (Cog 12;  4.5x -> 3.4x)
+      benchFib(28)x10 128 -> 87 ms   (Cog 25;  5.1x -> 3.5x)
+- Remaining levers toward parity, in order: (a) tempBase residency
+  (x26 is free! same sweep pattern, tempBase is the #2 hot field);
+  (b) per-method emit bloat (~6KB/method; SHA timeout = zone
+  exhaustion); (c) IC-probe shortening; (d) x86 Phase 2.
+
 ## CHECKPOINT 2026-06-10 EOD — correctness floor reached; gap = 5x
 
 - **Suite: 2-3/8459 (~99.97%), ZERO stable fails** (only known
