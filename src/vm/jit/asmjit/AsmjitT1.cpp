@@ -35,6 +35,7 @@
 #include "../JITState.hpp"
 #include "../PlatformJIT.hpp"
 #include "../SistaV1.hpp"
+#include "../J2JSaveLayout.h"
 #include "../../ObjectMemory.hpp"
 #include "../../Interpreter.hpp"
 #include "../../DebugSettings.hpp"
@@ -3074,7 +3075,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // Pop save: cursor -= sizeof(J2JSave) = 56; depth--
         // Pre-index ldp folds the cursor decrement into the first load.
         a.ldr(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
-        a.ldp(x5, x6, ptr_pre(x4, -56));  // x4 -= 56, then load sp + recv
+        a.ldp(x5, x6, ptr_pre(x4, -JSV_SIZE));  // x4 -= save size; load sp + recv
         a.str(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
         a.sub(w3, w3, asmjit::Imm(1));
         a.str(w3, ptr(x0, OFF_J2J_DEPTH));
@@ -3097,9 +3098,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // For xmethod-on: x10 is reassigned at line ~2602 (literals=
         // method+16) before any read, so dropping the original load is
         // also safe.
-        a.ldr(x6, ptr(x4, 16));       // tempBase (skip ip @ +24)
+        a.ldr(x6, ptr(x4, JSV_TEMPBASE));  // tempBase
         emitStoreTempBase(a, x6);
-        a.ldr(x8, ptr(x4, 40));       // resumeAddr (always needed)
+        a.ldr(x8, ptr(x4, JSV_RESUMEADDR));  // resumeAddr (always needed)
         // sendArgCount: if all J2J sends in this method have the same
         // nArgs (compile-time uniform), the return prelude can use the
         // value as an immediate, skipping the load + lsl/sub in the
@@ -4671,7 +4672,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.bind(haveRoom);
                         // save.{sp,receiver} from stash[0,8]
                         a.ldp(x4, x5, ptr(sp, 0));
-                        a.stp(x4, x5, ptr_post(x14, 56));   // cursor += 56
+                        a.stp(x4, x5, ptr_post(x14, JSV_SIZE));   // cursor += save size
                         // save.tempBase from stash[16]; save.ip = post-send
                         // ip = callerCM + bcOffsetFromMethObj + 1 (the
                         // stash ip is the stale state.ip, NOT post-send).
@@ -4913,7 +4914,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 //   original [x6, 40]  -> ptr(x6, -16)  (x6+56-16 = x6+40)
                 emitLoadSp(a, x15);                // sp (sweep: was ldp sp+recv)
                 a.ldr(x4, ptr(x0, OFF_RECEIVER)); // receiver
-                a.stp(x15, x4, ptr_post(x6, 56));  // [old x6, 0]; x6 += 56
+                a.stp(x15, x4, ptr_post(x6, JSV_SIZE));  // [old x6, 0]; x6 += save size
                 emitLoadTempBase(a, x15);
                 if (g_debug.t1J2JPostSendIp) {
                     // Compute past-send IP = callerCM + bcOffsetFromMethObj
