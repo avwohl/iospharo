@@ -10,9 +10,18 @@ DEFAULT config now: cfib(30) 344ms -> 44ms (Cog 8), benchFib(30) 296ms -> 32ms
 (Cog 5).  60-class SUnit A/B default-vs-J2J per-test identical (4130/4140;
 two known-flaky tests flip one each way; the historical flip-blocker
 CharacterTest>>testStoreStringAll PASSES).  Opt-out: PHARO_T1_NO_INLINE_J2J=1.
-Confirmation batches (1-60 re-run + 61-200) in flight at session end —
-COMPARE /tmp/sunit_results_flip{60,200}.txt against
-/tmp/sunit_results_{default,j2j}.txt and the Cog baseline next session.
+Confirmation COMPLETE: 1-60 re-run 4131/3 (one flaky better than the
+pre-flip A/B); 61-200 (4319 tests) J2J-on 4297 vs J2J-off 4299 — only
+per-test diffs are LIFOQueueTest>>testHeavyContention and
+WeakAnnouncerTest>>testWeakDoubleAnnouncer, both PASS under J2J in
+isolation on a quiet machine (load-flaky).  No reproducible regression
+across 200 classes / 8459 tests.  The 61-200 SHA256Test TIMEOUT (both
+configs) is the 64MB zone filling (~14.6K methods) -> late-hot methods
+interpreted; PHARO_CODE_ZONE_MB=192 works around it until lever (d)
+shrinks the ~6KB/method emit.  Next perf checkpoints vs Cog: re-run
+the full classify-sunit Δcog comparison on build-opt, and watch
+inline-J2J chain lengths vs preemption fairness (testHeavyContention
+under load is the canary).
 
 ## DONE this session (committed)
 
