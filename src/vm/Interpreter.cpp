@@ -13113,6 +13113,44 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 extern uint64_t g_scavengeCount;
                 fprintf(stderr, "[DNU] scavengesSoFar=%llu\n",
                         (unsigned long long)g_scavengeCount);
+                // Residual-hunt probe: method_ at DNU time printed as a
+                // NON-heap address in every caught failing run (same low
+                // bits per run — a C++-side pointer in the method
+                // register).  Classify it + hexdump bytecodes around ip.
+                if (GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK)) {
+                    uint64_t mb = method_.rawBits();
+                    const char* mloc =
+                        memory_.isValidPointer(method_) ? "heap" : "NON-HEAP";
+                    fprintf(stderr,
+                            "[DNU-METHODREG] method_=0x%llx loc=%s tag=%llu "
+                            "ip=%p bytecodeEnd=%p fp=%p sp=%p\n",
+                            (unsigned long long)mb, mloc,
+                            (unsigned long long)(mb & 7),
+                            (void*)instructionPointer_, (void*)bytecodeEnd_,
+                            (void*)framePointer_, (void*)stackPointer_);
+                    if (memory_.isValidPointer(method_)
+                            && method_.isObject()) {
+                        ObjectHeader* mo = method_.asObjectPtr();
+                        size_t nl = memory_.numLiteralsOf(method_);
+                        uint8_t* bs = mo->bytes() + (1 + nl) * 8;
+                        long ipOff = instructionPointer_ - bs;
+                        fprintf(stderr,
+                                "[DNU-METHODREG] sel=#%s bcStart=%p ipOff=%ld "
+                                "byteSize=%zu isCM=%d\n",
+                                memory_.selectorOf(method_).c_str(), (void*)bs,
+                                ipOff, mo->byteSize(),
+                                (int)mo->isCompiledMethod());
+                        if (ipOff >= 8 && (size_t)ipOff < mo->byteSize()) {
+                            fprintf(stderr, "[DNU-METHODREG] bc around ip:");
+                            for (long k = ipOff - 8; k < ipOff + 8
+                                     && (size_t)k < mo->byteSize(); k++) {
+                                fprintf(stderr, "%s%02x",
+                                        k == ipOff ? " >" : " ", bs[k]);
+                            }
+                            fprintf(stderr, "\n");
+                        }
+                    }
+                }
                 // PHARO_T1_LOG_SELFREC_PUSH: name the self-recursive methods
                 // whose inline-J2J save-push ran just before this crash.
                 if (GET_DEBUG_BOOL(PHARO_T1_LOG_SELFREC_PUSH)) {

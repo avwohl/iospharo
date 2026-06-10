@@ -94,6 +94,21 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   Validation in flight: catch10 60-rep loop.  Scavenge-wrap perf cost
   TBD (prepareForGC is O(frameDepth) per scavenge; if measurable, only
   wrap when any executing/saved method is YOUNG — usually none are).
+- **catch10/11 (post scavenge-wrap): STILL FAILS (~5%).**  [DNU-METHODREG]
+  probe (knob-gated, in sendDoesNotUnderstand) corrected an earlier
+  misread: method_ at DNU time IS valid heap — an EDEN CompiledBlock
+  (the DoIt's on:Error block; selectorOf prints `,` for blocks —
+  quirk), ip correctly inside it, bytecode window sane (`...9b 96 >d8
+  53 87 d8 88 5e`).  The failure shape from the window: `Stdio stderr`
+  (send0) RETURNED THE WRONG OBJECT (the 'EVAL-RESULT=' string) ->
+  cascade dup'd it -> nextPutAll: DNU on ByteString.  Earlier variants
+  (`,` to StdioStream) = the same class with the wrong object appearing
+  one send earlier.  VALUES wrong at CORRECT depth at every check.
+  IN FLIGHT: catch12 = same config + PHARO_NO_JIT (30 reps) — decides
+  JIT-side vs interp/GC-side.  Catch logs: /tmp/catch11_FAIL.log.
+  NOTE: all catch reps run in /tmp/harness on Pharo-base.image; evals
+  share /tmp/harness/startup.st — NEVER run a second eval there while
+  a catch loop is live (use /tmp/harness2).
 
 ## Headline: inline-J2J is DEFAULT-ON (lever e, commit after 0a48a0e1).
 DEFAULT config now: cfib(30) 344ms -> 44ms (Cog 8), benchFib(30) 296ms -> 32ms
