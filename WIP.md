@@ -1,95 +1,87 @@
-# WIP — JIT correctness + Cog-speed (resume after reboot)
+# WIP — JIT Cog-speed: cross-method inline-J2J unblocked (2026-06-09 session 2)
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
-Branch: `jit`. All work below is COMMITTED (clean tree except pre-existing
-`third_party/asmjit` submodule diff + untracked `build-opt/`, `scripts/pharo-headless-test`).
-Build: `cmake --build build-opt`. Test VM: `./build-opt/test_load_image /tmp/harness/Pharo.image eval "<expr>"`.
-Stock Cog baseline: `/tmp/harness/pharo /tmp/harness/Pharo.image eval "<expr>"`.
+Branch: `jit`. Build: `cmake --build build-opt` (optimized; the plain `build/` is -O0).
+Test VM: `./build-opt/test_load_image /tmp/harness/Pharo.image eval "<expr>"`.
+Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
+
+## Headline: cfib(30) 344ms -> 41-43ms (Cog: 8ms). 43x gap -> ~5x.
 
 ## DONE this session (committed)
 
-1. **inline-J2J #extent crash FIXED** (the 5-month blocker). Root cause: the
-   inline-J2J send emit's dispatch-A (AsmjitT1.cpp ~3710-3780) routed to six
-   UNVALIDATED "extra" inline specs (IC bits 51-58: multiSlot/returnsLiteral/
-   tempReturn/intCmp/intArith/evenOdd) the validated paths never use;
-   `tryMultiSlot` writes a wild receiver -> #extent crash. Fix: those 6 are now
-   DEFAULT-OFF opt-in knobs in `src/vm/debug_vars.h`
-   (`DEBUG_BOOL(PHARO_T1_INLINE_MULTISLOT)` etc.), read via `GET_DEBUG_BOOL` at
-   the AsmjitT1.cpp emit sites. (NOTE: earlier I wrongly used `envPresent` in
-   DebugSettings.cpp — user corrected; now uses debug_vars.h per the rules.)
-   NOT a GC bug, NOT the J2J save/return mechanism (both rigorously ruled out
-   earlier — see docs/jit-retrospective.md). Validated: `PHARO_T1_INLINE_J2J=1`
-   -> 3+4=7, factorial/gcd match default; `PHARO_T1_INLINE_MULTISLOT=1`
-   re-reproduces the crash (knob wired correctly).
+1. **dd0fa6f2 — cross-method inline-J2J gate off-by-one.** The xmethod gate
+   chain in AsmjitT1.cpp read JITMethod bytes 47/46 as isStubOnEntry/
+   canBailMidMethod; real layout 46=hasNLR 47=canBailMidMethod 48=isStubOnEntry.
+   Since t1NlrTailOnly (default ON) sets hasNLR for EVERY method containing a
+   return opcode 0x58-0x5C, the byte-46 read rejected ~all real cross-method
+   callees (574K/930K in cfib) — this WAS the entire cross-method send gap.
+   The real isStubOnEntry was never checked (stubs slipped through = the old
+   "xmethod corrupts state" reputation). All JM reads now use offsetof().
+   Also: per-gate bail counters (`xmethod gates:` line in dumpJITStats, only
+   emitted when PHARO_T1_INLINE_J2J is set), and the 30000 default fire cap
+   (bisection leftover) lifted to unlimited.
 
-2. **Hot methods now JIT-compile** (was: most failed -> interpreted -> slow):
-   - Per-method emit buffer was `bcLen*512+512` (too small; send bytecodes emit
-     ~900 B each) -> raised to `bcLen*1536+4096` + grow-and-retry on overflow
-     (AsmjitT1.cpp ~6850). Buffer overflows 844 -> 0.
-   - Code zone 16 MB filled (asmjit-T1 ~6 KB/method) -> raised to 64 MB
-     (`JITConfig.hpp DefaultCodeZoneSize`) so methods compiled late (e.g.
-     benchFib during an eval) can allocate.
+2. **24175466 — stale state.j2jDepth corruption (xmethod at scale).** With
+   876K+ fires/run, ~50% of startups corrupted (SettingTree mergeSort
+   sortBlock -> #value:value: DNU). Root cause: materializeJ2J (chain loop,
+   Interpreter.cpp ~22556) consumed pending saves into SavedFrames but never
+   reset state.j2jDepth; the ExitBlockCreate/ExitArrayCreate handlers check
+   `state.j2jDepth > 0` BEFORE enableJ2J resets it, so the
+   `state.sp = stackPointer_` resync was skipped on consumed saves -> fresh
+   closure above stale sp -> overwritten -> shifted operand passed as the
+   sortBlock. Fix: materializeJ2J resets depth+cursor. 10/10 clean startups.
+   Also hardened: prepareForGC/afterGC now round-trip live J2J pool saves'
+   raw `ip` through J2JSave.ipOffset (was a real GC hole: forEachRoot visits
+   only save.receiver); PHARO_J2J_MAT_LOG diagnostic knob.
 
-## Cog-speed MAP (validated; docs/jit-retrospective.md "Cog-speed MAP")
+3. **(uncommitted at write time) rj2j slice reservation** — the opt-in
+   PHARO_RESUME_J2J chain loop's save slice was never reserved in
+   j2jPoolCursor_, so GC receiver walk / ip round-trip / eviction pinning
+   all missed those saves. Latent (rj2j default-off); fixed anyway.
 
-benchFib / cfib timing, `Time millisecondsToRun:` warmed, custom(inline-J2J) vs Cog:
-- tight inlined loop (20M): custom 25ms vs Cog 50ms -> **custom 2x FASTER**
-- self-recursion benchFib(30): custom 30ms vs Cog 5ms -> 6x
-- +1 CROSS-METHOD call/node cfib(30): custom 344ms vs Cog 8ms -> **~43x**
+## Key corrections to the previous WIP (premise was WRONG)
 
-**The entire real-code Cog gap is CROSS-METHOD send throughput** (~90 ns/send via
-the JIT->C++->JIT trampoline activation). Custom beats Cog on compute; self-rec
-sends are 6x (inline-J2J self-rec works); cross-method sends are ~43-49x because
-they get **NO bit-60 J2J fill** and fall to the slow activation path.
+- "cfib->incc gets 0 bit-60 fills" was an ARTIFACT: PHARO_J2J_LOG_FILL caps
+  at 4000 lines and startup burns them. The IC fill always worked
+  (PHARO_DUMP_RECOMPILE_IC=cfib shows bit-60 + entryAddr on site 2).
+- The slow path was the SEND-SITE DISPATCH: with the gates broken, every
+  cross-method bit-60 send bailed to the trampoline activation
+  (2.5M C++ activations/run @ ~340ns).
+- incc DOES JIT-compile (T1-COMPILE right after cfib). `^self+1` is NOT
+  classified by detectTrivialMethod (intArith needs a method ARG, 0x40).
 
-## EXACT NEXT STEP (where I was when interrupted)
+## Current state / next levers toward Cog parity (~5x left on cfib)
 
-Investigating **why cfib->incc (a cross-method send) never gets a bit-60 J2J fill**
-(`PHARO_J2J_LOG_FILL=1` shows fills-to-incc=0 across 1.3M calls), while
-cross-method J2J DOES engage for ~4026 startup pairs. Ruled out: classification
-(non-classified `^self+1+1` helper also gets 0 fills), the numICEntries==0 gate
-(helpers have no sends), and SISTA_BIT (t1InlineSistaCall default-off; NO_SISTA
-didn't help — 313ms, still 0 fills).
+- Validation in flight: SUnit batch 0-150 default-vs-INLINE_J2J
+  (results /tmp/sunit_results_{default,j2j}.txt). MUST be equal-or-better
+  before flipping PHARO_T1_INLINE_J2J default-on (lever (e), the big one —
+  all of today's wins are behind that opt-in env).
+- Residual xmethod bails (cfib run): bail_prim=105K (prim-bearing callees),
+  bail_numic=237K (callees with sends — lever (c), needs nested-save
+  correctness), bail_b47/stub+canBail ~17K. Each bail = slow trampoline.
+- The xmethod fire path still bumps g_xmethod_count + cap-check per fire
+  (2 ld + add + st + cmp); could be emitted only when a cap is set.
+- J2J-s (stencil_sendJ2J out-of-line) handles 2.4M calls/run — dispatch-A
+  inline-J2J only covers sites in recompiled (tier-2) callers? Verify
+  coverage; tier-1-only callers may never get the inline emit.
+- Self-rec saveless path (PHARO_T1_CAN_SKIP_J2J_SAVE) exists but is
+  self-rec-only; cross-method saveless for canSkipJ2JSave callees (incc
+  qualifies) would shave the save-push cost — needs the state-update
+  extension noted in the Eδ.2c comment.
+- docs/jit-retrospective.md "Cog-speed MAP" numbers now stale for
+  cross-method; tight-loop 2x-faster-than-Cog and self-rec 6x still hold.
 
-Was reading the IC-upgrade path `upgradeICToJ2J` at **Interpreter.cpp ~21102-21142**:
-it only upgrades an IC entry to bit-60 when `extra == 0` (line 21114) and the
-callee `target` is compiled NOW. PRIME HYPOTHESIS: the cfib->incc IC is patched
-BEFORE incc compiles (so it gets a non-bit-60 `extra` != 0, e.g. a stale/quickPrim
-or plain cached entry), and is then NEVER re-upgraded once incc compiles ->
-cross-method send stuck on the trampoline path forever. Confirm + fix:
+## Workflow artifacts (multi-agent investigation maps, this session)
 
-1. Instrument the bit-60 fill (Interpreter.cpp ~20779) AND upgradeICToJ2J
-   (~21102) to log, for caller=cfib / selector=incc, WHICH condition blocks the
-   bit-60 set (target not compiled yet? extra!=0 so upgrade skipped? banned?).
-   Use a gated `debug_vars.h` knob (DEBUG_BOOL) — NOT envPresent.
-2. Likely fix: when a method finishes JIT-compiling, UPGRADE existing IC entries
-   that point to it (extra==0 OR re-resolvable) to bit-60; OR on IC-hit, if the
-   entry lacks bit-60 but the callee is now compiled + J2J-eligible, upgrade it.
-   This turns cross-method sends from ~90ns (trampoline) toward the 6x self-rec
-   path -> the big Cog-speed win.
-3. CAUTION: cross-method J2J was just made correct via the 6-spec fix; validate
-   every change with: cfib A/B (target: 344ms -> toward ~40-60ms), benchFib
-   correctness, 3+4=7, and a diverse-eval correctness batch.
+- /private/tmp/claude-501/-Users-wohl-src-iospharo/a6ed987d-559a-4f18-a43d-7bf2905adc05/tasks/wqrxey8av.output
+  (send-path map: bit consumers, compile triggers, ExitSendCached flow, gates)
+- .../tasks/wn7p9ib48.output (save-stack lifecycle: GC, recompile/eviction,
+  protocol diff — contains the remaining suspect list w/ likelihoods+tests:
+  matRetSlot-ignoring ExitReturn pops at ~22693 & jit_loop_exit, stale
+  bcStartCache after GC, recoverAfterGC ghost-version methodMap rebuild)
 
-Repro for the cross-method bench:
-```
-| t | Integer compile: 'incc ^self + 1'.
-Integer compile: 'cfib ^self < 2 ifTrue: [1] ifFalse: [((self - 1) cfib + (self - 2) cfib) incc]'.
-28 cfib. 28 cfib. t := Time millisecondsToRun: [30 cfib]. 'ms=', t printString
-```
-Run with `PHARO_T1_INLINE_J2J=1 PHARO_J2J_LOG_FILL=1` and grep `-> incc`.
-
-## Remaining Cog-parity levers (docs/jit-retrospective.md)
-- (a) IC-upgrade-to-bit-60 timing (above) — likely the dominant cross-method cause.
-- (b) reconcile Sista (J2J-s) vs J2J (bit-60) dispatch.
-- (c) relax the numICEntries==0 cross-method gate to admit callees-with-sends
-  (needs nested-save correctness — careful).
-- (d) compact the per-send emit (out-of-line dispatch) to shrink ~6KB/method
-  bloat so 16MB zone suffices without the 64MB bump.
-- (e) inline-J2J default-on after SUnit/GUI validation (it's the recursion win).
-
-## Rules reminders (bit me this session)
-- New env knobs -> `src/vm/debug_vars.h` (DEBUG_BOOL/INT/STR + GET_DEBUG_*), NOT
-  `envPresent`/getenv in DebugSettings.cpp. Read via `GET_DEBUG_BOOL(NAME)`.
-- EVAL-RESULT prints to **stderr** — capture with `2>&1`, not `2>/dev/null`.
-- Use `PHARO_DET_SCHED=1` to make JIT timing bugs deterministic/lldb-able.
+## Rules reminders
+- EVAL-RESULT prints to stderr — capture with 2>&1.
+- grep -o "ms=..." matches the arg echo first; grep EVAL-RESULT first.
+- New env knobs -> src/vm/debug_vars.h (DEBUG_BOOL + GET_DEBUG_BOOL).
+- JITMethod field reads in emit code: offsetof() ONLY, never raw ints.

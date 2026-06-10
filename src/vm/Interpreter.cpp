@@ -19222,6 +19222,15 @@ void Interpreter::tryJITResumeInCaller() {
                                         MaxJ2JPoolSize - rj2jBase);
 
           if (!noResumeJ2J) {
+            // Reserve the rj2j slice in j2jPoolCursor_ — the GC receiver
+            // walk (forEachRoot), the prepareForGC/afterGC ip round-trip,
+            // and eviction pinning all bound their j2jPool walks by
+            // j2jPoolCursor_, so without this reservation the in-flight
+            // rj2j saves are invisible to all three (stale receiver/ip
+            // after a GC fired by an allocating callee).  Mirrors the
+            // tryJITActivation reservation at ~21750.  Every exit path
+            // below already releases via `j2jPoolCursor_ = rj2jBase`.
+            j2jPoolCursor_ = rj2jBase + rj2jMaxDepth;
             // No flip — codebase invariant (W^X audit 2026-04-26): thread is in X mode.
             // PHARO_RJ2J_VALIDATE=1 enables state validation around every
             // JIT_CALL in the chain loop.  Catches the moment state.
