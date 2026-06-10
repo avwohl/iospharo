@@ -172,21 +172,27 @@ under load is the canary).
 - J2J-s (stencil_sendJ2J out-of-line) handles 2.4M calls/run — dispatch-A
   inline-J2J only covers sites in recompiled (tier-2) callers? Verify
   coverage; tier-1-only callers may never get the inline emit.
-- Saveless path (PHARO_T1_CAN_SKIP_J2J_SAVE): cross-method extension
-  LANDED (07bc40c9) but SIGSEGVs when enabled — and the prior self-rec
-  version had NEVER fired even once (self-rec canSkip callees don't
-  exist: canSkip needs numIC==0, self-rec needs a self-send).  The whole
-  saveless path is unexercised territory.  Crash signature: a normally-
-  activated method's IC probe with x1=0 — some receiver slot zeroed
-  upstream.  NEXT: audit the codeStart ENTRY CONVENTION (what JIT_CALL /
-  the asm trampoline load into registers before entering JIT code —
-  x19=jitMethod, x20=j2jDepthInc, x28=nil?, x1..x3?) vs what the
-  saveless blr provides; the asm trampoline's Lcall_enter_callee is the
-  reference.  Prize: replaces 56B pool-save + prelude pop with an
-  sp-stash + machine call/ret for leaf callees (incc!) — the next big
-  per-call cost cut toward the ~5x cfib gap (per-call sequence ~55
-  instrs vs Cog ~12; the structural endgame is register-resident
-  state.sp a la Cog/SimStack).
+- Saveless path (PHARO_T1_CAN_SKIP_J2J_SAVE), state after e6bb3809:
+  - RETURN-HIJACK FIXED: the callee prelude tail-jumps past the
+    post-blr restore whenever j2jDepth > j2jEntryDepth (callers
+    mid-J2J-chain) -> sp-stash leaked 96B/call -> guard-page crash.
+    Fix: pin entryDepth = depth across the blr (stash pad slot [40]).
+  - Controlled single-site repro recipe: PHARO_T1_SAVELESS_MIN_COMPILE=N
+    emits saveless only in compiles seq>=N (find the target caller's
+    seq with PHARO_T1_TRACE_COMPILE; cfib lands ~#4699 in the bench
+    eval).  cfib->incc via saveless: CORRECT (val=2692537).
+  - PERF: as implemented it LOSES to the save-push (510 vs 412 ms 10x
+    cfib) — the 96B stash + entryDepth pin cost more than they save.
+    Diet plan: x25-x28 are callee-saved AND absent from JIT_CALL's
+    clobber list (JIT code preserves them; trampoline relies on
+    x23/x24 likewise) -> carry caller receiver/sp/tempBase/ip in
+    x25-x28 across the blr, shrink the stash to {x30, entryDepth} +
+    cross fields, and skip the OFF_RECEIVER/TEMPBASE/IP restores
+    (write-back from regs).  Target: beat the ~23-op save-push.
+  - FULL-SCOPE enablement floods 210-230 startup DNUs — a SECOND shape
+    bug (suspects: nArgs>0 retval/sp math, temp-bearing callees'
+    dynamic nil-fill, block callers).  Bisect with MIN_COMPILE +
+    selector skips; the unary-leaf shape is proven.
 - docs/jit-retrospective.md "Cog-speed MAP" numbers now stale for
   cross-method; tight-loop 2x-faster-than-Cog and self-rec 6x still hold.
 - **First-compile fail thrash: FIXED (c79b97ab + 9dbe6a49).**  All
