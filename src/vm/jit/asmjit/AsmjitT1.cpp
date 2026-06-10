@@ -2947,15 +2947,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     if (op == 0x50) { a.mov(x1, asmjit::Imm(smiBits(0))); emitPushReg(a, x1); return true; }
     if (op == 0x51) { a.mov(x1, asmjit::Imm(smiBits(1))); emitPushReg(a, x1); return true; }
     if (op == SistaV1::Pop) {
+#if PHARO_T1_SP_IN_X25
+        a.sub(x25, x25, asmjit::Imm(8));
+#else
         emitLoadSp(a, x2);
         a.sub(x2, x2, asmjit::Imm(8));
         emitStoreSp(a, x2);
+#endif
         return true;
     }
     // Dup: read sp[-1], push it.
     if (op == SistaV1::Dup) {
+#if PHARO_T1_SP_IN_X25
+        a.ldur(x1, ptr(x25, -8));
+#else
         emitLoadSp(a, x2);
         a.ldur(x1, ptr(x2, -8));
+#endif
         emitPushReg(a, x1);
         return true;
     }
