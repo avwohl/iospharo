@@ -104,6 +104,23 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   cascade dup'd it -> nextPutAll: DNU on ByteString.  Earlier variants
   (`,` to StdioStream) = the same class with the wrong object appearing
   one send earlier.  VALUES wrong at CORRECT depth at every check.
+  **DICTIONARY REPRO CHAIN (supersedes the MAX_IC attribution!):**
+  single-class DictionaryTest>>testIncludes FAILS with NO KNOBS AT ALL
+  (the suite-pair MAX_IC attribution was run-context coincidence: batch
+  200-class PASSES, single-class FAILS, same binary same env).
+  PHARO_NO_JIT -> PASS.  Bisect panel: NO_INLINE_J2J / NO_INLINE_GETTER
+  / NO_J2J / NO_TIER2 / NO_SISTA all FAIL; **PHARO_ASMJIT_T1_STUB_ONLY
+  -> PASS = the bug is in T1's REAL codegen**, independent of the J2J/
+  IC superstructure.  Compile-cap bisect: PASS<=3242 FAIL>=3246, but
+  the window selectors (slot-reflection family: write:to:,
+  instVarNamed:put:, slotNamed:ifFound:ifNone:,
+  instanceVariablesToKeep) don't cure individually with uncapped JIT —
+  cap-boundary not identity-stable (known trap, rediscovered).
+  IN FLIGHT: automated identity-stable halving bisect over all 1759
+  compiled selectors (/tmp/halve_dict.sh, result /tmp/halve_result.txt,
+  ~30s/run): finds the minimal skip set that cures.  Repro recipe:
+  printf 'DictionaryTest\n' > /tmp/sunit_class_names.txt; run
+  build/test_load_image Pharo.image; grep testIncludes detail.
   **MAX_IC FLIP GATE (suite pair on the final binary): MAX_IC=1
   RE-BREAKS the *DictionaryTest>>testIncludes family** (the exact 12
   tests the fold fix cured in default config; default run PASSES them,
