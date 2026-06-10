@@ -653,6 +653,28 @@ private:
     // chain-loop continuation.  Only meaningful when JIT is compiled in.
 public:
 #if PHARO_JIT_ENABLED
+#if PHARO_J2J_SAVE_V2
+    // V2 packed save (J2JSaveLayout.h): the resumeAddr slot carries
+    //   bits 0-47:  the resume code address
+    //   bits 48-59: bcOffset of the resume point (post-send), GC-stable
+    //   bits 60-63: the send's nArgs
+    // jitMethod derives from the address via codeZone.findMethodByPC;
+    // the resume continuation pops args + writes the x1 retval with
+    // static offsets.
+    struct J2JSave {
+        Oop* sp;                  // 0
+        Oop receiver;             // 8
+        Oop* tempBase;            // 16
+        uint64_t resumeAddr;      // 24  packed: addr | bcOff<<48 | nArgs<<60
+        static constexpr uint64_t kAddrMask = 0x0000FFFFFFFFFFFFULL;
+        uint8_t* addr() const {
+            return reinterpret_cast<uint8_t*>(resumeAddr & kAddrMask);
+        }
+        uint32_t bcOff() const { return (resumeAddr >> 48) & 0xFFF; }
+        uint32_t nArgs() const { return resumeAddr >> 60; }
+    };
+    static_assert(sizeof(J2JSave) == 32, "V2 packed save is 32 bytes");
+#else
     struct J2JSave {
         Oop* sp;                  // 0
         Oop receiver;             // 8
@@ -672,6 +694,7 @@ public:
                                   //     stores only bytes 0-51).
     };
     static_assert(sizeof(J2JSave) == 56, "J2JSave should be 56 bytes after reduction");
+#endif
     // Tie the struct to the shared asm layout header (J2JSaveLayout.h)
     // — the .S used to carry a hand-synced duplicate of these offsets.
     static_assert(JSV_SP == offsetof(J2JSave, sp), "JSV_SP");
