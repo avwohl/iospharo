@@ -4167,15 +4167,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // and enables saveless emit in default config.
                 if (g_debug.t1CanSkipJ2JSave) {
                     asmjit::Label normalJ2J = a.new_label();
-                    // Saveless emit is SELF-REC ONLY — it does not update
-                    // state.{method,literals,jitMethod,argCount}, which
-                    // are unchanged for self-rec but would differ for
-                    // cross-method.  Cross-method saveless would need
-                    // those updates plus a corresponding restore on
-                    // return.  Out-of-scope for Eδ.2c — bail to normal
-                    // save-push path which DOES handle cross-method
-                    // (xmethod-on only) via the relocated state update.
-                    a.tbz(x7, asmjit::Imm(56), normalJ2J);
+                    // Eδ.2d (2026-06-10): saveless now covers CROSS-METHOD
+                    // leaf callees too (xmethod-on builds).  Cross needs
+                    // state.{method,jitMethod,literals,argCount} set for
+                    // the callee and restored after — the stash grows to
+                    // 96 bytes and the callee-state update mirrors the E2
+                    // block.  canSkipJ2JSave callees are straight-line
+                    // (no sends, no mid-method bails) so they cannot GC,
+                    // yield, or exit-to-C++ during the blr.  In
+                    // xmethod-OFF builds (x13/calleeCM not loaded) the
+                    // path stays self-rec-only as before.
+                    const bool crossSaveless = xmethod;
+                    if (!crossSaveless) {
+                        a.tbz(x7, asmjit::Imm(56), normalJ2J);
+                    }
                     // x10 may not be loaded when xmethod is off and
                     // counters are off.  Load it from x9 (entryAddr).
                     if (!needCalleeJM) {
@@ -4183,101 +4188,147 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     }
                     a.ldrb(w14, ptr(x10, (int)offsetof(JITMethod, canSkipJ2JSave)));  // canSkipJ2JSave byte
                     a.cbz(w14, normalJ2J);
+                    // Exclude prim-prologue callees: their entry code
+                    // reads receiver/args from REGISTERS (the
+                    // register-reading-entry convention), which this blr
+                    // does not populate.  The save-push path handles them
+                    // via its own protocol.
+                    a.ldrb(w14, ptr(x10, (int)offsetof(JITMethod, hasPrimPrologue)));
+                    a.cbnz(w14, normalJ2J);
 
                     // === SAVELESS PATH ===
-                    // Save caller state to sp-stash (48 bytes).  Layout:
+                    // Save caller state to sp-stash.  Layout (96 bytes in
+                    // cross-capable mode, 48 self-rec-only):
                     //   [0]  = caller state.sp (pre-send)
                     //   [8]  = caller state.receiver
                     //   [16] = caller state.tempBase
                     //   [24] = caller state.ip
                     //   [32] = x30 (caller's lr — blr will overwrite)
                     //   [40] = (pad)
-                    a.sub(sp, sp, asmjit::Imm(48));
+                    //   cross only:
+                    //   [48] = caller state.method
+                    //   [56] = caller state.jitMethod
+                    //   [64] = caller state.literals
+                    //   [72] = caller state.argCount (32-bit, zext)
+                    const int stashSize = crossSaveless ? 96 : 48;
+                    a.sub(sp, sp, asmjit::Imm(stashSize));
                     a.ldp(x4, x5, ptr(x0, OFF_SP));      // x4=sp x5=recv
                     a.stp(x4, x5, ptr(sp, 0));
                     a.ldr(x6, ptr(x0, OFF_TEMPBASE));
                     a.ldr(x12, ptr(x0, OFF_IP));
                     a.stp(x6, x12, ptr(sp, 16));
                     a.str(x30, ptr(sp, 32));
+                    if (crossSaveless) {
+                        a.ldr(x6, ptr(x0, OFF_METHOD));
+                        a.ldr(x12, ptr(x0, OFF_JITMETHOD));
+                        a.stp(x6, x12, ptr(sp, 48));
+                        a.ldr(x6, ptr(x0, OFF_LITERALS));
+                        a.ldr(w12, ptr(x0, OFF_ARGCOUNT));
+                        a.stp(x6, x12, ptr(sp, 64));
+                    }
 
-                    // Telemetry: bump fire counter.
-                    a.mov(x14, asmjit::Imm(
-                        (uint64_t)&g_canSkipJ2JSave_fires));
-                    a.ldr(x15, ptr(x14));
-                    a.add(x15, x15, asmjit::Imm(1));
-                    a.str(x15, ptr(x14));
+                    // Telemetry: bump fire counter (debug builds only —
+                    // skip in production for the leaner call).
+                    if (inlineJ2JCounters) {
+                        a.mov(x14, asmjit::Imm(
+                            (uint64_t)&g_canSkipJ2JSave_fires));
+                        a.ldr(x15, ptr(x14));
+                        a.add(x15, x15, asmjit::Imm(1));
+                        a.str(x15, ptr(x14));
+                    }
 
-                    // Set up callee state.  Mirror the existing J2J push
-                    // callee-setup pattern (line ~3935+), simpler because
-                    // self-rec only (no xmethod state writes).
+                    // Set up callee state.
                     //   state.receiver = x1 (new recv, already in x1)
                     //   state.tempBase = caller_sp - nArgs*8
-                    //   state.ip       = calleeJM->bcStartCache (callee bcStart)
+                    //   state.ip       = calleeJM->bcStartCache
                     //   state.sp       = new tempBase + tempCount*8
-                    //                    (with nil-fill of extras)
+                    //                    (nil-fill extras, dynamic count)
+                    //   cross: state.{jitMethod,method,literals,argCount}
+                    // NOTE: x13 = calleeCM (loaded in the xmethod gate
+                    // block) — use x6/x12 as scratch, never x13.
                     a.str(x1, ptr(x0, OFF_RECEIVER));
-                    a.sub(x13, x4, asmjit::Imm(nArgs * 8));  // new tempBase
-                    a.str(x13, ptr(x0, OFF_TEMPBASE));
+                    a.sub(x6, x4, asmjit::Imm(nArgs * 8));   // new tempBase
+                    a.str(x6, ptr(x0, OFF_TEMPBASE));
                     a.ldr(x14, ptr(x10, (int)offsetof(JITMethod, bcStartCache)));
                     a.str(x14, ptr(x0, OFF_IP));
-                    // Compute new sp = caller_sp + extras*8.  For self-rec,
-                    // callee.tempCount == compile-time-known callerTempCount.
-                    int extras = callerTempCount - nArgs;
-                    if (extras > 0 && extras <= 8) {
-                        a.mov(x6, asmjit::Imm(nilBits));
-                        for (int k = 0; k < extras; k++) {
-                            a.str(x6, ptr(x13, (nArgs + k) * 8));
-                        }
-                        a.add(x6, x4, asmjit::Imm(extras * 8));
-                        a.str(x6, ptr(x0, OFF_SP));
-                    } else if (extras == 0) {
-                        // new sp = caller's sp (unchanged); state.sp not
-                        // touched yet.
-                    } else {
-                        // Large extras: dynamic nil-fill loop.
+                    if (crossSaveless) {
+                        a.str(x10, ptr(x0, OFF_JITMETHOD));
+                        a.str(x13, ptr(x0, OFF_METHOD));
+                        a.add(x12, x13, asmjit::Imm(16));    // literals = CM+16
+                        a.str(x12, ptr(x0, OFF_LITERALS));
+                        a.mov(w12, asmjit::Imm(nArgs));
+                        a.str(w12, ptr(x0, OFF_ARGCOUNT));
+                        // Dynamic nil-fill: callee tempCount from its JM.
                         asmjit::Label initLoop = a.new_label();
                         asmjit::Label initDone = a.new_label();
-                        a.add(x14, x13, asmjit::Imm(nArgs * 8));
-                        a.add(x15, x13, asmjit::Imm(callerTempCount * 8));
-                        a.mov(x6, asmjit::Imm(nilBits));
+                        a.ldrb(w15, ptr(x10, (int)offsetof(JITMethod, tempCount)));
+                        a.cmp(w15, asmjit::Imm(nArgs));
+                        a.b_ls(initDone);                    // no extras
+                        a.add(x14, x6, asmjit::Imm(nArgs * 8));
+                        a.lsl(w15, w15, asmjit::Imm(3));
+                        a.add(x15, x6, x15);
+                        a.mov(x12, asmjit::Imm(nilBits));
                         a.bind(initLoop);
+                        a.str(x12, ptr_post(x14, 8));
                         a.cmp(x14, x15);
-                        a.b_hs(initDone);
-                        a.str(x6, ptr(x14));
-                        a.add(x14, x14, asmjit::Imm(8));
-                        a.b(initLoop);
-                        a.bind(initDone);
+                        a.b_lo(initLoop);
                         a.str(x15, ptr(x0, OFF_SP));
+                        a.bind(initDone);
+                        // extras==0 case: state.sp stays caller_sp ==
+                        // tempBase + nArgs*8 (correct).
+                    } else {
+                        // Self-rec: callee.tempCount == compile-time
+                        // callerTempCount.
+                        int extras = callerTempCount - nArgs;
+                        if (extras > 0 && extras <= 8) {
+                            a.mov(x12, asmjit::Imm(nilBits));
+                            for (int k = 0; k < extras; k++) {
+                                a.str(x12, ptr(x6, (nArgs + k) * 8));
+                            }
+                            a.add(x12, x4, asmjit::Imm(extras * 8));
+                            a.str(x12, ptr(x0, OFF_SP));
+                        } else if (extras != 0) {
+                            asmjit::Label initLoop = a.new_label();
+                            asmjit::Label initDone = a.new_label();
+                            a.add(x14, x6, asmjit::Imm(nArgs * 8));
+                            a.add(x15, x6, asmjit::Imm(callerTempCount * 8));
+                            a.mov(x12, asmjit::Imm(nilBits));
+                            a.bind(initLoop);
+                            a.cmp(x14, x15);
+                            a.b_hs(initDone);
+                            a.str(x12, ptr(x14));
+                            a.add(x14, x14, asmjit::Imm(8));
+                            a.b(initLoop);
+                            a.bind(initDone);
+                            a.str(x15, ptr(x0, OFF_SP));
+                        }
                     }
 
                     // blr to callee entry.  x9 already holds entryAddr.
-                    // x30 gets overwritten with post-blr address; the
-                    // callee's `ret` (via normalReturn) brings us back.
                     a.blr(x9);
 
                     // === Post-return: restore caller state ===
-                    // x0 (state) and x30 (overwritten before blr, restored
-                    // from sp-stash next) are the only regs we need
-                    // post-blr — restore everything from sp-stash.
                     a.ldp(x4, x5, ptr(sp, 0));     // saved sp + receiver
                     a.ldp(x6, x12, ptr(sp, 16));   // saved tempBase + ip
                     a.ldr(x30, ptr(sp, 32));
-                    a.add(sp, sp, asmjit::Imm(48));
-
-                    // Write back state.{receiver,tempBase,ip}.  state.sp
-                    // computed below from saved x4.  state.method/jitMethod/
-                    // literals/argCount are unchanged across self-rec.
                     a.str(x5, ptr(x0, OFF_RECEIVER));
                     a.str(x6, ptr(x0, OFF_TEMPBASE));
                     a.str(x12, ptr(x0, OFF_IP));
+                    if (crossSaveless) {
+                        a.ldp(x6, x12, ptr(sp, 48));   // method + jitMethod
+                        a.str(x6, ptr(x0, OFF_METHOD));
+                        a.str(x12, ptr(x0, OFF_JITMETHOD));
+                        a.ldp(x6, x12, ptr(sp, 64));   // literals + argCount
+                        a.str(x6, ptr(x0, OFF_LITERALS));
+                        a.str(w12, ptr(x0, OFF_ARGCOUNT));
+                    }
+                    a.add(sp, sp, asmjit::Imm(stashSize));
 
-                    // Read retval from OFF_RETVAL (callee's normalReturn
-                    // wrote it).  Apply send-return semantics: new sp =
-                    // caller_sp - nArgs*8; retval written at new_sp-8
-                    // (the receiver slot).
-                    a.ldr(x13, ptr(x0, OFF_RETVAL));
+                    // Retval semantics: new sp = caller_sp - nArgs*8;
+                    // retval written at new_sp-8 (the receiver slot).
+                    a.ldr(x12, ptr(x0, OFF_RETVAL));
                     a.sub(x14, x4, asmjit::Imm(nArgs * 8));
-                    a.stur(x13, ptr(x14, -8));
+                    a.stur(x12, ptr(x14, -8));
                     a.str(x14, ptr(x0, OFF_SP));
 
                     // Clear exitReason (callee set EXIT_RETURN).
