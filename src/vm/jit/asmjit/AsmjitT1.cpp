@@ -3879,8 +3879,26 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // Heap receiver path.  Arity gates (see below): getter
                     // 0-arg, setter 1-arg — a stale/racy IC extra must not
                     // hijack a wrong-arity send.
-                    if (g_debug.t1InlineGetter && nArgs == 0) {
-                        a.tbnz(x7, asmjit::Imm(63), tryGetter);
+                    // PHARO_T1_NO_GETTER_IN_J2J: bisect knob — disable
+                    // ONLY this dispatch-A-side entry into the shared
+                    // tryGetter label (the plain-probe entries stay on).
+                    // tryGetter assumes x2 == SP and x1 == receiver; the
+                    // dispatch-A path runs inline-prim/J2J attempts
+                    // between the block entry (which sets them) and this
+                    // tbnz — a bail path that clobbers x2/x1 makes the
+                    // getter write its result through garbage (the
+                    // MAX_IC=1 wrong-object residual: disabling only
+                    // this entry cured 30/30).  FIX: re-establish the
+                    // contract from state before taking the branch —
+                    // 2 ldrs on the getter-hit path only.
+                    if (g_debug.t1InlineGetter && nArgs == 0
+                            && !GET_DEBUG_BOOL(PHARO_T1_NO_GETTER_IN_J2J)) {
+                        asmjit::Label notGetter63 = a.new_label();
+                        a.tbz(x7, asmjit::Imm(63), notGetter63);
+                        a.ldr(x2, ptr(x0, OFF_SP));
+                        a.ldur(x1, ptr(x2, rcvrOffsetBytes));
+                        a.b(tryGetter);
+                        a.bind(notGetter63);
                     }
                     if (g_debug.t1InlineSetter && nArgs == 1) {
                         a.tbnz(x7, asmjit::Imm(62), trySetter);
