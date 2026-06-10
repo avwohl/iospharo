@@ -55,12 +55,26 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   emitSyncSpToState (no-op at 0) sits before all 47 arm64 rets.
   Validated per batch: eval, benchFib, sp-depth 1.82M checks clean.
   **REMAINING BEFORE FLIPPING PHARO_T1_SP_IN_X25=1:**
-  (1) BLR-site audit inside the T1 emit: helpers that READ state.sp
-      need emitSyncSpToState before the BLR (block_value_prep,
-      verify_getter already syncs?, atrec); helpers that can CHANGE
-      state.sp need an x25 RELOAD after (jit_rt_t1_sista_dispatch —
-      a Sista splice runs arbitrary code!, basicNew/basicAt push?).
-      grep `blr` in the emit for the full list.
+  (1) BLR-site audit — DONE (inventory below); the mechanical
+      insertion of emitSyncSpToState (before) / emitReloadSpFromState
+      (after x0-restore) remains.  All 24 emit BLR sites, classified:
+      MUST sync-before + RELOAD-after (sp can CHANGE):
+        5467 jit_rt_t1_sista_dispatch (runs a whole splice),
+        5920/5954 jit_rt_basic_new_with_arg/basic_new (alloc ->
+        scavenge -> prepareForGC reads AND now rebuilds sp),
+        2383/2503/2626 jit_rt_primsize/primat/primatput_ptr (pop/push
+        through state.sp).
+      Sync-before only (READ sp, never change):
+        4107 inline_block_value_prep, 5372 check_setter_bounds,
+        5433 setter_write_barrier, 6620 sync_globals.
+      Diagnostics (knob-gated, off by default — convert for hygiene
+      or assert knob+flip incompatible):
+        277 shadow_verify, 313/5404 store_ring, 2849 atrec_entry,
+        5304 atrec_getter, 5332 verify_getter, 3612 trace_mod,
+        4387 xmethod_log, 4783 bail_gate_log, 4821 log_selfrec_push,
+        6191 verify_inline_at, 6437 trace_idh, 4593 (unidentified —
+        read before flip).
+      emitReloadSpFromState helper is COMMITTED (no-op at 0).
   (2) **TIER-INTERACTION CONSTRAINT (discovered in the sweep): x25
       residency is an asmjit-T1-only contract.**  Stencil-compiled
       methods + Sista splices/lowered code keep sp in memory.  br
