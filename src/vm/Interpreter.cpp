@@ -219,6 +219,37 @@ extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val
 // push): op/ipOff = (sp - tempBase)/8 — the operand-stack depth at entry, which
 // MUST be 0 (empty stack).  Nonzero = the entry left OFF_SP one slot too high
 // (receiver-not-consumed), the off-by-one root.  fp1=sp, ctx=tempBase.
+// Verify-on-fire for the T1 inline getter (PHARO_VERIFY_GETTER):
+// called from the emit right after the inline slot read.  v1 checks
+// the classification's slotIdx against the live receiver's slot count
+// — a poisoned extra word (J2J address bits, foreign-site
+// classification) usually carries an index far beyond the object.
+// Reports are capped; provenance: receiver class, slotIdx, extra word,
+// the caller JITMethod and its selector.
+extern "C" void jit_rt_verify_getter(uint64_t statep, uint64_t recv,
+                                     uint64_t val, uint64_t extra) {
+    using pharo::Oop;
+    if (!statep || !recv || (recv & 7) != 0 || recv < 0x10000) return;
+    auto* st = reinterpret_cast<pharo::jit::JITState*>(statep);
+    pharo::ObjectHeader* ro = Oop::fromRawBits(recv).asObjectPtr();
+    uint64_t slotIdx = extra & 0xFFFF;
+    if (slotIdx < ro->slotCount()) return;
+    static int vgReports = 0;
+    if (++vgReports > 20) return;
+    auto* jm = reinterpret_cast<pharo::jit::JITMethod*>(
+        reinterpret_cast<uintptr_t>(st->jitMethod) & ~uintptr_t(1));
+    fprintf(stderr,
+            "[VERIFY-GETTER #%d] slotIdx=%llu >= slotCount=%llu "
+            "recv=0x%llx cls=%u extra=0x%llx val=0x%llx callerJM=%p "
+            "callerCM=0x%llx\n",
+            vgReports, (unsigned long long)slotIdx,
+            (unsigned long long)ro->slotCount(),
+            (unsigned long long)recv, ro->classIndex(),
+            (unsigned long long)extra, (unsigned long long)val,
+            (void*)jm,
+            (unsigned long long)(jm ? jm->compiledMethodOop : 0));
+}
+
 extern "C" void jit_rt_atrec_entry(uint64_t statep) {
     if (!g_atRecOn || statep == 0) return;
     pharo::jit::JITState* st = reinterpret_cast<pharo::jit::JITState*>(statep);

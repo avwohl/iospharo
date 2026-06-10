@@ -47,6 +47,8 @@
 extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val,
                                     uint64_t bcOff);
 extern "C" void jit_rt_atrec_entry(uint64_t statep);
+extern "C" void jit_rt_verify_getter(uint64_t statep, uint64_t recv,
+                                     uint64_t val, uint64_t extra);
 // Set true in compileViaAsmjit ONLY when compiling asTuple under
 // FINDNODE_WATCH, so the recorder BLR is emitted at just asTuple's 2 getter
 // sites (no global code bloat).  Read at emit time in the inline getter.
@@ -5156,6 +5158,30 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.mov(x2, x6);    // arg2 = val (x0=state, x1=recv already in place)
                 a.mov(x3, asmjit::Imm((uint64_t)bcOffsetFromMethObj));  // arg3 = bcOff
                 a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_atrec_getter));
+                a.blr(x9);
+                a.ldr(x0,  ptr(asmjit::a64::sp, 0));
+                a.ldr(x1,  ptr(asmjit::a64::sp, 8));
+                a.ldr(x2,  ptr(asmjit::a64::sp, 16));
+                a.ldr(x6,  ptr(asmjit::a64::sp, 24));
+                a.ldr(x7,  ptr(asmjit::a64::sp, 32));
+                a.ldr(x30, ptr(asmjit::a64::sp, 40));
+                a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
+            }
+            // PHARO_VERIFY_GETTER (emit-time gate): BLR a helper that
+            // flags slotIdx >= receiver slotCount — a poisoned extra
+            // word (J2J address bits / foreign-site classification).
+            // Same save/restore shape as the trace block above.
+            if (GET_DEBUG_BOOL(PHARO_VERIFY_GETTER)) {
+                a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(48));
+                a.str(x0,  ptr(asmjit::a64::sp, 0));
+                a.str(x1,  ptr(asmjit::a64::sp, 8));
+                a.str(x2,  ptr(asmjit::a64::sp, 16));
+                a.str(x6,  ptr(asmjit::a64::sp, 24));
+                a.str(x7,  ptr(asmjit::a64::sp, 32));
+                a.str(x30, ptr(asmjit::a64::sp, 40));
+                a.mov(x2, x6);    // arg2 = val (x0=state, x1=recv in place)
+                a.mov(x3, x7);    // arg3 = the IC extra word
+                a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_verify_getter));
                 a.blr(x9);
                 a.ldr(x0,  ptr(asmjit::a64::sp, 0));
                 a.ldr(x1,  ptr(asmjit::a64::sp, 8));
