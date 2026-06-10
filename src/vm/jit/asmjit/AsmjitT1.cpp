@@ -2284,13 +2284,18 @@ static inline void emitStoreTempBase(asmjit::a64::Assembler& a,
 
 void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
     using namespace asmjit::a64;
-    // sp-residency: routed through the helpers (byte-identical at
-    // PHARO_T1_SP_IN_X25=0; becomes mov/mov at =1, dropping the
-    // ldr+str OFF_SP round-trip on EVERY push).
+#if PHARO_T1_SP_IN_X25
+    // sp is register-resident: a push is ONE post-index store.  The
+    // old shape (mov x2,x25; str; add; mov x25,x2) survives at many
+    // inline copies — converting those needs a per-site x2-liveness
+    // audit (deferred to the simStack work, WIP.md 2026-06-11c).
+    a.str(valReg, ptr_post(x25, 8));
+#else
     emitLoadSp(a, x2);
     a.str(valReg, ptr(x2));
     a.add(x2, x2, asmjit::Imm(8));
     emitStoreSp(a, x2);
+#endif
 }
 
 // ARM64 mirror of emitPrimProlog_x86.  See that function for context.
