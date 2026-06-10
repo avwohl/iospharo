@@ -129,13 +129,27 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
     `[:a :b | a <lit0>: b]` = `40 41 90 5e` (sortBlock family!).
   INTERACTION bug: ONLY-387 passes, FIRST_N=387 fails, partner
   boundary sharp at #193.  PHARO_NO_BLOCK_BIT does NOT cure.
-  NEXT: identify the two blocks' home methods (print outer/home via a
-  one-off probe or image-side: find CompiledBlock literals), determine
-  the call topology (who values both blocks — detect:/mergeSort?),
-  then diff T1's emit for block 387's cond-jump chain (mustBeBoolean
-  bail path in BLOCKS — canBailMidMethod + block-frame interaction is
-  virgin territory; the historical sortStructs corruption was this
-  family).  Repro: printf 'DictionaryTest\n' >
+  **HOME METHODS RESOLVED (T1-BLOCK trace now prints home=):**
+  - 0x3004320a8 (#193) = the comparator block in **OCParser>>
+    addCommentsTo:** (`[:a :b | a <lit0>: b]`);
+  - 0x3003101a0 (bisect-#387; #386 on the new binary — attempt
+    indices shift per binary, OOPS are old-space-stable, grep by oop)
+    = the 43-byte type-tolerant comparison chain in
+    **Dictionary>>keysSortedSafely** (the classic sortBlock).
+  BOTH ARE SORTBLOCKS -> this is the ORIGINAL sortStructs/mergeSort
+  corruption family (mergeFirst `by` temp, SettingTree sortBlock DNU)
+  with a 30s deterministic repro and both players named.  MECHANISM
+  HYPOTHESIS to check first: a block-value dispatch path that caches
+  per-CLASS (FullBlockClosure classIndex is the SAME for every block!)
+  and replays block A's compiled code for closure B when two compiled
+  sortBlocks flow through one value:value: send site (mergeSort's).
+  Audit: the value:/value:value: IC route (BLOCK_VALUE bit 59
+  consumption in the chain loop + stencils + jit_rt_inline_block_value
+  _prep) — verify every path re-derives the CompiledBlock FROM THE
+  RECEIVER CLOSURE at runtime rather than from cached bits.
+  (PHARO_NO_BLOCK_BIT alone does NOT cure — the consuming path may be
+  elsewhere, e.g. OSR/tryJITActivation on CompiledBlock or the
+  primitiveFullClosureValue JIT fast path.)  Repro: printf 'DictionaryTest\n' >
   /tmp/sunit_class_names.txt; run build/test_load_image Pharo.image;
   grep testIncludes /tmp/sunit_test_detail.txt (30 s, deterministic,
   no env knobs needed; JIT-off/STUB_ONLY/skip-all-blocks all PASS).

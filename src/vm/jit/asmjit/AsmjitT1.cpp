@@ -7288,11 +7288,38 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 reject = true;
             }
             if (g_debug.t1BlocksTrace) {
+                // Resolve the block's HOME method selector: a
+                // CompiledBlock's last literal is its outer code
+                // (CompiledMethod, or another CompiledBlock — follow
+                // up to 3 levels).
+                std::string home = "?";
+                {
+                    Oop cur = compiledMethod;
+                    for (int hop = 0; hop < 3; hop++) {
+                        ObjectHeader* co = cur.asObjectPtr();
+                        Oop chdr = co->slotAt(0);
+                        if (!chdr.isSmallInteger()) break;
+                        size_t cnl = (size_t)(chdr.asSmallInteger() & 0x7FFF);
+                        if (cnl == 0 || cnl >= co->slotCount()) break;
+                        Oop outer = co->slotAt(cnl);
+                        if (!outer.isObject() || outer.rawBits() < 0x10000) break;
+                        ObjectHeader* oo = outer.asObjectPtr();
+                        if (!oo->isCompiledMethod()) break;
+                        if (oo->classIndex() == interp.compiledBlockClassIndex()) {
+                            cur = outer;            // nested block — keep walking
+                            continue;
+                        }
+                        home = memory.selectorOf(outer)
+                             + " (" + interp.classNameOfMethod(outer) + ")";
+                        break;
+                    }
+                }
                 fprintf(stderr,
-                        "[T1-BLOCK] #%d oop=0x%llx bcLen=%zu %s bc=",
+                        "[T1-BLOCK] #%d oop=0x%llx bcLen=%zu %s home=%s bc=",
                         blockCount,
                         (unsigned long long)compiledMethod.rawBits(),
-                        bcLenRaw, reject ? "REJECT" : "accept");
+                        bcLenRaw, reject ? "REJECT" : "accept",
+                        home.c_str());
                 for (size_t bi = 0; bi < bcLenRaw && bi < 16; bi++)
                     fprintf(stderr, "%02x ", bc[bi]);
                 fprintf(stderr, "\n");
