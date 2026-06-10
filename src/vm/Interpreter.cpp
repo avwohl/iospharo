@@ -22554,6 +22554,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
         state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
         state.j2jDepth = 0;
+        // Keep the prelude-pop base in sync with the depth reset — a
+        // stale j2jEntryDepth > 0 wedges the return prelude (pops only
+        // while depth > entryDepth) and leaks saves.
+        state.j2jEntryDepth = 0;
         state.j2jTotalCalls = 0;
         state.yieldCountdown = 1000;
     };
@@ -23500,6 +23504,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.yieldCountdown = 1000;
             state.exitReason = jit::ExitNone;
             state.j2jDepth = 0;
+            // Reset the prelude-pop base together with depth — a stale
+            // j2jEntryDepth > 0 here would wedge the return prelude
+            // (pops only while depth > entryDepth) and leak saves.
+            state.j2jEntryDepth = 0;
             state.j2jTotalCalls = 0;
             state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
             state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
@@ -23735,6 +23743,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
                         state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
                         state.j2jDepth = 0;
+                        // Keep the prelude-pop base in sync with the
+                        // depth reset (stale entryDepth wedges pops).
+                        state.j2jEntryDepth = 0;
                         state.j2jTotalCalls = 0;
                         state.yieldCountdown = 1000;
 

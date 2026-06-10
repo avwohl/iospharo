@@ -3999,15 +3999,31 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     } else {
                         a.tbnz(x4, asmjit::Imm(16), j2jBailSelf2);  // has prim → bail
                     }
-                    // JITMethod::numICEntries at offset 28 (uint16).
+                    // Callee send-site count gate.  Historical form:
+                    // numICEntries == 0 (leaf callees only) — guarded the
+                    // materialize-bail wrong-result bug (stale
+                    // state.j2jDepth, fixed 2026-06-09).
+                    // PHARO_T1_XMETHOD_MAX_IC=N admits callees with up to
+                    // N IC sites for A/B of lever (c).
                     a.ldrh(w4, ptr(x10, (int)offsetof(JITMethod, numICEntries)));
-                    if (inlineJ2JCounters) {
-                        asmjit::Label ok = a.new_label();
-                        a.cbz(w4, ok);
-                        emitGateBail((uint64_t)&g_xgate_bail_numic);
-                        a.bind(ok);
-                    } else {
-                        a.cbnz(w4, j2jBailSelf2);
+                    {
+                        const int maxIC = GET_DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC);
+                        if (inlineJ2JCounters) {
+                            asmjit::Label ok = a.new_label();
+                            if (maxIC > 0) {
+                                a.cmp(w4, asmjit::Imm(maxIC));
+                                a.b_ls(ok);
+                            } else {
+                                a.cbz(w4, ok);
+                            }
+                            emitGateBail((uint64_t)&g_xgate_bail_numic);
+                            a.bind(ok);
+                        } else if (maxIC > 0) {
+                            a.cmp(w4, asmjit::Imm(maxIC));
+                            a.b_hi(j2jBailSelf2);
+                        } else {
+                            a.cbnz(w4, j2jBailSelf2);
+                        }
                     }
                     // isStubOnEntry — stubs never invoke the return
                     // prelude → save would leak.

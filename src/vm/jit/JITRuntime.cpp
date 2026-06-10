@@ -2271,7 +2271,18 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
         return;
     }
 
+    // Fence the callee off from pending inline-J2J saves: its return
+    // prelude pops while j2jDepth > j2jEntryDepth, and we need ExitReturn
+    // back HERE (the C-local restore below) — without this, a callee
+    // with sends pops the pending outer save, tail-resumes a different
+    // method inside this JIT_CALL, and the restore clobbers that state.
+    // Mirrors the chain-loop pattern at Interpreter.cpp ~22264.
+    int32_t savedEntryDepth = state->j2jEntryDepth;
+    state->j2jEntryDepth = state->j2jDepth;
+
     JIT_CALL(entryAddr, state);
+
+    state->j2jEntryDepth = savedEntryDepth;
 
     if (__builtin_expect(state->exitReason == ExitReturn, 1)) {
         interp->incJ2JStencilReturns();
