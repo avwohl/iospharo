@@ -21096,8 +21096,23 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             bool eagerCompileTarget = (primIdx > 0 && primIdx < 200)
                 || (!g_debug.noEagerBlockValue
                     && (primIdx == 207 || primIdx == 209));
+            // Negative cache: this eager compile runs on EVERY
+            // ExitSendCached send to the method, so a prim method whose
+            // compile bails (unsupported prim prologue) re-ran the full
+            // asmjit pipeline PER SEND — 83K failed attempts in a bare
+            // startup, 1.5M+ per SUnit batch, all g_failedUnsuppPrim.
+            // This was the dominant compile-thrash path (the queue path
+            // is per-drain and already cached).
+            if (eagerCompileTarget && jitRuntime_.initialCompileFailedContains(
+                    cachedMethod.rawBits())) {
+                eagerCompileTarget = false;
+            }
             if (eagerCompileTarget) {
                 target = jitRuntime_.compiler()->compile(cachedMethod);
+                if (!target) {
+                    jitRuntime_.initialCompileFailedInsert(
+                        cachedMethod.rawBits());
+                }
                 if (target && !target->hasPrimPrologue) {
                     // For block-value prims (207/209), asmjit-T1 has no
                     // prim prologue but we still want BLOCK_VALUE_BIT set
