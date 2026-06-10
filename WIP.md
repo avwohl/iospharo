@@ -116,9 +116,15 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   instVarNamed:put:, slotNamed:ifFound:ifNone:,
   instanceVariablesToKeep) don't cure individually with uncapped JIT —
   cap-boundary not identity-stable (known trap, rediscovered).
-  IN FLIGHT: automated identity-stable halving bisect over all 1759
-  compiled selectors (/tmp/halve_dict.sh, result /tmp/halve_result.txt,
-  ~30s/run): finds the minimal skip set that cures.  Repro recipe:
+  Halving over 1759 method selectors SANITY-FAILED (skip-all doesn't
+  cure) while STUB_ONLY cures -> the corruptor is a **CompiledBlock**
+  (blocks compile selector-less, unskippable by selector list).
+  CONFIRMED: PHARO_T1_BLOCKS_SKIP_FROM=0/TO=9999999 (skip all block
+  compiles) -> PASS.  IN FLIGHT: /tmp/block_bisect.sh — binary-search
+  the block index via the FROM/TO range knobs, then single-block skip
+  at the boundary -> THE corrupting block, then dump its bytecodes
+  (PHARO_T1_INLINE_J2J_DUMP_BC / T1-BLOCK trace) and diff T1's emit
+  against interp semantics for its ops.  Repro recipe:
   printf 'DictionaryTest\n' > /tmp/sunit_class_names.txt; run
   build/test_load_image Pharo.image; grep testIncludes detail.
   **MAX_IC FLIP GATE (suite pair on the final binary): MAX_IC=1
