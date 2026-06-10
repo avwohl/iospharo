@@ -104,6 +104,23 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   cascade dup'd it -> nextPutAll: DNU on ByteString.  Earlier variants
   (`,` to StdioStream) = the same class with the wrong object appearing
   one send earlier.  VALUES wrong at CORRECT depth at every check.
+  catch16/17/18 (ExtJump fix, pendingICPatch GC-clear, icBuffer
+  ownership guard — all real bugs, all committed): residual STILL
+  reproduces (~rep 6-16).  GETTER CLASSIFICATION MACHINERY now fully
+  mapped (upgradeICToJ2J ~21436): bit63|slotIdx derives from
+  cachedMethod's QUICK-PRIM index (264+N), keyed by receiver =
+  stackPointer_[-(sendArgCount+1)].  TWO REMAINING CANDIDATES:
+  (a) stale cachedMethod oop at classification time (wrong method's
+  header read -> wrong slotIdx, valid-looking entry);
+  (b) stale state.sendArgCount at the upgrade call (Interpreter.cpp
+  20035) -> WRONG RECEIVER fetched -> wrong class lookupKey -> getter
+  classification poisoned onto an unrelated class.
+  NEXT INSTRUMENT (decisive): verify-on-fire — knob-gated BLR in the
+  T1 inline-getter emit (arm64 twin of the x86 block at ~2080) calling
+  a C++ helper that re-derives (recv class -> selector via selBitsArray
+  -> lookup -> quick-prim classify) and compares slotIdx + re-read
+  value; mismatch prints the IC entry + both classifications.  Catches
+  the misfire with full provenance wherever it happens.
   catch15 (methodMap-rebuild-per-scavenge fix in): CAUGHT at rep 25 —
   the patchJITICAfterSend guard hole was REAL (fix committed, sound)
   but the getter poisoning has ANOTHER path.  NEXT hygiene candidates:
