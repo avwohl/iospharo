@@ -44,12 +44,21 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   V2 save push; saveless tail variant is the B5 upside).  Startup:
   ~1.4K links, ~290 live.  Crash lesson recorded: the patch map is
   IN MAP_JIT — rec.flags writes must stay inside the write window.
-- **NEXT**: B3 soak (full-suite batched run >= the 836-class
-  watermark, -O0 AND RelWithDebInfo, per-test diff vs knob-off) ->
-  B4 default-ON flip (PHARO_T1_NO_PATCHED_SENDS opt-out) -> B5
-  saveless/self-rec tail variants (the perf upside) + MAX_IC widening
-  via link-time gates -> B6 prim-111 #class classifier (the o-class
-  suite-scale lever, mostly orthogonal).
+- **B3 SOAK PASSED + B4 FLIPPED (2026-06-10 evening)**: soak = 16372
+  tests knob-on, VERIFY silent, 24 fails = 5 known-environmental + a
+  pre-existing extended-region cluster (ClyFilter/ClyAsyncQuery 14,
+  CodeSimulation 2, OCClosure, OCClassBuilder) reproduced IDENTICALLY
+  knob-off (single-class A/B) -> zero knob-induced regressions.
+  **PMS is DEFAULT-ON** (opt-out PHARO_T1_NO_PATCHED_SENDS=1).
+  Default-config gates: Dictionary 205/205, cfib value correct,
+  ~1.1K startup links.  Default-config 200-class suite gate running.
+  Also landed: §14 #5 fix (upgradeICToJ2J owner re-validation after
+  the eager compile — confirmed WAF window), §14 #4 comment,
+  compact() tripwire.
+- **NEXT**: B5 saveless/self-rec tail variants + MAX_IC widening via
+  link-time gates (perf upside; two design workflows in flight:
+  B6 prim-111 #class classifier wf_b266f2c3, simStack wf_8ad1bdf7 —
+  implement from their outputs) -> quiet-machine bench re-baseline.
 - (was) **B2 plan — kept for reference:**
   Implementation order inside the batch:
   1. linkSendSite body: §5 predicate (incl. extras bits 60 set /
