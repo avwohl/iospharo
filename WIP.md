@@ -81,7 +81,16 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   V1-only; forEachRoot's save.receiver visit is offset-compatible.
   Batch 2 edits: dual J2JSave struct (V2 = 4 fields/32B), materialize
   unpack path, gate the GC pool walks + .ipOffset uses (2 sites),
-  then batch 3 = the emit (push/prelude/resume continuations).  CONTRACT DETAIL for batch 1+ (discovered sizing the
+  then batch 3 = the emit (push/prelude/resume continuations).
+  2a DONE (GC walks gated).  **COMPLETION STRATEGY for 2b-6: make the
+  struct dual FIRST, then build with the switch flipped LOCALLY — the
+  compiler enumerates every remaining V1-field reference as an error;
+  write each site's V2 side (push packing: resumeAddr | bcOff<<48 |
+  nArgs<<60; materialize unpack; MAT_LOG; jit_t2_send pushes in
+  JITRuntime.cpp; the 22xxx C++ push; null-resume save.ip readers),
+  flip back to 0, commit the fully-gated code green, repeat until a
+  V2=1 build compiles — then the emit batch, trampoline JSV_* paths
+  (already layout-driven via the shared header), checker, and flip.**  CONTRACT DETAIL for batch 1+ (discovered sizing the
   C++ pops): under V2 the RESUME SITE does the arg-pop and expects
   the RETVAL IN x1 — so the C++ chain-loop pops that JIT_CALL a
   resumeAddr need a JIT_RESUME_CALL macro variant that passes
