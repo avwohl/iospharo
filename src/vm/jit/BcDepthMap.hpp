@@ -29,7 +29,12 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace pharo {
+
+class ObjectMemory;
+
 namespace jit {
 
 struct JITState;
@@ -40,6 +45,22 @@ struct JITState;
 // with operands still on the stack (Send, SendCached, MustBool,
 // ArithOverflow, BlockCreate, ArrayCreate, Yield).
 void spDepthCheck(JITState& state, const char* where);
+
+// Same invariant for INTERPRETED frames, checked at send dispatch:
+// catches a JIT return that delivered a wrong sp into an interp frame
+// at the very next interpreted send.  ipPastSend = instructionPointer_
+// after operand fetch (backscanned to the send opcode); sp/fp are the
+// interpreter registers (sp one-past-TOS, fp at the receiver slot).
+// Out-of-range/ambiguous sites are skipped silently (blocks, odd ips).
+void spDepthCheckInterpSend(uint64_t methodOopBits,
+                            const uint8_t* ipPastSend,
+                            void* spRaw, void* fpRaw, int argCount,
+                            pharo::ObjectMemory* memory,
+                            const char* where);
+
+// Interp-side maps are keyed by method oop bits — invalidate after a
+// moving GC (call from Interpreter's afterGC).
+void bcDepthMapsClearAfterGC();
 
 // Print check/mismatch/unmappable counters (called from dumpJITStats).
 void spDepthStatsDump();

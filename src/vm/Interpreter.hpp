@@ -3311,6 +3311,17 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
             if (m->compiledMethodOop != 0) {
                 Oop& methodOop = *reinterpret_cast<Oop*>(&m->compiledMethodOop);
                 visitor(methodOop);
+                // Refresh the bcStart cache from the (possibly moved) oop.
+                // The xmethod inline-J2J emit loads state.ip from
+                // JITMethod::bcStartCache (AsmjitT1 callee-setup + push
+                // paths); the cache was set once at compile time, so a
+                // scavenge/compaction that moves the CompiledMethod (e.g.
+                // a fresh eden DoIt) left it pointing at the OLD address
+                // — materialized frames then resumed interpreting garbage
+                // bytes.  Recompute is idempotent (mark phases leave the
+                // oop unchanged) and the zone is writable here (above).
+                m->bcStartCache = m->compiledMethodOop
+                    + (2 + (m->methodHeader & 0x7FFF)) * 8;
             }
             if (m->selectorOop != 0) {
                 Oop& selOop = *reinterpret_cast<Oop*>(&m->selectorOop);

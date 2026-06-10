@@ -39,6 +39,8 @@ struct DepthEntry {
 };
 
 std::unordered_map<const JITMethod*, DepthEntry> g_depthMaps;
+// Interp-side maps keyed by method oop bits; cleared after moving GC.
+std::unordered_map<uint64_t, DepthEntry> g_interpDepthMaps;
 
 uint64_t g_checks = 0;
 uint64_t g_mismatches = 0;
@@ -46,6 +48,8 @@ uint64_t g_mapsBuilt = 0;
 uint64_t g_unmappable = 0;
 uint64_t g_ipOutOfRange = 0;
 uint64_t g_unreachableOffset = 0;
+uint64_t g_interpChecks = 0;
+uint64_t g_interpMismatches = 0;
 
 // Arg counts for special-selector sends 0x70-0x7F, from the image's
 // SpecialSelectorsArray [sel0, argc0, sel1, argc1, ...] entries 16-31.
@@ -222,6 +226,41 @@ bool computeDepthMap(const uint8_t* bc, size_t bcLen,
     return true;
 }
 
+// Fill `e` with the depth map for the CompiledMethod at oopBits.
+// Leaves e.unmappable = true on any failure.
+void buildEntryForMethodOop(uint64_t oopBits, DepthEntry& e) {
+    e.methodOopBits = oopBits;
+    e.unmappable = true;
+    e.depth.clear();
+
+    Oop methodOop = Oop::fromRawBits(oopBits);
+    if (!methodOop.isObject() || methodOop.rawBits() < 0x10000) {
+        g_unmappable++;
+        return;
+    }
+    ObjectHeader* methObj = methodOop.asObjectPtr();
+    Oop headerOop = methObj->slotAt(0);
+    if (!headerOop.isSmallInteger()) { g_unmappable++; return; }
+    int64_t headerBits = headerOop.asSmallInteger();
+    size_t numLits = static_cast<size_t>(headerBits & 0x7FFF);
+    size_t bcStartOff = (1 + numLits) * 8;
+    size_t totalBytes = methObj->slotCount() * 8;
+    uint8_t fmt = static_cast<uint8_t>(methObj->format());
+    size_t unusedBytes = (fmt >= 24) ? static_cast<size_t>(fmt - 24) : 0;
+    if (bcStartOff + unusedBytes >= totalBytes) { g_unmappable++; return; }
+    size_t bcLen = totalBytes - bcStartOff - unusedBytes;
+    if (bcLen > 0xFFFF) { g_unmappable++; return; }
+    const uint8_t* bc = methObj->bytes() + bcStartOff;
+
+    g_mapsBuilt++;
+    if (!computeDepthMap(bc, bcLen, e.depth)) {
+        e.depth.clear();
+        g_unmappable++;
+        return;
+    }
+    e.unmappable = false;
+}
+
 // Build (or rebuild after GC-move/recycle) the depth map for jm.
 // Returns nullptr if the method is unmappable.
 const DepthEntry* depthEntryFor(const JITMethod* jm) {
@@ -231,37 +270,8 @@ const DepthEntry* depthEntryFor(const JITMethod* jm) {
         return it->second.unmappable ? nullptr : &it->second;
     }
     DepthEntry& e = g_depthMaps[jm];
-    e.methodOopBits = jm->compiledMethodOop;
-    e.unmappable = true;
-    e.depth.clear();
-
-    Oop methodOop = Oop::fromRawBits(jm->compiledMethodOop);
-    if (!methodOop.isObject() || methodOop.rawBits() < 0x10000) {
-        g_unmappable++;
-        return nullptr;
-    }
-    ObjectHeader* methObj = methodOop.asObjectPtr();
-    Oop headerOop = methObj->slotAt(0);
-    if (!headerOop.isSmallInteger()) { g_unmappable++; return nullptr; }
-    int64_t headerBits = headerOop.asSmallInteger();
-    size_t numLits = static_cast<size_t>(headerBits & 0x7FFF);
-    size_t bcStartOff = (1 + numLits) * 8;
-    size_t totalBytes = methObj->slotCount() * 8;
-    uint8_t fmt = static_cast<uint8_t>(methObj->format());
-    size_t unusedBytes = (fmt >= 24) ? static_cast<size_t>(fmt - 24) : 0;
-    if (bcStartOff + unusedBytes >= totalBytes) { g_unmappable++; return nullptr; }
-    size_t bcLen = totalBytes - bcStartOff - unusedBytes;
-    if (bcLen > 0xFFFF) { g_unmappable++; return nullptr; }
-    const uint8_t* bc = methObj->bytes() + bcStartOff;
-
-    g_mapsBuilt++;
-    if (!computeDepthMap(bc, bcLen, e.depth)) {
-        e.depth.clear();
-        g_unmappable++;
-        return nullptr;
-    }
-    e.unmappable = false;
-    return &e;
+    buildEntryForMethodOop(jm->compiledMethodOop, e);
+    return e.unmappable ? nullptr : &e;
 }
 
 }  // namespace
@@ -373,15 +383,122 @@ void spDepthCheck(JITState& state, const char* where) {
     }
 }
 
+void spDepthCheckInterpSend(uint64_t methodOopBits,
+                            const uint8_t* ipPastSend,
+                            void* spRaw, void* fpRaw, int argCount,
+                            ObjectMemory* memory,
+                            const char* where) {
+    if (!GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK)) return;
+    if (!methodOopBits || !ipPastSend || !spRaw || !fpRaw || !memory) return;
+    if (!loadSpecialArgCounts(memory)) return;
+
+    auto it = g_interpDepthMaps.find(methodOopBits);
+    if (it == g_interpDepthMaps.end()) {
+        DepthEntry& fresh = g_interpDepthMaps[methodOopBits];
+        buildEntryForMethodOop(methodOopBits, fresh);
+        it = g_interpDepthMaps.find(methodOopBits);
+    }
+    const DepthEntry& e = it->second;
+    if (e.unmappable) return;
+
+    Oop methodOop = Oop::fromRawBits(methodOopBits);
+    ObjectHeader* methObj = methodOop.asObjectPtr();
+    Oop headerOop = methObj->slotAt(0);
+    if (!headerOop.isSmallInteger()) return;
+    int64_t headerBits = headerOop.asSmallInteger();
+    // Primitive methods: the failure path can leave an extra slot (the
+    // <primitive:error:> error value) the temp count doesn't predict —
+    // skip them rather than special-case the layout.
+    if ((headerBits >> 16) & 1) return;
+    size_t numLits = static_cast<size_t>(headerBits & 0x7FFF);
+    int numTemps = static_cast<int>((headerBits >> 18) & 0x3F);
+    const uint8_t* bcStart = methObj->bytes() + (1 + numLits) * 8;
+
+    // Backscan from the post-fetch ip to the send opcode (1-byte plain
+    // send vs 2-byte ExtSend).  Skip silently when out of range or
+    // ambiguous — sendSelector is reached from block frames and JIT
+    // bails where method/ip don't pair like this.
+    int64_t bcOffPast = ipPastSend - bcStart;
+    int64_t off1 = bcOffPast - 1, off2 = bcOffPast - 2;
+    bool plain = off1 >= 0
+        && static_cast<size_t>(off1) < e.depth.size()
+        && SistaV1::isSendBytecode(bcStart[off1])
+        && SistaV1::bytecodeLength(bcStart[off1]) == 1
+        && e.depth[off1] >= 0;
+    bool ext = off2 >= 0
+        && static_cast<size_t>(off2) < e.depth.size()
+        && (bcStart[off2] == SistaV1::ExtSend
+            || bcStart[off2] == SistaV1::ExtSuperSend)
+        && e.depth[off2] >= 0;
+    if (plain == ext) return;
+    int64_t sendOff = plain ? off1 : off2;
+    int16_t d = e.depth[sendOff];
+    if (d < argCount + 1) return;   // operands must cover recv+args
+
+    // sendSelector is also reached from internal resends (arith
+    // coercion adaptTo*, value-retry, DNU) whose argCount differs from
+    // the bytecode site's — require the site's own arg count to match
+    // or skip.  (For prefixed ExtSend the naked operand&7 mismatches
+    // and skips too, which is fine.)
+    {
+        namespace SV1 = SistaV1;
+        uint8_t sop = bcStart[sendOff];
+        int siteArgs;
+        if (SV1::isArithSelector(sop)) siteArgs = 1;
+        else if (SV1::isSpecialSelector(sop))
+            siteArgs = g_specialArgs[sop - SV1::SpecialSendBase];
+        else if (SV1::isSend0(sop)) siteArgs = 0;
+        else if (SV1::isSend1(sop)) siteArgs = 1;
+        else if (SV1::isSend2(sop)) siteArgs = 2;
+        else siteArgs = bcStart[sendOff + 1] & 7;   // naked ExtSend
+        if (siteArgs != argCount) return;
+    }
+
+    g_interpChecks++;
+    // fp points at the receiver slot; temps at fp+1; sp one-past-TOS.
+    Oop* fp = static_cast<Oop*>(fpRaw);
+    Oop* sp = static_cast<Oop*>(spRaw);
+    Oop* expected = fp + 1 + numTemps + d;
+    if (sp != expected) {
+        g_interpMismatches++;
+        // Dedup per (method, site, delta): a handful of JIT-bail sites
+        // report with a half-synced framePointer_ every time they run
+        // — without dedup they exhaust the report cap and mask new
+        // sites (the actual corruption victims).
+        static std::unordered_set<uint64_t> reportedSites;
+        uint64_t siteKey = methodOopBits ^ (static_cast<uint64_t>(sendOff) << 48)
+            ^ (static_cast<uint64_t>(static_cast<int64_t>(sp - expected) & 0xFF) << 40);
+        if (!reportedSites.insert(siteKey).second) return;
+        static int imReports = 0;
+        if (++imReports <= 40) {
+            fprintf(stderr,
+                    "[SP-DEPTH-INTERP #%llu] %s sel-args=%d sel=%s bcOff=%lld "
+                    "op=0x%02x depth=%d sp=%p expected=%p delta=%lld words "
+                    "fp=%p numTemps=%d\n",
+                    (unsigned long long)g_interpMismatches, where, argCount,
+                    memory->selectorOf(methodOop).c_str(),
+                    (long long)sendOff, bcStart[sendOff], (int)d,
+                    (void*)sp, (void*)expected,
+                    (long long)(sp - expected), (void*)fp, numTemps);
+        }
+    }
+}
+
+void bcDepthMapsClearAfterGC() {
+    g_interpDepthMaps.clear();
+}
+
 void spDepthStatsDump() {
     if (!GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK)) return;
     fprintf(stderr,
             "  sp-depth: checks=%llu mismatches=%llu (ip-oor=%llu unreach=%llu) "
-            "maps=%llu unmappable=%llu\n",
+            "maps=%llu unmappable=%llu interp: checks=%llu mismatches=%llu\n",
             (unsigned long long)g_checks, (unsigned long long)g_mismatches,
             (unsigned long long)g_ipOutOfRange,
             (unsigned long long)g_unreachableOffset,
-            (unsigned long long)g_mapsBuilt, (unsigned long long)g_unmappable);
+            (unsigned long long)g_mapsBuilt, (unsigned long long)g_unmappable,
+            (unsigned long long)g_interpChecks,
+            (unsigned long long)g_interpMismatches);
 }
 
 }  // namespace jit
@@ -392,6 +509,9 @@ void spDepthStatsDump() {
 namespace pharo { namespace jit {
 struct JITState;
 void spDepthCheck(JITState&, const char*) {}
+void spDepthCheckInterpSend(uint64_t, const uint8_t*, void*, void*, int,
+                            pharo::ObjectMemory*, const char*) {}
+void bcDepthMapsClearAfterGC() {}
 void spDepthStatsDump() {}
 }}
 

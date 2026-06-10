@@ -2948,6 +2948,14 @@ void Interpreter::interpret() {
                 goto after_send0_diag;
             }
         }
+        // sp-desync detector, interp side: only bytecode-driven sends
+        // are checkable (VM-initiated sendSelector calls push their own
+        // operands onto the interrupted frame and false-positive).
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)) {
+            jit::spDepthCheckInterpSend(method_.rawBits(), instructionPointer_,
+                                        stackPointer_, framePointer_, 0,
+                                        &memory_, "interp-send0");
+        }
         sendSelector(literal(bytecode & 0x0F), 0);
         if (__builtin_expect(!running_, 0)) goto cg_exit;
     after_send0_diag:
@@ -2955,11 +2963,21 @@ void Interpreter::interpret() {
     }
 
     op_send1:
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)) {
+            jit::spDepthCheckInterpSend(method_.rawBits(), instructionPointer_,
+                                        stackPointer_, framePointer_, 1,
+                                        &memory_, "interp-send1");
+        }
         sendSelector(literal(bytecode & 0x0F), 1);
         if (__builtin_expect(!running_, 0)) goto cg_exit;
         DISPATCH_NEXT();
 
     op_send2:
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)) {
+            jit::spDepthCheckInterpSend(method_.rawBits(), instructionPointer_,
+                                        stackPointer_, framePointer_, 2,
+                                        &memory_, "interp-send2");
+        }
         sendSelector(literal(bytecode & 0x0F), 2);
         if (__builtin_expect(!running_, 0)) goto cg_exit;
         DISPATCH_NEXT();
@@ -5413,6 +5431,14 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     case 0x84: case 0x85: case 0x86: case 0x87:
     case 0x88: case 0x89: case 0x8A: case 0x8B:
     case 0x8C: case 0x8D: case 0x8E: case 0x8F:
+        // sp-desync detector, interp side: only bytecode-driven sends
+        // are checkable (VM-initiated sendSelector calls push their own
+        // operands onto the interrupted frame and false-positive).
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)) {
+            jit::spDepthCheckInterpSend(method_.rawBits(), instructionPointer_,
+                                        stackPointer_, framePointer_, 0,
+                                        &memory_, "interp-send0");
+        }
         sendSelector(literal(bytecode & 0x0F), 0);
         break;
 
@@ -5421,6 +5447,11 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     case 0x94: case 0x95: case 0x96: case 0x97:
     case 0x98: case 0x99: case 0x9A: case 0x9B:
     case 0x9C: case 0x9D: case 0x9E: case 0x9F:
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)) {
+            jit::spDepthCheckInterpSend(method_.rawBits(), instructionPointer_,
+                                        stackPointer_, framePointer_, 1,
+                                        &memory_, "interp-send1");
+        }
         sendSelector(literal(bytecode & 0x0F), 1);
         break;
 
@@ -5429,6 +5460,11 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     case 0xA4: case 0xA5: case 0xA6: case 0xA7:
     case 0xA8: case 0xA9: case 0xAA: case 0xAB:
     case 0xAC: case 0xAD: case 0xAE: case 0xAF:
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)) {
+            jit::spDepthCheckInterpSend(method_.rawBits(), instructionPointer_,
+                                        stackPointer_, framePointer_, 2,
+                                        &memory_, "interp-send2");
+        }
         sendSelector(literal(bytecode & 0x0F), 2);
         break;
 
@@ -18185,6 +18221,12 @@ void Interpreter::afterGC() {
     // Shadow-slot detector: rehash (keys were GC-updated in place).
     if (GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS)) {
         shadowRehashAfterGC();
+    }
+
+    // sp-depth detector: interp-side maps are keyed by method oop bits,
+    // which a moving GC invalidates — drop them (rebuilt on demand).
+    if (GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK)) {
+        jit::bcDepthMapsClearAfterGC();
     }
 
     // Rebuild J2J pool saves. raw ip from the offsets stashed in
