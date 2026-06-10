@@ -107,15 +107,29 @@ under load is the canary).
   popStoreRecvVar interaction with a J2J-entered frame too.
   LOGGER FIXED (928df628): the XMETHOD_LOG wrapper now saves x0-x13+x30
   (was clobbering x1-x6 = receiver+args -> every logged call corrupted,
-  the origin of the "xmethod corrupts state" lore).  XMETHOD_LOG is now
-  SAFE: the failing config runs under it without crashing, reproduces
-  the genuine silent-eval-loss, and dumps the last-64-fires ring at
-  exit.  Next session: combine lldb stop (watchpoint/breakpoint at a
-  chosen point) + ring dump + per-fire fprintf (first 64 only — lift
-  the cap in jit_rt_xmethod_log if full enumeration is needed) to
-  enumerate the 1-IC-callee fires and bisect by callee selector via
-  PHARO_J2J_SKIP_SELECTORS (fill-path skip list, Interpreter.cpp
-  ~20908).
+  the origin of the "xmethod corrupts state" lore).
+  **SELECTOR-LEVEL BISECT DONE (2026-06-10, identity-stable):**
+  PHARO_J2J_SKIP_SELECTORS halving over the 429 with-sends+filled
+  callees converged on ONE selector: **initializeHandle:offset:**
+  (ExternalData family: `self initialize. handle := aHandle.
+  startOffset := aNumber - 1` — FIRST bytecode is a send -> immediate
+  mid-method C++ exit on every cold call).  Skipping ONLY its fills
+  cures the full failing config (ok + DNU=0).  Same selector the
+  original fire-bisect named — that identification was genuine.
+  **ROUTE NARROWED:** with the fixed XMETHOD_LOG, the failing run shows
+  only 8 dispatch-A inline fires, NONE to this callee -> the corruptor
+  route is the C++ J2J driver / stencil consumption of its bit-60 IC
+  entry (ExitJ2JCall driver, Interpreter.cpp ~19302) — which has NO
+  numICEntries gate and runs in the DEFAULT config too.  MAX_IC=1
+  likely only shifts scheduling to expose it; the default config may
+  carry the same latent bug.  NEXT: lift the 200-line PHARO_J2J_MAT_LOG
+  cap (Interpreter.cpp materializeJ2JSaveIntoFrame) and/or conditional-
+  break the ExitJ2JCall driver on calleeCM==initializeHandle's oop in
+  the DET run; inspect the mid-callee-exit (its first `self initialize`
+  send) -> materialize -> resume -> return sequence.
+  GOTCHA: PHARO_J2J_ONLY_SELECTORS kills ALL IC fills for other
+  selectors (0% IC hit rate) — runs under it DNU with ANY selector and
+  are NOT a valid minimal repro.
   Recipe (reusable): DET_SCHED makes the failure a deterministic
   function of the fire cap -> binary-search the cap (~20 runs), then
   watchpoint the cap-bail counter in the LAST PASSING run; x10=calleeJM
