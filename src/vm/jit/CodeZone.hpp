@@ -51,11 +51,13 @@
 #include "JITConfig.hpp"
 #include "JITMethod.hpp"
 #include "PlatformJIT.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+#include <vector>
 
 #if PHARO_JIT_ENABLED
 
@@ -108,6 +110,8 @@ public:
         firstMethod_ = nullptr;
         lastMethod_ = nullptr;
         freeList_ = nullptr;
+        pcIndex_.clear();
+        pcIndexDirty_ = true;
 
         return true;
     }
@@ -126,6 +130,8 @@ public:
             firstMethod_ = nullptr;
             lastMethod_ = nullptr;
             freeList_ = nullptr;
+            pcIndex_.clear();
+            pcIndexDirty_ = true;
         }
     }
 
@@ -252,6 +258,7 @@ public:
 
         methodCount_--;
         bytesUsed_ -= size;
+        pcIndexDirty_ = true;
 
         // Add to free list
         addToFreeList(reinterpret_cast<uint8_t*>(method), size);
@@ -390,17 +397,34 @@ public:
 
     JITMethod* firstMethod() const { return firstMethod_; }
 
-    // Find JIT method containing the given PC address (for crash diagnostics)
+    // Find JIT method containing the given PC address.  HOT under the
+    // J2J-save V2 protocol: both C++ chain-loop pops and the eviction
+    // pinner resolve every save's caller through here, so it must not
+    // be a linear walk (a defensive linear findMethodByPC scan was once
+    // 93% of tryResume CPU; the V2 flip made the same walk time out
+    // BehaviorTest>>testAllReferencesTo).  Binary search over a lazily
+    // rebuilt address-sorted snapshot of the (already address-ordered)
+    // method list.  Headers precede code and methods never overlap, so
+    // the containing method is the last one whose header is <= pc.
     JITMethod* findMethodByPC(uint64_t pc) const {
         uint8_t* addr = reinterpret_cast<uint8_t*>(pc);
         if (addr < zoneStart_ || addr >= zoneEnd_) return nullptr;
-        JITMethod* m = firstMethod_;
-        while (m) {
-            uint8_t* start = m->codeStart();
-            uint8_t* end = start + m->codeSize;
-            if (addr >= start && addr < end) return m;
-            m = m->nextInZone;
+        if (pcIndexDirty_) {
+            pcIndex_.clear();
+            pcIndex_.reserve(methodCount_);
+            for (JITMethod* m = firstMethod_; m; m = m->nextInZone)
+                pcIndex_.push_back(m);
+            pcIndexDirty_ = false;
         }
+        auto it = std::upper_bound(
+            pcIndex_.begin(), pcIndex_.end(), addr,
+            [](uint8_t* a, JITMethod* m) {
+                return a < reinterpret_cast<uint8_t*>(m);
+            });
+        if (it == pcIndex_.begin()) return nullptr;
+        JITMethod* m = *(it - 1);
+        uint8_t* start = m->codeStart();
+        if (addr >= start && addr < start + m->codeSize) return m;
         return nullptr;
     }
 
@@ -416,6 +440,11 @@ public:
     }
 
 private:
+    // Address-sorted snapshot of the method list for findMethodByPC's
+    // binary search; invalidated by linkMethod/freeMethod, rebuilt lazily.
+    mutable std::vector<JITMethod*> pcIndex_;
+    mutable bool pcIndexDirty_ = true;
+
     uint8_t* zoneStart_ = nullptr;
     uint8_t* zoneEnd_ = nullptr;
     uint8_t* freePtr_ = nullptr;
@@ -536,6 +565,8 @@ private:
         else firstMethod_ = method;
         if (curr) curr->prevInZone = method;
         else lastMethod_ = method;
+
+        pcIndexDirty_ = true;
     }
 };
 
