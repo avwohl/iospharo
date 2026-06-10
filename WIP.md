@@ -26,6 +26,19 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   admission (MAX_IC sweep is FLAT on microbenches but untested at
   suite scale) and via patched sites (which inline the dispatch too).
   MAX_IC sweep on cfib: flat (31-34ms) — its callee already inlines.
+- **SEND-FLOW ACCOUNTING on cfib (build-opt, V2, telemetry knob):**
+  ~9M IC hits -> 4.83M took dispatch-A inline-J2J (94.5% of inline
+  ATTEMPTS) but **~5M sends still exited to the trampoline**
+  (Ltramp_call count; returns 51K only — returns flow through the
+  inline prelude).  I.e. ~half of IC-HIT sends fail the dispatch-A
+  gate chain after the hit (extra_no_bit60=723K + xmethod gate bails
+  280K + the rest never reach the gate) and pay the C++ hop.  The hop
+  itself is cheap (~6ns amortized) — the gap is DISTRIBUTED: probe
+  load-latency + the long dispatch tbnz chain + hop, ~3.5x of Cog's
+  patched-immediate + direct-call.  This is exactly what the
+  patched-IC design must collapse: ONE compare + ONE direct branch
+  for the monomorphic case (no icBuffer loads, no dispatch chain).
+  Design workflow in flight: docs/patched-ic-design.md incoming.
 
 ## CHECKPOINT 2026-06-11 — sp-residency LIVE; gap = 3.5x
 
