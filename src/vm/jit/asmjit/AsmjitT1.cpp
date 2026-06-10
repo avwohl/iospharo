@@ -4912,6 +4912,26 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 //   original [x6, 0]   -> post-index advance to x6+56
                 //   original [x6, 16]  -> ptr(x6, -40)  (x6+56-40 = x6+16)
                 //   original [x6, 40]  -> ptr(x6, -16)  (x6+56-16 = x6+40)
+#if PHARO_J2J_SAVE_V2
+                // V2 packed push: 2 stps + 1 movk.  x14 = adr(endOfSend)
+                // from above; movk packs bcOff|nArgs<<12 into bits 48-63
+                // in ONE instruction (bcOff is the POST-send offset
+                // relative to bcStart = globalIdx + 1 for 1-byte sends).
+                // Sites that don't fit the 12/4-bit packing must not
+                // emit the inline-J2J fast path at all (checked by the
+                // gate that guards this whole block at flip time).
+                {
+                    uint32_t resumeBcOff = (uint32_t)globalIdx + 1;
+                    uint16_t packed16 =
+                        (uint16_t)(((nArgs & 0xF) << 12) | (resumeBcOff & 0xFFF));
+                    a.movk(x14, packed16, 48);
+                }
+                emitLoadSp(a, x15);
+                a.ldr(x4, ptr(x0, OFF_RECEIVER));
+                a.stp(x15, x4, ptr_post(x6, JSV_SIZE)); // sp+recv; cursor += 32
+                emitLoadTempBase(a, x15);
+                a.stp(x15, x14, ptr(x6, -16));          // tempBase + packedResume
+#else
                 emitLoadSp(a, x15);                // sp (sweep: was ldp sp+recv)
                 a.ldr(x4, ptr(x0, OFF_RECEIVER)); // receiver
                 a.stp(x15, x4, ptr_post(x6, JSV_SIZE));  // [old x6, 0]; x6 += save size
@@ -4974,6 +4994,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.stp(x14, x15, ptr(x6, -16));
                     }
                 }
+#endif  // PHARO_J2J_SAVE_V2 (push variant)
 
                 // E2 2026-05-24: cross-method state.{jitMethod,method,
                 // literals,argCount} update.  Relocated from BEFORE the
