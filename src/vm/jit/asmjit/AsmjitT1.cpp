@@ -2871,14 +2871,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     if (op == 0x50) { a.mov(x1, asmjit::Imm(smiBits(0))); emitPushReg(a, x1); return true; }
     if (op == 0x51) { a.mov(x1, asmjit::Imm(smiBits(1))); emitPushReg(a, x1); return true; }
     if (op == SistaV1::Pop) {
-        a.ldr(x2, ptr(x0, OFF_SP));
+        emitLoadSp(a, x2);
         a.sub(x2, x2, asmjit::Imm(8));
-        a.str(x2, ptr(x0, OFF_SP));
+        emitStoreSp(a, x2);
         return true;
     }
     // Dup: read sp[-1], push it.
     if (op == SistaV1::Dup) {
-        a.ldr(x2, ptr(x0, OFF_SP));
+        emitLoadSp(a, x2);
         a.ldur(x1, ptr(x2, -8));
         emitPushReg(a, x1);
         return true;
@@ -2915,9 +2915,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // popStoreTemp N (0xD0..0xD7): pop TOS, store into tempBase[N].
     if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) {
         int n = op - SistaV1::PopStoreTempBase;
-        a.ldr(x2, ptr(x0, OFF_SP));
+        emitLoadSp(a, x2);
         a.sub(x2, x2, asmjit::Imm(8));
-        a.str(x2, ptr(x0, OFF_SP));
+        emitStoreSp(a, x2);
         a.ldr(x1, ptr(x2));
         a.ldr(x4, ptr(x0, OFF_TEMPBASE));
         a.str(x1, ptr(x4, n * 8));
@@ -2940,9 +2940,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldr(w5, ptr(x4));                 // low 32 bits of header
         a.tst(w5, asmjit::Imm(0x800000));   // bit 23 = ImmutableBit
         a.b_ne(bail);
-        a.ldr(x2, ptr(x0, OFF_SP));
+        emitLoadSp(a, x2);
         a.sub(x2, x2, asmjit::Imm(8));
-        a.str(x2, ptr(x0, OFF_SP));
+        emitStoreSp(a, x2);
         a.ldr(x1, ptr(x2));
         a.str(x1, ptr(x4, OBJ_SLOT_0 + n * 8));
         emitStoreRingLog(a, n);
@@ -3098,7 +3098,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.sub(x5, x5, x12);
         }
         a.stur(x1, ptr(x5, -8));                    // write retval @ new_sp-8
-        a.str(x5, ptr(x0, OFF_SP));
+        emitStoreSp(a, x5);
 
         // Clear exitReason so callers don't see stale EXIT_RETURN.
         // Use wzr directly to skip the mov+str pair.
@@ -3145,9 +3145,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     if (op == 0x5A) { emitReturnPtr(OFF_FALSEOOP); return true; }
     if (op == 0x5B) { emitReturnImm(nilBits);      return true; }
     if (op == SistaV1::ReturnTop) {
-        a.ldr(x2, ptr(x0, OFF_SP));
+        emitLoadSp(a, x2);
         a.sub(x2, x2, asmjit::Imm(8));
-        a.str(x2, ptr(x0, OFF_SP));
+        emitStoreSp(a, x2);
         a.ldr(x1, ptr(x2));      // x1 = retval (TOS)
         emitJ2JReturnPreludeIfEnabled();
         a.str(x1, ptr(x0, OFF_RETVAL));
@@ -3166,7 +3166,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
 
-        a.ldr(x2, ptr(x0, OFF_SP));
+        emitLoadSp(a, x2);
         a.ldr(x1, ptr(x2, -16));
         a.ldr(x4, ptr(x2, -8));
         // SmI tag check (5 ops): (a^b) | (a-1) low 3 bits = 0 iff
@@ -3184,7 +3184,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.sub(x1, x1, asmjit::Imm(1));
             a.str(x1, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
-            a.str(x2, ptr(x0, OFF_SP));
+            emitStoreSp(a, x2);
         } else if (op == 0x61) { // -
             // a_bits - b_bits = (a-b)*8 → add 1 to retag.
             a.subs(x1, x1, x4);
@@ -3192,7 +3192,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.add(x1, x1, asmjit::Imm(1));
             a.str(x1, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
-            a.str(x2, ptr(x0, OFF_SP));
+            emitStoreSp(a, x2);
         } else if (op == 0x68) { // *
             // Untag both: a = (a_bits >> 3), b = (b_bits >> 3) using ASR.
             // smulh + mul; overflow if hi != asr(lo, 63).
@@ -3209,7 +3209,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.orr(x1, x1, asmjit::Imm(1));
             a.str(x1, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
-            a.str(x2, ptr(x0, OFF_SP));
+            emitStoreSp(a, x2);
         } else {
             // Comparisons: csel false/true on signed flags.  Compare
             // tagged bits directly — monotonic transform preserves
@@ -3229,7 +3229,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             a.str(x5, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
-            a.str(x2, ptr(x0, OFF_SP));
+            emitStoreSp(a, x2);
         }
         a.b(end);
 
@@ -3293,7 +3293,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.add(x5, x5, asmjit::Imm(5));
             a.str(x5, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
-            a.str(x2, ptr(x0, OFF_SP));
+            emitStoreSp(a, x2);
             a.b(end);
             a.bind(notFloat);
         }
@@ -3368,13 +3368,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.ldr(x6, ptr(x0, OFF_TRUEOOP));
             a.str(x6, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
-            a.str(x2, ptr(x0, OFF_SP));
+            emitStoreSp(a, x2);
             a.b(end);
             a.bind(resultFalse);
             a.ldr(x6, ptr(x0, OFF_FALSEOOP));
             a.str(x6, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
-            a.str(x2, ptr(x0, OFF_SP));
+            emitStoreSp(a, x2);
             a.b(end);
             a.bind(bsBail);
         }
@@ -3394,7 +3394,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     if (isPhase3BitOp(op)) {
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
-        a.ldr(x2, ptr(x0, OFF_SP));
+        emitLoadSp(a, x2);
         a.ldr(x1, ptr(x2, -16));
         a.ldr(x4, ptr(x2, -8));
         a.eor(x5, x1, x4);
@@ -3406,7 +3406,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         else            a.orr (x1, x1, x4);   // bitOr:
         a.str(x1, ptr(x2, -16));
         a.sub(x2, x2, asmjit::Imm(8));
-        a.str(x2, ptr(x0, OFF_SP));
+        emitStoreSp(a, x2);
         a.b(end);
         a.bind(bail);
         a.ldr(x5, ptr(x0, OFF_METHOD));
@@ -3423,7 +3423,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     if (isPhase3MulOp(op)) {
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
-        a.ldr(x2, ptr(x0, OFF_SP));
+        emitLoadSp(a, x2);
         a.ldr(x1, ptr(x2, -16));
         a.ldr(x4, ptr(x2, -8));
         a.eor(x5, x1, x4);
@@ -3446,7 +3446,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.orr(x1, x1, asmjit::Imm(SMI_TAG));
         a.str(x1, ptr(x2, -16));
         a.sub(x2, x2, asmjit::Imm(8));
-        a.str(x2, ptr(x0, OFF_SP));
+        emitStoreSp(a, x2);
         a.b(end);
         a.bind(bail);
         a.ldr(x5, ptr(x0, OFF_METHOD));
@@ -3464,7 +3464,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
         asmjit::Label rightShift = a.new_label();
-        a.ldr(x2, ptr(x0, OFF_SP));
+        emitLoadSp(a, x2);
         a.ldr(x1, ptr(x2, -16));
         a.ldr(x4, ptr(x2, -8));
         a.eor(x5, x1, x4);
@@ -3491,7 +3491,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.orr(x1, x1, asmjit::Imm(SMI_TAG));
         a.str(x1, ptr(x2, -16));
         a.sub(x2, x2, asmjit::Imm(8));
-        a.str(x2, ptr(x0, OFF_SP));
+        emitStoreSp(a, x2);
         a.b(end);
         a.bind(rightShift);
         // b in [-62, -1].  Negate.
@@ -3504,7 +3504,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.orr(x1, x1, asmjit::Imm(SMI_TAG));
         a.str(x1, ptr(x2, -16));
         a.sub(x2, x2, asmjit::Imm(8));
-        a.str(x2, ptr(x0, OFF_SP));
+        emitStoreSp(a, x2);
         a.b(end);
         a.bind(bail);
         a.ldr(x5, ptr(x0, OFF_METHOD));
@@ -3529,7 +3529,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
         asmjit::Label noAdjust = a.new_label();
-        a.ldr(x2, ptr(x0, OFF_SP));
+        emitLoadSp(a, x2);
         a.ldr(x1, ptr(x2, -16));
         a.ldr(x4, ptr(x2, -8));
         // SmI tag check
@@ -3595,7 +3595,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.orr(x1, x1, asmjit::Imm(SMI_TAG));
         a.str(x1, ptr(x2, -16));
         a.sub(x2, x2, asmjit::Imm(8));
-        a.str(x2, ptr(x0, OFF_SP));
+        emitStoreSp(a, x2);
         a.b(end);
         a.bind(bail);
         a.ldr(x5, ptr(x0, OFF_METHOD));
@@ -3632,7 +3632,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label takeBranch   = a.new_label();
         asmjit::Label fallThrough  = a.new_label();
 
-        a.ldr(x2, ptr(x0, OFF_SP));
+        emitLoadSp(a, x2);
         a.ldur(x1, asmjit::a64::ptr(x2, -8));   // x1 = TOS (not popped)
 
         // ldp loads TRUEOOP+FALSEOOP in one instruction.  Both adjacent
@@ -3649,12 +3649,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
         a.bind(takeBranch);
         a.sub(x2, x2, asmjit::Imm(8));
-        a.str(x2, ptr(x0, OFF_SP));
+        emitStoreSp(a, x2);
         a.b(bcLabels[targetIdx]);
 
         a.bind(fallThrough);
         a.sub(x2, x2, asmjit::Imm(8));
-        a.str(x2, ptr(x0, OFF_SP));
+        emitStoreSp(a, x2);
         a.b(bcLabels[globalIdx + 1]);
 
         a.bind(mustBoolBail);
@@ -3743,7 +3743,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label j2jBailHeap2 = a.new_label();
             asmjit::Label endOfSend = a.new_label();
 
-            a.ldr(x2, ptr(x0, OFF_SP));
+            emitLoadSp(a, x2);
             int rcvrOffsetBytes = -8 * (nArgs + 1);
             a.ldur(x1, ptr(x2, rcvrOffsetBytes));   // x1 = receiver
             a.and_(x4, x1, asmjit::Imm(0x7));
@@ -3982,7 +3982,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             && GET_DEBUG_BOOL(PHARO_T1_GETTER_IN_J2J)) {
                         asmjit::Label notGetter63 = a.new_label();
                         a.tbz(x7, asmjit::Imm(63), notGetter63);
-                        a.ldr(x2, ptr(x0, OFF_SP));
+                        emitLoadSp(a, x2);
                         a.ldur(x1, ptr(x2, rcvrOffsetBytes));
                         a.b(tryGetter);
                         a.bind(notGetter63);
@@ -4522,7 +4522,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.str(x12, ptr_post(x14, 8));
                         a.cmp(x14, x15);
                         a.b_lo(initLoop);
-                        a.str(x15, ptr(x0, OFF_SP));
+                        emitStoreSp(a, x15);
                         a.bind(initDone);
                         // extras==0 case: state.sp stays caller_sp ==
                         // tempBase + nArgs*8 (correct).
@@ -4536,7 +4536,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                                 a.str(x12, ptr(x6, (nArgs + k) * 8));
                             }
                             a.add(x12, x4, asmjit::Imm(extras * 8));
-                            a.str(x12, ptr(x0, OFF_SP));
+                            emitStoreSp(a, x12);
                         } else if (extras != 0) {
                             asmjit::Label initLoop = a.new_label();
                             asmjit::Label initDone = a.new_label();
@@ -4550,7 +4550,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             a.add(x14, x14, asmjit::Imm(8));
                             a.b(initLoop);
                             a.bind(initDone);
-                            a.str(x15, ptr(x0, OFF_SP));
+                            emitStoreSp(a, x15);
                         }
                     }
 
@@ -4655,7 +4655,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x12, ptr(x0, OFF_RETVAL));
                     a.sub(x14, x4, asmjit::Imm(nArgs * 8));
                     a.stur(x12, ptr(x14, -8));
-                    a.str(x14, ptr(x0, OFF_SP));
+                    emitStoreSp(a, x14);
 
                     // Clear exitReason (callee set EXIT_RETURN).
                     a.str(wzr, ptr(x0, OFF_EXIT));
@@ -4960,7 +4960,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 if (spLiveInX2) {
                     spReg = x2;   // skip the ldr; x2 still has caller sp
                 } else {
-                    a.ldr(x12, ptr(x0, OFF_SP));
+                    emitLoadSp(a, x12);
                 }
                 // jit-may20b Step 8.1 ROLLBACK 2026-05-21: keep the sub.
                 // Skipping for nArgs==0 caused gate-OFF SEGV in inline-J2J
@@ -5019,7 +5019,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             // New sp = tempBase + tempCount*8
                             //        = caller_sp + (tempCount-nArgs)*8
                             a.add(x15, spReg, asmjit::Imm(extras * 8));
-                            a.str(x15, ptr(x0, OFF_SP));
+                            emitStoreSp(a, x15);
                         } else {
                             // Large extras: fall back to dynamic loop
                             // (same as xmethod path).
@@ -5035,7 +5035,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             a.add(x14, x14, asmjit::Imm(8));
                             a.b(initLoop);
                             a.bind(initDone);
-                            a.str(x15, ptr(x0, OFF_SP));
+                            emitStoreSp(a, x15);
                         }
                     }
                 } else {
@@ -5056,7 +5056,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.add(x14, x14, asmjit::Imm(8));
                     a.b(initLoop);
                     a.bind(initDone);
-                    a.str(x15, ptr(x0, OFF_SP));
+                    emitStoreSp(a, x15);
                 }
 
                 // Bump hits counter
@@ -5303,7 +5303,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             if (nArgs > 0) {
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
             }
             a.b(endOfSend);
 
@@ -5378,7 +5378,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             if (nArgs > 0) {
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
             }
             // Audit-gap closer (PHARO_T1_SETTER_BARRIER=1, default off).
             // Emit a BLR to the C helper that records old→young writes
@@ -5457,7 +5457,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             }
             if (nArgs > 0) {
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
             }
             a.b(endOfSend);
 
@@ -5548,7 +5548,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(retLitDone);
                 if (nArgs > 0) {
                     a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                    a.str(x2, ptr(x0, OFF_SP));
+                    emitStoreSp(a, x2);
                 }
                 a.b(endOfSend);
             }
@@ -5586,7 +5586,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));  // store at recv slot
                 if (nArgs > 0) {
                     a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                    a.str(x2, ptr(x0, OFF_SP));
+                    emitStoreSp(a, x2);
                 }
                 a.b(endOfSend);
             }
@@ -5672,7 +5672,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(cmpDone);
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8));  // drop 1 arg
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
             }
 
@@ -5734,7 +5734,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.bind(arDone);
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
             }
 
@@ -5965,7 +5965,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.and_(x4, x1, x3);                    // bitAnd tagged
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
 
                 a.bind(tryPrimBitOr);
@@ -5977,7 +5977,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.orr(x4, x1, x3);                     // bitOr tagged
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
 
                 a.bind(tryPrimBitXor);
@@ -5990,7 +5990,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.orr(x4, x4, asmjit::Imm(0x1));       // restore SMI_TAG
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
 
                 // === Inline SmI bitShift: (primKind 13) ===
@@ -6034,7 +6034,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.orr(x6, x6, asmjit::Imm(0x1));
                     a.stur(x6, ptr(x2, rcvrOffsetBytes));
                     a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                    a.str(x2, ptr(x0, OFF_SP));
+                    emitStoreSp(a, x2);
                     a.b(endOfSend);
                 }
 
@@ -6058,7 +6058,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.orr(x9, x9, asmjit::Imm(1));           // retag
                 a.stur(x9, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
 
                 // === F5 R81: Inline == (primKind 10) ===
@@ -6073,7 +6073,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.csel(x6, x4, x5, asmjit::a64::CondCode::kEQ);
                 a.stur(x6, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
             } else {
                 // Labels still need to be bound somewhere even if unused —
@@ -6161,7 +6161,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 }
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
 
                 // Byte-indexed at:: fmt 16-23 (ByteArray, String, Symbol).
@@ -6195,7 +6195,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.orr(x4, x4, asmjit::Imm(0x1));
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
             } else if (!(nArgs == 2 && g_debug.t1InlinePrimAt)) {
                 a.bind(tryPrimAt);
@@ -6242,7 +6242,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // at:put: returns the value (sp[-3]=recv slot becomes val)
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
 
                 // Byte at:put: for fmt 16-23.  Val must be SmI in 0..255.
@@ -6282,7 +6282,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // at:put: returns the value (tagged SmI), write at recv slot
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
             } else if (!(nArgs == 1 && g_debug.t1InlinePrimAt)
                        && !(nArgs == 0 && g_debug.t1InlinePrimAt)) {
@@ -6505,7 +6505,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.add(x4, x4, asmjit::Imm(5));        // SmallFloatTag
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
-                a.str(x2, ptr(x0, OFF_SP));
+                emitStoreSp(a, x2);
                 a.b(endOfSend);
             } else {
                 a.bind(tryPrimSmallFloatOp);
@@ -6800,10 +6800,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 uint64_t smiBits = (static_cast<uint64_t>(
                     static_cast<int64_t>(imm)) << 3) | 1ULL;
                 a.mov(a64::x1, asmjit::Imm(smiBits));
-                a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                emitLoadSp(a, a64::x2);
                 a.str(a64::x1, a64::ptr(a64::x2));
                 a.add(a64::x2, a64::x2, asmjit::Imm(8));
-                a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                emitStoreSp(a, a64::x2);
                 a.bind(bcLabels[globalIdx + 1]);  // operand byte's label
                 i++;
                 continue;
@@ -6814,10 +6814,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 uint8_t cp = bcReal[i + 1];
                 uint64_t charBits = (static_cast<uint64_t>(cp) << 3) | 3ULL;
                 a.mov(a64::x1, asmjit::Imm(charBits));
-                a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                emitLoadSp(a, a64::x2);
                 a.str(a64::x1, a64::ptr(a64::x2));
                 a.add(a64::x2, a64::x2, asmjit::Imm(8));
-                a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                emitStoreSp(a, a64::x2);
                 a.bind(bcLabels[globalIdx + 1]);
                 i++;
                 continue;
@@ -6926,18 +6926,18 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     // x5 = TempVector; slot tempIdx at offset 8 + tempIdx*8.
                     a.ldr(a64::x6, a64::ptr(a64::x5, 8 + tempIdx * 8));
                     a.bind(pushDone);
-                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitLoadSp(a, a64::x2);
                     a.str(a64::x6, a64::ptr(a64::x2));
                     a.add(a64::x2, a64::x2, asmjit::Imm(8));
-                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitStoreSp(a, a64::x2);
                 } else {
                     // 0xFC (store, no pop) / 0xFD (pop+store)
                     asmjit::Label vecNotObj = a.new_label();
-                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitLoadSp(a, a64::x2);
                     a.ldr(a64::x6, a64::ptr(a64::x2, -8));  // x6 = stackTop
                     if (op == SistaV1::PopStoreTempAtInVec) {
                         a.sub(a64::x2, a64::x2, asmjit::Imm(8));
-                        a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        emitStoreSp(a, a64::x2);
                     }
                     a.ldr(a64::x4, a64::ptr(a64::x0, OFF_TEMPBASE));
                     a.ldr(a64::x5, a64::ptr(a64::x4, vecIdx * 8));
@@ -7000,41 +7000,41 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.ldr(a64::x1, a64::ptr(a64::x0, OFF_RECEIVER));
                     a.ldr(a64::x1, a64::ptr(a64::x1, OBJ_SLOT_0 + idx * 8));
                     emitShadowReadVerify(a, idx);
-                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitLoadSp(a, a64::x2);
                     a.str(a64::x1, a64::ptr(a64::x2));
                     a.add(a64::x2, a64::x2, asmjit::Imm(8));
-                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitStoreSp(a, a64::x2);
                 } else if (op == SistaV1::ExtPushLitConst) {
                     a.ldr(a64::x1, a64::ptr(a64::x0, OFF_LITERALS));
                     a.ldr(a64::x1, a64::ptr(a64::x1, idx * 8));
-                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitLoadSp(a, a64::x2);
                     a.str(a64::x1, a64::ptr(a64::x2));
                     a.add(a64::x2, a64::x2, asmjit::Imm(8));
-                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitStoreSp(a, a64::x2);
                 } else if (op == SistaV1::ExtPushLitVar) {
                     a.ldr(a64::x1, a64::ptr(a64::x0, OFF_LITERALS));
                     a.ldr(a64::x1, a64::ptr(a64::x1, idx * 8));
                     a.ldr(a64::x1, a64::ptr(a64::x1, OBJ_SLOT_0 + 8));
-                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitLoadSp(a, a64::x2);
                     a.str(a64::x1, a64::ptr(a64::x2));
                     a.add(a64::x2, a64::x2, asmjit::Imm(8));
-                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitStoreSp(a, a64::x2);
                 } else if (op == SistaV1::ExtPushTemp) {
                     a.ldr(a64::x1, a64::ptr(a64::x0, OFF_TEMPBASE));
                     a.ldr(a64::x1, a64::ptr(a64::x1, idx * 8));
-                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitLoadSp(a, a64::x2);
                     a.str(a64::x1, a64::ptr(a64::x2));
                     a.add(a64::x2, a64::x2, asmjit::Imm(8));
-                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitStoreSp(a, a64::x2);
                 } else if (op == SistaV1::ExtPopStoreTemp) {
-                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitLoadSp(a, a64::x2);
                     a.sub(a64::x2, a64::x2, asmjit::Imm(8));
-                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitStoreSp(a, a64::x2);
                     a.ldr(a64::x1, a64::ptr(a64::x2));
                     a.ldr(a64::x4, a64::ptr(a64::x0, OFF_TEMPBASE));
                     a.str(a64::x1, a64::ptr(a64::x4, idx * 8));
                 } else if (op == SistaV1::ExtStoreTemp) {
-                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitLoadSp(a, a64::x2);
                     a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
                     a.ldr(a64::x4, a64::ptr(a64::x0, OFF_TEMPBASE));
                     a.str(a64::x1, a64::ptr(a64::x4, idx * 8));
@@ -7045,12 +7045,12 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     // slot.  No write barrier — YG scavenge scans
                     // all of old space.
                     if (op == SistaV1::ExtPopStoreLitVar) {
-                        a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        emitLoadSp(a, a64::x2);
                         a.sub(a64::x2, a64::x2, asmjit::Imm(8));
-                        a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        emitStoreSp(a, a64::x2);
                         a.ldr(a64::x1, a64::ptr(a64::x2));
                     } else /* ExtStoreLitVar */ {
-                        a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        emitLoadSp(a, a64::x2);
                         a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
                     }
                     a.ldr(a64::x4, a64::ptr(a64::x0, OFF_LITERALS));
@@ -7068,12 +7068,12 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.tst(a64::w5, asmjit::Imm(0x800000));
                     a.b_ne(bail);
                     if (op == SistaV1::ExtPopStoreRecv) {
-                        a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        emitLoadSp(a, a64::x2);
                         a.sub(a64::x2, a64::x2, asmjit::Imm(8));
-                        a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        emitStoreSp(a, a64::x2);
                         a.ldr(a64::x1, a64::ptr(a64::x2));
                     } else /* ExtStoreRecv */ {
-                        a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                        emitLoadSp(a, a64::x2);
                         a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
                     }
                     a.str(a64::x1, a64::ptr(a64::x4, OBJ_SLOT_0 + idx * 8));
@@ -7129,7 +7129,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     asmjit::Label mustBoolBail = a.new_label();
                     asmjit::Label takeBranch   = a.new_label();
                     asmjit::Label fallThrough  = a.new_label();
-                    a.ldr(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitLoadSp(a, a64::x2);
                     a.ldur(a64::x1, asmjit::a64::ptr(a64::x2, -8));
                     a.ldp(a64::x4, a64::x5,
                           a64::ptr(a64::x0, OFF_TRUEOOP));
@@ -7140,11 +7140,11 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.b(jumpOnTrue ? fallThrough : takeBranch);
                     a.bind(takeBranch);
                     a.sub(a64::x2, a64::x2, asmjit::Imm(8));
-                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitStoreSp(a, a64::x2);
                     a.b(bcLabels[target]);
                     a.bind(fallThrough);
                     a.sub(a64::x2, a64::x2, asmjit::Imm(8));
-                    a.str(a64::x2, a64::ptr(a64::x0, OFF_SP));
+                    emitStoreSp(a, a64::x2);
                     a.b(bcLabels[globalIdx + 2]);  // next bytecode
                     a.bind(mustBoolBail);
                     a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
