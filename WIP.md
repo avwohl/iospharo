@@ -69,6 +69,28 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   -> 4/4 runs lose the eval silently (clean exit, no DNU, no EVAL-RESULT;
   [STARTUP-ST-FIRED] never appears -> the corruption drops the startup
   action from SessionManager's startup list, no error raised);
+  **CULPRIT PINNED (2026-06-10):** deterministic bisect on
+  PHARO_T1_INLINE_J2J_XMETHOD_MAX (pass at 26704, fail at 26705) +
+  lldb watchpoint on g_xgate_bail_cap in the PASS run -> fire #26705 is
+  caller=#handle:offset: (CM 0x300976370) callee=#initializeHandle:offset:
+  (CM 0x300976530, bcLen=10, 2 args, >=1 IC site) — FFI ExternalAddress
+  family.  HYPOTHESIS: the inline-J2J push's callee setup assumes
+  callee.tempCount == compile-time callerTempCount (true for self-rec,
+  the saveless block says so explicitly) -> wrong state.sp/nil-fill for
+  cross callees with differing temp counts; leaf callees usually have 0
+  extra temps so the validated config dodges it.  VERIFY at the
+  callee-setup emit (AsmjitT1 ~4560-4660: tempBase/sp/nil-fill).
+  ALSO FOUND: PHARO_T1_INLINE_J2J_XMETHOD_LOG's emit wrapper does NOT
+  save x1-x6 across its blr -> the LOGGER ITSELF corrupts the receiver
+  (instant crash in callee #header) — likely the origin of the
+  historical "xmethod corrupts state, lldb-only" lore.  Fix the wrapper
+  before trusting any XMETHOD_LOG run.
+  Recipe (reusable): DET_SCHED makes the failure a deterministic
+  function of the fire cap -> binary-search the cap (~20 runs), then
+  watchpoint the cap-bail counter in the LAST PASSING run; x10=calleeJM
+  x19/x11=callerJM x12=callerCM at the stop; resolve oops via
+  PHARO_T1_TRACE_COMPILE log lines (lldb expression evaluator is
+  useless under LTO).
   without DET_SCHED: intermittent startup DNUs (#do: in OpalCompiler
   evaluate / #key in WorkingSession startup), runs recover.  Control:
   DET_SCHED+leaf-only is clean.  Next session: lldb the deterministic
