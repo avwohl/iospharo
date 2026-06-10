@@ -3812,8 +3812,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // PMS B1 (docs/patched-ic-design.md §2): under the patched-sends
         // shape the icDataPtr chain below moves into the per-site cold
         // block (Lprobe) — the hot head never touches x5/x11.
+        // DEFAULT-ON since 2026-06-10 (PMS B4): opt-out via
+        // PHARO_T1_NO_PATCHED_SENDS=1; PHARO_T1_PATCHED_SENDS=1 is now
+        // a no-op (kept for script compat).  B3 soak: 16372 tests,
+        // zero knob-induced regressions, mirror verify silent.
         const bool patchedShape =
-            GET_DEBUG_BOOL(PHARO_T1_PATCHED_SENDS) && probeThis;
+            !GET_DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS) && probeThis;
         auto emitMaterializeX5 = [&]() {
             asmjit::a64::Gp jmReg = asmjit::a64::x19;
             if (g_debug.t1InlineJ2JXmethod) {
@@ -7930,7 +7934,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // scan the payload layout uses below (the two counts MUST agree —
     // they index the same IC-site space).
     std::vector<SendSitePatch> patchRecords;
-    if (GET_DEBUG_BOOL(PHARO_T1_PATCHED_SENDS)) {
+    if (!GET_DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS)) {
         uint16_t nSites = 0;
         for (size_t i = 0; i < bcLen; i++)
             if (isPhase4SendOp(bc[i])) nSites++;

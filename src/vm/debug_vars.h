@@ -141,8 +141,8 @@ DEBUG_BOOL(PHARO_SISTA_DUMP_NODES)             // dump each method's asmjit node
 DEBUG_BOOL(PHARO_T1_LEAK_GUARD_OFF)      // emit-time: drop the 2-instr IC-probe defensive check for classifier-bit leaks in receivers (task #10 — root-caused since); suite-validate before defaulting
 
 // ── Patched monomorphic send sites (PMS) — docs/patched-ic-design.md ──
-DEBUG_BOOL(PHARO_T1_PATCHED_SENDS)        // emit the patchable site shape (B1+); dev opt-in until the B4 flip
-DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS)     // opt-out after the B4 default-ON flip
+DEBUG_BOOL(PHARO_T1_PATCHED_SENDS)        // NO-OP since the B4 flip (2026-06-10); kept for script compat
+DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS)     // opt-out (PMS default-ON since B4, 2026-06-10)
 DEBUG_BOOL(PHARO_T1_PATCHED_SENDS_NOLINK) // shape on, linking off (within-binary A/B lane)
 DEBUG_BOOL(PHARO_T1_PATCH_VERIFY)         // post-GC mirror check: decoded patch words == heap IC slot 0
 DEBUG_BOOL(PHARO_T1_PATCH_STATS)          // link/unlink/refusal counter dump
