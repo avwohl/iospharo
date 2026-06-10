@@ -66,7 +66,9 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   N>=1 (admit callees with sends) still corrupts after the j2jDepth fix
   AND after j2jEntryDepth hardening at 4 JIT_CALL sites.  DETERMINISTIC
   REPRO: `PHARO_T1_INLINE_J2J=1 PHARO_T1_XMETHOD_MAX_IC=1 PHARO_DET_SCHED=1`
-  -> 4/4 runs lose the eval silently (clean exit, no DNU, no EVAL-RESULT);
+  -> 4/4 runs lose the eval silently (clean exit, no DNU, no EVAL-RESULT;
+  [STARTUP-ST-FIRED] never appears -> the corruption drops the startup
+  action from SessionManager's startup list, no error raised);
   without DET_SCHED: intermittent startup DNUs (#do: in OpalCompiler
   evaluate / #key in WorkingSession startup), runs recover.  Control:
   DET_SCHED+leaf-only is clean.  Next session: lldb the deterministic
@@ -83,17 +85,15 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   extension noted in the Eδ.2c comment.
 - docs/jit-retrospective.md "Cog-speed MAP" numbers now stale for
   cross-method; tight-loop 2x-faster-than-Cog and self-rec 6x still hold.
-- **First-compile fail thrash (suite-scale):** SUnit batch shows 698K
-  failed compile attempts vs 5.8K successes — initialCompileFailed_
-  (the first-compile negative cache, JITRuntime.cpp ~4045) is CLEARED on
-  every recoverAfterGC (i.e. every scavenge), so each failing method
-  re-runs the asmjit pipeline once per GC.  Same family as the fixed
-  kRecompileFailed thrash (memory jit-recompile-fail-thrash).  Fix
-  sketch: make it a key-array visited by forEachRoot (like countMap_)
-  + rehash in recoverAfterGC, instead of clear; or remap through the
-  scavenge forwarding table.  Measure cost share first (failed-compile
-  bail reasons breakdown: compilationsFailed_ bump sites
-  JITCompiler.cpp 1542-1701).
+- **First-compile fail thrash: FIXED (c79b97ab + 9dbe6a49).**  All
+  failures were unsuppPrim (PHARO_JIT_FAIL_REASONS=1).  TWO paths:
+  (a) initialCompileFailed_ negative cache was cleared every
+  recoverAfterGC -> per-GC retries (now a GC-visited, rehashed 16K-key
+  array like countMap_); (b) THE dominant one: upgradeICToJ2J's eager
+  compile of prim-bearing callees runs per ExitSendCached send with no
+  cache -> per-SEND asmjit pipeline re-runs.  Combined: 83.5K -> 694
+  failed attempts per bare startup (120x); suite batches were burning
+  ~700 failed compiles/sec.
 
 ## Workflow artifacts (multi-agent investigation maps, this session)
 
