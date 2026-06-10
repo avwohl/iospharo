@@ -209,6 +209,26 @@ Ltramp_return:
     // loaded early as the precomputed resume address.
     ldr     x17, [x21, #JS_RETURNVALUE]   // retVal
 
+#if PHARO_J2J_SAVE_V2
+    // V2: 32-byte packed save — {sp, receiver, tempBase, packedResume}.
+    ldp     x8, x9, [x23, #JSV_SP]         // x8=save.sp, x9=save.receiver
+    ldp     x10, x7, [x23, #JSV_TEMPBASE]  // x10=tempBase, x7=packedResume
+
+    str     x9,  [x21, #JS_RECEIVER]
+    str     x10, [x21, #JS_TEMPBASE]
+    // sp restore: the resume continuation pops args itself; hand it the
+    // caller sp and the retval in x1 (JIT_RESUME_CALL contract).
+    str     x8,  [x21, #JS_SP]
+    mov     x1,  x17                       // retval live-in for the continuation
+    and     x7,  x7, #0x0000FFFFFFFFFFFF  // unpack the code address
+    cbz     x7,  Lret_null_resume
+    ldr     x20, [x21, #JS_J2J_DEPTH_INC]
+    ldr     x25, [x21, #JS_SP]
+    mov     x0,  x21
+    blr     x7
+    str     x25, [x21, #JS_SP]
+    b       Ltramp_loop
+#else
     // Load save fields. JSV_JITMETHOD(32) and JSV_RESUMEADDR(40) are
     // adjacent → LDP.
     ldp     x8, x9, [x23, #JSV_SP]         // x8=save.sp, x9=save.receiver
@@ -274,11 +294,18 @@ Lret_after_restore:
     blr     x7
     str     x25, [x21, #JS_SP]        // sp-residency: x25 live-out from JIT code
     b       Ltramp_loop
+#endif  // PHARO_J2J_SAVE_V2 (Ltramp_return)
 
 Lret_null_resume:
+#if PHARO_J2J_SAVE_V2
+    // V2: no save.ip — leave state.ip; the C++ ExitReturn handler
+    // derives the resume ip from the popped save's packed bcOffset
+    // (already handled in the dual-protocol C++ pops).
+#else
     // Interpreter needs post-send IP
     ldr     x12, [x23, #JSV_IP]
     str     x12, [x21, #JS_IP]
+#endif
     mov     w0,  #EXIT_RETURN
     str     w0,  [x21, #JS_EXITREASON]
     b       Ltramp_exit
@@ -317,15 +344,23 @@ Ltramp_call:
     // JS_IP(48) are NOT adjacent so the second pair stays split.
     ldp     x10, x11, [x21]                // x10=state.sp, x11=state.receiver
     stp     x10, x11, [x23, #JSV_SP]       // save.sp, save.receiver
+#if PHARO_J2J_SAVE_V2
+    ldr     x10, [x21, #JS_TEMPBASE]
+    str     x10, [x23, #JSV_TEMPBASE]
+    // packedResume written below once the resume address + bcOffset are
+    // computed (Lresume_check stores it).
+#else
     ldr     x10, [x21, #JS_TEMPBASE]
     ldr     x11, [x21, #JS_IP]
     stp     x10, x11, [x23, #JSV_TEMPBASE] // save.tempBase, save.ip
     str     w9,       [x23, #JSV_SENDARGCOUNT]
 
     // Save caller jitMethod. literals/argCount/bcStart are derived from
-    // this on return (see Lret_after_restore).  Compute callerBCStart
-    // inline since the resume-address computation below needs it.
+    // this on return (see Lret_after_restore).
     str     x6,  [x23, #JSV_JITMETHOD]
+#endif
+    // Compute callerBCStart inline — the resume-address computation
+    // below needs it (both protocols).
 
     ldr     x10, [x6, #JM_METHODHEADER]
     and     x10, x10, #0x7FFF
@@ -360,6 +395,15 @@ Lresume_check:
     b.hs    Lresume_null
     add     x14, x6, #JM_SIZE              // codeStart
     add     x14, x14, w12, uxtw            // codeStart + codeOffset
+#if PHARO_J2J_SAVE_V2
+    // Pack bcOff (x10, bits 48-59) and nArgs (w9, bits 60-63).  Guard:
+    // bcOff must fit 12 bits — oversize falls to the null (materialize)
+    // path.
+    cmp     x10, #0xFFF
+    b.hi    Lresume_null
+    orr     x14, x14, x10, lsl #48
+    orr     x14, x14, x9, lsl #60
+#endif
     str     x14, [x23, #JSV_RESUMEADDR]
     b       Lcall_after_resume
 
