@@ -272,8 +272,14 @@ Lret_after_restore:
     // path.  This is what makes resume-after-send safe for send-methods.
     ldr     x19, [x21, #JS_JITMETHOD]
     ldr     x20, [x21, #JS_J2J_DEPTH_INC]
+    // sp-residency Phase 1 (contract half): x25 = state.sp live-in.
+    // NOTE: do NOT store x25 back after the blr until the T1 emit
+    // sweep maintains it — unmigrated JIT code updates JS_SP in
+    // memory only, and a stale-x25 writeback would corrupt sp.
+    ldr     x25, [x21, #JS_SP]
     mov     x0,  x21
     blr     x7
+    // TODO(sp-residency sweep): str x25, [x21, #JS_SP] here.
     b       Ltramp_loop
 
 Lret_null_resume:
@@ -430,8 +436,11 @@ Lcall_alloc_loop:
 
 Lcall_enter_callee:
     // BLR into callee JIT code; entryAddr is in x7
+    // sp-residency Phase 1 (contract half): x25 = state.sp live-in.
+    ldr     x25, [x21, #JS_SP]
     mov     x0,  x21                       // JITState* arg
     blr     x7
+    // TODO(sp-residency sweep): str x25, [x21, #JS_SP] here.
     b       Ltramp_loop
 
 
@@ -503,14 +512,21 @@ Ltramp_exit:
 SYMBOL(pharo_jit_osr_resume):
     // x0 = JITState*  (preserved through to JIT code)
     // x1 = entry function pointer
-    stp     x29, x30, [sp, #-32]!     // save fp, lr
+    stp     x29, x30, [sp, #-48]!     // save fp, lr
     stp     x19, x20, [sp, #16]       // save x19/x20 (AAPCS callee-saved)
+    str     x25, [sp, #32]            // save x25 (sp-residency mirror)
     mov     x29, sp
     ldr     x19, [x0, #JS_JITMETHOD]
     ldr     x20, [x0, #JS_J2J_DEPTH_INC]
+    // sp-residency Phase 1 (contract half): x25 = state.sp live-in.
+    ldr     x25, [x0, #JS_SP]
     blr     x1                         // call JIT'd code
+    // TODO(sp-residency sweep): writeback x25 -> JS_SP here (needs the
+    // state pointer preserved across the blr — stash x0 in a frame
+    // slot when the sweep lands).
+    ldr     x25, [sp, #32]            // restore x25 for our caller
     ldp     x19, x20, [sp, #16]       // restore x19/x20 for our caller
-    ldp     x29, x30, [sp], #32
+    ldp     x29, x30, [sp], #48
     ret
 
 // Cross-TU sentinel: a uint64_t holding our JM_SIZE constant.

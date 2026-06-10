@@ -298,11 +298,17 @@ typedef void (*StencilFunc)(JITState*);
         /* x19 = state.jitMethod (offset 56) — pre-loaded for IC HIT */ \
         /* path.  Saves 1 ldr per send for xmethod-off (default). */ \
         "ldr x19, [x0, #56]\n\t" \
+        /* x25 = state.sp (offset 0) — sp-residency Phase-1 contract */ \
+        /* half: live-in only.  Do NOT store x25 back after the blr */ \
+        /* until the T1 emit sweep maintains it (unmigrated code    */ \
+        /* updates memory; a stale-x25 writeback would corrupt sp). */ \
+        "ldr x25, [x0, #0]\n\t" \
         "blr %[e]" \
         : \
         : [s] "r"(_jit_s), [e] "r"(_jit_e) \
         : "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10","x11", \
-          "x12","x13","x14","x15","x16","x17","x19","x20","x21","x22","x30", \
+          "x12","x13","x14","x15","x16","x17","x19","x20","x21","x22", \
+          "x25","x30", \
           "memory","cc" \
     ); \
 } while(0)
