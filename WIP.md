@@ -5,6 +5,43 @@ Branch: `jit`. Build: `cmake --build build-opt` (optimized; the plain `build/` i
 Test VM: `./build-opt/test_load_image /tmp/harness/Pharo.image eval "<expr>"`.
 Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
 
+## NEWEST (2026-06-10 PM): sp-depth instrument -> staticJ2JArgCount fold bug FIXED
+
+- **PHARO_SP_DEPTH_CHECK** (BcDepthMap.{hpp,cpp}, knob in debug_vars.h):
+  per-bcOffset static operand-depth map (worklist walk, side table per
+  JITMethod) verified against `state.sp` at every checkable JIT exit
+  (Send/SendCached/MustBool/ArithOverflow/Block/ArrayCreate/Yield; 8 call
+  sites incl. both chain loops).  754K checks / 0 false positives healthy.
+  KEY FACT it documented: **sp convention is one-past-TOS everywhere**
+  (stackTop() = sp[-1]; the JITState.hpp "points to TOS" comment was stale).
+- **Found in its FIRST failing-config run**: [SP-DEPTH] delta == nArgs at
+  handle:offset: -> the J2J return prelude's staticJ2JArgCount fold
+  (AsmjitT1 ~7318) is UNSOUND cross-method: the CALLEE's prelude pops the
+  CALLER's save but folds the sp-adjust from its OWN send sites
+  (initializeHandle:offset:'s only send is 0-arg `self initialize` ->
+  sp-adjust folded to 0 while popping a 2-arg save -> sp high by nArgs,
+  retval in an arg slot).  This was the lever-(c) MAX_IC=1 corruptor the
+  selector bisect named.  FIX: force dynamic load-from-save when xmethod
+  or inline-block-value is enabled (every push site writes
+  save.sendArgCount correctly, so dynamic is always sound).
+- **Validation**: MAX_IC=1 repro 0/4 -> ~85-90% pass; benchFib unchanged
+  (10x fib28 123ms); 200-class suite vs abdet_default: **12 stable
+  FAIL->PASS** (the entire *DictionaryTest>>testIncludes family!) and 0
+  stable regressions (3 flickers = FIFOQueue heavyContention2,
+  ProcessTerminate nestedUnwindS1, WeakIdentityKey clearing/includes —
+  all re-run flaky).  Default config was previously safe only by the
+  leaf-only accident (MAX_IC=0 callees have no sends -> fold already -1).
+- **RESIDUAL (~8-20% by layout): MAX_IC=1 still loses the eval** with a
+  nextPutAll: DNU in OpalCompiler>>evaluate (catch_FAIL.log).  Caught a
+  failing run WITH the detector on: **mismatches=0 in 767K checks** ->
+  NOT an sp-depth desync at checkable exits.  Value corruption (wrong
+  receiver), or desync confined to unmappable methods (~10%) /
+  uncheckable exits (ExitReturn/J2JCall).  Per-run variance under
+  DET_SCHED = ASLR slide is part of the knife-edge (lldb's no-ASLR
+  hides it).  NEXT: STORE_RING on the failing config (DNU-time
+  provenance scan), then extend checkable exits (ExitJ2JCall via
+  send-length backscan; ExitReturn via callee-frame check).
+
 ## Headline: inline-J2J is DEFAULT-ON (lever e, commit after 0a48a0e1).
 DEFAULT config now: cfib(30) 344ms -> 44ms (Cog 8), benchFib(30) 296ms -> 32ms
 (Cog 5).  60-class SUnit A/B default-vs-J2J per-test identical (4130/4140;
