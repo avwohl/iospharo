@@ -104,6 +104,25 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   cascade dup'd it -> nextPutAll: DNU on ByteString.  Earlier variants
   (`,` to StdioStream) = the same class with the wrong object appearing
   one send earlier.  VALUES wrong at CORRECT depth at every check.
+  catch15 (methodMap-rebuild-per-scavenge fix in): CAUGHT at rep 25 —
+  the patchJITICAfterSend guard hole was REAL (fix committed, sound)
+  but the getter poisoning has ANOTHER path.  NEXT hygiene candidates:
+  (a) clear pendingICPatch_ in prepareForGC (any pending patch carries
+  pre-GC assumptions); (b) selector equality is NOT site identity —
+  same-selector foreign sites still pass the guard (poison a getter
+  classification across RECEIVER CLASSES with different ivar indices);
+  (c) **T1 ExtJump MISCOMPILE CONFIRMED WIDER**: the pre-scan ACCEPTS
+  ExtendB+ExtJump bundles (t1EnableJumps), but the emit at ~6965 reads
+  ONLY the operand byte as int8, ignoring extB.  Quadrants: extB=-1 &
+  operand>=128 (backward 1-128 bytes — common loop bodies) is correct
+  BY COINCIDENCE; backward >128 bytes, naked forward >=128, and all
+  extB=+1 forward jumps MISCOMPILE (branch to a wrong in-range label =
+  wrong-position execution, locally depth-consistent — fits the
+  residual!).  OPEN: check whether the prefix BUNDLE handler (~6719)
+  intercepts ExtendB+ExtJump before the 6965 site (if so the naked
+  >=128 case is the only live miscompile).  Fix all decode sites
+  (computeLiveLength ~846, first-pass ~1221, emit ~6965) to interp
+  semantics: offset = byte + (extB << 8), byte UNSIGNED.
   catch13/14 VERDICT (KNIFE-EDGE-CONTROLLED): **PHARO_T1_NO_INLINE_GETTER
   -> 30/30 PASS; same-length DUMMY var (PHARO_T1_NO_INLINE_GETTEX) ->
   FAILED at rep 8 — the bit-63 INLINE GETTER emit is the corruptor
