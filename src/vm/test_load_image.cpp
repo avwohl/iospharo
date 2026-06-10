@@ -632,11 +632,18 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
                         uint64_t ra = (uint64_t)base[i].resumeAddr;
                         int64_t delta = (int64_t)ra - (int64_t)pc;
                         if (delta > -64 && delta < 64) {
+#if PHARO_J2J_SAVE_V2
+                            fprintf(stderr,
+                                "[CRASH] STALE J2J resumeAddr: pool[%d] addr=0x%llx "
+                                "pc-delta=%lld (V2 packed)\n",
+                                i, (unsigned long long)ra, (long long)delta);
+#else
                             fprintf(stderr,
                                 "[CRASH] STALE J2J resumeAddr: pool[%d] addr=0x%llx "
                                 "pc-delta=%lld jitMethod=%p\n",
                                 i, (unsigned long long)ra, (long long)delta,
                                 (void*)base[i].jitMethod);
+#endif
                             j2jMatches++;
                         }
                     }

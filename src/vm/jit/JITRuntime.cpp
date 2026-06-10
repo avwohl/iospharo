@@ -5,6 +5,7 @@
  */
 
 #include "JITRuntime.hpp"
+#include "J2JSaveLayout.h"
 #include "PlatformJIT.hpp"
 #include "../DebugSettings.hpp"
 #include "../DebugVars.hpp"
@@ -339,7 +340,11 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
         if (state->j2jSaveCursor) {
             Interpreter::J2JSave* sv = reinterpret_cast<Interpreter::J2JSave*>(
                 state->j2jSaveCursor);
+#if PHARO_J2J_SAVE_V2
+            savedResume = sv->addr();
+#else
             savedResume = sv->resumeAddr;
+#endif
         }
         fprintf(stderr, "[B5] #%zu SAVE sp=%p depth=%d "
                         "nArgs=%llu rcvr=0x%llx(%s) resume=%p "
@@ -425,9 +430,16 @@ extern "C" void pharo_jit_b5_tramp_ret(JITState* state, Interpreter::J2JSave* sa
         : retVal.isObject() && state->interp
             ? state->interp->memory().classNameOf(retVal).c_str()
             : "other";
-    // Decode the caller's method (save->jitMethod->compiledMethodOop).
+    // Decode the caller's method.
     uint64_t cmOop = 0;
     std::string cls = "?", sel = "?";
+#if PHARO_J2J_SAVE_V2
+    fprintf(stderr, "[B5-TRAMP-RET-ASM] #%zu retVal=0x%llx(%s) "
+                    "save.sp=%p save.nArgs=%u save.resume=%p (V2)\n",
+            count, (unsigned long long)retVal.rawBits(), kind.c_str(),
+            save->sp, save->nArgs(), (void*)save->addr());
+    (void)cmOop; (void)cls; (void)sel;
+#else
     if (save->jitMethod && state->interp) {
         cmOop = save->jitMethod->compiledMethodOop;
         if (cmOop > 0x10000) {
@@ -442,6 +454,7 @@ extern "C" void pharo_jit_b5_tramp_ret(JITState* state, Interpreter::J2JSave* sa
             count, (unsigned long long)retVal.rawBits(), kind.c_str(),
             save->sp, (int)save->sendArgCount, save->resumeAddr,
             (unsigned long long)cmOop, cls.c_str(), sel.c_str());
+#endif
 }
 
 extern "C" void jit_rt_arith_overflow(JITState* state) {
@@ -762,10 +775,28 @@ ic_hit:
     saveEntry->sp           = state->sp;
     saveEntry->receiver     = state->receiver;
     saveEntry->tempBase     = state->tempBase;
+#if PHARO_J2J_SAVE_V2
+    {
+        // Pack codeStart-resume with the post-send bcOffset + nArgs;
+        // oversize bcOff falls to the materialize-only sentinel.
+        uint64_t packed = 0;
+        if (callerJM) {
+            uint64_t bcOff = (uint64_t)((state->ip + bcLen)
+                                        - callerJM->bcStart());
+            if (bcOff <= 0xFFF && (unsigned)nArgs <= 15) {
+                packed = reinterpret_cast<uint64_t>(callerJM->codeStart())
+                       | (bcOff << 48)
+                       | ((uint64_t)nArgs << 60);
+            }
+        }
+        saveEntry->resumeAddr = packed;
+    }
+#else
     saveEntry->ip           = state->ip + bcLen;
     saveEntry->jitMethod    = callerJM;
     saveEntry->resumeAddr   = callerJM ? callerJM->codeStart() : nullptr;
     saveEntry->sendArgCount = nArgs;
+#endif
     state->j2jSaveCursor += sizeof(Interpreter::J2JSave);
     state->j2jDepth++;
     state->j2jTotalCalls++;
@@ -842,6 +873,20 @@ ic_hit:
         state->sp = saveEntry->sp;
         state->receiver = saveEntry->receiver;
         state->tempBase = saveEntry->tempBase;
+#if PHARO_J2J_SAVE_V2
+        // V2: callerJM is still in scope (this is the same call frame
+        // that pushed the save); restore identity from it and derive ip
+        // from the packed bcOffset.
+        state->jitMethod = callerJM;
+        if (callerJM) {
+            state->ip = callerJM->bcStart()
+                + (saveEntry->resumeAddr ? saveEntry->bcOff() : 0);
+            state->argCount = callerJM->argCount;
+            state->literals = reinterpret_cast<Oop*>(
+                callerJM->compiledMethodOop + 8);
+            state->method = Oop::fromRawBits(callerJM->compiledMethodOop);
+        }
+#else
         state->jitMethod = saveEntry->jitMethod;
         state->ip = saveEntry->ip;
         if (saveEntry->jitMethod) {
@@ -851,6 +896,7 @@ ic_hit:
             state->method = Oop::fromRawBits(
                 saveEntry->jitMethod->compiledMethodOop);
         }
+#endif
 
         state->sp[-(nArgs + 1)] = retVal;
         state->sp -= nArgs;
@@ -1863,10 +1909,27 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     save->sp = s->sp;
     save->receiver = s->receiver;
     save->tempBase = s->tempBase;
+#if PHARO_J2J_SAVE_V2
+    {
+        // BV-inline push: pack the resume with bcOff (pre-send ip, the
+        // V1 convention for this path) + nArgs.
+        auto* cjm = reinterpret_cast<JITMethod*>(callerJM);
+        uint64_t packed = 0;
+        if (cjm && resumeAddr) {
+            uint64_t bcOff = (uint64_t)(s->ip - cjm->bcStart());
+            if (bcOff <= 0xFFF && (unsigned)nArgs <= 15) {
+                packed = reinterpret_cast<uint64_t>(resumeAddr)
+                       | (bcOff << 48) | ((uint64_t)nArgs << 60);
+            }
+        }
+        save->resumeAddr = packed;
+    }
+#else
     save->ip = s->ip;  // pre-send; matches xmethod default
     save->jitMethod = reinterpret_cast<JITMethod*>(callerJM);
     save->resumeAddr = reinterpret_cast<uint8_t*>(resumeAddr);
     save->sendArgCount = nArgs;
+#endif
     s->j2jSaveCursor += sizeof(Interpreter::J2JSave);
     s->j2jDepth++;
     s->j2jTotalCalls++;

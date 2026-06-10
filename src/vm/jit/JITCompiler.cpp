@@ -5,6 +5,7 @@
  */
 
 #include "JITCompiler.hpp"
+#include "J2JSaveLayout.h"
 #include "PlatformJIT.hpp"
 #include "SistaV1.hpp"
 #include "sista/SistaRuntime.hpp"
@@ -2343,9 +2344,19 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             int live = interp_.j2jPoolLiveCount();
             const auto* base = interp_.j2jPoolBase();
             for (int i = 0; i < live; i++) {
+#if PHARO_J2J_SAVE_V2
+                // V2: derive the owning method from the packed resume
+                // address (the header precedes codeStart in the zone).
+                JITMethod* jm = base[i].resumeAddr
+                    ? zone_.findMethodByPC(
+                          reinterpret_cast<uint64_t>(base[i].addr()))
+                    : nullptr;
+                if (jm) jm->pinned = true;
+#else
                 if (base[i].jitMethod && zone_.contains(base[i].jitMethod)) {
                     base[i].jitMethod->pinned = true;
                 }
+#endif
             }
             // (2) Native frame-pointer chain — LRs may be PCs inside JIT
             // code (trampoline return into caller's stencil).  Bounded by
