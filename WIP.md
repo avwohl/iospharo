@@ -1,11 +1,18 @@
-# WIP — JIT Cog-speed: cross-method inline-J2J unblocked (2026-06-09 session 2)
+# WIP — JIT Cog-speed: inline-J2J DEFAULT-ON (2026-06-09/10)
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 Branch: `jit`. Build: `cmake --build build-opt` (optimized; the plain `build/` is -O0).
 Test VM: `./build-opt/test_load_image /tmp/harness/Pharo.image eval "<expr>"`.
 Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
 
-## Headline: cfib(30) 344ms -> 41-43ms (Cog: 8ms). 43x gap -> ~5x.
+## Headline: inline-J2J is DEFAULT-ON (lever e, commit after 0a48a0e1).
+DEFAULT config now: cfib(30) 344ms -> 44ms (Cog 8), benchFib(30) 296ms -> 32ms
+(Cog 5).  60-class SUnit A/B default-vs-J2J per-test identical (4130/4140;
+two known-flaky tests flip one each way; the historical flip-blocker
+CharacterTest>>testStoreStringAll PASSES).  Opt-out: PHARO_T1_NO_INLINE_J2J=1.
+Confirmation batches (1-60 re-run + 61-200) in flight at session end —
+COMPARE /tmp/sunit_results_flip{60,200}.txt against
+/tmp/sunit_results_{default,j2j}.txt and the Cog baseline next session.
 
 ## DONE this session (committed)
 
