@@ -119,14 +119,26 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   Halving over 1759 method selectors SANITY-FAILED (skip-all doesn't
   cure) while STUB_ONLY cures -> the corruptor is a **CompiledBlock**
   (blocks compile selector-less, unskippable by selector list).
-  CONFIRMED: PHARO_T1_BLOCKS_SKIP_FROM=0/TO=9999999 (skip all block
-  compiles) -> PASS.  IN FLIGHT: /tmp/block_bisect.sh — binary-search
-  the block index via the FROM/TO range knobs, then single-block skip
-  at the boundary -> THE corrupting block, then dump its bytecodes
-  (PHARO_T1_INLINE_J2J_DUMP_BC / T1-BLOCK trace) and diff T1's emit
-  against interp semantics for its ops.  Repro recipe:
-  printf 'DictionaryTest\n' > /tmp/sunit_class_names.txt; run
-  build/test_load_image Pharo.image; grep testIncludes detail.
+  **BLOCK PAIR PINNED (attempt-indexed bisects via BLOCKS_SKIP_FROM/TO
+  + BLOCKS_FIRST_N; note: rejected blocks RETRY, so single-attempt
+  skips defer rather than prevent — use suffix/range bisects):**
+  - attempt #387 oop=0x3003101a0 bcLen=43: a 2-temp COMPARISON-CHAIN
+    block (and:/or: cond-jump diamonds):
+    `40 80 c2 41 80 b0 4e c1 4d b6 40 81 c2 41 81 b0 ...`
+  - attempt #193 oop=0x3004320a8 bcLen=4: the canonical comparator
+    `[:a :b | a <lit0>: b]` = `40 41 90 5e` (sortBlock family!).
+  INTERACTION bug: ONLY-387 passes, FIRST_N=387 fails, partner
+  boundary sharp at #193.  PHARO_NO_BLOCK_BIT does NOT cure.
+  NEXT: identify the two blocks' home methods (print outer/home via a
+  one-off probe or image-side: find CompiledBlock literals), determine
+  the call topology (who values both blocks — detect:/mergeSort?),
+  then diff T1's emit for block 387's cond-jump chain (mustBeBoolean
+  bail path in BLOCKS — canBailMidMethod + block-frame interaction is
+  virgin territory; the historical sortStructs corruption was this
+  family).  Repro: printf 'DictionaryTest\n' >
+  /tmp/sunit_class_names.txt; run build/test_load_image Pharo.image;
+  grep testIncludes /tmp/sunit_test_detail.txt (30 s, deterministic,
+  no env knobs needed; JIT-off/STUB_ONLY/skip-all-blocks all PASS).
   **MAX_IC FLIP GATE (suite pair on the final binary): MAX_IC=1
   RE-BREAKS the *DictionaryTest>>testIncludes family** (the exact 12
   tests the fold fix cured in default config; default run PASSES them,
