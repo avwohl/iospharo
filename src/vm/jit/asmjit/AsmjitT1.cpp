@@ -3714,28 +3714,28 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // (SmI Integer>>isInteger etc. is the common case).
                     // F5 R83: extended to all nArgs.  retLit emit now
                     // handles arg-dropping like returnsSelf does.
-                    if (g_debug.t1InlineReturnsLiteral) {
+                    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_RETURNS_LITERAL)) {
                         a.tbnz(x7, asmjit::Imm(58), tryReturnsLiteral);
                     }
                     // W1: bit 54 = TempReturn `^ arg N` — works for any
                     // receiver (no class-specific dispatch needed; the
                     // target body just reads tempBase[N]).  Dispatched
                     // BEFORE the heap/SmI split.
-                    if (nArgs >= 1 && g_debug.t1InlineTempReturn) {
+                    if (nArgs >= 1 && GET_DEBUG_BOOL(PHARO_T1_INLINE_TEMP_RETURN)) {
                         a.tbnz(x7, asmjit::Imm(54), tryTempReturn);
                     }
                     // W2: bit 53 = IntCmpReturn `^ self cmp arg`.  Needs
                     // SmI receiver AND SmI arg.  Caller pre-checked
                     // receiver class; arg checked in emit.
-                    if (nArgs == 1 && g_debug.t1InlineIntCmpReturn) {
+                    if (nArgs == 1 && GET_DEBUG_BOOL(PHARO_T1_INLINE_INT_CMP_RETURN)) {
                         a.tbnz(x7, asmjit::Imm(53), tryIntCmpReturn);
                     }
                     // W3: bit 52 = IntArithReturn `^ self op arg` (+/-/*).
-                    if (nArgs == 1 && g_debug.t1InlineIntArithReturn) {
+                    if (nArgs == 1 && GET_DEBUG_BOOL(PHARO_T1_INLINE_INT_ARITH_RETURN)) {
                         a.tbnz(x7, asmjit::Imm(52), tryIntArithReturn);
                     }
                     // W6: bit 51 = even/odd predicate (nArgs == 0).
-                    if (nArgs == 0 && g_debug.t1InlineEvenOdd) {
+                    if (nArgs == 0 && GET_DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)) {
                         a.tbnz(x7, asmjit::Imm(51), tryEvenOdd);
                     }
                     a.tst(x1, asmjit::Imm(0x7));
@@ -3758,7 +3758,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     }
                     // returnsLiteral (bit 58) dispatched before
                     // the heap/SmI split above.
-                    if (nArgs == 0 && g_debug.t1InlineMultiSlot) {
+                    if (nArgs == 0 && GET_DEBUG_BOOL(PHARO_T1_INLINE_MULTISLOT)) {
                         a.tbnz(x7, asmjit::Imm(57), tryMultiSlot);
                     }
                     a.b(dispatchCached);
@@ -5001,7 +5001,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // sp[-nArgs..sp-1].  After inline: result = sp[-(nArgs - N)]
             // (the Nth arg, since temps[N] for N < argCount = args[N]).
             // Then drop args, store result at rcvr slot.
-            if (nArgs >= 1 && g_debug.t1InlineTempReturn) {
+            if (nArgs >= 1 && GET_DEBUG_BOOL(PHARO_T1_INLINE_TEMP_RETURN)) {
                 a.bind(tryTempReturn);
                 a.mov(x14, asmjit::Imm((uint64_t)&g_t1TempReturn_hits));
                 a.ldr(x15, ptr(x14));
@@ -5040,7 +5040,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Bail to dispatchCached if arg isn't SmI (rare for hot
             // comparators since IC HIT already filtered receiver by class
             // but receiver class doesn't guarantee SmI arg type).
-            if (nArgs == 1 && g_debug.t1InlineIntCmpReturn) {
+            if (nArgs == 1 && GET_DEBUG_BOOL(PHARO_T1_INLINE_INT_CMP_RETURN)) {
                 a.bind(tryIntCmpReturn);
                 a.mov(x14, asmjit::Imm((uint64_t)&g_t1IntCmpReturn_hits));
                 a.ldr(x15, ptr(x14));
@@ -5124,7 +5124,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // (a_val+b_val)<<3 + 2 → subtract 1 to fix tag.
             // For mul: untag both, multiply, retag.
             // Overflow → bail to dispatchCached.
-            if (nArgs == 1 && g_debug.t1InlineIntArithReturn) {
+            if (nArgs == 1 && GET_DEBUG_BOOL(PHARO_T1_INLINE_INT_ARITH_RETURN)) {
                 a.bind(tryIntArithReturn);
                 a.mov(x14, asmjit::Imm((uint64_t)&g_t1IntArithReturn_hits));
                 a.ldr(x15, ptr(x14));
@@ -5190,7 +5190,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // For "even" predicate: result = (bits&9 == 1) ? trueOop : falseOop.
             // For "odd"  predicate: result = (bits&9 == 9) ? trueOop : falseOop.
             // Bail to dispatchCached on non-SmI receiver.
-            if (nArgs == 0 && g_debug.t1InlineEvenOdd) {
+            if (nArgs == 0 && GET_DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)) {
                 a.bind(tryEvenOdd);
                 a.mov(x14, asmjit::Imm((uint64_t)&g_t1EvenOdd_hits));
                 a.ldr(x15, ptr(x14));

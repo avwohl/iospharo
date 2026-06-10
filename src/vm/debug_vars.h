@@ -61,6 +61,19 @@ DEBUG_BOOL(PHARO_J2J_STACK_SCAN)          // localizer: at each det-sched checkp
 DEBUG_BOOL(PHARO_T1_LOG_SELFREC_PUSH)     // emit a gated runtime call at each self-rec inline-J2J save-push that records the caller(=callee) CompiledMethod oop into a ring; dump_selfrec_ring() (called at the #extent DNU) resolves the last N to selectors -> NAMES the self-recursive method whose inline-J2J save/branch/return desyncs. DET_SCHED-safe (bytecode-counted scheduling unaffected by added instructions).
 DEBUG_BOOL(PHARO_T1_NO_J2J_BRANCH)        // bisect (now gates the WHOLE if(inlineJ2J) send-emit block at AsmjitT1.cpp:3634): with INLINE_J2J=1, skip emitting the entire inline-J2J send-site block (J2J checks + dispatch-A + dead tryInlineJ2J/j2jBail blocks); bit-60 fill + return-prelude emit unchanged. PROVEN: this makes INLINE_J2J=1 CLEAN (3+4=7), so the #extent corruptor is the send-emit block itself, not the fill/prelude/push.
 DEBUG_BOOL(PHARO_T1_NO_J2J_RETPRELUDE)    // bisect: skip emitting the per-method inline-J2J RETURN PRELUDE (the j2jDepth>j2jEntryDepth pop/resume epilog) even when PHARO_T1_INLINE_J2J=1. If this (with NO_J2J_BRANCH) makes startup match default, the return prelude mis-fires on trampoline-activated returns (shared j2jDepth) — the corruptor.
+// ── inline-J2J dispatch-A "extra" inline specializations (IC bits 51-58) ──
+// These are routed ONLY by the inline-J2J send emit's dispatch-A; the validated
+// default/j2jBail dispatch paths never branch to them, so they were never
+// exercised before inline-J2J (which never worked) = UNVALIDATED + buggy
+// (tryMultiSlot writes a wild receiver -> the global-inline-J2J #extent crash;
+// the set also yields mustBeBoolean).  DEFAULT-OFF (opt-in) so global inline-J2J
+// is correct.  Re-enable a spec only after validating its emit.  (2026-06-09)
+DEBUG_BOOL(PHARO_T1_INLINE_MULTISLOT)        // bit 57: ^ self[A] op1 self[B] op2 const
+DEBUG_BOOL(PHARO_T1_INLINE_RETURNS_LITERAL)  // bit 58: ^ nil/true/false/0/1
+DEBUG_BOOL(PHARO_T1_INLINE_TEMP_RETURN)      // bit 54: ^ arg N
+DEBUG_BOOL(PHARO_T1_INLINE_INT_CMP_RETURN)   // bit 53: ^ self cmp arg
+DEBUG_BOOL(PHARO_T1_INLINE_INT_ARITH_RETURN) // bit 52: ^ self op arg
+DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)         // bit 51: Integer>>even/odd
 DEBUG_BOOL(PHARO_SISTA_VALIDATE_HINTS)  // opt-IN: re-resolve each extracted Sista inline hint (selector lookup in classKey's class) and drop it if it no longer yields the cached method. Partial mitigation for stale-IC-derived hints (blocker #4); does NOT fully fix the JIT-tier IC staleness.
 DEBUG_BOOL(PHARO_T1_VALIDATE_IC)         // ExitSendCached: re-resolve cached IC method in receiver class; on mismatch use the fresh method (blocker #4 T1 stale-IC dispatch)
 DEBUG_INT(PHARO_T1_HIT_COLD_SIDE, 0)     // bisect blocker #4: replay cold-path bookkeeping in the IC-hit handler. bits 1=clear pendingICPatch_ 2=set pendingICPatch_ 4=cacheMethod 8=megaCacheAdd
