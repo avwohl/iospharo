@@ -104,6 +104,19 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   cascade dup'd it -> nextPutAll: DNU on ByteString.  Earlier variants
   (`,` to StdioStream) = the same class with the wrong object appearing
   one send earlier.  VALUES wrong at CORRECT depth at every check.
+  **MAX_IC FLIP GATE (suite pair on the final binary): MAX_IC=1
+  RE-BREAKS the *DictionaryTest>>testIncludes family** (the exact 12
+  tests the fold fix cured in default config; default run PASSES them,
+  MAX_IC=1 run FAILS them, 26 diff lines total = just this family +
+  flakies).  Eval-level (catch25 80-rep) is CLEAN — this is a
+  DETERMINISTIC suite-level repro: stage `DictionaryTest` in
+  /tmp/sunit_class_names.txt, run with PHARO_T1_XMETHOD_MAX_IC=1 +
+  detectors (SP_DEPTH_CHECK, VERIFY_GETTER) — same bisect protocol,
+  far easier than the eval Heisenbug.  Suspect shape: another
+  cross-method assumption (same class as the fold bug) in a path that
+  with-send-callee admission newly exercises (includes: -> hashed
+  collection scan loops).  The MAX_IC default flip is BLOCKED until
+  this family is clean; the 7.3x incs prize stays opt-in meanwhile.
   **RESIDUAL KILLED (catch22-25, controlled):** the corruptor is the
   DISPATCH-A-SIDE entry into the shared tryGetter label (AsmjitT1
   ~3880).  Bisect: disabling only that tbnz -> 30/30 clean; same-length
