@@ -54,6 +54,21 @@ extern "C" void jit_rt_verify_getter(uint64_t statep, uint64_t recv,
 // FINDNODE_WATCH, so the recorder BLR is emitted at just asTuple's 2 getter
 // sites (no global code bloat).  Read at emit time in the inline getter.
 static bool g_emitGetterTrace = false;
+// ===== sp-residency Phase-1 emit sweep (build-time switch) =====
+// 0 = sp lives in memory at [x0, OFF_SP] (today's behavior; the
+//     helpers below produce byte-identical codegen to the raw
+//     ldr/str they replace).
+// 1 = sp lives in x25 across JIT execution (the trampoline/JIT_CALL
+//     contract half is ALREADY in: x25 is loaded live-in at every
+//     JIT entry).  Flip ONLY when every OFF_SP access in BOTH the
+//     send-site emit and emitOne_arm64 goes through these helpers
+//     AND every EXIT_* site stores x25 back (see WIP.md: the
+//     migration is all-or-nothing at runtime; this flag makes it
+//     incremental at the SOURCE level — each converted batch commits
+//     green with the flag at 0).
+#define PHARO_T1_SP_IN_X25 0
+// (the emitLoadSp/emitStoreSp/emitSyncSpToState helpers live next to
+//  emitPushReg, after the asmjit headers are in scope)
 // True while compiling a CompiledBlock (set per-compile in
 // compileViaAsmjit, same single-threaded pattern as g_emitGetterTrace).
 // Method-style returns 0x58-0x5C INSIDE a block are NON-LOCAL returns:
@@ -2193,12 +2208,44 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
 //   x2 = scratch sp
 //   w3 = scratch int (for exitReason store)
 
+// ===== sp-residency Phase-1 sweep helpers (see PHARO_T1_SP_IN_X25
+// at the top of the file).  Byte-identical codegen at =0; at =1 sp
+// lives in x25 and these become register moves. =====
+static inline void emitLoadSp(asmjit::a64::Assembler& a,
+                              asmjit::a64::Gp dst) {
+#if PHARO_T1_SP_IN_X25
+    a.mov(dst, asmjit::a64::x25);
+#else
+    a.ldr(dst, asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
+#endif
+}
+static inline void emitStoreSp(asmjit::a64::Assembler& a,
+                               asmjit::a64::Gp src) {
+#if PHARO_T1_SP_IN_X25
+    a.mov(asmjit::a64::x25, src);
+#else
+    a.str(src, asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
+#endif
+}
+// At exits (ret to C++) and before sp-reading helper BLRs, sp must be
+// visible in memory regardless of mode.
+static inline void emitSyncSpToState(asmjit::a64::Assembler& a) {
+#if PHARO_T1_SP_IN_X25
+    a.str(asmjit::a64::x25,
+          asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
+#endif
+    (void)a;
+}
+
 void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
     using namespace asmjit::a64;
-    a.ldr(x2, ptr(x0, OFF_SP));
+    // sp-residency: routed through the helpers (byte-identical at
+    // PHARO_T1_SP_IN_X25=0; becomes mov/mov at =1, dropping the
+    // ldr+str OFF_SP round-trip on EVERY push).
+    emitLoadSp(a, x2);
     a.str(valReg, ptr(x2));
     a.add(x2, x2, asmjit::Imm(8));
-    a.str(x2, ptr(x0, OFF_SP));
+    emitStoreSp(a, x2);
 }
 
 // ARM64 mirror of emitPrimProlog_x86.  See that function for context.
