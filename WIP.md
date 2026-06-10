@@ -68,8 +68,20 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   materializeJ2JSaveIntoFrame, prepareForGC/afterGC pool walk,
   forEachRoot save.receiver visit (offset changes), J2JSave struct +
   JSV_* asm constants + the sp-depth save checker.
-  BATCH 0 DONE (J2JSaveLayout.h shared header + static_asserts;
-  switch at 0).  CONTRACT DETAIL for batch 1+ (discovered sizing the
+  BATCHES 0, 1a, 1b, 1c DONE (layout header; JIT_RESUME_CALL at both
+  C++ pops; both pops dual-protocol with findMethodByPC(resumeAddr)
+  caller resolution).  BATCH 2 DESIGN (resolved): pack the V2
+  resumeAddr slot as addr(48 bits) | bcOff(12)<<48 | nArgs(4)<<60 —
+  push sites know bcOff+nArgs statically; the prelude masks the
+  address with one AND before br; materialize unpacks for ip
+  (bcStart+bcOff) and matRetSlot (nArgs); methods with bcLen > 4095
+  fall back to V1-style handling (compile-time gate).  GC SIMPLIFIES
+  under V2: the packed bcOff is an offset (GC-stable) — the
+  prepareForGC/afterGC pool ip-stash machinery (ipOffset field) is
+  V1-only; forEachRoot's save.receiver visit is offset-compatible.
+  Batch 2 edits: dual J2JSave struct (V2 = 4 fields/32B), materialize
+  unpack path, gate the GC pool walks + .ipOffset uses (2 sites),
+  then batch 3 = the emit (push/prelude/resume continuations).  CONTRACT DETAIL for batch 1+ (discovered sizing the
   C++ pops): under V2 the RESUME SITE does the arg-pop and expects
   the RETVAL IN x1 — so the C++ chain-loop pops that JIT_CALL a
   resumeAddr need a JIT_RESUME_CALL macro variant that passes
