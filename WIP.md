@@ -161,14 +161,22 @@ under load is the canary).
     DNU-time scan — useful once a config shows DNUs WITH the ring
     enabled (search configs; the scan prints planted-value provenance
     with selectors).
-  - **NEXT INSTRUMENT (visibility-independent): shadow-slot
-    verify-on-read.**  Mirror every JIT ivar STORE into a shadow table
-    keyed by (object, slot) — GC must remap keys like countMap_ — and
-    on every ivar READ (pushRecvVar emits + interpreter) compare slot
-    vs shadow: mismatch = the slot changed WITHOUT a JIT store ->
-    either an interpreter/primitive store (instrument those too) or a
-    GC-mover bug (the central unresolved question).  Heavy but decides
-    the mechanism class regardless of where symptoms land.
+  - **SHADOW-SLOT INSTRUMENT BUILT (PHARO_SHADOW_SLOTS, committed
+    2026-06-10):** ShadowSlots.{hpp,cpp} — 1M-entry (object,slot)->
+    (value,writer) table; writers tracked: 3 JIT store emits,
+    storePointer, storePointerUnchecked (covers setReceiverInstVar);
+    readers verified: interpreter pushRecvVar (both paths) + JIT
+    pushRecvVar/ExtPushRecvVar emits.  GC: forEachRoot visits entry
+    oops, afterGC rehashes, becomeForward clears.  VALIDATED: ~28M
+    stores / 3.45M checks / 0 mismatches / 0 false positives per
+    startup across default+DET+MAX_IC=1+NOJB configs — writer coverage
+    complete for exercised paths.  CAVEAT: those configs also showed
+    no DNUs in the instrument's layout, so absence-of-mismatch is not
+    yet absence-of-corruption.  Deployment: suite-scale run in flight;
+    if symptoms occur with ZERO mismatches -> the corruption is in
+    TEMP/STACK slots, not ivars (next instrument: shadow the frame
+    temps — transient keying needed) or in the inline-getter bit-63
+    IC read path (not yet verified — add emitShadowReadVerify there).
   - hasRecvFieldWrite now computed by T1 (commit 0bc7d7f9) — flag is
     real even though the gate experiment was inconclusive.
   Recipe (reusable): DET_SCHED makes the failure a deterministic
