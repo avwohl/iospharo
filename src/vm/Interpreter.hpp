@@ -60,6 +60,7 @@
 #include "DebugSettings.hpp"
 #include "DebugVars.hpp"
 #include "ShadowSlots.hpp"
+#include "jit/J2JSaveLayout.h"
 #include "ObjectMemory.hpp"
 #include "ImageLoader.hpp"
 #include "../platform/EventQueue.hpp"
@@ -671,6 +672,18 @@ public:
                                   //     stores only bytes 0-51).
     };
     static_assert(sizeof(J2JSave) == 56, "J2JSave should be 56 bytes after reduction");
+    // Tie the struct to the shared asm layout header (J2JSaveLayout.h)
+    // — the .S used to carry a hand-synced duplicate of these offsets.
+    static_assert(JSV_SP == offsetof(J2JSave, sp), "JSV_SP");
+    static_assert(JSV_RECEIVER == offsetof(J2JSave, receiver), "JSV_RECEIVER");
+    static_assert(JSV_TEMPBASE == offsetof(J2JSave, tempBase), "JSV_TEMPBASE");
+#if !PHARO_J2J_SAVE_V2
+    static_assert(JSV_IP == offsetof(J2JSave, ip), "JSV_IP");
+    static_assert(JSV_JITMETHOD == offsetof(J2JSave, jitMethod), "JSV_JITMETHOD");
+    static_assert(JSV_SENDARGCOUNT == offsetof(J2JSave, sendArgCount), "JSV_SENDARGCOUNT");
+#endif
+    static_assert(JSV_RESUMEADDR == offsetof(J2JSave, resumeAddr), "JSV_RESUMEADDR");
+    static_assert(JSV_SIZE == sizeof(J2JSave), "JSV_SIZE");
 #endif
 private:
     // Max J2J save depth per tryJITActivation entry.  At J2JSlotPerEntry

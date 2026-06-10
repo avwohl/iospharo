@@ -45,17 +45,10 @@
 #define JS_J2J_DEPTH      160
 #define JS_J2J_DEPTH_INC  208
 
-// -------- J2JSave field offsets (see Interpreter.hpp struct J2JSave) --------
-// 56 bytes after dropping literals/argCount/bcStart — those are derived from
-// save.jitMethod on return. See docs/jit-j2j-reduction-plan.md.
-#define JSV_SP            0
-#define JSV_RECEIVER      8
-#define JSV_TEMPBASE      16
-#define JSV_IP            24
-#define JSV_JITMETHOD     32
-#define JSV_RESUMEADDR    40
-#define JSV_SENDARGCOUNT  48
-#define JSV_SIZE          56
+// -------- J2JSave field offsets: single source of truth --------
+// (was a hand-synced duplicate of Interpreter.hpp's struct; the C++
+//  side now static_asserts against the same macros)
+#include "J2JSaveLayout.h" 
 
 // -------- JITMethod field offsets (see src/vm/jit/JITMethod.hpp) --------
 #define JM_COMPILEDMETHOD 0
