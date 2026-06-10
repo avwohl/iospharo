@@ -21569,6 +21569,33 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                     jitRuntime_.initialCompileFailedInsert(
                         cachedMethod.rawBits());
                 }
+                // Pre-existing bug fix (design §14 #5, confirmed): the
+                // eager compile above can trigger eviction, which can
+                // free (or free+recompile) the OWNER method's icBuffer —
+                // `icData` then dangles into freed/reused heap and every
+                // write below is a write-after-free poisoning an
+                // unrelated site (the inline-getter wrong-slot family).
+                // Re-validate the pointer against the owner's CURRENT
+                // buffer; on any mismatch drop the upgrade (the IC
+                // re-derives on the next send).
+                {
+                    bool ok = false;
+                    if (callerMethod.isObject()
+                            && callerMethod.rawBits() > 0x10000) {
+                        if (auto* ownJM = jitRuntime_.methodMap().lookup(
+                                callerMethod.rawBits())) {
+                            if (ownJM->icBuffer && ownJM->numICEntries > 0) {
+                                ptrdiff_t off =
+                                    reinterpret_cast<uint8_t*>(icData)
+                                    - ownJM->icZoneStart();
+                                ok = off >= 0
+                                    && (size_t)off < (size_t)ownJM->numICEntries
+                                                     * jit::IC_BYTES_PER_SITE;
+                            }
+                        }
+                    }
+                    if (!ok) return;
+                }
                 if (target && !target->hasPrimPrologue) {
                     // For block-value prims (207/209), asmjit-T1 has no
                     // prim prologue but we still want BLOCK_VALUE_BIT set
