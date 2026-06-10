@@ -131,6 +131,15 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   bcStartCache after GC, recoverAfterGC ghost-version methodMap rebuild)
 
 ## Rules reminders
+- **SUnit runner invocations: rm TWO stale files first** or the run
+  silently does nothing (ate three 90-min A/B attempts 2026-06-09/10):
+  1. /tmp/sunit_run_completed.txt — runner's done-marker, ALSO touched
+     by every test_load_image EVAL run (the A3 fix); blocks auto-start
+     ("skipping auto-restart", one easy-to-miss line).
+  2. <imagedir>/startup.st (e.g. /tmp/harness/startup.st) — eval mode
+     writes it and non-eval runs EXECUTE the stale one -> evaluates the
+     old expr and quits the image seconds after startup (0 SUnitRunner
+     lines, "Test Complete" almost immediately).
 - EVAL-RESULT prints to stderr — capture with 2>&1.
 - grep -o "ms=..." matches the arg echo first; grep EVAL-RESULT first.
 - New env knobs -> src/vm/debug_vars.h (DEBUG_BOOL + GET_DEBUG_BOOL).
