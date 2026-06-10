@@ -19863,6 +19863,25 @@ void Interpreter::tryJITResumeInCaller() {
                     Oop retVal = state.returnValue;
                     J2JSave& save = rj2jSaves[rj2jDepth];
 
+#if PHARO_J2J_SAVE_V2
+                    // V2: the packed save carries {sp, receiver,
+                    // tempBase, resumeAddr}; the caller identity comes
+                    // from the zone, and the RESUME SITE pops args +
+                    // writes the retval (passed in x1 by
+                    // JIT_RESUME_CALL) with static offsets.
+                    state.sp = save.sp;
+                    state.receiver = save.receiver;
+                    state.tempBase = save.tempBase;
+                    {
+                        auto* savedJM = jitRuntime_.codeZone().findMethodByPC(
+                            reinterpret_cast<uint64_t>(save.resumeAddr));
+                        state.jitMethod = savedJM;
+                        state.literals = reinterpret_cast<Oop*>(savedJM->literals());
+                        state.argCount = savedJM->argCount;
+                        state.ip = savedJM->bcStart();
+                        state.method = Oop::fromRawBits(savedJM->compiledMethodOop);
+                    }
+#else
                     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)
                             && save.jitMethod) {
                         jit::spDepthCheckJ2JSave(save.jitMethod->compiledMethodOop,
@@ -19888,6 +19907,7 @@ void Interpreter::tryJITResumeInCaller() {
                         // Restore state.method symmetric with J2JCall's update.
                         state.method = Oop::fromRawBits(savedJM->compiledMethodOop);
                     }
+#endif
                     // Sync Interpreter::receiver_/method_ on J2J Return —
                     // mirrors the slow-chain-loop sync at line ~19033.
                     // Without this, interp->receiver_ stays at the callee's
@@ -19899,9 +19919,12 @@ void Interpreter::tryJITResumeInCaller() {
                         method_ = state.method;
                     }
 
-                    // Pop receiver+args, push return value
+#if !PHARO_J2J_SAVE_V2
+                    // Pop receiver+args, push return value (V2: the
+                    // resume site does this with static offsets).
                     state.sp[-(save.sendArgCount + 1)] = retVal;
                     state.sp -= save.sendArgCount;
+#endif
 
                     if (__builtin_expect(save.resumeAddr == nullptr, 0)) {
                         state.ip = save.ip;
