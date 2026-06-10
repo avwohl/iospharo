@@ -4200,6 +4200,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // via its own protocol.
                     a.ldrb(w14, ptr(x10, (int)offsetof(JITMethod, hasPrimPrologue)));
                     a.cbnz(w14, normalJ2J);
+                    // Bisect (PHARO_T1_SAVELESS_NO_EXTRAS): only callees
+                    // with tempCount == nArgs (no nil-fill) — isolates
+                    // the dynamic nil-fill shape from the proven
+                    // no-extras shape (cfib->incc).
+                    if (GET_DEBUG_BOOL(PHARO_T1_SAVELESS_NO_EXTRAS)) {
+                        a.ldrb(w14, ptr(x10, (int)offsetof(JITMethod, tempCount)));
+                        a.cmp(w14, asmjit::Imm(nArgs));
+                        a.b_ne(normalJ2J);
+                    }
 
                     // === SAVELESS PATH ===
                     // Save caller state to sp-stash.  Layout (96 bytes in

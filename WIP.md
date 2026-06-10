@@ -193,12 +193,19 @@ under load is the canary).
     bug.  PHARO_T1_SAVELESS_MAX_ARGS=N added (compile-time nArgs gate):
     MAX_ARGS=0 at full scope -> dnu=0, no crash, but the eval is STILL
     silently lost -> even the 0-arg shape breaks at scale (the
-    controlled cfib->incc site differs how? suspects: 0-arg callees
-    WITH temps (the dynamic nil-fill loop never ran at the controlled
-    site — incc has 0 temps), and BLOCK callers whose
-    receiver/tempBase conventions differ).  Next sub-bisect: gate on
-    callee tempCount==nArgs (skip nil-fill shapes) via a runtime ldrb
-    compare, then block-caller exclusion (isBlock at emit time).
+    controlled cfib->incc site differs how?).  SUB-BISECT RESULTS
+    (PHARO_T1_SAVELESS_NO_EXTRAS runtime gate added): 0-arg AND
+    tempCount==nArgs at full scope STILL fails (10 DNUs) — nil-fill
+    and arg-math both EXONERATED.  Remaining suspects: the CALLER side
+    (block callers; callers entered via the asm trampoline whose
+    register/machine-sp discipline differs from the tryExecute entry
+    the controlled site used), or a callee exit the post-blr code
+    ignores — it ASSUMES EXIT_RETURN; if any leaf can exit otherwise
+    the OFF_RETVAL read is garbage.  NEXT (cheap, likely decisive):
+    verify OFF_EXIT == EXIT_RETURN in the post-blr (1 ldr + cmp,
+    branch to a bail stub that re-routes to the normal path
+    otherwise); also try gating saveless emit off inside block
+    compiles (isBlock at emit time).
 - docs/jit-retrospective.md "Cog-speed MAP" numbers now stale for
   cross-method; tight-loop 2x-faster-than-Cog and self-rec 6x still hold.
 - **First-compile fail thrash: FIXED (c79b97ab + 9dbe6a49).**  All
