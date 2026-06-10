@@ -148,12 +148,27 @@ under load is the canary).
     corruption fires broadly; behavior knobs re-land it visibly).
   - The corruption is REAL and present in the shipping default config;
     wall-clock scheduling + layout luck hide it (200-class suites
-    clean).  Next instrument must catch the WRITE, not the symptom:
-    e.g. a shadow-copy diff of a victim object class (OpalCompiler
-    collections / Form extents), or hardware watchpoints on a victim
-    slot after a first deterministic run locates it, or an
-    interpreter-vs-JIT differential replay.  Hold env BYTES constant
-    (pad to fixed total) in ALL future A/Bs on this bug.
+    clean).
+  - **KNIFE-EDGE EXTENDS TO BINARY DELTAS (2026-06-10 experiment
+    series):** even the C helper's body size moves the visibility, so
+    cross-binary DNU comparisons are NOISE.  Tested at the
+    DET+NO_J2J_BRANCH 2-DNU deterministic repro: store-site nop sleds,
+    register save/restore, empty calls, delay loops — DNUs persist
+    within each binary; the one 0-DNU binary (full ring) is not
+    attributable.  ONLY within-binary deterministic comparisons are
+    valid evidence on this bug.
+  - PHARO_T1_STORE_RING landed (knob-gated): store-provenance ring +
+    DNU-time scan — useful once a config shows DNUs WITH the ring
+    enabled (search configs; the scan prints planted-value provenance
+    with selectors).
+  - **NEXT INSTRUMENT (visibility-independent): shadow-slot
+    verify-on-read.**  Mirror every JIT ivar STORE into a shadow table
+    keyed by (object, slot) — GC must remap keys like countMap_ — and
+    on every ivar READ (pushRecvVar emits + interpreter) compare slot
+    vs shadow: mismatch = the slot changed WITHOUT a JIT store ->
+    either an interpreter/primitive store (instrument those too) or a
+    GC-mover bug (the central unresolved question).  Heavy but decides
+    the mechanism class regardless of where symptoms land.
   - hasRecvFieldWrite now computed by T1 (commit 0bc7d7f9) — flag is
     real even though the gate experiment was inconclusive.
   Recipe (reusable): DET_SCHED makes the failure a deterministic
