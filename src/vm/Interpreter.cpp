@@ -279,6 +279,36 @@ extern "C" void jit_rt_verify_getter(uint64_t statep, uint64_t recv,
             }
         }
     }
+    // (3) the cached method must still be what (site selector, live
+    // receiver class) resolves to — catches an internally-consistent
+    // entry holding the WRONG method (foreign-site fill, stale-oop
+    // refill).  Site selector recovered from the caller's selBitsArray.
+    auto* jm0 = reinterpret_cast<pharo::jit::JITMethod*>(
+        reinterpret_cast<uintptr_t>(st->jitMethod) & ~uintptr_t(1));
+    if (!why && jm0 && jm0->numICEntries > 0 && jm0->icBuffer
+            && methodBits > 0x10000 && st->interp) {
+        uint8_t* icStart = jm0->icZoneStart();
+        ptrdiff_t off = reinterpret_cast<uint8_t*>(entryPtr) - icStart;
+        if (off >= 0 && (size_t)off <
+                (size_t)jm0->numICEntries * pharo::jit::IC_BYTES_PER_SITE) {
+            uint32_t siteIdx =
+                (uint32_t)(off / pharo::jit::IC_BYTES_PER_SITE);
+            const uint64_t* sba = jm0->selBitsArray();
+            uint64_t selBits = sba ? sba[siteIdx] : 0;
+            if (selBits > 0x10000 && (selBits & 7) == 0) {
+                Oop sel = Oop::fromRawBits(selBits);
+                Oop cls = st->memory->classOf(Oop::fromRawBits(recv));
+                if (sel.isObject() && cls.isObject()) {
+                    Oop resolved =
+                        st->interp->lookupMethodForSend(sel, cls);
+                    if (!resolved.isNil()
+                            && resolved.rawBits() != methodBits) {
+                        why = "method!=lookup(sel,cls)";
+                    }
+                }
+            }
+        }
+    }
     if (!why && slotIdx >= ro->slotCount()) why = "slotIdx>=slotCount";
     if (!why) return;
     static int vgReports = 0;
