@@ -1543,6 +1543,22 @@ GCResult ObjectMemory::scavenge() {
     size_t edenUsedBefore = static_cast<size_t>(edenFree_ - edenStart_);
     static int scavCount = 0;
     int myScavId = ++scavCount;
+
+    // IP ROUND-TRIP (2026-06-10): a scavenge MOVES young CompiledMethods
+    // — including one the interpreter is CURRENTLY EXECUTING (a fresh
+    // eval DoIt / freshly-compiled test method).  forEachRoot updates
+    // method_/savedMethod oops, but instructionPointer_, the saved
+    // frames' savedIP, and the live JITState ip are raw pointers into
+    // the OLD eden copy.  Execution continues on the stale copy —
+    // correct until eden refills and overwrites those bytes, then the
+    // interpreter executes whatever the new objects put there (the
+    // 'EVAL-RESULT=' silent-eval-loss / wrong-receiver-DNU family;
+    // ~10% per layout, scavengesSoFar=3 signature).  fullGC has always
+    // wrapped object motion in prepareForGC/afterGC; do the same here.
+    // gcPrepared() guards the scavenge fullGC runs internally (ips are
+    // already offsets then — re-preparing would destroy them).
+    bool ipWrapped = interpreter_ && !interpreter_->gcPrepared();
+    if (ipWrapped) interpreter_->prepareForGC();
     if (g_debug.gcEphDebug && myScavId <= 20) {
         fprintf(stderr, "[SCAV-%d] eden used=%zu KB old=%zu KB\n",
             myScavId, edenUsedBefore / 1024,
@@ -1858,6 +1874,10 @@ GCResult ObjectMemory::scavenge() {
     size_t edenUsedAfter = 0;
     (void)edenUsedBefore;
     result.bytesReclaimed = edenUsedBefore - edenUsedAfter;
+
+    // Rebuild ips from the offsets stashed at scavenge entry (skips
+    // the full-GC-only methodCache/IC flush tail).
+    if (ipWrapped) interpreter_->afterGC(false);
 
     auto end = std::chrono::steady_clock::now();
     result.milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(

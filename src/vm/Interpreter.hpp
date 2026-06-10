@@ -262,8 +262,17 @@ public:
     /// Convert raw IP pointers to offsets before GC (methods may move)
     void prepareForGC();
 
-    /// Convert IP offsets back to pointers after GC (methods may have moved)
-    void afterGC();
+    /// Convert IP offsets back to pointers after GC (methods may have
+    /// moved).  fullGC=false (the per-scavenge wrap) skips the
+    /// full-GC-only tail (flushMethodCache + recoverJITAfterGC's IC
+    /// flush) — the ip/J2J-pool rebuilds still run.
+    void afterGC(bool fullGC = true);
+
+    /// True between prepareForGC and the end of afterGC.  The scavenge
+    /// wrap checks this so a scavenge nested inside fullGC (which
+    /// already converted ips to offsets) doesn't re-run prepareForGC on
+    /// the offset-ized state and destroy the saved offsets.
+    bool gcPrepared() const { return gcPrepared_; }
 
     /// Log current method and bytecode for debugging
     void logCurrentMethod(FILE* out);
@@ -775,6 +784,7 @@ private:
     // GC: IP offsets for current frame (set by prepareForGC, read by afterGC)
     ptrdiff_t ipOffset_ = 0;
     ptrdiff_t bytecodeEndOffset_ = 0;
+    bool gcPrepared_ = false;  // see gcPrepared()
 
     // GC: the live JITState currently driving JIT execution, or nullptr
     // when no JIT code is on the stack. forEachRoot scans its Oop fields

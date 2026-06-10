@@ -60,6 +60,40 @@ Stock Cog baseline: `cd /tmp/harness && ./pharo Pharo.image eval "<expr>"`.
   bench (callee with a send: `sfib ... incs`, `incs ^self incc`)
   default 370-378ms vs MAX_IC=1 **51-52ms (7.3x)** — raising MAX_IC
   is the next big cross-method win once the residual is confirmed dead.
+- **Interp-side sp-depth extension** (same commit family): the residual
+  DNU fires at a `,` that dispatches via **ExtSend 0xEA** (the eval DoIt
+  has >15 literals) — op_send0/1/2 hooks alone NEVER see it.  Hooks now:
+  threaded op_send0/1/2 + the ExtSend switch case.  Known noise floor:
+  6 FFI/stdio sites report stable +1 (special activation frame variant,
+  deduped).  Internal resends (adaptTo*, value-retry) and primitive
+  methods are skipped (argCount-vs-site filter + prim-bit filter).
+  Catch-loop protocol: /tmp/catch_fail5.sh — rep until no EVAL-RESULT,
+  keep the log, grep SP-DEPTH-INTERP minus the noise selectors.
+- **ROOT CAUSE FOUND (catch loop iterations 4-9): SCAVENGE NEVER CALLED
+  prepareForGC/afterGC.**  Only fullGC wraps object motion in the
+  ip->offset round-trip.  A scavenge moves young CompiledMethods —
+  including the one the interpreter is CURRENTLY EXECUTING (fresh eval
+  DoIt / freshly-compiled methods): forEachRoot updates method_ oops,
+  but instructionPointer_/savedIP/state.ip keep pointing at the OLD
+  eden copy.  Execution continues on the stale copy — CORRECT until
+  eden refills and overwrites those bytes, then the interp executes
+  the new objects' raw bytes (string-as-method, `,`-to-StdioStream,
+  silent early return — every observed mode).  Explains the ~10%
+  rate (race: DoIt completion vs eden refill), the scavengesSoFar=3
+  signature, the ASLR knife-edge, and the detectors' silence (stale
+  ip is out-of-range vs the MOVED method -> interp check skipped it
+  silently).  FIX: scavenge() now wraps in prepareForGC/afterGC(false)
+  (skips the full-GC-only methodCache/IC flush tail; gcPrepared_
+  guards the fullGC-internal scavenge from double-prepare).
+  En-route fixes that were ALSO real bugs: stale bcStartCache (commit
+  earlier), megaCacheAdd tenure guard (young oops in a non-root,
+  stencil-probed cache = same hazard class, distinct path), walker
+  ExtJump semantics (operand is UNSIGNED + extB sign — T1's emit reads
+  int8: LATENT T1 MISCOMPILE for naked forward long-jumps >= 128,
+  AsmjitT1.cpp ~6965/1221/846 — STILL UNFIXED, next task).
+  Validation in flight: catch10 60-rep loop.  Scavenge-wrap perf cost
+  TBD (prepareForGC is O(frameDepth) per scavenge; if measurable, only
+  wrap when any executing/saved method is YOUNG — usually none are).
 
 ## Headline: inline-J2J is DEFAULT-ON (lever e, commit after 0a48a0e1).
 DEFAULT config now: cfib(30) 344ms -> 44ms (Cog 8), benchFib(30) 296ms -> 32ms

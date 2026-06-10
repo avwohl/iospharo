@@ -58,6 +58,21 @@ void spDepthCheckInterpSend(uint64_t methodOopBits,
                             pharo::ObjectMemory* memory,
                             const char* where);
 
+// Consistency check for a J2JSave at materialize/pop time: the saved
+// (ip, sp) pair must satisfy the depth invariant
+//   save.sp == save.tempBase + tempCount + depth[save.ip - bcStart]
+//              + save.sendArgCount
+// (save.ip is the post-send resume offset; recv+args of the in-flight
+// send are still on the stack above the post-send depth).  Catches
+// wrong-but-in-range save.ip (stale caches, stale registers, slot
+// reuse) at the moment of consumption — the mechanism behind the
+// wrong-offset resumes that execute valid bytecode from the wrong
+// position (silent eval loss / StdioStream-receiver DNUs).
+void spDepthCheckJ2JSave(uint64_t saveJmMethodOop, const uint8_t* saveIp,
+                         void* saveSp, void* saveTempBase,
+                         int tempCount, int sendArgCount,
+                         pharo::ObjectMemory* memory, const char* where);
+
 // Interp-side maps are keyed by method oop bits — invalidate after a
 // moving GC (call from Interpreter's afterGC).
 void bcDepthMapsClearAfterGC();

@@ -50,6 +50,8 @@ uint64_t g_ipOutOfRange = 0;
 uint64_t g_unreachableOffset = 0;
 uint64_t g_interpChecks = 0;
 uint64_t g_interpMismatches = 0;
+uint64_t g_saveChecks = 0;
+uint64_t g_saveMismatches = 0;
 
 // Arg counts for special-selector sends 0x70-0x7F, from the image's
 // SpecialSelectorsArray [sel0, argc0, sel1, argc1, ...] entries 16-31.
@@ -75,6 +77,12 @@ bool loadSpecialArgCounts(ObjectMemory* memory) {
     g_specialArgsLoaded = true;
     return true;
 }
+
+// Diagnostics for the most recent computeDepthMap failure (read by the
+// unmappable report in buildEntryForMethodOop).
+uint32_t g_lastFailPc = 0;
+uint8_t g_lastFailOp = 0;
+const char* g_lastFailWhy = "?";
 
 // Worklist propagation of operand depth.  out[k] = depth BEFORE the
 // bytecode at offset k.  Returns false (unmappable) on: opcodes with
@@ -112,6 +120,11 @@ bool computeDepthMap(const uint8_t* bc, size_t bcLen,
             out[pc] = static_cast<int16_t>(depth);
 
             uint8_t op = bc[pc];
+            // Failure diagnostics: any `return false` below reports the
+            // op being processed (merge conflicts report the prior op —
+            // close enough for the unmappable triage line).
+            g_lastFailPc = pc;
+            g_lastFailOp = op;
             int len = SV1::bytecodeLength(op);
             if (pc + static_cast<uint32_t>(len) > bcLen) return false;
             bool terminator = false;
@@ -179,15 +192,18 @@ bool computeDepthMap(const uint8_t* bc, size_t bcLen,
             } else if (op == SV1::InlinedPrimitive) {
                 return false;                                    // non-static effect
             } else if (op == SV1::ExtJump) {
-                if (extBSet) return false;                       // T1: no prefix support
-                int8_t off = static_cast<int8_t>(bc[pc + 1]);
+                // Interp semantics (Interpreter.cpp ExtJump): operand is
+                // UNSIGNED; the sign lives in extB (offset = byte +
+                // (extB << 8)).  NOT int8 — T1's decoder reads int8 and
+                // is wrong for naked forward jumps >= 128 (latent T1
+                // bug, noted in WIP).
+                int64_t off = bc[pc + 1] + (static_cast<int64_t>(extB) << 8);
                 if (!branchTo(static_cast<int64_t>(pc) + 2 + off, depth)) return false;
                 terminator = true;
             } else if (op == SV1::ExtJumpTrue || op == SV1::ExtJumpFalse) {
-                if (extBSet) return false;
                 depth -= 1;
                 if (depth < 0) return false;
-                int8_t off = static_cast<int8_t>(bc[pc + 1]);
+                int64_t off = bc[pc + 1] + (static_cast<int64_t>(extB) << 8);
                 if (!branchTo(static_cast<int64_t>(pc) + 2 + off, depth)) return false;
             } else if (op >= SV1::ExtPopStoreRecv && op <= SV1::ExtPopStoreTemp) {
                 depth -= 1;
@@ -256,6 +272,16 @@ void buildEntryForMethodOop(uint64_t oopBits, DepthEntry& e) {
     if (!computeDepthMap(bc, bcLen, e.depth)) {
         e.depth.clear();
         g_unmappable++;
+        // Unmappable methods are silent blind spots — name them (capped)
+        // so a victim method hiding in the unmappable set is visible.
+        static int unmapReports = 0;
+        if (++unmapReports <= 60) {
+            fprintf(stderr,
+                    "[SP-DEPTH-UNMAPPABLE #%d] oop=0x%llx bcLen=%zu "
+                    "failPc=%u failOp=0x%02x\n",
+                    unmapReports, (unsigned long long)oopBits, bcLen,
+                    g_lastFailPc, g_lastFailOp);
+        }
         return;
     }
     e.unmappable = false;
@@ -484,6 +510,57 @@ void spDepthCheckInterpSend(uint64_t methodOopBits,
     }
 }
 
+void spDepthCheckJ2JSave(uint64_t saveJmMethodOop, const uint8_t* saveIp,
+                         void* saveSp, void* saveTempBase,
+                         int tempCount, int sendArgCount,
+                         ObjectMemory* memory, const char* where) {
+    if (!GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK)) return;
+    if (!saveJmMethodOop || !saveIp || !saveSp || !saveTempBase || !memory) return;
+    if (!loadSpecialArgCounts(memory)) return;
+
+    auto it = g_interpDepthMaps.find(saveJmMethodOop);
+    if (it == g_interpDepthMaps.end()) {
+        DepthEntry& fresh = g_interpDepthMaps[saveJmMethodOop];
+        buildEntryForMethodOop(saveJmMethodOop, fresh);
+        it = g_interpDepthMaps.find(saveJmMethodOop);
+    }
+    const DepthEntry& e = it->second;
+    if (e.unmappable) return;
+
+    Oop methodOop = Oop::fromRawBits(saveJmMethodOop);
+    ObjectHeader* methObj = methodOop.asObjectPtr();
+    Oop headerOop = methObj->slotAt(0);
+    if (!headerOop.isSmallInteger()) return;
+    size_t numLits = static_cast<size_t>(headerOop.asSmallInteger() & 0x7FFF);
+    const uint8_t* bcStart = methObj->bytes() + (1 + numLits) * 8;
+
+    g_saveChecks++;
+    int64_t bcOff = saveIp - bcStart;
+    int16_t d = -2;
+    bool oor = bcOff < 0 || static_cast<size_t>(bcOff) >= e.depth.size();
+    if (!oor) d = e.depth[bcOff];
+    Oop* tb = static_cast<Oop*>(saveTempBase);
+    Oop* sp = static_cast<Oop*>(saveSp);
+    Oop* expected = (d >= 0) ? tb + tempCount + d + sendArgCount : nullptr;
+    if (oor || d < 0 || sp != expected) {
+        g_saveMismatches++;
+        static int svReports = 0;
+        if (++svReports <= 40) {
+            fprintf(stderr,
+                    "[SP-DEPTH-SAVE #%llu] %s %s sel=%s bcOff=%lld depth=%d "
+                    "sendArgs=%d sp=%p expected=%p delta=%lld words "
+                    "tempBase=%p tempCount=%d\n",
+                    (unsigned long long)g_saveMismatches, where,
+                    oor ? "IP-OUT-OF-RANGE" : (d < 0 ? "UNREACHABLE-OFFSET" : "SP"),
+                    memory->selectorOf(methodOop).c_str(),
+                    (long long)bcOff, (int)d, sendArgCount,
+                    (void*)sp, (void*)expected,
+                    expected ? (long long)(sp - expected) : 0,
+                    (void*)tb, tempCount);
+        }
+    }
+}
+
 void bcDepthMapsClearAfterGC() {
     g_interpDepthMaps.clear();
 }
@@ -492,13 +569,16 @@ void spDepthStatsDump() {
     if (!GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK)) return;
     fprintf(stderr,
             "  sp-depth: checks=%llu mismatches=%llu (ip-oor=%llu unreach=%llu) "
-            "maps=%llu unmappable=%llu interp: checks=%llu mismatches=%llu\n",
+            "maps=%llu unmappable=%llu interp: checks=%llu mismatches=%llu "
+            "save: checks=%llu mismatches=%llu\n",
             (unsigned long long)g_checks, (unsigned long long)g_mismatches,
             (unsigned long long)g_ipOutOfRange,
             (unsigned long long)g_unreachableOffset,
             (unsigned long long)g_mapsBuilt, (unsigned long long)g_unmappable,
             (unsigned long long)g_interpChecks,
-            (unsigned long long)g_interpMismatches);
+            (unsigned long long)g_interpMismatches,
+            (unsigned long long)g_saveChecks,
+            (unsigned long long)g_saveMismatches);
 }
 
 }  // namespace jit
@@ -511,6 +591,8 @@ struct JITState;
 void spDepthCheck(JITState&, const char*) {}
 void spDepthCheckInterpSend(uint64_t, const uint8_t*, void*, void*, int,
                             pharo::ObjectMemory*, const char*) {}
+void spDepthCheckJ2JSave(uint64_t, const uint8_t*, void*, void*, int, int,
+                         pharo::ObjectMemory*, const char*) {}
 void bcDepthMapsClearAfterGC() {}
 void spDepthStatsDump() {}
 }}

@@ -5693,6 +5693,13 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         int numArgs = ((extB_ << 3) | (desc & 0x07)) & 0xFF;
         extA_ = 0;
         extB_ = 0;
+        // sp-desync detector: ExtSend is how methods with >15 literals
+        // send (the eval DoIt's `,` dispatches here, not op_send1).
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)) {
+            jit::spDepthCheckInterpSend(method_.rawBits(), instructionPointer_,
+                                        stackPointer_, framePointer_, numArgs,
+                                        &memory_, "interp-extsend");
+        }
         sendSelector(literal(selectorIndex), numArgs);
         break;
     }
@@ -9997,6 +10004,29 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // sp-desync hunt tripwire: a non-CompiledMethod oop reaching
+    // activation executes its raw bytes as bytecodes (caught live:
+    // method_ = the 'EVAL-RESULT=' ByteString).  Report provenance at
+    // the moment of activation instead of the downstream garbage DNU.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)) {
+        ObjectHeader* mh = (method.isObject() && method.rawBits() > 0x10000)
+            ? method.asObjectPtr() : nullptr;
+        if (!mh || !mh->isCompiledMethod()) {
+            extern uint64_t g_scavengeCount;
+            static int badActReports = 0;
+            if (++badActReports <= 20) {
+                fprintf(stderr,
+                        "[BAD-ACTIVATE #%d] non-method oop=0x%llx cls=%s "
+                        "argCount=%d fd=%zu caller=#%s scav=%llu\n",
+                        badActReports,
+                        (unsigned long long)method.rawBits(),
+                        mh ? memory_.classNameOf(method).c_str() : "(imm/low)",
+                        argCount, frameDepth_,
+                        memory_.selectorOf(method_).c_str(),
+                        (unsigned long long)g_scavengeCount);
+            }
+        }
+    }
     // PHARO_TRACE_EXTENT_SEL: arm the bytecode-extent trace when entering a
     // method whose selector matches the knob. The extent (this method + every
     // method it calls) is then traced per-bytecode in DISPATCH_NEXT until
@@ -18169,9 +18199,10 @@ void Interpreter::prepareForGC() {
             }
         }
     }
+    gcPrepared_ = true;
 }
 
-void Interpreter::afterGC() {
+void Interpreter::afterGC(bool fullGC) {
     // Convert current frame's offsets back to pointers (method may have moved).
     if (method_.isObject()) {
         uint8_t* methodBytes = method_.asObjectPtr()->bytes();
@@ -18259,9 +18290,15 @@ void Interpreter::afterGC() {
     }
 #endif
 
-    // GC may move method and class objects, invalidating cached lookups
-    flushMethodCache();
-    recoverJITAfterGC();
+    // GC may move method and class objects, invalidating cached lookups.
+    // Full-GC only: methodCache_ oops are GC-visited (scavenge updates
+    // them in place), and recoverJITAfterGC's full IC flush per scavenge
+    // would destroy IC warmth for no correctness gain.
+    if (fullGC) {
+        flushMethodCache();
+        recoverJITAfterGC();
+    }
+    gcPrepared_ = false;
 }
 
 void Interpreter::logCurrentMethod(FILE* out) {
@@ -18323,6 +18360,10 @@ void Interpreter::initializeJIT() {
         fprintf(stderr, "[JIT] Failed to initialize — running interpreted only\n");
         return;
     }
+    // megaCacheAdd tenure guard: young oops must never enter the cache
+    // (not a GC root; scavenge moves them — see JITRuntime.hpp).
+    jitRuntime_.setYoungSpaceBounds(memory_.newSpaceStart(),
+                                    memory_.newSpaceEnd());
     // Expose code zone for crash diagnostics
     ::g_jitCodeZone = &jitRuntime_.codeZone();
 }
@@ -19655,6 +19696,15 @@ void Interpreter::tryJITResumeInCaller() {
 
                     Oop retVal = state.returnValue;
                     J2JSave& save = rj2jSaves[rj2jDepth];
+
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)
+                            && save.jitMethod) {
+                        jit::spDepthCheckJ2JSave(save.jitMethod->compiledMethodOop,
+                                                 save.ip, save.sp, save.tempBase,
+                                                 save.jitMethod->tempCount,
+                                                 save.sendArgCount,
+                                                 &memory_, "rj2j-return-pop");
+                    }
 
                     state.sp = save.sp;
                     state.receiver = save.receiver;
@@ -21652,6 +21702,18 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
                 ipInRange ? "ip-OK" : "IP-OUT-OF-RANGE <<<",
                 resumeInRange ? "" : " RESUME-MISMATCH <<<");
         }
+    }
+
+    // sp-desync detector: validate the save's (ip, sp) pair against the
+    // static depth invariant at consumption time.  A wrong-but-in-range
+    // save.ip resumes valid bytecode from the wrong offset (silent eval
+    // loss / wrong-receiver DNUs) — invisible to per-send checks because
+    // each send is depth-consistent AT the wrong offset.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK), 0)) {
+        jit::spDepthCheckJ2JSave(saveJM->compiledMethodOop, save.ip,
+                                 save.sp, save.tempBase,
+                                 saveJM->tempCount, save.sendArgCount,
+                                 &memory_, siteTag);
     }
 
     frame.savedIP = save.ip;

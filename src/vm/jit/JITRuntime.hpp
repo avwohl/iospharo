@@ -222,9 +222,32 @@ public:
         bcEntryStates_.erase(jm);
     }
 
+    // Young-space bounds for megaCacheAdd's tenure guard.  Set once by
+    // the Interpreter after memory init (the mmap'd region is fixed for
+    // the process; objects move within it).
+    void setYoungSpaceBounds(const void* start, const void* end) {
+        youngStart_ = reinterpret_cast<uint64_t>(start);
+        youngEnd_   = reinterpret_cast<uint64_t>(end);
+    }
+
     // Add entry to mega cache (called by interpreter after method lookup)
     void megaCacheAdd(uint64_t selectorBits, uint64_t classIndex,
                       uint64_t methodBits, uint64_t jitEntry = 0) {
+        // TENURE GUARD (2026-06-10): the megaCache is NOT a GC root and
+        // is only cleared on FULL GC — a scavenge moves young objects
+        // and leaves the cached raw oops pointing at recycled eden
+        // memory.  Caught live: a stale methodBits served the address
+        // where the eval's 'EVAL-RESULT=' ByteString had been
+        // reallocated, and the send path executed the string as a
+        // CompiledMethod (stencils probe this cache directly — no C++
+        // validation downstream).  Never cache young oops: young
+        // methods/selectors re-lookup until tenured.  A young SELECTOR
+        // is equally fatal as a key: a different symbol recycled at its
+        // address would false-hit someone else's methodBits.
+        if ((methodBits >= youngStart_ && methodBits < youngEnd_)
+            || (selectorBits >= youngStart_ && selectorBits < youngEnd_)) {
+            return;
+        }
         // Primary probe (matches stencil hash)
         size_t h = static_cast<size_t>(selectorBits ^ classIndex) & (MegaCacheSize - 1);
         // Secondary probe (rotated hash, matches stencil)
@@ -259,6 +282,11 @@ public:
 
 private:
     MegaCacheEntry megaCache_[MegaCacheSize] = {};
+    // Young-space bounds for the megaCacheAdd tenure guard.  Defaults
+    // make the guard reject EVERYTHING until setYoungSpaceBounds runs
+    // (safe: cache misses, never stale entries).
+    uint64_t youngStart_ = 0;
+    uint64_t youngEnd_ = ~0ULL;
     CodeZone    codeZone_;
     MethodMap   methodMap_;
     JITCompiler* compiler_ = nullptr;
