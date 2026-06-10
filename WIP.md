@@ -82,7 +82,17 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   Batch 2 edits: dual J2JSave struct (V2 = 4 fields/32B), materialize
   unpack path, gate the GC pool walks + .ipOffset uses (2 sites),
   then batch 3 = the emit (push/prelude/resume continuations).
-  2a DONE (GC walks gated).  **COMPLETION STRATEGY for 2b-6: make the
+  2a DONE (GC walks gated).  2b DONE (dual struct; V2 = 32B packed
+  with addr()/bcOff()/nArgs() accessors).  **STRAGGLER ENUMERATION
+  DONE (V2=1 local build): exactly 17 error lines, ALL in
+  Interpreter.cpp** — 19323/19325 (early J2J region), 19753-19782
+  (the rj2j C++ push site: needs the V2 packed write), 19937-19950
+  (null-resume save.ip readers: V2 derives ip = jm->bcStart()+bcOff()),
+  21882-21935 (materializeJ2JSaveIntoFrame: V2 unpack — jm via
+  findMethodByPC(addr()), ip via bcStart+bcOff(), matRetSlot via
+  nArgs()).  JITRuntime.cpp and AsmjitT1.cpp compile clean at V2=1
+  (the emit writes raw offsets, converted in batch 3).  Fix these 17,
+  then batch 3 = the emit sides.  **COMPLETION STRATEGY for 2b-6: make the
   struct dual FIRST, then build with the switch flipped LOCALLY — the
   compiler enumerates every remaining V1-field reference as an error;
   write each site's V2 side (push packing: resumeAddr | bcOff<<48 |
