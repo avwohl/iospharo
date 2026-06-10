@@ -270,9 +270,12 @@ void spDepthCheck(JITState& state, const char* where) {
     if (!GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK)) return;
     int er = state.exitReason;
     // Only exits whose ip points AT a bytecode with operands intact.
+    // ExitJ2JCall is also checkable: ip points PAST the send bytecode,
+    // recovered below by backscanning for the send opcode.
     if (er != ExitSend && er != ExitSendCached && er != ExitMustBool
             && er != ExitArithOverflow && er != ExitBlockCreate
-            && er != ExitArrayCreate && er != ExitYield) {
+            && er != ExitArrayCreate && er != ExitYield
+            && er != ExitJ2JCall) {
         return;
     }
     auto* jm = reinterpret_cast<JITMethod*>(
@@ -285,6 +288,27 @@ void spDepthCheck(JITState& state, const char* where) {
 
     const uint8_t* bcStart = jm->bcStart();
     int64_t bcOff = state.ip - bcStart;
+    if (er == ExitJ2JCall) {
+        // ip points one past the send.  Backscan: plain sends are
+        // 1 byte (0x60-0xAF), ExtSend/ExtSuperSend are 2.  If both
+        // readings are plausible (the ExtSend operand byte can look
+        // like a send opcode), the site is ambiguous — skip it.
+        int64_t off1 = bcOff - 1, off2 = bcOff - 2;
+        bool plain = off1 >= 0
+            && static_cast<size_t>(off1) < entry->depth.size()
+            && SistaV1::isSendBytecode(bcStart[off1])
+            && SistaV1::bytecodeLength(bcStart[off1]) == 1
+            && entry->depth[off1] >= 0;
+        bool ext = off2 >= 0
+            && static_cast<size_t>(off2) < entry->depth.size()
+            && (bcStart[off2] == SistaV1::ExtSend
+                || bcStart[off2] == SistaV1::ExtSuperSend)
+            && entry->depth[off2] >= 0;
+        if (plain == ext) return;     // neither or ambiguous
+        bcOff = plain ? off1 : off2;
+        // Operands must at least cover recv + args of the in-flight send.
+        if (entry->depth[bcOff] < state.sendArgCount + 1) return;
+    }
     g_checks++;
     if (bcOff < 0 || static_cast<size_t>(bcOff) >= entry->depth.size()) {
         // ip outside the method's bytecodes is itself a finding (stale
