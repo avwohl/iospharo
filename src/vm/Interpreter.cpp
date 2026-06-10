@@ -22715,9 +22715,25 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
             }
             if (chainCallDepth > 0) {
-                // Inline callee returned — pop frame, resume caller in JIT
-                popFrame();
-                push(state.returnValue);
+                // Inline callee returned — pop frame, resume caller in JIT.
+                // Honor materializedRetSlot: chainCallDepth includes frames
+                // created by materializeJ2J (chainCallDepth += j2jDepth), so
+                // the popped frame can be a materialize-bail SavedFrame whose
+                // return value must land in the recorded receiver slot — the
+                // same misplaced-retval class fixed at the j2jMaterialized
+                // ExitReturn site (Step 7) above.
+                {
+                    Oop* matRetSlot = (frameDepth_ > 0)
+                        ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                        : nullptr;
+                    popFrame();
+                    if (matRetSlot) {
+                        *matRetSlot = state.returnValue;
+                        stackPointer_ = matRetSlot + 1;
+                    } else {
+                        push(state.returnValue);
+                    }
+                }
                 if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop) {
                     int ipOff = (g_atBcBase && instructionPointer_) ? (int)(instructionPointer_ - g_atBcBase) : -2;
                     atRec(4, 0xA0, ipOff, state.returnValue.rawBits(),
@@ -24496,7 +24512,11 @@ jit_loop_exit:
     // unprocessed exit reason in state.  Process it now so the
     // interpreter state is consistent.
     switch (state.exitReason) {
-    case jit::ExitReturn:
+    case jit::ExitReturn: {
+        // Honor materializedRetSlot (see the chainCallDepth>0 pop above).
+        Oop* matRetSlotLoopExit = (frameDepth_ > 0)
+            ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+            : nullptr;
         if (!popFrame()) {
             if (activeContext_.isObject() && !activeContext_.isNil()) {
                 Oop sender = memory_.fetchPointer(0, activeContext_);
@@ -24522,8 +24542,14 @@ jit_loop_exit:
             tryReschedule();
             return true;
         }
-        push(state.returnValue);
+        if (matRetSlotLoopExit) {
+            *matRetSlotLoopExit = state.returnValue;
+            stackPointer_ = matRetSlotLoopExit + 1;
+        } else {
+            push(state.returnValue);
+        }
         return true;
+    }
 
     case jit::ExitSend:
     case jit::ExitSendCached:

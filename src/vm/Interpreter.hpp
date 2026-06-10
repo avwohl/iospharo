@@ -3379,6 +3379,20 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
             }
         }
 
+        // Initial-compile-failed negative cache: same treatment as the
+        // count map (keys are CompiledMethod/Block oop bits; updated here,
+        // rehashed in recoverAfterGC).  Persisting entries across GC is
+        // what stops the per-GC asmjit-pipeline retry thrash on
+        // un-compilable methods (1.4M+ failed attempts per SUnit batch
+        // before 2026-06-10).
+        for (size_t i = 0; i < jit::JITRuntime::FailedMapSize; i++) {
+            uint64_t& key = jitRuntime_.initialCompileFailedKey(i);
+            if (key != 0) {
+                Oop& keyOop = *reinterpret_cast<Oop*>(&key);
+                visitor(keyOop);
+            }
+        }
+
         // Tier 2 map: keys are CompiledMethod Oop bits (needs GC update).
         for (size_t i = 0; i < jit::JITRuntime::Tier2MapSize; i++) {
             auto& entry = jitRuntime_.tier2Entry(i);

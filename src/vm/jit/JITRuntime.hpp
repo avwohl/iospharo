@@ -24,6 +24,7 @@
 #include <unordered_set>
 #include <vector>
 #include <cstdint>
+#include <cstring>
 
 #if PHARO_JIT_ENABLED
 
@@ -309,10 +310,57 @@ private:
     // every value — re-running the full asmjit T1 pipeline each safe-point
     // drain, forever (the method path is self-limited by the count-map; blocks
     // bypass it via queueInitialCompile).  Same bug class as the recompile
-    // thrash fixed by kRecompileFailed.  Keys go stale on compaction, so it is
-    // cleared in recoverAfterGC — a failing block then gets exactly one fresh
-    // attempt per GC (bounded), never per-drain.
-    std::unordered_set<uint64_t> initialCompileFailed_;
+    // thrash fixed by kRecompileFailed.
+    //
+    // 2026-06-10: was a std::unordered_set cleared per-GC ("one fresh
+    // attempt per GC, bounded") — at SUnit-suite scale that meant 1.4M+
+    // failed asmjit pipeline runs per 60-class batch (~700/sec, each a
+    // full compile attempt).  Now an open-addressed key array, GC-visited
+    // in forEachRoot (Interpreter.hpp, next to the countMap_ walk) and
+    // REHASHED in recoverAfterGC like countMap_ — entries survive GC, so
+    // a failing method is attempted once, ever (until evicted by hash
+    // pressure: insert overwrites the first probe slot when its 8-slot
+    // window is full).
+public:
+    static constexpr size_t FailedMapSize = 16384;  // 128 KB of keys
+    uint64_t& initialCompileFailedKey(size_t i) {
+        return initialCompileFailedKeys_[i];
+    }
+    bool initialCompileFailedContains(uint64_t methBits) const {
+        size_t idx = (methBits >> 3) % FailedMapSize;
+        for (size_t probe = 0; probe < 8; probe++) {
+            uint64_t k = initialCompileFailedKeys_[(idx + probe) % FailedMapSize];
+            if (k == methBits) return true;
+            if (k == 0) return false;
+        }
+        return false;
+    }
+    void initialCompileFailedInsert(uint64_t methBits) {
+        size_t idx = (methBits >> 3) % FailedMapSize;
+        for (size_t probe = 0; probe < 8; probe++) {
+            uint64_t& slot = initialCompileFailedKeys_[(idx + probe) % FailedMapSize];
+            if (slot == methBits) return;
+            if (slot == 0) { slot = methBits; return; }
+        }
+        // Window full — overwrite the first probe slot (eviction: the
+        // displaced method may thrash again briefly; bounded).
+        initialCompileFailedKeys_[idx] = methBits;
+    }
+    void rehashInitialCompileFailed() {
+        // Heap-allocate the temp (128 KB — too big for the stack; same
+        // pattern as recoverAfterGC's countMap_ rehash).
+        auto* temp = new uint64_t[FailedMapSize];
+        std::memcpy(temp, initialCompileFailedKeys_,
+                    sizeof(initialCompileFailedKeys_));
+        std::memset(initialCompileFailedKeys_, 0,
+                    sizeof(initialCompileFailedKeys_));
+        for (size_t i = 0; i < FailedMapSize; i++) {
+            if (temp[i] != 0) initialCompileFailedInsert(temp[i]);
+        }
+        delete[] temp;
+    }
+private:
+    uint64_t initialCompileFailedKeys_[FailedMapSize] = {};
 
     // T2 monomorphic IC slot pool (128KB, bump-allocated per compilation)
     T2ICSlot t2ICPool_[MaxT2ICSlots] = {};
