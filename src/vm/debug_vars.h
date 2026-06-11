@@ -158,6 +158,8 @@ DEBUG_BOOL(PHARO_T1_TOS_VERIFY)           // before every cache-consuming emit: 
 DEBUG_BOOL(PHARO_T1_NO_NATIVE_BACKJUMP)   // opt-OUT: revert prefixed ExtJump (loop back edges!) to the bail-to-interp emit.  Default ON since 2026-06-11: the bail meant EVERY to:do:/whileTrue back edge dropped the whole activation to the interpreter (the '29.6ns/iter floor' mystery)
 DEBUG_INT(PHARO_T1_RESUME_MIN_COMPILE, -1)  // send-resume bisect: advertise resume for send-bearing methods ONLY when compile-seq >= MIN (with FORCE_RESUME_FOR_SENDS semantics for that range); -1 = off
 DEBUG_INT(PHARO_T1_RESUME_MAX_COMPILE, -1)  // ...and compile-seq < MAX; -1 = no cap.  Bisects WHICH method's resume wedges startup (the only-idle family)
+DEBUG_INT(PHARO_T1_RESUME_MIN2_COMPILE, -1) // second bisect window (pair-interaction hunts)
+DEBUG_INT(PHARO_T1_RESUME_MAX2_COMPILE, -1)
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT

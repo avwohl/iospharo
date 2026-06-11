@@ -8578,6 +8578,14 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             resumeBisect = seq >= (uint64_t)lo
                         && (hi < 0 || seq < (uint64_t)hi);
         }
+        int lo2 = GET_DEBUG_INT(PHARO_T1_RESUME_MIN2_COMPILE);
+        int hi2 = GET_DEBUG_INT(PHARO_T1_RESUME_MAX2_COMPILE);
+        if (!resumeBisect && lo2 >= 0) {
+            extern uint64_t g_t1CompileSeq2;
+            uint64_t seq = g_t1CompileSeq2;
+            resumeBisect = seq >= (uint64_t)lo2
+                        && (hi2 < 0 || seq < (uint64_t)hi2);
+        }
     }
     if (numSendSites > 0 && !forceResumeForSends && !resumeBisect
             && (!resumeSendsNoCondjump || t1HasCondJump))
