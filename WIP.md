@@ -2,6 +2,32 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12bbb — prim-75 fill landed; flake characterized; bail_prim needs refill
+
+- prim-75 identityHash fill: SHIPPED via upgradeICToJ2J (the kind-20
+  emit existed complete; only the fill was missing).  bail_prim
+  UNCHANGED on dict because existing site entries don't reclassify
+  (only-fill-when-extra==0).  To see the win: IC clear/eviction or
+  fresh sites.  Consider a one-shot extras RECLASSIFY pass at
+  recompile/GC for pk-only prims (cheap, bounded).
+- STARTUP-DNU FLAKE: rate varies per binary AND per load on the SAME
+  binary+config (0/5 then 5/5 then 0).  NOT matguard (A/B noise —
+  narrow stays default).  DET_SCHED doesn't pin GC/startup-Delay
+  timing.  FORENSIC RECIPE: loop `PHARO_SP_DEPTH_TRAP=1
+  PHARO_DET_SCHED=1 eval 3+4` until dnus>0, save the full log; the
+  DNU-STACK + SEL-CORRUPT forensics auto-print.  Suspect pool:
+  recent windows' default-path changes (ignOC widening GC window?
+  matguard narrow + popFrameForJIT retslot hole — REAL regardless;
+  scan-fix newly-real methods changing layout).
+- popFrameForJIT does NOT honor materializedRetSlot (confirmed read)
+  — thread the retslot write through its callers; removes the
+  matguard entirely.
+- Soak in flight (/tmp/soak_idh.log).
+NEXT: (1) flake capture-on-fire + root cause (correctness bar);
+(2) retslot protocol in popFrameForJIT; (3) extras reclassify pass;
+(4) sieve-gate root fix (un-stub p60/61); (5) bail-protocol for
+MAX_IC.
+
 ## CHECKPOINT 2026-06-12aaa — gate-bail census: 92% bail rate; both halves named
 
 xmethod gate counters (PHARO_T1_INLINE_J2J=1, dict): enter=3.6M,
