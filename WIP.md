@@ -2,6 +2,37 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11k — NATIVE LOOP BACK EDGES + the OSR ping-pong discovery
+
+- **Loops now JIT** (commit "NATIVE loop back edges"): the ExtendA/B
+  prefix handler bailed every prefixed bytecode -> every to:do:/
+  whileTrue back edge dropped the rest of the activation to interp
+  FOREVER (the floor-bench contradiction exposed it: 29.6ns/iter
+  "empty loop" = the interpreter).  Now: ExtendB+ExtJump emits
+  natively; back edges poll forceYield_ (baked addr) and bail on
+  heartbeat preemption; DET_SCHED keeps the old bail; opt-out
+  PHARO_T1_NO_NATIVE_BACKJUMP.  All gates green.
+- Measured: sendless loops ~flat (naive JIT body ~= interp for simple
+  bytecodes at -O2); send-in-loop ~6%.  BUT:
+- **NEXT INVESTIGATION (the suite-scale lever): the send-in-loop
+  pathology** — 'sendloop: s := s incc inside 1 to: 3M do:' runs at
+  117ns/send-iteration BOTH knob states, with OSR=155K (baseline 14K),
+  activations NOT growing with the 3M sends, inline-J2J hits BELOW
+  bare-startup baseline.  The loop ping-pongs interp<->OSR ~21
+  iterations per cycle and its send sites never IC-classify.  This is
+  very plausibly THE mechanism behind the FFI/text run-killer family
+  (platformLongAt: loops at 8490 sends/sec).  Diagnose: WHY does the
+  OSR-entered activation exit per ~21 iterations (what exit reason?),
+  and why don't the loop's IC sites classify (pendingICPatch_ owner =
+  the OSR variant? upgradeICToJ2J never sees ExitSendCached because
+  the site misses every time after IC flush? trace with
+  PHARO_JIT_FAIL_REASONS + SLOW-EXIT-SEND + a per-exit-reason count
+  on a sendloop run).
+- Status vs Cog (quiet, default config): cfib ~25, benchFib ~69-80,
+  sfib ~31 (Cog 8/25/12).  The microbench gap is send-activation
+  machinery (frame-state design workflow wf_f0056620 running); the
+  SUITE gap now has a named candidate (the OSR ping-pong above).
+
 ## CHECKPOINT 2026-06-11j — simStack VERDICT: parked opt-in (design's own rule); next lever = frame-state residency
 
 - **Interleaved 5x5 quiet A/B (the design's measurement protocol):**
