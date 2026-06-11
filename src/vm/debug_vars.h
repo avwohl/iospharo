@@ -89,6 +89,7 @@ DEBUG_BOOL(PHARO_T1_INLINE_TEMP_RETURN)      // bit 54: ^ arg N
 DEBUG_BOOL(PHARO_T1_INLINE_INT_CMP_RETURN)   // bit 53: ^ self cmp arg
 DEBUG_BOOL(PHARO_T1_INLINE_INT_ARITH_RETURN) // bit 52: ^ self op arg
 DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)         // bit 51: Integer>>even/odd
+DEBUG_BOOL(PHARO_NO_IGNOC_WIDEN)            // opt out of the VM-side ignoreOuterContext widening (skip materialize for NLR-free, thisContext-free, nested-block-free blocks)
 DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_CREATE)    // OPT-IN: in-JIT block creation via jit_rt_block_create — UNSOUND for J2J-hidden callers (caller frames invisible to materialize), see AsmjitT1 PushFullBlock comment
 DEBUG_INT(PHARO_T1_INLINE_BLOCK_CREATE_MAX, -1) // bisect: inline-create only the first N emitted PushFullBlock sites (-1 = all)  // opt out of in-JIT block creation (restore the ExitBlockCreate exit/resume round trip)
 DEBUG_BOOL(PHARO_T1_NO_PRIM_FALLBACK_BODY)  // opt out of compiling fallback bodies for unsupported-prim methods (restores the old refuse-whole-method behavior)

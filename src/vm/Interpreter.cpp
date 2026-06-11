@@ -14442,6 +14442,43 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     // The closure's code is in a CompiledBlock literal at litIndex
     Oop compiledBlock = literal(litIndex);
 
+    // ignOC WIDENING (2026-06-11, the dict-bench materialize killer):
+    // the compiler sets ignoreOuterContext only for fully CLEAN blocks,
+    // but a closure's outerContext is semantically unread unless the
+    // block contains an NLR (^, method-return opcodes 0x58-0x5C inside
+    // a block), thisContext, or a NESTED block (whose home chain must
+    // pass through ours).  Scan the CompiledBlock once; if none are
+    // present, skip the whole-frame-stack materialization.  Opt-out
+    // PHARO_NO_IGNOC_WIDEN=1.
+    if (!ignoreOuterContext
+            && !GET_DEBUG_BOOL(PHARO_NO_IGNOC_WIDEN)
+            && compiledBlock.isObject()
+            && compiledBlock.rawBits() > 0x10000) {
+        ObjectHeader* cbObj = compiledBlock.asObjectPtr();
+        Oop cbHdr = cbObj->slots()[0];
+        if (cbHdr.isSmallInteger()) {
+            int cbLits = (int)(cbHdr.asSmallInteger() & 0x7FFF);
+            const uint8_t* cb = cbObj->bytes() + (1 + cbLits) * 8;
+            const uint8_t* cbEnd = cbObj->bytes() + cbObj->byteSize();
+            bool needsCtx = false;
+            for (const uint8_t* q = cb; q < cbEnd; ) {
+                uint8_t op = *q;
+                if ((op >= jit::SistaV1::ReturnReceiver
+                        && op <= jit::SistaV1::ReturnTop)
+                    || op == jit::SistaV1::PushThisContext
+                    || op == jit::SistaV1::PushFullBlock) {
+                    needsCtx = true;
+                    break;
+                }
+                if (jit::SistaV1::isBlockReturn(op) && q + 1 >= cbEnd) break;
+                int len = jit::SistaV1::bytecodeLength(op);
+                if (len <= 0) { needsCtx = true; break; }  // unknown: be safe
+                q += len;
+            }
+            if (!needsCtx) ignoreOuterContext = true;
+        }
+    }
+
     // Create FullBlockClosure
     // Get the class from special objects - index 59 is ClassFullBlockClosure
     Oop blockClass = memory_.specialObject(SpecialObjectIndex::ClassFullBlockClosure);
