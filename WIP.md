@@ -2,6 +2,36 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11jj — M3 stages a+b GATED-IN, parity-proven; (c) blocked on §9
+
+Stage (a) (both representations + parity oracle) and stage (b) (the
+prelude's 1-load cursor compare) are committed and SOAK-PROVEN
+(2468/2468 x2 with zero [M3-PARITY] divergences).  The entryCursor
+protocol is correct end-to-end including the saveless stash carry
+(new 64-bit slot; base stash 48->64, cross uses free [80]).
+
+**Stage (c) blocker, precisely**: the per-push depth RMW is the x20
+BATCHED increment 0x100000001 — its high half counts j2jTotalCalls,
+which chargeJITBytecodes converts into checkCountdown_ charging
+(GC/timer/scheduler periodic checks).  Dropping the RMW without the
+§9 doorbell-preemption redesign starves the scheduler.  The doorbell
+design (per frame-state-residency.md §9): back edges + send entries
+poll a single forceYield byte (already emitted for native back
+edges!), and charging moves to exit-time wall-clock or per-exit
+estimates — THEN the RMW drops and x20 frees (-> M5 receiver
+residency).
+
+**Where the remaining fib gap likely lives (next measurement step
+before more FSR)**: capstone-profile ONE hot linked round trip
+(PHARO_T1_DUMP_SEL=benchFib + the disasm recipe) and COUNT the
+remaining per-call instructions by category (gate cascade / mirror
+stores (M4) / save push (M2b) / depth RMW (M3c)).  Decide
+M4-vs-M2b-vs-send-fold from the counts, not the design order.
+
+Current: fib30 ~19ms vs Cog 5; dict ~375 vs 18; suite 4134/4140;
+all FSR knobs verified-correct (x19 invariant, x23 cursor, entry-
+cursor protocol).
+
 ## CHECKPOINT 2026-06-11ii — M3 phase 1 IN (C++ baseline maintenance); phase 2 design pinned
 
 Phase 1 committed: j2jEntryCursor maintained at all 11 C++
