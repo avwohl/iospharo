@@ -2,6 +2,31 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11n — cascade #2 emit-half landed; #3 = NLR-vs-resume (the real architecture item)
+
+- **#2 emit side SHIPPED** (commit "cascade #2 emit side"): the
+  retro-save pool-full brk is now a graceful ExitRetroFull handoff
+  (retro* JITState fields @272+).  REMAINING = the C++ handler at the
+  dispatch switches (precise plan in the commit message; ordering:
+  drain-then-retro-innermost).  Unreachable in default config —
+  safe as landed.
+- **#3 (the NLR cannotReturn under broad resume)** is the remaining
+  blocker and the real architecture item: resumed activations break
+  `^` home-finding (Context identity across materialize->resume; the
+  married/widowed-context problem).  Fix design sketch: when resume
+  re-enters a frame that was materialized (has a SavedFrame/Context),
+  either (a) keep the SavedFrame entry alive + marked resumed so the
+  home-search (Interpreter.cpp ~11445 family) can match it to the
+  live JIT frame, or (b) Cog-style: re-marry — record the Context oop
+  in the resumed frame's identity so NLR targeting the Context
+  resolves to the live activation.  Start by instrumenting WHICH
+  home-search fails (the cannotReturn signal path) under the
+  deterministic config: DET_SCHED + saveless-off + windows
+  [2000,3500)+[3500,5000).
+- After #2-C++ + #3: stage resume (RESUME_SENDS_NO_CONDJUMP -> full)
+  with the ladder; the measured prize = 14x on send-loops, i.e. the
+  iterative-workload suite family.
+
 ## CHECKPOINT 2026-06-11m — send-resume fix #1 LANDED; cascade components #2/#3 mapped
 
 - **Fix #1 SHIPPED + validated** (commit "SEND-RESUME FIX #1"): plain
