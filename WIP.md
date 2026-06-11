@@ -2,6 +2,43 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11x — FOURTH class FIXED; ladder status: narrow rung CLEAN, full force = ONE residual
+
+**FIX 4 (committed): chain-loop create handlers.**  ExitBlockCreate/
+ExitArrayCreate in the chain loop never refreshed state.sp after
+pushing the created closure/array (j2jDepth>0 branch) — the object sat
+ABOVE the JIT's resumed sp, the next send read operands one slot low
+(addAllLast:'s do: ran with arg0==receiver).  Plus missing/conditional
+globals sync (BlockCreate conditional, ArrayCreate none).  Diagnosed
+via [SELFARG-ACT] (all hits caller=#addAllLast: ipOff=5 kind=1).
+
+**Ladder status (deterministic, DET_SCHED, build-opt, eval 3+4):**
+- default: CLEAN (eval ✓, 0 DNU/MUSTBOOL)
+- narrow rung RESUME_SENDS_NO_CONDJUMP=1: CLEAN (was 10 DNUs+lost eval)
+- windows 2000-5000: 1 residual DNU (#method on nil, OpalCompiler>>
+  evaluate DoIt path), eval ✓ (was 10 DNUs+lost eval)
+- GLOBAL FORCE (PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1, the
+  historical 117-MUSTBOOL wedge config): ONE MUSTBOOL left:
+  DateParser>>parseNextPattern ipOff=6, fp[1](temp char)=THE RECEIVER
+  — `char := self readNextChar` returned the receiver.  site0 IC =
+  bit-60 J2J to readNextChar (fill correct).  Same recv-as-result
+  family: a J2J-called callee under force-resume whose return is
+  mis-delivered.  Forensics in the res38 pattern (rerun the force
+  config with SP_DEPTH_TRAP).  eval lost in this config.
+- benches: benchFib/sqrt unchanged on narrow rung (loops have
+  condjumps -> excluded there; the 14x needs the full force).
+
+**NEXT**: (1) DateParser residual: trace readNextChar's J2J return
+under force-resume ([RES-IN/OUT] on readNextChar/parseNextPattern,
+check the J2J return's retval slot arithmetic vs resumed-caller sp);
+(2) windows residual (#method on nil); (3) when force is clean:
+60-class SUnit A/B + 16K soak + bench ladder -> flip
+RESUME_SENDS_NO_CONDJUMP default-ON first (it is CLEAN now), then
+full send-resume; (4) re-baseline vs Cog (cfib/benchFib/sfib).
+NOTE: /tmp/harness/Pharo-jit.image was MISSING — earlier 'canary 205
+PASS' results were STALE files; re-prepped (bg task).  Re-run AIPrim
+canary before trusting it.
+
 ## CHECKPOINT 2026-06-11w — fourth class: activation arg-slot = receiver (off-by-one)
 
 Narrow-rung repro (PHARO_T1_RESUME_SENDS_NO_CONDJUMP=1 + DET_SCHED +
