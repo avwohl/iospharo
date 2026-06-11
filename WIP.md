@@ -2,6 +2,35 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11ii — M3 phase 1 IN (C++ baseline maintenance); phase 2 design pinned
+
+Phase 1 committed: j2jEntryCursor maintained at all 11 C++
+depth-baseline writer sites (8 zeroers + 3 pin/restore pairs).
+Ladder clean; field maintained, not yet consumed.
+
+**Phase 2 (emit) — the remaining design decisions, resolved:**
+- The saveless stash carries the caller's entryDepth in the 32-bit pad
+  slot [sp,40]; the 64-bit entryCursor needs a new slot: grow the
+  stash by 16 (alignment) in NODEPTH mode — base 48->64, cross
+  96->112, entryCursor at [stashSize-16]; keep [40] entryDepth DURING
+  the verify-parity soak, drop it at RMW removal.  (Considered: 32-bit
+  pool OFFSETS in [40] — rejected: the emitted code lacks a cheap pool
+  base; the pool is 32KB so offsets fit, but base materialization
+  costs more than the stash growth.)
+- Emit pin sites to convert (entryDepth -> entryCursor): 5171
+  (saveless stash save+pin), 5320/5382 (retro unwind restores), 5399,
+  3298 (the return-prelude READ -> becomes ldr x4,[x0,#312];
+  cmp x23,x4).
+- Push-site RMW removal: the three M2-gated sites' depth triple.
+- Choke-point depth refresh (state.j2jDepth = j2jDepthFromCursor())
+  at: chain-loop post-JIT_CALL, resume-loop post-tryResume,
+  tryJITActivation initial, the two osr entries — AFTER the verify
+  soak proves parity.
+- VERIFY order: (a) both representations maintained + a C++ assert at
+  choke points (knob PHARO_T1_FSR_NODEPTH_VERIFY), soak; (b) flip the
+  prelude to the cursor compare, soak; (c) remove the RMW + install
+  the choke-point refresh, soak; (d) measure.
+
 ## CHECKPOINT 2026-06-11hh — M3 implementation design (worked out, ready to execute)
 
 **M3 (depth elimination) — the exact plan, avoiding the consumer sweep:**
