@@ -2,6 +2,34 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11f — B6 #class inline landed; gap ~2.6-2.9x; simStack next
+
+- **QUIET BENCH STATE (2026-06-10 21:50, everything default-on):**
+      cfib(30)        22-24 ms   (Cog  8;  2.9x)   [was 43x at arc start]
+      benchFib(28)x10 69 ms      (Cog 25;  2.8x)
+      sfib(30)        31 ms      (Cog 12;  2.6x)
+- **B4 EXTENDED GATE**: default config ran 10765 tests before being
+  stopped (watermark passed): 4 fails, all known/pre-existing, zero
+  mirror drift.
+- **B6 phase 1a SHIPPED** (commit "B6 phase 1a"): prim-111 #class =
+  kPrimKindClass(24) extras with NO bit 60, classifier in
+  upgradeICToJ2J (no compile attempt — the dispatch-A snippet
+  replaces the callee), emit compare in the heap fall-through, F1
+  even/odd full-field-decode fix (a pk-24 immediate would have
+  returned a BOOLEAN from #class under INLINE_EVEN_ODD), F4 stencil
+  arity routing.  Compiled-method class bench -17% (195 vs 234).
+  **MEASUREMENT LESSON: eval-doIt loops run INTERPRETED — they never
+  exercise dispatch-A.  Bench #class (and anything send-path) inside
+  an Integer compile:'d method.**  The historical "o class 3.4M/s"
+  figure likely measured the interp path; the interp-send #class
+  fast path + stencil-tier pk-24 handler + 1b immediates are
+  follow-ups (design + review in /tmp/b6_design.md /tmp/b6_review.md,
+  workflow wf_b266f2c3).
+- simStack synthesis workflow resumed (wf_8ad1bdf7, designs+reviews
+  cached; synthesis had hit the session limit) -> docs/simstack-design.md.
+- Also landed today: §14 #5 eager-compile owner re-validation,
+  PHARO_T1_PATCH_MAX_IC (Q3 probe), compact() tripwire, §14 #4.
+
 ## CHECKPOINT 2026-06-11e — PMS design COMPLETE + B0 LANDED; resume at B1
 
 - **docs/patched-ic-design.md is the working plan** (synthesized by an
