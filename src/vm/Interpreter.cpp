@@ -13978,6 +13978,29 @@ void Interpreter::createFullBlock() {
 }
 
 void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool receiverOnStack, bool ignoreOuterContext) {
+    // Cascade-#3 divergence finder (PHARO_BLOCK_CREATE_TRACE): one
+    // line per create; diff a wedging run against a clean run — the
+    // first diverging field names the corruption and its producer.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_BLOCK_CREATE_TRACE), 0)) {
+        static size_t bcN = 0;
+        if (++bcN <= 60000) {
+            std::string sel = (method_.isObject()
+                               && method_.rawBits() > 0x10000)
+                ? memory_.selectorOf(method_) : std::string("?");
+            fprintf(stderr,
+                "[BLKCR #%zu] m=#%s lit=%d nCop=%d rcvOnStk=%d ignOC=%d "
+                "depth=%lld vals=",
+                bcN, sel.c_str(), litIndex, numCopied,
+                (int)receiverOnStack, (int)ignoreOuterContext,
+                (long long)(stackPointer_ - (framePointer_ + 1)));
+            for (int k = 0; k < numCopied && k < 4; k++) {
+                fprintf(stderr, "%llx,",
+                    (unsigned long long)stackPointer_[-(numCopied - k)]
+                        .rawBits());
+            }
+            fprintf(stderr, "\n");
+        }
+    }
     // Sista V1 0xF9: Push FullBlockClosure
     // The closure's code is in a CompiledBlock literal at litIndex
     Oop compiledBlock = literal(litIndex);

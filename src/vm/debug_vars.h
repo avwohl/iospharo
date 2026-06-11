@@ -159,6 +159,7 @@ DEBUG_BOOL(PHARO_T1_NO_NATIVE_BACKJUMP)   // opt-OUT: revert prefixed ExtJump (l
 DEBUG_INT(PHARO_T1_RESUME_MIN_COMPILE, -1)  // send-resume bisect: advertise resume for send-bearing methods ONLY when compile-seq >= MIN (with FORCE_RESUME_FOR_SENDS semantics for that range); -1 = off
 DEBUG_INT(PHARO_T1_RESUME_MAX_COMPILE, -1)  // ...and compile-seq < MAX; -1 = no cap.  Bisects WHICH method's resume wedges startup (the only-idle family)
 DEBUG_INT(PHARO_T1_RESUME_MIN2_COMPILE, -1) // second bisect window (pair-interaction hunts)
+DEBUG_BOOL(PHARO_BLOCK_CREATE_TRACE)        // dump every createFullBlockWithLiteral: method/fp/sp/copied-values/outerContext (capped 4000) — the cascade-#3 divergence finder
 DEBUG_INT(PHARO_T1_RESUME_MAX2_COMPILE, -1)
 
 #undef DEBUG_BOOL
