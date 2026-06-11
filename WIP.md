@@ -39,7 +39,20 @@ Enabling that image-side for Pharo's collection protocol might kill
 most materializes WITHOUT VM work.  CHECK FIRST NEXT SESSION — it
 may be a pure image/startup-script change.
 
-Suite soak of current default in flight (/tmp/soak_ibc.log).
+SHARPER FIRST EXPERIMENT (next session, ~30 lines): VM-side
+ignoreOuterContext widening.  Pharo sets ignOC only for CLEAN blocks
+(no self/outer-temps/^), so at:'s [self errorKeyNotFound: key] gets
+ignOC=0 and pays materializeFrameStack — but the closure's
+outerContext is semantically UNREAD unless the block has ^ (NLR) or
+thisContext.  In createFullBlockWithLiteral: scan the CompiledBlock's
+bytecodes once (cache verdict in a side map keyed by block oop) for
+ReturnTop-from-block/thisContext; if absent -> skip materialize, use
+the activeContext_ else-branch.  If the suite holds, EVERY dict-path
+block-create stops materializing — without touching the JIT.  Risks
+to watch: debugger tests, Context>>home/outerContext reflection
+tests, exception-retry (#retry re-runs protected block via ctx).
+
+Suite soak of current default PASSED 2468/0/0 (/tmp/soak_ibc.log).
 dict 437ms vs Cog 26 (16.8x); fib30 ~17.5 vs 5 (3.5x).
 
 ## CHECKPOINT 2026-06-11ss — dict gap FULLY decoded: block-creation exits are the cost
