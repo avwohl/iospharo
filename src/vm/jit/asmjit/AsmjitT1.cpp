@@ -3440,13 +3440,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // all seven do (+, -, *, csel-compares, float, ByteString=
         // true/false).
         const bool tosProduceArith = tosFam(kTosFamArith);
-        // SmI tag check (5 ops): (a^b) | (a-1) low 3 bits = 0 iff
-        // both SmI AND same tag.
-        a.eor(x5, x1, x4);
-        a.sub(x6, x1, asmjit::Imm(1));
-        a.orr(x5, x5, x6);
-        a.tst(x5, asmjit::Imm(7));
-        a.b_ne(bail);
+        // SmI tag check.  B3 (simStack constSmI shrink): when TOS is a
+        // KNOWN tagged-SmI constant (PushInteger/Push0/Push1 produced
+        // it), only the unknown side (NOS, x1) needs checking — 3 ops
+        // on a shorter dependency chain instead of the dual 5-op check.
+        if (tosFam(kTosFamArith) && g_tosIn.valid && g_tosIn.constSmI
+                && (g_tosIn.taggedBits & 7) == 1) {
+            a.eor(x5, x1, asmjit::Imm(1));   // tag-1 check on NOS only
+            a.tst(x5, asmjit::Imm(7));
+            a.b_ne(bail);
+        } else {
+            // (a^b) | (a-1) low 3 bits = 0 iff both SmI AND same tag.
+            a.eor(x5, x1, x4);
+            a.sub(x6, x1, asmjit::Imm(1));
+            a.orr(x5, x5, x6);
+            a.tst(x5, asmjit::Imm(7));
+            a.b_ne(bail);
+        }
 
         if (op == 0x60) {        // +
             // a_bits + b_bits = (a+b)*8 + 2 → sub 1 to retag.
