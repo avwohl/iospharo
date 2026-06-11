@@ -2,6 +2,37 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11o — #2 CURED (headroom reservation); #3 refined to corrupt-closure creation
+
+- **#2 is DONE** (commit "cascade #2 CURED"): the saveless fast path
+  reserves 64 saves of pool headroom and falls back to the save-push
+  path near capacity — the retro pool-full class is unreachable by
+  construction (and sidesteps the chained-handoff clobber problem the
+  single-slot ExitRetroFull design had; that machinery stays as
+  insurance).  bisect-ALL: exit 133 (brk) -> 124 (#3's wedge only).
+  Default config verified unchanged.
+- **#3 SIGNATURE REFINED** (deterministic repro unchanged): the run
+  is littered with "<Error printing blockClosure ... Error printing
+  the compiledBlock in FreeTypeFont>>widthAndKernedWidth... /
+  Dictionary>>at:ifAbsentPut: ..." — FullBlockClosures CREATED while
+  a resumed frame is live have corrupt innards (outerContext /
+  compiledBlock), which also explains the cannotReturn: (a ^ through
+  a corrupt outerContext).  This is the ExitBlockCreate-stale-state
+  FAMILY (the 2026-06-09 xmethod sortBlock bug's sibling — see the
+  materializeJ2J lambda's comment about ExitBlockCreate sp-resync
+  skips at ~23267): resume's state re-basing (j2jDepth/cursor/sp)
+  leaves something stale that the closure-creation path captures.
+  NEXT: trace ExitBlockCreate under the deterministic repro — dump
+  state.{sp,tempBase,j2jDepth,cursor} + the created closure's
+  outerContext at each block-create while a resumed frame is live;
+  compare against the non-resume run.  Check BOTH resume entry
+  classes (savedResumeEntry path resets depth/cursor at ~24614;
+  the V2 save-pop JIT_RESUME_CALL path at ~19999/22970 must NOT
+  reset mid-chain — verify each maintains what block-create reads).
+- Cascade scoreboard: #1 FIXED, #2 CURED, #3 = corrupt-closure
+  creation under resume (deterministic, family-known).  After #3:
+  stage resume -> the 14x iterative-workload win.
+
 ## CHECKPOINT 2026-06-11n — cascade #2 emit-half landed; #3 = NLR-vs-resume (the real architecture item)
 
 - **#2 emit side SHIPPED** (commit "cascade #2 emit side"): the
