@@ -19833,8 +19833,13 @@ void Interpreter::tryJITResumeInCaller() {
                             if (pOff <= 0xFFFu && pArgs <= 15
                                     && jitRuntime_.getBcEntryState(
                                            cJM, pOff) == 0) {
+                                // PLAIN-table predicate — must MATCH
+                                // the asm trampoline's Lresume_check
+                                // exactly, or the two refusals ping-
+                                // pong (asm exits ExitSendCached, C++
+                                // re-converts, asm refuses again...).
                                 uint32_t cOff =
-                                    cJM->codeOffsetForResume(pOff);
+                                    cJM->codeOffsetForBC(pOff);
                                 packable = cOff != 0
                                         && cOff < cJM->codeSize;
                             }

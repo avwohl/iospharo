@@ -328,6 +328,9 @@ Ltramp_call:
     // advance past it so save.ip and the resume address point to the
     // NEXT bytecode. 1-byte sends (0x80-0xAF), 2-byte (0xEA-0xEB).
     ldr     x10, [x21, #JS_IP]
+    mov     x16, x10                       // stash PRE-advance ip (cascade-#3
+                                           // refusal rewinds it; x16 is free
+                                           // straight-line to Lresume_null)
     ldrb    w11, [x10]
     add     x10, x10, #1                   // advance 1 byte (default)
     sub     w12, w11, #0xEA
@@ -410,7 +413,18 @@ Lresume_check:
     b       Lcall_after_resume
 
 Lresume_null:
-    str     xzr, [x23, #JSV_RESUMEADDR]
+    // Cascade-#3 ROOT FIX (2026-06-11): a null-resume V2 save loses
+    // both its resume ip and its caller identity — materialize rebuilt
+    // such frames at METHOD START and the interpreter re-executed the
+    // whole caller body on return.  REFUSE the J2J call instead:
+    // rewind ip to the send, exit to C++ as ExitSendCached; the chain
+    // loop's matching C++ refusal (same plain-table predicate) routes
+    // it to the regular cached-send path with a true SavedFrame.  The
+    // partially-written save slot is harmless (cursor not advanced).
+    str     x16, [x21, #JS_IP]             // rewind to the send bytecode
+    mov     w12, #7                        // ExitSendCached
+    str     w12, [x21, #JS_EXITREASON]
+    b       Ltramp_exit
 
 Lcall_after_resume:
     // Advance save cursor now that the slot is fully written
