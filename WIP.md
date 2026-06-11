@@ -2,6 +2,28 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11ff — FSR M2 v1 scaffold in (gated, one coherence hole)
+
+M2 v1 = WRITE-THROUGH x23 cursor residency (design deviation from the
+doc's full no-write-through M2: keeps memory authoritative at every
+mutation so C++/BLR observers need no brackets; the win is the
+dependent cursor LOAD leaving the J2J push/pop critical path; full
+no-write-through becomes M2b if v1 measures short).  Implemented:
+macro hoists + clobbers (unconditional, inert), 5 gated emit sites.
+KNOB-ON IS BROKEN (eval lost) — one coherence hole; default inert.
+
+NEXT for M2: the dual-cursor audit — gated emit at every exit stub
+comparing x23 vs [x0,#144] with brk #0xF23 on divergence (mirror the
+x19-verify pattern at dispatchCached + emitSyncSpToState callers);
+run the ladder -> the first trap names the divergent path.  Suspects:
+a trampoline path updating memory-cursor without x23; an emitted path
+running before the macro hoist (OSR entry? pharo_jit_osr_resume's
+register reloads — check whether IT reloads x23); C++ mid-chain
+cursor rewrites paired with non-macro JIT entries.
+
+Then: measure (cfib/fib30/dict A/B) -> M3 (depth elimination via
+j2jEntryCursor, the second money batch) -> price-the-design gate.
+
 ## CHECKPOINT 2026-06-11ee — SEVENTH root cause FIXED; suite fully clean
 
 **The -2^62-ns clock lesion = the Phase-3 arm64 inline multiply (0x68)
