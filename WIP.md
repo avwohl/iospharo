@@ -2,6 +2,34 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11ss — dict gap FULLY decoded: block-creation exits are the cost
+
+Counter false alarm resolved: inline-prim counters need
+PHARO_T1_INLINE_PRIM_COUNTERS=1.  With it: atPut=863K size=378K
+bitOp=366K fire fine; at=49K (vs 11.9M C++ #at:) and getter=0 (vs
+8.8M C++ #key).  The 11.9M C++ #at: are DICTIONARY-receiver at: (no
+prim — can't inline as primKind 14; must call the compiled method).
+
+THE CHAIN (per dict op): jitted caller -> Dictionary>>at: ->
+PushFullBlock (the ifAbsent: closure) -> ExitBlockCreate exits to C++
+-> createFullBlockWithLiteral + materializeFrameStack (incremental
+now, still 1-3 allocs) -> tryResume -> re-enter.  EVERY at: pays a
+full JIT exit/resume round trip + closure alloc + context
+materialization, and the #key/#hash sends execute interpreted inside
+that window.  Cog: closure alloc INLINE in machine code + married
+(lazy) outerContext — never exits.
+
+NEXT BIG LEVER (multi-session design, docs/ worthy): inline
+FullBlockClosure creation in T1 — pointer-bump alloc helper (no full
+exit), receiver+copied from stack, and the HARD part: outerContext.
+Options: (a) materialize-on-demand sentinel in the closure +
+divorce-on-access (married-context lite; touches thisContext, NLR,
+exception search); (b) keep eager materialization but make it O(1)
+via the incremental cache (now in: ctxSynced) + top-frame-only
+materialize with lazy sender linking.  Either removes the per-at:
+exit.  Suite 2468/0/0 green on everything through the ensure: fix.
+dict 437ms vs Cog 26 (16.8x); fib30 ~17.5 vs 5 (3.5x).
+
 ## CHECKPOINT 2026-06-11rr — ensure: was the force-rung blocker; dict lever = dead inline-prims
 
 FORCE-RUNG FIXED: compile-seq bisect (script /tmp/rbisect.sh,
