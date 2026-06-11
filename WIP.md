@@ -2,6 +2,30 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11cc — FSR M1 GATE PASSED; the 1880-clock signature
+
+**FSR M1 complete + gate passed**: x19 = active-JITMethod invariant
+maintained at all 5 emitted commit/restore sites + the trampoline
+Lcall fix; verify oracle (brk #0xF19 at dispatchCached on
+x19-vs-mirror divergence) ran the 1-15 suite (2466 tests) + full
+ladder with ZERO traps.  Knobs PHARO_T1_FSR_X19 / _VERIFY.  M2
+(cursor residency, MONEY 1) can now consume x19.
+
+**The residual sporadic corruption now has an exact signature**: the
+runner's WD-CLOCK forensics caught both spurious timeouts:
+`DateAndTime now` = year 1880 (now AND the derived deadline both
+1880, internally consistent; the later re-read returns 2026 ->
+instant-false compare -> spurious TIMEOUT verdict).  ~1-2 per 2500
+tests.  Shape candidates: (a) SmallFloat raw (tag 5) misread as SmI
+(huge negative — e.g. 0x854...005 = 80.0); (b) partial-slot
+overwrite (ruled out for the T1 emit: no 32-bit stores to oop slots).
+NEXT PROBE: compute the EXACT µs value for 1880-04-21T11:16:24 from
+the printed dates and match against candidate raw words; or add a
+clock-plausibility trap in primitiveUTCMicrosecondsClock's consumers
+(value < epoch-2020 => dump JIT state + frames).  The corrupted value
+enters between prim 240 (C++-correct) and DateAndTime's arithmetic —
+all JIT-visible.
+
 ## CHECKPOINT 2026-06-11bb — SIXTH root cause; send-resume rung FLIPPED DEFAULT-ON
 
 **Root cause #6 = the chain-loop ExitYield missing frame-identity
