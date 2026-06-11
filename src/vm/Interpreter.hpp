@@ -3386,6 +3386,9 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
                 // oop unchanged) and the zone is writable here (above).
                 m->bcStartCache = m->compiledMethodOop
                     + (2 + (m->methodHeader & 0x7FFF)) * 8;
+                // FSR M0: literalsCache tracks compiledMethodOop the same
+                // way (= oop + 16; see JITMethod::refreshLiteralsCache).
+                m->refreshLiteralsCache();
             }
             if (m->selectorOop != 0) {
                 Oop& selOop = *reinterpret_cast<Oop*>(&m->selectorOop);

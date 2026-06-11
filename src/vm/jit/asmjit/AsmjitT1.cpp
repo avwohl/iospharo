@@ -8658,6 +8658,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     }
 
     jm->compiledMethodOop = compiledMethod.rawBits();
+    jm->refreshLiteralsCache();  // FSR M0
     jm->methodHeader      = static_cast<uint64_t>(headerBits);
     // Pre-compute bcStart so the inline-J2J emit can read it in one load
     // instead of recomputing per send.  Mirrors JITMethod::bcStart() —

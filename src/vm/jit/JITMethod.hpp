@@ -317,6 +317,20 @@ struct JITMethod {
     uint32_t  resumeOvOffset;
     uint32_t  _pad_resv;
 
+    // --- FSR M0 (docs/frame-state-residency.md): literals cache ---
+    // = compiledMethodOop + 16 (slots()+1, past the header word) —
+    // the ONLY sanctioned source for state.literals once M4 deletes the
+    // per-call literals mirror writes.  Maintained alongside
+    // compiledMethodOop: set at compile finalize, refreshed wherever GC
+    // rewrites compiledMethodOop (CodeZone root visit).  APPENDED at
+    // struct end (stencils.cpp models the first 96 bytes by fixed
+    // offsets — never insert mid-struct).
+    uint64_t  literalsCache;
+
+    void refreshLiteralsCache() {
+        literalsCache = compiledMethodOop ? compiledMethodOop + 16 : 0;
+    }
+
     // --- Accessors ---
 
     // Pointer to the start of machine code (immediately after header)

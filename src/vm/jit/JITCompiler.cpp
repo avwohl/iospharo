@@ -2533,6 +2533,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     // Fill in method header
     jitMethod->compiledMethodOop = compiledMethod.rawBits();
+    jitMethod->refreshLiteralsCache();  // FSR M0
     jitMethod->methodHeader = static_cast<uint64_t>(headerBits);
     jitMethod->codeSize = totalSize;
     jitMethod->numBytecodes = static_cast<uint16_t>(bcLen);
@@ -2879,6 +2880,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             // and compaction can reclaim the space.
             jitMethod->invalidate();
             jitMethod->compiledMethodOop = 0;
+            jitMethod->literalsCache = 0;  // FSR M0
             return nullptr;
         }
 

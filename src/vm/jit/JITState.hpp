@@ -178,7 +178,23 @@ struct JITState {
     uint64_t retroResume;     // offset 296: packed V2 resume word
     int32_t  retroOrigExit;   // offset 304: the callee's bail reason
     int32_t  _pad_retro;      // offset 308
+
+    // FSR M0 (docs/frame-state-residency.md): the save-pool cursor value
+    // at THIS activation's entry.  M3 derives j2jDepth as
+    // (j2jSaveCursor - j2jEntryCursor) / JSV_SIZE instead of the
+    // per-call x20 RMW; M0 only adds the field + the C++ maintenance so
+    // the FSR_VERIFY oracle can cross-check both representations.
+    uint8_t* j2jEntryCursor;  // offset 312
+
+    // FSR helper: depth-by-cursor (valid only when both cursors are from
+    // the same pool slice; 32 = JSV_SIZE, asserted in J2JSaveLayout.h
+    // consumers).
+    int j2jDepthFromCursor() const {
+        if (!j2jSaveCursor || !j2jEntryCursor) return 0;
+        return (int)((j2jSaveCursor - j2jEntryCursor) / 32);
+    }
 };
+static_assert(offsetof(JITState, j2jEntryCursor) == 312, "j2jEntryCursor offset");
 
 // Verify expected offsets (stencils depend on these)
 static_assert(offsetof(JITState, sp)        == 0,  "sp offset");
