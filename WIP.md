@@ -2,6 +2,37 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11r — #3: the off-by-one CAUGHT LIVE; lldb walk is the last step
+
+- **The evidence chain is complete**:
+  1. DNU receiver forensics: a FreeTypeCache INSTANCE receives #+
+     (canonical selector) — a one-slot operand shift with named
+     identities (the width-accumulator slot holds the cache object).
+  2. PHARO_SP_DEPTH_CHECK (dev build) catches the shift LIVE and
+     EARLIER: **Array(ArrayedCollection)>>fillFrom:with: exits at
+     bcOff=10 (PushFullBlock) with delta=-1 — sp one word low — on
+     EVERY resumed activation** under the deterministic window config
+     (DET_SCHED + saveless-off + [2000,3500)+[3500,5000)).  The shift
+     is created by the resume of the send just BEFORE bcOff 10.
+  3. Isolation: single-method and 6-selector sets do NOT fire — the
+     producing resume needs the broader population (callee chain
+     resumable too).
+- **THE LAST STEP (lldb, dev build, fully deterministic)**: break at
+  the SP-DEPTH fprintf for fillFrom:with:, walk back to the resume
+  entry that re-entered this activation (savedResumeEntry JIT_CALL vs
+  V2 pop JIT_RESUME_CALL vs plain tryResume) and compare state.sp
+  against the save/frame's recorded sp.  delta=-1 arithmetic =
+  a post-send-sp vs pre-send-sp disagreement between ONE save
+  producer and the continuation protocol (the V2 continuation
+  subtracts nArgs and writes the retval at [sp-nArgs*8-8]; a producer
+  that records a post-send sp makes that one short for 1-arg sends).
+  Audit candidates: every J2JSave.sp writer (the rj2j C++ push ~19800
+  region, materializeJ2JSaveIntoFrame's inverse, the xmethod emit
+  push, the retro-save) for pre-vs-post-send sp semantics.
+- Also landed: the literals +8->+16 fix (both arms; real latent bug,
+  not this producer).
+- Cascade: #1 FIXED, #2 CURED, #3 = one lldb session from the fix.
+
 ## CHECKPOINT 2026-06-11q — #3 narrowed to a first-failure site; isolation negative; forensics next
 
 - **Divergence finder built + run** (PHARO_BLOCK_CREATE_TRACE, 60K
