@@ -2,6 +2,48 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11hh — M3 implementation design (worked out, ready to execute)
+
+**M3 (depth elimination) — the exact plan, avoiding the consumer sweep:**
+1. KEY TRICK: do NOT rewrite the dozens of C++ `state.j2jDepth` readers.
+   Instead the emitted code stops writing depth, and C++ REFRESHES
+   `state.j2jDepth = state.j2jDepthFromCursor()` once at each
+   exit choke point (post-JIT_CALL in the chain loop, post-tryResume in
+   the resume loop, tryJITActivation's initial call, the osr entries —
+   ~5 sites) BEFORE the exit switch dispatches.  All existing readers
+   then keep working unchanged.
+2. Emitted push sites (the 3 gated in M2): under PHARO_T1_FSR_NODEPTH
+   skip the depth RMW triple (ldr OFF_J2J_DEPTH / add x20 / str).
+3. Return prelude: replace `ldr w3,[DEPTH]; ldr w4,[ENTRY_DEPTH]; cmp;
+   b_le` with `ldr x4,[x0,#312] (j2jEntryCursor); cmp x23,x4; b_ls` —
+   x23 is live (M2 default-on).
+4. j2jEntryCursor writers: every C++ site that sets j2jEntryDepth
+   (grep state.j2jEntryDepth =) also sets j2jEntryCursor =
+   j2jSaveCursor-at-that-moment.  The EMITTED callee entry currently
+   pins entryDepth via the x20 trick — replace with `str x23 ->
+   [x0,#312]`; the SAVELESS STASH slot [sp,40] that carries
+   entryDepth (see the retro path's `ldr w4,[sp,40]`) must carry the
+   caller's entryCursor instead (64-bit — check the stash slot width!).
+5. The trampoline's depth writes become harmless redundancy (C++
+   refresh overwrites) — leave them for v1.
+6. VERIFY knob: at the choke points, assert
+   j2jDepthFromCursor() == the old-style depth while both maintained
+   (run one soak with the emitted RMW still on + the cursor compare
+   verified, THEN remove the RMW).
+7. Gate: ladder + 2468-soak + timer/Delay classes + /tmp/mutex_leak.st.
+
+**M4 preview (the likely bigger cut, per the cfib anatomy):** the
+per-call activation-commit stores (method/literals/argCount/ip — 4-5
+stores + address computations per cross-method J2J call) delete; exit
+stubs re-derive from x19 via syncDerivedFromJM/literalsCache (all
+landed in M0/M1).  M4 starts only after M3's verify soaks clean.
+
+**Estimate check (price-the-design):** M3 removes ~5 insns of ~83 per
+linked round trip; M4 ~15+.  If fib30 doesn't approach ~12-14ms after
+M3+M4, the residual is the send-site gate cascade (patched-IC fold)
+and dict's C++-exit sends — pivot levers documented in
+jit-cfib-gap-anatomy.
+
 ## CHECKPOINT 2026-06-11gg — M2 v1 CORRECT + default-ON (wash); M2b/M3 are the cut
 
 M2 v1 (write-through x23) is correct (2468-test soak under the
