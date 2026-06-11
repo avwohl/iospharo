@@ -23,7 +23,7 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   — thread the retslot write through its callers; removes the
   matguard entirely.
 - Soak in flight (/tmp/soak_idh.log).
-NEXT: (1) flake capture-on-fire + root cause (correctness bar);
+FLAKE RESOLVED: 0/40 on a QUIET box — every dnus=1 ladder ran CONCURRENT with a background soak.  Load-contamination, not a VM defect; the never-bench-during-suite rule extends to LADDERS.  NEXT: (1retired)
 (2) retslot protocol in popFrameForJIT; (3) extras reclassify pass;
 (4) sieve-gate root fix (un-stub p60/61); (5) bail-protocol for
 MAX_IC.
