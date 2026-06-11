@@ -886,8 +886,15 @@ ic_hit:
             state->ip = callerJM->bcStart()
                 + (saveEntry->resumeAddr ? saveEntry->bcOff() : 0);
             state->argCount = callerJM->argCount;
+            // +16, NOT +8 (cascade-#3 root bug, found via the FSR
+            // fact-check and confirmed by DNU forensics: with +8 the
+            // literal frame is one slot off, so every literal send in
+            // a resumed method dispatches a NEIGHBORING literal as its
+            // selector — '#+' failing lookup on a SmallInteger).  All
+            // other literals writers (incl. TrampolineAsm Lcall) use
+            // compiledMethodOop + 16 = slots()+1 past the header word.
             state->literals = reinterpret_cast<Oop*>(
-                callerJM->compiledMethodOop + 8);
+                callerJM->compiledMethodOop + 16);
             state->method = Oop::fromRawBits(callerJM->compiledMethodOop);
         }
 #else
@@ -896,7 +903,7 @@ ic_hit:
         if (saveEntry->jitMethod) {
             state->argCount = saveEntry->jitMethod->argCount;
             state->literals = reinterpret_cast<Oop*>(
-                saveEntry->jitMethod->compiledMethodOop + 8);
+                saveEntry->jitMethod->compiledMethodOop + 16);   // +16 not +8 (see V2 arm)
             state->method = Oop::fromRawBits(
                 saveEntry->jitMethod->compiledMethodOop);
         }

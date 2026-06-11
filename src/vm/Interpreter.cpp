@@ -13172,6 +13172,36 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             // Full stack dump for first 10 DNUs
             if (dnuLogCount <= 10) {
                 try {
+                    // Cascade-#3 forensics: the DNU RECEIVER's identity —
+                    // shifted-slot garbage vs a valid-but-wrong object
+                    // distinguishes operand-shift from slot-misalignment.
+                    {
+                        std::string rcvCls = "?";
+                        Oop fRcvr = stackValue(argCount);
+                        uint64_t rb = fRcvr.rawBits();
+                        try {
+                            if ((rb & 7) == 0 && rb >= 0x10000)
+                                rcvCls = memory_.classNameOf(fRcvr);
+                            else if (fRcvr.isSmallInteger()) rcvCls = "SmI";
+                            else rcvCls = "imm";
+                        } catch (...) { rcvCls = "(corrupt)"; }
+                        uint64_t canonBits = 0;
+                        try {
+                            Oop canon = memory_.lookupSymbol(selName.c_str());
+                            canonBits = canon.rawBits();
+                        } catch (...) {}
+                        fprintf(stderr,
+                            "[DNU-RCVR] #%s rcvr=0x%llx cls=%s selOop=0x%llx "
+                            "canon=0x%llx %s sp=%p fp=%p depth=%lld\n",
+                            selName.c_str(), (unsigned long long)rb,
+                            rcvCls.c_str(),
+                            (unsigned long long)selector.rawBits(),
+                            (unsigned long long)canonBits,
+                            selector.rawBits() == canonBits ? "CANONICAL"
+                                                            : "DUPLICATE!",
+                            (void*)stackPointer_, (void*)framePointer_,
+                            (long long)(stackPointer_ - framePointer_));
+                    }
                     fprintf(stderr, "[DNU-STACK] Full call stack for #%s (DNU #%d):\n", selName.c_str(), dnuLogCount);
                     for (size_t f = 0; f <= frameDepth_ && f < 30; f++) {
                         SavedFrame& sf = savedFrames_[f];
