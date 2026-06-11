@@ -9168,6 +9168,25 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                         && (hi2 < 0 || seq < (uint64_t)hi2);
         }
     }
+    // Bisect-culprit identification: with a narrow MIN/MAX range +
+    // PHARO_JIT_FAIL_REASONS, name the methods the range force-resumes.
+    if (resumeBisect && pharo::g_debug.jitFailReasons) {
+        fprintf(stderr, "[RESUME-BISECT] seq=%llu sel=#%s\n",
+            (unsigned long long)g_t1CompileSeq2,
+            memory.selectorOf(compiledMethod).c_str());
+    }
+    // Marked methods (prim 198 ensure: / 199 ifCurtailed:) must NEVER
+    // resume via JIT: the unwind/exception machinery identifies their
+    // frames as unwind-protect markers, and a JIT resume breaks that
+    // invariant (force-rung bisect 2026-06-11: compile-seq 109 =
+    // #ensure: alone reproduced the startup STONReaderError #freeze
+    // termination).  Applies in ALL modes, including force/bisect.
+    {
+        int rawPrimIdx = (bcLen >= 3 && bc[0] == SistaV1::CallPrimitive)
+            ? (bc[1] | ((bc[2] & 0x1F) << 8)) : 0;
+        if (rawPrimIdx == 198 || rawPrimIdx == 199)
+            advertiseResume = false;
+    }
     if (numSendSites > 0 && !forceResumeForSends && !resumeBisect
             && (!resumeSendsNoCondjump || t1HasCondJump))
         advertiseResume = false;

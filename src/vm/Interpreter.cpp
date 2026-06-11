@@ -8316,6 +8316,25 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    // C++-send edge census (PHARO_JIT_FAIL_REASONS=1): every send that
+    // reaches this C++ path is a JIT escape; dump the top selectors
+    // periodically to find the dominant escape edges (diagnosis only —
+    // map insert per send distorts absolute timing).
+    if (__builtin_expect(g_debug.jitFailReasons, 0)) {
+        static std::unordered_map<uint64_t, uint64_t> counts;
+        static uint64_t total = 0;
+        counts[selector.rawBits()]++;
+        if ((++total & 0xFFFFF) == 0) {
+            std::vector<std::pair<uint64_t,uint64_t>> v(counts.begin(), counts.end());
+            std::sort(v.begin(), v.end(), [](auto&x, auto&y){return x.second>y.second;});
+            fprintf(stderr, "[CPP-SEND-CENSUS] total=%llu:", (unsigned long long)total);
+            for (size_t i = 0; i < v.size() && i < 10; i++)
+                fprintf(stderr, " #%s=%llu",
+                    memory_.oopToString(Oop::fromRawBits(v[i].first)).c_str(),
+                    (unsigned long long)v[i].second);
+            fprintf(stderr, "\n");
+        }
+    }
     // PHARO_SORTSTR_WATCH: catch the FIRST time sendSelector receives
     // a non-Symbol selector — that's where the bad send originates.
     if (__builtin_expect(g_debug.sortstrWatch, 0)) {
