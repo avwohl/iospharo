@@ -2,6 +2,32 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11ll — M4 built + verify-clean; full mode = one consumer left
+
+M4 implemented per the census (~21%/call): exit publish via
+emitSyncSpToState (62 sites) + Ltramp_exit; mirror stores + ip stores
+gated out at the 3 J2J tails; 15 exit-ip idioms re-derive from
+x19->bcStartCache; literal pushes read literalsCache; the saveless
+stash carries live x19; fsrLazyRefresh at 14 C++ choke points + 3
+helper heads + the trampoline caller.  x19 movs now UNCONDITIONAL.
+
+VERIFY MODE ([M4-PARITY] oracle, stores+publish both on): CLEAN.
+FULL MODE: still 10 startup DNUs — garbage SELECTOR (a non-symbol
+literal) in WorkingSession>>on:do:/Array>>do: => an interp selector
+fetch reads method_/literals between a JIT exit and the refresh.
+NEXT PROBES (3-min cycle each): (1) the 26122-helper switch's
+return-false path (audit finding: syncs only ip/sp; the interp then
+dispatches with whatever method_ — under LAZY state.method itself is
+stale until refreshed — add fsrLazyRefresh INSIDE that helper before
+return false); (2) grep Interpreter for `state.method` reads in exit
+handlers that run BEFORE the choke refresh line (ordering within the
+handler bodies); (3) the [M4-PARITY] oracle moved INTO the failing
+window: run VERIFY+full-delta — enable LAZY_VERIFY and ALSO delete
+stores (a hybrid knob) so the oracle pinpoints the first stale read.
+
+Perf measurement deferred until full mode is clean.  Default
+unchanged + validated; everything gated.
+
 ## CHECKPOINT 2026-06-11kk — THE COUNT: per-call instruction census (decides M4 first)
 
 Capstone census of benchFib's LINKED J2J call sequence (the PMS
