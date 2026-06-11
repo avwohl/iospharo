@@ -2,6 +2,27 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11uu — ignOC widening SHIPPED (+20% dict); scanFor: orphan = open
+
+SHIPPED + SOAKED (2468/0/0): ignoreOuterContext widening — dict 424
+-> 329ms min.  The remaining dict cost is decoded to ONE bug:
+HashedCollection>>scanFor: executes INTERPRETED (18.4M at:/key
+interp sends per bench; [CPP-SEND-CENSUS] sender breakdown) because
+it has NO JITMethod (SF-PROBE jm=0) while Sista hasSplice()-owns it
+(splice compiled, NEVER ENGAGES: [SISTA] dispatch=0).  NO_SISTA ->
+sends collapse to 41K.  The 256-skip orphan escape added at the
+hasSplice gates (JITRuntime.cpp ~2727 + ~2833) DID NOT take —
+census unchanged.  NEXT (in order):
+(1) instrument WHICH path refuses: does noteMethodEntry fire for
+    scanFor: at all? is method bits in initialCompileFailed?
+    check the OTHER hasSplice gates (~3320, ~3874);
+(2) also check Sista's lookupBcEntry OSR hook — why dispatch=0 for
+    a method Sista owns (bcOffset key mismatch?);
+(3) once scanFor: is jitted, re-census; then quiet-box dict measure
+    (expect a major step toward Cog 26ms).
+Box-noise warning: dict swings 330-450 across windows on identical
+configs — only trust min-of-3 interleaved or functional counters.
+
 ## CHECKPOINT 2026-06-11tt — inline block-create parked; the lever is married contexts
 
 In-JIT block creation (jit_rt_block_create, the basicNew blr pattern)
