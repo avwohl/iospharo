@@ -4001,8 +4001,18 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // function prologue properly initializes all spill slots.
     // Fall through to T1 stencil resume below.
 
+    // Resume-refusal telemetry (PHARO_JIT_FAIL_REASONS=1): dict-bench
+    // J2J-r success is only ~22%; classify the 78%.
+    static uint64_t rrNoJM = 0, rrEntryState = 0, rrCodeOff = 0, rrOk = 0;
+    const bool rrLog = pharo::g_debug.jitFailReasons;
+    auto rrDump = [&]() {
+        if (rrLog && (((rrNoJM + rrEntryState + rrCodeOff + rrOk) & 0xFFF) == 0))
+            fprintf(stderr, "[RESUME-REFUSE] ok=%llu noJM=%llu entryState=%llu codeOff=%llu\n",
+                (unsigned long long)rrOk, (unsigned long long)rrNoJM,
+                (unsigned long long)rrEntryState, (unsigned long long)rrCodeOff);
+    };
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
-    if (!jm || !jm->isExecutable()) return false;
+    if (!jm || !jm->isExecutable()) { rrNoJM++; rrDump(); return false; }
 
     // Safety: refuse to resume at a bytecode offset whose stencil reads
     // operands from registers (x19-x22, "_N" variants). The stencil chain
@@ -4011,7 +4021,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // Non-boolean spill-and-deopt paths in the _1 jump stencils would
     // push garbage and EXIT_SEND without updating s->ip, creating a stack
     // leak. Deferred-issues.md #4 (Session 15).
-    if (getBcEntryState(jm, bcOffset) != 0) return false;
+    if (getBcEntryState(jm, bcOffset) != 0) { rrEntryState++; rrDump(); return false; }
 
     // No makeWritable — touch's lastUsedEpoch write is now to the heap
     // side-table (W^X audit 2026-04-26).  No JITMethod field writes
@@ -4019,7 +4029,18 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
 
     // Look up the code offset for this bytecode offset
     uint32_t codeOffset = jm->codeOffsetForBC(bcOffset);
-    if (codeOffset == 0 || codeOffset >= jm->codeSize) return false;
+    if (codeOffset == 0 || codeOffset >= jm->codeSize) {
+        rrCodeOff++; rrDump();
+        if (rrLog && rrCodeOff >= 3000000 && rrCodeOff <= 3000030 && jm->bcStartCache) {
+            const uint8_t* bs = reinterpret_cast<const uint8_t*>(jm->bcStartCache);
+            std::string rrSel = interp_ ? interp_->memory().selectorOf(compiledMethod) : std::string("?");
+            fprintf(stderr, "[RR-CODEOFF] sel=#%s tier=%d real0 bcOff=%u nBC=%u codeOff=%u op-1=0x%02x op-2=0x%02x\n",
+                rrSel.c_str(), (int)jm->tier, bcOffset, jm->numBytecodes, codeOffset,
+                bcOffset >= 1 ? bs[bcOffset-1] : 0xFF,
+                bcOffset >= 2 ? bs[bcOffset-2] : 0xFF);
+        }
+        return false;
+    }
 
     // Validate that codeOffset is within the machine code region, not the
     // literal pool / bcToCode table / IC data appended after it.
@@ -4038,6 +4059,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     }
 
     // Touch for LRU tracking
+    rrOk++; rrDump();
     codeZone_.touch(jm);
 
     // Set up JIT state

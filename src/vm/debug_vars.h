@@ -89,6 +89,7 @@ DEBUG_BOOL(PHARO_T1_INLINE_TEMP_RETURN)      // bit 54: ^ arg N
 DEBUG_BOOL(PHARO_T1_INLINE_INT_CMP_RETURN)   // bit 53: ^ self cmp arg
 DEBUG_BOOL(PHARO_T1_INLINE_INT_ARITH_RETURN) // bit 52: ^ self op arg
 DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)         // bit 51: Integer>>even/odd
+DEBUG_BOOL(PHARO_T1_NO_PRIM_FALLBACK_BODY)  // opt out of compiling fallback bodies for unsupported-prim methods (restores the old refuse-whole-method behavior)
 DEBUG_BOOL(PHARO_MAT_FULL_RESYNC)           // opt back into the legacy full per-frame re-sync in materializeFrameStack (incremental skip is default since 2026-06-11)
 DEBUG_BOOL(PHARO_T1_NO_XGATE_FOLD)           // opt-OUT of the XGATE fold (extras bit 57 = precomputed cross-method gate verdict; emitted 4-load cascade remains as the unfolded fallback)
 DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC, 1)        // lever (c): admit cross-method inline-J2J callees with up to N IC send sites. DEFAULT 1 since 2026-06-10 (was 0 = leaf-only): with-send-callee bench 491 -> 57ms (8.6x); validated by an 80-rep eval catch loop + a 200-class suite at 2/8459 (both known environmental flakes). The leaf-only gate guarded bugs all fixed today: staticJ2JArgCount fold, stale bcStartCache, dispatch-A tryGetter entry, scavenge ip round-trip, swallowed block-NLR. Set 0 to restore leaf-only for bisects.

@@ -7820,7 +7820,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // When emitting a prim prologue we skip the CallPrimitive bytes
     // (bc[0..2]) for the fallback emit — they're consumed by the
     // prologue.  The pre-scan + emit operate on bc + emitSkip.
-    int emitSkip = (primIndex > 0) ? 3 : 0;
+    // Skip the CallPrimitive header whenever present — either the
+    // prologue consumed it (primIndex > 0) or the prim-fallback-body
+    // path compiles the body past it (primIndex < 0, no prologue).
+    int emitSkip = (bcLen >= 3 && bc[0] == SistaV1::CallPrimitive) ? 3 : 0;
     const uint8_t* bcReal = bc + emitSkip;
     size_t bcRealLen = (bcLen >= (size_t)emitSkip) ? (bcLen - emitSkip) : 0;
     bool real = (bcRealLen > 0) && allBytecodesSupported(bcReal, bcRealLen);
@@ -8680,7 +8683,22 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     int primIdx = -1;
     if (hasPrimitive) {
         primIdx = supportedPrimIndex(bc, bcLenRaw);
-        if (primIdx < 0) {
+        if (primIdx < 0 && !GET_DEBUG_BOOL(PHARO_T1_NO_PRIM_FALLBACK_BODY)) {
+            // Cog-style PRIM-FALLBACK BODY (2026-06-11): compile the
+            // bytecode body even though the prim has no prologue.  The
+            // prim itself always runs in C++ first — activateMethod's
+            // tryJITActivation call sits AFTER the primitive attempt,
+            // and every direct-call path (chain inline-activate,
+            // convert_send, upgradeICToJ2J bit-60) gates on
+            // hasPrimPrologue (false here, primIdx < 0).  What the
+            // body buys: post-prim-fail activations run jitted, and
+            // mid-method resumes get a bcToCode table — unsupported-
+            // prim methods were 53% of dict-bench tryResume refusals
+            // (scanFor:, at:put:, findElementOrNil:, fullCheck ran
+            // interp-to-return on every C++ bail).
+            // primIdx stays -1: no prologue; emitSkip derives from the
+            // CallPrimitive header below.
+        } else if (primIdx < 0) {
             // Unsupported prim: bail compile, let C++ handle it.
             g_failed++; g_failedUnsuppPrim++;
             if (pharo::g_debug.jitFailReasons) {

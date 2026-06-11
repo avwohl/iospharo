@@ -2,6 +2,25 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11qq — refusal chain fully decoded; force-rung is the dict lever
+
+tryResume refusal telemetry (rrDump in JITRuntime.cpp, knob
+PHARO_JIT_FAIL_REASONS): 51% of dict-loop resumes refused, ALL at the
+codeOff gate, on JMs with numBytecodes=0.  TWO causes peeled:
+(1) unsupported-prim methods were refused WHOLESALE -> FIXED: the
+    prim-fallback-body change (AsmjitT1, opt-out
+    PHARO_T1_NO_PRIM_FALLBACK_BODY) compiles the bytecode body past
+    the CallPrimitive header; activateMethod runs the prim in C++
+    first, all direct-call paths gate on hasPrimPrologue.  Ladder
+    clean; dict ~3% only because cause (2) dominates.
+(2) THE BIG ONE: cond-jump send-methods (scanFor:, do:, ifNotNil:,
+    findElementOrNil: — every loop) have advertiseResume=false
+    (AsmjitT1 ~9171, the Phase-4b.2 mustBeBoolean-risk gate).  The
+    force-rung PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1 lifts it.
+    Bench + ladder in flight; if ladder+suite qualify, flip the gate
+    default (the six send-resume root causes are all fixed — this
+    soak was the documented open item).
+
 ## CHECKPOINT 2026-06-11pp — dict profile decoded; NEXT LEVER = resume-fail rate
 
 Profile (sample of the dict loop, steady state): time is C++ interp —
