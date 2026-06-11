@@ -2,6 +2,41 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11s — #3 SHARPEST HYPOTHESIS: a resume lands past-send WITHOUT the send completing
+
+- **Chronology correction**: the EARLIEST corruption is NOT fillFrom —
+  [MUSTBOOL] #13-17 in OCParser>>parseAssignment (ipOff=32, fd=2)
+  fire BEFORE the fillFrom sp-depth mismatch, with an
+  OCIdentifierToken/OCSpecialCharacterToken as the jump condition.
+- **The signature decodes**: the condition value = the SEND'S RECEIVER
+  (the token that isIdentifier-style send was sent TO), at CONSISTENT
+  stack depth (sp-depth checker exempts MUSTBOOL but saw no general
+  mismatch there).  result==receiver at right depth = **the send was
+  SKIPPED: a resume re-entered at the post-send (plain) label without
+  C++ having completed the send** — for a 0-arg send the depth stays
+  consistent and the receiver masquerades as the result.  fillFrom's
+  delta=-1 then = the 1-ARG variant of the same skip (recv+arg in,
+  one value out: skipping leaves depth one HIGH at the post-send
+  label... observed one LOW at later exits — reconcile signs during
+  the session).
+- **WHERE such a resume can originate**: an exit AT a send (ip not yet
+  advanced / completion not done) whose handler computes a PAST-send
+  bcOffset for re-entry.  Audit list (with fix-#1's plain-label
+  landing now making such mistakes EXECUTABLE rather than wedging):
+  the inline tryResume at ~23395 (which bcOffset does it use, and is
+  the send completed on every path into it?), the savedResumeEntry
+  precompute at ~24346 (pastSendOff — only valid after ExitReturn of
+  the callee), the yield re-entry at ~19717, JITRuntime tryResume
+  ~3972.  The discriminating question per site: is the send GUARANTEED
+  completed (retval on the memory stack) before the JIT_CALL to a
+  past-send label?
+- **Tools ready**: PHARO_T1_RESUME_TOS_LOG (the [JIT-MUSTBOOL-RES]
+  trace) + PHARO_SP_DEPTH_TRAP + the deterministic config; the
+  parseAssignment MUSTBOOL is the least-downstream signal — trace IT.
+- lldb note: dev-binary debug map stale after many rebuilds
+  ("debug map object file does not exist") — clean-rebuild build/
+  (or dsymutil) before the interactive session.
+
 ## CHECKPOINT 2026-06-11r — #3: the off-by-one CAUGHT LIVE; lldb walk is the last step
 
 - **The evidence chain is complete**:
