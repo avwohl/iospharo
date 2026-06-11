@@ -2,6 +2,52 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11u — #3 CRACKED OPEN: TWO root causes fixed; one DNU class left
+
+The "resume RE-ENTRY protocol" hypothesis from checkpoint t was WRONG.
+The lldb session was NOT needed — compiled-in forensics found both.
+
+**FIX 1 (commit 849e9431): phantom IC sites.**  Five raw byte scans in
+AsmjitT1.cpp counted send sites without skipping multi-byte operands;
+PushArray <E7 81>'s operand byte (0x81 = Send0 range) minted a phantom
+site, shifting every later site's selectorBits by one.  The shifted
+miss path then looked up the WRONG SELECTOR (parseAssignment's
+isIdentifier site got #value:, a self-returning setter -> receiver at
+TOS -> MUSTBOOL -> only-idle wedge exit 124).  Fix: forEachRealOpcode
+walker (SistaV1::bytecodeLength).  Validated: deterministic repro went
+exit-124+117-MUSTBOOLs -> exit-0+ZERO.
+
+**FIX 2 (latest): dangled NLR homeFrameDepth markers.**  The NLR home
+marker is an ABSOLUTE savedFrames_ index; exception-materialization
+rebuilds the stack under a live block (observed: the closure's caller
+record at 19 at activation, 17 at its ^v), so the marker dangles.
+The dangled check then silently degrades a block's ^-NLR to a NORMAL
+send-return: the home method's pop;returnSelf tail runs and returns
+the RECEIVER (FreeTypeCache atFont:...: ^v swallowed, cache propagated
+up widthOf: into width arithmetic -> 8x '#+ on FreeTypeCache' DNU/run,
+eval result lost).  Fix: validateNLRHomeFrame at BOTH consumers —
+derive the expected home CM (block literal chain / nlrHomeMethod_),
+verify the marker's frame, re-search innermost on mismatch, SIZE_MAX
+fallback.  Plus popFrame scrubs the popped slot's marker.
+Validated: FreeType DNU class 8 -> 0; 40 [NLR-REPAIR] hits.
+
+**REMAINING (windows repro, in progress)**: ~10 DNUs of a second
+class: 7x '#+ on InstanceVariableSlot' (OCBlockNode>>argumentNames /
+collect: path), 2x adaptToNumber:andSend: on a Character (Morphic
+doLayoutIn:), 1x #negative on ByteSymbol.  Same broad shape (wrong
+object where a number belonged).  Suspect: another NLR/marker case
+the validator can't check (expected underivable), or a second resume
+lesion.  Repro: PHARO_DET_SCHED=1 + the four RESUME window knobs
+(2000-3500 + 3500-5000) on build-opt, eval 3+4; forensics knob
+PHARO_SP_DEPTH_TRAP=1; traces: [NLR-REPAIR]/[BLKACT]/[BLKRET]/[HFD-W]/
+[RES-IN]/[RES-OUT]/[CTX-RET]/[DNU-FORENSICS].
+
+**NEXT**: (1) chase the InstanceVariableSlot DNU with the same chain
+(DNU-FORENSICS fp window -> bytecode map -> RES-IN/BLKRET around it);
+(2) when windows-repro is CLEAN: ladder = RESUME_SENDS_NO_CONDJUMP ->
+full force-resume -> default-ON send-resume (the proven 14x lever);
+(3) re-baseline vs Cog.
+
 ## CHECKPOINT 2026-06-11t — six latent classes fixed; #3's producer still standing; the lldb session is unavoidable
 
 - **Fixed during the #3 hunt (all real, all committed, default-safe)**:
