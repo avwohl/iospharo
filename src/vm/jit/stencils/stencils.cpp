@@ -1576,8 +1576,17 @@ extern "C" void stencil_sendJ2J(JITState* s) {
     if (((extra >> 48) & 0x1F) && !(extra & (1ULL << 58))) {
         uint8_t primKind = (uint8_t)((extra >> 48) & 0x1F);
         if (primKind != 0) {
-            // new/new: allocation helper (primKind 17-18)
-            if (primKind >= 17) {
+            // new/new: allocation helper — primKind 17 (basicNew,
+            // 0-arg) / 18 (basicNew:, 1-arg) ONLY.  Was `>= 17`, which
+            // misrouted pk 19-24 (bitXor/idh/floats/class) into
+            // jit_rt_new_prim (reads the receiver as a class object);
+            // B6's classifier makes pk=24 extras common, so this is a
+            // required safety companion.  The arity terms also close
+            // the W3-IntArithReturn alias (kind 1 == pk 17 bit-pattern,
+            // but W3 only occurs at 1-arg sites, pk 17 only at 0-arg) —
+            // B6 review F4.
+            if ((primKind == 17 && nArgs == 0)
+                    || (primKind == 18 && nArgs == 1)) {
                 uint64_t info = ((uint64_t)primKind << 8) | (uint64_t)nArgs;
                 if (_HOLE_RT_NEW_PRIM(s, info)) {
                     _HOLE_CONTINUE(s);

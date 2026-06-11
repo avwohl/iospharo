@@ -4210,9 +4210,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     if (nArgs == 1 && GET_DEBUG_BOOL(PHARO_T1_INLINE_INT_ARITH_RETURN)) {
                         a.tbnz(x7, asmjit::Imm(52), tryIntArithReturn);
                     }
-                    // W6: bit 51 = even/odd predicate (nArgs == 0).
+                    // W6: even/odd predicate (nArgs == 0).  B6 review F1:
+                    // a single-bit tbnz on bit 51 is an UNSOUND
+                    // discriminator — primKind values with bit 51 set
+                    // (kPrimKindClass=24=0b11000 first among 0-arg pks)
+                    // would be stolen and, for an immediate receiver,
+                    // tryEvenOdd would return a Boolean from a #class
+                    // send.  Decode the full 5-bit field: W6 entries are
+                    // exactly field 8 (kind 0) / 9 (kind 1).
                     if (nArgs == 0 && GET_DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)) {
-                        a.tbnz(x7, asmjit::Imm(51), tryEvenOdd);
+                        a.lsr(x6, x7, asmjit::Imm(48));
+                        a.and_(x6, x6, asmjit::Imm(0x1F));
+                        a.cmp(x6, asmjit::Imm(8));
+                        a.b_eq(tryEvenOdd);
+                        a.cmp(x6, asmjit::Imm(9));
+                        a.b_eq(tryEvenOdd);
                     }
                     a.tst(x1, asmjit::Imm(0x7));
                     if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
@@ -4259,6 +4271,25 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // the heap/SmI split above.
                     if (nArgs == 0 && GET_DEBUG_BOOL(PHARO_T1_INLINE_MULTISLOT)) {
                         a.tbnz(x7, asmjit::Imm(57), tryMultiSlot);
+                    }
+                    // B6 (docs/patched-ic-design.md §11): kPrimKindClass
+                    // dispatch for bit-60-clear entries.  prim-111
+                    // callees can't compile (no JITMethod, bit 60 never
+                    // set), so pk-classified #class entries previously
+                    // ALWAYS exited via dispatchCached — the per-send
+                    // C++ round trip behind the measured 18x 'o class'
+                    // gap.  Heap receivers only (phase 1a; this point is
+                    // below the heap/imm split).  x1=receiver(heap),
+                    // x2=sp copy, x7=extras; tryPrimClass clobbers x5
+                    // legally ONLY because it cannot bail — any future
+                    // bail must stash via OFF_ICDATAPTR +
+                    // dispatchCachedRestoreX5 (B6 review, verified-safe
+                    // list).
+                    if (nArgs == 0 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_CLASS)) {
+                        a.lsr(x6, x7, asmjit::Imm(48));
+                        a.and_(x6, x6, asmjit::Imm(0x1F));
+                        a.cmp(x6, asmjit::Imm(kPrimKindClass));
+                        a.b_eq(tryPrimClass);
                     }
                     a.b(dispatchCached);
                     // SmI receiver path: check primKind for inline bitwise.

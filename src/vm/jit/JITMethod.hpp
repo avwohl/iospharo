@@ -120,6 +120,12 @@ static constexpr uint32_t IC_SELBITS_SLOT     =
 static constexpr uint32_t IC_HITCOUNT_SLOT    =
     IC_SELBITS_SLOT + 1;                             // slot index of hitCount
 
+// IC extras primKind (bits 52:48) for prim 111 #class — the B6 inline
+// snippet (classTable[classIndex] load, callee-less).  Shared by the
+// inlinePrimKind writer, the upgradeICToJ2J classifier, and the T1
+// dispatch compares (was a bare 24 at several sites).
+static constexpr uint8_t kPrimKindClass = 24;
+
 // ===== JIT METHOD STATS (side-table) =====
 //
 // Frequently-mutated per-method counters that USED to live inside JITMethod

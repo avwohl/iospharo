@@ -21526,6 +21526,54 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         }
     }
 
+    // B6 header-only prim classification (docs/patched-ic-design.md §11):
+    // the dispatch-A snippet REPLACES the callee for prim-111 #class, so
+    // the desired terminal IC state is extras = kPrimKindClass<<48 with
+    // NO bit 60 — and no compile attempt at all.  Without this, prim-111
+    // sites looped forever: eager compile fails -> negative-cache ->
+    // return -> extras stay 0 -> per-send C++ round trip (the measured
+    // 18x 'o class' gap).  Review hardenings folded in: arity gate
+    // (1-arg prim-111 means class-of-ARGUMENT — F3), heap keys only in
+    // phase 1a (immediate-receiver dispatch is 1b — F1 blast radius),
+    // no noteLateSpecBit (weight 0 for pk bits, dead hook — F5).
+    if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_CLASS) && sendArgCount == 0) {
+        ObjectHeader* methObjB6 = cachedMethod.asObjectPtr();
+        Oop hdrB6 = methObjB6->slotAt(0);
+        if (hdrB6.isSmallInteger() && ((hdrB6.asSmallInteger() >> 16) & 1)
+                && primitiveIndexOf(cachedMethod) == 111) {
+            Oop rcvrB6 = stackPointer_[-(sendArgCount + 1)];
+            uint64_t rb = rcvrB6.rawBits();
+            if ((rb & 7) == 0 && rb >= 0x10000) {
+                uint64_t lookupKey = rcvrB6.asObjectPtr()->classIndex();
+                uint64_t pkExtra = (uint64_t)jit::kPrimKindClass << 48;
+                int firstEmpty = -1;
+                for (int e = 0; e < (int)jit::IC_ENTRIES_PER_SITE; e++) {
+                    if (icData[e * 3] == lookupKey) {
+                        if (icData[e * 3 + 2] == 0) {   // never overwrite
+                            icData[e * 3 + 2] = pkExtra;
+                            if (e == 0 && callerMethod.isObject()) {
+                                jitRuntime_.rederiveSiteForICData(
+                                    callerMethod.rawBits(), icData);
+                            }
+                        }
+                        return;
+                    }
+                    if (firstEmpty < 0 && icData[e * 3] == 0) firstEmpty = e;
+                }
+                if (firstEmpty >= 0 && fillEnabled) {
+                    icData[firstEmpty * 3]     = lookupKey;
+                    icData[firstEmpty * 3 + 1] = cachedMethod.rawBits();
+                    icData[firstEmpty * 3 + 2] = pkExtra;
+                    if (firstEmpty == 0 && callerMethod.isObject()) {
+                        jitRuntime_.rederiveSiteForICData(
+                            callerMethod.rawBits(), icData);
+                    }
+                }
+            }
+            return;
+        }
+    }
+
     jit::JITMethod* target = jitRuntime_.methodMap().lookup(cachedMethod.rawBits());
 
     // Eager compilation: if the target has a supported primitive prologue but
