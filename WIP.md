@@ -2,6 +2,57 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11l — SEND-RESUME ROOT CAUSE + the 14x sendloop proof; FSR design landed
+
+- **THE SUITE LEVER, proven**: enabling mid-method resume for ONE
+  send-bearing method (PHARO_T1_RESUME_ONLY_SEL=sendloop) took the
+  send-in-loop bench from 345-381 ms to **25 ms (14x)** — the
+  advertiseResume gate (numSendSites > 0 -> no resume) is why every
+  send-bearing activation that exits ONCE finishes interpreted, and
+  why iterative send-loops (the FFI/text run-killer family) crawl.
+- **THE WEDGE ROOT CAUSE (deterministic repro: PHARO_DET_SCHED=1
+  PHARO_T1_RESUME_ONLY_SEL=max: on build-opt, 45s, only-idle wedge
+  with #isInteger DNUs + WorldMorph>>ifTrue: = one-slot-shifted
+  operand stack)**: the V2 emit APPLIES resumeOverrides INTO the
+  bcToCode table — bcToCode[postSendOff] points at the
+  resumeAfterCall continuation, which assumes the retval-in-x1
+  JIT_RESUME_CALL protocol (pops nArgs, sturs x1).  But bcToCode
+  serves MANY consumers; interp-side/tryResume entries (operand
+  stack already complete in memory, NO retval in x1) land on the
+  same continuation -> double-pop + garbage store.  Send-free
+  methods have no overrides — exactly why only they were safe.
+- **THE FIX (designed, not yet implemented)**:
+  1. bcToCode reverts to PLAIN next-bytecode offsets (stop applying
+     the overrides into the table in emitMethodBytes ~7521 'for
+     (auto& ov : resumeOverrides)').
+  2. Store the override pairs (bcOff -> continuationCodeOff) in a
+     small per-JM side table (size it like the patch map; fill next
+     to it).
+  3. Add JITMethod::codeOffsetForResume(bcOff): consult the pairs,
+     fall back to plain.  Switch ONLY the retval-carrying resume
+     consumers to it.  NOTE: the V2 save-pool pops (JIT_RESUME_CALL
+     at Interpreter.cpp ~19999/22970) use save.resumeAddr DIRECTLY
+     (no bcToCode) — already correct.  The consumers to CLASSIFY
+     (retval-carrying vs plain-entry) are the codeOffsetForBC sites:
+     Interpreter.cpp 19717, 19800, 22781, 23395, 24190, 24346 (the
+     'pastSendOff' one!), JITRuntime.cpp 3972 (tryResume!), 4187.
+     For each: does C++ push the retval to the MEMORY stack before
+     entering (plain target, stack complete) or hand it via
+     JIT_RESUME_CALL x1 (continuation target)?  Get this per-site
+     classification RIGHT — a mistake re-wedges; the DET_SCHED repro
+     validates each in 45s.
+  4. Then advertiseResume for send-bearing methods (knob-staged:
+     RESUME_SENDS first, then default) + the full ladder (the
+     historical asTuple corruption canary = AIPrim DET_SCHED;
+     CharacterTest>>testStoreStringAll; 200-class A/B).
+- **FSR design landed** (docs/frame-state-residency.md, wf_f0056620):
+  x19-invariant + derive-at-boundary; batches M0-M6; found two real
+  latent bugs en route (literals +8-vs-+16 at JITRuntime.cpp:890/899;
+  trampoline Lcall never establishes x19).  IMPLEMENT AFTER the
+  send-resume fix (resume is strictly higher leverage: 14x on loops
+  vs ~25% of the linked round trip).
+- Bisect tooling committed: PHARO_T1_RESUME_MIN/MAX_COMPILE.
+
 ## CHECKPOINT 2026-06-11k — NATIVE LOOP BACK EDGES + the OSR ping-pong discovery
 
 - **Loops now JIT** (commit "NATIVE loop back edges"): the ExtendA/B
