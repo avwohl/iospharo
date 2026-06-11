@@ -2,6 +2,29 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12aaa — gate-bail census: 92% bail rate; both halves named
+
+xmethod gate counters (PHARO_T1_INLINE_J2J=1, dict): enter=3.6M,
+bail_prim=1.45M, bail_numic=1.8M (= 92% bail -> dispatchCached exit
+-> C++ round trip; THE per-send cost).
+- bail_prim half: callees WITH prims (hash p75, at: p60-sieve-stub,
+  key p264).  J2J correctly refuses (would skip the prim).  FIX =
+  send-site inline kinds: identityHash (~4-insn header extract,
+  bits 32-53) + getter p264 engagement + un-stub p60 (the sieve
+  gate!).  This is the yy item-1 plan, now confirmed by counters.
+- bail_numic half: MAX_IC=1 leaf-only cap.  PHARO_T1_XMETHOD_MAX_IC=8
+  wins 3/3 interleaved pairs but only ~3-6%, AND ladder dnus=1 →
+  re-exposes the mid-method-bail corruption the cap guards.  Raising
+  the cap requires fixing that bug class first (canBailMidMethod
+  callees corrupting the caller frame on bail — the inline-activate
+  fallback protocol).
+SOBER TRAJECTORY NOTE: dict layers each yield single-digit %.  The
+~15x lives in per-send C++ round trips vs Cog's all-machine-code
+PIC+prim sends.  The compounding path: (1) identityHash inline kind,
+(2) sieve-gate root fix to un-stub p60/61 at:/at:put: methods,
+(3) mid-method-bail fix -> raise MAX_IC.  Each removes a bail class;
+together they make the probe loop exit-free.
+
 ## CHECKPOINT 2026-06-12zz — hash-site exit = runtime J2J gate decline on a HEALTHY IC entry
 
 Full IC dump: scanFor: #hash site is POLYMORPHIC (5 entries; SmI
