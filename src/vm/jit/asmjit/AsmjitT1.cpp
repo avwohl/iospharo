@@ -133,6 +133,7 @@ static constexpr uint32_t kTosFamDup      = 1u << 2;
 static constexpr uint32_t kTosFamCondJump = 1u << 3;
 static constexpr uint32_t kTosFamRetTop   = 1u << 4;
 static constexpr uint32_t kTosFamPopStore = 1u << 5;
+static constexpr uint32_t kTosFamArith    = 1u << 6;
 static inline bool tosFam(uint32_t bit) {
     return g_useTos
         && ((uint32_t)GET_DEBUG_INT(PHARO_T1_TOS_MASK) & bit) != 0;
@@ -3413,7 +3414,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
         emitLoadSp(a, x2);
         a.ldr(x1, ptr(x2, -16));
-        a.ldr(x4, ptr(x2, -8));
+        // simStack B2a (consumer side): TOS is in x26 — kill the
+        // dependent reload that heads this bytecode's chain.  x4 keeps
+        // identical semantics for every downstream path (bail, float,
+        // ByteString=).  Producer validity for arith results is B2b
+        // (multiple store-to-TOS paths must each re-arm x26 first).
+        if (tosFam(kTosFamArith) && g_tosIn.valid) {
+            emitTosVerify(a);
+            a.mov(x4, x26);
+        } else {
+            a.ldr(x4, ptr(x2, -8));
+        }
         // SmI tag check (5 ops): (a^b) | (a-1) low 3 bits = 0 iff
         // both SmI AND same tag.
         a.eor(x5, x1, x4);
