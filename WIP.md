@@ -2,6 +2,34 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12eee — sieve fix + prim-prologue J2J admit SHIPPED; dict 437->~370
+
+ALL SOAKED 2468/0/0 (three soaks: gate-off default; +contracts;
++admit).  Stack landed this session:
+1. Sieve-bug root fix (dead prologue helper blocks + jitPrimAtFull
+   coverage-miss full-prim route).  Gate default OFF.  Sieve=1028 x3.
+2. Prologue J2J contracts: x1 retval at all 20 success returns;
+   success routes through emitJ2JReturnPrelude_arm64 (extracted free
+   fn) via a per-method shim — pops the save-push J2J save (plain
+   ret leaked it -> pool wedge).
+3. xmethod PRIM gate admits hasPrimPrologue callees (predicate +
+   cascade + bit-57 fill all agree).  numIC/canBailMid still apply
+   to ALL (exempting them = closure-as-receiver corruption,
+   deterministic, sub-bisected).  Opt-out PHARO_T1_NO_J2J_PRIM_PROLOGUE.
+MEASURED: dict interleaved min-of-5 x3: 355/374/384 admit vs
+425/442/447 no-admit (~16%); bail_prim 1.45M->40K.  fib30 16-17ms
+(was 17.5; mild).  dict now ~370 vs Cog 26 = ~14x.
+REMAINING BAILS: numic 2.3M + b46 170K — at:/at:put:'s cond-jump
+fallback BODIES keep them refused.  NEXT LEVERS (in order):
+(a) make at:/at:put: bodies not look scary: their numIC counts body
+    send sites — a 'prologue-leaf' variant could compile prologue-
+    only + EXIT_SEND body stub => numIC=0, no cond jumps => admit
+    => the probe-loop at:s become inline J2J calls;
+(b) root-cause the closure-as-receiver corruption (the b46/numIC
+    exemption bug) — it gates MAX_IC raising generally;
+(c) extras-reclassify pass (prim-75 fill on warm sites);
+(d) popFrameForJIT retslot -> matguard removal.
+
 ## CHECKPOINT 2026-06-12ddd — SIEVE BUG ROOT-CAUSED + FIXED; gate OFF; at:/at:put: real-compile
 
 The 13-month-feeling mystery fell to a 4-agent workflow + probes:
