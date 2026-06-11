@@ -76,7 +76,12 @@
 // JM_BCTOCODEOFF also shifted 52 → 56 at the same time.  The hasNLR
 // commit missed both updates — JIT silently failed to initialize for
 // ~14 commits until E2 (2026-05-24) caught it.
-#define JM_SIZE           120
+// 128 since 2026-06-11 (FSR M0 literalsCache appended).  The silent
+// drift to 120-vs-128 cost a 10x benchFib regression (V2 save identity
+// derivation read the wrong header) — JITMethod.hpp now carries an
+// EXACT static_assert(sizeof(JITMethod) == JM_SIZE_ASM) so any future
+// growth fails the BUILD instead of the benchmark.
+#define JM_SIZE           128
 
 // -------- ExitReason values --------
 #define EXIT_RETURN       1

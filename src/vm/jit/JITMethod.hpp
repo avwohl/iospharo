@@ -497,9 +497,14 @@ struct JITMethod {
     }
 };
 
-// JITMethod header is 72 bytes (fits in 2 cache lines at 64-byte alignment)
-static_assert(sizeof(JITMethod) <= 128,
-              "JITMethod header should fit in 2 cache lines");
+// EXACT-size lock (2026-06-11): TrampolineAsm.S bakes JM_SIZE as a
+// literal; a <= assert let the FSR-M0 append silently desync them
+// (asm derived V2 save identities 8 bytes off — 10x benchFib).  If you
+// grow JITMethod: bump BOTH this constant and TrampolineAsm.S JM_SIZE.
+static constexpr size_t kJITMethodSizeAsm = 128;  // == TrampolineAsm JM_SIZE
+static_assert(sizeof(JITMethod) == kJITMethodSizeAsm,
+              "sizeof(JITMethod) must equal TrampolineAsm.S JM_SIZE — "
+              "update both together");
 
 // ===== METHOD MAP =====
 //

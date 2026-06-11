@@ -151,6 +151,7 @@ DEBUG_INT(PHARO_T1_PATCH_MAX, -1)         // site-index bisect window hi (link o
 DEBUG_BOOL(PHARO_T1_EMIT_HASH)            // print FNV-1a of emitted bytes per compile (byte-identity gate harness)
 DEBUG_INT(PHARO_T1_PATCH_MAX_IC, -1)      // design §13 Q3: numICEntries cap for the LINK predicate only (-1 = use PHARO_T1_XMETHOD_MAX_IC); linked sites evaluate gates once in C++, so the cap can widen past the per-call gate's without re-emitting
 // ── simStack: write-through TOS cache in x26 (docs/simstack-design.md) ──
+DEBUG_BOOL(PHARO_T1_NO_RESUME_SENDS)      // opt-OUT: revert condjump-free send methods to non-resumable (pre-2026-06-11).  Default ON = such methods advertise resume; their post-send continuations re-enter JIT instead of stranding the activation in the interpreter.
 DEBUG_BOOL(PHARO_T1_FSR_VERIFY)           // FSR M0 dual-write oracle: at the chain/resume exit choke points, cross-check the JITState mirror (method/literals) against state.jitMethod's canonical fields; logs [FSR-VERIFY] divergences (capped).  The divergence census tells M4 which writers are load-bearing.
 DEBUG_BOOL(PHARO_T1_TOS_REG)              // opt-in during B0-B4 (flip to PHARO_T1_NO_TOS_REG at B5)
 DEBUG_INT(PHARO_T1_TOS_MASK, -1)          // bit per converted family (-1 = all): per-term A/B + miscompile bisect

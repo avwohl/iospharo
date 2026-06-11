@@ -8719,7 +8719,17 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // as element-0 — see docs/results-jitpkg.md).  Cond-jump send-methods
     // stay non-resumable (the MUSTBOOL risk).  Opt-in via
     // PHARO_T1_RESUME_SENDS_NO_CONDJUMP=1 while validating.
-    bool resumeSendsNoCondjump = pharo::g_debug.asmjitT1ResumeSendsNoCondjump;
+    // DEFAULT-ON since 2026-06-11 (the first send-resume rung): six root
+    // causes fixed (phantom IC sites, dangled NLR markers, dropped
+    // IC-offset adds, chain create-handler sp/global sync, saveless
+    // null-cursor underflow, chain-ExitYield identity sync), qualified by
+    // an IDENTICAL 60-class SUnit A/B (4134=4134, zero fail/timeout
+    // both sides) + the deterministic eval ladder on all configs.
+    // Opt-out: PHARO_T1_NO_RESUME_SENDS=1.  The old opt-in env var is
+    // kept readable for script compat (a no-op when set).
+    bool resumeSendsNoCondjump =
+        !GET_DEBUG_BOOL(PHARO_T1_NO_RESUME_SENDS)
+        || pharo::g_debug.asmjitT1ResumeSendsNoCondjump;
     // Send-resume compile-order bisect (2026-06-11, the only-idle wedge
     // hunt): treat methods whose compile sequence falls in
     // [RESUME_MIN_COMPILE, RESUME_MAX_COMPILE) as force-resume.
