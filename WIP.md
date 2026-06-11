@@ -2,6 +2,46 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11y — FIVE root causes fixed; ladder fully clean; bench truth
+
+**FIX 5 (committed): saveless-J2J null-cursor underflow.**  With the
+resume loop's j2jSaveCursor=limit=NULL, the headroom check's unsigned
+sub underflowed and the saveless path engaged with no pool; its retro
+pool-full check exited ExitRetroFull(13) which has NO C++ handler
+(fell into default arms, elided frame lost).  cbz-guard -> normalJ2J.
+GLOBAL FORCE-RESUME now: 0 DNU, 0 MUSTBOOL, eval correct.
+
+**Correctness status:** all four ladder configs deterministic-clean
+(default / narrow rung / windows / global force).  CharacterTest
+16/16 on default; under global force testStoreStringAll TIMEOUTs
+(perf collapse of force-everything — stress config, not the lever).
+
+**Bench truth (quiet, vs stock Cog same machine, same exprs):**
+  fib30:   Cog 5ms   ours 18ms   (3.6x)
+  sendmix: Cog 2ms   ours 79ms   (40x)  OC addLast/detect
+  dict:    Cog 18ms  ours 342ms  (19x)  Dictionary at:put:/at:
+  class-send-3M: 154ms default -> 12ms under resume configs (12.8x —
+  the IC-side lever fires) but macro benches UNCHANGED by send-resume:
+  the macro gap is per-send/per-activation overhead (the FSR design,
+  docs/frame-state-residency.md), NOT the resume gate.
+
+**Measured dead end (reverted in-tree with note):** compiling quick
+prims 256-519 body-only = ~2x macro REGRESSION (C++ quick path beats
+a J2J call to a 2-bytecode method; compile flood).  [UNSUPP-PRIM]
+diagnostic kept: prim-fail census on dict bench = mostly quicks +
+117/105/83/70/71/207.
+
+**Contamination warnings hit twice today:** (1) benches run while the
+SUnit A/B was live are garbage (dict 342->871 'regression' was load);
+(2) the A/B's run B exec'd a binary that was REBUILT mid-run —
+discard, re-run.  RULE: no rebuilds, no benches while a suite runs.
+
+**NEXT:** (1) finish + diff the 60-class A/B (rerun B clean);
+(2) flip RESUME_SENDS_NO_CONDJUMP default-ON if A/B identical;
+(3) THE Cog-parity lever per bench truth = FSR implementation
+(M0-M6) + send-sequence shortening — start M0;
+(4) exit-handler audit workflow results (running).
+
 ## CHECKPOINT 2026-06-11x — FOURTH class FIXED; ladder status: narrow rung CLEAN, full force = ONE residual
 
 **FIX 4 (committed): chain-loop create handlers.**  ExitBlockCreate/

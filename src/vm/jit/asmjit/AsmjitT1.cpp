@@ -1427,6 +1427,12 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 542: return primIndex;  // SmallFloat>>-
     case 549: return primIndex;  // SmallFloat>>*
     case 110: return primIndex;  // ProtoObject>>==
+    // NOTE (2026-06-11): compiling quick prims 256-519 (body-only, no
+    // prologue) was TRIED and is a measured ~2x REGRESSION on the
+    // dict/sendmix/fib macro benches: the C++ quick-path (direct slot
+    // read in executePrimitive, no frame) is cheaper than a J2J call
+    // to a compiled 2-bytecode method, and the compile flood pressures
+    // the zone.  Don't re-add without a leaner call path.
     default: return -1;
     }
 }
@@ -8295,6 +8301,17 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         if (primIdx < 0) {
             // Unsupported prim: bail compile, let C++ handle it.
             g_failed++; g_failedUnsuppPrim++;
+            if (pharo::g_debug.jitFailReasons) {
+                static int upLog = 0;
+                if (++upLog <= 200) {
+                    int rawPrim = (bcLenRaw >= 3
+                                   && bc[0] == SistaV1::CallPrimitive)
+                        ? (bc[1] | ((bc[2] & 0x1F) << 8)) : -1;
+                    fprintf(stderr, "[UNSUPP-PRIM] prim=%d sel=#%s\n",
+                        rawPrim,
+                        memory.selectorOf(compiledMethod).c_str());
+                }
+            }
             return nullptr;
         }
     }
