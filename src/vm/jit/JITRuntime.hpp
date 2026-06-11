@@ -89,12 +89,29 @@ inline bool fsrLazyActive() {
 // MUST mirror the cascade in AsmjitT1.cpp (xmethod gate block) exactly.
 inline constexpr uint64_t kXGateOkBit = 1ULL << 57;
 inline bool xmethodGateOk(const JITMethod* t) {
-    if ((t->methodHeader >> 16) & 1) return false;       // has primitive
-    int maxIC = GET_DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC);
-    if (maxIC > 0 ? (t->numICEntries > (uint32_t)maxIC)
-                  : (t->numICEntries != 0)) return false;
+    // 2026-06-12 (post sieve-bug fix): prim methods WITH a prologue are
+    // safe J2J callees — codeStart IS the primitive attempt, and the
+    // coverage-miss path runs the full prim (jitPrimAtFull) before the
+    // body.  Their hot path is the prologue ret: body IC sites and
+    // body cond-jumps are cold, so they're also exempt from the numIC
+    // cap and the canBailMidMethod refusal (a body bail routes through
+    // the established non-ExitReturn chain fallback).  Opt-out:
+    // PHARO_T1_NO_J2J_PRIM_PROLOGUE.
+    const bool primWithPrologue = ((t->methodHeader >> 16) & 1)
+        && t->hasPrimPrologue
+        && !GET_DEBUG_BOOL(PHARO_T1_NO_J2J_PRIM_PROLOGUE);
+    if (((t->methodHeader >> 16) & 1) && !primWithPrologue) return false;
+    // 2026-06-12 sub-bisect: exempting prologue callees from the numIC
+    // and canBailMidMethod gates corrupted (closure-as-receiver DNU) —
+    // those gates apply to EVERYONE again; the prologue exemption
+    // covers only the prim gate.
+    {
+        int maxIC = GET_DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC);
+        if (maxIC > 0 ? (t->numICEntries > (uint32_t)maxIC)
+                      : (t->numICEntries != 0)) return false;
+        if (t->canBailMidMethod) return false;
+    }
     if (t->isStubOnEntry) return false;
-    if (t->canBailMidMethod) return false;
     return true;
 }
 

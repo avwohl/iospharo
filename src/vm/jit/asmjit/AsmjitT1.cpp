@@ -2496,7 +2496,8 @@ void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
 }
 
 // ARM64 mirror of emitPrimProlog_x86.  See that function for context.
-void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
+void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex,
+                          asmjit::Label prologRet) {
     using namespace asmjit::a64;
 
     if (primIndex == 110) {
@@ -2514,7 +2515,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
         emitSyncSpToState(a);
-        a.ret(x30);
+        // V2 J2J-return contract: the inline-J2J lander expects the
+        // retval in x1 (the return prelude loads it; this plain ret
+        // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+        // callees were admitted through the xmethod gates.
+        a.ldr(x1, ptr(x0, OFF_RETVAL));
+        a.b(prologRet);  // V2 J2J-return via the shared prelude shim
         return;
     }
 
@@ -2563,7 +2569,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
-            a.ret(x30);
+            // V2 J2J-return contract: the inline-J2J lander expects the
+            // retval in x1 (the return prelude loads it; this plain ret
+            // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+            // callees were admitted through the xmethod gates.
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             a.bind(tryWords);
             // fmt 10-11: 32-bit indexable (WordArray, IntegerArray).
             // numElements = slotCount*2 - (fmt - 10).
@@ -2578,7 +2589,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
-            a.ret(x30);
+            // V2 J2J-return contract: the inline-J2J lander expects the
+            // retval in x1 (the return prelude loads it; this plain ret
+            // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+            // callees were admitted through the xmethod gates.
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             a.bind(tryBytes);
             // fmt - 16 in [0..7] → byte indexable.
             asmjit::Label tryFmt9 = a.new_label();
@@ -2596,7 +2612,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
-            a.ret(x30);
+            // V2 J2J-return contract: the inline-J2J lander expects the
+            // retval in x1 (the return prelude loads it; this plain ret
+            // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+            // callees were admitted through the xmethod gates.
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             a.bind(tryFmt9);
             // fmt 9 (Indexable64): size = slotCount.
             asmjit::Label tryFmt345 = a.new_label();
@@ -2608,7 +2629,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
-            a.ret(x30);
+            // V2 J2J-return contract: the inline-J2J lander expects the
+            // retval in x1 (the return prelude loads it; this plain ret
+            // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+            // callees were admitted through the xmethod gates.
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             // fmt 3/4/5 (IndexableWithFixed / Weak): call helper that
             // reads fixedFields from the class's instSpec slot.  Without
             // this branch, SparseLargeTable>>basicSize returned 0 (the
@@ -2642,7 +2668,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
-            a.ret(x30);
+            // V2 J2J-return contract: the inline-J2J lander expects the
+            // retval in x1 (the return prelude loads it; this plain ret
+            // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+            // callees were admitted through the xmethod gates.
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             a.bind(fail);
             return;
         }
@@ -2683,7 +2714,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
-            a.ret(x30);
+            // V2 J2J-return contract: the inline-J2J lander expects the
+            // retval in x1 (the return prelude loads it; this plain ret
+            // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+            // callees were admitted through the xmethod gates.
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             a.bind(tryWordsAt);
             // fmt 10-11: 32-bit indexable (WordArray, IntegerArray).
             // numElements = slotCount*2 - (fmt - 10).  Load uint32, tag SmI.
@@ -2708,7 +2744,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
-            a.ret(x30);
+            // V2 J2J-return contract: the inline-J2J lander expects the
+            // retval in x1 (the return prelude loads it; this plain ret
+            // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+            // callees were admitted through the xmethod gates.
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             a.bind(tryBytesAt);
             a.sub(x8, x6, asmjit::Imm(16));
             a.cmp(x8, asmjit::Imm(8));
@@ -2733,7 +2774,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
-            a.ret(x30);
+            // V2 J2J-return contract: the inline-J2J lander expects the
+            // retval in x1 (the return prelude loads it; this plain ret
+            // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+            // callees were admitted through the xmethod gates.
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             // fmt 3/4/5/9 (IndexableWithFixed / Weak / Indexable64) — call
             // jit_rt_primat_ptr helper.  Same dual-path trap as basicSize:
             // without this branch, LayoutClassScope.at: (fmt 3) fell
@@ -2770,7 +2816,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
                 a.mov(w3, asmjit::Imm(EXIT_RETURN));
                 a.str(w3, ptr(x0, OFF_EXIT));
                 emitSyncSpToState(a);
-                a.ret(x30);
+                // V2 J2J-return contract: the inline-J2J lander expects the
+                // retval in x1 (the return prelude loads it; this plain ret
+                // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+                // callees were admitted through the xmethod gates.
+                a.ldr(x1, ptr(x0, OFF_RETVAL));
+                a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             }
             a.bind(fail);
             if (pharo::g_debug.jitFailReasons) {
@@ -2811,7 +2862,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
-            a.ret(x30);
+            // V2 J2J-return contract: the inline-J2J lander expects the
+            // retval in x1 (the return prelude loads it; this plain ret
+            // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+            // callees were admitted through the xmethod gates.
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             a.bind(tryWordsAtPut);
             // fmt 10-11: 32-bit indexable (WordArray, IntegerArray).
             // val must be SmI in [0, 0xFFFFFFFF].
@@ -2845,7 +2901,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
-            a.ret(x30);
+            // V2 J2J-return contract: the inline-J2J lander expects the
+            // retval in x1 (the return prelude loads it; this plain ret
+            // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+            // callees were admitted through the xmethod gates.
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             a.bind(tryBytesAtPut);
             a.sub(x8, x6, asmjit::Imm(16));
             a.cmp(x8, asmjit::Imm(8));
@@ -2873,7 +2934,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
             a.str(w3, ptr(x0, OFF_EXIT));
             emitSyncSpToState(a);
-            a.ret(x30);
+            // V2 J2J-return contract: the inline-J2J lander expects the
+            // retval in x1 (the return prelude loads it; this plain ret
+            // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+            // callees were admitted through the xmethod gates.
+            a.ldr(x1, ptr(x0, OFF_RETVAL));
+            a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             // fmt 3/4/5 — call jit_rt_primatput_ptr helper.  Same dual-
             // path trap as basicSize/at:.
             {
@@ -2908,7 +2974,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
                 a.mov(w3, asmjit::Imm(EXIT_RETURN));
                 a.str(w3, ptr(x0, OFF_EXIT));
                 emitSyncSpToState(a);
-                a.ret(x30);
+                // V2 J2J-return contract: the inline-J2J lander expects the
+                // retval in x1 (the return prelude loads it; this plain ret
+                // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+                // callees were admitted through the xmethod gates.
+                a.ldr(x1, ptr(x0, OFF_RETVAL));
+                a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             }
             a.bind(fail);
             return;
@@ -2978,7 +3049,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
         emitSyncSpToState(a);
-        a.ret(x30);
+        // V2 J2J-return contract: the inline-J2J lander expects the
+        // retval in x1 (the return prelude loads it; this plain ret
+        // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+        // callees were admitted through the xmethod gates.
+        a.ldr(x1, ptr(x0, OFF_RETVAL));
+        a.b(prologRet);  // V2 J2J-return via the shared prelude shim
         a.bind(fail);
         return;
     }
@@ -3012,7 +3088,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
         emitSyncSpToState(a);
-        a.ret(x30);
+        // V2 J2J-return contract: the inline-J2J lander expects the
+        // retval in x1 (the return prelude loads it; this plain ret
+        // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+        // callees were admitted through the xmethod gates.
+        a.ldr(x1, ptr(x0, OFF_RETVAL));
+        a.b(prologRet);  // V2 J2J-return via the shared prelude shim
         a.bind(fail);
         return;
     }
@@ -3029,7 +3110,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
         emitSyncSpToState(a);
-        a.ret(x30);
+        // V2 J2J-return contract: the inline-J2J lander expects the
+        // retval in x1 (the return prelude loads it; this plain ret
+        // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+        // callees were admitted through the xmethod gates.
+        a.ldr(x1, ptr(x0, OFF_RETVAL));
+        a.b(prologRet);  // V2 J2J-return via the shared prelude shim
         a.bind(fail);
         return;
     }
@@ -3046,7 +3132,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
         emitSyncSpToState(a);
-        a.ret(x30);
+        // V2 J2J-return contract: the inline-J2J lander expects the
+        // retval in x1 (the return prelude loads it; this plain ret
+        // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+        // callees were admitted through the xmethod gates.
+        a.ldr(x1, ptr(x0, OFF_RETVAL));
+        a.b(prologRet);  // V2 J2J-return via the shared prelude shim
         a.bind(fail);
         return;
     }
@@ -3059,7 +3150,12 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
         emitSyncSpToState(a);
-        a.ret(x30);
+        // V2 J2J-return contract: the inline-J2J lander expects the
+        // retval in x1 (the return prelude loads it; this plain ret
+        // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+        // callees were admitted through the xmethod gates.
+        a.ldr(x1, ptr(x0, OFF_RETVAL));
+        a.b(prologRet);  // V2 J2J-return via the shared prelude shim
         a.bind(fail);
         return;
     }
@@ -3090,9 +3186,181 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
     a.mov(w3, asmjit::Imm(EXIT_RETURN));
     a.str(w3, ptr(x0, OFF_EXIT));
     emitSyncSpToState(a);
-    a.ret(x30);
+    // V2 J2J-return contract: the inline-J2J lander expects the
+    // retval in x1 (the return prelude loads it; this plain ret
+    // bypasses the prelude).  Exposed 2026-06-12 when prim-prologue
+    // callees were admitted through the xmethod gates.
+    a.ldr(x1, ptr(x0, OFF_RETVAL));
+    a.b(prologRet);  // V2 J2J-return via the shared prelude shim
 
     a.bind(fail);
+}
+
+// J2J chain return prelude — FREE FUNCTION so both emitOne_arm64's
+// return emits and the prim-prologue success shim (compileViaAsmjit)
+// can use it.  Retval is in x1 by convention; x2-x15 clobberable.
+// Pops this activation's pending save and tail-jumps to the caller's
+// resume; falls through when no save is poppable.
+static void emitJ2JReturnPrelude_arm64(asmjit::a64::Assembler& a,
+                                       int staticJ2JArgCount = -1) {
+    using namespace asmjit::a64;
+    (void)staticJ2JArgCount;
+    const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J);
+        if (!inlineJ2J) return;
+        if (GET_DEBUG_BOOL(PHARO_T1_NO_J2J_RETPRELUDE)) return;  // bisect knob
+        asmjit::Label normalReturn = a.new_label();
+        // Check current j2jDepth > j2jEntryDepth (this method pushed a save).
+        // Without entry-depth gate, chain-loop-activated methods would
+        // incorrectly pop OUTER inline-J2J saves.  See deferred A6 option (a).
+        if (g_fsrNodepth) {
+            // FSR M3: poppability = cursor above the per-activation
+            // baseline.  x23 = live cursor (M2 default-on).
+            a.ldr(x4, ptr(x0, OFF_J2J_ENTRY_CURSOR));
+            a.cmp(x23, x4);
+            a.b_ls(normalReturn);  // cursor <= baseline → nothing poppable
+        } else {
+        a.ldr(w3, ptr(x0, OFF_J2J_DEPTH));
+        a.ldr(w4, ptr(x0, OFF_J2J_ENTRY_DEPTH));
+        a.cmp(w3, w4);
+        a.b_le(normalReturn);   // current <= entry → no save pushed by this method
+        }
+
+        // Pop save: cursor -= sizeof(J2JSave) = 56; depth--
+        // Pre-index ldp folds the cursor decrement into the first load.
+        if (g_fsrCursor) {
+            // FSR M2 v1: cursor resident in x23 (write-through).  The
+            // pre-index ldp mutates x23 directly; the str keeps memory
+            // authoritative for every C++/helper observer.
+            a.ldp(x5, x6, ptr_pre(x23, -JSV_SIZE));
+            a.mov(x4, x23);
+            a.str(x23, ptr(x0, OFF_J2J_SAVE_CURSOR));
+        } else {
+        a.ldr(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
+        a.ldp(x5, x6, ptr_pre(x4, -JSV_SIZE));  // x4 -= save size; load sp + recv
+        a.str(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
+        }
+        if (!g_fsrNodepth) {
+            a.sub(w3, w3, asmjit::Imm(1));
+            a.str(w3, ptr(x0, OFF_J2J_DEPTH));
+        } else if (g_fsrNodepthVerify) {
+            // stage (b): w3 not loaded on the nodepth path — decrement
+            // the field in place for the parity oracle.
+            a.ldr(w3, ptr(x0, OFF_J2J_DEPTH));
+            a.sub(w3, w3, asmjit::Imm(1));
+            a.str(w3, ptr(x0, OFF_J2J_DEPTH));
+        }
+
+        // Load remaining save fields with ldp pairs.  Layout:
+        //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
+        //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
+        // (sp + recv already loaded above via pre-index — x5=sp, x6=recv)
+        a.str(x6, ptr(x0, OFF_RECEIVER));
+        // jit-may20b Step 8.2: load tempBase only (skip save.ip restore).
+        // The JIT body never READS state.ip during execution — every
+        // bytecode op writes state.ip itself before any exit to interp,
+        // so the restored ip value is always overwritten before being
+        // used.  save.ip stays in the j2jPool for the trampoline's
+        // Lret_null_resume bail (which reads it directly).  Saves 1
+        // instr per J2J return; ~1M returns on fib(28) ≈ ~0.3 ms.
+        //
+        // For xmethod-off (default, self-rec only): x10 is unused after
+        // this point; using ldr instead of ldp drops the redundant load.
+        // For xmethod-on: x10 is reassigned at line ~2602 (literals=
+        // method+16) before any read, so dropping the original load is
+        // also safe.
+        a.ldr(x6, ptr(x4, JSV_TEMPBASE));  // tempBase
+        emitStoreTempBase(a, x6);
+        a.ldr(x8, ptr(x4, JSV_RESUMEADDR));  // resumeAddr (always needed)
+#if PHARO_J2J_SAVE_V2
+        // V2 prelude tail: x5 = caller sp (restore the residency
+        // mirror), mask the packed resume address, clear the exit, br.
+        // Arg pop + retval write + (xmethod) context re-establishment
+        // all happen at the resumeAfterCall continuation; x1 already
+        // holds the retval from the return op.
+        emitStoreSp(a, x5);
+        a.and_(x8, x8, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
+        a.str(wzr, ptr(x0, OFF_EXIT));
+        a.br(x8);
+        a.bind(normalReturn);
+#else
+        // sendArgCount: if all J2J sends in this method have the same
+        // nArgs (compile-time uniform), the return prelude can use the
+        // value as an immediate, skipping the load + lsl/sub in the
+        // sp-adjust below.  Otherwise load from save.
+        if (staticJ2JArgCount < 0) {
+            a.ldr(w9, ptr(x4, 48));       // sendArgCount
+        }
+
+        // Derive method/literals/argCount/jitMethod from callerJM.
+        // When xmethod is OFF and inline-block-value is OFF, the J2J
+        // push path is strictly self-recursive (callee == caller —
+        // gated by SELF_REC_BIT tbz), so state.method, state.literals,
+        // state.argCount, and state.jitMethod were never modified
+        // during the J2J call — skip the 5 redundant stores.  When
+        // either xmethod or inline-block-value is ON, callee may
+        // differ from caller (block-value path or cross-method
+        // dispatch), so restore from save.
+        //
+        // F3-NL2 (2026-05-23): root-caused fib(15) non-leaf hang to
+        // missing restore.  jit_rt_inline_block_value_prep sets
+        // state.{jitMethod,method,literals,argCount} to the BLOCK's
+        // values; without this restore the caller's continuation reads
+        // the block's literals, producing the cascading DNU on
+        // `nil findNextHandlerContext` we observed.
+        if (g_debug.t1InlineJ2JXmethod || g_debug.t1InlineBlockValue) {
+            // 2026-05-24: skip the restore if save.jitMethod is null.
+            // xmethod-off (default) inline-J2J self-rec push at line
+            // ~4060 does NOT write save.jitMethod (state stays the
+            // same for self-rec).  When inline-block-value is also on
+            // (default) but the push was a self-rec one (not a
+            // block-value push), save.jitMethod is 0 from j2jPool_'s
+            // zero-init.  Without this guard, the ldr x6, [x7] below
+            // dereferences NULL and SIGSEGVs — was masked by the
+            // warm-J2J gate which prevented the push from happening.
+            asmjit::Label skipJMRestore = a.new_label();
+            a.ldr(x7, ptr(x4, 32));   // jitMethod
+            a.cbz(x7, skipJMRestore);
+            a.str(x7, ptr(x0, OFF_JITMETHOD));
+            if (g_fsrX19) a.mov(x19, x7);  // FSR M1: caller-restore
+            a.ldr(x6, ptr(x7, 0));    // method = callerJM[0]
+            a.str(x6, ptr(x0, OFF_METHOD));
+            a.add(x10, x6, asmjit::Imm(16));
+            a.str(x10, ptr(x0, OFF_LITERALS));
+            a.ldrb(w11, ptr(x7, 34)); // callerJM.argCount byte
+            a.str(w11, ptr(x0, OFF_ARGCOUNT));
+            a.bind(skipJMRestore);
+        }
+
+        // Pop callee's args from caller's sp, push retval (in x1).
+        // semantics: *(sp - (nArgs+1)*8) = retval; sp -= nArgs*8
+        //
+        // Fold via: new_sp = sp - nArgs*8; recv_slot = new_sp - 8
+        // (the recv slot was at sp-(nArgs+1)*8 = new_sp - 8 after the
+        // subtraction).  `stur` supports the -8 displacement directly.
+        //
+        // When staticJ2JArgCount is known (all J2J sends in this method
+        // have the same nArgs), substitute the immediate for the dynamic
+        // lsl+sub.  nArgs=0 skips the sub entirely.
+        if (staticJ2JArgCount == 0) {
+            // sp unchanged; just write retval below current sp.
+        } else if (staticJ2JArgCount > 0) {
+            a.sub(x5, x5, asmjit::Imm(staticJ2JArgCount * 8));
+        } else {
+            a.lsl(x12, x9, asmjit::Imm(3));
+            a.sub(x5, x5, x12);
+        }
+        a.stur(x1, ptr(x5, -8));                    // write retval @ new_sp-8
+        emitStoreSp(a, x5);
+
+        // Clear exitReason so callers don't see stale EXIT_RETURN.
+        // Use wzr directly to skip the mov+str pair.
+        a.str(wzr, ptr(x0, OFF_EXIT));
+
+        // Tail-call to caller's resumeAddr.
+        a.br(x8);
+
+        a.bind(normalReturn);
+#endif  // PHARO_J2J_SAVE_V2 (prelude tail, inside the free fn)
 }
 
 bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
@@ -3384,163 +3652,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // semantic change.
     const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J);
     auto emitJ2JReturnPreludeIfEnabled = [&]() {
-        if (!inlineJ2J) return;
-        if (GET_DEBUG_BOOL(PHARO_T1_NO_J2J_RETPRELUDE)) return;  // bisect knob
-        asmjit::Label normalReturn = a.new_label();
-        // Check current j2jDepth > j2jEntryDepth (this method pushed a save).
-        // Without entry-depth gate, chain-loop-activated methods would
-        // incorrectly pop OUTER inline-J2J saves.  See deferred A6 option (a).
-        if (g_fsrNodepth) {
-            // FSR M3: poppability = cursor above the per-activation
-            // baseline.  x23 = live cursor (M2 default-on).
-            a.ldr(x4, ptr(x0, OFF_J2J_ENTRY_CURSOR));
-            a.cmp(x23, x4);
-            a.b_ls(normalReturn);  // cursor <= baseline → nothing poppable
-        } else {
-        a.ldr(w3, ptr(x0, OFF_J2J_DEPTH));
-        a.ldr(w4, ptr(x0, OFF_J2J_ENTRY_DEPTH));
-        a.cmp(w3, w4);
-        a.b_le(normalReturn);   // current <= entry → no save pushed by this method
-        }
-
-        // Pop save: cursor -= sizeof(J2JSave) = 56; depth--
-        // Pre-index ldp folds the cursor decrement into the first load.
-        if (g_fsrCursor) {
-            // FSR M2 v1: cursor resident in x23 (write-through).  The
-            // pre-index ldp mutates x23 directly; the str keeps memory
-            // authoritative for every C++/helper observer.
-            a.ldp(x5, x6, ptr_pre(x23, -JSV_SIZE));
-            a.mov(x4, x23);
-            a.str(x23, ptr(x0, OFF_J2J_SAVE_CURSOR));
-        } else {
-        a.ldr(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
-        a.ldp(x5, x6, ptr_pre(x4, -JSV_SIZE));  // x4 -= save size; load sp + recv
-        a.str(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
-        }
-        if (!g_fsrNodepth) {
-            a.sub(w3, w3, asmjit::Imm(1));
-            a.str(w3, ptr(x0, OFF_J2J_DEPTH));
-        } else if (g_fsrNodepthVerify) {
-            // stage (b): w3 not loaded on the nodepth path — decrement
-            // the field in place for the parity oracle.
-            a.ldr(w3, ptr(x0, OFF_J2J_DEPTH));
-            a.sub(w3, w3, asmjit::Imm(1));
-            a.str(w3, ptr(x0, OFF_J2J_DEPTH));
-        }
-
-        // Load remaining save fields with ldp pairs.  Layout:
-        //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
-        //   [32]=jitMethod, [40]=resumeAddr, [48]=sendArgCount
-        // (sp + recv already loaded above via pre-index — x5=sp, x6=recv)
-        a.str(x6, ptr(x0, OFF_RECEIVER));
-        // jit-may20b Step 8.2: load tempBase only (skip save.ip restore).
-        // The JIT body never READS state.ip during execution — every
-        // bytecode op writes state.ip itself before any exit to interp,
-        // so the restored ip value is always overwritten before being
-        // used.  save.ip stays in the j2jPool for the trampoline's
-        // Lret_null_resume bail (which reads it directly).  Saves 1
-        // instr per J2J return; ~1M returns on fib(28) ≈ ~0.3 ms.
-        //
-        // For xmethod-off (default, self-rec only): x10 is unused after
-        // this point; using ldr instead of ldp drops the redundant load.
-        // For xmethod-on: x10 is reassigned at line ~2602 (literals=
-        // method+16) before any read, so dropping the original load is
-        // also safe.
-        a.ldr(x6, ptr(x4, JSV_TEMPBASE));  // tempBase
-        emitStoreTempBase(a, x6);
-        a.ldr(x8, ptr(x4, JSV_RESUMEADDR));  // resumeAddr (always needed)
-#if PHARO_J2J_SAVE_V2
-        // V2 prelude tail: x5 = caller sp (restore the residency
-        // mirror), mask the packed resume address, clear the exit, br.
-        // Arg pop + retval write + (xmethod) context re-establishment
-        // all happen at the resumeAfterCall continuation; x1 already
-        // holds the retval from the return op.
-        emitStoreSp(a, x5);
-        a.and_(x8, x8, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
-        a.str(wzr, ptr(x0, OFF_EXIT));
-        a.br(x8);
-        a.bind(normalReturn);
+        emitJ2JReturnPrelude_arm64(a, staticJ2JArgCount);
     };
-#else
-        // sendArgCount: if all J2J sends in this method have the same
-        // nArgs (compile-time uniform), the return prelude can use the
-        // value as an immediate, skipping the load + lsl/sub in the
-        // sp-adjust below.  Otherwise load from save.
-        if (staticJ2JArgCount < 0) {
-            a.ldr(w9, ptr(x4, 48));       // sendArgCount
-        }
-
-        // Derive method/literals/argCount/jitMethod from callerJM.
-        // When xmethod is OFF and inline-block-value is OFF, the J2J
-        // push path is strictly self-recursive (callee == caller —
-        // gated by SELF_REC_BIT tbz), so state.method, state.literals,
-        // state.argCount, and state.jitMethod were never modified
-        // during the J2J call — skip the 5 redundant stores.  When
-        // either xmethod or inline-block-value is ON, callee may
-        // differ from caller (block-value path or cross-method
-        // dispatch), so restore from save.
-        //
-        // F3-NL2 (2026-05-23): root-caused fib(15) non-leaf hang to
-        // missing restore.  jit_rt_inline_block_value_prep sets
-        // state.{jitMethod,method,literals,argCount} to the BLOCK's
-        // values; without this restore the caller's continuation reads
-        // the block's literals, producing the cascading DNU on
-        // `nil findNextHandlerContext` we observed.
-        if (g_debug.t1InlineJ2JXmethod || g_debug.t1InlineBlockValue) {
-            // 2026-05-24: skip the restore if save.jitMethod is null.
-            // xmethod-off (default) inline-J2J self-rec push at line
-            // ~4060 does NOT write save.jitMethod (state stays the
-            // same for self-rec).  When inline-block-value is also on
-            // (default) but the push was a self-rec one (not a
-            // block-value push), save.jitMethod is 0 from j2jPool_'s
-            // zero-init.  Without this guard, the ldr x6, [x7] below
-            // dereferences NULL and SIGSEGVs — was masked by the
-            // warm-J2J gate which prevented the push from happening.
-            asmjit::Label skipJMRestore = a.new_label();
-            a.ldr(x7, ptr(x4, 32));   // jitMethod
-            a.cbz(x7, skipJMRestore);
-            a.str(x7, ptr(x0, OFF_JITMETHOD));
-            if (g_fsrX19) a.mov(x19, x7);  // FSR M1: caller-restore
-            a.ldr(x6, ptr(x7, 0));    // method = callerJM[0]
-            a.str(x6, ptr(x0, OFF_METHOD));
-            a.add(x10, x6, asmjit::Imm(16));
-            a.str(x10, ptr(x0, OFF_LITERALS));
-            a.ldrb(w11, ptr(x7, 34)); // callerJM.argCount byte
-            a.str(w11, ptr(x0, OFF_ARGCOUNT));
-            a.bind(skipJMRestore);
-        }
-
-        // Pop callee's args from caller's sp, push retval (in x1).
-        // semantics: *(sp - (nArgs+1)*8) = retval; sp -= nArgs*8
-        //
-        // Fold via: new_sp = sp - nArgs*8; recv_slot = new_sp - 8
-        // (the recv slot was at sp-(nArgs+1)*8 = new_sp - 8 after the
-        // subtraction).  `stur` supports the -8 displacement directly.
-        //
-        // When staticJ2JArgCount is known (all J2J sends in this method
-        // have the same nArgs), substitute the immediate for the dynamic
-        // lsl+sub.  nArgs=0 skips the sub entirely.
-        if (staticJ2JArgCount == 0) {
-            // sp unchanged; just write retval below current sp.
-        } else if (staticJ2JArgCount > 0) {
-            a.sub(x5, x5, asmjit::Imm(staticJ2JArgCount * 8));
-        } else {
-            a.lsl(x12, x9, asmjit::Imm(3));
-            a.sub(x5, x5, x12);
-        }
-        a.stur(x1, ptr(x5, -8));                    // write retval @ new_sp-8
-        emitStoreSp(a, x5);
-
-        // Clear exitReason so callers don't see stale EXIT_RETURN.
-        // Use wzr directly to skip the mov+str pair.
-        a.str(wzr, ptr(x0, OFF_EXIT));
-
-        // Tail-call to caller's resumeAddr.
-        a.br(x8);
-
-        a.bind(normalReturn);
-    };
-#endif  // PHARO_J2J_SAVE_V2 (prelude tail)
 
     auto emitReturnPtr = [&](int srcOff) {
         a.ldr(x1, ptr(x0, srcOff));
@@ -5088,15 +5201,31 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.b(j2jBailSelf2);
                     };
                     emitIncCounter((uint64_t)&g_xgate_enter);
+                    // 2026-06-12: prim callees WITH a prologue are
+                    // admitted (codeStart IS the prim attempt; body
+                    // gates are cold for them) — mirror xmethodGateOk.
+                    // gatesAdmit skips the numIC/b47/b46 checks.
+                    asmjit::Label gatesAdmitPrim = a.new_label();
+                    asmjit::Label gatesNoPrim = a.new_label();
                     a.ldr(x4, ptr(x10, (int)offsetof(JITMethod, methodHeader)));            // methodHeader (decoded)
+                    a.tbz(x4, asmjit::Imm(16), gatesNoPrim);
+                    a.ldrb(w4, ptr(x10,
+                        (int)offsetof(JITMethod, hasPrimPrologue)));
+                    if (GET_DEBUG_BOOL(PHARO_T1_NO_J2J_PRIM_PROLOGUE)) {
+                        a.mov(w4, asmjit::Imm(0));  // opt-out: never admit
+                    }
                     if (inlineJ2JCounters) {
                         asmjit::Label ok = a.new_label();
-                        a.tbz(x4, asmjit::Imm(16), ok);
+                        a.cbnz(w4, ok);
                         emitGateBail((uint64_t)&g_xgate_bail_prim);
                         a.bind(ok);
                     } else {
-                        a.tbnz(x4, asmjit::Imm(16), j2jBailSelf2);  // has prim → bail
+                        a.cbz(w4, j2jBailSelf2);  // prim w/o prologue → bail
                     }
+                    // prologue-prim admitted past the PRIM gate only;
+                    // numIC/b47/b46 still apply (sub-bisect 2026-06-12).
+                    a.bind(gatesNoPrim);
+                    (void)gatesAdmitPrim;
                     // Callee send-site count gate.  Historical form:
                     // numICEntries == 0 (leaf callees only) — guarded the
                     // materialize-bail wrong-result bug (stale
@@ -5163,6 +5292,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     } else {
                         a.cbnz(w4, j2jBailSelf2);
                     }
+                    a.bind(gatesAdmitPrim);
                     // Fire counting + cap check: only emitted when a cap
                     // is set (PHARO_T1_INLINE_J2J_XMETHOD_MAX >= 0) or
                     // counters are on.  Production default (uncapped, no
@@ -8011,7 +8141,22 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
     }
     if (primIndex > 0) {
-        emitPrimProlog_arm64(a, primIndex);
+        // Prologue-success returns route through a shim that runs the
+        // V2 J2J return prelude (pops this call's save / tail-jumps to
+        // the caller's resume) — a plain ret leaked the save when
+        // prim-prologue callees were admitted as inline-J2J targets
+        // (2026-06-12).  The prologue's FAIL edge falls through past
+        // the shim into the body emit.
+        {
+            asmjit::Label prologRet = a.new_label();
+            asmjit::Label prologBodyStart = a.new_label();
+            emitPrimProlog_arm64(a, primIndex, prologRet);
+            a.b(prologBodyStart);          // prolog fail -> body
+            a.bind(prologRet);             // x1 = retval (prolog contract)
+            emitJ2JReturnPrelude_arm64(a);
+            a.ret(asmjit::a64::x30);
+            a.bind(prologBodyStart);
+        }
     }
     if (real) {
         int siteIdx = 0;
