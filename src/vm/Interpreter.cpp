@@ -20309,6 +20309,23 @@ void Interpreter::tryJITResumeInCaller() {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
 
+            // Send-resume cascade #3 FIX (2026-06-11): in the RESUME
+            // handler the C++ globals can describe a STALE frame even
+            // with j2jDepth == 0 (the V2 save-pop re-enters the caller
+            // in JIT without touching interp globals; a later
+            // block-create then captured the WRONG outerContext —
+            // corrupt closures, the cannotReturn: only-idle wedge).
+            // After ANY JIT execution state.* is the truth (the
+            // per-call mirror writes); sync unconditionally here —
+            // unlike the main-loop handler whose globals are fresh in
+            // its depth==0 case.
+            {
+                receiver_ = state.receiver;
+                framePointer_ = state.tempBase - 1;
+                method_ = state.method;
+                homeMethod_ = state.method;
+            }
+
             uint64_t packed = state.cachedTarget.rawBits();
             int litIndex = static_cast<int>(packed & 0xFFFF);
             int flags = static_cast<int>((packed >> 32) & 0xFF);
@@ -20323,6 +20340,15 @@ void Interpreter::tryJITResumeInCaller() {
 
         case jit::ExitArrayCreate: {
             // PushArray during resume: allocate array, then continue resume loop.
+            // Cascade-#3 sibling sync (see ExitBlockCreate above): pop()/
+            // push() in this handler read the C++ globals.  Uncondi-
+            // tional — same staleness analysis.
+            {
+                receiver_ = state.receiver;
+                framePointer_ = state.tempBase - 1;
+                method_ = state.method;
+                homeMethod_ = state.method;
+            }
             //
             // 2026-05-07 A1 FIX: stencil_pushArray does NOT update state.ip;
             // asmjit-T1 DOES (its PushArray emit writes state.ip = method +
