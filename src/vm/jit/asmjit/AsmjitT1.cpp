@@ -1092,13 +1092,28 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
     //   0xF0-0xF5: ExtPop/Store{Recv,LitVar,Temp}  (consume extA)
     //   0x80-0xAF: Phase 4 literal sends  (consume extA — index = extA*16+i)
     //   0x70-0x7F: special selectors  (consume extB for nArgs)
-    for (size_t i = 0; i < bcLen; i++) {
+    // WALK BY BYTECODE LENGTH — this loop byte-stepped (i++) until
+    // 2026-06-11, so multi-byte OPERANDS were misread as opcodes: the
+    // 0xE0 displacement byte of Dictionary>>scanFor:'s long backward
+    // jump (E1 FF ED E0) read as a spurious ExtendA prefix -> whole
+    // method rejected -> STUB -> the entire Dictionary probe loop ran
+    // INTERPRETED (the 18.4M interp at:/key sends, most of the
+    // dict-vs-Cog gap).  Same trap class as the cascade-#3 phantom IC
+    // sites: NEVER scan bytecode raw.
+    for (size_t i = 0; i < bcLen; ) {
         if (bc[i] == SistaV1::ExtendA || bc[i] == SistaV1::ExtendB) {
             if (i + 2 >= bcLen) {
                 traceFail(i, bc[i], "ext-prefix-truncated");
                 return false;
             }
             uint8_t nextOp = bc[i + 2];
+            // Chained prefixes (ExtB ExtB op / ExtA ExtB op): accept the
+            // inner prefix here; the final consumer is validated when
+            // the walk reaches the LAST prefix in the chain.
+            if (nextOp == SistaV1::ExtendA || nextOp == SistaV1::ExtendB) {
+                i += 2;
+                continue;
+            }
             bool acceptable = false;
             // Bytecodes that consume the prefix:
             if (nextOp == SistaV1::ExtSend
@@ -1130,7 +1145,12 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
                 traceFail(i, bc[i], "ext-prefix-not-handled-pattern");
                 return false;
             }
+            i += 2;  // past this prefix; next iteration lands on the op
+            continue;
         }
+        int stepLen = SistaV1::bytecodeLength(bc[i]);
+        if (stepLen <= 0) { traceFail(i, bc[i], "unknown-length"); return false; }
+        i += (size_t)stepLen;
     }
     for (size_t i = 0; i < bcLen; i++) {
         uint8_t op = bc[i];

@@ -3329,9 +3329,31 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // compiles sumArr, intercepts the activation in tryJITActivation,
     // and falls back to per-iter IC speed (~150× slowdown).  See
     // memory/project_t1_vs_sista_race.md.
+    // scanFor: orphan diagnosis (PHARO_JIT_FAIL_REASONS): trace this
+    // method's path through the gates.
+    bool sfTrace = false;
+    if (__builtin_expect(pharo::g_debug.jitFailReasons, 0) && interp_) {
+        static uint64_t sfSeen = 0;
+        std::string sel = interp_->memory().selectorOf(compiledMethod);
+        if (sel == "scanFor:") {
+            sfSeen++;
+            if ((sfSeen & 0xFFFFF) == 1) sfTrace = true;
+        }
+    }
     if (sistaRuntimeForGCHook_) {
         Oop m = compiledMethod;
-        if (sistaRuntimeForGCHook_->hasSplice(m)) {
+        bool spliced = sistaRuntimeForGCHook_->hasSplice(m);
+        if (sfTrace) {
+            JITMethod* sfJm = methodMap_.lookup(m.rawBits());
+            fprintf(stderr, "[SF-NOTE] oop=0x%llx hasSplice=%d jm=%p "
+                "exec=%d nBC=%u negCache=%d\n",
+                (unsigned long long)m.rawBits(), (int)spliced,
+                (void*)sfJm, sfJm ? (int)sfJm->isExecutable() : -1,
+                sfJm ? sfJm->numBytecodes : 0,
+                (int)initialCompileFailedContains(m.rawBits()));
+        }
+        if (spliced
+                && !sistaOrphanEscape(m.rawBits())) {
             // Cache the splice flag on the JITMethod so stencils can
             // skip per-call counter bumps (avoiding the T1-vs-Sista
             // race) without an unordered_set probe per send.
@@ -4045,7 +4067,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     uint32_t codeOffset = jm->codeOffsetForBC(bcOffset);
     if (codeOffset == 0 || codeOffset >= jm->codeSize) {
         rrCodeOff++; rrDump();
-        if (rrLog && rrCodeOff >= 3000000 && rrCodeOff <= 3000030 && jm->bcStartCache) {
+        if (rrLog && rrCodeOff >= 2000000 && rrCodeOff <= 2000030 && jm->bcStartCache) {
             const uint8_t* bs = reinterpret_cast<const uint8_t*>(jm->bcStartCache);
             std::string rrSel = interp_ ? interp_->memory().selectorOf(compiledMethod) : std::string("?");
             fprintf(stderr, "[RR-CODEOFF] sel=#%s tier=%d real0 bcOff=%u nBC=%u codeOff=%u op-1=0x%02x op-2=0x%02x\n",
