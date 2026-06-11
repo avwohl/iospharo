@@ -4995,6 +4995,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.cmp(w14, asmjit::Imm(nArgs));
                         a.b_ne(normalJ2J);
                     }
+                    // Cascade #2 PREVENTION (headroom reservation,
+                    // 2026-06-11): when the pool is within 64 saves of
+                    // full, take the save-push path instead — its
+                    // j2jBailFull handles full gracefully.  This keeps
+                    // the retro-save pool-full handoff (ExitRetroFull)
+                    // unreachable for bail ret-chains up to 64 deep,
+                    // sidestepping the single-slot clobber a chained
+                    // handoff would need to solve.  Cost: 1 ldp + sub +
+                    // cmp + branch on the saveless fast path.
+                    a.ldp(x14, x15, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                    a.sub(x15, x15, asmjit::Imm(64 * JSV_SIZE));
+                    a.cmp(x14, x15);
+                    a.b_hs(normalJ2J);
 
                     // === SAVELESS PATH ===
                     // Save caller state to sp-stash.  Layout (96 bytes in
