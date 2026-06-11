@@ -2,6 +2,35 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11q — #3 narrowed to a first-failure site; isolation negative; forensics next
+
+- **Divergence finder built + run** (PHARO_BLOCK_CREATE_TRACE, 60K
+  creates, structural diff): the wedge and clean runs are IDENTICAL
+  through create #27035; at #27036 the wedge enters handleError:log:.
+  **First failure: '#+' DNU in FreeTypeFont>>widthOfString:from:to:**
+  (the width-accumulating send-in-loop) under Dictionary>>
+  at:ifAbsentPut: from widthAndKernedWidthOfLeft:right:into:.
+- **Isolation NEGATIVE**: PHARO_T1_RESUME_ONLY_SEL now takes a COMMA
+  LIST (committed); single/pair/quad of the visible stack's methods
+  all PASS.  Window bisection hit its resolution limit (unions wedge,
+  halves pass at every level) — the trigger is a specific dynamic
+  resume SEQUENCE that only occurs at population scale, deterministic
+  under DET_SCHED.
+- **NEXT (forensics, in order)**:
+  1. Dump the DNU RECEIVER (class + raw bits) at doesNotUnderstand
+     when selector==#+ under the wedge config — shifted-slot garbage
+     vs a valid-but-wrong object distinguishes operand-shift from
+     slot-misalignment.
+  2. Trace resume EVENTS into widthOfString:from:to:'s frame lineage:
+     log every JIT_RESUME_CALL/savedResumeEntry re-entry whose target
+     method is one of the four stack methods (selector match on
+     state.jitMethod) with {bcOff, sp, depth, x1} — the failing
+     iteration's entry will show the protocol step that shifted.
+  3. lldb on the DET_SCHED repro: break at sendDoesNotUnderstand
+     (selector #+), walk the operand stack + savedFrames_ + the pool.
+- Tooling landed this stretch: comma-list RESUME_ONLY_SEL, the
+  60K-create divergence finder, resume window-pair knobs.
+
 ## CHECKPOINT 2026-06-11p — #3: resume-path create-handlers hardened (negative result); trace next
 
 - Resume-loop ExitBlockCreate/ExitArrayCreate now sync receiver_/

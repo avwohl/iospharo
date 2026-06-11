@@ -8649,9 +8649,21 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // Wins over the send-gate above; still requires a real, bc-bearing method.
     {
         const char* resumeOnlySel = GET_DEBUG_STR(PHARO_T1_RESUME_ONLY_SEL);
-        if (resumeOnlySel && isReal && !noNumBc && !noBcToCode && bcLen > 0
-                && memory.selectorOf(compiledMethod) == resumeOnlySel)
-            advertiseResume = true;
+        if (resumeOnlySel && isReal && !noNumBc && !noBcToCode && bcLen > 0) {
+            // Comma-separated list (2026-06-11: pair/nested-resume repros).
+            std::string sel = memory.selectorOf(compiledMethod);
+            const char* pp = resumeOnlySel;
+            while (*pp) {
+                const char* end = pp;
+                while (*end && *end != ',') end++;
+                if ((size_t)(end - pp) == sel.size()
+                        && std::memcmp(pp, sel.data(), sel.size()) == 0) {
+                    advertiseResume = true;
+                    break;
+                }
+                pp = (*end == ',') ? end + 1 : end;
+            }
+        }
     }
     jm->numBytecodes      = advertiseResume ? (uint16_t)bcLen : 0;
     jm->numICEntries      = numSendSites;
