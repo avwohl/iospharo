@@ -339,6 +339,11 @@ typedef void (*StencilFunc)(JITState*);
         /* until the T1 emit sweep maintains it (unmigrated code    */ \
         /* updates memory; a stale-x25 writeback would corrupt sp). */ \
         "ldr x25, [x0, #0]\n\t" \
+        /* x23 = j2j save cursor (offset 144) — FSR M2 v1 hoist.  The */ \
+        /* emitted push/pop use x23 for address generation under     */ \
+        /* PHARO_T1_FSR_CURSOR and WRITE THROUGH to memory, so no    */ \
+        /* live-out store is needed and non-FSR code can ignore it.  */ \
+        "ldr x23, [x0, #144]\n\t" \
         /* x26 = TOS mirror (simStack, docs/simstack-design.md §4): */ \
         /* re-establish from memory at every C++->JIT entry.  Always */ \
         /* in-bounds (sp >= tempBase+1); at worst loads bits the */ \
@@ -352,7 +357,7 @@ typedef void (*StencilFunc)(JITState*);
         : [s] "r"(_jit_s), [e] "r"(_jit_e) \
         : "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10","x11", \
           "x12","x13","x14","x15","x16","x17","x19","x20","x21","x22", \
-          "x25","x26","x30", \
+          "x23","x25","x26","x30", \
           "memory","cc" \
     ); \
 } while(0)
@@ -374,6 +379,11 @@ typedef void (*StencilFunc)(JITState*);
         "ldr x20, [x0, #208]\n\t" \
         "ldr x19, [x0, #56]\n\t" \
         "ldr x25, [x0, #0]\n\t" \
+        /* x23 = j2j save cursor (offset 144) — FSR M2 v1 hoist.  The */ \
+        /* emitted push/pop use x23 for address generation under     */ \
+        /* PHARO_T1_FSR_CURSOR and WRITE THROUGH to memory, so no    */ \
+        /* live-out store is needed and non-FSR code can ignore it.  */ \
+        "ldr x23, [x0, #144]\n\t" \
         "ldur x26, [x25, #-8]\n\t" \
         "blr %[e]\n\t" \
         "str x25, [%[s], #0]" \
@@ -381,7 +391,7 @@ typedef void (*StencilFunc)(JITState*);
         : [s] "r"(_jit_s), [e] "r"(_jit_e), [rv] "r"(_jit_rv) \
         : "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10","x11", \
           "x12","x13","x14","x15","x16","x17","x19","x20","x21","x22", \
-          "x25","x26","x30", \
+          "x23","x25","x26","x30", \
           "memory","cc" \
     ); \
 } while(0)

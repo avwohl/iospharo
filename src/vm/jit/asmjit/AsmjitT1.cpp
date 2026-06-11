@@ -90,6 +90,7 @@ static bool g_emitGetterTrace = false;
 static bool g_emitIsBlock = false;
 // FSR M1 per-compile gates (set in compileViaAsmjit).
 static bool g_fsrX19 = false;
+static bool g_fsrCursor = false;  // FSR M2 v1: x23 cursor residency (write-through)
 static bool g_fsrX19Verify = false;
 // V2 emit plumbing (set per-compile by emitMethodBytes, used by the
 // send emit inside emitOne_arm64 — same single-threaded pattern):
@@ -3299,9 +3300,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
         // Pop save: cursor -= sizeof(J2JSave) = 56; depth--
         // Pre-index ldp folds the cursor decrement into the first load.
+        if (g_fsrCursor) {
+            // FSR M2 v1: cursor resident in x23 (write-through).  The
+            // pre-index ldp mutates x23 directly; the str keeps memory
+            // authoritative for every C++/helper observer.
+            a.ldp(x5, x6, ptr_pre(x23, -JSV_SIZE));
+            a.mov(x4, x23);
+            a.str(x23, ptr(x0, OFF_J2J_SAVE_CURSOR));
+        } else {
         a.ldr(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
         a.ldp(x5, x6, ptr_pre(x4, -JSV_SIZE));  // x4 -= save size; load sp + recv
         a.str(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
+        }
         a.sub(w3, w3, asmjit::Imm(1));
         a.str(w3, ptr(x0, OFF_J2J_DEPTH));
 
@@ -4303,9 +4313,17 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.movz(x10, 0);            // W3: calleeJM lo16
                         a.movk(x10, 0, 16);        // W4: calleeJM mid16
                         a.movk(x10, 0, 32);        // W5: calleeJM hi16
+                        if (g_fsrCursor) {
+                            // FSR M2 v1: cursor from x23; limit load off
+                            // the critical path (stores no longer wait
+                            // on the cursor load).
+                            a.mov(x6, x23);
+                            a.ldr(x14, ptr(x0, OFF_J2J_SAVE_LIMIT));
+                        } else {
                         static_assert(OFF_J2J_SAVE_LIMIT == OFF_J2J_SAVE_CURSOR + 8,
                                       "cursor/limit adjacency required for ldp fold");
                         a.ldp(x6, x14, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                        }
                         a.cmp(x6, x14);
                         a.b_hs(Lprobe);            // pool full -> generic full-bail path
                         a.adr(x14, resumeAfterCall);
@@ -4333,6 +4351,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.mov(w13, asmjit::Imm(nArgs));
                         a.str(w13, ptr(x0, OFF_ARGCOUNT));
                         a.str(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                        if (g_fsrCursor) a.mov(x23, x6);  // FSR M2 v1
                         a.ldr(x13, ptr(x0, OFF_J2J_DEPTH));
                         a.add(x13, x13, asmjit::a64::x20);
                         a.str(x13, ptr(x0, OFF_J2J_DEPTH));
@@ -5093,7 +5112,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // sidestepping the single-slot clobber a chained
                     // handoff would need to solve.  Cost: 1 ldp + sub +
                     // cmp + branch on the saveless fast path.
+                    if (g_fsrCursor) {
+                        a.mov(x14, x23);                  // FSR M2 v1
+                        a.ldr(x15, ptr(x0, OFF_J2J_SAVE_LIMIT));
+                    } else {
                     a.ldp(x14, x15, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                    }
                     // NULL-CURSOR GUARD (cascade-#3 force-resume residual,
                     // 2026-06-11): the interp resume loop runs with
                     // j2jSaveCursor = limit = NULL (J2J disabled).  The
@@ -5255,7 +5279,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         // -- cold path: build the retro-save --
                         // Pool space check: if full, trap (would have
                         // bailed at the save-push too; ~impossible).
+                        if (g_fsrCursor) {
+                            a.mov(x14, x23);              // FSR M2 v1
+                            a.ldr(x15, ptr(x0, OFF_J2J_SAVE_LIMIT));
+                        } else {
                         a.ldp(x14, x15, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                        }
                         a.cmp(x14, x15);
                         asmjit::Label haveRoom = a.new_label();
                         a.b_lo(haveRoom);
@@ -5341,6 +5370,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 #endif  // PHARO_J2J_SAVE_V2 (retro-save)
                         // Commit cursor; bump depth (+totalCalls via x20).
                         a.str(x14, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                        if (g_fsrCursor) a.mov(x23, x14);  // FSR M2 v1
                         a.ldr(x4, ptr(x0, OFF_J2J_DEPTH));
                         a.add(x4, x4, asmjit::a64::x20);
                         a.str(x4, ptr(x0, OFF_J2J_DEPTH));
@@ -5529,7 +5559,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // (offset 152) are adjacent — load both with one ldp.
                 static_assert(OFF_J2J_SAVE_LIMIT == OFF_J2J_SAVE_CURSOR + 8,
                               "cursor/limit adjacency required for ldp fold");
+                if (g_fsrCursor) {
+                    a.mov(x6, x23);                       // FSR M2 v1
+                    a.ldr(x14, ptr(x0, OFF_J2J_SAVE_LIMIT));
+                } else {
                 a.ldp(x6, x14, ptr(x0, OFF_J2J_SAVE_CURSOR));  // x6=cursor, x14=limit
+                }
                 a.cmp(x6, x14);
                 a.b_hs(j2jBailFull);
 
@@ -5684,6 +5719,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // Cursor was advanced by 56 via the first stp's post-
                 // index — just write x6 to state.j2jSaveCursor.
                 a.str(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                if (g_fsrCursor) a.mov(x23, x6);  // FSR M2 v1
                 static_assert(OFF_J2J_TOTAL_CALLS == OFF_J2J_DEPTH + 4,
                               "depth/totalCalls adjacency required for 64-bit batched increment");
                 // x20 = j2jDepthInc (0x100000001), pre-loaded at JIT
@@ -8399,6 +8435,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         methObj->classIndex() == interp.compiledBlockClassIndex();
     g_fsrX19 = GET_DEBUG_BOOL(PHARO_T1_FSR_X19)
             || GET_DEBUG_BOOL(PHARO_T1_FSR_X19_VERIFY);
+    g_fsrCursor = GET_DEBUG_BOOL(PHARO_T1_FSR_CURSOR);
     g_fsrX19Verify = GET_DEBUG_BOOL(PHARO_T1_FSR_X19_VERIFY);
     {
         uint32_t cls = methObj->classIndex();
