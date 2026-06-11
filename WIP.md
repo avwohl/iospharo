@@ -2,6 +2,42 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11aa — narrow-rung cluster = SILENT VALUE CORRUPTION under process-switch resume
+
+**The 'timeouts' are SPURIOUS VERDICTS, not stalls.**  A stall-catcher
+(sample-on-no-progress, /tmp/stall_catcher.sh) ran the 1-15 repro 3x:
+timeouts occurred but the detail file NEVER paused >=15s — no stall
+exists.  The runner watchdog computes `DateAndTime now < deadline`; an
+instant-false comparison means a CORRUPTED CLOCK/DateAndTime value
+(silent wrong value — no DNU, no MUSTBOOL).  Delay accuracy in
+isolation is CLEAN both configs (100ms +-14ms x30).
+
+**Bisect:** narrow + NO_INLINE_J2J still produces timeouts PLUS new
+visible corruption (IntegerTest>>testNegativeIntegerPrinting FAIL,
+FractionTest>>testAsSmallerPowerOfTwo FAIL) => the lesion is NOT
+inline-J2J; it is the C++ RESUME machinery under PROCESS-SWITCH
+PREEMPTION (heartbeat forceYield mid-JIT-method -> suspend ->
+materialize/context -> later resume).  The eval ladder never exercises
+this (single flow), which is why all 4 ladder configs are clean while
+the suite shows ~1-7 corrupt values per 2500-test batch.
+
+**NEXT (the decisive probe):** instrument the process-switch
+suspend/resume of JIT activations: when the heartbeat preempts a
+resumable JIT method, log/verify the suspended frame's (sp, ip,
+method) at suspend vs at resume (a [PSWITCH] pair trace); or
+PHARO_DET_SCHED with a SMALL quantum reproduces preemption
+deterministically (DET_SCHED's known narrow-rung slowness is itself
+likely THIS BUG repeating per-quantum!).  Try:
+PHARO_DET_SCHED=1 PHARO_DET_SCHED_QUANTUM=1 + narrow rung + eval of a
+multi-process workload (forked delays); expect deterministic value
+corruption.  The DET_SCHED mass-timeout slowness and the spurious
+suite timeouts are PROBABLY THE SAME LESION (per-preemption value
+damage), making DET_SCHED the deterministic repro after all.
+
+**FSR M0 partial committed:** literalsCache + j2jEntryCursor +
+maintenance (forEachRoot refresh, compile finalize, invalidation).
+Remaining: syncDerivedFromJM funnel, FSR_VERIFY oracle, grep tables.
+
 ## CHECKPOINT 2026-06-11z — audit fixes in; narrow-rung A/B: one exception-cluster from flippable
 
 **Audit (42-agent workflow, 17 confirmed / 46 clean) — 9 fixed+committed:**
