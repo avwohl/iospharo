@@ -2,6 +2,43 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11mm — M4 FULL MODE CLEAN; verdict = perf-neutral, park opt-in
+
+ROOT CAUSE of the full-LAZY startup DNU: EIGHT exit-ip idioms in the
+extended-op emit loop spelled the pattern `OFF_METHOD + bcOffsetBase +
+globalIdx` (vs the converted family's `bcOffsetFromMethObj`) — grep for
+ONE spelling missed the other.  PushFullBlock's was the killer: inside
+an inline-J2J callee the method mirror is stale, so ExitBlockCreate
+handed C++ an ip in the WRONG method -> wrong closure literal ->
+garbage-Array-as-selector DNU at startup (Array>>do:).  All 8 now
+derive from x19->bcStartCache.  Hunt artifacts that were real but not
+sufficient (all committed): materializeX5 mirror reload, block-value
+br x19 reload, lander gate widened to blockValue, GC prepare/forEach
+refresh + ip clamp, tier-2 bit-60 refusal/unlink, exit-side x19 brk
+#0xF14 oracle (verify modes).
+
+DIAGNOSTIC LESSONS:
+- "dnus=10" was a print cap — every config read identical; eval7 was
+  the real binary signal.  Knob-bisect said all pairs fail/all-off
+  passes because the bug needed (any cross-method continuation) AND
+  (an extended-op bail inside a J2J callee).
+- [SEL-CORRUPT] + RESUME-MISMATCH ip-arithmetic (ip = wrongMethod +
+  smallOffset) pointed at the ip WRITER; the exit-side x19 oracle
+  (clean) then EXONERATED x19 flow and narrowed it to the ip idioms.
+
+MEASUREMENT (quiet, x3-4 each): fib30 18.5 -> 17.5ms (~5%, saveless-
+dominated); cfib28 ~110 both with Sista off (WASH — 8th OoO-absorption
+instance: independent fire-and-forget stores are free on M-series;
+only dependent-chain cuts pay).  VERDICT: M4 parks OPT-IN per the
+simStack/M2 park rule.  Census instruction counts are NOT cycle
+counts — stop pricing levers by instruction deltas alone.
+
+Suite soak (1-15 batch, full LAZY, Pharo-jit3) running in background.
+NEXT LEVERS (dependent-chain, per cfib-gap-anatomy): (1) the 8-load
+JM gate cascade fold at linked send sites (PMS gate-bit fold), (2)
+nil-fill link-time specialization (cmp+branch header is on the
+critical path), (3) M3c via §9 doorbell (frees x20).
+
 ## CHECKPOINT 2026-06-11ll — M4 built + verify-clean; full mode = one consumer left
 
 M4 implemented per the census (~21%/call): exit publish via
