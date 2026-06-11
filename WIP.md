@@ -35,6 +35,20 @@ while a suite runs; A/B pairs must use the SAME binary; results files
 can be STALE (rm before runs; Pharo-jit.image had vanished entirely —
 earlier '205 PASS' canaries were stale files).
 
+**Cluster repro refinement (2026-06-11 late):** ExceptionTest SOLO
+under the narrow rung = 47/47 PASS; batch 1-20 reproduces the cluster;
+batch 1-10 CLEAN; batch 1-15's timeouts hit FractionTest/PointTest
+(classes 6-7, INSIDE the clean prefix) => POSITION-FLAKY sporadic
+extreme slowness, not a fixed population threshold.  Combined with the
+Delay/Semaphore fails and the DET teardown timer-runner [WEDGE]:
+hypothesis = TIMER/DELAY STARVATION under the narrow rung (resumable
+methods x heartbeat/forceYield interplay; suspect forceYield_ not
+cleared on the JIT yield path, or P80 timer-runner starved by resume
+churn).  Decisive probe: catch a stalled test live and `sample` the
+VM / suspend+walk suspendedContext (the documented no-lldb stack
+capture), or instrument the ExitYield round-trip rate.
+chain-ExitYield S2 sync added+committed (same class as resume-loop).
+
 **NEXT:** (1) repro one cluster test solo (ExceptionTest>>
 testUnhandledErrorWhenNoHandlers, narrow rung, no DET) + forensics;
 (2) fix the cluster -> flip RESUME_SENDS_NO_CONDJUMP default-ON;
