@@ -2,6 +2,25 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11nn — XGATE fold shipped default-ON; soak in flight
+
+Lever (1) from mm implemented (commit "jit: XGATE fold"): extras bit
+57 = precomputed xmethod gate verdict (xmethodGateOk() in
+JITRuntime.hpp MUST mirror the emitted cascade), set at the 3 bit-60
+setters + recomputed in rewriteIcEntriesAfterRecompile; emit = one
+tbnz x7,#57 past the 4-load cascade (cascade kept as fallback;
+opt-out PHARO_T1_NO_XGATE_FOLD; counters/cap/log modes unfolded).
+Ladder clean.  cfib interleaved min-of-5: fold wins 2/3 pairs (~3%,
+NOISY box — re-measure quiet before quoting).  PENDING: 1-15 batch
+suite soak running in background (/tmp/soak_xgate.log, results in
+/tmp/sunit_test_results.txt; expect 2468/0/0).  If soak regresses:
+suspect a bit-57 misuse collision or a gate-predicate mismatch —
+PHARO_T1_NO_XGATE_FOLD=1 A/B isolates instantly.
+
+NEXT после soak: (a) quiet-box cfib + fib30 + dict re-measure vs Cog
+baseline (the Stop-hook numbers fib30 19/5, dict 375/18 are stale);
+(b) nil-fill link-time specialization; (c) M3c §9 doorbell.
+
 ## CHECKPOINT 2026-06-11mm — M4 FULL MODE CLEAN; verdict = perf-neutral, park opt-in
 
 ROOT CAUSE of the full-LAZY startup DNU: EIGHT exit-ip idioms in the
