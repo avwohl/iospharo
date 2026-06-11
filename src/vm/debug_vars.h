@@ -155,6 +155,7 @@ DEBUG_BOOL(PHARO_T1_TOS_REG)              // opt-in during B0-B4 (flip to PHARO_
 DEBUG_INT(PHARO_T1_TOS_MASK, -1)          // bit per converted family (-1 = all): per-term A/B + miscompile bisect
 DEBUG_BOOL(PHARO_T1_TOS_POISON)           // movz x26,#0xDEAD at every invalidation point — stale-valid consumers crash deterministically
 DEBUG_BOOL(PHARO_T1_TOS_VERIFY)           // before every cache-consuming emit: ldur/cmp/b.eq/brk — THE net for the valid-but-stale direction
+DEBUG_BOOL(PHARO_T1_NO_NATIVE_BACKJUMP)   // opt-OUT: revert prefixed ExtJump (loop back edges!) to the bail-to-interp emit.  Default ON since 2026-06-11: the bail meant EVERY to:do:/whileTrue back edge dropped the whole activation to the interpreter (the '29.6ns/iter floor' mystery)
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT

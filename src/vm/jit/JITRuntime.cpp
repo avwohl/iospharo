@@ -6,6 +6,9 @@
 
 #include "JITRuntime.hpp"
 #include "SendSitePatcher.hpp"
+
+// Defined in AsmjitT1.cpp; the native back-edge yield poll's target.
+extern "C" { extern uint8_t* g_t1ForceYieldAddr; }
 #include "J2JSaveLayout.h"
 #include "PlatformJIT.hpp"
 #include "../DebugSettings.hpp"
@@ -2486,6 +2489,11 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
 
     // Store interpreter reference for stats access
     interp_ = &interp;
+
+    // Native JIT back edges poll the heartbeat's forceYield flag; bake
+    // its (session-stable) address for the emitter.
+    g_t1ForceYieldAddr =
+        reinterpret_cast<uint8_t*>(interp.forceYieldAddr());
 
     // Create the compiler
     compiler_ = new JITCompiler(codeZone_, methodMap_, memory, interp);

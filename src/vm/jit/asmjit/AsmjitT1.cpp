@@ -141,6 +141,10 @@ static constexpr uint32_t kTosFamFuseCmpJ = 1u << 9;  // B4: cmp + b.cond fusion
 // compile next to the jump-target bitmap).
 static const uint8_t* g_tosBc = nullptr;
 static size_t g_tosBcLen = 0;
+// Native back-edge yield poll target: &Interpreter::forceYield_ (set
+// once by JITRuntime::initialize; session-stable singleton address).
+extern "C" uint8_t* g_t1ForceYieldAddr;
+uint8_t* g_t1ForceYieldAddr = nullptr;
 static inline bool tosFam(uint32_t bit) {
     return g_useTos
         && ((uint32_t)GET_DEBUG_INT(PHARO_T1_TOS_MASK) & bit) != 0;
@@ -7601,6 +7605,67 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             if (op == SistaV1::ExtendA || op == SistaV1::ExtendB) {
                 uint8_t nextOp = bcReal[i + 2];
                 int nextLen = SistaV1::bytecodeLength(nextOp);
+                // NATIVE prefixed unconditional ExtJump (2026-06-11):
+                // the generic prefix-bail below meant EVERY loop back
+                // edge (to:do:/whileTrue compile to ExtendB+ExtJump
+                // backward) dropped the WHOLE remaining activation to
+                // the interpreter — iterative hot loops ran at interp
+                // speed forever (~30ns/iter) while recursion JIT'd.
+                // Emit the jump natively; back edges poll forceYield_
+                // (heartbeat preemption: a sendless JIT loop must
+                // still yield) and bail to the interp jump-execution
+                // path when set.  PHARO_DET_SCHED keeps the old bail
+                // (deterministic scheduling counts interp bytecodes —
+                // a native loop would change the schedule).
+                // Conditional prefixed jumps (rare) keep the bail.
+                if (op == SistaV1::ExtendB
+                        && nextOp == SistaV1::ExtJump
+                        && !GET_DEBUG_BOOL(PHARO_T1_NO_NATIVE_BACKJUMP)
+                        && !GET_DEBUG_BOOL(PHARO_DET_SCHED)
+                        && g_t1ForceYieldAddr != nullptr
+                        && i + 3 < bcRealLen) {
+                    uint8_t eb = bcReal[i + 1];
+                    int64_t extB = (eb > 127) ? (int64_t)eb - 256
+                                              : (int64_t)eb;
+                    int jumpIdx = globalIdx + 2;
+                    int64_t off = (int64_t)bcReal[i + 3] + (extB << 8);
+                    int64_t target = (int64_t)jumpIdx + 2 + off;
+                    if (target >= 0 && (size_t)target < bcLabels.size()) {
+                        // simStack: arrivals at the target are cold —
+                        // it is bitmap-marked by the prescan; our own
+                        // state after an unconditional jump is moot.
+                        if (target <= (int64_t)globalIdx) {
+                            // back edge: yield poll
+                            asmjit::Label yieldBail = a.new_label();
+                            a.mov(a64::x16,
+                                  Imm((uint64_t)g_t1ForceYieldAddr));
+                            a.ldrb(a64::w17, a64::ptr(a64::x16));
+                            a.cbnz(a64::w17, yieldBail);
+                            a.b(bcLabels[target]);
+                            a.bind(yieldBail);
+                            // interp executes the prefix+jump (and the
+                            // rest of this activation; re-JITs on the
+                            // next activation).
+                            a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
+                            a.add(a64::x5, a64::x5,
+                                  asmjit::Imm(bcOffsetBase + globalIdx));
+                            a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+                            a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
+                            a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+                            emitSyncSpToState(a);
+                            a.ret(a64::x30);
+                        } else {
+                            a.b(bcLabels[target]);
+                        }
+                        for (int k = 1; k <= 3; k++) {
+                            if ((size_t)(globalIdx + k) < bcLabels.size()) {
+                                a.bind(bcLabels[globalIdx + k]);
+                            }
+                        }
+                        i += 3;
+                        continue;
+                    }
+                }
                 a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
                 a.add(a64::x5, a64::x5,
                       asmjit::Imm(bcOffsetBase + globalIdx));

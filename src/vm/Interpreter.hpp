@@ -1711,6 +1711,15 @@ public:
 
     uint32_t compiledMethodClassIdx() const { return compiledMethodClassIndex_; }
 
+    // Native JIT back edges poll this flag (heartbeat preemption);
+
+    // the address is baked into emitted code at compile time
+
+    // (the Interpreter object is a session-stable singleton).
+
+    void* forceYieldAddr() { return &forceYield_; }
+
+
     jit::JITRuntime& jitRuntime() { return jitRuntime_; }
 
     /// Sista runtime helper: monomorphic Array basicSize.
