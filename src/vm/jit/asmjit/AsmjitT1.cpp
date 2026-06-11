@@ -123,6 +123,20 @@ static T1TosCache g_tosIn;   // snapshot consumed by the current bytecode
 // their target is marked; a mismatch hard-fails the compile (interp
 // fallback) — never BUG-print-and-continue.
 static const std::vector<bool>* g_tosJumpTargetsPtr = nullptr;
+// Per-compile master switch (knob && real emit) + per-family mask bits
+// (PHARO_T1_TOS_MASK; -1 = all).  Each converted family checks its bit
+// so miscompiles bisect to a family within one binary.
+static bool g_useTos = false;
+static constexpr uint32_t kTosFamPush     = 1u << 0;
+static constexpr uint32_t kTosFamPushImm  = 1u << 1;  // PushInteger/PushCharacter
+static constexpr uint32_t kTosFamDup      = 1u << 2;
+static constexpr uint32_t kTosFamCondJump = 1u << 3;
+static constexpr uint32_t kTosFamRetTop   = 1u << 4;
+static constexpr uint32_t kTosFamPopStore = 1u << 5;
+static inline bool tosFam(uint32_t bit) {
+    return g_useTos
+        && ((uint32_t)GET_DEBUG_INT(PHARO_T1_TOS_MASK) & bit) != 0;
+}
 
 #include <cstdio>
 #include <cstdlib>
@@ -2319,6 +2333,27 @@ static inline void emitStoreTempBase(asmjit::a64::Assembler& a,
 #endif
 }
 
+// simStack producer pair: value is already IN x26; push it and mark
+// the cache valid IN THE SAME CALL (the §3 pairing rule — bookkeeping
+// and the x26 write can never drift apart).
+static inline void emitTosPush(asmjit::a64::Assembler& a) {
+    a.str(asmjit::a64::x26, asmjit::a64::ptr_post(asmjit::a64::x25, 8));
+    g_tos.valid = true;
+}
+// VERIFY net (PHARO_T1_TOS_VERIFY): before any cache-consuming emit —
+// x26 must equal memory TOS; brk on divergence (the deterministic net
+// for the valid-but-stale direction).  x16 = IP0, purely local use.
+static inline void emitTosVerify(asmjit::a64::Assembler& a) {
+    if (!GET_DEBUG_BOOL(PHARO_T1_TOS_VERIFY)) return;
+    using namespace asmjit::a64;
+    asmjit::Label ok = a.new_label();
+    a.ldur(x16, ptr(x25, -8));
+    a.cmp(x16, x26);
+    a.b_eq(ok);
+    a.brk(0xDEA);
+    a.bind(ok);
+}
+
 void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
     using namespace asmjit::a64;
 #if PHARO_T1_SP_IN_X25
@@ -2944,38 +2979,63 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.ldr(x30, ptr(asmjit::a64::sp, 8));
             a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
         }
-        a.ldr(x1, ptr(x0, OFF_RECEIVER));
-        a.ldr(x1, ptr(x1, OBJ_SLOT_0 + n * 8));
-        emitShadowReadVerify(a, n);
-        emitPushReg(a, x1);
+        if (tosFam(kTosFamPush) && !GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS)) {
+            a.ldr(x26, ptr(x0, OFF_RECEIVER));
+            a.ldr(x26, ptr(x26, OBJ_SLOT_0 + n * 8));
+            emitTosPush(a);
+        } else {
+            a.ldr(x1, ptr(x0, OFF_RECEIVER));
+            a.ldr(x1, ptr(x1, OBJ_SLOT_0 + n * 8));
+            emitShadowReadVerify(a, n);
+            emitPushReg(a, x1);
+        }
         return true;
     }
     if (op >= 0x20 && op <= 0x3F) {
         int n = op - 0x20;
-        a.ldr(x1, ptr(x0, OFF_LITERALS));
-        a.ldr(x1, ptr(x1, n * 8));
-        emitPushReg(a, x1);
+        asmjit::a64::Gp dst = tosFam(kTosFamPush) ? x26 : x1;
+        a.ldr(dst, ptr(x0, OFF_LITERALS));
+        a.ldr(dst, ptr(dst, n * 8));
+        if (tosFam(kTosFamPush)) emitTosPush(a); else emitPushReg(a, x1);
         return true;
     }
     // pushLitVar N (0x10..0x1F): push literals[N].value (Association.slot[1]).
     if (op >= SistaV1::PushLitVarBase && op <= SistaV1::PushLitVarLast) {
         int n = op - SistaV1::PushLitVarBase;
-        a.ldr(x1, ptr(x0, OFF_LITERALS));
-        a.ldr(x1, ptr(x1, n * 8));
-        a.ldr(x1, ptr(x1, OBJ_SLOT_0 + 8));
-        emitPushReg(a, x1);
+        asmjit::a64::Gp dst = tosFam(kTosFamPush) ? x26 : x1;
+        a.ldr(dst, ptr(x0, OFF_LITERALS));
+        a.ldr(dst, ptr(dst, n * 8));
+        a.ldr(dst, ptr(dst, OBJ_SLOT_0 + 8));
+        if (tosFam(kTosFamPush)) emitTosPush(a); else emitPushReg(a, x1);
         return true;
     }
     if (op >= 0x40 && op <= 0x4B) {
         int n = op - 0x40;
-        emitLoadTempBase(a, x1);
-        a.ldr(x1, ptr(x1, n * 8));
-        emitPushReg(a, x1);
+        asmjit::a64::Gp dst = tosFam(kTosFamPush) ? x26 : x1;
+        emitLoadTempBase(a, dst);
+        a.ldr(dst, ptr(dst, n * 8));
+        if (tosFam(kTosFamPush)) emitTosPush(a); else emitPushReg(a, x1);
         return true;
     }
     if (op == SistaV1::PushReceiver) {
-        a.ldr(x1, ptr(x0, OFF_RECEIVER));
-        emitPushReg(a, x1);
+        asmjit::a64::Gp dst = tosFam(kTosFamPush) ? x26 : x1;
+        a.ldr(dst, ptr(x0, OFF_RECEIVER));
+        if (tosFam(kTosFamPush)) emitTosPush(a); else emitPushReg(a, x1);
+        return true;
+    }
+    if (op >= 0x4D && op <= 0x51 && tosFam(kTosFamPush)) {
+        switch (op) {
+        case 0x4D: a.ldr(x26, ptr(x0, OFF_TRUEOOP));  break;
+        case 0x4E: a.ldr(x26, ptr(x0, OFF_FALSEOOP)); break;
+        case 0x4F: a.mov(x26, asmjit::Imm(nilBits));  break;
+        case 0x50: a.mov(x26, asmjit::Imm(smiBits(0))); break;
+        default:   a.mov(x26, asmjit::Imm(smiBits(1))); break;
+        }
+        emitTosPush(a);
+        if (op == 0x50 || op == 0x51) {
+            g_tos.constSmI = true;
+            g_tos.taggedBits = (int64_t)smiBits(op - 0x50);
+        }
         return true;
     }
     if (op == 0x4D) { a.ldr(x1, ptr(x0, OFF_TRUEOOP));  emitPushReg(a, x1); return true; }
@@ -2995,6 +3055,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     }
     // Dup: read sp[-1], push it.
     if (op == SistaV1::Dup) {
+        if (tosFam(kTosFamDup) && g_tosIn.valid) {
+            // write-through: x26 already == TOS; push it again and the
+            // cache stays valid (x26 == the new TOS too).
+            emitTosVerify(a);
+            emitTosPush(a);
+            g_tos.constSmI = g_tosIn.constSmI;
+            g_tos.taggedBits = g_tosIn.taggedBits;
+            return true;
+        }
 #if PHARO_T1_SP_IN_X25
         a.ldur(x1, ptr(x25, -8));
 #else
@@ -7123,6 +7192,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     const uint8_t* bcReal = bc + emitSkip;
     size_t bcRealLen = (bcLen >= (size_t)emitSkip) ? (bcLen - emitSkip) : 0;
     bool real = (bcRealLen > 0) && allBytecodesSupported(bcReal, bcRealLen);
+    // simStack: per-compile master switch (stub emits never convert).
+    g_useTos = GET_DEBUG_BOOL(PHARO_T1_TOS_REG) && real;
     // Sieve correctness gate (2026-05-19): methods with prim 60/61/62
     // declared at method entry AND conditional jumps in the body trigger
     // a still-unexplained interaction that returns wrong results for
@@ -7282,11 +7353,18 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 // SmI bits: (val << 3) | 1
                 uint64_t smiBits = (static_cast<uint64_t>(
                     static_cast<int64_t>(imm)) << 3) | 1ULL;
-                a.mov(a64::x1, asmjit::Imm(smiBits));
-                emitLoadSp(a, a64::x2);
-                a.str(a64::x1, a64::ptr(a64::x2));
-                a.add(a64::x2, a64::x2, asmjit::Imm(8));
-                emitStoreSp(a, a64::x2);
+                if (tosFam(kTosFamPushImm)) {
+                    a.mov(a64::x26, asmjit::Imm(smiBits));
+                    emitTosPush(a);
+                    g_tos.constSmI = true;
+                    g_tos.taggedBits = (int64_t)smiBits;
+                } else {
+                    a.mov(a64::x1, asmjit::Imm(smiBits));
+                    emitLoadSp(a, a64::x2);
+                    a.str(a64::x1, a64::ptr(a64::x2));
+                    a.add(a64::x2, a64::x2, asmjit::Imm(8));
+                    emitStoreSp(a, a64::x2);
+                }
                 a.bind(bcLabels[globalIdx + 1]);  // operand byte's label
                 i++;
                 continue;
@@ -7296,11 +7374,16 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             if (op == SistaV1::PushCharacter) {
                 uint8_t cp = bcReal[i + 1];
                 uint64_t charBits = (static_cast<uint64_t>(cp) << 3) | 3ULL;
-                a.mov(a64::x1, asmjit::Imm(charBits));
-                emitLoadSp(a, a64::x2);
-                a.str(a64::x1, a64::ptr(a64::x2));
-                a.add(a64::x2, a64::x2, asmjit::Imm(8));
-                emitStoreSp(a, a64::x2);
+                if (tosFam(kTosFamPushImm)) {
+                    a.mov(a64::x26, asmjit::Imm(charBits));
+                    emitTosPush(a);
+                } else {
+                    a.mov(a64::x1, asmjit::Imm(charBits));
+                    emitLoadSp(a, a64::x2);
+                    a.str(a64::x1, a64::ptr(a64::x2));
+                    a.add(a64::x2, a64::x2, asmjit::Imm(8));
+                    emitStoreSp(a, a64::x2);
+                }
                 a.bind(bcLabels[globalIdx + 1]);
                 i++;
                 continue;
