@@ -25,6 +25,14 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   fast path + stencil-tier pk-24 handler + 1b immediates are
   follow-ups (design + review in /tmp/b6_design.md /tmp/b6_review.md,
   workflow wf_b266f2c3).
+- **THE FLOOR MEASUREMENT (B6 epilogue, decisive for lever ranking):**
+  an EMPTY `1 to: 3000000 do: [:i | ]` loop in a T1-compiled method
+  costs 83 ms = **28 ns/iteration of pure naive-emit loop machinery**
+  (push/compare/jump/increment memory round-trips).  A #class send
+  adds only ~21 ns ON vs ~23 ns OFF on top.  The loop FLOOR alone,
+  at suite scale, is bigger than the whole remaining Cog gap —
+  simStack is now unambiguously the #1 lever.  (B6 inline stays:
+  correct, cheap, helps the C++-exit-heavy shapes.)
 - simStack synthesis workflow resumed (wf_8ad1bdf7, designs+reviews
   cached; synthesis had hit the session limit) -> docs/simstack-design.md.
 - Also landed today: §14 #5 eager-compile owner re-validation,

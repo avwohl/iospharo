@@ -32,6 +32,10 @@
 // static data, vtables, etc.). These MUST match the real definitions.
 
 // Oop is a 64-bit tagged value (matches pharo::Oop)
+// B6: the flat class-table base (ObjectMemory.cpp, resize-once; GC
+// rewrites entries in place, so a fresh per-use load is GC-current).
+namespace pharo { extern uint64_t g_classTableBase; }
+
 struct Oop {
     uint64_t bits;
 };
@@ -1592,6 +1596,27 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                     _HOLE_CONTINUE(s);
                     return;
                 }
+            }
+            // #class (primKind 24 = kPrimKindClass, B6): classTable
+            // lookup off the receiver header classIndex.  Heap
+            // receivers + 0-arg only — mirrors the T1 dispatch-A
+            // tryPrimClass snippet; immediates/wrong arity fall to the
+            // generic send below.  Keeps recompiled (stencil-tier)
+            // methods on the fast #class path.
+            else if (primKind == 24) {
+                if (nArgs == 0) {
+                    Oop rcv = s->sp[-1];
+                    if ((rcv.bits & 7) == 0 && rcv.bits >= 0x10000) {
+                        uint64_t hdr =
+                            *reinterpret_cast<uint64_t*>(rcv.bits);
+                        Oop* tbl = reinterpret_cast<Oop*>(
+                            pharo::g_classTableBase);
+                        s->sp[-1] = tbl[hdr & 0x3FFFFF];
+                        _HOLE_CONTINUE(s);
+                        return;
+                    }
+                }
+                // fall through to the generic send
             }
             // Array prims at:/at:put:/size (primKind 14-16)
             else if (primKind >= 14) {
