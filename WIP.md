@@ -17,6 +17,14 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
 - **Perf so far (within-binary, build-opt): cfib ON 29-30 vs OFF
   32-33 (~9%)** — inside the design's honest -5..-15% band.
 - 200-class+ soak with TOS_VERIFY + PATCH_VERIFY running in background.
+- **B4 fusion SHIPPED** (commit "simStack B4"): cmp+b.cond direct for
+  comparison+naked-forward-cond-jump pairs; the jump keeps its unfused
+  emit at its bcLabel; pops published before the branch.  Eval gates
+  green under VERIFY (cfib's '< 2 ifTrue:' is the fused pair).
+  QUEUED behind the running soak: Dictionary + DET_SCHED single-class
+  gates (the soak owns /tmp/sunit_test_detail.txt — do NOT run
+  single-class until BATCH COMPLETE), quiet perf re-baseline, then
+  the B5 default-flip decision.
 - **REMAINING simStack**: B3 (constSmI single-check shrink,
   popStoreRecvVar, post-blr rearm, join-label merge), B4 (cmp+b.cond
   fusion — the suite's #1 pair), B5 default flip after soak.
