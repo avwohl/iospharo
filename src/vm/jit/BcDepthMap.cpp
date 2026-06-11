@@ -406,6 +406,11 @@ void spDepthCheck(JITState& state, const char* where) {
                     (void*)state.tempBase, (int)jm->tempCount,
                     (int)jm->isBlock, state.j2jDepth, (void*)jm);
         }
+        // Cascade-#3 lldb hook: trap at the mismatch so the debugger
+        // lands ON the inconsistent frame with all state live.
+        if (GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP)) {
+            __builtin_debugtrap();
+        }
     }
 }
 
