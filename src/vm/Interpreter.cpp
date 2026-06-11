@@ -10320,6 +10320,42 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // 4th-class trap (checkpoint w): an activation whose arg0 == receiver
+    // oop is the smoking signature (Array>>do: ran with the closure slot
+    // holding the receiver).  Selector-filtered to do:/value-family to
+    // avoid legit self-arg sends (e.g. x max: x is legal).
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+            && argCount >= 1 && method.isObject()
+            && method.rawBits() > 0x10000) {
+        Oop recvT = stackValue(argCount);
+        Oop arg0T = stackValue(argCount - 1);
+        if (recvT.rawBits() == arg0T.rawBits()
+                && recvT.isObject() && recvT.rawBits() > 0x10000
+                && !recvT.asObjectPtr()->isBytesObject()) {
+            std::string aSel = memory_.selectorOf(method);
+            if (aSel == "do:" || aSel == "collect:" || aSel == "value:"
+                    || aSel == "on:do:") {
+                static int sa = 0;
+                if (++sa <= 20) {
+                    long ipo = -1;
+                    if (method_.isObject()) {
+                        ObjectHeader* mo = method_.asObjectPtr();
+                        size_t nl = memory_.numLiteralsOf(method_);
+                        ipo = instructionPointer_
+                            - (mo->bytes() + (1 + nl) * 8);
+                    }
+                    fprintf(stderr,
+                        "[SELFARG-ACT #%d] #%s rcvr=%s(0x%llx) caller=#%s "
+                        "callerIpOff=%ld fd=%zu lastResumeKind=%d\n",
+                        sa, aSel.c_str(),
+                        memory_.classNameOf(recvT).c_str(),
+                        (unsigned long long)recvT.rawBits(),
+                        memory_.selectorOf(method_).c_str(), ipo,
+                        frameDepth_, lastResumeKind_);
+                }
+            }
+        }
+    }
     // sp-desync hunt tripwire: a non-CompiledMethod oop reaching
     // activation executes its raw bytes as bytecodes (caught live:
     // method_ = the 'EVAL-RESULT=' ByteString).  Report provenance at
@@ -24699,10 +24735,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
 
-            // Sync C++ globals from state when J2J chain active (asmjit-T1
-            // cross-method inline doesn't update C++ globals; chain loop
-            // helpers like createFullBlockWithLiteral read them).
-            if (state.j2jDepth > 0) {
+            // Sync C++ globals from state UNCONDITIONALLY (cascade-#3
+            // fourth class, 2026-06-11): even with j2jDepth == 0 the V2
+            // save-pop re-enters a caller in JIT without touching the
+            // interp globals, so method_/framePointer_/receiver_ can
+            // describe a STALE frame here — createFullBlockWithLiteral
+            // then reads the WRONG method's literal frame and captures
+            // the wrong outer.  Mirrors the resume-loop handler's
+            // 2026-06-11 fix.
+            {
                 receiver_ = state.receiver;
                 framePointer_ = state.tempBase - 1;
                 method_ = state.method;
@@ -24737,9 +24778,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             methObj = method.asObjectPtr();
             state.literals = methObj->slots() + 1;
             if (state.j2jDepth > 0) {
-                // J2J chain active — state.sp/receiver/tempBase/method/
-                // argCount already correctly callee's from JIT cross-
-                // method emit.  Don't overwrite with caller's C++ globals.
+                // J2J chain active — receiver/tempBase/method/argCount
+                // already correctly callee's from the JIT cross-method
+                // emit.  Don't overwrite those with caller's globals.
+                // BUT the create handler just PUSHED onto stackPointer_
+                // (cascade-#3 fourth class, 2026-06-11): without
+                // refreshing state.sp the pushed closure/array sits
+                // ABOVE the sp the JIT resumes with — the next send
+                // reads [recv-1]/[recv] (observed: addAllLast:'s do:
+                // ran with arg0 == receiver; the closure was invisible).
+                state.sp = stackPointer_;
             } else {
                 state.sp = stackPointer_;
                 state.receiver = receiver_;
@@ -24790,6 +24838,17 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 instructionPointer_ = state.ip;
             }
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            // Cascade-#3 fourth class (2026-06-11): this handler had NO
+            // globals sync at all — pop()/push() below and the
+            // computeCurrentBCOffset() afterwards read method_/
+            // framePointer_, which can describe a stale frame (same
+            // analysis as the BlockCreate handler above).
+            {
+                receiver_ = state.receiver;
+                framePointer_ = state.tempBase - 1;
+                method_ = state.method;
+                homeMethod_ = state.method;
+            }
 
             int desc = static_cast<int>(state.cachedTarget.rawBits());
             int arraySize = desc & 0x7F;
@@ -24856,9 +24915,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             methObj = method.asObjectPtr();
             state.literals = methObj->slots() + 1;
             if (state.j2jDepth > 0) {
-                // J2J chain active — state.sp/receiver/tempBase/method/
-                // argCount already correctly callee's from JIT cross-
-                // method emit.  Don't overwrite with caller's C++ globals.
+                // J2J chain active — receiver/tempBase/method/argCount
+                // already correctly callee's from the JIT cross-method
+                // emit.  Don't overwrite those with caller's globals.
+                // BUT the create handler just PUSHED onto stackPointer_
+                // (cascade-#3 fourth class, 2026-06-11): without
+                // refreshing state.sp the pushed closure/array sits
+                // ABOVE the sp the JIT resumes with — the next send
+                // reads [recv-1]/[recv] (observed: addAllLast:'s do:
+                // ran with arg0 == receiver; the closure was invisible).
+                state.sp = stackPointer_;
             } else {
                 state.sp = stackPointer_;
                 state.receiver = receiver_;
