@@ -136,6 +136,11 @@ static constexpr uint32_t kTosFamPopStore = 1u << 5;
 static constexpr uint32_t kTosFamArith    = 1u << 6;
 static constexpr uint32_t kTosFamSendHead = 1u << 7;  // 0-arg receiver feed
 static constexpr uint32_t kTosFamSendRes  = 1u << 8;  // send result -> x26 (needs Lrearm)
+static constexpr uint32_t kTosFamFuseCmpJ = 1u << 9;  // B4: cmp + b.cond fusion
+// Bytecode window for fusion lookahead (indexed by globalIdx; set per
+// compile next to the jump-target bitmap).
+static const uint8_t* g_tosBc = nullptr;
+static size_t g_tosBcLen = 0;
 static inline bool tosFam(uint32_t bit) {
     return g_useTos
         && ((uint32_t)GET_DEBUG_INT(PHARO_T1_TOS_MASK) & bit) != 0;
@@ -3483,6 +3488,50 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Comparisons: csel false/true on signed flags.  Compare
             // tagged bits directly — monotonic transform preserves
             // ordering (mirrors x86 skip-untag-for-compare opt).
+            // simStack B4 (design §6 fusion row): when the NEXT bytecode
+            // is a naked FORWARD conditional short jump that is not
+            // itself a jump target, fuse: cmp + b.cond direct — no
+            // boolean materialization, no bool round trip.  The jump
+            // bytecode KEEPS its full unfused emit at its own bcLabel
+            // (the send-resume / non-SmI arrival path); the fused fast
+            // path branches around it.  Pops are applied (x25) BEFORE
+            // the b.cond (RF-7; plain sub does not touch flags).  The
+            // post-jump label's emit-time cache state is invalid by
+            // construction (the jump bytecode's emit leaves g_tos
+            // cleared), so the new jump edge is consistent.
+#if PHARO_T1_SP_IN_X25
+            if (tosFam(kTosFamFuseCmpJ) && g_tosBc && g_tosJumpTargetsPtr) {
+                int nextIdx = globalIdx + 1;
+                if ((size_t)nextIdx < g_tosBcLen) {
+                    uint8_t nop = g_tosBc[nextIdx];
+                    if (SistaV1::isConditionalShortJump(nop)
+                            && !(*g_tosJumpTargetsPtr)[nextIdx]) {
+                        int targetIdx = SistaV1::shortJumpTarget(nop, nextIdx);
+                        int postIdx = nextIdx + 1;
+                        if (targetIdx > nextIdx
+                                && (size_t)targetIdx < bcLabels.size()
+                                && (size_t)postIdx < bcLabels.size()) {
+                            bool jt = SistaV1::isShortJumpTrue(nop);
+                            a.cmp(x1, x4);
+                            a.sub(x25, x25, asmjit::Imm(16));
+                            asmjit::Label tgt = bcLabels[targetIdx];
+                            switch (op) {
+                            case 0x62: if (jt) a.b_lt(tgt); else a.b_ge(tgt); break;
+                            case 0x63: if (jt) a.b_gt(tgt); else a.b_le(tgt); break;
+                            case 0x64: if (jt) a.b_le(tgt); else a.b_gt(tgt); break;
+                            case 0x65: if (jt) a.b_ge(tgt); else a.b_lt(tgt); break;
+                            case 0x66: if (jt) a.b_eq(tgt); else a.b_ne(tgt); break;
+                            default:   if (jt) a.b_ne(tgt); else a.b_eq(tgt); break;
+                            }
+                            a.b(bcLabels[postIdx]);
+                            a.b(end);   // unreachable; keeps the block shape
+                            // fall into the bail path below for non-SmI
+                            goto tosFusedCmpDone;
+                        }
+                    }
+                }
+            }
+#endif
             a.cmp(x1, x4);
             // ldp loads both oops in one instruction (x6=TRUEOOP at +128,
             // x5=FALSEOOP at +136).  Saves 1 ldr per inline comparison
@@ -3500,6 +3549,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.str(x5, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             emitStoreSp(a, x2);
+#if PHARO_T1_SP_IN_X25
+            tosFusedCmpDone: ;
+#endif
         }
         a.b(end);
 
@@ -7272,6 +7324,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         }
     }
     g_tosJumpTargetsPtr = &tosJumpTargets;
+    g_tosBc = bc;
+    g_tosBcLen = bcLen;
     if (err != kErrorOk) return false;
 
     // PHARO_ASMJIT_T1_LOG=1 — dump asmjit asm to stderr per compile.
@@ -7928,6 +7982,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     }
     g_patchLabelsPtr = nullptr;
     g_tosJumpTargetsPtr = nullptr;
+    g_tosBc = nullptr;
+    g_tosBcLen = 0;
 
     size_t total = code.code_size();
     if (total == 0 || total > outCap) {
