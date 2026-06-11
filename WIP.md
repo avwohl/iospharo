@@ -2,6 +2,29 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12zz — hash-site exit = runtime J2J gate decline on a HEALTHY IC entry
+
+Full IC dump: scanFor: #hash site is POLYMORPHIC (5 entries; SmI
+entry has bit60 + bit57 xgate-ok = healthy).  The per-activation
+exit is an IC HIT that DECLINES to inline-J2J at a runtime gate and
+exits ExitSendCached.  NEXT (one probe): count the j2jBailSelf2
+reasons at runtime — gate candidates in priority order:
+(1) state.j2jSaveCursor NULL at tryJITActivation entry (the JIT_CALL
+    state init may not provision a pool slice for the top-level
+    activation; cursor=null -> every save-push/saveless bails ->
+    dispatchCached exit).  CHECK tryJITActivation's state setup vs
+    the chain loop's (which sets &j2jPool_[...] slices).
+(2) PMS patched-key mismatch: site patched for the startup class
+    (0xc0d); SmI receivers miss the patched compare and the
+    unpatched fallback shape may exit rather than probe.
+(3) warm-J2J gate / depth limit.
+Add counters at the bail branches (inlineJ2JCounters exists —
+PHARO_T1_INLINE_J2J_COUNTERS=1 emits per-gate bail counters
+ALREADY: g_xgate_bail_* family!).  Run dict with that knob FIRST —
+zero new code.  prim-75 inline (yy item 1) parked until this gate
+question resolves (the healthy-entry decline may explain everything
+without new inline kinds).
+
 ## CHECKPOINT 2026-06-12yy — scanFor: IC map decoded; 2 concrete fixes queued
 
 [IC-SITE] dump (new, under PHARO_JIT_TRACE_OOP): scanFor: site0
