@@ -24,6 +24,16 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   then DET_SCHED + the DNU-stack tracing as for #1.  NOTE the seq2
   counter counts compile ATTEMPTS (incl. failures) — startup exceeds
   5000; use MAX=-1 for 'everything'.
+- **#3 CHARACTERIZED (bisect data)**: [0,2000) ok, [2000,8000) WEDGE,
+  [2000,5000) WEDGE, but BOTH halves [2000,3500)/[3500,5000) ok and
+  [2000,2750)/[2750,3500) ok -> POPULATION-DEPENDENT, not a single
+  method: the wedge needs enough simultaneously-resumable methods
+  (pair interaction or resource exhaustion — prime suspects: the J2J
+  save pool filling with materialize-only/live saves, SavedFrames/
+  frameDepth limits, or the j2jBailFull handling under resume).
+  Diagnose with: pool-occupancy counter at wedge time + the WEDGE
+  process-table lldb recipe (memory sunit-fullsuite-blocker-cascade)
+  + DET_SCHED on a wedging window for determinism.
 - The prize (re-verified post-fix-#1 pending): single-method resume
   sendloop 345 -> 25 ms (14x).  After #2/#3: stage
   RESUME_SENDS_NO_CONDJUMP -> full -> default with the ladder
