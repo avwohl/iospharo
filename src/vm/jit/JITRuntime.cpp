@@ -2464,6 +2464,18 @@ JITRuntime::~JITRuntime() {
     delete compiler_;
 }
 
+// Sista orphan escape (2026-06-11): a hasSplice()-owned method that
+// keeps re-entering via the interpreter is de-facto ORPHANED — its
+// splice fn never engages (observed: HashedCollection>>scanFor:,
+// 18.4M interp sends/dict-bench while owned).  After 256 skipped
+// hotness notes, release it to T1.  Methods whose splice works don't
+// re-enter the interp hot path, so they never reach the bar.  Map
+// keys are method oop bits; a moving GC only resets counts (benign).
+static std::unordered_map<uint64_t, uint32_t> g_spliceSkipCounts;
+static bool sistaOrphanEscape(uint64_t methBits) {
+    return ++g_spliceSkipCounts[methBits] > 256;
+}
+
 bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     if (initialized_) return true;
 
@@ -2722,9 +2734,10 @@ size_t JITRuntime::drainInitialCompileQueue() {
             continue;
         }
         // Skip Sista-spliced methods (race-avoidance — same gate as in
-        // noteMethodEntry's direct path).
+        // noteMethodEntry's direct path), unless de-facto orphaned.
         if (sistaRuntimeForGCHook_
-            && sistaRuntimeForGCHook_->hasSplice(method)) {
+            && sistaRuntimeForGCHook_->hasSplice(method)
+            && !sistaOrphanEscape(method.rawBits())) {
             g_initialCompileQueueDrained++;
             continue;
         }
@@ -2830,7 +2843,8 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
     // resolved.  See memory/project_t1_vs_sista_race.md and
     // memory/project_osr_recompile_regression.md.
     if (sistaRuntimeForGCHook_
-        && sistaRuntimeForGCHook_->hasSplice(compiledMethod)) {
+        && sistaRuntimeForGCHook_->hasSplice(compiledMethod)
+        && !sistaOrphanEscape(compiledMethod.rawBits())) {
         return false;
     }
 

@@ -8322,8 +8322,30 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // map insert per send distorts absolute timing).
     if (__builtin_expect(g_debug.jitFailReasons, 0)) {
         static std::unordered_map<uint64_t, uint64_t> counts;
+        static std::unordered_map<std::string, uint64_t> senders;
         static uint64_t total = 0;
         counts[selector.rawBits()]++;
+        {
+            std::string selNm = memory_.oopToString(selector);
+            if (selNm == "at:" || selNm == "key")
+                senders[memory_.selectorOf(method_)]++;
+            static int sfProbe = 0;
+            if (selNm == "at:" && sfProbe < 3
+                    && memory_.selectorOf(method_) == "scanFor:") {
+                sfProbe++;
+                jit::JITMethod* sfJM =
+                    jitRuntime_.methodMap().lookup(method_.rawBits());
+                fprintf(stderr,
+                    "[SF-PROBE] jm=%p exec=%d tier=%d nBC=%u stub=%d "
+                    "canJIT=%d matCnt=%zu\n",
+                    (void*)sfJM, sfJM ? (int)sfJM->isExecutable() : -1,
+                    sfJM ? (int)sfJM->tier : -1,
+                    sfJM ? sfJM->numBytecodes : 0,
+                    sfJM ? (int)sfJM->isStubOnEntry : -1,
+                    (int)canJITActivate(method_),
+                    materializedFrameCount_);
+            }
+        }
         if ((++total & 0xFFFFF) == 0) {
             std::vector<std::pair<uint64_t,uint64_t>> v(counts.begin(), counts.end());
             std::sort(v.begin(), v.end(), [](auto&x, auto&y){return x.second>y.second;});
@@ -8332,6 +8354,14 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 fprintf(stderr, " #%s=%llu",
                     memory_.oopToString(Oop::fromRawBits(v[i].first)).c_str(),
                     (unsigned long long)v[i].second);
+            fprintf(stderr, "\n  at:/key senders:");
+            {
+                std::vector<std::pair<std::string,uint64_t>> sv(senders.begin(), senders.end());
+                std::sort(sv.begin(), sv.end(), [](auto&x, auto&y){return x.second>y.second;});
+                for (size_t i = 0; i < sv.size() && i < 8; i++)
+                    fprintf(stderr, " #%s=%llu", sv[i].first.c_str(),
+                        (unsigned long long)sv[i].second);
+            }
             fprintf(stderr, "\n");
         }
     }
