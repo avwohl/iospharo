@@ -2,6 +2,34 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11dd — 1880-clock = EXACTLY -2^62 NANOSECONDS
+
+**The corrupted clock value is correct_ns MINUS EXACTLY 2^62** —
+proven: bad(1880-04-21T11:16:24-04:00) + 2^62 ns =
+2026-06-11T11:10:02-04:00, INSIDE the run window (log mtime 11:10:58).
+So a NANOSECOND-domain quantity (ns-since-1901 ~3.96e18: exceeds the
+61-bit SmI range -> LargeInt territory, bit 61 set, bit 62 clear)
+lost/never-gained bit 62, going negative.
+
+Checked and CLEAN: all three arm64 inline-mul sites have both
+overflow checks (smulh + 61-bit retag); no 32-bit stores to oop
+slots; 3M-iteration single-flow hammer of `µsClock * 1000` shows no
+wrap (the corruption needs the suite's process-switch context,
+~1-2 per 2500 tests).
+
+SUSPECT SPACE (next session): (a) the image-side DateAndTime now
+nanosecond path (read DateAndTime class>>now + asNanoSeconds source:
+WHERE does a single 62-bit-significant integer arise — LargeInt
+digit ops? a cached offset?); (b) the inline tagged ADD/SUB checks
+only the 64-bit V flag (adds+b_vs) NOT the 61-bit SmI range — sums
+with values in 2^58..2^60 produce silent non-canonical 'SmIs'
+(NOTE: arithmetic says a tagged add CAN'T reach bit 62 from
+legitimate µs/ns-piece values; but a chain of such non-canonical
+results could — audit the add/sub inline emits' range check);
+(c) LargeInt primitive paths under JIT'd callers.  Repro: the 1-15
+narrow batch with WD-CLOCK forensics (~1-2 hits/run, results stream
+shows now=1880 lines).
+
 ## CHECKPOINT 2026-06-11cc — FSR M1 GATE PASSED; the 1880-clock signature
 
 **FSR M1 complete + gate passed**: x19 = active-JITMethod invariant
