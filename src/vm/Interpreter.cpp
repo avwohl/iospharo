@@ -19551,15 +19551,17 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
                 if (bailBcOff >= 0 && bailBcOff < (ptrdiff_t)mh->byteSize()) {
                     bailDistance = bailBcOff - (ptrdiff_t)bcOff;
                     if (bailDistance < 0) bailDistance = -bailDistance;
-                    // Walk back to find the bail-causing byte.  For 1-byte
-                    // bytecodes (the common case for BlockReturnTop/Nil at
-                    // 0x5D/0x5E) the byte is at bailBcOff - 1 since the
-                    // post-bail ip has advanced past the bytecode.  For
-                    // extended bytecodes (2 or 3 bytes), the byte at
-                    // bailBcOff - 1 is just a tail-byte; the lift handler
-                    // walks back further to find the prefix.  Single-byte
-                    // walk-back is sufficient for BlockReturn detection.
-                    ptrdiff_t bailByteOff = bailBcOff - 1;
+                    // Audit S4 fix (2026-06-11): the producer
+                    // (SistaBuilder bailToInterpreter, bailOffset =
+                    // currentInstrStart_) points state.ip AT the
+                    // UNEXECUTED bail bytecode, not past it — the
+                    // adjacent SISTA-PER-BC-BAIL diagnostic already
+                    // reads bcs[bailBcOff].  The old bailBcOff-1 read
+                    // looked at the PREVIOUS byte, so the BlockReturn
+                    // guard below almost never matched and short hot
+                    // block loops got bail-blacklisted — the exact
+                    // regression the guard was added to prevent.
+                    ptrdiff_t bailByteOff = bailBcOff;
                     if (bailByteOff >= 0 &&
                         bailByteOff < (ptrdiff_t)mh->byteSize()) {
                         bailByte = bcs[bailByteOff];
@@ -19630,6 +19632,29 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
                 ? savedFrames_[frameDepth_ - 1].materializedRetSlot
                 : nullptr;
             if (!popFrame()) {
+                // Audit fix (2026-06-11): popFrame()==false means "the
+                // process may have more contexts in the HEAP chain" —
+                // follow the sender chain like the canonical fd=0 return
+                // paths (returnValue ~6642, resume-loop ExitReturn) instead
+                // of TERMINATING the process with a live heap sender.
+                if (activeContext_.isObject() && !activeContext_.isNil()) {
+                    Oop sender = memory_.fetchPointer(0, activeContext_);
+                    if (sender.isObject() && !sender.isNil()
+                            && memory_.isValidPointer(sender)) {
+                        memory_.storePointer(0, activeContext_, memory_.nil());
+                        memory_.storePointer(1, activeContext_, memory_.nil());
+                        stackPointer_ = stackBase_;
+                        Oop senderStackp = memory_.fetchPointer(2, sender);
+                        int origSp = senderStackp.isSmallInteger()
+                            ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
+                        if (executeFromContext(sender)) {
+                            framePointer_[1 + origSp] = sstate.returnValue;
+                            Oop* pastVal = framePointer_ + 1 + origSp + 1;
+                            if (pastVal > stackPointer_) stackPointer_ = pastVal;
+                            return;
+                        }
+                    }
+                }
                 if (benchMode_) {
                     handleBenchComplete(sstate.returnValue);
                     return;
@@ -20666,7 +20691,21 @@ void Interpreter::tryJITResumeInCaller() {
                         Oop senderStackp = memory_.fetchPointer(2, sender);
                         int origSp = senderStackp.isSmallInteger()
                             ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
-                        executeFromContext(sender);
+                        // Audit S2 fix (2026-06-11): executeFromContext can FAIL
+                        // (invalid sender context, bad method slot, SIGSEGV recovery)
+                        // leaving framePointer_/method_/ip STALE from the method that
+                        // just returned.  The unchecked call then wrote the return
+                        // value through the dead fp and re-entered the resume loop on
+                        // the stale globals — re-executing the already-returned
+                        // method's JIT code.  Mirror the canonical interp path
+                        // (returnValue ~6642): gate on the result; on failure fall to
+                        // process termination like the no-sender case.
+                        if (!executeFromContext(sender)) {
+                            terminateCurrentProcess();
+                            tryReschedule();
+                            inJITResume_ = false;
+                            return;
+                        }
                         // Push return value at correct position
                                                 if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
                             Oop _rv = state.returnValue;
@@ -20863,6 +20902,15 @@ void Interpreter::tryJITResumeInCaller() {
             countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            // Audit S2 fix (2026-06-11): unconditional frame-identity sync
+            // before activateMethod/executePrimitive record the caller frame
+            // (same class as the chain-loop handlers' fix).
+            {
+                receiver_ = state.receiver;
+                framePointer_ = state.tempBase - 1;
+                method_ = state.method;
+                homeMethod_ = state.method;
+            }
 
             // Upgrade IC entry to J2J if target is now JIT-compiled
             upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount, state.method);
@@ -21159,6 +21207,17 @@ void Interpreter::tryJITResumeInCaller() {
             jitYieldCount_++;
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            // Audit S2 fix (2026-06-11): the continue path re-enters the
+            // loop top, which pairs instructionPointer_ with method_ in
+            // computeCurrentBCOffset and tryResume(method_, ...) — sync the
+            // frame identity so a yield inside an inline-J2J callee doesn't
+            // resume the OUTER method at the callee's ip.
+            {
+                receiver_ = state.receiver;
+                framePointer_ = state.tempBase - 1;
+                method_ = state.method;
+                homeMethod_ = state.method;
+            }
             // Each yield = ~1000 backward jumps. Estimate bytecodes executed.
             int numBC = state.jitMethod ? state.jitMethod->numBytecodes : 20;
             int charge = 1000 * numBC;
@@ -21186,6 +21245,15 @@ void Interpreter::tryJITResumeInCaller() {
             jitICHits_++;
             countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;  // Already past the send
+            // Audit S2 fix (2026-06-11): unconditional frame-identity sync
+            // before activateMethod/executePrimitive record the caller frame
+            // (same class as the chain-loop handlers' fix).
+            {
+                receiver_ = state.receiver;
+                framePointer_ = state.tempBase - 1;
+                method_ = state.method;
+                homeMethod_ = state.method;
+            }
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
 
             jitRuntime_.noteMethodEntry(cached);
@@ -23127,6 +23195,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.jitMethod = nullptr;  // Tier 2 path doesn't set this; must be null for chain loop
     state.exitReason = jit::ExitNone;
     state.icDataPtr = nullptr;
+    state.cachedTarget = Oop::fromRawBits(0);  // audit S3: never reuse stale identification
     state.sendArgCount = 0;
     state.trueOop = memory_.trueObject();
     state.falseOop = memory_.falseObject();
@@ -24135,6 +24204,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.method = method;
                 state.argCount = argCount;
                 state.icDataPtr = nullptr;
+                state.cachedTarget = Oop::fromRawBits(0);  // audit S3: never reuse stale identification
                 state.sendArgCount = 0;
                 state.exitReason = jit::ExitNone;
 
@@ -24198,6 +24268,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 continue;
             }
 
+            // Audit S1 fix (2026-06-11): honor materializedRetSlot — this
+            // pop site missed the capture both sibling pop sites have
+            // (depth>0 branch + the jit_loop_exit twin); a materialize-bail
+            // frame popped here delivered its retval via plain push at the
+            // wrong slot.
+            Oop* matRetSlotD0 = (frameDepth_ > 0)
+                ? savedFrames_[frameDepth_ - 1].materializedRetSlot
+                : nullptr;
             if (!popFrame()) {
                 // fd=0: follow context sender chain
                 if (activeContext_.isObject() && !activeContext_.isNil()) {
@@ -24209,7 +24287,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         Oop senderStackp = memory_.fetchPointer(2, sender);
                         int origSp = senderStackp.isSmallInteger()
                             ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
-                        executeFromContext(sender);
+                        // Audit S2 fix (2026-06-11): executeFromContext can FAIL
+                        // (invalid sender context, bad method slot, SIGSEGV recovery)
+                        // leaving framePointer_/method_/ip STALE from the method that
+                        // just returned.  The unchecked call then wrote the return
+                        // value through the dead fp and re-entered the resume loop on
+                        // the stale globals — re-executing the already-returned
+                        // method's JIT code.  Mirror the canonical interp path
+                        // (returnValue ~6642): gate on the result; on failure fall to
+                        // process termination like the no-sender case.
+                        if (!executeFromContext(sender)) {
+                            terminateCurrentProcess();
+                            tryReschedule();
+                            return true;
+                        }
                                                 if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
                             Oop _rv = state.returnValue;
                             std::string _rc = _rv.isSmallInteger() ? "SmI"
@@ -24247,7 +24338,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             lastJitReturn_.returnBits = state.returnValue.rawBits();
             lastJitReturn_.frameDepth = frameDepth_;
             lastJitReturn_.wasResume = false;
-            push(state.returnValue);
+            if (__builtin_expect(matRetSlotD0 != nullptr, 0)) {
+                *matRetSlotD0 = state.returnValue;
+                stackPointer_ = matRetSlotD0 + 1;
+            } else {
+                push(state.returnValue);
+            }
             if (__builtin_expect(g_atRecOn, 0) && g_atOop && method_.rawBits() == g_atOop) {
                 int ipOff = (g_atBcBase && instructionPointer_) ? (int)(instructionPointer_ - g_atBcBase) : -2;
                 atRec(4, 0xA1, ipOff, state.returnValue.rawBits(),
@@ -24334,6 +24430,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             }
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            // Audit S2 fix (2026-06-11, exit-handler audit): sync the
+            // frame-identity globals from state UNCONDITIONALLY before any
+            // helper that reads or records them (activateMethod's pushFrame
+            // snapshots method_/framePointer_/receiver_ into the caller's
+            // SavedFrame; computeCurrentBCOffset pairs ip with method_).
+            // Same class as the cascade-#3 fourth fix in the create
+            // handlers.  (closure_ has no state mirror — a known residual
+            // gap for block frames.)
+            {
+                receiver_ = state.receiver;
+                framePointer_ = state.tempBase - 1;
+                method_ = state.method;
+                homeMethod_ = state.method;
+            }
             jitICMisses_++;
 
             // DIAGNOSTIC: distinguish "IC had room" vs "IC full" vs
@@ -24612,6 +24722,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            // Audit S2 fix (2026-06-11, exit-handler audit): sync the
+            // frame-identity globals from state UNCONDITIONALLY before any
+            // helper that reads or records them (activateMethod's pushFrame
+            // snapshots method_/framePointer_/receiver_ into the caller's
+            // SavedFrame; computeCurrentBCOffset pairs ip with method_).
+            // Same class as the cascade-#3 fourth fix in the create
+            // handlers.  (closure_ has no state mirror — a known residual
+            // gap for block frames.)
+            {
+                receiver_ = state.receiver;
+                framePointer_ = state.tempBase - 1;
+                method_ = state.method;
+                homeMethod_ = state.method;
+            }
 
             // PHARO_SORTSTR_WATCH: check state.method vs state.ip mismatch.
             // If state.ip isn't in state.method's bytecode range, that's
@@ -24801,6 +24925,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.ip = methObj->bytes() + (1 + numLits) * 8;
             }
             state.icDataPtr = nullptr;
+            state.cachedTarget = Oop::fromRawBits(0);  // audit S3: never reuse stale identification
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
             enableJ2J();
@@ -24938,6 +25063,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.ip = methObj->bytes() + (1 + numLits) * 8;
             }
             state.icDataPtr = nullptr;
+            state.cachedTarget = Oop::fromRawBits(0);  // audit S3: never reuse stale identification
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
             enableJ2J();
@@ -24982,6 +25108,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            // Audit S2 fix (2026-06-11, exit-handler audit): sync the
+            // frame-identity globals from state UNCONDITIONALLY before any
+            // helper that reads or records them (activateMethod's pushFrame
+            // snapshots method_/framePointer_/receiver_ into the caller's
+            // SavedFrame; computeCurrentBCOffset pairs ip with method_).
+            // Same class as the cascade-#3 fourth fix in the create
+            // handlers.  (closure_ has no state mirror — a known residual
+            // gap for block frames.)
+            {
+                receiver_ = state.receiver;
+                framePointer_ = state.tempBase - 1;
+                method_ = state.method;
+                homeMethod_ = state.method;
+            }
             chainTarget = j2jCached;
             jitRuntime_.noteMethodEntry(j2jCached);
             ipAlreadyAdvanced = true;
@@ -25074,15 +25214,21 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             if (state.j2jDepth > 0) {
                 size_t baseDepth = frameDepth_;
                 J2JSave* _stateSaves2 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
+                // Audit S3 fix (2026-06-11): count only the frames the
+                // materialize loop actually WROTE — on a mid-loop failure
+                // the old unconditional `baseDepth + j2jDepth` put GARBAGE
+                // SavedFrame slots (beyond the break) inside frameDepth_.
+                int site5Done = 0;
                 for (int i = 0; i < state.j2jDepth; i++) {
                     J2JSave& save = _stateSaves2[i];
                     SavedFrame& frame = savedFrames_[baseDepth + i];
                     if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site5")) {
                         break;
                     }
+                    site5Done++;
                 }
-                frameDepth_ = baseDepth + state.j2jDepth;
-                chainCallDepth += state.j2jDepth;
+                frameDepth_ = baseDepth + site5Done;
+                chainCallDepth += site5Done;
                 // Sync interpreter from innermost frame
                 if (state.jitMethod) {
                     state.method = Oop::fromRawBits(
@@ -25496,6 +25642,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 state.ip = savedBcStart;
                                 state.sp = stackPointer_;
                                 state.icDataPtr = nullptr;
+                                state.cachedTarget = Oop::fromRawBits(0);  // audit S3: never reuse stale identification
                                 state.sendArgCount = 0;
                                 state.exitReason = jit::ExitNone;
                                 state.j2jDepth = 0;
@@ -25585,6 +25732,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             if (bcOffset == UINT32_MAX) return true;
                             state.sp = stackPointer_;
                             state.icDataPtr = nullptr;
+                            state.cachedTarget = Oop::fromRawBits(0);  // audit S3: never reuse stale identification
                             state.sendArgCount = 0;
                             state.exitReason = jit::ExitNone;
                             // J2J disabled: precompute-failed is rare (0 chains in AWFY)
@@ -25834,6 +25982,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                     state.method = method;
                                     state.argCount = argCount_;
                                     state.icDataPtr = nullptr;
+                                    state.cachedTarget = Oop::fromRawBits(0);  // audit S3: never reuse stale identification
                                     state.sendArgCount = 0;
                                     enableJ2J();
                                     // Use tryExecute (starts from beginning) not
@@ -25874,6 +26023,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.method = method;
                         state.argCount = argCount;
                         state.icDataPtr = nullptr;
+                        state.cachedTarget = Oop::fromRawBits(0);  // audit S3: never reuse stale identification
                         state.sendArgCount = 0;
                         state.exitReason = jit::ExitNone;
                         // Adaptive J2J depth: per-method limit (default 2,
@@ -25953,6 +26103,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.method = method;
                 state.argCount = argCount;
                 state.icDataPtr = nullptr;
+                state.cachedTarget = Oop::fromRawBits(0);  // audit S3: never reuse stale identification
                 state.sendArgCount = 0;
                 state.exitReason = jit::ExitNone;
                 // J2J disabled: activateMethod fallback is rare (0 chains in AWFY)
@@ -26066,7 +26217,20 @@ jit_loop_exit:
                     Oop senderStackp = memory_.fetchPointer(2, sender);
                     int origSp = senderStackp.isSmallInteger()
                         ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
-                    executeFromContext(sender);
+                    // Audit S2 fix (2026-06-11): executeFromContext can FAIL
+                    // (invalid sender context, bad method slot, SIGSEGV recovery)
+                    // leaving framePointer_/method_/ip STALE from the method that
+                    // just returned.  The unchecked call then wrote the return
+                    // value through the dead fp and re-entered the resume loop on
+                    // the stale globals — re-executing the already-returned
+                    // method's JIT code.  Mirror the canonical interp path
+                    // (returnValue ~6642): gate on the result; on failure fall to
+                    // process termination like the no-sender case.
+                    if (!executeFromContext(sender)) {
+                        terminateCurrentProcess();
+                        tryReschedule();
+                        return true;
+                    }
                                             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
                             Oop _rv = state.returnValue;
                             std::string _rc = _rv.isSmallInteger() ? "SmI"
