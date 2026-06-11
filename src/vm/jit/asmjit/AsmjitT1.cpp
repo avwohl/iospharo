@@ -3154,10 +3154,25 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldr(w5, ptr(x4));                 // low 32 bits of header
         a.tst(w5, asmjit::Imm(0x800000));   // bit 23 = ImmutableBit
         a.b_ne(bail);
-        emitLoadSp(a, x2);
-        a.sub(x2, x2, asmjit::Imm(8));
-        emitStoreSp(a, x2);
-        a.ldr(x1, ptr(x2));
+        // B3.2 (simStack): value from x26 — skip the reload.  The
+        // immutable bail above fires BEFORE the sp decrement either
+        // way (memory intact at the bail).
+        if (tosFam(kTosFamPopStore) && g_tosIn.valid) {
+            emitTosVerify(a);
+#if PHARO_T1_SP_IN_X25
+            a.sub(x25, x25, asmjit::Imm(8));
+#else
+            emitLoadSp(a, x2);
+            a.sub(x2, x2, asmjit::Imm(8));
+            emitStoreSp(a, x2);
+#endif
+            a.mov(x1, x26);
+        } else {
+            emitLoadSp(a, x2);
+            a.sub(x2, x2, asmjit::Imm(8));
+            emitStoreSp(a, x2);
+            a.ldr(x1, ptr(x2));
+        }
         a.str(x1, ptr(x4, OBJ_SLOT_0 + n * 8));
         emitStoreRingLog(a, n);
         // Inline write barrier.  Skip if value isn't an Oop (tag != 0),
