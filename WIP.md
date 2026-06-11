@@ -2,6 +2,37 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11kk — THE COUNT: per-call instruction census (decides M4 first)
+
+Capstone census of benchFib's LINKED J2J call sequence (the PMS
+patched tail, /tmp/jit_benchFib_1.bin 0x228-0x2d0, ~43 insns/call):
+  calleeJM movz x3 (patched)              3
+  cursor headroom (M2 shape)              4   (mov x23 + ldr limit + cmp + b.hs)
+  resume adr+movk                         2
+  save push (stp pairs + loads)           5   (M2b: -1 write-through str)
+  MIRROR STORES                           9   <- M4: ldr CM + str jitMethod +
+                                               str method + add/str literals +
+                                               mov/str argCount + ldr bcStart
+                                               + str ip
+  cursor write-through + x23              2   (M2b: -1)
+  depth RMW (x20 batched)                 3   (M3c, blocked on §9)
+  receiver + tempBase stores              3   (M5 territory)
+  nil-fill loop header (0 locals!)        ~5  <- link-time specializable:
+                                               patched sites KNOW the callee;
+                                               emit could skip/unroll the fill
+  sp update (x25)                         1
+=> **M4 is the single biggest cut (~21%/call), then the nil-fill
+specialization (~12% for 0-local callees like fib), then M3c+M2b
+(~14% combined, blocked/small)**.  Plus the return-side prelude+
+restore sequence (not yet censused — do the return side next).
+
+M4 prerequisites all in place: x19 invariant (M1 ✓ verified), the
+syncDerivedFromJM funnel + literalsCache (M0 ✓), exit stubs publish
+points enumerated.  M4 = delete the 9 mirror stores from the linked
+tail; exit stubs re-derive method/literals/argCount/ip from x19 (via
+funnel on the C++ side; bcStartCache for ip).  VERIFY: FR-7 assert
+(mirror==derived at exits) soaked before deletion, like M3's oracle.
+
 ## CHECKPOINT 2026-06-11jj — M3 stages a+b GATED-IN, parity-proven; (c) blocked on §9
 
 Stage (a) (both representations + parity oracle) and stage (b) (the
