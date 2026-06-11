@@ -540,6 +540,11 @@ Lcall_frame_overflow:
 
 // ======== Exit: write counts back and restore callee-saved regs ========
 Ltramp_exit:
+    // FSR M4: publish the active-method identity for trampoline-
+    // generated exits (refusals, pool-full handoffs) that have no
+    // emitted exit stub.  x19 == active JM unconditionally since the
+    // M1 movs went always-on, so this is safe in every mode.
+    str     x19, [x21, #JS_JITMETHOD]
     // Write local state back through out-pointers
     ldr     x0,  [sp, #96]                 // frameDepthInOut
     str     x24, [x0]

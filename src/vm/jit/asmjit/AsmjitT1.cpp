@@ -8628,13 +8628,13 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // a block bail to interp) and for jm->isBlock below.
     g_emitIsBlock =
         methObj->classIndex() == interp.compiledBlockClassIndex();
-    // M4 (lazy mirror deletion) DEPENDS on the M1 x19 invariant —
-    // exits publish x19 as the identity; without the activation movs
-    // the published value is the entry hoist (stale after J2J).
-    g_fsrX19 = GET_DEBUG_BOOL(PHARO_T1_FSR_X19)
-            || GET_DEBUG_BOOL(PHARO_T1_FSR_X19_VERIFY)
-            || GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY)
-            || GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY);
+    // M1 x19 invariant: UNCONDITIONAL since 2026-06-11 (five one-cycle
+    // movs at activation commits, gate-verified by the 2468-test soak)
+    // — it lets the TRAMPOLINE publish x19 -> JS_JITMETHOD at its own
+    // exit paths unconditionally, which M4's lazy mirrors require
+    // (trampoline-generated exits like the Lresume_null refusal have
+    // no emitted exit stub to do the publish).
+    g_fsrX19 = true;
     g_bcStartDelta = (2 + numLiterals) * 8;
     g_fsrLazyVerify = GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY);
     g_fsrLazy = GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY) || g_fsrLazyVerify;
