@@ -1008,6 +1008,12 @@ private:
     std::atomic<int> pendingSignalTail_{0};  // consumer reads here (mod capacity)
 
     // Force yield flag - set by heartbeat to preempt long-running processes
+    // Cascade-#3 forensics: how the current activation was last
+    // (re)entered.  1=savedResumeEntry JIT_CALL, 2=inline tryResume,
+    // 3=JITRuntime tryResume, 4=fastResume, 5=yield re-entry,
+    // 6=normal activation.  Read by the MUSTBOOL trap dump.
+    int lastResumeKind_ = 0;
+
     std::atomic<bool> forceYield_{false};
 
     // Watchdog: terminate process stuck for too long (VM safety feature)

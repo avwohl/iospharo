@@ -13703,6 +13703,39 @@ void Interpreter::sendMustBeBoolean(Oop value) {
                 memory_.selectorOf(method_).c_str(),
                 memory_.classNameOf(receiver_).c_str(),
                 (unsigned long long)method_.rawBits(), numLits, ipOff);
+        // Cascade-#3 forensics dump: everything the lldb session would
+        // inspect (symbols proved unreliable — compiled-in instead).
+        if (GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP)) {
+            fprintf(stderr, "[MB-FORENSICS] lastResumeKind=%d fd=%zu "
+                    "fp=%p sp=%p\n",
+                    lastResumeKind_, frameDepth_,
+                    (void*)framePointer_, (void*)stackPointer_);
+            for (int k = -2; k <= 10; k++) {
+                Oop* slot = framePointer_ + k;
+                if (slot >= stackBase_ && slot < stackPointer_ + 2) {
+                    uint64_t bits = slot->rawBits();
+                    std::string cls = "?";
+                    if ((bits & 7) == 0 && bits >= 0x10000) {
+                        try { cls = memory_.classNameOf(*slot); }
+                        catch (...) { cls = "(bad)"; }
+                    } else if (slot->isSmallInteger()) cls = "SmI";
+                    fprintf(stderr, "[MB-FORENSICS]   fp[%d]=0x%llx %s%s\n",
+                            k, (unsigned long long)bits, cls.c_str(),
+                            slot == stackPointer_ ? "  <-- sp" : "");
+                }
+            }
+            for (int k = 0; k < 3 && frameDepth_ >= (size_t)(k + 1); k++) {
+                SavedFrame& sf = savedFrames_[frameDepth_ - 1 - k];
+                fprintf(stderr, "[MB-FORENSICS]   frame[-%d] m=#%s ipOff=%lld\n",
+                        k + 1,
+                        memory_.selectorOf(sf.savedMethod).c_str(),
+                        (long long)(sf.savedIP
+                            - (sf.savedMethod.isObject()
+                               ? sf.savedMethod.asObjectPtr()->bytes()
+                               : sf.savedIP)));
+            }
+            __builtin_debugtrap();
+        }
         // Dump literals of current method (once per unique method)
         static std::set<uint64_t> dumpedMethods;
         bool firstForMethod = method_.isObject() &&
@@ -23521,6 +23554,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 if (bcOffset == UINT32_MAX) return true;
 
                 // Inline tryResume — skip redundant lookup/validation
+                lastResumeKind_ = 2;
                 {
                     jit::JITMethod* callerJM = jitRuntime_.methodMap().lookup(
                         method.rawBits());
@@ -24743,6 +24777,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                             // Use precomputed resume to skip tryResume overhead
                             if (__builtin_expect(savedResumeEntry != nullptr, 1)) {
+                                lastResumeKind_ = 1;
                                 state.ip = savedBcStart;
                                 state.sp = stackPointer_;
                                 state.icDataPtr = nullptr;
