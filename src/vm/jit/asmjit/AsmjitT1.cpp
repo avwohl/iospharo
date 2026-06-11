@@ -3107,6 +3107,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // popStoreTemp N (0xD0..0xD7): pop TOS, store into tempBase[N].
     if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) {
         int n = op - SistaV1::PopStoreTempBase;
+        if (tosFam(kTosFamPopStore) && g_tosIn.valid) {
+            // simStack: value already in x26 — skip the reload.
+            emitTosVerify(a);
+#if PHARO_T1_SP_IN_X25
+            a.sub(x25, x25, asmjit::Imm(8));
+#else
+            emitLoadSp(a, x2);
+            a.sub(x2, x2, asmjit::Imm(8));
+            emitStoreSp(a, x2);
+#endif
+            emitLoadTempBase(a, x4);
+            a.str(x26, ptr(x4, n * 8));
+            return true;
+        }
         emitLoadSp(a, x2);
         a.sub(x2, x2, asmjit::Imm(8));
         emitStoreSp(a, x2);
@@ -3355,6 +3369,26 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     if (op == 0x5A) { emitReturnPtr(OFF_FALSEOOP); return true; }
     if (op == 0x5B) { emitReturnImm(nilBits);      return true; }
     if (op == SistaV1::ReturnTop) {
+        if (tosFam(kTosFamRetTop) && g_tosIn.valid) {
+            // simStack: retval already in x26 (RC-F7 ordering: the mov
+            // happens before the prelude restores caller state).
+            emitTosVerify(a);
+#if PHARO_T1_SP_IN_X25
+            a.sub(x25, x25, asmjit::Imm(8));
+#else
+            emitLoadSp(a, x2);
+            a.sub(x2, x2, asmjit::Imm(8));
+            emitStoreSp(a, x2);
+#endif
+            a.mov(x1, x26);
+            emitJ2JReturnPreludeIfEnabled();
+            a.str(x1, ptr(x0, OFF_RETVAL));
+            a.mov(w3, asmjit::Imm(EXIT_RETURN));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            emitSyncSpToState(a);
+            a.ret(x30);
+            return true;
+        }
         emitLoadSp(a, x2);
         a.sub(x2, x2, asmjit::Imm(8));
         emitStoreSp(a, x2);
@@ -3850,7 +3884,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         asmjit::Label fallThrough  = a.new_label();
 
         emitLoadSp(a, x2);
-        a.ldur(x1, asmjit::a64::ptr(x2, -8));   // x1 = TOS (not popped)
+        const bool tosCondJ = tosFam(kTosFamCondJump) && g_tosIn.valid;
+        asmjit::a64::Gp boolReg = tosCondJ ? x26 : x1;
+        if (tosCondJ) {
+            emitTosVerify(a);   // simStack: bool already in x26
+        } else {
+            a.ldur(x1, asmjit::a64::ptr(x2, -8));   // x1 = TOS (not popped)
+        }
 
         // ldp loads TRUEOOP+FALSEOOP in one instruction.  Both adjacent
         // at offsets 128 and 136 in JITState.  Slightly wasted load on
@@ -3858,9 +3898,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // cmp), but ldp is typically L1-cycle-equivalent to a single ldr
         // and saves 1 instruction worth of i-cache.
         a.ldp(x4, x5, ptr(x0, OFF_TRUEOOP));
-        a.cmp(x1, x4);
+        a.cmp(boolReg, x4);
         a.b_eq(jumpOnTrue ? takeBranch : fallThrough);
-        a.cmp(x1, x5);
+        a.cmp(boolReg, x5);
         a.b_ne(mustBoolBail);
         a.b(jumpOnTrue ? fallThrough : takeBranch);
 
