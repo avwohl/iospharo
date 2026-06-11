@@ -2,6 +2,32 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12ddd — SIEVE BUG ROOT-CAUSED + FIXED; gate OFF; at:/at:put: real-compile
+
+The 13-month-feeling mystery fell to a 4-agent workflow + probes:
+NOT a cond-jump miscompile.  emitPrimProlog_arm64 prim-60/61 format
+misses branched to fail(=BODY), the fmt-3/4/5/9 helper blocks were
+DEAD CODE, and uncovered formats entered fallback bodies that CANNOT
+retry (Object>>at: body unconditionally raises for variable classes).
+Fix: range-miss -> helper blocks (prim-62 pattern) + coverage-miss ->
+jitPrimAtFull (real primitiveAt/AtPut staged above state.sp,
+GC-visible) + emitted pre-tests dropped.  Gate default OFF
+(PHARO_T1_SIEVE_GATE=1 restores).  Acceptance: sieve x3=1028 (was 1);
+ladders clean (quiet + DET + gate-on/off).
+
+LESSON (workflow synthesis caveat proved right): ac25a547's "bug
+class still real" conflated TWO mechanisms — the May wrong-result
+(stale-IC/recompile era, likely fixed since) and the June burn (this
+dead code).  Also: a python edit script that asserts mid-way writes
+NOTHING — verify each edit landed (the missing primat_ptr route cost
+3 probe cycles).
+
+IN FLIGHT: suite soak gate-off default (/tmp/soak_sieve.log).
+AFTER SOAK: dict bench + xmethod gate-bail census (expect bail_prim
+~halved: at:/at:put:/basicAt: now J2J-able with REAL prologues);
+then re-run [IC-SITE] dump on scanFor: (its at: sites should now
+carry pk14 AND hit the inline path); fib30 re-measure.
+
 ## CHECKPOINT 2026-06-12ccc — sieve gate is REAL; root-cause queue reordered
 
 Sieve-gate removal: eval never completes (resume traffic x25,
