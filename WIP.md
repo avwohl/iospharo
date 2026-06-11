@@ -2,6 +2,32 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11ee — SEVENTH root cause FIXED; suite fully clean
+
+**The -2^62-ns clock lesion = the Phase-3 arm64 inline multiply (0x68)
+missing the 61-bit range check** — the FOURTH mul emit site (the three
+audited ones all had it).  smulh caught only 64-bit overflow; a 62-bit
+product (microsecondClock*1000 in DateAndTime>>now) retagged mod 2^61
+= value - 2^62 = year 1880, on every WARM call of the compiled method.
+Found via: WD-CLOCK forensics -> exact 2^62-ns date arithmetic ->
+warm-call repro (#(2026 1880 1880...)) -> piece bisection (all clean
+solo) -> CAPSTONE DISASSEMBLY of the dumped method showed the missing
+check.  Fixed + validated: repro all-2026; ladder clean; 60-class
+suite 4134/4140 ZERO fail/error/timeout; NANO-CORRUPT tripwire
+(permanent runner canary) zero hits; fib30=22ms.
+
+**AUDIT RULE REINFORCED**: there were FOUR inline-mul emit sites, not
+three — when auditing an emit pattern, grep the OPCODE dispatch
+(op == 0x68) AND the prim indices AND the IC-spec blocks; or better,
+disassemble the SHIPPED code (PHARO_T1_DUMP_SEL + capstone), which is
+what actually caught it.
+
+**Correctness scoreboard: SEVEN root causes, ALL FIXED; no known
+remaining correctness defects.**  Next: FSR M2 (cursor residency,
+MONEY 1) -> M3 (depth elimination, MONEY 2) for the macro gap
+(fib30 22 vs 5; dict ~390 vs 18; sendmix ~96 vs 2), then the force
+rung, full suite, Cog re-baseline.
+
 ## CHECKPOINT 2026-06-11dd — 1880-clock = EXACTLY -2^62 NANOSECONDS
 
 **The corrupted clock value is correct_ns MINUS EXACTLY 2^62** —
