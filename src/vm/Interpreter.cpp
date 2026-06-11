@@ -23590,11 +23590,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     Oop selO = Oop::fromRawBits(sl[18]);
                     std::string sn = (selO.isObject() && selO.rawBits() > 0x10000)
                         ? memory_.oopToString(selO) : "?";
-                    fprintf(stderr, "  [IC-SITE %u] sel=#%s key0=0x%llx "
-                        "extras0=0x%llx key1=0x%llx extras1=0x%llx\n",
-                        si, sn.c_str(),
-                        (unsigned long long)sl[0], (unsigned long long)sl[2],
-                        (unsigned long long)sl[3], (unsigned long long)sl[5]);
+                    fprintf(stderr, "  [IC-SITE %u] sel=#%s", si, sn.c_str());
+                    for (int e = 0; e < 6; e++) {
+                        if (!sl[e*3]) continue;
+                        fprintf(stderr, " | k=0x%llx x=0x%llx pk=%d b%s%s%s%s",
+                            (unsigned long long)sl[e*3],
+                            (unsigned long long)sl[e*3+2],
+                            (int)((sl[e*3+2] >> 48) & 0x1F),
+                            (sl[e*3+2] >> 63) & 1 ? "63" : "",
+                            (sl[e*3+2] >> 61) & 1 ? "61" : "",
+                            (sl[e*3+2] >> 60) & 1 ? "60" : "",
+                            (sl[e*3+2] >> 59) & 1 ? "59" : "");
+                    }
+                    fprintf(stderr, "\n");
                 }
             }
         }
