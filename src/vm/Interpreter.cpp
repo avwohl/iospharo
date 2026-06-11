@@ -25474,6 +25474,28 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // --- Enter callee JIT code ---
                         // No flip — W^X audit 2026-04-26.
                         JIT_CALL(chainJM->codeStart(), &state);
+                        // FSR M3 stage (a): parity oracle — the RMW-maintained
+                        // depth must equal the cursor-derived depth (slice
+                        // base = &j2jPool_[j2jStateBase]).
+                        if (__builtin_expect(
+                                GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH_VERIFY), 0)
+                            && state.j2jSaveCursor) {
+                            ptrdiff_t fromCur =
+                                (state.j2jSaveCursor
+                                 - reinterpret_cast<uint8_t*>(
+                                       &j2jPool_[j2jStateBase]))
+                                / (ptrdiff_t)sizeof(J2JSave);
+                            if (fromCur != (ptrdiff_t)state.j2jDepth) {
+                                static int mp = 0;
+                                if (++mp <= 20)
+                                    fprintf(stderr,
+                                        "[M3-PARITY] rmw=%d fromCursor=%ld "
+                                        "exit=%d m=#%s\n",
+                                        state.j2jDepth, (long)fromCur,
+                                        (int)state.exitReason,
+                                        memory_.selectorOf(state.method).c_str());
+                            }
+                        }
                         checkSortstrWatch("chain-loop:inline-activate-return", frameDepth_);
                         chargeJITBytecodes(state);
                         jitJ2JStencilCalls_ += 1 + state.j2jTotalCalls;

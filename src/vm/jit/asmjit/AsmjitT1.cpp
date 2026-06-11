@@ -92,6 +92,8 @@ static bool g_emitIsBlock = false;
 static bool g_fsrX19 = false;
 static bool g_fsrCursor = false;  // FSR M2 v1: x23 cursor residency (write-through)
 static bool g_fsrCursorVerify = false;
+static bool g_fsrNodepth = false;        // FSR M3
+static bool g_fsrNodepthVerify = false;  // FSR M3 stage (a)
 static bool g_fsrX19Verify = false;
 // V2 emit plumbing (set per-compile by emitMethodBytes, used by the
 // send emit inside emitOne_arm64 — same single-threaded pattern):
@@ -829,6 +831,7 @@ constexpr int OFF_J2J_SAVE_LIMIT  = 152;
 constexpr int OFF_J2J_DEPTH       = 160;
 constexpr int OFF_J2J_TOTAL_CALLS = 164;
 constexpr int OFF_J2J_ENTRY_DEPTH = 200;
+constexpr int OFF_J2J_ENTRY_CURSOR = 312;  // FSR M3 (JITState.j2jEntryCursor; static_asserted there)
 [[maybe_unused]] constexpr int OFF_J2J_DEPTH_INC = 208;
 // Retro-save graceful pool-full handoff (cascade #2).
 constexpr int OFF_RETRO_SP        = 272;
@@ -3294,10 +3297,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // Check current j2jDepth > j2jEntryDepth (this method pushed a save).
         // Without entry-depth gate, chain-loop-activated methods would
         // incorrectly pop OUTER inline-J2J saves.  See deferred A6 option (a).
+        if (g_fsrNodepth) {
+            // FSR M3: poppability = cursor above the per-activation
+            // baseline.  x23 = live cursor (M2 default-on).
+            a.ldr(x4, ptr(x0, OFF_J2J_ENTRY_CURSOR));
+            a.cmp(x23, x4);
+            a.b_ls(normalReturn);  // cursor <= baseline → nothing poppable
+        } else {
         a.ldr(w3, ptr(x0, OFF_J2J_DEPTH));
         a.ldr(w4, ptr(x0, OFF_J2J_ENTRY_DEPTH));
         a.cmp(w3, w4);
         a.b_le(normalReturn);   // current <= entry → no save pushed by this method
+        }
 
         // Pop save: cursor -= sizeof(J2JSave) = 56; depth--
         // Pre-index ldp folds the cursor decrement into the first load.
@@ -3313,8 +3324,16 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldp(x5, x6, ptr_pre(x4, -JSV_SIZE));  // x4 -= save size; load sp + recv
         a.str(x4, ptr(x0, OFF_J2J_SAVE_CURSOR));
         }
-        a.sub(w3, w3, asmjit::Imm(1));
-        a.str(w3, ptr(x0, OFF_J2J_DEPTH));
+        if (!g_fsrNodepth) {
+            a.sub(w3, w3, asmjit::Imm(1));
+            a.str(w3, ptr(x0, OFF_J2J_DEPTH));
+        } else if (g_fsrNodepthVerify) {
+            // stage (b): w3 not loaded on the nodepth path — decrement
+            // the field in place for the parity oracle.
+            a.ldr(w3, ptr(x0, OFF_J2J_DEPTH));
+            a.sub(w3, w3, asmjit::Imm(1));
+            a.str(w3, ptr(x0, OFF_J2J_DEPTH));
+        }
 
         // Load remaining save fields with ldp pairs.  Layout:
         //   [0]=sp, [8]=receiver, [16]=tempBase, [24]=ip,
@@ -5150,7 +5169,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     //   [56] = caller state.jitMethod
                     //   [64] = caller state.literals
                     //   [72] = caller state.argCount (32-bit, zext)
-                    const int stashSize = crossSaveless ? 96 : 48;
+                    // FSR M3: the caller's j2jEntryCursor (64-bit) rides in
+                    // the stash — cross mode has [80-95] free; the base
+                    // stash grows 48->64 with the slot at [48].
+                    const int stashSize = crossSaveless ? 96
+                                        : (g_fsrNodepth ? 64 : 48);
+                    const int entryCurSlot = crossSaveless ? 80 : 48;
+                    (void)entryCurSlot;
                     a.sub(sp, sp, asmjit::Imm(stashSize));
                     emitLoadSp(a, x4);                   // x4=sp (sweep: was ldp sp+recv)
                     a.ldr(x5, ptr(x0, OFF_RECEIVER)); // x5=recv
@@ -5171,6 +5196,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(w15, ptr(x0, OFF_J2J_ENTRY_DEPTH));
                     a.str(w15, ptr(sp, 40));
                     a.str(w14, ptr(x0, OFF_J2J_ENTRY_DEPTH));
+                    if (g_fsrNodepth) {
+                        // FSR M3: pin the per-activation cursor baseline
+                        // (x23 = live cursor, M2 default-on) and stash the
+                        // caller's.
+                        a.ldr(x15, ptr(x0, OFF_J2J_ENTRY_CURSOR));
+                        a.str(x15, ptr(sp, entryCurSlot));
+                        a.str(x23, ptr(x0, OFF_J2J_ENTRY_CURSOR));
+                    }
                     if (crossSaveless) {
                         a.ldr(x6, ptr(x0, OFF_METHOD));
                         a.ldr(x12, ptr(x0, OFF_JITMETHOD));
@@ -5318,6 +5351,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             // normal retro epilogue, then exit to C++.
                             a.ldr(w4, ptr(sp, 40));
                             a.str(w4, ptr(x0, OFF_J2J_ENTRY_DEPTH));
+                            if (g_fsrNodepth) {
+                                a.ldr(x4, ptr(sp, entryCurSlot));
+                                a.str(x4, ptr(x0, OFF_J2J_ENTRY_CURSOR));
+                            }
                             a.ldr(x30, ptr(sp, 32));
                             a.add(sp, sp, asmjit::Imm(stashSize));
                             emitSyncSpToState(a);
@@ -5380,6 +5417,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         // materialize accounting).
                         a.ldr(w4, ptr(sp, 40));
                         a.str(w4, ptr(x0, OFF_J2J_ENTRY_DEPTH));
+                        if (g_fsrNodepth) {
+                            a.ldr(x4, ptr(sp, entryCurSlot));
+                            a.str(x4, ptr(x0, OFF_J2J_ENTRY_CURSOR));
+                        }
                         // Unwind the machine stash and propagate the bail
                         // to the caller's caller (trampoline/tryExecute)
                         // with the CALLEE's exit state intact.
@@ -5397,6 +5438,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // Restore the caller's j2jEntryDepth (pinned above).
                     a.ldr(w14, ptr(sp, 40));
                     a.str(w14, ptr(x0, OFF_J2J_ENTRY_DEPTH));
+                    if (g_fsrNodepth) {
+                        a.ldr(x14, ptr(sp, entryCurSlot));
+                        a.str(x14, ptr(x0, OFF_J2J_ENTRY_CURSOR));
+                    }
                     a.str(x5, ptr(x0, OFF_RECEIVER));
                     emitStoreTempBase(a, x6);
                     a.str(x12, ptr(x0, OFF_IP));
@@ -8446,6 +8491,8 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         methObj->classIndex() == interp.compiledBlockClassIndex();
     g_fsrX19 = GET_DEBUG_BOOL(PHARO_T1_FSR_X19)
             || GET_DEBUG_BOOL(PHARO_T1_FSR_X19_VERIFY);
+    g_fsrNodepthVerify = GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH_VERIFY);
+    g_fsrNodepth = GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH) || g_fsrNodepthVerify;
     g_fsrCursor = fsrCursorMode()
                || GET_DEBUG_BOOL(PHARO_T1_FSR_CURSOR);  // legacy opt-in, now a no-op
     g_fsrCursorVerify = GET_DEBUG_BOOL(PHARO_T1_FSR_CURSOR_VERIFY);
