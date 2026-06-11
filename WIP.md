@@ -2,6 +2,33 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11g — simStack design landed; B0 in progress
+
+- **docs/simstack-design.md is the working plan** (write-through TOS
+  cache in x26; all 30 review findings resolved; batches B0-B5 §8).
+- B0 progress: the 4 knobs are IN debug_vars.h (TOS_REG/TOS_MASK/
+  TOS_POISON/TOS_VERIFY).  REMAINING B0 (design §8 B0 box):
+  1. file-scope T1TosCache + g_tos/g_tosIn + snapshot-then-clear at
+     BOTH dispatch heads (the arm64 emit loop ~7189 after
+     a.bind(bcLabels[globalIdx]) AND before each inline multi-byte
+     handler's emit; jump-target bitmap forces g_tos={} at BIND time)
+  2. jump-target bitmap prescan in emitMethodBytes — mirror
+     BcDepthMap.cpp's decode EXACTLY (ExtJump offset = byte +
+     (extB<<8) UNSIGNED byte; short jump helpers in SistaV1) + emit-
+     time assert in emitOne jump emits: target not marked -> return
+     false (compile hard-fail -> interp fallback)
+  3. JIT_CALL + JIT_RESUME_CALL (JITState.hpp): add post-blr
+     `ldur x26,[x25,#-8]`-equivalent (ldr x26 from x25-8) + "x26" in
+     clobbers
+  4. TrampolineAsm.S :226/:292/:477 + pharo_jit_osr_resume: x26
+     re-establish after each x25 hoist + osr x26 save/restore at
+     frame #48/#56
+  5. #error guard: PHARO_T1_TB_IN_X26 must be 0 when TOS cache code
+     is present
+  GATE: PHARO_T1_DUMP_SEL=cfib dumps byte-identical knob-off AND
+  knob-on (B0 emits nothing); bench 19/19; 60-class identical.
+- B6 suite gate running in background (BATCH-COMPLETE waiter).
+
 ## CHECKPOINT 2026-06-11f — B6 #class inline landed; gap ~2.6-2.9x; simStack next
 
 - **QUIET BENCH STATE (2026-06-10 21:50, everything default-on):**

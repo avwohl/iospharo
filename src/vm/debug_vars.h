@@ -150,6 +150,11 @@ DEBUG_INT(PHARO_T1_PATCH_MIN, -1)         // site-index bisect window lo (link o
 DEBUG_INT(PHARO_T1_PATCH_MAX, -1)         // site-index bisect window hi (link only sites <= MAX; -1 = no cap)
 DEBUG_BOOL(PHARO_T1_EMIT_HASH)            // print FNV-1a of emitted bytes per compile (byte-identity gate harness)
 DEBUG_INT(PHARO_T1_PATCH_MAX_IC, -1)      // design §13 Q3: numICEntries cap for the LINK predicate only (-1 = use PHARO_T1_XMETHOD_MAX_IC); linked sites evaluate gates once in C++, so the cap can widen past the per-call gate's without re-emitting
+// ── simStack: write-through TOS cache in x26 (docs/simstack-design.md) ──
+DEBUG_BOOL(PHARO_T1_TOS_REG)              // opt-in during B0-B4 (flip to PHARO_T1_NO_TOS_REG at B5)
+DEBUG_INT(PHARO_T1_TOS_MASK, -1)          // bit per converted family (-1 = all): per-term A/B + miscompile bisect
+DEBUG_BOOL(PHARO_T1_TOS_POISON)           // movz x26,#0xDEAD at every invalidation point — stale-valid consumers crash deterministically
+DEBUG_BOOL(PHARO_T1_TOS_VERIFY)           // before every cache-consuming emit: ldur/cmp/b.eq/brk — THE net for the valid-but-stale direction
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT
