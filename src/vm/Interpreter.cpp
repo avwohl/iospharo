@@ -19797,7 +19797,14 @@ void Interpreter::tryJITResumeInCaller() {
                         // Safety: refuse register-reading entry offsets —
                         // see JITRuntime::tryResume / deferred.md A1.
                         if (jitRuntime_.getBcEntryState(callerJM, bcOff) == 0) {
-                            uint32_t codeOff = callerJM->codeOffsetForBC(bcOff);
+                            // RETVAL-carrying consumer: this save is
+                            // popped via JIT_RESUME_CALL (x1 = retval),
+                            // so it must land on the resumeAfterCall
+                            // continuation when one exists — the side
+                            // table; bcToCode itself is now PLAIN
+                            // (send-resume fix 2026-06-11).
+                            uint32_t codeOff =
+                                callerJM->codeOffsetForResume(bcOff);
                             resume =
                                 (codeOff == 0 || codeOff >= callerJM->codeSize)
                                     ? nullptr

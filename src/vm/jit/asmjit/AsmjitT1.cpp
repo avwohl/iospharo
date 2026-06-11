@@ -7292,7 +7292,9 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                      size_t* outSize, bool* isReal,
                      uint32_t* bcToCodeOut,
                      SendSitePatch* patchRecords = nullptr,
-                     uint32_t patchRecordCount = 0) {
+                     uint32_t patchRecordCount = 0,
+                     std::vector<std::pair<uint32_t,uint32_t>>* resumeOvOut
+                         = nullptr) {
     using namespace asmjit;
 
     Environment env = Environment::host();
@@ -8042,10 +8044,20 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             // V2: resume machinery (codeOffsetForBC consumers) lands on
             // the post-send continuation, not the next bytecode's label
             // (which forward jumps keep using).
-            for (auto& ov : resumeOverrides) {
-                if (ov.first < bcLen) {
-                    bcToCodeOut[ov.first] = (uint32_t)
-                        code.label_offset_from_base(ov.second);
+            // Send-resume fix (2026-06-11): bcToCode stays PLAIN.
+            // The continuation offsets go to a side table consumed
+            // ONLY by retval-carrying resume sites
+            // (JITMethod::codeOffsetForResume) — writing them into
+            // bcToCode poisoned every non-retval resume entry
+            // (tryResume/interp re-entry executed the continuation's
+            // arg-pop + x1 store with no retval => one-slot-shifted
+            // operand stack, the mustBeBoolean/only-idle wedge).
+            if (resumeOvOut) {
+                for (auto& ov : resumeOverrides) {
+                    if (ov.first < bcLen) {
+                        resumeOvOut->emplace_back(ov.first, (uint32_t)
+                            code.label_offset_from_base(ov.second));
+                    }
                 }
             }
         } else {
@@ -8381,10 +8393,12 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     }
     SendSitePatch* patchRecPtr =
         patchRecords.empty() ? nullptr : patchRecords.data();
+    std::vector<std::pair<uint32_t,uint32_t>> resumeOvPairs;
     bool emitOk = emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
                          callerArgCount, callerTempCount, staticJ2JArgCount,
                          buf.data(), cap, &emitted, &isReal, bcToCode.data(),
-                         patchRecPtr, (uint32_t)patchRecords.size());
+                         patchRecPtr, (uint32_t)patchRecords.size(),
+                         &resumeOvPairs);
     // Grow-and-retry on buffer overflow (emitMethodBytes returns false when
     // code_size > outCap).  The transient buffer is freed after the code-zone
     // copy, so doubling it is cheap; failing instead would lose a real method
@@ -8395,10 +8409,12 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         buf.assign(cap, 0);
         std::fill(bcToCode.begin(), bcToCode.end(), 0);
         std::fill(patchRecords.begin(), patchRecords.end(), SendSitePatch{});
+        resumeOvPairs.clear();
         emitOk = emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
                          callerArgCount, callerTempCount, staticJ2JArgCount,
                          buf.data(), cap, &emitted, &isReal, bcToCode.data(),
-                         patchRecPtr, (uint32_t)patchRecords.size());
+                         patchRecPtr, (uint32_t)patchRecords.size(),
+                         &resumeOvPairs);
     }
     if (!emitOk) {
         g_failed++; g_failedBcOther++;
@@ -8464,9 +8480,20 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         patchMapOffset = (selBitsArrayOffset + selBitsArraySize + 7u) & ~7u;
         patchMapSize   = (uint32_t)(numSendSites * sizeof(SendSitePatch));
     }
-    uint32_t payloadSize = patchMapOffset
+    uint32_t prePayloadEnd = patchMapOffset
         ? patchMapOffset + patchMapSize
         : selBitsArrayOffset + selBitsArraySize;
+    // Send-resume override side table: u32 count + count {bcOff,codeOff}
+    // pairs, 8-aligned.  Only for real emits that recorded overrides.
+    uint32_t resumeOvOffset = 0;
+    uint32_t resumeOvSize   = 0;
+    if (isReal && !resumeOvPairs.empty()) {
+        resumeOvOffset = (prePayloadEnd + 7u) & ~7u;
+        resumeOvSize   = (uint32_t)(4 + resumeOvPairs.size() * 8);
+    }
+    uint32_t payloadSize = resumeOvOffset
+        ? resumeOvOffset + resumeOvSize
+        : prePayloadEnd;
 
     // Allocate the JITMethod with full payload + IC sites.  CodeZone
     // calloc()s a heap-side icBuffer of numSendSites*IC_BYTES_PER_SITE.
@@ -8571,6 +8598,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     jm->selBitsArrayOffset =
         numSendSites > 0 ? selBitsArrayOffset : 0;
     jm->patchMapOffset = patchMapOffset;   // PMS B1 (0 = no map)
+    jm->resumeOvOffset = resumeOvOffset;   // send-resume side table (0 = none)
     jm->tier              = 1;
     // hasPrimPrologue = true means the chain loop's inline-activation
     // path (Interpreter.cpp:18731-18732) will activate this method
@@ -8811,6 +8839,16 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                     std::abort();
                 }
             }
+        }
+    }
+    // Send-resume override side table (in the same W window).
+    if (resumeOvOffset != 0) {
+        uint32_t* t = reinterpret_cast<uint32_t*>(
+            jm->codeStart() + resumeOvOffset);
+        t[0] = (uint32_t)resumeOvPairs.size();
+        for (size_t k = 0; k < resumeOvPairs.size(); k++) {
+            t[1 + 2 * k] = resumeOvPairs[k].first;
+            t[2 + 2 * k] = resumeOvPairs[k].second;
         }
     }
     // PMS B1: write the resolved patch map (design §9).  Defensive

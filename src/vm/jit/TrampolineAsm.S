@@ -76,7 +76,7 @@
 // JM_BCTOCODEOFF also shifted 52 → 56 at the same time.  The hasNLR
 // commit missed both updates — JIT silently failed to initialize for
 // ~14 commits until E2 (2026-05-24) caught it.
-#define JM_SIZE           112
+#define JM_SIZE           120
 
 // -------- ExitReason values --------
 #define EXIT_RETURN       1

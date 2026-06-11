@@ -304,6 +304,19 @@ struct JITMethod {
     // no invalidation needed.
     uint64_t  bcStartCache;
 
+    // --- V2 resume-override side table (send-resume fix, 2026-06-11) ---
+    // Offset from codeStart() to: uint32_t count, then count pairs of
+    // {bcOff, continuationCodeOff}.  The continuation (resumeAfterCall)
+    // assumes the retval-in-x1 JIT_RESUME_CALL protocol; bcToCode now
+    // stays PLAIN (next-bytecode labels) so non-retval resume entries
+    // (tryResume, interp re-entry) are safe.  Only retval-carrying
+    // consumers use codeOffsetForResume().  0 = no table.
+    // APPENDED at struct end: the stencil-tier JITMethod_mirror
+    // (stencils.cpp) models the first 96 bytes by fixed offsets —
+    // never insert mid-struct.
+    uint32_t  resumeOvOffset;
+    uint32_t  _pad_resv;
+
     // --- Accessors ---
 
     // Pointer to the start of machine code (immediately after header)
@@ -369,6 +382,21 @@ struct JITMethod {
     const SendSitePatch* patchMap() const {
         if (patchMapOffset == 0) return nullptr;
         return reinterpret_cast<const SendSitePatch*>(codeStart() + patchMapOffset);
+    }
+
+    // Resume lookup for RETVAL-CARRYING re-entries (the J2J/chain pop
+    // protocol): the per-site resumeAfterCall continuation if one was
+    // recorded for this post-send bcOffset, else the plain label.
+    uint32_t codeOffsetForResume(uint32_t bcOffset) const {
+        if (resumeOvOffset != 0) {
+            const uint32_t* t = reinterpret_cast<const uint32_t*>(
+                codeStart() + resumeOvOffset);
+            uint32_t n = t[0];
+            for (uint32_t k = 0; k < n; k++) {
+                if (t[1 + 2 * k] == bcOffset) return t[2 + 2 * k];
+            }
+        }
+        return codeOffsetForBC(bcOffset);
     }
 
     // Pointer to the bcToCode re-entry table
