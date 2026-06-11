@@ -8538,7 +8538,21 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // stay non-resumable (the MUSTBOOL risk).  Opt-in via
     // PHARO_T1_RESUME_SENDS_NO_CONDJUMP=1 while validating.
     bool resumeSendsNoCondjump = pharo::g_debug.asmjitT1ResumeSendsNoCondjump;
-    if (numSendSites > 0 && !forceResumeForSends
+    // Send-resume compile-order bisect (2026-06-11, the only-idle wedge
+    // hunt): treat methods whose compile sequence falls in
+    // [RESUME_MIN_COMPILE, RESUME_MAX_COMPILE) as force-resume.
+    bool resumeBisect = false;
+    {
+        int lo = GET_DEBUG_INT(PHARO_T1_RESUME_MIN_COMPILE);
+        int hi = GET_DEBUG_INT(PHARO_T1_RESUME_MAX_COMPILE);
+        if (lo >= 0) {
+            extern uint64_t g_t1CompileSeq2;
+            uint64_t seq = g_t1CompileSeq2;
+            resumeBisect = seq >= (uint64_t)lo
+                        && (hi < 0 || seq < (uint64_t)hi);
+        }
+    }
+    if (numSendSites > 0 && !forceResumeForSends && !resumeBisect
             && (!resumeSendsNoCondjump || t1HasCondJump))
         advertiseResume = false;
     // DEBUG ISOLATION (PHARO_T1_RESUME_ONLY_SEL): force send-resume ON for a
