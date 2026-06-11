@@ -37,6 +37,7 @@
 #include "JITConfig.hpp"
 #include "../Oop.hpp"
 #include <cstdint>
+#include "../DebugVars.hpp"
 #include <cstddef>
 #include <atomic>
 #include <new>
@@ -505,6 +506,17 @@ static constexpr size_t kJITMethodSizeAsm = 128;  // == TrampolineAsm JM_SIZE
 static_assert(sizeof(JITMethod) == kJITMethodSizeAsm,
               "sizeof(JITMethod) must equal TrampolineAsm.S JM_SIZE — "
               "update both together");
+
+// FSR M2 cursor-residency mode (DEFAULT-ON 2026-06-11): the emitted
+// J2J push/pop shapes AND the PMS patcher's pack-word offset both
+// depend on it — derive BOTH from this single helper so they can
+// never disagree.  Opt-out PHARO_T1_NO_FSR_CURSOR; the VERIFY knob
+// forces it on.  Defined here because AsmjitT1.cpp and JITRuntime.cpp
+// both include this header.
+inline bool fsrCursorMode() {
+    return !GET_DEBUG_BOOL(PHARO_T1_NO_FSR_CURSOR)
+        || GET_DEBUG_BOOL(PHARO_T1_FSR_CURSOR_VERIFY);
+}
 
 // ===== METHOD MAP =====
 //

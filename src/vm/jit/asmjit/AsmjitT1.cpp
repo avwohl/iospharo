@@ -91,6 +91,7 @@ static bool g_emitIsBlock = false;
 // FSR M1 per-compile gates (set in compileViaAsmjit).
 static bool g_fsrX19 = false;
 static bool g_fsrCursor = false;  // FSR M2 v1: x23 cursor residency (write-through)
+static bool g_fsrCursorVerify = false;
 static bool g_fsrX19Verify = false;
 // V2 emit plumbing (set per-compile by emitMethodBytes, used by the
 // send emit inside emitOne_arm64 — same single-threaded pattern):
@@ -7323,6 +7324,16 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
             // === Plain cached dispatch === (emits deferred state setup)
             a.bind(dispatchCached);
+            if (g_fsrCursorVerify) {
+                // M2 dual-cursor audit: x23 must equal the memory cursor
+                // at every send exit (write-through contract).
+                asmjit::Label c23ok = a.new_label();
+                a.ldr(x16, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                a.cmp(x16, x23);
+                a.b_eq(c23ok);
+                a.brk(0xF23);
+                a.bind(c23ok);
+            }
             if (g_fsrX19Verify) {
                 // FSR M1 oracle: x19 must equal the jitMethod mirror at
                 // every send exit.  brk #0xF19 on divergence.
@@ -8435,7 +8446,9 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         methObj->classIndex() == interp.compiledBlockClassIndex();
     g_fsrX19 = GET_DEBUG_BOOL(PHARO_T1_FSR_X19)
             || GET_DEBUG_BOOL(PHARO_T1_FSR_X19_VERIFY);
-    g_fsrCursor = GET_DEBUG_BOOL(PHARO_T1_FSR_CURSOR);
+    g_fsrCursor = fsrCursorMode()
+               || GET_DEBUG_BOOL(PHARO_T1_FSR_CURSOR);  // legacy opt-in, now a no-op
+    g_fsrCursorVerify = GET_DEBUG_BOOL(PHARO_T1_FSR_CURSOR_VERIFY);
     g_fsrX19Verify = GET_DEBUG_BOOL(PHARO_T1_FSR_X19_VERIFY);
     {
         uint32_t cls = methObj->classIndex();

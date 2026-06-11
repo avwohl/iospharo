@@ -2999,7 +2999,13 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
     std::memcpy(&w4, code + rec.tailOffset + 4, 4);
     std::memcpy(&w5, code + rec.tailOffset + 8, 4);
     std::memcpy(&w6, code + rec.tailBranchOffset, 4);
-    std::memcpy(&wPack, code + rec.tailOffset + 28, 4);
+    // The pack movk sits 28 bytes past the tail in the classic emit;
+    // the FSR M2 cursor shape (mov+ldr replacing the cursor/limit ldp)
+    // adds one instruction before it.  The mode is process-static, so
+    // the same knob the emit read decides the distance.
+    const int wPackOff = (fsrCursorMode()
+                          || GET_DEBUG_BOOL(PHARO_T1_FSR_CURSOR)) ? 32 : 28;
+    std::memcpy(&wPack, code + rec.tailOffset + wPackOff, 4);
     // Pre-patch opcode asserts (design §4 step 3): every word we are
     // about to overwrite must be the opcode class the emit put there.
     // Hard-fail on mismatch — patch-map drift is silent code corruption

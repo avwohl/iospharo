@@ -578,10 +578,11 @@ Ltramp_exit:
 SYMBOL(pharo_jit_osr_resume):
     // x0 = JITState*  (preserved through to JIT code)
     // x1 = entry function pointer
-    stp     x29, x30, [sp, #-64]!     // save fp, lr
+    stp     x29, x30, [sp, #-80]!     // save fp, lr
     stp     x19, x20, [sp, #16]       // save x19/x20 (AAPCS callee-saved)
     str     x25, [sp, #32]            // save x25 (sp-residency mirror)
     str     x26, [sp, #48]            // save x26 (simStack TOS mirror)
+    str     x23, [sp, #56]            // save x23 (FSR M2 cursor mirror)
     mov     x29, sp
     ldr     x19, [x0, #JS_JITMETHOD]
     ldr     x20, [x0, #JS_J2J_DEPTH_INC]
@@ -589,13 +590,19 @@ SYMBOL(pharo_jit_osr_resume):
     str     x0,  [sp, #40]            // stash state for the writeback
     ldr     x25, [x0, #JS_SP]
     ldur    x26, [x25, #-8]           // simStack: TOS mirror live-in
+    // FSR M2: x23 = save cursor live-in (write-through in emitted code,
+    // so no live-out store is needed).  This was THE hole that made the
+    // gated cursor mode corrupt: tryResume/tryResumeFast enter JIT here,
+    // not via JIT_CALL, and emitted code consumed an uninitialized x23.
+    ldr     x23, [x0, #JS_J2J_SAVE_CURSOR]
     blr     x1                         // call JIT'd code
     ldr     x9,  [sp, #40]
     str     x25, [x9, #JS_SP]         // writeback BEFORE restoring caller's regs
+    ldr     x23, [sp, #56]            // restore x23 for our caller
     ldr     x26, [sp, #48]            // restore x26 for our caller
     ldr     x25, [sp, #32]            // restore x25 for our caller
     ldp     x19, x20, [sp, #16]       // restore x19/x20 for our caller
-    ldp     x29, x30, [sp], #64
+    ldp     x29, x30, [sp], #80
     ret
 
 // Cross-TU sentinel: a uint64_t holding our JM_SIZE constant.
