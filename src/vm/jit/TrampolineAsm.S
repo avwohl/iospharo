@@ -494,6 +494,13 @@ Lcall_alloc_loop:
 
 Lcall_enter_callee:
     // BLR into callee JIT code; entryAddr is in x7
+    // FSR M1 (FR-1, docs/frame-state-residency.md): establish the
+    // x19 = callee-JITMethod hoist.  This entry previously left x19 at
+    // the TRAMPOLINE-ENTRY hoist (the caller's jm) — harmless while
+    // every consumer reads the OFF_JITMETHOD mirror, FATAL once FSR
+    // makes x19 the canonical identity.  x8 = callee JM here (stored
+    // to JS_JITMETHOD above).
+    mov     x19, x8
     // sp-residency Phase 1 (contract half): x25 = state.sp live-in.
     ldr     x25, [x21, #JS_SP]
     ldur    x26, [x25, #-8]           // simStack: TOS mirror live-in
