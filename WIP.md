@@ -2,6 +2,26 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11p — #3: resume-path create-handlers hardened (negative result); trace next
+
+- Resume-loop ExitBlockCreate/ExitArrayCreate now sync receiver_/
+  framePointer_/method_/homeMethod_ from state unconditionally
+  (commit "resume-path ExitBlockCreate/ExitArrayCreate sync") — a real
+  staleness hole, but **the deterministic #3 repro STILL wedges**:
+  the corrupt-closure signature has another source.
+- **NEXT (trace, not inference)**: knob-gated dump in
+  createFullBlockWithLiteral — per create: {stackPointer_, framePointer_,
+  the numCopied copied values, the outerContext oop chosen, method_
+  selector}; run the deterministic repro AND a clean resume-off run of
+  the same DET_SCHED schedule; diff streams; the first divergence
+  names the corrupt field + its producer.  Suspects list, ranked:
+  (a) copied VALUES wrong (operand stack shifted at create — would
+  point back at a resume-entry sp bug, e.g. the V2 pop's stur/sp
+  adjust interacting with creates BETWEEN sends), (b) outerContext
+  machinery (materialized-context identity), (c) something earlier
+  corrupting the stack that creates merely capture.
+- Cascade: #1 FIXED, #2 CURED, #3 = one trace away from its producer.
+
 ## CHECKPOINT 2026-06-11o — #2 CURED (headroom reservation); #3 refined to corrupt-closure creation
 
 - **#2 is DONE** (commit "cascade #2 CURED"): the saveless fast path
