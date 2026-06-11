@@ -31,6 +31,16 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   popStoreRecvVar value-from-x26 (immutable bail before sp decrement
   preserved).  Both VERIFY-gated.  B3.3 post-blr re-arm SKIPPED
   (expected ~0 per design's park rule); B3.4 join-merge PARKED.
+- **SOAK MILESTONE (2026-06-11 early am)**: the B2 soak (TOS_REG +
+  TOS_VERIFY + PATCH_VERIFY, -O0 dev) ran PAST every previous
+  endpoint — 20,336+ tests vs the prior ~16.7K max — with ZERO VERIFY
+  traps and ZERO mirror drift.  Baselined-span comparison (first
+  16,752 vs the B6 run): 29 vs 26 fails, identical composition (Cly*
+  14, CodeSimulation 2, environmental singles) -> no simStack
+  regression.  The 20K+ region's new fails are the DOCUMENTED gap
+  families (PNG 37, Fuel ~30, Mic resources, FileAttributes/LibTTY
+  env-dependent) — no session baseline exists there; they are the
+  suite-gap work, not simStack regressions.
 - **NEXT after soak completes**: quiet perf re-baseline (cfib/
   benchFib/sfib/floor ON vs OFF x5) -> B5 default-flip decision
   (flip = PHARO_T1_NO_TOS_REG opt-out + 200-class per-test A/B).
