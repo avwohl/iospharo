@@ -2,6 +2,28 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11i — simStack B2 COMPLETE (B2a/b/c); soak running
+
+- **B2 is fully landed behind PHARO_T1_TOS_REG**: B2a (arith consumes
+  TOS from x26), B2b (arith produces x26 — all 7 end-paths re-arm,
+  validity once at end), B2c (0-arg send-head receiver feed +
+  resumeAfterCall mov x26,x1 + ALL 27 endOfSend spec arrivals through
+  the per-site tosLrearm stub = the RM-F1 fix; validity claimed at the
+  send case end; both arrival classes re-arm AFTER the callee returns
+  so in-send GC cannot stale x26).
+- Every step gated under PHARO_T1_TOS_VERIFY (the per-consumer
+  ldur/cmp/brk net): cfib + DictionaryTest 205/205 + DET_SCHED 10/10,
+  zero traps at every batch.
+- **Perf so far (within-binary, build-opt): cfib ON 29-30 vs OFF
+  32-33 (~9%)** — inside the design's honest -5..-15% band.
+- 200-class+ soak with TOS_VERIFY + PATCH_VERIFY running in background.
+- **REMAINING simStack**: B3 (constSmI single-check shrink,
+  popStoreRecvVar, post-blr rearm, join-label merge), B4 (cmp+b.cond
+  fusion — the suite's #1 pair), B5 default flip after soak.
+- NOTE for the flip decision: with TOS default-on the suite/bench
+  numbers re-baseline; expect cfib ~29-30 quiet -> recompute the Cog
+  gap then.
+
 ## CHECKPOINT 2026-06-11h — simStack B0+B1 SHIPPED; next = B2 (the payoff batch)
 
 - **B0 + B1 are LIVE behind PHARO_T1_TOS_REG** (commits "simStack B0",
