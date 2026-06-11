@@ -57,6 +57,19 @@ void noteLitVarStore(uint64_t assocBits, ObjectMemory& memory);
 
 static constexpr size_t CountMapSize = 16384;
 
+// FSR M0 (docs/frame-state-residency.md): the ONE sanctioned C++ writer
+// of the JM-derived JITState mirror fields.  M4 deletes the per-call
+// emitted writers; every C++ entry edge then routes through this funnel.
+// ip is NOT set here (positional, caller-owned).
+inline void syncDerivedFromJM(JITState& s) {
+    JITMethod* jm = s.jitMethod;
+    if (!jm) return;
+    s.method = pharo::Oop::fromRawBits(jm->compiledMethodOop);
+    if (jm->literalsCache)
+        s.literals = reinterpret_cast<pharo::Oop*>(jm->literalsCache);
+    s.argCount = jm->argCount;
+}
+
 class JITRuntime {
 public:
     JITRuntime();
