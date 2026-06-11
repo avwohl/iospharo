@@ -2,6 +2,39 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11bb — SIXTH root cause; send-resume rung FLIPPED DEFAULT-ON
+
+**Root cause #6 = the chain-loop ExitYield missing frame-identity
+sync** (committed a7cb9410): a heartbeat forceYield inside an
+inline-J2J callee resumed the OUTER method at the callee's ip —
+preemption-timed SILENT value corruption (no DNU/MUSTBOOL; surfaced
+as spurious watchdog timeouts + wrong Integer/Fraction values).
+Proof: every run on the pre-sync binary had 1-7 spurious timeouts;
+SIX consecutive runs post-sync have ZERO.  The SP-DEPTH oracle's 8
+startup hits are config-independent noise (identical in default).
+
+**THE FLIP (committed): condjump-free send methods are RESUMABLE BY
+DEFAULT** (resumeSendsNoCondjump default-true; opt-out
+PHARO_T1_NO_RESUME_SENDS).  Qualified by an IDENTICAL 60-class A/B
+(4134==4134, zero fail both sides) + ladder + benches.
+
+**Trap fixed en route: JM_SIZE drift** — FSR-M0's literalsCache grew
+sizeof(JITMethod) 120->128; TrampolineAsm.S JM_SIZE stayed 120 -> V2
+identities 8 bytes off -> 10x benchFib (251ms).  Bisected across 3
+commits; fixed + LOCKED with an exact static_assert (build fails on
+future drift).
+
+**Current quiet numbers:** fib30 24-25ms (Cog 5), dict 388 (Cog 18),
+sendmix 96 (Cog 2).  The macro gap = FSR M1-M3 (per-activation mirror
++ send sequence), unchanged by the rung as predicted.
+
+**NEXT:** (1) FSR M1 (x19 invariant) -> M2 (cursor residency, MONEY)
+-> M3 (depth elimination, MONEY) per docs/frame-state-residency.md;
+M0 remains: FSR_VERIFY oracle wiring at choke points, grep tables;
+(2) next resume rung when ready (RESUME for condjump methods = the
+full force config — ladder-clean already, suite-soak needed);
+(3) full-suite + Cog re-baseline after M3.
+
 ## CHECKPOINT 2026-06-11aa — narrow-rung cluster = SILENT VALUE CORRUPTION under process-switch resume
 
 **The 'timeouts' are SPURIOUS VERDICTS, not stalls.**  A stall-catcher
