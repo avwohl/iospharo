@@ -23570,6 +23570,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             ipOff, frameDepth_, (void*)state.sp, state.j2jDepth);
     }
     jitActivationHits_++;
+    // PHARO_JIT_TRACE_OOP exit-reason histogram (scanFor: bail-edge hunt).
+    if (__builtin_expect(traceThis, 0)) {
+        static uint64_t exitHist[16] = {0};
+        int er = (int)state.exitReason;
+        if (er >= 0 && er < 16) exitHist[er]++;
+        static uint64_t tn = 0;
+        if ((++tn & 0x3FFF) == 0) {
+            fprintf(stderr, "[JIT-TRACE-EXITS]");
+            for (int e = 0; e < 16; e++) if (exitHist[e])
+                fprintf(stderr, " r%d:%llu", e, (unsigned long long)exitHist[e]);
+            fprintf(stderr, "\n");
+        }
+    }
 
     // Diagnostic: detect when JIT produces obviously wrong return values.
     // A small SmallInteger (<256) as returnValue from a non-arithmetic method
