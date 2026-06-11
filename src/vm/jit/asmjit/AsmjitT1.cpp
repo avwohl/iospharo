@@ -3425,6 +3425,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         } else {
             a.ldr(x4, ptr(x2, -8));
         }
+        // B2b (producer side): every path that reaches `end` stores a
+        // result to the new TOS slot — mirror it into x26 so the next
+        // bytecode starts with a valid cache.  The bail path rets to
+        // the interpreter (no `end` arrival), so claiming validity at
+        // `end` is sound iff EVERY b(end) site below re-arms first —
+        // all seven do (+, -, *, csel-compares, float, ByteString=
+        // true/false).
+        const bool tosProduceArith = tosFam(kTosFamArith);
         // SmI tag check (5 ops): (a^b) | (a-1) low 3 bits = 0 iff
         // both SmI AND same tag.
         a.eor(x5, x1, x4);
@@ -3438,6 +3446,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.adds(x1, x1, x4);
             a.b_vs(bail);
             a.sub(x1, x1, asmjit::Imm(1));
+            if (tosProduceArith) a.mov(x26, x1);
             a.str(x1, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             emitStoreSp(a, x2);
@@ -3446,6 +3455,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.subs(x1, x1, x4);
             a.b_vs(bail);
             a.add(x1, x1, asmjit::Imm(1));
+            if (tosProduceArith) a.mov(x26, x1);
             a.str(x1, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             emitStoreSp(a, x2);
@@ -3463,6 +3473,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Retag.
             a.lsl(x1, x1, asmjit::Imm(3));
             a.orr(x1, x1, asmjit::Imm(1));
+            if (tosProduceArith) a.mov(x26, x1);
             a.str(x1, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             emitStoreSp(a, x2);
@@ -3483,6 +3494,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 case 0x66: a.csel(x5, x6, x5, CondCode::kEQ); break;
                 case 0x67: a.csel(x5, x6, x5, CondCode::kNE); break;
             }
+            if (tosProduceArith) a.mov(x26, x5);
             a.str(x5, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             emitStoreSp(a, x2);
@@ -3547,6 +3559,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // immediate (asmjit drops it → tag 0 corruption); after `lsl #3`
             // the low 3 bits are 0 so `add #5` sets the tag identically.
             a.add(x5, x5, asmjit::Imm(5));
+            if (tosProduceArith) a.mov(x26, x5);
             a.str(x5, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             emitStoreSp(a, x2);
@@ -3622,12 +3635,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // true / false result.
             a.bind(resultTrue);
             a.ldr(x6, ptr(x0, OFF_TRUEOOP));
+            if (tosProduceArith) a.mov(x26, x6);
             a.str(x6, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             emitStoreSp(a, x2);
             a.b(end);
             a.bind(resultFalse);
             a.ldr(x6, ptr(x0, OFF_FALSEOOP));
+            if (tosProduceArith) a.mov(x26, x6);
             a.str(x6, ptr(x2, -16));
             a.sub(x2, x2, asmjit::Imm(8));
             emitStoreSp(a, x2);
@@ -3644,6 +3659,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ret(x30);
 
         a.bind(end);
+        if (tosProduceArith) g_tos.valid = true;
         return true;
     }
     // Phase 3 bitwise on ARM64: 0x6E bitAnd:, 0x6F bitOr:.  Tag bits
