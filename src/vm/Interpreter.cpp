@@ -25168,6 +25168,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             jitYieldCount_++;
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            // Audit S2 fix (2026-06-11): same as the resume-loop ExitYield —
+            // the resume below pairs computeCurrentBCOffset()/tryResume with
+            // method_; sync the frame identity from state so a yield inside
+            // an inline-J2J callee doesn't resume the OUTER method.
+            {
+                receiver_ = state.receiver;
+                framePointer_ = state.tempBase - 1;
+                method_ = state.method;
+                homeMethod_ = state.method;
+            }
             {
                 // Each yield = ~1000 backward jumps. Estimate bytecodes executed.
                 int numBC = state.jitMethod ? state.jitMethod->numBytecodes : 20;
