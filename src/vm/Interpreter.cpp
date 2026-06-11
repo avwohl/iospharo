@@ -20982,6 +20982,31 @@ void Interpreter::tryJITResumeInCaller() {
             uint32_t classIndex = memory_.indexOfClass(arrayClass);
             Oop array = memory_.allocateSlots(classIndex, arraySize, ObjectFormat::Indexable);
             if (popIntoArray) {
+                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                        && arraySize == 1) {
+                    Oop tv = stackPointer_[-1];
+                    bool bad = tv.isObject() && tv.rawBits() > 0x10000
+                        && !tv.asObjectPtr()->isBytesObject()
+                        && tv.asObjectPtr()->slotCount() > 0;
+                    if (bad) {
+                        static int vp = 0;
+                        if (++vp <= 30) {
+                            long ipo = -1;
+                            if (method_.isObject()) {
+                                ObjectHeader* mo = method_.asObjectPtr();
+                                size_t nl = memory_.numLiteralsOf(method_);
+                                ipo = instructionPointer_
+                                    - (mo->bytes() + (1 + nl) * 8);
+                            }
+                            fprintf(stderr,
+                                "[VEC-POP@20946] m=#%s ipOff=%ld tos=%s "
+                                "sp-fp=%lld\n",
+                                memory_.selectorOf(method_).c_str(), ipo,
+                                memory_.classNameOf(tv).c_str(),
+                                (long long)(stackPointer_ - framePointer_));
+                        }
+                    }
+                }
                 for (int i = arraySize - 1; i >= 0; i--)
                     memory_.storePointer(i, array, pop());
             }
@@ -24774,6 +24799,31 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             uint32_t classIndex = memory_.indexOfClass(arrayClass);
             Oop array = memory_.allocateSlots(classIndex, arraySize, ObjectFormat::Indexable);
             if (popIntoArray) {
+                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                        && arraySize == 1) {
+                    Oop tv = stackPointer_[-1];
+                    bool bad = tv.isObject() && tv.rawBits() > 0x10000
+                        && !tv.asObjectPtr()->isBytesObject()
+                        && tv.asObjectPtr()->slotCount() > 0;
+                    if (bad) {
+                        static int vp = 0;
+                        if (++vp <= 30) {
+                            long ipo = -1;
+                            if (method_.isObject()) {
+                                ObjectHeader* mo = method_.asObjectPtr();
+                                size_t nl = memory_.numLiteralsOf(method_);
+                                ipo = instructionPointer_
+                                    - (mo->bytes() + (1 + nl) * 8);
+                            }
+                            fprintf(stderr,
+                                "[VEC-POP@24744] m=#%s ipOff=%ld tos=%s "
+                                "sp-fp=%lld\n",
+                                memory_.selectorOf(method_).c_str(), ipo,
+                                memory_.classNameOf(tv).c_str(),
+                                (long long)(stackPointer_ - framePointer_));
+                        }
+                    }
+                }
                 for (int i = arraySize - 1; i >= 0; i--)
                     memory_.storePointer(i, array, pop());
             }

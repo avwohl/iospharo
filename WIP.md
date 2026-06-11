@@ -2,6 +2,33 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11w — fourth class: activation arg-slot = receiver (off-by-one)
+
+Narrow-rung repro (PHARO_T1_RESUME_SENDS_NO_CONDJUMP=1 + DET_SCHED +
+SP_DEPTH_TRAP, build-opt, eval 3+4) fails EARLY (first DNU at output
+line ~21K, vs ~5.7M for the windows config) with a SHARPER signature:
+
+  [DNU] #value: on Array in Array>>do: fd=12 ipOff=16
+  fp[0]=Array(receiver) fp[1]=Array(SAME OOP — should be the closure!)
+  caller stack: fp[-1]=OrderedCollection (not a closure either)
+
+i.e. Array>>do: was ACTIVATED with its argument slot holding the
+RECEIVER oop — the closure never made it into the frame.  An
+activation argument-copy off-by-one (copy source = stack[recv] instead
+of stack[recv+1], or the send pushed [recv, recv]) in a resume-related
+activation path.  Chimera caller stack (SourceFile>>on:do: under
+FinalizationRegistry>>add:) — frame identities unreliable, as with the
+prior classes.  The windows-config variant of this class shows as
+'#+ on OCVariableNode' (loop-index temp = args array) — likely the
+SAME copy off-by-one seen through the vec capture.
+
+Next probes: (1) trap in activateMethod/activateBlock when argCount>=1
+and arg0 oop == receiver oop (cheap, knob-gated) -> print the caller
+frame + savedIP to identify the pushing path; (2) audit the J2J/chain
+activation copies (`state.sp[-(nArgs+1)]` family) for one path using
+nArgs where nArgs+1 belongs; (3) [VEC-POP] trap is in (both create
+handlers) — successorSequences pops are legit captures, ignore.
+
 ## CHECKPOINT 2026-06-11v — THIRD root cause fixed (silent encoding drop); FOURTH class isolated
 
 **FIX 3 (committed): un-encodable IC-offset add silently dropped.**
