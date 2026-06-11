@@ -5070,6 +5070,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // handoff would need to solve.  Cost: 1 ldp + sub +
                     // cmp + branch on the saveless fast path.
                     a.ldp(x14, x15, ptr(x0, OFF_J2J_SAVE_CURSOR));
+                    // NULL-CURSOR GUARD (cascade-#3 force-resume residual,
+                    // 2026-06-11): the interp resume loop runs with
+                    // j2jSaveCursor = limit = NULL (J2J disabled).  The
+                    // unsigned subtraction below then underflows
+                    // (0 - 64*JSV wraps huge) and 0 >= huge is FALSE, so
+                    // the saveless path engaged WITH NO POOL — its retro
+                    // pool-full check (cursor==limit==0 -> "full") exited
+                    // ExitRetroFull(13), which has NO C++ handler (it was
+                    // believed unreachable) and fell into the switches'
+                    // default arms with the elided frame lost (the
+                    // DateParser parseNextPattern MUSTBOOL).  A null
+                    // cursor must mean "no J2J" -> normalJ2J.
+                    a.cbz(x14, normalJ2J);
                     a.sub(x15, x15, asmjit::Imm(64 * JSV_SIZE));
                     a.cmp(x14, x15);
                     a.b_hs(normalJ2J);
