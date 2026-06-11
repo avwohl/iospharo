@@ -2,6 +2,35 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11rr — ensure: was the force-rung blocker; dict lever = dead inline-prims
+
+FORCE-RUNG FIXED: compile-seq bisect (script /tmp/rbisect.sh,
+RESUME_MIN/MAX_COMPILE knobs) -> ONE culprit, #ensure: (prim 198,
+unwind-MARKED).  Marked methods (198/199) now never advertise resume
+(AsmjitT1, ~9171 gate region).  Force-rung ladder CLEAN.  Suite soak
+of the new default IN FLIGHT (/tmp/soak_ensure.log).
+NOTE: cond-jump send-resume default flip is now UNBLOCKED (remove
+t1HasCondJump from the gate) but NOT YET justified by measurement —
+force-rung dict showed NO win (450 vs 437ms).
+
+REFUSAL-RATE THEORY KILLED (5th false-lead class): resumability does
+not move dict.  THE REAL LEAD — C++-send census (new probe in
+sendSelector, PHARO_JIT_FAIL_REASONS=1, [CPP-SEND-CENSUS]): per 1M
+window #at:=477K #key=453K dwarf everything; and the stats footer
+shows inline-prim: at=0 atPut=0 size=0 class=0 — the send-site
+primKind 14/15/16 specializations AND the bit-63 quick-getter (#key,
+prim 264!) NEVER ENGAGE in the dict loop.  In bench-suite-era runs
+these fired constantly.  NEXT SESSION:
+(1) find why at:-site IC extras lack primKind 14 here (fill order?
+    late-spec recompile dead? tier=2 recompiles w/ numBytecodes=0
+    suggest the recompile path is producing stub JMs!);
+(2) check JITCompiler recompile()/compile() — observed tier=2 JMs
+    with nBC=0 contradict JITCompiler.cpp:2539 setting numBytecodes;
+(3) #key inline-getter: UNSUPP-PRIM log showed prim=264 #key REFUSED
+    compile — quick prims should at least fallback-body-compile now,
+    but the SEND-SITE getter bit is the real fix (caller-side).
+dict still 437ms vs Cog 26 (16.8x).  fib30 unchanged ~17.5 vs 5.
+
 ## CHECKPOINT 2026-06-11qq — refusal chain fully decoded; force-rung is the dict lever
 
 tryResume refusal telemetry (rrDump in JITRuntime.cpp, knob
