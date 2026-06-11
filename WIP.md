@@ -2,6 +2,27 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11pp — dict profile decoded; NEXT LEVER = resume-fail rate
+
+Profile (sample of the dict loop, steady state): time is C++ interp —
+returnFromMethod -> tryJITResumeInCaller -> activateMethod chain +
+storePointer sweep.  Two fixes landed: incremental materialization
+(SavedFrame.ctxSynced; skip re-sync of unchanged suspended frames;
+opt-out PHARO_MAT_FULL_RESYNC; dict ~5%) — soak IN FLIGHT
+(/tmp/soak_matskip.log, expect 2468/0/0).
+
+THE BIG LEAD (steady-state [JIT] Stats windows, dict run): J2J-r
+resume succeeds only ~22% (1650/7400 per 65K-send window).  A failed
+tryResume leaves the caller INTERPRETED until return -> per-return
+tryJITResumeInCaller -> the C++ storm.  Suspected refusal:
+getBcEntryState(jm, postSendOff) != 0 (register-reading _N entries)
+— over-conservative for offsets the resumeOverrides table points at
+LANDERS (they take retval in x1; JIT_RESUME_CALL passes it).  TODO:
+(1) instrument tryResume fail reasons (counter per refusal site);
+(2) if confirmed, accept lander-override entries at the tryResume +
+kind-1 precompute gates (use JIT_RESUME_CALL with the retval);
+(3) re-measure dict (was 378-450ms vs Cog 26).
+
 ## CHECKPOINT 2026-06-11oo — fresh gap numbers; dict is the headline
 
 Quiet re-measure (min-of-3 in-process, current default build-opt):
