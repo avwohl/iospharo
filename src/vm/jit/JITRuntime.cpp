@@ -2376,11 +2376,15 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
     // method inside this JIT_CALL, and the restore clobbers that state.
     // Mirrors the chain-loop pattern at Interpreter.cpp ~22264.
     int32_t savedEntryDepth = state->j2jEntryDepth;
+    uint8_t* savedEntryDepth_cur = state->j2jEntryCursor;  // FSR M3
     state->j2jEntryDepth = state->j2jDepth;
+    state->j2jEntryCursor = state->j2jSaveCursor;  // FSR M3: pin baseline
 
     JIT_CALL(entryAddr, state);
 
     state->j2jEntryDepth = savedEntryDepth;
+
+    state->j2jEntryCursor = savedEntryDepth_cur;  // FSR M3
 
     if (__builtin_expect(state->exitReason == ExitReturn, 1)) {
         interp->incJ2JStencilReturns();

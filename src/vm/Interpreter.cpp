@@ -11131,6 +11131,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             sstate.methodMapPtr = nullptr;
             sstate.yieldCountdown = 0;
             sstate.j2jEntryDepth = 0;
+            sstate.j2jEntryCursor = sstate.j2jSaveCursor;  // FSR M3: fresh-slice baseline
             sstate.j2jDepthInc = 0x0000000100000001ULL;
             sstate.sistaSaveCursor = nullptr;
             sstate.sistaSaveLimit = nullptr;
@@ -15021,6 +15022,7 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     sstate.methodMapPtr = nullptr;
     sstate.yieldCountdown = 0;
     sstate.j2jEntryDepth = 0;
+    sstate.j2jEntryCursor = sstate.j2jSaveCursor;  // FSR M3: fresh-slice baseline
     sstate.j2jDepthInc = 0x0000000100000001ULL;
     sstate.sistaSaveCursor = nullptr;
     sstate.sistaSaveLimit = nullptr;
@@ -19435,6 +19437,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         sstate.methodMapPtr = nullptr;
         sstate.yieldCountdown = 0;
         sstate.j2jEntryDepth = 0;
+        sstate.j2jEntryCursor = sstate.j2jSaveCursor;  // FSR M3: fresh-slice baseline
         sstate.j2jDepthInc = 0x0000000100000001ULL;
         sstate.sistaSaveCursor = nullptr;
         sstate.sistaSaveLimit = nullptr;
@@ -19905,6 +19908,7 @@ void Interpreter::tryJITResumeInCaller() {
         state.j2jDepth = 0;
         state.j2jTotalCalls = 0;
         state.j2jEntryDepth = 0;
+        state.j2jEntryCursor = state.j2jSaveCursor;  // FSR M3: fresh-slice baseline
         state.j2jDepthInc = 0x0000000100000001ULL;
         state.methodMapPtr = &jitRuntime_.methodMap();
         state.yieldCountdown = 1000;
@@ -20468,9 +20472,12 @@ void Interpreter::tryJITResumeInCaller() {
                     spLastSite = "J2JCall";
                     // Set per-entry baseline (option (a) per deferred A6).
                     int32_t saved_entryDepth_r = state.j2jEntryDepth;
+                    uint8_t* saved_entryDepth_r_cur = state.j2jEntryCursor;  // FSR M3
                     state.j2jEntryDepth = state.j2jDepth;
+                    state.j2jEntryCursor = state.j2jSaveCursor;  // FSR M3: pin baseline
                     JIT_CALL(entryAddr, &state);
                     state.j2jEntryDepth = saved_entryDepth_r;
+                    state.j2jEntryCursor = saved_entryDepth_r_cur;  // FSR M3
                     validateState("post-J2JCall", nullptr);
 
                 } else {
@@ -23269,6 +23276,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.j2jDepth = 0;
     state.j2jTotalCalls = 0;
     state.j2jEntryDepth = 0;
+    state.j2jEntryCursor = state.j2jSaveCursor;  // FSR M3: fresh-slice baseline
     state.j2jDepthInc = 0x0000000100000001ULL;
     state.methodMapPtr = &jitRuntime_.methodMap();
     state.yieldCountdown = 1000;
@@ -23696,12 +23704,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 // Set per-entry baseline so callee's return prelude doesn't
                 // pop OUTER inline-J2J saves (option (a) per deferred A6).
                 int32_t saved_entryDepth = state.j2jEntryDepth;
+                uint8_t* saved_entryDepth_cur = state.j2jEntryCursor;  // FSR M3
                 state.j2jEntryDepth = state.j2jDepth;
+                state.j2jEntryCursor = state.j2jSaveCursor;  // FSR M3: pin baseline
 
                 // Enter callee JIT code (already executable from loop start)
                 JIT_CALL(entryAddr, &state);
 
                 state.j2jEntryDepth = saved_entryDepth;
+
+                state.j2jEntryCursor = saved_entryDepth_cur;  // FSR M3
 
             } else {
                 // --- J2J Return: pop frame, resume caller ---
@@ -24001,6 +24013,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // stale j2jEntryDepth > 0 wedges the return prelude (pops only
         // while depth > entryDepth) and leaks saves.
         state.j2jEntryDepth = 0;
+        state.j2jEntryCursor = state.j2jSaveCursor;  // FSR M3: fresh-slice baseline
         state.j2jTotalCalls = 0;
         state.yieldCountdown = 1000;
     };
@@ -25197,6 +25210,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // j2jEntryDepth > 0 here would wedge the return prelude
             // (pops only while depth > entryDepth) and leak saves.
             state.j2jEntryDepth = 0;
+            state.j2jEntryCursor = state.j2jSaveCursor;  // FSR M3: fresh-slice baseline
             state.j2jTotalCalls = 0;
             state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
             state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
@@ -25453,6 +25467,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // Keep the prelude-pop base in sync with the
                         // depth reset (stale entryDepth wedges pops).
                         state.j2jEntryDepth = 0;
+                        state.j2jEntryCursor = state.j2jSaveCursor;  // FSR M3: fresh-slice baseline
                         state.j2jTotalCalls = 0;
                         state.yieldCountdown = 1000;
 
