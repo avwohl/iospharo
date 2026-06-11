@@ -23581,6 +23581,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             for (int e = 0; e < 16; e++) if (exitHist[e])
                 fprintf(stderr, " r%d:%llu", e, (unsigned long long)exitHist[e]);
             fprintf(stderr, "\n");
+            // Dump the traced method's IC sites: per site, entry-0
+            // key/extras (+ selector bits) — the at:-inline question.
+            if (jm->icBuffer && jm->numICEntries > 0 && tn <= 0x8000) {
+                for (uint32_t si = 0; si < jm->numICEntries && si < 8; si++) {
+                    uint64_t* sl = reinterpret_cast<uint64_t*>(
+                        jm->icZoneStart() + si * jit::IC_BYTES_PER_SITE);
+                    Oop selO = Oop::fromRawBits(sl[18]);
+                    std::string sn = (selO.isObject() && selO.rawBits() > 0x10000)
+                        ? memory_.oopToString(selO) : "?";
+                    fprintf(stderr, "  [IC-SITE %u] sel=#%s key0=0x%llx "
+                        "extras0=0x%llx key1=0x%llx extras1=0x%llx\n",
+                        si, sn.c_str(),
+                        (unsigned long long)sl[0], (unsigned long long)sl[2],
+                        (unsigned long long)sl[3], (unsigned long long)sl[5]);
+                }
+            }
         }
     }
 
