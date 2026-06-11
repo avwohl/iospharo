@@ -34,6 +34,25 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   Diagnose with: pool-occupancy counter at wedge time + the WEDGE
   process-table lldb recipe (memory sunit-fullsuite-blocker-cascade)
   + DET_SCHED on a wedging window for determinism.
+- **#3 ROOT-CAUSED (deterministic: DET_SCHED + saveless-off +
+  windows [2000,3500)+[3500,5000))**: the wedge output contains
+  character-INTERLEAVED error prints (two processes printing at once)
+  that deinterleave to **Context>>cannotReturn: +
+  Exception>>handleSignal: + NonInteractiveUIManager>>handleError:**,
+  and [DIAG-TIMER] shows timerSem=nil/armed=0 at the wedge.  Chain:
+  a NON-LOCAL RETURN from (or through) a RESUMED activation fails
+  home-context identification -> cannotReturn: -> error cascade kills
+  the active process -> Delay scheduler never re-armed -> only-idle.
+  This is the known NLR home-finding weakness (memory
+  nlr-nested-valuewithexit-bug: home matched by method-oop,
+  innermost) interacting with resume's frame identity: resumed
+  callers' frames are re-entered/re-materialized and blocks' `^`
+  can't find home.  FIX AREA: the NLR home-finding vs
+  SavedFrame/materialize bookkeeping across resume
+  (Interpreter.cpp ~11445 home-matching + materializeJ2JSaveIntoFrame
+  + the resume entry's frame identity).  NOT pool exhaustion (8x pool
+  no effect); population-dependence = more resumable methods => more
+  blocks whose home is a resumed frame.
 - The prize (re-verified post-fix-#1 pending): single-method resume
   sendloop 345 -> 25 ms (14x).  After #2/#3: stage
   RESUME_SENDS_NO_CONDJUMP -> full -> default with the ladder
