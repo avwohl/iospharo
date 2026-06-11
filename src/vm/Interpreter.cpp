@@ -19800,6 +19800,51 @@ void Interpreter::tryJITResumeInCaller() {
                         state.exitReason = jit::ExitSendCached;
                         break;
                     }
+#if PHARO_J2J_SAVE_V2
+                    // Send-resume cascade-#3 ROOT FIX (2026-06-11): a V2
+                    // rj2j save whose caller cannot carry a packed resume
+                    // (no continuation/plain target, bcOff > 0xFFF, or a
+                    // register-reading entry) loses BOTH its resume ip
+                    // AND its caller identity (V2 derives them from the
+                    // packed word) — materializeJ2JSaveIntoFrame then
+                    // rebuilt the frame at METHOD START with nArgs=0 and
+                    // the interpreter RE-EXECUTED the whole caller body
+                    // on return (the token-for-Boolean MUSTBOOLs and the
+                    // shifted-operand DNUs under broad send-resume).
+                    // Refuse the conversion instead: the regular cached-
+                    // send path records a true SavedFrame with the real
+                    // interp ip.
+                    {
+                        jit::JITMethod* cJM = reinterpret_cast<
+                            jit::JITMethod*>(state.jitMethod);
+                        bool packable = false;
+                        if (cJM) {
+                            int cNumLits =
+                                (int)(cJM->methodHeader & 0x7FFF);
+                            ObjectHeader* cMeth = Oop::fromRawBits(
+                                cJM->compiledMethodOop).asObjectPtr();
+                            uint8_t* cBcStart =
+                                cMeth->bytes() + (1 + cNumLits) * 8;
+                            uint8_t sOp = *state.ip;
+                            int sLen = (sOp >= 0xEA && sOp <= 0xEB) ? 2 : 1;
+                            uint32_t pOff = (uint32_t)(
+                                state.ip + sLen - cBcStart);
+                            int pArgs = state.sendArgCount;
+                            if (pOff <= 0xFFFu && pArgs <= 15
+                                    && jitRuntime_.getBcEntryState(
+                                           cJM, pOff) == 0) {
+                                uint32_t cOff =
+                                    cJM->codeOffsetForResume(pOff);
+                                packable = cOff != 0
+                                        && cOff < cJM->codeSize;
+                            }
+                        }
+                        if (!packable) {
+                            state.exitReason = jit::ExitSendCached;
+                            break;
+                        }
+                    }
+#endif
 
                     rj2jCalls++;
 
