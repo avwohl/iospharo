@@ -2,6 +2,39 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11v — THIRD root cause fixed (silent encoding drop); FOURTH class isolated
+
+**FIX 3 (committed): un-encodable IC-offset add silently dropped.**
+emitMaterializeX5's `add x5,x5,#(siteIdx*152)` is un-encodable for
+siteIdx>=27 (imm12 max 4095); asmjit SILENTLY SKIPPED it -> every send
+site >=27 probed SITE 0's IC: same-class key matched, dispatchCached
+served site 0's METHOD for the wrong selector (minExtent bc-144
+minHeight ran #hResizing -> #shrinkWrap as a Point coordinate ->
+Morphic DNU cascade).  Diagnosis: [IC-WRONGSEL] consumer check (all
+hits site=0) -> table verified -> [X5ADD] code scan found ZERO adds.
+Fixed: split lsl#12+low add; T1EncodingErrorHandler now FAILS any
+compile with an encoding error (systemic guard — the 3rd shipped bug
+of this silent-drop class); consumer-side wrong-selector bail kept.
+Wrong-selector dispatches: 34 -> 0.
+
+**FOURTH class (OPEN, the current blocker for the resume ladder)**:
+10x '#+ on OCVariableNode' DNU during in-image compilation
+(OCASTTranslator>>emitMessageNode: subtree).  Shape: a loop-index
+temp in the OrderedCollection do:/fillFrom:with: machinery holds the
+ARGS ARRAY instead of the index SmI (`i := i + 1` -> `array + 1` ->
+adaptToCollection -> per-element #+ on OCVariableNode).  The temp is
+block-written (indirection vector, PushTempAtInVec 0xFB) -> suspect
+the tempVector slot or the copied-values capture corrupted by a
+resume.  Reproduces ALSO under the NARROW rung
+(PHARO_T1_RESUME_SENDS_NO_CONDJUMP=1 + DET_SCHED, no windows): 10
+DNUs, eval result lost — so this lesion (not the fixed three) is what
+the old 'AI-Algorithms-Graph asTuple operand corruption' note in the
+resume gate comment was about.  NEXT: RETPLACE/RES-IN trace on
+fillFrom:with:/do: frames around the first DNU (line ~5.7M in
+/tmp/res33.txt pattern); check the 0xFB/vec-create handling in resumed
+methods (ExitArrayCreate sync, tempVector slot writes); the asTuple
+atRec tape (FINDNODE_WATCH) is purpose-built for exactly this shape.
+
 ## CHECKPOINT 2026-06-11u — #3 CRACKED OPEN: TWO root causes fixed; one DNU class left
 
 The "resume RE-ENTRY protocol" hypothesis from checkpoint t was WRONG.

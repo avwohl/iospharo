@@ -6810,7 +6810,8 @@ terminate_process:
             std::string s_ = (method_.isObject()
                               && method_.rawBits() > 0x10000)
                 ? memory_.selectorOf(method_) : std::string("?");
-            if (s_ == "minExtent" && ++rvN <= 400) {
+            if ((s_ == "emitMessageNode:" || s_ == "argumentNames"
+                 || s_ == "translateFullBlock:") && ++rvN <= 400) {
                 long ipo = -1;
                 if (method_.isObject()) {
                     ObjectHeader* mo = method_.asObjectPtr();
