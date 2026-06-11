@@ -29,6 +29,11 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   cached; synthesis had hit the session limit) -> docs/simstack-design.md.
 - Also landed today: §14 #5 eager-compile owner re-validation,
   PHARO_T1_PATCH_MAX_IC (Q3 probe), compact() tripwire, §14 #4.
+- **Q3 probe results (PATCH_MAX_IC=4)**: cfib 22 / benchFib 68 (flat
+  vs default — cfib callees already <=1 IC), Dictionary 205/205 with
+  VERIFY silent, DET_SCHED 10/10.  Safe; suite-scale benefit unproven
+  -> left non-default.  Flip candidate after a 60-class A/B if the
+  suite-scale linked population matters.
 
 ## CHECKPOINT 2026-06-11e — PMS design COMPLETE + B0 LANDED; resume at B1
 
