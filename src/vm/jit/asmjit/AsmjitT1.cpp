@@ -825,6 +825,12 @@ constexpr int OFF_J2J_DEPTH       = 160;
 constexpr int OFF_J2J_TOTAL_CALLS = 164;
 constexpr int OFF_J2J_ENTRY_DEPTH = 200;
 [[maybe_unused]] constexpr int OFF_J2J_DEPTH_INC = 208;
+// Retro-save graceful pool-full handoff (cascade #2).
+constexpr int OFF_RETRO_SP        = 272;
+constexpr int OFF_RETRO_RECV      = 280;
+constexpr int OFF_RETRO_TEMPBASE  = 288;
+constexpr int OFF_RETRO_RESUME    = 296;
+constexpr int OFF_RETRO_ORIG_EXIT = 304;
 
 // ExitReason values (JITState.hpp).
 constexpr int EXIT_RETURN          = 1;
@@ -834,6 +840,7 @@ constexpr int EXIT_SEND_CACHED     = 7;
 constexpr int EXIT_BLOCK_CREATE    = 8;
 constexpr int EXIT_ARRAY_CREATE    = 9;
 constexpr int EXIT_MUST_BOOL       = 12;
+constexpr int EXIT_RETRO_FULL      = 13;
 
 // nArgs per special selector 0x70..0x7F (index = op - 0x70).
 //   at: at:put: size next nextPut: atEnd == class ~~ value value: do: new new: x y
@@ -5136,7 +5143,40 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.cmp(x14, x15);
                         asmjit::Label haveRoom = a.new_label();
                         a.b_lo(haveRoom);
-                        a.brk(asmjit::Imm(0xDEAE & 0xFFFF));
+                        {
+                            // Graceful pool-full handoff (cascade #2,
+                            // was brk 0xDEAE): hand the elided frame to
+                            // C++ via the retro fields + ExitRetroFull;
+                            // the handler materializes the pool, resets
+                            // the cursor, pushes this save, and
+                            // re-dispatches the callee's ORIGINAL bail
+                            // reason (currently in OFF_EXIT).
+                            a.ldr(w15, ptr(x0, OFF_EXIT));
+                            a.str(w15, ptr(x0, OFF_RETRO_ORIG_EXIT));
+                            a.ldp(x4, x5, ptr(sp, 0));     // sp + recv
+                            a.str(x4, ptr(x0, OFF_RETRO_SP));
+                            a.str(x5, ptr(x0, OFF_RETRO_RECV));
+                            a.ldr(x4, ptr(sp, 16));         // tempBase
+                            a.str(x4, ptr(x0, OFF_RETRO_TEMPBASE));
+                            a.adr(x5, resumeAfterCall);
+                            {
+                                uint32_t rOff = (uint32_t)globalIdx + 1;
+                                uint16_t p16 = (uint16_t)
+                                    (((nArgs & 0xF) << 12) | (rOff & 0xFFF));
+                                a.movk(x5, p16, 48);
+                            }
+                            a.str(x5, ptr(x0, OFF_RETRO_RESUME));
+                            a.mov(w15, asmjit::Imm(EXIT_RETRO_FULL));
+                            a.str(w15, ptr(x0, OFF_EXIT));
+                            // unwind the machine stash exactly like the
+                            // normal retro epilogue, then exit to C++.
+                            a.ldr(w4, ptr(sp, 40));
+                            a.str(w4, ptr(x0, OFF_J2J_ENTRY_DEPTH));
+                            a.ldr(x30, ptr(sp, 32));
+                            a.add(sp, sp, asmjit::Imm(stashSize));
+                            emitSyncSpToState(a);
+                            a.ret(x30);
+                        }
                         a.bind(haveRoom);
                         // save.{sp,receiver} from stash[0,8]
                         a.ldp(x4, x5, ptr(sp, 0));

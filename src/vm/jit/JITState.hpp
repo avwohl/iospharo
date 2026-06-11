@@ -164,6 +164,20 @@ struct JITState {
     uint8_t* oldSpaceEnd;     // offset 248
     uint8_t* newSpaceStart;   // offset 256
     uint8_t* newSpaceEnd;     // offset 264
+
+    // Retro-save graceful pool-full handoff (send-resume cascade #2,
+    // 2026-06-11): when the saveless path's retro-save finds the pool
+    // full, the frame that WOULD have been saved is handed to C++ via
+    // these four fields + ExitRetroFull, instead of the old brk 0xDEAE.
+    // The chain loop materializes the pool, resets the cursor, pushes
+    // this frame's save, restores the callee's ORIGINAL exit reason
+    // (retroOrigExit) and re-dispatches.
+    uint64_t retroSp;         // offset 272: caller sp (stash[0])
+    uint64_t retroRecv;       // offset 280: caller receiver (stash[8])
+    uint64_t retroTempBase;   // offset 288: caller tempBase (stash[16])
+    uint64_t retroResume;     // offset 296: packed V2 resume word
+    int32_t  retroOrigExit;   // offset 304: the callee's bail reason
+    int32_t  _pad_retro;      // offset 308
 };
 
 // Verify expected offsets (stencils depend on these)
@@ -249,6 +263,12 @@ enum ExitReason : int {
                           //   conditional-jump bytecode.  Trampoline pushes the
                           //   value back onto the interp stack and calls
                           //   sendMustBeBoolean per the Smalltalk spec.
+    ExitRetroFull   = 13, // Saveless retro-save found the J2J pool full.
+                          //   retroSp/Recv/TempBase/Resume carry the frame
+                          //   that needs a save; retroOrigExit carries the
+                          //   callee's actual bail reason.  Handler:
+                          //   materialize pool, reset cursor, push the save,
+                          //   restore exitReason = retroOrigExit, re-dispatch.
 };
 
 // ===== TRAMPOLINE HELPER =====
