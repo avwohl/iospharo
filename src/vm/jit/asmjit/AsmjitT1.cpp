@@ -7863,7 +7863,17 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // thing lost — <5% perf delta on bench per docs/deferred.md A6 iter
     // N+19.  Detect by scanning the BODY for conditional jumps; the
     // prologue has already consumed the CallPrimitive header at bc[0..2].
-    if (real && (primIndex == 60 || primIndex == 61 || primIndex == 62)) {
+    // 2026-06-12 REMOVAL ATTEMPT FAILED: with the gate off the eval
+    // ladder never completes (resume traffic explodes 25x and startup
+    // burns out) — the 2026-05-19 bug class is still real, NOT
+    // obsoleted by the encoding-error/NLR/raw-scan fixes.  The gate
+    // stays default-ON (PHARO_T1_NO_SIEVE_GATE=1 to experiment).
+    // Un-stubbing at:/at:put: (half the J2J bail census) therefore
+    // requires root-causing the cond-jump emit interaction first —
+    // see WIP checkpoint ccc.  NOTE the scan below still byte-steps
+    // raw; with the gate on that only causes EXTRA stubs (safe).
+    if (!GET_DEBUG_BOOL(PHARO_T1_NO_SIEVE_GATE)
+            && real && (primIndex == 60 || primIndex == 61 || primIndex == 62)) {
         bool hasCJ = false;
         for (size_t bi = 0; bi < bcRealLen; bi++) {
             uint8_t op = bcReal[bi];
