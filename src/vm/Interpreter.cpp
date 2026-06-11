@@ -6643,6 +6643,23 @@ void Interpreter::returnValue(Oop value) {
                         // same as push(). In the jump case (origSp < numTemps),
                         // this correctly overwrites the temp slot instead of
                         // going above the padded nil temps.
+                                                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+                            Oop _rv = value;
+                            std::string _rc = _rv.isSmallInteger() ? "SmI"
+                                : (_rv.isObject() && _rv.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(_rv) : "imm";
+                            Oop _old = framePointer_[1 + origSp];
+                            std::string _oc = _old.isSmallInteger() ? "SmI"
+                                : (_old.isObject() && _old.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(_old) : "imm";
+                            fprintf(stderr,
+                                "[CTX-RET@6646] m=#%s origSp=%d retval=%s "
+                                "slotOld=%s sp-fp=%lld fd=%zu\n",
+                                memory_.selectorOf(method_).c_str(), origSp,
+                                _rc.c_str(), _oc.c_str(),
+                                (long long)(stackPointer_ - framePointer_),
+                                frameDepth_);
+                        }
                         framePointer_[1 + origSp] = value;
                         // Ensure stackPointer_ is past the written position
                         Oop* pastValue = framePointer_ + 1 + origSp + 1;
@@ -7101,6 +7118,20 @@ void Interpreter::returnFromMethod() {
 
             // If we found a home method, search context chain and do context-based NLR
             if (homeMethodOop.isObject() && !homeMethodOop.isNil()) {
+                bool nlrTrace = false;
+                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+                    std::string hSel = memory_.selectorOf(homeMethodOop);
+                    nlrTrace = hSel.find("atFont:") == 0;
+                    if (nlrTrace) {
+                        fprintf(stderr, "[NLR-HOME] sel=#%s fd=%zu value=0x%llx "
+                                "frames:", hSel.c_str(), frameDepth_,
+                                (unsigned long long)value.rawBits());
+                        for (size_t si = 0; si < frameDepth_ && si < 20; si++)
+                            fprintf(stderr, " [%zu]#%s", si,
+                                memory_.selectorOf(savedFrames_[si].savedMethod).c_str());
+                        fprintf(stderr, "\n");
+                    }
+                }
                 // First check if home method is in context chain
                 Oop ctx = activeContext_;
                 int searchDepth = 0;
@@ -7112,6 +7143,8 @@ void Interpreter::returnFromMethod() {
                     if (savedFrames_[si].savedMethod.rawBits() == homeMethodOop.rawBits()) {
                         // Home method IS in savedFrames_ — use inline NLR
                         size_t homeFrame = si;
+                        if (__builtin_expect(nlrTrace, 0))
+                            fprintf(stderr, "[NLR-HOME] inline path homeFrame=%zu\n", si);
                         while (frameDepth_ > homeFrame) {
                             // Check ensure: in unwind path
                             if (frameDepth_ > 1) {
@@ -13234,6 +13267,48 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                         fprintf(stderr, "[DNU-STACK]   [%zu] %s>>%s\n", f, rCls.c_str(), mSel.c_str());
                     }
                     fprintf(stderr, "[DNU-STACK]   [current] #%s fd=%zu\n", memory_.selectorOf(method_).c_str(), frameDepth_);
+                    // Cascade-#3 residual: same fp-window dump that
+                    // cracked the parser phantom-IC case.
+                    if (GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP)) {
+                        fprintf(stderr, "[DNU-FORENSICS] lastResumeKind=%d "
+                                "fp=%p sp=%p ipOff=%ld\n",
+                                lastResumeKind_, (void*)framePointer_,
+                                (void*)stackPointer_,
+                                method_.isObject()
+                                  ? (long)(instructionPointer_
+                                      - (method_.asObjectPtr()->bytes()
+                                         + (1 + memory_.numLiteralsOf(method_)) * 8))
+                                  : -1L);
+                        for (int k = -2; k <= 14; k++) {
+                            Oop* slot = framePointer_ + k;
+                            if (slot < stackBase_ || slot >= stackPointer_ + 3)
+                                continue;
+                            uint64_t bits = slot->rawBits();
+                            std::string cls = "?";
+                            if ((bits & 7) == 0 && bits >= 0x10000) {
+                                try { cls = memory_.classNameOf(*slot); }
+                                catch (...) { cls = "(bad)"; }
+                            } else if (slot->isSmallInteger()) cls = "SmI";
+                            fprintf(stderr, "[DNU-FORENSICS]   fp[%d]=0x%llx %s%s\n",
+                                    k, (unsigned long long)bits, cls.c_str(),
+                                    slot == stackPointer_ ? "  <-- sp" : "");
+                        }
+                        for (int k = 0; k < 4 && frameDepth_ >= (size_t)(k + 1); k++) {
+                            SavedFrame& sf = savedFrames_[frameDepth_ - 1 - k];
+                            long ipo = -1;
+                            if (sf.savedMethod.isObject()) {
+                                ObjectHeader* mo = sf.savedMethod.asObjectPtr();
+                                size_t nl = memory_.numLiteralsOf(sf.savedMethod);
+                                ipo = sf.savedIP - (mo->bytes() + (1 + nl) * 8);
+                            }
+                            fprintf(stderr, "[DNU-FORENSICS]   frame[-%d] m=#%s "
+                                    "ipOff=%ld matRetSlot=%p savedFP=%p argc=%d\n",
+                                    k + 1,
+                                    memory_.selectorOf(sf.savedMethod).c_str(), ipo,
+                                    (void*)sf.materializedRetSlot,
+                                    (void*)sf.savedFP, sf.savedArgCount);
+                        }
+                    }
                 } catch (...) {
                     fprintf(stderr, "[DNU-STACK]   (stack dump failed)\n");
                 }
@@ -19638,9 +19713,48 @@ void Interpreter::tryJITResumeInCaller() {
             }
         }
 
+        // Cascade-#3 residual forensics: full resume-entry/exit trace
+        // for the FreeType wrong-retval chain.
+        bool resTrace = false;
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+            std::string rSel = memory_.selectorOf(method_);
+            resTrace = true;  // unfiltered while hunting the lost frames
+            if (resTrace) {
+                Oop tos = stackPointer_ > framePointer_
+                    ? stackPointer_[-1] : Oop::fromRawBits(0);
+                std::string tCls = tos.isSmallInteger() ? "SmI"
+                    : (tos.isObject() && tos.rawBits() >= 0x10000)
+                        ? memory_.classNameOf(tos) : "imm";
+                fprintf(stderr,
+                    "[RES-IN] #%s bcOff=%u sp-fp=%lld tos=%s fd=%zu\n",
+                    rSel.c_str(), bcOffset,
+                    (long long)(stackPointer_ - framePointer_),
+                    tCls.c_str(), frameDepth_);
+            }
+        }
         if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
             j2jPoolCursor_ = rj2jBase;  // Release pool slice
             break;  // No re-entry at this offset
+        }
+        if (__builtin_expect(resTrace, 0)) {
+            Oop rv = state.returnValue;
+            std::string rCls = rv.isSmallInteger() ? "SmI"
+                : (rv.isObject() && rv.rawBits() >= 0x10000)
+                    ? memory_.classNameOf(rv) : "imm";
+            long ipo = -1;
+            if (state.method.isObject() && state.ip) {
+                ObjectHeader* mo = state.method.asObjectPtr();
+                size_t nl = memory_.numLiteralsOf(state.method);
+                ipo = state.ip - (mo->bytes() + (1 + nl) * 8);
+            }
+            fprintf(stderr,
+                "[RES-OUT] #%s exit=%d retval=%s ipOff=%ld sp-fp=%lld "
+                "exitSel=#%s\n",
+                memory_.selectorOf(method_).c_str(), (int)state.exitReason,
+                rCls.c_str(), ipo,
+                (long long)(state.sp - framePointer_),
+                state.method.isObject()
+                  ? memory_.selectorOf(state.method).c_str() : "?");
         }
 
         // --- DIAGNOSTIC: scan stack for megaCache pointers after resume ---
@@ -20323,6 +20437,23 @@ void Interpreter::tryJITResumeInCaller() {
                             ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
                         executeFromContext(sender);
                         // Push return value at correct position
+                                                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+                            Oop _rv = state.returnValue;
+                            std::string _rc = _rv.isSmallInteger() ? "SmI"
+                                : (_rv.isObject() && _rv.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(_rv) : "imm";
+                            Oop _old = framePointer_[1 + origSp];
+                            std::string _oc = _old.isSmallInteger() ? "SmI"
+                                : (_old.isObject() && _old.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(_old) : "imm";
+                            fprintf(stderr,
+                                "[CTX-RET@20410] m=#%s origSp=%d retval=%s "
+                                "slotOld=%s sp-fp=%lld fd=%zu\n",
+                                memory_.selectorOf(method_).c_str(), origSp,
+                                _rc.c_str(), _oc.c_str(),
+                                (long long)(stackPointer_ - framePointer_),
+                                frameDepth_);
+                        }
                         framePointer_[1 + origSp] = state.returnValue;
                         Oop* pastVal = framePointer_ + 1 + origSp + 1;
                         if (pastVal > stackPointer_) stackPointer_ = pastVal;
@@ -23686,6 +23817,23 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         int origSp = senderStackp.isSmallInteger()
                             ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
                         executeFromContext(sender);
+                                                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+                            Oop _rv = state.returnValue;
+                            std::string _rc = _rv.isSmallInteger() ? "SmI"
+                                : (_rv.isObject() && _rv.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(_rv) : "imm";
+                            Oop _old = framePointer_[1 + origSp];
+                            std::string _oc = _old.isSmallInteger() ? "SmI"
+                                : (_old.isObject() && _old.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(_old) : "imm";
+                            fprintf(stderr,
+                                "[CTX-RET@23770] m=#%s origSp=%d retval=%s "
+                                "slotOld=%s sp-fp=%lld fd=%zu\n",
+                                memory_.selectorOf(method_).c_str(), origSp,
+                                _rc.c_str(), _oc.c_str(),
+                                (long long)(stackPointer_ - framePointer_),
+                                frameDepth_);
+                        }
                         framePointer_[1 + origSp] = state.returnValue;
                         Oop* pastVal = framePointer_ + 1 + origSp + 1;
                         if (pastVal > stackPointer_) stackPointer_ = pastVal;
@@ -25429,7 +25577,24 @@ jit_loop_exit:
                     int origSp = senderStackp.isSmallInteger()
                         ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
                     executeFromContext(sender);
-                    framePointer_[1 + origSp] = state.returnValue;
+                                            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+                            Oop _rv = state.returnValue;
+                            std::string _rc = _rv.isSmallInteger() ? "SmI"
+                                : (_rv.isObject() && _rv.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(_rv) : "imm";
+                            Oop _old = framePointer_[1 + origSp];
+                            std::string _oc = _old.isSmallInteger() ? "SmI"
+                                : (_old.isObject() && _old.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(_old) : "imm";
+                            fprintf(stderr,
+                                "[CTX-RET@25513] m=#%s origSp=%d retval=%s "
+                                "slotOld=%s sp-fp=%lld fd=%zu\n",
+                                memory_.selectorOf(method_).c_str(), origSp,
+                                _rc.c_str(), _oc.c_str(),
+                                (long long)(stackPointer_ - framePointer_),
+                                frameDepth_);
+                        }
+                        framePointer_[1 + origSp] = state.returnValue;
                     Oop* pastVal = framePointer_ + 1 + origSp + 1;
                     if (pastVal > stackPointer_) stackPointer_ = pastVal;
                     return true;
