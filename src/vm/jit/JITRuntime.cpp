@@ -3230,6 +3230,17 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
     const bool trace = g_debug.traceRewriteIC;
     size_t methodsWalked = 0, slotsRewritten = 0, slotsWithJ2J = 0;
 
+    // FSR M4: a method recompiled to tier-2 must be UNLINKED from J2J
+    // sites under LAZY, not re-pointed — tier-2 bodies read the state
+    // mirrors at entry (see fsrLazyActive()).  Without this, bit-60
+    // entries created while the callee was tier-1 survive the recompile
+    // pointing into the Sista body.
+    bool unlinkTier2 = false;
+    if (fsrLazyActive()) {
+        JITMethod* newJM = methodMap_.lookup(methodBits);
+        unlinkTier2 = newJM && newJM->tier == 2;
+    }
+
     // 2026-05-03: IC zone moved to heap; no W^X flip required.  Single
     // pass over methods, write directly to heap-side icBuffer.
     while (m) {
@@ -3243,8 +3254,11 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
                     if (slots[e * 3 + 1] == methodBits) {
                         uint64_t extra = slots[e * 3 + 2];
                         if (extra & kJ2JEntryBit) {
-                            extra = (extra & ~kJ2JAddrMask)
-                                  | (newEntryAddr & kJ2JAddrMask);
+                            if (unlinkTier2)
+                                extra &= ~(kJ2JEntryBit | kJ2JAddrMask);
+                            else
+                                extra = (extra & ~kJ2JAddrMask)
+                                      | (newEntryAddr & kJ2JAddrMask);
                             slots[e * 3 + 2] = extra;
                             slotsRewritten++;
                             if (e == 0) slot0Rewritten = true;
@@ -3269,7 +3283,7 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
     for (size_t k = 0; k < MegaCacheSize; k++) {
         if (megaCache_[k].methodBits == methodBits
             && megaCache_[k].jitEntry != 0) {
-            megaCache_[k].jitEntry = newEntryAddr;
+            megaCache_[k].jitEntry = unlinkTier2 ? 0 : newEntryAddr;
             megaRewrites++;
         }
     }

@@ -18684,11 +18684,34 @@ void Interpreter::prepareForGC() {
     // state.ip/literals are absolute pointers that break if GC moves the
     // CompiledMethod. forEachRoot updates state.method; afterGC re-derives
     // state.ip and state.literals from the new method address.
+    // FSR M4: under LAZY the method/literals mirrors lag the live
+    // identity mid-J2J (per-call stores deleted).  state.jitMethod IS
+    // fresh at every GC trigger point — helper-call wrappers and exit
+    // stubs publish x19 via emitSyncSpToState — so re-derive before
+    // stashing offsets against state.method.  Without this, the ip
+    // offset is computed against the WRONG method and afterGC
+    // reconstitutes a garbage state.ip (the startup Array>>do: DNU).
+    if (currentJITState_) jit::fsrLazyRefresh(*currentJITState_);
     if (currentJITState_ && currentJITState_->method.isObject() &&
         currentJITState_->method.rawBits() > 0x10000 &&
         currentJITState_->ip) {
-        uint8_t* methodBytes = currentJITState_->method.asObjectPtr()->bytes();
+        ObjectHeader* methObjGC = currentJITState_->method.asObjectPtr();
+        uint8_t* methodBytes = methObjGC->bytes();
         jitStateIpOffset_ = currentJITState_->ip - methodBytes;
+        // FSR M4: the ip mirror itself can lag the refreshed method
+        // (only exits write it now).  An out-of-range offset would
+        // reconstitute a wild ip — clamp to the bytecode start; safe
+        // because every exit stub overwrites state.ip before any C++
+        // consumer reads it.
+        if (jit::fsrLazyActive()
+            && (jitStateIpOffset_ < 0
+                || jitStateIpOffset_
+                       >= (ptrdiff_t)methObjGC->byteSize())) {
+            Oop hdrGC = methObjGC->slots()[0];
+            int nLitsGC = hdrGC.isSmallInteger()
+                ? (int)(hdrGC.asSmallInteger() & 0x7FFF) : 0;
+            jitStateIpOffset_ = (ptrdiff_t)(1 + nLitsGC) * 8;
+        }
     } else {
         jitStateIpOffset_ = 0;
     }
@@ -22120,6 +22143,11 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                 // (the 2026-06-10 J2J corruption class).
                 unsafePrim = true;
             }
+            // FSR M4: tier-2 bodies read the state mirrors at entry —
+            // never J2J-link them under LAZY (see fsrLazyActive()).
+            if (jit::fsrLazyActive() && target->tier == 2) {
+                unsafePrim = true;
+            }
             if (!unsafePrim && !isJ2JBanned(resolvedMethod.rawBits())) {
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                 // Preserve primKind bits (52:48) already set above
@@ -22516,6 +22544,10 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     // callees from bit-60 J2J.
     if (GET_DEBUG_BOOL(PHARO_J2J_NO_HEAPWRITE_CALLEES)
             && target->hasRecvFieldWrite) return;
+    // FSR M4: tier-2 bodies read the state mirrors at entry — never
+    // J2J-link them under LAZY (see fsrLazyActive()).  Covers both the
+    // matching-entry upgrade and the empty-slot fill below.
+    if (jit::fsrLazyActive() && target->tier == 2) return;
 
     // Check unsafe prim: has primitive but no JIT prologue.
     // Quick primitives (256-519) are trivial — handle them via existing

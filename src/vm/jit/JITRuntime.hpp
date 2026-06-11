@@ -70,6 +70,16 @@ inline void syncDerivedFromJM(JITState& s) {
     s.argCount = jm->argCount;
 }
 
+// FSR M4 mode test (LAZY or LAZY_VERIFY).  Tier-2 (Sista) bodies hoist
+// literals/method from the STATE MIRRORS at entry, which the M4 deleted
+// per-call stores no longer maintain across inline-J2J — so under this
+// mode tier-2 callees must not be J2J-linked (bit 60); they route via
+// the C++ chain / trampoline, whose entry setups write the mirrors.
+inline bool fsrLazyActive() {
+    return GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY)
+        || GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY);
+}
+
 // FSR M4: post-JIT-entry mirror refresh.  Under PHARO_T1_FSR_LAZY the
 // per-call mirror stores are deleted from emitted code; the exit stubs
 // publish x19 -> state.jitMethod, and this refresh re-derives

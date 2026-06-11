@@ -3503,6 +3503,11 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     // state.receiver/method/cachedTarget out from under the JIT, leaving
     // stale pointers that crash on next dereference.
     if (currentJITState_) {
+        // FSR M4: re-derive the (possibly stale) method/literals mirrors
+        // from state.jitMethod before visiting — otherwise the visitor
+        // pins/updates a DEAD method oop while the live one moves.
+        // Idempotent; jitMethod is published at every helper-call/exit.
+        jit::fsrLazyRefresh(*currentJITState_);
         visitor(currentJITState_->receiver);
         visitor(currentJITState_->method);
         visitor(currentJITState_->returnValue);
