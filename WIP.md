@@ -2,6 +2,34 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12xx — resumability lever DEAD; at:-inline engagement is the dict endgame
+
+MEASUREMENT VERDICTS THIS WINDOW:
+- matguard 1-deep: shipped + soaked 2468/0/0 (cascade fixed).
+- Cond-jump resume flip: REJECTED — force-rung collapses scanFor:
+  interp sends 19x (17M->920K, the resume DOES work now) yet dict is
+  consistently SLOWER (449-500 vs 413-435, interleaved min-of-5,
+  3/3 pairs).  Per-send exit/resume round trips > interp dispatch.
+  Keep nBC=0 default for cond-jump send methods.
+
+THE DICT ENDGAME (one question): why does scanFor:'s `array at:
+index` site NOT engage the primKind-14 inline-at dispatch?  Stats:
+atPut inline=863K fires vs at:=49K (with ~800K at: ops/run).  The
+site exits ExitSendCached per iteration (the r7:388K histogram via
+PHARO_JIT_TRACE_OOP=0x3003037f0 + [JIT-TRACE-EXITS]).  Suspects:
+(a) dispatch ORDER at sites whose extras carry BOTH bit-60 J2J and
+    pk 14: J2J gate tbnz bit16 (callee has prim) bails -> falls to
+    dispatchCached/EXIT instead of trying the pk-14 inline (the
+    basicNew-style 'prim kind wins over bit 60' reordering comments
+    exist for at:/atPut:/size — verify it actually covers this
+    shape);
+(b) the at:-site extras never get pk 14 (fill-path condition);
+(c) the inline-at emit bails on format/bounds for these receivers.
+Probe: dump scanFor:'s at:-site IC extras word at steady state
+(rederiveSiteForICData-style read), or add a bail counter to the
+inline-at emit.  Fix = make the at: probe loop run with ZERO exits;
+THEN the dict gap should finally step toward Cog 26ms.
+
 ## CHECKPOINT 2026-06-12ww — matguard cascade fixed; scanFor: bail edge = last open dict item
 
 SHIPPED (soak in flight /tmp/soak_matguard.log): canJITActivate's
