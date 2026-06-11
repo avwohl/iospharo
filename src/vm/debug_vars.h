@@ -152,6 +152,8 @@ DEBUG_BOOL(PHARO_T1_EMIT_HASH)            // print FNV-1a of emitted bytes per c
 DEBUG_INT(PHARO_T1_PATCH_MAX_IC, -1)      // design §13 Q3: numICEntries cap for the LINK predicate only (-1 = use PHARO_T1_XMETHOD_MAX_IC); linked sites evaluate gates once in C++, so the cap can widen past the per-call gate's without re-emitting
 // ── simStack: write-through TOS cache in x26 (docs/simstack-design.md) ──
 DEBUG_BOOL(PHARO_T1_NO_RESUME_SENDS)      // opt-OUT: revert condjump-free send methods to non-resumable (pre-2026-06-11).  Default ON = such methods advertise resume; their post-send continuations re-enter JIT instead of stranding the activation in the interpreter.
+DEBUG_BOOL(PHARO_T1_FSR_LAZY)             // FSR M4: delete the per-call mirror stores (method/literals/argCount/ip/jitMethod, ~9 insns/linked call); exits publish x19 and C++ choke points re-derive via syncDerivedFromJM.
+DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY)      // FSR M4 stage (a): publish-at-exit ON, mirror stores STILL ON, C++ asserts mirror==derived at choke points ([M4-PARITY]).
 DEBUG_BOOL(PHARO_T1_FSR_NODEPTH)          // FSR M3 stage b/c: prelude uses the entryCursor compare; push sites drop the depth RMW; C++ refreshes depth from the slice base at choke points.
 DEBUG_BOOL(PHARO_T1_FSR_NODEPTH_VERIFY)   // FSR M3 stage a: maintain BOTH depth representations; C++ asserts parity at the chain-loop choke point ([M3-PARITY] log + abort on divergence).
 DEBUG_BOOL(PHARO_T1_NO_FSR_CURSOR)        // opt-OUT: revert to memory-cursor J2J push/pop (FSR M2 default-ON 2026-06-11: x23 write-through residency; gate = 2468-test soak under the dual-cursor trap + ~9%% fib win)

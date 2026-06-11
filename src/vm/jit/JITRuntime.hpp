@@ -70,6 +70,35 @@ inline void syncDerivedFromJM(JITState& s) {
     s.argCount = jm->argCount;
 }
 
+// FSR M4: post-JIT-entry mirror refresh.  Under PHARO_T1_FSR_LAZY the
+// per-call mirror stores are deleted from emitted code; the exit stubs
+// publish x19 -> state.jitMethod, and this refresh re-derives
+// method/literals/argCount before any C++ consumer reads them.  Under
+// _VERIFY (both representations live) it first CHECKS the mirrors
+// against the derived values ([M4-PARITY]).
+inline void fsrLazyRefresh(JITState& s) {
+    if (!(GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY)
+          || GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY))) return;
+    JITMethod* jm = s.jitMethod;
+    if (!jm) return;
+    if (GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY)) {
+        bool mOk = s.method.rawBits() == jm->compiledMethodOop;
+        bool lOk = !jm->literalsCache
+            || reinterpret_cast<uint64_t>(s.literals) == jm->literalsCache;
+        if (!mOk || !lOk) {
+            static int mp = 0;
+            if (++mp <= 20)
+                fprintf(stderr,
+                    "[M4-PARITY] mOk=%d lOk=%d mirrorM=0x%llx jmCM=0x%llx "
+                    "exit=%d\n", (int)mOk, (int)lOk,
+                    (unsigned long long)s.method.rawBits(),
+                    (unsigned long long)jm->compiledMethodOop,
+                    (int)s.exitReason);
+        }
+    }
+    syncDerivedFromJM(s);
+}
+
 class JITRuntime {
 public:
     JITRuntime();

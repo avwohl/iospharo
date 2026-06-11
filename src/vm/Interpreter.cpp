@@ -20243,6 +20243,7 @@ void Interpreter::tryJITResumeInCaller() {
 
                     state.yieldCountdown = 1000;
                     JIT_CALL(yJM->codeStart() + yCodeOff, &state);
+                    jit::fsrLazyRefresh(state);  // FSR M4
                     continue;
                 }
 
@@ -20476,6 +20477,7 @@ void Interpreter::tryJITResumeInCaller() {
                     state.j2jEntryDepth = state.j2jDepth;
                     state.j2jEntryCursor = state.j2jSaveCursor;  // FSR M3: pin baseline
                     JIT_CALL(entryAddr, &state);
+                    jit::fsrLazyRefresh(state);  // FSR M4
                     state.j2jEntryDepth = saved_entryDepth_r;
                     state.j2jEntryCursor = saved_entryDepth_r_cur;  // FSR M3
                     validateState("post-J2JCall", nullptr);
@@ -20581,6 +20583,7 @@ void Interpreter::tryJITResumeInCaller() {
                     spLastNArgs = 0;  // resume isn't a call — no args to pop
                     spLastSite = "Return-resume";
                     JIT_RESUME_CALL(resumeTo, &state, retVal.rawBits());
+                    jit::fsrLazyRefresh(state);  // FSR M4
                     validateState("post-Return-resume", nullptr);
                 }
 
@@ -22820,6 +22823,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
 // ExitJ2JCall, and returns 1. Otherwise returns 0.
 // NOTE: Does NOT advance IP — the trampoline call path does that.
 extern "C" int pharo_jit_convert_send(jit::JITState* state) {
+    jit::fsrLazyRefresh(*state);  // FSR M4: mid-trampoline helper reads the mirror
     auto* mm = reinterpret_cast<jit::MethodMap*>(state->methodMapPtr);
     if (!mm) return 0;
 
@@ -23511,6 +23515,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 &localCalls,
                 &localReturns,
                 memory_.nil().rawBits());
+            jit::fsrLazyRefresh(state);  // FSR M4 (trampoline exit)
             // Recover j2jDepth from the frameDepth delta — the asm keeps
             // both counters in lockstep, so `(localFrameDepth -
             // j2jBaseFrameDepth)` is the number of unpopped save slots.
@@ -23710,6 +23715,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                 // Enter callee JIT code (already executable from loop start)
                 JIT_CALL(entryAddr, &state);
+                jit::fsrLazyRefresh(state);  // FSR M4
 
                 state.j2jEntryDepth = saved_entryDepth;
 
@@ -23806,6 +23812,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                 // exitReason NOT cleared — stencils only write it, never read.
                 JIT_RESUME_CALL(save.resumeAddr, &state, retVal.rawBits());
+                jit::fsrLazyRefresh(state);  // FSR M4
             }
 
             // No checkCountdown_ check here: nothing inside the loop body
@@ -24244,6 +24251,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     state.yieldCountdown = 1000;
                     // No flips — W^X audit 2026-04-26.
                     JIT_CALL(callerJM->codeStart() + codeOff, &state);
+                    jit::fsrLazyRefresh(state);  // FSR M4
                 }
                 jitJ2JStencilCalls_ += state.j2jTotalCalls;
                 chargeJITBytecodes(state);
@@ -25228,6 +25236,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.jitMethod = jm;
                 // No flips — W^X audit 2026-04-26.
                 JIT_CALL(jm->codeStart() + codeOff, &state);
+                jit::fsrLazyRefresh(state);  // FSR M4
             }
             // Charge stencil J2J calls from this segment
             jitJ2JStencilCalls_ += state.j2jTotalCalls;
@@ -25474,6 +25483,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // --- Enter callee JIT code ---
                         // No flip — W^X audit 2026-04-26.
                         JIT_CALL(chainJM->codeStart(), &state);
+                        jit::fsrLazyRefresh(state);  // FSR M4
                         // FSR M3 stage (a): parity oracle — the RMW-maintained
                         // depth must equal the cursor-derived depth (slice
                         // base = &j2jPool_[j2jStateBase]).
@@ -25700,6 +25710,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 // Direct resume — no hash lookup or codeOffsetForBC.
                                 // Stay in X — W^X audit 2026-04-26.
                                 JIT_CALL(savedResumeEntry, &state);
+                                jit::fsrLazyRefresh(state);  // FSR M4
                                 // PHARO_SORTSTR_WATCH: detect state.method
                                 // / state.ip mismatch after resume.
                                 if (__builtin_expect(g_debug.sortstrWatch, 0)

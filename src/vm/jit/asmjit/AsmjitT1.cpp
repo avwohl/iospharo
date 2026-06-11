@@ -94,6 +94,9 @@ static bool g_fsrCursor = false;  // FSR M2 v1: x23 cursor residency (write-thro
 static bool g_fsrCursorVerify = false;
 static bool g_fsrNodepth = false;        // FSR M3
 static bool g_fsrNodepthVerify = false;  // FSR M3 stage (a)
+static bool g_fsrLazy = false;         // FSR M4
+static int g_bcStartDelta = 0;         // (2+numLits)*8: methObj->bcStart delta (M4 exit-ip)
+static bool g_fsrLazyVerify = false;   // FSR M4 stage (a)
 static bool g_fsrX19Verify = false;
 // V2 emit plumbing (set per-compile by emitMethodBytes, used by the
 // send emit inside emitOne_arm64 — same single-threaded pattern):
@@ -2370,6 +2373,13 @@ static inline void emitSyncSpToState(asmjit::a64::Assembler& a) {
     a.str(asmjit::a64::x25,
           asmjit::a64::ptr(asmjit::a64::x0, OFF_SP));
 #endif
+    // FSR M4: publish the active-method identity at every exit (the
+    // 62 emitSyncSpToState callers cover all JIT->C++ edges).  One
+    // store per EXIT replaces five mirror stores per CALL once the
+    // per-call writers delete.  x19 invariant = M1, verified.
+    if (g_fsrLazy)
+        a.str(asmjit::a64::x19,
+              asmjit::a64::ptr(asmjit::a64::x0, 56 /*OFF_JITMETHOD*/));
 #if PHARO_T1_TB_IN_X26
     a.str(asmjit::a64::x26,
           asmjit::a64::ptr(asmjit::a64::x0, OFF_TEMPBASE));
@@ -3071,6 +3081,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     if (op >= 0x20 && op <= 0x3F) {
         int n = op - 0x20;
         asmjit::a64::Gp dst = tosFam(kTosFamPush) ? x26 : x1;
+        if (g_fsrLazy)  // M4: mirror may be stale; x19's literalsCache is canonical
+            a.ldr(dst, ptr(x19, (int)offsetof(JITMethod, literalsCache)));
+        else
         a.ldr(dst, ptr(x0, OFF_LITERALS));
         a.ldr(dst, ptr(dst, n * 8));
         if (tosFam(kTosFamPush)) emitTosPush(a); else emitPushReg(a, x1);
@@ -3080,6 +3093,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     if (op >= SistaV1::PushLitVarBase && op <= SistaV1::PushLitVarLast) {
         int n = op - SistaV1::PushLitVarBase;
         asmjit::a64::Gp dst = tosFam(kTosFamPush) ? x26 : x1;
+        if (g_fsrLazy)  // M4: see pushLitConst
+            a.ldr(dst, ptr(x19, (int)offsetof(JITMethod, literalsCache)));
+        else
         a.ldr(dst, ptr(x0, OFF_LITERALS));
         a.ldr(dst, ptr(dst, n * 8));
         a.ldr(dst, ptr(dst, OBJ_SLOT_0 + 8));
@@ -3157,8 +3173,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // ip+sp and returns to interp's main loop, which executes the
     // 0x52 normally and runs the rest of the method in interp.
     if (op == SistaV1::PushThisContext) {
+        if (g_fsrLazy) {
+            // M4: the method mirror may be stale (per-call store
+            // deleted) — derive the exit ip from x19's bcStartCache.
+            a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        } else {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        }
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -3172,8 +3195,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // handles it correctly; subsequent JIT code is unreachable
     // anyway since block returns terminate the block body.
     if (op == SistaV1::BlockReturnNil || op == SistaV1::BlockReturnTop) {
+        if (g_fsrLazy) {
+            // M4: the method mirror may be stale (per-call store
+            // deleted) — derive the exit ip from x19's bcStartCache.
+            a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        } else {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        }
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -3267,8 +3297,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.bind(barrierSkip);
         a.b(end);
         a.bind(bail);
+        if (g_fsrLazy) {
+            // M4: the method mirror may be stale (per-call store
+            // deleted) — derive the exit ip from x19's bcStartCache.
+            a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        } else {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        }
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -3473,8 +3510,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // Plain EXIT_RETURN here would return from the block's own frame —
     // the swallowed-NLR bug (see g_emitIsBlock comment).
     if (g_emitIsBlock && SistaV1::isReturn(op)) {
+        if (g_fsrLazy) {
+            // M4: the method mirror may be stale (per-call store
+            // deleted) — derive the exit ip from x19's bcStartCache.
+            a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        } else {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        }
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -3837,8 +3881,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.bind(bsBail);
         }
         // x5 = state.method.rawBits + bcOffsetFromMethObj  (post-GC safe)
+        if (g_fsrLazy) {
+            // M4: the method mirror may be stale (per-call store
+            // deleted) — derive the exit ip from x19's bcStartCache.
+            a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        } else {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        }
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -3869,8 +3920,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         emitStoreSp(a, x2);
         a.b(end);
         a.bind(bail);
+        if (g_fsrLazy) {
+            // M4: the method mirror may be stale (per-call store
+            // deleted) — derive the exit ip from x19's bcStartCache.
+            a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        } else {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        }
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -3910,8 +3968,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         emitStoreSp(a, x2);
         a.b(end);
         a.bind(bail);
+        if (g_fsrLazy) {
+            // M4: the method mirror may be stale (per-call store
+            // deleted) — derive the exit ip from x19's bcStartCache.
+            a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        } else {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        }
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -3969,8 +4034,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         emitStoreSp(a, x2);
         a.b(end);
         a.bind(bail);
+        if (g_fsrLazy) {
+            // M4: the method mirror may be stale (per-call store
+            // deleted) — derive the exit ip from x19's bcStartCache.
+            a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        } else {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        }
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -4061,8 +4133,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         emitStoreSp(a, x2);
         a.b(end);
         a.bind(bail);
+        if (g_fsrLazy) {
+            // M4: the method mirror may be stale (per-call store
+            // deleted) — derive the exit ip from x19's bcStartCache.
+            a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        } else {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        }
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -4078,8 +4157,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // (Pharo's CompiledMethod trailer follows the bytecodes and can
         // include short jumps with bogus offsets.)
         if (targetIdx < 0 || targetIdx >= (int)bcLabels.size()) {
+            if (g_fsrLazy) {
+                // M4: the method mirror may be stale (per-call store
+                // deleted) — derive the exit ip from x19's bcStartCache.
+                a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+            } else {
             a.ldr(x5, ptr(x0, OFF_METHOD));
             a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+            }
             a.str(x5, ptr(x0, OFF_IP));
             a.mov(w3, asmjit::Imm(EXIT_SEND));
             a.str(w3, ptr(x0, OFF_EXIT));
@@ -4129,8 +4215,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.b(bcLabels[globalIdx + 1]);
 
         a.bind(mustBoolBail);
+        if (g_fsrLazy) {
+            // M4: the method mirror may be stale (per-call store
+            // deleted) — derive the exit ip from x19's bcStartCache.
+            a.ldr(x5, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        } else {
         a.ldr(x5, ptr(x0, OFF_METHOD));
         a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        }
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_MUST_BOOL));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -4362,14 +4455,16 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         // Callee state from the patched calleeJM — all
                         // level-1 loads off an immediate.  offsetof ONLY
                         // (the JM-byte-offset off-by-one lesson).
+                        if (g_fsrX19) a.mov(x19, x10);  // FSR M1: activation commit
+                        if (!g_fsrLazy || g_fsrLazyVerify) {
                         a.ldr(x13, ptr(x10, (int)offsetof(JITMethod, compiledMethodOop)));
                         a.str(x10, ptr(x0, OFF_JITMETHOD));
-                        if (g_fsrX19) a.mov(x19, x10);  // FSR M1: activation commit
                         a.str(x13, ptr(x0, OFF_METHOD));
                         a.add(x13, x13, asmjit::Imm(16));
                         a.str(x13, ptr(x0, OFF_LITERALS));
                         a.mov(w13, asmjit::Imm(nArgs));
                         a.str(w13, ptr(x0, OFF_ARGCOUNT));
+                        }
                         a.str(x6, ptr(x0, OFF_J2J_SAVE_CURSOR));
                         if (g_fsrCursor) a.mov(x23, x6);  // FSR M2 v1
                         a.ldr(x13, ptr(x0, OFF_J2J_DEPTH));
@@ -4378,8 +4473,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.str(x1, ptr(x0, OFF_RECEIVER));
                         a.sub(x13, x2, asmjit::Imm(nArgs * 8));
                         emitStoreTempBase(a, x13);
+                        if (!g_fsrLazy || g_fsrLazyVerify) {
                         a.ldr(x14, ptr(x10, (int)offsetof(JITMethod, bcStartCache)));
                         a.str(x14, ptr(x0, OFF_IP));
+                        }
                         // Dynamic nil-fill: callee tempCount is a link-time
                         // unknown (any gate-passing callee may link here).
                         a.ldrb(w15, ptr(x10, (int)offsetof(JITMethod, tempCount)));
@@ -5206,8 +5303,16 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     }
                     if (crossSaveless) {
                         a.ldr(x6, ptr(x0, OFF_METHOD));
+                        if (g_fsrLazy) {
+                            // M4: the jitMethod MIRROR is stale (per-call
+                            // store deleted); x19 is the live identity and
+                            // the restore side's `mov x19, x12` is the
+                            // caller-x19 carrier (FR-6) — stash x19 itself.
+                            a.stp(x6, x19, ptr(sp, 48));
+                        } else {
                         a.ldr(x12, ptr(x0, OFF_JITMETHOD));
                         a.stp(x6, x12, ptr(sp, 48));
+                        }
                         a.ldr(x6, ptr(x0, OFF_LITERALS));
                         a.ldr(w12, ptr(x0, OFF_ARGCOUNT));
                         a.stp(x6, x12, ptr(sp, 64));
@@ -5235,16 +5340,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(x1, ptr(x0, OFF_RECEIVER));
                     a.sub(x6, x4, asmjit::Imm(nArgs * 8));   // new tempBase
                     emitStoreTempBase(a, x6);
+                    if (!g_fsrLazy || g_fsrLazyVerify) {
                     a.ldr(x14, ptr(x10, (int)offsetof(JITMethod, bcStartCache)));
                     a.str(x14, ptr(x0, OFF_IP));
-                    if (crossSaveless) {
+                    }
+                    if (crossSaveless && g_fsrX19) a.mov(x19, x10);  // FSR M1
+                    if (crossSaveless && (!g_fsrLazy || g_fsrLazyVerify)) {
                         a.str(x10, ptr(x0, OFF_JITMETHOD));
-                        if (g_fsrX19) a.mov(x19, x10);  // FSR M1: activation commit
                         a.str(x13, ptr(x0, OFF_METHOD));
                         a.add(x12, x13, asmjit::Imm(16));    // literals = CM+16
                         a.str(x12, ptr(x0, OFF_LITERALS));
                         a.mov(w12, asmjit::Imm(nArgs));
                         a.str(w12, ptr(x0, OFF_ARGCOUNT));
+                    }
+                    if (crossSaveless) {
                         // Dynamic nil-fill: callee tempCount from its JM.
                         asmjit::Label initLoop = a.new_label();
                         asmjit::Label initDone = a.new_label();
@@ -5743,10 +5852,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // For self-recursive sends this is a redundant write
                 // of the same value (callee == caller); cost is 4
                 // extra stores per push.
-                if (xmethod) {
+                if (xmethod && g_fsrX19) a.mov(x19, x10);  // FSR M1
+                if (xmethod && (!g_fsrLazy || g_fsrLazyVerify)) {
                     a.ldr(x13, ptr(x10, (int)offsetof(JITMethod, compiledMethodOop)));      // x13 = calleeCM
                     a.str(x10, ptr(x0, OFF_JITMETHOD));
-                    if (g_fsrX19) a.mov(x19, x10);  // FSR M1: activation commit
                     a.str(x13, ptr(x0, OFF_METHOD));
                     a.add(x13, x13, asmjit::Imm(16));
                     a.str(x13, ptr(x0, OFF_LITERALS));
@@ -5815,12 +5924,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // For self-rec, callerJM == calleeJM.  In xmethod-off
                 // (default) x19 holds state.jitMethod; in xmethod-on
                 // x10 is calleeJM (set above) and x11 is callerJM.
+                if (!g_fsrLazy || g_fsrLazyVerify) {
                 a.ldr(x14, ptr(needCalleeJM
                                   ? x10
                                   : (g_debug.t1InlineJ2JXmethod
                                       ? x11 : asmjit::a64::x19),
                               (int)offsetof(JITMethod, bcStartCache)));
                 a.str(x14, ptr(x0, OFF_IP));
+                }
 
                 // sp = tempBase + tempCount*8.  For the SELF-RECURSIVE
                 // path (the only path when xmethod is off), callee ==
@@ -7392,8 +7503,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.str(x5, ptr(x0, OFF_ICDATAPTR));
             a.mov(w3, asmjit::Imm(nArgs));
             a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
+            if (g_fsrLazy) {
+                // M4: the method mirror may be stale (per-call store
+                // deleted) — derive the exit ip from x19's bcStartCache.
+                a.ldr(x6, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+            } else {
             a.ldr(x6, ptr(x0, OFF_METHOD));
             a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
+            }
             a.str(x6, ptr(x0, OFF_IP));
             a.ldr(x6, ptr(x5, 8));            // icData[1] = method Oop
             a.str(x6, ptr(x0, OFF_CACHED_TARGET));
@@ -7407,8 +7525,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.str(x5, ptr(x0, OFF_ICDATAPTR));
             a.mov(w3, asmjit::Imm(nArgs));
             a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
+            if (g_fsrLazy) {
+                // M4: the method mirror may be stale (per-call store
+                // deleted) — derive the exit ip from x19's bcStartCache.
+                a.ldr(x6, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+            } else {
             a.ldr(x6, ptr(x0, OFF_METHOD));
             a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
+            }
             a.str(x6, ptr(x0, OFF_IP));
             a.mov(w3, asmjit::Imm(EXIT_SEND));
             a.str(w3, ptr(x0, OFF_EXIT));
@@ -7471,8 +7596,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
                 }
                 if (sy & 2) {
+                    if (g_fsrLazy) {
+                        // M4: the method mirror may be stale (per-call store
+                        // deleted) — derive the exit ip from x19's bcStartCache.
+                        a.ldr(x6, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+                        a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+                    } else {
                     a.ldr(x6, ptr(x0, OFF_METHOD));
                     a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
+                    }
                     a.str(x6, ptr(x0, OFF_IP));
                 }
                 if (sy & 4) {
@@ -7509,8 +7641,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.str(x5, ptr(x0, OFF_ICDATAPTR));
         a.mov(w3, asmjit::Imm(nArgs));
         a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
+        if (g_fsrLazy) {
+            // M4: the method mirror may be stale (per-call store
+            // deleted) — derive the exit ip from x19's bcStartCache.
+            a.ldr(x6, ptr(x19, (int)offsetof(JITMethod, bcStartCache)));
+            a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj - g_bcStartDelta));
+        } else {
         a.ldr(x6, ptr(x0, OFF_METHOD));
         a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
+        }
         a.str(x6, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_SEND));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -8489,8 +8628,16 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // a block bail to interp) and for jm->isBlock below.
     g_emitIsBlock =
         methObj->classIndex() == interp.compiledBlockClassIndex();
+    // M4 (lazy mirror deletion) DEPENDS on the M1 x19 invariant —
+    // exits publish x19 as the identity; without the activation movs
+    // the published value is the entry hoist (stale after J2J).
     g_fsrX19 = GET_DEBUG_BOOL(PHARO_T1_FSR_X19)
-            || GET_DEBUG_BOOL(PHARO_T1_FSR_X19_VERIFY);
+            || GET_DEBUG_BOOL(PHARO_T1_FSR_X19_VERIFY)
+            || GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY)
+            || GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY);
+    g_bcStartDelta = (2 + numLiterals) * 8;
+    g_fsrLazyVerify = GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY);
+    g_fsrLazy = GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY) || g_fsrLazyVerify;
     g_fsrNodepthVerify = GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH_VERIFY);
     g_fsrNodepth = GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH) || g_fsrNodepthVerify;
     g_fsrCursor = fsrCursorMode()

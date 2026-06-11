@@ -843,6 +843,7 @@ ic_hit:
         ((void(*)(JITState*))t2code)(state);
     } else {
         JIT_CALL(jm->codeStart(), state);
+        fsrLazyRefresh(*state);  // FSR M4
     }
 
     // GC during callee invalidates C-stack oops (selector, rcvr, etc.).
@@ -963,6 +964,7 @@ ic_hit:
 extern "C" void jit_rt_fill_ic(JITState* s, uint64_t* icData,
                                 uint64_t lookupKey, uint64_t extra,
                                 uint64_t methodBits) {
+    fsrLazyRefresh(*s);  // FSR M4
     // PHARO_NO_MEGAHIT_IC_FILL=1: kill switch.  Set if the mega-cache
     // hit IC fill regresses a workload.
     if (g_debug.noMegahitICFill) return;
@@ -1054,6 +1056,7 @@ extern "C" int jit_rt_ic_miss(
     int nArgs, int bcOffset,
     uint64_t* out_extra, uint64_t* out_methodBits)
 {
+    fsrLazyRefresh(*s);  // FSR M4
     // Constants matching stencils.cpp
     constexpr uint64_t J2J_ENTRY_BIT  = 1ULL << 60;
     constexpr uint64_t J2J_ADDR_MASK  = 0x0000FFFFFFFFFFFFULL;
@@ -2381,6 +2384,7 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
     state->j2jEntryCursor = state->j2jSaveCursor;  // FSR M3: pin baseline
 
     JIT_CALL(entryAddr, state);
+    fsrLazyRefresh(*state);  // FSR M4
 
     state->j2jEntryDepth = savedEntryDepth;
 
@@ -3964,6 +3968,7 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // No flips — codebase invariant: thread is in X mode.  W^X audit
     // 2026-04-26.  Stats writes above went to the heap side-table.
     JIT_CALL(jm->codeStart(), &state);
+    fsrLazyRefresh(state);  // FSR M4
 
     return true;
 }
@@ -4185,6 +4190,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // register state (trampoline + JIT_CALL guarantee this; bare
     // entry() call from C did not).  See pharo_jit_osr_resume.
     pharo_jit_osr_resume(&state, reinterpret_cast<void*>(entry));
+    fsrLazyRefresh(state);  // FSR M4
 #else
     entry(&state);
 #endif
@@ -4227,6 +4233,7 @@ bool JITRuntime::tryResumeFast(JITMethod* jm, uint32_t bcOffset, JITState& state
     StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart() + codeOffset);
 #if PHARO_JIT_ENABLED && defined(PHARO_ASM_TRAMPOLINE) && defined(__aarch64__)
     pharo_jit_osr_resume(&state, reinterpret_cast<void*>(entry));
+    fsrLazyRefresh(state);  // FSR M4
 #else
     entry(&state);
 #endif
