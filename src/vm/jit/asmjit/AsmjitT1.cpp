@@ -3567,6 +3567,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.asr(x10, x1, asmjit::Imm(63));  // x10 = sign-extend(lo)
             a.cmp(x9, x10);
             a.b_ne(bail);
+            // 61-BIT RANGE CHECK (the -2^62-ns clock lesion, 2026-06-11):
+            // smulh only catches 64-bit overflow.  A product needing
+            // 61-63 bits (e.g. microsecondClock*1000 = 3.96e18 ns in
+            // DateAndTime>>now) passed here and the retag below wrapped
+            // it mod 2^61 — signed = value - 2^62: every warm
+            // DateAndTime now returned year 1880, surfacing as sporadic
+            // spurious watchdog timeouts across the whole suite.  The
+            // other three mul emits all have this check; this Phase-3
+            // site was missing it.
+            a.lsl(x9, x1, asmjit::Imm(3));
+            a.asr(x10, x9, asmjit::Imm(3));
+            a.cmp(x10, x1);
+            a.b_ne(bail);
             // Retag.
             a.lsl(x1, x1, asmjit::Imm(3));
             a.orr(x1, x1, asmjit::Imm(1));
