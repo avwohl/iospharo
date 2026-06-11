@@ -22727,6 +22727,14 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             else if (primIdx == 259) quickPrimExtra = (1ULL << 58) | ((uint64_t)1 << 48);
             else if (primIdx == 261) quickPrimExtra = (1ULL << 58) | ((uint64_t)4 << 48);
             else if (primIdx == 262) quickPrimExtra = (1ULL << 58) | ((uint64_t)5 << 48);
+            // basicIdentityHash (prim 75): the T1 emit has a complete
+            // kind-20 inline (header-bits extract + hash-0 bail) that
+            // NEVER fired — this fill path returned 'genuinely unsafe'
+            // before classifying.  pk-only extra, no bit 60 (J2J would
+            // skip the prim).  The dict-bench #hash site's
+            // per-activation exit (gate-bail census bail_prim=1.45M).
+            else if (primIdx == 75)
+                quickPrimExtra = (uint64_t)inlinePrimKind(75) << 48;
             if (quickPrimExtra == 0) {
                 // Quick constant prims (257-263) are safe for J2J:
                 // bytecodes produce the same result as the primitive.

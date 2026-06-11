@@ -1318,6 +1318,13 @@ public:
             // honors.  Deeper activations return into ordinary frames
             // first.  PHARO_JIT_MATGUARD_DEEP=1 restores the 4-deep
             // scan for bisection.
+            // NOTE 2026-06-12: a rare startup DNU flickers under
+            // DET_SCHED INDEPENDENT of this guard's depth (same binary
+            // flips 0/5 vs 5/5 across reruns under load; an A/B that
+            // first blamed the 1-deep narrowing was noise).  DET_SCHED
+            // does not pin all timing (GC/startup Delay).  Flake hunt
+            // = separate forensic session; capture-on-fire loop in
+            // WIP checkpoint bbb.
             size_t scan = GET_DEBUG_BOOL(PHARO_JIT_MATGUARD_DEEP)
                 ? ((frameDepth_ < 4) ? frameDepth_ : 4)
                 : (frameDepth_ < 1 ? frameDepth_ : 1);
