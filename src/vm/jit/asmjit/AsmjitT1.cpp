@@ -134,6 +134,8 @@ static constexpr uint32_t kTosFamCondJump = 1u << 3;
 static constexpr uint32_t kTosFamRetTop   = 1u << 4;
 static constexpr uint32_t kTosFamPopStore = 1u << 5;
 static constexpr uint32_t kTosFamArith    = 1u << 6;
+static constexpr uint32_t kTosFamSendHead = 1u << 7;  // 0-arg receiver feed
+static constexpr uint32_t kTosFamSendRes  = 1u << 8;  // send result -> x26 (needs Lrearm)
 static inline bool tosFam(uint32_t bit) {
     return g_useTos
         && ((uint32_t)GET_DEBUG_INT(PHARO_T1_TOS_MASK) & bit) != 0;
@@ -4037,13 +4039,28 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label j2jBailHeap = a.new_label();
             asmjit::Label j2jBailHeap2 = a.new_label();
             asmjit::Label endOfSend = a.new_label();
+            // simStack B2c (design §5 RM-F1): when the send-result
+            // family is on, EVERY inline-spec arrival at endOfSend is
+            // retargeted through tosLrearm (ldur x26 from memory) so
+            // the validity claimed after this send holds for ALL
+            // arrival paths; resumeAfterCall re-arms from x1 and falls
+            // through load-free.
+            const bool tosSendRes = tosFam(kTosFamSendRes);
+            asmjit::Label tosLrearm = a.new_label();
 #if PHARO_J2J_SAVE_V2
             asmjit::Label resumeAfterCall = a.new_label();
 #endif
 
             emitLoadSp(a, x2);
             int rcvrOffsetBytes = -8 * (nArgs + 1);
-            a.ldur(x1, ptr(x2, rcvrOffsetBytes));   // x1 = receiver
+            if (nArgs == 0 && tosFam(kTosFamSendHead) && g_tosIn.valid) {
+                // simStack: the receiver IS TOS — feed the probe head
+                // from x26 (kills the load heading the IC chain).
+                emitTosVerify(a);
+                a.mov(x1, x26);
+            } else {
+                a.ldur(x1, ptr(x2, rcvrOffsetBytes));   // x1 = receiver
+            }
             a.and_(x4, x1, asmjit::Imm(0x7));
             a.cbnz(x4, imm);
             // Defensive: an object-tagged Oop must be a canonical user-space
@@ -5137,7 +5154,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
                     // Branch to endOfSend (caller's continuation past
                     // the send).  Skips the warm-J2J gate entirely.
-                    a.b(endOfSend);
+                    a.b(tosSendRes ? tosLrearm : endOfSend);
 
                     a.bind(normalJ2J);
                     // Fall through to the warm-J2J gate + save-push path.
@@ -5806,7 +5823,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
             }
-            a.b(endOfSend);
+            a.b(tosSendRes ? tosLrearm : endOfSend);
 
             // === Inline setter: recv->slots[slotIdx] = arg ===
             // x2 still holds SP from probe entry.
@@ -5901,7 +5918,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x30, ptr(asmjit::a64::sp, 8));
                 a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
             }
-            a.b(endOfSend);
+            a.b(tosSendRes ? tosLrearm : endOfSend);
 
             // === trySistaCall (jit-may22b Step 2 — real BLR via helper) ===
             // Dispatch to a Sista-compiled fn (ptr in x7's bits 47:0).
@@ -5947,7 +5964,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x15, ptr(x14));
                 a.add(x15, x15, asmjit::Imm(1));
                 a.str(x15, ptr(x14));
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
                 a.bind(bailSista);
                 a.b(dispatchCached);
             }
@@ -5964,7 +5981,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
             }
-            a.b(endOfSend);
+            a.b(tosSendRes ? tosLrearm : endOfSend);
 
             // === returnsLiteral helper (counter bump) ===
             auto bumpRetLitCounter = [&]() {
@@ -6055,7 +6072,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                     emitStoreSp(a, x2);
                 }
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             }
 
             // === W1: tryTempReturn (bit 54, nArgs >= 1) ===
@@ -6093,7 +6110,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                     emitStoreSp(a, x2);
                 }
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             }
 
             // === W2: tryIntCmpReturn (bit 53, nArgs == 1) ===
@@ -6178,7 +6195,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8));  // drop 1 arg
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             }
 
             // === W3: tryIntArithReturn (bit 52, nArgs == 1) ===
@@ -6240,7 +6257,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8));
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             }
 
             // === W6: tryEvenOdd (bit 51, nArgs == 0) ===
@@ -6288,7 +6305,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.csel(x3, x10, x11, asmjit::a64::CondCode::kEQ);
                 // Store result at rcvr slot.  No args to drop (nArgs=0).
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             }
 
             // === Multi-slot inline (bit 57, nArgs==0 only) ===
@@ -6367,7 +6384,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x15, ptr(x14));
                 a.add(x15, x15, asmjit::Imm(1));
                 a.str(x15, ptr(x14));
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             }
 
             // === inline-prim 18 (basicNew:) — jit-may20b Step 10 ===
@@ -6402,7 +6419,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x15, ptr(x14));
                     a.add(x15, x15, asmjit::Imm(1));
                     a.str(x15, ptr(x14));
-                    a.b(endOfSend);
+                    a.b(tosSendRes ? tosLrearm : endOfSend);
                     a.bind(bailBN);
                     // Bail path: bump counter, route to dispatchCached.
                     a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNew_bails));
@@ -6436,7 +6453,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x15, ptr(x14));
                     a.add(x15, x15, asmjit::Imm(1));
                     a.str(x15, ptr(x14));
-                    a.b(endOfSend);
+                    a.b(tosSendRes ? tosLrearm : endOfSend);
                     a.bind(bailBNZ);
                     a.mov(x14, asmjit::Imm(
                         (uint64_t)&g_primBasicNewZero_bails));
@@ -6475,7 +6492,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
 
                 a.bind(tryPrimBitOr);
                 emitIncPrimCounter((uint64_t)&g_primBitOp_hits);
@@ -6487,7 +6504,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
 
                 a.bind(tryPrimBitXor);
                 emitIncPrimCounter((uint64_t)&g_primBitOp_hits);
@@ -6500,7 +6517,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
 
                 // === Inline SmI bitShift: (primKind 13) ===
                 // Mirrors stencils.cpp:1615-1626.  Positive count = shift
@@ -6544,7 +6561,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.stur(x6, ptr(x2, rcvrOffsetBytes));
                     a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                     emitStoreSp(a, x2);
-                    a.b(endOfSend);
+                    a.b(tosSendRes ? tosLrearm : endOfSend);
                 }
 
                 // === F5 R80: Inline SmI mul (primKind 9) ===
@@ -6568,7 +6585,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x9, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
 
                 // === F5 R81: Inline == (primKind 10) ===
                 // ProtoObject>>== compares two Oops by raw bits.  Works
@@ -6583,7 +6600,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x6, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             } else {
                 // Labels still need to be bound somewhere even if unused —
                 // bind them as aliases for dispatchCached.
@@ -6671,7 +6688,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
 
                 // Byte-indexed at:: fmt 16-23 (ByteArray, String, Symbol).
                 // byteSize = slotCount*8 - (fmt & 7).  byte[idx] at
@@ -6705,7 +6722,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             } else if (!(nArgs == 2 && g_debug.t1InlinePrimAt)) {
                 a.bind(tryPrimAt);
                 a.b(dispatchCached);
@@ -6752,7 +6769,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
 
                 // Byte at:put: for fmt 16-23.  Val must be SmI in 0..255.
                 a.bind(tryByteAtPut);
@@ -6792,7 +6809,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x3, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             } else if (!(nArgs == 1 && g_debug.t1InlinePrimAt)
                        && !(nArgs == 0 && g_debug.t1InlinePrimAt)) {
                 a.bind(tryPrimAtPut);
@@ -6853,7 +6870,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.lsl(x5, x5, asmjit::Imm(3));
                 a.orr(x5, x5, asmjit::Imm(0x1));
                 a.stur(x5, ptr(x2, rcvrOffsetBytes));
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
                 (void)sizeBytes;
             } else if (!(nArgs == 1 && g_debug.t1InlinePrimAt)
                        && !(nArgs == 2 && g_debug.t1InlinePrimAt)) {
@@ -6917,7 +6934,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.lsl(x4, x4, asmjit::Imm(3));
                 a.orr(x4, x4, asmjit::Imm(0x1));
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             } else {
                 a.bind(tryPrimIdentityHash);
                 a.b(dispatchCached);
@@ -6946,7 +6963,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.add(x5, x5, x4);                   // &classTable[classIndex]
                 a.ldr(x5, ptr(x5));                  // x5 = class oop
                 a.stur(x5, ptr(x2, rcvrOffsetBytes));
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             } else {
                 a.bind(tryPrimClass);
                 a.b(dispatchCached);
@@ -7015,7 +7032,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.stur(x4, ptr(x2, rcvrOffsetBytes));
                 a.sub(x2, x2, asmjit::Imm(8 * nArgs));
                 emitStoreSp(a, x2);
-                a.b(endOfSend);
+                a.b(tosSendRes ? tosLrearm : endOfSend);
             } else {
                 a.bind(tryPrimSmallFloatOp);
                 a.b(dispatchCached);
@@ -7067,11 +7084,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // and never execute this block (label split; jumps to the
             // post-send bytecode keep bcLabels and skip it too — the
             // resumeOverrides table points only resume machinery here).
+            if (tosSendRes) {
+                // Unreachable by fall-through (the prior path branched
+                // to endOfSend/Lrearm); spec arrivals land here.
+                a.bind(tosLrearm);
+                a.ldur(x26, ptr(x25, -8));
+                a.b(endOfSend);
+            }
             a.bind(resumeAfterCall);
             emitLoadSp(a, x2);
             if (nArgs > 0) a.sub(x2, x2, asmjit::Imm(8 * nArgs));
             a.stur(x1, ptr(x2, -8));
             emitStoreSp(a, x2);
+            if (tosSendRes) a.mov(x26, x1);   // retval = new TOS
             if (g_debug.t1InlineJ2JXmethod) {
                 // Cross-method return: re-establish the CALLER's (= this
                 // method's) context.  Self-identify PC-relatively: the
@@ -7130,6 +7155,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x30, ptr(asmjit::a64::sp, 8));
                 a.add(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
             }
+            // simStack B2c: both arrival classes re-armed x26
+            // (resumeAfterCall via mov x26,x1; spec paths via tosLrearm)
+            // — the send result is a valid TOS cache for the next
+            // bytecode.  The SYNC_GLOBALS debug block above clobbers
+            // nothing callee-saved (x26 survives its blr).
+            if (tosSendRes) g_tos.valid = true;
             return true;
         }
 
