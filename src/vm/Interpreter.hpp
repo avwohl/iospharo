@@ -1987,6 +1987,9 @@ private:
     /// Pop the current stack frame. Returns false if this was the last frame
     /// (process completed) and the caller should NOT push a return value.
     bool popFrame();
+    // NLR-marker validation (cascade-#3 residual): see Interpreter.cpp.
+    Oop nlrHomeCMOf(Oop code);
+    size_t validateNLRHomeFrame(size_t homeFrame, Oop expectedHome);
 
     /// Get temporary variable
     Oop temporary(int index) const;

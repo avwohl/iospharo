@@ -164,6 +164,9 @@ extern "C" uint64_t g_sistaShortcut_evenOdd_hits;
 // first corrupt build and read backward to the first moment fp1 becomes a
 // (heap) tuple instead of the from.model immediate.  Gated on FINDNODE_WATCH.
 namespace {
+bool     g_fpushArm = false;   // cascade-#3 residual: frame push/pop tape armed
+int      g_fpushN = 0;         //   at the first widthOf: tryResume; capped
+constexpr int kFpushCap = 600000;
 bool     g_atRecOn = false;    // FINDNODE_WATCH, cached at interpret() entry
 uint64_t g_atOop = 0;          // asTuple's CompiledMethod oop (bootstrapped, cold)
 uint8_t* g_atBcBase = nullptr; // asTuple's bytecode[0] address (for cheap ipOff)
@@ -6950,8 +6953,93 @@ terminate_process:
     }
 }
 
+// NLR-marker validation helper (cascade-#3 residual, 2026-06-11).
+// Derive the lexical home CompiledMethod of `code`: follow the
+// last-literal chain of a CompiledBlock to the enclosing
+// CompiledMethod.  Returns nil when `code` is not a CompiledBlock (or
+// the chain is malformed) — callers treat nil as "cannot validate".
+Oop Interpreter::nlrHomeCMOf(Oop code) {
+    if (!code.isObject() || code.rawBits() < 0x10000) return Oop::nil();
+    ObjectHeader* h = code.asObjectPtr();
+    if (!h->isCompiledMethod()) return Oop::nil();
+    if (h->classIndex() != compiledBlockClassIndex_) return Oop::nil();
+    Oop walk = code;
+    for (int chain = 0; chain < 20; chain++) {
+        ObjectHeader* wh = walk.asObjectPtr();
+        Oop whdr = memory_.fetchPointer(0, walk);
+        if (!whdr.isSmallInteger()) return Oop::nil();
+        int nl = whdr.asSmallInteger() & 0x7FFF;
+        if (nl < 1) return walk;
+        Oop last = memory_.fetchPointer(nl, walk);
+        bool lastIsCode = last.isObject() && last.rawBits() > 0x10000
+            && last.asObjectPtr()->isCompiledMethod();
+        if (!lastIsCode) return walk;
+        walk = last;
+        (void)wh;
+    }
+    return Oop::nil();
+}
+
+// Validate an NLR homeFrame marker against the EXPECTED home method.
+// The marker is an absolute savedFrames_ index, which dangles when the
+// frame stack is rebuilt under it (exception materialization resets
+// frameDepth_ to 0 and frames re-accumulate at different depths) or
+// when a stale value survives in a reused slot.  A dangled marker
+// silently rerouted a block's ^-NLR (FreeTypeCache atFont:... returned
+// its receiver instead of ^v).  expectedHome may be nil (no
+// validation possible -> accept).  Returns the corrected homeFrame:
+// the marker itself if valid, the innermost re-searched match if the
+// marker is wrong but the home is findable, SIZE_MAX otherwise.
+size_t Interpreter::validateNLRHomeFrame(size_t homeFrame, Oop expectedHome) {
+    if (homeFrame == SIZE_MAX || homeFrame >= frameDepth_) return homeFrame;
+    if (!expectedHome.isObject() || expectedHome.isNil()
+        || expectedHome.rawBits() < 0x10000)
+        return homeFrame;  // cannot validate
+    if (savedFrames_[homeFrame].savedMethod.rawBits()
+            == expectedHome.rawBits())
+        return homeFrame;  // marker is right
+    // Marker dangles — re-search (innermost) for the expected home.
+    static int relogged = 0;
+    for (size_t i = frameDepth_; i > 0; i--) {
+        if (savedFrames_[i - 1].savedMethod.rawBits()
+                == expectedHome.rawBits()) {
+            if (relogged < 40 && GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP)) {
+                relogged++;
+                fprintf(stderr,
+                    "[NLR-REPAIR] marker=%zu actual=#%s expected=#%s "
+                    "-> re-searched home=%zu fd=%zu\n",
+                    homeFrame,
+                    memory_.selectorOf(
+                        savedFrames_[homeFrame].savedMethod).c_str(),
+                    memory_.selectorOf(expectedHome).c_str(),
+                    i - 1, frameDepth_);
+            }
+            return i - 1;
+        }
+    }
+    return SIZE_MAX;  // home not on the inline stack -> context-NLR path
+}
+
 void Interpreter::returnFromMethod() {
     Oop value = pop();
+
+    // Cascade-#3 residual: trace ^-returns from CompiledBlocks while the
+    // FPUSH tape is armed — the swallowed-NLR hunt.
+    if (__builtin_expect(g_fpushArm, 0)
+            && method_.isObject() && method_.rawBits() > 0x10000
+            && method_.asObjectPtr()->classIndex()
+               == compiledBlockClassIndex_) {
+        g_fpushN++;
+        size_t hfd = frameDepth_ > 0
+            ? savedFrames_[frameDepth_ - 1].homeFrameDepth : SIZE_MAX;
+        fprintf(stderr, "[BLKRET] fd=%zu hfd=%zd value=0x%llx below=#%s\n",
+                frameDepth_, hfd == SIZE_MAX ? -1 : (ssize_t)hfd,
+                (unsigned long long)value.rawBits(),
+                frameDepth_ > 0
+                  ? memory_.selectorOf(
+                        savedFrames_[frameDepth_ - 1].savedMethod).c_str()
+                  : "-");
+    }
 
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_RETMETH_TRACE), 0)) {
         std::string sel = memory_.selectorOf(method_);
@@ -7013,6 +7101,14 @@ void Interpreter::returnFromMethod() {
 
     if (frameDepth_ > 0) {
         size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
+        if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
+            // Validate: for a block's ^, the expected home derives from
+            // the executing CompiledBlock; for an ensure-continuation
+            // (method_ is the prim-198 method), it's nlrHomeMethod_.
+            Oop expected = nlrHomeCMOf(method_);
+            if (expected.isNil()) expected = nlrHomeMethod_;
+            homeFrame = validateNLRHomeFrame(homeFrame, expected);
+        }
 
         // Inline NLR: homeFrame is a valid saved frame index.
         // homeFrameDepth is set by activateBlock (for block NLR) or by the
@@ -7046,7 +7142,13 @@ void Interpreter::returnFromMethod() {
                         // returns (even if nlrHomeMethod_ gets clobbered by
                         // process switches during cleanup).
                         if (frameDepth_ > 0) {
-                            savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+                            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                && homeFrame != SIZE_MAX && frameDepth_ <= 24) {
+            fprintf(stderr, "[HFD-W@7070] entry=%zu val=%zu m=#%s\n",
+                frameDepth_ - 1, homeFrame,
+                memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
+        }
+        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
                         }
                         return;
                     }
@@ -7156,7 +7258,13 @@ void Interpreter::returnFromMethod() {
                                     if (!popFrame()) return;
                                     push(value);
                                     if (frameDepth_ > 0) {
-                                        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+                                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                && homeFrame != SIZE_MAX && frameDepth_ <= 24) {
+            fprintf(stderr, "[HFD-W@7180] entry=%zu val=%zu m=#%s\n",
+                frameDepth_ - 1, homeFrame,
+                memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
+        }
+        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
                                     }
                                     return;
                                 }
@@ -7279,7 +7387,13 @@ void Interpreter::returnFromMethod() {
                                     if (!popFrame()) return;
                                     push(value);
                                     if (frameDepth_ > 0) {
-                                        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+                                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                && homeFrame != SIZE_MAX && frameDepth_ <= 24) {
+            fprintf(stderr, "[HFD-W@7303] entry=%zu val=%zu m=#%s\n",
+                frameDepth_ - 1, homeFrame,
+                memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
+        }
+        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
                                     }
                                     return;
                                 }
@@ -7420,6 +7534,11 @@ void Interpreter::returnFromBlock() {
     size_t homeFrame = SIZE_MAX;
     if (frameDepth_ > 0) {
         homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
+        if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
+            Oop expected = nlrHomeCMOf(method_);
+            if (expected.isNil()) expected = nlrHomeMethod_;
+            homeFrame = validateNLRHomeFrame(homeFrame, expected);
+        }
     }
 
     // If homeFrame is valid and we have inline frames, unwind via inline frame stack
@@ -7451,7 +7570,13 @@ void Interpreter::returnFromBlock() {
                                 if (!popFrame()) return;
                                 push(value);
                                 if (frameDepth_ > 0) {
-                                    savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+                                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                && homeFrame != SIZE_MAX && frameDepth_ <= 24) {
+            fprintf(stderr, "[HFD-W@7475] entry=%zu val=%zu m=#%s\n",
+                frameDepth_ - 1, homeFrame,
+                memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
+        }
+        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
                                 }
                                 return;
                             }
@@ -11887,7 +12012,28 @@ void Interpreter::activateBlock(Oop block, int argCount) {
             }
         }
 
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                && homeFrame != SIZE_MAX && frameDepth_ <= 24) {
+            fprintf(stderr, "[HFD-W@11911] entry=%zu val=%zu m=#%s\n",
+                frameDepth_ - 1, homeFrame,
+                memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
+        }
         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                && homeFrame != SIZE_MAX
+                && (memory_.selectorOf(homeMethodOop).find("atFont:") == 0
+                    || memory_.selectorOf(homeMethodOop)
+                           .find("criticalReleasing") == 0)) {
+            fprintf(stderr, "[BLKACT] fd=%zu homeFrame=%zu home=#%s stack:",
+                    frameDepth_, homeFrame,
+                    memory_.selectorOf(
+                        savedFrames_[homeFrame].savedMethod).c_str());
+            for (size_t si = (frameDepth_ > 12 ? frameDepth_ - 12 : 0);
+                 si < frameDepth_; si++)
+                fprintf(stderr, " [%zu]#%s", si,
+                    memory_.selectorOf(savedFrames_[si].savedMethod).c_str());
+            fprintf(stderr, "\n");
+        }
     }
 
     method_ = methodToExecute;
@@ -12274,6 +12420,11 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     Oop cachedCtx = currentFrameMaterializedCtx_;
 
     SavedFrame& frame = savedFrames_[frameDepth_++];
+    if (false) {
+        g_fpushN++;
+        fprintf(stderr, "[FPUSH-A fd=%zu] #%s\n", frameDepth_ - 1,
+                memory_.selectorOf(method_).c_str());
+    }
     frame.savedIP = instructionPointer_;
     frame.savedBytecodeEnd = bytecodeEnd_;
     frame.savedMethod = method_;
@@ -12473,6 +12624,12 @@ Oop Interpreter::getErrorObjectFromPrimFailCode() {
 
 
 bool Interpreter::popFrame() {
+    if (false) {
+        g_fpushN++;
+        fprintf(stderr, "[FPOP fd=%zu] #%s -> #%s\n", frameDepth_ - 1,
+                memory_.selectorOf(method_).c_str(),
+                memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
+    }
     checkSortstrWatch("popFrame", frameDepth_);
     // Disarm temp 0 watcher when sortStructs:into: itself returns —
     // the slot becomes invalid once the frame is gone.
@@ -12671,6 +12828,17 @@ bool Interpreter::popFrame() {
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
+
+    // NLR-marker hygiene (cascade-#3 residual, 2026-06-11): scrub the
+    // popped slot's homeFrameDepth so a later activation that reuses
+    // this savedFrames_ slot WITHOUT writing the field (JIT block
+    // activations that bypass activateBlock) can never inherit a stale
+    // marker.  A stale marker silently rerouted a block's ^-NLR to the
+    // wrong "home" (FreeTypeCache atFont:...: the ^v non-local return
+    // degraded to a normal send-return, the method tail returned self,
+    // and the receiver propagated up as the send result).  The popped
+    // frame's marker is dead once popped — nothing below restores it.
+    frame.homeFrameDepth = SIZE_MAX;
 
     // jit-may24 Step 2: track materialize-bail frame count.  Decrement
     // here (not in returnValue's matRetSlot path) because popFrame is
@@ -14742,6 +14910,11 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     if (frameDepth_ >= MaxFrameDepth) return 0;
     stackPointer_ = callerState->sp;
     SavedFrame& frame = savedFrames_[frameDepth_++];
+    if (false) {
+        g_fpushN++;
+        fprintf(stderr, "[FPUSH-B fd=%zu] #%s\n", frameDepth_ - 1,
+                memory_.selectorOf(method_).c_str());
+    }
     frame.savedIP = instructionPointer_;
     frame.savedBytecodeEnd = bytecodeEnd_;
     frame.savedMethod = method_;
@@ -19730,6 +19903,7 @@ void Interpreter::tryJITResumeInCaller() {
                     rSel.c_str(), bcOffset,
                     (long long)(stackPointer_ - framePointer_),
                     tCls.c_str(), frameDepth_);
+                if (rSel == "widthOf:") g_fpushArm = true;
             }
         }
         if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
@@ -22386,6 +22560,10 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     SavedFrame& frame, J2JSave& save, jit::JITMethod* fallbackJM,
     const char* siteTag)
 {
+    if (false) {
+        g_fpushN++;
+        fprintf(stderr, "[FPUSH-M] site=%s\n", siteTag);
+    }
 #if PHARO_J2J_SAVE_V2
     // V2: the caller identity derives from the packed resume address;
     // the materialize-only sentinel (resumeAddr == 0) falls back like
