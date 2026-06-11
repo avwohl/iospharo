@@ -2,6 +2,32 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12ww — matguard cascade fixed; scanFor: bail edge = last open dict item
+
+SHIPPED (soak in flight /tmp/soak_matguard.log): canJITActivate's
+matRetSlot guard narrowed 4-deep -> 1-deep.  [SF-ACT] proved the
+cascade: 1428 of 1.05M scanFor: activations passed canJITActivate;
+post-fix interp activations collapse.  Opt-back
+PHARO_JIT_MATGUARD_DEEP=1.
+
+LAST OPEN DICT ITEM: scanFor: STILL does ~17M interp at:/key sends
+(per-activation ~17 = the probe loop) even with matguard-narrow +
+FORCE_RESUME_FOR_SENDS.  Its jit-entered activations bail at the
+FIRST send (#hash) and complete interpreted; resume telemetry shows
+ZERO refusals for it (frozen at startup levels) — so the resume is
+never even ATTEMPTED on that bail path.  NEXT PROBE (5 lines):
+per-method counter in the tryJITActivation/tryExecute exit loop —
+which exitReason does scanFor: produce, and does its handler attempt
+tryResume at all?  Suspects: (a) the exit lands in a handler that
+goes interp without resume (EXIT_SEND miss-path?), (b) #hash callee
+(SmallInteger>>hash / prim-75 family) routes through a no-resume
+edge, (c) t1NoPostPrimResume-style skip.  When fixed, expect the
+17M sends to collapse and dict to step toward Cog (currently
+~360-470ms noisy vs 26).
+
+Also pending: force-rung suite soak -> cond-jump gate default flip;
+fib30 unchanged ~17.5 vs 5.
+
 ## CHECKPOINT 2026-06-11vv — RAW-SCAN BUG FIXED (scanFor: un-stubbed); census attribution next
 
 MAJOR FIX (commit "allBytecodesSupported prefix scan walked RAW
