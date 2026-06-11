@@ -11,9 +11,8 @@ setters + recomputed in rewriteIcEntriesAfterRecompile; emit = one
 tbnz x7,#57 past the 4-load cascade (cascade kept as fallback;
 opt-out PHARO_T1_NO_XGATE_FOLD; counters/cap/log modes unfolded).
 Ladder clean.  cfib interleaved min-of-5: fold wins 2/3 pairs (~3%,
-NOISY box — re-measure quiet before quoting).  PENDING: 1-15 batch
-suite soak running in background (/tmp/soak_xgate.log, results in
-/tmp/sunit_test_results.txt; expect 2468/0/0).  If soak regresses:
+NOISY box — re-measure quiet before quoting).  DONE: 1-15 batch suite soak
+PASSED 2468/0/0 (fold default-ON qualified).  If soak regresses:
 suspect a bit-57 misuse collision or a gate-predicate mismatch —
 PHARO_T1_NO_XGATE_FOLD=1 A/B isolates instantly.
 
