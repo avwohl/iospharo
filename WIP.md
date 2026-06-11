@@ -2,6 +2,27 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11gg — M2 v1 CORRECT + default-ON (wash); M2b/M3 are the cut
+
+M2 v1 (write-through x23) is correct (2468-test soak under the
+dual-cursor brk-trap, zero divergences) and DEFAULT-ON.  The hole was
+pharo_jit_osr_resume never loading x23 (caught by the audit trap +
+lldb: x23 garbage at a tryResume entry).  Pack-word patcher offset and
+emit shape now derive from one fsrCursorMode() helper.
+
+HONEST PERF: fib30 A/B x4 = 19ms BOTH states (wash — write-through
+keeps the store; OoO absorbs the load-latency win; 7th instance of
+the measurement lesson).  Per the design, the instructions LEAVE at:
+- M2b: drop the write-through -> publish x23 only at exit stubs +
+  BLR brackets (the M0 blr classification table gates this), and
+- M3: depth elimination — replace the OFF_J2J_DEPTH RMW pair with the
+  j2jEntryCursor compare (field + helper already in from M0).
+PRICE-THE-DESIGN gate after M3: if M2b+M3 < 3% on fib/cfib, the
+remaining macro gap is the send SEQUENCE (patched-IC fold) and
+C++-exit sends (dict's cost), not frame state.
+
+Current honest numbers: fib30 ~19ms (Cog 5), dict ~375 (Cog 18).
+
 ## CHECKPOINT 2026-06-11ff — FSR M2 v1 scaffold in (gated, one coherence hole)
 
 M2 v1 = WRITE-THROUGH x23 cursor residency (design deviation from the
