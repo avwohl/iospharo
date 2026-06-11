@@ -188,6 +188,7 @@ namespace jit {
 // Forward decl: inline block-value prep helper lives in JITRuntime.cpp.
 // Called from the asmjit-T1 IC HIT emit when BLOCK_VALUE_BIT is set.
 extern "C" uint64_t jit_rt_block_create(pharo::jit::JITState*, uint64_t);
+extern "C" void jit_rt_prim_body_entry(pharo::jit::JITState*, uint64_t);
 extern "C" void* jit_rt_inline_block_value_prep(
     void* state, int nArgs, void* resumeAddr);
 
@@ -2657,6 +2658,16 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             // at: — fmt 2 (Array), fmt 10-11 (32-bit WordArray), or 16-23 (byte).
             asmjit::Label tryWordsAt = a.new_label();
             asmjit::Label tryBytesAt = a.new_label();
+            // 2026-06-12 (sieve-bug root cause): the fmt-3/4/5/9 helper
+            // block below was DEAD CODE — the byte-range miss branched
+            // to `fail`, so fmt-3 receivers (LayoutClassScope etc.)
+            // entered the Smalltalk fallback BODY, which assumes the
+            // full primitive was attempted and raises spurious
+            // SubscriptOutOfBounds.  That error cascade is what the
+            // 2026-05-19 "sieve gate" was masking (the cond-jump
+            // predicate selected error-raising bodies by accident).
+            // Mirror prim 62's chain: range-miss -> helper block.
+            asmjit::Label tryPtrAt = a.new_label();
             a.cmp(x6, asmjit::Imm(2));
             a.b_ne(tryWordsAt);
             a.asr(x4, x3, asmjit::Imm(3));   // idx untagged
@@ -2701,7 +2712,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.bind(tryBytesAt);
             a.sub(x8, x6, asmjit::Imm(16));
             a.cmp(x8, asmjit::Imm(8));
-            a.b_hs(fail);
+            a.b_hs(tryPtrAt);
             // byteSize = slotCount*8 - (fmt & 7)
             a.lsl(x5, x5, asmjit::Imm(3));
             a.and_(x9, x6, asmjit::Imm(0x7));
@@ -2730,13 +2741,11 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             // raised a confusing ArgumentsCountMismatch instead of doing
             // the right thing for fmt-3 receivers.
             {
-                asmjit::Label tryFmt345At = a.new_label();
-                a.sub(x8, x6, asmjit::Imm(3));
-                a.cmp(x8, asmjit::Imm(3));
-                a.b_lo(tryFmt345At);
-                a.cmp(x6, asmjit::Imm(9));
-                a.b_ne(fail);
-                a.bind(tryFmt345At);
+                a.bind(tryPtrAt);
+                // No fmt pre-test: jit_rt_primat_ptr now routes any
+                // format it can't fast-path through the FULL primitive
+                // (jitPrimAtFull) and only returns 0 on genuine
+                // failure — the body entry is then semantically right.
                 // Untag idx (x3 has tagged), save x1 (rcvr) for helper call.
                 a.asr(x4, x3, asmjit::Imm(3));   // x4 = untagged idx
                 // Helper signature: int(JITState* s, uint64_t rcvBits, uint64_t i, uint64_t* out)
@@ -2764,6 +2773,17 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
                 a.ret(x30);
             }
             a.bind(fail);
+            if (pharo::g_debug.jitFailReasons) {
+                a.sub(sp, sp, asmjit::Imm(16));
+                a.str(x0,  ptr(sp, 0));
+                a.str(x30, ptr(sp, 8));
+                a.mov(x1, asmjit::Imm(60));
+                a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_prim_body_entry));
+                a.blr(x9);
+                a.ldr(x0,  ptr(sp, 0));
+                a.ldr(x30, ptr(sp, 8));
+                a.add(sp, sp, asmjit::Imm(16));
+            }
             return;
         }
 
@@ -2774,6 +2794,8 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.ldr(x9, ptr(x2, 8));            // x9 = val (tagged)
             asmjit::Label tryWordsAtPut = a.new_label();
             asmjit::Label tryBytesAtPut = a.new_label();
+            // 2026-06-12: same dead-helper fix as prim 60 above.
+            asmjit::Label tryPtrAtPut = a.new_label();
             a.cmp(x6, asmjit::Imm(2));
             a.b_ne(tryWordsAtPut);
             // Array path.
@@ -2827,7 +2849,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             a.bind(tryBytesAtPut);
             a.sub(x8, x6, asmjit::Imm(16));
             a.cmp(x8, asmjit::Imm(8));
-            a.b_hs(fail);
+            a.b_hs(tryPtrAtPut);
             // val must be SmI in 0..255.
             a.and_(x7, x9, asmjit::Imm(0x7));
             a.cmp(x7, asmjit::Imm(1));
@@ -2855,11 +2877,8 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             // fmt 3/4/5 — call jit_rt_primatput_ptr helper.  Same dual-
             // path trap as basicSize/at:.
             {
-                asmjit::Label tryFmt345AtPut = a.new_label();
-                a.sub(x8, x6, asmjit::Imm(3));
-                a.cmp(x8, asmjit::Imm(3));
-                a.b_hs(fail);
-                a.bind(tryFmt345AtPut);
+                a.bind(tryPtrAtPut);
+                // No fmt pre-test — see tryPtrAt above.
                 // SmI tag check on idx (x3 was tagged).
                 a.and_(x7, x3, asmjit::Imm(0x7));
                 a.cmp(x7, asmjit::Imm(1));
@@ -7863,16 +7882,21 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // thing lost — <5% perf delta on bench per docs/deferred.md A6 iter
     // N+19.  Detect by scanning the BODY for conditional jumps; the
     // prologue has already consumed the CallPrimitive header at bc[0..2].
-    // 2026-06-12 REMOVAL ATTEMPT FAILED: with the gate off the eval
-    // ladder never completes (resume traffic explodes 25x and startup
-    // burns out) — the 2026-05-19 bug class is still real, NOT
-    // obsoleted by the encoding-error/NLR/raw-scan fixes.  The gate
-    // stays default-ON (PHARO_T1_NO_SIEVE_GATE=1 to experiment).
-    // Un-stubbing at:/at:put: (half the J2J bail census) therefore
-    // requires root-causing the cond-jump emit interaction first —
-    // see WIP checkpoint ccc.  NOTE the scan below still byte-steps
-    // raw; with the gate on that only causes EXTRA stubs (safe).
-    if (!GET_DEBUG_BOOL(PHARO_T1_NO_SIEVE_GATE)
+    // GATE OFF BY DEFAULT (2026-06-12, root cause FIXED): the
+    // 2026-05-19 "sieve bug" was never a cond-jump miscompile — the
+    // prim-60/61 prologues' format-range misses branched to `fail`
+    // (= the Smalltalk fallback BODY), leaving their fmt-3/4/5/9
+    // helper blocks DEAD CODE; uncovered formats (fmt 24-31
+    // CompiledMethod etc.) entered the body, whose semantics assume a
+    // real primitive attempt (Object>>at:'s body CANNOT retry — for
+    // variable classes it unconditionally raises SubscriptOutOfBounds).
+    // The gate's cond-jump predicate selected error-raising bodies by
+    // accident.  Fixed by retargeting the range misses to the helper
+    // blocks and routing remaining coverage misses through the FULL
+    // primitive (jitPrimAtFull).  Acceptance: sieve x3 = 1028 (was 1),
+    // gate-off ladder clean.  PHARO_T1_SIEVE_GATE=1 restores the stub
+    // behavior for bisection.
+    if (GET_DEBUG_BOOL(PHARO_T1_SIEVE_GATE)
             && real && (primIndex == 60 || primIndex == 61 || primIndex == 62)) {
         bool hasCJ = false;
         for (size_t bi = 0; bi < bcRealLen; bi++) {

@@ -1135,10 +1135,27 @@ extern "C" int jit_rt_ic_miss(
 // memory via state->memory.
 extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
                                   uint64_t i, uint64_t* out) {
+    if (__builtin_expect(pharo::g_debug.jitFailReasons, 0)) {
+        static int phn = 0;
+        if (++phn <= 24)
+            fprintf(stderr, "[PRIMAT-PTR-ENTRY] rcv=0x%llx i=%llu\n",
+                (unsigned long long)rcvBits, (unsigned long long)i);
+    }
     if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return 0;
     auto* rh = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
     uint32_t fmt = (uint32_t)rh->format();
     size_t slotCount = rh->slotCount();
+
+    // Format-coverage miss (anything but the fast fmt 3/4/5/9 paths
+    // below): run the FULL primitive in C++.  Entering the Smalltalk
+    // fallback body without a real attempt raises spurious
+    // SubscriptOutOfBounds (Object>>at:'s body CANNOT retry — for
+    // variable classes it unconditionally errors).  The 2026-05-19
+    // sieve-gate bug, root-caused 2026-06-12.
+    if (!(fmt == 9 || (fmt >= 3 && fmt <= 5))) {
+        return (int)s->interp->jitPrimAtFull(*s, rcvBits, (i << 3) | 1,
+                                             out, false, 0);
+    }
 
     // fmt 9: Indexable64 (DoubleWordArray, BoxedFloat64).  Each slot
     // holds one 64-bit word.  If the word fits in SmallInteger return
@@ -1229,7 +1246,22 @@ extern "C" int jit_rt_primatput_ptr(JITState* s, uint64_t rcvBits,
     if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return 0;
     auto* rh = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
     uint64_t header = *reinterpret_cast<uint64_t*>(rcvBits);
-    if (header & (1ULL << 23)) return 0;  // immutable
+    if (header & (1ULL << 23)) return 0;  // immutable (genuine fail -> body)
+
+    // Format-coverage miss: this helper's body math assumes pointer
+    // formats 3/4/5.  Anything else (fmt 24-31 CompiledMethod, byte
+    // formats the prologue's value-range pretests rejected, fmt 9)
+    // runs the FULL primitive — entering the Smalltalk fallback body
+    // without a real attempt raises spurious errorImproperStore (the
+    // 2026-05-19 sieve-gate bug, root-caused 2026-06-12).
+    {
+        uint32_t fmtPut = (uint32_t)rh->format();
+        if (!(fmtPut >= 3 && fmtPut <= 5)) {
+            uint64_t fullOut = 0;
+            return (int)s->interp->jitPrimAtFull(*s, rcvBits,
+                (i << 3) | 1, &fullOut, true, valBits);
+        }
+    }
 
     if (!s || !s->memory) return 0;
     pharo::ObjectMemory* mem = static_cast<pharo::ObjectMemory*>(s->memory);
@@ -1407,6 +1439,23 @@ extern "C" void jit_rt_trace_mod(int64_t a, int64_t b, int64_t result, JITState*
 
 // Blocker #4 test: sync C++ interpreter globals from the JITState at an inline-
 // spec continuation point.
+extern "C" void jit_rt_prim_body_entry(JITState* s, uint64_t primIdx) {
+    // Diagnostic (PHARO_JIT_FAIL_REASONS): the prim prologue fell into
+    // the Smalltalk fallback body — log what arrived.
+    static int n = 0;
+    if (++n > 24) return;
+    uint64_t rcv = s->receiver.rawBits();
+    uint64_t t0 = s->tempBase ? reinterpret_cast<uint64_t*>(s->tempBase)[0] : 0;
+    int fmt = -1;
+    if ((rcv & 7) == 0 && rcv >= 0x10000)
+        fmt = (int)reinterpret_cast<pharo::ObjectHeader*>(rcv)->format();
+    fprintf(stderr, "[PRIM-BODY-ENTRY] prim=%llu rcv=0x%llx fmt=%d temp0=0x%llx cls=%s\n",
+        (unsigned long long)primIdx, (unsigned long long)rcv, fmt,
+        (unsigned long long)t0,
+        (rcv & 7) == 0 && rcv >= 0x10000 && s->interp
+            ? s->interp->memory().classNameOf(pharo::Oop::fromRawBits(rcv)).c_str() : "?");
+}
+
 extern "C" void jit_rt_sync_globals(JITState* s) {
     if (s && s->interp) {
         static_cast<pharo::Interpreter*>(s->interp)->syncGlobalsFromJITState(*s);

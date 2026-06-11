@@ -2103,6 +2103,14 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
 
         // arrayIndex is (idx - 1), so byteIndex is 0-based
         if (arrayIndex >= totalBytes) {
+            if (g_debug.jitFailReasons) {
+                static int cmf = 0;
+                if (++cmf <= 10)
+                    fprintf(stderr, "[P60-CM-OOB] idx=%lld totalBytes=%zu "
+                        "slots=%zu fmt=%d\n", (long long)(arrayIndex + 1),
+                        totalBytes, header->slotCount(),
+                        (int)header->format());
+            }
             return PrimitiveResult::Failure;
         }
 

@@ -1188,6 +1188,14 @@ public:
     /// state.sp.  Caller emits the j2jDepth==0 guard (the exit path
     /// materializes J2J saves first; this helper cannot).
     uint64_t jitInlineBlockCreate(jit::JITState& state, uint64_t packed);
+    /// Full-fidelity prim 60/61 for the JIT prologue's format-coverage
+    /// miss (fmt 24-31 CompiledMethod, Strings, floats...).  Stages
+    /// rcvr/idx(/val) above state.sp (GC-visible: both sp views bumped),
+    /// runs the REAL primitive, returns 1 + *out on success, 0 on
+    /// genuine failure (then the fallback body is semantically correct).
+    uint64_t jitPrimAtFull(jit::JITState& state, uint64_t rcvBits,
+                           uint64_t idxTagged, uint64_t* out,
+                           bool isPut, uint64_t valBits);
     /// Blocker #4 test: sync C++ interpreter globals from a live JITState (def
     /// in Interpreter.cpp where jit::JITState is fully visible).
 #if PHARO_JIT_ENABLED

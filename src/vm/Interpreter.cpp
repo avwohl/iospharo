@@ -21628,6 +21628,56 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
 // receiver's LIVE class; on mismatch use the fresh method.  Diagnostic-gated by
 // PHARO_T1_VALIDATE_IC; `tag` identifies which dispatch handler called us.
 #if PHARO_JIT_ENABLED
+uint64_t Interpreter::jitPrimAtFull(jit::JITState& state, uint64_t rcvBits,
+                                    uint64_t idxTagged, uint64_t* out,
+                                    bool isPut, uint64_t valBits) {
+    // Stage the prim operands on the LIVE stack above state.sp so the
+    // real primitive (which reads stackValue()/pushes via interp sp)
+    // can run, and so a GC inside it (LargeInteger alloc etc.) sees
+    // them as roots.  Both sp views move together and are restored.
+    Oop* savedInterpSP = stackPointer_;
+    Oop* base = state.sp;
+    base[0] = Oop::fromRawBits(rcvBits);
+    base[1] = Oop::fromRawBits(idxTagged);
+    int argc = 1;
+    if (isPut) { base[2] = Oop::fromRawBits(valBits); argc = 2; }
+    Oop* top = base + 2 + (isPut ? 1 : 0);
+    stackPointer_ = top;
+    Oop* savedStateSP = state.sp;
+    state.sp = top;
+    if (__builtin_expect(g_debug.jitFailReasons, 0)) {
+        static int pfa = 0;
+        if (!isPut && ++pfa <= 40)
+            fprintf(stderr, "[PRIMFULL-CALL] put=%d idxTag=0x%llx rcv=%s\n",
+                (int)isPut, (unsigned long long)idxTagged,
+                memory_.classNameOf(Oop::fromRawBits(rcvBits)).c_str());
+    }
+    PrimitiveResult r = isPut ? primitiveAtPut(argc) : primitiveAt(argc);
+    if (__builtin_expect(g_debug.jitFailReasons, 0)
+            && r != PrimitiveResult::Success) {
+        static int pfn = 0;
+        if (++pfn <= 20) {
+            Oop rO = Oop::fromRawBits(rcvBits);
+            ObjectHeader* rh = rO.isObject() ? rO.asObjectPtr() : nullptr;
+            fprintf(stderr, "[PRIMFULL-FAIL] put=%d idxTag=0x%llx rcvCls=%s "
+                "fmt=%d byteSize=%zu slots=%zu\n",
+                (int)isPut, (unsigned long long)idxTagged,
+                rh ? memory_.classNameOf(rO).c_str() : "?",
+                rh ? (int)rh->format() : -1,
+                rh ? rh->byteSize() : 0, rh ? rh->slotCount() : 0);
+        }
+    }
+    uint64_t ok = 0;
+    if (r == PrimitiveResult::Success) {
+        // primitiveSuccess replaced rcvr+args with the result.
+        *out = stackPointer_[-1].rawBits();
+        ok = 1;
+    }
+    stackPointer_ = savedInterpSP;
+    state.sp = savedStateSP;
+    return ok;
+}
+
 uint64_t Interpreter::jitInlineBlockCreate(jit::JITState& state, uint64_t packed) {
     // Mirror of the chain-loop ExitBlockCreate handler, minus the
     // exit/resume round trip.  state.* is the truth (cascade-#3 rule).
