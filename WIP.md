@@ -2,6 +2,34 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11m — send-resume fix #1 LANDED; cascade components #2/#3 mapped
+
+- **Fix #1 SHIPPED + validated** (commit "SEND-RESUME FIX #1"): plain
+  bcToCode + per-JM override side table (resumeOvOffset, JM 112->120,
+  appended at END — the stencils.cpp JITMethod_mirror models the first
+  96 bytes by FIXED offsets, never insert mid-struct).  One retval-
+  carrying consumer switched (the V2 save packer ~19800); all others
+  plain by construction.  The DET_SCHED max: repro PASSES; windows
+  [0,1500) pass; default config untouched (all default gates green).
+- **Component #2**: bisect-ALL (and FORCE) crash exit=133 = the
+  SAVELESS retro-save pool-overflow brk (AsmjitT1.cpp ~5139,
+  0xDEAE) — broad resume deepens save chains past the pool.  Fix
+  direction: graceful pool-full path (restore the stash, hand the
+  frame to C++ via state fields + a new exit reason; C++ materializes
+  the pool + this frame, resets cursor, resumes) — OR first try:
+  saveless-off interaction quantified (next).
+- **Component #3**: with saveless OFF + force resume -> only-idle
+  WEDGE again (exit=124).  Bisect it with PHARO_T1_RESUME_MIN/
+  MAX_COMPILE on a PHARO_T1_NO_CAN_SKIP_J2J_SAVE=1 build-opt run;
+  then DET_SCHED + the DNU-stack tracing as for #1.  NOTE the seq2
+  counter counts compile ATTEMPTS (incl. failures) — startup exceeds
+  5000; use MAX=-1 for 'everything'.
+- The prize (re-verified post-fix-#1 pending): single-method resume
+  sendloop 345 -> 25 ms (14x).  After #2/#3: stage
+  RESUME_SENDS_NO_CONDJUMP -> full -> default with the ladder
+  (asTuple canary = AIPrim DET_SCHED; CharacterTest;
+  200-class A/B; the 16K soak).
+
 ## CHECKPOINT 2026-06-11l — SEND-RESUME ROOT CAUSE + the 14x sendloop proof; FSR design landed
 
 - **THE SUITE LEVER, proven**: enabling mid-method resume for ONE
