@@ -6782,6 +6782,30 @@ terminate_process:
 
     // After popping, if execution is still running, push the result
     if (running_) {
+        // Cascade-#3 forensics: trace retval placement for the parser
+        // frames under the deterministic repro (trap knob + selector
+        // filter keeps it quiet otherwise).
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+            static int rvN = 0;
+            std::string s_ = (method_.isObject()
+                              && method_.rawBits() > 0x10000)
+                ? memory_.selectorOf(method_) : std::string("?");
+            if (s_.find("parse") == 0 && ++rvN <= 60) {
+                long ipo = -1;
+                if (method_.isObject()) {
+                    ObjectHeader* mo = method_.asObjectPtr();
+                    size_t nl = memory_.numLiteralsOf(method_);
+                    ipo = instructionPointer_
+                        - (mo->bytes() + (1 + nl) * 8);
+                }
+                fprintf(stderr,
+                    "[RETPLACE] m=#%s ipOff=%ld matSlot=%p sp=%p fp=%p "
+                    "retval=0x%llx\n",
+                    s_.c_str(), ipo, (void*)matRetSlot,
+                    (void*)stackPointer_, (void*)framePointer_,
+                    (unsigned long long)value.rawBits());
+            }
+        }
         if (matRetSlot) {
             // Step 7: write value to caller's receiver slot, set sp past
             // it.  Skips the standard push(value) — popFrame's
@@ -13723,6 +13747,46 @@ void Interpreter::sendMustBeBoolean(Oop value) {
                             k, (unsigned long long)bits, cls.c_str(),
                             slot == stackPointer_ ? "  <-- sp" : "");
                 }
+            }
+            // IC dump: per-site selectorBits + all 6 entries, to catch
+            // site<->IC mapping shifts (recompile copies icBuffer
+            // positionally) and wrong-kind fills (bit61 returnsSelf on a
+            // ^true method).
+            if (jit::JITMethod* fJM =
+                    jitRuntime_.methodMap().lookup(method_.rawBits())) {
+                fprintf(stderr, "[MB-IC] jm=%p tier=%d numIC=%u\n",
+                        (void*)fJM, (int)fJM->tier, fJM->numICEntries);
+                const uint64_t* sba = fJM->selBitsArray();
+                for (uint32_t si = 0; si < fJM->numICEntries && si < 12; si++) {
+                    uint64_t* slots = reinterpret_cast<uint64_t*>(
+                        fJM->icSiteAt(si));
+                    std::string sel = "?";
+                    Oop selOop = Oop::fromRawBits(
+                        sba ? sba[si] : slots[jit::IC_SELBITS_SLOT]);
+                    if (selOop.isObject() && selOop.rawBits() > 0x10000)
+                        sel = memory_.oopToString(selOop);
+                    fprintf(stderr, "[MB-IC]  site%u sel=#%s\n", si, sel.c_str());
+                    for (int e = 0; e < 6; e++) {
+                        uint64_t key = slots[e * 3];
+                        if (!key) continue;
+                        uint64_t meth = slots[e * 3 + 1];
+                        uint64_t extra = slots[e * 3 + 2];
+                        std::string mSel = "?";
+                        Oop mOop = Oop::fromRawBits(meth);
+                        if (mOop.isObject() && mOop.rawBits() > 0x10000)
+                            mSel = memory_.selectorOf(mOop);
+                        fprintf(stderr,
+                            "[MB-IC]   e%d key=0x%llx target=#%s extra=0x%llx"
+                            " (b63=%d b61=%d b60=%d b58=%d pk=%d)\n",
+                            e, (unsigned long long)key, mSel.c_str(),
+                            (unsigned long long)extra,
+                            (int)((extra >> 63) & 1), (int)((extra >> 61) & 1),
+                            (int)((extra >> 60) & 1), (int)((extra >> 58) & 1),
+                            (int)((extra >> 48) & 0x1F));
+                    }
+                }
+            } else {
+                fprintf(stderr, "[MB-IC] no JM for method\n");
             }
             for (int k = 0; k < 3 && frameDepth_ >= (size_t)(k + 1); k++) {
                 SavedFrame& sf = savedFrames_[frameDepth_ - 1 - k];
@@ -24516,6 +24580,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 uint32_t codeOff = savedJitMethod->codeOffsetForBC(pastSendOff);
                                 if (codeOff > 0 && codeOff < savedJitMethod->codeSize)
                                     savedResumeEntry = savedJitMethod->codeStart() + codeOff;
+                                if (__builtin_expect(g_debug.t1ResumeTosLog, 0)) {
+                                    std::string cSel = memory_.selectorOf(savedMethod);
+                                    if (cSel == "parseAssignment") {
+                                        std::string tSel = memory_.selectorOf(chainTarget);
+                                        fprintf(stderr,
+                                            "[PA-SAVE] target=#%s nArgs=%d pastSendOff=%u "
+                                            "codeOff=%u entry=%p savedSP=%p tempBase=%p\n",
+                                            tSel.c_str(), nArgs, pastSendOff, codeOff,
+                                            (void*)savedResumeEntry, (void*)savedSP,
+                                            (void*)savedTempBase);
+                                    }
+                                }
                                 // PHARO_SORTSTR_WATCH: log bc→code resolution
                                 // for sends inside Collection>>#isEmpty.  If the
                                 // mapping is wrong, savedResumeEntry will resume
@@ -24754,7 +24830,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                               || tos.rawBits() == memory_.falseObject().rawBits());
                                 bool isNil = (tos.rawBits() == memory_.nil().rawBits());
                                 std::string callerSel = memory_.selectorOf(savedMethod);
-                                bool ofInterest = (callerSel == "sortStructs:into:");
+                                bool ofInterest = (callerSel == "sortStructs:into:"
+                                        || callerSel == "parseAssignment");
                                 if (logN < 50 || !isBool || ofInterest) {
                                     logN++;
                                     std::string targetSel = memory_.selectorOf(chainTarget);
@@ -25257,7 +25334,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                   || tos.rawBits() == memory_.falseObject().rawBits());
                     bool isNil = (tos.rawBits() == memory_.nil().rawBits());
                     std::string callerSel = memory_.selectorOf(method);
-                    bool ofInterest = (callerSel == "sortStructs:into:");
+                    bool ofInterest = (callerSel == "sortStructs:into:"
+                                        || callerSel == "parseAssignment");
                     if (logN < 50 || !isBool || ofInterest) {
                         logN++;
                         std::string tosCls = tos.isSmallInteger() ? "SmI"

@@ -1001,6 +1001,28 @@ inline bool isPhase4SendOp(uint8_t op) {
     return op >= 0x70 && op <= 0xAF;
 }
 
+// Walk the REAL opcode stream — one callback per instruction, skipping
+// operand bytes via SistaV1::bytecodeLength (the same advance the emit
+// loop performs).  Every send-site scan MUST use this, never a raw
+// per-byte loop: a multi-byte instruction whose operand byte lands in
+// the send range (e.g. PushArray <E7 81> — operand 0x81 looks like
+// Send0) otherwise mints a phantom IC site, shifting every later
+// site's selectorBits by one.  The shifted miss path then looks up the
+// WRONG SELECTOR for the send (cascade-#3: #value: instead of
+// #isIdentifier on OCParser>>parseAssignment — setter returned self,
+// receiver landed where the Boolean belonged).
+template <typename F>
+static inline void forEachRealOpcode(const uint8_t* bc, size_t bcLen, F&& fn) {
+    size_t i = 0;
+    while (i < bcLen) {
+        uint8_t op = bc[i];
+        int len = SistaV1::bytecodeLength(op);
+        if (i + (size_t)len > bcLen) return;  // truncated multi-byte tail
+        fn(i, op);
+        i += (size_t)len;
+    }
+}
+
 // Counter of methods successfully real-emitted with conditional jumps.
 // Used by the FIRST_N / ONLY_N / SKIP_N bisect knobs.  Incremented in
 // compileViaAsmjit after the JITMethod is finalized.
@@ -8402,17 +8424,19 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // dynamic load-from-save path.
     int staticJ2JArgCount = -1;
     int emitSkip = (primIdx > 0) ? 3 : 0;
-    for (size_t i = (size_t)emitSkip; i < bcLen; i++) {
-        uint8_t op = bc[i];
-        if (isPhase4SendOp(op)) {
+    {
+        bool mixed = false;
+        forEachRealOpcode(bc + emitSkip, bcLen - (size_t)emitSkip,
+                          [&](size_t, uint8_t op) {
+            if (mixed || !isPhase4SendOp(op)) return;
             int n = sendNArgs(op);
             if (staticJ2JArgCount < 0) {
                 staticJ2JArgCount = n;
             } else if (staticJ2JArgCount != n) {
                 staticJ2JArgCount = -1;  // mixed
-                break;
+                mixed = true;
             }
-        }
+        });
     }
     // SOUNDNESS GATE (2026-06-10, found by PHARO_SP_DEPTH_CHECK): the
     // fold assumes every save this method's return prelude pops was
@@ -8440,8 +8464,9 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     std::vector<SendSitePatch> patchRecords;
     if (!GET_DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS)) {
         uint16_t nSites = 0;
-        for (size_t i = 0; i < bcLen; i++)
-            if (isPhase4SendOp(bc[i])) nSites++;
+        forEachRealOpcode(bc, bcLen, [&](size_t, uint8_t op) {
+            if (isPhase4SendOp(op)) nSites++;
+        });
         patchRecords.resize(nSites);   // value-init: all-zero records
     }
     SendSitePatch* patchRecPtr =
@@ -8504,9 +8529,9 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // send opcode (0x70..0xAF) gets one IC site.
     uint16_t numSendSites = 0;
     if (isReal) {
-        for (size_t i = 0; i < bcLen; i++) {
-            if (isPhase4SendOp(bc[i])) numSendSites++;
-        }
+        forEachRealOpcode(bc, bcLen, [&](size_t, uint8_t op) {
+            if (isPhase4SendOp(op)) numSendSites++;
+        });
     }
 
     // Payload layout after the JITMethod header:
@@ -8949,9 +8974,8 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         ObjectHeader* ssHdr = (ssArrayOop.isObject()
                                && ssArrayOop.rawBits() > 0x10000)
                               ? ssArrayOop.asObjectPtr() : nullptr;
-        for (size_t i = 0; i < bcLen; i++) {
-            uint8_t op = bc[i];
-            if (!isPhase4SendOp(op)) continue;
+        forEachRealOpcode(bc, bcLen, [&](size_t, uint8_t op) {
+            if (!isPhase4SendOp(op)) return;
             uint64_t selBits = 0;
             if (op >= 0x60 && op <= 0x6F) {
                 // Binary special selectors: ssArray[(op - 0x60) * 2].
@@ -8991,7 +9015,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                     icStart + (siteIdx - 1) * IC_BYTES_PER_SITE);
                 siteSlots[IC_SELBITS_SLOT] = selBits;
             }
-        }
+        });
 
         // jit-84 B1: populate sendSiteMap_ in the shared JITCompiler so
         // Interpreter::extractInlineHintsForMethod can map sendIdx →
@@ -9001,11 +9025,11 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         if (interp.jitRuntime().compiler()) {
             std::vector<uint16_t> bcOffsets;
             bcOffsets.reserve(numSendSites);
-            for (size_t i = 0; i < bcLen; i++) {
-                if (isPhase4SendOp(bc[i])) {
+            forEachRealOpcode(bc, bcLen, [&](size_t i, uint8_t op) {
+                if (isPhase4SendOp(op)) {
                     bcOffsets.push_back(static_cast<uint16_t>(i));
                 }
-            }
+            });
             interp.jitRuntime().compiler()->setSendSiteBCOffsets(
                 compiledMethod.rawBits(), std::move(bcOffsets));
         }

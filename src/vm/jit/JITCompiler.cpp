@@ -11,6 +11,7 @@
 #include "sista/SistaRuntime.hpp"
 #include "asmjit/AsmjitT1.hpp"
 #include "../DebugSettings.hpp"
+#include "../DebugVars.hpp"
 #include "../ObjectMemory.hpp"
 #include "../Interpreter.hpp"
 #include <cstring>
@@ -2283,6 +2284,25 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // sends got numSendSites=0 → icBuffer not allocated (NULL) → setup
     // loop writes through NULL+offset → SIGSEGV at 0x90 in the recompile
     // path.  Root cause of deferred.md A1 P0, lldb-confirmed 2026-05-06.
+    // Cascade-#3 forensics: dump the full decoded stream for the
+    // phantom-IC-site investigation (selBits showed a 17-site layout
+    // with a non-selector at site4 for OCParser>>parseAssignment).
+    if (GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP)) {
+        std::string dSel = interp_.memory().selectorOf(compiledMethod);
+        if (dSel == "parseAssignment") {
+            fprintf(stderr,
+                "[PA-DECODE] compile method=0x%llx oldVersion=%p entries=%zu\n",
+                (unsigned long long)compiledMethod.rawBits(),
+                (void*)oldVersion, decoded.size());
+            for (auto& d : decoded) {
+                fprintf(stderr,
+                    "[PA-DECODE]  bcOff=%d op=0x%02X len=%d stencil=%d "
+                    "operand=%d brTgt=%d\n",
+                    d.bcOffset, d.opcode, d.bcLength, (int)d.stencilIdx,
+                    d.operand, d.branchTarget);
+            }
+        }
+    }
     uint16_t numSendSites = 0;
     for (auto& bc : decoded) {
         auto sid = static_cast<StencilID>(bc.stencilIdx);
