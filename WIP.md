@@ -2,6 +2,31 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12yy — scanFor: IC map decoded; 2 concrete fixes queued
+
+[IC-SITE] dump (new, under PHARO_JIT_TRACE_OOP): scanFor: site0
+#size pk16+J2J ok; site1 #hash = J2J bit-60 NO KIND -> inline-J2J
+gate bails on callee prim (75 identityHash, no prologue) ->
+dispatchCached EXIT per activation; sites 2-7 (at:/==/key) ALL ZERO
+— never filled, because post-hash the activation runs interp and
+interp sends don't fill T1 ICs.  One bad site poisons the method's
+whole IC warmup.
+
+CONCRETE FIXES (next window, in order):
+(1) prim-75 identityHash INLINE: add an inline prim kind for
+    basicIdentityHash (hash = header bits 32-53 extract per the
+    relocated-header memory — ~4 insns) at fill (inlinePrimKind) +
+    emit (the tryPrim* family).  Kills the per-activation hash exit;
+    scanFor: then runs to the at: site jitted and FILLS sites 2-7.
+    NOTE fill-path: prim-75 callee has hasPrimPrologue=false — route
+    like quick prims (kind classification, NOT bit-60).
+(2) Verify at:-site pk14 then engages (the dump will show extras
+    with kind 14 once site 2 fills from the JIT path).
+(3) Re-measure dict; if the loop still exits, repeat the site-dump
+    method on the next exit source.
+Suspect this chain (bad-prim site -> IC warmup poisoning) is GENERIC
+— same dump recipe applies to any hot method.
+
 ## CHECKPOINT 2026-06-12xx — resumability lever DEAD; at:-inline engagement is the dict endgame
 
 MEASUREMENT VERDICTS THIS WINDOW:
