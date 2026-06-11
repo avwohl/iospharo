@@ -3346,11 +3346,15 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         if (sfTrace) {
             JITMethod* sfJm = methodMap_.lookup(m.rawBits());
             fprintf(stderr, "[SF-NOTE] oop=0x%llx hasSplice=%d jm=%p "
-                "exec=%d nBC=%u negCache=%d\n",
+                "exec=%d nBC=%u negCache=%d execCount=%u stub=%d "
+                "bailMid=%d\n",
                 (unsigned long long)m.rawBits(), (int)spliced,
                 (void*)sfJm, sfJm ? (int)sfJm->isExecutable() : -1,
                 sfJm ? sfJm->numBytecodes : 0,
-                (int)initialCompileFailedContains(m.rawBits()));
+                (int)initialCompileFailedContains(m.rawBits()),
+                (sfJm && sfJm->stats) ? sfJm->stats->executionCount : 0,
+                sfJm ? (int)sfJm->isStubOnEntry : -1,
+                sfJm ? (int)sfJm->canBailMidMethod : -1);
         }
         if (spliced
                 && !sistaOrphanEscape(m.rawBits())) {

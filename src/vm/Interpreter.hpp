@@ -1308,7 +1308,19 @@ public:
         // behavior, for bisection).
         if (__builtin_expect(materializedFrameCount_ > 0
                 && !g_debug.t1AllowNestedJitBail, 0)) {
-            size_t scan = (frameDepth_ < 4) ? frameDepth_ : 4;
+            // 2026-06-12: the scan was 4 frames deep, which refused JIT
+            // for the ENTIRE call subtree under any materialize-bailed
+            // frame — the dict loop keeps one around constantly, so
+            // 99.9% of scanFor: activations (and everything nested)
+            // ran INTERPRETED (the [SF-ACT] cascade).  Only the DIRECT
+            // child matters: its return edge writes into the mat
+            // frame's context slot, which only interp returnFromMethod
+            // honors.  Deeper activations return into ordinary frames
+            // first.  PHARO_JIT_MATGUARD_DEEP=1 restores the 4-deep
+            // scan for bisection.
+            size_t scan = GET_DEBUG_BOOL(PHARO_JIT_MATGUARD_DEEP)
+                ? ((frameDepth_ < 4) ? frameDepth_ : 4)
+                : (frameDepth_ < 1 ? frameDepth_ : 1);
             for (size_t i = 0; i < scan; i++) {
                 if (savedFrames_[frameDepth_ - 1 - i].materializedRetSlot
                         != nullptr) {

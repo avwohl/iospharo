@@ -11798,9 +11798,27 @@ past_sista_block:
     // JIT method map.  Skipping the tryJITActivation call entirely on
     // the miss path avoids its prologue/epilogue + trace-guard costs
     // for the common case.
+    // scanFor: activation diagnosis (PHARO_JIT_FAIL_REASONS).
+    if (__builtin_expect(g_debug.jitFailReasons, 0)) {
+        static uint64_t sfActs = 0, sfCan = 0, sfJit = 0;
+        if (memory_.selectorOf(method) == "scanFor:") {
+            sfActs++;
+            bool can = canJITActivate(method);
+            if (can) sfCan++;
+            bool jitted = can && tryJITActivation(method, argCount);
+            if (jitted) sfJit++;
+            if ((sfActs & 0x3FFFF) == 1)
+                fprintf(stderr, "[SF-ACT] acts=%llu canJIT=%llu jitOk=%llu\n",
+                    (unsigned long long)sfActs, (unsigned long long)sfCan,
+                    (unsigned long long)sfJit);
+            if (jitted) return;
+            goto sfActFallthrough;
+        }
+    }
     if (canJITActivate(method) && tryJITActivation(method, argCount)) {
         return;  // JIT handled it
     }
+    sfActFallthrough:;
     // Otherwise fall through to interpreter execution via the dispatch loop
 #endif
 
