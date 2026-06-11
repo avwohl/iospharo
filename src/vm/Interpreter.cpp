@@ -21543,6 +21543,38 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
 // receiver's LIVE class; on mismatch use the fresh method.  Diagnostic-gated by
 // PHARO_T1_VALIDATE_IC; `tag` identifies which dispatch handler called us.
 #if PHARO_JIT_ENABLED
+uint64_t Interpreter::jitInlineBlockCreate(jit::JITState& state, uint64_t packed) {
+    // Mirror of the chain-loop ExitBlockCreate handler, minus the
+    // exit/resume round trip.  state.* is the truth (cascade-#3 rule).
+    jit::fsrLazyRefresh(state);
+    instructionPointer_ = state.ip;
+    stackPointer_ = state.sp;
+    receiver_ = state.receiver;
+    framePointer_ = state.tempBase - 1;
+    method_ = state.method;
+    homeMethod_ = state.method;
+
+    int litIndex = static_cast<int>(packed & 0xFFFF);
+    int flags = static_cast<int>((packed >> 32) & 0xFF);
+    int numCopied = flags & 0x3F;
+    bool receiverOnStack = (flags >> 7) & 1;
+    bool ignoreOuterContext = (flags >> 6) & 1;
+
+    createFullBlockWithLiteral(litIndex, numCopied, receiverOnStack,
+                               ignoreOuterContext);
+    // createFullBlockWithLiteral pushed the closure and may have GC'd;
+    // write the moved/updated truth back into the JITState.
+    state.sp = stackPointer_;
+    state.receiver = receiver_;
+    state.method = method_;
+    return 1;
+}
+
+extern "C" uint64_t jit_rt_block_create(pharo::jit::JITState* s,
+                                        uint64_t packed) {
+    return s->interp->jitInlineBlockCreate(*s, packed);
+}
+
 void Interpreter::syncGlobalsFromJITState(jit::JITState& s) {
     stackPointer_ = s.sp;
     instructionPointer_ = s.ip;

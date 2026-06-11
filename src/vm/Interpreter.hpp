@@ -1182,6 +1182,12 @@ public:
     //   if position < writeLimit: position++; collection[position] := arg; ^arg
     //   else: PrimitiveFailure (caller activates the full method for grow)
     PrimitiveResult primitiveWSNextPut(int argCount);
+    /// Inline block-create helper (called from emitted T1 code via
+    /// jit_rt wrapper): create the FullBlockClosure for a PushFullBlock
+    /// WITHOUT a JIT exit/resume round trip.  Pushes the closure onto
+    /// state.sp.  Caller emits the j2jDepth==0 guard (the exit path
+    /// materializes J2J saves first; this helper cannot).
+    uint64_t jitInlineBlockCreate(jit::JITState& state, uint64_t packed);
     /// Blocker #4 test: sync C++ interpreter globals from a live JITState (def
     /// in Interpreter.cpp where jit::JITState is fully visible).
 #if PHARO_JIT_ENABLED

@@ -187,6 +187,7 @@ namespace jit {
 
 // Forward decl: inline block-value prep helper lives in JITRuntime.cpp.
 // Called from the asmjit-T1 IC HIT emit when BLOCK_VALUE_BIT is set.
+extern "C" uint64_t jit_rt_block_create(pharo::jit::JITState*, uint64_t);
 extern "C" void* jit_rt_inline_block_value_prep(
     void* state, int nArgs, void* resumeAddr);
 
@@ -277,6 +278,7 @@ extern "C" void jit_rt_log_selfrec_push(pharo::jit::JITState* s) {
 extern "C" uint64_t g_xmethod_count = 0;
 // Monotonic T1 compile counter for the saveless MIN_COMPILE bisect gate.
 extern "C" uint64_t g_t1CompileSeq2;
+extern "C" int g_ibcEmits;
 // Eδ.2a (2026-05-24): count of methods compiled with canSkipJ2JSave=true.
 // Bumped at AsmjitT1.cpp compileMethod when the flag is set on a real
 // (non-stub) method.  Read by JIT stats dump.
@@ -8261,8 +8263,9 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 uint8_t flags  = bcReal[i + 2];
                 uint64_t packed = static_cast<uint64_t>(litIdx)
                                 | (static_cast<uint64_t>(flags) << 32);
-                a.mov(a64::x1, asmjit::Imm(packed));
-                a.str(a64::x1, a64::ptr(a64::x0, OFF_CACHED_TARGET));
+                // Set state.ip first — both paths need it (the C++
+                // create reads it for the materialize pc and GC ip
+                // round-trip).
                 if (g_fsrLazy) {
                     // M4: method mirror may be stale (per-call store
                     // deleted) — derive the exit ip from x19's
@@ -8276,10 +8279,58 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                       asmjit::Imm(bcOffsetBase + globalIdx));
                 }
                 a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+                asmjit::Label bcrSlow = a.new_label();
+                asmjit::Label bcrDone = a.new_label();
+                const int ibcMax = GET_DEBUG_INT(PHARO_T1_INLINE_BLOCK_CREATE_MAX);
+                // OPT-IN ONLY (2026-06-11): the inline helper is UNSOUND
+                // whenever this method runs as a JIT-to-JIT callee —
+                // the caller's activation exists only in machine state
+                // (chain inline-activate, inline/saveless J2J) and is
+                // reified by the EXIT handlers ("push a SavedFrame for
+                // the caller") before C++ creates the closure.  An
+                // in-JIT create sees a frame model missing the caller
+                // -> the closure's outerContext sender chain skips it
+                // (emit-bisect culprit #3 = Dictionary>>at:, garbage
+                // #value: DNUs at startup).  The sound form of this
+                // lever is LAZY outerContext (married contexts) — see
+                // WIP checkpoint tt.
+                const bool inlineBlockCreate =
+                    GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_CREATE)
+                    && (ibcMax < 0 || g_ibcEmits < ibcMax);
+                if (inlineBlockCreate) g_ibcEmits++;
+                if (inlineBlockCreate) {
+                    // INLINE block create (2026-06-11, the dict-bench
+                    // per-at: lever): call jit_rt_block_create via blr
+                    // — same closure semantics (C++ create incl.
+                    // materialization), no exit/resume round trip.
+                    // Guard: only at j2jDepth == 0 — the exit path
+                    // materializes pending J2J saves before creating
+                    // (the closure's outerContext must see them); the
+                    // helper cannot.
+                    a.ldr(a64::w6, a64::ptr(a64::x0, OFF_J2J_DEPTH));
+                    a.cbnz(a64::w6, bcrSlow);
+                    a.sub(a64::sp, a64::sp, asmjit::Imm(16));
+                    a.str(a64::x0,  a64::ptr(a64::sp, 0));
+                    a.str(a64::x30, a64::ptr(a64::sp, 8));
+                    a.mov(a64::x1, asmjit::Imm(packed));
+                    emitSyncSpToState(a);
+                    a.mov(a64::x9, asmjit::Imm(
+                        (uint64_t)&jit_rt_block_create));
+                    a.blr(a64::x9);
+                    a.ldr(a64::x0,  a64::ptr(a64::sp, 0));
+                    a.ldr(a64::x30, a64::ptr(a64::sp, 8));
+                    a.add(a64::sp, a64::sp, asmjit::Imm(16));
+                    emitReloadSpFromState(a);
+                    a.b(bcrDone);
+                }
+                a.bind(bcrSlow);
+                a.mov(a64::x1, asmjit::Imm(packed));
+                a.str(a64::x1, a64::ptr(a64::x0, OFF_CACHED_TARGET));
                 a.mov(a64::w3, Imm(EXIT_BLOCK_CREATE));
                 a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
                 emitSyncSpToState(a);
                 a.ret(a64::x30);
+                a.bind(bcrDone);
                 a.bind(bcLabels[globalIdx + 1]);
                 a.bind(bcLabels[globalIdx + 2]);
                 i += 2;
@@ -8639,6 +8690,7 @@ size_t g_failedBcOther    = 0;
 // Monotonic compile counter — used by the PHARO_T1_SAVELESS_MIN_COMPILE
 // bisect gate (saveless emit only in compiles with seq >= N, so startup
 // methods can be excluded while a controlled late-compiled site fires).
+extern "C" int g_ibcEmits = 0;
 extern "C" uint64_t g_t1CompileSeq2 = 0;
 
 JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
@@ -8646,6 +8698,15 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                              Oop compiledMethod) {
     (void)interp;
     g_t1CompileSeq2++;
+    const int ibcBefore = g_ibcEmits;
+    struct IbcLogGuard {
+        const int before; pharo::Oop cm; pharo::ObjectMemory& mem;
+        ~IbcLogGuard() {
+            if (pharo::g_debug.jitFailReasons && g_ibcEmits != before)
+                fprintf(stderr, "[IBC-RANGE] %d..%d sel=#%s\n",
+                    before + 1, g_ibcEmits, mem.selectorOf(cm).c_str());
+        }
+    } ibcGuard{ibcBefore, compiledMethod, memory};
 
     if (!compiledMethod.isObject() || compiledMethod.rawBits() < 0x10000) {
         g_failed++; g_failedBadHeader++;
