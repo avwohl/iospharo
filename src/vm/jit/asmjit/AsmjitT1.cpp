@@ -88,6 +88,9 @@ static bool g_emitGetterTrace = false;
 // [^true]]. ^false`) returned false on present elements once its do:
 // block compiled (DictionaryTest>>testIncludes 2-test repro).
 static bool g_emitIsBlock = false;
+// FSR M1 per-compile gates (set in compileViaAsmjit).
+static bool g_fsrX19 = false;
+static bool g_fsrX19Verify = false;
 // V2 emit plumbing (set per-compile by emitMethodBytes, used by the
 // send emit inside emitOne_arm64 — same single-threaded pattern):
 static asmjit::Label g_codeStartLabel;
@@ -3374,6 +3377,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.ldr(x7, ptr(x4, 32));   // jitMethod
             a.cbz(x7, skipJMRestore);
             a.str(x7, ptr(x0, OFF_JITMETHOD));
+            if (g_fsrX19) a.mov(x19, x7);  // FSR M1: caller-restore
             a.ldr(x6, ptr(x7, 0));    // method = callerJM[0]
             a.str(x6, ptr(x0, OFF_METHOD));
             a.add(x10, x6, asmjit::Imm(16));
@@ -4309,6 +4313,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         // (the JM-byte-offset off-by-one lesson).
                         a.ldr(x13, ptr(x10, (int)offsetof(JITMethod, compiledMethodOop)));
                         a.str(x10, ptr(x0, OFF_JITMETHOD));
+                        if (g_fsrX19) a.mov(x19, x10);  // FSR M1: activation commit
                         a.str(x13, ptr(x0, OFF_METHOD));
                         a.add(x13, x13, asmjit::Imm(16));
                         a.str(x13, ptr(x0, OFF_LITERALS));
@@ -5163,6 +5168,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(x14, ptr(x0, OFF_IP));
                     if (crossSaveless) {
                         a.str(x10, ptr(x0, OFF_JITMETHOD));
+                        if (g_fsrX19) a.mov(x19, x10);  // FSR M1: activation commit
                         a.str(x13, ptr(x0, OFF_METHOD));
                         a.add(x12, x13, asmjit::Imm(16));    // literals = CM+16
                         a.str(x12, ptr(x0, OFF_LITERALS));
@@ -5354,6 +5360,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.ldp(x6, x12, ptr(sp, 48));   // method + jitMethod
                         a.str(x6, ptr(x0, OFF_METHOD));
                         a.str(x12, ptr(x0, OFF_JITMETHOD));
+                        if (g_fsrX19) a.mov(x19, x12);  // FSR M1: caller-restore
                         a.ldp(x6, x12, ptr(sp, 64));   // literals + argCount
                         a.str(x6, ptr(x0, OFF_LITERALS));
                         a.str(w12, ptr(x0, OFF_ARGCOUNT));
@@ -5645,6 +5652,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 if (xmethod) {
                     a.ldr(x13, ptr(x10, (int)offsetof(JITMethod, compiledMethodOop)));      // x13 = calleeCM
                     a.str(x10, ptr(x0, OFF_JITMETHOD));
+                    if (g_fsrX19) a.mov(x19, x10);  // FSR M1: activation commit
                     a.str(x13, ptr(x0, OFF_METHOD));
                     a.add(x13, x13, asmjit::Imm(16));
                     a.str(x13, ptr(x0, OFF_LITERALS));
@@ -7266,6 +7274,16 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
             // === Plain cached dispatch === (emits deferred state setup)
             a.bind(dispatchCached);
+            if (g_fsrX19Verify) {
+                // FSR M1 oracle: x19 must equal the jitMethod mirror at
+                // every send exit.  brk #0xF19 on divergence.
+                asmjit::Label x19ok = a.new_label();
+                a.ldr(x16, ptr(x0, OFF_JITMETHOD));
+                a.cmp(x16, x19);
+                a.b_eq(x19ok);
+                a.brk(0xF19);
+                a.bind(x19ok);
+            }
             a.str(x5, ptr(x0, OFF_ICDATAPTR));
             a.mov(w3, asmjit::Imm(nArgs));
             a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
@@ -8366,6 +8384,9 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // a block bail to interp) and for jm->isBlock below.
     g_emitIsBlock =
         methObj->classIndex() == interp.compiledBlockClassIndex();
+    g_fsrX19 = GET_DEBUG_BOOL(PHARO_T1_FSR_X19)
+            || GET_DEBUG_BOOL(PHARO_T1_FSR_X19_VERIFY);
+    g_fsrX19Verify = GET_DEBUG_BOOL(PHARO_T1_FSR_X19_VERIFY);
     {
         uint32_t cls = methObj->classIndex();
         if (cls == interp.compiledBlockClassIndex()) {
