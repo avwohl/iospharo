@@ -6810,7 +6810,7 @@ terminate_process:
             std::string s_ = (method_.isObject()
                               && method_.rawBits() > 0x10000)
                 ? memory_.selectorOf(method_) : std::string("?");
-            if (s_.find("parse") == 0 && ++rvN <= 60) {
+            if (s_ == "minExtent" && ++rvN <= 400) {
                 long ipo = -1;
                 if (method_.isObject()) {
                     ObjectHeader* mo = method_.asObjectPtr();
@@ -7016,6 +7016,15 @@ size_t Interpreter::validateNLRHomeFrame(size_t homeFrame, Oop expectedHome) {
             }
             return i - 1;
         }
+    }
+    if (GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP)) {
+        static int missLog = 0;
+        if (++missLog <= 40)
+            fprintf(stderr,
+                "[NLR-MISS] marker=%zu expected=#%s NOT on inline stack "
+                "fd=%zu (context-NLR or swallow follows)\n",
+                homeFrame, memory_.selectorOf(expectedHome).c_str(),
+                frameDepth_);
     }
     return SIZE_MAX;  // home not on the inline stack -> context-NLR path
 }
@@ -19906,6 +19915,17 @@ void Interpreter::tryJITResumeInCaller() {
                 if (rSel == "widthOf:") g_fpushArm = true;
             }
         }
+        // Stale-identification guard (cascade-#3 third class): clear the
+        // send-identification fields before EVERY re-entry.  With
+        // j2jSaveCursor null (this loop's default), J2J-upgraded sites
+        // bail ExitSendCached WITHOUT repopulating cachedTarget /
+        // icDataPtr — the consumer then pairs the PREVIOUS send's cached
+        // method with the CURRENT ip (observed: minExtent's bc-144
+        // minHeight send activating site-0's cached hResizing — the
+        // width Point got a #shrinkWrap coordinate).
+        state.cachedTarget = Oop::fromRawBits(0);
+        state.icDataPtr = nullptr;
+        state.sendArgCount = 0;
         if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
             j2jPoolCursor_ = rj2jBase;  // Release pool slice
             break;  // No re-entry at this offset
@@ -20717,6 +20737,85 @@ void Interpreter::tryJITResumeInCaller() {
                 pendingICPatch_ = nullptr;
                 inJITResume_ = false;
                 return;
+            }
+            // Cascade-#3 third class: verify the CACHED METHOD matches the
+            // SEND'S selector decoded from the bytecode.  A poisoned hit
+            // (entry filled for another site / shifted icDataPtr) passes
+            // every existing gate because the entry is self-consistent —
+            // only the send bytecode knows the truth.  On mismatch, log
+            // and fall back to the normal lookup path.
+            if (cached.isObject() && cached.rawBits() > 0x10000
+                    && state.ip && state.method.isObject()
+                    && state.method.rawBits() > 0x10000) {
+                uint8_t so = *state.ip;
+                if (so >= 0x80 && so <= 0xAF) {
+                    ObjectHeader* cmO = state.method.asObjectPtr();
+                    Oop cmHdr = cmO->slotAt(0);
+                    int cmNL = cmHdr.isSmallInteger()
+                        ? (int)(cmHdr.asSmallInteger() & 0x7FFF) : 0;
+                    int litIdx = so & 0x0F;
+                    if (litIdx + 1 <= cmNL) {
+                        Oop sendSel = cmO->slotAt(1 + litIdx);
+                        size_t cnl = memory_.numLiteralsOf(cached);
+                        Oop mSel = (cnl >= 2)
+                            ? memory_.fetchPointer(cnl - 1, cached) : Oop::nil();
+                        if (mSel.isObject() && mSel.rawBits() > 0x10000
+                            && !mSel.asObjectPtr()->isBytesObject()
+                            && mSel.asObjectPtr()->slotCount() >= 2)
+                            mSel = mSel.asObjectPtr()->slotAt(1);
+                        if (sendSel.isObject() && mSel.isObject()
+                                && sendSel.rawBits() > 0x10000
+                                && mSel.rawBits() > 0x10000
+                                && sendSel.rawBits() != mSel.rawBits()) {
+                            static int wsN = 0;
+                            if (++wsN <= 40) {
+                                int siteIdx = -1; std::string siteSel = "?";
+                                if (auto* oj = jitRuntime_.methodMap().lookup(
+                                        state.method.rawBits())) {
+                                    ptrdiff_t off =
+                                        reinterpret_cast<uint8_t*>(state.icDataPtr)
+                                        - oj->icZoneStart();
+                                    if (oj->icBuffer && off >= 0
+                                        && (off % jit::IC_BYTES_PER_SITE) == 0) {
+                                        siteIdx = (int)(off / jit::IC_BYTES_PER_SITE);
+                                        if (uint64_t* sba = oj->selBitsArray()) {
+                                            Oop ss = Oop::fromRawBits(
+                                                sba[siteIdx]);
+                                            if (ss.isObject()
+                                                && ss.rawBits() > 0x10000)
+                                                siteSel = memory_.oopToString(ss);
+                                        }
+                                    }
+                                }
+                                jit::JITMethod* xjm =
+                                    reinterpret_cast<jit::JITMethod*>(state.jitMethod);
+                                fprintf(stderr,
+                                    "[IC-WRONGSEL@RESUME] send=#%s cached=#%s "
+                                    "caller=#%s ic=%p site=%d siteSel=#%s "
+                                    "ipOff=%ld jm=%p tier=%d numBc=%u "
+                                    "b2c143=%u b2c144=%u\n",
+                                    memory_.oopToString(sendSel).c_str(),
+                                    memory_.oopToString(mSel).c_str(),
+                                    memory_.selectorOf(state.method).c_str(),
+                                    (void*)state.icDataPtr, siteIdx,
+                                    siteSel.c_str(),
+                                    (long)(state.ip
+                                        - state.method.asObjectPtr()->bytes()
+                                        - (1 + memory_.numLiteralsOf(state.method)) * 8),
+                                    (void*)xjm, xjm ? (int)xjm->tier : -1,
+                                    xjm ? xjm->numBytecodes : 0,
+                                    xjm ? xjm->codeOffsetForBC(143) : 0,
+                                    xjm ? xjm->codeOffsetForBC(144) : 0);
+                            }
+                            jitICStale_++;
+                            instructionPointer_ = state.ip;
+                            stackPointer_ = state.sp;
+                            pendingICPatch_ = nullptr;
+                            inJITResume_ = false;
+                            return;
+                        }
+                    }
+                }
             }
             if (GET_DEBUG_BOOL(PHARO_T1_VALIDATE_IC) && state.sendArgCount >= 0) {
                 cached = validateICTarget("RESUME", cached, state.sp,
@@ -21934,6 +22033,19 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // Find the first empty slot and fill it
     for (int e = 0; e < 6; e++) {
         if (icData[e * 3] == 0) {
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+                Oop so18 = Oop::fromRawBits(icData[18]);
+                std::string siteSel = (so18.isObject() && so18.rawBits() > 0x10000)
+                    ? memory_.oopToString(so18) : "?";
+                std::string mSel = memory_.selectorOf(resolvedMethod);
+                if (siteSel != "?" && mSel != "?" && siteSel != mSel) {
+                    static int mm2 = 0;
+                    if (++mm2 <= 40)
+                        fprintf(stderr,
+                            "[IC-FILL-MM@21995] site=#%s cached=#%s\n",
+                            siteSel.c_str(), mSel.c_str());
+                }
+            }
             icData[e * 3] = lookupKey;
             icData[e * 3 + 1] = resolvedMethod.rawBits();
             icData[e * 3 + 2] = extra;
@@ -22099,6 +22211,20 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                     if (firstEmpty < 0 && icData[e * 3] == 0) firstEmpty = e;
                 }
                 if (firstEmpty >= 0 && fillEnabled) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+                        Oop so18 = Oop::fromRawBits(icData[18]);
+                        std::string siteSel = (so18.isObject() && so18.rawBits() > 0x10000)
+                            ? memory_.oopToString(so18) : "?";
+                        std::string mSel = memory_.selectorOf(cachedMethod);
+                        if (siteSel != "?" && mSel != "?" && siteSel != mSel) {
+                            static int mm = 0;
+                            if (++mm <= 40)
+                                fprintf(stderr,
+                                    "[IC-FILL-MM@22111] site=#%s cached=#%s key=0x%llx\n",
+                                    siteSel.c_str(), mSel.c_str(),
+                                    (unsigned long long)lookupKey);
+                        }
+                    }
                     icData[firstEmpty * 3]     = lookupKey;
                     icData[firstEmpty * 3 + 1] = cachedMethod.rawBits();
                     icData[firstEmpty * 3 + 2] = pkExtra;
@@ -22216,6 +22342,19 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                                 // sites always have heap receivers, so this
                                 // is a defensive fallback.
                                 key = 0x80000000u | (uint32_t)(rb & 0x7);
+                            }
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+                                Oop so18 = Oop::fromRawBits(icData[18]);
+                                std::string siteSel = (so18.isObject() && so18.rawBits() > 0x10000)
+                                    ? memory_.oopToString(so18) : "?";
+                                std::string mSel = memory_.selectorOf(cachedMethod);
+                                if (siteSel != "?" && mSel != "?" && siteSel != mSel) {
+                                    static int mm2 = 0;
+                                    if (++mm2 <= 40)
+                                        fprintf(stderr,
+                                            "[IC-FILL-MM@22292] site=#%s cached=#%s\n",
+                                            siteSel.c_str(), mSel.c_str());
+                                }
                             }
                             icData[e * 3 + 0] = key;
                             icData[e * 3 + 1] = cachedMethod.rawBits();
@@ -22499,6 +22638,20 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             }
         }
 
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+            Oop so18 = Oop::fromRawBits(icData[18]);
+            std::string siteSel = (so18.isObject() && so18.rawBits() > 0x10000)
+                ? memory_.oopToString(so18) : "?";
+            std::string mSel = memory_.selectorOf(cachedMethod);
+            if (siteSel != "?" && mSel != "?" && siteSel != mSel) {
+                static int mm = 0;
+                if (++mm <= 40)
+                    fprintf(stderr,
+                        "[IC-FILL-MM@22511] site=#%s cached=#%s key=0x%llx\n",
+                        siteSel.c_str(), mSel.c_str(),
+                        (unsigned long long)lookupKey);
+            }
+        }
         icData[firstEmpty * 3] = lookupKey;
         icData[firstEmpty * 3 + 1] = cachedMethod.rawBits();
         icData[firstEmpty * 3 + 2] = newExtra;
@@ -24254,6 +24407,48 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitSendCached: {
             // IC hit: cached method is in state.cachedTarget. Skip method lookup.
             Oop cached = state.cachedTarget;
+            // Cascade-#3 third class: verify the CACHED METHOD matches the
+            // SEND'S selector decoded from the bytecode.  A poisoned hit
+            // (entry filled for another site / shifted icDataPtr) passes
+            // every existing gate because the entry is self-consistent —
+            // only the send bytecode knows the truth.  On mismatch, log
+            // and fall back to the normal lookup path.
+            if (cached.isObject() && cached.rawBits() > 0x10000
+                    && state.ip && state.method.isObject()
+                    && state.method.rawBits() > 0x10000) {
+                uint8_t so = *state.ip;
+                if (so >= 0x80 && so <= 0xAF) {
+                    ObjectHeader* cmO = state.method.asObjectPtr();
+                    Oop cmHdr = cmO->slotAt(0);
+                    int cmNL = cmHdr.isSmallInteger()
+                        ? (int)(cmHdr.asSmallInteger() & 0x7FFF) : 0;
+                    int litIdx = so & 0x0F;
+                    if (litIdx + 1 <= cmNL) {
+                        Oop sendSel = cmO->slotAt(1 + litIdx);
+                        size_t cnl = memory_.numLiteralsOf(cached);
+                        Oop mSel = (cnl >= 2)
+                            ? memory_.fetchPointer(cnl - 1, cached) : Oop::nil();
+                        if (mSel.isObject() && mSel.rawBits() > 0x10000
+                            && !mSel.asObjectPtr()->isBytesObject()
+                            && mSel.asObjectPtr()->slotCount() >= 2)
+                            mSel = mSel.asObjectPtr()->slotAt(1);
+                        if (sendSel.isObject() && mSel.isObject()
+                                && sendSel.rawBits() > 0x10000
+                                && mSel.rawBits() > 0x10000
+                                && sendSel.rawBits() != mSel.rawBits()) {
+                            static int wsN = 0;
+                            if (++wsN <= 40)
+                                fprintf(stderr,
+                                    "[IC-WRONGSEL@CHAIN] send=#%s cached=#%s "
+                                    "caller=#%s ic=%p\n",
+                                    memory_.oopToString(sendSel).c_str(),
+                                    memory_.oopToString(mSel).c_str(),
+                                    memory_.selectorOf(state.method).c_str(),
+                                    (void*)state.icDataPtr);
+                        }
+                    }
+                }
+            }
             if (!cached.isObject() || cached.rawBits() < 0x10000 ||
                 cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
                 // Stale IC — invalidate and fall back to normal send

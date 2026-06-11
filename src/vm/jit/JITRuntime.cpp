@@ -1018,6 +1018,19 @@ extern "C" void jit_rt_fill_ic(JITState* s, uint64_t* icData,
 
     // 2026-05-03: IC entries are heap-allocated (RW always); no W^X
     // flip needed.
+    if (GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP) && s->interp) {
+        pharo::Oop so18 = pharo::Oop::fromRawBits(icData[18]);
+        pharo::Oop mo = pharo::Oop::fromRawBits(methodBits);
+        std::string siteSel = (so18.isObject() && so18.rawBits() > 0x10000)
+            ? s->interp->memory().oopToString(so18) : "?";
+        std::string mSel = s->interp->memory().selectorOf(mo);
+        if (siteSel != "?" && mSel != "?" && siteSel != mSel) {
+            static int mm3 = 0;
+            if (++mm3 <= 40)
+                fprintf(stderr, "[IC-FILL-MM@rt1022] site=#%s cached=#%s\n",
+                        siteSel.c_str(), mSel.c_str());
+        }
+    }
     icData[firstEmpty * 3]     = lookupKey;
     icData[firstEmpty * 3 + 1] = methodBits;
     icData[firstEmpty * 3 + 2] = extra;

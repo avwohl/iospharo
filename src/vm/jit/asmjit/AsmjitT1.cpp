@@ -1011,6 +1011,28 @@ inline bool isPhase4SendOp(uint8_t op) {
 // WRONG SELECTOR for the send (cascade-#3: #value: instead of
 // #isIdentifier on OCParser>>parseAssignment — setter returned self,
 // receiver landed where the Boolean belonged).
+// Encoding-failure trap (cascade-#3, 2026-06-11): without an attached
+// ErrorHandler, asmjit RECORDS the error and SKIPS the instruction — the
+// compile "succeeds" with the instruction silently missing.  Two shipped
+// bugs came from this class (orr/and bitmask immediates, the IC-offset
+// add >4095).  This handler latches the failure; emitMethodBytes checks
+// it and FAILS the compile, so the method stays interpreted instead of
+// running with a hole in its code.
+struct T1EncodingErrorHandler : public asmjit::ErrorHandler {
+    bool failed = false;
+    asmjit::Error first = asmjit::kErrorOk;
+    void handle_error(asmjit::Error err, const char* message,
+                      asmjit::BaseEmitter*) override {
+        failed = true;
+        if (first == asmjit::kErrorOk) first = err;
+        static int logged = 0;
+        if (++logged <= 20)
+            fprintf(stderr,
+                "[asmjit-t1] ENCODING ERROR (compile will bail): %s\n",
+                message ? message : "?");
+    }
+};
+
 template <typename F>
 static inline void forEachRealOpcode(const uint8_t* bc, size_t bcLen, F&& fn) {
     size_t i = 0;
@@ -4100,8 +4122,29 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.ldr(x5, ptr(jmReg, (int)offsetof(JITMethod, icBuffer)));
             // Skip the add when siteIdx == 0 (the first send in the
             // method — x5 already points at the right place).
+            //
+            // ENCODING TRAP (cascade-#3 third class, 2026-06-11): the
+            // AArch64 add-immediate field is 12 bits (0-4095).  For
+            // siteIdx >= 27 the offset (siteIdx*152 > 4095) is
+            // UN-ENCODABLE and asmjit SILENTLY DROPPED the add (same
+            // silent-drop class as the orr/and bitmask-immediate bug,
+            // memory asmjit-arm64-invalid-logical-imm) — so every send
+            // site >= 27 probed SITE 0's IC entries: key matched on the
+            // same receiver class, dispatchCached served site 0's
+            // cached METHOD for a different selector (minExtent's
+            // bc-144 minHeight send ran #hResizing; the width Point got
+            // a #shrinkWrap coordinate -> Morphic DNU cascade).  Use
+            // the split add (lsl#12 + low) which always encodes.
             if (siteIdx != 0) {
-                a.add(x5, x5, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
+                uint32_t icOff = (uint32_t)siteIdx * (uint32_t)IC_BYTES_PER_SITE;
+                if (icOff <= 4095) {
+                    a.add(x5, x5, asmjit::Imm(icOff));
+                } else {
+                    a.add(x5, x5, asmjit::Imm(icOff >> 12),
+                          asmjit::a64::lsl(12));
+                    if (icOff & 0xFFF)
+                        a.add(x5, x5, asmjit::Imm(icOff & 0xFFF));
+                }
             }
         };
         if (!patchedShape) emitMaterializeX5();
@@ -7375,6 +7418,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     Environment env = Environment::host();
     CodeHolder code;
     Error err = code.init(env);
+    T1EncodingErrorHandler encErr;
+    code.set_error_handler(&encErr);
     // V2 resume overrides: (postSendBcOff, continuation label) —
     // applied to bcToCode after assembly (jumps keep the plain
     // bcLabels; only resume machinery lands on the continuation).
@@ -8082,6 +8127,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     }
 #endif
 
+    if (encErr.failed) return false;  // an instruction was silently dropped
     err = code.flatten();
     if (err != kErrorOk) return false;
 
@@ -8974,7 +9020,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         ObjectHeader* ssHdr = (ssArrayOop.isObject()
                                && ssArrayOop.rawBits() > 0x10000)
                               ? ssArrayOop.asObjectPtr() : nullptr;
-        forEachRealOpcode(bc, bcLen, [&](size_t, uint8_t op) {
+        forEachRealOpcode(bc, bcLen, [&](size_t i, uint8_t op) {
             if (!isPhase4SendOp(op)) return;
             uint64_t selBits = 0;
             if (op >= 0x60 && op <= 0x6F) {
@@ -9002,6 +9048,56 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 int litIdx = op & 0x0F;
                 if (litIdx < numLiterals) {
                     selBits = literals[litIdx].rawBits();
+                }
+            }
+            if (GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP)) {
+                std::string mSel = memory.selectorOf(compiledMethod);
+                if (mSel == "minExtent" && siteIdx == 0) {
+                    const uint32_t* t = jm->bcToCodeTableOffset
+                        ? reinterpret_cast<const uint32_t*>(
+                              jm->codeStart() + jm->bcToCodeTableOffset)
+                        : nullptr;
+                    if (t) {
+                        fprintf(stderr, "[B2C-SLICE] jm=%p numBc=%u:",
+                                (void*)jm, jm->numBytecodes);
+                        for (int k = 139; k <= 148; k++)
+                            fprintf(stderr, " [%d]=%u", k, t[k]);
+                        fprintf(stderr, "\n");
+                    }
+                    {
+                        // Scan the bc-144 send's code window for the
+                        // expected site-45 IC bake: add x5,x5,#6840
+                        // (0x916AE0A5) and any add x5,x5,#imm.
+                        const uint32_t* c = reinterpret_cast<const uint32_t*>(
+                            jm->codeStart());
+                        int found = 0;
+                        for (uint32_t w = 98104 / 4; w < 100068 / 4; w++) {
+                            uint32_t insn = c[w];
+                            // add x5, x5, #imm  (sf=1 op 0x91, Rd=Rn=5)
+                            if ((insn & 0xFF0003FF) == 0x910000A5) {
+                                uint32_t imm = (insn >> 10) & 0xFFF;
+                                fprintf(stderr,
+                                    "[X5ADD] at code+%u: add x5,x5,#%u\n",
+                                    w * 4, imm);
+                                found++;
+                            }
+                        }
+                        fprintf(stderr, "[X5ADD] total=%d in bc144 window\n",
+                                found);
+                    }
+                }
+                if (mSel == "minExtent") {
+                    Oop so = pharo::Oop::fromRawBits(selBits);
+                    const uint32_t* b2c = jm->bcToCodeTableOffset
+                        ? reinterpret_cast<const uint32_t*>(
+                              jm->codeStart() + jm->bcToCodeTableOffset)
+                        : nullptr;
+                    fprintf(stderr, "[SBA-W] site%u bcOff=%zu op=0x%02X sel=%s "
+                            "b2c[i]=%u b2c[i+1]=%u\n",
+                        siteIdx, i, op,
+                        (so.isObject() && so.rawBits() > 0x10000)
+                            ? memory.oopToString(so).c_str() : "?",
+                        b2c ? b2c[i] : 0, b2c ? b2c[i + 1] : 0);
                 }
             }
             sba[siteIdx++] = selBits;
