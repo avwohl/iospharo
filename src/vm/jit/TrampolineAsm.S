@@ -224,6 +224,7 @@ Ltramp_return:
     cbz     x7,  Lret_null_resume
     ldr     x20, [x21, #JS_J2J_DEPTH_INC]
     ldr     x25, [x21, #JS_SP]
+    ldur    x26, [x25, #-8]           // simStack: TOS mirror live-in (design §4)
     mov     x0,  x21
     blr     x7
     str     x25, [x21, #JS_SP]
@@ -290,6 +291,7 @@ Lret_after_restore:
     // sweep maintains it — unmigrated JIT code updates JS_SP in
     // memory only, and a stale-x25 writeback would corrupt sp.
     ldr     x25, [x21, #JS_SP]
+    ldur    x26, [x25, #-8]           // simStack: TOS mirror live-in
     mov     x0,  x21
     blr     x7
     str     x25, [x21, #JS_SP]        // sp-residency: x25 live-out from JIT code
@@ -475,6 +477,7 @@ Lcall_enter_callee:
     // BLR into callee JIT code; entryAddr is in x7
     // sp-residency Phase 1 (contract half): x25 = state.sp live-in.
     ldr     x25, [x21, #JS_SP]
+    ldur    x26, [x25, #-8]           // simStack: TOS mirror live-in
     mov     x0,  x21                       // JITState* arg
     blr     x7
     str     x25, [x21, #JS_SP]        // sp-residency: x25 live-out from JIT code
@@ -552,15 +555,18 @@ SYMBOL(pharo_jit_osr_resume):
     stp     x29, x30, [sp, #-64]!     // save fp, lr
     stp     x19, x20, [sp, #16]       // save x19/x20 (AAPCS callee-saved)
     str     x25, [sp, #32]            // save x25 (sp-residency mirror)
+    str     x26, [sp, #48]            // save x26 (simStack TOS mirror)
     mov     x29, sp
     ldr     x19, [x0, #JS_JITMETHOD]
     ldr     x20, [x0, #JS_J2J_DEPTH_INC]
     // sp/tempBase residency: x25/x26 live-in/live-out.
     str     x0,  [sp, #40]            // stash state for the writeback
     ldr     x25, [x0, #JS_SP]
+    ldur    x26, [x25, #-8]           // simStack: TOS mirror live-in
     blr     x1                         // call JIT'd code
     ldr     x9,  [sp, #40]
     str     x25, [x9, #JS_SP]         // writeback BEFORE restoring caller's regs
+    ldr     x26, [sp, #48]            // restore x26 for our caller
     ldr     x25, [sp, #32]            // restore x25 for our caller
     ldp     x19, x20, [sp, #16]       // restore x19/x20 for our caller
     ldp     x29, x30, [sp], #64

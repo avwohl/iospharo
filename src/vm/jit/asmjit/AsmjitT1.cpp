@@ -70,6 +70,12 @@ static bool g_emitGetterTrace = false;
 #define PHARO_T1_SP_IN_X25 1
 // tempBase residency (x26) — same pattern, same contract sites.
 #define PHARO_T1_TB_IN_X26 0
+// simStack claims x26 as the TOS mirror (docs/simstack-design.md §4);
+// the dead tempBase-residency experiment must never be re-enabled
+// while the TOS cache code exists — mutually exclusive register use.
+#if PHARO_T1_TB_IN_X26
+#error "PHARO_T1_TB_IN_X26 conflicts with the simStack TOS cache (x26)"
+#endif
 // (the emitLoadSp/emitStoreSp/emitSyncSpToState helpers live next to
 //  emitPushReg, after the asmjit headers are in scope)
 // True while compiling a CompiledBlock (set per-compile in
@@ -98,6 +104,25 @@ struct PatchSiteLabels {
     bool hasTail = false;
 };
 static std::vector<PatchSiteLabels>* g_patchLabelsPtr = nullptr;
+// simStack B0 (docs/simstack-design.md §3): write-through TOS cache —
+// emit-time bookkeeping ONLY.  Memory is exact at every boundary by
+// construction; x26 is a redundant mirror.  Producers set g_tos via
+// paired helpers that emit the x26 write in the same call (B1+);
+// consumers read g_tosIn (the snapshot of what the PREVIOUS bytecode
+// left).  Unconverted ops are safe automatically: the dispatch head
+// clears g_tos, so omissions lose optimization, never correctness.
+struct T1TosCache {
+    bool    valid    = false;  // x26 == value at [x25,#-8]
+    bool    constSmI = false;  // B3: x26 is a known tagged SmI ...
+    int64_t taggedBits = 0;    //     ... with these bits
+};
+static T1TosCache g_tos;     // running state (current bytecode writes)
+static T1TosCache g_tosIn;   // snapshot consumed by the current bytecode
+// Per-compile jump-target bitmap (prescan in emitMethodBytes): targets
+// force g_tos = {} at label-BIND time.  emitOne's jump emits assert
+// their target is marked; a mismatch hard-fails the compile (interp
+// fallback) — never BUG-print-and-continue.
+static const std::vector<bool>* g_tosJumpTargetsPtr = nullptr;
 
 #include <cstdio>
 #include <cstdlib>
@@ -7036,6 +7061,50 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // PMS B1: per-site patch-word labels (resolved after flatten).
     std::vector<PatchSiteLabels> patchLabels;
     g_patchLabelsPtr = patchRecords ? &patchLabels : nullptr;
+    // simStack B0: reset the TOS cache per compile + build the jump-
+    // target bitmap.  Decode mirrors BcDepthMap.cpp's interp-faithful
+    // rules (ExtJump operand is an UNSIGNED byte; the sign lives in
+    // extB: offset = byte + (extB << 8)); the emit-time assert in the
+    // jump emits catches any drift by failing the compile.
+    g_tos = T1TosCache{};
+    g_tosIn = T1TosCache{};
+    std::vector<bool> tosJumpTargets(bcLen, false);
+    {
+        using namespace pharo::jit;
+        int64_t extB = 0;
+        bool extBSet = false;
+        size_t pc = 0;
+        while (pc < bcLen) {
+            uint8_t jop = bc[pc];
+            int len = SistaV1::bytecodeLength(jop);
+            if (len <= 0) len = 1;
+            int64_t target = -1;
+            if (SistaV1::isShortJump(jop)
+                    || SistaV1::isConditionalShortJump(jop)) {
+                target = SistaV1::shortJumpTarget(jop, (int)pc);
+            } else if (jop == SistaV1::ExtJump
+                       || jop == SistaV1::ExtJumpTrue
+                       || jop == SistaV1::ExtJumpFalse) {
+                if (pc + 1 < bcLen) {
+                    int64_t off = bc[pc + 1] + (extB << 8);
+                    target = (int64_t)pc + 2 + off;
+                }
+            }
+            if (jop == SistaV1::ExtendB && pc + 1 < bcLen) {
+                uint8_t b = bc[pc + 1];
+                extB = (!extBSet && b > 127) ? (int64_t)b - 256
+                                             : extB * 256 + (int64_t)b;
+                extBSet = true;
+            } else if (jop != SistaV1::ExtendA) {
+                extB = 0;
+                extBSet = false;
+            }
+            if (target >= 0 && (size_t)target < bcLen)
+                tosJumpTargets[(size_t)target] = true;
+            pc += (size_t)len;
+        }
+    }
+    g_tosJumpTargetsPtr = &tosJumpTargets;
     if (err != kErrorOk) return false;
 
     // PHARO_ASMJIT_T1_LOG=1 — dump asmjit asm to stderr per compile.
@@ -7188,6 +7257,17 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             int globalIdx = (int)i + emitSkip;
             uint8_t op = bcReal[i];
             a.bind(bcLabels[globalIdx]);
+
+            // simStack §3/§5: jump targets are cold (bind-time rule),
+            // then snapshot-then-clear for this bytecode's emit.
+            if (g_tosJumpTargetsPtr && globalIdx >= 0
+                    && (size_t)globalIdx < g_tosJumpTargetsPtr->size()
+                    && (*g_tosJumpTargetsPtr)[globalIdx]) {
+                g_tos = T1TosCache{};
+            }
+            g_tosIn = g_tos;
+            g_tos = T1TosCache{};
+            (void)g_tosIn;   // consumers arrive in B1+
 
             // InlinedPrimitive 0xEC: 2-byte no-op.  Bind operand label
             // and skip.
@@ -7666,6 +7746,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         }
     }
     g_patchLabelsPtr = nullptr;
+    g_tosJumpTargetsPtr = nullptr;
 
     size_t total = code.code_size();
     if (total == 0 || total > outCap) {
