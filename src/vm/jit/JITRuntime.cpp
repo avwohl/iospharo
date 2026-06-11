@@ -3235,11 +3235,10 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
     // mirrors at entry (see fsrLazyActive()).  Without this, bit-60
     // entries created while the callee was tier-1 survive the recompile
     // pointing into the Sista body.
-    bool unlinkTier2 = false;
-    if (fsrLazyActive()) {
-        JITMethod* newJM = methodMap_.lookup(methodBits);
-        unlinkTier2 = newJM && newJM->tier == 2;
-    }
+    JITMethod* newJM = methodMap_.lookup(methodBits);
+    bool unlinkTier2 = fsrLazyActive() && newJM && newJM->tier == 2;
+    // XGATE fold: gate facts can change across recompile — recompute.
+    const bool newGateOk = newJM && newJM->tier != 2 && xmethodGateOk(newJM);
 
     // 2026-05-03: IC zone moved to heap; no W^X flip required.  Single
     // pass over methods, write directly to heap-side icBuffer.
@@ -3257,8 +3256,9 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
                             if (unlinkTier2)
                                 extra &= ~(kJ2JEntryBit | kJ2JAddrMask);
                             else
-                                extra = (extra & ~kJ2JAddrMask)
-                                      | (newEntryAddr & kJ2JAddrMask);
+                                extra = (extra & ~(kJ2JAddrMask | kXGateOkBit))
+                                      | (newEntryAddr & kJ2JAddrMask)
+                                      | (newGateOk ? kXGateOkBit : 0);
                             slots[e * 3 + 2] = extra;
                             slotsRewritten++;
                             if (e == 0) slot0Rewritten = true;

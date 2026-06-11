@@ -80,6 +80,24 @@ inline bool fsrLazyActive() {
         || GET_DEBUG_BOOL(PHARO_T1_FSR_LAZY_VERIFY);
 }
 
+// XGATE fold (patched-ic-design.md §5): the inline-J2J cross-method
+// gate re-validates per SEND four callee facts that are constant after
+// callee compile.  Precompute them here at IC fill/upgrade/rewrite
+// time into extras bit 57 (free when bit 60 is set — the trivial-
+// inline 57 only occurs without bit 60), so the emitted 4-load gate
+// cascade collapses to one tbnz on the already-loaded extras word.
+// MUST mirror the cascade in AsmjitT1.cpp (xmethod gate block) exactly.
+inline constexpr uint64_t kXGateOkBit = 1ULL << 57;
+inline bool xmethodGateOk(const JITMethod* t) {
+    if ((t->methodHeader >> 16) & 1) return false;       // has primitive
+    int maxIC = GET_DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC);
+    if (maxIC > 0 ? (t->numICEntries > (uint32_t)maxIC)
+                  : (t->numICEntries != 0)) return false;
+    if (t->isStubOnEntry) return false;
+    if (t->canBailMidMethod) return false;
+    return true;
+}
+
 // FSR M4: post-JIT-entry mirror refresh.  Under PHARO_T1_FSR_LAZY the
 // per-call mirror stores are deleted from emitted code; the exit stubs
 // publish x19 -> state.jitMethod, and this refresh re-derives

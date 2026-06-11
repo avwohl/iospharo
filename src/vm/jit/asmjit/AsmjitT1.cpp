@@ -5023,6 +5023,19 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     if (!inlineJ2JCounters) {
                         a.ldr(x13, ptr(x10, (int)offsetof(JITMethod, compiledMethodOop)));   // callee CM (for state.method)
                     }
+                    // XGATE fold (patched-ic-design.md §5): extras bit 57
+                    // carries the precomputed gate verdict (set at IC
+                    // fill/upgrade, recomputed on callee recompile) —
+                    // skip the 4-load cascade.  Production shape only;
+                    // counters/cap/log modes keep the cascade for
+                    // per-gate attribution.
+                    asmjit::Label xgateFast = a.new_label();
+                    const bool xgateFoldable = !inlineJ2JCounters
+                        && g_debug.t1InlineJ2JXmethodMax < 0
+                        && !pharo::g_debug.t1InlineJ2JXmethodLog
+                        && !GET_DEBUG_BOOL(PHARO_T1_NO_XGATE_FOLD);
+                    if (xgateFoldable)
+                        a.tbnz(x7, asmjit::Imm(57), xgateFast);
                     // Per-gate bail counters (emitted only when
                     // inlineJ2JCounters; production emit unchanged).
                     // emitIncCounter clobbers x14/x15 — both scratch here.
@@ -5132,6 +5145,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                             a.b_hi(j2jBailSelf2);
                         }
                     }
+                    a.bind(xgateFast);
                     // E2 2026-05-24: cross-method state.{jitMethod,method,
                     // literals,argCount} update RELOCATED to after the
                     // save-full check (line ~3843), because that bail
