@@ -25,7 +25,16 @@ Goal (active /goal): **fix this jit to work and be as fast as cog.**
   gates (the soak owns /tmp/sunit_test_detail.txt — do NOT run
   single-class until BATCH COMPLETE), quiet perf re-baseline, then
   the B5 default-flip decision.
-- **REMAINING simStack**: B3 (constSmI single-check shrink,
+- **B3.1 + B3.2 SHIPPED**: constSmI single-check shrink (arith dual
+  5-op check -> 3-op single-side when TOS is a known SmI constant;
+  fires on cfib's '< 2'/'- 1'; mixed-type float bail verified) and
+  popStoreRecvVar value-from-x26 (immutable bail before sp decrement
+  preserved).  Both VERIFY-gated.  B3.3 post-blr re-arm SKIPPED
+  (expected ~0 per design's park rule); B3.4 join-merge PARKED.
+- **NEXT after soak completes**: quiet perf re-baseline (cfib/
+  benchFib/sfib/floor ON vs OFF x5) -> B5 default-flip decision
+  (flip = PHARO_T1_NO_TOS_REG opt-out + 200-class per-test A/B).
+- (orig) REMAINING simStack: B3 (constSmI single-check shrink,
   popStoreRecvVar, post-blr rearm, join-label merge), B4 (cmp+b.cond
   fusion — the suite's #1 pair), B5 default flip after soak.
 - NOTE for the flip decision: with TOS default-on the suite/bench
