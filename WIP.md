@@ -2,6 +2,46 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11tt — inline block-create parked; the lever is married contexts
+
+In-JIT block creation (jit_rt_block_create, the basicNew blr pattern)
+BUILT AND PARKED OPT-IN: structurally unsound under JIT-to-JIT calls
+— the CALLER's activation lives only in machine state (chain
+inline-activate / inline J2J / saveless) and only the EXIT handlers
+reify it before C++ creates the closure; an in-JIT create builds
+outerContext from a frame model missing the caller.  j2jDepth==0
+guard insufficient (chain + saveless callers leave no depth trace);
+falsified even with NO_INLINE_J2J=1.  Diagnosis tools that found it:
+emit-count bisect (PHARO_T1_INLINE_BLOCK_CREATE_MAX + /tmp/ibisect.sh,
+culprit site #3 = Dictionary>>at:) + PHARO_BLOCK_CREATE_TRACE diff
+(creates identical -> emit-interaction bug, not C++).
+
+=> THE DICT GAP'S REAL REQUIREMENT, twice confirmed now: closures
+need an outerContext WITHOUT reifying the frame chain = MARRIED
+CONTEXTS (Cog's design).  Sketch: closure.outerContext = a lightweight
+context whose sender is a SENTINEL resolved on access (Context>>sender
+prim / VM walks); divorce on frame pop.  Entry points to audit:
+Context>>sender/home/unwind search, NLR home finding
+(validateNLRHomeFrame), exception delivery, thisContext, debugger.
+Write docs/married-contexts.md FIRST (multi-session).
+
+Cheaper interim candidates for dict: (i) Sista-side: at:ifAbsent:
+specialization that REUSES a per-call-site closure or compiles the
+common hit path without creating the block (Cog's Cogit doesn't
+create the block either on the hit path — the BYTECODE COMPILER in
+the image already evaluates ifAbsent: lazily... verify what stock
+Pharo bytecode does for at:ifAbsent: w/ literal block: the block IS
+created each call there too — Cog pays closure alloc but inline +
+married ctx).  (ii) clean-block image-side optimization
+(CompilationContext optionCleanBlockClosure) — clean blocks skip
+outerContext entirely (ignOC=1 -> our create skips materialize!).
+Enabling that image-side for Pharo's collection protocol might kill
+most materializes WITHOUT VM work.  CHECK FIRST NEXT SESSION — it
+may be a pure image/startup-script change.
+
+Suite soak of current default in flight (/tmp/soak_ibc.log).
+dict 437ms vs Cog 26 (16.8x); fib30 ~17.5 vs 5 (3.5x).
+
 ## CHECKPOINT 2026-06-11ss — dict gap FULLY decoded: block-creation exits are the cost
 
 Counter false alarm resolved: inline-prim counters need
