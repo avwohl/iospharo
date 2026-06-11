@@ -2,6 +2,30 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11j — simStack VERDICT: parked opt-in (design's own rule); next lever = frame-state residency
+
+- **Interleaved 5x5 quiet A/B (the design's measurement protocol):**
+  cfib OFF {25,26,29,27,26} vs ON {24,26,26,25,27} — median 26 BOTH,
+  min 25 vs 24.  The simStack effect at -O2 quiet is ~0-4% (the
+  earlier ~9% was load-amplified memory traffic).  floor + benchFib:
+  wash.  **6th instance of the OoO lesson** — the round trips ARE
+  killed (structurally verifiable) but store-to-load forwarding +
+  OoO absorb them on this core at -O2.
+- **DECISION per the design's own park rule (<3% ensemble): simStack
+  stays OPT-IN (PHARO_T1_TOS_REG), correct and fully soak-validated
+  (20K+ tests, zero VERIFY traps), available for: x86 (in-order-ish
+  cores may benefit), loaded conditions, and as the foundation for
+  future fusion work.  NO B5 flip.**
+- **THE REMAINING GAP, final decomposition (design §9 + measurements):**
+  cfib ~26ms vs Cog 8 vs skeleton 4.  The ~20ms over skeleton is
+  ~230/310 per-activation insns of SEND-ACTIVATION MACHINERY:
+  maintaining the JITState mirror (receiver/method/literals/argCount/
+  ip/tempBase stores per call + save-pool RMWs) that Cog doesn't do —
+  Cog's machine frames ARE its state; ours shadows everything into
+  memory per activation.  THE next lever = **frame-state residency**
+  (keep activation state implicit in frame/registers, materialize on
+  exit) — an architectural design problem; workflow next.
+
 ## CHECKPOINT 2026-06-11i — simStack B2 COMPLETE (B2a/b/c); soak running
 
 - **B2 is fully landed behind PHARO_T1_TOS_REG**: B2a (arith consumes
