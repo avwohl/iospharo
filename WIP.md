@@ -2,6 +2,37 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11h — simStack B0+B1 SHIPPED; next = B2 (the payoff batch)
+
+- **B0 + B1 are LIVE behind PHARO_T1_TOS_REG** (commits "simStack B0",
+  "B1 pass A", "B1 pass B").  Producers: all simple pushes,
+  PushInteger/PushCharacter (constSmI tagged), Dup.  Consumers: cond
+  jumps, returnTop, popStoreTemp.  All verified: cfib correct under
+  PHARO_T1_TOS_VERIFY (zero brk traps), Dictionary 205/205 under
+  VERIFY, DET_SCHED 10/10, knob-off structurally identical.
+  Perf at B1: cfib 30-31 vs 31-33 (small, expected).
+- **NEXT = B2 (design §8): the payoff** — REQUIRES the Lrearm fix in
+  the same batch:
+  1. inline arith family (isPhase3ArithOp at ~3380): TOS from x26
+     (kills the ldur of sp[-8]), result -> x26 + stur, valid=true;
+     bails BEFORE result store + sp adjust (memory still exact)
+  2. 0-arg send head: mov x1, x26 replaces the receiver ldur (the
+     PMS patched head + probe head feed; W-offsets are label-derived
+     so the patch map is unaffected)
+  3. resumeAfterCall continuation: + mov x26, x1 (retval), valid
+     downstream; THEN retarget every spec-path `b endOfSend` (~27)
+     through a per-site `Lrearm: ldur x26,[x25,#-8]; b endOfSend`
+     stub — design §5 RM-F1: a single valid flag across all arrivals
+     leaves x26 = stale pre-send junk on inline-spec hits ->
+     wrong-receiver IC keys.  resumeAfterCall falls through load-free.
+  4. inline-getter result: + mov x26, x6 when the result lands at TOS
+  GATE: B1 gates + PHARO_SP_DEPTH_CHECK clean + full bench 19/19 +
+  60-class + cfib/benchFib/sfib A/B x5 + ONE FULL RUN under
+  PHARO_T1_TOS_VERIFY (the deterministic net for exactly the Lrearm
+  bug class) + DET_SCHED canaries.
+- After B2: B3 (constSmI shrink, popStoreRecvVar, post-blr rearm,
+  join-label merge), B4 (cmp+b.cond fusion), B5 default flip.
+
 ## CHECKPOINT 2026-06-11g — simStack design landed; B0 in progress
 
 - **docs/simstack-design.md is the working plan** (write-through TOS
