@@ -2,6 +2,22 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12ccc — sieve gate is REAL; root-cause queue reordered
+
+Sieve-gate removal: eval never completes (resume traffic x25,
+startup burn).  The cond-jump emit interaction from 2026-05-19 is a
+LIVE bug, not stale scar tissue.  Its root-cause hunt = the gateway
+to un-stubbing at:/at:put: (half of bail_prim).  Repro recipe: build
+with PHARO_T1_NO_SIEVE_GATE=1, eval 3+4 burns — bisect WHICH method
+of the p60/61/62+condjump family corrupts via PHARO_JIT_SKIP_SELECTORS
+or the compile-seq bisect knobs.  ALSO: ladder log grew to 280MB of
+RES traces (trap mode) after today's fills — resume traffic up; keep
+an eye on whether prim-75 fill caused legit extra exit/resume churn.
+QUEUE: (1) sieve-bug root cause (unlocks at:/at:put: bodies);
+(2) popFrameForJIT retslot protocol (removes matguard);
+(3) extras reclassify pass (activates prim-75 fill on warm sites);
+(4) bail-protocol -> MAX_IC.
+
 ## CHECKPOINT 2026-06-12bbb — prim-75 fill landed; flake characterized; bail_prim needs refill
 
 - prim-75 identityHash fill: SHIPPED via upgradeICToJ2J (the kind-20
