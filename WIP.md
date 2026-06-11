@@ -2,6 +2,45 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11z — audit fixes in; narrow-rung A/B: one exception-cluster from flippable
+
+**Audit (42-agent workflow, 17 confirmed / 46 clean) — 9 fixed+committed:**
+S2 sync at 5 more handler sites (chain Send/SendCached/J2JCall,
+resume-loop SendCached/J2JCall, ExitYield), 3 unguarded
+executeFromContext(sender) calls gated, per-BC fd=0 ExitReturn now
+follows the heap sender chain (was: TERMINATED the process), chain
+depth-0 matRetSlot honor, cachedTarget cleared at all 9 re-entries,
+site5 materialize-failure accounting, Sista bail-blacklist byte
+off-by-one (bcs[bailBcOff], not -1).  Ladder clean on all 3 configs.
+Remaining (documented, low priority): stencil-tier-only ip gates
+(21097/26125-class), dead-context cannotReturn contract (20688), 25732.
+
+**60-class SUnit A/B (quiet, no DET_SCHED — see below):**
+  A3 default:      4132/4140 (2 fail: known process tests)
+  B3 narrow rung:  ~4090 — B3-only failures CLUSTER:
+    ExceptionTest UnhandledError family (7 TIMEOUTs),
+    testCannotReturn x2, DelayTest (2F/1E/2T), SemaphoreTest (6T),
+    ProcessSpecificTest (3T), nested-unwind termination (1T)
+  => the narrow rung's remaining defect = resume x EXCEPTION-UNWIND/
+  DELAY interplay (context materialization under resumable frames).
+  ~29 tests, clustered -> likely 1-3 root causes.
+
+**DET_SCHED x narrow rung = mass timeouts (debug-only config):**
+SortedCollectionTest: narrow+DET 66P/8T vs narrow-noDET 287P/0T.
+Plus a DET-only post-suite teardown wedge ([WEDGE] timer-runner
+death).  DET_SCHED is the diagnostic scheduler; characterize later.
+
+**Contamination discipline (hit 3x today):** never rebuild/bench
+while a suite runs; A/B pairs must use the SAME binary; results files
+can be STALE (rm before runs; Pharo-jit.image had vanished entirely —
+earlier '205 PASS' canaries were stale files).
+
+**NEXT:** (1) repro one cluster test solo (ExceptionTest>>
+testUnhandledErrorWhenNoHandlers, narrow rung, no DET) + forensics;
+(2) fix the cluster -> flip RESUME_SENDS_NO_CONDJUMP default-ON;
+(3) FSR M0 (the Cog-parity macro lever; bench truth in checkpoint y);
+(4) full-suite + Cog re-baseline.
+
 ## CHECKPOINT 2026-06-11y — FIVE root causes fixed; ladder fully clean; bench truth
 
 **FIX 5 (committed): saveless-J2J null-cursor underflow.**  With the
