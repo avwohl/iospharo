@@ -2,6 +2,31 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11vv — RAW-SCAN BUG FIXED (scanFor: un-stubbed); census attribution next
+
+MAJOR FIX (commit "allBytecodesSupported prefix scan walked RAW
+BYTES"): the ExtA/ExtB acceptance pass byte-stepped, so operand bytes
+that LOOK like prefixes (0xE0/0xE1) stubbed entire methods.
+Dictionary>>scanFor: (long backward jump E1 FF ED E0) was the
+canonical victim — explains the whole scanFor:-interp mystery chain
+of checkpoint uu (it was NEVER Sista ownership; hasSplice=0; the
+SF-NOTE probe disproved that narrative).  Post-fix scanFor: compiles
+REAL and (under force-rung) resumes fine.
+
+OPEN: the at:/key sender census STILL shows ~17M sendSelector sends
+attributed to scanFor: while dict stays ~360ms.  Attribution caveat:
+census uses method_ which may be STALE for chain-mediated sends.
+NEXT: (1) tag sendSelector call SITES (interp 9159/9430 vs
+chain-side 21060/21396) in the census; (2) if chain-side dominates,
+the cost is per-send C++ chain round trips in jitted scanFor: —
+check why its at:(0x70 special) IC sites miss/exit (IC fill?
+primChain routing? '[JIT] Stats' IC-miss breakdown noICData);
+(3) suite-qualify force-rung (resumes now healthy post-ensure:-fix
++ post-scan-fix) and consider the cond-jump gate default flip.
+Soak of the scan fix in flight (/tmp/soak_scanfix.log).
+Ladder-verified dnus=0.  Earlier-window items still open: married
+contexts design; xmethod gate flip measurement.
+
 ## CHECKPOINT 2026-06-11uu — ignOC widening SHIPPED (+20% dict); scanFor: orphan = open
 
 SHIPPED + SOAKED (2468/0/0): ignoreOuterContext widening — dict 424
