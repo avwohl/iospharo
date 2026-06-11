@@ -2,6 +2,36 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11t — six latent classes fixed; #3's producer still standing; the lldb session is unavoidable
+
+- **Fixed during the #3 hunt (all real, all committed, default-safe)**:
+  1. resume-path ExitBlockCreate/ArrayCreate global syncs
+  2. literals +8 -> +16 (both protocol arms)
+  3. C++ rj2j null-resume refusal (conversion -> regular send)
+  4. ASM trampoline Lresume_null refusal (the high-frequency producer;
+     ip rewound via x16 stash; predicate ALIGNED with the C++ side —
+     plain bcToCode, not override-aware, else the refusals ping-pong)
+  5. (+ fix #1 bcToCode poisoning, #2 headroom — the earlier cascade)
+  6. PMS/B6/backjump all unaffected; default gates green throughout.
+- **The #3 corruption STILL reproduces** (deterministic config,
+  394 MUSTBOOL/DNU lines): the producer is none of the above.
+  Remaining hypothesis space: the resume RE-ENTRY protocol itself
+  (a path that re-enters with sp/operands subtly off in a way the
+  depth checker only catches downstream), or an interaction in the
+  ExitReturn caller-restore under mixed resumable/non-resumable
+  chains.
+- **THE UNAVOIDABLE NEXT STEP**: full-symbol lldb.  Procedure:
+  (1) clean-rebuild build/ (the debug map went stale:
+  'debug map object file does not exist'), (2) run the deterministic
+  config with PHARO_SP_DEPTH_TRAP=1 + a NEW trap at the FIRST
+  MUSTBOOL with a non-Boolean (the earliest signal:
+  OCParser>>parseAssignment ipOff=32), (3) at the trap walk:
+  framePointer_[..], the SavedFrame above, WHO resumed this
+  activation (add a per-activation 'resumedBy' debug field if
+  needed), and the operand window vs the depth map.
+- All tooling (traps, traces, selector lists, window knobs) is
+  committed and documented across checkpoints m-t.
+
 ## CHECKPOINT 2026-06-11s — #3 SHARPEST HYPOTHESIS: a resume lands past-send WITHOUT the send completing
 
 - **Chronology correction**: the EARLIEST corruption is NOT fillFrom —
