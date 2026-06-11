@@ -2,6 +2,17 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-11oo — fresh gap numbers; dict is the headline
+
+Quiet re-measure (min-of-3 in-process, current default build-opt):
+  dict 200K at:put:+at:  OURS 378ms  vs COG 26ms  = 14.5x  <- THE GAP
+  fib30                  OURS ~17.5ms vs COG ~5ms = ~3.5x
+NEXT WINDOW: profile the dict loop (PHARO_JIT_FAIL_REASONS, sample,
+IC-hit counters) — per vm-speed-lever-dispatch the lever is
+non-inlined activation throughput (at: -> at:ifAbsent: -> scanFor:
+send chain + prims 60/61/110/111 inline coverage).  Then nil-fill
+link-time spec + M3c doorbell.
+
 ## CHECKPOINT 2026-06-11nn — XGATE fold shipped default-ON; soak in flight
 
 Lever (1) from mm implemented (commit "jit: XGATE fold"): extras bit
