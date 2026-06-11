@@ -12484,6 +12484,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.savedClosure = closure_;  // Save current frame's closure (nil for methods, block for block activations)
     frame.homeFrameDepth = SIZE_MAX;  // Default: not a block (will be set by activateBlock if needed)
     frame.materializedContext = cachedCtx;  // Preserve cached context from current frame
+    frame.ctxSynced = false;  // frame ran since that ctx was synced
     currentFrameMaterializedCtx_ = memory_.nil();  // New frame has no cached context
 
     // When pushing a frame on top of a heap context (fd 0→1), sync the return
@@ -14974,6 +14975,7 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     frame.savedClosure = closure_;
     frame.homeFrameDepth = SIZE_MAX;
     frame.materializedContext = currentFrameMaterializedCtx_;
+    frame.ctxSynced = false;  // frame ran since that ctx was synced
     currentFrameMaterializedCtx_ = memory_.nil();
 
     Oop receiver = stackPointer_[-(int)nArgs - 1];
@@ -16357,6 +16359,7 @@ Oop Interpreter::materializeFrameStack() {
             // (no separate context was created for frame[0]). This caused
             // thisContext sender == nil inside Context>>jump, crashing startup.
             savedFrames_[0].materializedContext = activeContext_;
+            savedFrames_[0].ctxSynced = false;
         }
     }
 
@@ -16400,6 +16403,20 @@ Oop Interpreter::materializeFrameStack() {
             // already correct.
             if (context.rawBits() != sender.rawBits()) {
                 setSenderSafe(context, sender);
+            }
+            // Incremental materialization (2026-06-11, the dict-bench
+            // 14.5x-vs-Cog lever): a cached context means this frame has
+            // NOT executed since it was suspended — pushFrame always
+            // nils materializedContext, so a re-suspended activation
+            // gets a fresh slot.  Its synced pc/temps/expr stack are
+            // therefore still exact; re-syncing them was pure overhead
+            // (a full store-barrier sweep of EVERY frame on EVERY block
+            // creation — Dictionary>>at:'s ifAbsent: block paid it per
+            // call).  Skipping also preserves Smalltalk-side context
+            // mutations (tempNamed:put:), which the re-sync clobbered.
+            if (frame.ctxSynced && !GET_DEBUG_BOOL(PHARO_MAT_FULL_RESYNC)) {
+                sender = context;
+                continue;
             }
         } else {
             // Calculate context size (6 fixed + temps + some stack)
@@ -16488,6 +16505,7 @@ Oop Interpreter::materializeFrameStack() {
 
         // Set stackp to actual number of items saved
         memory_.storePointer(2, context, Oop::fromSmallInteger(savedCount)); // stackp
+        frame.ctxSynced = true;  // snapshot now exact for this suspension
 
         // This context becomes the sender for the next frame
         sender = context;
@@ -23009,6 +23027,7 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     frame.savedClosure = nil;
     frame.savedActiveContext = activeContext_;
     frame.materializedContext = nil;
+    frame.ctxSynced = false;
     frame.savedFP = save.tempBase - 1;
     frame.materializedRetSlot = save.sp - (saveNArgs + 1);
     frame.savedArgCount = saveJM->argCount;
@@ -25916,6 +25935,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             frame.savedClosure = memory_.nil();
                             frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                             frame.materializedContext = memory_.nil();
+                            frame.ctxSynced = false;
                             frame.savedFP = savedTempBase - 1;
                             // Step 7: OUTER frame's send-receiver slot.
                             // savedSP = OUTER caller's sp at send time;

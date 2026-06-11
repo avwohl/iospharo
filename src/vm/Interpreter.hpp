@@ -615,6 +615,11 @@ private:
         Oop savedClosure;     // FullBlockClosure for block frames, nil for method frames
         Oop savedActiveContext;  // Active context at time of call (for proper return chain)
         Oop materializedContext;  // Cached context from materializeFrameStack (nil if not yet materialized)
+        // True only if materializedContext's pc/temps/expr snapshot was
+        // synced AFTER this frame last executed — gates the incremental
+        // skip in materializeFrameStack.  Cleared whenever the frame's
+        // logical state may have advanced (push, suspend-with-identity).
+        bool ctxSynced = false;
         Oop* savedFP;
         // jit-may20b Step 7 (recursive-safe materialize): when this SavedFrame
         // was pushed from a J2JSave by the chain-loop materialize-bail
@@ -1560,6 +1565,7 @@ public:
         frame.savedClosure = nil;
         frame.savedActiveContext = nil;
         frame.materializedContext = nil;
+        frame.ctxSynced = false;
         frame.savedFP = framePointer_;
         // Step 7: not a materialize-bail frame; standard popFrame applies.
         // Without this, stale materializedRetSlot from a prior occupant of
@@ -1709,6 +1715,7 @@ public:
         frame.savedClosure = nil;
         frame.savedActiveContext = nil;
         frame.materializedContext = nil;
+        frame.ctxSynced = false;
         frame.savedFP = tempBase - 1;
         frame.materializedRetSlot = nullptr;  // Step 7: no callers — clear for safety
         frame.savedArgCount = argCount;
