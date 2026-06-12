@@ -1514,6 +1514,16 @@ public:
     /// J2J direct call: lightweight frame push/pop for GC root scanning.
     /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.
     inline void pushFrameForJIT(jit::JITState* state) {
+        // Entry-path census for the scanFor: bypass.
+        if (__builtin_expect(g_debug.jitFailReasons, 0)) {
+            static uint64_t pfj = 0;
+            Oop m = newMethod_;
+            (void)m;
+            ++pfj;
+            if ((pfj & 0x7FFFF) == 1)
+                fprintf(stderr, "[SF-PUSHFRAMEJIT] n=%llu\n",
+                    (unsigned long long)pfj);
+        }
         // 2026-05-07 A1 hunt: log pushFrameForJIT for pollEvent:
         const bool a1TraceFJ = g_debug.a1Trace;
         if (__builtin_expect(a1TraceFJ, 0)) {

@@ -12244,6 +12244,16 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 bool Interpreter::pushFrame(Oop method, int argCount) {
+    // Entry-path census for the scanFor: bypass (PHARO_JIT_FAIL_REASONS).
+    if (__builtin_expect(g_debug.jitFailReasons, 0)) {
+        static uint64_t pf = 0;
+        if (method.isObject() && method.rawBits() > 0x10000
+                && memory_.selectorOf(method) == "scanFor:") {
+            if ((++pf & 0x7FFFF) == 1)
+                fprintf(stderr, "[SF-PUSHFRAME] n=%llu (interp pushFrame)\n",
+                    (unsigned long long)pf);
+        }
+    }
     checkSortstrWatch("pushFrame", frameDepth_);
     // PHARO_SORTSTR_WATCH: trace every DNU activation (not gated by
     // watcher state).  Identifies the FIRST DNU that fires under the IC
@@ -20822,6 +20832,22 @@ void Interpreter::tryJITResumeInCaller() {
         j2jPoolCursor_ = rj2jBase;
 
         jit::spDepthCheck(state, "tryJITResume-exit");
+        if (__builtin_expect(g_debug.jitTraceOop != nullptr, 0)) {
+            static uint64_t traceBits = strtoull(g_debug.jitTraceOop, nullptr, 0);
+            if (state.jitMethod
+                    && state.jitMethod->compiledMethodOop == traceBits) {
+                static uint64_t hist[16] = {0}, tn = 0;
+                int er = (int)state.exitReason;
+                if (er >= 0 && er < 16) hist[er]++;
+                if ((++tn & 0xFFF) == 1) {
+                    fprintf(stderr, "[%s-EXITS]", "S20835");
+                    for (int e = 0; e < 16; e++) if (hist[e])
+                        fprintf(stderr, " r%d:%llu", e,
+                            (unsigned long long)hist[e]);
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
         switch (state.exitReason) {
         case jit::ExitReturn:
             // Bug-14 diagnostic (tryResume path)
@@ -24280,6 +24306,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // state.ip / state.sp were already synced to interpreter by materialization.
         // Handle the exit reason that caused the J2J trampoline to bail.
         jit::spDepthCheck(state, "j2jMaterialized-exit");
+        if (__builtin_expect(g_debug.jitTraceOop != nullptr, 0)) {
+            static uint64_t traceBits = strtoull(g_debug.jitTraceOop, nullptr, 0);
+            if (state.jitMethod
+                    && state.jitMethod->compiledMethodOop == traceBits) {
+                static uint64_t hist[16] = {0}, tn = 0;
+                int er = (int)state.exitReason;
+                if (er >= 0 && er < 16) hist[er]++;
+                if ((++tn & 0xFFF) == 1) {
+                    fprintf(stderr, "[%s-EXITS]", "S24293");
+                    for (int e = 0; e < 16; e++) if (hist[e])
+                        fprintf(stderr, " r%d:%llu", e,
+                            (unsigned long long)hist[e]);
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
         switch (state.exitReason) {
         case jit::ExitReturn:
             // Bug-14 diagnostic (materialized J2J exit)
@@ -24467,6 +24509,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         Oop chainTarget;  // Set by ExitSend/ExitSendCached/ExitJ2JCall, used by shared chain code after switch
         bool ipAlreadyAdvanced = false;  // ExitJ2JCall: stencil already advanced IP past send
         jit::spDepthCheck(state, "tryJITActivation-exit");
+        if (__builtin_expect(g_debug.jitTraceOop != nullptr, 0)) {
+            static uint64_t traceBits = strtoull(g_debug.jitTraceOop, nullptr, 0);
+            if (state.jitMethod
+                    && state.jitMethod->compiledMethodOop == traceBits) {
+                static uint64_t hist[16] = {0}, tn = 0;
+                int er = (int)state.exitReason;
+                if (er >= 0 && er < 16) hist[er]++;
+                if ((++tn & 0xFFF) == 1) {
+                    fprintf(stderr, "[%s-EXITS]", "S24480");
+                    for (int e = 0; e < 16; e++) if (hist[e])
+                        fprintf(stderr, " r%d:%llu", e,
+                            (unsigned long long)hist[e]);
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
         switch (state.exitReason) {
         case jit::ExitReturn: {
             // Bug-14 diagnostic: PHARO_B5_TRACE=1 logs where JIT landed on
