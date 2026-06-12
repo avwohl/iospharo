@@ -3360,7 +3360,11 @@ void Interpreter::interpret() {
 
         // -- Force yield (set by heartbeat every ~2ms) --
         if (forceYield_.load(std::memory_order_acquire)) {
-            if (suppressContextSwitch_) {
+            // EXPERIMENT (PHARO_NO_RR_SCHED): Cog never time-slices within
+            // a priority; consume the flag without yielding.
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NO_RR_SCHED), 0)) {
+                forceYield_.store(false, std::memory_order_release);
+            } else if (suppressContextSwitch_) {
                 suppressContextSwitch_ = false;
             } else {
                 // Don't let heartbeat preempt finalization drain.
@@ -5136,6 +5140,12 @@ bool Interpreter::step() {
     g_watchdogSubphase = 14;
     bool shouldYield = forceYield_.load(std::memory_order_acquire);
     if (shouldYield) {
+        // EXPERIMENT (PHARO_NO_RR_SCHED): Cog never time-slices within a
+        // priority; consume the flag without yielding.
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NO_RR_SCHED), 0)) {
+            forceYield_.store(false, std::memory_order_release);
+            goto skip_yield;
+        }
         // Per Cog VM: suppress context switch after activating methods with
         // primitive 198 (ensure:/ifCurtailed:). These methods must run their
         // setup bytecodes atomically to establish unwind protection.
