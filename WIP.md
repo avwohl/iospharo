@@ -2,6 +2,25 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12fff — at:-family prologue-leaf SHIPPED; dict ~253-283ms
+
+Leaf (Cog-style, prim 60/61/62 only): prologue + interp-resume bail
+(EXIT_ARITH_OVERFLOW + ip=body), numIC=0/noCondJump/notStub => full
+J2J admit.  Ladder 6/6, sieve 1028.  Census: b46 169K->36K.
+SCOPING LESSON: leafing arithmetic prims (1-16) flickered the
+closure-as-receiver DNU — their fail paths (overflow->LargeInt) are
+hot and the admitted-callee bail path has a latent bug.  That bug
+(also seen as the numIC/canBailMid exemption corruption) is now THE
+blocker for: arith leafing, MAX_IC raise, numic 1.77M bails
+(scanFor:/at:ifAbsent: as callees).  Root-cause it next (workflow
+recon + the emit-count bisect pattern; repro = leaf-all-prims build,
+1-in-3 ladders, #do: receiver=FullBlockClosure).
+
+NOTE: /tmp purge ate Pharo.image — rebuilt from Pharo-base2 (cp).
+Baselines SHIFTED (dict noleaf ~263-292 on the new image vs ~425
+before).  COG RE-BASELINE NEEDED on this same image for honest gap
+numbers.  Soak in flight (/tmp/soak_leaf.log).
+
 ## CHECKPOINT 2026-06-12eee — sieve fix + prim-prologue J2J admit SHIPPED; dict 437->~370
 
 ALL SOAKED 2468/0/0 (three soaks: gate-off default; +contracts;
