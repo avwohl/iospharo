@@ -2,6 +2,27 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12rrr — internal-J2J v2 scaffolding in; handler audit = the remaining work
+
+v2 (committed, OPT-IN): function-scope slice below rj2jBase +
+guard + post-resume materialization — structurally sound.  STILL
+CORRUPTS enabled: garbage-selector DNUs because the resume loop's
+handlers assume EXTERNAL-mode exit shapes:
+(1) the r7 handler's cascade-#3 selector-verification decodes
+    *state.ip as a send bytecode (0x80-0xAF) — internal-mode exits
+    arrive at other positions;
+(2) the stale-identification guard clears cachedTarget/icDataPtr
+    per re-entry citing the null-cursor bail behavior;
+(3) possibly the ExitReturn/J2JCall handlers' sp/identity math.
+NEXT WINDOW (the audit, ~2-3h): walk each case in the switch at
+~20880-21568 asking 'what does this read that only external mode
+guarantees?'; fix each to use state.icDataPtr/cachedTarget (which
+internal-mode exits DO populate properly via the converted stubs)
+instead of re-decoding bytecodes; validate with the deterministic
+ladder then dict (expect the ~13M round trips to collapse — THE
+dict lever, sized at reaching <100ms vs Cog 26).
+Default still external; ladders 3/3; standing dict ~215-264.
+
 ## CHECKPOINT 2026-06-12qqq — THE DICT RESIDUAL ROOT: resumed methods run with inline-J2J DISABLED
 
 FOUND (the whole scanFor: chain converges here):
