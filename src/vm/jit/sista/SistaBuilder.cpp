@@ -5035,7 +5035,19 @@ private:
                     }
                 }
                 if (isSelfRec) {
+                    // Primitive guard (2026-06-12, same as
+                    // tryInlineConstReturn): a self-send re-runs the
+                    // primitive; splicing only the bytecode fallback
+                    // would skip it.
+                    bool selfHasPrim = true;
+                    if (g_currentBuildMemory != nullptr) {
+                        Oop selfHdr = g_currentBuildMemory->fetchPointer(
+                            0, Oop::fromRawBits(selfMethodBits_));
+                        selfHasPrim = !selfHdr.isSmallInteger()
+                            || ((selfHdr.asSmallInteger() >> 16) & 1);
+                    }
                     if (g_debug.t1SelfRecSplice
+                        && !selfHasPrim
                         && g_calleeLiftDepth < g_debug.t1SelfRecSpliceDepth
                         && g_currentBuildMemory != nullptr) {
                         Method selfBody;
@@ -6200,6 +6212,15 @@ private:
             uint32_t calleeNumArgs =
                 (uint32_t)((calleeHdr.asSmallInteger() >> 24) & 0x0F);
             if (calleeNumArgs != nArgs) return false;
+            // Primitive guard (2026-06-12): a <primitive:> method's bytecode
+            // body is only the FALLBACK if the prim fails, but the probe-lift
+            // sees just that body.  `Time millisecondClockValue` =
+            // `<primitive: 251> ^ 0` lifts to kConstantOop(0)+kReturn and
+            // inlined the constant 0 in place of the clock read — wedging
+            // AndreasSystemProfiler>>startProfiling's busy-wait
+            // `[Time millisecondClockValue >= limit] whileFalse: []` forever.
+            // Same rule as the interpreter's returnsLiteralKind shortcut.
+            if ((calleeHdr.asSmallInteger() >> 16) & 1) return false;
         }
         g_calleeLiftDepth++;
         LiftResult cr;
