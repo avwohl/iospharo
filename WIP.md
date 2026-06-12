@@ -4,6 +4,34 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-13b — two fix attempts measured; both half-steps (knob still opt-in)
+
+Experiment data on the DET repro (counts are occurrences of the error
+text, which REPEATS per failure — compare shapes, not magnitudes):
+ - committed baseline (93579b63): cannotReturn storm (~600 lines),
+   10 DNU lines, no eval result.
+ - REFUSAL (block saves rejected at resume-internal site): cannotReturn
+   GONE (0) but RESUME-MAT-FAIL x7 → 2 DNUs — refusing mid-protocol
+   DROPS live caller frames; the rsFailed bail is NOT a safe fallback
+   (the saves represent real pending callers).
+ - CLOSURE RECOVERY (savedClosure := *(save.tempBase-1) when
+   saveJM->isBlock + verified FullBlockClosure): same cannotReturn
+   storm as baseline — EITHER fp[0] does not hold the closure for J2J
+   block frames (check the BLOCK_VALUE J2J call setup in stencils/
+   AsmjitT1: what's actually at tempBase-1?) OR closure recovery is
+   necessary-but-insufficient (another defect in the same path).
+   REVERTED (not committed).
+NEXT session options: (1) instrument what IS at tempBase-1/-2/sp slots
+for a block save at materialize time (one fprintf, DET repro);
+(2) the principled fix — extend the V2 save layout with a closure
+field written by the block-JM save-push emit (AsmjitT1; layout bump
+32→40 bytes, offsets in J2JSaveLayout.h + stencils);
+(3) prevention — make the RESUME slice refuse to admit block-JM J2J
+calls at the EMIT level (gate bit on isBlock callees when compiling
+send sites, only effective for resume sessions — needs a runtime
+flag the emitted gate can test, e.g. a state field checked in the
+xmethod gate cascade like the bit-57 fold).
+
 ## CHECKPOINT 2026-06-13a — cannotReturn MECHANISM FOUND: block saves materialized closureless
 
 [J2J-MAT] probe on the DET repro (PHARO_J2J_MAT_LOG=1
