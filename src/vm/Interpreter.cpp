@@ -19958,6 +19958,23 @@ void Interpreter::tryJITResumeInCaller() {
     }
 
     int resumeIter = 0;
+    // Internal-J2J slice for the whole resume session (per-iteration
+    // cursor reset inside the loop).  Reserved below every rj2jBase
+    // capture; guard restores on function exit.
+    constexpr int kResumeSliceSlots = 8;
+    // OPT-IN (v2 still corrupts: garbage-selector DNUs — the loop's
+    // handlers decode send bytecodes at state.ip shapes only external
+    // mode guarantees; see WIP rrr).  The slice/materialize scaffolding
+    // is sound; the HANDLER protocol audit is the remaining work.
+    const bool resumeInternalJ2J =
+        GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)
+        && j2jPoolCursor_ + kResumeSliceSlots <= (int)MaxJ2JPoolSize;
+    const int resumeSliceBase = j2jPoolCursor_;
+    if (resumeInternalJ2J) j2jPoolCursor_ += kResumeSliceSlots;
+    struct ResumeSliceGuard {
+        int& cursor; int base; bool active;
+        ~ResumeSliceGuard() { if (active) cursor = base; }
+    } resumeSliceGuard{j2jPoolCursor_, resumeSliceBase, resumeInternalJ2J};
     while (running_ && jitRuntime_.isInitialized()) {
         if (++resumeIter > 10000) break;  // Safety limit
         if (__builtin_expect(g_debug.a1Trace, 0)
@@ -20086,32 +20103,21 @@ void Interpreter::tryJITResumeInCaller() {
         // justified external mode predate this month's inline-J2J
         // fixes (gates, leaf, prelude contracts).  Opt-out restores
         // the null slice: PHARO_T1_RESUME_EXTERNAL_J2J=1.
-        if (GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)
-                && j2jPoolCursor_ + 8 <= (int)MaxJ2JPoolSize) {
-            // OPT-IN EXPERIMENT -- KNOWN BROKEN (2026-06-12): with the
-            // slice provisioned, startup DNUs 10/10 (the rj2j external
-            // machinery allocates the SAME pool region from rj2jBase,
-            // and the loop exit handling assumes the external
-            // protocol).  Kept as the marker for the real fix: the
-            // per-send r7-exit cost of external mode is THE dict-bench
-            // residual (~1 C++ round trip per resumed-method send).
-            // OPT-IN EXPERIMENT (not default): the rj2j external
-            // machinery also allocates from rj2jBase (see the
-            // `rj2jBase + rj2jMaxDepth` release) — the two slices can
-            // overlap on mixed flows.  Deconflict before defaulting.
-            // Reserve the slice (GC walks j2jPool_[0..j2jPoolCursor_),
-            // so saves pushed by the resumed method must sit below the
-            // cursor); rj2jBase (captured above) restores it on every
-            // exit from this loop iteration via the existing
-            // j2jPoolCursor_ = rj2jBase paths.
+        // INTERNAL J2J slice for resumed methods (rework v2): the
+        // function-scope slice (resumeSliceBase, reserved BEFORE the
+        // loop with a guard) sits BELOW every per-iteration rj2jBase,
+        // so the rj2j machinery and chain slices never overlap it.
+        // Pending saves are materialized immediately after each
+        // tryResume exit, so all existing handlers keep their
+        // depth==0 assumption.  Opt-out PHARO_T1_RESUME_EXTERNAL_J2J=1.
+        if (resumeInternalJ2J) {
             state.j2jSaveCursor = reinterpret_cast<uint8_t*>(
-                &j2jPool_[j2jPoolCursor_]);
+                &j2jPool_[resumeSliceBase]);
             state.j2jSaveLimit = reinterpret_cast<uint8_t*>(
-                &j2jPool_[j2jPoolCursor_ + 8]);
-            j2jPoolCursor_ += 8;
+                &j2jPool_[resumeSliceBase + kResumeSliceSlots]);
         } else {
-        state.j2jSaveCursor = nullptr;
-        state.j2jSaveLimit = nullptr;
+            state.j2jSaveCursor = nullptr;
+            state.j2jSaveLimit = nullptr;
         }
         state.j2jDepth = 0;
         state.j2jTotalCalls = 0;
@@ -20203,6 +20209,29 @@ void Interpreter::tryJITResumeInCaller() {
         if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
             j2jPoolCursor_ = rj2jBase;  // Release pool slice
             break;  // No re-entry at this offset
+        }
+        // Internal J2J: materialize any pending saves NOW so every
+        // handler below keeps its external-mode depth==0 assumption.
+        if (resumeInternalJ2J && state.j2jDepth > 0) {
+            J2JSave* rsSaves = &j2jPool_[resumeSliceBase];
+            for (int rsI = 0; rsI < state.j2jDepth; rsI++) {
+                if (frameDepth_ >= StackOverflowLimit) break;
+                SavedFrame& rsF = savedFrames_[frameDepth_++];
+                if (!materializeJ2JSaveIntoFrame(rsF, rsSaves[rsI],
+                        state.jitMethod, "resume-internal")) {
+                    if (frameDepth_ > 0) frameDepth_--;
+                    break;
+                }
+            }
+            state.j2jDepth = 0;
+            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(
+                &j2jPool_[resumeSliceBase]);
+            state.j2jEntryCursor = state.j2jSaveCursor;
+            state.j2jEntryDepth = 0;
+            if (state.jitMethod) {
+                state.method = Oop::fromRawBits(
+                    state.jitMethod->compiledMethodOop);
+            }
         }
         if (__builtin_expect(resTrace, 0)) {
             Oop rv = state.returnValue;
