@@ -2,6 +2,32 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12nnn — scanFor: ping-pong data complete; r2-miss exits despite healthy sites
+
+[IC-SITE] dump on the live scanFor: jm (steady state): sites HEALTHY
+— at: pk14+b60(+57), == pk10, key bit63-getter, hash poly-b60.  The
+stale-extras hypothesis is DEAD.  Exit histogram: r2(EXIT_SEND, IC
+MISS)=8191 : r7=1 — every jit entry of scanFor: exits ONCE as an IC
+MISS, then the activation finishes in the INTERP (the 13M census
+sends; ipOff 87/96 = probe loop 1; lrk=2).
+OPEN QUESTIONS, precisely: (1) WHICH site misses (r2's ip needed —
+extend the histogram to bucket by exit ipOff); (2) why does the
+post-miss resume leave the interp running the WHOLE loop (resume-ok
+counters say resumes succeed globally — maybe the EXIT_SEND handler
+path for THESE sends doesn't attempt resume: check the chain
+EXIT_SEND (miss) handler vs SENDCACHED — the MISS path may
+activateMethod + interp WITHOUT the kind-1 precompute!);
+(3) resume-kind 2 = which site (Interpreter.cpp:24235)?
+HYPOTHESIS RANKED FIRST: the IC-MISS handler (EXIT_SEND) lacks the
+precomputed-resume machinery that SENDCACHED has — after a miss the
+caller continues in INTERP BY DESIGN, and scanFor: misses ONCE PER
+ACTIVATION at a polymorphic/rotating entry (the hash site is 5-way
+poly = entry rotation/thrash!) -> every activation = miss -> interp.
+FIX SHAPE: per-activation miss should still resume the caller in
+JIT after the C++ lookup (mirror the kind-1 rung onto the miss
+path), or widen the hash site's entries (IC_ENTRIES_PER_SITE=6,
+5 used — borderline).  Queue re-arm soak PASSED 2468/0/0.
+
 ## CHECKPOINT 2026-06-12mmm — queue-drop re-arm shipped; the scanFor: ping-pong = THE dict question
 
 SHIPPED: compile-queue full -> silent drop -> permanent starvation

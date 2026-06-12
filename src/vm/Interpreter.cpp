@@ -23667,7 +23667,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         int er = (int)state.exitReason;
         if (er >= 0 && er < 16) exitHist[er]++;
         static uint64_t tn = 0;
-        if ((++tn & 0x3FFF) == 0) {
+        if ((++tn & 0x3FF) == 0 || tn == 2) {
             fprintf(stderr, "[JIT-TRACE-EXITS]");
             for (int e = 0; e < 16; e++) if (exitHist[e])
                 fprintf(stderr, " r%d:%llu", e, (unsigned long long)exitHist[e]);
