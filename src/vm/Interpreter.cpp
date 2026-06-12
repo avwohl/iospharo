@@ -3360,11 +3360,7 @@ void Interpreter::interpret() {
 
         // -- Force yield (set by heartbeat every ~2ms) --
         if (forceYield_.load(std::memory_order_acquire)) {
-            // EXPERIMENT (PHARO_NO_RR_SCHED): Cog never time-slices within
-            // a priority; consume the flag without yielding.
-            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NO_RR_SCHED), 0)) {
-                forceYield_.store(false, std::memory_order_release);
-            } else if (suppressContextSwitch_) {
+            if (suppressContextSwitch_) {
                 suppressContextSwitch_ = false;
             } else {
                 // Don't let heartbeat preempt finalization drain.
@@ -3892,6 +3888,7 @@ void Interpreter::handleForceYield() {
 
     Oop nilObj = memory_.nil();
     Oop nextProcess = nilObj;
+    bool viaHigherPri = false;
 
     {
         Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
@@ -3905,12 +3902,20 @@ void Interpreter::handleForceYield() {
             Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
             if (first.isObject() && first.rawBits() != nilObj.rawBits()) {
                 nextProcess = removeFirstLinkOfList(processList);
+                viaHigherPri = true;
                 break;
             }
         }
 
-        // Round-robin at same priority level
-        if (nextProcess.rawBits() == nilObj.rawBits() &&
+        // Round-robin at same priority level — OPT-IN ONLY (2026-06-12,
+        // PHARO_RR_SCHED=1, or implied by PHARO_DET_SCHED whose repro
+        // tooling depends on deterministic rotation).  Cog never
+        // time-slices within a priority; doing it broke image code
+        // written against that guarantee (ProcessTerminateBugTest /
+        // SemaphoreTest fork-window flakes — 0/8 with rotation off).
+        // Higher-priority preemption (above) and aging (below) stay.
+        if ((GET_DEBUG_BOOL(PHARO_RR_SCHED) || GET_DEBUG_BOOL(PHARO_DET_SCHED)) &&
+            nextProcess.rawBits() == nilObj.rawBits() &&
             activePriority > 0 && activePriority <= maxPri) {
             Oop processList = memory_.fetchPointer(activePriority - 1, schedLists);
             Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
@@ -4019,7 +4024,14 @@ void Interpreter::handleForceYield() {
 
     if (nextProcess.isObject() && nextProcess.rawBits() != nilObj.rawBits() &&
         nextProcess.rawBits() != activeProcess.rawBits()) {
-        putToSleep(activeProcess);
+        // Higher-priority displacement = preemption (active resumes
+        // FIRST among its peers, Cog ordering); rotation/aging picks
+        // keep the yield-style back-append.
+        if (viaHigherPri) {
+            putToSleepPreempted(activeProcess);
+        } else {
+            putToSleep(activeProcess);
+        }
         transferTo(nextProcess);
     }
 
@@ -5140,12 +5152,6 @@ bool Interpreter::step() {
     g_watchdogSubphase = 14;
     bool shouldYield = forceYield_.load(std::memory_order_acquire);
     if (shouldYield) {
-        // EXPERIMENT (PHARO_NO_RR_SCHED): Cog never time-slices within a
-        // priority; consume the flag without yielding.
-        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NO_RR_SCHED), 0)) {
-            forceYield_.store(false, std::memory_order_release);
-            goto skip_yield;
-        }
         // Per Cog VM: suppress context switch after activating methods with
         // primitive 198 (ensure:/ifCurtailed:). These methods must run their
         // setup bytecodes atomically to establish unwind protection.
@@ -5168,6 +5174,7 @@ bool Interpreter::step() {
         Oop nilObj = memory_.nil();
         Oop nextProcess = nilObj;
 
+        bool viaHigherPri = false;
         {
             Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
             Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
@@ -5181,12 +5188,16 @@ bool Interpreter::step() {
                 Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
                 if (first.isObject() && first.rawBits() != nilObj.rawBits()) {
                     nextProcess = removeFirstLinkOfList(processList);
+                    viaHigherPri = true;
                     break;
                 }
             }
 
-            // Then: round-robin at same priority level
-            if (nextProcess.rawBits() == nilObj.rawBits() &&
+            // Round-robin at same priority — OPT-IN ONLY (PHARO_RR_SCHED
+            // or PHARO_DET_SCHED; see handleForceYield, 2026-06-12).
+            // Cog never time-slices within a priority.
+            if ((GET_DEBUG_BOOL(PHARO_RR_SCHED) || GET_DEBUG_BOOL(PHARO_DET_SCHED)) &&
+                nextProcess.rawBits() == nilObj.rawBits() &&
                 activePriority > 0 && activePriority <= maxPri) {
                 Oop processList = memory_.fetchPointer(activePriority - 1, schedLists);
                 Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
@@ -5206,7 +5217,13 @@ bool Interpreter::step() {
                            nextProcess.rawBits() != activeProcess.rawBits();
 
         if (foundProcess) {
-            putToSleep(activeProcess);
+            // Higher-pri displacement = preemption (front); rotation/
+            // aging picks keep the yield-style back-append.
+            if (viaHigherPri) {
+                putToSleepPreempted(activeProcess);
+            } else {
+                putToSleep(activeProcess);
+            }
             transferTo(nextProcess);
         }
 
