@@ -4,6 +4,36 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-13a — cannotReturn MECHANISM FOUND: block saves materialized closureless
+
+[J2J-MAT] probe on the DET repro (PHARO_J2J_MAT_LOG=1
+PHARO_J2J_MAT_SEL=allSubclasses): the resume-internal materialize
+processes **BLOCK saves** (saveJM->isBlock, sel=#addAll: — the do:-loop
+block) and materializeJ2JSaveIntoFrame HARDCODES frame.savedClosure =
+nil (Interpreter.cpp ~23515). A block frame without its closure builds
+a broken context at the process-switch frame->context conversion → the
+#allSubclasses continuation drops out of the sender chain →
+#addAllLast:/#addAll: return via CTX-RET into nothing → cannotReturn:.
+Trace anatomy (oracle2.log): ExitSend from callee at fd=2 → interp →
+DET-rotation switch (FormCanvas CTX-RET burst) → switch-back resumes
+via CONTEXTS (fd=0, normal) → the converted chain is missing/broken at
+the block frame → cannotReturn. ALSO: 134M total materialize calls in
+one startup (2.57M flagged lines) — block saves flagged "<<<" by the
+diagnostic author as known-special.
+WHY the chain loop survives the same function: its materialized frames
+are consumed in-loop (tryResume on the block JM) and rarely linger to a
+switch; the RESUME loop hands them to the interpreter where they live
+long enough to hit the conversion.
+FIX DIRECTION (next session): in the resume-internal materialize,
+REFUSE block saves (rsFailed-style loud bail → external-mode fallback
+for that resume session) OR extend the V2 save layout to carry the
+closure so savedClosure can be reconstructed (check J2JSaveLayout.h
+for spare bits/fields; the closure is in a known register at save-push
+time — AsmjitT1 xmethod save-push emit). Refusal is the safe first
+step; measure how often block saves occur in resume-internal (the
+#addAll: do:-block pattern suggests OFTEN — refusal may forfeit much
+of the win; then the layout extension is the real fix).
+
 ## CHECKPOINT 2026-06-12zzz — internal-J2J audit steps 0-4 LANDED; cannotReturn residual pinned
 
 93579b63: workflow plan steps 0-4 implemented (knob still OPT-IN).
