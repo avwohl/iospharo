@@ -2,6 +2,29 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12kkk — J2J GATES OPENED: dict ~251-268 (Cog 25, ~10.3x); bail rate 92%->2%
+
+THE POISONED-EVIDENCE DIVIDEND: with the PMS/NO_INLINE_J2J fix in,
+requalified both remaining gate classes — their corruption evidence
+was contamination-era.  MAX_IC default 1->8 (numic 1.77M->7K);
+canBailMidMethod callees admitted (b46 1.83M->0; opt-out
+PHARO_T1_NO_BAILMID_CALLEES).  Census: 3.4M enters, ~71K total
+bails (~2%, was 92%).  dict 251-268 vs 292-303 (~14%, 3/3).
+fib30 16-17.  Suite 2468/0/0.  Sieve 1028.
+
+CURRENT GAP: dict ~255 min vs Cog 25 => ~10x.  fib30 16 vs 6 =>
+2.7x.  REMAINING DICT COST (new census needed): with gates open,
+sends now inline-J2J — the per-send cost is the inline-J2J call
+sequence itself (the ~43-insn census from the cfib anatomy) + interp
+residency of whatever still escapes.  NEXT LEVERS:
+(a) re-run the CPP-SEND-CENSUS + sample profile on dict (what
+    remains in C++ now?);
+(b) LEAF_ALL flicker — STILL open (4/8; J2J-on + arith leaves);
+    suspect list in jjj; with gates open its value rose (arith
+    leaves would now inline);
+(c) the per-call sequence shrink (patched-IC B5 saveless tail,
+    nil-fill specialization — the cfib-anatomy levers).
+
 ## CHECKPOINT 2026-06-12jjj — LEAF_ALL: two more fix attempts falsified; full evidence inventory
 
 Flicker facts (all measured this window, post-PMS-fix toolbox):
