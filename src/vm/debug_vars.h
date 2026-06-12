@@ -89,6 +89,7 @@ DEBUG_BOOL(PHARO_T1_INLINE_TEMP_RETURN)      // bit 54: ^ arg N
 DEBUG_BOOL(PHARO_T1_INLINE_INT_CMP_RETURN)   // bit 53: ^ self cmp arg
 DEBUG_BOOL(PHARO_T1_INLINE_INT_ARITH_RETURN) // bit 52: ^ self op arg
 DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)         // bit 51: Integer>>even/odd
+DEBUG_BOOL(PHARO_T1_NO_IC_POLY_WALK)        // opt-out: probe IC slot 0 only (default walks slots 0-2 since 2026-06-12; poly sites missed once per activation -> interp residency)
 DEBUG_BOOL(PHARO_T1_NO_RESUME_CONDJUMP)     // opt-out: refuse mid-method resume for cond-jump send methods (default ADVERTISE since 2026-06-12)
 DEBUG_BOOL(PHARO_T1_NO_BAILMID_CALLEES)     // opt-out: refuse canBailMidMethod callees at the xmethod J2J gate (default ADMIT since 2026-06-12; the guarded corruption was the PMS/NO_INLINE_J2J interaction)
 DEBUG_BOOL(PHARO_T1_LEAF_ALL_PRIMS)         // REPRO KNOB: prologue-leaf ALL supported prims (flickers the closure-as-receiver DNU ~1-in-3 ladders — the admitted-callee bail bug)

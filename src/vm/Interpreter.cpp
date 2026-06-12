@@ -23666,6 +23666,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         static uint64_t exitHist[16] = {0};
         int er = (int)state.exitReason;
         if (er >= 0 && er < 16) exitHist[er]++;
+        // r2 (EXIT_SEND, IC miss) ip-offset bucketing: which SITE
+        // misses once per activation?
+        if (er == (int)jit::ExitSend) {
+            static int r2n = 0;
+            if (++r2n <= 12 && state.method.isObject()) {
+                fprintf(stderr, "[R2-IPOFF] ipOff=%lld selFromIC=%s\n",
+                    (long long)(state.ip
+                        - state.method.asObjectPtr()->bytes()),
+                    state.icDataPtr
+                        ? memory_.oopToString(Oop::fromRawBits(
+                              state.icDataPtr[18])).c_str()
+                        : "(null)");
+            }
+        }
         static uint64_t tn = 0;
         if ((++tn & 0x3FF) == 0 || tn == 2) {
             fprintf(stderr, "[JIT-TRACE-EXITS]");

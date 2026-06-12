@@ -4713,7 +4713,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // older comment here claimed an opt-out knob that does not
             // exist — design §14 #4).
             asmjit::Label probeDone = a.new_label();
-            if (g_debug.t1ICPolyWalk) {
+            if (g_debug.t1ICPolyWalk
+                    || !GET_DEBUG_BOOL(PHARO_T1_NO_IC_POLY_WALK)) {
                 asmjit::Label slot1Hit = a.new_label();
                 a.b_eq(probeDone);              // slot 0 hit (common)
                 // Slot 1
