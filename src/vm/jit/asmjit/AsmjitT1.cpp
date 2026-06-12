@@ -5293,6 +5293,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     }
                     // canBailMidMethod — mid-method bails corrupt the
                     // caller frame via the inline-activate path.
+                    // Default ADMIT since 2026-06-12 (the corruption
+                    // this gate guarded was the PMS/NO_INLINE_J2J
+                    // interaction, fixed; requalified 0/6+0/8 ladders,
+                    // sieve 1028, suite soak).  Opt-out restores the
+                    // refusal.
+                    if (!GET_DEBUG_BOOL(PHARO_T1_NO_BAILMID_CALLEES)) {
+                        a.mov(w4, asmjit::Imm(0));
+                    } else
                     a.ldrb(w4, ptr(x10,
                         (int)offsetof(JITMethod, canBailMidMethod)));
                     if (inlineJ2JCounters) {

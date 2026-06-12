@@ -109,7 +109,9 @@ inline bool xmethodGateOk(const JITMethod* t) {
         int maxIC = GET_DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC);
         if (maxIC > 0 ? (t->numICEntries > (uint32_t)maxIC)
                       : (t->numICEntries != 0)) return false;
-        if (t->canBailMidMethod) return false;
+        if (t->canBailMidMethod
+                && GET_DEBUG_BOOL(PHARO_T1_NO_BAILMID_CALLEES))
+            return false;
     }
     if (t->isStubOnEntry) return false;
     return true;
