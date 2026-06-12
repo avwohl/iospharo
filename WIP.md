@@ -4,6 +4,30 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-12yyy — SHA256 anatomy; resume-loop audit workflow launched
+
+SHA256Test testFips180Example3: the test SETS `self timeLimit: 10
+seconds` IMPERATIVELY (runner's defaultTimeLimit patch can't override;
+binds only under an active TestExecutionEnvironment — which is why
+bare-runCase evals look 'ok' at 13.8s). Need <10s.
+PROFILE (1MB hash): was 13.8s →
+ (1) findGlobal("Display") at EVERY checkpoint while displayForm_ nil
+     (= forever headless) ~10-18% — FIXED 8d64457e (64x throttle) → 11.3s.
+ (2) fullGC/markPhase ~12% — shallowCopy allocates DIRECTLY IN OLD
+     SPACE (eden reserved for compact-GC scratch per design); 3.2M
+     ThirtyTwoBitRegister copies/hash burn toward the 512MB headroom →
+     periodic fullGC. PHARO_GC_HEADROOM_MB=2048 → 10.0s. Generational
+     alloc for clones = major surgery, parked.
+ (3) Residual ≈ send/activation round trips: CPP-SEND-CENSUS shows
+     #copy 3.2M + ThirtyTwoBitRegister ops (+= / leftRotateBy: /
+     bitXor: / bitAnd: / bitOr: / load: / bitShift:) ~5M more ALL
+     exiting r7 → C++ executePrimitive-in-place → tryResume. This is
+     THE RESUME-LOOP EXTERNAL-J2J TAX (WIP rrr): once a method bails+
+     resumes, every send in it round-trips. ~21M round trips/hash.
+LAUNCHED: 3-agent + synthesize workflow auditing tryJITResumeInCaller's
+exit handlers for internal-J2J correctness (v2 scaffolding exists,
+opt-in PHARO_T1_RESUME_INTERNAL_J2J, currently garbage-selector DNUs).
+
 ## CHECKPOINT 2026-06-12xxx — FINAL: 12692/0F/2E, delta vs Cog = 1 flicker
 
 Full 565 on new VM defaults + new runner:
