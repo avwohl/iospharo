@@ -1153,8 +1153,25 @@ extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
     // variable classes it unconditionally errors).  The 2026-05-19
     // sieve-gate bug, root-caused 2026-06-12.
     if (!(fmt == 9 || (fmt >= 3 && fmt <= 5))) {
-        return (int)s->interp->jitPrimAtFull(*s, rcvBits, (i << 3) | 1,
-                                             out, false, 0);
+        int fr16 = (int)s->interp->jitPrimAtFull(*s, rcvBits, (i << 3) | 1,
+                                                 out, false, 0);
+        if (__builtin_expect(pharo::g_debug.jitFailReasons, 0)
+                && fmt >= 12 && fmt <= 15) {
+            static int w16a = 0;
+            if (++w16a <= 50)
+                fprintf(stderr,
+                    "[W16-AT] rcv=0x%llx fmt=%u slots=%zu i=%llu -> %d "
+                    "out=0x%llx sp=%p sp[-3]=0x%llx sp[-2]=0x%llx "
+                    "sp[-1]=0x%llx jm=%p ip=%p\n",
+                    (unsigned long long)rcvBits, fmt, slotCount,
+                    (unsigned long long)i, fr16, (unsigned long long)*out,
+                    (void*)s->sp,
+                    (unsigned long long)s->sp[-3].rawBits(),
+                    (unsigned long long)s->sp[-2].rawBits(),
+                    (unsigned long long)s->sp[-1].rawBits(),
+                    (void*)s->jitMethod, (void*)s->ip);
+        }
+        return fr16;
     }
 
     // fmt 9: Indexable64 (DoubleWordArray, BoxedFloat64).  Each slot
@@ -1258,8 +1275,20 @@ extern "C" int jit_rt_primatput_ptr(JITState* s, uint64_t rcvBits,
         uint32_t fmtPut = (uint32_t)rh->format();
         if (!(fmtPut >= 3 && fmtPut <= 5)) {
             uint64_t fullOut = 0;
-            return (int)s->interp->jitPrimAtFull(*s, rcvBits,
+            int fr = (int)s->interp->jitPrimAtFull(*s, rcvBits,
                 (i << 3) | 1, &fullOut, true, valBits);
+            if (__builtin_expect(pharo::g_debug.jitFailReasons, 0)
+                    && fmtPut >= 12 && fmtPut <= 15) {
+                static int w16p = 0;
+                if (++w16p <= 50)
+                    fprintf(stderr,
+                        "[W16-ATPUT] rcv=0x%llx fmt=%u slots=%zu i=%llu "
+                        "val=0x%llx -> %d\n",
+                        (unsigned long long)rcvBits, fmtPut,
+                        rh->slotCount(), (unsigned long long)i,
+                        (unsigned long long)valBits, fr);
+            }
+            return fr;
         }
     }
 

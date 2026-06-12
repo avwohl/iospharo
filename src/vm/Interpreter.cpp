@@ -21772,6 +21772,15 @@ uint64_t Interpreter::jitPrimAtFull(jit::JITState& state, uint64_t rcvBits,
     stackPointer_ = top;
     Oop* savedStateSP = state.sp;
     state.sp = top;
+    // primitiveSuccess pops `argCount_ + 1` from the MEMBER, not the
+    // argc parameter.  Left stale (e.g. 4 from an enclosing
+    // replaceFrom:to:with:startingAt: activation) it over-pops past the
+    // staged operands into the caller's LIVE stack and the result push
+    // clobbers a caller slot — NativeArrayTest's mixed-format copy loop
+    // ran `at: v put: v` because the loop-index slot got overwritten
+    // with the at: result (2026-06-12).
+    int savedArgCount = argCount_;
+    argCount_ = argc;
     if (__builtin_expect(g_debug.jitFailReasons, 0)) {
         static int pfa = 0;
         if (!isPut && ++pfa <= 40)
@@ -21800,6 +21809,7 @@ uint64_t Interpreter::jitPrimAtFull(jit::JITState& state, uint64_t rcvBits,
         *out = stackPointer_[-1].rawBits();
         ok = 1;
     }
+    argCount_ = savedArgCount;
     stackPointer_ = savedInterpSP;
     state.sp = savedStateSP;
     return ok;
