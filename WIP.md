@@ -4,6 +4,38 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-12www — scheduling Cog-parity + harness-env fix; final run in flight
+
+SHIPPED (validated + committed):
+1. bc9c4108 putToSleepPreempted — preempted process now resumes FIRST
+   in its priority list (Cog processPreemptionYields=false ordering);
+   back-append was a hidden round-robin on every Delay tick. 3 sites:
+   synchronousSignal, primitiveResume, checkForPreemption.
+2. beeec92b same-priority round-robin time-slicing now OPT-IN
+   (PHARO_RR_SCHED, implied by PHARO_DET_SCHED). Higher-pri preemption
+   (front-ordered) + the aging anti-starvation rescue KEPT. Cog never
+   time-slices within a priority. Evidence chain: fork-window eval
+   repro (DET 1/50 bad -> DET+gate 200/200 ok), flaky family 8x
+   2/8 -> 0/8, SIX consecutive full-565 runs on new defaults all
+   complete (~12690 passes each).
+3. runner db6d62e — framework-self-tests (TestExecutionEnvironmentTest,
+   ProcessMonitorTestServiceTest) run under DefaultExecutionEnvironment:
+   the forked test process INHERITS the runner's wrapper env
+   (installEnvIntoForked:), whose ProcessMonitorTestService wraps every
+   test-created process via Process>>on:do:, mutating the
+   suspendedContext shape those tests inspect (receiver no longer
+   isClosure -> prepareForNewProcess: bails). 82/0/0 x3 after.
+   + idempotent FFI-cache chunk (re-filing the runner used to abort on
+   addClassVarNamed:). RE-PREP Pharo-jit3.image after runner edits.
+DIAGNOSIS RECIPE that cracked the env bug: inject an instrumented
+replica test into probe2.image (NativeProbeTest + probeLog:), run under
+the runner, log each guard input — receiver class came back Process
+(the on:do: wrapper ctx) instead of ConstantBlockClosure.
+IN FLIGHT: final full-565 confirmation (new VM defaults + new runner).
+Expected residual: SHA256 timeout (speed) + OCClassBuilderTest trait
+(image-level, Cog fails too) + rare batch flickers (CoverageCollector/
+testIsClean/testBenchFor — all pass isolated 5/5).
+
 ## CHECKPOINT 2026-06-12vvv — GOAL MET: suite exceeds Cog; all VM binaries pass
 
 DEFINITIVE (with .sources staged, full curated 565, JIT default-on):
