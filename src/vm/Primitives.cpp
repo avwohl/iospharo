@@ -4544,9 +4544,10 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     if (activePriority < 0) return PrimitiveResult::Failure;
 
     if (processPriority > activePriority) {
-        // Resumed process has higher priority - preempt current process
-        // Put current process to sleep
-        putToSleep(activeProcess);
+        // Resumed process has higher priority - preempt current process.
+        // Cog parity: the preempted process goes to the FRONT of its
+        // priority list (putToSleepPreempted), not the back.
+        putToSleepPreempted(activeProcess);
         // Switch to resumed process (don't put it to sleep, just run it)
         transferTo(process);
     } else {

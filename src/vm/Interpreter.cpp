@@ -4309,7 +4309,7 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         }
 
         if (processPriority > activePriority) {
-            putToSleep(activeProcess);
+            putToSleepPreempted(activeProcess);
             transferTo(process);
         } else {
             // Same or lower priority: just add woken process to its priority queue.
@@ -16087,6 +16087,47 @@ void Interpreter::addLastLinkToList(Oop process, Oop list) {
     memory_.storePointer(LinkedListLastLinkIndex, list, process);
 }
 
+void Interpreter::addFirstLinkToList(Oop process, Oop list) {
+    if (!process.isObject() || !list.isObject()) {
+        return;
+    }
+    ObjectHeader* procHdr = process.asObjectPtr();
+    if (procHdr->slotCount() < 4) {
+        return;
+    }
+    Oop nilObj = memory_.nil();
+    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, list);
+    memory_.storePointer(ProcessNextLinkIndex, process,
+        (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits())
+            ? nilObj : firstLink);
+    memory_.storePointer(ProcessMyListIndex, process, list);
+    memory_.storePointer(LinkedListFirstLinkIndex, list, process);
+    if (firstLink.isNil() || firstLink.rawBits() == nilObj.rawBits()) {
+        memory_.storePointer(LinkedListLastLinkIndex, list, process);
+    }
+}
+
+// Cog parity (processPreemptionYields = false, the Pharo default): a
+// process PREEMPTED by a higher-priority wake goes to the FRONT of its
+// priority list so it resumes first — back-appending it (the old
+// behavior, opt-back PHARO_PREEMPT_YIELDS=1) silently round-robins the
+// priority level on every Delay/timer tick, which breaks image code
+// written against Cog's no-time-slice-within-priority guarantee
+// (ProcessTerminateBugTest / SemaphoreTest fork-window flakes).
+void Interpreter::putToSleepPreempted(Oop process) {
+    if (GET_DEBUG_BOOL(PHARO_PREEMPT_YIELDS)) {
+        putToSleep(process);
+        return;
+    }
+    Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+    Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+    Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+    int priority = safeProcessPriority(process);
+    if (priority < 0) return;
+    Oop processList = memory_.fetchPointer(priority - 1, schedLists);
+    addFirstLinkToList(process, processList);
+}
+
 Oop Interpreter::removeFirstLinkOfList(Oop list) {
     Oop nilObj = memory_.nil();
 
@@ -17061,8 +17102,9 @@ void Interpreter::checkForPreemption() {
         // (removeFirstLinkOfList clears both nextLink and myList)
         removeFirstLinkOfList(queue);
 
-        // Put current process back on ready queue
-        putToSleep(activeProcess);
+        // Put current process back on ready queue — at the FRONT (Cog
+        // preemption ordering; see putToSleepPreempted)
+        putToSleepPreempted(activeProcess);
 
         // Switch to new process
         transferTo(firstProcess);

@@ -3256,6 +3256,8 @@ private:
 
     /// Add process to end of a LinkedList
     void addLastLinkToList(Oop process, Oop list);
+    void addFirstLinkToList(Oop process, Oop list);
+    void putToSleepPreempted(Oop process);
 
     /// Remove and return first process from a LinkedList
     Oop removeFirstLinkOfList(Oop list);
