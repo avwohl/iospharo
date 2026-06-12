@@ -4,6 +4,38 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-12uuu — FULL-SUITE PARITY: zero VM-attributable regressions vs Cog
+
+Full curated 565-class suite, both VMs, identical class list:
+  ours 12507 P / 47 F / 130 E / 39 S / 1 T   (completed all 565, exit 0)
+  cog  12591 P / 49 F / 228 E / 30 S         (556 classes; 9 MISSING in its image)
+classify-sunit.py: **4 regressions** of cog-pass + 102 not-run.
+The 102 not-run = the runner's deliberate skip-lists (87 inherited lint
+tests, 5 LargeInteger O(n^2), 2 OOM 1GB allocs) + singletons.
+The 4 regressions, triaged to ZERO VM bugs:
+  - OCClosureTest — MISSING .sources file (/tmp purge casualty; image
+    rebuilt but Pharo13.1-64bit-e84a2d1.sources never restaged).
+    Re-fetched via get.pharo.org/64/130 → passes. RE-STAGE .sources
+    WHENEVER /tmp/harness IS REBUILT.
+  - TestExecutionEnvironmentTest testHandleForkedProcessesByAllServices
+    + ProcessMonitorTestServiceTest testFailTestWhenBackground... —
+    HARNESS-CONTEXT artifacts: both TEST-PASSED standalone on our VM
+    (runCase eval); they fail only inside our runner's nested
+    TestExecutionEnvironment/watchdog wrapper. Cog's inline runner has
+    no wrapper. Harness fix or document; NOT VM.
+  - AILongestPathInDCGTest testNegativeWeightedGraph2 — passes 3/3
+    isolated; batch-flaky (load/timing family). Characterize later.
+Also: we PASS ~98 tests Cog ERRORS on (forked watchdog runner
+survives what Cog's inline runner can't).
+RUNNING: definitive full re-run with .sources staged (expect the
+OC*/MethodMap/CompiledMethod source-dependent clusters to shrink for
+us; re-run Cog after for the matching baseline).
+PHARO_NO_RR_SCHED knob committed (50d7a015) — Cog-scheduling
+experiment for the flaky fork-family; no effect on the deterministic 3
+(they were harness/env); still untested on testThreadSafe x8.
+TODO queue: test_ios_bridge <image>; cog re-baseline w/ sources;
+final classify; AILongestPath flake; (stretch) runner nested-env fix.
+
 ## CHECKPOINT 2026-06-12ttt — three commits in; full 565-class run launched
 
 SHIPPED (each suite/probe-validated + committed):
