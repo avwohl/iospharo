@@ -1,6 +1,75 @@
-# WIP — JIT Cog-speed: inline-J2J DEFAULT-ON (2026-06-09/10)
+# WIP — JIT correctness: pass VM + SUnit tests (goal switched 2026-06-12)
 
-Goal (active /goal): **fix this jit to work and be as fast as cog.**
+Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
+(The previous Cog-speed goal's checkpoints are preserved below — the
+internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
+
+## CHECKPOINT 2026-06-12ttt — three commits in; full 565-class run launched
+
+SHIPPED (each suite/probe-validated + committed):
+1. c0b30141 ignOC widening default OFF — fixed BlockClosureTest
+   testSetUp/testTallyMethods + SemaphoreTest testInCriticalWait
+   (terminate-unwind reads ensure:-block outerContexts).
+2. cba9855a Sista: refuse inlining <primitive:> callees (probe-lift
+   sees only the fallback body; millisecondClockValue inlined as 0 →
+   AndreasSystemProfiler busy-wait wedge, ~50% of runs, killed every
+   batch run at class ~5). lldb recipe in memory
+   sista-primitive-fallback-inline-trap.
+3. 793790bb jitPrimAtFull stale argCount_ — primitiveSuccess pops the
+   MEMBER argCount_; stale 4 inside replaceFrom:...startingAt: made the
+   mixed-format copy loop run `at: v put: v` (NativeArrayTest
+   testReplaceFromToWithStartingAt). Probe: 4 widths + 2048-combo
+   sweep clean. Probe harness: /tmp/harness/probe2.image has
+   NativeProbeTest (injected TestCase; runner-driven; the
+   startup.st-on-unprepped-image route does NOT work — render-loop
+   DNU storm starves StartupPreferencesLoader).
+
+Curated batch 1-100 now 5965/4/5; the 9 non-pass = 7 image-level
+(Cog-identical: OCCascadeNode>>isClean, decompiler arg-names, tempNamed
+isLocalVariable) + NativeArrayTest (FIXED post-run) + RecursionStopper
+testThreadSafe (PARKED: fork-scheduling-sensitive, passes isolated 3/3,
+fails under batch load; Cog 10/10).
+Alphabetical A-C accidental run: all 12 extra failures Cog-identical
+image bugs (debugger step isLocalVariable nil, BCBeautifulComments
+improper store, CNSelectorExtraction OCMessageNode>>messages) — zero
+custom-VM defects.
+RUNNING: full curated "1 565" (background, ~3-5h). Next: triage its
+non-pass list against the gap-analysis memory categories.
+PARKED: test_platform (legacy callback-pipeline test, needs prepped
+image; JIT-orthogonal). TRAP LOG: /tmp/sunit_test_classes.txt is the
+runner UNIVERSE — restore from scripts/pharo-headless-test/ after any
+cog-baseline run; echo done > /tmp/sunit_run_completed.txt before ANY
+Cog eval on prepped images (else the eval hangs running the suite).
+
+## CHECKPOINT 2026-06-12sss — test-goal status
+
+VM unit binaries: test_asmjit_t1_stub PASS, test_sista_ir PASS,
+test_class_table 51/51 PASS (needs image arg), test_sista_survey =
+survey tool (no verdict), test_ios_bridge needs image arg (not yet
+run), test_platform INCOMPLETE — legacy-style run with an UNPREPPED
+image: the callback pipeline (DisplaySurface::invalidateRect →
+vm_setDisplayUpdateCallback) is live (PharoBridge.swift uses it) but
+the raw image never starts its UI without the app's startup.st prep
+(resources/startup.st + PharoBridge.writeStartupScript). JIT-orthogonal.
+
+SUnit batch 1-100 (first 100 classes, ~6000 tests): 5962/7/5 → after
+the ignOC fix expect ~5965/4/5-ish. FIXED + COMMITTED: ignOC widening
+default OFF (opt-in PHARO_IGNOC_WIDEN) — the body scan can't rule out
+external outerContext reads: aBlock home identity
+(BlockClosureTest>>testSetUp), Context>>tallyMethods: simulation, and
+Process>>terminate's unwind walk reading ensure:-block outerContexts
+(SemaphoreTest>>testInCriticalWait). Widened path stored activeContext_
+(wrong). With the flip, BlockClosureTest/ContextTest/SemaphoreTest
+match Cog's non-pass list EXACTLY (7 image-level bugs: OCCascadeNode>>
+isClean missing, decompiler arg-name mismatches, tempNamed
+isLocalVariable nil — Cog fails all 7 identically).
+
+OPEN for batch 1-100: 2 unaccounted non-pass beyond the 3 classes
+(detail got truncated in the first run; AllocationTest shows
+'Total: 4 P:2' = 2 silent timeouts? — check the re-run's detail).
+Then scale: batches toward all 2051 classes; known cascade blockers
+beyond ~class 511 (memories: sunit-fullsuite-blocker-cascade,
+sunit-fullrun-clynotebook-blocker ~663, historical max 836).
 
 ## CHECKPOINT 2026-06-12rrr — internal-J2J v2 scaffolding in; handler audit = the remaining work
 
