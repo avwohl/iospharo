@@ -2,6 +2,33 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12qqq — THE DICT RESIDUAL ROOT: resumed methods run with inline-J2J DISABLED
+
+FOUND (the whole scanFor: chain converges here):
+tryJITResumeInCaller (Interpreter.cpp ~20080) sets
+state.j2jSaveCursor/Limit = NULLPTR before tryResume — by design
+('external J2J': every send in a resumed method exits r7 to the
+loop, which handles it in C++ and resumes).  Cost: ~1 C++ round
+trip PER SEND of any resumed method = the 13M-send dict residual.
+The design note cites 'severe slowdowns' from internal J2J +
+materialization storms — ALL of which predate this month's fixes.
+
+NAIVE FIX FAILED (knob PHARO_T1_RESUME_INTERNAL_J2J, KNOWN BROKEN,
+10/10 startup DNUs): the rj2j machinery allocates the SAME pool
+region (rj2jBase) and the loop's exit handlers assume the external
+protocol (yieldCountdown inheritance, materialize paths).
+
+THE REAL FIX (next window, sized half-day): rework the resume loop
+for internal J2J — (1) deconflict pool slices (reserve BEFORE
+rj2jBase capture or use a separate slice + GC-walk both);
+(2) audit the loop's exit handlers for internal-mode correctness
+(materializeJ2J on non-return exits, yieldCountdown reset, the
+rj2jMaxDepth release at ~20298); (3) qualify ladder->sieve->dict->
+suite.  EXPECTED: the residual ~13M round trips collapse; dict
+should step well below 200ms (Cog 26).
+Standing: dict ~215-264 vs Cog 26; fib30 16-18 vs 6; suite
+2468/0/0 throughout.
+
 ## CHECKPOINT 2026-06-12ppp — scanFor: exit profile complete; handler-resume audit next
 
 FACTS (all instrumented, this window):
