@@ -20077,8 +20077,42 @@ void Interpreter::tryJITResumeInCaller() {
         // severe slowdowns (stencil-managed J2J + frequent materialization from
         // inherited yieldCountdown and non-return exits).
         int rj2jBase = j2jPoolCursor_;
+        // INTERNAL J2J for resumed methods (2026-06-12 experiment,
+        // default ON): the null-slice "external J2J" design forced
+        // EVERY send in a tryResume-resumed method to exit r7 to this
+        // loop — one C++ round trip per send (the dict-bench 13M-send
+        // interp residency: scanFor: resumed here ran its whole probe
+        // loop through per-send exits).  The "severe slowdowns" that
+        // justified external mode predate this month's inline-J2J
+        // fixes (gates, leaf, prelude contracts).  Opt-out restores
+        // the null slice: PHARO_T1_RESUME_EXTERNAL_J2J=1.
+        if (GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)
+                && j2jPoolCursor_ + 8 <= (int)MaxJ2JPoolSize) {
+            // OPT-IN EXPERIMENT -- KNOWN BROKEN (2026-06-12): with the
+            // slice provisioned, startup DNUs 10/10 (the rj2j external
+            // machinery allocates the SAME pool region from rj2jBase,
+            // and the loop exit handling assumes the external
+            // protocol).  Kept as the marker for the real fix: the
+            // per-send r7-exit cost of external mode is THE dict-bench
+            // residual (~1 C++ round trip per resumed-method send).
+            // OPT-IN EXPERIMENT (not default): the rj2j external
+            // machinery also allocates from rj2jBase (see the
+            // `rj2jBase + rj2jMaxDepth` release) — the two slices can
+            // overlap on mixed flows.  Deconflict before defaulting.
+            // Reserve the slice (GC walks j2jPool_[0..j2jPoolCursor_),
+            // so saves pushed by the resumed method must sit below the
+            // cursor); rj2jBase (captured above) restores it on every
+            // exit from this loop iteration via the existing
+            // j2jPoolCursor_ = rj2jBase paths.
+            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(
+                &j2jPool_[j2jPoolCursor_]);
+            state.j2jSaveLimit = reinterpret_cast<uint8_t*>(
+                &j2jPool_[j2jPoolCursor_ + 8]);
+            j2jPoolCursor_ += 8;
+        } else {
         state.j2jSaveCursor = nullptr;
         state.j2jSaveLimit = nullptr;
+        }
         state.j2jDepth = 0;
         state.j2jTotalCalls = 0;
         state.j2jEntryDepth = 0;
