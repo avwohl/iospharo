@@ -2,6 +2,31 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12hhh — handler completion REGRESSED + reverted; suite clean; rollback probe next
+
+Final state of the closure-DNU arc this window:
+- Synthesis's handler fix: REFUTED on the repro AND regressed the
+  suite (groupsOfAtATimeCollect 2467/0/1 -> 2466/0/2; the identity
+  sync clobbers framePointer_ on hot real-body arith bails).
+  REVERTED with an in-code tombstone note.  Suite re-verified
+  2468/0/0 twice (one IntervalTest TIMEOUT flake, non-reproducing).
+- ec-hygiene KEPT (leaf refused for store-at-body-start prims).
+- LESSON: 'complete the thin handler to match siblings' is NOT
+  automatically safe — the siblings run in contexts where state
+  identity is authoritative; ExitArithOverflow fires mid-REAL-method
+  where interp globals are already correct and state mirrors may be
+  coarser.  Sibling-parity arguments need per-exit context analysis.
+- OPEN (the one blocker for arith leafing / MAX_IC / numic 1.77M):
+  the LEAF_ALL closure-as-receiver bug.  NEXT PROBE per the
+  synthesis refutation arm: counters + logs on the materialize
+  ROLLBACK paths (Interpreter.cpp materializeJ2J lambda rollback
+  ~24336-41: silently drops ALL materialized frames on a mid-pool
+  materializeJ2JSaveIntoFrame failure; also the rj2j rollback
+  ~20770-80).  Ask WHY materializeJ2JSaveIntoFrame fails, make
+  failure loud, fix the drop.  Deterministic repro:
+  PHARO_T1_LEAF_ALL_PRIMS=1 PHARO_T1_NO_INLINE_J2J=1 PHARO_DET_SCHED=1
+  eval 3+4 -> 4/4 fail, 5 dnus.
+
 ## CHECKPOINT 2026-06-12ggg — closure-bug synthesis REFUTED; handler hygiene kept; rollback paths next
 
 The 4-agent workflow's synthesis (thin ExitArithOverflow handlers =
