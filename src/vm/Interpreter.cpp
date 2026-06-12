@@ -3500,7 +3500,12 @@ void Interpreter::interpret() {
             }
 #endif
 
-            if (displayForm_.isNil()) {
+            // Throttled: findGlobal is a string-keyed lookup and this probe
+            // runs at EVERY checkpoint while displayForm_ is nil — which is
+            // FOREVER on headless runs (~10% of SHA256Test's runtime, 2026-06-12
+            // sample).  Latching the Display a few ms later is harmless.
+            static uint32_t displayProbeTick = 0;
+            if (displayForm_.isNil() && (++displayProbeTick & 63) == 0) {
                 Oop display = memory_.findGlobal("Display");
                 if (!display.isNil() && display.isObject()) {
                     ObjectHeader* hdr = display.asObjectPtr();
