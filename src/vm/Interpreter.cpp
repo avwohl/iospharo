@@ -21304,6 +21304,20 @@ void Interpreter::tryJITResumeInCaller() {
         case jit::ExitArithOverflow:
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            if (__builtin_expect(g_debug.jitFailReasons, 0)) {
+                static int dvn = 0;
+                bool dv = (state.j2jDepth > 0)
+                    || (state.tempBase - 1 != framePointer_);
+                if (dv && ++dvn <= 30)
+                    fprintf(stderr, "[AO-DIVERGED %s] sel=#%s j2jD=%d "
+                        "tb-1=%p fp=%p ipOff=%lld\n", "tryact",
+                        memory_.selectorOf(state.method).c_str(),
+                        state.j2jDepth, (void*)(state.tempBase - 1),
+                        (void*)framePointer_,
+                        (long long)(state.ip && state.method.isObject()
+                            ? state.ip - state.method.asObjectPtr()->bytes()
+                            : -1));
+            }
             // Sync method_ from state.jitMethod->compiledMethodOop on
             // tier=1 bail.  state.method tracks the OUTERMOST method
             // in the J2J chain (AsmjitT1.cpp ~2395) and doesn't
@@ -25389,6 +25403,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitArithOverflow: {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            if (__builtin_expect(g_debug.jitFailReasons, 0)) {
+                static int dvn = 0;
+                bool dv = (state.j2jDepth > 0)
+                    || (state.tempBase - 1 != framePointer_);
+                if (dv && ++dvn <= 30)
+                    fprintf(stderr, "[AO-DIVERGED %s] sel=#%s j2jD=%d "
+                        "tb-1=%p fp=%p ipOff=%lld\n", "chain",
+                        memory_.selectorOf(state.method).c_str(),
+                        state.j2jDepth, (void*)(state.tempBase - 1),
+                        (void*)framePointer_,
+                        (long long)(state.ip && state.method.isObject()
+                            ? state.ip - state.method.asObjectPtr()->bytes()
+                            : -1));
+            }
             // NOTE 2026-06-12: completing this handler with the
             // audit-S2 identity sync + materializeJ2J (per a workflow
             // synthesis of the LEAF_ALL closure DNU) was TRIED and
@@ -26637,6 +26665,17 @@ jit_loop_exit:
         // re-executes it and calls sendMustBeBoolean per spec.
         instructionPointer_ = state.ip;
         stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+        if (__builtin_expect(g_debug.jitFailReasons, 0)) {
+            static int dvn3 = 0;
+            bool dv = (state.j2jDepth > 0)
+                || (state.tempBase - 1 != framePointer_);
+            if (dv && ++dvn3 <= 30)
+                fprintf(stderr, "[AO-DIVERGED final] sel=#%s j2jD=%d "
+                    "tb-1=%p fp=%p exit=%d\n",
+                    memory_.selectorOf(state.method).c_str(),
+                    state.j2jDepth, (void*)(state.tempBase - 1),
+                    (void*)framePointer_, (int)state.exitReason);
+        }
         return false;
 
     case jit::ExitBlockCreate:

@@ -4427,8 +4427,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         // PHARO_T1_NO_PATCHED_SENDS=1; PHARO_T1_PATCHED_SENDS=1 is now
         // a no-op (kept for script compat).  B3 soak: 16372 tests,
         // zero knob-induced regressions, mirror verify silent.
+        // PMS REQUIRES the inline-J2J site emit: the patched direct-
+        // branch tail IS a J2J call sequence, and the patcher's word
+        // offsets are derived against that shape.  With inline-J2J
+        // disabled the sites emit without the tail, and patching them
+        // corrupts unrelated words — PHARO_T1_NO_INLINE_J2J=1 alone
+        // produced 5-7 deterministic startup DNUs (2026-06-12; this
+        // also poisoned every knob-bisect that used NO_INLINE_J2J as
+        // an arm since at least 2026-06-11).  Auto-disable.
         const bool patchedShape =
-            !GET_DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS) && probeThis;
+            !GET_DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS)
+            && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
+            && probeThis;
         auto emitMaterializeX5 = [&]() {
             asmjit::a64::Gp jmReg = asmjit::a64::x19;
             // Pre-M1, xmethod mode couldn't trust x19 (the entry hoist
