@@ -9530,8 +9530,18 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         if (rawPrimIdx == 198 || rawPrimIdx == 199)
             advertiseResume = false;
     }
+    // COND-JUMP RESUME DEFAULT-ON (2026-06-12): with the J2J gates
+    // open (MAX_IC=8, b46 admit, PMS fix), force-rung measured a
+    // consistent dict win (251-253 vs 268-271 interleaved, 3/3) with
+    // clean ladders — the 06-12-morning "resume is not the lever"
+    // verdict predated six shipped fixes.  Marked methods (prim
+    // 198/199) remain excluded above.  Opt-out:
+    // PHARO_T1_NO_RESUME_CONDJUMP=1 restores the old refusal for
+    // cond-jump send methods only.
     if (numSendSites > 0 && !forceResumeForSends && !resumeBisect
-            && (!resumeSendsNoCondjump || t1HasCondJump))
+            && (!resumeSendsNoCondjump
+                || (t1HasCondJump
+                    && GET_DEBUG_BOOL(PHARO_T1_NO_RESUME_CONDJUMP))))
         advertiseResume = false;
     // DEBUG ISOLATION (PHARO_T1_RESUME_ONLY_SEL): force send-resume ON for a
     // single selector so the resume protocol can be exercised/validated on one
