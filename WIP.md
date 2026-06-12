@@ -4,6 +4,20 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-12xxx — FINAL: 12692/0F/2E, delta vs Cog = 1 flicker
+
+Full 565 on new VM defaults + new runner:
+  **12692 PASS / 0 FAIL / 2 ERROR / 29 SKIP / 1 TIMEOUT**
+Residual three, fully attributed:
+  - SHA256Test testFips180Example3 TIMEOUT — VM speed (the parked
+    Cog-speed workstream; Cog passes in <1s).
+  - OCClassBuilderTest testCreateNormalClassWithTraitComposition —
+    Cog ERRORS IDENTICALLY (OCCodeError: Undeclared variable) ✓ image.
+  - CoverageCollectorTest testNodeCoverage2 — batch-context flicker,
+    passes isolated 5/5.
+classify vs cog: 1 regression (the flicker). Zero deterministic
+VM-attributable deltas. Both prior harness-context fails now PASS.
+
 ## CHECKPOINT 2026-06-12www — scheduling Cog-parity + harness-env fix; final run in flight
 
 SHIPPED (validated + committed):
