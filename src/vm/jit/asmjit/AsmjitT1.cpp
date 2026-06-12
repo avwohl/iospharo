@@ -8150,8 +8150,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // cold.  Arithmetic prims (1-16) keep real bodies: their failure
     // paths (overflow -> LargeInteger, mixed-type coercion) are HOT,
     // and leafing them flickered the closure-as-receiver DNU.
-    const bool prologueLeaf = (primIndex == 60 || primIndex == 61
-                               || primIndex == 62)
+    const bool prologueLeaf = ((primIndex == 60 || primIndex == 61
+                                || primIndex == 62)
+                               || GET_DEBUG_BOOL(PHARO_T1_LEAF_ALL_PRIMS))
+        && primIndex > 0
         && !GET_DEBUG_BOOL(PHARO_T1_NO_PROLOGUE_LEAF);
     if (prologueLeaf) real = false;
     if (real) {
