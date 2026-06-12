@@ -280,6 +280,7 @@ extern "C" uint64_t g_xmethod_count = 0;
 // Monotonic T1 compile counter for the saveless MIN_COMPILE bisect gate.
 extern "C" uint64_t g_t1CompileSeq2;
 extern "C" int g_ibcEmits;
+extern "C" bool g_emitPrologueLeaf;
 // Eδ.2a (2026-05-24): count of methods compiled with canSkipJ2JSave=true.
 // Bumped at AsmjitT1.cpp compileMethod when the flag is set on a real
 // (non-stub) method.  Read by JIT stats dump.
@@ -8136,6 +8137,23 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // V2 self-identification anchor: code offset 0.
     g_codeStartLabel = a.new_label();
     a.bind(g_codeStartLabel);
+    // PROLOGUE-LEAF (2026-06-12): supported-prim methods NEVER compile
+    // their fallback body (Cog's design) — prologue + interp-resume
+    // bail instead.  numIC=0 / no cond jumps / not stub-on-entry, so
+    // they pass every inline-J2J gate (the dict-bench bail_numic/b46
+    // classes were at:/at:put:'s cold bodies).  Correct because
+    // prologue coverage misses run the FULL primitive (jitPrimAtFull)
+    // — prologue failure IS prim failure.  Opt-out
+    // PHARO_T1_NO_PROLOGUE_LEAF=1 restores body compiles.
+    // Scope: at:-family only (60/61/62).  Their prologue failure is
+    // genuinely rare (bounds/immutable), so the interp-resume bail is
+    // cold.  Arithmetic prims (1-16) keep real bodies: their failure
+    // paths (overflow -> LargeInteger, mixed-type coercion) are HOT,
+    // and leafing them flickered the closure-as-receiver DNU.
+    const bool prologueLeaf = (primIndex == 60 || primIndex == 61
+                               || primIndex == 62)
+        && !GET_DEBUG_BOOL(PHARO_T1_NO_PROLOGUE_LEAF);
+    if (prologueLeaf) real = false;
     if (real) {
         bcLabels.reserve(bcLen);
         for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
@@ -8773,6 +8791,31 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             emitSyncSpToState(a);
             a.ret(a64::x30);
         }
+    } else if (prologueLeaf) {
+        // PROLOGUE-LEAF (2026-06-12, Cog's design for prim methods):
+        // the prologue above IS the method for the hot path; on
+        // prologue failure (a GENUINE prim failure — coverage misses
+        // run the full prim via jitPrimAtFull), resume the INTERPRETER
+        // at the first body bytecode in this same activation (the
+        // proven PushThisContext bail protocol: EXIT_ARITH_OVERFLOW +
+        // ip).  vs the old bail-on-entry stub: numIC=0, no cond
+        // jumps, NOT isStubOnEntry -> passes every inline-J2J gate, so
+        // at:/at:put:/basicAt: become direct J2J callees.
+        g_emitPrologueLeaf = true;
+        if (g_fsrLazy) {
+            a.ldr(a64::x5, a64::ptr(a64::x19,
+                  (int)offsetof(JITMethod, bcStartCache)));
+            a.add(a64::x5, a64::x5, asmjit::Imm(emitSkip));
+        } else {
+            a.ldr(a64::x5, a64::ptr(a64::x0, OFF_METHOD));
+            a.add(a64::x5, a64::x5,
+                  asmjit::Imm(bcOffsetBase + emitSkip));
+        }
+        a.str(a64::x5, a64::ptr(a64::x0, OFF_IP));
+        a.mov(a64::w3, Imm(EXIT_ARITH_OVERFLOW));
+        a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+        emitSyncSpToState(a);
+        a.ret(a64::x30);
     } else {
         a.mov(a64::w1, Imm(EXIT_SEND));
         a.str(a64::w1, a64::ptr(a64::x0, OFF_EXIT));
@@ -8890,6 +8933,13 @@ size_t g_failedBcOther    = 0;
 // bisect gate (saveless emit only in compiles with seq >= N, so startup
 // methods can be excluded while a controlled late-compiled site fires).
 extern "C" int g_ibcEmits = 0;
+// PROLOGUE-LEAF mode (2026-06-12): set per compile when a supported-
+// prim method's body is unsupported/scary and the emit produced
+// prologue + interp-resume bail instead of a bail-on-entry stub.
+// Consumed at JM finalize: such methods are NOT isStubOnEntry (the
+// prologue is real, so they pass the J2J gates), have numIC=0 and
+// canBailMidMethod=false by construction.
+extern "C" bool g_emitPrologueLeaf = false;
 extern "C" uint64_t g_t1CompileSeq2 = 0;
 
 JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
@@ -8897,6 +8947,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                              Oop compiledMethod) {
     (void)interp;
     g_t1CompileSeq2++;
+    g_emitPrologueLeaf = false;
     const int ibcBefore = g_ibcEmits;
     struct IbcLogGuard {
         const int before; pharo::Oop cm; pharo::ObjectMemory& mem;
@@ -9497,7 +9548,9 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     jm->hasLitVarWrite    = false;
     jm->maxRecvFieldIndex = 0;
     jm->isSpliceTarget    = false;
-    jm->isStubOnEntry     = !isReal;
+    // Prologue-leaf methods are NOT stub-on-entry: the prologue is the
+    // real hot path and the bail is the validated interp-resume shape.
+    jm->isStubOnEntry     = !isReal && !g_emitPrologueLeaf;
     // canBailMidMethod = true when the emitter produces a mid-method
     // ExitMustBool bail (conditional jumps).  The chain loop's
     // inline-activate path (Interpreter.cpp:18807-18809) skips this

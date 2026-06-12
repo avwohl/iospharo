@@ -89,6 +89,7 @@ DEBUG_BOOL(PHARO_T1_INLINE_TEMP_RETURN)      // bit 54: ^ arg N
 DEBUG_BOOL(PHARO_T1_INLINE_INT_CMP_RETURN)   // bit 53: ^ self cmp arg
 DEBUG_BOOL(PHARO_T1_INLINE_INT_ARITH_RETURN) // bit 52: ^ self op arg
 DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)         // bit 51: Integer>>even/odd
+DEBUG_BOOL(PHARO_T1_NO_PROLOGUE_LEAF)       // opt out of prologue-leaf compiles (prim methods with unsupported bodies fall back to bail-on-entry stubs)
 DEBUG_BOOL(PHARO_T1_NO_J2J_PRIM_PROLOGUE)   // opt out of admitting prim-prologue callees through the xmethod J2J gates
 DEBUG_BOOL(PHARO_T1_SIEVE_GATE)             // restore the legacy stub-on-condjump gate for prim 60/61/62 methods (root cause fixed 2026-06-12; default OFF)
 DEBUG_BOOL(PHARO_JIT_MATGUARD_DEEP)         // restore the 4-deep matRetSlot scan in canJITActivate (default 1-deep; the startup-DNU flake is guard-independent)
