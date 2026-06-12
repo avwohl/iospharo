@@ -4,6 +4,39 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-12zzz — internal-J2J audit steps 0-4 LANDED; cannotReturn residual pinned
+
+93579b63: workflow plan steps 0-4 implemented (knob still OPT-IN).
+Knob-off PROVEN no-op (eval + batch 1-15 = 2468/0/0).
+KNOB-ON PROGRESS: the 5-month deterministic startup garbage-selector
+DNU is GONE (was 3/3, selector slot clobbered). Residual: ~50% of
+knob-on startups hit a Context>>cannotReturn: storm → 'computation has
+been terminated'; DETERMINISTIC under DET_SCHED (3/3):
+  PHARO_T1_RESUME_INTERNAL_J2J=1 PHARO_DET_SCHED=1 \\
+    ./build-opt/test_load_image /tmp/harness/Pharo-jit3.image eval "3+4"
+Oracle: + PHARO_SP_DEPTH_TRAP=1 → RES-IN/RES-OUT pairs; failure
+neighborhood = #allSubclasses/#subclasses/#addAllLast: resume cycles
+([RES-OUT] #subclasses exit=1 retval=Array ipOff=0 then [CTX-RET@6646]
+m=#cannotReturn: fd=1). ExitReturn DOES pop materialized frames via
+popFrame (verified) — the broken linkage is elsewhere: suspects =
+(a) ExitReturn's fd=0 context-sender path interacting with frames
+materialized in THIS loop (sender chain vs savedFrames split),
+(b) the per-iteration slice reset clobbering saves still referenced
+by an outer iteration, (c) my materialize running at loop-top for
+exits that RE-ENTER the same callee (double-materialize of the same
+saves across continue cycles — check: saves materialized, cursor
+reset, then 'continue' re-runs tryResume of the CALLEE whose RETURN
+now pops a frame... if the callee exits AGAIN before returning, its
+NEW saves are fine, but the previously-materialized frames + the
+re-derived method_ may mismatch computeCurrentBCOffset).
+NEXT: walk the oracle trace backward from the first bad RES-IN
+(sp-fp jumps), instrument materializeJ2JSaveIntoFrame's resumeAddr →
+caller-JM resolution for slice saves. The audit plan's remaining
+steps 5 (AO tier-gate widening) + 6 (bit-0 marker cleanup) also
+pending — each its own commit per the plan.
+Plan archive: workflow run wf_bf322270-06b (full synthesis in
+/private/tmp/claude-501/.../tasks/wjat3yxk5.output).
+
 ## CHECKPOINT 2026-06-12yyy — SHA256 anatomy; resume-loop audit workflow launched
 
 SHA256Test testFips180Example3: the test SETS `self timeLimit: 10
