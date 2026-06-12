@@ -2,6 +2,29 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12ppp — scanFor: exit profile complete; handler-resume audit next
+
+FACTS (all instrumented, this window):
+- scanFor: is J2J-CALLED ~1.3M+/run (never interp pushFrame, never
+  activateMethod) — frames JIT-materialized on bail.
+- Exit profile per dispatch switch ([SXXXXX-EXITS], PHARO_JIT_TRACE_OOP):
+  S20835 r7:268K r1:178K r6:23K r2:18K; S24480 r7:200K r1:180K
+  r2:98K r6:10K.  ~1.2 SendCached(r7) exits per activation + arith
+  bails(r6) + misses(r2).
+- After these exits the interp runs the REST of each activation
+  (13M at:/key census sends; poly-walk killed the hash-site misses
+  at the OTHER entry path but didn't dent this).
+NEXT (the precise audit): for switches at Interpreter.cpp 20835 and
+24480, check their r7/r2/r6 handlers — which lack the kind-1
+precomputed-resume (savedResumeEntry) machinery the 25xxx chain has?
+The structural fix: after handling the send/bail at THESE switches,
+resume scanFor: in JIT (the rung exists; port it).  Each ported rung
+should cut ~one C++ round trip per scanFor: send and collapse the
+interp residency.
+SHIPPED this window (all soaked 2468/0/0): queue-drop re-arm,
+IC poly-walk default-ON.  Standing: dict ~215-230 vs Cog 26 (8.4x);
+fib30 16-18 vs 6.
+
 ## CHECKPOINT 2026-06-12ooo — poly-walk default-ON; the bypassing entry path = the dict question
 
 SHIPPED (soaked 2468/0/0): IC poly-walk slots 0-2 default (r2 miss
