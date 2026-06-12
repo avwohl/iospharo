@@ -2,6 +2,35 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12jjj — LEAF_ALL: two more fix attempts falsified; full evidence inventory
+
+Flicker facts (all measured this window, post-PMS-fix toolbox):
+- 4/8 with inline-J2J ON; 0/8 with leafs off; 0/3 with J2J off.
+- NOT cured by: NO_PATCHED(2/6) NO_RESUME(3/6) NO_XGATE(3/6)
+  NO_J2J_PRIM_PROLOGUE(4/6).
+- Frame identity SOUND at all 3 ArithOverflow handlers (diverged
+  probe: only j2jD=1 hits, 6M lines pre-DNU, weak causality).
+- FAILED FIX #1: identity sync at handlers (regressed suite).
+- FAILED FIX #2: materializeJ2J at chain handler (8/8 WORSE —
+  double-handles; return-false context has downstream save handling).
+- Bisect (workflow): minimal skip set = the 14 arith/cmp/==/species
+  selectors; comparisons central (skipping all-but-comparisons =
+  13/16 WORSE, non-monotone).
+NEXT IDEAS (fresh window): (a) trace the SAVE LIFECYCLE for a
+flicker run — tag each save push/pop/materialize with a counter and
+find the save that gets popped/materialized TWICE or never (the
+non-monotone knob behavior smells like double-pop); (b) suspect the
+COMPARISON leaf bail's interaction with the cond-jump CONSUMER: a
+leafed < is called, prologue fails (non-SmI), interp computes the
+body, returns a Boolean — but the JIT CALLER site expected the
+result for an immediately-following conditional jump emitted as a
+FUSED compare-branch?? (check if cmp-prims at IC sites fuse with
+jumps — the bcArithBail counters); (c) species (prim 111) always-
+fail leaf is in the minimal set — its every call bails; check what
+its callers' sites assume.
+Production state: default ladders 3/3, PMS fix soaked 2468/0/0.
+dict ~253-283ms vs Cog 25 (~10x); fib30 16-18 vs 6 (~3x).
+
 ## CHECKPOINT 2026-06-12iii — PMS/NO_INLINE_J2J defect FIXED; workflow repro invalidated; flicker isolated to J2J-on
 
 MAJOR: PHARO_T1_NO_INLINE_J2J=1 ALONE was deterministically broken
