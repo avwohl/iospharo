@@ -2,6 +2,25 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12ooo — poly-walk default-ON; the bypassing entry path = the dict question
+
+SHIPPED (soaked 2468/0/0): IC poly-walk slots 0-2 default (r2 miss
+exits 8191->1; dict 3/3 small).  Queue re-arm also soaked earlier.
+
+THE PRECISE REMAINING QUESTION: scanFor: frames execute ~13M interp
+at:/key sends, but activateMethod(scanFor:) runs <262K times
+(SF-ACT) and the jit-traced entries are ~8K.  So ~1.6M scanFor:
+activations enter via a path that is NEITHER activateMethod NOR
+tryJITActivation/chain-trace — candidates: (a) the interp's
+direct-dispatch send fast path IF one exists that pushes frames
+without activateMethod (grep pushFrame callers in the send paths);
+(b) executeFromContext (materialized contexts re-entered);
+(c) the RES-IN tryResume loop creating interp frames per probe
+iteration??  NEXT: instrument pushFrame (or frame-push sites) with
+a selector==scanFor: sampled counter per call SITE — one run names
+the entry path; then put the JIT hook there.
+Standing: dict ~215-230 vs Cog 26 (8.4x); fib30 16-18 vs 6.
+
 ## CHECKPOINT 2026-06-12nnn — scanFor: ping-pong data complete; r2-miss exits despite healthy sites
 
 [IC-SITE] dump on the live scanFor: jm (steady state): sites HEALTHY
