@@ -2,6 +2,34 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12ggg — closure-bug synthesis REFUTED; handler hygiene kept; rollback paths next
+
+The 4-agent workflow's synthesis (thin ExitArithOverflow handlers =
+the mechanism) was tested per its own falsification plan and
+REFUTED: completing both handlers (materializeJ2J + audit-S2
+identity sync, sibling parity) did NOT fix the LEAF_ALL repro —
+deterministic variant (LEAF_ALL+NO_INLINE_J2J+DET_SCHED) still 4/4
+fail (5 dnus each); flicker config now 2-3 dnus/run.  Default config
+6/6 CLEAN — the handler completion is kept as hygiene (it matches
+the audited sibling shape; soak pending /tmp/soak_handlers.log).
+
+PER THE SYNTHESIS'S REFUTATION ARM, the search moves to the
+materialize-ROLLBACK paths: Interpreter.cpp ~24336-24341 (the
+materializeJ2J lambda rolls back ALL materialized frames and
+SILENTLY RETURNS on a mid-pool materializeJ2JSaveIntoFrame failure
+— frames dropped, the no-workarounds anti-pattern) and ~20770-20780
+(rj2j rollback).  NEXT PROBE: counter+log on both rollbacks under
+the deterministic repro — if they fire before the DNU, the fix is
+making materialize failure LOUD + handling it correctly (why does
+materializeJ2JSaveIntoFrame fail? its failure conditions are the
+real question).  Also still open from the synthesis: the bisect
+agent's claim that the hole fires 5/5 WITHOUT LEAF_ALL under
+NO_INLINE_J2J — i.e. a LIVE pre-existing defect on the
+NO_INLINE_J2J diagnostic config (not production).
+
+Error-clause hygiene SHIPPED: leaf refused when bc[3] is a store
+(latent <primitive:error:> hazard, 3 cold fixtures).
+
 ## CHECKPOINT 2026-06-12fff — at:-family prologue-leaf SHIPPED; dict ~253-283ms
 
 Leaf (Cog-style, prim 60/61/62 only): prologue + interp-resume bail

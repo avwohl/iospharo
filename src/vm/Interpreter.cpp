@@ -25389,6 +25389,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitArithOverflow: {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            // NOTE 2026-06-12: completing this handler with the
+            // audit-S2 identity sync + materializeJ2J (per a workflow
+            // synthesis of the LEAF_ALL closure DNU) was TRIED and
+            // REVERTED: it regressed testGroupsOfAtATimeCollect
+            // (2467/0/1 then 2466/0/2 in suite soaks — the sync
+            // overwrote framePointer_ on hot REAL-body arith bails
+            // where the existing frame was already correct), and did
+            // NOT fix the LEAF_ALL repro.  The LEAF_ALL bug hunt
+            // continues at the materialize-rollback paths.
             // Sync method_ from state.method when tier=1 — inline-J2J
             // may have moved state into a callee without updating
             // method_, which super-send and other method-context
