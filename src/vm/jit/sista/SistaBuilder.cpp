@@ -5038,18 +5038,25 @@ private:
                     // Primitive guard (2026-06-12, same as
                     // tryInlineConstReturn): a self-send re-runs the
                     // primitive; splicing only the bytecode fallback
-                    // would skip it.
-                    bool selfHasPrim = true;
-                    if (g_currentBuildMemory != nullptr) {
+                    // would skip it.  MUST stay inside the knob gate and
+                    // validate selfMethodBits_ — block-lifts can reach
+                    // here with selfMethodBits_ unset, and an
+                    // unconditional fetchPointer on it SEGV'd the full
+                    // 565-class run at class 514 (first version of this
+                    // guard ran the deref knob-independently).
+                    auto selfHasPrim = [&]() -> bool {
+                        if (g_currentBuildMemory == nullptr) return true;
+                        if ((selfMethodBits_ & 7) != 0
+                            || selfMethodBits_ < 0x10000) return true;
                         Oop selfHdr = g_currentBuildMemory->fetchPointer(
                             0, Oop::fromRawBits(selfMethodBits_));
-                        selfHasPrim = !selfHdr.isSmallInteger()
+                        return !selfHdr.isSmallInteger()
                             || ((selfHdr.asSmallInteger() >> 16) & 1);
-                    }
+                    };
                     if (g_debug.t1SelfRecSplice
-                        && !selfHasPrim
                         && g_calleeLiftDepth < g_debug.t1SelfRecSpliceDepth
-                        && g_currentBuildMemory != nullptr) {
+                        && g_currentBuildMemory != nullptr
+                        && !selfHasPrim()) {
                         Method selfBody;
                         uint32_t selfFailedAt = UINT32_MAX;
                         Oop selfOop = Oop::fromRawBits(selfMethodBits_);
