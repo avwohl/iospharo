@@ -20041,15 +20041,34 @@ void Interpreter::tryJITResumeInCaller() {
     // cursor reset inside the loop).  Reserved below every rj2jBase
     // capture; guard restores on function exit.
     constexpr int kResumeSliceSlots = 8;
-    // OPT-IN (v2 still corrupts: garbage-selector DNUs — the loop's
-    // handlers decode send bytecodes at state.ip shapes only external
-    // mode guarantees; see WIP rrr).  The slice/materialize scaffolding
-    // is sound; the HANDLER protocol audit is the remaining work.
+    static_assert(kResumeSliceSlots < 64,
+        "must stay below the 64-save saveless headroom (AsmjitT1 ~5459) "
+        "or ExitRetroFull(13) becomes reachable with no C++ handler");
+    // OPT-IN (PHARO_T1_RESUME_INTERNAL_J2J).  Handler-protocol audit
+    // landed 2026-06-12 (steps 0-4 of the resume-loop-internal-j2j-audit
+    // workflow plan): the materialize block now does the FULL global
+    // sync (lambda parity) and every bail path re-derives identity.
+    // Tier/knob matrix: the stencil tier writes 56-byte V1 saves into
+    // the 32-byte V2 slice (J2JSaveLayout.h vs stencils.cpp J2JSave),
+    // the rj2j chain loop walks only its own slice, and FSR_NODEPTH
+    // stops maintaining state.j2jDepth which gates the materialize.
     const bool resumeInternalJ2J =
         GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)
+        && g_debug.useAsmjitT1
+        && !g_debug.resumeJ2J
+        && !GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH)
         && j2jPoolCursor_ + kResumeSliceSlots <= (int)MaxJ2JPoolSize;
     const int resumeSliceBase = j2jPoolCursor_;
-    if (resumeInternalJ2J) j2jPoolCursor_ += kResumeSliceSlots;
+    if (resumeInternalJ2J) {
+        j2jPoolCursor_ += kResumeSliceSlots;
+        // forEachRoot visits receiver/cachedTarget of every slot below
+        // the cursor; j2jPool_ is an uninitialized member, so a fresh
+        // session's slice slots hold indeterminate memory.
+        for (int i = 0; i < kResumeSliceSlots; i++) {
+            j2jPool_[resumeSliceBase + i].receiver = Oop::fromRawBits(0);
+            j2jPool_[resumeSliceBase + i].resumeAddr = 0;
+        }
+    }
     struct ResumeSliceGuard {
         int& cursor; int base; bool active;
         ~ResumeSliceGuard() { if (active) cursor = base; }
@@ -20293,14 +20312,33 @@ void Interpreter::tryJITResumeInCaller() {
         // handler below keeps its external-mode depth==0 assumption.
         if (resumeInternalJ2J && state.j2jDepth > 0) {
             J2JSave* rsSaves = &j2jPool_[resumeSliceBase];
+            // Failure policy mirrors the rj2j twin: FULL rollback +
+            // loud bail.  The old break-and-limp silently dropped the
+            // deeper saves and entered the switch with a frame stack
+            // missing live callers.
+            int rsDone = 0;
+            bool rsFailed = false;
             for (int rsI = 0; rsI < state.j2jDepth; rsI++) {
-                if (frameDepth_ >= StackOverflowLimit) break;
+                if (frameDepth_ >= StackOverflowLimit) { rsFailed = true; break; }
                 SavedFrame& rsF = savedFrames_[frameDepth_++];
                 if (!materializeJ2JSaveIntoFrame(rsF, rsSaves[rsI],
                         state.jitMethod, "resume-internal")) {
                     if (frameDepth_ > 0) frameDepth_--;
+                    rsFailed = true;
                     break;
                 }
+                rsDone++;
+            }
+            if (rsFailed) {
+                while (rsDone-- > 0 && frameDepth_ > 0) frameDepth_--;
+                static int rsmfLog = 0;
+                if (++rsmfLog <= 20)
+                    fprintf(stderr, "[RESUME-MAT-FAIL] depth=%d fd=%zu\n",
+                            state.j2jDepth, frameDepth_);
+                instructionPointer_ = state.ip;
+                stackPointer_ = state.sp;
+                inJITResume_ = false;
+                return;
             }
             state.j2jDepth = 0;
             state.j2jSaveCursor = reinterpret_cast<uint8_t*>(
@@ -20310,6 +20348,24 @@ void Interpreter::tryJITResumeInCaller() {
             if (state.jitMethod) {
                 state.method = Oop::fromRawBits(
                     state.jitMethod->compiledMethodOop);
+            }
+            // PRIMARY internal-mode fix (audit step 2): the exit came
+            // from a J2J CALLEE's interior — the resumed method's
+            // identity in the globals is stale for every handler and
+            // for the loop-top dispatch checks (ip >= bytecodeEnd_!).
+            // Port of the materializeJ2J lambda's sync tail (the
+            // reference internal-mode handler in the main chain loop).
+            method_ = state.method;
+            homeMethod_ = state.method;
+            receiver_ = state.receiver;
+            stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            instructionPointer_ = state.ip;
+            framePointer_ = state.tempBase - 1; FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
+            argCount_ = state.argCount;
+            {
+                ObjectHeader* mObj = state.method.isObject()
+                    ? state.method.asObjectPtr() : nullptr;
+                if (mObj) bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
             }
         }
         if (__builtin_expect(resTrace, 0)) {
@@ -20990,6 +21046,26 @@ void Interpreter::tryJITResumeInCaller() {
                 }
             }
         }
+        // Audit step 3 (2026-06-12): bail-path identity sync.  In
+        // external mode every field written equals the global it
+        // replaces (no-op); in internal mode the exit may come from a
+        // J2J callee, so any handler that RETURNS to the dispatch loop
+        // must hand it a coherent frame (incl. argCount_ and
+        // bytecodeEnd_, which no handler previously synced — a stale
+        // bytecodeEnd_ makes the dispatch loop's ip>=bytecodeEnd_ check
+        // fire returnValue(receiver_) mid-method).
+        auto resumeFullSync = [&]() {
+            method_ = state.method;
+            homeMethod_ = state.method;
+            receiver_ = state.receiver;
+            stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            instructionPointer_ = state.ip;
+            framePointer_ = state.tempBase - 1; FP_CORRUPT_TRACE_FROM_TB(framePointer_, state.tempBase);
+            argCount_ = state.argCount;
+            ObjectHeader* mObj = state.method.isObject()
+                ? state.method.asObjectPtr() : nullptr;
+            if (mObj) bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+        };
         switch (state.exitReason) {
         case jit::ExitReturn:
             // Bug-14 diagnostic (tryResume path)
@@ -21105,8 +21181,11 @@ void Interpreter::tryJITResumeInCaller() {
 
         case jit::ExitSend: {
             // JIT hit a send. Let interpreter handle it.
-            instructionPointer_ = state.ip;
-            stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+            // Audit 3a: full identity sync (external mode: no-op).
+            // pendingICOwnerMethod_ below depends on state.method being
+            // the EXIT method — the loop-top re-derive from
+            // state.jitMethod->compiledMethodOop maintains that.
+            resumeFullSync();
             jitICMisses_++;
 
             // Patch IC on miss if any slot is empty
@@ -21145,13 +21224,15 @@ void Interpreter::tryJITResumeInCaller() {
         case jit::ExitSendCached: {
             // IC hit during resume — activate cached method, then resume caller
             Oop cached = state.cachedTarget;
+            // Audit 3b: identity sync hoisted to the case head so BOTH
+            // bail returns (stale-IC here, WRONGSEL below) hand the
+            // dispatch loop a coherent frame.  External mode: no-op.
+            resumeFullSync();
             if (!cached.isObject() || cached.rawBits() < 0x10000 ||
                 !memory_.isValidPointer(cached) ||
                 cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
                 // Stale IC — fall through to normal send
                 jitICStale_++;
-                instructionPointer_ = state.ip;
-                stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
                 pendingICPatch_ = nullptr;
                 inJITResume_ = false;
                 return;
@@ -21553,27 +21634,22 @@ void Interpreter::tryJITResumeInCaller() {
                         tosCls.c_str(), (void*)state.sp);
                 }
             }
-            instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            // Audit 3d: full identity sync (external mode: no-op).  The
+            // interpreter re-executes the conditional and sends
+            // mustBeBoolean — identity only, never handle it in C++.
+            resumeFullSync();
             inJITResume_ = false;
             return;
 
         case jit::ExitYield: {
             // Backward-jump yield during resume — charge countdown and continue
             jitYieldCount_++;
-            instructionPointer_ = state.ip;
-            stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
-            // Audit S2 fix (2026-06-11): the continue path re-enters the
-            // loop top, which pairs instructionPointer_ with method_ in
-            // computeCurrentBCOffset and tryResume(method_, ...) — sync the
-            // frame identity so a yield inside an inline-J2J callee doesn't
-            // resume the OUTER method at the callee's ip.
-            {
-                receiver_ = state.receiver;
-                framePointer_ = state.tempBase - 1;
-                method_ = state.method;
-                homeMethod_ = state.method;
-            }
+            // Audit S2 (2026-06-11) + 3e (2026-06-12): full identity sync —
+            // the continue path re-enters the loop top (pairs ip with
+            // method_ in computeCurrentBCOffset/tryResume) and the
+            // countdown-expired return hands the dispatch loop this frame
+            // (incl. argCount_/bytecodeEnd_, previously unsynced).
+            resumeFullSync();
             // Each yield = ~1000 backward jumps. Estimate bytecodes executed.
             int numBC = state.jitMethod ? state.jitMethod->numBytecodes : 20;
             int charge = 1000 * numBC;
@@ -21590,27 +21666,18 @@ void Interpreter::tryJITResumeInCaller() {
             // J2J IC hit during resume — ip is already past the send bytecode.
             // Handle like ExitSendCached: activate the cached method directly.
             Oop cached = state.cachedTarget;
+            // Audit 3c: validity gate gains isValidPointer (parity with
+            // ExitSendCached) and BOTH paths get the full identity sync.
+            resumeFullSync();
             if (!cached.isObject() || cached.rawBits() < 0x10000 ||
+                !memory_.isValidPointer(cached) ||
                 cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
-                // Stale IC entry — sync state and bail to interpreter
-                instructionPointer_ = state.ip;
-                stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+                // Stale IC entry — bail to interpreter (synced above)
                 inJITResume_ = false;
                 return;
             }
             jitICHits_++;
             countICHitDbg(state.icDataPtr);
-            instructionPointer_ = state.ip;  // Already past the send
-            // Audit S2 fix (2026-06-11): unconditional frame-identity sync
-            // before activateMethod/executePrimitive record the caller frame
-            // (same class as the chain-loop handlers' fix).
-            {
-                receiver_ = state.receiver;
-                framePointer_ = state.tempBase - 1;
-                method_ = state.method;
-                homeMethod_ = state.method;
-            }
-            stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
 
             jitRuntime_.noteMethodEntry(cached);
 
@@ -21648,9 +21715,25 @@ void Interpreter::tryJITResumeInCaller() {
             return;
         }
 
-        default:
+        case jit::ExitRetroFull:
+            // Slice/headroom coupling broken: the emit-side saveless
+            // headroom (64 saves) must exceed kResumeSliceSlots — an
+            // elided frame can never be silently dropped (the
+            // DateParser precedent).
+            stopVM("ExitRetroFull reached tryJITResumeInCaller");
             inJITResume_ = false;
             return;
+
+        default: {
+            // Audit 3f: never return with a stale frame.
+            static int rdLog = 0;
+            if (++rdLog <= 20)
+                fprintf(stderr, "[RESUME-DEFAULT-EXIT] r%d\n",
+                        (int)state.exitReason);
+            resumeFullSync();
+            inJITResume_ = false;
+            return;
+        }
         }
     }
     inJITResume_ = false;
