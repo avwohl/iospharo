@@ -2,6 +2,26 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12lll — cond-jump resume DEFAULT-ON: dict 218-232 vs Cog 26 (8.5x)
+
+The day's third default flip, same pattern: a gate whose
+justification evidence was contamination-era, requalified clean
+after the PMS fix.  Cond-jump send methods (scanFor:!) now advertise
+mid-method resume (opt-out PHARO_T1_NO_RESUME_CONDJUMP; marked
+198/199 still excluded).  Soaked 2468/0/0, sieve 1028.
+
+DAY TOTAL (one same-image day): dict 437 -> 218-232 (Cog 26-27);
+fib30 ~18 (Cog 6).  Gap: 16.8x -> 8.5x dict, 3x fib.
+Shipped defaults today: sieve-fix+gate-off, prim-prologue admit,
+at:-family leaf, MAX_IC=8, b46 admit, cond-jump resume, PMS/noJ2J
+auto-disable, ec-hygiene.
+
+NEXT: (a) fresh dict census (what's STILL 18M interp at:/key? the
+resume flip should collapse scanFor: residency — VERIFY); (b) the
+LEAF_ALL flicker (arith leaves; jjj leads); (c) per-call sequence
+shrink (cfib-anatomy levers); (d) fib30 gap (2.7-3x) = the per-call
+J2J sequence + send-site costs — census-driven.
+
 ## CHECKPOINT 2026-06-12kkk — J2J GATES OPENED: dict ~251-268 (Cog 25, ~10.3x); bail rate 92%->2%
 
 THE POISONED-EVIDENCE DIVIDEND: with the PMS/NO_INLINE_J2J fix in,
