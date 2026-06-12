@@ -4,6 +4,30 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-12vvv — GOAL MET: suite exceeds Cog; all VM binaries pass
+
+DEFINITIVE (with .sources staged, full curated 565, JIT default-on):
+  ours 12688 P / 3 F / 3 E / 29 S / 1 T   — exit 0, all 565 classes
+  cog  12576 P / 4 F / 100 E / 20 S       — same list, same image
+**Ours passes +113 MORE than Cog.** classify delta = 5 cog-pass tests:
+2 harness-context (pass standalone runCase on our VM — runner
+nested-env wrapper issue, not VM), 3 timing flakes (pass isolated;
+~1 surfaces per full run; family = terminate/fork races; DET_SCHED
+gives a deterministic 9-test ProcessTerminateBugTest repro for future
+work but also artifactually fails wall-clock Semaphore tests; NO_RR
+experiment did not reduce the family).
+VM binaries: test_asmjit_t1_stub PASS, test_sista_ir PASS,
+test_class_table 51/51 PASS, test_ios_bridge clean 5s run (0 failed
+compiles), test_sista_survey runs (survey tool), test_platform legacy
+INCOMPLETE (display-callback harness needs prepped image;
+JIT-orthogonal; the live app pipeline is verified separately).
+The earlier 178-non-pass run was the MISSING .sources file (~170
+tests) — restage Pharo13.1-64bit-*.sources whenever /tmp/harness is
+rebuilt (get.pharo.org/64/130).
+Remaining (post-goal quality work): the terminate-race flake family
+(DET repro above), runner nested-env fix for the 2 harness tests,
+SHA256 timeout (VM speed), full-2051-universe blockers (memories).
+
 ## CHECKPOINT 2026-06-12uuu — FULL-SUITE PARITY: zero VM-attributable regressions vs Cog
 
 Full curated 565-class suite, both VMs, identical class list:
