@@ -2,6 +2,36 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12mmm — queue-drop re-arm shipped; the scanFor: ping-pong = THE dict question
+
+SHIPPED: compile-queue full -> silent drop -> permanent starvation
+FIXED (queueInitialCompile returns drop status; countMap re-arms).
+
+THE REMAINING DICT MECHANISM (precisely bounded now):
+- Dictionary>>scanFor: (oop printable via [SF-SEND-CTX]) IS compiled
+  (nBC=94, resumable), resumes succeed (RESUME-REFUSE ok=14M+,
+  refusals startup-frozen), the gates are open... yet ~13M at:/key
+  sends per 800K-op dict run execute in the INTERP from ipOff 87/96
+  (probe loop 1), and the steady profile is the per-return
+  returnValue -> tryJITResumeInCaller -> activateMethod chain.
+- HYPOTHESIS: resume-succeed -> immediate re-bail ping-pong: each
+  interp RETURN into scanFor: resumes it in JIT; the jitted code
+  hits the NEXT send/op and bails again (one C++ round trip per
+  scanFor:-interior send, ~16/op).  WHAT bails?  ipOff 87 = the
+  at: send; its IC extras may lack pk14/bit60 (filled before at:
+  compiled?) and never self-heal — OR the to:by:do: loop's
+  non-local exit shape.  NEXT PROBE: extend [IC-SITE] dump to
+  scanFor:'s jm (PHARO_JIT_TRACE_OOP=<scanFor: oop from SF-SEND-CTX>)
+  — read sites at steady state; if extras stale -> the fix is IC
+  self-healing (upgrade non-empty non-bit60 entries when the target
+  compiles later: rewriteIcEntriesAfterRecompile only rewrites
+  EXISTING bit-60s; INITIAL compiles never retro-fill sites that
+  cached extra=0!!! <- likely THE mechanism: scanFor: sites filled
+  while at:/callees uncompiled stay extra=0 forever; the per-send
+  ExitSendCached -> upgradeICToJ2J should heal... 'only upgrade when
+  extra==0' includes extra==0 ✓ heals... unless these sites carry
+  TRIVIAL bits).  Soak of re-arm in flight.
+
 ## CHECKPOINT 2026-06-12lll — cond-jump resume DEFAULT-ON: dict 218-232 vs Cog 26 (8.5x)
 
 The day's third default flip, same pattern: a gate whose
