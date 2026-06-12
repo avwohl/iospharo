@@ -8327,8 +8327,27 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         counts[selector.rawBits()]++;
         {
             std::string selNm = memory_.oopToString(selector);
-            if (selNm == "at:" || selNm == "key")
-                senders[memory_.selectorOf(method_)]++;
+            if (selNm == "at:" || selNm == "key") {
+                std::string snm = memory_.selectorOf(method_);
+                if (!closure_.isNil()) snm += "[blk]";
+                static int sfdbg = 0;
+                static int sfdbgLate = 0;
+                bool late = senders[snm] > 1000000;
+                if (snm.rfind("scanFor:", 0) == 0
+                        && ((++sfdbg <= 3) || (late && ++sfdbgLate <= 3)))
+                    { jit::JITMethod* sjm = jitRuntime_.methodMap().lookup(method_.rawBits());
+                    fprintf(stderr, "[SF-SEND-CTX] m=0x%llx cls=%s home=0x%llx "
+                        "clo=%d fd=%zu lrk=%d jm=%p nBC=%u ipOff=%lld\n",
+                        (unsigned long long)method_.rawBits(),
+                        classNameOfMethod(method_).c_str(),
+                        (unsigned long long)homeMethod_.rawBits(),
+                        (int)!closure_.isNil(), frameDepth_,
+                        lastResumeKind_, (void*)sjm,
+                        sjm ? sjm->numBytecodes : 0,
+                        (long long)(instructionPointer_
+                            - method_.asObjectPtr()->bytes())); }
+                senders[snm]++;
+            }
             static int sfProbe = 0;
             if (selNm == "at:" && sfProbe < 3
                     && memory_.selectorOf(method_) == "scanFor:") {

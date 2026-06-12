@@ -196,7 +196,7 @@ public:
     // noteMethodEntry when PHARO_QUEUE_COMPILE=1 is set; otherwise the
     // direct compile path runs.  Bounded ring buffer; overflow drops
     // silently (re-queue happens on next threshold-bump).
-    void queueInitialCompile(Oop compiledMethod);
+    bool queueInitialCompile(Oop compiledMethod);  // false = dropped (queue full): re-arm your trigger
 
     // Drain the initial-compile queue.  Methods that crossed the JIT
     // threshold during interp dispatch are enqueued here (instead of

@@ -2704,26 +2704,40 @@ static size_t g_initialCompileQueueHead = 0;
 static size_t g_initialCompileQueueDrained = 0;
 static size_t g_initialCompileQueueDropped = 0;
 
-void JITRuntime::queueInitialCompile(Oop compiledMethod) {
+bool JITRuntime::queueInitialCompile(Oop compiledMethod) {
     uint64_t methBits = compiledMethod.rawBits();
-    if (methBits == 0) return;
+    if (methBits == 0) return true;
+    if (__builtin_expect(pharo::g_debug.jitFailReasons, 0) && interp_) {
+        static int qn = 0;
+        if (qn < 8 && interp_->memory().selectorOf(compiledMethod) == "scanFor:") {
+            qn++;
+            fprintf(stderr, "[SF-QUEUE] oop=0x%llx head=%zu\n",
+                (unsigned long long)methBits, g_initialCompileQueueHead);
+        }
+    }
     // Negative cache: a prior drain already tried to compile this method/block
     // and compiler_->compile() bailed.  Don't re-queue — re-running the asmjit
     // T1 pipeline every drain on an un-compilable hot block is the dominant
     // block-path codegen thrash (the op_value fast path re-queues on every
     // value since a failed block is never inserted into methodMap_).  Keys
     // are GC-visited + rehashed (see JITRuntime.hpp), so entries survive GC.
-    if (initialCompileFailedContains(methBits)) return;
+    if (initialCompileFailedContains(methBits)) return true;
     size_t head = g_initialCompileQueueHead;
     if (head < kInitialCompileQueueSize) {
         for (size_t i = 0; i < head; i++) {
-            if (g_initialCompileQueue[i] == methBits) return;  // dedup
+            if (g_initialCompileQueue[i] == methBits) return true;  // dedup
         }
         g_initialCompileQueue[head] = methBits;
         g_initialCompileQueueHead = head + 1;
-    } else {
-        g_initialCompileQueueDropped++;
+        return true;
     }
+    // Queue full: the caller must RE-ARM its one-shot threshold —
+    // a silent drop here left the method interp-resident FOREVER
+    // (noteMethodEntry's count==threshold exact-match fires once;
+    // Dictionary>>scanFor: starved at 13M interp sends/run on the
+    // 2026-06-12 image until this).
+    g_initialCompileQueueDropped++;
+    return false;
 }
 
 size_t JITRuntime::drainInitialCompileQueue() {
@@ -2789,6 +2803,14 @@ size_t JITRuntime::drainInitialCompileQueue() {
             && !sistaOrphanEscape(method.rawBits())) {
             g_initialCompileQueueDrained++;
             continue;
+        }
+        if (__builtin_expect(pharo::g_debug.jitFailReasons, 0) && interp_) {
+            static int dn = 0;
+            if (dn < 8 && interp_->memory().selectorOf(method) == "scanFor:") {
+                dn++;
+                fprintf(stderr, "[SF-DRAIN] oop=0x%llx compiling\n",
+                    (unsigned long long)method.rawBits());
+            }
         }
         if (!compiler_->compile(method)) {
             // Compile bailed (unsupported bytecode/prim, etc.) — record so
@@ -3756,7 +3778,14 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 // PHARO_NO_QUEUE_COMPILE=1 to opt out (falls back to direct
                 // inline compile, the legacy mid-bytecode behavior).
                 if (!g_debug.noQueueCompile) {
-                    queueInitialCompile(compiledMethod);
+                    if (!queueInitialCompile(compiledMethod)) {
+                        // Queue full -> dropped.  Re-arm the one-shot
+                        // ==threshold trigger so the next activation
+                        // retries (the silent drop permanently starved
+                        // hot methods — Dictionary>>scanFor:, 13M
+                        // interp sends/dict-run, 2026-06-12).
+                        countMap_[i].count--;
+                    }
                     return;
                 }
                 size_t gcBefore = interp_ ? interp_->memory().statistics().gcCount : 0;
