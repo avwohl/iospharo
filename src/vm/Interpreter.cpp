@@ -25417,15 +25417,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             ? state.ip - state.method.asObjectPtr()->bytes()
                             : -1));
             }
-            // NOTE 2026-06-12: completing this handler with the
-            // audit-S2 identity sync + materializeJ2J (per a workflow
-            // synthesis of the LEAF_ALL closure DNU) was TRIED and
-            // REVERTED: it regressed testGroupsOfAtATimeCollect
-            // (2467/0/1 then 2466/0/2 in suite soaks — the sync
-            // overwrote framePointer_ on hot REAL-body arith bails
-            // where the existing frame was already correct), and did
-            // NOT fix the LEAF_ALL repro.  The LEAF_ALL bug hunt
-            // continues at the materialize-rollback paths.
+            // NOTE 2026-06-12, TWO failed fixes documented:
+            // (1) identity sync (audit-S2 shape) — regressed
+            //     testGroupsOfAtATimeCollect (clobbers framePointer_
+            //     on hot real-body arith bails).
+            // (2) materializeJ2J() here — made the LEAF_ALL flicker
+            //     WORSE (8/8, 2-3 dnus): this handler's `return false`
+            //     context has its own downstream save handling; eager
+            //     materialization double-handles.  The [AO-DIVERGED]
+            //     j2jD=1 hits at #to: were ~6M log lines before the
+            //     DNU — weak causality, over-read.
+            // The LEAF_ALL flicker root cause remains OPEN (J2J-on +
+            // arith-leaf interaction; production at:-family unaffected).
             // Sync method_ from state.method when tier=1 — inline-J2J
             // may have moved state into a callee without updating
             // method_, which super-send and other method-context
