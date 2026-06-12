@@ -2,6 +2,27 @@
 
 Goal (active /goal): **fix this jit to work and be as fast as cog.**
 
+## CHECKPOINT 2026-06-12iii — PMS/NO_INLINE_J2J defect FIXED; workflow repro invalidated; flicker isolated to J2J-on
+
+MAJOR: PHARO_T1_NO_INLINE_J2J=1 ALONE was deterministically broken
+(5-7 DNUs) since >=2026-06-11 — PMS patched sites assume the
+inline-J2J tail shape; patching tail-less sites corrupts words.
+patchedShape now requires inline-J2J.  SOAKED 2468/0/0.
+CONSEQUENCES: every NO_INLINE_J2J bisect arm since 06-11 was
+poisoned, INCLUDING the closure-DNU workflow's 'deterministic repro'
+(LEAF_ALL+NO_INLINE_J2J 8/8) — that was 100% the PMS bug (3/3 clean
+post-fix), which is why the handler-completion synthesis failed.
+AO-DIVERGED probes (in-tree, log-only): frame identity SOUND at all
+three ExitArithOverflow handlers under the repro.
+
+REMAINING: the genuine LEAF_ALL flicker = 4/8 with inline-J2J ON
+only (arith leaves + inline-J2J interaction).  Saveless non-RETURN
+recovery (retro-save) reviewed: looks correct.  NEXT: knob matrix on
+the flicker config (NO_PATCHED / NO_RESUME / saveless force-off /
+XGATE fold off), 8 runs per arm; then per-arith-prim leaf bisect
+(PHARO_T1_SKIP_SELECTORS on +,-,<..., 8 runs/arm).  Production
+unaffected (at:-family leaf, 2468/0/0 throughout).
+
 ## CHECKPOINT 2026-06-12hhh — handler completion REGRESSED + reverted; suite clean; rollback probe next
 
 Final state of the closure-DNU arc this window:
