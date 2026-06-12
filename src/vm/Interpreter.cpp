@@ -14520,15 +14520,20 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     Oop compiledBlock = literal(litIndex);
 
     // ignOC WIDENING (2026-06-11, the dict-bench materialize killer):
-    // the compiler sets ignoreOuterContext only for fully CLEAN blocks,
-    // but a closure's outerContext is semantically unread unless the
-    // block contains an NLR (^, method-return opcodes 0x58-0x5C inside
-    // a block), thisContext, or a NESTED block (whose home chain must
-    // pass through ours).  Scan the CompiledBlock once; if none are
-    // present, skip the whole-frame-stack materialization.  Opt-out
-    // PHARO_NO_IGNOC_WIDEN=1.
+    // skip the whole-frame-stack materialization for blocks whose BODY
+    // contains no NLR (^, method-return opcodes inside a block), no
+    // thisContext, and no nested block.  UNSOUND AS IMPLEMENTED, hence
+    // OPT-IN (PHARO_IGNOC_WIDEN=1, 2026-06-12): the body scan can't
+    // rule out EXTERNAL reads of outerContext — `aBlock home` identity
+    // (BlockClosureTest>>testSetUp), in-image simulation
+    // (Context>>tallyMethods:), and critically Process>>terminate's
+    // unwind walk, which reads the outerContext of ensure: blocks
+    // (SemaphoreTest>>testInCriticalWait leaves excessSignals wrong).
+    // The widened path stores activeContext_ — a WRONG context — in
+    // slot 0.  A sound version needs per-frame married-context identity
+    // (single-frame lazy materialization), not a body scan.
     if (!ignoreOuterContext
-            && !GET_DEBUG_BOOL(PHARO_NO_IGNOC_WIDEN)
+            && GET_DEBUG_BOOL(PHARO_IGNOC_WIDEN)
             && compiledBlock.isObject()
             && compiledBlock.rawBits() > 0x10000) {
         ObjectHeader* cbObj = compiledBlock.asObjectPtr();
