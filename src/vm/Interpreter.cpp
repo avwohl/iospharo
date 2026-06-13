@@ -19280,6 +19280,24 @@ void Interpreter::initializeJIT() {
         return;
     }
 
+#if defined(__x86_64__) || defined(_M_X64)
+    // The x86_64 tier-1 asmjit codegen (emitOne_x86) has bit-rotted relative
+    // to the heavily-developed arm64 path: at runtime the prescan/emit passes
+    // disagree on ~10 bytecodes (safe bails) and at least one compiled method
+    // miscompiles into a Corrupt stackPointer_ crash.  The x86 VM core
+    // (interpreter + image load + primitives) is correct — the eval battery
+    // passes interpreter-only — so default the x86 JIT OFF until the tier-1
+    // emit is revived to the current J2J/IC protocol.  Opt in for JIT-dev with
+    // PHARO_X86_JIT=1.  This is an arch-capability gate, the same category as
+    // tier-2/Sista already being off on x86 — not a silent error swallow.
+    if (!GET_DEBUG_BOOL(PHARO_X86_JIT)) {
+        fprintf(stderr, "[JIT] x86_64 tier-1 JIT off by default (bit-rotted vs "
+                        "arm64; set PHARO_X86_JIT=1 to enable) — running "
+                        "interpreted\n");
+        return;
+    }
+#endif
+
     if (!jitRuntime_.initialize(memory_, *this)) {
         fprintf(stderr, "[JIT] Failed to initialize — running interpreted only\n");
         return;
