@@ -4,6 +4,78 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-13h — internal-J2J cannotReturn FIXED (option A complete); but the lever is PERF-NEUTRAL
+
+OPTION A COMPLETE (Phases 1+2+3, committed 8380a647/63ba17f8/483d289c).
+Phase 3 (483d289c) was the key: the 3 asmjit J2J save-pushes read
+interp->closure_ DIRECTLY (state->interp@40 + Interpreter::
+closureFieldOffset(), offsetof behind the existing -Winvalid-offsetof
+suppression) — the C++ closure_ is the always-correct running-frame
+closure (set by BOTH activateBlock and the BV fast path), so it closes
+the JITState.closure sync gap that left 6 chain-loop malformed frames.
+
+THE 5-MONTH cannotReturn BUG IS DEAD:
+  PHARO_T1_RESUME_INTERNAL_J2J=1 PHARO_DET_SCHED=1 eval '3+4' -> 7,
+  MALFORMED-BLOCK-CTX 0, cannotReturn 0 (was ~700), 3/3.
+VALIDATED both knob states: knob-off batch 1-15 = 2468/0/0, KNOB-ON
+batch 1-15 = 2468/0/0, knob-on eval ladder correct (40! digits = 48).
+Knob-off full-565 confirmation RUNNING (the +8-byte layout is the main
+default-path risk; batch 1-15 clean).
+
+BUT — THE LEVER IS A DEAD SPEED LEVER (measurement-refuted, like
+resumability/M4 before it). With the knob WORKING:
+  dict bench: default 2788ms vs knob-on 2998ms (~7% SLOWER)
+  SHA256 1MB: default 9179ms vs knob-on 9683ms (~5% SLOWER)
+The 5-month hypothesis ("resumed methods exit r7 per send = 13M round
+trips = THE dict/SHA residual; internal-J2J collapses them -> dict
+<100ms") is WRONG. Either these benches don't hit the resume-internal
+path, or the slice-management + per-push cost exceeds the round-trips
+saved. Either way: enabling internal-J2J does NOT speed up the target
+workloads. KEEP IT OPT-IN (no perf reason to default-on).
+NEXT (if pursuing speed): verify with the [SXXXXX-EXITS] histogram
+(PHARO_JIT_TRACE_OOP on the scanFor:/processBuffer JM) whether the knob
+actually reduces r7 exits — if it does but isn't faster, the round
+trips were never the bottleneck (re-aim the speed hunt); if it doesn't,
+these benches bypass the resume path (find one that doesn't).
+The CORRECTNESS infrastructure (JSV_CLOSURE block-frame materialization,
+the +8-byte layout) is sound and validated — keep regardless.
+
+## CHECKPOINT 2026-06-13g — option A IMPLEMENTED (Phase 1+2), malformed 10->6; chain-loop sync gap remains
+
+SHIPPED (both validated knob-off batch 1-15 = 2468/0/0, knob still OPT-IN):
+- Phase 1 (8380a647): J2JSave +closure field, JSV_SIZE 32->40, JS_CLOSURE.
+  All 3 asmjit push sites' post-advance offsets recomputed (-16->-24) +
+  closure store; trampoline + C helper + GC walk. Layout proven coherent.
+- Phase 2 (63ba17f8): JITState.closure synced from closure_ at all 5
+  JITState constructions + BV activation/restore; the 3 asmjit pushes +
+  trampoline + C helper write state.closure; materialize reads
+  save.closure with VALIDATE-AND-DEGRADE (live FBC whose slot-3 receiver
+  == frame receiver, else tb[-1]/nil). Mechanism PROVEN: DET repro
+  MALFORMED-BLOCK-CTX 10 -> 6.
+
+REMAINING GAP (the residual 6 -> the cannotReturn storm persists):
+[BLOCK-SAVE-NIL-CLOSURE] oracle (PHARO_BLOCK_SAVE_PROBE) shows the 6 are
+all `site=materializeJ2J lambda` (the CHAIN LOOP, not resume-internal)
+with cand=0x300000000 (nil) — state.closure was NIL when those blocks
+pushed. Hypothesis: blocks activated via the BV slow-path (a
+jit_rt_inline_block_value_prep g_bvBail_* return -> interp activateBlock
+-> JIT resume) don't get state.closure set the way the BV-inline fast
+path does (s->closure = block at JITRuntime.cpp:2072). The 5 JITState
+constructions set state.closure = closure_, and activateBlock sets
+closure_ = block (Interpreter.cpp:12042), so a resume INTO such a block
+SHOULD pick it up — but the diagnostic says nil, so either closure_ is
+nil at that construction or the block runs on a JITState whose .closure
+wasn't (re)synced after the BV bail.
+NEXT: add the block SELECTOR + activation path to [BLOCK-SAVE-NIL-CLOSURE]
+(memory_.selectorOf(saveMethod)), trace the 6 blocks' activation; likely
+add state.closure = closure_ at the chain-loop tryExecute/tryResume
+re-entry that runs these blocks, or set s->closure on the BV slow-path
+fallback. Each malformed frame -> storm, so the count must hit 0.
+ALTERNATIVE if sync-hunting stalls: a public Interpreter::closureOffset()
+(offsetof, -Winvalid-offsetof already suppressed at Interpreter.cpp:2008)
+lets the 3 asmjit pushes read interp->closure_ directly (always correct,
+zero sync surface) — 2 loads vs 1; trampoline keeps state.closure.
+
 ## CHECKPOINT 2026-06-13f — cannotReturn DEFINITIVE: malformed contexts from asm-pushed block saves; two fix options
 
 NEW ORACLE (committed, PHARO_BLOCK_SAVE_PROBE): MALFORMED-BLOCK-CTX log
