@@ -4,6 +4,25 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-13j — RESOLVED: option A gated, CLEAN full-565 = 12692 (no regression)
+
+The 26/37 Trait* timeouts in the earlier "regression" runs were PURE
+MACHINE-LOAD CONTENTION (I had multiple full-565 soaks + batches running
+concurrently; Trait* tests sit right at the 50s watchdog and are
+CPU-load-sensitive). Killed all background runs, settled the machine
+(load 1.3), ran ONE clean full-565 knob-off: **12692 P / 1 F / 1 E / 1 T
+— IDENTICAL to the pre-option-A baseline.** The gating is correct;
+knob-off pays zero. LESSON: never measure a near-watchdog full-suite run
+while other heavy runs contend — the timeout tail is load-induced noise,
+not a code regression. (Already knew this for benches/ladders; it applies
+doubly to the watchdog-bound full suite.)
+
+FINAL option A STATUS: the 5-month internal-J2J cannotReturn bug is FIXED
+(eval 3+4->7, both knob states batch 1-15 = 2468/0/0, knob-off full-565 =
+12692). The lever is perf-neutral (no speed win), so it stays OPT-IN with
+zero default-config cost (all closure ops knob-gated). The JSV_CLOSURE
+block-frame materialization infra is sound and preserved.
+
 ## CHECKPOINT 2026-06-13i — option A correctness DONE + knob-off zero-cost gated (regression fixed)
 
 Sequence: option A (Phases 1-3) FIXED the internal-J2J cannotReturn bug
