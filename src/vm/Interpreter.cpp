@@ -10537,7 +10537,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         static int actN = 0;
         std::string s = memory_.selectorOf(method);
         if (!armed && s == "resolve:") armed = true;
-        if (armed && ++actN <= 200) {
+        if (armed && ++actN <= 1500) {
             Oop recv = stackValue(argCount);
             Oop a0 = argCount >= 1 ? stackValue(argCount - 1) : Oop::nil();
             auto tg = [&](Oop o)->const char*{
