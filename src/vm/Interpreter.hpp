@@ -3582,11 +3582,18 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         // caused 2026-05-19 (deferred A6 iter N+15): the sharp 32K
         // xmethod corruption threshold corresponded to the cumulative
         // GC frequency × bench's xmethod fire rate.
-        // JSV_CLOSURE (2026-06-13): only the resume-internal path writes
-        // the closure slot (the asmjit push is knob-gated), so only walk
-        // it when the knob is on — otherwise the slot is unused garbage
-        // and must NOT be visited.  Hoisted: one knob read per GC.
-        const bool walkClosure = GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J);
+        // JSV_CLOSURE (2026-06-13): only the resume-internal (asmjit)
+        // push writes the closure slot, and only when its FULL predicate
+        // holds — the PHARO_RESUME_J2J chain-loop is a SEPARATE pusher
+        // that leaves .closure uninitialized, so the walk gate must match
+        // resumeInternalJ2J EXACTLY (esp. !resumeJ2J), not just the knob,
+        // or GC visits garbage Oops in the rj2j slice (adversarial review
+        // 2026-06-13).  Hoisted: one read per GC.
+        const bool walkClosure =
+            GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)
+            && g_debug.useAsmjitT1
+            && !g_debug.resumeJ2J
+            && !GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH);
         for (int i = 0; i < j2jPoolCursor_; i++) {
             visitor(j2jPool_[i].receiver);
             if (walkClosure) visitor(j2jPool_[i].closure);

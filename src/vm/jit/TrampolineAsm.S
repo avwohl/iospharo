@@ -435,9 +435,14 @@ Lresume_null:
 Lcall_after_resume:
 #if PHARO_J2J_SAVE_V2
     // JSV_CLOSURE (2026-06-13): the executing frame's closure, from
-    // JITState.closure (x21=state).  x8 is scratch here (resume compute done).
-    ldr     x8, [x21, #JS_CLOSURE]
-    str     x8, [x23, #JSV_CLOSURE]
+    // JITState.closure (x21=state).  MUST use a genuinely-free scratch:
+    // x8 holds calleeJM (sub x8,x7,#JM_SIZE above) and is live through the
+    // self-rec test + JITMethod-header derivation below (lines ~468-510) —
+    // clobbering it poisons state.jitMethod/x19/state.ip (default-config
+    // corruption, caught by adversarial review 2026-06-13).  x12-x15 are
+    // free here (reused freely below).
+    ldr     x12, [x21, #JS_CLOSURE]
+    str     x12, [x23, #JSV_CLOSURE]
 #endif
     // Advance save cursor now that the slot is fully written
     add     x23, x23, #JSV_SIZE
