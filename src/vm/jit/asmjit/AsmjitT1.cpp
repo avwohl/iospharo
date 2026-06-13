@@ -1939,6 +1939,25 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.mov(ptr(rax, -16), rcx);
             a.sub(rax, 8);
             a.mov(ptr(rdi, OFF_SP), rax);
+        } else if (op == 0x68) {     // *  (isPhase3ArithOp includes 0x68 so the
+            // dedicated isPhase3MulOp emit below is dead for arith dispatch;
+            // arm64's arith emit has a 0x68 mul case (AsmjitT1 ~3884) but the
+            // x86 one previously fell through to the comparison default,
+            // emitting cmp+FALSEOOP -> `a * b` always returned False (the
+            // CompiledMethod>>initialPC `numLiterals * wordSize` -> false+1
+            // DNU storm that wedged x86 startup).  Mirror the dedicated x86
+            // mul emit: untag, imul, retag with overflow checks.
+            a.sar(rcx, asmjit::Imm(3));   // untag a (arithmetic, sign-preserve)
+            a.sar(rdx, asmjit::Imm(3));   // untag b
+            a.imul(rcx, rdx);             // signed multiply, sets OF
+            a.jo(bail);
+            a.add(rcx, rcx); a.jo(bail);  // *2 } retag to (a*b)<<3, each
+            a.add(rcx, rcx); a.jo(bail);  // *2 } step jo-checks the 61-bit
+            a.add(rcx, rcx); a.jo(bail);  // *2 } SmI range
+            a.or_(rcx, asmjit::Imm(SMI_TAG));
+            a.mov(ptr(rax, -16), rcx);
+            a.sub(rax, 8);
+            a.mov(ptr(rdi, OFF_SP), rax);
         } else {
             // Comparison ops.  cmp tagged bits directly — the map
             // x → 8x+1 is monotonic for signed values, so cmp(a_bits,
