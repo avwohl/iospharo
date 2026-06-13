@@ -341,6 +341,12 @@ extern "C" void jit_rt_shadow_verify(uint64_t state, uint64_t value,
     pharo::shadowVerify(recv, slot, value, "jit-pushRecvVar");
 }
 
+// arm64-only emit helpers: these take asmjit::a64::Assembler&, which only
+// exists when asmjit's a64 backend is built (the host arch).  On x86_64 the
+// JIT uses the stencil tier + Tier2Compiler_x86_64, and every call site of
+// these is inside an `#elif defined(__aarch64__)` arch branch, so guarding
+// the definitions out is safe.
+#if defined(__aarch64__) || defined(_M_ARM64)
 // Emit the knob-gated verify call after an ivar-read emit.  Convention:
 // x1 = just-loaded value; slot is compile-time.  Full caller-saved
 // save/restore (the 928df628 lesson).
@@ -407,6 +413,7 @@ static void emitStoreRingLog(asmjit::a64::Assembler& a, int slotIdx) {
     a.ldr(x30,      ptr(sp, 128));
     a.add(sp, sp, asmjit::Imm(144));
 }
+#endif  // arm64-only emit helpers (emitShadowReadVerify, emitStoreRingLog)
 // Per-gate bail counters for the cross-method (xmethod) inline-J2J
 // gate chain.  Only bumped when PHARO_T1_INLINE_J2J is set (the
 // inlineJ2JCounters emit gate), same as the other bail counters.
@@ -849,6 +856,9 @@ constexpr int OFF_INTERP = 40;  // JITState.interp (static_asserted in JITState.
 // reads interp->closure_ directly (state->interp@OFF_INTERP + the
 // runtime-constant closure_ offset) — the always-correct running-frame
 // closure, no JITState.closure sync surface.  `scratch` is clobbered.
+// arm64-only (asmjit::a64::Assembler&); x86 J2JSave is V1 with no closure
+// slot, and the resume-internal-J2J path is arm64-only (PHARO_J2J_SAVE_V2).
+#if defined(__aarch64__) || defined(_M_ARM64)
 static inline void emitClosurePush(asmjit::a64::Assembler& a,
                                    const asmjit::a64::Gp& cursor, int off,
                                    const asmjit::a64::Gp& scratch) {
@@ -858,6 +868,7 @@ static inline void emitClosurePush(asmjit::a64::Assembler& a,
         (int)pharo::Interpreter::closureFieldOffset()));
     a.str(scratch, asmjit::a64::ptr(cursor, off));
 }
+#endif  // arm64-only emitClosurePush
 [[maybe_unused]] constexpr int OFF_J2J_DEPTH_INC = 208;
 // Retro-save graceful pool-full handoff (cascade #2).
 constexpr int OFF_RETRO_SP        = 272;
