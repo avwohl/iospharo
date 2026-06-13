@@ -189,6 +189,7 @@ DEBUG_INT(PHARO_T1_RESUME_MIN_COMPILE, -1)  // send-resume bisect: advertise res
 DEBUG_INT(PHARO_T1_RESUME_MAX_COMPILE, -1)  // ...and compile-seq < MAX; -1 = no cap.  Bisects WHICH method's resume wedges startup (the only-idle family)
 DEBUG_INT(PHARO_T1_RESUME_MIN2_COMPILE, -1) // second bisect window (pair-interaction hunts)
 DEBUG_BOOL(PHARO_BLOCK_CREATE_TRACE)        // dump every createFullBlockWithLiteral: method/fp/sp/copied-values/outerContext (capped 4000) — the cascade-#3 divergence finder
+DEBUG_BOOL(PHARO_BLOCK_SAVE_PROBE)          // dump frame-slot contents (tb[0/-1/-2], sp[-1]) at every block-save materialize — locate the FullBlockClosure for the closureless-block-frame cannotReturn bug
 DEBUG_BOOL(PHARO_SP_DEPTH_TRAP)             // __builtin_debugtrap() at the first sp-depth mismatch — lldb lands on the inconsistent frame
 DEBUG_INT(PHARO_T1_RESUME_MAX2_COMPILE, -1)
 

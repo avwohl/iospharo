@@ -23441,6 +23441,38 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     int saveNArgs = save.sendArgCount;
 #endif
 
+    // PHARO_BLOCK_SAVE_PROBE: for block saves, dump what's actually in
+    // the frame's slots so we can find where the FullBlockClosure lives
+    // (the closureless-block-frame cannotReturn bug, 2026-06-13).
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_BLOCK_SAVE_PROBE), 0)
+            && saveJM->isBlock) {
+        static int bsp = 0;
+        if (++bsp <= 20) {
+            auto desc = [&](Oop o) -> std::string {
+                if (o.isSmallInteger()) return "SmI";
+                if (o.isObject() && o.rawBits() >= 0x10000
+                        && memory_.isValidPointer(o))
+                    return memory_.classNameOf(o);
+                return "imm/bad";
+            };
+            Oop tb0 = save.tempBase ? *(save.tempBase) : nil;
+            Oop tbm1 = save.tempBase ? *(save.tempBase - 1) : nil;
+            Oop tbm2 = save.tempBase ? *(save.tempBase - 2) : nil;
+            Oop spm1 = save.sp ? *(save.sp - 1) : nil;
+            std::string dRecv = desc(save.receiver), d0 = desc(tb0),
+                dm1 = desc(tbm1), dm2 = desc(tbm2), dsp = desc(spm1);
+            fprintf(stderr,
+                "[BLOCK-SAVE-PROBE #%d] site=%s sel=#%s recv=%s "
+                "fbcClassIdx=%u | tb[0]=%s tb[-1]=%s tb[-2]=%s "
+                "sp[-1]=%s | nArgs=%d tempCount=%d sp-tb=%lld\n",
+                bsp, siteTag, memory_.selectorOf(saveMethod).c_str(),
+                dRecv.c_str(), fullBlockClosureClassIndex_,
+                d0.c_str(), dm1.c_str(), dm2.c_str(),
+                dsp.c_str(), saveNArgs, (int)saveJM->tempCount,
+                (long long)(save.sp - save.tempBase));
+        }
+    }
+
     // Diagnostic (PHARO_J2J_MAT_LOG): log every J2J-save materialize and
     // flag saves whose ip does not lie inside saveJM's bytecode range —
     // the signature of a stale save.jitMethod (x11-liveness bug in the
@@ -23512,7 +23544,29 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     frame.savedMethod = saveMethod;
     frame.savedHomeMethod = saveMethod;
     frame.savedReceiver = save.receiver;
+    // Block frames need their FullBlockClosure: a closureless block
+    // frame converts to a METHOD context (Context slot 4 = nil) whose
+    // "method" is a CompiledBlock — malformed, breaking home/receiver/
+    // sender resolution and dropping the caller continuation (the
+    // cannotReturn: storm under PHARO_T1_RESUME_INTERNAL_J2J +
+    // DET_SCHED).  PARTIAL FIX (2026-06-13, resume-internal site ONLY
+    // to keep the default chain-loop path byte-identical): probe the
+    // slot below tempBase.  INCOMPLETE — PHARO_BLOCK_SAVE_PROBE showed
+    // the closure is at tb[-1] for some blocks but tb[-1] holds a
+    // ByteString/WorldState for others, so the offset is NOT reliable.
+    // The principled fix is to RECORD the closure in the V2 save layout
+    // at the block-JM save-push emit (AsmjitT1); see WIP 2026-06-13c.
     frame.savedClosure = nil;
+    if (saveJM->isBlock && save.tempBase
+            && std::strcmp(siteTag, "resume-internal") == 0) {
+        Oop cand = *(save.tempBase - 1);
+        if (cand.isObject() && cand.rawBits() >= 0x10000
+                && memory_.isValidPointer(cand)
+                && cand.asObjectPtr()->classIndex()
+                       == fullBlockClosureClassIndex_) {
+            frame.savedClosure = cand;
+        }
+    }
     frame.savedActiveContext = activeContext_;
     frame.materializedContext = nil;
     frame.ctxSynced = false;
