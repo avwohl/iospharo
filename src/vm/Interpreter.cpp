@@ -322,6 +322,90 @@ extern "C" void jit_rt_verify_getter(uint64_t statep, uint64_t recv,
             (unsigned long long)(jm ? jm->compiledMethodOop : 0));
 }
 
+// x86 inline setter/returnsSelf misfire detector (the resolve:-to-nil hunt).
+// kind: 1=setter, 2=returnsSelf.  Flags a POISONED IC: entry key !=
+// receiver class, or the cached method != lookup(site-selector, recv class)
+// (a foreign-site fill / stale refill — cascade-#3 class), or the cached
+// method's shape doesn't match the fired spec bit.  Gated by the emit
+// (PHARO_VERIFY_GETTER reused as the inline-spec verify gate).
+extern "C" void jit_rt_verify_spec(uint64_t statep, uint64_t recv,
+                                   uint64_t extra, uint64_t entryPtr,
+                                   uint64_t kind) {
+    using pharo::Oop;
+    if (!statep || !recv || (recv & 7) != 0 || recv < 0x10000 || !entryPtr)
+        return;
+    auto* st = reinterpret_cast<pharo::jit::JITState*>(statep);
+    pharo::ObjectHeader* ro = Oop::fromRawBits(recv).asObjectPtr();
+    const uint64_t* e = reinterpret_cast<const uint64_t*>(entryPtr);
+    uint64_t key = e[0], methodBits = e[1];
+    const char* why = nullptr;
+    if (key != ro->classIndex()) why = "KEY!=recvClass";
+    auto* jm0 = reinterpret_cast<pharo::jit::JITMethod*>(
+        reinterpret_cast<uintptr_t>(st->jitMethod) & ~uintptr_t(1));
+    if (!why && jm0 && jm0->numICEntries > 0 && jm0->icBuffer
+            && methodBits > 0x10000 && st->interp) {
+        uint8_t* icStart = jm0->icZoneStart();
+        ptrdiff_t off = reinterpret_cast<uint8_t*>(entryPtr) - icStart;
+        if (off >= 0 && (size_t)off <
+                (size_t)jm0->numICEntries * pharo::jit::IC_BYTES_PER_SITE) {
+            uint32_t siteIdx = (uint32_t)(off / pharo::jit::IC_BYTES_PER_SITE);
+            const uint64_t* sba = jm0->selBitsArray();
+            uint64_t selBits = sba ? sba[siteIdx] : 0;
+            if (selBits > 0x10000 && (selBits & 7) == 0) {
+                Oop sel = Oop::fromRawBits(selBits);
+                Oop cls = st->memory->classOf(Oop::fromRawBits(recv));
+                if (sel.isObject() && cls.isObject()) {
+                    Oop resolved =
+                        st->interp->lookupMethodForSend(sel, cls);
+                    if (!resolved.isNil()
+                            && resolved.rawBits() != methodBits)
+                        why = "method!=lookup(sel,cls)";
+                }
+            }
+        }
+    }
+    // Shape check: re-derive the trivial shape (MIRROR detectTrivialMethod's
+    // bc0-based test, incl. the CallPrimitive skip) and confirm it matches
+    // the fired bit.  A mismatch = poisoned extras (bit set on a site whose
+    // own method is NOT that shape).  returnsSelf is set ONLY when the body's
+    // first bytecode is returnReceiver (0x58); setter is popStoreRecvVar+0x58.
+    if (!why && methodBits > 0x10000 && (methodBits & 7) == 0) {
+        Oop mOop = Oop::fromRawBits(methodBits);
+        pharo::ObjectHeader* mo = mOop.asObjectPtr();
+        Oop mhdr = mo->slotAt(0);
+        if (mhdr.isSmallInteger() && mo->isCompiledMethod()) {
+            int64_t hb = mhdr.asSmallInteger();
+            int nl = (int)(hb & 0x7FFF);
+            uint8_t* bytes = mo->bytes();
+            size_t bcStart = (size_t)(1 + nl) * 8;
+            size_t bcLen = mo->byteSize() - bcStart;
+            if (bcLen >= 5 && bytes[bcStart] == 0xF8) {
+                int primIndex = bytes[bcStart + 1]
+                                | ((bytes[bcStart + 2] & 0x1F) << 8);
+                if (primIndex >= 256) { bcStart += 3; bcLen -= 3; }
+            }
+            uint8_t bc0 = bcLen >= 1 ? bytes[bcStart] : 0;
+            uint8_t bc1 = bcLen >= 2 ? bytes[bcStart + 1] : 0;
+            if (kind == 2) {            // returnsSelf: body is exactly 0x58
+                if (bc0 != 0x58) why = "returnsSelf-shape-mismatch";
+            } else if (kind == 1) {     // setter: popStoreRecvVar N + 0x58
+                bool ok = (bc0 >= 0xC8 && bc0 <= 0xCF && bc1 == 0x58)
+                          || (bc0 == 0xF0 && bcLen >= 3
+                              && bytes[bcStart + 2] == 0x58);
+                if (!ok) why = "setter-shape-mismatch";
+            }
+        }
+    }
+    if (!why) return;
+    static int vsReports = 0;
+    if (++vsReports > 20) return;
+    std::string msel = st->memory->selectorOf(Oop::fromRawBits(methodBits));
+    fprintf(stderr, "[VERIFY-SPEC kind=%llu] %s sel=#%s recvCls=%u "
+            "methodBits=0x%llx extra=0x%llx\n", (unsigned long long)kind, why,
+            msel.c_str(), ro->classIndex(), (unsigned long long)methodBits,
+            (unsigned long long)extra);
+}
+
 extern "C" void jit_rt_atrec_entry(uint64_t statep) {
     if (!g_atRecOn || statep == 0) return;
     pharo::jit::JITState* st = reinterpret_cast<pharo::jit::JITState*>(statep);
@@ -13331,6 +13415,54 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     const int MAX_DNU_DEPTH = 10;
+
+    // x86 leak hunt: dump the FIRST DNUs (the trigger of the exception storm).
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_CT_SPLOG), 0)) {
+        static int firstDnu = 0;
+        if (firstDnu++ < 14) {
+            Oop rcv = stackValue(argCount);
+            std::string rcls = rcv.isSmallInteger() ? "SmI"
+                : (rcv.rawBits() == memory_.falseObject().rawBits()) ? "FALSE"
+                : (rcv.rawBits() == memory_.trueObject().rawBits()) ? "TRUE"
+                : rcv.isNil() ? "nil"
+                : (rcv.isObject() && rcv.rawBits() >= 0x10000
+                    && memory_.isValidPointer(rcv)) ? memory_.classNameOf(rcv)
+                : "imm";
+            std::string sel;
+            if (selector.isObject() && selector.rawBits() > 0x10000
+                    && memory_.isValidPointer(selector)) {
+                size_t n = memory_.byteSizeOf(selector);
+                for (size_t i = 0; i < n && i < 30; i++)
+                    sel += (char)memory_.fetchByte(i, selector);
+            }
+            long ipOff = -1; std::string msel = "?"; int jitC = 0;
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                msel = memory_.selectorOf(method_);
+                ObjectHeader* mo = method_.asObjectPtr();
+                size_t nl = memory_.numLiteralsOf(method_);
+                if (instructionPointer_)
+                    ipOff = (long)(instructionPointer_ - (mo->bytes() + (1+nl)*8));
+                jitC = jitRuntime_.methodMap().lookup(method_.rawBits()) ? 1 : 0;
+            }
+            fprintf(stderr, "[FIRST-DNU #%d] sel=#%s rcvrCls=%s argCount=%d "
+                "inMethod=#%s ipOff=%ld jitCompiled=%d sp-fp=%ld opstack:",
+                firstDnu, sel.c_str(), rcls.c_str(), argCount, msel.c_str(),
+                ipOff, jitC, framePointer_ ? (long)(stackPointer_ - framePointer_) : -1);
+            if (framePointer_ && stackPointer_ > framePointer_) {
+                for (Oop* p = stackPointer_-1;
+                        p >= framePointer_ && p > stackPointer_-10; p--) {
+                    Oop v = *p;
+                    const char* k = v.isSmallInteger() ? "SmI"
+                        : (v.rawBits()==memory_.falseObject().rawBits()) ? "FALSE"
+                        : (v.rawBits()==memory_.trueObject().rawBits()) ? "TRUE"
+                        : v.isNil() ? "nil"
+                        : (v.isObject() && v.rawBits()>=0x10000) ? "obj" : "imm";
+                    fprintf(stderr, " %s", k);
+                }
+            }
+            fprintf(stderr, "\n");
+        }
+    }
 
     // DIAG (PHARO_TRACE_WEDGE_NIL): the full-suite wedge is a T1 miscompute that
     // produces a NIL where an object should be, surfacing as a DNU on nil. When a

@@ -51,6 +51,10 @@ extern "C" void jit_rt_atrec_entry(uint64_t statep);
 extern "C" void jit_rt_verify_getter(uint64_t statep, uint64_t recv,
                                      uint64_t val, uint64_t extra,
                                      uint64_t entryPtr);
+// Inline setter/returnsSelf misfire detector (kind: 1=setter, 2=returnsSelf).
+extern "C" void jit_rt_verify_spec(uint64_t statep, uint64_t recv,
+                                   uint64_t extra, uint64_t entryPtr,
+                                   uint64_t kind);
 // Set true in compileViaAsmjit ONLY when compiling asTuple under
 // FINDNODE_WATCH, so the recorder BLR is emitted at just asTuple's 2 getter
 // sites (no global code bloat).  Read at emit time in the inline getter.
@@ -2380,6 +2384,22 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // (ObjectMemory.cpp:1538) so missed remembered-set updates are
             // tolerated.
             a.bind(trySetter);
+            if (GET_DEBUG_BOOL(PHARO_VERIFY_GETTER)) {
+                // verify the setter fire isn't a poisoned IC (rax=recv,
+                // rsi=entry, r8=extras, rdi=state).  7-push realigns rsp.
+                a.push(rax); a.push(rcx); a.push(rsi); a.push(r8);
+                a.push(rdi); a.push(rdx); a.push(r9);
+                // top->: r9(0) rdx(8) rdi(16) r8(24) rsi(32) rcx(40) rax(48)
+                a.mov(rdi, ptr(rsp, 16));   // statep
+                a.mov(rsi, ptr(rsp, 48));   // recv
+                a.mov(rdx, ptr(rsp, 24));   // extra (r8)
+                a.mov(rcx, ptr(rsp, 32));   // entryPtr (rsi)
+                a.mov(r8, asmjit::Imm(1));  // kind=setter
+                a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_verify_spec));
+                a.call(rax);
+                a.pop(r9); a.pop(rdx); a.pop(rdi); a.pop(r8);
+                a.pop(rsi); a.pop(rcx); a.pop(rax);
+            }
             a.mov(rdx, r8);
             a.and_(rdx, asmjit::Imm(0xFFFF));    // slotIdx in rdx
             a.mov(r9, ptr(rcx, -8));             // arg = sp[-1] (rcx is SP)
@@ -2394,6 +2414,19 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // Receiver is already at sp[-1-nArgs]; just pop nArgs and
             // it becomes TOS.  rcx still has SP from probe.
             a.bind(tryReturnsSelf);
+            if (GET_DEBUG_BOOL(PHARO_VERIFY_GETTER)) {
+                a.push(rax); a.push(rcx); a.push(rsi); a.push(r8);
+                a.push(rdi); a.push(rdx); a.push(r9);
+                a.mov(rdi, ptr(rsp, 16));   // statep
+                a.mov(rsi, ptr(rsp, 48));   // recv
+                a.mov(rdx, ptr(rsp, 24));   // extra (r8)
+                a.mov(rcx, ptr(rsp, 32));   // entryPtr (rsi)
+                a.mov(r8, asmjit::Imm(2));  // kind=returnsSelf
+                a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_verify_spec));
+                a.call(rax);
+                a.pop(r9); a.pop(rdx); a.pop(rdi); a.pop(r8);
+                a.pop(rsi); a.pop(rcx); a.pop(rax);
+            }
             if (nArgs > 0) {
                 a.sub(rcx, asmjit::Imm(8 * nArgs));
                 a.mov(ptr(rdi, OFF_SP), rcx);
