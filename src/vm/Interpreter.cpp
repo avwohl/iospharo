@@ -6738,6 +6738,23 @@ void Interpreter::returnValue(Oop value) {
         if (activeContext_.isObject() && activeContext_.rawBits() != nilObj.rawBits()) {
             Oop sender = memory_.fetchPointer(0, activeContext_);
 
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                    && method_.isObject() && method_.rawBits() > 0x10000) {
+                std::string nrs = memory_.selectorOf(method_);
+                if (nrs == "resolve:" || nrs == "resolve"
+                        || nrs == "asResolvedBy:" || nrs == "resolvePath:") {
+                    static int nrN = 0;
+                    if (++nrN <= 20)
+                        fprintf(stderr, "[FD0-RET] #%s sender=%s%s\n", nrs.c_str(),
+                            sender.rawBits()==0 ? "ZERO" :
+                            sender.isNil() ? "NIL" :
+                            sender.rawBits()<0x10000 ? "LOW" :
+                            !memory_.isValidPointer(sender) ? "INVALID" : "obj",
+                            sender.rawBits()>0x10000 && memory_.isValidPointer(sender)
+                                && sender.asObjectPtr()->slotCount()>=4
+                                ? "" : " <BAD/will-terminate>");
+                }
+            }
             // DEFENSIVE: Check for corrupted sender (raw 0 or very low address)
             if (sender.rawBits() == 0 || sender.rawBits() < 0x10000) {
                 // Corrupted sender - treat as end of context chain
@@ -16569,9 +16586,17 @@ Oop Interpreter::materializeFrameStack() {
                 || ms == "resolvePath:" || ms == "canResolve:"
                 || ms == "at:ifAbsent:") {
             static int mfsN = 0;
-            if (++mfsN <= 20)
-                fprintf(stderr, "[MAT-FS] in #%s fd=%zu caller=%p\n",
+            if (++mfsN <= 8) {
+                fprintf(stderr, "[MAT-FS] in #%s fd=%zu caller=%p chain:",
                     ms.c_str(), frameDepth_, __builtin_return_address(0));
+                // dump the savedFrames_ chain (innermost..outermost) + current
+                for (size_t i = frameDepth_; i > 0 && frameDepth_ - i < 14; i--) {
+                    Oop sm = savedFrames_[i - 1].savedMethod;
+                    fprintf(stderr, " %s", sm.isObject() && sm.rawBits()>0x10000
+                        ? memory_.selectorOf(sm).c_str() : "?");
+                }
+                fprintf(stderr, "\n");
+            }
         }
     }
     // Cycle-safe sender setter (2026-05-01).  Under HELPER_SENDS,
@@ -20631,11 +20656,20 @@ void Interpreter::tryJITResumeInCaller() {
                 Oop t0v = (framePointer_+1) ? framePointer_[1] : Oop::fromRawBits(0);
                 fprintf(stderr,
                     "[RES-IN] #%s bcOff=%u sp-fp=%lld tos=%s fd=%zu "
-                    "s-1=%s s-2=%s s-3=%s t0=%s\n",
+                    "s-1=%s s-2=%s s-3=%s t0=%s recv=%s\n",
                     rSel.c_str(), bcOffset,
                     (long long)(stackPointer_ - framePointer_),
                     tCls.c_str(), frameDepth_,
-                    stag(s1), stag(s2), stag(s3), stag(t0v));
+                    stag(s1), stag(s2), stag(s3), stag(t0v),
+                    receiver_.isObject() && receiver_.rawBits()>0x10000
+                        ? memory_.classNameOf(receiver_).c_str() : "imm");
+                if (rSel == "resolve:")
+                    fprintf(stderr, "    t0cls=%s t1cls=%s\n",
+                        t0v.isObject() && t0v.rawBits()>0x10000
+                            ? memory_.classNameOf(t0v).c_str() : "imm",
+                        (framePointer_+2) && framePointer_[2].isObject()
+                            && framePointer_[2].rawBits()>0x10000
+                            ? memory_.classNameOf(framePointer_[2]).c_str() : "imm");
                 if (rSel == "widthOf:") g_fpushArm = true;
             }
         }
