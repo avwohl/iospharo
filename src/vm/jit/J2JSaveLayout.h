@@ -32,7 +32,13 @@
 #define JSV_RECEIVER      8
 #define JSV_TEMPBASE      16
 #define JSV_RESUMEADDR    24
-#define JSV_SIZE          32
+// JSV_CLOSURE (2026-06-13): the executing frame's FullBlockClosure (nil
+// for method frames), copied from JITState.closure at save-push.
+// materializeJ2JSaveIntoFrame uses it to give block frames their
+// closure — a nil closure builds a malformed method-context (the
+// internal-J2J cannotReturn: storm).
+#define JSV_CLOSURE       32
+#define JSV_SIZE          40
 
 #else  /* V1: the historical 56-byte save */
 

@@ -2039,6 +2039,11 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
             }
         }
         save->resumeAddr = packed;
+        // JSV_CLOSURE (2026-06-13): the BV path KNOWS the block's closure
+        // (it's the receiver of the value: send = blockClosureOop).  The
+        // saved frame here is the CALLER, whose closure is currentClosure()
+        // — Phase 2 wires it; Phase 1 writes nil to validate the layout.
+        save->closure = pharo::Oop::fromRawBits(0);
     }
 #else
     save->ip = s->ip;  // pre-send; matches xmethod default

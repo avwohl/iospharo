@@ -432,6 +432,11 @@ Lresume_null:
     b       Ltramp_exit
 
 Lcall_after_resume:
+#if PHARO_J2J_SAVE_V2
+    // JSV_CLOSURE (2026-06-13): the executing frame's closure.  Phase 1
+    // writes 0; Phase 2 loads state.closure (JS_CLOSURE) for block frames.
+    str     xzr, [x23, #JSV_CLOSURE]
+#endif
     // Advance save cursor now that the slot is fully written
     add     x23, x23, #JSV_SIZE
     // Sync state.j2jSaveCursor with the trampoline's local x23 so any

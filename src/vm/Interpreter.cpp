@@ -20093,6 +20093,7 @@ void Interpreter::tryJITResumeInCaller() {
         for (int i = 0; i < kResumeSliceSlots; i++) {
             j2jPool_[resumeSliceBase + i].receiver = Oop::fromRawBits(0);
             j2jPool_[resumeSliceBase + i].resumeAddr = 0;
+            j2jPool_[resumeSliceBase + i].closure = Oop::fromRawBits(0);
         }
     }
     struct ResumeSliceGuard {

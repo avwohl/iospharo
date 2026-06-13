@@ -4636,7 +4636,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.ldr(x4, ptr(x0, OFF_RECEIVER));
                         a.stp(x15, x4, ptr_post(x6, JSV_SIZE));
                         emitLoadTempBase(a, x15);
-                        a.stp(x15, x14, ptr(x6, -16));
+                        // size-40 layout: tempBase@-24, packedResume@-16,
+                        // closure@-8 (was -16/-8 at size 32).
+                        a.stp(x15, x14, ptr(x6, -24));
+                        a.str(xzr, ptr(x6, -8));  // JSV_CLOSURE (Phase 1: 0)
                         // Callee state from the patched calleeJM — all
                         // level-1 loads off an immediate.  offsetof ONLY
                         // (the JM-byte-offset off-by-one lesson).
@@ -5722,7 +5725,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                                 (((nArgs & 0xF) << 12) | (resumeBcOff & 0xFFF));
                             a.movk(x5, packed16, 48);
                         }
-                        a.stp(x4, x5, ptr(x14, -16));      // tempBase + packedResume
+                        // size-40: tempBase@-24, packedResume@-16, closure@-8.
+                        a.stp(x4, x5, ptr(x14, -24));      // tempBase + packedResume
+                        a.str(xzr, ptr(x14, -8));          // JSV_CLOSURE (Phase 1: 0)
 #else
                         // save.tempBase from stash[16]; save.ip = post-send
                         // ip = callerCM + bcOffsetFromMethObj + 1 (the
@@ -6001,7 +6006,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.ldr(x4, ptr(x0, OFF_RECEIVER));
                 a.stp(x15, x4, ptr_post(x6, JSV_SIZE)); // sp+recv; cursor += 32
                 emitLoadTempBase(a, x15);
-                a.stp(x15, x14, ptr(x6, -16));          // tempBase + packedResume
+                // size-40: tempBase@-24, packedResume@-16, closure@-8.
+                a.stp(x15, x14, ptr(x6, -24));          // tempBase + packedResume
+                a.str(xzr, ptr(x6, -8));                // JSV_CLOSURE (Phase 1: 0)
 #else
                 emitLoadSp(a, x15);                // sp (sweep: was ldp sp+recv)
                 a.ldr(x4, ptr(x0, OFF_RECEIVER)); // receiver

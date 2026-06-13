@@ -186,6 +186,17 @@ struct JITState {
     // the FSR_VERIFY oracle can cross-check both representations.
     uint8_t* j2jEntryCursor;  // offset 312
 
+    // Closure of the currently-executing JIT frame (2026-06-13, the
+    // internal-J2J cannotReturn fix).  Mirrors interp->closure_; synced
+    // at JIT entry (tryJITActivation / resume setup) and at every
+    // BV-inline closure change.  The J2J save-push copies this into
+    // J2JSave.closure so materializeJ2JSaveIntoFrame can give a block
+    // frame its FullBlockClosure (a nil closure builds a malformed
+    // method-context — the resume-internal cannotReturn: storm).  nil
+    // for method frames.  Appended at the END so no baked stencil
+    // offset (all <= 312) shifts.
+    Oop closure;              // offset 320
+
     // FSR helper: depth-by-cursor (valid only when both cursors are from
     // the same pool slice; 32 = JSV_SIZE, asserted in J2JSaveLayout.h
     // consumers).
@@ -195,6 +206,7 @@ struct JITState {
     }
 };
 static_assert(offsetof(JITState, j2jEntryCursor) == 312, "j2jEntryCursor offset");
+static_assert(offsetof(JITState, closure) == 320, "JITState.closure offset (JS_CLOSURE in asm)");
 
 // Verify expected offsets (stencils depend on these)
 static_assert(offsetof(JITState, sp)        == 0,  "sp offset");

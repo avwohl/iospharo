@@ -671,6 +671,7 @@ public:
         Oop receiver;             // 8
         Oop* tempBase;            // 16
         uint64_t resumeAddr;      // 24  packed: addr | bcOff<<48 | nArgs<<60
+        Oop closure;              // 32  executing frame's closure (nil for methods)
         static constexpr uint64_t kAddrMask = 0x0000FFFFFFFFFFFFULL;
         uint8_t* addr() const {
             return reinterpret_cast<uint8_t*>(resumeAddr & kAddrMask);
@@ -678,7 +679,7 @@ public:
         uint32_t bcOff() const { return (resumeAddr >> 48) & 0xFFF; }
         uint32_t nArgs() const { return resumeAddr >> 60; }
     };
-    static_assert(sizeof(J2JSave) == 32, "V2 packed save is 32 bytes");
+    static_assert(sizeof(J2JSave) == 40, "V2 packed save is 40 bytes (incl. closure)");
 #else
     struct J2JSave {
         Oop* sp;                  // 0
@@ -711,6 +712,9 @@ public:
     static_assert(JSV_SENDARGCOUNT == offsetof(J2JSave, sendArgCount), "JSV_SENDARGCOUNT");
 #endif
     static_assert(JSV_RESUMEADDR == offsetof(J2JSave, resumeAddr), "JSV_RESUMEADDR");
+#if PHARO_J2J_SAVE_V2
+    static_assert(JSV_CLOSURE == offsetof(J2JSave, closure), "JSV_CLOSURE");
+#endif
     static_assert(JSV_SIZE == sizeof(J2JSave), "JSV_SIZE");
 #endif
 private:
@@ -3575,6 +3579,10 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         // GC frequency × bench's xmethod fire rate.
         for (int i = 0; i < j2jPoolCursor_; i++) {
             visitor(j2jPool_[i].receiver);
+            // JSV_CLOSURE (2026-06-13): every push writes this slot (nil
+            // for method frames, the closure for block frames), so it is
+            // always a valid Oop below the cursor — visit it as a root.
+            visitor(j2jPool_[i].closure);
         }
 
         // Session H: BV-inline closure side-stack must be walked so
