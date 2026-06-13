@@ -193,6 +193,7 @@ DEBUG_BOOL(PHARO_BLOCK_CREATE_TRACE)        // dump every createFullBlockWithLit
 DEBUG_BOOL(PHARO_BLOCK_SAVE_PROBE)          // dump frame-slot contents (tb[0/-1/-2], sp[-1]) at every block-save materialize — locate the FullBlockClosure for the closureless-block-frame cannotReturn bug
 DEBUG_BOOL(PHARO_SP_DEPTH_TRAP)             // __builtin_debugtrap() at the first sp-depth mismatch — lldb lands on the inconsistent frame
 DEBUG_INT(PHARO_T1_RESUME_MAX2_COMPILE, -1)
+DEBUG_BOOL(PHARO_T1_FATAL_DISAGREE)          // anti-regression: abort() at the prescan/emit-disagree site instead of silently bailing the method to interp. Run the suite + benches with this on BOTH arches so any future arm64 prescan widening that the x86 (or arm64) emit doesn't follow trips immediately, instead of silently degrading to interpreter. Default off (production bails quietly).
 DEBUG_BOOL(PHARO_X86_JIT)                    // opt-IN: enable the x86_64 tier-1 asmjit JIT, which is bit-rotted vs the arm64 path (prescan/emit disagree on ~10 bytecodes + at least one miscompile -> Corrupt stackPointer_).  DEFAULT-OFF on x86 only: the x86 VM core (interpreter) is correct, so initializeJIT runs interpreted unless this is set.  No effect on arm64 (the shipping config, JIT always on).  Arch-capability gate, same category as tier-2/Sista being off on x86.
 
 #undef DEBUG_BOOL

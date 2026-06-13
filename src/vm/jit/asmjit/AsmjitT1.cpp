@@ -2141,6 +2141,22 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     //   0xC0..0xC7 = jumpFalse (pop; jump if was false)
     if (op >= SistaV1::ShortJumpBase && op <= SistaV1::ShortJumpFalseLast) {
         int targetIdx = SistaV1::shortJumpTarget(op, globalIdx);
+        // Out-of-range target = an unreachable trailer byte (Pharo's
+        // CompiledMethod trailer looks like bytecodes; the prescan
+        // DELIBERATELY allows out-of-range UNCONDITIONAL targets on the
+        // promise the emit bails here — see allBytecodesSupported's
+        // shortJump branch and arm64's matching bail at ~4355).  Without
+        // this guard x86 emitted `jmp <unbound label>`, producing wrong
+        // control flow that skipped sp-balancing emits -> the
+        // "Corrupt stackPointer_ in push()" miscompile.
+        if (targetIdx < 0 || targetIdx >= (int)bcLabels.size()) {
+            a.mov(r8, ptr(rdi, OFF_METHOD));
+            a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+            a.mov(ptr(rdi, OFF_IP), r8);
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
+            a.ret();
+            return true;
+        }
         if (op <= SistaV1::ShortJumpLast) {
             // Unconditional forward jump — safe even from inline-activated
             // contexts because no bail involved.
@@ -2386,6 +2402,41 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(rax, ptr(rdi, OFF_METHOD));
         a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), rax);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
+        a.ret();
+        return true;
+    }
+    // PushThisContext 0x52: bail to interp (materializing thisContext is
+    // complex; the interp does it and continues the rest of the method).
+    // Mirrors arm64 emitOne_arm64 ~3530.
+    if (op == SistaV1::PushThisContext) {
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.ret();
+        return true;
+    }
+    // BlockReturnNil 0x5D / BlockReturnTop 0x5E: bail to interp (block
+    // return involves frame walking + enclosingLevels not worth inlining).
+    // Only reached in a non-block method; the in-block NLR gate above
+    // (g_emitIsBlock && isReturn) covers 0x58-0x5C.  Mirrors arm64 ~3552.
+    if (op == SistaV1::BlockReturnNil || op == SistaV1::BlockReturnTop) {
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.ret();
+        return true;
+    }
+    // Phase 3 \\ (0x6A) / // (0x6D): floor-mod / floor-div.  No inline x86
+    // codegen yet (arm64 has it at ~4263); bail as a send so the method
+    // still compiles — interp re-dispatches \\ // at this ip as a normal
+    // send and continues.  (Real inline x86 modulo is a follow-up.)
+    if (isPhase3ModOp(op)) {
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
         a.ret();
         return true;
@@ -8169,6 +8220,146 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     i, globalIdx, bcReal[i],
                     bcOffsetBase + globalIdx, siteIdx);
             }
+            // Multi-byte / extended bytecodes are handled HERE in the loop
+            // (not in emitOne_x86) so operand bytes are skipped and their
+            // labels bound — mirrors the arm64 emit loop (~8252+).  Byte-
+            // stepping these through emitOne_x86 mis-read operand bytes as
+            // opcodes (the prescan/emit disagree + the miscompile).  Simple
+            // single-byte ops fall through to emitOne_x86 below.
+            {
+                using namespace asmjit::x86;
+                uint8_t op = bcReal[i];
+                // Generic bail-to-interp: set ip to this bytecode, exit,
+                // ret.  The chain loop syncs ip/sp and the interp runs the
+                // bytecode + the rest of the method (x86 keeps sp in OFF_SP
+                // always, so no sp-resync is needed — unlike arm64's x25).
+                auto loopBail = [&](int exitCode) {
+                    a.mov(r8, ptr(rdi, OFF_METHOD));
+                    a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
+                    a.mov(ptr(rdi, OFF_IP), r8);
+                    a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(exitCode));
+                    a.ret();
+                };
+                // InlinedPrimitive 0xEC: 2-byte no-op — bind operand, skip.
+                if (op == SistaV1::InlinedPrimitive) {
+                    a.bind(bcLabels[globalIdx + 1]);
+                    i++; continue;
+                }
+                // PushInteger 0xE8: push SmI((int8_t)operand).
+                if (op == SistaV1::PushInteger) {
+                    int8_t imm = (int8_t)bcReal[i + 1];
+                    uint64_t bits = ((uint64_t)(int64_t)imm << 3) | 1ULL;
+                    a.mov(rax, asmjit::Imm(bits));
+                    emitPushReg(a, rax);
+                    a.bind(bcLabels[globalIdx + 1]);
+                    i++; continue;
+                }
+                // PushCharacter 0xE9: push Character((uint8_t)operand)
+                // (CharacterTag = 3).
+                if (op == SistaV1::PushCharacter) {
+                    uint64_t bits = ((uint64_t)(uint8_t)bcReal[i + 1] << 3) | 3ULL;
+                    a.mov(rax, asmjit::Imm(bits));
+                    emitPushReg(a, rax);
+                    a.bind(bcLabels[globalIdx + 1]);
+                    i++; continue;
+                }
+                // Extended push 0xE2-0xE5 (naked; the prefixed form is
+                // bailed by the ExtendA/B handler below).  1-byte index.
+                if (op == SistaV1::ExtPushRecvVar
+                        || op == SistaV1::ExtPushLitVar
+                        || op == SistaV1::ExtPushLitConst
+                        || op == SistaV1::ExtPushTemp) {
+                    int idx = bcReal[i + 1];
+                    if (op == SistaV1::ExtPushRecvVar) {
+                        a.mov(rax, ptr(rdi, OFF_RECEIVER));
+                        a.mov(rax, ptr(rax, OBJ_SLOT_0 + idx * 8));
+                    } else if (op == SistaV1::ExtPushLitConst) {
+                        a.mov(rax, ptr(rdi, OFF_LITERALS));
+                        a.mov(rax, ptr(rax, idx * 8));
+                    } else if (op == SistaV1::ExtPushLitVar) {
+                        a.mov(rax, ptr(rdi, OFF_LITERALS));
+                        a.mov(rax, ptr(rax, idx * 8));
+                        a.mov(rax, ptr(rax, OBJ_SLOT_0 + 8));  // Association.value
+                    } else {  // ExtPushTemp
+                        a.mov(rax, ptr(rdi, OFF_TEMPBASE));
+                        a.mov(rax, ptr(rax, idx * 8));
+                    }
+                    emitPushReg(a, rax);
+                    a.bind(bcLabels[globalIdx + 1]);
+                    i++; continue;
+                }
+                // PushArray 0xE7: bail to ExitArrayCreate; cachedTarget =
+                // desc (bits0-6 size, bit7 popIntoArray).
+                if (op == SistaV1::PushArray) {
+                    a.mov(rax, asmjit::Imm((uint64_t)bcReal[i + 1]));
+                    a.mov(ptr(rdi, OFF_CACHED_TARGET), rax);
+                    loopBail(EXIT_ARRAY_CREATE);
+                    a.bind(bcLabels[globalIdx + 1]);
+                    i++; continue;
+                }
+                // PushFullBlock 0xF9: bail to ExitBlockCreate;
+                // cachedTarget = litIdx | (flags << 32).
+                if (op == SistaV1::PushFullBlock) {
+                    uint64_t packed = (uint64_t)bcReal[i + 1]
+                                    | ((uint64_t)bcReal[i + 2] << 32);
+                    a.mov(rax, asmjit::Imm(packed));
+                    a.mov(ptr(rdi, OFF_CACHED_TARGET), rax);
+                    loopBail(EXIT_BLOCK_CREATE);
+                    a.bind(bcLabels[globalIdx + 1]);
+                    a.bind(bcLabels[globalIdx + 2]);
+                    i += 2; continue;
+                }
+                // ExtSend 0xEA / ExtSuperSend 0xEB: bail to interp.
+                if (op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend) {
+                    loopBail(EXIT_ARITH_OVERFLOW);
+                    a.bind(bcLabels[globalIdx + 1]);
+                    i++; continue;
+                }
+                // Extended store/popStore 0xF0-0xF5: bail to interp (no
+                // inline x86 emit yet; arm64 has it ~8640).  Interp runs
+                // the store + the rest of the method.
+                if (op == SistaV1::ExtPopStoreRecv
+                        || op == SistaV1::ExtPopStoreLitVar
+                        || op == SistaV1::ExtPopStoreTemp
+                        || op == SistaV1::ExtStoreRecv
+                        || op == SistaV1::ExtStoreLitVar
+                        || op == SistaV1::ExtStoreTemp) {
+                    loopBail(EXIT_ARITH_OVERFLOW);
+                    a.bind(bcLabels[globalIdx + 1]);
+                    i++; continue;
+                }
+                // Remote temp 0xFB/0xFC/0xFD (3-byte): bail to interp.
+                if (op == SistaV1::PushTempAtInVec
+                        || op == SistaV1::StoreTempAtInVec
+                        || op == SistaV1::PopStoreTempAtInVec) {
+                    loopBail(EXIT_ARITH_OVERFLOW);
+                    a.bind(bcLabels[globalIdx + 1]);
+                    a.bind(bcLabels[globalIdx + 2]);
+                    i += 2; continue;
+                }
+                // Long jumps 0xED/0xEE/0xEF (naked): bail to interp (no
+                // inline x86 long-jump codegen yet; arm64 ~8766).
+                if (op == SistaV1::ExtJump || op == SistaV1::ExtJumpTrue
+                        || op == SistaV1::ExtJumpFalse) {
+                    loopBail(EXIT_ARITH_OVERFLOW);
+                    a.bind(bcLabels[globalIdx + 1]);
+                    i++; continue;
+                }
+                // ExtendA 0xE0 / ExtendB 0xE1 prefix bundle: bail at the
+                // prefix; interp runs prefix + prefixed op + rest.  Skip
+                // the data byte + the next bytecode's full length.
+                if (op == SistaV1::ExtendA || op == SistaV1::ExtendB) {
+                    uint8_t nextOp = bcReal[i + 2];
+                    int nextLen = SistaV1::bytecodeLength(nextOp);
+                    loopBail(EXIT_ARITH_OVERFLOW);
+                    for (int k = 1; k <= 1 + nextLen; k++) {
+                        if ((size_t)(globalIdx + k) < bcLabels.size())
+                            a.bind(bcLabels[globalIdx + k]);
+                    }
+                    i += 1 + nextLen;
+                    continue;
+                }
+            }
             if (!emitOne_x86(a, bcReal[i], nilBits,
                              bcOffsetBase + globalIdx, siteIdx,
                              bcLabels, globalIdx,
@@ -8177,6 +8368,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
                     globalIdx, bcReal[i]);
+                if (GET_DEBUG_BOOL(PHARO_T1_FATAL_DISAGREE)) std::abort();
                 return false;
             }
             if (isPhase4SendOp(bcReal[i])) siteIdx++;
@@ -8852,6 +9044,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
                     globalIdx, op);
+                if (GET_DEBUG_BOOL(PHARO_T1_FATAL_DISAGREE)) std::abort();
                 return false;
             }
             if (isPhase4SendOp(op)) siteIdx++;
