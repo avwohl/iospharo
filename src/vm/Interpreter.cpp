@@ -1744,6 +1744,21 @@ static inline void countICHitDbg(const uint64_t* ic) {
 #endif
 }
 
+#if PHARO_JIT_ENABLED
+// Byte offset of closure_ within Interpreter — the JIT J2J save-push
+// reads interp->closure_ (state->interp at OFF_INTERP, then this offset)
+// to record the running frame's closure directly, with no JITState sync
+// surface.  offsetof on the (non-standard-layout) Interpreter is
+// conditionally-supported but works here; same suppression as the offset
+// dump below.
+size_t Interpreter::closureFieldOffset() {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+    return offsetof(Interpreter, closure_);
+#pragma GCC diagnostic pop
+}
+#endif
+
 void Interpreter::dumpJITStats() {
 #if PHARO_JIT_ENABLED
     size_t icTotal = jitICHits_ + jitICMisses_;
@@ -2004,6 +2019,8 @@ void Interpreter::dumpJITStats() {
     // suppress the warning locally.
     if (g_debug.dumpInterpOffsets) {
         fprintf(stderr, "Interpreter offsets:\n");
+        fprintf(stderr, "  closureFieldOffset() = %zu\n",
+                Interpreter::closureFieldOffset());
         #pragma GCC diagnostic push
         #pragma GCC diagnostic ignored "-Winvalid-offsetof"
         #define O(f) fprintf(stderr, "  +0x%05zx (%4zu): %s\n", offsetof(Interpreter, f), offsetof(Interpreter, f), #f)

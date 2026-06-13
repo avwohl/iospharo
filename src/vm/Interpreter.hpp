@@ -949,6 +949,11 @@ public:
     // PushTempAtInVec resolve the right captured tempVec).
     Oop currentClosure() const { return closure_; }
     void setCurrentClosure(Oop c) { closure_ = c; }
+    // Byte offset of closure_ within Interpreter, for the JIT J2J
+    // save-push to read interp->closure_ directly (the always-correct
+    // running-frame closure; avoids the JITState.closure sync surface
+    // for block frames).  Defined out-of-line where the type is complete.
+    static size_t closureFieldOffset();
 #endif
 private:
     std::vector<std::string> imageArguments_;  // Command-line args for the image (index 2+)
