@@ -6906,6 +6906,18 @@ terminate_process:
         } else {
             push(value);
         }
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_CT_SPLOG), 0)
+                && method_.isObject() && framePointer_
+                && memory_.selectorOf(method_) == "copyTo:") {
+            long spfp = (long)(stackPointer_ - framePointer_);
+            if (spfp > 5 || spfp < 0) {
+                fprintf(stderr, "[CT-RETVAL] sp-fp=%ld matRetSlot=%p (%s) "
+                    "sp=%p fp=%p fd=%zu matRet-fp=%ld\n", spfp,
+                    (void*)matRetSlot, matRetSlot ? "MAT" : "PUSH",
+                    (void*)stackPointer_, (void*)framePointer_, frameDepth_,
+                    matRetSlot ? (long)(matRetSlot - framePointer_) : -999);
+            }
+        }
 
         if (__builtin_expect(dispatchTraceLeakOn_, 0) && framePointer_) {
             long long spAboveFP = (long long)(stackPointer_ - framePointer_);
@@ -20371,6 +20383,21 @@ void Interpreter::tryJITResumeInCaller() {
             j2jPoolCursor_ = rj2jBase;  // Release pool slice
             break;  // No re-entry at this offset
         }
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_CT_SPLOG), 0)
+                && state.jitMethod && state.method.isObject()
+                && memory_.selectorOf(state.method) == "copyTo:") {
+            auto* rjm = reinterpret_cast<jit::JITMethod*>(
+                reinterpret_cast<uintptr_t>(state.jitMethod)
+                & ~static_cast<uintptr_t>(1));
+            long spRel = (rjm && state.tempBase)
+                ? (long)(state.sp - (state.tempBase + rjm->tempCount)) : -999;
+            if (spRel > 4 || spRel < 0) {
+                fprintf(stderr, "[CT-ENTRYRESUME] bcOff=%u spRel=%ld sp=%p "
+                    "stackPtr=%p tb=%p fp=%p tc=%d\n", bcOffset, spRel,
+                    (void*)state.sp, (void*)stackPointer_, (void*)state.tempBase,
+                    (void*)framePointer_, (int)(rjm ? rjm->tempCount : -1));
+            }
+        }
         // Internal J2J: materialize any pending saves NOW so every
         // handler below keeps its external-mode depth==0 assumption.
         if (resumeInternalJ2J && state.j2jDepth > 0) {
@@ -26564,6 +26591,25 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             // Use precomputed resume to skip tryResume overhead
                             if (__builtin_expect(savedResumeEntry != nullptr, 1)) {
                                 lastResumeKind_ = 1;
+                                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_CT_SPLOG), 0)
+                                        && savedMethod.isObject()
+                                        && memory_.selectorOf(savedMethod) == "copyTo:") {
+                                    long spRel = savedTempBase
+                                        ? (long)(stackPointer_ - (savedTempBase
+                                            + savedJitMethod->tempCount)) : -999;
+                                    if (spRel > 4 || spRel < 0) {
+                                        long ipOff = (long)(instructionPointer_ - savedBcStart);
+                                        fprintf(stderr, "[CT-BADRESUME] resumeBcOff=%ld "
+                                            "spRel=%ld stackPointer_=%p savedSP=%p "
+                                            "savedTempBase=%p tc=%d nArgs=%d fp=%p "
+                                            "spOfStackPtr-fp=%ld\n", ipOff, spRel,
+                                            (void*)stackPointer_, (void*)savedSP,
+                                            (void*)savedTempBase,
+                                            (int)savedJitMethod->tempCount, (int)nArgs,
+                                            (void*)framePointer_,
+                                            (long)(stackPointer_ - framePointer_));
+                                    }
+                                }
                                 state.ip = savedBcStart;
                                 state.sp = stackPointer_;
                                 state.icDataPtr = nullptr;
