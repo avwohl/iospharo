@@ -1216,7 +1216,12 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (isPhase3BitOp(op)) continue;              // 0x6E, 0x6F bitAnd:/bitOr:
         if (isPhase3MulOp(op)) continue;              // 0x68 *
         if (isPhase3ShiftOp(op)) continue;            // 0x6C bitShift:
-        if (isPhase3ModOp(op)) continue;              // 0x6A \\, 0x6D //
+        if (isPhase3ModOp(op)) {                      // 0x6A \\, 0x6D //
+            // BISECT: reject \\/// methods so they run fully interpreted —
+            // tests whether the mid-method modulo bail corrupts.
+            if (GET_DEBUG_BOOL(PHARO_T1_NO_MOD_METHODS)) return false;
+            continue;
+        }
         if (isPhase4SendOp(op)) {
             if (noSendsBisect) return false;
             if (sendNArgs(op) > maxSendNArgs) return false;
@@ -2501,16 +2506,64 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.ret();
         return true;
     }
-    // Phase 3 \\ (0x6A) / // (0x6D): floor-mod / floor-div.  No inline x86
-    // codegen yet (arm64 has it at ~4263); bail as a send so the method
-    // still compiles — interp re-dispatches \\ // at this ip as a normal
-    // send and continues.  (Real inline x86 modulo is a follow-up.)
+    // Phase 3 \\ (0x6A) floor-mod / // (0x6D) floor-div — inline x86 idiv
+    // (port of the arm64 emit ~4386).  Pharo uses floor semantics; x86 idiv
+    // is trunc, so adjust by +b (mod) / -1 (div) when rem!=0 AND signs differ.
+    // idiv needs rax:rdx, so sp lives in rsi here (not rax like the arith
+    // path).  Bails (EXIT_SEND) on non-SmI / divisor 0 / // SmI overflow.
+    // Previously this BAILED every \\ as a mid-method send -> the resulting
+    // send-resume corrupted state (the resolve: DNU; NO_MOD_METHODS bisect).
     if (isPhase3ModOp(op)) {
+        asmjit::Label mbail = a.new_label();
+        asmjit::Label mdone = a.new_label();
+        asmjit::Label noAdj = a.new_label();
+        a.mov(rsi, ptr(rdi, OFF_SP));
+        a.mov(rax, ptr(rsi, -16));        // a (dividend)
+        a.mov(rcx, ptr(rsi, -8));         // b (divisor)
+        a.mov(r8, rax);                   // SmI tag check (both SmI)
+        a.xor_(r8, rcx);
+        a.lea(r9, asmjit::x86::ptr(rax, -1));
+        a.or_(r8, r9);
+        a.test(r8.r8(), asmjit::Imm(7));
+        a.jne(mbail);
+        a.sar(rax, asmjit::Imm(3));       // untag a
+        a.sar(rcx, asmjit::Imm(3));       // untag b
+        a.test(rcx, rcx);
+        a.jz(mbail);                      // divisor 0
+        a.cqo();                          // rdx:rax = sign-extend a
+        a.idiv(rcx);                      // rax=quot(trunc), rdx=rem(trunc)
+        a.test(rdx, rdx);                 // floor adjust if rem!=0 && signs differ
+        a.jz(noAdj);
+        a.mov(r8, rdx);
+        a.xor_(r8, rcx);                  // rem^b ; SF=1 => signs differ
+        a.jns(noAdj);
+        if (op == 0x6A) a.add(rdx, rcx);  // \\: rem += b
+        else            a.sub(rax, asmjit::Imm(1));  // //: quot -= 1
+        a.bind(noAdj);
+        if (op == 0x6A) {                 // \\: result in rdx, always fits SmI
+            a.shl(rdx, asmjit::Imm(3));
+            a.or_(rdx, asmjit::Imm(SMI_TAG));
+            a.mov(ptr(rsi, -16), rdx);
+        } else {                          // //: result in rax, may overflow
+            a.mov(r8, rax);
+            a.shl(rax, asmjit::Imm(3));
+            a.mov(r9, rax);
+            a.sar(r9, asmjit::Imm(3));
+            a.cmp(r9, r8);
+            a.jne(mbail);
+            a.or_(rax, asmjit::Imm(SMI_TAG));
+            a.mov(ptr(rsi, -16), rax);
+        }
+        a.sub(rsi, asmjit::Imm(8));
+        a.mov(ptr(rdi, OFF_SP), rsi);
+        a.jmp(mdone);
+        a.bind(mbail);
         a.mov(r8, ptr(rdi, OFF_METHOD));
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
         a.ret();
+        a.bind(mdone);
         return true;
     }
     return false;  // pre-scan failed to filter — bug in allBytecodesSupported
