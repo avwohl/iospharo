@@ -1,3 +1,41 @@
+# WIP — x86 JIT startup-corruption FIXED (2026-06-13)
+
+Root cause of the long-standing "x86 tier-1 JIT corrupts/DNUs/hangs at
+startup": the SHARED `supportedPrimIndex()` (AsmjitT1.cpp ~1469) advertised
+prims 10-13 (`\\` `//` bitShift: `/`), 60-62 (at:/at:put:/size), 541/542/549
+(SmallFloat +/-/*) as JIT-supported, but `emitPrimProlog_x86()` (~1557) only
+ever implemented 1,2,3-8,9,14,15,16,110. So on x86 those primitive methods
+compiled a prologue that failed its SmI-receiver check (Array/Float isn't a
+SmI) and fell THROUGH to the method's Smalltalk error fallback WITHOUT running
+the C primitive — e.g. `Array>>at:` ran `^self errorSubscriptBounds: index`
+on a *valid* index, raising a spurious SubscriptOutOfBounds in the morphic
+startup loop, which had no handler → `primitiveFindHandlerContext` looped
+forever (DET) / DNU'd (wall-clock). The sender chain was intact the whole time
+(red herring).
+
+Fix (commit 337eeb20): on x86 only, `supportedPrimIndex` returns -1 for those
+prims → prim-fallback BODY path (C primitive runs first, correct). arm64
+untouched (`#if defined(__x86_64__)`). Perf follow-up: port the arm64
+emitPrimProlog cases (60/61/62/10-13/541/542/549) to x86 and remove them from
+the x86 -1 list one at a time.
+
+Validated on the x86 box (18.221.159.216): fib/sum/mul/bigmul battery +
+Dictionary/OrderedColl/Float/SortedColl/String all match the interpreter
+byte-for-byte (wall-clock AND DET_SCHED); a 7-class SUnit batch ran 1292 tests
+0 fail / 1 env-err (testPrintingRecursive passes when invoked directly under
+both interp and x86jit). arm64 builds clean, battery unchanged. Memory:
+`jit-x86-prim-prologue-mismatch.md`.
+
+Debugging notes that worked: EVAL-RESULT IS capturable from the headless
+harness (differential interp-vs-JIT eval beats chasing startup DNUs);
+PHARO_DET_SCHED turns the wall-clock DNU into a deterministic hang;
+`gdb -p` after `sysctl kernel.yama.ptrace_scope=0` located the loop in
+primitiveFindHandlerContext; gdb can't read member vars on the box build
+(no full DWARF) so instrument in C++ (PHARO_T1_TRACE_HANDLER dumps the
+handler-search chain w/ receiver class + at: index).
+
+---
+
 # WIP — JIT optimization session (2026-05-27 → 2026-05-28)
 
 ## 2026-05-28 late PM — graphics-test queue kickoff
