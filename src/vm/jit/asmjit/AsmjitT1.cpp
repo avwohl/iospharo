@@ -1469,6 +1469,28 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
 inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     if (bcLen < 3 || bc[0] != SistaV1::CallPrimitive) return -1;
     int primIndex = bc[1] | ((bc[2] & 0x1F) << 8);
+#if defined(__x86_64__) || defined(_M_X64)
+    // emitPrimProlog_x86 implements ONLY prims 1,2,3-8,9,14,15,16,110.
+    // The remaining prims that the arm64 emitPrimProlog handles
+    // (10-13 = \\ // bitShift: /, 60-62 = at:/at:put:/size,
+    // 541/542/549 = SmallFloat +/-/*) have NO x86 prologue: advertising
+    // them here compiled a prologue that fell straight through to the
+    // method's Smalltalk error fallback WITHOUT running the C primitive
+    // (Array>>at: -> #errorSubscriptBounds: on a *valid* index), which
+    // raised a spurious SubscriptOutOfBounds during morphic startup and
+    // hung the exception-handler search forever (DET) / DNU'd (wall-clock).
+    // Returning -1 routes these through the prim-fallback BODY path
+    // (AsmjitT1.cpp:9300): the C++ primitive runs first (correct) and the
+    // jitted body is only the post-fail fallback.  Remove a case here as
+    // its x86 prologue lands in emitPrimProlog_x86.
+    switch (primIndex) {
+        case 10: case 11: case 12: case 13:
+        case 60: case 61: case 62:
+        case 541: case 542: case 549:
+            return -1;
+        default: break;
+    }
+#endif
     switch (primIndex) {
     case 1:  return primIndex;   // SmallInteger>>+
     case 2:  return primIndex;   // SmallInteger>>-
@@ -8385,7 +8407,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 if (op >= SistaV1::ExtendA) {   // 0xE0..0xFD
                     int len = SistaV1::bytecodeLength(op);
                     if (len < 1) len = 1;
-                    loopBail(EXIT_ARITH_OVERFLOW);
+                    // BISECT: was EXIT_ARITH_OVERFLOW (arith-specific name);
+                    // EXIT_SEND is the generic "resume interp at this ip" code.
+                    loopBail(GET_DEBUG_BOOL(PHARO_T1_EXTBAIL_SEND)
+                             ? EXIT_SEND : EXIT_ARITH_OVERFLOW);
                     for (int k = 1; k < len; k++) {
                         if ((size_t)(globalIdx + k) < bcLabels.size())
                             a.bind(bcLabels[globalIdx + k]);

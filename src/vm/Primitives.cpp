@@ -10837,6 +10837,12 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
         if (method.isObject() && !method.isNil()) {
             int primIdx = primitiveIndexOf(method);
             if (primIdx == 199) {
+                if (GET_DEBUG_BOOL(PHARO_T1_TRACE_HANDLER)) {
+                    static int okCalls = 0;
+                    if ((++okCalls % 4000) == 1)
+                        fprintf(stderr, "[HCTX] FOUND handler #%s after walk\n",
+                                memory_.selectorOf(method).c_str());
+                }
                 pop();
                 push(ctx);
                 return PrimitiveResult::Success;
@@ -10845,7 +10851,47 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
         ctx = memory_.fetchPointer(0, ctx);  // sender = slot 0
     }
 
-    // Not found - return nil
+    // Not found - return nil.  DIAG: dump the walked chain to pin the
+    // x86-JIT sender-chain corruption (cycle vs truncated-before-handler).
+    if (GET_DEBUG_BOOL(PHARO_T1_TRACE_HANDLER)) {
+        static int calls = 0;
+        bool exhausted = (limit <= 0);
+        if (exhausted || (++calls % 4000) == 1) {
+            fprintf(stderr, "[HCTX] not-found (exhausted=%d call#%d) chain:\n",
+                    exhausted, calls);
+            Oop c = startContext;
+            for (int i = 0; i < 30 && c.isObject() && !c.isNil(); i++) {
+                Oop m = memory_.fetchPointer(3, c);
+                int pidx = (m.isObject() && !m.isNil()) ? primitiveIndexOf(m) : -1;
+                Oop sender = memory_.fetchPointer(0, c);
+                std::string sel = (m.isObject() && !m.isNil())
+                                      ? memory_.selectorOf(m) : std::string("?");
+                Oop rcvr = memory_.fetchPointer(5, c);  // receiver = slot 5
+                std::string rcls = rcvr.isObject() ? memory_.classNameOf(rcvr)
+                                   : (rcvr.isSmallInteger() ? "SmallInt" : "imm");
+                long rsize = -1;
+                if (rcvr.isObject()) {
+                    pharo::ObjectHeader* h = rcvr.asObjectPtr();
+                    if (h) rsize = (long)h->slotCount();
+                }
+                Oop arg0 = memory_.fetchPointer(6, c);  // first temp/arg = slot 6
+                char argbuf[64];
+                if (arg0.isSmallInteger())
+                    snprintf(argbuf, sizeof argbuf, "arg0=%lld", (long long)arg0.asSmallInteger());
+                else
+                    snprintf(argbuf, sizeof argbuf, "arg0=%p(%s)", (void*)arg0.rawBits(),
+                             arg0.isObject() ? memory_.classNameOf(arg0).c_str() : "imm");
+                fprintf(stderr, "  [%2d] ctx=%p #%s prim=%d rcvr=%s[slots=%ld] %s sender=%p\n",
+                        i, (void*)c.rawBits(), sel.c_str(), pidx,
+                        rcls.c_str(), rsize, argbuf, (void*)sender.rawBits());
+                if (sender.rawBits() == c.rawBits()) {
+                    fprintf(stderr, "       *** SELF-CYCLE: sender==self ***\n");
+                    break;
+                }
+                c = sender;
+            }
+        }
+    }
     pop();
     push(memory_.nil());
     return PrimitiveResult::Success;
