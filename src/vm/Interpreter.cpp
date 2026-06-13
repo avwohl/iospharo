@@ -6466,7 +6466,32 @@ void Interpreter::pushSpecial(int which) {
     }
 }
 
+bool g_retValArmed = true;
+int  g_retValN = 0;
 void Interpreter::returnValue(Oop value) {
+    if (__builtin_expect(g_retValArmed, 0) && g_retValN < 400
+            && method_.isObject() && method_.rawBits() > 0x10000
+            && receiver_.isObject() && receiver_.rawBits() > 0x10000
+            && [&]{ std::string c = memory_.classNameOf(receiver_);
+                    return c.find("Resolver")!=std::string::npos
+                        || c.find("FileSystem")!=std::string::npos
+                        || c.find("Store")!=std::string::npos
+                        || c.find("Path")!=std::string::npos
+                        || c.find("Locator")!=std::string::npos
+                        || c.find("Reference")!=std::string::npos; }()) {
+        Oop v = value;
+        std::string vs = v.isObject() && v.rawBits()>0x10000
+            && v.asObjectPtr()->isBytesObject() ? memory_.oopToString(v) : "";
+        fprintf(stderr, "[RV %d] #%s -> %s'%s' (recv %s)\n", g_retValN++,
+            memory_.selectorOf(method_).c_str(),
+            v.isNil() ? "NIL" : v.isSmallInteger() ? "int"
+              : v.rawBits()==memory_.trueObject().rawBits() ? "T"
+              : v.rawBits()==memory_.falseObject().rawBits() ? "F"
+              : v.isObject() && v.rawBits()>0x10000 ? memory_.classNameOf(v).c_str() : "obj",
+            vs.c_str(),
+            receiver_.isObject() && receiver_.rawBits()>0x10000
+              ? memory_.classNameOf(receiver_).c_str() : "imm");
+    }
     // RETURN-VALUE trace (gated PHARO_SP_DEPTH_TRAP): log resolve-family
     // method returns with their value tag, to find the send that returns nil
     // under caller-resume but not the interpreter control.
@@ -10580,6 +10605,19 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         static bool armed = false;
         static int actN = 0;
         std::string s = memory_.selectorOf(method);
+        // Origin-arg trace: the corrupt value reaching the resolvers.
+        if ((s == "unknownOrigin:" || s == "canResolve:" || s == "resolveString:")
+                && argCount >= 1) {
+            Oop org = stackValue(argCount - 1);
+            Oop rcv = stackValue(argCount);
+            static int orgN = 0;
+            if (++orgN <= 40)
+                fprintf(stderr, "[ORIGIN] #%s recv=%s@0x%llx arg='%s' (%s)\n", s.c_str(),
+                    rcv.isObject() && rcv.rawBits()>0x10000 ? memory_.classNameOf(rcv).c_str() : "imm",
+                    (unsigned long long)rcv.rawBits(),
+                    org.isObject() && org.rawBits()>0x10000 ? memory_.oopToString(org).c_str() : "imm",
+                    org.isObject() && org.rawBits()>0x10000 ? memory_.classNameOf(org).c_str() : "imm");
+        }
         if (!armed && s == "resolve:") armed = true;
         if (armed && ++actN <= 1500) {
             Oop recv = stackValue(argCount);
@@ -20212,6 +20250,29 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         jit::spDepthCheck(sstate, "perBcSista-backjump");
         switch (sstate.exitReason) {
         case jit::ExitReturn: {
+            if (__builtin_expect(g_retValArmed, 0) && g_retValN < 400
+                    && method_.isObject() && method_.rawBits() > 0x10000
+                    && receiver_.isObject() && receiver_.rawBits() > 0x10000
+                    && [&]{ std::string c = memory_.classNameOf(receiver_);
+                            return c.find("Resolver")!=std::string::npos
+                                || c.find("FileSystem")!=std::string::npos
+                                || c.find("Store")!=std::string::npos
+                                || c.find("Path")!=std::string::npos
+                                || c.find("Locator")!=std::string::npos
+                                || c.find("Reference")!=std::string::npos; }()) {
+                Oop v = sstate.returnValue;
+                std::string vs = v.isObject() && v.rawBits()>0x10000
+                    && v.asObjectPtr()->isBytesObject() ? memory_.oopToString(v) : "";
+                fprintf(stderr, "[RV %d] #%s -> %s'%s' (recv %s)\n", g_retValN++,
+                    memory_.selectorOf(method_).c_str(),
+                    v.isNil() ? "NIL" : v.isSmallInteger() ? "int"
+                      : v.rawBits()==memory_.trueObject().rawBits() ? "T"
+                      : v.rawBits()==memory_.falseObject().rawBits() ? "F"
+                      : v.isObject() && v.rawBits()>0x10000 ? memory_.classNameOf(v).c_str() : "obj",
+                    vs.c_str(),
+                    receiver_.isObject() && receiver_.rawBits()>0x10000
+                      ? memory_.classNameOf(receiver_).c_str() : "imm");
+            }
             if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
                     && method_.isObject() && method_.rawBits() > 0x10000) {
                 static int jrvN = 0;

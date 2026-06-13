@@ -1,0 +1,14 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/Users/wohl/src/iospharo/src/vm/jit/J2JSaveLayout.h
+
+/Users/wohl/src/iospharo/src/vm/jit/TrampolineAsm.S
+J2JSaveLayout.h
+/Users/wohl/src/iospharo/src/vm/jit/J2JSaveLayout.h
+

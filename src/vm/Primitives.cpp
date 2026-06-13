@@ -3264,6 +3264,23 @@ PrimitiveResult Interpreter::primitivePerform(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+        Oop pr = stackValue(argCount);  // perform: receiver
+        std::string rc = pr.isObject() && pr.rawBits()>0x10000
+            ? memory_.classNameOf(pr) : "imm";
+        if (rc.find("Resolver") != std::string::npos
+                || rc.find("FileSystem") != std::string::npos
+                || rc.find("Locator") != std::string::npos) {
+            static int ppN = 0;
+            if (++ppN <= 30)
+                fprintf(stderr, "[PERFORM] recv=%s sel=#%s argc=%d\n",
+                    rc.c_str(), memory_.oopToString(selector).c_str(), argCount);
+            extern bool g_retValArmed;
+            if (memory_.oopToString(selector) == "imageDirectory")
+                g_retValArmed = true;
+        }
+    }
+
     // Remove selector from the middle of the stack, keeping args
     // Stack before: receiver, selector, arg1, ..., argN
     // Stack after:  receiver, arg1, ..., argN

@@ -1,0 +1,4 @@
+/Users/wohl/src/iospharo/build-opt/CMakeFiles/_CMakeLTOTest-C/bin/CMakeFiles/foo.dir
+/Users/wohl/src/iospharo/build-opt/CMakeFiles/_CMakeLTOTest-C/bin/CMakeFiles/boo.dir
+/Users/wohl/src/iospharo/build-opt/CMakeFiles/_CMakeLTOTest-C/bin/CMakeFiles/edit_cache.dir
+/Users/wohl/src/iospharo/build-opt/CMakeFiles/_CMakeLTOTest-C/bin/CMakeFiles/rebuild_cache.dir

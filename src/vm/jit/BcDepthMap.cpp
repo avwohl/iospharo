@@ -304,6 +304,33 @@ const DepthEntry* depthEntryFor(const JITMethod* jm) {
 }  // namespace
 
 void spDepthCheck(JITState& state, const char* where) {
+    // CORRUPT-PTR scan (gated SP_DEPTH_TRAP): the resolve DNU receiver is a
+    // 1MB-aligned pointer (low 20 bits zero) — a corrupt value produced by a
+    // JIT computation (no GC, heap clean).  Scan the operand stack at each
+    // JIT exit; the FIRST appearance names the producing method.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+            && state.tempBase && state.sp && state.sp > state.tempBase
+            && state.sp - state.tempBase < 256 && state.memory) {
+        for (Oop* p = state.tempBase; p < state.sp; p++) {
+            uint64_t v = p->rawBits();
+            // genuinely-corrupt: pointer-tagged, nonzero, but NOT a valid heap obj
+            if (v > 0x10000 && (v & 7) == 0
+                    && !state.memory->isValidPointer(Oop::fromRawBits(v))) {
+                static int cpN = 0;
+                if (++cpN <= 12) {
+                    auto* jm0 = reinterpret_cast<JITMethod*>(
+                        reinterpret_cast<uintptr_t>(state.jitMethod) & ~uintptr_t(1));
+                    fprintf(stderr, "[CORRUPT-PTR] 0x%llx at sp[%ld] in #%s "
+                        "exit=%d where=%s\n", (unsigned long long)v,
+                        (long)(p - state.tempBase),
+                        jm0 ? state.memory->selectorOf(
+                            Oop::fromRawBits(jm0->compiledMethodOop)).c_str() : "?",
+                        (int)state.exitReason, where);
+                }
+                break;
+            }
+        }
+    }
     if (!GET_DEBUG_BOOL(PHARO_SP_DEPTH_CHECK)) return;
     int er = state.exitReason;
     // Only exits whose ip points AT a bytecode with operands intact.
