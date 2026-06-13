@@ -10524,6 +10524,35 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // One-shot resolve: identity probe (gated SP_DEPTH_TRAP): dump the
+    // target class + literals 0/1/2 (the sel0/sel1/sel2 of the
+    // ifTrue/ifFalse body) + the receiver, so we know what sel0 is and
+    // whether the JIT-resumed False branch is the correct one.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+            && method.isObject() && method.rawBits() > 0x10000) {
+        // Activation-sequence diff: arm on the first resolve:, then log the
+        // next 200 activations (sel, recvCls, arg0tag).  Diff JIT vs interp
+        // to pin the FIRST diverging dispatch (the miscompiled caller-resume).
+        static bool armed = false;
+        static int actN = 0;
+        std::string s = memory_.selectorOf(method);
+        if (!armed && s == "resolve:") armed = true;
+        if (armed && ++actN <= 200) {
+            Oop recv = stackValue(argCount);
+            Oop a0 = argCount >= 1 ? stackValue(argCount - 1) : Oop::nil();
+            auto tg = [&](Oop o)->const char*{
+                if (o.isNil()) return "nil";
+                if (o.rawBits()==memory_.trueObject().rawBits()) return "T";
+                if (o.rawBits()==memory_.falseObject().rawBits()) return "F";
+                if (o.isSmallInteger()) return "int";
+                return "obj"; };
+            fprintf(stderr, "[ACT %d] #%s recvCls=%s a0=%s d=%zu\n", actN,
+                s.c_str(),
+                recv.isObject() && recv.rawBits()>0x10000
+                    ? memory_.classNameOf(recv).c_str() : "imm",
+                tg(a0), frameDepth_);
+        }
+    }
     // 4th-class trap (checkpoint w): an activation whose arg0 == receiver
     // oop is the smoking signature (Array>>do: ran with the closure slot
     // holding the receiver).  Selector-filtered to do:/value-family to
@@ -20492,11 +20521,27 @@ void Interpreter::tryJITResumeInCaller() {
                 std::string tCls = tos.isSmallInteger() ? "SmI"
                     : (tos.isObject() && tos.rawBits() >= 0x10000)
                         ? memory_.classNameOf(tos) : "imm";
+                // Caller-resume value-protocol probe: dump the top stack slots
+                // and t0 so a nil-at-TOS (sel2 returned nil vs wrong arg) is
+                // distinguishable from an sp-depth drift.
+                auto stag = [&](Oop o)->const char*{
+                    if (o.rawBits()==0) return "ZERO";
+                    if (o.isNil()) return "nil";
+                    if (o.rawBits()==memory_.trueObject().rawBits()) return "T";
+                    if (o.rawBits()==memory_.falseObject().rawBits()) return "F";
+                    if (o.isSmallInteger()) return "int";
+                    return "obj"; };
+                Oop s1 = stackPointer_-1>=framePointer_ ? stackPointer_[-1] : Oop::fromRawBits(0);
+                Oop s2 = stackPointer_-2>=framePointer_ ? stackPointer_[-2] : Oop::fromRawBits(0);
+                Oop s3 = stackPointer_-3>=framePointer_ ? stackPointer_[-3] : Oop::fromRawBits(0);
+                Oop t0v = (framePointer_+1) ? framePointer_[1] : Oop::fromRawBits(0);
                 fprintf(stderr,
-                    "[RES-IN] #%s bcOff=%u sp-fp=%lld tos=%s fd=%zu\n",
+                    "[RES-IN] #%s bcOff=%u sp-fp=%lld tos=%s fd=%zu "
+                    "s-1=%s s-2=%s s-3=%s t0=%s\n",
                     rSel.c_str(), bcOffset,
                     (long long)(stackPointer_ - framePointer_),
-                    tCls.c_str(), frameDepth_);
+                    tCls.c_str(), frameDepth_,
+                    stag(s1), stag(s2), stag(s3), stag(t0v));
                 if (rSel == "widthOf:") g_fpushArm = true;
             }
         }
