@@ -4,6 +4,27 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-13i — option A correctness DONE + knob-off zero-cost gated (regression fixed)
+
+Sequence: option A (Phases 1-3) FIXED the internal-J2J cannotReturn bug
+(eval 3+4->7, both knob states batch 1-15 = 2468/0/0) — but the lever is
+PERF-NEUTRAL (dict 2788->2998, SHA 9179->9683, ~5-7% SLOWER knob-on).
+Worse, the UNCONDITIONAL closure recording REGRESSED the DEFAULT config:
+full-565 knob-off 12692->12656 with 26 timeouts (was 1), 25 new in Trait*
+— the +per-push interp-deref store + doubled forEachRoot J2J walk +
+materialize validation tipped slow reflective tests over the 50s
+watchdog. FIXED (gated commit): emitClosurePush / forEachRoot closure
+visit / materialize closure read are ALL no-ops when
+PHARO_T1_RESUME_INTERNAL_J2J is off. Knob-off Trait region recovered
+35/0/0/0-timeout; full-565 knob-off confirmation RUNNING (expect ~12692).
+The +8-byte JSV_SIZE layout stays (no per-push instruction cost, just
+slot size). NET: internal-J2J is now a CORRECT, opt-in, perf-neutral
+knob with ZERO default-config cost. Correctness infra (JSV_CLOSURE block
+materialization) is sound. LESSON: a hot-path layout/GC change for an
+opt-in feature MUST be knob-gated end to end (push + GC walk + read) or
+it taxes the default config — measure with a FULL run (batch 1-15 missed
+the Trait timeouts; they only surface under full-suite cumulative load).
+
 ## CHECKPOINT 2026-06-13h — internal-J2J cannotReturn FIXED (option A complete); but the lever is PERF-NEUTRAL
 
 OPTION A COMPLETE (Phases 1+2+3, committed 8380a647/63ba17f8/483d289c).
