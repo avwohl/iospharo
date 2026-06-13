@@ -6467,6 +6467,25 @@ void Interpreter::pushSpecial(int which) {
 }
 
 void Interpreter::returnValue(Oop value) {
+    // RETURN-VALUE trace (gated PHARO_SP_DEPTH_TRAP): log resolve-family
+    // method returns with their value tag, to find the send that returns nil
+    // under caller-resume but not the interpreter control.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+            && method_.isObject() && method_.rawBits() > 0x10000) {
+        static int rvN = 0;
+        std::string rs = memory_.selectorOf(method_);
+        if ((rs == "resolve:" || rs == "resolve" || rs == "asResolvedBy:"
+             || rs == "resolvePath:" || rs == "canResolve:") && ++rvN <= 40) {
+            const char* vt = value.isNil() ? "NIL" :
+                value.isSmallInteger() ? "int" :
+                value.rawBits()==memory_.trueObject().rawBits() ? "T" :
+                value.rawBits()==memory_.falseObject().rawBits() ? "F" : "obj";
+            fprintf(stderr, "[RET-VAL] #%s -> %s (recv %s) d=%zu\n", rs.c_str(),
+                vt, receiver_.isObject() && receiver_.rawBits()>0x10000
+                    ? memory_.classNameOf(receiver_).c_str() : "imm",
+                frameDepth_);
+        }
+    }
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
         // Check for pending NLR through ensure:.
@@ -20126,6 +20145,22 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         jit::spDepthCheck(sstate, "perBcSista-backjump");
         switch (sstate.exitReason) {
         case jit::ExitReturn: {
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+                    && method_.isObject() && method_.rawBits() > 0x10000) {
+                static int jrvN = 0;
+                std::string rs = memory_.selectorOf(method_);
+                if ((rs == "resolve:" || rs == "resolve"
+                     || rs == "asResolvedBy:" || rs == "resolvePath:"
+                     || rs == "canResolve:") && ++jrvN <= 40) {
+                    Oop v = sstate.returnValue;
+                    fprintf(stderr, "[RET-VAL-JIT] #%s -> %s (recv %s) d=%zu\n",
+                        rs.c_str(), v.isNil() ? "NIL" : v.isSmallInteger()
+                            ? "int" : "obj",
+                        receiver_.isObject() && receiver_.rawBits()>0x10000
+                            ? memory_.classNameOf(receiver_).c_str() : "imm",
+                        frameDepth_);
+                }
+            }
             // Sista ran past the loop and returned.  Pop frame, push
             // return value, let the interp's caller-side resume.
             // Step 7: honor materializedRetSlot.
