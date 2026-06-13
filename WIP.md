@@ -4,6 +4,54 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-13c — cannotReturn ROOT CAUSE confirmed + principled-fix spec
+
+ROOT CAUSE (committed 9a670fdf, PHARO_BLOCK_SAVE_PROBE diagnostic):
+materializeJ2JSaveIntoFrame hardcodes savedClosure=nil → a block save
+becomes a Context with closureOrNil=nil (slot 4) whose 'method' is a
+CompiledBlock = a malformed METHOD context. At the process-switch
+frame->context conversion (materializeFrameStack:16677) its home/
+receiver/sender resolution breaks → caller continuation dropped →
+cannotReturn: storm.
+
+WHY tempBase-1 RECOVERY IS INSUFFICIENT (measured): the probe shows the
+closure is at tb[-1] for SOME blocks (whileFalse:/ZnUTF8Encoder, 10/20)
+but tb[-1] holds ByteString/WorldState/FreeTypeCache for OTHERS — a
+running block A reuses its fp[0] slot for temps/expr-stack, so the
+closure is gone by the time A makes its own J2J call. The closure is
+NOT recoverable from the frame; it must be RECORDED at save-push (when
+A was activated and the closure was live in a register), exactly like
+the interpreter's pushFrame does (Interpreter.cpp:15145
+frame.savedClosure = closure_).
+
+PRINCIPLED FIX (next session, the V2 save-layout closure field):
+  1. J2JSaveLayout.h: add JSV_CLOSURE 32, bump JSV_SIZE 32->40 (V2).
+  2. Interpreter.hpp J2JSave struct: add `Oop closure;` field +
+     update the static_asserts to match offsets/size.
+  3. AsmjitT1 J2J save-push emit (the block-JM path, ~line 4080 inline
+     + the xmethod save-push): for isBlock callees write the live
+     closure register into [cursor + JSV_CLOSURE]. For method JMs write
+     nil (or skip — materialize already nils methods). NEED: which reg
+     holds the closure at the block-value J2J call site (the
+     BLOCK_VALUE_BIT dispatch in stencils.cpp / AsmjitT1 sets it up —
+     trace x-reg for the closure operand).
+  4. TrampolineAsm.S J2J push/pop: copy the 40th-byte field through.
+  5. materializeJ2JSaveIntoFrame: frame.savedClosure = save.closure
+     (drop the tb[-1] heuristic).
+  6. forEachRoot + prepareForGC/afterGC pool walks: visit
+     j2jPool_[i].closure as a GC root (it's an Oop).
+  7. sp-depth save checker: no change (doesn't read closure).
+  RISK: hot-path layout +8 bytes/save on the DEFAULT config. Gate the
+  validation on knob-off batch 1-15 = 2468/0/0 AND a bench A/B (the
+  save push/pop is in every J2J call). If the +8 bytes regresses
+  benches, make the closure field V2-block-only via a parallel
+  side-array keyed by cursor index (no layout change) instead.
+ALTERNATIVE (cheaper, knob-only): a std::vector<Oop> closure side-
+channel parallel to the resume slice (kResumeSliceSlots entries),
+written by a NEW runtime helper the block-JM J2J emit calls only when
+resumeInternalJ2J is active — zero default-config layout change. This
+is the recommended FIRST attempt (isolates the fix to the opt-in path).
+
 ## CHECKPOINT 2026-06-13b — two fix attempts measured; both half-steps (knob still opt-in)
 
 Experiment data on the DET repro (counts are occurrences of the error
