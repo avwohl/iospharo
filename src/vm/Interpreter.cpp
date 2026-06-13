@@ -20053,6 +20053,10 @@ void Interpreter::tryJITResumeInCaller() {
     // bytecode after the send and the return value on the stack. If the
     // caller has JIT code, resume execution in JIT from this bytecode.
     if (inJITResume_) return;  // Prevent re-entrancy from returnValue or tryJITActivation
+    // x86 WIP: the caller-resume re-entry has a pre-existing per-send sp
+    // leak (see PHARO_T1_NO_CALLER_RESUME in debug_vars.h).  When set, skip
+    // the JIT re-entry so the interpreter continues the caller correctly.
+    if (GET_DEBUG_BOOL(PHARO_T1_NO_CALLER_RESUME)) return;
     inJITResume_ = true;
 
     // Bug-14 diagnostic: log each invocation with caller method, retVal
