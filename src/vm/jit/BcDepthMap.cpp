@@ -13,6 +13,7 @@
 
 #include "BcDepthMap.hpp"
 #include "JITConfig.hpp"
+#include "../DebugTrap.hpp"
 
 #if PHARO_JIT_ENABLED
 
@@ -409,7 +410,7 @@ void spDepthCheck(JITState& state, const char* where) {
         // Cascade-#3 lldb hook: trap at the mismatch so the debugger
         // lands ON the inconsistent frame with all state live.
         if (GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP)) {
-            __builtin_debugtrap();
+            PHARO_DEBUGTRAP();
         }
     }
 }

@@ -16,6 +16,7 @@
 #include "Interpreter.hpp"
 #include "DebugVars.hpp"
 #include "ShadowSlots.hpp"
+#include "DebugTrap.hpp"
 #include "ImageLoader.hpp"
 #include "ImageWriter.hpp"
 #include "FFI.hpp"
@@ -4681,7 +4682,7 @@ PrimitiveResult Interpreter::primitiveExitToDebugger(int argCount) {
 
     // On debug builds, trigger a breakpoint
 #if defined(__APPLE__) && defined(__arm64__)
-    __builtin_debugtrap();
+    PHARO_DEBUGTRAP();
 #elif defined(__x86_64__) || defined(_M_X64)
     __builtin_trap();
 #else
@@ -12055,7 +12056,7 @@ PrimitiveResult Interpreter::primitiveDebugHalt(int argCount) {
     // In debug builds, this could trigger a breakpoint
     // For iOS release, just log and continue
 #ifdef DEBUG
-    // Could use: __builtin_debugtrap(); or raise(SIGTRAP);
+    // Could use: PHARO_DEBUGTRAP(); or raise(SIGTRAP);
 #endif
 
     // Return receiver (self)
