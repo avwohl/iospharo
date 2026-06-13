@@ -10546,11 +10546,28 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 if (o.rawBits()==memory_.falseObject().rawBits()) return "F";
                 if (o.isSmallInteger()) return "int";
                 return "obj"; };
-            fprintf(stderr, "[ACT %d] #%s recvCls=%s a0=%s d=%zu\n", actN,
+            // For new:, also dump the receiver oop + the method's literal0
+            // (the `self == LV0` test operand) to catch the == flip.
+            std::string extra;
+            if (s == "new:" && recv.rawBits() > 0x10000) {
+                size_t nl = memory_.numLiteralsOf(method);
+                Oop l0 = nl >= 1 ? method.asObjectPtr()->slotAt(1) : Oop::nil();
+                char buf[160];
+                snprintf(buf, sizeof buf,
+                    " meth=0x%llx recvOop=0x%llx lit0=0x%llx(%s) eq=%d",
+                    (unsigned long long)method.rawBits(),
+                    (unsigned long long)recv.rawBits(),
+                    (unsigned long long)l0.rawBits(),
+                    l0.isObject() && l0.rawBits()>0x10000
+                        ? memory_.classNameOf(l0).c_str() : "imm",
+                    (int)(recv.rawBits() == l0.rawBits()));
+                extra = buf;
+            }
+            fprintf(stderr, "[ACT %d] #%s recvCls=%s a0=%s d=%zu%s\n", actN,
                 s.c_str(),
                 recv.isObject() && recv.rawBits()>0x10000
                     ? memory_.classNameOf(recv).c_str() : "imm",
-                tg(a0), frameDepth_);
+                tg(a0), frameDepth_, extra.c_str());
         }
     }
     // 4th-class trap (checkpoint w): an activation whose arg0 == receiver
