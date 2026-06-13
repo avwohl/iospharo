@@ -4,6 +4,29 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-13l — all default-on changes adversarially reviewed; scheduler = SOUND
+
+Second adversarial workflow (11 agents) on the default-on scheduler
+preemption-ordering change (bc9c4108/beeec92b): **0 confirmed bugs,
+verdict SOUND.** Verified against source: addFirstLinkToList integrity
+(empty/single/multi, no stale lastLink, matches cointerp), no
+lost/duplicate process (active-off-all-ready-lists invariant +
+removeFirstLink-before-front-insert at all 3 sites), starvation is the
+deliberate Cog no-time-slice semantics (same-pri progress still flows via
+yield/semaphore/aging), viaHigherPri correct in both handleForceYield and
+step() incl. the grace-period undo, opt-outs clean. Residuals are all
+PRE-EXISTING (primitiveResume not unlinking from a wait-list; priority<0
+drop) — not regressions.
+
+VERIFICATION SWEEP COMPLETE — the session's three riskiest default-on
+changes are now all adversarially reviewed:
+  gen-clone (eden shallowCopy)     SOUND
+  option-A J2JSave layout/asm      2 bugs found (1 default-config
+                                   corruption: x8 clobber) -> FIXED (x12)
+  scheduler preemption ordering    SOUND
+High confidence in the default config. Suite stands 12691-12692 (rotating
+flicker noise) vs Cog 12576, zero VM-attributable deltas.
+
 ## CHECKPOINT 2026-06-13k — adversarial review caught a DEFAULT-CONFIG corruption in my option-A code
 
 Ran a 6-agent adversarial workflow (review → independent refute → synth)
