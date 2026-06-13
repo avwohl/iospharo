@@ -841,14 +841,22 @@ constexpr int OFF_J2J_ENTRY_DEPTH = 200;
 constexpr int OFF_J2J_ENTRY_CURSOR = 312;  // FSR M3 (JITState.j2jEntryCursor; static_asserted there)
 [[maybe_unused]] constexpr int OFF_CLOSURE = 320;  // JITState.closure (JS_CLOSURE; static_asserted in JITState.hpp)
 constexpr int OFF_INTERP = 40;  // JITState.interp (static_asserted in JITState.hpp)
-// Emit `dst = interp->closure_` given x0=state: 2 loads via OFF_INTERP
-// then the (runtime-constant) closure_ field offset.  The always-correct
-// running-frame closure — no JITState.closure sync surface.
-static inline void emitLoadInterpClosure(asmjit::a64::Assembler& a,
-                                         const asmjit::a64::Gp& dst) {
-    a.ldr(dst, asmjit::a64::ptr(asmjit::a64::x0, OFF_INTERP));
-    a.ldr(dst, asmjit::a64::ptr(dst,
+// Store the running frame's closure into J2JSave.closure at [cursor+off].
+// GATED on PHARO_T1_RESUME_INTERNAL_J2J: only the resume-internal path
+// reads/GC-walks the closure slot, so when the knob is off this is a
+// NO-OP — the default config pays nothing (the slot stays unused; the
+// GC walk + materialize closure reads are likewise knob-gated).  Knob-on:
+// reads interp->closure_ directly (state->interp@OFF_INTERP + the
+// runtime-constant closure_ offset) — the always-correct running-frame
+// closure, no JITState.closure sync surface.  `scratch` is clobbered.
+static inline void emitClosurePush(asmjit::a64::Assembler& a,
+                                   const asmjit::a64::Gp& cursor, int off,
+                                   const asmjit::a64::Gp& scratch) {
+    if (!GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)) return;
+    a.ldr(scratch, asmjit::a64::ptr(asmjit::a64::x0, OFF_INTERP));
+    a.ldr(scratch, asmjit::a64::ptr(scratch,
         (int)pharo::Interpreter::closureFieldOffset()));
+    a.str(scratch, asmjit::a64::ptr(cursor, off));
 }
 [[maybe_unused]] constexpr int OFF_J2J_DEPTH_INC = 208;
 // Retro-save graceful pool-full handoff (cascade #2).
@@ -4650,9 +4658,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         // size-40 layout: tempBase@-24, packedResume@-16,
                         // closure@-8 (was -16/-8 at size 32).
                         a.stp(x15, x14, ptr(x6, -24));
-                        // JSV_CLOSURE = interp->closure_ (x14 dead after store).
-                        emitLoadInterpClosure(a, x14);
-                        a.str(x14, ptr(x6, -8));
+                        // JSV_CLOSURE (knob-gated; no-op default).
+                        emitClosurePush(a, x6, -8, x14);
                         // Callee state from the patched calleeJM — all
                         // level-1 loads off an immediate.  offsetof ONLY
                         // (the JM-byte-offset off-by-one lesson).
@@ -5740,9 +5747,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         }
                         // size-40: tempBase@-24, packedResume@-16, closure@-8.
                         a.stp(x4, x5, ptr(x14, -24));      // tempBase + packedResume
-                        // JSV_CLOSURE = interp->closure_ (x4 dead after store).
-                        emitLoadInterpClosure(a, x4);
-                        a.str(x4, ptr(x14, -8));
+                        // JSV_CLOSURE (knob-gated; no-op default).
+                        emitClosurePush(a, x14, -8, x4);
 #else
                         // save.tempBase from stash[16]; save.ip = post-send
                         // ip = callerCM + bcOffsetFromMethObj + 1 (the
@@ -6023,9 +6029,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 emitLoadTempBase(a, x15);
                 // size-40: tempBase@-24, packedResume@-16, closure@-8.
                 a.stp(x15, x14, ptr(x6, -24));          // tempBase + packedResume
-                // JSV_CLOSURE = interp->closure_ (x14 dead after its store).
-                emitLoadInterpClosure(a, x14);
-                a.str(x14, ptr(x6, -8));
+                // JSV_CLOSURE (knob-gated; no-op default).
+                emitClosurePush(a, x6, -8, x14);
 #else
                 emitLoadSp(a, x15);                // sp (sweep: was ldp sp+recv)
                 a.ldr(x4, ptr(x0, OFF_RECEIVER)); // receiver

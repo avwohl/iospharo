@@ -3582,12 +3582,14 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         // caused 2026-05-19 (deferred A6 iter N+15): the sharp 32K
         // xmethod corruption threshold corresponded to the cumulative
         // GC frequency × bench's xmethod fire rate.
+        // JSV_CLOSURE (2026-06-13): only the resume-internal path writes
+        // the closure slot (the asmjit push is knob-gated), so only walk
+        // it when the knob is on — otherwise the slot is unused garbage
+        // and must NOT be visited.  Hoisted: one knob read per GC.
+        const bool walkClosure = GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J);
         for (int i = 0; i < j2jPoolCursor_; i++) {
             visitor(j2jPool_[i].receiver);
-            // JSV_CLOSURE (2026-06-13): every push writes this slot (nil
-            // for method frames, the closure for block frames), so it is
-            // always a valid Oop below the cursor — visit it as a root.
-            visitor(j2jPool_[i].closure);
+            if (walkClosure) visitor(j2jPool_[i].closure);
         }
 
         // Session H: BV-inline closure side-stack must be walked so

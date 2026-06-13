@@ -23604,7 +23604,9 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     // fall back to nil (the prior behavior, no corruption).  Fallback
     // for the resume-internal site also still tries tb[-1].
     frame.savedClosure = nil;
-    if (saveJM->isBlock) {
+    // Only the resume-internal path writes save.closure (knob-gated push);
+    // when the knob is off the slot is unused garbage — don't read it.
+    if (saveJM->isBlock && GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)) {
         Oop cand = save.closure;
         bool ok = cand.isObject() && cand.rawBits() >= 0x10000
             && memory_.isValidPointer(cand)
