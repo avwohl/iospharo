@@ -68,6 +68,24 @@ written by a NEW runtime helper the block-JM J2J emit calls only when
 resumeInternalJ2J is active — zero default-config layout change. This
 is the recommended FIRST attempt (isolates the fix to the opt-in path).
 
+**KEY 2026-06-13d: the side-channel ALREADY EXISTS.**
+jit_rt_inline_block_value_prep (JITRuntime.cpp:2059-2067) pushes the
+block-value J2J save AND records closure bookkeeping keyed by j2jDepth:
+  bvClosureSaveStack_[bvClosureSaveDepth_++] = currentClosure();  // parent
+  bvIsBvSaveAtJ2jDepth_[j2jDepthBefore] = true;                   // mark
+  setCurrentClosure(blockClosureOop);                             // block's
+A block A running via BV-inline therefore has currentClosure()==A's
+closure while A executes; when A pushes its OWN J2J save (the save that
+later materializes as a block frame), A's closure IS live in
+currentClosure() at push time. Plan: at EVERY J2J save-push (this
+helper + the xmethod/inline save-push emit), record currentClosure()
+into a parallel array indexed by the same slice slot as the save; in
+materializeJ2JSaveIntoFrame use that array for isBlock saves instead of
+the tb[-1] heuristic. Check the existing bvIsBvSaveAtJ2jDepth_ /
+bvClosureSaveStack_ indexing (consumed by jit_rt_inline_block_value_post)
+to see if it can be extended directly rather than adding a new array.
+This keeps the fix C-side (no asm layout change) and opt-in-scoped.
+
 ## CHECKPOINT 2026-06-13b — two fix attempts measured; both half-steps (knob still opt-in)
 
 Experiment data on the DET repro (counts are occurrences of the error
