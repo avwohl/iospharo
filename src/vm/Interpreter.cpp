@@ -20104,7 +20104,9 @@ void Interpreter::tryJITResumeInCaller() {
         for (int i = 0; i < kResumeSliceSlots; i++) {
             j2jPool_[resumeSliceBase + i].receiver = Oop::fromRawBits(0);
             j2jPool_[resumeSliceBase + i].resumeAddr = 0;
+#if PHARO_J2J_SAVE_V2
             j2jPool_[resumeSliceBase + i].closure = Oop::fromRawBits(0);
+#endif
         }
     }
     struct ResumeSliceGuard {
@@ -23597,7 +23599,9 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     frame.savedClosure = nil;
     // Only the resume-internal path writes save.closure (knob-gated push);
     // when the knob is off the slot is unused garbage — don't read it.
+    // V1 (x86 stencil path) has no save.closure field — tb[-1] only.
     if (saveJM->isBlock && GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)) {
+#if PHARO_J2J_SAVE_V2
         Oop cand = save.closure;
         bool ok = cand.isObject() && cand.rawBits() >= 0x10000
             && memory_.isValidPointer(cand)
@@ -23632,6 +23636,18 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
                     isFBC ? "(slot3 mismatch)" : "(not FBC / zero)");
             }
         }
+#else
+        // V1: no save.closure; the resume-internal tb[-1] heuristic only.
+        if (save.tempBase && std::strcmp(siteTag, "resume-internal") == 0) {
+            Oop tb = *(save.tempBase - 1);
+            if (tb.isObject() && tb.rawBits() >= 0x10000
+                    && memory_.isValidPointer(tb)
+                    && tb.asObjectPtr()->classIndex()
+                           == fullBlockClosureClassIndex_) {
+                frame.savedClosure = tb;
+            }
+        }
+#endif
     }
     frame.savedActiveContext = activeContext_;
     frame.materializedContext = nil;

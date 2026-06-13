@@ -24,7 +24,18 @@
 #ifndef PHARO_J2J_SAVE_LAYOUT_H
 #define PHARO_J2J_SAVE_LAYOUT_H
 
-#define PHARO_J2J_SAVE_V2 1
+// V2 (the packed 40-byte save) is the asmjit-T1 protocol, which is the
+// arm64 JIT path.  The x86_64 JIT uses the STENCIL tier, whose own J2JSave
+// (stencils.cpp) is 56-byte V1 and whose C++ chain-loop fallback
+// (Interpreter.cpp, the !PHARO_ASM_TRAMPOLINE branch) reads V1 fields.
+// Making this unconditionally 1 broke the x86 build (global struct V2 vs
+// V1 producers/consumers).  Gate it to arm64 so each arch's global
+// J2JSave matches its active J2J mechanism. (2026-06-13)
+#if defined(__aarch64__) || defined(__arm64__)
+#  define PHARO_J2J_SAVE_V2 1
+#else
+#  define PHARO_J2J_SAVE_V2 0
+#endif
 
 #if PHARO_J2J_SAVE_V2
 

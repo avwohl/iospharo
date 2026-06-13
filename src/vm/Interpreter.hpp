@@ -3589,14 +3589,18 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         // resumeInternalJ2J EXACTLY (esp. !resumeJ2J), not just the knob,
         // or GC visits garbage Oops in the rj2j slice (adversarial review
         // 2026-06-13).  Hoisted: one read per GC.
+#if PHARO_J2J_SAVE_V2
         const bool walkClosure =
             GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)
             && g_debug.useAsmjitT1
             && !g_debug.resumeJ2J
             && !GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH);
+#endif
         for (int i = 0; i < j2jPoolCursor_; i++) {
             visitor(j2jPool_[i].receiver);
+#if PHARO_J2J_SAVE_V2
             if (walkClosure) visitor(j2jPool_[i].closure);
+#endif
         }
 
         // Session H: BV-inline closure side-stack must be walked so
