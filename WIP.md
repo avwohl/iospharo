@@ -4,6 +4,22 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-13d — generational clones shipped; SHA256 = VM-speed tail (no primitive gap)
+
+GEN-CLONE (committed 226108d1, default-on, opt-out PHARO_NO_GEN_CLONE):
+shallowCopy now routes small non-overflow clones to eden like
+allocateSlots (the "eden reserved for GC scratch" comment was stale).
+SHA256 1MB-hash A/B 14385→12664ms (~12% under load). Validated:
+batch 1-15 = 2468/0/0, 200K interleaved copy+GC stress = 0 bad.
+FULL-565 GEN-CLONE VALIDATION RUNNING (bn7vau2y8) — the gate for
+keeping it default-on; flip to opt-in if it regresses below 12692.
+SHA256 VERDICT: processBuffer:/hashStream: have NO primitive — Cog runs
+the SAME pure-Smalltalk code, faster (JIT'd, no resume round-trips). So
+it is VM-speed, not a missing primitive. findGlobal throttle + gen-clone
+narrow it toward ~10-11s but not reliably <10s; the rest is the resume
+round-trip tax = internal-J2J (blocked on closureless block frames).
+SHA256 stays the documented VM-speed-tail timeout; not a correctness bug.
+
 ## CHECKPOINT 2026-06-13c — cannotReturn ROOT CAUSE confirmed + principled-fix spec
 
 ROOT CAUSE (committed 9a670fdf, PHARO_BLOCK_SAVE_PROBE diagnostic):
