@@ -2346,6 +2346,26 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.mov(rdx, r8);
             a.and_(rdx, asmjit::Imm(0xFFFF));    // slotIdx in rdx
             a.mov(rdx, ptr(rax, rdx, 3, 8));     // load slot value into rdx
+            // PHARO_VERIFY_GETTER (x86 port of the arm64 emit ~6576): call
+            // jit_rt_verify_getter to flag a misfiring inline getter (poisoned
+            // IC extras: bit-63 on a non-getter site, key/classification/
+            // method-vs-lookup mismatch).  At this point rax=recv, rcx=sp,
+            // rdx=val, rsi=icDataPtr(entry), r8=extras, rdi=state.  7 pushes
+            // (56B) realign rsp (JIT entry rsp == 8 mod 16) for the C call.
+            if (GET_DEBUG_BOOL(PHARO_VERIFY_GETTER)) {
+                a.push(rax); a.push(rcx); a.push(rdx); a.push(rsi);
+                a.push(r8); a.push(rdi); a.push(r9);
+                // stack top->bottom: r9,rdi,r8,rsi,rdx,rcx,rax (offsets 0..48)
+                a.mov(rdi, ptr(rsp, 8));    // arg0 statep
+                a.mov(rsi, ptr(rsp, 48));   // arg1 recv (rax)
+                a.mov(rdx, ptr(rsp, 32));   // arg2 val
+                a.mov(rcx, ptr(rsp, 16));   // arg3 extra (r8)
+                a.mov(r8,  ptr(rsp, 24));   // arg4 entryPtr (rsi=icDataPtr)
+                a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_verify_getter));
+                a.call(rax);
+                a.pop(r9); a.pop(rdi); a.pop(r8); a.pop(rsi);
+                a.pop(rdx); a.pop(rcx); a.pop(rax);
+            }
             a.mov(ptr(rcx, rcvrOffsetBytes), rdx);
             if (nArgs > 0) {
                 a.sub(rcx, asmjit::Imm(8 * nArgs));
