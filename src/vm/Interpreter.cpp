@@ -21115,6 +21115,19 @@ void Interpreter::tryJITResumeInCaller() {
 
         j2jPoolCursor_ = rj2jBase;
 
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_CT_SPLOG), 0)
+                && state.jitMethod && state.method.isObject()
+                && memory_.selectorOf(state.method) == "copyTo:") {
+            auto* cjm = reinterpret_cast<jit::JITMethod*>(
+                reinterpret_cast<uintptr_t>(state.jitMethod)
+                & ~static_cast<uintptr_t>(1));
+            long bcOff = cjm ? (long)(state.ip - cjm->bcStart()) : -1;
+            long spRel = state.tempBase
+                ? (long)(state.sp - (state.tempBase + cjm->tempCount)) : -999;
+            fprintf(stderr, "[CT-REXIT] bcOff=%ld spRel=%ld exit=%d "
+                "lastResumeKind=%d\n", bcOff, spRel, (int)state.exitReason,
+                (int)lastResumeKind_);
+        }
         jit::spDepthCheck(state, "tryJITResume-exit");
         if (__builtin_expect(g_debug.jitTraceOop != nullptr, 0)) {
             static uint64_t traceBits = strtoull(g_debug.jitTraceOop, nullptr, 0);
@@ -26205,6 +26218,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             reinterpret_cast<jit::JITMethod*>(state.jitMethod);
                         int savedArgCount = state.argCount;
                         Oop savedMethod = state.method;
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_CT_SPLOG), 0)
+                                && savedMethod.isObject()
+                                && memory_.selectorOf(savedMethod) == "copyTo:") {
+                            long ipOff = savedJitMethod
+                                ? (long)(state.ip - savedJitMethod->bcStart()) : -1;
+                            long spRel = savedTempBase
+                                ? (long)(savedSP - (savedTempBase
+                                    + savedJitMethod->tempCount)) : -999;
+                            fprintf(stderr, "[CT-CALL] resumeBcOff=%ld savedSP=%p "
+                                "spRel=%ld nArgs=%d\n", ipOff, (void*)savedSP,
+                                spRel, (int)state.sendArgCount);
+                        }
                         // instructionPointer_ is already past-send (caller resume point)
 
                         // Precompute caller's resume address to avoid expensive
