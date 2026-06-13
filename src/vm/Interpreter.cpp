@@ -20618,6 +20618,20 @@ void Interpreter::tryJITResumeInCaller() {
                    state.exitReason == jit::ExitYield ||
                    (state.exitReason == jit::ExitReturn && rj2jDepth > 0)) {
                 jit::spDepthCheck(state, "tryJITResume-chain");
+                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_CT_SPLOG), 0)
+                        && state.jitMethod && state.method.isObject()
+                        && memory_.selectorOf(state.method) == "copyTo:") {
+                    auto* cjm = reinterpret_cast<jit::JITMethod*>(
+                        reinterpret_cast<uintptr_t>(state.jitMethod)
+                        & ~static_cast<uintptr_t>(1));
+                    long bcOff = cjm ? (long)(state.ip - cjm->bcStart()) : -1;
+                    long spRel = state.tempBase
+                        ? (long)(state.sp - (state.tempBase + cjm->tempCount))
+                        : -999;
+                    fprintf(stderr, "[CT-CHAIN] exit=%d bcOff=%ld spRel=%ld "
+                        "nArgs=%d j2jD=%d\n", (int)state.exitReason, bcOff,
+                        spRel, (int)state.sendArgCount, state.j2jDepth);
+                }
 
                 // SAFE-POINT BAIL: bail to interpreter when checkCountdown_
                 // expired and chain is at a Return-with-saves boundary.
