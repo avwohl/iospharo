@@ -16674,6 +16674,32 @@ Oop Interpreter::materializeFrameStack() {
         memory_.storePointer(1, context, Oop::fromSmallInteger(pc));        // pc
         // stackp is set below after we know how many items we saved
         memory_.storePointer(3, context, frame.savedMethod);                // method
+        // PHARO_BLOCK_SAVE_PROBE: flag malformed contexts — a CompiledBlock
+        // method with a nil closure builds a Context that lies about being
+        // a method activation (slot 4 nil), breaking home/sender resolution
+        // (the resume-internal cannotReturn: storm).  Confirms whether the
+        // gated tb[-1] recovery covered all block frames or some remain.
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_BLOCK_SAVE_PROBE), 0)
+                && frame.savedClosure.isNil()
+                && frame.savedMethod.isObject()) {
+            // last literal of a CompiledBlock is its outer code; cheap
+            // heuristic: numLiterals>=1 and the method is NOT a normal
+            // CompiledMethod (no AdditionalMethodState selector).  Simpler:
+            // flag any nil-closure method whose selectorOf is empty (blocks
+            // have no selector).
+            std::string sel = memory_.selectorOf(frame.savedMethod);
+            if (sel.empty() || sel == "?") {
+                static int mc = 0;
+                if (++mc <= 30)
+                    fprintf(stderr,
+                        "[MALFORMED-BLOCK-CTX #%d] nil-closure method, "
+                        "recv=%s fd-idx=%zu\n", mc,
+                        frame.savedReceiver.isObject()
+                          && frame.savedReceiver.rawBits() >= 0x10000
+                            ? memory_.classNameOf(frame.savedReceiver).c_str()
+                            : "imm", i);
+            }
+        }
         memory_.storePointer(4, context, frame.savedClosure);                // closureOrNil
         memory_.storePointer(5, context, frame.savedReceiver);              // receiver
 

@@ -4,6 +4,44 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-13f — cannotReturn DEFINITIVE: malformed contexts from asm-pushed block saves; two fix options
+
+NEW ORACLE (committed, PHARO_BLOCK_SAVE_PROBE): MALFORMED-BLOCK-CTX log
+at materializeFrameStack:16677 fires when a Context is built with a
+CompiledBlock method + nil closure. DET repro: 10 such contexts,
+recv=OrderedDictionary, → 1 cannotReturn. These are NOT the tb[-1]=FBC
+ZnUTF8Encoder blocks the gated recovery covers — they are
+OrderedDictionary blocks making REGULAR sends (at:/add:), whose J2J
+saves are ASM-pushed (xmethod/inline save-push), not via the C
+block-value helper. So a C-only fix (instrument jit_rt_inline_block_
+value_prep) cannot reach them; the closure must live AT THE SAVE,
+written by BOTH push paths.
+
+TWO IMPLEMENTATION OPTIONS (next session, opt-in path):
+ (A) +8-byte V2 layout field JSV_CLOSURE: J2JSaveLayout.h size 32->40,
+     J2JSave struct + static_asserts, asm xmethod/inline save-push +
+     C BV helper write closure_ (live register), TrampolineAsm.S
+     push/pop, materialize reads it, forEachRoot/GC walks visit it.
+     Default-config cost: +8 bytes/save + one store on the hot J2J
+     push. RISK: hot-path layout change.
+ (B) CLEANER — repurpose the receiver slot for block saves (no layout
+     change): a block frame's home receiver == closure[3] is ALWAYS
+     derivable, so the block save-push can store the CLOSURE in
+     save.receiver; materialize, gated on saveJM->isBlock, sets
+     savedClosure = save.receiver and savedReceiver = closure[3].
+     CATCH: the resume (non-materialize) path that restores the
+     caller's receiver from save.receiver must, for block saves, derive
+     it as save.receiver[3] (closure->receiver). Audit every save.receiver
+     reader (resume continuation, chain-loop pops, sp-depth checker) —
+     if few, (B) is strictly better (zero layout/GC-walk change, the
+     closure is already a GC-visible Oop in the receiver slot).
+RECOMMEND (B) first: grep save.receiver / JSV_RECEIVER readers, confirm
+the only consumers are the materialize + the resume receiver-restore,
+make both branch on isBlock. Validate: knob-off batch 1-15 = 2468/0/0
+(byte-identical — block saves are only produced under inline-J2J),
+then knob-on DET repro MALFORMED-BLOCK-CTX count -> 0, cannotReturn ->
+0, eval 3+4 -> 7, then ladder/dict/suite per the audit plan's seq.
+
 ## CHECKPOINT 2026-06-13e — gen-clone VALIDATED default-on (full-565 = 12692, no regression)
 
 Gen-clone full-565: 12692 P / 0 F / 2 E / 1 T — IDENTICAL pass count to
