@@ -35,6 +35,33 @@ TWO IMPLEMENTATION OPTIONS (next session, opt-in path):
      reader (resume continuation, chain-loop pops, sp-depth checker) —
      if few, (B) is strictly better (zero layout/GC-walk change, the
      closure is already a GC-visible Oop in the receiver slot).
+OPTION-A SCOPE FULLY AUDITED (2026-06-13f) — 3 push sites + closure
+source. The closure must be written at EVERY J2J save-push:
+  (1) TrampolineAsm.S Ltramp_call V2 push (~line 357, after the
+      JSV_TEMPBASE store) — chain-loop ExitJ2JCall;
+  (2) AsmjitT1 inline xmethod save-push (~line 4080) — emitted per
+      method's send sites (the path that pushes the OrderedDictionary
+      block saves);
+  (3) jit_rt_inline_block_value_prep (JITRuntime.cpp:2024 push) — C, easy.
+  CLOSURE SOURCE PROBLEM: JITState has NO closure field (only sp,
+  receiver, tempBase, ip, ...; no JS_CLOSURE). So the asm push sites
+  (1)(2) can't read the closure from x21=state directly. EITHER add a
+  JS_CLOSURE field to JITState kept in sync with interp->closure_ (more
+  surface: sync at every BV activation / setCurrentClosure), OR have
+  each asm push deref interp->closure_ via offsetof (state->interp +
+  offsetof(Interpreter, closure_)). The JS_CLOSURE-field route is
+  cleaner if closure_ is already mirrored anywhere; check
+  setCurrentClosure call sites. This is the FIRST thing to resolve next
+  session — it gates whether (1)(2) are 1-instruction adds or need an
+  interp-load each.
+  Full (A) edit list (in dependency order): JITState +closure field
+  (+JS_CLOSURE offset, sync), J2JSaveLayout.h JSV_CLOSURE=32/JSV_SIZE=40,
+  J2JSave struct +closure +static_asserts, the 3 push sites, materialize
+  read, forEachRoot (Interpreter.hpp:3577) + prepareForGC/afterGC pool
+  walks. Validate knob-off batch 1-15=2468/0/0 + bench A/B (the +8 bytes
+  and extra store hit the DEFAULT J2J push), then knob-on DET repro
+  MALFORMED-BLOCK-CTX->0, cannotReturn->0, 3+4->7, ladder/dict/suite.
+
 CORRECTION (2026-06-13f, audited save.receiver readers): (B) is NOT
 cleaner — save.receiver is read on the RESUME path to restore the
 caller's receiver by ASM (TrampolineAsm.S:219/240 chain-pop) AND two
