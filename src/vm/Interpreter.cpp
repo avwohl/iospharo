@@ -20982,6 +20982,15 @@ void Interpreter::tryJITResumeInCaller() {
                     }
 
 #if !PHARO_J2J_SAVE_V2
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_CT_SPLOG), 0)
+                            && save.jitMethod && memory_.selectorOf(
+                                Oop::fromRawBits(save.jitMethod->compiledMethodOop))
+                                == "copyTo:") {
+                        fprintf(stderr, "[CT-J2JRET] save.sp=%p nArgs=%d "
+                            "sp_in=%p -> sp_out=%p\n", (void*)save.sp,
+                            (int)save.sendArgCount, (void*)state.sp,
+                            (void*)(save.sp - save.sendArgCount));
+                    }
                     // Pop receiver+args, push return value (V2: the
                     // resume site does this with static offsets).
                     state.sp[-(save.sendArgCount + 1)] = retVal;
@@ -26464,6 +26473,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 int spOff = (int)(state.sp - savedTempBase);
                                 atRec(9, (uint8_t)nArgs, spOff, retVal.rawBits(),
                                       state.sp[-(nArgs + 1)].rawBits());
+                            }
+                            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_CT_SPLOG), 0)
+                                    && memory_.selectorOf(savedMethod) == "copyTo:") {
+                                fprintf(stderr, "[CT-STENCILRET] savedSP=%p nArgs=%d "
+                                    "sp_in=%p -> sp_out=%p\n", (void*)savedSP,
+                                    (int)nArgs, (void*)state.sp,
+                                    (void*)(state.sp - nArgs));
                             }
                             state.sp[-(nArgs + 1)] = retVal;
                             state.sp -= nArgs;

@@ -387,6 +387,21 @@ void spDepthCheck(JITState& state, const char* where) {
     // sp convention is one-past-TOS (stackTop() = *(sp-1)); with an
     // empty operand stack sp = tempBase + tempCount.
     Oop* expected = state.tempBase + jm->tempCount + d;
+    // x86 leak hunt: log EVERY copyTo: exit so the per-recursion drift is
+    // visible (PHARO_T1_CT_SPLOG).
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_CT_SPLOG), 0)) {
+        std::string sel = state.memory->selectorOf(
+            Oop::fromRawBits(jm->compiledMethodOop));
+        if (sel == "copyTo:") {
+            fprintf(stderr,
+                "[CT-SPLOG] %s exit=%d bcOff=%lld op=0x%02x depth=%d "
+                "sp=%p tb=%p tc=%d expected=%p delta=%lld j2jD=%d\n",
+                where, er, (long long)bcOff, bcStart[bcOff], (int)d,
+                (void*)state.sp, (void*)state.tempBase, (int)jm->tempCount,
+                (void*)expected, (long long)(state.sp - expected),
+                state.j2jDepth);
+        }
+    }
     // ExitMustBool: the emit may have consumed the condition before
     // exiting (the chain loop pushes it back) — accept d or d-1.
     if (er == ExitMustBool && state.sp == expected - 1) return;
