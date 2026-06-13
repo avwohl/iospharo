@@ -35,12 +35,29 @@ TWO IMPLEMENTATION OPTIONS (next session, opt-in path):
      reader (resume continuation, chain-loop pops, sp-depth checker) —
      if few, (B) is strictly better (zero layout/GC-walk change, the
      closure is already a GC-visible Oop in the receiver slot).
-RECOMMEND (B) first: grep save.receiver / JSV_RECEIVER readers, confirm
-the only consumers are the materialize + the resume receiver-restore,
-make both branch on isBlock. Validate: knob-off batch 1-15 = 2468/0/0
-(byte-identical — block saves are only produced under inline-J2J),
-then knob-on DET repro MALFORMED-BLOCK-CTX count -> 0, cannotReturn ->
-0, eval 3+4 -> 7, then ladder/dict/suite per the audit plan's seq.
+CORRECTION (2026-06-13f, audited save.receiver readers): (B) is NOT
+cleaner — save.receiver is read on the RESUME path to restore the
+caller's receiver by ASM (TrampolineAsm.S:219/240 chain-pop) AND two
+C++ sites (Interpreter.cpp:20943, 24423). Option (B) would force ALL of
+them (incl. asm) to branch on isBlock and deref closure[3]. Option (A)
+the +8-byte field touches FEWER asm points: one store at the save-push
+(closure_ is a live register), one load at materialize-read; the resume
+path never reads the closure field. So (A) IS THE RECOMMENDED PLAN.
+Concrete (A) edits: J2JSaveLayout.h JSV_CLOSURE=32 + JSV_SIZE 32->40;
+J2JSave struct `Oop closure;` + static_asserts; the asm save-push emits
+(AsmjitT1 xmethod/inline ~4080 + the BV C helper JITRuntime.cpp:2024)
+write closure_/currentClosure() at +32; TrampolineAsm.S push (line 356
+stp region) + pop carry the +32..40 bytes; materializeJ2JSaveIntoFrame
+sets savedClosure = save.closure for isBlock (drop tb[-1]); forEachRoot
+(Interpreter.hpp:3577 loop) + prepareForGC/afterGC pool walks visit
+save.closure as a GC root. Validate: knob-off batch 1-15 = 2468/0/0
+(block saves only under inline-J2J, but the +8 layout is default — also
+run a bench A/B for the extra store), then knob-on DET repro
+MALFORMED-BLOCK-CTX -> 0, cannotReturn -> 0, eval 3+4 -> 7, then
+ladder/dict/suite per the audit plan seq. If the +8 bench-regresses,
+make closure a parallel j2jPoolClosure_[1024] array written by the same
+push points (no struct change, same GC-walk addition) — but that needs
+the asm to compute the slot index, so the struct field is simpler.
 
 ## CHECKPOINT 2026-06-13e — gen-clone VALIDATED default-on (full-565 = 12692, no regression)
 
