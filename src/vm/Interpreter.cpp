@@ -7762,6 +7762,14 @@ void Interpreter::returnFromBlock() {
     // and is no longer in the inline frame stack. Materialize all remaining inline
     // frames to contexts, then use the context-based NLR path below.
     if (frameDepth_ > 0 && homeFrame == SIZE_MAX) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)) {
+            static int nlrZ = 0;
+            if (++nlrZ <= 20)
+                fprintf(stderr, "[NLR-DRAIN] homeFrame=SIZE_MAX in #%s fd=%zu "
+                    "-> materialize+fd0 (home not in savedFrames_)\n",
+                    method_.isObject() && method_.rawBits()>0x10000
+                        ? memory_.selectorOf(method_).c_str() : "?", frameDepth_);
+        }
         Oop topCtx = materializeFrameStack();
         activeContext_ = topCtx;
         frameDepth_ = 0;
@@ -14709,6 +14717,17 @@ void Interpreter::createBlock() {
     // Set fields
     // Ensure proper context identity by materializing if running inline
     Oop outerContextForBlock = activeContext_;
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+            && method_.isObject() && method_.rawBits() > 0x10000) {
+        std::string bs = memory_.selectorOf(method_);
+        if (bs == "resolve:" || bs == "resolve" || bs == "asResolvedBy:"
+                || bs == "resolvePath:") {
+            static int bcN = 0;
+            if (++bcN <= 30)
+                fprintf(stderr, "[BLK-MAT] #%s fd=%zu willMaterialize=%d\n",
+                    bs.c_str(), frameDepth_, (int)(frameDepth_ > 0));
+        }
+    }
     if (frameDepth_ > 0) {
         // GC SAFETY: materializeFrameStack allocates contexts, which may trigger GC.
         // Protect block on the operand stack during allocation.
@@ -15913,6 +15932,17 @@ void Interpreter::createBlockWithArgs(int numArgs, int numCopied, int blockSize)
     // Set fields
     // Ensure proper context identity by materializing if running inline
     Oop outerContextForBlock = activeContext_;
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+            && method_.isObject() && method_.rawBits() > 0x10000) {
+        std::string bs = memory_.selectorOf(method_);
+        if (bs == "resolve:" || bs == "resolve" || bs == "asResolvedBy:"
+                || bs == "resolvePath:") {
+            static int bcN = 0;
+            if (++bcN <= 30)
+                fprintf(stderr, "[BLK-MAT] #%s fd=%zu willMaterialize=%d\n",
+                    bs.c_str(), frameDepth_, (int)(frameDepth_ > 0));
+        }
+    }
     if (frameDepth_ > 0) {
         // GC SAFETY: materializeFrameStack allocates contexts, which may trigger GC.
         // Protect block on the operand stack during allocation.
@@ -16532,6 +16562,18 @@ void Interpreter::putToSleep(Oop process) {
 // Materialize the inline frame stack into context objects
 // Returns the topmost context (current execution point)
 Oop Interpreter::materializeFrameStack() {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
+            && method_.isObject() && method_.rawBits() > 0x10000) {
+        std::string ms = memory_.selectorOf(method_);
+        if (ms == "resolve:" || ms == "resolve" || ms == "asResolvedBy:"
+                || ms == "resolvePath:" || ms == "canResolve:"
+                || ms == "at:ifAbsent:") {
+            static int mfsN = 0;
+            if (++mfsN <= 20)
+                fprintf(stderr, "[MAT-FS] in #%s fd=%zu caller=%p\n",
+                    ms.c_str(), frameDepth_, __builtin_return_address(0));
+        }
+    }
     // Cycle-safe sender setter (2026-05-01).  Under HELPER_SENDS,
     // recursive error handling reuses error-chain contexts and
     // materialization can set a sender that closes a loop.  Smalltalk's
