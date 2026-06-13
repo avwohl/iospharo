@@ -44,6 +44,7 @@
 #define JS_J2J_SAVE_LIMIT  152
 #define JS_J2J_DEPTH      160
 #define JS_J2J_DEPTH_INC  208
+#define JS_CLOSURE        320   // JITState.closure (static_asserted in JITState.hpp)
 
 // -------- J2JSave field offsets: single source of truth --------
 // (was a hand-synced duplicate of Interpreter.hpp's struct; the C++
@@ -433,9 +434,10 @@ Lresume_null:
 
 Lcall_after_resume:
 #if PHARO_J2J_SAVE_V2
-    // JSV_CLOSURE (2026-06-13): the executing frame's closure.  Phase 1
-    // writes 0; Phase 2 loads state.closure (JS_CLOSURE) for block frames.
-    str     xzr, [x23, #JSV_CLOSURE]
+    // JSV_CLOSURE (2026-06-13): the executing frame's closure, from
+    // JITState.closure (x21=state).  x8 is scratch here (resume compute done).
+    ldr     x8, [x21, #JS_CLOSURE]
+    str     x8, [x23, #JSV_CLOSURE]
 #endif
     // Advance save cursor now that the slot is fully written
     add     x23, x23, #JSV_SIZE

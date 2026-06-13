@@ -839,6 +839,7 @@ constexpr int OFF_J2J_DEPTH       = 160;
 constexpr int OFF_J2J_TOTAL_CALLS = 164;
 constexpr int OFF_J2J_ENTRY_DEPTH = 200;
 constexpr int OFF_J2J_ENTRY_CURSOR = 312;  // FSR M3 (JITState.j2jEntryCursor; static_asserted there)
+[[maybe_unused]] constexpr int OFF_CLOSURE = 320;  // JITState.closure (JS_CLOSURE; static_asserted in JITState.hpp)
 [[maybe_unused]] constexpr int OFF_J2J_DEPTH_INC = 208;
 // Retro-save graceful pool-full handoff (cascade #2).
 constexpr int OFF_RETRO_SP        = 272;
@@ -4639,7 +4640,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         // size-40 layout: tempBase@-24, packedResume@-16,
                         // closure@-8 (was -16/-8 at size 32).
                         a.stp(x15, x14, ptr(x6, -24));
-                        a.str(xzr, ptr(x6, -8));  // JSV_CLOSURE (Phase 1: 0)
+                        // JSV_CLOSURE = state.closure (x14 dead after store).
+                        a.ldr(x14, ptr(x0, OFF_CLOSURE));
+                        a.str(x14, ptr(x6, -8));
                         // Callee state from the patched calleeJM — all
                         // level-1 loads off an immediate.  offsetof ONLY
                         // (the JM-byte-offset off-by-one lesson).
@@ -5727,7 +5730,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         }
                         // size-40: tempBase@-24, packedResume@-16, closure@-8.
                         a.stp(x4, x5, ptr(x14, -24));      // tempBase + packedResume
-                        a.str(xzr, ptr(x14, -8));          // JSV_CLOSURE (Phase 1: 0)
+                        // JSV_CLOSURE = state.closure (x4 dead after store).
+                        a.ldr(x4, ptr(x0, OFF_CLOSURE));
+                        a.str(x4, ptr(x14, -8));
 #else
                         // save.tempBase from stash[16]; save.ip = post-send
                         // ip = callerCM + bcOffsetFromMethObj + 1 (the
@@ -6008,7 +6013,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 emitLoadTempBase(a, x15);
                 // size-40: tempBase@-24, packedResume@-16, closure@-8.
                 a.stp(x15, x14, ptr(x6, -24));          // tempBase + packedResume
-                a.str(xzr, ptr(x6, -8));                // JSV_CLOSURE (Phase 1: 0)
+                // JSV_CLOSURE = state.closure (x14 dead after its store).
+                a.ldr(x14, ptr(x0, OFF_CLOSURE));
+                a.str(x14, ptr(x6, -8));
 #else
                 emitLoadSp(a, x15);                // sp (sweep: was ldp sp+recv)
                 a.ldr(x4, ptr(x0, OFF_RECEIVER)); // receiver

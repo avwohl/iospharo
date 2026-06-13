@@ -11207,6 +11207,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             jit::JITState sstate;
             sstate.sp = stackPointer_;
             sstate.receiver = receiver_;
+            sstate.closure = closure_;  // JSV_CLOSURE source (option A Phase 2)
             sstate.literals = methodObj->slots() + 1;
             sstate.tempBase = framePointer_ + 1;
             sstate.memory = &memory_;
@@ -15170,6 +15171,7 @@ uint64_t Interpreter::jitT1SistaDispatch(jit::JITState* callerState,
     jit::JITState sstate;
     sstate.sp = stackPointer_;
     sstate.receiver = receiver;
+    sstate.closure = closure_;  // JSV_CLOSURE source (option A Phase 2)
     sstate.literals = methodObj->slots() + 1;
     sstate.tempBase = framePointer_ + 1;
     sstate.memory = &memory_;
@@ -19692,6 +19694,7 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         jit::JITState sstate;
         sstate.sp = stackPointer_;
         sstate.receiver = receiver_;
+        sstate.closure = closure_;  // JSV_CLOSURE source (option A Phase 2)
         sstate.literals = methodObj->slots() + 1;
         sstate.tempBase = framePointer_ + 1;
         sstate.memory = &memory_;
@@ -20194,6 +20197,7 @@ void Interpreter::tryJITResumeInCaller() {
         jit::JITState state;
         state.sp = stackPointer_;
         state.receiver = receiver_;
+        state.closure = closure_;  // JSV_CLOSURE source (option A Phase 2)
 
         ObjectHeader* methObj = method_.asObjectPtr();
         state.literals = methObj->slots() + 1;
@@ -23571,27 +23575,52 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     frame.savedMethod = saveMethod;
     frame.savedHomeMethod = saveMethod;
     frame.savedReceiver = save.receiver;
-    // Block frames need their FullBlockClosure: a closureless block
-    // frame converts to a METHOD context (Context slot 4 = nil) whose
-    // "method" is a CompiledBlock — malformed, breaking home/receiver/
-    // sender resolution and dropping the caller continuation (the
-    // cannotReturn: storm under PHARO_T1_RESUME_INTERNAL_J2J +
-    // DET_SCHED).  PARTIAL FIX (2026-06-13, resume-internal site ONLY
-    // to keep the default chain-loop path byte-identical): probe the
-    // slot below tempBase.  INCOMPLETE — PHARO_BLOCK_SAVE_PROBE showed
-    // the closure is at tb[-1] for some blocks but tb[-1] holds a
-    // ByteString/WorldState for others, so the offset is NOT reliable.
-    // The principled fix is to RECORD the closure in the V2 save layout
-    // at the block-JM save-push emit (AsmjitT1); see WIP 2026-06-13c.
+    // Block frames need their FullBlockClosure (option A, 2026-06-13):
+    // a closureless block frame converts to a METHOD context (Context
+    // slot 4 = nil) whose "method" is a CompiledBlock — malformed,
+    // breaking home/receiver/sender resolution and dropping the caller
+    // continuation (the resume-internal cannotReturn: storm).  The
+    // closure is recorded at save-push in J2JSave.closure (from
+    // JITState.closure).  VALIDATE-AND-DEGRADE: accept it only if it is
+    // a live FullBlockClosure whose own receiver (slot 3) matches this
+    // frame's receiver — a stale/unsynced closure is rejected and we
+    // fall back to nil (the prior behavior, no corruption).  Fallback
+    // for the resume-internal site also still tries tb[-1].
     frame.savedClosure = nil;
-    if (saveJM->isBlock && save.tempBase
-            && std::strcmp(siteTag, "resume-internal") == 0) {
-        Oop cand = *(save.tempBase - 1);
-        if (cand.isObject() && cand.rawBits() >= 0x10000
-                && memory_.isValidPointer(cand)
-                && cand.asObjectPtr()->classIndex()
-                       == fullBlockClosureClassIndex_) {
+    if (saveJM->isBlock) {
+        Oop cand = save.closure;
+        bool ok = cand.isObject() && cand.rawBits() >= 0x10000
+            && memory_.isValidPointer(cand)
+            && cand.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_
+            && cand.asObjectPtr()->slotCount() >= 4
+            && cand.asObjectPtr()->slotAt(3).rawBits() == save.receiver.rawBits();
+        if (ok) {
             frame.savedClosure = cand;
+        } else if (save.tempBase
+                   && std::strcmp(siteTag, "resume-internal") == 0) {
+            // Fallback: the legacy tb[-1] heuristic (BV-inline frames).
+            Oop tb = *(save.tempBase - 1);
+            if (tb.isObject() && tb.rawBits() >= 0x10000
+                    && memory_.isValidPointer(tb)
+                    && tb.asObjectPtr()->classIndex()
+                           == fullBlockClosureClassIndex_) {
+                frame.savedClosure = tb;
+            }
+        }
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_BLOCK_SAVE_PROBE), 0)
+                && frame.savedClosure.isNil()) {
+            static int bnc = 0;
+            if (++bnc <= 20) {
+                bool isFBC = cand.isObject() && cand.rawBits() >= 0x10000
+                    && memory_.isValidPointer(cand)
+                    && cand.asObjectPtr()->classIndex()
+                           == fullBlockClosureClassIndex_;
+                fprintf(stderr,
+                    "[BLOCK-SAVE-NIL-CLOSURE] site=%s cand=0x%llx isFBC=%d "
+                    "%s\n", siteTag,
+                    (unsigned long long)cand.rawBits(), (int)isFBC,
+                    isFBC ? "(slot3 mismatch)" : "(not FBC / zero)");
+            }
         }
     }
     frame.savedActiveContext = activeContext_;
@@ -23775,6 +23804,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     jit::JITState state;
     state.sp = stackPointer_;
     state.receiver = receiver_;
+    state.closure = closure_;  // JSV_CLOSURE source (option A Phase 2)
 
     ObjectHeader* methObj = method.asObjectPtr();
     state.literals = methObj->slots() + 1;

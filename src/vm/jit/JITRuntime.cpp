@@ -872,6 +872,7 @@ ic_hit:
                     state->interp->bvClosureSaveStack_[
                         --state->interp->bvClosureSaveDepth_]);
             }
+            state->closure = state->interp->currentClosure();  // JSV_CLOSURE restore
         }
 
         Oop retVal = state->returnValue;
@@ -2039,11 +2040,11 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
             }
         }
         save->resumeAddr = packed;
-        // JSV_CLOSURE (2026-06-13): the BV path KNOWS the block's closure
-        // (it's the receiver of the value: send = blockClosureOop).  The
-        // saved frame here is the CALLER, whose closure is currentClosure()
-        // — Phase 2 wires it; Phase 1 writes nil to validate the layout.
-        save->closure = pharo::Oop::fromRawBits(0);
+        // JSV_CLOSURE (2026-06-13, Phase 2): the saved frame is the CALLER,
+        // whose closure is the current one (s->closure, kept in sync with
+        // interp->closure_).  The block being activated gets its own
+        // s->closure below.
+        save->closure = s->closure;
     }
 #else
     save->ip = s->ip;  // pre-send; matches xmethod default
@@ -2069,6 +2070,7 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
             s->interp->currentClosure();
         s->interp->bvIsBvSaveAtJ2jDepth_[j2jDepthBefore] = true;
         s->interp->setCurrentClosure(blockClosureOop);
+        s->closure = blockClosureOop;  // JSV_CLOSURE: block's frame closure
     }
 
     // Set up callee state.  Block's outer receiver is at closure[3].
