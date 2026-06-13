@@ -4,6 +4,19 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-13e — gen-clone VALIDATED default-on (full-565 = 12692, no regression)
+
+Gen-clone full-565: 12692 P / 0 F / 2 E / 1 T — IDENTICAL pass count to
+the pre-gen-clone baseline. The 3 non-pass: SHA256 TIMEOUT (VM-speed),
+OCClassBuilderTest (Cog-identical image bug), and
+OCASTSingleBranchConditionalTranslatorTest testNilIfNotNilReturnsNil
+(NEW slot in the rotating batch-flicker family — passes isolated 3/3,
+28/0/0; replaces the prior run's CoverageCollectorTest flicker). So
+gen-clone is a clean default-path win (no correctness cost, ~12% on
+clone-heavy GC) — KEEP default-on. The lone batch flicker rotates
+class-to-class each full run (CoverageCollector → OCASTSingleBranch);
+it's the fork/timing-noise floor, ~1 test/run, all pass isolated.
+
 ## CHECKPOINT 2026-06-13d — generational clones shipped; SHA256 = VM-speed tail (no primitive gap)
 
 GEN-CLONE (committed 226108d1, default-on, opt-out PHARO_NO_GEN_CLONE):
