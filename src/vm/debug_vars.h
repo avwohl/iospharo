@@ -100,6 +100,7 @@ DEBUG_BOOL(PHARO_T1_NO_J2J_PRIM_PROLOGUE)   // opt out of admitting prim-prologu
 DEBUG_BOOL(PHARO_T1_SIEVE_GATE)             // restore the legacy stub-on-condjump gate for prim 60/61/62 methods (root cause fixed 2026-06-12; default OFF)
 DEBUG_BOOL(PHARO_JIT_MATGUARD_DEEP)         // restore the 4-deep matRetSlot scan in canJITActivate (default 1-deep; the startup-DNU flake is guard-independent)
 DEBUG_BOOL(PHARO_IGNOC_WIDEN)               // OPT-IN (unsound): VM-side ignoreOuterContext widening — skips materialize for body-clean blocks but breaks home identity + terminate-unwind of ensure: blocks (BlockClosureTest/SemaphoreTest, 2026-06-12)
+DEBUG_BOOL(PHARO_NO_GEN_CLONE)              // opt out of generational clones (shallowCopy small non-overflow objects in eden); restores the old always-old-space behavior
 DEBUG_BOOL(PHARO_PREEMPT_YIELDS)            // opt back to pre-2026-06-12 preemption: preempted process appended to the BACK of its priority list (Cog default is FRONT — processPreemptionYields=false)
 DEBUG_BOOL(PHARO_RR_SCHED)                  // opt back IN to same-priority round-robin time-slicing (pre-2026-06-12 default; Cog never time-slices within a priority — rotation broke fork-window scheduling assumptions). Implied by PHARO_DET_SCHED.
 DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_CREATE)    // OPT-IN: in-JIT block creation via jit_rt_block_create — UNSOUND for J2J-hidden callers (caller frames invisible to materialize), see AsmjitT1 PushFullBlock comment

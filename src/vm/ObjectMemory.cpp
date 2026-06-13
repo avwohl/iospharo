@@ -351,8 +351,21 @@ Oop ObjectMemory::shallowCopy(Oop original) {
     size_t size = src->totalSize();
     bool hasOverflow = src->hasOverflowSlots();
 
-    // Allocate in old space (no generational GC — eden is reserved for compacting GC scratch)
-    ObjectHeader* copy = allocateRaw(size, Space::Old);
+    // Generational clones (2026-06-13): most clones are short-lived
+    // (ThirtyTwoBitRegister in SHA256 = 3.2M/hash, Point/Rectangle in
+    // graphics) and piling them into old space forces periodic fullGC.
+    // Route small non-overflow clones through eden like allocateSlots
+    // does — a scavenge reclaims the dead ones cheaply.  (The old "eden
+    // reserved for compacting GC scratch" comment was stale:
+    // allocateSlots has used eden for normal pointer objects all along.)
+    // Overflow (>=255 slots) and young-gen-off fall to old, matching
+    // allocateSlots' caveat (scavenge copy untested vs the overflow-word
+    // layout).  Opt-out PHARO_NO_GEN_CLONE.
+    bool cloneToEden = !hasOverflow && enableYoungGen_
+        && !GET_DEBUG_BOOL(PHARO_NO_GEN_CLONE);
+    ObjectHeader* copy = allocateRaw(size,
+        cloneToEden ? Space::New : Space::Old);
+    if (!copy && cloneToEden) copy = allocateRaw(size, Space::Old);
     if (!copy) return nilObject_;
 
     // For objects with overflow slot count, the memory layout is:
