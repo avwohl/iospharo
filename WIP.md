@@ -4,6 +4,28 @@ Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
 (The previous Cog-speed goal's checkpoints are preserved below — the
 internal-J2J handler audit and LEAF_ALL flicker are now SECONDARY.)
 
+## CHECKPOINT 2026-06-13k — adversarial review caught a DEFAULT-CONFIG corruption in my option-A code
+
+Ran a 6-agent adversarial workflow (review → independent refute → synth)
+over the session's 3 riskiest default-on changes. gen-clone = SOUND
+(barrier matrix + GC-phase + 3 stress harnesses all clean). Found TWO
+confirmed bugs in MY option-A closure plumbing (both fixed, 5787ecac):
+- BUG 1 (CORRUPTION, DEFAULT CONFIG): the TrampolineAsm.S V2 closure-push
+  used x8 as scratch, but x8 = calleeJM and is live through the self-rec
+  test + JITMethod-header derivation (~468-510). It poisoned
+  state.jitMethod/x19/state.ip with a closure oop. NOT knob-gated → shipped
+  in the default build (introduced 63ba17f8). Silent: self-recursion
+  returns right numbers via x7 while corrupted state bites later. Fix: x12
+  (free) instead of x8. Verified recursive-block fib28 + cross-method
+  tfib28 = 317811, knob-off batch 1-15 = 2468/0/0.
+- BUG 2 (latent, both opt-in knobs): forEachRoot walkClosure gated only on
+  the knob, but the PHARO_RESUME_J2J chain-loop leaves .closure
+  uninitialized → GC walked garbage. Fix: full resumeInternalJ2J predicate.
+LESSON: an adversarial multi-agent review of hot-path asm/GC changes is
+worth it even after the suite passes — register-liveness clobbers and
+GC-walk-of-garbage are exactly the silent corruptions a passing suite
+misses. Clean knob-off full-565 confirmation RUNNING.
+
 ## CHECKPOINT 2026-06-13j — RESOLVED: option A gated, CLEAN full-565 = 12692 (no regression)
 
 The 26/37 Trait* timeouts in the earlier "regression" runs were PURE
