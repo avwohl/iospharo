@@ -88,7 +88,16 @@ real per-send C++ overhead), so inline-J2J WOULD help — but the baseline is
 chain-loop J2J, NOT no-J2J, so the win is smaller than arm64's 296->32ms benchFib
 (inline-J2J vs FULL activation).  Recommend treating this as a dedicated
 multi-session redesign with its own validation gates, or deprioritizing (x86 is
-not the shipping arch and already has working chain-loop J2J).  The WIP code
+not the shipping arch and already has working chain-loop J2J).
+
+DESIGN DOC: docs/x86-inline-j2j-design.md — synthesized from a 5-map + 3-proposal
++ 3-critique workflow.  CORRECTS the blocker diagnosis: not the cursor reset, but
+(1) inline push never publishes state.j2jDepth (so C++ consumers + materialize
+don't see the saves) and (2) the chain loop's local j2jDepth=0 + j2jStack[0]
+ALIASES inline save #0 and overwrites it on a cold re-entry.  The materializer
+already exists (V1/x86-ready).  Fix = 3 couplings (publish depth; seed chain-loop
+depth from state.j2jDepth + fix j2jDepthFromCursor V1 stride; reuse materialize),
+gated, gates G0-G5.  Realistic 5-8 sessions for default-on; coupling 1 is ~1-2h.  The WIP code
 stays inert (triple-gated default-off) as scaffolding.
 
 ## PERF FOLLOW-UP — ported at:/size/SmallFloat x86 prim prologues (3b81d93d)
