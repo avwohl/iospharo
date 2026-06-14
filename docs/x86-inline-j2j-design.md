@@ -76,6 +76,20 @@ Three couplings, all inside the existing default-off gates
 (`g_emitX86J2JOk` = master knob && selector match). The existing materializer
 is reused unchanged.
 
+> STATUS 2026-06-14: **Coupling 1 DONE (commit 8e26d711) — and it alone made the
+> self-recursive inline-J2J CORRECT**, better than this design predicted (we
+> expected coupling 2 needed for correctness). rfib(20/25/28/30) and `tak`
+> (3-arg, 3-site) are correct COLD and under DET_SCHED; the WIP previously
+> collapsed them. Likely because the published depth lets the existing
+> materialize-on-bail (:25047) convert inline saves, and the `j2jStack[0]`
+> clobber the critiques feared does not manifest for these interleavings (cold
+> ExitSend sends land at C++ boundaries with no pending inline saves). Coupling 2
+> may still be needed for other call shapes / wider coverage. PERF: marginal —
+> inline fires (~830K fewer chain-loop calls on rfib(30)) but x86's baseline is
+> the efficient chain loop, not full activation, so the per-send win is below
+> wall-clock noise; ~30% of sends go inline. Knob-off byte-identical (no
+> regression); arm64 clean.
+
 **Coupling 1 — publish depth (small, verified knob-off-safe).**
 The inline send-site push (`AsmjitT1.cpp` ~:2774) increments `state.j2jDepth`
 (`dword[rdi+OFF_J2J_DEPTH(160)] += 1`); the return prelude
