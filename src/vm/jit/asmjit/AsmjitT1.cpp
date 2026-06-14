@@ -143,6 +143,14 @@ static T1TosCache g_tosIn;   // snapshot consumed by the current bytecode
 // their target is marked; a mismatch hard-fails the compile (interp
 // fallback) — never BUG-print-and-continue.
 static const std::vector<bool>* g_tosJumpTargetsPtr = nullptr;
+// Out-of-line-dispatch B0 (docs/out-of-line-dispatch-design.md): when set,
+// emitOne_arm64's return ops `b` to ONE shared J2J-return-prelude+epilogue
+// block at method end instead of inlining it.  Set per-compile by
+// emitMethodBytes (arm64) only when PHARO_T1_SHARED_RETPRELUDE is on AND the
+// method has >=2 prelude-using return ops AND it is not a block.  The Label
+// lives in emitMethodBytes's frame; the pointer is valid for that compile only.
+static asmjit::Label* g_sharedRetPreludeLabel = nullptr;
+static bool g_sharedRetPreludeActive = false;
 // Per-compile master switch (knob && real emit) + per-family mask bits
 // (PHARO_T1_TOS_MASK; -1 = all).  Each converted family checks its bit
 // so miscompiles bisect to a family within one binary.
@@ -4340,6 +4348,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
     auto emitReturnPtr = [&](int srcOff) {
         a.ldr(x1, ptr(x0, srcOff));
+        // B0: x1 = retval; the shared block owns prelude + the uniform epilogue.
+        if (g_sharedRetPreludeActive) { a.b(*g_sharedRetPreludeLabel); return; }
         emitJ2JReturnPreludeIfEnabled();
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
@@ -4349,6 +4359,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     };
     auto emitReturnImm = [&](uint64_t imm) {
         a.mov(x1, asmjit::Imm(imm));
+        if (g_sharedRetPreludeActive) { a.b(*g_sharedRetPreludeLabel); return; }
         emitJ2JReturnPreludeIfEnabled();
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
@@ -4395,6 +4406,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             emitStoreSp(a, x2);
 #endif
             a.mov(x1, x26);
+            if (g_sharedRetPreludeActive) { a.b(*g_sharedRetPreludeLabel); return true; }
             emitJ2JReturnPreludeIfEnabled();
             a.str(x1, ptr(x0, OFF_RETVAL));
             a.mov(w3, asmjit::Imm(EXIT_RETURN));
@@ -4407,6 +4419,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.sub(x2, x2, asmjit::Imm(8));
         emitStoreSp(a, x2);
         a.ldr(x1, ptr(x2));      // x1 = retval (TOS)
+        if (g_sharedRetPreludeActive) { a.b(*g_sharedRetPreludeLabel); return true; }
         emitJ2JReturnPreludeIfEnabled();
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
@@ -8954,6 +8967,32 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             a.bind(prologBodyStart);
         }
     }
+    // B0 out-of-line-dispatch (docs/out-of-line-dispatch-design.md): when this
+    // method has >=2 prelude-using return ops, route them all to ONE shared
+    // J2J-return-prelude + uniform-epilogue block bound at method end, instead
+    // of inlining ~17 insns per return.  Single-return methods stay inline
+    // (sharing one return ADDS a branch with no offsetting saving).  Blocks are
+    // excluded: their return ops NLR-bail and never use the prelude.  Counted
+    // bytecode-stepped (operand bytes that alias 0x58-0x5C must not miscount).
+    asmjit::Label sharedRetPreludeLabel;
+    bool useSharedRetPrelude = false;
+    if (real && !g_emitIsBlock && GET_DEBUG_BOOL(PHARO_T1_SHARED_RETPRELUDE)) {
+        int retOpCount = 0;
+        for (size_t bi = 0; bi < bcRealLen; ) {
+            uint8_t rop = bcReal[bi];
+            if (rop >= SistaV1::ReturnReceiver && rop <= SistaV1::ReturnTop)
+                retOpCount++;
+            int rlen = SistaV1::bytecodeLength(rop);
+            if (rlen <= 0) rlen = 1;
+            bi += (size_t)rlen;
+        }
+        if (retOpCount >= 2) {
+            sharedRetPreludeLabel = a.new_label();
+            useSharedRetPrelude = true;
+        }
+    }
+    g_sharedRetPreludeActive = useSharedRetPrelude;
+    g_sharedRetPreludeLabel = useSharedRetPrelude ? &sharedRetPreludeLabel : nullptr;
     if (real) {
         int siteIdx = 0;
         for (size_t i = 0; i < bcRealLen; i++) {
@@ -9570,6 +9609,23 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             emitSyncSpToState(a);
             a.ret(a64::x30);
         }
+        // B0: the ONE shared return-prelude + uniform epilogue, bound at method
+        // end.  Each return op `b`s here with x1 = retval already loaded.  The
+        // prelude (poppable path) br's to the J2J caller's resume; the
+        // non-poppable path falls through to the epilogue (str retval,
+        // EXIT_RETURN, syncSp, ret x30) — byte-identical to the inline shape it
+        // replaces.  Reached only via the forward `b` (returns never fall
+        // through), so no preceding guard is needed.
+        if (useSharedRetPrelude) {
+            a.bind(sharedRetPreludeLabel);
+            emitJ2JReturnPrelude_arm64(a, staticJ2JArgCount);
+            a.str(a64::x1, a64::ptr(a64::x0, OFF_RETVAL));
+            a.mov(a64::w3, Imm(EXIT_RETURN));
+            a.str(a64::w3, a64::ptr(a64::x0, OFF_EXIT));
+            emitSyncSpToState(a);
+            a.ret(a64::x30);
+        }
+        g_sharedRetPreludeActive = false;  // defensive: label leaves scope at return
     } else if (prologueLeaf) {
         // PROLOGUE-LEAF (2026-06-12, Cog's design for prim methods):
         // the prologue above IS the method for the hot path; on
