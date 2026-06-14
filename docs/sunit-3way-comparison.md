@@ -57,11 +57,10 @@ recursion, see x86-inline-j2j-design.md).
 
 ## Cross-arch (x86 ours vs arm64 ours)
 
-x86 vs arm64: 4 differences = exactly the 4 above (3 flaky + 1 x86-core SHA1).
-So the x86 VM (with this session's JIT fixes) matches arm64 modulo flakes and
-the one pre-existing x86-core SHA1 issue. The supportedPrimIndex fix +
-prim-prologue port + inline-J2J brought x86 from "hangs at startup" to
-parity-with-arm64 on the curated suite.
+x86 vs arm64: 4 differences = exactly the 4 above (3 flaky + 1 crypto-config
+artifact). With matched crypto config and flakes excluded, x86 and arm64 agree
+test-for-test. The supportedPrimIndex fix + prim-prologue port + inline-J2J
+brought x86 from "hangs at startup" to parity-with-arm64 on the curated suite.
 
 ## Follow-ups
 
