@@ -1,3 +1,24 @@
+# WIP — Cog-speed /goal (2026-06-14, ongoing): arm64 zone wins landed; x86 blocked
+
+/goal "JIT as fast as cog on arm AND x86". This session's landed wins (all
+committed+pushed): B0+B0.5 (shared return-prelude / zone-global stub);
+inline-`class` upgrade-path fix + confirmed inline-prims healthy
+([[inline-class-already-works]]); B1 send-emit MAPPED;
+**DEAD-CODE GATING (commit 4ee9224b) = ~10.5% image-wide zone reduction**, SAFE
+(tryMultiSlot/tryReturnsLiteral bodies were emitted per-site but their dispatch is
+default-off → dead; gated them; cfibx 5568->4904B, battery==Cog, SUnit 1577 PASS).
+arm64 inlined arith/float/at/size/class ≈ Cog; residual ~2.7x = per-send dispatch
+(B1, multi-session) + ~1.9x per-bytecode tax (architectural).
+X86 BLOCKED: 3 boxes spent measuring; ours-x86 evals the Cog-speed bench EMPTY
+every time while ours-arm64 + Cog-x86 work → x86-SPECIFIC eval/miscompile of a
+block+timing method (x86 SUnit suite passes 12692, so not broadly broken). Needs a
+focused x86 debug session (box) to root-cause, NOT more measurement. Cog-x86
+baseline ~loop20M=50 fib30=10 cfibx30=13. Bench: scripts/cog-speed-bench.st.
+NEXT: arm64 B1 reachable-handler relocation (harder, resume-pass) OR more
+dead-code/zone wins; x86 root-cause session.
+
+---
+
 # WIP — arm64 Cog-speed: cross-method lever CLOSED, next levers are multi-session (2026-06-14)
 
 Fair same-machine re-measurement (docs/cog-speed-current.md): the documented
