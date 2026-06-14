@@ -29,10 +29,15 @@ Cog   (stock, x86)             12778    4     96            <- buggier per-test 
     PASS in isolation both arches → flaky (timing/fork).
   - `FBIRBytecodeDecompilerTest>>testDecompileIRBuilderTestClass` — PASS on
     interp + JIT-rerun×2 (one earlier FAIL) → flaky on x86.
-  - `SHA1Test>>testLargeCharacterStream` — DETERMINISTIC FAIL on x86 under
-    **both interp AND JIT** (PASS on arm64). Fails under interp ⇒ it is an
-    **x86 VM-core bug, NOT a JIT bug, and NOT from this session's JIT work**
-    (this session was JIT-only). Pre-existing x86-platform issue; see follow-up.
+  - `SHA1Test>>testLargeCharacterStream` — deterministic FAIL on x86, but
+    **NOT an x86 bug**: it is a CRYPTO-BUILD-CONFIG artifact. The x86 box was
+    built `PHARO_WITH_CRYPTO=OFF` (build-linux.sh, to dodge an SSL link error),
+    which drops the crypto-gated DSAPlugin and its native SHA1 primitives
+    (`primitiveHashBlock`/`primitiveExpandBlock`); SHA1 then uses its
+    pure-Smalltalk fallback, which fails on large input. PROVEN config-not-arch:
+    an arm64 build with `PHARO_WITH_CRYPTO=OFF` fails this test IDENTICALLY,
+    while arm64 crypto-ON passes. So with matched crypto config x86 has ZERO
+    deterministic regressions, same as arm64.
 
 ## inline-J2J at full-suite scale (the default-on gate)
 
@@ -60,8 +65,10 @@ parity-with-arm64 on the curated suite.
 
 ## Follow-ups
 
-- `SHA1Test>>testLargeCharacterStream` x86-core failure (interp + JIT, x86 only)
-  — a real x86 VM-core bug to investigate (likely byte/word handling on a large
-  character stream), independent of the JIT.
+- SHA1 largeCharacterStream is a CRYPTO-CONFIG artifact, not an x86 bug
+  (arm64 crypto-OFF reproduces it). To make x86 match arm64 here, build x86 with
+  PHARO_WITH_CRYPTO=ON (needs the SSL platform impl linked, or the SSL syms
+  stubbed). Separately, the image's pure-Smalltalk SHA1 fallback has a
+  large-input bug exposed only in crypto-OFF builds (arch-independent, image-level).
 - inline-J2J default-on: cleared on correctness; flip is a config decision on
   the non-shipping arch.
