@@ -124,3 +124,4 @@ docs/results/jitpkg/*_run.log
 docs/results/jitpkg/*_clean_*.log
 build-dbg/
 .sweep-state/
+build-opt/

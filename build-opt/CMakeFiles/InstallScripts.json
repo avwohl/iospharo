@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/Users/wohl/src/iospharo/build-opt/cmake_install.cmake",
-		"/Users/wohl/src/iospharo/build-opt/third_party/asmjit/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
