@@ -90,3 +90,28 @@ Metacello load completes:
 **Upstream wishlist:** the right fix is for `ThirtyTwoBitRegister`
 (or the surrounding code) to use `asInteger`/`codePoint`/`asciiValue`
 explicitly so it works without depending on either VM behaviour.
+
+## `SHA1 >> hashStream:` corrupts on character streams > 64 bytes (Smalltalk fallback)
+
+**Symptom:** `SHA1Test>>testLargeCharacterStream` (a 260-byte String) fails on any
+build WITHOUT the native DSAPlugin SHA primitive — i.e. crypto-OFF builds. SHA1
+of any String stream > 64 bytes errors / yields a wrong digest; ByteArray streams
+and inputs <= 64 bytes are fine. (Surfaced by the x86 SUnit comparison, where the
+x86 box was built `PHARO_WITH_CRYPTO=OFF`; see `docs/sunit-3way-comparison.md`.)
+
+**Cause:** `SHA1>>hashStream:` reads each middle block with
+`buf := aPositionableStream next: 64` and passes it straight to `processBuffer:`.
+For a *character* stream `next: 64` returns a **String** (Characters). The native
+path (`primExpandBlock:`) reads the String's bytes fine, but the Smalltalk
+fallback `expandedBlock:` does `ThirtyTwoBitRegister loadFrom: buf` which expects
+byte *integers* — a Character errors. Only the middle blocks are affected;
+`processFinalBuffer:` copies the last partial block into a `ByteArray` first
+(which is why <=64-byte inputs and `'abc'` pass even crypto-OFF).
+
+**Patch (image):** `scripts/pharo-headless-test/run_sunit_tests.st` recompiles
+`SHA1>>hashStream:` to convert the middle block to bytes —
+`buf := (aPositionableStream next: 64) asByteArray` — the same bytes the native
+primitive reads; the rest of the upstream method is unchanged. Verified
+crypto-OFF: SHA1 of 'a'×{65,100,128,260} now match `shasum`, and
+`testLargeCharacterStream` passes. Moot on crypto-ON builds (native primitive
+used). Upstream-worthy (a one-line fix to Pharo's `SHA1>>hashStream:`).
