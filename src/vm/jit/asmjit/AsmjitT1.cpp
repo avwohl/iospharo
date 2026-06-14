@@ -9860,11 +9860,13 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // the master knob is on AND its selector matches PHARO_T1_X86_J2J_SEL.
     g_emitX86J2JOk = false;
 #if defined(__x86_64__) || defined(_M_X64)
-    if (GET_DEBUG_BOOL(PHARO_T1_X86_INLINE_J2J) && !g_emitIsBlock) {
-        // PHARO_T1_X86_J2J_SEL set  -> opt in ONLY that selector (debug/bisect).
-        // PHARO_T1_X86_J2J_SEL unset -> opt in ALL non-block methods (the inline
-        //   path still only FIRES for self-recursive sends, cached==OFF_METHOD,
-        //   so the blast radius is self-recursive self-sends across the image).
+    // inline-J2J is DEFAULT-ON for the x86 tier-1 JIT (matches arm64, default-on
+    // since 2026-06-10).  Full-suite validated: 0 deterministic regressions,
+    // correctness-neutral A/B, ~20% faster recursion (docs/sunit-3way-comparison.md,
+    // docs/x86-inline-j2j-design.md).  Opt out with PHARO_T1_X86_NO_INLINE_J2J.
+    // The fast path still only FIRES for self-recursive sends (cached==OFF_METHOD).
+    if (!GET_DEBUG_BOOL(PHARO_T1_X86_NO_INLINE_J2J) && !g_emitIsBlock) {
+        // PHARO_T1_X86_J2J_SEL set -> restrict to that one selector (debug/bisect).
         const char* j2jSel = GET_DEBUG_STR(PHARO_T1_X86_J2J_SEL);
         g_emitX86J2JOk = (!j2jSel || !*j2jSel)
                              ? true
