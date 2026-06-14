@@ -19,6 +19,7 @@
 #define PHARO_JIT_STATE_HPP
 
 #include "JITConfig.hpp"
+#include "J2JSaveLayout.h"   // JSV_SIZE (40 V2 / 56 V1) for j2jDepthFromCursor
 #include "../Oop.hpp"
 #include "../../platform/Platform.hpp"
 #include <cstdint>
@@ -198,11 +199,15 @@ struct JITState {
     Oop closure;              // offset 320
 
     // FSR helper: depth-by-cursor (valid only when both cursors are from
-    // the same pool slice; 32 = JSV_SIZE, asserted in J2JSaveLayout.h
-    // consumers).
+    // the same pool slice).  Divides by JSV_SIZE (40 under V2 / 56 under
+    // V1, from J2JSaveLayout.h) — NOT a hardcoded literal: the original
+    // `/ 32` predated JSV_CLOSURE (appended 2026-06-13, growing V2 32->40),
+    // so a stale 32 silently mis-derived depth by 1.25x once that field
+    // landed.  This is the stencil-offset silent-corruption class
+    // (jit-stencil-header-offsets memory) — keep it pinned to JSV_SIZE.
     int j2jDepthFromCursor() const {
         if (!j2jSaveCursor || !j2jEntryCursor) return 0;
-        return (int)((j2jSaveCursor - j2jEntryCursor) / 32);
+        return (int)((j2jSaveCursor - j2jEntryCursor) / JSV_SIZE);
     }
 };
 static_assert(offsetof(JITState, j2jEntryCursor) == 312, "j2jEntryCursor offset");
