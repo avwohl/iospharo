@@ -9861,9 +9861,14 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     g_emitX86J2JOk = false;
 #if defined(__x86_64__) || defined(_M_X64)
     if (GET_DEBUG_BOOL(PHARO_T1_X86_INLINE_J2J) && !g_emitIsBlock) {
+        // PHARO_T1_X86_J2J_SEL set  -> opt in ONLY that selector (debug/bisect).
+        // PHARO_T1_X86_J2J_SEL unset -> opt in ALL non-block methods (the inline
+        //   path still only FIRES for self-recursive sends, cached==OFF_METHOD,
+        //   so the blast radius is self-recursive self-sends across the image).
         const char* j2jSel = GET_DEBUG_STR(PHARO_T1_X86_J2J_SEL);
-        if (j2jSel && *j2jSel)
-            g_emitX86J2JOk = (memory.selectorOf(compiledMethod) == j2jSel);
+        g_emitX86J2JOk = (!j2jSel || !*j2jSel)
+                             ? true
+                             : (memory.selectorOf(compiledMethod) == j2jSel);
     }
 #endif
     // M1 x19 invariant: UNCONDITIONAL since 2026-06-11 (five one-cycle
