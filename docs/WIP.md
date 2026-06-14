@@ -34,6 +34,24 @@ primitiveFindHandlerContext; gdb can't read member vars on the box build
 (no full DWARF) so instrument in C++ (PHARO_T1_TRACE_HANDLER dumps the
 handler-search chain w/ receiver class + at: index).
 
+## PERF FOLLOW-UP — ported at:/size/SmallFloat x86 prim prologues (3b81d93d)
+
+emitPrimProlog_x86 now implements prims 60 (at:), 62 (size), 541/542/549
+(SmallFloat +/-/*), ported from emitPrimProlog_arm64 (removed from the x86
+supportedPrimIndex -1 list). Drafted + adversarially verified via a Workflow,
+cross-checked vs arm64 + the C primitives, validated on the x86 box:
+eval matches interp (Array/String/ByteArray at:/size, fmt-9 DoubleWordArray
+helper path, float incl. 0.1+0.2 precision); SUnit ~2319 tests 0 fail (only the
+pre-existing ArrayTest>>testPrintingRecursive env-error); arm64 builds clean +
+battery unchanged. A/B win on x86 is MODEST (~2-4% on at:/size/float loops):
+the x86 -1 fallback already ran the C prim first, and x86 has no inline-J2J, so
+the prologue only elides the C-prim call, not the activation. Main value: arm64
+parity. STILL on -1: prim 61 (at:put: — arm64 fmt-2 inline store omits the
+old->young write barrier; the C-prim path's storePointer is the safe one) and
+10-13 (no arm64 prologue exists; C-prim-first already optimal). Next perf lever
+if wanted: give x86 an inline-J2J path so prim-prologue callees activate without
+the C runtime hop (that's where arm64 gets its larger win).
+
 ---
 
 # WIP — JIT optimization session (2026-05-27 → 2026-05-28)
