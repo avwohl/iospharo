@@ -34,6 +34,47 @@ primitiveFindHandlerContext; gdb can't read member vars on the box build
 (no full DWARF) so instrument in C++ (PHARO_T1_TRACE_HANDLER dumps the
 handler-search chain w/ receiver class + at: index).
 
+## WIP — x86 self-recursive inline-J2J (knob-gated, BLOCKED on materialization)
+
+Goal: bypass the JIT->C++->JIT activate/resume round-trip for self-recursive
+JIT->JIT calls on x86 (the bigger remaining perf lever; arm64's larger J2J win
+comes from this). Implemented behind two default-off knobs:
+`PHARO_T1_X86_INLINE_J2J` (master) + `PHARO_T1_X86_J2J_SEL=<selector>`
+(per-method opt-in, so the unfinished mechanism never touches startup/library
+code). Triple-gated (x86-only too); default x86 + arm64 are unaffected
+(verified: battery + arm64 build clean).
+
+What's built (AsmjitT1.cpp):
+- `emitJ2JReturnPrelude_x86` (after emitPushReg): at each of the 5 return ops,
+  if j2jSaveCursor > j2jEntryCursor, pop the V1 J2JSave, restore caller
+  sp/tempBase/receiver, write retval as caller TOS, branch to saved resumeAddr.
+- Send-site fast path (in the bit-60 region): self-rec gate (extras bit 60 +
+  cached methodBits == OFF_METHOD), save-stack-room check, push V1 J2JSave
+  (sp/recv/tempBase/ip/jitMethod/resumeAddr/nArgs), set up callee frame
+  (newReceiver=sp[-1-nArgs], newTempBase=sp-8*nArgs, nil locals,
+  newSp=tempBase+callerTempCount*8), branch to extras&0x0000FFFFFFFFFFFF.
+  The frame model + branch target match arm64 (verified vs AsmjitT1:6520-6930,
+  branch target = entryAddr = extras & ADDR_MASK at :5783).
+- Step A (return prelude as a no-op when no saves) validated CLEAN knob-on.
+
+THE BLOCKER (precisely identified, this is the multi-session part):
+`Interpreter::tryJITActivation` (Interpreter.cpp:24290) UNCONDITIONALLY resets
+`state.j2jSaveCursor = state.j2jEntryCursor = j2jPool base` on every C++ JIT
+activation. During IC warmup a self-recursive method mixes J2J calls (warm site)
+with C++ activations (cold site) — and each C++ activation DISCARDS the pending
+inline-J2J saves, orphaning the caller's resume. Result (SEL=rfib): rfib
+collapses toward rfib(n-1) (rfib(20)=1, rfib(28)=1) instead of the real value.
+This is the bail-time J2J-save MATERIALIZATION problem: on any exit to C++ with
+pending inline-J2J saves, the C++ side must materialize them into real frames
+(arm64 does; x86's asmjit-T1 path never had J2J saves so it doesn't). Fixing it
+means either (a) materialize pending saves into C++ frames before every C++
+activation/resume, or (b) make the cursor reset conditional and have the C++
+chain-loop/resume understand asmjit-T1 V1 saves. NOT a localized change.
+
+Next session: implement bail-time materialization for x86 asmjit-T1 J2J saves
+(reuse the V1 J2JSave layout the stencil tier's C++ path already reads), then
+re-validate SEL=rfib correctness + measure, then widen past self-recursive.
+
 ## PERF FOLLOW-UP — ported at:/size/SmallFloat x86 prim prologues (3b81d93d)
 
 emitPrimProlog_x86 now implements prims 60 (at:), 62 (size), 541/542/549

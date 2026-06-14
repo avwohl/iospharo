@@ -92,6 +92,12 @@ static bool g_emitGetterTrace = false;
 // [^true]]. ^false`) returned false on present elements once its do:
 // block compiled (DictionaryTest>>testIncludes 2-test repro).
 static bool g_emitIsBlock = false;
+// x86 inline-J2J (WIP): true only while compiling a method whose selector
+// matches PHARO_T1_X86_J2J_SEL (and the master knob is on).  Per-method opt-in
+// keeps the unfinished mechanism off startup/library code — it is only safe for
+// self-recursive methods whose chain never bails mid-flight to C++ (bail-time
+// J2J-save materialization on x86 is not yet implemented).
+static bool g_emitX86J2JOk = false;
 // FSR M1 per-compile gates (set in compileViaAsmjit).
 static bool g_fsrX19 = false;
 static bool g_fsrCursor = false;  // FSR M2 v1: x23 cursor residency (write-through)
@@ -1559,6 +1565,48 @@ void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
     a.mov(ptr(rdi, OFF_SP), rcx);
 }
 
+// x86 inline-J2J (knob PHARO_T1_X86_INLINE_J2J) RETURN PRELUDE.  Emitted at
+// the start of every normal return op, BEFORE the normal ExitReturn.  If this
+// activation was entered via an inline-J2J self-recursive call — detected by
+// j2jSaveCursor being ABOVE the per-activation entry baseline (j2jEntryCursor,
+// set by tryJITActivation) — pop the caller's V1 J2JSave, restore the caller's
+// receiver/tempBase, write the return value as the caller's new TOS, and branch
+// directly to the caller's post-send resume address, bypassing the C++
+// activate/resume round-trip.  Otherwise (a normal C++-activated frame, where
+// cursor == entryCursor) fall through to the normal return.
+//
+// `retval` holds the return value and must be rax (the prelude clobbers
+// rcx/rdx/r8/r9/r10/r11; rdi=state is preserved).  V1 J2JSave layout
+// (J2JSaveLayout.h, 56 bytes): [0]=sp [8]=receiver [16]=tempBase [24]=ip
+// [32]=jitMethod [40]=resumeAddr [48]=sendArgCount.
+static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
+                                     asmjit::x86::Gp retval) {
+    using namespace asmjit::x86;
+    if (!g_emitX86J2JOk) return;
+    asmjit::Label normalRet = a.new_label();
+    a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
+    a.cmp(r9, ptr(rdi, OFF_J2J_ENTRY_CURSOR));
+    a.jbe(normalRet);                       // cursor <= entry → no save → normal
+    a.sub(r9, asmjit::Imm(56));             // pop one V1 save
+    a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
+    a.mov(r10, ptr(r9, 0));                 // savedSp
+    a.mov(rcx, ptr(r9, 8));                 // savedReceiver
+    a.mov(rdx, ptr(r9, 16));                // savedTempBase
+    a.mov(r11, ptr(r9, 40));                // resumeAddr (code address)
+    a.mov(r8d, dword_ptr(r9, 48));          // sendArgCount (zero-extends to r8)
+    a.mov(ptr(rdi, OFF_RECEIVER), rcx);
+    a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+    // newSp = savedSp - 8*nArgs ; result becomes caller's TOS at newSp-8.
+    a.mov(rcx, r8);
+    a.shl(rcx, asmjit::Imm(3));             // 8*nArgs
+    a.mov(rdx, r10);
+    a.sub(rdx, rcx);                        // rdx = newSp
+    a.mov(ptr(rdi, OFF_SP), rdx);
+    a.mov(ptr(rdx, -8), retval);            // *(newSp-8) = retval
+    a.jmp(r11);                             // resume in the caller's JIT code
+    a.bind(normalRet);
+}
+
 // Emit the JIT prologue for a supported primitive.  Used as a fast
 // path when the chain loop inline-activates this method — without
 // it, hasPrimPrologue=false blocks inline activation entirely
@@ -2207,6 +2255,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // returnReceiver: returnValue = receiver; exitReason = ExitReturn; ret.
     if (op == SistaV1::ReturnReceiver) {
         a.mov(rax, ptr(rdi, OFF_RECEIVER));
+        emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
         a.ret();
@@ -2215,6 +2264,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // returnTrue / returnFalse: similar with bake-via-state.
     if (op == 0x59) {
         a.mov(rax, ptr(rdi, OFF_TRUEOOP));
+        emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
         a.ret();
@@ -2222,6 +2272,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     }
     if (op == 0x5A) {
         a.mov(rax, ptr(rdi, OFF_FALSEOOP));
+        emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
         a.ret();
@@ -2230,6 +2281,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     // returnNil: bake nil immediate.
     if (op == 0x5B) {
         a.mov(rax, asmjit::Imm(nilBits));
+        emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
         a.ret();
@@ -2241,6 +2293,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.sub(rcx, 8);
         a.mov(ptr(rdi, OFF_SP), rcx);
         a.mov(rax, ptr(rcx));
+        emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
         a.ret();
@@ -2681,6 +2734,62 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.mov(r8, qword_ptr(rsi, 16));
             a.test(r8, r8);
             a.jz(dispatchCached);
+
+            // ===== Inline-J2J self-recursive fast path (knob; default off) =====
+            // When the IC says this site is a J2J entry (bit 60) AND the cached
+            // callee method == this method (self-recursive), call directly into
+            // our own JIT code instead of round-tripping JIT->C++->JIT.  Works
+            // for any receiver (incl. SmI), so it MUST precede the heap-receiver
+            // gate below.  Pushes a V1 J2JSave (the caller's resume state); the
+            // callee's return prelude pops it.  Mirrors arm64 (~AsmjitT1:6520+),
+            // restricted to the self-recursive method case.  Bails (notJ2J) on
+            // cold/non-self/full-stack → the normal getter/setter/dispatch path.
+            // Regs here: rax=send receiver, rcx=sp, rsi=icDataPtr, r8=extras;
+            // the bail checks clobber only r9/r10/r11 before notJ2J.
+            if (g_emitX86J2JOk && !g_emitIsBlock) {
+                asmjit::Label notJ2J = a.new_label();
+                a.bt(r8, asmjit::Imm(60));               // J2J_ENTRY_BIT?
+                a.jnc(notJ2J);
+                a.mov(r9, qword_ptr(rsi, 8));            // cached methodBits
+                a.cmp(r9, ptr(rdi, OFF_METHOD));         // == this method? (self-rec)
+                a.jne(notJ2J);
+                // Save-stack room (also guards a null cursor: 0+56 > limit(0)).
+                a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
+                a.mov(r10, ptr(rdi, OFF_J2J_SAVE_LIMIT));
+                a.lea(r11, ptr(r9, 56));
+                a.cmp(r11, r10);
+                a.ja(notJ2J);
+                // --- push V1 J2JSave (56B) at r9: caller resume state ---
+                a.mov(ptr(r9, 0), rcx);                  // sp
+                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);   // receiver
+                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, 16), rdx);  // tempBase
+                a.mov(rdx, ptr(rdi, OFF_METHOD));
+                a.add(rdx, asmjit::Imm(bcOffsetFromMethObj + 1));
+                a.mov(ptr(r9, 24), rdx);                 // ip (resume bytecode, for materialize)
+                a.mov(rdx, ptr(rdi, OFF_JITMETHOD)); a.mov(ptr(r9, 32), rdx); // jitMethod
+                a.lea(rdx, ptr(bcLabels[globalIdx + 1]));
+                a.mov(ptr(r9, 40), rdx);                 // resumeAddr (post-send code)
+                a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));   // sendArgCount
+                a.add(r9, asmjit::Imm(56));
+                a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
+                // --- set up callee frame (self-rec: method/literals/jitMethod/
+                //     argCount unchanged) ---
+                a.mov(rdx, ptr(rcx, -8 * (nArgs + 1)));  // newReceiver = sp[-1-nArgs]
+                a.mov(ptr(rdi, OFF_RECEIVER), rdx);
+                a.lea(rdx, ptr(rcx, -8 * nArgs));        // newTempBase = sp - 8*nArgs
+                a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+                a.mov(r10, asmjit::Imm(nilBits));        // nil the locals
+                for (int t = nArgs; t < callerTempCount; t++)
+                    a.mov(ptr(rdx, t * 8), r10);
+                a.lea(r10, ptr(rdx, callerTempCount * 8));  // newSp = tempBase + numTemps
+                a.mov(ptr(rdi, OFF_SP), r10);
+                // Branch to callee code entry = extras & J2J_ADDR_MASK.
+                a.mov(r10, r8);
+                a.mov(r11, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
+                a.and_(r10, r11);
+                a.jmp(r10);
+                a.bind(notJ2J);
+            }
 
             // Inline specializations need a heap-class receiver
             // (the stencil's `tag == 0` gate). Immediates fall through
@@ -9739,6 +9848,16 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // a block bail to interp) and for jm->isBlock below.
     g_emitIsBlock =
         methObj->classIndex() == interp.compiledBlockClassIndex();
+    // x86 inline-J2J WIP: opt this method into the inline-J2J fast path only if
+    // the master knob is on AND its selector matches PHARO_T1_X86_J2J_SEL.
+    g_emitX86J2JOk = false;
+#if defined(__x86_64__) || defined(_M_X64)
+    if (GET_DEBUG_BOOL(PHARO_T1_X86_INLINE_J2J) && !g_emitIsBlock) {
+        const char* j2jSel = GET_DEBUG_STR(PHARO_T1_X86_J2J_SEL);
+        if (j2jSel && *j2jSel)
+            g_emitX86J2JOk = (memory.selectorOf(compiledMethod) == j2jSel);
+    }
+#endif
     // M1 x19 invariant: UNCONDITIONAL since 2026-06-11 (five one-cycle
     // movs at activation commits, gate-verified by the 2468-test soak)
     // — it lets the TRAMPOLINE publish x19 -> JS_JITMETHOD at its own
