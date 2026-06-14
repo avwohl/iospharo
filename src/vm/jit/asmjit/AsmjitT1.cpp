@@ -9819,7 +9819,18 @@ extern "C" uint64_t g_t1CompileSeq2 = 0;
 JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                              ObjectMemory& memory, Interpreter& interp,
                              Oop compiledMethod) {
-    (void)interp;
+    // x86 compile-thrash fix (2026-06-14): skip re-emitting a method whose
+    // asmjit-T1 emit PERMANENTLY failed before (prescan/emit disagree on an
+    // unsupported/extended bytecode, encoder drop, or too-big).  Without this
+    // the x86 build re-ran the whole emit pipeline on EVERY activation —
+    // 14,069,951 failed compiles -> timeout (the prim/block eager-compile path
+    // was negative-cached; the activation + other compile paths were not).
+    // GC-safe key set (FailedMapSize hash, survives GC), shared with the eager
+    // path.  Transient zone-full failures are NOT recorded here (see the
+    // zone.allocate() failure below), so they stay retryable.  ~no-op on arm64
+    // (its emit rarely permanently fails — no extended-bytecode disagree).
+    if (interp.jitRuntime().initialCompileFailedContains(compiledMethod.rawBits()))
+        return nullptr;
     g_t1CompileSeq2++;
     g_emitPrologueLeaf = false;
     const int ibcBefore = g_ibcEmits;
@@ -10190,6 +10201,10 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     }
     if (!emitOk) {
         g_failed++; g_failedBcOther++;
+        // PERMANENT emit failure (not zone-full — that's the allocate() path
+        // below) -> negative-cache so this method is never re-emitted.  Stops
+        // the x86 compile-thrash (the entry check above consumes this).
+        interp.jitRuntime().initialCompileFailedInsert(compiledMethod.rawBits());
         return nullptr;
     }
     // PMS B1 gate harness: FNV-1a over the emitted bytes, printed per
