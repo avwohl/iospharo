@@ -71,9 +71,25 @@ means either (a) materialize pending saves into C++ frames before every C++
 activation/resume, or (b) make the cursor reset conditional and have the C++
 chain-loop/resume understand asmjit-T1 V1 saves. NOT a localized change.
 
-Next session: implement bail-time materialization for x86 asmjit-T1 J2J saves
-(reuse the V1 J2JSave layout the stencil tier's C++ path already reads), then
-re-validate SEL=rfib correctness + measure, then widen past self-recursive.
+SCOPE CORRECTION (deeper dig): the fix is bigger than "add materialization."
+x86 ALREADY HAS J2J via the C++ CHAIN LOOP in tryJITActivation (~24500:
+`while (exitReason == ExitJ2JCall || ExitSendCached ...)`, converts
+ExitSendCached->ExitJ2JCall, drives recursion in C++ via j2jDepth/j2jPool_,
+materializes on resume — the "J2J stencil: calls=NN" stat).  My inline-J2J is a
+SECOND, conflicting J2J manager on the same pool: when it fires it bypasses the
+chain loop, but any cold/non-J2J send in the chain does a recursive
+tryJITActivation that resets the cursor and discards the inline saves.  So a
+correct inline-J2J must REPLACE the chain loop's J2J for the methods it owns
+(handle every J2J send + materialize on every bail) — an architectural redesign
+of a LOAD-BEARING mechanism, risky on the non-shipping arch.
+
+PERF REALITY: wall-clock rfib(28) on x86 is ~interp-speed (chain-loop J2J has
+real per-send C++ overhead), so inline-J2J WOULD help — but the baseline is
+chain-loop J2J, NOT no-J2J, so the win is smaller than arm64's 296->32ms benchFib
+(inline-J2J vs FULL activation).  Recommend treating this as a dedicated
+multi-session redesign with its own validation gates, or deprioritizing (x86 is
+not the shipping arch and already has working chain-loop J2J).  The WIP code
+stays inert (triple-gated default-off) as scaffolding.
 
 ## PERF FOLLOW-UP — ported at:/size/SmallFloat x86 prim prologues (3b81d93d)
 
