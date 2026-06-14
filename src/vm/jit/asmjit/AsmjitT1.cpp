@@ -7421,8 +7421,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             //   1=nil, 2=true, 3=false, 4=SmI 0, 5=SmI 1.
             // F5 R83: handles all nArgs.  Result goes at rcvr slot;
             // for nArgs > 0, SP adjusts down by nArgs*8 to drop args.
-            asmjit::Label retLitDone = a.new_label();
-            {
+            // DEAD-CODE GATE: dispatch tbnz->tryReturnsLiteral (~5622) is gated
+            // on PHARO_T1_INLINE_RETURNS_LITERAL (default OFF); without the same
+            // gate the body was emitted UNREACHABLE at every send site.  Gate to
+            // match (self-contained, exits via b endOfSend).
+            if (GET_DEBUG_BOOL(PHARO_T1_INLINE_RETURNS_LITERAL)) {
+                asmjit::Label retLitDone = a.new_label();
                 a.bind(tryReturnsLiteral);
                 bumpRetLitCounter();
                 // Extract kind from bits 48-50 → x6.
@@ -7746,7 +7750,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // tagged SmI arith with overflow check, writes result to
             // receiver slot, bails to endOfSend.  On overflow or non-SmI
             // slots, bails to dispatchCached.
-            if (nArgs == 0) {
+            // DEAD-CODE GATE: the dispatch tbnz->tryMultiSlot (~5701) is gated
+            // on PHARO_T1_INLINE_MULTISLOT (default OFF, the #extent-spec fix),
+            // so without the same gate here the body was emitted UNREACHABLE at
+            // every nArgs-0 site — pure zone bloat.  Gate the body to match
+            // (self-contained, exits via b endOfSend; label tryMultiSlot is
+            // only referenced by the gated dispatch, so no unresolved link).
+            if (nArgs == 0 && GET_DEBUG_BOOL(PHARO_T1_INLINE_MULTISLOT)) {
                 a.bind(tryMultiSlot);
                 // Extract A (bits 0-7) → x3, B (bits 8-15) → x4.
                 a.and_(x3, x7, asmjit::Imm(0xFF));
