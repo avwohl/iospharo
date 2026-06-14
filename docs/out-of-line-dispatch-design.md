@@ -997,3 +997,45 @@ addresses it:
   PMS tail-deletion, and the headline shrink is a measured link-state-weighted
   number — directly reflecting the critique's winModelCheck ("broken as written;
   underlying thesis plausible with a different resume mechanism").
+---
+
+## B1 implementation notes — send-emit mapping (2026-06-14, session continuation)
+
+Mapped the arm64 send-site emit (emitOne_arm64) to pin B1's lowest-risk first
+increment. Hot structure of a Phase4 send (anchors as of ad0c2d15):
+- **Head / IC probe** (~AsmjitT1.cpp:5455): load receiver class key, cmp
+  icData[0].key. PER-SITE (icDataPtr per site; key computed at runtime).
+- **Poly-walk** slots 0-2 (5467-5487): default-on; cold-ish.
+- **extras load + cbz** (5506-5516): x7=extras; cbz x7 -> dispatchCached.
+- **inline-J2J block** (5537+): bit-60 J2J fast path (self-rec direct tail).
+- **dispatch fan** (5540-5722): bit59/55/primKind checks -> tryPrimBasicNew/
+  BitOps/Class/etc.; heap/imm split (5657); getter/setter/returnsSelf/multislot/
+  class(5716). Routes by classification.
+- **inline-prim handlers** (~8300-8520): tryPrimIdentityHash/tryPrimClass/
+  tryPrimSmallFloatOp/tryPrimAt/tryPrimSize/... — emitted INLINE at EVERY
+  nArgs-0/1 site. Each ends `b (tosSendRes ? tosLrearm : endOfSend)` (PER-SITE
+  continuation). These are the bulk of the per-site inline-prim bytes.
+- **dispatchCached** = the C++ send fallback (the ~2.7x non-inlined tax).
+
+PER-SITE vs SHAREABLE:
+- Per-site DATA: the icDataPtr/key (head), rcvrOffsetBytes (= -8*(nArgs+1), but
+  UNIFORM within an nArgs class), the resume continuation (endOfSend/tosLrearm),
+  the linked-tail callee addr.
+- Shareable (per nArgs): the inline-prim handler bodies (tryPrimClass etc. read
+  x1=receiver, x2=sp, rcvrOffsetBytes uniform per nArgs) and the dispatch fan /
+  gate cascade.
+
+CHOSEN B1 FIRST INCREMENT (lowest-risk, biggest per-site zone hog): move the
+**inline-prim handler bodies** (the 8300-8520 block) into per-(nArgs) shared
+stubs on the B0.5 stub page, reached by `b`. They hit the SAME resume-address
+problem B0.5 solved (each ends `b endOfSend`, per-site) -> reuse the proven
+pattern: the SITE produces its continuation with `adr x14, endOfSend` and passes
+it in a reg; the shared handler `br x14` to resume. nArgs is uniform per stub
+(separate nArgs-0 and nArgs-1 handler stubs). Knob-gated; gates = byte-identical
+knob-off (SIZE proxy, ASLR), per-prim correctness (class/at:/size/float results),
+emitted-byte shrink, SUnit subset per-test identical, DET_SCHED, full-suite.
+This is latency-neutral (handlers do the same work, relocated) and a real zone
+win (the inline-prim handlers are a large fraction of nArgs-0/1 site bytes).
+LINKED-STUB (the per-send save-push relocation, design §2-5) is the harder later
+increment; this handler-relocation proves the per-nArgs resume-pass machinery
+first.
