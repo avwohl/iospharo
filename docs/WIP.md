@@ -34,7 +34,20 @@ primitiveFindHandlerContext; gdb can't read member vars on the box build
 (no full DWARF) so instrument in C++ (PHARO_T1_TRACE_HANDLER dumps the
 handler-search chain w/ receiver class + at: index).
 
-## WIP — x86 self-recursive inline-J2J (knob-gated, BLOCKED on materialization)
+## x86 self-recursive inline-J2J — RESOLVED + DEFAULT-ON (2026-06-14, b471f862)
+
+**STATUS: landed.** The "BLOCKER" narrative below is HISTORICAL — superseded by
+the design workflow (docs/x86-inline-j2j-design.md). The real fix was much
+smaller than the multi-session redesign feared here: **coupling-1 alone**
+(the inline send-site push must publish `state.j2jDepth` so the C++ chain-loop /
+materializer see the pending saves) fixed correctness. Coupling-2/3 proved
+unnecessary even past the 32-slot save-room limit. Validated at full-suite scale
+(x86, 12689 pass, 0 deterministic regressions; see docs/sunit-3way-comparison.md)
+and now flipped DEFAULT-ON to match arm64 (default-on since 2026-06-10). Opt out
+with `PHARO_T1_X86_NO_INLINE_J2J=1`; `PHARO_T1_X86_INLINE_J2J` is now a no-op.
+The historical "blocked" account is kept below as the diagnostic trail.
+
+### (historical) WIP — knob-gated, then thought BLOCKED on materialization
 
 Goal: bypass the JIT->C++->JIT activate/resume round-trip for self-recursive
 JIT->JIT calls on x86 (the bigger remaining perf lever; arm64's larger J2J win
