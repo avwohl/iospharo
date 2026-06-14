@@ -30,6 +30,15 @@ NEXT-LEVER DECISION (strategic, multi-session — awaiting direction):
   construction). Staged B0-B6, B0 = shared return-prelude (de-risked first move,
   no resume-address problem). Gates are compile-fail-rate + survivability, NOT
   cfib ms.
+  B0 LANDED opt-in (commit f2493c49, PHARO_T1_SHARED_RETPRELUDE): per-method
+  shared prelude+epilogue owning BOTH exits; single-return methods stay inline
+  (benchFib/cfibx untouched). Validated: battery==Cog, rdense (3 ret) 5692->5528B
+  both exits correct, cfibx (1 ret) SIZE-identical 5568->5568, DET_SCHED rdense
+  75025 x3, SUnit subset 1577 tests per-test identical on/off. MEASUREMENT
+  GOTCHA: byte dumps AND EMIT_HASH vary run-to-run via ASLR-baked helper/zone
+  addresses (off-vs-off differs) -> use emitted SIZE as the knob-off-identity
+  proxy, NOT cmp/hash. NEXT B0.5: promote to a zone-global shared stub so
+  single-return methods shrink too (the real Axis-1 reach).
 Harness ready for either: /tmp/cogbench2.st + golden /tmp/battery_golden.txt
 (Cog-validated), PHARO_T1_DUMP_SEL+capstone, fresh /tmp/bench/Pharo.image.
 

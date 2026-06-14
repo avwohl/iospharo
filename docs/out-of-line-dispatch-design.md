@@ -734,8 +734,25 @@ A/B only for any perf claim; (iii) `PHARO_DET_SCHED=1` AIPrimTest/AITarjanTest
 ERROR=0; (iv) emitted-bytes stat under PHARO_T1_DUMP_SEL.  Knobs go in
 `debug_vars.h` (project rule), opt-in until the default-ON flip.
 
-- **B0 — SHARED RETURN-PRELUDE (de-risked first move, but NOT trivial — see
-  §4.4).**  Build `SharedReturnPrelude` as a frameless shared stub handling BOTH
+- **B0 — SHARED RETURN-PRELUDE — LANDED opt-in (commit f2493c49, 2026-06-14).**
+  Per-method scope (local label, zero cross-method-addressing risk): when an
+  arm64 method has >=2 prelude-using return ops, route them to ONE shared
+  prelude+epilogue block at method end; the shared block owns BOTH exits (the
+  uniform `str retval;EXIT_RETURN;syncSp;ret x30` epilogue is byte-identical
+  across return ops, so no per-site normalReturn address is needed). Single-
+  return methods stay inline (so benchFib/cfibx are untouched). Validated:
+  battery==golden==Cog; rdense (3 ret) 5692->5528 B + correct both exits;
+  cfibx (1 ret) SIZE-identical 5568->5568; DET_SCHED rdense 75025 x3; SUnit
+  subset (1577 tests, Array/OC/Dict/String/Interval) per-test IDENTICAL on/off.
+  NOTE (measurement): raw byte dumps AND EMIT_HASH vary run-to-run via
+  ASLR-baked helper/zone addresses (off-vs-off differs) — emitted SIZE is the
+  ASLR-immune knob-off-identity proxy; capstone-classified baseline diff is
+  deferred to the default-ON flip. NEXT: per-method only wins return-dense
+  methods; promote to a ZONE-GLOBAL shared stub (single `b`/literal-load to a
+  fixed zone address) so single-return methods also shrink — the real Axis-1
+  reach (B0.5). (Original design notes below.)
+- **B0 (original design notes) — de-risked first move, but NOT trivial — see
+  §4.4.**  Build `SharedReturnPrelude` as a frameless shared stub handling BOTH
   prelude exits (poppable `br x8` AND fall-through `normalReturn`/`ret x30`) and
   the per-site variants (V1 staticJ2JArgCount, simStack x26 ordering, g_fsr*),
   either parameterized via registers or restricted to the byte-identical-variant
