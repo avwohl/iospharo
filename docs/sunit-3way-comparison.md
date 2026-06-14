@@ -96,3 +96,23 @@ cross-arch x86 vs arm64                  2                   same 2 flakes
 vs Cog or arm64.** The x86 JIT (startup-corruption fix + prim-prologue port +
 inline-J2J) reaches full parity with the shipping arm64 VM on the curated suite,
 and is itself cleaner than Cog (error=1 vs Cog's 96).
+
+## UPDATE 2026-06-14: SHA1 fix verified — full suite, config-independent
+
+After fixing the Smalltalk SHA1 fallback (submodule e0e51fd, main 2757b0df), the
+full 565-class suite was re-run on x86 in BOTH crypto configs with the patched
+runner (one box, keep-alive):
+
+```
+config                                   Pass    Fail  Error  SHA1largeStream
+x86 crypto-OFF (patched Smalltalk SHA1)  12693    0      1     PASS
+x86 crypto-ON  (native DSAPlugin SHA1)   12692    0      2     PASS
+```
+
+- `SHA1Test>>testLargeCharacterStream` PASSES in BOTH configs (was: FAIL on
+  crypto-OFF). The crypto-OFF run exercises the patched Smalltalk fallback, so
+  this verifies the fix at full-suite scale, not just in isolation.
+- **0 failures** in both; pass counts match within 1 (fork-timing flake
+  variance). The suite is now config-INDEPENDENT — the crypto build flag no
+  longer changes SUnit results. x86 holds full parity with arm64/Cog
+  (0 deterministic regressions) regardless of crypto config.
