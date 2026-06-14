@@ -19,8 +19,17 @@ NEXT-LEVER DECISION (strategic, multi-session — awaiting direction):
   6446-6448) and re-fund in-descent scheduler preemption (forceYield doorbell is
   back-edge-only; fib/cfib have no back-edges -> deadlock-family risk) + a
   deep-recursion-starves-Delay probe.
-- Out-of-line dispatch (Cog-style shared send-stubs): HIGHEST ceiling (attacks the
-  +1.5x send tax AND ~6KB/method zone bloat) but needs a design pass first.
+- Out-of-line dispatch (Cog-style shared send-stubs): HIGHEST ceiling. DESIGN
+  DONE 2026-06-14 -> docs/out-of-line-dispatch-design.md (7-agent workflow +
+  adversarial critique). KEY CORRECTION: the obvious "bl harvests x30 as the
+  per-site resume address" is FATAL (x30 is the method's live return-to-C++ link;
+  the VM is frameless, 0 bl / 15 ret in cfibx). Resume instead via the SHIPPED
+  per-site `adr x14, resumeAfterCall` + plain `b`/`br`. Win is Axis-1
+  (zone/i-cache/compile-COVERAGE: ~204B/site saved via LINKED-STUB = a PMS
+  tail-deletion; recover 64MB->16MB), NOT per-send latency (NEUTRAL by
+  construction). Staged B0-B6, B0 = shared return-prelude (de-risked first move,
+  no resume-address problem). Gates are compile-fail-rate + survivability, NOT
+  cfib ms.
 Harness ready for either: /tmp/cogbench2.st + golden /tmp/battery_golden.txt
 (Cog-validated), PHARO_T1_DUMP_SEL+capstone, fresh /tmp/bench/Pharo.image.
 
