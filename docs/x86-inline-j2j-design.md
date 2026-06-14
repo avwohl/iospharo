@@ -99,6 +99,14 @@ existing merge (`:25016`) and materialize-on-bail (`:25047`) SEE the inline
 saves. (No x86 stencil writes `state.j2jDepth` today, so any
 `if (state.j2jDepth>0)` guard is a guaranteed no-op when the knob is off.)
 
+> STATUS 2026-06-14 (coupling 2): NOT NEEDED. Coupling 1 alone is correct even
+> for deep recursion past the 32-slot room limit (rdown 50/100/500). The gate
+> was WIDENED instead (commit baf9bb4b): PHARO_T1_X86_INLINE_J2J alone (no SEL)
+> opts in ALL self-recursive methods. Validated: ~2193 SUnit tests 0 new fails,
+> startup+battery clean (cold+DET), ~20% faster on recursion (40x rfib(28),
+> startup-subtracted: ~10s chain -> ~8s inline). Default-OFF; full-suite run
+> gates any default-on flip.
+
 **Coupling 2 — stop the chain loop clobbering inline saves (the real fix).**
 On x86 entry to the tight chain loop, **seed the local `j2jDepth` from
 `state.j2jDepth`** (and `localFrameDepth` accordingly), so
