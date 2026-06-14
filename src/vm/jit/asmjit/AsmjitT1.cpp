@@ -151,6 +151,9 @@ static const std::vector<bool>* g_tosJumpTargetsPtr = nullptr;
 // lives in emitMethodBytes's frame; the pointer is valid for that compile only.
 static asmjit::Label* g_sharedRetPreludeLabel = nullptr;
 static bool g_sharedRetPreludeActive = false;
+// B0.5 sizing counters (PHARO_T1_RETPRELUDE_STATS); dumped at exit.
+static uint64_t g_retStatsM = 0, g_retStatsB = 0, g_retStatsR = 0,
+                g_retStatsM2 = 0, g_retStatsR2 = 0;
 // Per-compile master switch (knob && real emit) + per-family mask bits
 // (PHARO_T1_TOS_MASK; -1 = all).  Each converted family checks its bit
 // so miscompiles bisect to a family within one binary.
@@ -10166,6 +10169,45 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 (unsigned long long)h);
     }
     bcToCode[bcLen] = (uint32_t)emitted;
+
+    // B0.5 sizing (PHARO_T1_RETPRELUDE_STATS): tally the return-op distribution
+    // and the bytes the shared-return-prelude lever would save, to size B0.5
+    // (zone-global) vs B0 (per-method, >=2 returns).  ~82 B/inline prelude+epilog
+    // (measured: rdense 3-ret 5692->5528).  Dumped once at exit.
+    {
+        static const bool retStats = GET_DEBUG_BOOL(PHARO_T1_RETPRELUDE_STATS);
+        if (retStats && isReal && !g_emitIsBlock) {
+            int rc = 0;
+            for (size_t bi = 0; bi < bcLen; ) {
+                uint8_t rop = bc[bi];
+                if (rop >= SistaV1::ReturnReceiver && rop <= SistaV1::ReturnTop)
+                    rc++;
+                int rl = SistaV1::bytecodeLength(rop);
+                if (rl <= 0) rl = 1;
+                bi += (size_t)rl;
+            }
+            g_retStatsM++; g_retStatsB += emitted; g_retStatsR += rc;
+            if (rc >= 2) { g_retStatsM2++; g_retStatsR2 += rc; }
+            static const bool installed = []() {
+                std::atexit([]() {
+                    const uint64_t P = 82, BR = 12;  // bytes: inline prelude+epilog, branch
+                    if (!g_retStatsB) return;
+                    uint64_t b0 = (g_retStatsR2 - g_retStatsM2) * P;        // >=2: collapse R-1 per method
+                    uint64_t b05 = g_retStatsR * (P - BR);                  // global: all R, minus branch
+                    fprintf(stderr,
+                      "[RETPRELUDE-STATS] realMethods=%llu emittedBytes=%llu "
+                      "retOps=%llu | B0(>=2ret): methods=%llu save~%lluB (%.2f%%) "
+                      "| B0.5(global all): save~%lluB (%.2f%%)\n",
+                      (unsigned long long)g_retStatsM, (unsigned long long)g_retStatsB,
+                      (unsigned long long)g_retStatsR, (unsigned long long)g_retStatsM2,
+                      (unsigned long long)b0, 100.0*(double)b0/(double)g_retStatsB,
+                      (unsigned long long)b05, 100.0*(double)b05/(double)g_retStatsB);
+                });
+                return true;
+            }();
+            (void)installed;
+        }
+    }
 
     // FINDNODE_WATCH: dump asTuple's bcToCode table (per-bytecode code offset;
     // 0 = not a valid JIT re-entry point per codeOffsetForBC contract).
