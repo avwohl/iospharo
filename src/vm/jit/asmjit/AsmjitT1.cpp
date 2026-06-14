@@ -1485,9 +1485,14 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     // its x86 prologue lands in emitPrimProlog_x86.
     switch (primIndex) {
         case 10: case 11: case 12: case 13:
-        case 60: case 61: case 62:
-        case 541: case 542: case 549:
+        case 61:  // at:put: stays on the C-prim fallback: the arm64 fmt-2
+                  // inline store omits the old->young write barrier, while
+                  // C++ primitiveAtPut uses storePointer (barrier) — so the
+                  // -1 path (C prim runs first) is the only safe option.
             return -1;
+        // 60/62 (at:/size) and 541/542/549 (SmallFloat +/-/*) now have x86
+        // prologues in emitPrimProlog_x86 (ported from arm64), so they are
+        // NOT bailed here.
         default: break;
     }
 #endif
@@ -1592,6 +1597,338 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         a.ret();
         return;  // never falls through (always succeeds)
     }
+
+    // prim 541/542/549 (SmallFloat + - *) — ported from emitPrimProlog_arm64:3221-3289
+    if (primIndex == 541 || primIndex == 542 || primIndex == 549) {
+        asmjit::Label fail = a.new_label();
+
+        a.mov(rcx, ptr(rdi, OFF_RECEIVER));      // rcx = receiver oop
+        a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+        a.mov(rdx, ptr(rdx));                    // rdx = tempBase[0] = arg oop
+
+        // Tag-check both operands == 5 (SmallFloatTag).
+        a.mov(r8, rcx);
+        a.and_(r8, asmjit::Imm(0x7));
+        a.cmp(r8, asmjit::Imm(5));
+        a.jne(fail);
+        a.mov(r8, rdx);
+        a.and_(r8, asmjit::Imm(0x7));
+        a.cmp(r8, asmjit::Imm(5));
+        a.jne(fail);
+
+        // r10 = exponent offset constant 0x7000000000000000 (reused for
+        // decode-add AND encode-subtract, exactly like arm64's x5).
+        a.mov(r10, asmjit::Imm(0x7000000000000000ULL));
+
+        // Decode receiver: shifted = oop >> 3 (logical); if <=1 -> +-0 -> bail.
+        a.mov(r8, rcx);
+        a.shr(r8, asmjit::Imm(3));               // logical shift (matches arm64 lsr)
+        a.cmp(r8, asmjit::Imm(1));
+        a.jbe(fail);                             // shifted <= 1  (b_ls)
+        a.add(r8, r10);                          // + exponent offset
+        a.ror(r8, asmjit::Imm(1));               // rotate right 1 -> doubleBits
+        a.movq(xmm0, r8);                        // d0 = receiver
+
+        // Decode arg (r10 still holds offset).
+        a.mov(r9, rdx);
+        a.shr(r9, asmjit::Imm(3));
+        a.cmp(r9, asmjit::Imm(1));
+        a.jbe(fail);
+        a.add(r9, r10);
+        a.ror(r9, asmjit::Imm(1));
+        a.movq(xmm1, r9);                        // d1 = arg
+
+        switch (primIndex) {
+            case 541: a.addsd(xmm0, xmm1); break;   // #+
+            case 542: a.subsd(xmm0, xmm1); break;   // #-
+            case 549: a.mulsd(xmm0, xmm1); break;   // #*
+        }
+
+        // Encode result.  r8 = result bits.
+        a.movq(r8, xmm0);
+        // ROL by 1 (sign bit -> LSB) == arm64 ror #63.  NaN/Inf have an
+        // all-ones exponent, which makes the rotated form exceed the
+        // overflow ceiling, so the range checks below catch them.
+        a.rol(r8, asmjit::Imm(1));
+        a.cmp(r8, r10);
+        a.jb(fail);                              // rotated < offset -> exp underflow (b_lo)
+        a.sub(r8, r10);                          // adjusted = rotated - offset
+        a.mov(r9, asmjit::Imm(0x1FFFFFFFFFFFFFFFULL));
+        a.cmp(r8, r9);
+        a.ja(fail);                              // adjusted > 0x1FFF... -> exp overflow (b_hi)
+        a.shl(r8, asmjit::Imm(3));               // make room for tag (low 3 bits now 0)
+        a.or_(r8, asmjit::Imm(5));               // SmallFloatTag (or fine on x86; == add 5 here)
+
+        a.mov(ptr(rdi, OFF_RETVAL), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();                                 // plain ret (no sp-sync, no J2J shim on x86)
+
+        a.bind(fail);
+        return;
+    }
+
+    // prim 62 (size/basicSize) — ported from emitPrimProlog_arm64:2788-2908
+    if (primIndex == 62) {
+        asmjit::Label fail = a.new_label();
+
+        // rcx = receiver; must be a heap pointer (low 3 bits == 0).
+        a.mov(rcx, ptr(rdi, OFF_RECEIVER));
+        a.test(rcx.r8(), asmjit::Imm(7));
+        a.jne(fail);
+
+        // r8 = header word.
+        a.mov(r8, ptr(rcx));
+        // r9 = fmt = (hdr >> 24) & 0x1F.
+        a.mov(r9, r8);
+        a.shr(r9, asmjit::Imm(24));
+        a.and_(r9, asmjit::Imm(0x1F));
+        // r10 = slotCount = (hdr >> 56) & 0xFF; 0xFF => overflow word at [rcv-8].
+        a.mov(r10, r8);
+        a.shr(r10, asmjit::Imm(56));
+        a.and_(r10, asmjit::Imm(0xFF));
+        {
+            asmjit::Label noOverflow = a.new_label();
+            a.cmp(r10, asmjit::Imm(255));
+            a.jne(noOverflow);
+            // Real count is in the 8 bytes before the header; high byte is the
+            // 0xFF overflow marker — mask it off via shl 8 / shr 8.
+            a.mov(r10, ptr(rcx, -8));
+            a.shl(r10, asmjit::Imm(8));
+            a.shr(r10, asmjit::Imm(8));
+            a.bind(noOverflow);
+        }
+
+        // --- fmt 2 (Array): size = slotCount ---
+        {
+            asmjit::Label tryWords = a.new_label();
+            a.cmp(r9, asmjit::Imm(2));
+            a.jne(tryWords);
+            a.shl(r10, asmjit::Imm(3));          // tag slotCount as SmI: (n<<3)|1
+            a.or_(r10, asmjit::Imm(SMI_TAG));
+            a.mov(ptr(rdi, OFF_RETVAL), r10);
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+            a.ret();
+            a.bind(tryWords);
+        }
+
+        // --- fmt 10-11 (32-bit indexable): numElements = slotCount*2 - (fmt-10) ---
+        {
+            asmjit::Label tryBytes = a.new_label();
+            a.mov(r11, r9);
+            a.sub(r11, asmjit::Imm(10));         // r11 = fmt - 10
+            a.cmp(r11, asmjit::Imm(2));
+            a.jae(tryBytes);                      // unsigned: fmt-10 in {0,1} only
+            a.shl(r10, asmjit::Imm(1));          // slotCount * 2
+            a.sub(r10, r11);                      // - (fmt - 10)
+            a.shl(r10, asmjit::Imm(3));          // tag as SmI
+            a.or_(r10, asmjit::Imm(SMI_TAG));
+            a.mov(ptr(rdi, OFF_RETVAL), r10);
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+            a.ret();
+            a.bind(tryBytes);
+        }
+
+        // --- fmt 16-23 (byte indexable): byteSize = slotCount*8 - (fmt & 7) ---
+        {
+            asmjit::Label tryFmt9 = a.new_label();
+            a.mov(r11, r9);
+            a.sub(r11, asmjit::Imm(16));         // r11 = fmt - 16
+            a.cmp(r11, asmjit::Imm(8));
+            a.jae(tryFmt9);                       // unsigned: fmt-16 in [0..7]
+            a.shl(r10, asmjit::Imm(3));          // slotCount * 8
+            a.mov(r11, r9);
+            a.and_(r11, asmjit::Imm(0x7));       // fmt & 7  (preserves r9/fmt)
+            a.sub(r10, r11);                      // byteSize
+            a.shl(r10, asmjit::Imm(3));          // tag as SmI
+            a.or_(r10, asmjit::Imm(SMI_TAG));
+            a.mov(ptr(rdi, OFF_RETVAL), r10);
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+            a.ret();
+            a.bind(tryFmt9);
+        }
+
+        // --- fmt 9 (Indexable64): size = slotCount ---
+        {
+            asmjit::Label tryFmt345 = a.new_label();
+            a.cmp(r9, asmjit::Imm(9));
+            a.jne(tryFmt345);
+            a.shl(r10, asmjit::Imm(3));          // tag as SmI
+            a.or_(r10, asmjit::Imm(SMI_TAG));
+            a.mov(ptr(rdi, OFF_RETVAL), r10);
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+            a.ret();
+            a.bind(tryFmt345);
+        }
+
+        // --- fmt 3/4/5 (IndexableWithFixed / Weak / WeakWithFixed): C helper ---
+        // size = slotCount - fixedFields (read from the class instSpec).
+        a.mov(r11, r9);
+        a.sub(r11, asmjit::Imm(3));              // r11 = fmt - 3
+        a.cmp(r11, asmjit::Imm(3));
+        a.jae(fail);                             // unsigned: only fmt-3 in {0,1,2}
+
+        // jit_rt_primsize_ptr(state, rcvBits, &state.returnValue).
+        // SysV: rdi=state(already), rsi=rcvBits, rdx=out.  One `push rdi`
+        // both saves state and realigns rsp to 16 (JIT entry rsp == 8 mod 16,
+        // see line 2385), so it is 0 mod 16 at the `call`.
+        a.push(rdi);                             // save state + align rsp to 16
+        a.mov(rsi, rcx);                         // arg2 = rcvBits (receiver)
+        a.lea(rdx, ptr(rdi, OFF_RETVAL));        // arg3 = &state.returnValue
+        a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_primsize_ptr));
+        a.call(rax);                             // returns 1 on success (rax)
+        a.mov(r9, rax);                          // r9 = success flag
+        a.pop(rdi);                              // restore state (re-aligns rsp)
+        a.test(r9, r9);
+        a.je(fail);                              // helper failed -> Smalltalk fallback
+        // Helper wrote the UNTAGGED size to state.returnValue; tag it as SmI.
+        a.mov(r10, ptr(rdi, OFF_RETVAL));
+        a.shl(r10, asmjit::Imm(3));
+        a.or_(r10, asmjit::Imm(SMI_TAG));
+        a.mov(ptr(rdi, OFF_RETVAL), r10);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();
+
+        a.bind(fail);
+        return;
+    }
+
+    // prim 60 (at:) — ported from emitPrimProlog_arm64:2761-3067
+    if (primIndex == 60) {
+    asmjit::Label fail = a.new_label();
+
+    // rcx = receiver (must be heap pointer: low 3 bits == 0).
+    a.mov(rcx, ptr(rdi, OFF_RECEIVER));
+    a.test(rcx.r8(), asmjit::Imm(7));   // tst x1,#7 ; b_ne fail
+    a.jne(fail);
+
+    // r8 = header word (arm64: ldr x4,[x1]).
+    a.mov(r8, ptr(rcx));
+    // fmt = (hdr >> 24) & 0x1F -> r9   (FormatShift=24, FormatMask=0x1F<<24)
+    a.mov(r9, r8);
+    a.shr(r9, asmjit::Imm(24));
+    a.and_(r9, asmjit::Imm(0x1F));
+    // slotCount = (hdr >> 56) & 0xFF -> r10  (SlotCountShift=56). If 0xFF,
+    // read overflow word at [rcvr-8] and mask off its high (0xFF) byte.
+    a.mov(r10, r8);
+    a.shr(r10, asmjit::Imm(56));
+    a.and_(r10, asmjit::Imm(0xFF));
+    {
+        asmjit::Label noOverflow = a.new_label();
+        a.cmp(r10, asmjit::Imm(255));
+        a.jne(noOverflow);
+        a.mov(r10, ptr(rcx, -8));        // ldur x5,[x1,-8]
+        a.shl(r10, asmjit::Imm(8));      // lsl #8
+        a.shr(r10, asmjit::Imm(8));      // lsr #8 (clears 0xFF marker byte)
+        a.bind(noOverflow);
+    }
+
+    // Load idx (tagged) from first temp; must be SmI.
+    a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+    a.mov(rdx, ptr(rdx));                // rdx = idx (tagged)
+    a.mov(rax, rdx);
+    a.and_(rax, asmjit::Imm(0x7));
+    a.cmp(rax, asmjit::Imm(SMI_TAG));    // SMI_TAG == 1
+    a.jne(fail);                         // idx not SmI
+
+    asmjit::Label tryWordsAt = a.new_label();
+    asmjit::Label tryBytesAt = a.new_label();
+    asmjit::Label tryPtrAt   = a.new_label();
+
+    // --- fmt 2 (Array): inline pointer slot load ---
+    a.cmp(r9, asmjit::Imm(2));
+    a.jne(tryWordsAt);
+    a.mov(rax, rdx);
+    a.sar(rax, asmjit::Imm(3));          // rax = idx untagged (signed)
+    a.cmp(rax, asmjit::Imm(1));
+    a.jl(fail);
+    a.cmp(rax, r10);                     // idx > slotCount -> fail
+    a.jg(fail);
+    // slot[idx-1] at offset 8 + (idx-1)*8 = idx*8 => [rcvr + idx*8].
+    a.mov(rax, ptr(rcx, rax, 3, 0));     // shift=3 (x8), disp=0
+    a.mov(ptr(rdi, OFF_RETVAL), rax);
+    a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+    a.ret();
+
+    // --- fmt 10-11: 32-bit word indexable (WordArray/IntegerArray/WideString) ---
+    a.bind(tryWordsAt);
+    a.mov(rax, r9);
+    a.sub(rax, asmjit::Imm(10));
+    a.cmp(rax, asmjit::Imm(2));          // (fmt-10) >= 2 (unsigned) -> not 10/11
+    a.jae(tryBytesAt);                   // wraps for fmt<10 -> correctly skips
+    // numElements = slotCount*2 - (fmt-10) -> r11
+    a.mov(r11, r10);
+    a.shl(r11, asmjit::Imm(1));          // sc*2
+    a.sub(r11, rax);                     // - (fmt-10)
+    a.mov(rax, rdx);
+    a.sar(rax, asmjit::Imm(3));          // idx untagged
+    a.cmp(rax, asmjit::Imm(1));
+    a.jl(fail);
+    a.cmp(rax, r11);
+    a.jg(fail);
+    // 32-bit elem at recv + 4 + idx*4 (slot[0]=+8, slot[idx-1]=4+idx*4).
+    a.mov(eax, dword_ptr(rcx, rax, 2, 4));   // shift=2 (x4), disp=4; zero-ext to rax
+    a.shl(rax, asmjit::Imm(3));          // tag SmI: (val<<3)|1
+    a.or_(rax, asmjit::Imm(SMI_TAG));
+    a.mov(ptr(rdi, OFF_RETVAL), rax);
+    a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+    a.ret();
+
+    // --- fmt 16-23: byte indexable (ByteArray/ByteString/Symbol etc.) ---
+    a.bind(tryBytesAt);
+    a.mov(rax, r9);
+    a.sub(rax, asmjit::Imm(16));
+    a.cmp(rax, asmjit::Imm(8));          // (fmt-16) >= 8 (unsigned) -> not a byte fmt
+    a.jae(tryPtrAt);
+    // byteSize = slotCount*8 - (fmt & 7) -> r11
+    a.mov(r11, r10);
+    a.shl(r11, asmjit::Imm(3));          // sc*8
+    a.mov(rax, r9);
+    a.and_(rax, asmjit::Imm(0x7));       // fmt & 7
+    a.sub(r11, rax);                     // byteSize
+    a.mov(rax, rdx);
+    a.sar(rax, asmjit::Imm(3));          // idx untagged
+    a.cmp(rax, asmjit::Imm(1));
+    a.jl(fail);
+    a.cmp(rax, r11);
+    a.jg(fail);
+    // byte at recv + 7 + idx (slot[0] at +8, idx 1 -> recv+7+1).
+    a.movzx(eax, byte_ptr(rcx, rax, 0, 7));  // base+idx*1+7, zero-extend byte
+    a.shl(rax, asmjit::Imm(3));          // tag SmI
+    a.or_(rax, asmjit::Imm(SMI_TAG));
+    a.mov(ptr(rdi, OFF_RETVAL), rax);
+    a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+    a.ret();
+
+    // --- fmt 3/4/5/9 + every other format: jit_rt_primat_ptr helper ---
+    // int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits, uint64_t i, uint64_t* out)
+    //   System V args: rdi=s, rsi=rcvBits, rdx=i, rcx=out.  Returns eax (1=ok).
+    // The helper fast-paths fmt 3/4/5/9 and runs the FULL C primitive
+    // (jitPrimAtFull) for anything else, writing the already-tagged result
+    // oop into *out; returns 0 only on a genuine C-prim failure.
+    a.bind(tryPtrAt);
+    a.mov(rax, rdx);
+    a.sar(rax, asmjit::Imm(3));          // rax = untagged idx (helper wants untagged i)
+    a.push(rdi);                         // save state (1 push => rsp 16-aligned at call)
+    // Marshal args: read sources before overwriting them; rdi(arg0=state)
+    // stays untouched until after rcx(arg3) is derived from it.
+    a.mov(rsi, rcx);                     // arg1 = rcvBits (receiver still in rcx)
+    a.mov(rdx, rax);                     // arg2 = idx (untagged)
+    a.lea(rcx, ptr(rdi, OFF_RETVAL));    // arg3 = &state.returnValue (rdi=state)
+    // arg0 = rdi is already state.
+    a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_primat_ptr));
+    a.call(rax);
+    a.mov(r11d, eax);                    // r11d = helper result (caller-saved-safe)
+    a.pop(rdi);                          // restore state ptr
+    a.test(r11d, r11d);
+    a.je(fail);                          // helper returned 0 -> genuine C-prim failure
+    // Helper already wrote the tagged result oop into state.returnValue.
+    a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+    a.ret();
+
+    a.bind(fail);
+    return;   // fall through to the method's bytecode body (Smalltalk fallback)
+}
+
 
     asmjit::Label fail = a.new_label();
 
