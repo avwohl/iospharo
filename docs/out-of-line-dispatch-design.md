@@ -747,10 +747,21 @@ ERROR=0; (iv) emitted-bytes stat under PHARO_T1_DUMP_SEL.  Knobs go in
   NOTE (measurement): raw byte dumps AND EMIT_HASH vary run-to-run via
   ASLR-baked helper/zone addresses (off-vs-off differs) — emitted SIZE is the
   ASLR-immune knob-off-identity proxy; capstone-classified baseline diff is
-  deferred to the default-ON flip. NEXT: per-method only wins return-dense
-  methods; promote to a ZONE-GLOBAL shared stub (single `b`/literal-load to a
-  fixed zone address) so single-return methods also shrink — the real Axis-1
-  reach (B0.5). (Original design notes below.)
+  deferred to the default-ON flip.
+  B0.5 — ZONE-GLOBAL shared stub — LANDED opt-in (commit 5fe0c001, 2026-06-14).
+  Promotes B0 to ONE never-freed MAP_JIT stub page (getSharedReturnPreludeStub:
+  asmjit -> flatten -> copy under ScopedWriteAccess; stable absolute address,
+  separate from the flush/evict'd method zone -> no invalidation). EVERY real
+  non-block method's returns collapse to `mov x16,stub; br x16` (x30 stays the
+  live return link). Single-return methods now shrink too (cfibx 5568->5496).
+  Position-independent prelude (no adr/literal/abs-reloc) copies directly; gated
+  off under per-method VERIFY knobs (g_codeStartLabel) -> inline. Validated:
+  battery==Cog, cfibx/rdense correct, DET_SCHED 75025 x3, SUnit subset 1577 tests
+  per-test identical on/off, actual zone 32.70M->32.00M (~1.8%). Measured reach
+  (PHARO_T1_RETPRELUDE_STATS): the return prelude is a SMALL fraction of bloat
+  (~1.2-1.8%) — the per-SEND machinery dominates (B1). B0.5's real value is the
+  proven zone-global-stub infra that B1's per-send stub reuses. (Original B0
+  design notes below.)
 - **B0 (original design notes) — de-risked first move, but NOT trivial — see
   §4.4.**  Build `SharedReturnPrelude` as a frameless shared stub handling BOTH
   prelude exits (poppable `br x8` AND fall-through `normalReturn`/`ret x30`) and

@@ -37,8 +37,16 @@ NEXT-LEVER DECISION (strategic, multi-session — awaiting direction):
   75025 x3, SUnit subset 1577 tests per-test identical on/off. MEASUREMENT
   GOTCHA: byte dumps AND EMIT_HASH vary run-to-run via ASLR-baked helper/zone
   addresses (off-vs-off differs) -> use emitted SIZE as the knob-off-identity
-  proxy, NOT cmp/hash. NEXT B0.5: promote to a zone-global shared stub so
-  single-return methods shrink too (the real Axis-1 reach).
+  proxy, NOT cmp/hash.
+  B0.5 LANDED opt-in (commit 5fe0c001): zone-GLOBAL shared stub (one never-freed
+  MAP_JIT page via getSharedReturnPreludeStub) -> EVERY real non-block method's
+  returns become `mov x16,stub; br x16` (x30 stays the live return link, no bl).
+  Single-return methods now shrink too (cfibx 5568->5496). Validated: battery==Cog,
+  DET_SCHED 75025 x3, SUnit subset 1577 tests per-test identical on/off, actual
+  zone 32.70M->32.00M (~1.8%). Measured (PHARO_T1_RETPRELUDE_STATS): return prelude
+  is only ~1.2-1.8% of bloat; the per-SEND machinery dominates -> B1 is the real
+  win. B0.5's value = the proven zone-global-stub infra B1 reuses. NEXT = B1
+  (per-send shared stub: LINKED-STUB state + the resume-address mechanism, §2-5).
 Harness ready for either: /tmp/cogbench2.st + golden /tmp/battery_golden.txt
 (Cog-validated), PHARO_T1_DUMP_SEL+capstone, fresh /tmp/bench/Pharo.image.
 
