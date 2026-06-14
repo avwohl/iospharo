@@ -71,3 +71,28 @@ brought x86 from "hangs at startup" to parity-with-arm64 on the curated suite.
   large-input bug exposed only in crypto-OFF builds (arch-independent, image-level).
 - inline-J2J default-on: cleared on correctness; flip is a config decision on
   the non-shipping arch.
+
+## UPDATE 2026-06-14: config-matched re-run (x86 crypto-ON)
+
+After adding the portable SSL backend (sqGenericSSL.c, commit 0ad3d00c), the x86
+box was rebuilt **PHARO_WITH_CRYPTO=ON** (matching arm64) and the suite re-run:
+
+```
+config                          Pass    regressions vs Cog   note
+arm64 ours (crypto-ON)          12694    0                   matches Cog
+x86   ours (crypto-ON)          12692    2                   both flaky (below)
+Cog                             12778    —
+cross-arch x86 vs arm64                  2                   same 2 flakes
+```
+
+- `SHA1Test>>testLargeCharacterStream` now **PASSES** on x86 (native DSAPlugin
+  SHA1 primitives available with crypto-ON) — confirming it was a config
+  artifact, not a bug. Pass count 12689→12691.
+- The only remaining 2 x86-vs-Cog/arm64 differences are
+  `ProcessMonitorTestServiceTest` and `TestExecutionEnvironmentTest` — the
+  fork/process-timing flakes that PASS in isolation on both arches.
+
+**Conclusion: with matched crypto config, x86 has ZERO deterministic regressions
+vs Cog or arm64.** The x86 JIT (startup-corruption fix + prim-prologue port +
+inline-J2J) reaches full parity with the shipping arm64 VM on the curated suite,
+and is itself cleaner than Cog (error=1 vs Cog's 96).
