@@ -53,12 +53,54 @@ NO_XGATE_FOLD         92   17   24    33     (XGATE worth ~1-2ms)
 NO_FSR_CURSOR        var   18   25    35     (FSR worth ~1-3ms on sends)
 ```
 
-## Next lever (under investigation, see characterization workflow)
+## Next-lever analysis (cog-speed-anatomy workflow, 2026-06-14)
 
-The cross-method lever is closed; the remaining ~1.9x bytecode tax + ~1.5x send
-tax are the constant per-op overhead of the naive stack machine vs Cog's
-register-resident frames. Candidate levers: (1) finish frame-state-residency
-(docs/frame-state-residency.md, M1/M2 landed); (2) revisit the TOS register
-cache for arith-heavy code; (3) shrink the per-send emit (out-of-line the
-IC-probe/dispatch into shared trampolines, Cog-style — also fixes the ~6KB/method
-zone pressure). Decision pending the disasm characterization.
+A 6-agent workflow (4 parallel disasm/source/doc characterizers → synthesis →
+adversarial critique) mapped the residual and ranked the levers. Ground-truth
+per-send anatomy (one linked recursive cfibx send ≈ 102 emitted insns): IC-probe
+head 17, dispatch/poly-walk 13, xmethod gate 16, J2J save-push 34, the branch 1,
+return-prelude 21. Per the six-times-confirmed OoO lesson (FSR §11, simstack §9),
+**instruction COUNT is free** (independent stores drain via the store buffer);
+only dependent-chain shortening and shared-address serialization (RMWs, STLF
+round-trips) measure. That single fact decides the ranking:
+
+```
+lever                              verdict
+poly-walk fold (cut IC walk)       REJECT — misread of static/unlinked disasm; linked PMS
+                                   sites already cmp/b.ne/b-tail past the walk (linked-now=747)
+M4 (delete save-push mirror stores) DEAD — already built + [M4-PARITY]-clean + MEASURED A WASH
+                                   (store-buffer-absorbed category)
+TOS_REG on the arith loop          REJECT — measured REGRESSING tightLoop 36->56; park rule fired
+FSR M3 NODEPTH (kill depth RMW)    candidate, but ENABLING-ONLY (<3% likely) + scheduler-preempt risk
+FSR M5 (receiver in x20)           higher upside BUT depends on M3 freeing x20; #extent-history risk
+out-of-line dispatch (Cog-style)   HIGHEST ceiling (attacks +1.5x send tax AND 6KB/method bloat),
+                                   but large/exploratory — needs a design pass (no doc beyond
+                                   patched-ic-design §11 B6 sketch)
+```
+
+The only proven-to-MEASURE shape left is the dependent-chain/RMW kill: M2 cursor
+(LANDED, took cfib 29→24-25), M3 depth, M5 receiver. The critique's honest call:
+**there is no safe quick win left** — the cross-method lever already banked them.
+
+### What the workflow's adversarial critique found (real defects in the M3c plan)
+
+1. **FIXED THIS SESSION (commit 26613442):** `j2jDepthFromCursor()` divided by a
+   stale literal `32`; V2 J2JSave is 40 bytes — a 1.25x mis-derivation landmine,
+   dormant (no callers) but would bite the moment M3c wired the helper in.
+2. M3c must guard **three** push-side depth-RMW emit sites (AsmjitT1.cpp
+   6813-6815, 5341-5343, AND 6446-6448 — the synthesis missed the retro-save one).
+3. **Scheduler-preemption blocker:** the forceYield doorbell is emitted only on
+   native loop back-edges (9097-9104); benchFib/cfib are pure recursion with NO
+   back-edges, so a deep self-rec J2J descent is preempted SOLELY by the per-call
+   j2jTotalCalls charge. Dropping that charge without a per-call doorbell can run
+   the chain un-preempted → the timer-scheduler-wedge / blocker-cascade deadlock
+   family. M3c is not safe until in-descent preemption is re-funded + probed.
+
+### Recommendation
+
+M3c is enabling-only (its real value is freeing x20 for M5, the actual
+receiver-residency send-critical-chain kill) and carries a real scheduler-deadlock
+risk that needs a deep-recursion-starvation probe to clear — modest payoff, careful
+work. The higher-ceiling play (out-of-line dispatch, Cog-shaped) needs a design
+pass first. Both are multi-session; neither is a quick win. The divisor-bug
+prerequisite is now fixed. Direction is a strategic call (see WIP.md).

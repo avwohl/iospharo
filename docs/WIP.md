@@ -1,3 +1,31 @@
+# WIP — arm64 Cog-speed: cross-method lever CLOSED, next levers are multi-session (2026-06-14)
+
+Fair same-machine re-measurement (docs/cog-speed-current.md): the documented
+"cross-method send activation" Cog-speed lever is DONE — cfibx 43x->2.65x,
+cfibs 50x->2.9x, benchFib 2.9x, inline-loop 1.9x (MAX_IC=8 + bailmid +
+prim-prologue + PMS + XGATE + FSR all default-on). Residual = ~1.9x per-bytecode
+naive-stack tax + ~1.5x per-send sequence. A 6-agent cog-speed-anatomy workflow
+ranked the next levers; the OoO lesson (count is free, only RMW/STLF kills
+measure) means there is NO safe quick win left.
+
+DONE this session: fixed a latent j2jDepthFromCursor() /32-divisor silent-
+corruption landmine (commit 26613442; V2 J2JSave is 40B since JSV_CLOSURE,
+dormant helper, pinned to JSV_SIZE).
+
+NEXT-LEVER DECISION (strategic, multi-session — awaiting direction):
+- FSR M3c (PHARO_T1_FSR_NODEPTH, kill per-call j2jDepth RMW): ENABLING-ONLY
+  (<3% likely; real value = freeing x20 for M5). Blockers the workflow critique
+  found: must guard THREE push-RMW sites (AsmjitT1.cpp 6813-6815/5341-5343/
+  6446-6448) and re-fund in-descent scheduler preemption (forceYield doorbell is
+  back-edge-only; fib/cfib have no back-edges -> deadlock-family risk) + a
+  deep-recursion-starves-Delay probe.
+- Out-of-line dispatch (Cog-style shared send-stubs): HIGHEST ceiling (attacks the
+  +1.5x send tax AND ~6KB/method zone bloat) but needs a design pass first.
+Harness ready for either: /tmp/cogbench2.st + golden /tmp/battery_golden.txt
+(Cog-validated), PHARO_T1_DUMP_SEL+capstone, fresh /tmp/bench/Pharo.image.
+
+---
+
 # WIP — x86 JIT startup-corruption FIXED (2026-06-13)
 
 Root cause of the long-standing "x86 tier-1 JIT corrupts/DNUs/hangs at
