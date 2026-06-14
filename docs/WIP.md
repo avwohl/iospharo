@@ -9,13 +9,23 @@ inline-`class` upgrade-path fix + confirmed inline-prims healthy
 default-off → dead; gated them; cfibx 5568->4904B, battery==Cog, SUnit 1577 PASS).
 arm64 inlined arith/float/at/size/class ≈ Cog; residual ~2.7x = per-send dispatch
 (B1, multi-session) + ~1.9x per-bytecode tax (architectural).
-X86 BLOCKED: 3 boxes spent measuring; ours-x86 evals the Cog-speed bench EMPTY
-every time while ours-arm64 + Cog-x86 work → x86-SPECIFIC eval/miscompile of a
-block+timing method (x86 SUnit suite passes 12692, so not broadly broken). Needs a
-focused x86 debug session (box) to root-cause, NOT more measurement. Cog-x86
-baseline ~loop20M=50 fib30=10 cfibx30=13. Bench: scripts/cog-speed-bench.st.
-NEXT: arm64 B1 reachable-handler relocation (harder, resume-pass) OR more
-dead-code/zone wins; x86 root-cause session.
+X86 ROOT-CAUSED (diagnostic box #4): ours-x86 evals empty because the x86 JIT
+COMPILE-THRASHES — cogRunBench under PHARO_X86_JIT=1 = exit 124 (timeout) with
+14,069,951 FAILED compiles; ours-interp + Cog-x86 complete fine. Mechanism:
+`[asmjit-t1] BUG: prescan/emit disagree at bc=0xEA (ExtSend) / 0xF9 (PushFullBlock)`
+-> compile fails -> the ACTIVATION-driven compile (JITRuntime.cpp:3828) re-attempts
+on hotness (the eager path's negative-cache initialCompileFailedContains @23434 is
+prim/block-only), so the x86 extended-bytecode failures thrash. THE x86 LEVER
+(likely the biggest reason x86 lags): (1) fix the x86 emit-loop stepping of
+extended bytecodes (0xEA/0xF9) so they don't disagree; (2) negative-cache PERMANENT
+(bytecode-unsupported) activation-path compile failures — must NOT cache transient
+zone-full failures, so compiler_->compile needs to report the reason. BOX-GATED:
+x86 emit can't be built/repro'd locally (#if x86 skipped on arm64) -> needs ONE
+focused x86 fix+validate session (build + run_x86diag.sh, confirm 14M failed -> ~0,
+ours-x86 bench returns). ~4 boxes spent; STOP ad-hoc runs. Full detail +
+run_x86diag.sh in memory [[cog-speed-lever-closed]]. Cog-x86 baseline ~loop20M=50
+fib30=10 cfibx30=13. NEXT: this x86 fix session; OR arm64 B1 reachable-handler
+relocation; verify the x86 benchFib DNU isn't a separate correctness bug.
 
 ---
 
