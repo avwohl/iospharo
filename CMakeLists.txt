@@ -130,10 +130,17 @@ if(PHARO_WITH_CRYPTO)
         src/vm/plugins/DSAPrims.c
         src/vm/plugins/SqueakSSL.c
     )
-    # sqMacSSL is Darwin-only (TargetConditionals.h / Security.framework);
-    # Linux boxes (AWS arm sweeps) build with crypto but without it.
+    # SSL platform backend: sqMacSSL (Darwin, Security.framework) on Apple;
+    # a portable no-op stub elsewhere (Linux) so SqueakSSL.c LINKS with crypto
+    # ON — which is what makes the DSAPlugin's native SHA1/MD5/DSA primitives
+    # available.  Without a backend the sqAcceptSSL/... symbols are undefined
+    # and the link fails (the reason Linux boxes were forced to crypto-OFF,
+    # which silently disabled native SHA1 — see docs/sunit-3way-comparison.md).
+    # A real OpenSSL backend can replace sqGenericSSL.c later.
     if(APPLE)
         list(APPEND PLUGIN_C_SOURCES src/vm/plugins/sqMacSSL.c)
+    else()
+        list(APPEND PLUGIN_C_SOURCES src/vm/plugins/sqGenericSSL.c)
     endif()
 endif()
 
