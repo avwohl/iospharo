@@ -1589,6 +1589,9 @@ static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
     a.jbe(normalRet);                       // cursor <= entry → no save → normal
     a.sub(r9, asmjit::Imm(56));             // pop one V1 save
     a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
+    // Coupling 1: decrement state.j2jDepth to match the push (keeps the int32
+    // depth field balanced so the C++ exit merge sees 0 on a clean inline chain).
+    a.sub(dword_ptr(rdi, OFF_J2J_DEPTH), asmjit::Imm(1));
     a.mov(r10, ptr(r9, 0));                 // savedSp
     a.mov(rcx, ptr(r9, 8));                 // savedReceiver
     a.mov(rdx, ptr(r9, 16));                // savedTempBase
@@ -2772,6 +2775,11 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));   // sendArgCount
                 a.add(r9, asmjit::Imm(56));
                 a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
+                // Coupling 1 (docs/x86-inline-j2j-design.md): publish the depth
+                // to state.j2jDepth (int32) so the C++ exit merge (:25016),
+                // materialize-on-bail (:25047) and GC see this inline save.
+                // Emitted only inside the g_emitX86J2JOk gate.
+                a.add(dword_ptr(rdi, OFF_J2J_DEPTH), asmjit::Imm(1));
                 // --- set up callee frame (self-rec: method/literals/jitMethod/
                 //     argCount unchanged) ---
                 a.mov(rdx, ptr(rcx, -8 * (nArgs + 1)));  // newReceiver = sp[-1-nArgs]
