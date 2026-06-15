@@ -2817,13 +2817,19 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 // repack the save and silently drop the caller identity.
                 static_assert(!PHARO_J2J_SAVE_V2,
                     "x86 cross-method inline-J2J assumes the V1 56-byte save");
+                // SELF-REC sends route to the ORIGINAL validated self-rec frame
+                // setup (selfRecAdmit, below) — byte-identical to the self-rec-only
+                // else-branch.  The unified cross-method emit (callee-state writes +
+                // state.ip=bcStart + dynamic nil-fill) REGRESSED self-rec for
+                // canBailMidMethod methods at depth (probe: allSlotsDo: j2jD=5 leak).
+                // Only canSkipJ2JSave CROSS-method sends use the new emit.
                 asmjit::Label notJ2J = a.new_label();
-                asmjit::Label admit  = a.new_label();
+                asmjit::Label selfRecAdmit = a.new_label();
                 a.bt(r8, asmjit::Imm(60));               // J2J_ENTRY_BIT?
                 a.jnc(notJ2J);
                 a.mov(r9, qword_ptr(rsi, 8));            // cached methodBits
                 a.cmp(r9, ptr(rdi, OFF_METHOD));         // self-rec?
-                a.je(admit);
+                a.je(selfRecAdmit);
                 // Cross-method: gate on calleeJM->canSkipJ2JSave (NOT bit 57 --
                 // xmethodGateOk admits up to MAX_IC=8 IC sites + bailmid callees,
                 // which Increment 1 cannot support).  calleeJM = entryAddr - sizeof.
@@ -2853,7 +2859,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     a.mov(r10, asmjit::Imm((uint64_t)&g_x86_xmethod_fires));
                     a.inc(qword_ptr(r10));               // cross-method ONLY (r10 dead here)
                 }
-                a.bind(admit);
+                // === CROSS-METHOD admit (fall-through from the canSkip gate) ===
                 // Save-stack room (also guards a null cursor: 0+56 > limit(0)).
                 a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
                 a.mov(r10, ptr(rdi, OFF_J2J_SAVE_LIMIT));
@@ -2914,6 +2920,41 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     a.mov(ptr(rdi, OFF_SP), r9);         // newSp = end
                 }
                 a.jmp(r11);                              // entryAddr
+                // === SELF-REC admit: ORIGINAL validated frame setup (no callee-
+                //     state writes, static nil-fill) — byte-identical to the
+                //     self-rec-only else-branch; avoids the depth regression. ===
+                a.bind(selfRecAdmit);
+                a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
+                a.mov(r10, ptr(rdi, OFF_J2J_SAVE_LIMIT));
+                a.lea(r11, ptr(r9, 56));
+                a.cmp(r11, r10);
+                a.ja(notJ2J);
+                a.mov(ptr(r9, 0), rcx);                  // sp
+                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);
+                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, 16), rdx);
+                a.mov(rdx, ptr(rdi, OFF_METHOD));
+                a.add(rdx, asmjit::Imm(bcOffsetFromMethObj + 1));
+                a.mov(ptr(r9, 24), rdx);                 // ip
+                a.mov(rdx, ptr(rdi, OFF_JITMETHOD)); a.mov(ptr(r9, 32), rdx); // jitMethod
+                a.lea(rdx, ptr(bcLabels[globalIdx + 1]));
+                a.mov(ptr(r9, 40), rdx);                 // resumeAddr
+                a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));
+                a.add(r9, asmjit::Imm(56));
+                a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
+                a.add(dword_ptr(rdi, OFF_J2J_DEPTH), asmjit::Imm(1));
+                a.mov(rdx, ptr(rcx, -8 * (nArgs + 1)));  // newReceiver
+                a.mov(ptr(rdi, OFF_RECEIVER), rdx);
+                a.lea(rdx, ptr(rcx, -8 * nArgs));        // newTempBase
+                a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+                a.mov(r10, asmjit::Imm(nilBits));        // nil locals (static count)
+                for (int t = nArgs; t < callerTempCount; t++)
+                    a.mov(ptr(rdx, t * 8), r10);
+                a.lea(r10, ptr(rdx, callerTempCount * 8));  // newSp
+                a.mov(ptr(rdi, OFF_SP), r10);
+                a.mov(r10, r8);
+                a.mov(r11, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
+                a.and_(r10, r11);
+                a.jmp(r10);                              // entryAddr (self code)
                 a.bind(notJ2J);
             } else if (g_emitX86J2JOk && !g_emitIsBlock) {
                 asmjit::Label notJ2J = a.new_label();
