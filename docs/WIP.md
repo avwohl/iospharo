@@ -12,11 +12,14 @@ arm64 inlined arith/float/at/size/class ≈ Cog; residual ~2.7x = per-send dispa
 X86 COMPILE-THRASH FIXED (commit 74f12085, box-validated): failed compiles
 14,069,951 -> 13; ours-x86 cogRunBench empty/timeout -> RETURNS loop20M=1381
 fib30=520 cfibx30=856 (Cog-x86: 44/9/13). negative-cache permanent asmjit-T1 emit
-failures in compileViaAsmjit; arm64 unaffected (battery==Cog). NEXT x86 LEVER: the
-ratio is now ~31-66x vs Cog (arm64 is ~3x) because the failing methods run INTERP
-(the emit-disagree blocks JIT) -> fix the asmjit-T1 emit-disagree on extended
-bytecodes (0xEA ExtSend / 0xF9 PushFullBlock) so hot methods JIT on x86 = the big
-x86 coverage win. (older root-cause detail:)
+failures in compileViaAsmjit; arm64 unaffected (battery==Cog). NEXT x86 LEVER (CORRECTED via clean box #6): the disagree/DNU were polling
+artifacts (clean run: 0 disagrees, benchFib=2692537 correct). x86 is 31-66x because
+the correctness-first x86 emit loop (AsmjitT1.cpp ~8936) BAILS EVERY >=0xE0 extended
+bytecode to interp, and hot methods use them (cfibx has ED=ExtJump for its
+ifTrue:ifFalse: -> interp-bound). arm64 handles >=0xE0 inline; x86 doesn't. LEVER =
+port the arm64 >=0xE0 handling to the x86 loop (ExtJump/True/False control flow
+first, then ExtSend/ExtPush/PushInteger). Multi-op, box-validated, deep. (older
+detail:)
 X86 ROOT-CAUSED (diagnostic box #4): ours-x86 evals empty because the x86 JIT
 COMPILE-THRASHED (now fixed) — cogRunBench under PHARO_X86_JIT=1 = exit 124 (timeout) with
 14,069,951 FAILED compiles; ours-interp + Cog-x86 complete fine. Mechanism:
