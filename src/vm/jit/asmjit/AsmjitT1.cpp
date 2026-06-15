@@ -8956,6 +8956,21 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
                     globalIdx, bcReal[i]);
+                // x86 coverage diagnostic (PHARO_T1_DISAGREE_DUMP): dump the
+                // full bytecode + the disagree position so the exact emit-loop
+                // vs allBytecodesSupported stepping mismatch can be traced
+                // (the polled box output garbled the earlier capture).  Capped.
+                if (GET_DEBUG_BOOL(PHARO_T1_DISAGREE_DUMP)) {
+                    static int dn = 0;
+                    if (dn++ < 40) {
+                        std::fprintf(stderr, "[DISAGREE-BC #%d] at i=%zu glob=%d "
+                            "byte=0x%02x bcRealLen=%zu emitSkip=%d bc=",
+                            dn, i, globalIdx, bcReal[i], bcRealLen, emitSkip);
+                        for (size_t z = 0; z < bcRealLen && z < 48; z++)
+                            std::fprintf(stderr, "%02x ", bcReal[z]);
+                        std::fprintf(stderr, "\n");
+                    }
+                }
                 if (GET_DEBUG_BOOL(PHARO_T1_FATAL_DISAGREE)) std::abort();
                 return false;
             }
