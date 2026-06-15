@@ -568,6 +568,21 @@ NEXT SESSION PLAN:
   (iii) Long-term: port V2 saves to x86 (arm64's proven path); V1 cross-method
       has now resisted bail-mat, per-class, and nArgs gating — stop patching V1.
 
+MINIMAL-REPRO ATTEMPT — DID NOT FIRE (2026-06-15, second box, /tmp/xm-minimal-repro.st):
+SEL-scoped (PHARO_T1_X86_J2J_SEL=xm*) xmcaller(^self xmcallee)/xmcallee(^self)
+on heap-instance (XmFoo), SmallInteger, and class (Object class) receivers,
+400k warm iterations, ALLARGS + COUNTERS -> `[X86-XMETHOD] 0 cross-method
+inline-J2J fires`, bad=0.  Cross-method inline-J2J does NOT fire for a flat
+from-eval send chain — the J2J IC-upgrade (bit 60) that the cross-method admit
+gates on only establishes under the deep recursive / re-entrant hot send chains
+that cfibx and the full startup library create.  So the bug RESISTS isolated
+reproduction; it needs full-startup context.  Consequence: the next debugging
+pass must either (a) wire lldb-MCP on the box and break at the cross-method
+return-prelude during full startup, or (b) just do the V2 save port and validate
+against full startup — the isolated-repro shortcut is closed.  (cfibx fires
+because its incc send sits inside the recursive cfibx body; a non-recursive
+caller never drives the IC to J2J in time.)
+
 OBSOLETE (kept for history; do not act on): the "(A) bail-materialize in
 tryExecute's ExitArithOverflow resume loop" plan below is misdirected --
 tryExecute has NO resume loop (it JIT_CALLs once and returns; bails are handled
