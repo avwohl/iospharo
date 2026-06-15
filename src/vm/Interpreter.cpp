@@ -24419,6 +24419,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.j2jTotalCalls = 0;
     state.j2jEntryDepth = 0;
     state.j2jEntryCursor = state.j2jSaveCursor;  // FSR M3: fresh-slice baseline
+#if !PHARO_J2J_SAVE_V2
+    size_t probeEntryMC = GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_PROBE)
+        ? jitRuntime_.codeZone().methodCount() : 0;
+#endif
     state.j2jDepthInc = 0x0000000100000001ULL;
     state.methodMapPtr = &jitRuntime_.methodMap();
     state.yieldCountdown = 1000;
@@ -24478,6 +24482,35 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (!jitRuntime_.tryExecute(method, state, jm)) {
         return false;  // Should not happen — jm was already validated
     }
+#if !PHARO_J2J_SAVE_V2
+    // capture-first-corruption probe (PHARO_T1_X86_XMETHOD_PROBE): a clean
+    // tryExecute must return with all inline-J2J saves popped, i.e.
+    // j2jDepth == j2jEntryDepth(0).  A leak (j2jDepth>entry) is the startup-
+    // corruption signature -> name the leaking CALLER (the first leaked save's
+    // jitMethod, V1=caller) + the current method, classify zone-churn vs
+    // specific-method, then abort.
+    if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_PROBE)
+            && state.j2jDepth != state.j2jEntryDepth) {
+        J2JSave* saves = reinterpret_cast<J2JSave*>(state.j2jEntryCursor);
+        J2JSave& leaked = saves[0];   // first leaked save above the baseline
+        std::string callerSel = leaked.jitMethod
+            ? memory_.selectorOf(Oop::fromRawBits(leaked.jitMethod->compiledMethodOop))
+            : std::string("<null-jm>");
+        std::string stMethSel = state.method.isObject()
+            ? memory_.selectorOf(state.method) : std::string("<imm>");
+        size_t mcNow = jitRuntime_.codeZone().methodCount();
+        fprintf(stderr,
+            "[XM-LEAK] j2jDepth=%d entryDepth=%d callerSel=#%s stateMethodSel=#%s "
+            "mcDelta=%zd %s\n",
+            state.j2jDepth, state.j2jEntryDepth, callerSel.c_str(),
+            stMethSel.c_str(), (ssize_t)(mcNow - probeEntryMC),
+            (mcNow != probeEntryMC)
+                ? "(ZONE-CHURN between entry+leak -> GC/evict confound)"
+                : "(no zone churn -> specific-method shape)");
+        fflush(stderr);
+        abort();
+    }
+#endif
     if (sortstrIsemptyTrace) {
         static size_t exitN = 0;
         exitN++;
