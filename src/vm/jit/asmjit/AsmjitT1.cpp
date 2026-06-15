@@ -2834,6 +2834,21 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, canSkipJ2JSave)));
                 a.test(r10, r10);
                 a.jz(notJ2J);                            // not canSkip -> bail
+                // canSkipJ2JSave (=!canBailMidMethod && numIC==0) is NECESSARY
+                // but NOT sufficient for "clean-return-only": it still admits
+                // prim-prologue callees (prim-fail bails to the Smalltalk body)
+                // and heap-write callees (need a GC barrier the inline path
+                // omits) -- both re-enter C++ mid-method and hit the open
+                // ExitArith/materialize bug.  Exclude them so only straight-line
+                // callees are inlined (arith-overflow remains a residual, rare).
+                a.movzx(r10d, byte_ptr(r9,
+                    -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, hasPrimPrologue)));
+                a.test(r10, r10);
+                a.jnz(notJ2J);
+                a.movzx(r10d, byte_ptr(r9,
+                    -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, hasHeapWrites)));
+                a.test(r10, r10);
+                a.jnz(notJ2J);
                 if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_COUNTERS)) {
                     a.mov(r10, asmjit::Imm((uint64_t)&g_x86_xmethod_fires));
                     a.inc(qword_ptr(r10));               // cross-method ONLY (r10 dead here)
