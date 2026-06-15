@@ -251,6 +251,38 @@ method-return uses framePointer_/its own frame stack and may not consume the
 savedFrames_ entry. Resume-flow workflow wf_8b29daf3 analyzing the exact divergence +
 the correct resume primitive (interp-does-arith-then-returns-into-CALLER).
 
+## REDIRECT (workflow wf_8b29daf3, 2026-06-15): the AO path is NOT the (3+4) corruptor
+
+Two airtight facts overturn the AO-fix framing:
+1. (3+4)=7 is in SmallInteger range -> the interp fast path (Interpreter.cpp:3003)
+   returns directly; the JIT inline-add only bails to ExitArithOverflow on OVERFLOW.
+   So (3+4) NEVER reaches case ExitArithOverflow -> the AO-materialize fix CANNOT
+   be what turns (3+4) into nil. The AO bails seen during startup (30/30, #to:/
+   #next:putAll:) are a separate, real-but-secondary bug.
+2. activeContext_ is ALWAYS nil during a J2J chain (Interpreter.hpp:1616-1620
+   invariant; pushFrameForJIT skips writing it). So the resume-flow design's
+   nil-ing steps would be no-ops. The AO-MAT-PROBE already proved the
+   materialize/save-read CORRECT (save0.jm=CALLER, j2jD->0, fd++).
+
+VERDICT needs-more-investigation: the PHARO_T1_X86_XMETHOD startup corruption
+((3+4)->nil) is the cross-method NORMAL send/return EMIT (blocker #1, lines
+111-118), UPSTREAM of and independent from the AO path. An ordinary, non-
+overflowing cross-method send returns a corrupted (nil) result. objdump (box 4)
+showed the emit matches INTENT, so the bug is SEMANTIC (the intent/design is
+subtly wrong, or a runtime interaction), not an encoding/offset error — objdump
+is insufficient; this needs single-stepping the x86 resume (box-lldb, not wired:
+lines 121-122) or a value-level probe of one normal cross-method send.
+
+STATE: PHARO_T1_AO_MAT_J2J committed (arm64-safe, default-OFF, V1-scoped) as a
+real partial fix for the secondary AO bug; its sufficiency for the AO case is
+unverifiable until blocker #1 is fixed. The AO sub-thread (workflows wf_ec90a67e
++ wf_8b29daf3, ~3 boxes) peeled the AO layer but the PRIMARY cfibx blocker is the
+normal cross-method emit semantics. NEXT (focused session): value-probe a single
+clean cross-method send (does `xm1 ^self xm2` / `xm2 ^41` return 41 under
+X86_XMETHOD?) to confirm the normal emit is the corruptor, then capstone-diff +
+box-lldb the send-site/return-prelude semantics. This is the genuine multi-session
+blocker; it needs x86 debug infrastructure objdump alone can't substitute for.
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.

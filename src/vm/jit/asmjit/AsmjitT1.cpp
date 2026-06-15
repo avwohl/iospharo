@@ -10335,11 +10335,24 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // docs/x86-inline-j2j-design.md).  Opt out with PHARO_T1_X86_NO_INLINE_J2J.
     // The fast path still only FIRES for self-recursive sends (cached==OFF_METHOD).
     if (!GET_DEBUG_BOOL(PHARO_T1_X86_NO_INLINE_J2J) && !g_emitIsBlock) {
-        // PHARO_T1_X86_J2J_SEL set -> restrict to that one selector (debug/bisect).
+        // PHARO_T1_X86_J2J_SEL set -> restrict to that selector (debug/bisect).
+        // A trailing '*' means PREFIX match (e.g. "xm*" scopes inline-J2J to xm1
+        // AND xm2 so a clean cross-method pair can be value-tested without
+        // startup interference — neither caller nor callee prelude is dropped).
         const char* j2jSel = GET_DEBUG_STR(PHARO_T1_X86_J2J_SEL);
-        g_emitX86J2JOk = (!j2jSel || !*j2jSel)
-                             ? true
-                             : (memory.selectorOf(compiledMethod) == j2jSel);
+        if (!j2jSel || !*j2jSel) {
+            g_emitX86J2JOk = true;
+        } else {
+            std::string sel = memory.selectorOf(compiledMethod);
+            std::string js(j2jSel);
+            if (!js.empty() && js.back() == '*') {
+                std::string pfx = js.substr(0, js.size() - 1);
+                g_emitX86J2JOk = (sel.size() >= pfx.size() &&
+                                  sel.compare(0, pfx.size(), pfx) == 0);
+            } else {
+                g_emitX86J2JOk = (sel == js);
+            }
+        }
     }
     // Increment 1: cross-method inline-J2J (admit canSkipJ2JSave callees) only
     // when the master inline-J2J path is on AND the opt-in knob is set.  Default
