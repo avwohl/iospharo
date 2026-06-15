@@ -350,6 +350,34 @@ must match the SEL (use the trailing-* prefix), else the callee loses its prelud
 and the result is a scoping artifact, not a VM bug. Always compare to arm64/interp
 truth, never to a SEL-scoped "self-rec" baseline.
 
+
+## SCALE-BUG BISECTION COMPLETE (2026-06-15): lever CORRECT, startup blocker narrowed
+
+EXHAUSTIVE isolation via SEL=prefix-* (compare to arm64 truth, never a SEL baseline):
+ALL of these cross-method patterns are VALUE-CORRECT on x86 + 7.9x faster (cfibx30
+569->72ms):
+  0/1/2/3-arg callees; getter/constant/arith callees; caller-with-temps;
+  self-rec+cross MIX (cfibx, all n match arm64 17710..2178308); polymorphic;
+  multiple cross-method sends per caller; deep cross+self-rec mix.
+So the cross-method emit/save/resume is CORRECT. cfibx lever WORKS.
+
+The startup corruption (X86_XMETHOD no-SEL, (3+4)->nil) is a SCALE-ONLY effect.
+RULED OUT: (a) every method pattern above; (b) code-zone EVICTION — CODE_ZONE_MB
+4/64/256/512 ALL still corrupt, so zone size / eviction is NOT it. The only remaining
+difference between SEL=z* (works) and no-SEL (corrupts) is WHICH methods inline-J2J.
+REMAINING SUSPECTS: (1) a specific SYSTEM method with a bytecode shape the synthetic
+patterns don't cover (e.g. ^special / ^GlobalLitVar / a particular store/push combo);
+(2) code-zone GC/COMPACTION moving methods -> stale cached J2J entries (independent
+of zone size). NEXT (focused): a capture-first-corruption probe — validate each
+cross-method return's resumed state (caller method == save's caller) and log+abort on
+the FIRST violation to name the corrupting (caller,callee) selectors; OR test a
+code-zone-GC-disable knob. With the corrupting method named, the fix is targeted.
+
+SHIPPABILITY: the lever already delivers 7.9x and is correct per-pattern; it could
+ship SCOPED via PHARO_T1_X86_J2J_SEL to a validated hot-method whitelist even before
+the scale blocker is root-caused. The AO fix (PHARO_T1_AO_MAT_J2J) is UNNECESSARY
+(isolated AO-bail works without it) — revert candidate; kept default-off, arm64-safe.
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
