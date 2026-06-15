@@ -16,11 +16,20 @@ failures in compileViaAsmjit; arm64 unaffected (battery==Cog). X86 PROGRESS (202
 3 commits: thrash-fix (74f12085, 14M->13), forward-ExtJump native (c80799c8,
 benchFib 520->51ms = 58x->5.7x vs Cog), ExtendB+ExtJump back-edge native (61a5b4af,
 correct, helps LARGE loops; micro-bench loop unchanged — it uses SHORT back-jumps).
-REMAINING x86 (DEEPER, not single-op ports): loop 31x = x86 sp-in-OFF_SP-MEMORY
-per-bytecode tax (deep lever: port arm64's SP_IN_X25 register residency to
-emitOne_x86); cfibx 46x = cross-method `incc` send efficiency. benchFib (5.7x,
-send-dominated) is closest; tight loop (31x) is per-bytecode-bound (sp tax). The
-next big x86 lever is sp/TOS register residency in the x86 emit (a major refactor).
+REMAINING x86 (CORRECTED 2026-06-15):
+- loop 98x (vs arm64 14ms) was COVERAGE not sp-tax: the JIT'd loop method BAILED at
+  ExtJumpFalse (0xEF) condition + ExtStoreTemp (0xF5) counter. FIXED dae71b87 (port
+  both + canBailMidMethod scan fix). Validating via box (loop should drop near
+  arm64's 14ms / Cog-x86's 44ms). If residual remains AFTER coverage, THEN sp-tax.
+- cfibx 27x (599ms vs arm64 22ms) = x86 has SELF-recursive inline-J2J only (benchFib
+  works, 3.2x), NO cross-method inline-J2J (AsmjitT1.cpp:95-99: "bail-time J2J-save
+  materialization on x86 is not yet implemented"). cfibx's cross-method `incc` send
+  runs full IC dispatch (222ns/call vs arm64's 8ns). LEVER = port arm64's xmethod
+  inline-J2J + bail-time J2J-save to x86 — a MAJOR focused-session port (the
+  historically buggy save/restore area), not a blind edit.
+- broad x86 SUnit coverage: still-unported naked-extended ops (ExtPush* family,
+  ExtSend/ExtSuperSend, ExtStoreLitVar/Recv) bail real-code methods to interp;
+  porting the family (mirror arm64 ~9450-9640) is a one-box coverage win.
 (older detail:)
 NEXT x86 LEVER (CORRECTED via clean box #6): the disagree/DNU were polling
 artifacts (clean run: 0 disagrees, benchFib=2692537 correct). x86 is 31-66x because
