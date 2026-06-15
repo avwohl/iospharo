@@ -453,6 +453,44 @@ separation, likely 1 fix] then re-probe for any remaining cross-method class, OR
 names each remaining class in one box.  arm64 untouched throughout (all fixes
 #if !PHARO_J2J_SAVE_V2; battery==golden every build).
 
+
+## PER-CLASS EXCLUSION DOES NOT CONVERGE — arith callees need bail-materialize (2026-06-15)
+
+After fixing ExtSend (class 1) + mid-arith (class 2) + separating self-rec (class 3
+attempt), the probe STILL leaks: allSlotsDo: cross-method, j2jD=5.  The self-rec
+separation did NOT change it (selfRecAdmit is byte-identical to the validated
+self-rec-only path, battery==golden) -> the leak is a CROSS-METHOD send, not
+self-rec.  FUNDAMENTAL FINDING: the "tail-arith is safe" assumption (from xm5's SmI
+overflow) is WRONG.  The real distinction is SmI vs NON-SmI operands AT RUNTIME, not
+static tail-vs-mid: ANY inline-arith callee bails (EXIT_ARITH_OVERFLOW) when called
+with a non-SmI operand (Float/LargeInt).  cfibx's incc (^self+1) works ONLY because
+its operands are always SmI (Integer receiver, bounded); statically indistinguishable
+from an arith callee that gets a Float.  So per-class static exclusion CANNOT admit
+incc (the 7.9x win) while excluding the non-SmI arith leaks -> the approach does not
+converge for arith callees.
+
+THE COMPLETE FIX is bail-materialize (NOT a tighter gate): when an inline-J2J'd
+cross-method callee bails mid-method (the inline arith's EXIT_ARITH_OVERFLOW, handled
+inside JITRuntime::tryExecute's resume loop -- NOT the Interpreter.cpp:26322 chain
+loop where PHARO_T1_AO_MAT_J2J sits), materialize the pending caller save so the
+interp-resumed callee returns into the real caller frame.  xm5 (SmI tail overflow)
+works because its resume reaches the return prelude; the general case (mid-method, or
+the interp continuation) does not.  This is the one remaining piece for cfibx
+default-on.
+
+DEFAULT-ON OPTIONS:
+  (A) bail-materialize in JITRuntime::tryExecute's ExitArithOverflow resume -> full
+      cfibx default-on (the correct, complete fix; deep).
+  (B) getter/constant-only cross-method (exclude ALL ops >= 0x60: arith + sends +
+      ext) -> provably non-bailing callees -> safe + converging default-on, but LOSES
+      cfibx's arith win (incc); still a broad real-code getter speedup.
+  (C) ship SCOPED via SEL whitelist -> cfibx 7.9x where validated, no default-on.
+
+STATUS: lever correct + 7.9x for SmI-arith/send-free callees; default-ON blocked on
+(A) [deep] or accept (B)/(C).  Fixes landed this session: ExtSend exclusion (34fb456b),
+mid-arith exclusion (7ee4f5e1, INSUFFICIENT per above), self-rec separation (b2724a35).
+arm64 untouched throughout (battery==golden every build).
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
