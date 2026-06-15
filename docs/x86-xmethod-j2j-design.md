@@ -135,6 +135,40 @@ NET: the cfibx lever (x86 27x) is a genuine MULTI-SESSION effort (emit-debug +
 open-bug-fix + base-harden), not a single-increment win. Implementation kept
 default-OFF as a safe foundation; arm64 + x86-default are untouched.
 
+## objdump diagnostic (box 4, 2026-06-15): THE EMIT IS CORRECT
+
+Dumped xm1 (cross-method caller `^self xm2`, 716B) + xm2 (callee `^41`, 163B) via
+PHARO_T1_DUMP_SEL with PHARO_T1_X86_J2J_SEL=xm1 (keeps startup clean so the dump
+reliably fires), objdump'd both. EVERY instruction matches intent:
+- gate: bt $0x3c (bit60); self-rec cmp vs OFF_METHOD(0x40); cross: entryAddr =
+  extras & 0xffffffffffff; canSkipJ2JSave @ calleeJM+49, hasPrimPrologue @ +41,
+  hasHeapWrites @ +37 (all movzbl+test).
+- save push: save[32]=OFF_JITMETHOD (caller JM) BEFORE the overwrite; ip=method+0x2a.
+- callee state: calleeJM = entryAddr-0x80 (sizeof=128); method=calleeJM[0]
+  (compiledMethodOop); literals=calleeJM[0x78] (literalsCache); ip=calleeJM[0x68]
+  (bcStartCache); argCount=nArgs; dynamic nil-fill reads tempCount @ calleeJM[0x23].
+- return prelude: restores callerJM=save[32], method/literals/argCount(byte @ +0x22)
+  from it; preserves rax(retval)/rdi(state). All correct.
+VERIFIED the load-bearing assumption: Interpreter.cpp:23142-23144 sets the IC J2J
+entry = target->codeStart(), so calleeJM = entryAddr - sizeof is exactly right.
+
+ROOT CAUSE (by elimination, strongly indicated): the emit is correct, so getters /
+constant-returners (no mid-method exit) inline-J2J fine. The ONLY mid-method exit a
+canSkipJ2JSave callee can take is SmallInteger ARITH-OVERFLOW -> ExitArithOverflow,
+which is the OPEN materialize bug (blocker 2). During startup, arith canSkipJ2JSave
+callees overflow and hit it -> corruption. So knob-on breaking startup is NOT an
+emit bug — it is the open ExitArithOverflow-materialize bug, reached because
+canSkipJ2JSave is not truly bail-free (arith escapes canBailMidMethod).
+
+CONCLUSION: x86 cross-method inline-J2J is CORRECTLY IMPLEMENTED (objdump-proven) but
+gated behind the open ExitArithOverflow-materialize bug. To ship it: (a) fix that
+handler to materializeJ2J when j2jDepth>0 (the known-hard arm64 bug, 2 prior fails) —
+this ALSO unlocks arm64 Increment 2; OR (b) add a compile-time "no-arith / no-alloc"
+truly-bail-free flag (excludes incc -> no cfibx benefit). Immediate next step for a
+focused session: a confirmation box (count ExitArithOverflow-with-j2jDepth>0 during
+knob-on startup) then attempt the materialize fix with PHARO_DET_SCHED for determinism.
+Implementation stays default-OFF (correct foundation; arm64 + x86-default untouched).
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
