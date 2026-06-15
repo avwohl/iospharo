@@ -28,9 +28,12 @@ REMAINING x86 (CORRECTED 2026-06-15):
   runs full IC dispatch (222ns/call vs arm64's 8ns). LEVER = port arm64's xmethod
   inline-J2J + bail-time J2J-save to x86 — a MAJOR focused-session port (the
   historically buggy save/restore area), not a blind edit.
-- broad x86 SUnit coverage: still-unported naked-extended ops (ExtPush* family,
-  ExtSend/ExtSuperSend, ExtStoreLitVar/Recv) bail real-code methods to interp;
-  porting the family (mirror arm64 ~9450-9640) is a one-box coverage win.
+- broad x86 SUnit coverage: naked-extended push/store family DONE (766f3a9b,
+  box-validated: extTemp=580, 845 SUnit tests 0-fail, battery golden) —
+  ExtPushRecvVar/LitVar/LitConst/Temp, ExtPopStoreTemp, ExtStoreTemp,
+  ExtPopStore/StoreLitVar. STILL unported (next coverage): ExtSend/ExtSuperSend
+  (sends — need IC setup, more complex) + ExtStore/PopStoreRecv (immutable bail,
+  excluded to keep canBailMidMethod surface small). Mirror arm64 ~9418/~9594.
 (older detail:)
 NEXT x86 LEVER (CORRECTED via clean box #6): the disagree/DNU were polling
 artifacts (clean run: 0 disagrees, benchFib=2692537 correct). x86 is 31-66x because
