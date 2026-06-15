@@ -229,6 +229,28 @@ The bail/materialize machinery involved in the open bug:
   repro, see which fires for the #to: j2jD=1 case, then fix that path. Knob-gate +
   validate 0 AO-DIVERGED on the repro + arm64 full-suite no-regress (SHARED handler).
 
+## AO materialize fix: SAVE-READ correct, RESUME-FLOW is the bug (probe box, 2026-06-15)
+
+Knob-gated fix PHARO_T1_AO_MAT_J2J (#if !PHARO_J2J_SAVE_V2, x86/V1) calls
+materializeJ2J in case ExitArithOverflow when j2jDepth>0. arm64-SAFE: compiles out
+on V2; knob-OFF AND knob-ON both battery==golden (verified). BUT x86 box: knob-ON
+does NOT fix (3+4) (still nil, same as control) -> NECESSARY-BUT-INSUFFICIENT.
+
+AO-MAT-PROBE (FAIL_REASONS-gated PRE/POST trace) PROVED the materialize is CORRECT:
+  [AO-MAT-PRE] j2jD=1 save0.jm=<CALLER> state.jm=<CALLEE, different> save0.ip=<valid> sel=#to:
+  [AO-MAT-POST] j2jD=0 fd=<incremented>   (one CALLER SavedFrame built, depth reset)
+So the save-read is RIGHT (CALLER, non-null, != CALLEE; V1-direct-read, not the
+danger-zone fallback). Bailing selectors: #next:putAll: (21x) + #to: (9x), all AO
+j2jD=1 (no non-AO leak). The bug is now purely the RESUME FLOW after materialize:
+the interp resumes at the CALLEE's arith bytecode (correct) + does the LargeInteger
+arith, but when the callee RETURNS it does not land in the materialized CALLER frame
+-> corruption. Hypothesis: materializeJ2J builds the frame in savedFrames_ (the
+JIT-chain resume structure) + the sibling handlers re-enter JIT (continue) to consume
+it, whereas the AO handler return-false hands control to the INTERPRETER, whose
+method-return uses framePointer_/its own frame stack and may not consume the
+savedFrames_ entry. Resume-flow workflow wf_8b29daf3 analyzing the exact divergence +
+the correct resume primitive (interp-does-arith-then-returns-into-CALLER).
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
