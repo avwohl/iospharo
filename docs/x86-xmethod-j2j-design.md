@@ -92,6 +92,49 @@ regressions on the x86 box.
    debug_vars.h:208 + per-send sp leak 200 — repro any new failure knob-OFF
    before blaming this change.)
 
+## Increment 1 IMPLEMENTED + 3 validation boxes (2026-06-15) — KNOWN-BROKEN
+
+Commits 1bba9021 (Increment 1) + cc1caa18 (tighter gate: +!hasPrimPrologue
++!hasHeapWrites). Behind PHARO_T1_X86_XMETHOD, default OFF.
+
+Box results:
+- KNOB-OFF: byte-identical baseline CONFIRMED (cogRunBench 133/51/571, cfibx20
+  =17710). The hot self-rec default-on path is untouched.
+- KNOB-ON: CORRUPTS STARTUP. The path FIRES (counter: ~245K cross-method
+  inline-J2J during image startup — getters everywhere), but EVERY eval returns
+  nil via FullBlockClosure>>onErrorDo: -> SnapshotOperation>>executeStoringError:,
+  including the `3 + 4` canary (which uses no cross-method send) -> the
+  corruption is during STARTUP, not the bench. The tighter prim/heap gate did
+  NOT fix it -> it is a COMMON-PATH emit bug (getter cross-method sends), not the
+  prim/heap bail path.
+
+Verified CORRECT by inspection (ruled out): calleeJM = entryAddr - sizeof(JITMethod)
+(matches arm64 6014-6018: entryAddr = extra & 0x0000FFFFFFFFFFFF, calleeJM =
+entryAddr - sizeof); the save push is byte-copied from the working self-rec push
+(save[32]=callerJM); literalsCache/bcStartCache/tempCount/canSkipJ2JSave read via
+offsetof; the return-prelude restore preserves rax/rdi and uses only
+already-clobbered rcx/rdx. The bug is inspection-resistant.
+
+THREE blockers, in order:
+1. A subtle COMMON-PATH emit bug in the cross-method send/return (needs runtime
+   debugging — but x86 can't build locally and the AWS box has no lldb wired up;
+   next step = a capstone-disasm box (workflow validation step 2) to SEE the
+   emitted cross-method site, or wire lldb on the box).
+2. DEFAULT-ON additionally needs the open ExitArithOverflow-materialize bug fixed
+   (Interpreter.cpp:26339-26350; 2 prior arm64 attempts regressed): canSkipJ2JSave
+   is NOT truly bail-free — arith-overflow (and alloc/GC) escape the canBailMidMethod
+   count, so a qualifying callee can still bail mid-method. cfibx's bounded incc
+   never overflows, but startup callees do.
+3. The x86 tier-1 base is bit-rotted (debug_vars.h:208: prescan/emit disagree on
+   ~10 bytecodes + a Corrupt-stackPointer miscompile; :200: ~1-word/send caller-
+   resume sp leak). Cross-method sends multiply send activity -> amplify the
+   pre-existing leak/miscompiles. A clean cross-method run likely needs the base
+   hardened first.
+
+NET: the cfibx lever (x86 27x) is a genuine MULTI-SESSION effort (emit-debug +
+open-bug-fix + base-harden), not a single-increment win. Implementation kept
+default-OFF as a safe foundation; arm64 + x86-default are untouched.
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
