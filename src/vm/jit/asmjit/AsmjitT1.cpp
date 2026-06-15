@@ -8961,6 +8961,72 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     }
                     // out-of-range -> fall through to the generic bail below.
                 }
+                // x86 coverage (2026-06-15): native NAKED conditional long jump
+                // ExtJumpTrue/False (0xEE/0xEF) — the LOOP CONDITION jump
+                // (`to:do:`/whileTrue) and big-method ifTrue:ifFalse: merges.
+                // Bailing them ran the loop body in interp (loop20M 98x vs
+                // arm64).  Naked operand is UNSIGNED forward (a prefixed bundle
+                // carries the sign in extB and still bails).  The mid-method
+                // mustBeBoolean bail is safe: canBailMidMethod now counts
+                // ExtJumpTrue/False (~10470).  Mirrors arm64 (~9684) + the x86
+                // short-conditional (~2627).
+                if ((op == SistaV1::ExtJumpTrue || op == SistaV1::ExtJumpFalse)
+                        && !wasExtPrefix && (size_t)(i + 1) < bcRealLen) {
+                    int offset = static_cast<int>(bcReal[i + 1]);
+                    int target = globalIdx + 2 + offset;
+                    if (target >= 0 && target < (int)bcLabels.size()) {
+                        bool jumpOnTrue = (op == SistaV1::ExtJumpTrue);
+                        int takeOop = jumpOnTrue ? OFF_TRUEOOP : OFF_FALSEOOP;
+                        int fallOop = jumpOnTrue ? OFF_FALSEOOP : OFF_TRUEOOP;
+                        asmjit::Label notBoolean = a.new_label();
+                        asmjit::Label takeBranch = a.new_label();
+                        asmjit::Label fallThru   = a.new_label();
+                        a.mov(rcx, ptr(rdi, OFF_SP));
+                        a.mov(rax, ptr(rcx, -8));            // TOS (don't pop)
+                        a.cmp(rax, ptr(rdi, takeOop));
+                        a.je(takeBranch);
+                        a.cmp(rax, ptr(rdi, fallOop));
+                        a.jne(notBoolean);
+                        a.sub(rcx, 8);                       // fall-through: pop
+                        a.mov(ptr(rdi, OFF_SP), rcx);
+                        a.jmp(fallThru);
+                        a.bind(takeBranch);
+                        a.sub(rcx, 8);                       // take: pop, jump
+                        a.mov(ptr(rdi, OFF_SP), rcx);
+                        a.jmp(bcLabels[(size_t)target]);
+                        a.bind(notBoolean);                  // mustBeBoolean bail
+                        a.mov(r8, ptr(rdi, OFF_METHOD));
+                        a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
+                        a.mov(ptr(rdi, OFF_IP), r8);
+                        a.mov(dword_ptr(rdi, OFF_EXIT),
+                              asmjit::Imm(EXIT_MUST_BOOL));
+                        a.ret();
+                        a.bind(fallThru);
+                        if ((size_t)(globalIdx + 1) < bcLabels.size())
+                            a.bind(bcLabels[globalIdx + 1]);
+                        i += 1;
+                        continue;
+                    }
+                    // out-of-range -> fall through to the generic bail below.
+                }
+                // x86 coverage (2026-06-15): native NAKED ExtStoreTemp (0xF5) —
+                // store TOS (no pop) into tempBase[idx].  The `to:do:` loop
+                // counter store; bailing it ran the loop in interp.  Naked
+                // operand = temp index (extA=0; a prefixed ExtStoreTemp carries
+                // idx in extA and still bails).  Mirrors arm64 (~9576) + the x86
+                // popStoreTemp (~2216).  No bail -> no canBailMidMethod impact.
+                if (op == SistaV1::ExtStoreTemp && !wasExtPrefix
+                        && (size_t)(i + 1) < bcRealLen) {
+                    int idx = static_cast<int>(bcReal[i + 1]);
+                    a.mov(rcx, ptr(rdi, OFF_SP));
+                    a.mov(rax, ptr(rcx, -8));                // TOS (don't pop)
+                    a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+                    a.mov(ptr(rdx, idx * 8), rax);
+                    if ((size_t)(globalIdx + 1) < bcLabels.size())
+                        a.bind(bcLabels[globalIdx + 1]);
+                    i += 1;
+                    continue;
+                }
                 // x86 coverage (2026-06-15): native ExtendB+ExtJump BACK-EDGE.
                 // Loops (`1 to: N do:` / whileTrue) compile to ExtendB+ExtJump
                 // backward; the generic prefix-bail dropped every loop back edge
@@ -10467,7 +10533,16 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     if (isReal) {
         for (size_t i = 0; i < bcLen; ) {
             uint8_t op = bc[i];
-            if (SistaV1::isConditionalShortJump(op)) { t1HasCondJump = true; break; }
+            // Conditional jumps (short OR extended ExtJumpTrue/False) emit a
+            // mid-method mustBeBoolean bail, so the method CAN return to interp
+            // mid-method -> canBailMidMethod must be true (else the inline-J2J
+            // gate mis-activates it on the rare non-boolean condition path).
+            // The extended cases were missing here — a latent gap exposed once
+            // x86 emits real conditional ExtJumps (2026-06-15); also corrects
+            // arm64, which has emitted ExtJumpTrue/False bails all along.
+            if (SistaV1::isConditionalShortJump(op)
+                    || op == SistaV1::ExtJumpTrue
+                    || op == SistaV1::ExtJumpFalse) { t1HasCondJump = true; break; }
             int len = SistaV1::bytecodeLength(op);
             if (len <= 0 || i + (size_t)len > bcLen) break;
             i += (size_t)len;
