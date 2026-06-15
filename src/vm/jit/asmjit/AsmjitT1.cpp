@@ -8961,6 +8961,51 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     }
                     // out-of-range -> fall through to the generic bail below.
                 }
+                // x86 coverage (2026-06-15): native ExtendB+ExtJump BACK-EDGE.
+                // Loops (`1 to: N do:` / whileTrue) compile to ExtendB+ExtJump
+                // backward; the generic prefix-bail dropped every loop back edge
+                // to interp -> iterative hot loops ran interp-bound (loop20M
+                // 31x).  Emit the jump natively; back edges poll forceYield_ and
+                // bail to interp on heartbeat preemption (a sendless JIT loop
+                // must still yield).  DET_SCHED keeps the bail (it counts interp
+                // bytecodes).  Mirrors arm64 (~9203).
+                if (op == SistaV1::ExtendB && (size_t)(i + 2) < bcRealLen
+                        && bcReal[i + 2] == SistaV1::ExtJump
+                        && !GET_DEBUG_BOOL(PHARO_T1_NO_NATIVE_BACKJUMP)
+                        && !GET_DEBUG_BOOL(PHARO_DET_SCHED)
+                        && g_t1ForceYieldAddr != nullptr
+                        && (size_t)(i + 3) < bcRealLen) {
+                    uint8_t eb = bcReal[i + 1];
+                    int64_t extB = (eb > 127) ? (int64_t)eb - 256 : (int64_t)eb;
+                    int jumpIdx = globalIdx + 2;
+                    int64_t off = (int64_t)bcReal[i + 3] + (extB << 8);
+                    int64_t target = (int64_t)jumpIdx + 2 + off;
+                    if (target >= 0 && (size_t)target < bcLabels.size()) {
+                        if (target <= (int64_t)globalIdx) {
+                            asmjit::Label yieldBail = a.new_label();
+                            a.mov(rax, asmjit::Imm((uint64_t)g_t1ForceYieldAddr));
+                            a.movzx(ecx, byte_ptr(rax));
+                            a.test(ecx, ecx);
+                            a.jnz(yieldBail);
+                            a.jmp(bcLabels[(size_t)target]);
+                            a.bind(yieldBail);
+                            a.mov(r8, ptr(rdi, OFF_METHOD));
+                            a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
+                            a.mov(ptr(rdi, OFF_IP), r8);
+                            a.mov(dword_ptr(rdi, OFF_EXIT),
+                                  asmjit::Imm(EXIT_ARITH_OVERFLOW));
+                            a.ret();
+                        } else {
+                            a.jmp(bcLabels[(size_t)target]);
+                        }
+                        for (int k = 1; k <= 3; k++)
+                            if ((size_t)(globalIdx + k) < bcLabels.size())
+                                a.bind(bcLabels[globalIdx + k]);
+                        i += 3;
+                        continue;
+                    }
+                    // not in-range -> fall through to the generic prefix bail.
+                }
                 if (op >= SistaV1::ExtendA) {   // 0xE0..0xFD
                     int len = SistaV1::bytecodeLength(op);
                     if (len < 1) len = 1;
