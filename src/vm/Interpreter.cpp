@@ -25322,6 +25322,31 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         methObj = method.asObjectPtr();
     };
 
+    // PHARO_T1_X86_BAIL_MAT_J2J (x86/V1 cross-method inline-J2J, default-OFF):
+    // materialize any pending J2J save before a chain-loop bail-to-interp.
+    // On V1 the caller frame of a cross-method inline-J2J send lives ONLY in
+    // the unpopped save; a clean callee return pops it via the return prelude,
+    // but a MID-METHOD bail (`return false` to interp) leaves it leaked and the
+    // interp-resumed callee returns into a corrupt frame — the no-SEL startup
+    // (3+4)->nil class.  cfibx proves the normal cross-method emit is correct
+    // (its callees return cleanly), so the leak is EXIT-driven, not class-
+    // driven: a tighter canSkipJ2JSave cannot converge.  The cure is to
+    // materialize at every bail site.  Reuses materializeJ2J (reconstructs the
+    // caller SavedFrame(s), resets depth/cursor, syncs globals to the callee's
+    // resume state).  Idempotent: no-op when j2jDepth==0 (covers the case where
+    // a handler already materialized, e.g. AO_MAT_J2J).  On arm64 (V2) this is
+    // an empty lambda so every call site compiles to nothing and the shipping
+    // path is byte-identical.
+#if !PHARO_J2J_SAVE_V2
+    auto bailMatJ2J = [&]() {
+        if (GET_DEBUG_BOOL(PHARO_T1_X86_BAIL_MAT_J2J) && state.j2jDepth > 0)
+            materializeJ2J();
+    };
+#else
+    auto bailMatJ2J = []() {};  // V2: bails handled by the V2 save machinery
+#endif
+    (void)bailMatJ2J;
+
     // Adaptive J2J depth: per-method depth limit that promotes on clean
     // stencil re-entries and demotes on bail (materialization).  Towers
     // bails frequently → stays at depth 2.  List runs clean → promotes
@@ -25770,6 +25795,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 sendSel = state.cachedTarget;
             }
             if (!sendSel.isObject() || sendSel.rawBits() < 0x10000) {
+                bailMatJ2J();
                 return false;
             }
 
@@ -25791,7 +25817,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     superclass = superclassOf(methodClass);
                 }
                 resolved = lookupMethod(sendSel, superclass);
-                if (resolved.isNil()) return false;  // DNU — interpreter handles
+                if (resolved.isNil()) { bailMatJ2J(); return false; }  // DNU — interpreter handles
             } else {
                 Oop rcvrClass = memory_.classOf(rcvr);
                 MethodCacheEntry* ce = probeCache(sendSel, rcvrClass);
@@ -25799,13 +25825,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     resolved = ce->method;
                 } else {
                     resolved = lookupMethod(sendSel, rcvrClass);
-                    if (resolved.isNil()) return false;  // DNU — interpreter handles
+                    if (resolved.isNil()) { bailMatJ2J(); return false; }  // DNU — interpreter handles
                     cacheMethod(sendSel, rcvrClass, resolved);
                 }
             }
 
             if (!resolved.isObject() || resolved.rawBits() < 0x10000 ||
                 resolved.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
+                bailMatJ2J();
                 return false;  // Non-standard method — interpreter handles
             }
 
@@ -25942,6 +25969,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
                 instructionPointer_ = state.ip;
                 stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+                bailMatJ2J();
                 return false;
             }
             if (GET_DEBUG_BOOL(PHARO_T1_VALIDATE_IC) && state.sendArgCount >= 0) {
@@ -26435,6 +26463,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     && state.method.rawBits() >= 0x10000) {
                 method_ = state.method;
             }
+            bailMatJ2J();  // umbrella (idempotent if AO_MAT_J2J already ran)
             return false;
         }
 
@@ -26448,6 +26477,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 j2jCached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
                 instructionPointer_ = state.ip;
                 stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+                bailMatJ2J();
                 return false;
             }
             jitICHits_++;
@@ -26505,6 +26535,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             }
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
+            bailMatJ2J();
             return false;
 
         case jit::ExitYield: {
@@ -27714,6 +27745,7 @@ jit_loop_exit:
                     state.j2jDepth, (void*)(state.tempBase - 1),
                     (void*)framePointer_, (int)state.exitReason);
         }
+        bailMatJ2J();  // x86/V1: the [AO-DIVERGED final] leak — materialize before interp
         return false;
 
     case jit::ExitBlockCreate:
@@ -27721,12 +27753,14 @@ jit_loop_exit:
         // These exits need interpreter handling; sync state
         instructionPointer_ = state.ip;
         stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+        bailMatJ2J();
         return false;
 
     case jit::ExitYield:
         // Yield after chain limit / countdown expired — let interpreter run
         instructionPointer_ = state.ip;
         stackPointer_ = state.sp; SP_CORRUPT_TRACE("stateSp", stackPointer_);
+        bailMatJ2J();
         return false;
 
     default:
