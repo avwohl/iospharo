@@ -11018,10 +11018,30 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 p = (*end == ',') ? end + 1 : end;
             }
         }
+        // x86/V1 cross-method-leaf correctness (2026-06-15, probe found
+        // indexOf: -> indexOf:ifAbsent:): numICEntries counts only
+        // isPhase4SendOp sites, which OMIT ExtSend(0xEA)/ExtSuperSend(0xEB) —
+        // real dispatched sends.  A method whose only send is an ExtSend thus
+        // gets numICEntries==0 -> wrongly canSkipJ2JSave.  On x86 the ExtSend is
+        // ALSO unported (bails mid-method), so admitting such a method as a
+        // cross-method inline-J2J leaf leaves the pushed J2J save un-popped ->
+        // leak -> startup corruption.  Exclude ExtSend/ExtSuperSend methods from
+        // canSkipJ2JSave on x86/V1 only (arm64/V2 emits ExtSend; its
+        // canSkipJ2JSave is unchanged because x86HasExtSend stays false there).
+        bool x86HasExtSend = false;
+#if !PHARO_J2J_SAVE_V2
+        if (isReal && !jm->canBailMidMethod && jm->numICEntries == 0) {
+            forEachRealOpcode(bc, bcLen, [&](size_t, uint8_t op) {
+                if (op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend)
+                    x86HasExtSend = true;
+            });
+        }
+#endif
         jm->canSkipJ2JSave = isReal
                               && (forceSaveless
                                   || (!jm->canBailMidMethod
-                                      && jm->numICEntries == 0));
+                                      && jm->numICEntries == 0
+                                      && !x86HasExtSend));
         if (isReal) {
             g_canSkipJ2JSave_total++;
             if (jm->canSkipJ2JSave) g_canSkipJ2JSave_count++;
