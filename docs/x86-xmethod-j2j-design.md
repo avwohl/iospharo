@@ -169,6 +169,43 @@ focused session: a confirmation box (count ExitArithOverflow-with-j2jDepth>0 dur
 knob-on startup) then attempt the materialize fix with PHARO_DET_SCHED for determinism.
 Implementation stays default-OFF (correct foundation; arm64 + x86-default untouched).
 
+## ROOT CAUSE CONFIRMED + DETERMINISTIC REPRO (box 5, 2026-06-15)
+
+KNOB-ON + PHARO_JIT_FAIL_REASONS=1 on `(3+4) printString`: **30/30 [AO-DIVERGED]
+with j2jD=1**, all `sel=#to:` at ipOff=44, `tb-1 == fp` (frame pointer MATCHES —
+so NOT the framePointer-mismatch class, issue (1); it is purely pending-save,
+issue (2)). KNOB-OFF: 0 AO-DIVERGED, EVAL='7'. (30 is the diagnostic's print cap;
+real count is higher.)
+
+So the open bug is DEFINITIVELY: `ExitArithOverflow` fires with a pending
+cross-method J2J save (j2jDepth>0) and does NOT materialize it. Method M (entered
+via cross-method inline-J2J) hits SmI arith-overflow -> ExitArithOverflow returns
+false to the interpreter, but M's caller frame lives only in the unpopped J2J save
+-> M's eventual interpreter return corrupts. `#to:` (inlined to:do:) is the
+deterministic trigger during startup.
+
+KEY UPGRADE vs the 2 prior failed fixes: they faced the INTERMITTENT "LEAF_ALL
+flicker"; PHARO_T1_X86_XMETHOD=1 gives a **DETERMINISTIC repro** (every run, #to:,
+j2jD=1) — the missing enabler. Repro recipe:
+    PHARO_X86_JIT=1 PHARO_T1_X86_XMETHOD=1 PHARO_JIT_FAIL_REASONS=1 \
+      ./build/test_load_image <image> eval "(3+4) printString"
+    # -> [AO-DIVERGED] j2jD=1 spam + corrupt (empty) result; knob-off = clean '7'
+
+MATERIALIZE MACHINERY (Interpreter.cpp:25237 `materializeJ2J` lambda): for each
+pending save it builds a SavedFrame (materializeJ2JSaveIntoFrame, :23894),
+chainCallDepth += depth, resets j2jDepth/cursor, syncs live regs to the callee.
+This is what ExitArithOverflow needs. BUT the prior eager-materialize there
+"double-handled" with a DOWNSTREAM save handler (in the chain-loop's caller, after
+`return false`) -> the real open sub-problem is reconciling the bail-time
+materialize with that downstream handler. The naive `materializeJ2J()` in
+ExitArithOverflow regresses (proven 2026-06-12). Next focused session: with the
+deterministic repro, trace the chain-loop caller's downstream j2jDepth handling
+after an ExitArithOverflow false-return, find why it doesn't materialize the
+cross-method save (and why doing it eagerly double-handles), then a knob-gated fix
+validated against the repro (must show 0 AO-DIVERGED corruption) + arm64
+no-regression (the handler is SHARED). Likely needs the fix to ALSO gate arm64
+Increment 2.
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
