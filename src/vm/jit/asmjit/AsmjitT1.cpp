@@ -667,10 +667,15 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
         uint64_t callerMH = *(uint64_t*)(callerCM + 8);
         int calleeNumLits = (int)((calleeMH >> 3) & 0x7FFF);  // SmI: shift 3
         int callerNumLits = (int)((callerMH >> 3) & 0x7FFF);
-        int calleeArgCount = (int)((calleeMH >> (3+15)) & 0x1F);
-        int callerArgCount = (int)((callerMH >> (3+15)) & 0x1F);
-        int calleeTempCount = (int)((calleeMH >> (3+15+5)) & 0x3F);
-        int callerTempCount = (int)((callerMH >> (3+15+5)) & 0x3F);
+        // Canonical Spur header decode on the RAW tagged oop (untag = >>3):
+        // argCount = bits 24-27 of the untagged value, tempCount = bits 18-23.
+        // (The old (>>3+15)/(>>3+15+5) layout here was a DEBUG-ONLY mis-decode --
+        // it disagreed with the real call-site decode at ~10562 and the JITMethod
+        // cache at ~10781, and lied about argCount/tempCount in [XMETHOD] traces.)
+        int calleeArgCount = (int)((calleeMH >> (3+24)) & 0x0F);
+        int callerArgCount = (int)((callerMH >> (3+24)) & 0x0F);
+        int calleeTempCount = (int)((calleeMH >> (3+18)) & 0x3F);
+        int callerTempCount = (int)((callerMH >> (3+18)) & 0x3F);
         // First bytecode of callee
         uint8_t* calleeBC = (uint8_t*)(calleeCM + 8 + (1 + calleeNumLits) * 8);
         fprintf(stderr, "[XMETHOD #%zu] state=%p\n"
