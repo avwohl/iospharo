@@ -412,6 +412,47 @@ probe + PHARO_JIT_FAIL_REASONS to name the exact bail exit, then make that exit
 materialize (mirror the working ExitArithOverflow path). The lever stays shippable
 SCOPED via SEL whitelist (correct + 7.9x for SmI-arith / send-free callees).
 
+
+## DEFAULT-ON BLOCKED: unified block leaks saves on multiple bail classes (2026-06-15)
+
+The capture-probe iteratively named the no-SEL startup leak classes (each = a
+canSkipJ2JSave/self-rec inline-J2J'd callee that BAILS mid-method, leaving its J2J
+save un-popped):
+  1. CROSS-METHOD ExtSend callees (indexOf:->indexOf:ifAbsent:) -- FIXED 34fb456b
+     (numSendSites omits 0xEA -> wrongly canSkipJ2JSave; exclude on x86/V1).
+  2. CROSS-METHOD mid-arith callees (adaptToInteger:andCompare:->isFinite, Float
+     ^(self-self)=lit) -- FIXED 7ee4f5e1 (inline arith 0x60-0x6F bails for non-SmI;
+     exclude mid-arith, keep tail-arith so cfibx's incc survives).
+  3. SELF-REC / deep recursion (allSlotsDo:->allSlotsDo:, j2jDepth=5) -- OPEN. This
+     is NOT a canSkipJ2JSave callee: self-rec is gated by cached==OFF_METHOD, which
+     admits canBailMidMethod methods (loops).  The self-rec-only path (knob-OFF,
+     default-on) handles allSlotsDo: correctly, so the UNIFIED block (knob-on)
+     REGRESSED self-rec for canBailMidMethod methods at depth.
+
+ROOT INSIGHT: the unified cross-method emit replaced the working self-rec-only emit
+(adding callee-state writes + state.ip=bcStart + dynamic nil-fill).  For self-rec
+those are mostly no-ops, but something in them leaks for a canBailMidMethod method
+that bails at depth.  Per-class exclusion (canSkipJ2JSave tightening) cannot reach
+self-rec (different gate).
+
+TWO robust paths to default-on:
+  (A) SEPARATE self-rec from cross-method in the knob-on emit: for cached==OFF_METHOD
+      emit the ORIGINAL self-rec frame setup (byte-identical to the validated
+      self-rec-only path, no extra writes); only canSkipJ2JSave cross-method sends
+      use the new emit.  Eliminates the self-rec regression (class 3) outright.
+  (B) BAIL-MATERIALIZE: handle the cross-method/self-rec save on EVERY mid-method
+      bail.  NOTE the arith bail is handled inside JITRuntime::tryExecute (NOT the
+      Interpreter.cpp:26322 chain-loop where PHARO_T1_AO_MAT_J2J sits -> that knob
+      is the WRONG location for the inline-arith bail; combo test confirmed it does
+      not help).  The correct fix is in tryExecute's ExitArithOverflow resume.
+
+STATUS: cfibx lever WORKS + 7.9x for safe (SmI-arith / send-free / tail-arith)
+callees; shippable SCOPED via SEL whitelist.  Default-ON needs (A) [self-rec
+separation, likely 1 fix] then re-probe for any remaining cross-method class, OR
+(B) [tryExecute bail-materialize, deeper].  The probe (PHARO_T1_X86_XMETHOD_PROBE)
+names each remaining class in one box.  arm64 untouched throughout (all fixes
+#if !PHARO_J2J_SAVE_V2; battery==golden every build).
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
