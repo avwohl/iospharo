@@ -283,6 +283,35 @@ X86_XMETHOD?) to confirm the normal emit is the corruptor, then capstone-diff +
 box-lldb the send-site/return-prelude semantics. This is the genuine multi-session
 blocker; it needs x86 debug infrastructure objdump alone can't substitute for.
 
+## TRIANGULATION (boxes GATE0 + AO-bail + cfibx-isolation, 2026-06-15): LEVER IS CORRECT
+
+Using PHARO_T1_X86_J2J_SEL trailing-* prefix scoping (keeps startup clean), every
+isolated cross-method pattern produces the CORRECT value:
+- normal send: (7 xm1)=41 (getter callee), (7 xm4)=8 (arith callee). GATE 0.
+- AO-bailing send: (SmallInteger maxVal) xm6 = maxVal+1 (correct LargeInteger),
+  WITH AND WITHOUT PHARO_T1_AO_MAT_J2J. So the AO bail in isolation is handled by
+  the EXISTING machinery; my AO fix is NEITHER needed (isolated works without it)
+  NOR sufficient (startup still broke) -> the AO fix is REVERTABLE.
+- self-rec + cross-method MIX (the real cfibx: zcfibx -> zcfincc): zcfibx(20)=17710
+  CORRECT (knob-on, SEL=zcf*).
+
+CONCLUSION: the cross-method inline-J2J EMIT + RESUME logic is SOUND for all isolated
+patterns. The PHARO_T1_X86_XMETHOD startup corruption ((3+4)->nil) is a SCALE/
+INTERACTION effect that only manifests with the full 245K-fire startup across MANY
+diverse methods + GC -- NOT the core cross-method mechanism, NOT the normal emit
+(GATE 0 refutes the workflow wf_8b29daf3 "normal emit" redirect), NOT the AO bail.
+
+This is a big positive: the cfibx lever WORKS. Remaining blocker = the scale bug.
+NEXT: (1) re-measure the cfibx speedup with a correct timer (Time millisecondsToRun:)
+to confirm cross-method inline-J2J actually beats self-rec-only for cfibx. (2) Find
+the scale bug: bisect which method PATTERN or interaction (complex args/temps/blocks,
+GC-during-fire, IC/save-stack at scale, deep self-rec+cross mix) corrupts at startup
+that the simple isolated pairs don't exercise -- e.g. progressively widen the SEL
+prefix from a safe set toward the full startup set, or capture the first corrupting
+cross-method method. (3) Revert PHARO_T1_AO_MAT_J2J (unnecessary) once the scale bug
+is understood (keep for now; default-off, arm64-safe). The lever could ship scoped to
+validated patterns even before the scale bug is fully fixed.
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
