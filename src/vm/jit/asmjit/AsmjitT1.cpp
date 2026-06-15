@@ -98,6 +98,13 @@ static bool g_emitIsBlock = false;
 // self-recursive methods whose chain never bails mid-flight to C++ (bail-time
 // J2J-save materialization on x86 is not yet implemented).
 static bool g_emitX86J2JOk = false;
+// x86 cross-method inline-J2J (Increment 1, PHARO_T1_X86_XMETHOD): when true,
+// the send-site inline-J2J gate admits self-rec OR canSkipJ2JSave cross-method
+// callees and sets the callee's method/literals/jitMethod/argCount + a dynamic
+// nil-fill; the return prelude restores caller state from save[32]=callerJM.
+// When false the emit is byte-identical to the self-rec-only path.  Implies
+// g_emitX86J2JOk.  See docs/x86-xmethod-j2j-design.md.
+static bool g_emitX86Xmethod = false;
 // FSR M1 per-compile gates (set in compileViaAsmjit).
 static bool g_fsrX19 = false;
 static bool g_fsrCursor = false;  // FSR M2 v1: x23 cursor residency (write-through)
@@ -267,6 +274,11 @@ extern "C" uint64_t g_blockValue_bails = 0;  // helper returned NULL
 // Incremented from JIT-emitted code via address-load + atomic-ish increment;
 // printed by JITRuntime stats.  Process-global (single VM per process).
 extern "C" uint64_t g_inlineJ2J_hits      = 0;  // path taken (br to entry)
+// x86 cross-method inline-J2J fires (PHARO_T1_X86_XMETHOD): incremented only on
+// the CROSS-method push (not self-rec), so a non-zero count proves the new path
+// fired (guards the gated-counter artifact).  Dumped at exit under
+// PHARO_T1_X86_XMETHOD_COUNTERS.
+extern "C" uint64_t g_x86_xmethod_fires   = 0;
 extern "C" uint64_t g_inlineJ2J_bail_zero = 0;  // entryAddr == 0
 extern "C" uint64_t g_inlineJ2J_bail_full = 0;  // save stack at limit
 extern "C" uint64_t g_inlineJ2J_bail_self = 0;  // calleeJM != callerJM (or other bail2 routes)
@@ -476,6 +488,18 @@ static const int xmethod_atexit_install = []() {
         std::atexit([]() {
             extern void jit_rt_xmethod_dump_trace_extern();
             jit_rt_xmethod_dump_trace_extern();
+        });
+    }
+    return 0;
+}();
+
+extern "C" uint64_t g_x86_xmethod_fires;
+static const int x86_xmethod_counter_atexit = []() {
+    if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_COUNTERS)) {
+        std::atexit([]() {
+            fprintf(stderr, "[X86-XMETHOD] %llu cross-method inline-J2J fires\n",
+                    (unsigned long long)g_x86_xmethod_fires);
+            fflush(stderr);
         });
     }
     return 0;
@@ -1606,6 +1630,23 @@ static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
     // Coupling 1: decrement state.j2jDepth to match the push (keeps the int32
     // depth field balanced so the C++ exit merge sees 0 on a clean inline chain).
     a.sub(dword_ptr(rdi, OFF_J2J_DEPTH), asmjit::Imm(1));
+    // Cross-method (PHARO_T1_X86_XMETHOD): restore the CALLER's
+    // jitMethod/method/literals/argCount from save[32]=callerJM — the
+    // cross-method send overwrote state with the callee's, and the resumed
+    // caller code reads OFF_LITERALS/OFF_METHOD directly.  For self-rec under
+    // the knob (callee==caller) these are no-op writes.  Uses rcx/rdx (both
+    // reloaded by the receiver/tempBase restore just below); r9=save base and
+    // rax=retval survive.  argCount is uint8_t -> BYTE load (not dword).
+    if (g_emitX86Xmethod) {
+        a.mov(rcx, ptr(r9, 32));                            // callerJM
+        a.mov(ptr(rdi, OFF_JITMETHOD), rcx);
+        a.mov(rdx, ptr(rcx, (int)offsetof(JITMethod, compiledMethodOop)));
+        a.mov(ptr(rdi, OFF_METHOD), rdx);
+        a.mov(rdx, ptr(rcx, (int)offsetof(JITMethod, literalsCache)));
+        a.mov(ptr(rdi, OFF_LITERALS), rdx);
+        a.movzx(edx, byte_ptr(rcx, (int)offsetof(JITMethod, argCount)));
+        a.mov(dword_ptr(rdi, OFF_ARGCOUNT), edx);
+    }
     a.mov(r10, ptr(r9, 0));                 // savedSp
     a.mov(rcx, ptr(r9, 8));                 // savedReceiver
     a.mov(rdx, ptr(r9, 16));                // savedTempBase
@@ -2763,7 +2804,103 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // cold/non-self/full-stack → the normal getter/setter/dispatch path.
             // Regs here: rax=send receiver, rcx=sp, rsi=icDataPtr, r8=extras;
             // the bail checks clobber only r9/r10/r11 before notJ2J.
-            if (g_emitX86J2JOk && !g_emitIsBlock) {
+            if (g_emitX86Xmethod && !g_emitIsBlock) {
+                // ===== Increment 1: cross-method-capable inline-J2J =====
+                // Admit self-rec OR a canSkipJ2JSave cross-method callee (no
+                // send + no cond-jump bail -> only the clean return-prelude path
+                // runs).  save[32] = CALLER jitMethod (the resume identity that
+                // materialize reads); state is set to the CALLEE.  Mirrors arm64
+                // ~6848-7002.  Regs: rax=recv, rcx=sp, rsi=icDataPtr, r8=extras
+                // (preserved for entryAddr); scratch r9/r10/r11/rdx.
+                // V1 save only: save[32]=jitMethod is read directly by
+                // materializeJ2JSaveIntoFrame.  A future V2 flip on x86 would
+                // repack the save and silently drop the caller identity.
+                static_assert(!PHARO_J2J_SAVE_V2,
+                    "x86 cross-method inline-J2J assumes the V1 56-byte save");
+                asmjit::Label notJ2J = a.new_label();
+                asmjit::Label admit  = a.new_label();
+                a.bt(r8, asmjit::Imm(60));               // J2J_ENTRY_BIT?
+                a.jnc(notJ2J);
+                a.mov(r9, qword_ptr(rsi, 8));            // cached methodBits
+                a.cmp(r9, ptr(rdi, OFF_METHOD));         // self-rec?
+                a.je(admit);
+                // Cross-method: gate on calleeJM->canSkipJ2JSave (NOT bit 57 --
+                // xmethodGateOk admits up to MAX_IC=8 IC sites + bailmid callees,
+                // which Increment 1 cannot support).  calleeJM = entryAddr - sizeof.
+                a.mov(r9, r8);
+                a.mov(r10, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
+                a.and_(r9, r10);                         // r9 = entryAddr
+                a.movzx(r10d, byte_ptr(r9,
+                    -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, canSkipJ2JSave)));
+                a.test(r10, r10);
+                a.jz(notJ2J);                            // not canSkip -> bail
+                if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_COUNTERS)) {
+                    a.mov(r10, asmjit::Imm((uint64_t)&g_x86_xmethod_fires));
+                    a.inc(qword_ptr(r10));               // cross-method ONLY (r10 dead here)
+                }
+                a.bind(admit);
+                // Save-stack room (also guards a null cursor: 0+56 > limit(0)).
+                a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
+                a.mov(r10, ptr(rdi, OFF_J2J_SAVE_LIMIT));
+                a.lea(r11, ptr(r9, 56));
+                a.cmp(r11, r10);
+                a.ja(notJ2J);
+                // --- push V1 J2JSave (56B): CALLER resume state (save[32]=callerJM) ---
+                a.mov(ptr(r9, 0), rcx);                  // sp
+                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);
+                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, 16), rdx);
+                a.mov(rdx, ptr(rdi, OFF_METHOD));
+                a.add(rdx, asmjit::Imm(bcOffsetFromMethObj + 1));
+                a.mov(ptr(r9, 24), rdx);                 // ip (CALLER resume, for materialize)
+                a.mov(rdx, ptr(rdi, OFF_JITMETHOD)); a.mov(ptr(r9, 32), rdx); // CALLER jitMethod
+                a.lea(rdx, ptr(bcLabels[globalIdx + 1]));
+                a.mov(ptr(r9, 40), rdx);                 // resumeAddr
+                a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));
+                a.add(r9, asmjit::Imm(56));
+                a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
+                a.add(dword_ptr(rdi, OFF_J2J_DEPTH), asmjit::Imm(1));
+                // --- set CALLEE state (E2: AFTER the push+depth, so a save-room
+                //     bail leaves state.method=callerCM).  calleeJM=entryAddr-sizeof. ---
+                a.mov(r11, r8);
+                a.mov(r10, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
+                a.and_(r11, r10);                        // r11 = entryAddr (kept for jmp)
+                a.lea(r10, ptr(r11, -(int)sizeof(JITMethod)));  // r10 = calleeJM
+                a.mov(ptr(rdi, OFF_JITMETHOD), r10);             // state.jitMethod = calleeJM
+                a.mov(rdx, ptr(r10, (int)offsetof(JITMethod, compiledMethodOop)));
+                a.mov(ptr(rdi, OFF_METHOD), rdx);                // state.method = calleeCM
+                a.mov(rdx, ptr(r10, (int)offsetof(JITMethod, literalsCache)));
+                a.mov(ptr(rdi, OFF_LITERALS), rdx);             // state.literals (=CM+16, cached)
+                a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs)); // state.argCount = nArgs
+                // receiver / tempBase
+                a.mov(rdx, ptr(rcx, -8 * (nArgs + 1)));  // newReceiver = sp[-1-nArgs]
+                a.mov(ptr(rdi, OFF_RECEIVER), rdx);
+                a.lea(rdx, ptr(rcx, -8 * nArgs));        // newTempBase = sp - 8*nArgs (kept in rdx)
+                a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+                // state.ip = calleeJM->bcStartCache (callee's first bytecode)
+                a.mov(r9, ptr(r10, (int)offsetof(JITMethod, bcStartCache)));
+                a.mov(ptr(rdi, OFF_IP), r9);
+                // dynamic nil-fill [nArgs..tempCount) + newSp: callee tempCount
+                // differs from caller -> runtime loop (mirror arm64 ~6988).
+                {
+                    asmjit::Label fillLoop = a.new_label();
+                    asmjit::Label fillDone = a.new_label();
+                    a.movzx(r9d, byte_ptr(r10, (int)offsetof(JITMethod, tempCount)));
+                    a.shl(r9, asmjit::Imm(3));           // tempCount*8
+                    a.add(r9, rdx);                      // r9 = end = tempBase + tempCount*8
+                    a.lea(rcx, ptr(rdx, 8 * nArgs));     // rcx = start (sp no longer needed)
+                    a.mov(r10, asmjit::Imm(nilBits));    // calleeJM no longer needed
+                    a.bind(fillLoop);
+                    a.cmp(rcx, r9);
+                    a.jae(fillDone);
+                    a.mov(ptr(rcx), r10);
+                    a.add(rcx, asmjit::Imm(8));
+                    a.jmp(fillLoop);
+                    a.bind(fillDone);
+                    a.mov(ptr(rdi, OFF_SP), r9);         // newSp = end
+                }
+                a.jmp(r11);                              // entryAddr
+                a.bind(notJ2J);
+            } else if (g_emitX86J2JOk && !g_emitIsBlock) {
                 asmjit::Label notJ2J = a.new_label();
                 a.bt(r8, asmjit::Imm(60));               // J2J_ENTRY_BIT?
                 a.jnc(notJ2J);
@@ -10175,6 +10312,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // x86 inline-J2J WIP: opt this method into the inline-J2J fast path only if
     // the master knob is on AND its selector matches PHARO_T1_X86_J2J_SEL.
     g_emitX86J2JOk = false;
+    g_emitX86Xmethod = false;   // set below on x86; keep arm64 from warning unused
 #if defined(__x86_64__) || defined(_M_X64)
     // inline-J2J is DEFAULT-ON for the x86 tier-1 JIT (matches arm64, default-on
     // since 2026-06-10).  Full-suite validated: 0 deterministic regressions,
@@ -10188,6 +10326,10 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                              ? true
                              : (memory.selectorOf(compiledMethod) == j2jSel);
     }
+    // Increment 1: cross-method inline-J2J (admit canSkipJ2JSave callees) only
+    // when the master inline-J2J path is on AND the opt-in knob is set.  Default
+    // OFF -> g_emitX86Xmethod=false -> byte-identical self-rec-only emit.
+    g_emitX86Xmethod = g_emitX86J2JOk && GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD);
 #endif
     // M1 x19 invariant: UNCONDITIONAL since 2026-06-11 (five one-cycle
     // movs at activation commits, gate-verified by the 2468-test soak)
