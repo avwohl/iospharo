@@ -12,7 +12,17 @@ arm64 inlined arith/float/at/size/class ≈ Cog; residual ~2.7x = per-send dispa
 X86 COMPILE-THRASH FIXED (commit 74f12085, box-validated): failed compiles
 14,069,951 -> 13; ours-x86 cogRunBench empty/timeout -> RETURNS loop20M=1381
 fib30=520 cfibx30=856 (Cog-x86: 44/9/13). negative-cache permanent asmjit-T1 emit
-failures in compileViaAsmjit; arm64 unaffected (battery==Cog). NEXT x86 LEVER (CORRECTED via clean box #6): the disagree/DNU were polling
+failures in compileViaAsmjit; arm64 unaffected (battery==Cog). X86 PROGRESS (2026-06-15, box-validated): x86 broken->working, benchFib ~10x faster.
+3 commits: thrash-fix (74f12085, 14M->13), forward-ExtJump native (c80799c8,
+benchFib 520->51ms = 58x->5.7x vs Cog), ExtendB+ExtJump back-edge native (61a5b4af,
+correct, helps LARGE loops; micro-bench loop unchanged — it uses SHORT back-jumps).
+REMAINING x86 (DEEPER, not single-op ports): loop 31x = x86 sp-in-OFF_SP-MEMORY
+per-bytecode tax (deep lever: port arm64's SP_IN_X25 register residency to
+emitOne_x86); cfibx 46x = cross-method `incc` send efficiency. benchFib (5.7x,
+send-dominated) is closest; tight loop (31x) is per-bytecode-bound (sp tax). The
+next big x86 lever is sp/TOS register residency in the x86 emit (a major refactor).
+(older detail:)
+NEXT x86 LEVER (CORRECTED via clean box #6): the disagree/DNU were polling
 artifacts (clean run: 0 disagrees, benchFib=2692537 correct). x86 is 31-66x because
 the correctness-first x86 emit loop (AsmjitT1.cpp ~8936) BAILS EVERY >=0xE0 extended
 bytecode to interp, and hot methods use them (cfibx has ED=ExtJump for its
