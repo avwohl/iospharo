@@ -19,8 +19,9 @@ correct, helps LARGE loops; micro-bench loop unchanged — it uses SHORT back-ju
 REMAINING x86 (CORRECTED 2026-06-15):
 - loop 98x (vs arm64 14ms) was COVERAGE not sp-tax: the JIT'd loop method BAILED at
   ExtJumpFalse (0xEF) condition + ExtStoreTemp (0xF5) counter. FIXED dae71b87 (port
-  both + canBailMidMethod scan fix). Validating via box (loop should drop near
-  arm64's 14ms / Cog-x86's 44ms). If residual remains AFTER coverage, THEN sp-tax.
+  both + canBailMidMethod scan fix). BOX-VALIDATED: loop20M 1375->133ms (10.3x),
+  loopsum1M correct, battery golden -> now ~3x vs Cog-x86's 44ms. Residual 133 vs
+  arm64 14ms IS the per-bytecode sp-tax (sp/TOS register residency = deferred lever).
 - cfibx 27x (599ms vs arm64 22ms) = x86 has SELF-recursive inline-J2J only (benchFib
   works, 3.2x), NO cross-method inline-J2J (AsmjitT1.cpp:95-99: "bail-time J2J-save
   materialization on x86 is not yet implemented"). cfibx's cross-method `incc` send
