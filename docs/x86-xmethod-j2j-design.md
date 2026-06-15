@@ -378,6 +378,40 @@ ship SCOPED via PHARO_T1_X86_J2J_SEL to a validated hot-method whitelist even be
 the scale blocker is root-caused. The AO fix (PHARO_T1_AO_MAT_J2J) is UNNECESSARY
 (isolated AO-bail works without it) — revert candidate; kept default-off, arm64-safe.
 
+
+## ROOT CAUSE NAMED + FIRST CLASS FIXED (capture-probe, 2026-06-15)
+
+The capture-first-corruption probe (PHARO_T1_X86_XMETHOD_PROBE) named the startup
+corruptors precisely. The class: a canSkipJ2JSave x86 cross-method callee that
+BAILS mid-method leaves its pushed J2J save un-popped (j2jDepth=1 leak) -> the
+no-SEL startup corruption ((3+4)->nil). Two sources found:
+
+1. ExtSend/ExtSuperSend (FIXED, commit 34fb456b): indexOf: -> indexOf:ifAbsent:
+   (bc 4c 40 51 41 ea 03 5c). numICEntries=numSendSites counts only isPhase4SendOp
+   sites, which OMIT ExtSend(0xEA) -> a method whose only send is an ExtSend gets
+   numICEntries==0 -> wrongly canSkipJ2JSave. On x86 ExtSend is unported (bails).
+   FIX: exclude ExtSend/ExtSuperSend methods from canSkipJ2JSave on x86/V1 only
+   (arm64 emits ExtSend, unchanged). Validated arm64 battery==golden.
+
+2. Non-SmI / overflow INLINE ARITH (REMAINING): adaptToInteger:andCompare: ->
+   isFinite (bc 4c 4c 61 20 66 5c = ^(self-self)=lit, Float receiver). The inline
+   arith special selectors (0x60-0x6F: - = etc.) take the SmI fast path but BAIL
+   for non-SmI operands (Float/LargeInt) or overflow. isFinite's Float arith bails
+   EVERY call -> mid-method bail -> save leak. CANNOT exclude statically: cfibx's
+   incc (^self+1) also has inline arith (0x60) and is the 7.9x win; the difference
+   is runtime operand type (SmI vs Float), not static shape.
+
+So the COMPLETE fix is bail-materialize, NOT a tighter gate: when a cross-method
+inline-J2J'd callee bails to the interpreter mid-method (j2jDepth>0), materialize
+the pending caller save. NOTE the isolated AO-bail test (xm5 ^self+1 maxVal overflow)
+WORKED -> ExitArithOverflow's path already materializes correctly for cross-method.
+So the remaining work is the OTHER interp-returning bail exit(s) that the non-SmI
+inline arith takes (NOT ExitArithOverflow, which works). NEXT: reproduce a Float-arith
+cross-method callee in isolation (Float>>zfk ^self-self / caller ^1.5 zfk) with the
+probe + PHARO_JIT_FAIL_REASONS to name the exact bail exit, then make that exit
+materialize (mirror the working ExitArithOverflow path). The lever stays shippable
+SCOPED via SEL whitelist (correct + 7.9x for SmI-arith / send-free callees).
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
