@@ -26348,6 +26348,34 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             //     DNU — weak causality, over-read.
             // The LEAF_ALL flicker root cause remains OPEN (J2J-on +
             // arith-leaf interaction; production at:-family unaffected).
+            // PHARO_T1_AO_MAT_J2J (default-OFF, x86/V1 cross-method fix,
+            // 2026-06-15): when an inline-J2J'd callee arith-overflows with a
+            // pending J2J save (j2jDepth>0), the CALLER frame lives only in the
+            // unpopped save (save.jitMethod=CALLER on V1, stencils.cpp:1878 /
+            // AsmjitT1 x86 push save[32]); without materializing it the interp
+            // resumes with the caller frame leaked -> M's return corrupts (the
+            // open bug; deterministic repro under PHARO_T1_X86_XMETHOD).  The
+            // materializeJ2J lambda reconstructs the caller SavedFrame(s) +
+            // resets depth/cursor.  SAFE to `return false` after it WITHOUT the
+            // jit_loop_exit epilogue's chainCallDepth popFrame() unwind:
+            // chainCallDepth is function-local and this early return bypasses the
+            // epilogue (DO NOT convert this return to break/goto jit_loop_exit).
+            // The downstream :20769 resume-internal path is statically dead here
+            // (needs PHARO_T1_RESUME_INTERNAL_J2J + a disjoint pool slice), so no
+            // double-handle.  Knob-OFF short-circuits -> arm64/x86-default
+            // behavior unchanged.
+            // SCOPED TO V1 (x86): on V2 (arm64) calling materializeJ2J here
+            // double-handles with arm64's existing j2jD>0 bail machinery and
+            // CORRUPTS (verified: arm64 knob-ON breaks battery_golden) — arm64's
+            // V2 cross-method/self-rec arith bails are already handled by its own
+            // path (findMethodByPC), so this fix is x86/V1-only.  The #if also
+            // makes the knob a no-op on arm64 (compiled out) so even knob-ON
+            // can't regress the shipping arch.
+#if !PHARO_J2J_SAVE_V2
+            if (GET_DEBUG_BOOL(PHARO_T1_AO_MAT_J2J) && state.j2jDepth > 0) {
+                materializeJ2J();
+            }
+#endif
             // Sync method_ from state.method when tier=1 — inline-J2J
             // may have moved state into a callee without updating
             // method_, which super-send and other method-context
