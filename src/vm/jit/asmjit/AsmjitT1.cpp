@@ -8884,9 +8884,17 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     }
     if (real) {
         int siteIdx = 0;
+        // x86 ExtJump (0xED) native-emit guard: only a BARE forward ExtJump
+        // (no ExtendA/B prefix -> offset = unsigned byte, 0-255 forward) is
+        // safe to emit as a direct jmp; a prefixed/back-edge ExtJump carries
+        // its offset in extB and must keep bailing to interp.  This flag is
+        // true iff the immediately-preceding op was an ExtendA/B prefix bail.
+        bool prevExtPrefix = false;
         for (size_t i = 0; i < bcRealLen; i++) {
             int globalIdx = (int)i + emitSkip;
             a.bind(bcLabels[globalIdx]);
+            bool wasExtPrefix = prevExtPrefix;
+            prevExtPrefix = false;
             // Diagnostic: track every emit's bcOffsetFromMethObj for the
             // sortStructs corruption hunt.
             if (__builtin_expect(pharo::g_debug.t1TraceEmit, 0)) {
@@ -8933,6 +8941,26 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 // prefix bails at the prefix; the interp runs the whole
                 // bundle, so the (dead) bail re-emitted at the prefixed op is
                 // harmless.
+                // x86 coverage (2026-06-15): native bare-forward unconditional
+                // ExtJump (0xED).  Hot methods' control flow (cfibx's
+                // ifTrue:ifFalse: merge jump) uses ExtJump; bailing it dropped
+                // the whole method to interp (the 31-66x gap).  Mirrors arm64
+                // (~9576).  Only the BARE forward case (no ExtendA/B prefix ->
+                // offset = unsigned byte); prefixed/back-edge ExtJump (extB)
+                // and out-of-range targets fall through to the generic bail.
+                if (op == SistaV1::ExtJump && !wasExtPrefix
+                        && (size_t)(i + 1) < bcRealLen) {
+                    int offset = static_cast<int>(bcReal[i + 1]);
+                    int target = globalIdx + 2 + offset;
+                    if (target >= 0 && target < (int)bcLabels.size()) {
+                        a.jmp(bcLabels[target]);
+                        if ((size_t)(globalIdx + 1) < bcLabels.size())
+                            a.bind(bcLabels[globalIdx + 1]);
+                        i += 1;
+                        continue;
+                    }
+                    // out-of-range -> fall through to the generic bail below.
+                }
                 if (op >= SistaV1::ExtendA) {   // 0xE0..0xFD
                     int len = SistaV1::bytecodeLength(op);
                     if (len < 1) len = 1;
@@ -8944,6 +8972,11 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         if ((size_t)(globalIdx + k) < bcLabels.size())
                             a.bind(bcLabels[globalIdx + k]);
                     }
+                    // remember an ExtendA/B prefix so the NEXT op (the prefixed
+                    // ExtJump) keeps bailing instead of being mis-emitted as a
+                    // bare forward jump.
+                    prevExtPrefix = (op == SistaV1::ExtendA
+                                     || op == SistaV1::ExtendB);
                     i += (len - 1);
                     continue;
                 }
