@@ -11028,12 +11028,29 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         // leak -> startup corruption.  Exclude ExtSend/ExtSuperSend methods from
         // canSkipJ2JSave on x86/V1 only (arm64/V2 emits ExtSend; its
         // canSkipJ2JSave is unchanged because x86HasExtSend stays false there).
-        bool x86HasExtSend = false;
+        bool x86HasMidBail = false;
 #if !PHARO_J2J_SAVE_V2
         if (isReal && !jm->canBailMidMethod && jm->numICEntries == 0) {
+            bool prevArith = false;
             forEachRealOpcode(bc, bcLen, [&](size_t, uint8_t op) {
+                // ExtSend/ExtSuperSend (0xEA/0xEB): real dispatched sends that
+                // isPhase4SendOp/numSendSites OMIT + the x86 emit bails on.
                 if (op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend)
-                    x86HasExtSend = true;
+                    x86HasMidBail = true;
+                // Inline arith/compare specials (0x60-0x6F) take the SmI fast
+                // path but BAIL (EXIT_ARITH_OVERFLOW) for non-SmI operands
+                // (Float/LargeInt) or overflow.  A MID-method bail (the arith is
+                // NOT immediately before a return op) resumes into the interp,
+                // leaving the cross-method inline-J2J save un-popped -> leak ->
+                // startup corruption (probe: adaptToInteger:andCompare: ->
+                // isFinite ^(self-self)=lit).  TAIL arith (incc ^self+1: the +
+                // just before ReturnTop) resumes through the return prelude and
+                // is safe (xm5 maxVal-overflow validated) -> keep it (cfibx's
+                // 7.9x win).
+                if (prevArith && !(op >= SistaV1::ReturnReceiver
+                                   && op <= SistaV1::ReturnTop))
+                    x86HasMidBail = true;
+                prevArith = (op >= 0x60 && op <= 0x6F);
             });
         }
 #endif
@@ -11041,7 +11058,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                               && (forceSaveless
                                   || (!jm->canBailMidMethod
                                       && jm->numICEntries == 0
-                                      && !x86HasExtSend));
+                                      && !x86HasMidBail));
         if (isReal) {
             g_canSkipJ2JSave_total++;
             if (jm->canSkipJ2JSave) g_canSkipJ2JSave_count++;
