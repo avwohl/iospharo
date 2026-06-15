@@ -491,6 +491,88 @@ STATUS: lever correct + 7.9x for SmI-arith/send-free callees; default-ON blocked
 mid-arith exclusion (7ee4f5e1, INSUFFICIENT per above), self-rec separation (b2724a35).
 arm64 untouched throughout (battery==golden every build).
 
+## 2026-06-15 BOX RE-DIAGNOSIS — supersedes the "per-class / bail-materialize" theory above
+
+Three of the conclusions above are WRONG; corrected by a clean box session
+(m6a.4xlarge, HEAD 0527ab9f -> 2653f0b9):
+
+1. RED HERRING KILLED.  The `[RESUME] ctx[*]: SnapshotOperation>>executeStoringError:
+   / performSnapshot / doSnapshot` chain that every prior session read as the
+   "(3+4)->nil corruption signature" is just the NORMAL Pharo snapshot-resume
+   bootstrap (the VM patching `isImageStarting` on resume).  It prints on EVERY
+   startup, healthy or not.  Not a signal.
+
+2. THE REAL ERROR (full stderr tail, config xmethod-on):
+       ShouldNotImplement: #new: should not have been implemented in ByteSymbol class
+       ByteSymbol class(Symbol class)>>new:
+       String class(SequenceableCollection class)>>new:streamContents:
+   i.e. inside `String class>>new:streamContents:`, the send `self new:` ran with
+   `self` = Symbol class instead of String class.  This is a RECEIVER (`self`)
+   CORRUPTION in cross-method inline-J2J, raised as an unhandled error during the
+   startup library load (then the eval never runs -> empty EVAL-RESULT).
+
+3. NOT a bail-leak, NOT recompile-invalidation:
+   - PHARO_T1_X86_BAIL_MAT_J2J=1 (umbrella materialize at EVERY chain-loop
+     bail-to-interp, commit 0527ab9f) did NOT change the failure -> the caller
+     frame is not lost at a bail; `materialize: count=51` only.
+   - PHARO_RECOMPILE_AT=2e9 (recompile disabled) did NOT change it -> the stale
+     V1 `save[32]=caller-JITMethod-pointer` is not being invalidated by a
+     recompile/evict here.
+
+ROOT-CAUSE HYPOTHESIS (committed gate, 2653f0b9): the corruption is the
+**nArgs>0** cross-method path.  cfibx's ONLY cross-method callee is `incc`
+(`^self+1`, nArgs==0); the whole 7.9x validation never exercised an nArgs>0
+cross-method send.  `new:streamContents:` (and the startup library generally)
+is the first heavy nArgs>0 user.  The send-site receiver/tempBase/newSp math
+(`sp[-8*(nArgs+1)]`, `sp-8*nArgs`, return `savedSp-8*nArgs`) is suspect for
+nArgs>0.
+
+GATE LANDED: cross-method admit now requires nArgs==0 (unary sends: getters,
+class, size, isNil, at:... wait, at: is nArgs==1) -> the bulk of *unary* real
+sends, a SAFE converging default-on subset that keeps a real-code win without
+the broken path.  Self-rec admit unaffected (any nArgs).  Opt back into the
+broken path to debug it: PHARO_T1_X86_XMETHOD_ALLARGS=1.
+
+nArgs HYPOTHESIS — DISPROVEN (same box session, HEAD 2653f0b9):
+With the nArgs==0 gate ON (cross-method admit restricted to unary), startup
+STILL corrupts: `3+4`=>empty, battery=>empty.  Config-D stderr shows a DNU for
+`#adaptToNumber:andSend:` (SessionManager>>snapshot path) PLUS the same
+`ByteSymbol class(Symbol class)>>new:` swap via `String class>>new:stream-
+Contents:` and `Metaclass>>name`.  So nArgs==0 cross-method ALSO corrupts ->
+the nArgs==0 gate is NOT a safe default-on subset.  ALLARGS=1 reproduces the
+nArgs>0 `ShouldNotImplement #new:` variant.
+
+REFINED ROOT CAUSE: cross-method inline-J2J swaps **class objects** as the
+receiver across the startup library (String class <-> Symbol class, Metaclass,
+ByteSymbol class) — a general receiver-corruption, INDEPENDENT of nArgs, bail,
+and recompile.  cfibx's 7.9x works only because its receivers are SmallIntegers
+in a narrow self-rec+incc pattern; it never exercised heap/class receivers in a
+deep cross-method chain.  Suspects (need runtime trace): (a) the J2J save[8]
+receiver slot is overwritten between push and pop at depth>1 / interleaved
+self-rec+cross saves (probe: allSlotsDo: j2jD=5); (b) the return-prelude newSp
+math leaves a stale class oop on the operand stack that a later PushReceiver/
+class-side send picks up.
+
+The nArgs==0 gate (2653f0b9) is therefore a DEBUG bisection knob, NOT a shippable
+subset — keep PHARO_T1_X86_XMETHOD opt-in/known-broken.
+
+NEXT SESSION PLAN:
+  (i) MINIMAL REPRO for lldb: SEL-scope cross-method to a selector startup does
+      NOT use (PHARO_T1_X86_J2J_SEL=<uniqueSel>*) so startup stays clean, then
+      eval a method that does a class-side cross-method send with a heap/class
+      receiver -> isolate the swap without the 8M-send startup.  The box has lldb
+      (bootstrap.sh) though no MCP wiring; a small deterministic repro makes
+      manual lldb-over-ssh tractable.
+  (ii) Inspect save[8] lifetime at depth>1: add a knob-gated assert that the
+      restored receiver's classIndex matches the caller's at the return prelude.
+  (iii) Long-term: port V2 saves to x86 (arm64's proven path); V1 cross-method
+      has now resisted bail-mat, per-class, and nArgs gating — stop patching V1.
+
+OBSOLETE (kept for history; do not act on): the "(A) bail-materialize in
+tryExecute's ExitArithOverflow resume loop" plan below is misdirected --
+tryExecute has NO resume loop (it JIT_CALLs once and returns; bails are handled
+in the Interpreter.cpp chain loop), and the bug isn't arith-bail anyway.
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
