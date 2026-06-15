@@ -26373,7 +26373,24 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // can't regress the shipping arch.
 #if !PHARO_J2J_SAVE_V2
             if (GET_DEBUG_BOOL(PHARO_T1_AO_MAT_J2J) && state.j2jDepth > 0) {
+                if (__builtin_expect(g_debug.jitFailReasons, 0)) {
+                    J2JSave* _ss = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
+                    static int _aopn = 0;
+                    if (++_aopn <= 12)
+                        fprintf(stderr, "[AO-MAT-PRE] j2jD=%d save0.jm=%p state.jm=%p "
+                            "save0.ip=%p fd=%d sel=#%s\n", state.j2jDepth,
+                            (void*)_ss[0].jitMethod, (void*)state.jitMethod,
+                            (void*)_ss[0].ip, frameDepth_,
+                            memory_.selectorOf(state.method).c_str());
+                }
                 materializeJ2J();
+                if (__builtin_expect(g_debug.jitFailReasons, 0)) {
+                    static int _aopn2 = 0;
+                    if (++_aopn2 <= 12)
+                        fprintf(stderr, "[AO-MAT-POST] j2jD=%d fd=%d sp=%p ip=%p\n",
+                            state.j2jDepth, frameDepth_, (void*)stackPointer_,
+                            (void*)instructionPointer_);
+                }
             }
 #endif
             // Sync method_ from state.method when tier=1 — inline-J2J
