@@ -206,6 +206,29 @@ validated against the repro (must show 0 AO-DIVERGED corruption) + arm64
 no-regression (the handler is SHARED). Likely needs the fix to ALSO gate arm64
 Increment 2.
 
+## Code-path map for the fix (next session roadmap)
+
+The bail/materialize machinery involved in the open bug:
+- `tryJITActivation` (Interpreter.cpp:24119) = the chain loop. Its `case
+  ExitArithOverflow` (:26322) does `return false` WITHOUT materializing when
+  j2jDepth>0. Sibling handlers (PushArray create :26317, :26179, :27138/27336/
+  27400) DO call the `materializeJ2J` lambda (:25237) and resume into JIT.
+- `materializeJ2J` lambda (:25237): per pending save -> SavedFrame via
+  materializeJ2JSaveIntoFrame (:23894); chainCallDepth += depth; reset depth/
+  cursor; sync live regs to callee. Correct reconstruction.
+- DOWNSTREAM handler (:20769, gated `resumeInternalJ2J && j2jDepth>0`): a SECOND
+  materialize site in the resume path (callers of tryJITActivation at activateMethod
+  :12092/:12102). The prior eager-materialize in ExitArithOverflow double-handled
+  with THIS.
+- THE FIX QUESTION: when ExitArithOverflow returns false with j2jDepth>0, does the
+  downstream (:20769) path run for that return, or not? If it runs but doesn't
+  materialize the cross-method save correctly -> fix :20769. If it doesn't run for
+  the ExitArithOverflow false-return path -> materialize at :26322 but guard against
+  the double-handle (a flag, or only when the downstream won't). Use the
+  DETERMINISTIC repro to bisect: add a one-shot trace at :20769 and :26322 under the
+  repro, see which fires for the #to: j2jD=1 case, then fix that path. Knob-gate +
+  validate 0 AO-DIVERGED on the repro + arm64 full-suite no-regress (SHARED handler).
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
