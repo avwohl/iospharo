@@ -1,5 +1,38 @@
 # x86 cross-method inline-J2J — vetted design (Increment 1)
 
+> **2026-06-15 STATUS: V1 cross-method is a DEAD END — port V2 instead.**
+> The receiver-corruption (see "BOX RE-DIAGNOSIS" below) has resisted bail-mat,
+> per-class, nArgs gating, and isolated repro. The recommended fix is to put x86
+> on arm64's V2 save mechanism. V1 vs V2 (Interpreter.hpp:669-702):
+>
+>     V1 (56B, x86 now)        V2 (40B, arm64)
+>     [0]  sp                  [0]  sp
+>     [8]  receiver            [8]  receiver
+>     [16] tempBase            [16] tempBase
+>     [24] ip                  [24] resumeAddr PACKED (addr|bcOff<<48|nArgs<<60)
+>     [32] jitMethod (ptr)     [32] closure        <-- V1 HAS NO CLOSURE SLOT
+>     [40] resumeAddr          (jitMethod DERIVES via codeZone.findMethodByPC)
+>     [48] sendArgCount
+>     [52] ipOffset (GC stash)
+>
+> Two V2 advantages bear on the bug: (1) jitMethod derived from the resume
+> ADDRESS (recompile-stable via rewriteIcEntriesAfterRecompile) instead of a
+> stored pointer; (2) it SAVES THE CLOSURE — V1's missing closure slot is the
+> documented "closure_ has no state mirror — a known residual gap for block
+> frames" (Interpreter.cpp ~26464). The block-heavy startup library
+> (new:streamContents:, do:, on:do:) is exactly where a lost closure would
+> scramble frame/receiver identity -> the leading hypothesis for the class-
+> receiver swap. PORT TASK = task #16. Steps: (a) flip x86 to PHARO_J2J_SAVE_V2;
+> (b) make the x86 AsmjitT1 cross-method + self-rec emit push the 40B packed V2
+> save (mirror arm64 stencils.cpp / the arm64 emit ~6848-7002) incl. the closure
+> at [32]; (c) wire x86 consume to derive jitMethod via findMethodByPC + the
+> packed bcOff/nArgs (mirror arm64 return prelude); (d) the bail-time materialize
+> + chain-loop paths are already V2-aware on the #if PHARO_J2J_SAVE_V2 side —
+> reuse them; (e) validate against FULL startup on a box (battery==golden, then
+> cfibx). EXPENSIVE/multi-session/box-gated. The bail-mat/nArgs/SEL knobs from
+> this session stay for bisection but are V1-only and become no-ops under V2.
+
+
 Source: design workflow `wf_1a7414dd-94b` (2026-06-15, 9 agents, 4 maps +
 adversarial verify, 25 holes / 7 critical). Verdict: **go-incremental**.
 
