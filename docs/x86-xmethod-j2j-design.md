@@ -327,6 +327,29 @@ now deterministically reproducible via SEL=zcf* at high n. Bisecting: find the n
 where cross-method first diverges from self-rec (off-by-1 = single isolatable
 miscompile), determinism (3x), and the GC/timing hypothesis (DET_SCHED).
 
+
+## CORRECTION: the "scale bug / off-by-5" was a PHANTOM (2026-06-15)
+
+The earlier "cfib(30) off by 5" was a BROKEN BASELINE artifact, not a real bug.
+The "self-rec truth" used SEL=zcfibx, which scopes inline-J2J to ONLY zcfibx, so
+the callee zcfincc gets NO return prelude (g_emitX86J2JOk false for it) -> that
+config is itself broken (17706/2178303). Verified against the REAL truth (arm64,
+no x86 knobs): cfib(20)=17710, (24)=121392, (28)=832039, (30)=2178308 -- and x86
+cross-method (SEL=zcf*, both methods get the prelude) MATCHES ALL of them.
+
+So the cfibx cross-method lever is FULLY CORRECT (every n) and 7.9x faster
+(569->72ms). There is NO scale bug in the cfibx pattern. The startup corruption
+(X86_XMETHOD no-SEL, all methods get preludes) is therefore a DIFFERENT, untested
+method PATTERN -- not cfibx-like. All isolated tests used 0-ARG callees; the prime
+suspect is the nArgs>0 cross-method path (the receiver=sp[-1-nArgs] / arg-shuffle /
+save geometry). Bisecting arg-taking callees next (arm64 truth: 1-arg=101, 2-arg=30,
+3-arg=6, temps+arg=15).
+
+LESSON: when SEL-scoping a cross-method pair for isolation, BOTH caller and callee
+must match the SEL (use the trailing-* prefix), else the callee loses its prelude
+and the result is a scoping artifact, not a VM bug. Always compare to arm64/interp
+truth, never to a SEL-scoped "self-rec" baseline.
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
