@@ -312,6 +312,21 @@ cross-method method. (3) Revert PHARO_T1_AO_MAT_J2J (unnecessary) once the scale
 is understood (keep for now; default-off, arm64-safe). The lever could ship scoped to
 validated patterns even before the scale bug is fully fixed.
 
+
+## SPEEDUP CONFIRMED + SCALE BUG ISOLATED (timing box, 2026-06-15)
+
+cfibx30 cross-method inline-J2J = **7.9x speedup**: self-rec-only (incc via IC)
+569ms -> cross-method (incc inline-J2J) 72ms. The lever delivers.
+
+BUT the scale bug is now reproducible IN ISOLATION (no startup needed): cfibx(30)
+cross-method = 2178308 vs self-rec truth 2178303 (OFF BY 5). cfibx(20) was correct
+(17710). All values stay in SmallInteger range -> NOT the AO path; it is a RARE
+miscompile in the normal cross-method incc that accumulates with depth/count (~5
+wrong in ~1.3M incc calls). This is the same bug that corrupts startup at scale,
+now deterministically reproducible via SEL=zcf* at high n. Bisecting: find the n
+where cross-method first diverges from self-rec (off-by-1 = single isolatable
+miscompile), determinism (3x), and the GC/timing hypothesis (DET_SCHED).
+
 ## Revised plan (steps 1-10) — see workflow result for full text
 
 1. debug_vars.h: DEBUG_BOOL(PHARO_T1_X86_XMETHOD) + _COUNTERS.
