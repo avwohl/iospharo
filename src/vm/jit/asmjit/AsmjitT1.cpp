@@ -9009,19 +9009,70 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     }
                     // out-of-range -> fall through to the generic bail below.
                 }
-                // x86 coverage (2026-06-15): native NAKED ExtStoreTemp (0xF5) —
-                // store TOS (no pop) into tempBase[idx].  The `to:do:` loop
-                // counter store; bailing it ran the loop in interp.  Naked
-                // operand = temp index (extA=0; a prefixed ExtStoreTemp carries
-                // idx in extA and still bails).  Mirrors arm64 (~9576) + the x86
-                // popStoreTemp (~2216).  No bail -> no canBailMidMethod impact.
-                if (op == SistaV1::ExtStoreTemp && !wasExtPrefix
-                        && (size_t)(i + 1) < bcRealLen) {
+                // x86 coverage (2026-06-15): native NAKED extended push/store
+                // family — ExtPushRecvVar/LitVar/LitConst/Temp, ExtPopStoreTemp,
+                // ExtStoreTemp, ExtPopStore/StoreLitVar.  These appear in big
+                // methods (many lits/temps); bailing any one ran the method body
+                // in interp.  Naked operand = index (extA=0; a prefixed variant
+                // carries high bits in extA and still bails).  ALL of these are
+                // BAIL-FREE (no mid-method exit) -> no canBailMidMethod impact.
+                // Recv stores (ExtStore/PopStoreRecv) are deliberately EXCLUDED:
+                // their immutable-bit bail is a mid-method exit, kept on the
+                // generic interp bail to avoid expanding the canBailMidMethod
+                // surface.  Mirrors arm64 (~9594) + the x86 short push/store.
+                if ((op == SistaV1::ExtPushRecvVar
+                        || op == SistaV1::ExtPushLitVar
+                        || op == SistaV1::ExtPushLitConst
+                        || op == SistaV1::ExtPushTemp
+                        || op == SistaV1::ExtPopStoreTemp
+                        || op == SistaV1::ExtStoreTemp
+                        || op == SistaV1::ExtPopStoreLitVar
+                        || op == SistaV1::ExtStoreLitVar)
+                        && !wasExtPrefix && (size_t)(i + 1) < bcRealLen) {
                     int idx = static_cast<int>(bcReal[i + 1]);
-                    a.mov(rcx, ptr(rdi, OFF_SP));
-                    a.mov(rax, ptr(rcx, -8));                // TOS (don't pop)
-                    a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
-                    a.mov(ptr(rdx, idx * 8), rax);
+                    if (op == SistaV1::ExtPushRecvVar) {
+                        a.mov(rax, ptr(rdi, OFF_RECEIVER));
+                        a.mov(rax, ptr(rax, OBJ_SLOT_0 + idx * 8));
+                        emitPushReg(a, rax);
+                    } else if (op == SistaV1::ExtPushLitConst) {
+                        a.mov(rax, ptr(rdi, OFF_LITERALS));
+                        a.mov(rax, ptr(rax, idx * 8));
+                        emitPushReg(a, rax);
+                    } else if (op == SistaV1::ExtPushLitVar) {
+                        a.mov(rax, ptr(rdi, OFF_LITERALS));
+                        a.mov(rax, ptr(rax, idx * 8));       // Association oop
+                        a.mov(rax, ptr(rax, OBJ_SLOT_0 + 8)); // slot[1] = value
+                        emitPushReg(a, rax);
+                    } else if (op == SistaV1::ExtPushTemp) {
+                        a.mov(rax, ptr(rdi, OFF_TEMPBASE));
+                        a.mov(rax, ptr(rax, idx * 8));
+                        emitPushReg(a, rax);
+                    } else if (op == SistaV1::ExtPopStoreTemp) {
+                        a.mov(rcx, ptr(rdi, OFF_SP));
+                        a.sub(rcx, 8);
+                        a.mov(ptr(rdi, OFF_SP), rcx);
+                        a.mov(rax, ptr(rcx));
+                        a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+                        a.mov(ptr(rdx, idx * 8), rax);
+                    } else if (op == SistaV1::ExtStoreTemp) {
+                        a.mov(rcx, ptr(rdi, OFF_SP));
+                        a.mov(rax, ptr(rcx, -8));            // TOS (don't pop)
+                        a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+                        a.mov(ptr(rdx, idx * 8), rax);
+                    } else { // ExtPopStoreLitVar || ExtStoreLitVar
+                        if (op == SistaV1::ExtPopStoreLitVar) {
+                            a.mov(rcx, ptr(rdi, OFF_SP));
+                            a.sub(rcx, 8);
+                            a.mov(ptr(rdi, OFF_SP), rcx);
+                            a.mov(rax, ptr(rcx));
+                        } else {
+                            a.mov(rcx, ptr(rdi, OFF_SP));
+                            a.mov(rax, ptr(rcx, -8));        // TOS (don't pop)
+                        }
+                        a.mov(rdx, ptr(rdi, OFF_LITERALS));
+                        a.mov(rdx, ptr(rdx, idx * 8));       // Association oop
+                        a.mov(ptr(rdx, OBJ_SLOT_0 + 8), rax); // slot[1] = value
+                    }
                     if ((size_t)(globalIdx + 1) < bcLabels.size())
                         a.bind(bcLabels[globalIdx + 1]);
                     i += 1;
