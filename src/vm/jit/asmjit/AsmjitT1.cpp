@@ -105,6 +105,14 @@ static bool g_emitX86J2JOk = false;
 // When false the emit is byte-identical to the self-rec-only path.  Implies
 // g_emitX86J2JOk.  See docs/x86-xmethod-j2j-design.md.
 static bool g_emitX86Xmethod = false;
+// Cross-method inline-J2J: admit nArgs>0 callees too.  Default OFF -> only
+// nArgs==0 (unary) cross-method sends inline.  The nArgs>0 path corrupts the
+// caller's receiver at startup scale (box 2026-06-15: String class>>new:stream-
+// Contents: dispatched #new: on Symbol class -> ShouldNotImplement; cfibx never
+// exercised it because its only cross-method callee, incc, is nArgs==0).  Unary
+// cross-method (getters, class, size, isNil, ...) is the bulk of real sends and
+// is the safe default-on subset.  Opt in to re-test the broken path.
+static bool g_emitX86XmethodAllArgs = false;
 // FSR M1 per-compile gates (set in compileViaAsmjit).
 static bool g_fsrX19 = false;
 static bool g_fsrCursor = false;  // FSR M2 v1: x23 cursor residency (write-through)
@@ -2830,6 +2838,13 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(r9, qword_ptr(rsi, 8));            // cached methodBits
                 a.cmp(r9, ptr(rdi, OFF_METHOD));         // self-rec?
                 a.je(selfRecAdmit);
+                // nArgs>0 cross-method corrupts the caller's receiver at startup
+                // scale (box 2026-06-15) -> admit nArgs==0 (unary) only by default;
+                // PHARO_T1_X86_XMETHOD_ALLARGS re-tests the broken path.  self-rec
+                // above is unaffected (any nArgs).
+                if (nArgs != 0 && !g_emitX86XmethodAllArgs) {
+                    a.jmp(notJ2J);
+                } else {
                 // Cross-method: gate on calleeJM->canSkipJ2JSave (NOT bit 57 --
                 // xmethodGateOk admits up to MAX_IC=8 IC sites + bailmid callees,
                 // which Increment 1 cannot support).  calleeJM = entryAddr - sizeof.
@@ -2920,6 +2935,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     a.mov(ptr(rdi, OFF_SP), r9);         // newSp = end
                 }
                 a.jmp(r11);                              // entryAddr
+                }  // end nArgs==0 (or ALLARGS) cross-method admit
                 // === SELF-REC admit: ORIGINAL validated frame setup (no callee-
                 //     state writes, static nil-fill) — byte-identical to the
                 //     self-rec-only else-branch; avoids the depth regression. ===
@@ -10369,6 +10385,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // the master knob is on AND its selector matches PHARO_T1_X86_J2J_SEL.
     g_emitX86J2JOk = false;
     g_emitX86Xmethod = false;   // set below on x86; keep arm64 from warning unused
+    g_emitX86XmethodAllArgs = false;  // ditto (set below on x86)
 #if defined(__x86_64__) || defined(_M_X64)
     // inline-J2J is DEFAULT-ON for the x86 tier-1 JIT (matches arm64, default-on
     // since 2026-06-10).  Full-suite validated: 0 deterministic regressions,
@@ -10399,6 +10416,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // when the master inline-J2J path is on AND the opt-in knob is set.  Default
     // OFF -> g_emitX86Xmethod=false -> byte-identical self-rec-only emit.
     g_emitX86Xmethod = g_emitX86J2JOk && GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD);
+    g_emitX86XmethodAllArgs = GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_ALLARGS);
 #endif
     // M1 x19 invariant: UNCONDITIONAL since 2026-06-11 (five one-cycle
     // movs at activation commits, gate-verified by the 2468-test soak)
