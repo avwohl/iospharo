@@ -502,7 +502,7 @@ extern "C" void jit_rt_xm_fire_trace(uint64_t statep, uint64_t calleeEntryAddr,
         && recvCls.compare(recvCls.size() - 6, 6, " class") == 0;
     if (!classLike) return;
     static size_t n = 0;
-    if (++n > 400) return;
+    if (++n > 8000) return;
     auto* calleeJM = reinterpret_cast<jit::JITMethod*>(
         calleeEntryAddr - sizeof(jit::JITMethod));
     std::string calleeSel = interp->memory().selectorOf(
