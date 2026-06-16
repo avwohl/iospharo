@@ -17,6 +17,22 @@
 > trace logging newReceiver's class when the callee is class-side, under full
 > startup; the minimal repro doesn't fire cross-method). The save-mechanism red
 > herring is now ruled out by construction.
+>
+> **Cross-method validated CORRECT across many isolated shapes — startup trigger
+> is narrow.** SEL-scoped (xm*, XMETHOD+ALLARGS, COUNTERS) recursive-caller repros
+> ALL pass with tens of thousands of fires: xmsum (SmI recv, nArgs=2 `^a+b`)=20100;
+> xmcsum (CLASS recv=Integer, nArgs=2)=20100 (37639 fires); xmfsum (field-read+
+> arith callee `^value+1`, hasRecvFieldAccess, bit-60 J2J)=200 (19967 fires).
+> NON-firing (untested but not the bug): getters `^iv` (inline-getter path bit-63,
+> not bit-60 -> 0 fires), flat non-recursive (0 fires, no J2J upgrade), any send
+> after a block-create (create bails to interp first -> 0 fires). So the admit/
+> save/restore is correct for SmI+class receivers, nArgs 0-2, arith + field+arith
+> callees, recursion. The startup swap is a SPECIFIC interaction none hit —
+> candidates: polymorphic/megamorphic sites, a specific callee bytecode, code-zone
+> EVICTION staling an IC entryAddr (recompile ruled out), shared-callee argCount
+> mismatch. NEXT = full-startup trace (rate-limited C call in the admit logging
+> caller/callee/receiver per fire) or lldb-MCP. Broad correctness also makes a
+> SCOPED ship (SEL-whitelist) viable as a partial win if the trigger stays elusive.
 
 
 Source: design workflow `wf_ca97bfc2-967` (2026-06-15, 12 agents: 6 maps → synthesis →
