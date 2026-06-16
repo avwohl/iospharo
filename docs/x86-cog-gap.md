@@ -95,7 +95,54 @@ TWICE → exactly the documented ~1-word/send operand-stack leak. arm64 avoids i
 because its resume entry and continuation share one emitLoadSp/emitStoreSp
 residency contract that the C++ re-entry feeds consistently.
 
-## Port plan (task #20) — ordered, arm64-safe
+## CORRECTION — step-1 empirical root cause (2026-06-16, box #18)
+
+The double-pop hypothesis above is **REFUTED** by both code reading and on-box
+measurement. Do NOT implement the step-3 sp fix below as written.
+
+Evidence:
+- `PHARO_SP_DEPTH_CHECK` reports IDENTICAL counts (49) for cfibs and cfibx — no
+  per-send sp drift. No leak.
+- Code: `tryResume` (top-level resume) uses `codeOffsetForBC` (PLAIN label) with
+  post-send sp — self-consistent. `resumeAfterCall` (the continuation) is only
+  ever fed PRE-send sp (chain-loop `save.sp` + the in-JIT V2 prelude). Both
+  consumers match their contract. There is no double-accounting.
+
+REAL cause = **C++ caller-resume round-trip per inner send of a J2J-entered
+callee** (resume-thrash, not a leak). Controlled leaf-shape A/B (N=30, min-of-5,
+PHARO_X86_JIT=1, build-opt):
+
+    leaf shape                         JIT   interp  no-caller-resume
+    cfibx  incc = ^self+1 (no send)     72     460        71      JIT 6.4x WIN
+    cfibt  inct = ^(self+1) incc        672    568        567     JIT NET-NEGATIVE
+    cfibs  incs = ^(self+1) max: 0      809     —          —
+
+cfibt's leaf sends incc (a trivial J2J-able method) and is STILL ~9x slower than
+cfibx — so it is NOT max:-specific; ANY inner send inside a J2J-entered callee
+thrashes. cfibt JIT (672) is SLOWER than interp (568); forcing interp-after-send
+(`PHARO_T1_NO_CALLER_RESUME=1`) drops it to 567 ≈ interp. So the heavy C++
+`tryJITResumeInCaller` round-trip after each inner send costs MORE than it saves.
+Stat deltas confirm it: cfibs32 bench triggers ~4.88M J2J-resume events
+(≈2.2×fib(32)) vs cfibx32's 476K — roughly one C++ resume per inner send.
+
+So: JIT is a big win for methods whose callees return without an intervening send
+(cfibx 6.4x); it is net-negative for callees that send-then-continue, because the
+post-send continuation exits to C++ instead of staying in JIT. This IS the arm64
+"resume-sends / FSR residency" the x86 path lacks — but the fix is the in-JIT
+post-send continuation, NOT an sp-arithmetic change.
+
+## Revised lever (task #20) — in-JIT post-send resume for send-bearing J2J callees
+
+Make a J2J-entered callee's continuation AFTER an inner send re-enter JIT cheaply
+(in-JIT resume continuation, as arm64 does via resume-sends), instead of bailing
+to the heavy C++ `tryJITResumeInCaller`. Reference: arm64's resume-sends emit +
+the `resumeAfterCall`/`codeOffsetForResume` continuation already present on x86
+for the chain-loop — extend it so the C++-return edge of a send-bearing J2J
+callee lands on an in-JIT continuation rather than rebuilding a full JITState in
+C++ per send. Validate: cfibt/cfibs approach cfibx (beat interp, ~3-5x Cog); then
+the gate-flip criteria below. This SUPERSEDES the double-pop step 3.
+
+## (SUPERSEDED — double-pop hypothesis) Port plan (task #20) — ordered, arm64-safe
 
 1. Lock baseline: PHARO_X86_JIT=1 min-of-9 for all 5 benches on build-opt;
    arm64 battery -> /tmp/battery_golden.txt; build a -DPHARO_X86_FORCE_V1 escape.
