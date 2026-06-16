@@ -24121,8 +24121,9 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
         const char* sf = GET_DEBUG_STR(PHARO_J2J_MAT_SEL);
         std::string s = memory_.selectorOf(saveMethod);
         if (!sf || s.find(sf) != std::string::npos) {
-            long depthW = save.tempBase
-                ? (long)((save.sp - save.tempBase) / 8) : -999;
+            // save.sp/tempBase are Oop* — pointer subtraction already yields
+            // the element (word) count; do NOT divide by 8 again.
+            long depthW = save.tempBase ? (long)(save.sp - save.tempBase) : -999;
             fprintf(stderr,
                 "[MAT-SP] site=%s sel=#%s bcOff=%ld nArgs=%d tempCount=%d "
                 "argc=%d | save.sp=%p tempBase=%p depth(sp-tb/8)=%ld "
