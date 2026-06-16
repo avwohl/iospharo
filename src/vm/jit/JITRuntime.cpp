@@ -514,6 +514,34 @@ extern "C" void jit_rt_xm_fire_trace(uint64_t statep, uint64_t calleeEntryAddr,
     fflush(stderr);
 }
 
+// Save-stack debug trace for the cross-method-send-bearing (Increment 2) bug.
+// kind: 0=admit-PUSH 1=prelude-POP 2=resumeAfterCall.  Logs the save cursor
+// delta (number of live saves) + depth + sp/receiver so a push/pop imbalance
+// (the runaway-loop signature) is visible.  Gated on PHARO_T1_X86_J2J_DBG.
+extern "C" void jit_rt_j2j_dbg(uint64_t statep, uint64_t kind, uint64_t id) {
+    if (!GET_DEBUG_BOOL(PHARO_T1_X86_J2J_DBG)) return;
+    static size_t n = 0;
+    if (++n > 200) return;
+    auto rdU = [&](int off) -> uint64_t {
+        return *reinterpret_cast<uint64_t*>(statep + off); };
+    uint64_t cursor = rdU(144);          // OFF_J2J_SAVE_CURSOR
+    uint64_t entry  = rdU(312);          // OFF_J2J_ENTRY_CURSOR
+    int32_t  depth  = *reinterpret_cast<int32_t*>(statep + 160);  // OFF_J2J_DEPTH
+    uint64_t sp     = rdU(0);            // OFF_SP
+    uint64_t recv   = rdU(8);            // OFF_RECEIVER
+    long saves = (cursor >= entry && entry) ? (long)((cursor - entry) / 40) : -1;
+    JITState* state = reinterpret_cast<JITState*>(statep);
+    std::string sel = (state->interp && state->method.isObject())
+        ? state->interp->memory().selectorOf(state->method) : std::string("?");
+    const char* k = kind == 0 ? "PUSH" : kind == 1 ? "POP " : kind == 2 ? "RSUM" : "?";
+    fprintf(stderr, "[J2J-DBG #%zu %s id=%llu] saves=%ld depth=%d cursor=%#llx "
+                    "sp=%#llx recv=%#llx in=#%s\n",
+            n, k, (unsigned long long)id, saves, depth,
+            (unsigned long long)cursor, (unsigned long long)sp,
+            (unsigned long long)recv, sel.c_str());
+    fflush(stderr);
+}
+
 extern "C" void jit_rt_push_frame(JITState* state) {
     // J2J direct call: push an interpreter frame for GC root scanning.
     // Reads cachedTarget (method Oop), sendArgCount, ip from state.

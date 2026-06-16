@@ -50,6 +50,7 @@ extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val
 extern "C" void jit_rt_atrec_entry(uint64_t statep);
 extern "C" void jit_rt_xm_fire_trace(uint64_t statep,
                                      uint64_t calleeEntryAddr, uint64_t recvBits);
+extern "C" void jit_rt_j2j_dbg(uint64_t statep, uint64_t kind, uint64_t id);
 extern "C" void jit_rt_verify_getter(uint64_t statep, uint64_t recv,
                                      uint64_t val, uint64_t extra,
                                      uint64_t entryPtr);
@@ -1678,6 +1679,16 @@ static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
     a.mov(rcx, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
     a.and_(r11, rcx);                       // mask off the packed bcOff/nArgs
     a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(0));  // clear exit
+    if (GET_DEBUG_BOOL(PHARO_T1_X86_J2J_DBG)) {
+        // POP trace.  Preserve rdi(state)/r11(resumeAddr)/rax(retval); rsi/rdx
+        // are dead here.  3 pushes keep rsp 16-aligned.
+        a.push(rdi); a.push(r11); a.push(rax);
+        a.mov(rsi, asmjit::Imm(1));                  // kind = POP
+        a.mov(rdx, asmjit::Imm(0));
+        a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_j2j_dbg));
+        a.call(rax);
+        a.pop(rax); a.pop(r11); a.pop(rdi);
+    }
     a.jmp(r11);                             // -> caller's resumeAfterCall (retval in rax)
     a.bind(normalRet);
 #else
@@ -3022,6 +3033,16 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
 #endif
                 a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
                 a.add(dword_ptr(rdi, OFF_J2J_DEPTH), asmjit::Imm(1));
+                if (GET_DEBUG_BOOL(PHARO_T1_X86_J2J_DBG)) {
+                    // PUSH trace.  Preserve rdi/r8/rcx/rsi/rax (live for the
+                    // callee-state setup below); 5 pushes keep rsp 16-aligned.
+                    a.push(rdi); a.push(r8); a.push(rcx); a.push(rsi); a.push(rax);
+                    a.mov(rsi, asmjit::Imm(0));                  // kind = PUSH
+                    a.mov(rdx, asmjit::Imm((uint64_t)(globalIdx)));
+                    a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_j2j_dbg));
+                    a.call(rax);
+                    a.pop(rax); a.pop(rsi); a.pop(rcx); a.pop(r8); a.pop(rdi);
+                }
                 // --- set CALLEE state (E2: AFTER the push+depth, so a save-room
                 //     bail leaves state.method=callerCM).  calleeJM=entryAddr-sizeof. ---
                 a.mov(r11, r8);
