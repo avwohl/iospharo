@@ -236,3 +236,37 @@ opcode; then fix the C++ cross-method-frame resume (the chain loop / materialize
 in tryJITResumeInCaller, Interpreter.cpp ~20404) to reconstruct an inlined
 cross-method callee's caller correctly (mirror arm64, which admits these via
 xmethodGateOk + a working materialize). Reproducer + trace knobs committed.
+
+## Increment 2 — deeper diagnosis (box #21, 2026-06-16): fundamental, not an edge case
+
+PHARO_J2J_MAT_LOG + PHARO_SP_DEPTH_CHECK on the SENDS=1 startup corruption:
+- SENDS=0: 49 flags (all benign startup sp-depth delta=1, e.g. getSystemAttribute:).
+- SENDS=1: 126 flags, incl. 40 `tryJITActivation-exit IP-OUT-OF-RANGE` on send-
+  bearing callees (e.g. sel=on: bcOff=16==bcLen=16, a resume-past-end), plus extra
+  sp-depth delta=1.
+
+Hypothesis tests (ruled out narrow causes):
+- NOT recursion-specific: two-level non-recursive (block->cmid->cleaf) runs away.
+- NOT tail-send-specific: cmid=^(self+10) cleaf (tail) AND cmidnt=^((self+10) cleaf)+0
+  (non-tail) BOTH run away under SENDS=1. The bcOff==bcLen IP-OUT flags are partly
+  benign (normal return-point over-flagging).
+
+CONCLUSION: the corruption is FUNDAMENTAL to admitting a send-bearing cross-method
+callee — when such a callee bails to C++ mid-method (which send-bearing methods do:
+cold/poly inner sends, cond-jumps, etc.), the C++ resume/materialize of the cross-
+method-INLINED callee frame is wrong (sp-depth drift + bad resume ip) -> runaway.
+The x86 cross-method admit + save/return path was built for canSkipJ2JSave (leaf)
+callees, whose entire execution stays in-JIT (return via the V2 prelude, never the
+C++ path). Leaf-only is the correct gate for the CURRENT machinery.
+
+SCOPE: the real fix is porting arm64's cross-method-callee materialize/resume (the
+full frame-state-residency path arm64 uses behind xmethodGateOk/MAX_IC=8) to x86 —
+a substantial, bug-prone effort, NOT a localized edit. AND it is only ONE of the
+blockers to flipping PHARO_X86_JIT default-on: the gate banner also cites ~10
+prescan/emit disagree bytecodes + a "Corrupt stackPointer_" miscompile (commit
+7af58fdfa), independent of cross-method. Realistically a multi-session campaign.
+
+STATUS: Increment 1 (leaf-only cross-method) is the validated cross-method win
+(cfibx 6.4x with PHARO_X86_JIT=1). Increment 2 (send-bearing) needs the arm64
+materialize port. Reproducer + PHARO_T1_X86_J2J_DBG/MAT_LOG knobs committed for
+that work.
