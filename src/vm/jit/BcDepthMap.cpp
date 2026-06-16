@@ -381,14 +381,24 @@ void spDepthCheck(JITState& state, const char* where) {
         g_mismatches++;
         static int oorReports = 0;
         if (++oorReports <= 40) {
+            // tail-send fingerprint: is the last bytecode a 1-byte send and is
+            // bcOff exactly == bcLen (one past end)?  numIC = send-bearing
+            // discriminator.  Confirms whether the OOR ip came from a
+            // materialized tail-send save (globalIdx+1==bcLen).
+            size_t bcLen = entry->depth.size();
+            uint8_t lastOp = bcLen > 0 ? bcStart[bcLen - 1] : 0;
             fprintf(stderr,
                     "[SP-DEPTH #%llu] %s IP-OUT-OF-RANGE exit=%d sel=%s "
-                    "bcOff=%lld bcLen=%zu jm=%p isBlock=%d\n",
+                    "bcOff=%lld bcLen=%zu atEnd=%d lastOp=0x%02x lastOpLen=%d "
+                    "lastIsSend=%d numIC=%d jm=%p isBlock=%d\n",
                     (unsigned long long)g_mismatches, where, er,
                     state.memory->selectorOf(
                         Oop::fromRawBits(jm->compiledMethodOop)).c_str(),
-                    (long long)bcOff, entry->depth.size(), (void*)jm,
-                    (int)jm->isBlock);
+                    (long long)bcOff, bcLen,
+                    (int)(static_cast<size_t>(bcOff) == bcLen),
+                    (unsigned)lastOp, (int)SistaV1::bytecodeLength(lastOp),
+                    (int)SistaV1::isSendBytecode(lastOp),
+                    (int)jm->numICEntries, (void*)jm, (int)jm->isBlock);
         }
         return;
     }

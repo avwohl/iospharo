@@ -24124,12 +24124,20 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
             // save.sp/tempBase are Oop* — pointer subtraction already yields
             // the element (word) count; do NOT divide by 8 again.
             long depthW = save.tempBase ? (long)(save.sp - save.tempBase) : -999;
+            long bcOffV = (long)(saveIp - saveJM->bcStart());
+            // bcLen = bytecode byte length from bcStart to method end (numBytecodes
+            // is 0 for send-bearing AsmjitT1 methods).  atEnd/pastEnd = the
+            // tail-send (globalIdx+1==bcLen) fingerprint.  numIC = send-bearing.
+            ObjectHeader* mo2 = saveMethod.isObject() ? saveMethod.asObjectPtr() : nullptr;
+            long bcLen = mo2 ? (long)(mo2->bytes() + mo2->byteSize()
+                                      - saveJM->bcStart()) : -1;
             fprintf(stderr,
-                "[MAT-SP] site=%s sel=#%s bcOff=%ld nArgs=%d tempCount=%d "
-                "argc=%d | save.sp=%p tempBase=%p depth(sp-tb/8)=%ld "
-                "retSlot=%p fp=%p\n",
-                siteTag, s.c_str(),
-                (long)(saveIp - saveJM->bcStart()), saveNArgs,
+                "[MAT-SP] site=%s sel=#%s bcOff=%ld bcLen=%ld atEnd=%d "
+                "pastEnd=%d numIC=%d nArgs=%d tempCount=%d argc=%d | "
+                "save.sp=%p tempBase=%p depth(sp-tb)=%ld retSlot=%p fp=%p\n",
+                siteTag, s.c_str(), bcOffV, bcLen,
+                (int)(bcOffV == bcLen), (int)(bcLen >= 0 && bcOffV >= bcLen),
+                (int)saveJM->numICEntries, saveNArgs,
                 (int)saveJM->tempCount, (int)saveJM->argCount,
                 (void*)save.sp, (void*)save.tempBase, depthW,
                 (void*)frame.materializedRetSlot, (void*)frame.savedFP);
