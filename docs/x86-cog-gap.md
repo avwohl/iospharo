@@ -106,12 +106,26 @@ behind xmethodGateOk). The materialize (`materializeJ2JSaveIntoFrame`,
 Interpreter.cpp ~23894) is SHARED C++ and arm64 works through it, so the x86 bug
 is in what x86 emits/pushes or how its callee-bail interacts with that path.
 
-Open lead for the next iteration: `PHARO_J2J_MAT_LOG`+`SP_DEPTH_CHECK` showed an
-**sp-depth delta=1 (one word)** at materialize for send-bearing callees. Trace
-`materializeJ2JSaveIntoFrame`'s reconstructed (sp, ip, tempBase) for a `cmid`
-save vs expected, and confirm whether cmid's specific bail path even reaches a
-`bailMatJ2J` site. Validate against the §4 repro (cmid → 115, no runaway) +
-correctness (SENDS=1 results == SENDS=0) + battery==golden + cfibt/cfibs ~3-5x Cog.
+Lead 1 — materialize reconstructed sp: EXONERATED (box #23, MAT-SP trace,
+commit 31d0a6e0). `materializeJ2JSaveIntoFrame` reconstructs the caller sp as
+`save.sp` directly; the operand depth `(save.sp - save.tempBase)` is non-trivial
+and CONSISTENT for every heavily-firing send-bearing cross-method callee under
+SENDS=1 (hash bcOff2=1, bcOff5=3; findElementOrNil: bcOff3=4; scanFor: bcOff5=7;
+nextPutAll: bcOff5=4; …). The ONLY SP-DEPTH-flagged selector is `getSystemAttribute:`
+(delta=1, 40×) — and that's the benign startup case present in SENDS=0 too. So the
+materialize sp is NOT the bug. (The earlier "sp-depth delta=1" was getSystemAttribute:
+startup noise, not the corrupting callees.)
+
+Lead 2 (now primary) — the SENDS=1-SPECIFIC signal is **40 `tryJITActivation-exit
+IP-OUT-OF-RANGE`** (resume ip == bcLen, past the method end) on send-bearing
+callees (e.g. `on:`). This is the ACTIVATION/resume path, NOT materialize. Next:
+instrument tryJITActivation's exit-ip computation for a send-bearing cross-method
+callee — why does the resume land at bcLen? Candidate: the V2 save packs
+bcOff=globalIdx+1 (the byte offset after the send's FIRST byte); for a multi-byte
+send that's mid-instruction / off-by-(len-1), and for a last-bytecode (tail) send
+it's bcLen. Check whether the resume bcOff is being computed from the send byte
+offset vs the next-bytecode offset. Validate against the §4 repro (cmid → 115,
+no runaway) + battery==golden + cfibt/cfibs ~3-5x Cog.
 
 This is a substantial, bug-prone, multi-session effort (the cross-method path is
 historically the most fragile area of this branch).
