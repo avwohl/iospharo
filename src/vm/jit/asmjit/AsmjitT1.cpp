@@ -2926,10 +2926,28 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     + (int)offsetof(JITMethod, compiledMethodOop)));
                 a.cmp(r10, qword_ptr(rsi, 8));
                 a.jne(notJ2J);
+                if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_SENDS)) {
+                    // Increment 2 (opt-in): admit SEND-BEARING callees instead
+                    // of the canSkipJ2JSave (numIC==0) leaf-only gate.  When
+                    // inct's inner send is itself J2J-able (the common case) it
+                    // stays in-JIT (nested J2J) — no C++ re-entry, no materialize.
+                    // Still exclude canBailMidMethod (mid-method ExitMustBool
+                    // re-enters C++; the inline path can't reconstruct it) and
+                    // (below) hasPrimPrologue/hasHeapWrites.  Admit numIC<=MAX_IC.
+                    a.movzx(r10d, byte_ptr(r9,
+                        -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, canBailMidMethod)));
+                    a.test(r10, r10);
+                    a.jnz(notJ2J);                        // bailmid -> bail
+                    a.movzx(r10d, word_ptr(r9,
+                        -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, numICEntries)));
+                    a.cmp(r10d, asmjit::Imm(GET_DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC)));
+                    a.ja(notJ2J);                         // numIC > cap -> bail
+                } else {
                 a.movzx(r10d, byte_ptr(r9,
                     -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, canSkipJ2JSave)));
                 a.test(r10, r10);
                 a.jz(notJ2J);                            // not canSkip -> bail
+                }
                 // canSkipJ2JSave (=!canBailMidMethod && numIC==0) is NECESSARY
                 // but NOT sufficient for "clean-return-only": it still admits
                 // prim-prologue callees (prim-fail bails to the Smalltalk body)
