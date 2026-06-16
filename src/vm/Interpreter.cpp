@@ -25381,7 +25381,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             materializeJ2J();
     };
 #else
-    auto bailMatJ2J = []() {};  // V2: bails handled by the V2 save machinery
+    // V2: clean callee RETURNS are popped by the return prelude, so leaf-only
+    // (Increment 1) cross-method callees — which never bail mid-method — need
+    // no bail-time materialize (the empty lambda).  Increment 2 admits SEND-
+    // BEARING callees, which DO bail mid-method (cold/poly inner sends, etc.);
+    // there the caller frame lives only in the un-popped V2 save, so a bail-to-
+    // interp must materialize it (reconstruct the caller SavedFrame + sync
+    // globals to the callee's resume state) or the interp-resumed callee
+    // returns into a corrupt frame -> the cmid/cleaf runaway.  Gated on the
+    // SENDS knob so the validated leaf-only/self-rec paths stay byte-identical.
+    const bool x86XmSendsBailMat = GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_SENDS);
+    auto bailMatJ2J = [&]() {
+        if (x86XmSendsBailMat && state.j2jDepth > 0)
+            materializeJ2J();
+    };
 #endif
     (void)bailMatJ2J;
 
