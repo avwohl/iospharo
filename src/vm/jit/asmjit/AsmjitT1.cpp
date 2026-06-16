@@ -2912,6 +2912,18 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(r9, r8);
                 a.mov(r10, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
                 a.and_(r9, r10);                         // r9 = entryAddr
+                // CONSISTENCY GUARD (2026-06-15): the IC extras' entryAddr and the
+                // IC's cached method (rsi[8]) must agree.  If a stale/poisoned
+                // entryAddr (code-zone eviction, recompile gap, mis-patched IC)
+                // points at a DIFFERENT method than the IC keyed, inlining it
+                // jmps into the wrong callee -> receiver/state corruption.  Verify
+                // calleeJM->compiledMethodOop == cached method; bail otherwise.
+                // Holds for every valid IC (isolated repros unaffected); only the
+                // inconsistent case bails -> safe by construction.
+                a.mov(r10, ptr(r9, -(int)sizeof(JITMethod)
+                    + (int)offsetof(JITMethod, compiledMethodOop)));
+                a.cmp(r10, qword_ptr(rsi, 8));
+                a.jne(notJ2J);
                 a.movzx(r10d, byte_ptr(r9,
                     -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, canSkipJ2JSave)));
                 a.test(r10, r10);
