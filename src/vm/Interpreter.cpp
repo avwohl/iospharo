@@ -24113,6 +24113,28 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
     frame.savedArgCount = saveJM->argCount;
     frame.homeFrameDepth = SIZE_MAX;
     materializedFrameCount_++;
+    // MAT-SP trace: dump the reconstructed caller sp for a save, filtered by
+    // PHARO_J2J_MAT_SEL.  depth=(sp-tempBase)/8 is the operand-stack depth at the
+    // resume ip — compare to the method's static bytecode depth at bcOff; an
+    // off-by-one is the send-bearing-cross-method materialize bug (cmid runaway).
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_J2J_MAT_LOG), 0)) {
+        const char* sf = GET_DEBUG_STR(PHARO_J2J_MAT_SEL);
+        std::string s = memory_.selectorOf(saveMethod);
+        if (!sf || s.find(sf) != std::string::npos) {
+            long depthW = save.tempBase
+                ? (long)((save.sp - save.tempBase) / 8) : -999;
+            fprintf(stderr,
+                "[MAT-SP] site=%s sel=#%s bcOff=%ld nArgs=%d tempCount=%d "
+                "argc=%d | save.sp=%p tempBase=%p depth(sp-tb/8)=%ld "
+                "retSlot=%p fp=%p\n",
+                siteTag, s.c_str(),
+                (long)(saveIp - saveJM->bcStart()), saveNArgs,
+                (int)saveJM->tempCount, (int)saveJM->argCount,
+                (void*)save.sp, (void*)save.tempBase, depthW,
+                (void*)frame.materializedRetSlot, (void*)frame.savedFP);
+            fflush(stderr);
+        }
+    }
     return true;
 }
 
