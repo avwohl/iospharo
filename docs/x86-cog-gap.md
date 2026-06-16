@@ -172,3 +172,30 @@ arm64 safety: emit changes (4,5) are in emitOne_x86 / x86-twin emit fns — cann
 alter an arm64 byte. The only arm64-touching surface is shared C++ (step 3); gate
 every changed sp computation behind PHARO_T1_X86_RESUME_V2 and re-run arm64
 battery==/tmp/battery_golden.txt after EVERY commit to a file arm64 compiles.
+
+## Increment 2 attempt — gate relaxation CORRUPTS (box #19, 2026-06-16)
+
+Confirmed root cause on box, then tried the obvious fix: relax the x86 cross-method
+admit from `canSkipJ2JSave` (numIC==0 leaf-only) to `!canBailMidMethod && numIC <=
+PHARO_T1_XMETHOD_MAX_IC` (opt-in `PHARO_T1_X86_XMETHOD_SENDS`), mirroring arm64's
+xmethodGateOk. Kept the prim-prologue/heap-write exclusions. x86-only emit, opt-in
+-> arm64 byte-identical (battery==golden verified locally).
+
+RESULT: **CORRUPTS.** With the knob on:
+- correctness probe (cfibx28/cfibt28/cfibs28 printString) -> NO EVAL-RESULT.
+- cfibt(28) alone runs **787,959,599 bytecode steps** (correct is ~6M) with
+  `chain: actChain=11 actFall=6728` — wrong/runaway recursion, then a result that
+  never materializes. SENDS=0 (default) is correct (cfibt28=1346267) and fast
+  where applicable (cfibx30=71ms).
+
+CONCLUSION: the leaf-only gate guards a REAL nested-cross-method-J2J bug. The
+failing shape is three distinct methods chained (cfibt -> inct -> incc): inct is
+admitted as a cross-method callee (save pushed, callee state set, jmp inct), but
+inct's OWN inner send (incc) pushes a second save / resumeAfterCall on top of the
+caller's cross-method save, and the nested save-stack/frame bookkeeping corrupts
+(receiver/sp drift -> wrong recursion). Naive gate-relaxation is INSUFFICIENT;
+arm64 handles this via its full frame-state-residency path. The real fix is the
+cross-method-send-bearing callee frame + save/resume correctness (lldb on box:
+break at the inct cross-method admit + the incc resumeAfterCall, watch the save
+cursor/depth + receiver across the nested unwind). The knob is kept as the
+reproducer. Self-rec nesting works (cfibx); cross-method nesting is the gap.
