@@ -24815,8 +24815,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 save.sp = state.sp;
                 save.receiver = state.receiver;
                 save.tempBase = state.tempBase;
+#if !PHARO_J2J_SAVE_V2
                 save.ip = state.ip;
                 save.sendArgCount = nArgs;
+#endif
 
                 bool selfRecursive = (callerJM == calleeJM);
                 // Compute callerBCStart (re-used below to precompute resume).
@@ -24826,9 +24828,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 uint8_t* callerBCStart =
                     callerMethObj->bytes() + (1 + callerNumLits) * 8;
                 // literals/argCount/bcStart are derived from save.jitMethod
-                // on return (see J2J_INLINE_RETURN).
+                // (V1) or findMethodByPC(resumeAddr) (V2) on return.
                 (void)selfRecursive;
+#if !PHARO_J2J_SAVE_V2
                 save.jitMethod = callerJM;
+#endif
                 // Precompute resume JIT code address from the advanced IP.
                 // bcOffset = (advancedIP - callerBCStart) gives the next
                 // bytecode, so bcToCode maps to the stencil AFTER the send.
@@ -24836,14 +24840,28 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     uint32_t bcOffset = static_cast<uint32_t>(state.ip - callerBCStart);
                     // Safety: refuse register-reading entry offsets —
                     // see JITRuntime::tryResume / deferred.md A1.
-                    if (jitRuntime_.getBcEntryState(callerJM, bcOffset) != 0) {
-                        save.resumeAddr = nullptr;
-                    } else {
+                    uint8_t* resume = nullptr;
+                    if (jitRuntime_.getBcEntryState(callerJM, bcOffset) == 0) {
                         uint32_t codeOffset = callerJM->codeOffsetForBC(bcOffset);
-                        save.resumeAddr = (codeOffset == 0 || codeOffset >= callerJM->codeSize)
+                        resume = (codeOffset == 0 || codeOffset >= callerJM->codeSize)
                             ? nullptr
                             : callerJM->codeStart() + codeOffset;
                     }
+#if PHARO_J2J_SAVE_V2
+                    // Pack (addr | bcOff<<48 | nArgs<<60).  Keep bcOff/nArgs even
+                    // when the JIT resume addr is null (addr() then==0 -> "can't
+                    // JIT-resume", but the null-resume bail still derives the
+                    // post-send ip = caller bcStart + bcOff()).  bcOff must fit
+                    // 12 bits; otherwise fully unpackable -> 0.
+                    save.resumeAddr =
+                        (bcOffset <= 0xFFF && nArgs <= 15)
+                            ? ((resume ? reinterpret_cast<uint64_t>(resume) : 0)
+                               | (static_cast<uint64_t>(bcOffset) << 48)
+                               | (static_cast<uint64_t>(nArgs) << 60))
+                            : 0;
+#else
+                    save.resumeAddr = resume;
+#endif
                 }
 
                 // Lazy frame: just increment local depth, no SavedFrame write.
@@ -25004,7 +25022,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     static size_t cTramp = 0;
                     cTramp++;
                     if (cTramp <= 2500) {
+#if PHARO_J2J_SAVE_V2
+                        auto* savedJM = state.jitMethod;  // derived above
+                        int nArgsPopped = (int)save.nArgs();
+                        void* resumePtr = (void*)save.addr();
+#else
                         auto* savedJM = save.jitMethod;
+                        int nArgsPopped = (int)save.sendArgCount;
+                        void* resumePtr = (void*)save.resumeAddr;
+#endif
                         uint64_t callerOop = savedJM
                             ? savedJM->compiledMethodOop : 0;
                         Oop callerOop_ = Oop::fromRawBits(callerOop);
@@ -25018,7 +25044,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                         "callerCM=0x%llx cls=%s sel=#%s\n",
                                 cTramp, state.sp,
                                 (unsigned long long)retVal.rawBits(),
-                                (int)save.sendArgCount, save.resumeAddr,
+                                nArgsPopped, resumePtr,
                                 frameDepth_,
                                 (unsigned long long)callerOop,
                                 cls.c_str(), sel.c_str());
@@ -25026,14 +25052,26 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
 
                 // Resume caller's JIT at bytecode after send (precomputed on call path)
-                if (__builtin_expect(save.resumeAddr == nullptr, 0)) {
+#if PHARO_J2J_SAVE_V2
+                uint8_t* resumeCode = save.addr();   // masked low-48 bits
+#else
+                uint8_t* resumeCode = save.resumeAddr;
+#endif
+                if (__builtin_expect(resumeCode == nullptr, 0)) {
+#if PHARO_J2J_SAVE_V2
+                    // V2: derive the post-send ip from the packed bcOff + the
+                    // caller bcStart (state.jitMethod = savedJM, set above).
+                    if (state.jitMethod)
+                        state.ip = state.jitMethod->bcStart() + save.bcOff();
+#else
                     state.ip = save.ip;  // interpreter needs post-send IP
+#endif
                     state.exitReason = jit::ExitReturn;
                     break;
                 }
 
                 // exitReason NOT cleared — stencils only write it, never read.
-                JIT_RESUME_CALL(save.resumeAddr, &state, retVal.rawBits());
+                JIT_RESUME_CALL(resumeCode, &state, retVal.rawBits());
                 jit::fsrLazyRefresh(state);  // FSR M4
             }
 
