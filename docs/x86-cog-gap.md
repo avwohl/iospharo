@@ -270,3 +270,28 @@ STATUS: Increment 1 (leaf-only cross-method) is the validated cross-method win
 (cfibx 6.4x with PHARO_X86_JIT=1). Increment 2 (send-bearing) needs the arm64
 materialize port. Reproducer + PHARO_T1_X86_J2J_DBG/MAT_LOG knobs committed for
 that work.
+
+## Increment 2 port — attempt 1 (bail-mat) INSUFFICIENT (box #22, 2026-06-16)
+
+First port attempt: make the V2 `bailMatJ2J` materialize pending J2J saves on a
+mid-method bail (it was an empty lambda on V2 — "bails handled by the V2 save
+machinery"), gated on PHARO_T1_X86_XMETHOD_SENDS. Hypothesis: send-bearing callees
+bail mid-method, leaking the caller frame (the V1-era bug the V1 bailMatJ2J fixed).
+
+RESULT: INSUFFICIENT. cmid still runs away with bail-mat on (correctness B/C and
+speed D all still "no result"). So the corruption is NOT (only) the leaked-caller-
+frame on mid-method bail. This mirrors the V1 history (bailMatJ2J was "necessary
+groundwork, insufficient alone"). The change is kept (gated, arm64 byte-identical
+battery==golden) as correct groundwork.
+
+Remaining lead: the earlier MAT_LOG run showed an sp-depth delta=1 (one word) at
+materialize for the send-bearing callees — materializeJ2JSaveIntoFrame may
+reconstruct the cross-method callee/caller frame with sp off by one word. Next:
+trace materializeJ2JSaveIntoFrame's reconstructed (sp, ip, tempBase) for a cmid
+save vs the expected, and/or check whether bailMatJ2J is even reached on cmid's
+specific bail path (the corruption may exit via a site that doesn't call it).
+
+HONEST STATUS: the Increment-2 port is a genuine multi-session effort. One concrete
+hypothesis (bail-leak) is now ruled out on V2. The repro + J2J_DBG/MAT_LOG/SENDS
+knobs + bail-mat groundwork are committed; the next iteration targets the
+materialize sp-reconstruction for cross-method frames.
