@@ -1,5 +1,24 @@
 # x86 V2 J2J-save port — vetted implementation plan
 
+> **2026-06-15 RESULT (box, HEAD b10d2597): V2 self-rec PASSES, cross-method
+> still corrupts — the receiver swap is NOT in the save mechanism.**
+> STEP 4 (V2 self-rec, no XMETHOD): battery==golden, and the nArgs>0 benches are
+> exact — sumTo:acc:=5050, xsum:=5050, rfib(24)=46368, cfibx(24)=121392 (=fib(26)-1,
+> correct; cfibx adds 1/node). So the V1->V2 conversion is clean: no self-rec
+> regression, no arg-pop double-pop. STEP 5 (XMETHOD+ALLARGS): the SAME
+> `ShouldNotImplement #new: ByteSymbol class` as V1. **V1 and V2 cross-method
+> corrupt IDENTICALLY**, so the class-receiver swap lives in the SHARED cross-
+> method admit / callee-setup (AsmjitT1.cpp ~2862-3001: newReceiver=sp[-8*(nArgs+1)],
+> callee method/literals/jitMethod writes, dynamic nil-fill), which is byte-
+> identical V1/V2 — NOT in the save/restore. The reconcile's "PC-relative caller
+> re-derivation is the cure" hypothesis is DISPROVEN. The V2 port stands as a
+> validated-correct foundation (kept; default-on for x86, escape -DPHARO_X86_FORCE_V1),
+> but the cross-method fix is a SEPARATE task: debug the admit callee-setup (add a
+> trace logging newReceiver's class when the callee is class-side, under full
+> startup; the minimal repro doesn't fire cross-method). The save-mechanism red
+> herring is now ruled out by construction.
+
+
 Source: design workflow `wf_ca97bfc2-967` (2026-06-15, 12 agents: 6 maps → synthesis →
 4 adversarial verifiers → reconcile). Verdict: **go-with-revisions**.
 
