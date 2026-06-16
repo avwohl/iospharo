@@ -2952,12 +2952,16 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 // 2 pushes + sub 8 keep rsp 16-aligned for the C call (JIT entry
                 // rsp == 8 mod 16); preserve r9+rdi (state needed by the push).
                 if (GET_DEBUG_BOOL(PHARO_T1_XM_TRACE)) {
-                    a.push(r9); a.push(rdi); a.sub(rsp, asmjit::Imm(8));
+                    // Preserve every live reg the admit needs AFTER this: rcx=sp,
+                    // rsi=icDataPtr, r8=extras, r9=entryAddr, rdi=state.  (rax/rdx/
+                    // r10/r11 are scratch, recomputed below.)  5 pushes (40B) keep
+                    // rsp 16-aligned for the C call (JIT entry rsp == 8 mod 16).
+                    a.push(rcx); a.push(rsi); a.push(r8); a.push(r9); a.push(rdi);
                     a.mov(rsi, r9);                       // arg1 = entryAddr
                     a.mov(rdx, rax);                      // arg2 = receiver
                     a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_xm_fire_trace));
                     a.call(rax);                          // arg0 rdi = state
-                    a.add(rsp, asmjit::Imm(8)); a.pop(rdi); a.pop(r9);
+                    a.pop(rdi); a.pop(r9); a.pop(r8); a.pop(rsi); a.pop(rcx);
                 }
                 if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_COUNTERS)) {
                     a.mov(r10, asmjit::Imm((uint64_t)&g_x86_xmethod_fires));
