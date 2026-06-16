@@ -930,6 +930,22 @@ static inline void emitClosurePush(asmjit::a64::Assembler& a,
     a.str(scratch, asmjit::a64::ptr(cursor, off));
 }
 #endif  // arm64-only emitClosurePush
+// x86 twin (STEP 0 of the V2 save port, docs/x86-v2-save-port.md).  Mirrors the
+// arm64 codegen above: source is interp->closure_ (state@rdi -> OFF_INTERP ->
+// closureFieldOffset()), NOT JITState.closure@320.  NO-OP unless the resume-
+// internal knob is on, so it is dead code at default config and on x86 until the
+// V2 push blocks call it (STEP 3).  `cursor` is the save cursor, `off`=JSV_CLOSURE.
+#if defined(__x86_64__) || defined(_M_X64)
+static inline void emitClosurePush(asmjit::x86::Assembler& a,
+                                   const asmjit::x86::Gp& cursor, int off,
+                                   const asmjit::x86::Gp& scratch) {
+    using namespace asmjit::x86;
+    if (!GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)) return;
+    a.mov(scratch, ptr(rdi, OFF_INTERP));
+    a.mov(scratch, ptr(scratch, (int)pharo::Interpreter::closureFieldOffset()));
+    a.mov(ptr(cursor, off), scratch);
+}
+#endif  // x86 emitClosurePush twin
 [[maybe_unused]] constexpr int OFF_J2J_DEPTH_INC = 208;
 // Retro-save graceful pool-full handoff (cascade #2).
 constexpr int OFF_RETRO_SP        = 272;
@@ -1633,6 +1649,13 @@ void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
 static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
                                      asmjit::x86::Gp retval) {
     using namespace asmjit::x86;
+    // STEP 2 tripwire (docs/x86-v2-save-port.md): this prelude reads V1 56-byte
+    // save fields ([24]ip, [32]jitMethod, [40]resumeAddr, [48]sendArgCount) via
+    // hardcoded literals.  It MUST be re-authored to the 40-byte V2 record (STEP 3)
+    // BEFORE x86 flips to V2 (STEP 4) — flipping first would silently read/write
+    // wrong slots.  Delete this assert as part of STEP 4.
+    static_assert(!PHARO_J2J_SAVE_V2,
+        "emitJ2JReturnPrelude_x86 is V1-only; port it to the 40B V2 record first");
     if (!g_emitX86J2JOk) return;
     asmjit::Label normalRet = a.new_label();
     a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
@@ -2978,6 +3001,14 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.jmp(r10);                              // entryAddr (self code)
                 a.bind(notJ2J);
             } else if (g_emitX86J2JOk && !g_emitIsBlock) {
+                // STEP 2 tripwire (docs/x86-v2-save-port.md): this DEFAULT-ON
+                // self-rec push writes a V1 56-byte record via hardcoded literals
+                // ([24]ip, [32]jitMethod, [40]resumeAddr, [48]sendArgCount, +56).
+                // It MUST be converted to the 40B V2 record (STEP 3) BEFORE the
+                // x86 V2 flip (STEP 4), or it silently corrupts the 40B struct.
+                // Delete this assert as part of STEP 4.
+                static_assert(!PHARO_J2J_SAVE_V2,
+                    "x86 default self-rec push is V1-only; port it to the 40B V2 record first");
                 asmjit::Label notJ2J = a.new_label();
                 a.bt(r8, asmjit::Imm(60));               // J2J_ENTRY_BIT?
                 a.jnc(notJ2J);
@@ -9084,6 +9115,16 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
 
 #if defined(__x86_64__) || defined(_M_X64)
     x86::Assembler a(&code);
+    // V2 self-identification anchor: bind g_codeStartLabel at code offset 0
+    // (STEP 1 of the V2 save port, docs/x86-v2-save-port.md; mirrors arm64
+    // 9417-9418).  The V2 resumeAfterCall continuation will self-identify the
+    // caller JITMethod PC-relatively via lea(scratch, g_codeStartLabel) -
+    // sizeof(JITMethod).  Harmless dead anchor until the V2 emit (STEP 3):
+    // resumeOverrides stays empty on V1 x86, so the override-apply loop is a
+    // no-op.  resumeOverrides + g_resumeOverridesPtr are already wired in the
+    // shared pre-arch section (8943/8947).
+    g_codeStartLabel = a.new_label();
+    a.bind(g_codeStartLabel);
     // Always allocate per-bytecode labels when emitting real code.
     // Conditional jumps need them even if bcToCodeOut is null (which
     // doesn't happen in practice but is API-safe).
