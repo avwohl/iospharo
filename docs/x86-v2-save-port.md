@@ -1,5 +1,25 @@
 # x86 V2 J2J-save port — vetted implementation plan
 
+> **2026-06-16 FIXED — the cross-method class-receiver swap was a STALE
+> literalsCache (commit 825542a5).** The x86 cross-method admit set
+> `state.literals = calleeJM->literalsCache` (AsmjitT1.cpp ~3016) — a raw cached
+> pointer refreshed only by `refreshLiteralsCache` (FSR M0), so it goes STALE
+> after a GC moves the CompiledMethod. arm64 computes `calleeCM + 16` fresh
+> (the method oop is GC-updated). So a cross-method-inlined `PushLiteralVariable`
+> callee (`arrayType ^Array`, `specialSelectors`, `specialLiterals`,
+> `maxSmallSize`, ...) read the WRONG literal post-GC -> its result (e.g. Array)
+> became another class -> `OrderedCollection class cannot have variable sized
+> instances` / `ShouldNotImplement #new: ByteSymbol class`. Fix = compute
+> `calleeCM + 16` (mirror arm64 7232). Only manifests with GC + cross-method +
+> litvar callee (the startup scenario); 15+ GC-free isolated repros all passed,
+> masking it. VALIDATED on box with PHARO_T1_X86_XMETHOD + ALLARGS: `3+4`=7,
+> battery==golden, v2bench exact (sumTo2/xsum/rfib/cfibx). Found via PHARO_T1_XM_
+> TRACE (named the litvar callees) + an arm64-vs-x86 forward-setup diff. NOTE: the
+> fix is in the SHARED callee-setup (works on V1 and V2); the V2 port validated
+> the save mechanism but was not what fixed the swap. NEXT: full SUnit A/B, then
+> flip XMETHOD+ALLARGS default-on (the cfibx ~7.9x cross-method lever).
+
+
 > **2026-06-15 RESULT (box, HEAD b10d2597): V2 self-rec PASSES, cross-method
 > still corrupts — the receiver swap is NOT in the save mechanism.**
 > STEP 4 (V2 self-rec, no XMETHOD): battery==golden, and the nArgs>0 benches are
