@@ -75,3 +75,53 @@ Harness: `scripts/aws/sunit-ab.sh` style; bench `/tmp/cogbench3.st`; stock Cog v
 `get.pharo.org/64/130+vm` (NOT `/64/vm`, which returns an HTML error page — the
 historical install blocker). Run our VM with `PHARO_X86_JIT=1` or every number is
 the interpreter.
+
+## Root cause of the regressions (workflow, 2026-06-16)
+
+The x86 in-JIT J2J return tail is CORRECT (cfibx/fib prove it): the V2 prelude
+(AsmjitT1.cpp:1651-1727) restores caller sp from save[JSV_SP] and jmps to
+resumeAfterCall (3327-3346) which does the static-nArgs arg-pop + retval write.
+
+The leak is on the OTHER return edge: when the callee returns to C++ via
+EXIT_RETURN (callee bailed mid-method — e.g. cfibs's inner `max:` send, loopS's
+closure-temp write — so no in-JIT J2J tail fires) and `Interpreter::
+tryJITResumeInCaller` (Interpreter.cpp:20404) re-enters JIT. That C++ path sets
+`state.sp = stackPointer_` (20583) where the interpreter has ALREADY popped the
+args and pushed the retval, then lands at the codeOffsetForResume entry (21223)
+which on x86 resolves to `resumeAfterCall` — but resumeAfterCall ASSUMES the
+V2-prelude contract (sp == caller's pre-send sp, retval in rax, args NOT yet
+popped) and re-does `sp -= 8*nArgs; *(sp-8)=retval`. The args+retval are accounted
+TWICE → exactly the documented ~1-word/send operand-stack leak. arm64 avoids it
+because its resume entry and continuation share one emitLoadSp/emitStoreSp
+residency contract that the C++ re-entry feeds consistently.
+
+## Port plan (task #20) — ordered, arm64-safe
+
+1. Lock baseline: PHARO_X86_JIT=1 min-of-9 for all 5 benches on build-opt;
+   arm64 battery -> /tmp/battery_golden.txt; build a -DPHARO_X86_FORCE_V1 escape.
+2. Add opt-in knob `PHARO_T1_X86_RESUME_V2` (debug_vars.h) + wire
+   PHARO_SP_DEPTH_CHECK at the x86 resume re-entry (per-send sp-drift detector).
+3. **The fix** (Interpreter.cpp tryJITResumeInCaller 20404-21243): make the C++
+   resume entry obey resumeAfterCall's contract — when the resume lands on the
+   continuation, set state.sp to the caller's PRE-send sp (un-pop args + the
+   already-pushed retval) and load retval into the rax slot the continuation
+   reads, so the continuation's nArgs-pop+retval-write reproduces the stack
+   exactly ONCE. Gate behind PHARO_T1_X86_RESUME_V2 (this is SHARED C++ arm64
+   runs too) until arm64 byte-parity is proven. Target: cfibs 2208->~130ms (3x Cog).
+4. (AsmjitT1.cpp emitOne_x86) add the x86 twin of arm64's PHARO_T1_INLINE_SYNC
+   endOfSend republish (OFF_SENDARGCOUNT/OFF_IP) — x86's endOfSend (3348) lacks it.
+5. (AsmjitT1.cpp) wire emitClosurePush x86 (currently a knob-gated no-op) to store
+   interp->closure_ (OFF_INTERP+closureFieldOffset(), NOT JITState.closure@320 —
+   J2JSaveLayout.h:46 comment is wrong per docs/x86-v2-save-port.md) at the 3 V2
+   push sites, mirroring arm64 925-933. Fixes loopS block-frame resume.
+6. Re-measure: require cfibs AND loopS <=3x Cog, no regression on loopD/cfibx/fib.
+7. Flip the gate: initializeJIT (19597-19611) default x86 JIT ON; convert
+   PHARO_X86_JIT -> opt-out PHARO_X86_NO_JIT. ONLY after a clean full x86 SUnit
+   A/B (the ~10 prescan/emit disagree bytecodes + the 'Corrupt stackPointer_'
+   miscompile from commit 7af58fdfa are independent of the leak and only surface
+   under load — bench-pass is NOT sufficient).
+
+arm64 safety: emit changes (4,5) are in emitOne_x86 / x86-twin emit fns — cannot
+alter an arm64 byte. The only arm64-touching surface is shared C++ (step 3); gate
+every changed sp computation behind PHARO_T1_X86_RESUME_V2 and re-run arm64
+battery==/tmp/battery_golden.txt after EVERY commit to a file arm64 compiles.
