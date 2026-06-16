@@ -48,6 +48,8 @@
 extern "C" void jit_rt_atrec_getter(uint64_t statep, uint64_t recv, uint64_t val,
                                     uint64_t bcOff);
 extern "C" void jit_rt_atrec_entry(uint64_t statep);
+extern "C" void jit_rt_xm_fire_trace(uint64_t statep,
+                                     uint64_t calleeEntryAddr, uint64_t recvBits);
 extern "C" void jit_rt_verify_getter(uint64_t statep, uint64_t recv,
                                      uint64_t val, uint64_t extra,
                                      uint64_t entryPtr);
@@ -2943,6 +2945,20 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, hasHeapWrites)));
                 a.test(r10, r10);
                 a.jnz(notJ2J);
+                // PHARO_T1_XM_TRACE full-startup diagnostic: log class-receiver
+                // cross-method fires (caller=state.method [still the caller here,
+                // before the callee-state writes below], callee from entryAddr,
+                // receiver=rax).  r9=entryAddr, rax=send receiver, rdi=state.
+                // 2 pushes + sub 8 keep rsp 16-aligned for the C call (JIT entry
+                // rsp == 8 mod 16); preserve r9+rdi (state needed by the push).
+                if (GET_DEBUG_BOOL(PHARO_T1_XM_TRACE)) {
+                    a.push(r9); a.push(rdi); a.sub(rsp, asmjit::Imm(8));
+                    a.mov(rsi, r9);                       // arg1 = entryAddr
+                    a.mov(rdx, rax);                      // arg2 = receiver
+                    a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_xm_fire_trace));
+                    a.call(rax);                          // arg0 rdi = state
+                    a.add(rsp, asmjit::Imm(8)); a.pop(rdi); a.pop(r9);
+                }
                 if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_COUNTERS)) {
                     a.mov(r10, asmjit::Imm((uint64_t)&g_x86_xmethod_fires));
                     a.inc(qword_ptr(r10));               // cross-method ONLY (r10 dead here)

@@ -483,6 +483,37 @@ extern "C" void jit_rt_arith_overflow(JITState* state) {
     }
 }
 
+// Full-startup cross-method admit trace (PHARO_T1_XM_TRACE).  Called from the
+// x86 cross-method inline-J2J admit just before the jmp to the callee, with the
+// send receiver in recvBits.  Logs ONLY class receivers (the startup-corruption
+// shape) — caller + callee selector + receiver class — rate-limited.  The last
+// few before the ShouldNotImplement/cannot-have-variable-instances error name
+// the corrupting caller/callee.
+extern "C" void jit_rt_xm_fire_trace(uint64_t statep, uint64_t calleeEntryAddr,
+                                     uint64_t recvBits) {
+    if (!GET_DEBUG_BOOL(PHARO_T1_XM_TRACE)) return;
+    JITState* state = reinterpret_cast<JITState*>(statep);
+    Oop recv = Oop::fromRawBits(recvBits);
+    if (!recv.isObject() || recv.rawBits() < 0x10000) return;
+    Interpreter* interp = state->interp;
+    if (!interp) return;
+    std::string recvCls = interp->memory().classNameOf(recv);
+    bool classLike = recvCls.size() > 6
+        && recvCls.compare(recvCls.size() - 6, 6, " class") == 0;
+    if (!classLike) return;
+    static size_t n = 0;
+    if (++n > 400) return;
+    auto* calleeJM = reinterpret_cast<jit::JITMethod*>(
+        calleeEntryAddr - sizeof(jit::JITMethod));
+    std::string calleeSel = interp->memory().selectorOf(
+        Oop::fromRawBits(calleeJM->compiledMethodOop));
+    std::string callerSel = state->method.isObject()
+        ? interp->memory().selectorOf(state->method) : std::string("?");
+    fprintf(stderr, "[XM-FIRE #%zu] caller=#%s callee=#%s recvCls=%s\n",
+            n, callerSel.c_str(), calleeSel.c_str(), recvCls.c_str());
+    fflush(stderr);
+}
+
 extern "C" void jit_rt_push_frame(JITState* state) {
     // J2J direct call: push an interpreter frame for GC root scanning.
     // Reads cachedTarget (method Oop), sendArgCount, ip from state.
