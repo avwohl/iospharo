@@ -10,10 +10,12 @@
  *
  * PHARO_J2J_SAVE_V2: the packed-save protocol (WIP.md, 2026-06-11).
  * V2 moves statically-known work to the per-site resume continuation:
- *   - save shrinks 56 -> 32 bytes {sp, receiver, tempBase, resumeAddr}
+ *   - save shrinks 56 -> 40 bytes {sp, receiver, tempBase, resumeAddr,
+ *     closure}
  *   - sendArgCount: popped by the resume site with a static immediate
- *   - jitMethod: re-established by the resume site from emit-time
- *     immediates; materialize derives it from resumeAddr via the zone
+ *   - jitMethod: re-established by the resume site PC-relatively
+ *     (codeStart - sizeof(JITMethod)); materialize derives it from
+ *     resumeAddr via the zone (findMethodByPC)
  *   - ip: derived at materialize time (rare path)
  * Flip ONLY when every producer/consumer batch is converted (push
  * emits incl. xmethod + retro-stub, prelude, trampoline push/pop,
@@ -24,14 +26,16 @@
 #ifndef PHARO_J2J_SAVE_LAYOUT_H
 #define PHARO_J2J_SAVE_LAYOUT_H
 
-// V2 (the packed 40-byte save) is the asmjit-T1 protocol, which is the
-// arm64 JIT path.  The x86_64 JIT uses the STENCIL tier, whose own J2JSave
-// (stencils.cpp) is 56-byte V1 and whose C++ chain-loop fallback
-// (Interpreter.cpp, the !PHARO_ASM_TRAMPOLINE branch) reads V1 fields.
-// Making this unconditionally 1 broke the x86 build (global struct V2 vs
-// V1 producers/consumers).  Gate it to arm64 so each arch's global
-// J2JSave matches its active J2J mechanism. (2026-06-13)
+// V2 (the packed 40-byte save) is the asmjit-T1 protocol, used by BOTH the
+// arm64 JIT (shipping) and the x86_64 asmjit-T1 JIT (the live x86 J2J emit
+// is AsmjitT1.cpp; the stencil tier is dormant).  x86 was ported to V2 on
+// 2026-06-15 (docs/x86-v2-save-port.md) — the cross-method receiver-swap fix.
+// The flip is a compile-time struct choice (V1 56B vs V2 40B), so A/B is via
+// a BUILD flag, not a runtime knob: build x86 with -DPHARO_X86_FORCE_V1 to
+// get the historical V1 save back for bisection.
 #if defined(__aarch64__) || defined(__arm64__)
+#  define PHARO_J2J_SAVE_V2 1
+#elif (defined(__x86_64__) || defined(_M_X64)) && !defined(PHARO_X86_FORCE_V1)
 #  define PHARO_J2J_SAVE_V2 1
 #else
 #  define PHARO_J2J_SAVE_V2 0

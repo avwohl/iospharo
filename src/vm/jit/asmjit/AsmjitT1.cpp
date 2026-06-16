@@ -1649,14 +1649,36 @@ void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
 static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
                                      asmjit::x86::Gp retval) {
     using namespace asmjit::x86;
-    // STEP 2 tripwire (docs/x86-v2-save-port.md): this prelude reads V1 56-byte
-    // save fields ([24]ip, [32]jitMethod, [40]resumeAddr, [48]sendArgCount) via
-    // hardcoded literals.  It MUST be re-authored to the 40-byte V2 record (STEP 3)
-    // BEFORE x86 flips to V2 (STEP 4) — flipping first would silently read/write
-    // wrong slots.  Delete this assert as part of STEP 4.
-    static_assert(!PHARO_J2J_SAVE_V2,
-        "emitJ2JReturnPrelude_x86 is V1-only; port it to the 40B V2 record first");
     if (!g_emitX86J2JOk) return;
+#if PHARO_J2J_SAVE_V2
+    // V2 prelude (mirror arm64 emitJ2JReturnPrelude_arm64 V2 tail, 4216-4226):
+    // pop the 40B save, restore receiver/tempBase + the CALLER's sp (save[0]),
+    // mask the packed resumeAddr, clear the exit, and jmp to the caller's
+    // resumeAfterCall continuation.  The arg-pop + retval-write + (xmethod)
+    // caller-context re-establishment all happen THERE with the send-site's
+    // static nArgs — the prelude is shared across return ops and cannot know
+    // nArgs.  retval is already in rax; this prelude does not touch rax.
+    (void)retval;
+    asmjit::Label normalRet = a.new_label();
+    a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
+    a.cmp(r9, ptr(rdi, OFF_J2J_ENTRY_CURSOR));
+    a.jbe(normalRet);                       // cursor <= entry → no save → normal
+    a.sub(r9, asmjit::Imm(JSV_SIZE));       // pop one V2 save (40B)
+    a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
+    a.sub(dword_ptr(rdi, OFF_J2J_DEPTH), asmjit::Imm(1));  // coupling 1
+    a.mov(r10, ptr(r9, JSV_SP));            // savedSp (caller sp at the send)
+    a.mov(rcx, ptr(r9, JSV_RECEIVER));      // savedReceiver
+    a.mov(rdx, ptr(r9, JSV_TEMPBASE));      // savedTempBase
+    a.mov(r11, ptr(r9, JSV_RESUMEADDR));    // packed resumeAddr
+    a.mov(ptr(rdi, OFF_RECEIVER), rcx);
+    a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
+    a.mov(ptr(rdi, OFF_SP), r10);           // restore caller sp = savedSp
+    a.mov(rcx, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
+    a.and_(r11, rcx);                       // mask off the packed bcOff/nArgs
+    a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(0));  // clear exit
+    a.jmp(r11);                             // -> caller's resumeAfterCall (retval in rax)
+    a.bind(normalRet);
+#else
     asmjit::Label normalRet = a.new_label();
     a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
     a.cmp(r9, ptr(rdi, OFF_J2J_ENTRY_CURSOR));
@@ -1699,6 +1721,7 @@ static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
     a.mov(ptr(rdx, -8), retval);            // *(newSp-8) = retval
     a.jmp(r11);                             // resume in the caller's JIT code
     a.bind(normalRet);
+#endif
 }
 
 // Emit the JIT prologue for a supported primitive.  Used as a fast
@@ -2780,6 +2803,19 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             asmjit::Label trySetter = a.new_label();
             asmjit::Label tryReturnsSelf = a.new_label();
             asmjit::Label endOfSend = a.new_label();
+            // V2 resume continuation for inline-J2J (the lander the V2 prelude
+            // jmps to; bound just before endOfSend below).  Declared always so
+            // the V2 push can reference it; only emitted/bound under V2.
+            asmjit::Label resumeAfterCall = a.new_label();
+            // V2 emit-time gate: the packed resumeAddr carries bcOff in bits
+            // 48-59 (<=0xFFF) and nArgs in bits 60-63 (<=0xF).  A send site that
+            // would truncate must NOT take the inline-J2J fast path (mirror arm64
+            // 6959).  V1 has no such limit.
+            bool j2jSiteOk = true;
+#if PHARO_J2J_SAVE_V2
+            j2jSiteOk = ((globalIdx + 1) <= 0xFFF) && (nArgs <= 0xF);
+#endif
+            (void)resumeAfterCall; (void)j2jSiteOk;
 
             a.mov(rcx, ptr(rdi, OFF_SP));
             int rcvrOffsetBytes = -8 * (nArgs + 1);
@@ -2840,7 +2876,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // cold/non-self/full-stack → the normal getter/setter/dispatch path.
             // Regs here: rax=send receiver, rcx=sp, rsi=icDataPtr, r8=extras;
             // the bail checks clobber only r9/r10/r11 before notJ2J.
-            if (g_emitX86Xmethod && !g_emitIsBlock) {
+            if (j2jSiteOk && g_emitX86Xmethod && !g_emitIsBlock) {
                 // ===== Increment 1: cross-method-capable inline-J2J =====
                 // Admit self-rec OR a canSkipJ2JSave cross-method callee (no
                 // send + no cond-jump bail -> only the clean return-prelude path
@@ -2848,11 +2884,8 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 // materialize reads); state is set to the CALLEE.  Mirrors arm64
                 // ~6848-7002.  Regs: rax=recv, rcx=sp, rsi=icDataPtr, r8=extras
                 // (preserved for entryAddr); scratch r9/r10/r11/rdx.
-                // V1 save only: save[32]=jitMethod is read directly by
-                // materializeJ2JSaveIntoFrame.  A future V2 flip on x86 would
-                // repack the save and silently drop the caller identity.
-                static_assert(!PHARO_J2J_SAVE_V2,
-                    "x86 cross-method inline-J2J assumes the V1 56-byte save");
+                // Save protocol is now dual (V1 56B / V2 40B packed) via the
+                // #if PHARO_J2J_SAVE_V2 branches in the push records below.
                 // SELF-REC sends route to the ORIGINAL validated self-rec frame
                 // setup (selfRecAdmit, below) — byte-identical to the self-rec-only
                 // else-branch.  The unified cross-method emit (callee-state writes +
@@ -2906,9 +2939,24 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 // Save-stack room (also guards a null cursor: 0+56 > limit(0)).
                 a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
                 a.mov(r10, ptr(rdi, OFF_J2J_SAVE_LIMIT));
-                a.lea(r11, ptr(r9, 56));
+                a.lea(r11, ptr(r9, JSV_SIZE));
                 a.cmp(r11, r10);
                 a.ja(notJ2J);
+#if PHARO_J2J_SAVE_V2
+                // --- push V2 J2JSave (40B): CALLER resume state.  jitMethod is
+                //     NOT stored (re-derived PC-relatively in resumeAfterCall);
+                //     resumeAddr is packed (addr | bcOff<<48 | nArgs<<60). ---
+                a.mov(ptr(r9, JSV_SP), rcx);             // sp
+                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, JSV_RECEIVER), rdx);
+                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
+                a.lea(rdx, ptr(resumeAfterCall));
+                a.mov(r11, asmjit::Imm(((uint64_t)nArgs << 60)
+                                       | ((uint64_t)(globalIdx + 1) << 48)));
+                a.or_(rdx, r11);
+                a.mov(ptr(r9, JSV_RESUMEADDR), rdx);     // packed resumeAddr
+                emitClosurePush(a, r9, JSV_CLOSURE, rdx);  // knob-gated no-op; clobbers rdx
+                a.add(r9, asmjit::Imm(JSV_SIZE));
+#else
                 // --- push V1 J2JSave (56B): CALLER resume state (save[32]=callerJM) ---
                 a.mov(ptr(r9, 0), rcx);                  // sp
                 a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);
@@ -2921,6 +2969,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(ptr(r9, 40), rdx);                 // resumeAddr
                 a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));
                 a.add(r9, asmjit::Imm(56));
+#endif
                 a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
                 a.add(dword_ptr(rdi, OFF_J2J_DEPTH), asmjit::Imm(1));
                 // --- set CALLEE state (E2: AFTER the push+depth, so a save-room
@@ -2970,9 +3019,21 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.bind(selfRecAdmit);
                 a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
                 a.mov(r10, ptr(rdi, OFF_J2J_SAVE_LIMIT));
-                a.lea(r11, ptr(r9, 56));
+                a.lea(r11, ptr(r9, JSV_SIZE));
                 a.cmp(r11, r10);
                 a.ja(notJ2J);
+#if PHARO_J2J_SAVE_V2
+                a.mov(ptr(r9, JSV_SP), rcx);             // sp
+                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, JSV_RECEIVER), rdx);
+                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
+                a.lea(rdx, ptr(resumeAfterCall));
+                a.mov(r11, asmjit::Imm(((uint64_t)nArgs << 60)
+                                       | ((uint64_t)(globalIdx + 1) << 48)));
+                a.or_(rdx, r11);
+                a.mov(ptr(r9, JSV_RESUMEADDR), rdx);     // packed resumeAddr
+                emitClosurePush(a, r9, JSV_CLOSURE, rdx);
+                a.add(r9, asmjit::Imm(JSV_SIZE));
+#else
                 a.mov(ptr(r9, 0), rcx);                  // sp
                 a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);
                 a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, 16), rdx);
@@ -2984,6 +3045,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(ptr(r9, 40), rdx);                 // resumeAddr
                 a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));
                 a.add(r9, asmjit::Imm(56));
+#endif
                 a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
                 a.add(dword_ptr(rdi, OFF_J2J_DEPTH), asmjit::Imm(1));
                 a.mov(rdx, ptr(rcx, -8 * (nArgs + 1)));  // newReceiver
@@ -3000,15 +3062,9 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.and_(r10, r11);
                 a.jmp(r10);                              // entryAddr (self code)
                 a.bind(notJ2J);
-            } else if (g_emitX86J2JOk && !g_emitIsBlock) {
-                // STEP 2 tripwire (docs/x86-v2-save-port.md): this DEFAULT-ON
-                // self-rec push writes a V1 56-byte record via hardcoded literals
-                // ([24]ip, [32]jitMethod, [40]resumeAddr, [48]sendArgCount, +56).
-                // It MUST be converted to the 40B V2 record (STEP 3) BEFORE the
-                // x86 V2 flip (STEP 4), or it silently corrupts the 40B struct.
-                // Delete this assert as part of STEP 4.
-                static_assert(!PHARO_J2J_SAVE_V2,
-                    "x86 default self-rec push is V1-only; port it to the 40B V2 record first");
+            } else if (j2jSiteOk && g_emitX86J2JOk && !g_emitIsBlock) {
+                // Default-on self-rec push: dual V1/V2 record via the
+                // #if PHARO_J2J_SAVE_V2 branch in the push below.
                 asmjit::Label notJ2J = a.new_label();
                 a.bt(r8, asmjit::Imm(60));               // J2J_ENTRY_BIT?
                 a.jnc(notJ2J);
@@ -3018,9 +3074,22 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 // Save-stack room (also guards a null cursor: 0+56 > limit(0)).
                 a.mov(r9, ptr(rdi, OFF_J2J_SAVE_CURSOR));
                 a.mov(r10, ptr(rdi, OFF_J2J_SAVE_LIMIT));
-                a.lea(r11, ptr(r9, 56));
+                a.lea(r11, ptr(r9, JSV_SIZE));
                 a.cmp(r11, r10);
                 a.ja(notJ2J);
+#if PHARO_J2J_SAVE_V2
+                // --- push V2 J2JSave (40B) at r9: caller resume state ---
+                a.mov(ptr(r9, JSV_SP), rcx);             // sp
+                a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, JSV_RECEIVER), rdx);
+                a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
+                a.lea(rdx, ptr(resumeAfterCall));
+                a.mov(r11, asmjit::Imm(((uint64_t)nArgs << 60)
+                                       | ((uint64_t)(globalIdx + 1) << 48)));
+                a.or_(rdx, r11);
+                a.mov(ptr(r9, JSV_RESUMEADDR), rdx);     // packed resumeAddr
+                emitClosurePush(a, r9, JSV_CLOSURE, rdx);
+                a.add(r9, asmjit::Imm(JSV_SIZE));
+#else
                 // --- push V1 J2JSave (56B) at r9: caller resume state ---
                 a.mov(ptr(r9, 0), rcx);                  // sp
                 a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);   // receiver
@@ -3033,6 +3102,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(ptr(r9, 40), rdx);                 // resumeAddr (post-send code)
                 a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));   // sendArgCount
                 a.add(r9, asmjit::Imm(56));
+#endif
                 a.mov(ptr(rdi, OFF_J2J_SAVE_CURSOR), r9);
                 // Coupling 1 (docs/x86-inline-j2j-design.md): publish the depth
                 // to state.j2jDepth (int32) so the C++ exit merge (:25016),
@@ -3203,6 +3273,38 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
             a.ret();
 
+#if PHARO_J2J_SAVE_V2
+            // V2 resume continuation (mirror arm64 8808-8835).  Reached ONLY via
+            // the V2 prelude's jmp to the packed resumeAddr (retval in rax, the
+            // caller's sp already restored to savedSp).  Pop this send's args with
+            // the STATIC nArgs, write the retval into the receiver slot, and (cross-
+            // method) re-establish the CALLER's context PC-relatively — the work
+            // the V1 prelude did dynamically from save[32]/save[48].  Falls through
+            // to endOfSend -> next bytecode.  Bound only when this site emitted an
+            // inline-J2J push (same gate), so resumeAfterCall is never an unbound
+            // dangling reference.
+            if (j2jSiteOk && g_emitX86J2JOk && !g_emitIsBlock) {
+                a.bind(resumeAfterCall);
+                a.mov(rcx, ptr(rdi, OFF_SP));            // = savedSp (prelude restored it)
+                if (nArgs > 0) a.sub(rcx, asmjit::Imm(8 * nArgs));
+                a.mov(ptr(rcx, -8), rax);                // *(newSp-8) = retval
+                a.mov(ptr(rdi, OFF_SP), rcx);
+                if (g_emitX86Xmethod) {
+                    // Caller JITMethod = codeStart(offset 0) - sizeof(JITMethod).
+                    a.lea(r9, ptr(g_codeStartLabel));    // RIP-relative
+                    a.sub(r9, asmjit::Imm((int)sizeof(JITMethod)));
+                    a.mov(ptr(rdi, OFF_JITMETHOD), r9);
+                    a.mov(r10, ptr(r9, (int)offsetof(JITMethod, compiledMethodOop)));
+                    a.mov(ptr(rdi, OFF_METHOD), r10);
+                    a.add(r10, asmjit::Imm(16));         // literals = method + 16 (arm64 8828)
+                    a.mov(ptr(rdi, OFF_LITERALS), r10);
+                    a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(callerArgCount));
+                }
+                if (g_resumeOverridesPtr)
+                    g_resumeOverridesPtr->emplace_back(
+                        (uint32_t)globalIdx + 1, resumeAfterCall);
+            }
+#endif
             a.bind(endOfSend);
             return true;  // inline paths fall through to next bytecode
         }
@@ -11134,7 +11236,12 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         // canSkipJ2JSave on x86/V1 only (arm64/V2 emits ExtSend; its
         // canSkipJ2JSave is unchanged because x86HasExtSend stays false there).
         bool x86HasMidBail = false;
-#if !PHARO_J2J_SAVE_V2
+        // x86-arch guard (was #if !PHARO_J2J_SAVE_V2): the x86 emit still bails
+        // mid-method on ExtSend/mid-arith under V2 (only the SAVE protocol
+        // changed, not bytecode coverage), so the exclusion must SURVIVE the
+        // V2 flip.  arm64 is unaffected either way (x86HasMidBail stays false:
+        // arm64 emits ExtSend, and this block never ran there).
+#if defined(__x86_64__) || defined(_M_X64)
         if (isReal && !jm->canBailMidMethod && jm->numICEntries == 0) {
             bool prevArith = false;
             forEachRealOpcode(bc, bcLen, [&](size_t, uint8_t op) {
