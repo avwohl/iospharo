@@ -162,3 +162,33 @@ x86 has no `movk` → build high bits with `movabs(rTmp, (nArgs<<60)|(bcOff<<48)
   (capstone via PHARO_T1_DUMP_SEL).
 - **prim-prologue J2J-return shim is arm64-only** (9438-9455); exclude hasPrimPrologue from
   x86 default self-rec admit OR mirror the shim.
+
+## SUnit A/B — UNBLOCKED + PASSING (2026-06-16)
+
+STEP 7's "full SUnit A/B" was infra-blocked for 12 boxes by a harness gap, now
+resolved.  ROOT CAUSE of the block: `test_load_image` cannot parse `eval --save`,
+so the SUnit runner (`run_sunit_tests.st`) must be filed-in by a STOCK pharo at
+prep time, and every prior box attempt tried to install stock pharo ON the EC2 box
+(`get.pharo.org/64/vm…`) which never produced a runnable VM (prep rc=127) → the box
+ran an UN-prepped image → no SUnitRunner/SessionManager handler → 0 results.
+
+FIX (the portable-prepped-image approach): a Spur image is arch-independent, so
+prep LOCALLY with a stock pharo we already have, then ship the PORTABLE prepped
+image + its MATCHING `.sources` to the box; the box just runs it with the runtime
+`/tmp/sunit_class_names.txt` filter (no stock pharo on the box).  Tooling:
+`scripts/aws/sunit-ab.sh` (local: prep+ship+launch+poll+diff) and
+`scripts/aws/sunit-ab-box.sh` (box runner, no prep).
+
+RESULT (12-class fast set: SmallInteger/Fraction/Character/Association/Interval/
+Array/OrderedColl/Dictionary/String/Set/Bag/Symbol):
+
+    config                                  classes  pass  fail  err  skip
+    x86 ON  (cross-method fix default)         12     2271    0    0    0
+    x86 OFF (PHARO_T1_X86_NO_XMETHOD=1)        12     2271    0    0    0
+    arm64 golden                               12     2271    0    0    0
+
+AB-RESULT: IDENTICAL (x86 ON == OFF == arm64-golden), ~12s/run on -O2 Release.
+Gotcha: the matching `.sources` MUST ship — the box's own image is a different
+Pharo build (45e803d vs e84a2d1); a sources mismatch silently changes source-
+reflective tests.  This is in addition to the prior fix validation (full startup
+clean + battery==golden + v2bench exact + cfibx 8.7x).
