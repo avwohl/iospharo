@@ -10600,11 +10600,15 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             }
         }
     }
-    // Increment 1: cross-method inline-J2J (admit canSkipJ2JSave callees) only
-    // when the master inline-J2J path is on AND the opt-in knob is set.  Default
-    // OFF -> g_emitX86Xmethod=false -> byte-identical self-rec-only emit.
-    g_emitX86Xmethod = g_emitX86J2JOk && GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD);
-    g_emitX86XmethodAllArgs = GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_ALLARGS);
+    // Cross-method inline-J2J (admit canSkipJ2JSave callees): DEFAULT-ON since
+    // 2026-06-16 (the stale-literalsCache root cause is fixed; validated full
+    // startup clean + battery==golden + v2bench exact + cfibx 1616->185ms 8.7x).
+    // Tied to the master inline-J2J path (g_emitX86J2JOk).  Opt out with
+    // PHARO_T1_X86_NO_XMETHOD (self-rec-only) / PHARO_T1_X86_NO_XMETHOD_ALLARGS
+    // (nArgs==0 unary cross-method only).  PHARO_T1_X86_XMETHOD/_ALLARGS are now
+    // no-ops (kept for script compat).
+    g_emitX86Xmethod = g_emitX86J2JOk && !GET_DEBUG_BOOL(PHARO_T1_X86_NO_XMETHOD);
+    g_emitX86XmethodAllArgs = !GET_DEBUG_BOOL(PHARO_T1_X86_NO_XMETHOD_ALLARGS);
 #endif
     // M1 x19 invariant: UNCONDITIONAL since 2026-06-11 (five one-cycle
     // movs at activation commits, gate-verified by the 2468-test soak)
