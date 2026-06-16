@@ -199,3 +199,40 @@ cross-method-send-bearing callee frame + save/resume correctness (lldb on box:
 break at the inct cross-method admit + the incc resumeAfterCall, watch the save
 cursor/depth + receiver across the nested unwind). The knob is kept as the
 reproducer. Self-rec nesting works (cfibx); cross-method nesting is the gap.
+
+## Increment 2 — bug LOCALIZED by save-stack trace (box #20, 2026-06-16)
+
+Built the FIRST minimal deterministic repro of the cross-method corruption (prior
+sessions could only repro at full-startup scale): two-level, NON-recursive —
+`cleaf ^self+100`, `cmid ^(self+10) cleaf`, `[N timesRepeat: [5 cmid]]` under
+PHARO_X86_JIT=1 PHARO_T1_X86_XMETHOD_SENDS=1 runs away (793M steps; `5 cmid`
+should be ~10 bytecodes). So the bug is NOT recursion-specific; the minimal unit
+is a send-bearing cross-method callee making ONE inner J2J send.
+
+PHARO_T1_X86_J2J_DBG trace (saves=(cursor-entry)/40 at admit-PUSH + prelude-POP):
+
+  CONTROL cfibx (leaf incc): BALANCED — PUSH saves=1 -> POP saves=0, every time.
+    incc returns via the in-JIT V2 return prelude (the POP fires).
+
+  BROKEN cmid (send-bearing): almost ALL PUSH, NO in-JIT POP. saves oscillate
+    1<->2 (nested cmid->cleaf reaches 2) but the return-prelude POP NEVER fires
+    for the send-bearing callees. The cursor is instead reset by a C++ bail/
+    resume path. (Traced callees are findElementOrNil:/hash — SENDS=1 corrupts
+    STARTUP itself, so the cmid repro is representative.)
+
+ROOT CAUSE (localized): a send-bearing cross-method callee is admitted (save
+pushed by the in-JIT admit at AsmjitT1 ~2970), but it does NOT return via the
+in-JIT V2 return prelude (emitJ2JReturnPrelude_x86 ~1655) the way leaf callees do.
+Its return/bail exits to C++, and the C++ resume of a cross-method-INLINED callee
+frame is what mishandles the frame -> runaway. This is exactly the "re-enter C++
+mid-method" hazard the canSkipJ2JSave gate was guarding (comment AsmjitT1 ~2933);
+the gate is correct given the C++ resume can't yet reconstruct the cross-method
+frame. The leaf-only restriction works precisely because leaf callees always
+return via the in-JIT prelude (never the C++ path).
+
+NEXT (scoped): find WHY the send-bearing callee's return doesn't take the in-JIT
+prelude — add an RSUM trace at resumeAfterCall + a trace at the callee's return
+opcode; then fix the C++ cross-method-frame resume (the chain loop / materialize
+in tryJITResumeInCaller, Interpreter.cpp ~20404) to reconstruct an inlined
+cross-method callee's caller correctly (mirror arm64, which admits these via
+xmethodGateOk + a working materialize). Reproducer + trace knobs committed.
