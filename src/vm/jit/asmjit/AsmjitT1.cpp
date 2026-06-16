@@ -3013,8 +3013,16 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(ptr(rdi, OFF_JITMETHOD), r10);             // state.jitMethod = calleeJM
                 a.mov(rdx, ptr(r10, (int)offsetof(JITMethod, compiledMethodOop)));
                 a.mov(ptr(rdi, OFF_METHOD), rdx);                // state.method = calleeCM
-                a.mov(rdx, ptr(r10, (int)offsetof(JITMethod, literalsCache)));
-                a.mov(ptr(rdi, OFF_LITERALS), rdx);             // state.literals (=CM+16, cached)
+                // state.literals = calleeCM + 16 — computed FRESH from the (GC-
+                // updated) method oop, NOT read from calleeJM->literalsCache.
+                // literalsCache is a raw cached pointer refreshed only by
+                // refreshLiteralsCache (FSR M0), so it goes STALE after a GC moves
+                // the CompiledMethod; reading it in the cross-method inline made a
+                // PushLiteralVariable callee (arrayType ^Array, specialSelectors,
+                // ...) read the wrong literal -> the startup class-receiver swap.
+                // arm64 already computes CM+16 here (7232) — match it. (2026-06-16)
+                a.add(rdx, asmjit::Imm(16));
+                a.mov(ptr(rdi, OFF_LITERALS), rdx);             // state.literals = calleeCM + 16
                 a.mov(dword_ptr(rdi, OFF_ARGCOUNT), asmjit::Imm(nArgs)); // state.argCount = nArgs
                 // receiver / tempBase
                 a.mov(rdx, ptr(rcx, -8 * (nArgs + 1)));  // newReceiver = sp[-1-nArgs]
