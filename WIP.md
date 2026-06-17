@@ -1,4 +1,45 @@
-# RESUME POINT — 2026-06-17 (session: ExtSend port + send-bearing J2J bug)
+# RESUME POINT — 2026-06-17 (session: LOCAL Rosetta x86 JIT + DEFAULT-ON flip)
+
+Branch **jit** (== origin/jit-x86 tip). arm64 battery == `/tmp/battery_golden.txt`
+(verified). NO AWS box used this session — the whole x86 loop went LOCAL.
+
+## DONE + VALIDATED this session (the big ones)
+
+1. **x86 JIT now runs LOCALLY under Rosetta 2** (commit `6abf0a35`). CMake
+   `PHARO_TARGET_ARM64` honors `CMAKE_OSX_ARCHITECTURES` + libffi/SDL2 arch-
+   fallback → `cmake -B build-x86 -DCMAKE_OSX_ARCHITECTURES=x86_64` builds a real
+   x86_64 `test_load_image`; Rosetta translates the JIT-emitted x86 code
+   correctly (battery==golden, 4270 methods compiled). **No AWS box needed for
+   x86 correctness / SUnit A/B / lldb.** Memory: [[x86-jit-local-rosetta]].
+   Recipe: `PHARO_X86_JIT...`→ now default; run `arch -x86_64 ./build-x86/test_load_image`.
+
+2. **x86 tier-1 JIT FLIPPED DEFAULT-ON** (commit `3b6e2435`). Was opt-in
+   (`PHARO_X86_JIT=1`) pending GUI validation; that's done:
+   - Headless: 40- + 120-class SUnit A/B at PARITY with arm64-JIT AND interp
+     (only nondeterministic weak-ref/GC-timing flakes differ — testBenchFor /
+     testFlatCollect pass in isolation; WeakOrderedCollection…AllGarbageCollected
+     is GC-timing-dependent, flips on arm64-JIT too → not x86-specific).
+   - Visual: Morphic rendering PIXEL-IDENTICAL under JIT vs interp (2 imageForm
+     scenes: Morph/BorderedMorph fills+borders, gradient strips, StringMorph+
+     TextMorph FreeType, BitBlt, PNG encode → byte-equal MD5).
+   Gate inverted (Interpreter.cpp ~19612); opt-out `PHARO_NO_X86_JIT=1` (escape
+   hatch) or `PHARO_NO_JIT=1`. arm64 untouched (battery==golden). Residual: live
+   Catalyst Metal app render-loop unverified (needs real x86 Catalyst hardware).
+
+## STILL OPEN
+- **BUG-2** (`PHARO_T1_X86_XMETHOD_SENDS`, send-bearing cross-method J2J): opt-in,
+  default-OFF, PERF-only, correctness-NEUTRAL (the default JIT is correct without
+  it). Now lldb-able LOCALLY under Rosetta. Root cause = x86 lacks arm64's
+  register-resident (x23) J2J cursor, so the chain-loop cursor reset to base
+  (Interpreter.cpp ~26998/27258) orphans a send-bearing inline-J2J'd caller's
+  pending save. Fix = port arm64's cursor register-residency to the x86 emit
+  (multi-session emit work). Independent of the default-on flip above.
+- (optional) Full live x86 Catalyst app screenshot — needs x86 SDL2 (build-sdl2.sh
+  can build it) + the Xcode x86_64 Catalyst app under Rosetta.
+
+---
+
+# (prior session) RESUME POINT — 2026-06-17 (ExtSend port + send-bearing J2J bug)
 
 Branch **jit-x86** @ `3e3a12e6` (pushed to origin/jit-x86). arm64 battery ==
 `/tmp/battery_golden.txt` (verified). All AWS boxes terminated. Working tree clean
