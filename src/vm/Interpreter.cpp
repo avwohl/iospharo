@@ -25393,18 +25393,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // enableJ2J re-bases the cursor before every re-entry.
         state.j2jDepth = 0;
         state.j2jSaveCursor = reinterpret_cast<uint8_t*>(stateSaves);
-#if defined(__x86_64__) || defined(_M_X64)
-        // Re-base the prelude-pop baseline too (mirror enableJ2J 25350-51).
-        // The x86 return prelude (AsmjitT1.cpp:1704) decides "did I push a save?"
-        // by cursor > entryCursor; after a SENDS-path bail-materialize that reset
-        // depth+cursor, a STALE entryCursor/entryDepth makes the resumed callee's
-        // prelude mis-decide (pop a save that's gone, or skip a real one). Gated on
-        // the SENDS knob; arm64 (FSR-resident cursor) compiles out.
-        if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_SENDS)) {
-            state.j2jEntryDepth = 0;
-            state.j2jEntryCursor = state.j2jSaveCursor;
-        }
-#endif
         if (state.jitMethod) {
             state.method = Oop::fromRawBits(
                 state.jitMethod->compiledMethodOop);
@@ -26953,19 +26941,63 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                         // Enable stencil J2J for callee — lets it chain
                         // sends directly instead of falling back to C++.
-                        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
-                        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
-                        state.j2jDepth = 0;
-                        // Keep the prelude-pop base in sync with the
-                        // depth reset (stale entryDepth wedges pops).
-                        state.j2jEntryDepth = 0;
-                        state.j2jEntryCursor = state.j2jSaveCursor;  // FSR M3: fresh-slice baseline
+                        //
+                        // SEND-BEARING cross-method fix (2026-06-17): if the
+                        // CALLER (the method that did this send) was itself
+                        // inline-J2J'd it has a PENDING J2J save above the slice
+                        // base (j2jDepth>0). Resetting the cursor to base here
+                        // would ORPHAN + OVERWRITE that save -> the caller later
+                        // returns into a corrupt frame (the PHARO_T1_X86_XMETHOD_
+                        // SENDS runaway: cfibt 781M steps). Instead, when a save
+                        // is pending, leave the cursor where it is (the callee's
+                        // saves stack ABOVE it) and pin the entry baseline to the
+                        // current cursor/depth so the callee's return preludes pop
+                        // only the callee's own saves; restore the caller's
+                        // baseline after the call. depth==0 (leaf caller / the
+                        // only case arm64 + x86-default reach) takes the original
+                        // reset-to-base path verbatim -> byte-identical.
+                        // arm64 keeps the live save cursor RESIDENT in x23 (FSR),
+                        // so resetting the in-memory j2jSaveCursor here does NOT
+                        // orphan its pending saves — and the reset IS load-bearing
+                        // for arm64's normal J2J chaining (verified: pinning breaks
+                        // the arm64 battery).  Only x86 (memory-cursor authority)
+                        // needs the pin-vs-reset divergence; arm64 compiles the
+                        // original unconditional reset-to-base.
+#if defined(__x86_64__) || defined(_M_X64)
+                        const bool callerHasPendingJ2JSave = (state.j2jDepth > 0);
+                        uint8_t* callerEntryCursor = state.j2jEntryCursor;
+                        int      callerEntryDepth  = state.j2jEntryDepth;
+                        if (callerHasPendingJ2JSave) {
+                            // pin: the callee's saves stack ABOVE the caller's
+                            // pending save; do not reset (that orphans+overwrites it).
+                            state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
+                            state.j2jEntryCursor = state.j2jSaveCursor;
+                            state.j2jEntryDepth  = state.j2jDepth;
+                        } else
+#endif
+                        {
+                            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
+                            state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
+                            state.j2jDepth = 0;
+                            // Keep the prelude-pop base in sync with the
+                            // depth reset (stale entryDepth wedges pops).
+                            state.j2jEntryDepth = 0;
+                            state.j2jEntryCursor = state.j2jSaveCursor;  // FSR M3: fresh-slice baseline
+                        }
                         state.j2jTotalCalls = 0;
                         state.yieldCountdown = 1000;
 
                         // --- Enter callee JIT code ---
                         // No flip — W^X audit 2026-04-26.
                         JIT_CALL(chainJM->codeStart(), &state);
+#if defined(__x86_64__) || defined(_M_X64)
+                        // Restore the caller's pinned entry baseline so its own
+                        // return prelude later pops its pending save.
+                        if (callerHasPendingJ2JSave) {
+                            state.j2jEntryCursor = callerEntryCursor;
+                            state.j2jEntryDepth  = callerEntryDepth;
+                        }
+#endif
                         jit::fsrLazyRefresh(state);  // FSR M4
                         // FSR M3 stage (a): parity oracle — the RMW-maintained
                         // depth must equal the cursor-derived depth (slice
