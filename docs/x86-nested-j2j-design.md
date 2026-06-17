@@ -299,8 +299,11 @@ lever it extends — it pays off for RECURSIVE / deeply-nested multi-arg (or
 high-literal-index) sends, NOT flat-loop leaf calls.  The 8.7x cfibx win now
 reaches 3+arg / >15-literal-index self-recursion (11x on cfx).  Correctness:
 battery + 4 benchmark shapes all agree interp==JIT-OFF==JIT-ON; SUnit A/B
-(JIT-on knob-on vs interp) is the broad gate.  Still default-OFF behind the
-GUI-gated PHARO_X86_JIT flip (ships to nobody until an x86 Mac validates Morphic).
+(JIT-on knob-on vs interp) IDENTICAL on a 15-class set (2342 pass) AND a broader
+29-class collections/numbers/streams/dates/points set (3694 pass), 0 fail / 0
+error / 0 disagree.  Still default-OFF behind the GUI-gated PHARO_X86_JIT flip
+(ships to nobody until an x86 Mac validates Morphic) — flip this knob default-ON
+together with that gate, so the whole x86 JIT gets GUI-validated at once.
 Prefixed (ExtendA/B+ExtSend, selector index >=32 / nArgs>7) still bails — a
 follow-up if real code shows high-literal-index ExtSend hot paths.
 
