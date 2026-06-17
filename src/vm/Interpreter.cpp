@@ -27259,6 +27259,28 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
                                 state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateEnd]);
                                 state.yieldCountdown = 1000;
+                                // BUG-2 operand-stack dump (PHARO_J2J_NEST_TRACE):
+                                // the Smalltalk VALUE stack the caller resumes with.
+                                // Diff x86-SENDS=1 (broken) vs arm64-default (works)
+                                // at the same #= resume to find the stale operand.
+                                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_J2J_NEST_TRACE), 0)
+                                        && savedMethod.isObject()
+                                        && memory_.selectorOf(savedMethod) == "=") {
+                                    static int g_eqOpndN = 0;
+                                    if (++g_eqOpndN <= 48) {
+                                        Oop* sp = stackPointer_;
+                                        uint32_t rbc = static_cast<uint32_t>(
+                                            instructionPointer_ - savedBcStart);
+                                        fprintf(stderr, "[EQ-OPND #%d] rbc=%u sp=%p tos=0x%llx "
+                                            "[-2]=0x%llx [-3]=0x%llx [-4]=0x%llx recv=0x%llx\n",
+                                            g_eqOpndN, rbc, (void*)sp,
+                                            (unsigned long long)sp[-1].rawBits(),
+                                            (unsigned long long)sp[-2].rawBits(),
+                                            (unsigned long long)sp[-3].rawBits(),
+                                            (unsigned long long)sp[-4].rawBits(),
+                                            (unsigned long long)savedRecv.rawBits());
+                                    }
+                                }
                                 // Direct resume — no hash lookup or codeOffsetForBC.
                                 // Stay in X — W^X audit 2026-04-26.
                                 JIT_CALL(savedResumeEntry, &state);
