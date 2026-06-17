@@ -25393,6 +25393,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // enableJ2J re-bases the cursor before every re-entry.
         state.j2jDepth = 0;
         state.j2jSaveCursor = reinterpret_cast<uint8_t*>(stateSaves);
+#if defined(__x86_64__) || defined(_M_X64)
+        // Re-base the prelude-pop baseline too (mirror enableJ2J 25350-51).
+        // The x86 return prelude (AsmjitT1.cpp:1704) decides "did I push a save?"
+        // by cursor > entryCursor; after a SENDS-path bail-materialize that reset
+        // depth+cursor, a STALE entryCursor/entryDepth makes the resumed callee's
+        // prelude mis-decide (pop a save that's gone, or skip a real one). Gated on
+        // the SENDS knob; arm64 (FSR-resident cursor) compiles out.
+        if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_SENDS)) {
+            state.j2jEntryDepth = 0;
+            state.j2jEntryCursor = state.j2jSaveCursor;
+        }
+#endif
         if (state.jitMethod) {
             state.method = Oop::fromRawBits(
                 state.jitMethod->compiledMethodOop);
