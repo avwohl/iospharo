@@ -30,16 +30,21 @@ Branch **jit** (== origin/jit-x86 tip). arm64 battery == `/tmp/battery_golden.tx
    hatch) or `PHARO_NO_JIT=1`. arm64 untouched (battery==golden). Residual: live
    Catalyst Metal app render-loop unverified (needs real x86 Catalyst hardware).
 
-## STILL OPEN
-- **BUG-2** (`PHARO_T1_X86_XMETHOD_SENDS`, send-bearing cross-method J2J): opt-in,
-  default-OFF, PERF-only, correctness-NEUTRAL (the default JIT is correct without
-  it). Now lldb-able LOCALLY under Rosetta. Root cause = x86 lacks arm64's
-  register-resident (x23) J2J cursor, so the chain-loop cursor reset to base
-  (Interpreter.cpp ~26998/27258) orphans a send-bearing inline-J2J'd caller's
-  pending save. Fix = port arm64's cursor register-residency to the x86 emit
-  (multi-session emit work). Independent of the default-on flip above.
-- (optional) Full live x86 Catalyst app screenshot — needs x86 SDL2 (build-sdl2.sh
-  can build it) + the Xcode x86_64 Catalyst app under Rosetta.
+## BUG-2 RESOLVED (perf-not-correctness)
+- **BUG-2** (`PHARO_T1_X86_XMETHOD_SENDS`, send-bearing cross-method J2J) is NOT a
+  correctness bug. The [RES-STACK] driver dump (commit `bf315200`) named the
+  thrash: `ExternalObject class>>installSubclasses` startup loop
+  (`withAllSubclassesDo:` over **242** subclasses, each re-decoding the UNCACHED
+  `OSPlatform name` → `ByteString>>=`). Under send-bearing inline-J2J each
+  iteration thrashes ~750 materializes → 742M+ steps; bounded (reaches "Test
+  Complete"), NO errors (pure thrash, materialize SP/bcOff exonerated). So
+  send-bearing is correct-but-net-negative-perf → CORRECTLY opt-in/default-OFF.
+  The cursor-orphan hypothesis was REFUTED this session (3-site pin implemented +
+  reverted). No fix needed; the shipped leaf-only x86 JIT (default-on) is correct
+  + faster. Revisit only if a real x86 workload shows the gap mattering (diffuse
+  emit work: ExtSend coverage / deeper J2J nesting / arith-tail).
+- (optional, never blocking) Full live x86 Catalyst app screenshot — needs x86
+  SDL2 (build-sdl2.sh) + the Xcode x86_64 Catalyst app under Rosetta.
 
 ---
 
