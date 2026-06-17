@@ -78,6 +78,9 @@ extern "C" uint64_t g_inlineJ2J_hits;
 extern "C" uint64_t g_inlineJ2J_bail_zero;
 extern "C" uint64_t g_inlineJ2J_bail_full;
 extern "C" uint64_t g_inlineJ2J_bail_self;
+extern "C" uint64_t g_xadmit_reached;
+extern "C" uint64_t g_xadmit_bitset;
+extern "C" uint64_t g_x86_xmethod_fires;
 extern "C" uint64_t g_inlineJ2J_bail_gate;
 extern "C" uint64_t g_inlineJ2J_dbg_caller_method;
 extern "C" uint64_t g_inlineJ2J_dbg_callee_method;
@@ -1862,6 +1865,15 @@ void Interpreter::dumpJITStats() {
     fprintf(stderr, "  chain: actChain=%zu actFall=%zu | primChain=%zu primFall=%zu\n",
             jitChainActivateChains_, jitChainActivateFalls_,
             jitChainPrimChains_, jitChainPrimFalls_);
+    // x86 cross-method inline-J2J admit: reached (IC hit) vs J2J_ENTRY_BIT set —
+    // diagnoses the inner-send-bail-rate (reliable here vs the static-init-order-
+    // fragile atexit dump).  Globals declared file-scope above; 0 on arm64.
+    if (g_xadmit_reached)
+        fprintf(stderr, "  x86-admit: reached=%llu bitset=%llu (%.1f%%) fires=%llu\n",
+                (unsigned long long)g_xadmit_reached,
+                (unsigned long long)g_xadmit_bitset,
+                100.0 * g_xadmit_bitset / g_xadmit_reached,
+                (unsigned long long)g_x86_xmethod_fires);
     fprintf(stderr, "  yields=%zu OSR=%zu\n", jitYieldCount_, jitOSREntries_);
     {
         int t2ICTotal = jit::g_t2ICHits + jit::g_t2ICMisses;
