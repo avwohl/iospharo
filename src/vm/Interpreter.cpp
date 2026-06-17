@@ -1865,6 +1865,9 @@ void Interpreter::dumpJITStats() {
     fprintf(stderr, "  chain: actChain=%zu actFall=%zu | primChain=%zu primFall=%zu\n",
             jitChainActivateChains_, jitChainActivateFalls_,
             jitChainPrimChains_, jitChainPrimFalls_);
+    fprintf(stderr, "  stencil-fall: cached=%zu send=%zu j2j=%zu other=%zu\n",
+            jitStencilFallSendCached_, jitStencilFallSend_,
+            jitStencilFallJ2JCall_, jitStencilFallOther_);
     // x86 cross-method inline-J2J admit: reached (IC hit) vs J2J_ENTRY_BIT set —
     // diagnoses the inner-send-bail-rate (reliable here vs the static-init-order-
     // fragile atexit dump).  Globals declared file-scope above; 0 on arm64.
