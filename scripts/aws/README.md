@@ -1,9 +1,12 @@
 # AWS x64 build spot instance
 
 Scripts to stand up a disposable AWS EC2 **spot** instance that builds and
-develops the **x86_64 JIT** port of the iospharo VM. The arm work continues in
-parallel on the `jit` branch; the x86 work lives on `jit-x86` and is merged
-back deliberately (so it never clobbers the arm process).
+develops the **x86_64 JIT** of the iospharo VM. The box works on `jit` directly
+(`BASE_BRANCH==WORK_BRANCH==jit`): the x86 JIT was merged into `jit` on
+2026-06-17 (commit `f317dd0b`) and the old `jit-x86` topic branch was deleted,
+so x86 and arm now share one line. Every x86 change is arm-neutral (gated
+`#if x86` / `if(APPLE)` / behind a knob), so it can't clobber the arm process.
+For an isolated experiment, set `WORK_BRANCH=<topic>` and merge back deliberately.
 
 ## One-time prerequisites (local machine)
 
@@ -46,8 +49,9 @@ scratch, that one script is all you need.
 - **Spot-interruption preservation** (`spot-watch.sh`): watches the IMDS
   spot/instance-action endpoint; on the ~2-min reclaim notice it runs
   `preserve.sh` immediately.
-- **`preserve.sh`**: commits WIP, pushes `jit-x86` to GitHub (durable), and
-  syncs notes/logs to S3. Safe to run by hand anytime.
+- **`preserve.sh`**: commits WIP, pushes the work branch (`$WORK_BRANCH`,
+  default `jit`) to GitHub (durable), and syncs notes/logs to S3. Safe to run by
+  hand anytime.
 
 ## Tear down
 
@@ -55,10 +59,14 @@ scratch, that one script is all you need.
     ./scripts/aws/teardown.sh --bucket   # also delete the S3 bucket
     ./scripts/aws/teardown.sh --instance-only
 
-## Merging the x86 work back
+## Branch flow
 
-`jit-x86` is pushed from the box. To fold it into `jit`, locally:
+The box pushes to `jit` directly (`preserve.sh` → `origin/$WORK_BRANCH`, default
+`jit`), so there's normally no separate merge step — just `git pull` locally.
+
+If you run an isolated experiment with `WORK_BRANCH=<topic>`, fold it back with:
 
     git fetch origin && git checkout jit && git pull
-    git merge origin/jit-x86      # resolve, test
+    git merge origin/<topic>      # resolve, test
     git push origin jit
+    git push origin --delete <topic>   # clean up
