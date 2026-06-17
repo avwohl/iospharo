@@ -2953,6 +2953,16 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                         -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, numICEntries)));
                     a.cmp(r10d, asmjit::Imm(GET_DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC)));
                     a.ja(notJ2J);                         // numIC > cap -> bail
+                    // isStubOnEntry exclusion (mirror arm64 xmethodGateOk ~6444):
+                    // the dropped canSkipJ2JSave gate required isReal, and
+                    // isStubOnEntry = !isReal — so leaf-only never admitted stubs.
+                    // A stub bails on entry and never runs the return prelude ->
+                    // un-popped save -> the C++ bail/materialize churn that makes
+                    // SENDS=1 thrash ~5x worse than arm64 (178K vs 35K materializes).
+                    a.movzx(r10d, byte_ptr(r9,
+                        -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, isStubOnEntry)));
+                    a.test(r10, r10);
+                    a.jnz(notJ2J);                        // stub-on-entry -> bail
                 } else {
                 a.movzx(r10d, byte_ptr(r9,
                     -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, canSkipJ2JSave)));
