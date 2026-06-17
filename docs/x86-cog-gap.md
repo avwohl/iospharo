@@ -177,6 +177,31 @@ REMAINING gate to actually flip PHARO_X86_JIT default-on: GUI/Catalyst validatio
 screenshot-verified before flipping the shipping default). That needs an x86 Mac /
 Catalyst run, NOT the Linux box. Headless correctness: DONE.
 
+## 6c. FLIPPED DEFAULT-ON (2026-06-17, commit 3b6e2435)
+
+DONE — the x86_64 tier-1 JIT is now default-ON, validated entirely LOCALLY under
+Rosetta 2 on the arm64 dev Mac (no AWS box; see the CMake build fix 6abf0a35 and
+memory x86-jit-local-rosetta). Rosetta faithfully translates the JIT-emitted x86
+code (battery==golden, thousands of methods compiled).
+
+- Headless re-validated at tip: 40- and 120-class SUnit A/B at PARITY with both
+  the interpreter AND the shipping arm64 JIT. The only per-test diffs are
+  nondeterministic weak-ref / GC-timing tests (`testBenchFor`, `testFlatCollect`
+  pass in isolation; `WeakOrderedCollection…AllGarbageCollected` is GC-timing-
+  dependent and flips on arm64-JIT too — not x86-specific, not a codegen bug).
+- GUI/visual gate satisfied without SDL2/Metal: Morphic rendering is PIXEL-
+  IDENTICAL under JIT vs interp. Two `imageForm` scenes (Morph/BorderedMorph
+  fills+borders, gradient strips, StringMorph+TextMorph FreeType text, BitBlt
+  compositing, PNG encode) produce byte-for-byte equal PNGs (same MD5). The
+  JIT-relevant GUI surface is Smalltalk drawing (exercised + validated); the
+  Metal/SDL2 bridge is JIT-agnostic C++. The §7 "disagree bytecodes + Corrupt-
+  stackPointer" blockers were already STALE (§6b).
+
+Gate (Interpreter.cpp ~19612) inverted: JIT inits by default on x86; opt out with
+`PHARO_NO_X86_JIT=1` or `PHARO_NO_JIT=1`. Residual unverified surface: the live
+Catalyst Metal app render-loop (needs real x86 Catalyst hardware) — escape hatch
+mitigates. The §7 blocker list below is now historical.
+
 ## 7. Blockers to flipping PHARO_X86_JIT default-on (the full picture)
 
 Even a perfect Increment 2 does NOT flip the gate by itself. The banner cites,
