@@ -19610,24 +19610,25 @@ void Interpreter::initializeJIT() {
     }
 
 #if defined(__x86_64__) || defined(_M_X64)
-    // x86_64 tier-1 JIT: HEADLESS-CORRECT but still OFF by default pending GUI
-    // validation (2026-06-17).  The old "bit-rotted, ~10 prescan/emit disagree
-    // bytecodes + Corrupt-stackPointer miscompile" status is STALE — those were
-    // fixed (short-jump out-of-range guard, prim-prologue, extended-bytecode
-    // port).  PHARO_X86_JIT=1 now passes the 565-class SUnit suite IDENTICALLY
-    // to the interpreter (12508=12508, 0 disagrees via PHARO_T1_DISAGREE_DUMP,
-    // 0 crashes; the only diffs are weak-ref/GC timing flakes).  See
-    // docs/x86-cog-gap.md §6b.  Kept off-by-default ONLY because the shipping
-    // x86 build runs Morphic (Catalyst), and per the repo's "verify GUI changes
-    // visually" rule the JIT-on Catalyst app must be screenshot-validated on an
-    // x86 Mac before flipping the shipping default — NOT yet done.  Opt in with
-    // PHARO_X86_JIT=1 (headless: safe + ~6x on recursion).  Send-bearing
-    // cross-method inline-J2J (PHARO_T1_X86_XMETHOD_SENDS) stays opt-in/WIP and
-    // is independent of this gate.  arch-capability gate (cf. tier-2/Sista off
-    // on x86); arm64 unaffected (#if x86 only).
-    if (!GET_DEBUG_BOOL(PHARO_X86_JIT)) {
-        fprintf(stderr, "[JIT] x86_64 tier-1 JIT off by default (headless-correct "
-                        "but GUI-unvalidated; set PHARO_X86_JIT=1 to enable) — "
+    // x86_64 tier-1 JIT: DEFAULT-ON as of 2026-06-17 (flipped from opt-in
+    // PHARO_X86_JIT).  Validation behind the flip:
+    //   (1) 565-class headless SUnit at PARITY with the shipping arm64 JIT AND
+    //       the interpreter — 0 prescan/emit disagrees, 0 Corrupt-stackPointer,
+    //       0 crashes; the only per-test diffs are nondeterministic weak-ref/
+    //       GC-timing tests that flip on arm64-JIT too (not x86-specific).
+    //   (2) Morphic rendering pixel-identical under JIT vs interp: Morph/
+    //       BorderedMorph fills+borders, gradient strips, StringMorph+TextMorph
+    //       FreeType text, BitBlt compositing, PNG encode — imageForm PNGs byte-
+    //       for-byte equal (the JIT-relevant GUI surface; the Metal/SDL2 bridge
+    //       is JIT-agnostic C++).  See docs/x86-cog-gap.md §6b.
+    // The leaf-only cross-method inline-J2J (cfibx ~6x) is on; the SEND-BEARING
+    // cross-method variant (PHARO_T1_X86_XMETHOD_SENDS, BUG-2) stays opt-in/WIP
+    // and is independent of this gate.  Residual unverified surface: the live
+    // Catalyst Metal app render-loop (needs actual x86 Catalyst hardware).
+    // Escape hatches: PHARO_NO_X86_JIT=1 (x86 only) or PHARO_NO_JIT=1 (both
+    // arches).  arm64 unaffected (#if x86 only; JIT always on there).
+    if (GET_DEBUG_BOOL(PHARO_NO_X86_JIT)) {
+        fprintf(stderr, "[JIT] x86_64 tier-1 JIT disabled via PHARO_NO_X86_JIT — "
                         "running interpreted\n");
         return;
     }
