@@ -26956,25 +26956,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                     chainTarget.isObject() ? memory_.selectorOf(chainTarget).c_str() : "?");
                             }
                         }
-#if defined(__x86_64__) || defined(_M_X64)
-                        // BUG-2 fix (PHARO_T1_X86_XMETHOD_SENDS): when the caller
-                        // is an inline-J2J'd SEND-BEARING method with a pending
-                        // save (depth>0), the cursor reset just below would ORPHAN
-                        // that save on x86 (arm64 tolerates it: x23-resident cursor
-                        // + saveless discipline; box NEST trace proved the shared
-                        // chain-loop path is otherwise identical on both arches, so
-                        // the divergence is x86's memory-cursor authority).
-                        // Materialize the pending J2J chain into real SavedFrames
-                        // first, so the caller chain rides the well-tested interp
-                        // return path instead of the orphaned J2J stack.  No perf
-                        // loss vs the un-admitted baseline (this only runs when a
-                        // send-bearing callee's inner send already exited to C++).
-                        // Gated on the knob; arm64 compiles out -> byte-identical.
-                        if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_SENDS)
-                                && state.j2jDepth > 0) {
-                            materializeJ2J();
-                        }
-#endif
                         // Enable stencil J2J for callee — lets it chain
                         // sends directly instead of falling back to C++.
                         // NOTE (2026-06-17): this resets the save cursor to the
