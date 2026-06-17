@@ -16,6 +16,8 @@ build-cpp/
 build-test/
 build-nojit/
 build_nojit/
+build-x86/
+build-opt/
 build-xcframework/
 third-party-build/
 

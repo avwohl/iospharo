@@ -80,12 +80,28 @@ set(VM_SOURCES
     src/vm/jit/sista/SistaRuntime.cpp
 )
 
+# Resolve the TARGET arch for per-arch source selection.  CMAKE_OSX_ARCHITECTURES
+# is authoritative when set (it drives clang's -arch), so a single-arch macOS
+# cross-build (e.g. an x86_64-under-Rosetta build on an arm64 host) selects the
+# matching siblings.  Falls back to the host CMAKE_SYSTEM_PROCESSOR when unset
+# (normal native builds, including the Linux x86_64 box).  A universal
+# "arm64;x86_64" Catalyst build still resolves arm64 here (matches old behavior;
+# the per-file compiler #if guards handle the x86 slice of that fat binary).
+if(CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+    set(PHARO_TARGET_ARM64 TRUE)
+elseif(CMAKE_OSX_ARCHITECTURES)
+    set(PHARO_TARGET_ARM64 FALSE)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    set(PHARO_TARGET_ARM64 TRUE)
+else()
+    set(PHARO_TARGET_ARM64 FALSE)
+endif()
+
 # Sista IR lowering (asmjit-emitted machine code) is per-arch.  The arm64
 # implementation is the original full lowerer; the x86_64 implementation
 # is being filled in op by op (start with stub that defers everything to
-# tier-1).  Selected by CMAKE_SYSTEM_PROCESSOR / CMAKE_OSX_ARCHITECTURES,
-# matching the same pattern used elsewhere in this file.
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+# tier-1).
+if(PHARO_TARGET_ARM64)
     list(APPEND VM_SOURCES src/vm/jit/sista/SistaLowering_arm64.cpp)
 else()
     list(APPEND VM_SOURCES src/vm/jit/sista/SistaLowering_x86_64.cpp)
@@ -95,7 +111,7 @@ endif()
 # SistaLowering above.  The arm64 path is the original Tier2Compiler.cpp;
 # the x86_64 sibling starts as a stub that bails every method to tier-1
 # and gets filled in op by op.
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+if(PHARO_TARGET_ARM64)
     list(APPEND VM_SOURCES src/vm/jit/Tier2Compiler_arm64.cpp)
 else()
     list(APPEND VM_SOURCES src/vm/jit/Tier2Compiler_x86_64.cpp)
@@ -231,7 +247,7 @@ endif()
 # CMake doesn't know the value of PHARO_JIT_ENABLED yet (it's set on
 # the target below), so use the same source-of-truth gate cmake does.
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" OR (DEFINED PHARO_JIT_ENABLED AND PHARO_JIT_ENABLED))
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+    if(PHARO_TARGET_ARM64)
         list(APPEND VM_SOURCES src/platform/jit_jmsize_arm64.cpp)
     else()
         list(APPEND VM_SOURCES src/platform/jit_jmsize_other.cpp)
@@ -258,7 +274,7 @@ endif()
 # baseline behavior is preserved; flip ON for benchmarking and correctness
 # tests (`-DPHARO_ASM_TRAMPOLINE=ON`).
 option(PHARO_ASM_TRAMPOLINE "Use hand-written ARM64 J2J trampoline" ON)
-if(PHARO_ASM_TRAMPOLINE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+if(PHARO_ASM_TRAMPOLINE AND PHARO_TARGET_ARM64)
     target_compile_definitions(PharoVMCore PUBLIC PHARO_ASM_TRAMPOLINE=1)
     message(STATUS "J2J trampoline: ARM64 hand-written")
 else()
@@ -381,19 +397,57 @@ if(PHARO_WITH_CRYPTO)
 endif()
 
 if(APPLE)
+    # Effective single target arch for the prebuilt-slice check below.  Only
+    # meaningful for a single-arch build (e.g. the x86_64-under-Rosetta dev
+    # cross-build); universal builds set _PHARO_ONE_ARCH empty and keep the
+    # original static-lib path.
+    set(_PHARO_ONE_ARCH "")
+    list(LENGTH CMAKE_OSX_ARCHITECTURES _PHARO_NARCH)
+    if(_PHARO_NARCH EQUAL 1)
+        set(_PHARO_ONE_ARCH ${CMAKE_OSX_ARCHITECTURES})
+    endif()
+
+    # Helper: does a prebuilt static .a contain _PHARO_ONE_ARCH?  Empty arch
+    # (universal/native build) => treat as present (original behavior).
+    function(_pharo_lib_has_arch _lib _out)
+        if(NOT _PHARO_ONE_ARCH)
+            set(${_out} TRUE PARENT_SCOPE)
+            return()
+        endif()
+        execute_process(COMMAND lipo -archs ${_lib}
+            OUTPUT_VARIABLE _archs OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(_archs MATCHES "(^| )${_PHARO_ONE_ARCH}( |$)")
+            set(${_out} TRUE PARENT_SCOPE)
+        else()
+            set(${_out} FALSE PARENT_SCOPE)
+        endif()
+    endfunction()
+
     # Link SDL2 static library with force_load to ensure all symbols are available for dlsym
     set(SDL2_LIBRARY ${CMAKE_SOURCE_DIR}/Frameworks/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/libSDL2.a)
-    if(EXISTS ${SDL2_LIBRARY})
+    _pharo_lib_has_arch(${SDL2_LIBRARY} _SDL2_OK)
+    if(EXISTS ${SDL2_LIBRARY} AND _SDL2_OK)
         # Force load all symbols from SDL2 so they're available via dlsym at runtime
         target_link_libraries(PharoVMCore "-Wl,-force_load,${SDL2_LIBRARY}")
         message(STATUS "Using SDL2 (force_load): ${SDL2_LIBRARY}")
+    else()
+        # No SDL2 slice for the target arch (x86_64 cross-build): headless only.
+        # SDL2 entry points are reached via dlsym, so a missing archive just
+        # disables GUI; headless eval/SUnit are unaffected.
+        message(STATUS "SDL2 slice for '${_PHARO_ONE_ARCH}' not in prebuilt .a — building headless (no GUI)")
     endif()
 
     # Link libffi static library
     set(LIBFFI_LIBRARY ${CMAKE_SOURCE_DIR}/Frameworks/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/libffi.a)
-    if(EXISTS ${LIBFFI_LIBRARY})
+    _pharo_lib_has_arch(${LIBFFI_LIBRARY} _LIBFFI_OK)
+    if(EXISTS ${LIBFFI_LIBRARY} AND _LIBFFI_OK)
         target_link_libraries(PharoVMCore ${LIBFFI_LIBRARY})
         message(STATUS "Using libffi: ${LIBFFI_LIBRARY}")
+    else()
+        # Fall back to the universal system libffi via the SDK .tbd stub
+        # (resolves through the dyld shared cache; works under Rosetta).
+        target_link_libraries(PharoVMCore ffi)
+        message(STATUS "libffi slice for '${_PHARO_ONE_ARCH}' not in prebuilt .a — using system -lffi")
     endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Linux: SDL2 + libffi via pkg-config (system packages).
