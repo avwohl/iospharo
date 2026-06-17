@@ -165,6 +165,41 @@ not the (sole) cause and the resume re-entry must be traced directly
 
 This is a smaller, localized C++/emit fix than path (A) — pursue it.
 
+UPDATE (box #25, 2026-06-16): the caller-resume-leak suspect is REFUTED —
+`SENDS=1 + PHARO_T1_NO_CALLER_RESUME=1` STILL HANGS (`3+4` never completes). So
+the non-progress is NOT in the JIT caller-resume re-entry; it persists even when
+post-send execution is forced into the interpreter. The loop is in the
+bail→materialize→chain-loop cycle itself.
+
+REFINED ROOT MODEL (definitive, from AsmjitT1.cpp:11321-11356 + the §2 result):
+- The x86 emit BAILS mid-method on inner sends (ExitSendCached), ExtSend, and
+  non-tail arith. `x86HasMidBail` (a term of `canSkipJ2JSave`) detects this — but
+  it is only COMPUTED for `numIC==0` methods (line 11328). For send-bearing
+  callees (numIC>0) no such analysis is done, and EVERY send-bearing callee bails
+  mid-method at its own inner sends.
+- A mid-method bail of a CROSS-METHOD-INLINED callee leaves the caller's J2J save
+  un-popped (the callee never reaches its return prelude). The comment at
+  11338-11340 documents exactly this leak→corruption hazard; `canSkipJ2JSave`/
+  leaf-only exists to admit ONLY callees that NEVER bail mid-method.
+- Therefore the leaf-only gate is FUNDAMENTALLY correct for the current x86 emit:
+  a send-bearing callee cannot be safely inlined because its inner sends bail.
+- arm64 admits send-bearing callees and survives the identical bail+materialize
+  churn (§2: 35458 materializes, completes); x86 does the same churn but its
+  resume-after-mid-method-bail of an inlined callee does NOT advance (18x more
+  materializes of the same save, then hang).
+
+So the two viable fixes remain, now sharply defined:
+  (A) nested in-JIT sends — make the inner sends NOT bail (inline-J2J / chain-loop
+      them in-JIT) so the inlined callee always reaches its return prelude.
+  (B) make x86's resume-after-mid-method-bail of an inlined callee ADVANCE like
+      arm64's — a control-flow fix in the chain-loop / materialize-resume.
+Either is a deep effort. The DECISIVE next instrument (needs lldb or a per-
+iteration chain-loop trace, NOT another env-combo box): catch the exact step
+where x86 re-materializes the same (caller,bcOff) without advancing, and diff the
+same point on arm64 (which advances). Refuted so far: double-pop, bail-leak,
+tail-send/resume-bcOff, materialize sp/bcOff, caller-resume leak, isStubOnEntry
+(not the core — send-bearing callees bail at their SENDS, not just stubs).
+
 ## 6. Validation
 
 - Primary metric: per-startup `jitMaterializeCount_` with SENDS-on must be within
