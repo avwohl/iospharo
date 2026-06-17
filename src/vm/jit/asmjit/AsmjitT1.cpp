@@ -505,11 +505,21 @@ static const int xmethod_atexit_install = []() {
 }();
 
 extern "C" uint64_t g_x86_xmethod_fires;
+// inner-send-bail-rate diagnosis: reached = runtime hits of the cross-method
+// inline-J2J admit (after IC hit); bitset = of those, how many had the
+// J2J_ENTRY_BIT set.  reached>>bitset => the inner-send IC is rarely upgraded to
+// J2J (the bail-rate cause), not a gate-reject.
+extern "C" uint64_t g_xadmit_reached = 0;
+extern "C" uint64_t g_xadmit_bitset  = 0;
 static const int x86_xmethod_counter_atexit = []() {
     if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_COUNTERS)) {
         std::atexit([]() {
-            fprintf(stderr, "[X86-XMETHOD] %llu cross-method inline-J2J fires\n",
-                    (unsigned long long)g_x86_xmethod_fires);
+            fprintf(stderr, "[X86-XMETHOD] %llu cross-method inline-J2J fires; "
+                    "admit reached=%llu bitset=%llu (bit-set rate %.1f%%)\n",
+                    (unsigned long long)g_x86_xmethod_fires,
+                    (unsigned long long)g_xadmit_reached,
+                    (unsigned long long)g_xadmit_bitset,
+                    g_xadmit_reached ? 100.0 * g_xadmit_bitset / g_xadmit_reached : 0.0);
             fflush(stderr);
         });
     }
@@ -2907,8 +2917,16 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 // Only canSkipJ2JSave CROSS-method sends use the new emit.
                 asmjit::Label notJ2J = a.new_label();
                 asmjit::Label selfRecAdmit = a.new_label();
+                if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_COUNTERS)) {
+                    a.mov(r10, asmjit::Imm((uint64_t)&g_xadmit_reached));
+                    a.inc(qword_ptr(r10));               // admit reached (IC hit)
+                }
                 a.bt(r8, asmjit::Imm(60));               // J2J_ENTRY_BIT?
                 a.jnc(notJ2J);
+                if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_COUNTERS)) {
+                    a.mov(r10, asmjit::Imm((uint64_t)&g_xadmit_bitset));
+                    a.inc(qword_ptr(r10));               // J2J_ENTRY_BIT was set
+                }
                 a.mov(r9, qword_ptr(rsi, 8));            // cached methodBits
                 a.cmp(r9, ptr(rdi, OFF_METHOD));         // self-rec?
                 a.je(selfRecAdmit);
