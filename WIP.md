@@ -1,3 +1,70 @@
+# RESUME POINT — 2026-06-17 (session: ExtSend port + send-bearing J2J bug)
+
+Branch **jit-x86** @ `3e3a12e6` (pushed to origin/jit-x86). arm64 battery ==
+`/tmp/battery_golden.txt` (verified). All AWS boxes terminated. Working tree clean
+except the pre-existing `third_party/asmjit` submodule dirt (untouched).
+
+## DONE + VALIDATED this session
+
+1. **ExtSend (0xEA) port** (task #22, knob `PHARO_T1_X86_EMIT_EXTSEND`, default-OFF).
+   - Increment A (`1f75e910`): naked ExtSend → real cached send (own IC slot) via
+     `isX86SendSite(op,prevOp)` single send-site predicate + `emitOne_x86`
+     nArgs-override. Increment B (`c9e4d4ca`): enable inline-J2J for ExtSend
+     (`j2jResumeBcOff = globalIdx + (extSend?2:1)` for the 2-byte op).
+   - **11x win** on self-recursive 3-arg (cfx26 142→13ms); flat-loop neutral.
+   - SUnit A/B (JIT-on knob-on vs interp): IDENTICAL on 15-class (2342 pass) AND
+     29-class (3694 pass) sets, 0 fail/error. arm64 battery==golden. Still behind
+     the GUI-gated `PHARO_X86_JIT` flip. Memory: jit-x86-extsend-port.
+
+2. **Send-bearing cross-method J2J corruption** (`PHARO_T1_X86_XMETHOD_SENDS`) =
+   TWO bugs (box-bisected; prior "nested" + workflow g_codeStartLabel/entryCursor
+   hypotheses REFUTED). Memory: jit-x86-sendbearing-two-bugs.
+   - **BUG-1 FIXED** (`eb1c2366`): SENDS gate dropped canSkipJ2JSave's
+     `!x86HasMidBail` → admitted mid-bailing callees. Stored `x86HasMidBail` in
+     JITMethod + gate-excluded it. MAX_IC=0 now correct (cfibt28=1346267),
+     x86-default==interp, arm64 golden. Reproduced even at MAX_IC=0 (proved it
+     wasn't the nesting).
+
+## OPEN — BUG-2 (task #24): x86 MAX_IC>=1 send-bearing runaway
+
+Resume `/tmp/cfibt_repro.st` (incc=`^self+1`, inct=`^(self+1) incc`, cfibt fib
+sending #inct; oracle **cfibt28=1346267**). SENDS=1 MAX_IC>=1 → ~1B steps, no
+result (even `3+4` startup corrupts).
+
+ROOT LAYER ISOLATED (ruled out, each by ground truth):
+  - chain-loop C++ inline-activate (arm64/x86 NEST patterns identical),
+  - caller-chain orphaning (materialize-before-activate didn't fix),
+  - resume bcToCode table (x86 #= bcToCode monotonic+correct: [5]=1697 [7]=2510),
+  - SP/receiver/retval (restored by shared C++ 27067-73 / 27158-59).
+REMAINING = **x86 EMIT operand-stack RESIDENCY across a send-bearing resume**:
+the method `#=` (sends 0x72@4, 0x72@6, recursive binary #= 0x66@7) resumes
+5,7,5,7… in a tight loop on x86, not arm64 — its recursion never terminates
+because the resumed operand stack is wrong. FSR x23-resident (arm64) vs
+memory-resident (x86) divergence.
+
+**EXACT NEXT STEP**: gdb on a fresh box at the #= precomputed-resume `JIT_CALL`
+(`Interpreter.cpp ~27234`, break when `savedMethod=="="`); dump `[sp-1..sp-4]`
+pre/post; compare x86 vs arm64; find the stale operand; port arm64's FSR operand
+discipline to the x86 send-bearing resume. FIVE localized C++ fixes already failed
+— do NOT re-chase the chain loop. Diagnostics committed + gated:
+`PHARO_J2J_NEST_TRACE` ([NEST]/[RESUME]/[EQ-DUMP], both arches).
+
+## Repro / harness quick-ref
+  - eval: `./build/test_load_image <image> eval "<expr>"` (EVAL-RESULT → STDERR;
+    the literal `eval` keyword is REQUIRED). Clean image: `/tmp/cleanimg/Pharo.image`
+    (stock pharo v10 is too old to prep a v13 image — reuse
+    `/tmp/harness/Pharo-prepped.image` for the SUnit runner).
+  - arm64 byte-identity: `eval "$(cat /tmp/battery.st)"` vs `/tmp/battery_golden.txt`.
+  - x86 box: `scripts/aws/provision.sh` (builds jit-x86); stop iospharo-idle.timer
+    + arm 3 keepalive loops right after SSH; `build/`=-O0, `build-opt/`=-O2; the
+    provision-time build lags my last push → `git reset --hard origin/jit-x86` +
+    rebuild. x86 JIT is `PHARO_X86_JIT=1` (default-OFF). Deterministic repro:
+    add `PHARO_DET_SCHED=1`.
+  - key commits: ExtSend 1f75e910/c9e4d4ca; BUG-1 eb1c2366; BUG-2 diagnostics
+    5cfaaa49/e010932f/38e58662; docs 3e3a12e6.
+
+---
+
 # WIP — JIT correctness: pass VM + SUnit tests (goal switched 2026-06-12)
 
 Goal (active /goal): **fix this JIT to pass vm and sunit tests.**
