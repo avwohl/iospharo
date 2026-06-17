@@ -27286,6 +27286,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                             cn(savedRecv).c_str(), rbc,
                                             (unsigned long long)sp[-1].rawBits(), cn(sp[-1]).c_str(),
                                             (unsigned long long)sp[-2].rawBits(), cn(sp[-2]).c_str());
+                                        // One-shot saved-frame + active-context chain dump
+                                        // deep in the runaway → names the scan-loop DRIVER.
+                                        if (g_resN == 180) {
+                                            fprintf(stderr, "[RES-STACK] frameDepth=%zu chainCallDepth=%d\n",
+                                                frameDepth_, chainCallDepth);
+                                            for (size_t f = frameDepth_; f-- > 0 && f + 16 >= frameDepth_; ) {
+                                                Oop sm = savedFrames_[f].savedMethod;
+                                                fprintf(stderr, "  [sf %zu] %s>>#%s\n", f,
+                                                    sm.isObject() && sm.rawBits() > 0x10000
+                                                        ? classNameOfMethod(sm).c_str() : "?",
+                                                    sm.isObject() && sm.rawBits() > 0x10000
+                                                        ? memory_.selectorOf(sm).c_str() : "?");
+                                            }
+                                        }
                                     }
                                 }
                                 // Direct resume — no hash lookup or codeOffsetForBC.
