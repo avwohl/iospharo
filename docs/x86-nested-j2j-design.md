@@ -48,15 +48,26 @@ them:
       nesting capability.
       => the fix is "fix x86's resume control flow", a smaller, different change.
 
-FIRST EXPERIMENT (one box, cheap, decisive): on arm64 AND x86, count
-`jitMaterializeCount_` per startup with send-bearing cross-method admitted vs not
-(arm64 already admits at MAX_IC=8; toggle via PHARO_T1_XMETHOD_MAX_IC=0 to get the
-leaf-only baseline). Add a one-line dump of `jitMaterializeCount_` at shutdown
-(the stat already exists; the JIT Stats block prints `materialize: count=`).
-  - If arm64 admit-on materialize count ≈ admit-off  -> case (A), arm64 nests.
-  - If arm64 admit-on materialize count explodes too  -> case (B); then check
-    whether arm64 HANGS or just runs slower (it doesn't hang -> x86 resume bug).
-Do NOT write the §4/§5 mechanism until this is answered; it picks the path.
+FIRST EXPERIMENT — DONE (arm64, local, 2026-06-16). Counted `materialize: count`
+on `3+4` startup with PHARO_T1_XMETHOD_MAX_IC=8 (admits send-bearing) vs =0
+(leaf-only):
+
+    arm64 MAX_IC=8 : materialize count = 35458  -> 3+4=7 (COMPLETES)
+    arm64 MAX_IC=0 : materialize count =   956  -> 3+4=7
+
+RESULT = **case (B)**. arm64 ALSO explodes the materialize count 37× when
+admitting send-bearing callees (so it does NOT nest in-JIT — both arches
+bail+materialize per inner send on cold ICs). But arm64 COMPLETES; x86 HANGS on
+the identical workload. Therefore the x86 failure is a CONTROL-FLOW defect in
+x86's materialize/resume cycle, NOT a missing nesting capability. **Pursue path
+(B), §5 — not the architectural path (A), §4.**
+
+Corollary: the materialize explosion is mostly STARTUP cold-IC churn (warm
+steady-state inner sends inline-J2J and don't exit to C++); arm64 survives it,
+x86 hangs in it. And since `materializeJ2JSaveIntoFrame` is SHARED C++ and both
+arches are V2, the divergence is in the x86 EMIT's exit-state (what the JIT
+leaves in OFF_SP/IP/DEPTH/CURSOR when a send-bearing callee's inner send exits
+ExitSendCached), NOT in the shared materialize.
 
 ## 3. Current architecture (what a send compiles to, and the resident state)
 
@@ -125,18 +136,34 @@ after every shared-C++ commit):
 
 ## 5. Design — path (B): fix x86 resume control flow (if arm64 bails-but-works)
 
-If the experiment shows arm64 also materializes per inner send but does NOT hang,
-then x86's `materialize → resume` cycle has a control-flow defect (not a missing
-nesting capability). The save DATA is correct (exonerated), so the defect is in
-WHERE the resume lands or whether it advances:
-- Suspect: the resume after a materialized send-bearing callee re-enters JIT and
-  re-bails at the SAME inner send without advancing (infinite), vs the interp
-  running the inner send and advancing.
-- Instrument: at the resume entry, log (caller, callee, ip-before, ip-after-one-
-  step) for a send-bearing callee post-materialize; confirm forward progress.
-- Compare the exact same trace on arm64 (which works) to see the divergence.
-This path is a smaller, localized C++ fix in `tryJITResumeInCaller` / the chain
-loop — but only pursue it if the §2 experiment points here.
+CONFIRMED this is the path (§2 = case B). The save DATA is correct (exonerated),
+so the defect is that x86's resume-after-materialize does NOT make forward
+progress — it re-materializes the same saves. Evidence (local arm64 vs box x86,
+both PHARO_J2J_MAT_LOG, `3+4`):
+
+    save              arm64 (COMPLETES)   x86 (HANGS)
+    hash bcOff=2            7427             134076   (~18x, still unfinished)
+    hash bcOff=5           12435             116402
+
+x86 materializes a single save ~18x more than arm64 materializes it across the
+WHOLE completed startup — i.e. x86 is stuck re-materializing without advancing.
+
+PRIME SUSPECT: the documented x86 caller-resume operand-stack leak
+(`PHARO_T1_NO_CALLER_RESUME` in debug_vars.h: "the x86 tier-1 caller-resume
+re-entry has a ~1-word-per-send operand-stack leak"). When a materialized
+send-bearing callee resumes via x86's BUGGY `tryJITResumeInCaller`, the per-send
+leak accumulates -> sp drifts -> non-progress / re-bail loop -> hang. arm64's
+caller-resume has no such leak, so it advances and completes.
+
+DECISIVE TEST (binary, one box): run `SENDS=1` WITH `PHARO_T1_NO_CALLER_RESUME=1`
+(forces interp-after-send, bypassing the buggy x86 caller-resume). If startup
+COMPLETES (`3+4`=7), the caller-resume leak IS the SENDS hang cause -> the fix is
+to repair the x86 caller-resume sp protocol (or ship SENDS only with caller-resume
+off, accepting the interp-after-send perf cost). If it STILL hangs, the leak is
+not the (sole) cause and the resume re-entry must be traced directly
+(ip-before/ip-after per resume, vs arm64).
+
+This is a smaller, localized C++/emit fix than path (A) — pursue it.
 
 ## 6. Validation
 
