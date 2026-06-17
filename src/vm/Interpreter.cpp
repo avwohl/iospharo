@@ -26868,6 +26868,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 uint32_t codeOff = savedJitMethod->codeOffsetForBC(pastSendOff);
                                 if (codeOff > 0 && codeOff < savedJitMethod->codeSize)
                                     savedResumeEntry = savedJitMethod->codeStart() + codeOff;
+                                // BUG-2 resume trace (PHARO_J2J_NEST_TRACE): the
+                                // caller's resume point after a chain-loop send.
+                                // pastSendOff must be PAST the send; if codeOff is
+                                // wrong/0 the resumed caller re-executes (the
+                                // runaway).  Diff arm64 vs x86 for the same method.
+                                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_J2J_NEST_TRACE), 0)) {
+                                    static int g_rtN = 0;
+                                    if (++g_rtN <= 90)
+                                        fprintf(stderr, "[RESUME #%d] caller=#%s pastSendOff=%u codeOff=%u codeSize=%u entry=%s\n",
+                                            g_rtN,
+                                            savedMethod.isObject() ? memory_.selectorOf(savedMethod).c_str() : "?",
+                                            pastSendOff, codeOff, savedJitMethod->codeSize,
+                                            savedResumeEntry ? "precomp" : "NULL->tryResume");
+                                }
                                 if (__builtin_expect(g_debug.t1ResumeTosLog, 0)) {
                                     std::string cSel = memory_.selectorOf(savedMethod);
                                     if (cSel == "parseAssignment") {
