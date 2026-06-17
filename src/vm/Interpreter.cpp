@@ -25393,26 +25393,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // enableJ2J re-bases the cursor before every re-entry.
         state.j2jDepth = 0;
         state.j2jSaveCursor = reinterpret_cast<uint8_t*>(stateSaves);
-#if defined(__x86_64__) || defined(_M_X64)
-        // x86 send-bearing cross-method fix (PHARO_T1_X86_XMETHOD_SENDS): the
-        // return prelude (AsmjitT1.cpp:1704/1734) decides poppability by
-        // comparing the live cursor to OFF_J2J_ENTRY_CURSOR (and depth to
-        // entryDepth).  enableJ2J (25350-25351) keeps that prelude-pop baseline
-        // in lockstep with the depth/cursor reset, but materializeJ2J historically
-        // reset only depth+cursor.  On the SENDS path a COLD inner send
-        // (cfibt->inct->incc, incc's IC not yet J2J-warm) bails to C++ and
-        // materializes while the OUTER caller's save is pending; if the entry
-        // baseline is left stale, the next return prelude pops against a wrong
-        // entryCursor -> resumes the wrong frame -> runaway re-execution
-        // (cfibt(3): 781M steps / 183K materializes / vanished result).  arm64
-        // keeps the cursor FSR-resident (x23) + manages entryDepth/entryCursor in
-        // emit (6783-7040), so it never needs this and the block compiles out.
-        // Gated on the knob so x86 default (leaf-only) stays byte-identical.
-        if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_SENDS)) {
-            state.j2jEntryDepth = 0;
-            state.j2jEntryCursor = state.j2jSaveCursor;
-        }
-#endif
         if (state.jitMethod) {
             state.method = Oop::fromRawBits(
                 state.jitMethod->compiledMethodOop);

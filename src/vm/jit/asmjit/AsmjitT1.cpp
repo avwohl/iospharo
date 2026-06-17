@@ -3027,6 +3027,20 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                         -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, isStubOnEntry)));
                     a.test(r10, r10);
                     a.jnz(notJ2J);                        // stub-on-entry -> bail
+                    // x86HasMidBail exclusion (THE send-bearing-bug fix, box
+                    // 2026-06-17): the SENDS gate dropped canSkipJ2JSave, which
+                    // folds in !x86HasMidBail.  Without this check the gate admits
+                    // callees that EXIT_ARITH_OVERFLOW / bail on a NON-TAIL inline
+                    // arith (or an unported ExtSend) mid-body -> the callee
+                    // re-enters interp leaving the caller's pushed J2J save
+                    // un-popped -> runaway re-execution (cfibt(3): 781M steps,
+                    // 183K materializes, vanished result; reproduced even at
+                    // MAX_IC=0, proving it was the missing mid-bail exclusion, not
+                    // the send-bearing nesting itself).  Mirrors canSkipJ2JSave.
+                    a.movzx(r10d, byte_ptr(r9,
+                        -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, x86HasMidBail)));
+                    a.test(r10, r10);
+                    a.jnz(notJ2J);                        // mid-bailing callee -> bail
                 } else {
                 a.movzx(r10d, byte_ptr(r9,
                     -(int)sizeof(JITMethod) + (int)offsetof(JITMethod, canSkipJ2JSave)));
@@ -11440,7 +11454,13 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         // V2 flip.  arm64 is unaffected either way (x86HasMidBail stays false:
         // arm64 emits ExtSend, and this block never ran there).
 #if defined(__x86_64__) || defined(_M_X64)
-        if (isReal && !jm->canBailMidMethod && jm->numICEntries == 0) {
+        // Compute for ALL real methods (was numICEntries==0 only): canSkipJ2JSave
+        // ANDs numIC==0 so this is a no-op there, but the SENDS-gate
+        // (PHARO_T1_X86_XMETHOD_SENDS, numIC<=MAX_IC) needs x86HasMidBail for
+        // send-bearing callees too — a send-bearing method with a non-tail
+        // mid-arith (e.g. inct `^(self+1) incc`: the self+1 precedes the send)
+        // can EXIT_ARITH_OVERFLOW mid-body and leak the caller's J2J save.
+        if (isReal && !jm->canBailMidMethod) {
             bool prevArith = false;
             forEachRealOpcode(bc, bcLen, [&](size_t, uint8_t op) {
                 // ExtSend/ExtSuperSend (0xEA/0xEB): real dispatched sends that
@@ -11464,6 +11484,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             });
         }
 #endif
+        jm->x86HasMidBail = x86HasMidBail;   // stored for the SENDS-gate (arm64: always false)
         jm->canSkipJ2JSave = isReal
                               && (forceSaveless
                                   || (!jm->canBailMidMethod

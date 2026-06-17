@@ -254,6 +254,17 @@ struct JITMethod {
                                     // a method — Eδ.2 will use this to emit a
                                     // direct br/ret pair at the IC HIT inline-J2J
                                     // site, saving ~12-15 instructions per call.
+    bool        x86HasMidBail;      // x86-only: the body emits a MID-method bail
+                                    // (an ExtSend(0xEA)/ExtSuperSend, or a non-tail
+                                    // inline-arith special 0x60-0x6F that can
+                                    // EXIT_ARITH_OVERFLOW before its return).  Such
+                                    // a callee, if cross-method inline-J2J'd, can
+                                    // re-enter the interp mid-body leaving its
+                                    // caller's pushed J2J save un-popped -> runaway
+                                    // re-execution.  canSkipJ2JSave already folds
+                                    // this in (numIC==0 only); stored separately so
+                                    // the SENDS-gate (numIC<=MAX_IC) can exclude
+                                    // mid-bailing callees too.  Always false on arm64.
 
     // pad to 4-byte-align totalSize
 
