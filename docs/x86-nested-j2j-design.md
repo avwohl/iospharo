@@ -225,6 +225,30 @@ more than arm64 (181K vs 35K). The gap is NOT a single unset bit or a binary
 "x86 doesn't nest"; it is a diffuse mid-method-bail-rate difference (x86's emit
 bails mid-method on more shapes / its inner-inner sends inline-J2J less deeply).
 
+EMIT-POLISH START (box #29, commit fcaf8f04): added a stencil-fall exit-reason
+breakdown to the JIT stats. SENDS=1 `3+4`:
+    stencil-fall: cached=401941 send=417361 j2j=0 other=54663
+So the mid-method bails are SEND-dominated (ExitSendCached 402K + ExitSend 417K =
+819K of 874K); arith-overflow ("other") is minor (54K). The `j2j=0` confirms it's
+inner SENDS bailing, not J2J-call mechanics.
+
+HIGHEST-LEVERAGE LEVER = port x86 ExtSend (0xEA) to a real in-JIT send. x86 does
+NOT emit ExtSend (it bails -> ExitSend; arm64 emits the bundled ExtA/B+ExtSend).
+This helps the DEFAULT leaf-only JIT too (ExtSend-heavy methods currently bail /
+are excluded from canSkipJ2JSave via x86HasExtSend), not just send-bearing.
+
+SCOPE (substantial, careful — NOT a quick edit, do NOT rush): ExtSend sites
+currently get NO IC slot (numSendSites/isPhase4SendOp OMITS 0xEA, AsmjitT1 ~11341),
+and inline-J2J REQUIRES an IC slot (J2J_ENTRY_BIT + cached method). So the port
+needs: (1) count ExtSend/ExtSuperSend sites in numSendSites + size the IC buffer
+for them; (2) decode the selector literal-index + nArgs from extA/extB at the
+ExtSend site; (3) emit the IC-probe + inline-J2J + dispatch (reuse the
+isPhase4SendOp machinery at AsmjitT1 ~2791, parameterized by the decoded
+selector/nArgs instead of the opcode); (4) the literal-selector lookup. x86-only
+emit (arm64 unaffected), but correctness-sensitive — VALIDATE with the JIT-on-vs-
+interp SUnit A/B (the harness exists) to catch any miscompile before trusting it.
+This is a focused multi-step session, not an end-of-turn change.
+
 ASSESSMENT: closing the residual 5x is a fine-grained, multi-pronged emit effort
 (reduce x86 mid-method bails: ExtSend coverage, deeper inner-inner J2J nesting,
 arith-overflow tail handling) on a feature that is opt-in, default-off,
