@@ -28736,6 +28736,15 @@ PrimitiveResult Interpreter::primitiveDefineFunction(int argCount) {
                                      static_cast<unsigned int>(paramCount),
                                      returnType, paramTypes);
     if (status != FFI_OK) {
+        if (GET_DEBUG_BOOL(PHARO_FFI_TRACE)) {
+            static int n = 0;
+            if (++n <= 8)
+                fprintf(stderr, "[FFI-PREP-FAIL] status=%d abiToUse=%d FFI_DEFAULT_ABI=%d "
+                    "paramCount=%zu returnType=%p rt_size=%zu paramTypes[0]=%p\n",
+                    (int)status, (int)abiToUse, (int)FFI_DEFAULT_ABI, paramCount,
+                    (void*)returnType, returnType ? returnType->size : 0,
+                    paramCount ? (void*)paramTypes[0] : nullptr);
+        }
         free(paramTypes);
         free(cif);
         return PrimitiveResult::Failure;

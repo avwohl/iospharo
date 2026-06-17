@@ -444,10 +444,29 @@ if(APPLE)
         target_link_libraries(PharoVMCore ${LIBFFI_LIBRARY})
         message(STATUS "Using libffi: ${LIBFFI_LIBRARY}")
     else()
-        # Fall back to the universal system libffi via the SDK .tbd stub
-        # (resolves through the dyld shared cache; works under Rosetta).
+        # Fall back to the universal system libffi (SDK .tbd → dyld shared cache;
+        # works under Rosetta).  CRUCIAL: also compile against the SDK's
+        # ARCH-AWARE ffi headers (its ffitarget.h dispatches arm64/x86) with
+        # precedence over the xcframework's arm64-only ffitarget.h.  Otherwise an
+        # x86 build would compile FFI_DEFAULT_ABI as arm64's FFI_SYSV (=1) while
+        # the x86 system libffi runtime expects FFI_UNIX64 (=2) — ffi_prep_cif
+        # then returns FFI_BAD_ABI and every FFI call fails (header/runtime ABI
+        # mismatch).  BEFORE => this dir wins over the xcframework Headers above.
         target_link_libraries(PharoVMCore ffi)
-        message(STATUS "libffi slice for '${_PHARO_ONE_ARCH}' not in prebuilt .a — using system -lffi")
+        # Resolve the real SDK path (CMAKE_OSX_SYSROOT can be empty; modern macOS
+        # has no /usr/include).  The SDK ships arch-aware ffi headers.
+        set(_PHARO_SDK "${CMAKE_OSX_SYSROOT}")
+        if(NOT _PHARO_SDK OR NOT EXISTS "${_PHARO_SDK}/usr/include/ffi/ffi.h")
+            execute_process(COMMAND xcrun --show-sdk-path
+                OUTPUT_VARIABLE _PHARO_SDK OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        endif()
+        if(EXISTS "${_PHARO_SDK}/usr/include/ffi/ffi.h")
+            target_include_directories(PharoVMCore BEFORE PUBLIC
+                "${_PHARO_SDK}/usr/include/ffi")
+            message(STATUS "libffi slice for '${_PHARO_ONE_ARCH}' not in prebuilt .a — using system -lffi + SDK arch-aware ffi headers (${_PHARO_SDK})")
+        else()
+            message(WARNING "libffi: no SDK ffi headers found; x86 FFI ABI may be wrong (using arm64 xcframework headers)")
+        endif()
     endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Linux: SDL2 + libffi via pkg-config (system packages).
