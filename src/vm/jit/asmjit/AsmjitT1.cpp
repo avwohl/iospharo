@@ -2818,10 +2818,12 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     }
     // extSendEmit: the caller (the emit loop) is asking us to emit a NAKED
     // ExtSend (0xEA) as a real cached send, with nArgs decoded from the 2-byte
-    // descriptor and passed via sendNArgsOverride.  It reuses the entire send
-    // body below EXCEPT the inline-J2J fast paths (whose resume override bakes a
-    // 1-byte-send resume offset that's wrong for the 2-byte ExtSend); those are
-    // gated off with !extSendEmit.
+    // descriptor and passed via sendNArgsOverride.  It reuses the ENTIRE send
+    // body below, including the inline-J2J fast paths — the only adjustment is
+    // j2jResumeBcOff = globalIdx+2 (vs +1) so the J2J save/resume + resume
+    // override point at the byte after the 2-byte op.  For a normal 1-byte send
+    // sendNArgsOverride is -1, extSendEmit is false, and j2jResumeBcOff reduces
+    // to globalIdx+1 -> byte-identical.
     bool extSendEmit = (op == SistaV1::ExtSend) && (sendNArgsOverride >= 0);
     if (isPhase4SendOp(op) || extSendEmit) {
         int nArgs = (sendNArgsOverride >= 0) ? sendNArgsOverride : sendNArgs(op);
@@ -2865,13 +2867,22 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // jmps to; bound just before endOfSend below).  Declared always so
             // the V2 push can reference it; only emitted/bound under V2.
             asmjit::Label resumeAfterCall = a.new_label();
+            // Resume bytecode offset for the inline-J2J save/resume: where the
+            // CALLER continues after this send returns = the byte AFTER the send
+            // opcode.  A normal 1-byte send resumes at globalIdx+1; the 2-byte
+            // ExtSend resumes at globalIdx+2 (the C++ caller-resume computes the
+            // same IP from the bytecode length, so the resume-override key, the
+            // packed-bcOff in the V2 save, and the V1 resumeAddr label must all
+            // use this).  Used everywhere the J2J push/override encodes the
+            // resume point.
+            const int j2jResumeBcOff = globalIdx + (extSendEmit ? 2 : 1);
             // V2 emit-time gate: the packed resumeAddr carries bcOff in bits
             // 48-59 (<=0xFFF) and nArgs in bits 60-63 (<=0xF).  A send site that
             // would truncate must NOT take the inline-J2J fast path (mirror arm64
             // 6959).  V1 has no such limit.
             bool j2jSiteOk = true;
 #if PHARO_J2J_SAVE_V2
-            j2jSiteOk = ((globalIdx + 1) <= 0xFFF) && (nArgs <= 0xF);
+            j2jSiteOk = (j2jResumeBcOff <= 0xFFF) && (nArgs <= 0xF);
 #endif
             (void)resumeAfterCall; (void)j2jSiteOk;
 
@@ -2934,7 +2945,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // cold/non-self/full-stack → the normal getter/setter/dispatch path.
             // Regs here: rax=send receiver, rcx=sp, rsi=icDataPtr, r8=extras;
             // the bail checks clobber only r9/r10/r11 before notJ2J.
-            if (j2jSiteOk && g_emitX86Xmethod && !g_emitIsBlock && !extSendEmit) {
+            if (j2jSiteOk && g_emitX86Xmethod && !g_emitIsBlock) {
                 // ===== Increment 1: cross-method-capable inline-J2J =====
                 // Admit self-rec OR a canSkipJ2JSave cross-method callee (no
                 // send + no cond-jump bail -> only the clean return-prelude path
@@ -3075,7 +3086,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
                 a.lea(rdx, ptr(resumeAfterCall));
                 a.mov(r11, asmjit::Imm(((uint64_t)nArgs << 60)
-                                       | ((uint64_t)(globalIdx + 1) << 48)));
+                                       | ((uint64_t)j2jResumeBcOff << 48)));
                 a.or_(rdx, r11);
                 a.mov(ptr(r9, JSV_RESUMEADDR), rdx);     // packed resumeAddr
                 emitClosurePush(a, r9, JSV_CLOSURE, rdx);  // knob-gated no-op; clobbers rdx
@@ -3086,10 +3097,11 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);
                 a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, 16), rdx);
                 a.mov(rdx, ptr(rdi, OFF_METHOD));
-                a.add(rdx, asmjit::Imm(bcOffsetFromMethObj + 1));
+                a.add(rdx, asmjit::Imm(bcOffsetFromMethObj
+                                       + (extSendEmit ? 2 : 1)));
                 a.mov(ptr(r9, 24), rdx);                 // ip (CALLER resume, for materialize)
                 a.mov(rdx, ptr(rdi, OFF_JITMETHOD)); a.mov(ptr(r9, 32), rdx); // CALLER jitMethod
-                a.lea(rdx, ptr(bcLabels[globalIdx + 1]));
+                a.lea(rdx, ptr(bcLabels[j2jResumeBcOff]));
                 a.mov(ptr(r9, 40), rdx);                 // resumeAddr
                 a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));
                 a.add(r9, asmjit::Imm(56));
@@ -3170,7 +3182,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
                 a.lea(rdx, ptr(resumeAfterCall));
                 a.mov(r11, asmjit::Imm(((uint64_t)nArgs << 60)
-                                       | ((uint64_t)(globalIdx + 1) << 48)));
+                                       | ((uint64_t)j2jResumeBcOff << 48)));
                 a.or_(rdx, r11);
                 a.mov(ptr(r9, JSV_RESUMEADDR), rdx);     // packed resumeAddr
                 emitClosurePush(a, r9, JSV_CLOSURE, rdx);
@@ -3180,10 +3192,11 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);
                 a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, 16), rdx);
                 a.mov(rdx, ptr(rdi, OFF_METHOD));
-                a.add(rdx, asmjit::Imm(bcOffsetFromMethObj + 1));
+                a.add(rdx, asmjit::Imm(bcOffsetFromMethObj
+                                       + (extSendEmit ? 2 : 1)));
                 a.mov(ptr(r9, 24), rdx);                 // ip
                 a.mov(rdx, ptr(rdi, OFF_JITMETHOD)); a.mov(ptr(r9, 32), rdx); // jitMethod
-                a.lea(rdx, ptr(bcLabels[globalIdx + 1]));
+                a.lea(rdx, ptr(bcLabels[j2jResumeBcOff]));
                 a.mov(ptr(r9, 40), rdx);                 // resumeAddr
                 a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));
                 a.add(r9, asmjit::Imm(56));
@@ -3204,8 +3217,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.and_(r10, r11);
                 a.jmp(r10);                              // entryAddr (self code)
                 a.bind(notJ2J);
-            } else if (j2jSiteOk && g_emitX86J2JOk && !g_emitIsBlock
-                       && !extSendEmit) {
+            } else if (j2jSiteOk && g_emitX86J2JOk && !g_emitIsBlock) {
                 // Default-on self-rec push: dual V1/V2 record via the
                 // #if PHARO_J2J_SAVE_V2 branch in the push below.
                 asmjit::Label notJ2J = a.new_label();
@@ -3227,7 +3239,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, JSV_TEMPBASE), rdx);
                 a.lea(rdx, ptr(resumeAfterCall));
                 a.mov(r11, asmjit::Imm(((uint64_t)nArgs << 60)
-                                       | ((uint64_t)(globalIdx + 1) << 48)));
+                                       | ((uint64_t)j2jResumeBcOff << 48)));
                 a.or_(rdx, r11);
                 a.mov(ptr(r9, JSV_RESUMEADDR), rdx);     // packed resumeAddr
                 emitClosurePush(a, r9, JSV_CLOSURE, rdx);
@@ -3238,10 +3250,11 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(rdx, ptr(rdi, OFF_RECEIVER)); a.mov(ptr(r9, 8), rdx);   // receiver
                 a.mov(rdx, ptr(rdi, OFF_TEMPBASE)); a.mov(ptr(r9, 16), rdx);  // tempBase
                 a.mov(rdx, ptr(rdi, OFF_METHOD));
-                a.add(rdx, asmjit::Imm(bcOffsetFromMethObj + 1));
+                a.add(rdx, asmjit::Imm(bcOffsetFromMethObj
+                                       + (extSendEmit ? 2 : 1)));
                 a.mov(ptr(r9, 24), rdx);                 // ip (resume bytecode, for materialize)
                 a.mov(rdx, ptr(rdi, OFF_JITMETHOD)); a.mov(ptr(r9, 32), rdx); // jitMethod
-                a.lea(rdx, ptr(bcLabels[globalIdx + 1]));
+                a.lea(rdx, ptr(bcLabels[j2jResumeBcOff]));
                 a.mov(ptr(r9, 40), rdx);                 // resumeAddr (post-send code)
                 a.mov(dword_ptr(r9, 48), asmjit::Imm(nArgs));   // sendArgCount
                 a.add(r9, asmjit::Imm(56));
@@ -3426,7 +3439,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // to endOfSend -> next bytecode.  Bound only when this site emitted an
             // inline-J2J push (same gate), so resumeAfterCall is never an unbound
             // dangling reference.
-            if (j2jSiteOk && g_emitX86J2JOk && !g_emitIsBlock && !extSendEmit) {
+            if (j2jSiteOk && g_emitX86J2JOk && !g_emitIsBlock) {
                 a.bind(resumeAfterCall);
                 a.mov(rcx, ptr(rdi, OFF_SP));            // = savedSp (prelude restored it)
                 if (nArgs > 0) a.sub(rcx, asmjit::Imm(8 * nArgs));
@@ -3445,7 +3458,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 }
                 if (g_resumeOverridesPtr)
                     g_resumeOverridesPtr->emplace_back(
-                        (uint32_t)globalIdx + 1, resumeAfterCall);
+                        (uint32_t)j2jResumeBcOff, resumeAfterCall);
             }
 #endif
             a.bind(endOfSend);
@@ -9627,14 +9640,15 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 // cached send instead of the generic mid-method bail below
                 // (PHARO_T1_X86_EMIT_EXTSEND).  Reuses the isPhase4SendOp send
                 // machinery in emitOne_x86 via an explicit nArgs override (the
-                // naked descriptor's low 3 bits, extB==0).  inline-J2J is
-                // suppressed at this site (emitOne_x86 keys off op==ExtSend):
-                // the 2-byte op resumes at globalIdx+2 through bcToCode, not the
-                // 1-byte resume-override the J2J prelude bakes.  The IC-probe +
-                // getter/setter/returnsSelf + dispatchCached/miss all emit, so
-                // ExtSend-bearing methods stay fully JIT'd.  Consumes its own IC
-                // slot (siteIdx++), kept in lock-step with isX86SendSite at the
-                // numSendSites/selBits/bcOffsets counting sites.
+                // naked descriptor's low 3 bits, extB==0).  The FULL send body
+                // emits — IC-probe + getter/setter/returnsSelf + inline-J2J +
+                // dispatchCached/miss — with the J2J resume point set to
+                // globalIdx+2 (the byte after the 2-byte op) via j2jResumeBcOff
+                // inside emitOne_x86, so the cross-method inline-J2J win (the
+                // 8.7x cfibx lever) extends to 3+arg / high-literal sends.
+                // Consumes its own IC slot (siteIdx++), kept in lock-step with
+                // isX86SendSite at the numSendSites/selBits/bcOffsets counting
+                // sites.
                 if (op == SistaV1::ExtSend && !wasExtPrefix
                         && GET_DEBUG_BOOL(PHARO_T1_X86_EMIT_EXTSEND)) {
                     int extNArgs = bcReal[i + 1] & 0x07;
