@@ -193,12 +193,30 @@ So the two viable fixes remain, now sharply defined:
       them in-JIT) so the inlined callee always reaches its return prelude.
   (B) make x86's resume-after-mid-method-bail of an inlined callee ADVANCE like
       arm64's — a control-flow fix in the chain-loop / materialize-resume.
-Either is a deep effort. The DECISIVE next instrument (needs lldb or a per-
-iteration chain-loop trace, NOT another env-combo box): catch the exact step
-where x86 re-materializes the same (caller,bcOff) without advancing, and diff the
-same point on arm64 (which advances). Refuted so far: double-pop, bail-leak,
-tail-send/resume-bcOff, materialize sp/bcOff, caller-resume leak, isStubOnEntry
-(not the core — send-bearing callees bail at their SENDS, not just stubs).
+Either is a deep effort.
+
+UPDATE (box #27, lldb/sample + isStubOnEntry test, 2026-06-17): the "hang" is
+BOUNDED EXTREME THRASH, not an infinite loop. gdb-sampling the SENDS=1 `3+4`
+process: it RAN to "Test Complete" (742M-828M bytecode steps) — it does not spin
+forever, it just does a catastrophic amount of materialize work. Materialize
+counts (3+4 startup):
+    SENDS=0 (leaf-only):                7      (correct, EVAL-RESULT=7)
+    SENDS=1 (x86):                 182569      (no EVAL-RESULT — lost in thrash)
+    arm64 MAX_IC=8:                 35458      (completes)
+So admitting send-bearing callees takes materializes from 7 to 182569 (~26000x);
+arm64's admit also explodes (35458) but is ~5x LESS than x86's AND completes. The
+isStubOnEntry exclusion (committed e2d3ec6d, a correct arm64-mirror, arm64-safe)
+did NOT reduce it (182569 ≈ before) — stubs are not the source.
+
+THE REAL GAP: x86's inner sends (from a J2J-entered send-bearing callee) bail to
+C++ + materialize ~5x more often than arm64's. arm64 keeps more inner sends IN-JIT
+(nested inline-J2J), so it materializes 5x less and completes. So path (A) (nested
+in-JIT sends) IS the lever after all — but framed as a BAIL-RATE gap, not a binary
+"x86 doesn't nest". Next: instrument the inner-send admit (does it inline-J2J or
+ExitSendCached?) for a J2J-entered callee on x86 vs arm64; find why x86 bails 5x
+more (the J2J-entry-bit / resident-state at the inner send site). Refuted so far:
+double-pop, bail-leak, tail-send/resume-bcOff, materialize sp/bcOff, caller-resume
+leak, isStubOnEntry, "infinite loop" (it's bounded thrash).
 
 ## 6. Validation
 
