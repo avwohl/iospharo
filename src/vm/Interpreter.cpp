@@ -27264,21 +27264,28 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 // Diff x86-SENDS=1 (broken) vs arm64-default (works)
                                 // at the same #= resume to find the stale operand.
                                 if (__builtin_expect(GET_DEBUG_BOOL(PHARO_J2J_NEST_TRACE), 0)
-                                        && savedMethod.isObject()
-                                        && memory_.selectorOf(savedMethod) == "=") {
-                                    static int g_eqOpndN = 0;
-                                    if (++g_eqOpndN <= 48) {
+                                        && savedMethod.isObject()) {
+                                    static int g_resN = 0;
+                                    if (++g_resN <= 256) {
                                         Oop* sp = stackPointer_;
                                         uint32_t rbc = static_cast<uint32_t>(
                                             instructionPointer_ - savedBcStart);
-                                        fprintf(stderr, "[EQ-OPND #%d] rbc=%u sp=%p tos=0x%llx "
-                                            "[-2]=0x%llx [-3]=0x%llx [-4]=0x%llx recv=0x%llx\n",
-                                            g_eqOpndN, rbc, (void*)sp,
-                                            (unsigned long long)sp[-1].rawBits(),
-                                            (unsigned long long)sp[-2].rawBits(),
-                                            (unsigned long long)sp[-3].rawBits(),
-                                            (unsigned long long)sp[-4].rawBits(),
-                                            (unsigned long long)savedRecv.rawBits());
+                                        auto cn = [&](Oop o) -> std::string {
+                                            if (o.isSmallInteger()) return "SmI";
+                                            if (!o.isObject() || o.rawBits() < 0x10000) return "imm";
+                                            return memory_.classNameOf(o);
+                                        };
+                                        // [RES]: per-resume caller + recv class + post-send
+                                        // bcOff + operand TOS/[-2].  Reveals the corrupted
+                                        // send-bearing startup scan-loop (BUG-2): the loop
+                                        // method (OSPlatform / SmalltalkImage arg-scan) whose
+                                        // control operand goes stale at its J2J resume.
+                                        fprintf(stderr, "[RES #%d] caller=#%s recvCls=%s rbc=%u "
+                                            "tos=0x%llx(%s) [-2]=0x%llx(%s)\n",
+                                            g_resN, memory_.selectorOf(savedMethod).c_str(),
+                                            cn(savedRecv).c_str(), rbc,
+                                            (unsigned long long)sp[-1].rawBits(), cn(sp[-1]).c_str(),
+                                            (unsigned long long)sp[-2].rawBits(), cn(sp[-2]).c_str());
                                     }
                                 }
                                 // Direct resume — no hash lookup or codeOffsetForBC.
