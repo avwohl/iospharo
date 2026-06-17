@@ -26881,6 +26881,21 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                             savedMethod.isObject() ? memory_.selectorOf(savedMethod).c_str() : "?",
                                             pastSendOff, codeOff, savedJitMethod->codeSize,
                                             savedResumeEntry ? "precomp" : "NULL->tryResume");
+                                    // One-shot bytecode + bcToCode dump for the looping #= (codeSize 4164/8172).
+                                    static bool g_dumpedEq = false;
+                                    if (!g_dumpedEq && savedMethod.isObject()
+                                            && memory_.selectorOf(savedMethod) == "=") {
+                                        g_dumpedEq = true;
+                                        const uint32_t* tbl = savedJitMethod->bcToCodeTable();
+                                        uint32_t nbc = savedJitMethod->numBytecodes;
+                                        fprintf(stderr, "[EQ-DUMP] numBC=%u bc=", nbc);
+                                        for (uint32_t i = 0; i < nbc && i < 24; i++)
+                                            fprintf(stderr, "%02x ", savedBcStart[i]);
+                                        fprintf(stderr, "\n[EQ-DUMP] bcToCode=");
+                                        for (uint32_t i = 0; i <= nbc && i < 25; i++)
+                                            fprintf(stderr, "[%u]=%u ", i, tbl ? tbl[i] : 0);
+                                        fprintf(stderr, "\n");
+                                    }
                                 }
                                 if (__builtin_expect(g_debug.t1ResumeTosLog, 0)) {
                                     std::string cSel = memory_.selectorOf(savedMethod);
