@@ -1136,6 +1136,33 @@ inline bool isPhase4SendOp(uint8_t op) {
     return op >= 0x70 && op <= 0xAF;
 }
 
+// A NAKED ExtSend (0xEA with no immediately-preceding ExtendA/B prefix) that
+// the x86 emit treats as a real in-JIT cached send under
+// PHARO_T1_X86_EMIT_EXTSEND.  `prevOp` is the immediately-preceding REAL
+// opcode (0 if none).  On arm64 / knob-off this is always false, so the
+// shared send-site predicate below reduces to isPhase4SendOp and every
+// counting site stays byte-identical.
+inline bool isX86NakedExtSend(uint8_t op, uint8_t prevOp) {
+#if defined(__x86_64__) || defined(_M_X64)
+    return op == SistaV1::ExtSend
+        && prevOp != SistaV1::ExtendA
+        && prevOp != SistaV1::ExtendB
+        && GET_DEBUG_BOOL(PHARO_T1_X86_EMIT_EXTSEND);
+#else
+    (void)op; (void)prevOp;
+    return false;
+#endif
+}
+
+// Single source of truth for "this bytecode is a send site that gets an IC
+// slot" — used by EVERY counting site (numSendSites, siteIdx, selBitsArray,
+// sendSiteBCOffsets, patchRecords) so the IC-buffer size and the per-site
+// indices can never drift.  = isPhase4SendOp, plus a naked ExtSend under the
+// x86 emit-polish knob.
+inline bool isX86SendSite(uint8_t op, uint8_t prevOp) {
+    return isPhase4SendOp(op) || isX86NakedExtSend(op, prevOp);
+}
+
 // Walk the REAL opcode stream — one callback per instruction, skipping
 // operand bytes via SistaV1::bytecodeLength (the same advance the emit
 // loop performs).  Every send-site scan MUST use this, never a raw
@@ -2243,7 +2270,8 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                   const std::vector<asmjit::Label>& bcLabels,
                   int globalIdx,
                   int callerArgCount, int callerTempCount,
-                  int staticJ2JArgCount) {
+                  int staticJ2JArgCount,
+                  int sendNArgsOverride = -1) {
     using namespace asmjit::x86;
     (void)bcOffsetFromMethObj;
     (void)siteIdx;
@@ -2788,8 +2816,15 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.bind(fallThru);
         return true;
     }
-    if (isPhase4SendOp(op)) {
-        int nArgs = sendNArgs(op);
+    // extSendEmit: the caller (the emit loop) is asking us to emit a NAKED
+    // ExtSend (0xEA) as a real cached send, with nArgs decoded from the 2-byte
+    // descriptor and passed via sendNArgsOverride.  It reuses the entire send
+    // body below EXCEPT the inline-J2J fast paths (whose resume override bakes a
+    // 1-byte-send resume offset that's wrong for the 2-byte ExtSend); those are
+    // gated off with !extSendEmit.
+    bool extSendEmit = (op == SistaV1::ExtSend) && (sendNArgsOverride >= 0);
+    if (isPhase4SendOp(op) || extSendEmit) {
+        int nArgs = (sendNArgsOverride >= 0) ? sendNArgsOverride : sendNArgs(op);
 
         // Per-site icData address: jm->icBuffer + siteIdx*IC_BYTES_PER_SITE.
         a.mov(rdx, ptr(rdi, OFF_JITMETHOD));
@@ -2899,7 +2934,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // cold/non-self/full-stack → the normal getter/setter/dispatch path.
             // Regs here: rax=send receiver, rcx=sp, rsi=icDataPtr, r8=extras;
             // the bail checks clobber only r9/r10/r11 before notJ2J.
-            if (j2jSiteOk && g_emitX86Xmethod && !g_emitIsBlock) {
+            if (j2jSiteOk && g_emitX86Xmethod && !g_emitIsBlock && !extSendEmit) {
                 // ===== Increment 1: cross-method-capable inline-J2J =====
                 // Admit self-rec OR a canSkipJ2JSave cross-method callee (no
                 // send + no cond-jump bail -> only the clean return-prelude path
@@ -3169,7 +3204,8 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.and_(r10, r11);
                 a.jmp(r10);                              // entryAddr (self code)
                 a.bind(notJ2J);
-            } else if (j2jSiteOk && g_emitX86J2JOk && !g_emitIsBlock) {
+            } else if (j2jSiteOk && g_emitX86J2JOk && !g_emitIsBlock
+                       && !extSendEmit) {
                 // Default-on self-rec push: dual V1/V2 record via the
                 // #if PHARO_J2J_SAVE_V2 branch in the push below.
                 asmjit::Label notJ2J = a.new_label();
@@ -3390,7 +3426,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // to endOfSend -> next bytecode.  Bound only when this site emitted an
             // inline-J2J push (same gate), so resumeAfterCall is never an unbound
             // dangling reference.
-            if (j2jSiteOk && g_emitX86J2JOk && !g_emitIsBlock) {
+            if (j2jSiteOk && g_emitX86J2JOk && !g_emitIsBlock && !extSendEmit) {
                 a.bind(resumeAfterCall);
                 a.mov(rcx, ptr(rdi, OFF_SP));            // = savedSp (prelude restored it)
                 if (nArgs > 0) a.sub(rcx, asmjit::Imm(8 * nArgs));
@@ -9587,6 +9623,39 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     }
                     // not in-range -> fall through to the generic prefix bail.
                 }
+                // Naked ExtSend (0xEA, no ExtendA/B prefix) -> real in-JIT
+                // cached send instead of the generic mid-method bail below
+                // (PHARO_T1_X86_EMIT_EXTSEND).  Reuses the isPhase4SendOp send
+                // machinery in emitOne_x86 via an explicit nArgs override (the
+                // naked descriptor's low 3 bits, extB==0).  inline-J2J is
+                // suppressed at this site (emitOne_x86 keys off op==ExtSend):
+                // the 2-byte op resumes at globalIdx+2 through bcToCode, not the
+                // 1-byte resume-override the J2J prelude bakes.  The IC-probe +
+                // getter/setter/returnsSelf + dispatchCached/miss all emit, so
+                // ExtSend-bearing methods stay fully JIT'd.  Consumes its own IC
+                // slot (siteIdx++), kept in lock-step with isX86SendSite at the
+                // numSendSites/selBits/bcOffsets counting sites.
+                if (op == SistaV1::ExtSend && !wasExtPrefix
+                        && GET_DEBUG_BOOL(PHARO_T1_X86_EMIT_EXTSEND)) {
+                    int extNArgs = bcReal[i + 1] & 0x07;
+                    if (!emitOne_x86(a, SistaV1::ExtSend, nilBits,
+                                     bcOffsetBase + globalIdx, siteIdx,
+                                     bcLabels, globalIdx,
+                                     callerArgCount, callerTempCount,
+                                     staticJ2JArgCount, extNArgs)) {
+                        std::fprintf(stderr,
+                            "[asmjit-t1] BUG: ExtSend emit failed at bc[%d]\n",
+                            globalIdx);
+                        if (GET_DEBUG_BOOL(PHARO_T1_FATAL_DISAGREE))
+                            std::abort();
+                        return false;
+                    }
+                    siteIdx++;
+                    if ((size_t)(globalIdx + 1) < bcLabels.size())
+                        a.bind(bcLabels[globalIdx + 1]);   // descriptor byte
+                    i += 1;
+                    continue;
+                }
                 if (op >= SistaV1::ExtendA) {   // 0xE0..0xFD
                     int len = SistaV1::bytecodeLength(op);
                     if (len < 1) len = 1;
@@ -10867,8 +10936,10 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     std::vector<SendSitePatch> patchRecords;
     if (!GET_DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS)) {
         uint16_t nSites = 0;
+        uint8_t prevOp = 0;
         forEachRealOpcode(bc, bcLen, [&](size_t, uint8_t op) {
-            if (isPhase4SendOp(op)) nSites++;
+            if (isX86SendSite(op, prevOp)) nSites++;
+            prevOp = op;
         });
         patchRecords.resize(nSites);   // value-init: all-zero records
     }
@@ -10975,8 +11046,10 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // send opcode (0x70..0xAF) gets one IC site.
     uint16_t numSendSites = 0;
     if (isReal) {
+        uint8_t prevOp = 0;
         forEachRealOpcode(bc, bcLen, [&](size_t, uint8_t op) {
-            if (isPhase4SendOp(op)) numSendSites++;
+            if (isX86SendSite(op, prevOp)) numSendSites++;
+            prevOp = op;
         });
     }
 
@@ -11513,10 +11586,19 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         ObjectHeader* ssHdr = (ssArrayOop.isObject()
                                && ssArrayOop.rawBits() > 0x10000)
                               ? ssArrayOop.asObjectPtr() : nullptr;
+        uint8_t prevOp = 0;
         forEachRealOpcode(bc, bcLen, [&](size_t i, uint8_t op) {
-            if (!isPhase4SendOp(op)) return;
+            bool isSite = isX86SendSite(op, prevOp);
+            prevOp = op;
+            if (!isSite) return;
             uint64_t selBits = 0;
-            if (op >= 0x60 && op <= 0x6F) {
+            if (op == SistaV1::ExtSend) {
+                // Naked ExtSend (extA==0): selectorIndex = desc>>3, selector
+                // = literals[selectorIndex].  (Bundled ExtSend never reaches
+                // here — isX86SendSite excludes the prefixed case.)
+                int litIdx = bc[i + 1] >> 3;
+                if (litIdx < numLiterals) selBits = literals[litIdx].rawBits();
+            } else if (op >= 0x60 && op <= 0x6F) {
                 // Binary special selectors: ssArray[(op - 0x60) * 2].
                 // Only 0x69 /, 0x6A \\, 0x6B @, 0x6D // reach here —
                 // the others have Phase 3 inline emits.
@@ -11614,10 +11696,12 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         if (interp.jitRuntime().compiler()) {
             std::vector<uint16_t> bcOffsets;
             bcOffsets.reserve(numSendSites);
+            uint8_t prevOp = 0;
             forEachRealOpcode(bc, bcLen, [&](size_t i, uint8_t op) {
-                if (isPhase4SendOp(op)) {
+                if (isX86SendSite(op, prevOp)) {
                     bcOffsets.push_back(static_cast<uint16_t>(i));
                 }
+                prevOp = op;
             });
             interp.jitRuntime().compiler()->setSendSiteBCOffsets(
                 compiledMethod.rawBits(), std::move(bcOffsets));
