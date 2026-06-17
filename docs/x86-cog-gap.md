@@ -209,3 +209,20 @@ commit to a file arm64 compiles.
 - Box hygiene: arm the CPU keep-alive (3 nice-19 loops) + stop iospharo-idle.timer
   IMMEDIATELY after SSH (before the build) — the idle mechanism terminated a box
   that went idle in the post-build gap.
+
+## 6c. Both arches confirmed correct (2026-06-17)
+
+565-class SUnit, same prepped image:
+
+    config                         Pass    Fail  Error  Skip  crashes
+    arm64 (local, JIT always on)  12509     46    129    39      0
+    x86 interp (box #26)          12508     47    129    39      0
+    x86 JIT-on (box #26)          12508     46    130    39      0
+
+All three agree within ±1 (weak-ref/GC timing flakes). No crashes on any. So both
+the arm64 JIT (shipping config) and the x86 leaf-only JIT are debugged-correct,
+and the whole x86 cross-method campaign left arm64 un-regressed (x86-#ifdef'd
+emit + battery==golden, re-verified after every commit). The achievable JIT
+correctness debugging is complete. Remaining (not correctness): x86 GUI/Catalyst
+validation to flip the shipping default (needs an x86 Mac), and the opt-in
+send-bearing cross-method optimization (docs/x86-nested-j2j-design.md).
