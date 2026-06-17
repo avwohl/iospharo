@@ -259,6 +259,51 @@ leak, isStubOnEntry, infinite-loop, IC-not-upgraded. The send-bearing optimizati
 is CORRECTNESS-COMPLETE (leaf-only default is correct + the JIT works); this is
 pure perf polish, parked behind the gate.
 
+======================================================================
+EXTSEND PORT — IMPLEMENTED + MEASURED (box, 2026-06-17, PHARO_T1_X86_EMIT_EXTSEND)
+======================================================================
+
+The ExtSend (0xEA) port shipped in two commits, both knob-gated (default-OFF =
+byte-identical; arm64 battery == golden both times):
+
+  A) 1f75e910 — emit a NAKED ExtSend as a real cached send (own IC slot), but
+     SUPPRESS inline-J2J at the site (IC-probe + getter/setter/dispatchCached
+     only).  isX86SendSite(op,prevOp) is the single send-site predicate used at
+     every counting site (numSendSites / patchRecords / selBitsArray /
+     sendSiteBCOffsets), tracking prevOp so naked-vs-prefixed never drifts.
+     numICEntries=numSendSites auto-excludes ExtSend methods from canSkipJ2JSave
+     (a send is not a leaf), so x86HasMidBail needs no change.
+
+  B) c9e4d4ca — ENABLE inline-J2J for ExtSend.  The only thing that made the
+     2-byte op unsafe was the resume point: the V2 packed bcOff, the V1
+     resumeAddr label/ip, and the resume-override key all assumed a 1-byte send
+     (resume at globalIdx+1).  Fix = j2jResumeBcOff = globalIdx+(extSend?2:1),
+     used at every resume-encoding site; the C++ caller-resume already derives
+     the same IP from the bytecode length.  Dropped the 3 !extSendEmit guards.
+
+MEASUREMENT (build-opt -O2, taskset -c0, min-of-9, clean Pharo-13 image):
+
+  flat loop, 3-arg leaf call (extbench3/4, callee `^a+1` over 2-3M iters):
+    interp ~= JIT-OFF ~= JIT-ON   (NO win — inline-J2J fires 2.05M times but
+    the per-call save/restore + loop overhead ~= the interp send cost; flat-loop
+    leaf calls don't benefit, same as a normal 1-byte send would not).
+
+  self-recursive 3-arg method (extbench5, cfx:b:c: = cfib shape, recursive call
+  is a 3-arg ExtSend), cfx(26):
+    INTERP   157ms
+    JIT-OFF  142ms   (bails at the ExtSend recursive call -> interp recursion)
+    JIT-ON    13ms   (result 317810 == interp; ~11x vs JIT-OFF)
+
+CONCLUSION: the ExtSend port's value is the SAME as the cross-method inline-J2J
+lever it extends — it pays off for RECURSIVE / deeply-nested multi-arg (or
+high-literal-index) sends, NOT flat-loop leaf calls.  The 8.7x cfibx win now
+reaches 3+arg / >15-literal-index self-recursion (11x on cfx).  Correctness:
+battery + 4 benchmark shapes all agree interp==JIT-OFF==JIT-ON; SUnit A/B
+(JIT-on knob-on vs interp) is the broad gate.  Still default-OFF behind the
+GUI-gated PHARO_X86_JIT flip (ships to nobody until an x86 Mac validates Morphic).
+Prefixed (ExtendA/B+ExtSend, selector index >=32 / nArgs>7) still bails — a
+follow-up if real code shows high-literal-index ExtSend hot paths.
+
 ## 6. Validation
 
 - Primary metric: per-startup `jitMaterializeCount_` with SENDS-on must be within
