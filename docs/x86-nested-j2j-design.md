@@ -403,3 +403,37 @@ PIN entryDepth=depth / entryCursor=cursor across the call, restore after
 NET: SENDS=1 is now SAFE at MAX_IC=0 (correctness-complete, but == leaf-only, no
 perf gain); MAX_IC>=1 stays a reproducer for the BUG-2 port.  Both fixes are
 x86-only; arm64 battery==golden throughout.
+
+----------------------------------------------------------------------
+BUG-2 — DECISIVE NARROWING (box, 2026-06-17, PHARO_J2J_NEST_TRACE)
+----------------------------------------------------------------------
+
+New diagnostic PHARO_J2J_NEST_TRACE logs every chain-loop inline-one-shot-J2J
+activation that runs with a PENDING caller J2J save (state.j2jDepth>0) — the
+send-bearing nested case. Compared arm64 (send-bearing default-on MAX_IC=8, WORKS)
+vs x86 (PHARO_T1_X86_XMETHOD_SENDS=1, CORRUPTS), SAME startup workload:
+
+  arm64: caller=#findElementOrNil: depth=3 curOff=3 entOff=0 target=#scanFor:  ...
+  x86  : caller=#new:              depth=1 curOff=1 entOff=0 target=#==        ...
+         caller=#utf8              depth=2 curOff=2 entOff=0 target=#default
+
+The two are STRUCTURALLY IDENTICAL: both reach the shared inline-activate with the
+SAME depth/cursor pattern (curOff==depth, entOff==0, depths 1-3). => the shared
+chain-loop C++ (the inline-activate at Interpreter.cpp ~26941, AND the precomputed-
+resume reset at ~27227) behaves the SAME on both arches. **This RULES OUT the
+chain-loop C++ as the bug** — including the inline-activate cursor reset that the
+workflow + my candidate-2/3 fixes targeted (all four C++ fix attempts: two
+entryCursor resets in materializeJ2J, the inline-activate pin, and the prelude
+entry-baseline — failed or were neutral, consistent with the bug NOT being here).
+
+The divergence is therefore in the x86 EMIT-level resume/return of a send-bearing
+inline-J2J'd callee (what arm64's FSR-resident-cursor + saveless/blr discipline
+emit and x86's jmp-style does not) — exactly the box-#16 §2 conclusion ("x86 EMIT
+exit-state divergence, not the shared materialize"). The next concrete lead is the
+caller's resume point: savedResumeEntry = codeOffsetForBC(pastSendOff)
+(Interpreter.cpp ~26868) for the inlined callee's post-inner-send bcOff, and the
+inlined callee's entryCursor/entryDepth at its own return prelude (set by the
+cross-method admit, AsmjitT1 ~3121). Fixing it = porting arm64's send-bearing
+resume discipline to the x86 emit; multi-session (task #24). cfibx (self-rec leaf)
+works, so the self-rec resume is fine — the gap is the CROSS-method send-bearing
+callee's resume.
