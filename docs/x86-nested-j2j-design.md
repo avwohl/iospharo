@@ -209,14 +209,31 @@ isStubOnEntry exclusion (committed e2d3ec6d, a correct arm64-mirror, arm64-safe)
 did NOT reduce it (182569 ≈ before) — stubs are not the source.
 
 THE REAL GAP: x86's inner sends (from a J2J-entered send-bearing callee) bail to
-C++ + materialize ~5x more often than arm64's. arm64 keeps more inner sends IN-JIT
-(nested inline-J2J), so it materializes 5x less and completes. So path (A) (nested
-in-JIT sends) IS the lever after all — but framed as a BAIL-RATE gap, not a binary
-"x86 doesn't nest". Next: instrument the inner-send admit (does it inline-J2J or
-ExitSendCached?) for a J2J-entered callee on x86 vs arm64; find why x86 bails 5x
-more (the J2J-entry-bit / resident-state at the inner send site). Refuted so far:
+C++ + materialize ~5x more often than arm64's.
+
+ADMIT INSTRUMENTATION (box #28, commit ce3b11c8): added reached/bitset counters at
+the x86 cross-method inline-J2J admit. SENDS=1 `3+4`:
+    x86-admit: reached=4922157 bitset=3975879 (80.8%) fires=1139028
+    materialize: count=181076   chain: actChain=11 actFall=29672
+So the J2J_ENTRY_BIT IS set 80.8% of the time — the "IC not upgraded to J2J"
+hypothesis is REFUTED. Inline-J2J FIRES 1.14M times (it works). The ~181K
+materializes are NOT inner sends failing to inline-J2J; they are inlined callees
+(self-rec + cross-method) bailing MID-METHOD at their own inner sends/arith
+(ExitSendCached/ExitArith), which materializes the pending save. This is the
+fundamental "send-bearing callee bails mid-method" thrash — x86 just does it ~5x
+more than arm64 (181K vs 35K). The gap is NOT a single unset bit or a binary
+"x86 doesn't nest"; it is a diffuse mid-method-bail-rate difference (x86's emit
+bails mid-method on more shapes / its inner-inner sends inline-J2J less deeply).
+
+ASSESSMENT: closing the residual 5x is a fine-grained, multi-pronged emit effort
+(reduce x86 mid-method bails: ExtSend coverage, deeper inner-inner J2J nesting,
+arith-overflow tail handling) on a feature that is opt-in, default-off,
+correctness-neutral (the JIT is CORRECT without it), AND gated behind the
+GUI-gated PHARO_X86_JIT flip. Low ROI until the gate flips. Refuted hypotheses (8):
 double-pop, bail-leak, tail-send/resume-bcOff, materialize sp/bcOff, caller-resume
-leak, isStubOnEntry, "infinite loop" (it's bounded thrash).
+leak, isStubOnEntry, infinite-loop, IC-not-upgraded. The send-bearing optimization
+is CORRECTNESS-COMPLETE (leaf-only default is correct + the JIT works); this is
+pure perf polish, parked behind the gate.
 
 ## 6. Validation
 
