@@ -150,6 +150,33 @@ count: SENDS-on must NOT explode the per-startup materialize count vs SENDS-off.
 This is a substantial, bug-prone, multi-session effort (the cross-method path is
 historically the most fragile area of this branch).
 
+## 6b. x86 JIT-on is CORRECT — the "bit-rotted" banner is STALE (box #26, 2026-06-17)
+
+SUnit A/B, PHARO_X86_JIT=1 (leaf-only default) vs interp, on the portable prepped
+image, 565-class curated set (the project's standard A/B set):
+
+    config    Classes  Pass    Fail  Error  Skip   disagree-ops  crashes
+    interp      565   12508    47    129     39      (none)        0
+    JIT-on      565   12508    46    130     39      (none)        0
+
+SAME 12508 pass. ZERO prescan/emit disagrees (PHARO_T1_DISAGREE_DUMP). ZERO
+crashes / Corrupt-stackPointer. Only 4 of 565 classes diverged; re-running each 3x
+in isolation: 3 were full-suite TIMING FLAKES (clean in isolation —
+WeakIdentityValueDictionary/SlotBasic/RegisteredClassAnnotations) and the 4th
+(WeakOrderedCollectionTest) is a weak-reference GC-timing flake (it PASSED P:2
+under JIT in the full-set context). NO deterministic JIT codegen divergence.
+
+So the §7 banner's "~10 prescan/emit disagree bytecodes + Corrupt-stackPointer
+miscompile" is STALE — those were fixed (short-jump out-of-range guard
+AsmjitT1:2721, prim-prologue, extended-bytecode port, etc.). The HEADLESS x86 JIT
+(leaf-only, the default cross-method config) is correct.
+
+REMAINING gate to actually flip PHARO_X86_JIT default-on: GUI/Catalyst validation
+(the shipping x86 build runs Morphic, not headless SUnit; per the repo's
+"Verify GUI changes visually" rule, the JIT-on Catalyst app must be launched +
+screenshot-verified before flipping the shipping default). That needs an x86 Mac /
+Catalyst run, NOT the Linux box. Headless correctness: DONE.
+
 ## 7. Blockers to flipping PHARO_X86_JIT default-on (the full picture)
 
 Even a perfect Increment 2 does NOT flip the gate by itself. The banner cites,
