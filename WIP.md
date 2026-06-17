@@ -22,6 +22,10 @@ Branch **jit** (== origin/jit-x86 tip). arm64 battery == `/tmp/battery_golden.tx
    - Visual: Morphic rendering PIXEL-IDENTICAL under JIT vs interp (2 imageForm
      scenes: Morph/BorderedMorph fills+borders, gradient strips, StringMorph+
      TextMorph FreeType, BitBlt, PNG encode → byte-equal MD5).
+   - Scale: 300-class x86-JIT vs arm64-JIT SUnit = 9769 vs 9770 pass (differ by
+     1); all 3 divergent tests are nondeterministic timing/GC flakes (SHA256
+     compute-TIMEOUT under Rosetta, 2 weak-ref/GC tests). The 34F/81E are SHARED
+     with arm64-JIT → not x86 regressions. x86-JIT at parity with shipping arm64.
    Gate inverted (Interpreter.cpp ~19612); opt-out `PHARO_NO_X86_JIT=1` (escape
    hatch) or `PHARO_NO_JIT=1`. arm64 untouched (battery==golden). Residual: live
    Catalyst Metal app render-loop unverified (needs real x86 Catalyst hardware).
