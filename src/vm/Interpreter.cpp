@@ -26939,6 +26939,23 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             }
                         }
 
+                        // BUG-2 nesting trace (PHARO_J2J_NEST_TRACE, both arches):
+                        // fires when this inline-activate runs with a pending
+                        // caller J2J save (send-bearing nested case).
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_J2J_NEST_TRACE), 0)
+                                && state.j2jDepth > 0) {
+                            static int g_nestN = 0;
+                            if (++g_nestN <= 80) {
+                                uint8_t* nbase = reinterpret_cast<uint8_t*>(&j2jPool_[j2jStateBase]);
+                                fprintf(stderr, "[NEST #%d] caller=#%s depth=%d curOff=%ld entOff=%ld target=#%s\n",
+                                    g_nestN,
+                                    savedMethod.isObject() ? memory_.selectorOf(savedMethod).c_str() : "?",
+                                    state.j2jDepth,
+                                    state.j2jSaveCursor ? (long)((state.j2jSaveCursor - nbase)/(long)sizeof(J2JSave)) : -1,
+                                    state.j2jEntryCursor ? (long)((state.j2jEntryCursor - nbase)/(long)sizeof(J2JSave)) : -1,
+                                    chainTarget.isObject() ? memory_.selectorOf(chainTarget).c_str() : "?");
+                            }
+                        }
                         // Enable stencil J2J for callee — lets it chain
                         // sends directly instead of falling back to C++.
                         // NOTE (2026-06-17): this resets the save cursor to the
