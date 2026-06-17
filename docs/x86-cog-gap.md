@@ -116,16 +116,36 @@ nextPutAll: bcOff5=4; …). The ONLY SP-DEPTH-flagged selector is `getSystemAttr
 materialize sp is NOT the bug. (The earlier "sp-depth delta=1" was getSystemAttribute:
 startup noise, not the corrupting callees.)
 
-Lead 2 (now primary) — the SENDS=1-SPECIFIC signal is **40 `tryJITActivation-exit
-IP-OUT-OF-RANGE`** (resume ip == bcLen, past the method end) on send-bearing
-callees (e.g. `on:`). This is the ACTIVATION/resume path, NOT materialize. Next:
-instrument tryJITActivation's exit-ip computation for a send-bearing cross-method
-callee — why does the resume land at bcLen? Candidate: the V2 save packs
-bcOff=globalIdx+1 (the byte offset after the send's FIRST byte); for a multi-byte
-send that's mid-instruction / off-by-(len-1), and for a last-bytecode (tail) send
-it's bcLen. Check whether the resume bcOff is being computed from the send byte
-offset vs the next-bytecode offset. Validate against the §4 repro (cmid → 115,
-no runaway) + battery==golden + cfibt/cfibs ~3-5x Cog.
+Lead 2 — resume bcOff / tail-send packing: EXONERATED (box #24, instrumentation
+commit 403cc247). The `globalIdx+1` packing is consumed in exactly ONE place
+(materialize → `frame.savedIP`); the hot return path masks it off. Instrumented
+the tail-send fingerprint (atEnd=bcOff==bcLen, lastOp, numIC) at both the
+materialize read and the IP-OUT-OF-RANGE report:
+- Every materialized send-bearing save (millions, numIC=1..19) has atEnd=0,
+  pastEnd=0 — a VALID INTERIOR bcOff (hash bcOff2/bcLen8, findElementOrNil:
+  bcOff3/bcLen22, scanFor: bcOff5/bcLen95). The tail-send hypothesis is REFUTED.
+- The 40 `IP-OUT-OF-RANGE` are all `numIC=0` (LEAF methods) ending in a 2-byte
+  non-send op (lastOp=0xf0, lastIsSend=0) — a SEPARATE, benign-looking leaf
+  resume-at-end, NOT the send-bearing corruption.
+
+So the entire save-reconstruction area (sp AND bcOff AND materialize) is now
+exonerated. And the corruption is NOT cmid-specific: even a trivial `3+4` HANGS
+under SENDS=1 — **startup itself fails**, with MILLIONS of (correct) materializes.
+
+ROOT INSIGHT (premise inverted): admitting a send-bearing callee via inline-J2J
+does NOT make its inner sends stay in-JIT — they STILL bail to C++ and materialize
+(one materialize per inner send), so SENDS=1 just relocates the bail to the
+callee's inner sends and amplifies the thrash into a hang. "Admit send-bearing
+callees to avoid the C++ round-trip" is therefore the WRONG framing. The real
+lever is **nested in-JIT sends**: a J2J-admitted callee's inner sends must
+themselves be J2J (in-JIT), not bail. That is a larger architectural piece (true
+nested J2J / keeping the operand+frame state resident across a callee's inner
+send) — NOT a gate relaxation or a save-field fix. The leaf-only gate is correct
+precisely because a leaf callee has no inner send to bail on.
+
+Next (bigger than one box): design nested in-JIT sends for J2J-admitted callees
+(or accept that x86 cross-method stays leaf-only). Validate via the materialize
+count: SENDS-on must NOT explode the per-startup materialize count vs SENDS-off.
 
 This is a substantial, bug-prone, multi-session effort (the cross-method path is
 historically the most fragile area of this branch).
