@@ -12,7 +12,7 @@ set -uo pipefail
 REASON="${1:-manual}"
 REPO=/home/ubuntu/src/iospharo
 BUCKET="${BUCKET:-iospharo-build-670060058357}"
-WORK_BRANCH="${WORK_BRANCH:-jit-x86}"
+WORK_BRANCH="${WORK_BRANCH:-jit}"   # x86 merged into jit; jit-x86 deleted 2026-06-17
 S3_PREFIX="s3://${BUCKET}/x64-builder"
 ts=$(date -u +%Y%m%dT%H%M%SZ)
 

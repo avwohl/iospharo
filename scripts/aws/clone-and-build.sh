@@ -7,7 +7,7 @@ set -euxo pipefail
 
 GIT_REMOTE="${GIT_REMOTE:-git@github.com:avwohl/iospharo.git}"
 BASE_BRANCH="${BASE_BRANCH:-jit}"
-WORK_BRANCH="${WORK_BRANCH:-jit-x86}"
+WORK_BRANCH="${WORK_BRANCH:-jit}"   # x86 merged into jit; jit-x86 deleted 2026-06-17
 REPO=/home/ubuntu/src/iospharo
 
 # --- ssh config so `git` uses the scoped deploy key for github --------------
