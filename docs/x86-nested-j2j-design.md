@@ -356,3 +356,50 @@ arm64 compiles.
   prelude ~1655; resumeAfterCall ~3327; materialize Interpreter.cpp ~23894;
   chain loop / tryJITResumeInCaller ~20404–21260; bailMatJ2J ~25379.
 - Golden: `/tmp/arm64_battery_golden_step1.txt`.
+
+======================================================================
+SEND-BEARING (XMETHOD_SENDS) BUG — INVESTIGATED + HALF-FIXED (box, 2026-06-17)
+======================================================================
+
+Deterministic repro (PHARO_DET_SCHED=1): incc=`^self+1`, inct=`^(self+1) incc`,
+cfibt=fib-shape sending #inct in the combine.  Oracle cfibt28=1346267.
+SENDS=0 correct; SENDS=1 -> cfibt(3) runs ~781M bytecode steps (vs ~50), 183K
+materializes, vanished EVAL-RESULT.
+
+Workflow w3f8xvcx7 + box bisection REFUTED the long-standing "nested
+cfibt->inct->incc save/resume" characterization AND the workflow's own
+g_codeStartLabel / entryCursor hypotheses (g_codeStartLabel is emit-time-resolved
+per method; entryCursor reset in materializeJ2J changed nothing).  The corruption
+is TWO distinct defects:
+
+BUG 1 (FIXED, committed) — reproduced even at MAX_IC=0 (admit only numIC==0 leaf
+callees), proving it was NOT the send-bearing nesting.  The SENDS gate
+(AsmjitT1.cpp ~3004) replaced canSkipJ2JSave with !canBailMidMethod &&
+numIC<=MAX_IC && !isStubOnEntry, DROPPING canSkipJ2JSave's !x86HasMidBail term.
+So it admitted callees that bail mid-body on a NON-TAIL inline-arith
+(EXIT_ARITH_OVERFLOW) or an unported ExtSend; that callee re-enters interp leaving
+the caller's pushed J2J save un-popped -> runaway.  FIX: store x86HasMidBail in
+JITMethod (now computed for ALL real methods, not just numIC==0) and exclude it in
+the SENDS gate, mirroring canSkipJ2JSave.  MAX_IC=0 now computes cfibt28 correctly.
+arm64 #if-x86'd + always-false -> battery==golden.
+
+BUG 2 (STILL OPEN) — MAX_IC>=1 (genuine send-bearing) still runs away; even `3+4`
+at startup corrupts (~1B steps), so it is a pervasive startup defect, not a bench
+artifact.  Mechanism: the chain-loop "inline one-shot J2J call" (Interpreter.cpp
+~26941) RESETS the in-memory j2jSaveCursor/j2jDepth/entryCursor/entryDepth to the
+slice base before JIT_CALL-ing the inner-send target, and the fast-path return
+restores the caller's FRAME but never the cursor.  For a leaf caller (depth==0,
+cursor already==base) this is a no-op; arm64 keeps the live cursor RESIDENT in x23
+so the in-memory reset never orphans its saves (and the reset is load-bearing for
+arm64 — pinning broke the arm64 battery).  But on x86 with an inline-J2J'd
+SEND-BEARING caller (depth>0) the reset ORPHANS+OVERWRITES the caller's pending
+save.  An x86-gated pin-and-restore here CHANGED the runaway signature (1.03B ->
+1.31B steps, actChain 21->4) but did NOT converge, so the nested EMIT push/pop
+(AsmjitT1 V2 prelude / resume) is also involved.  The proper fix is to port
+arm64's saveless/blr cross-method discipline — stash the caller's entry baseline,
+PIN entryDepth=depth / entryCursor=cursor across the call, restore after
+(AsmjitT1.cpp ~6776-7040) — to the x86 jmp-style cross-method admit.  Multi-session.
+
+NET: SENDS=1 is now SAFE at MAX_IC=0 (correctness-complete, but == leaf-only, no
+perf gain); MAX_IC>=1 stays a reproducer for the BUG-2 port.  Both fixes are
+x86-only; arm64 battery==golden throughout.
