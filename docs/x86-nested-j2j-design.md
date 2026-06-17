@@ -437,3 +437,37 @@ cross-method admit, AsmjitT1 ~3121). Fixing it = porting arm64's send-bearing
 resume discipline to the x86 emit; multi-session (task #24). cfibx (self-rec leaf)
 works, so the self-rec resume is fine — the gap is the CROSS-method send-bearing
 callee's resume.
+
+----------------------------------------------------------------------
+BUG-2 — ROOT LAYER ISOLATED (box, 2026-06-17, [RESUME]+[EQ-DUMP] traces)
+----------------------------------------------------------------------
+
+The [RESUME] trace (caller resume bcOff/codeOff per chain-loop send) pinned the
+runaway: on x86 (SENDS=1) the method #= resumes at pastSendOff 5,7,5,7,5,7...
+in a TIGHT loop (13+ pairs in the first 28 resumes) that arm64 does NOT have
+(arm64 hits #= twice and moves on). #='s bytecode (both arches):
+  40 80 c5 4c 72 40 72 66 b0 4e c1 4f b0 5a d8 4c 4c 40 a1 50 66 5c
+— sends (0x72) at bcOff 4 and 6, and a BINARY #= (0x66) at bcOff 7: #= recurses
+into its components. The x86 loop = that recursion not terminating.
+
+Ruled out, in order, by ground truth:
+ - chain-loop C++ inline-activate: arm64/x86 NEST patterns identical.
+ - caller-chain orphaning: materialize-before-activate didn't fix it.
+ - resume bcToCode table: x86 #= bcToCode is MONOTONIC + correct
+   ([5]=1697 [6]=1717 [7]=2510 [8]=2598 ...), same structure as arm64.
+ - SP/receiver/retval at resume: restored by SHARED C++ (Interpreter.cpp
+   27067-27073, 27158-27159) — identical on both arches.
+
+REMAINING ROOT LAYER: the x86 EMIT-level frame-state (operand-stack) RESIDENCY
+across a send-bearing callee's resume. The resume lands at the right code with
+the right SP/receiver, but the resumed #='s operand stack is wrong, so its
+recursive 0x66@7 #= gets wrong operands and never reaches the base case ->
+runaway. This is the FSR-residency divergence (x86 memory-resident vs arm64
+x23/FSR-resident), exactly box-#16's "x86 EMIT exit-state" conclusion.
+
+NEXT (task #24): gdb on the box at the #= resume (savedMethod=="=" , break in the
+precomputed-resume JIT_CALL at Interpreter.cpp ~27234) — dump the operand stack
+[sp-1..sp-4] just before and after, compare x86 vs arm64, find which operand is
+stale/wrong. Then fix the x86 emit's operand-residency for send-bearing resumes
+(port arm64's FSR x23/operand discipline). The diagnostics PHARO_J2J_NEST_TRACE
+([NEST]/[RESUME]/[EQ-DUMP]) are committed + gated for this.
