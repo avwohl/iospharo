@@ -24183,6 +24183,20 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
                 (int)saveJM->tempCount, (int)saveJM->argCount,
                 (void*)save.sp, (void*)save.tempBase, depthW,
                 (void*)frame.materializedRetSlot, (void*)frame.savedFP);
+            // BUG-2: dump the actual operand-stack slot classes so an
+            // off-by-one (self leaking into an operand) is visible.
+            if (save.sp && save.tempBase) {
+                auto cn = [&](Oop o) -> std::string {
+                    if (o.isSmallInteger()) return "SmI";
+                    if (!o.isObject() || o.rawBits() < 0x10000) return "imm";
+                    if (!memory_.isValidPointer(o)) return "bad";
+                    return memory_.classNameOf(o);
+                };
+                fprintf(stderr, "  [MAT-STK]");
+                for (long k = 1; k <= depthW + 1 && k <= 8; k++)
+                    fprintf(stderr, " sp[-%ld]=%s", k, cn(save.sp[-k]).c_str());
+                fprintf(stderr, "  recv=%s\n", cn(save.receiver).c_str());
+            }
             fflush(stderr);
         }
     }
@@ -24915,7 +24929,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     // see JITRuntime::tryResume / deferred.md A1.
                     uint8_t* resume = nullptr;
                     if (jitRuntime_.getBcEntryState(callerJM, bcOffset) == 0) {
-                        uint32_t codeOffset = callerJM->codeOffsetForBC(bcOffset);
+                        // RETVAL-CARRYING post-send resume: use codeOffsetForResume
+                        // (the per-site resumeAfterCall continuation that pops nArgs
+                        // + writes the retval), NOT the plain bcToCode entry.  For a
+                        // send-bearing inline-J2J callee whose inner send exits to
+                        // C++ here, the plain entry skips `sub sp, 8*nArgs`, leaving
+                        // the operand stack nArgs slots too deep (nArgs>0 only) ->
+                        // the caller's pending receiver leaks into an arg slot
+                        // (icon:'s self -> form:'s {arg1}, the #asForm DNU).  Mirrors
+                        // the rj2j path (codeOffsetForResume at ~21266).
+                        uint32_t codeOffset = callerJM->codeOffsetForResume(bcOffset);
                         resume = (codeOffset == 0 || codeOffset >= callerJM->codeSize)
                             ? nullptr
                             : callerJM->codeStart() + codeOffset;
@@ -26886,7 +26909,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             // register-reading (_N) stencil offset —
                             // see JITRuntime::tryResume / deferred.md A1.
                             if (jitRuntime_.getBcEntryState(savedJitMethod, pastSendOff) == 0) {
-                                uint32_t codeOff = savedJitMethod->codeOffsetForBC(pastSendOff);
+                                // RETVAL-CARRYING caller-resume after a send: use
+                                // codeOffsetForResume (per-site resumeAfterCall that
+                                // pops nArgs + writes retval), not the plain bcToCode
+                                // entry — the send-bearing nArgs>0 operand-swap fix.
+                                uint32_t codeOff = savedJitMethod->codeOffsetForResume(pastSendOff);
                                 if (codeOff > 0 && codeOff < savedJitMethod->codeSize)
                                     savedResumeEntry = savedJitMethod->codeStart() + codeOff;
                                 // BUG-2 resume trace (PHARO_J2J_NEST_TRACE): the

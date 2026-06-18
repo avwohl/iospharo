@@ -55,6 +55,55 @@ callee does its own send (exits to C++ mid-callee), and the mid-callee resume
 swaps a value/receiver. `NO_XMETHOD` (self-rec only) is CLEAN, so it is in the
 CROSS-METHOD admit; `NO_XMETHOD_ALLARGS` does not clear it.
 
+## REAL BUG ROOT-CAUSED (2026-06-18e) — nArgs>0 send-bearing callee whose own send exits to C++
+
+The full-config `SENDS=1` `#asForm` corruption is now fully root-caused (mismatch-
+free hash-bisect over all callers via `PHARO_T1_X86_SENDS_HMOD/_HVAL`, then the
+`SENDS_SEL`/`SENDS_CLASS` knobs):
+
+- **Corrupting caller: `PragmaMenuAndShortcutRegistrationItem>>icon:`**
+  `icon: arg1   ^ self iconFormSet: (arg1 ifNotNil: [ FormSet form: arg1 ])`
+- **Send-bearing callee: `FormSet class>>form: arg1  ^ self forms: { arg1 }`** (nArgs=1).
+- DECISIVE BISECTS: `SENDS_SEL=icon:` corrupts; `SENDS_SEL=form:`/`forms:` clean;
+  `icon:` + `NO_XMETHOD_ALLARGS=1` (nArgs>0 NOT admitted) clean. So the trigger is
+  precisely **nArgs>0 AND send-bearing** cross-method inline-J2J.
+
+MECHANISM (evidence chain below): `icon:` inline-J2Js `form:` (nArgs=1) and pushes
+ONE J2J save (state.j2jDepth=1). `form:` is send-bearing — it sends `forms:`. Under
+`SENDS_SEL=icon:`, `form:` uses the LEAF admit, and `forms:` is itself send-bearing
+(`^self extent: arg1 first extent depth: arg1 first depth forms: arg1`) so it is NOT
+leaf-admittable → `form:`'s `forms:` send EXITS to C++ (ExitSendCached) **while
+icon:'s J2J save is still pending (depth=1)**. The C++ mid-callee resume of `form:`
+(a send-bearing callee inline-J2J'd into icon:, with icon:'s receiver `self_icon`
+sitting on icon:'s operand stack BELOW the form: send) is where the swap happens:
+`self_icon` leaks into form:'s arg/result, so eventually `#asForm` is sent to
+`self_icon` (a PragmaMenuAndShortcutRegistrationItem) → DNU.
+
+EVIDENCE (all committed knobs/probes):
+- `[J2J-DBG]` (PHARO_T1_X86_J2J_DBG): depth NEVER exceeds 1 → `form:` does not push
+  its own in-JIT save; its `forms:` send round-trips C++ with icon:'s save pending.
+- `[MAT-STK]` (PHARO_J2J_MAT_LOG, added this session): icon:'s MATERIALIZED stack is
+  CORRECT — `[self_icon, FormSet class, arg1=Form]`, retSlot = FormSet slot. So the
+  swap is NOT in icon:'s materialize; the save BALANCES (PHARO_T1_X86_XMETHOD_PROBE
+  shows no leak). The in-JIT prelude + resumeAfterCall arg-pop math is also correct
+  for the simple return. => the defect is specifically the C++ mid-resume of the
+  send-bearing callee `form:` whose own send exited to C++ with the outer save live.
+
+CANDIDATE FIX DIRECTIONS (from a 4-lens + verify workflow; two refuted by runtime
+evidence, two survive — confirm empirically with `scripts/bug2-asString-repro/run.sh`
+`real` + `verify_bug2_fix.sh`):
+- REFUTED: nil-fill newSp `+8*nArgs` (AsmjitT1 ~3246) — `tempCount` already INCLUDES
+  args (Spur numTemps, JITCompiler ~2547), so the existing `tempBase+tempCount*8` is
+  correct; adding nArgs double-counts.
+- REFUTED: materializedRetSlot off-by-one (Interpreter ~24154) — the MAT-STK dump
+  shows retSlot correctly = form:'s receiver (FormSet) slot.
+- SURVIVING: the sp restoration when a send-bearing callee returns to its caller
+  AFTER its own inner send round-tripped C++ — the precomputed-resume / chain-loop
+  that resumes `form:` mid-method (Interpreter ~26840-27390, esp. the cursor/depth
+  reset ~27034/27277 documented as the orphan site) vs the V2 return prelude
+  (AsmjitT1 ~1760-1800) + resumeAfterCall (~3526). Mirror arm64 (~6733-7060), which
+  keeps sp/cursor in callee-saved regs and is correct for this case.
+
 ## THE PERF PREMISE IS INVALID — SENDS does not deliver the cfibs win
 
 Measured this session (clean-scope, NO mismatch artifact), cfibs28
