@@ -1774,13 +1774,14 @@ static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
     a.mov(r11, ptr(r9, JSV_RESUMEADDR));    // packed resumeAddr
     a.mov(ptr(rdi, OFF_RECEIVER), rcx);
     a.mov(ptr(rdi, OFF_TEMPBASE), rdx);
-    a.mov(ptr(rdi, OFF_SP), r10);           // restore caller sp = savedSp
+    emitStoreSp_x86(a, r10);           // restore caller sp = savedSp
     a.mov(rcx, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
     a.and_(r11, rcx);                       // mask off the packed bcOff/nArgs
     a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(0));  // clear exit
     if (GET_DEBUG_BOOL(PHARO_T1_X86_J2J_DBG)) {
         // POP trace.  Preserve rdi(state)/r11(resumeAddr)/rax(retval); rsi/rdx
         // are dead here.  3 pushes keep rsp 16-aligned.
+        emitSyncSpToState_x86(a);  // publish rbx so the trace's s->sp read is current (nop at =0)
         a.push(rdi); a.push(r11); a.push(rax);
         a.mov(rsi, asmjit::Imm(1));                  // kind = POP
         a.mov(rdx, asmjit::Imm(0));
@@ -1829,7 +1830,7 @@ static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
     a.shl(rcx, asmjit::Imm(3));             // 8*nArgs
     a.mov(rdx, r10);
     a.sub(rdx, rcx);                        // rdx = newSp
-    a.mov(ptr(rdi, OFF_SP), rdx);
+    emitStoreSp_x86(a, rdx);
     a.mov(ptr(rdx, -8), retval);            // *(newSp-8) = retval
     a.jmp(r11);                             // resume in the caller's JIT code
     a.bind(normalRet);
@@ -1871,7 +1872,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         a.cmove(rax, ptr(rdi, OFF_TRUEOOP));
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         return;  // never falls through (always succeeds)
     }
 
@@ -1938,7 +1939,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
 
         a.mov(ptr(rdi, OFF_RETVAL), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();                                 // plain ret (no sp-sync, no J2J shim on x86)
+        emitSyncSpToState_x86(a); a.ret();                                 // plain ret (no sp-sync, no J2J shim on x86)
 
         a.bind(fail);
         return;
@@ -1984,7 +1985,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
             a.or_(r10, asmjit::Imm(SMI_TAG));
             a.mov(ptr(rdi, OFF_RETVAL), r10);
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-            a.ret();
+            emitSyncSpToState_x86(a); a.ret();
             a.bind(tryWords);
         }
 
@@ -2001,7 +2002,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
             a.or_(r10, asmjit::Imm(SMI_TAG));
             a.mov(ptr(rdi, OFF_RETVAL), r10);
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-            a.ret();
+            emitSyncSpToState_x86(a); a.ret();
             a.bind(tryBytes);
         }
 
@@ -2020,7 +2021,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
             a.or_(r10, asmjit::Imm(SMI_TAG));
             a.mov(ptr(rdi, OFF_RETVAL), r10);
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-            a.ret();
+            emitSyncSpToState_x86(a); a.ret();
             a.bind(tryFmt9);
         }
 
@@ -2033,7 +2034,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
             a.or_(r10, asmjit::Imm(SMI_TAG));
             a.mov(ptr(rdi, OFF_RETVAL), r10);
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-            a.ret();
+            emitSyncSpToState_x86(a); a.ret();
             a.bind(tryFmt345);
         }
 
@@ -2063,7 +2064,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         a.or_(r10, asmjit::Imm(SMI_TAG));
         a.mov(ptr(rdi, OFF_RETVAL), r10);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
 
         a.bind(fail);
         return;
@@ -2124,7 +2125,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     a.mov(rax, ptr(rcx, rax, 3, 0));     // shift=3 (x8), disp=0
     a.mov(ptr(rdi, OFF_RETVAL), rax);
     a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-    a.ret();
+    emitSyncSpToState_x86(a); a.ret();
 
     // --- fmt 10-11: 32-bit word indexable (WordArray/IntegerArray/WideString) ---
     a.bind(tryWordsAt);
@@ -2148,7 +2149,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     a.or_(rax, asmjit::Imm(SMI_TAG));
     a.mov(ptr(rdi, OFF_RETVAL), rax);
     a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-    a.ret();
+    emitSyncSpToState_x86(a); a.ret();
 
     // --- fmt 16-23: byte indexable (ByteArray/ByteString/Symbol etc.) ---
     a.bind(tryBytesAt);
@@ -2174,7 +2175,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     a.or_(rax, asmjit::Imm(SMI_TAG));
     a.mov(ptr(rdi, OFF_RETVAL), rax);
     a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-    a.ret();
+    emitSyncSpToState_x86(a); a.ret();
 
     // --- fmt 3/4/5/9 + every other format: jit_rt_primat_ptr helper ---
     // int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits, uint64_t i, uint64_t* out)
@@ -2183,6 +2184,9 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     // (jitPrimAtFull) for anything else, writing the already-tagged result
     // oop into *out; returns 0 only on a genuine C-prim failure.
     a.bind(tryPtrAt);
+    // sp-residency: publish rbx->mem so the helper (and its s->sp debug read)
+    // sees current sp.  nop at flag=0.  (Defensive: at method-start rbx==mem.)
+    emitSyncSpToState_x86(a);
     a.mov(rax, rdx);
     a.sar(rax, asmjit::Imm(3));          // rax = untagged idx (helper wants untagged i)
     a.push(rdi);                         // save state (1 push => rsp 16-aligned at call)
@@ -2200,7 +2204,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     a.je(fail);                          // helper returned 0 -> genuine C-prim failure
     // Helper already wrote the tagged result oop into state.returnValue.
     a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-    a.ret();
+    emitSyncSpToState_x86(a); a.ret();
 
     a.bind(fail);
     return;   // fall through to the method's bytecode body (Smalltalk fallback)
@@ -2234,7 +2238,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         }
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         a.bind(fail);
         return;
     }
@@ -2252,7 +2256,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         }
         a.mov(ptr(rdi, OFF_RETVAL), rcx);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         a.bind(fail);
         return;
     }
@@ -2268,7 +2272,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         a.sub(rcx, asmjit::Imm(1));
         a.mov(ptr(rdi, OFF_RETVAL), rcx);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         a.bind(fail);
         return;
     }
@@ -2278,7 +2282,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         a.add(rcx, asmjit::Imm(1));
         a.mov(ptr(rdi, OFF_RETVAL), rcx);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         a.bind(fail);
         return;
     }
@@ -2306,7 +2310,7 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     a.or_(rcx, asmjit::Imm(SMI_TAG));
     a.mov(ptr(rdi, OFF_RETVAL), rcx);
     a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-    a.ret();
+    emitSyncSpToState_x86(a); a.ret();
 
     a.bind(fail);
 }
@@ -2383,7 +2387,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     }
     // Dup: read sp[-1], push it (stack [..., v] → [..., v, v]).
     if (op == SistaV1::Dup) {
-        a.mov(rcx, ptr(rdi, OFF_SP));
+        emitLoadSp_x86(a, rcx);
         a.mov(rax, ptr(rcx, -8));
         emitPushReg(a, rax);
         return true;
@@ -2420,17 +2424,17 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     }
     // pop: state.sp--.
     if (op == SistaV1::Pop) {
-        a.mov(rcx, ptr(rdi, OFF_SP));
+        emitLoadSp_x86(a, rcx);
         a.sub(rcx, 8);
-        a.mov(ptr(rdi, OFF_SP), rcx);
+        emitStoreSp_x86(a, rcx);
         return true;
     }
     // popStoreTemp N (0xD0..0xD7): pop TOS, store into tempBase[N].
     if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) {
         int n = op - SistaV1::PopStoreTempBase;
-        a.mov(rcx, ptr(rdi, OFF_SP));
+        emitLoadSp_x86(a, rcx);
         a.sub(rcx, 8);
-        a.mov(ptr(rdi, OFF_SP), rcx);
+        emitStoreSp_x86(a, rcx);
         a.mov(rax, ptr(rcx));
         a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
         a.mov(ptr(rdx, n * 8), rax);
@@ -2455,9 +2459,9 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.test(dword_ptr(rdx),
                asmjit::Imm(static_cast<int32_t>(0x800000)));
         a.jne(bail);
-        a.mov(rcx, ptr(rdi, OFF_SP));
+        emitLoadSp_x86(a, rcx);
         a.sub(rcx, 8);
-        a.mov(ptr(rdi, OFF_SP), rcx);
+        emitStoreSp_x86(a, rcx);
         a.mov(rax, ptr(rcx));
         a.mov(ptr(rdx, OBJ_SLOT_0 + n * 8), rax);
         a.jmp(end);
@@ -2467,7 +2471,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT),
               asmjit::Imm(EXIT_ARITH_OVERFLOW));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         a.bind(end);
         return true;
     }
@@ -2479,7 +2483,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         return true;
     }
     // returnReceiver: returnValue = receiver; exitReason = ExitReturn; ret.
@@ -2488,7 +2492,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         return true;
     }
     // returnTrue / returnFalse: similar with bake-via-state.
@@ -2497,7 +2501,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         return true;
     }
     if (op == 0x5A) {
@@ -2505,7 +2509,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         return true;
     }
     // returnNil: bake nil immediate.
@@ -2514,19 +2518,19 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         return true;
     }
     // returnTop: pop into rax (sp--, then *sp), store as retVal.
     if (op == SistaV1::ReturnTop) {
-        a.mov(rcx, ptr(rdi, OFF_SP));
+        emitLoadSp_x86(a, rcx);
         a.sub(rcx, 8);
-        a.mov(ptr(rdi, OFF_SP), rcx);
+        emitStoreSp_x86(a, rcx);
         a.mov(rax, ptr(rcx));
         emitJ2JReturnPrelude_x86(a, rax);
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         return true;
     }
     // Phase 3 arithmetic: 0x60..0x67 (+, -, <, >, <=, >=, =, ~=).
@@ -2550,7 +2554,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
 
-        a.mov(rax, ptr(rdi, OFF_SP));
+        emitLoadSp_x86(a, rax);
         a.mov(rcx, ptr(rax, -16));   // a
         a.mov(rdx, ptr(rax, -8));    // b
         // SmI tag check (both SmI): 5 instructions, replaces the older
@@ -2579,7 +2583,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.sub(rcx, asmjit::Imm(1));
             a.mov(ptr(rax, -16), rcx);
             a.sub(rax, 8);
-            a.mov(ptr(rdi, OFF_SP), rax);
+            emitStoreSp_x86(a, rax);
         } else if (op == 0x61) {     // -
             // Tagged-sub: a_bits - b_bits = (a-b)*8.
             // jo catches SmI overflow (same reasoning as +).
@@ -2589,7 +2593,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.add(rcx, asmjit::Imm(1));
             a.mov(ptr(rax, -16), rcx);
             a.sub(rax, 8);
-            a.mov(ptr(rdi, OFF_SP), rax);
+            emitStoreSp_x86(a, rax);
         } else if (op == 0x68) {     // *  (isPhase3ArithOp includes 0x68 so the
             // dedicated isPhase3MulOp emit below is dead for arith dispatch;
             // arm64's arith emit has a 0x68 mul case (AsmjitT1 ~3884) but the
@@ -2608,7 +2612,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.or_(rcx, asmjit::Imm(SMI_TAG));
             a.mov(ptr(rax, -16), rcx);
             a.sub(rax, 8);
-            a.mov(ptr(rdi, OFF_SP), rax);
+            emitStoreSp_x86(a, rax);
         } else {
             // Comparison ops.  cmp tagged bits directly — the map
             // x → 8x+1 is monotonic for signed values, so cmp(a_bits,
@@ -2626,7 +2630,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             }
             a.mov(ptr(rax, -16), rsi);
             a.sub(rax, 8);
-            a.mov(ptr(rdi, OFF_SP), rax);
+            emitStoreSp_x86(a, rax);
         }
         a.jmp(end);
 
@@ -2639,7 +2643,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT),
               asmjit::Imm(EXIT_ARITH_OVERFLOW));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
 
         a.bind(end);
         return true;
@@ -2650,7 +2654,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     if (isPhase3BitOp(op)) {
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
-        a.mov(rax, ptr(rdi, OFF_SP));
+        emitLoadSp_x86(a, rax);
         a.mov(rcx, ptr(rax, -16));   // a
         a.mov(rdx, ptr(rax, -8));    // b
         // SmI check: (a^b) | (a-1) low 3 bits = 0 iff both SmI.
@@ -2667,7 +2671,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         }
         a.mov(ptr(rax, -16), rcx);
         a.sub(rax, 8);
-        a.mov(ptr(rdi, OFF_SP), rax);
+        emitStoreSp_x86(a, rax);
         a.jmp(end);
 
         a.bind(bail);
@@ -2676,7 +2680,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT),
               asmjit::Imm(EXIT_ARITH_OVERFLOW));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
 
         a.bind(end);
         return true;
@@ -2685,7 +2689,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
     if (isPhase3MulOp(op)) {
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
-        a.mov(rax, ptr(rdi, OFF_SP));
+        emitLoadSp_x86(a, rax);
         a.mov(rcx, ptr(rax, -16));   // a
         a.mov(rdx, ptr(rax, -8));    // b
         // SmI check: (a^b) | (a-1) low 3 bits = 0 iff both SmI.
@@ -2711,7 +2715,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.or_(rcx, asmjit::Imm(SMI_TAG));
         a.mov(ptr(rax, -16), rcx);
         a.sub(rax, 8);
-        a.mov(ptr(rdi, OFF_SP), rax);
+        emitStoreSp_x86(a, rax);
         a.jmp(end);
 
         a.bind(bail);
@@ -2720,7 +2724,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT),
               asmjit::Imm(EXIT_ARITH_OVERFLOW));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
 
         a.bind(end);
         return true;
@@ -2732,7 +2736,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         asmjit::Label bail = a.new_label();
         asmjit::Label end  = a.new_label();
         asmjit::Label rightShift = a.new_label();
-        a.mov(rax, ptr(rdi, OFF_SP));
+        emitLoadSp_x86(a, rax);
         a.mov(rcx, ptr(rax, -16));   // a
         a.mov(rdx, ptr(rax, -8));    // b
         // SmI check: (a^b) | (a-1) low 3 bits = 0 iff both SmI.
@@ -2774,7 +2778,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.or_(rcx, asmjit::Imm(SMI_TAG));
         a.mov(ptr(rax, -16), rcx);
         a.sub(rax, 8);
-        a.mov(ptr(rdi, OFF_SP), rax);
+        emitStoreSp_x86(a, rax);
         a.jmp(end);
 
         a.bind(rightShift);
@@ -2791,7 +2795,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.or_(rcx, asmjit::Imm(SMI_TAG));
         a.mov(ptr(rax, -16), rcx);
         a.sub(rax, 8);
-        a.mov(ptr(rdi, OFF_SP), rax);
+        emitStoreSp_x86(a, rax);
         a.jmp(end);
 
         a.bind(bail);
@@ -2800,7 +2804,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT),
               asmjit::Imm(EXIT_ARITH_OVERFLOW));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
 
         a.bind(end);
         return true;
@@ -2824,7 +2828,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
             a.mov(ptr(rdi, OFF_IP), r8);
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
-            a.ret();
+            emitSyncSpToState_x86(a); a.ret();
             return true;
         }
         if (op <= SistaV1::ShortJumpLast) {
@@ -2842,7 +2846,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         asmjit::Label notBoolean = a.new_label();
         asmjit::Label fallThru   = a.new_label();
 
-        a.mov(rcx, ptr(rdi, OFF_SP));
+        emitLoadSp_x86(a, rcx);
         a.mov(rax, ptr(rcx, -8));               // TOS (don't pop)
 
         // First cmp: against the "branch-taken" boolean.
@@ -2858,13 +2862,13 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
 
         // Was the fall-through boolean.  Pop and fall through.
         a.sub(rcx, 8);
-        a.mov(ptr(rdi, OFF_SP), rcx);
+        emitStoreSp_x86(a, rcx);
         a.jmp(fallThru);
 
         a.bind(takeBranch);
         // Was the take-branch boolean.  Pop and jump.
         a.sub(rcx, 8);
-        a.mov(ptr(rdi, OFF_SP), rcx);
+        emitStoreSp_x86(a, rcx);
         a.jmp(bcLabels[targetIdx]);
 
         a.bind(notBoolean);
@@ -2873,7 +2877,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_MUST_BOOL));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
 
         a.bind(fallThru);
         return true;
@@ -2948,7 +2952,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
 #endif
             (void)resumeAfterCall; (void)j2jSiteOk;
 
-            a.mov(rcx, ptr(rdi, OFF_SP));
+            emitLoadSp_x86(a, rcx);
             int rcvrOffsetBytes = -8 * (nArgs + 1);
             a.mov(rax, ptr(rcx, rcvrOffsetBytes));   // rax = send receiver
             a.mov(rdx, rax);
@@ -3187,6 +3191,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 if (GET_DEBUG_BOOL(PHARO_T1_X86_J2J_DBG)) {
                     // PUSH trace.  Preserve rdi/r8/rcx/rsi/rax (live for the
                     // callee-state setup below); 5 pushes keep rsp 16-aligned.
+                    emitSyncSpToState_x86(a);  // publish rbx for the trace's s->sp read (nop at =0)
                     a.push(rdi); a.push(r8); a.push(rcx); a.push(rsi); a.push(rax);
                     a.mov(rsi, asmjit::Imm(0));                  // kind = PUSH
                     a.mov(rdx, asmjit::Imm((uint64_t)(globalIdx)));
@@ -3239,7 +3244,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     a.add(rcx, asmjit::Imm(8));
                     a.jmp(fillLoop);
                     a.bind(fillDone);
-                    a.mov(ptr(rdi, OFF_SP), r9);         // newSp = end
+                    emitStoreSp_x86(a, r9);         // newSp = end
                 }
                 a.jmp(r11);                              // entryAddr
                 }  // end nArgs==0 (or ALLARGS) cross-method admit
@@ -3287,7 +3292,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 for (int t = nArgs; t < callerTempCount; t++)
                     a.mov(ptr(rdx, t * 8), r10);
                 a.lea(r10, ptr(rdx, callerTempCount * 8));  // newSp
-                a.mov(ptr(rdi, OFF_SP), r10);
+                emitStoreSp_x86(a, r10);
                 a.mov(r10, r8);
                 a.mov(r11, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
                 a.and_(r10, r11);
@@ -3351,7 +3356,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 for (int t = nArgs; t < callerTempCount; t++)
                     a.mov(ptr(rdx, t * 8), r10);
                 a.lea(r10, ptr(rdx, callerTempCount * 8));  // newSp = tempBase + numTemps
-                a.mov(ptr(rdi, OFF_SP), r10);
+                emitStoreSp_x86(a, r10);
                 // Branch to callee code entry = extras & J2J_ADDR_MASK.
                 a.mov(r10, r8);
                 a.mov(r11, asmjit::Imm(0x0000FFFFFFFFFFFFULL));
@@ -3415,7 +3420,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.mov(ptr(rcx, rcvrOffsetBytes), rdx);
             if (nArgs > 0) {
                 a.sub(rcx, asmjit::Imm(8 * nArgs));
-                a.mov(ptr(rdi, OFF_SP), rcx);
+                emitStoreSp_x86(a, rcx);
             }
             a.jmp(endOfSend);
 
@@ -3448,7 +3453,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.mov(ptr(rax, rdx, 3, 8), r9);      // recv->slot[slotIdx] = arg
             if (nArgs > 0) {
                 a.sub(rcx, asmjit::Imm(8 * nArgs));
-                a.mov(ptr(rdi, OFF_SP), rcx);
+                emitStoreSp_x86(a, rcx);
             }
             a.jmp(endOfSend);
 
@@ -3471,7 +3476,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             }
             if (nArgs > 0) {
                 a.sub(rcx, asmjit::Imm(8 * nArgs));
-                a.mov(ptr(rdi, OFF_SP), rcx);
+                emitStoreSp_x86(a, rcx);
             }
             a.jmp(endOfSend);
 
@@ -3485,13 +3490,13 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.mov(ptr(rdi, OFF_IP), rax);
             if (g_debug.t1HitAsMiss) {
                 a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
-                a.ret();
+                emitSyncSpToState_x86(a); a.ret();
             } else {
                 a.mov(rax, ptr(rsi, 8));         // icData[1] = method Oop
                 a.mov(ptr(rdi, OFF_CACHED_TARGET), rax);
                 a.mov(dword_ptr(rdi, OFF_EXIT),
                       asmjit::Imm(EXIT_SEND_CACHED));
-                a.ret();
+                emitSyncSpToState_x86(a); a.ret();
             }
 
             // === Miss — chain loop does the IC fill ===
@@ -3503,7 +3508,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
             a.mov(ptr(rdi, OFF_IP), rax);
             a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
-            a.ret();
+            emitSyncSpToState_x86(a); a.ret();
 
 #if PHARO_J2J_SAVE_V2
             // V2 resume continuation (mirror arm64 8808-8835).  Reached ONLY via
@@ -3517,10 +3522,10 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             // dangling reference.
             if (j2jSiteOk && g_emitX86J2JOk && !g_emitIsBlock) {
                 a.bind(resumeAfterCall);
-                a.mov(rcx, ptr(rdi, OFF_SP));            // = savedSp (prelude restored it)
+                emitLoadSp_x86(a, rcx);            // = savedSp (prelude restored it)
                 if (nArgs > 0) a.sub(rcx, asmjit::Imm(8 * nArgs));
                 a.mov(ptr(rcx, -8), rax);                // *(newSp-8) = retval
-                a.mov(ptr(rdi, OFF_SP), rcx);
+                emitStoreSp_x86(a, rcx);
                 if (g_emitX86Xmethod) {
                     // Caller JITMethod = codeStart(offset 0) - sizeof(JITMethod).
                     a.lea(r9, ptr(g_codeStartLabel));    // RIP-relative
@@ -3549,7 +3554,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         return true;
     }
     // PushThisContext 0x52: bail to interp (materializing thisContext is
@@ -3560,7 +3565,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         return true;
     }
     // BlockReturnNil 0x5D / BlockReturnTop 0x5E: bail to interp (block
@@ -3572,7 +3577,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_ARITH_OVERFLOW));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         return true;
     }
     // Phase 3 \\ (0x6A) floor-mod / // (0x6D) floor-div — inline x86 idiv
@@ -3586,7 +3591,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         asmjit::Label mbail = a.new_label();
         asmjit::Label mdone = a.new_label();
         asmjit::Label noAdj = a.new_label();
-        a.mov(rsi, ptr(rdi, OFF_SP));
+        emitLoadSp_x86(a, rsi);
         a.mov(rax, ptr(rsi, -16));        // a (dividend)
         a.mov(rcx, ptr(rsi, -8));         // b (divisor)
         a.mov(r8, rax);                   // SmI tag check (both SmI)
@@ -3624,14 +3629,14 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.mov(ptr(rsi, -16), rax);
         }
         a.sub(rsi, asmjit::Imm(8));
-        a.mov(ptr(rdi, OFF_SP), rsi);
+        emitStoreSp_x86(a, rsi);
         a.jmp(mdone);
         a.bind(mbail);
         a.mov(r8, ptr(rdi, OFF_METHOD));
         a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
         a.bind(mdone);
         return true;
     }
@@ -9511,7 +9516,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     a.add(r8, asmjit::Imm(bcOffsetBase + globalIdx));
                     a.mov(ptr(rdi, OFF_IP), r8);
                     a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(exitCode));
-                    a.ret();
+                    emitSyncSpToState_x86(a); a.ret();
                 };
                 // CORRECTNESS-FIRST x86 port: bail EVERY multi-byte /
                 // extended bytecode (op >= 0xE0: ExtendA..PopStoreRemoteTemp)
@@ -9570,18 +9575,18 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         asmjit::Label notBoolean = a.new_label();
                         asmjit::Label takeBranch = a.new_label();
                         asmjit::Label fallThru   = a.new_label();
-                        a.mov(rcx, ptr(rdi, OFF_SP));
+                        emitLoadSp_x86(a, rcx);
                         a.mov(rax, ptr(rcx, -8));            // TOS (don't pop)
                         a.cmp(rax, ptr(rdi, takeOop));
                         a.je(takeBranch);
                         a.cmp(rax, ptr(rdi, fallOop));
                         a.jne(notBoolean);
                         a.sub(rcx, 8);                       // fall-through: pop
-                        a.mov(ptr(rdi, OFF_SP), rcx);
+                        emitStoreSp_x86(a, rcx);
                         a.jmp(fallThru);
                         a.bind(takeBranch);
                         a.sub(rcx, 8);                       // take: pop, jump
-                        a.mov(ptr(rdi, OFF_SP), rcx);
+                        emitStoreSp_x86(a, rcx);
                         a.jmp(bcLabels[(size_t)target]);
                         a.bind(notBoolean);                  // mustBeBoolean bail
                         a.mov(r8, ptr(rdi, OFF_METHOD));
@@ -9589,7 +9594,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         a.mov(ptr(rdi, OFF_IP), r8);
                         a.mov(dword_ptr(rdi, OFF_EXIT),
                               asmjit::Imm(EXIT_MUST_BOOL));
-                        a.ret();
+                        emitSyncSpToState_x86(a); a.ret();
                         a.bind(fallThru);
                         if ((size_t)(globalIdx + 1) < bcLabels.size())
                             a.bind(bcLabels[globalIdx + 1]);
@@ -9637,25 +9642,25 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         a.mov(rax, ptr(rax, idx * 8));
                         emitPushReg(a, rax);
                     } else if (op == SistaV1::ExtPopStoreTemp) {
-                        a.mov(rcx, ptr(rdi, OFF_SP));
+                        emitLoadSp_x86(a, rcx);
                         a.sub(rcx, 8);
-                        a.mov(ptr(rdi, OFF_SP), rcx);
+                        emitStoreSp_x86(a, rcx);
                         a.mov(rax, ptr(rcx));
                         a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
                         a.mov(ptr(rdx, idx * 8), rax);
                     } else if (op == SistaV1::ExtStoreTemp) {
-                        a.mov(rcx, ptr(rdi, OFF_SP));
+                        emitLoadSp_x86(a, rcx);
                         a.mov(rax, ptr(rcx, -8));            // TOS (don't pop)
                         a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
                         a.mov(ptr(rdx, idx * 8), rax);
                     } else { // ExtPopStoreLitVar || ExtStoreLitVar
                         if (op == SistaV1::ExtPopStoreLitVar) {
-                            a.mov(rcx, ptr(rdi, OFF_SP));
+                            emitLoadSp_x86(a, rcx);
                             a.sub(rcx, 8);
-                            a.mov(ptr(rdi, OFF_SP), rcx);
+                            emitStoreSp_x86(a, rcx);
                             a.mov(rax, ptr(rcx));
                         } else {
-                            a.mov(rcx, ptr(rdi, OFF_SP));
+                            emitLoadSp_x86(a, rcx);
                             a.mov(rax, ptr(rcx, -8));        // TOS (don't pop)
                         }
                         a.mov(rdx, ptr(rdi, OFF_LITERALS));
@@ -9700,11 +9705,11 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                         emitPushReg(a, rax);
                     } else {
                         asmjit::Label vecNotObj = a.new_label();
-                        a.mov(rcx, ptr(rdi, OFF_SP));
+                        emitLoadSp_x86(a, rcx);
                         a.mov(rax, ptr(rcx, -8));                // stackTop (TOS)
                         if (op == SistaV1::PopStoreTempAtInVec) {
                             a.sub(rcx, asmjit::Imm(8));
-                            a.mov(ptr(rdi, OFF_SP), rcx);        // pop
+                            emitStoreSp_x86(a, rcx);        // pop
                         }
                         a.mov(rcx, ptr(rdi, OFF_TEMPBASE));
                         a.mov(rdx, ptr(rcx, vecIdx * 8));        // vec
@@ -9753,7 +9758,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                             a.mov(ptr(rdi, OFF_IP), r8);
                             a.mov(dword_ptr(rdi, OFF_EXIT),
                                   asmjit::Imm(EXIT_ARITH_OVERFLOW));
-                            a.ret();
+                            emitSyncSpToState_x86(a); a.ret();
                         } else {
                             a.jmp(bcLabels[(size_t)target]);
                         }
@@ -9851,11 +9856,11 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                 || bcReal[bcRealLen-1] < SistaV1::ReturnReceiver
                 || bcReal[bcRealLen-1] > SistaV1::ReturnTop) {
             a.mov(x86::dword_ptr(x86::rdi, OFF_EXIT), Imm(EXIT_SEND));
-            a.ret();
+            emitSyncSpToState_x86(a); a.ret();
         }
     } else {
         a.mov(x86::dword_ptr(x86::rdi, OFF_EXIT), Imm(EXIT_SEND));
-        a.ret();
+        emitSyncSpToState_x86(a); a.ret();
     }
 #elif defined(__aarch64__) || defined(_M_ARM64)
     a64::Assembler a(&code);
