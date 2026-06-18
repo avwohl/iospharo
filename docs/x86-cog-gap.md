@@ -102,10 +102,16 @@ are Rosetta numbers; native x86 wins are likely smaller but same direction.)
 
 VALIDATION: flag=0 byte-identical (battery==golden); arm64 untouched
 (battery==golden); flag=1 battery==golden, a 12-op closure/NLR/recursion/
-exception stress == golden, and a 12-class/1938-test SUnit A/B IDENTICAL to
-flag=0 (same 1934 P, same pre-existing testIsClean E / testSourceNodeOptimized
-F). Still OPT-IN (build-time -DPHARO_T1_X86_SP_IN_REG=1); flipping the default
-mirrors arm64's default-on sp-residency once a broader SUnit A/B confirms.
+exception stress == golden, and SUnit A/B IDENTICAL to flag=0 at 12 classes/
+1938 tests, 40 classes/3509 tests, AND 150 classes/7866 tests (same Pass 7846 /
+Fail 14 / Error 6 on both). The 150-class run showed ONE F/E-NAME difference
+(flag=0 ProcessTerminateBugTest>>testTerminationDuringNestedUnwindWithReturn1
+vs flag=1 WeakOrderedCollectionTest>>testWeakOrderedCollectionAllGarbageCollected)
+— PROVEN a nondeterministic GC/scheduler flake, not an sp effect: re-running just
+those two classes 5x on EACH flag, the WeakOrderedCollection GC-timing failures
+flip pass/fail run-to-run on BOTH flags (flag=1 run1=1F vs runs2-5=2F; flag=0
+run4=1F vs others=2F) and ProcessTerminateBugTest passes in isolation. So DEFAULT-
+ON (commit 46be2194); opt out -DPHARO_T1_X86_SP_IN_REG=0.
 
 --- original port plan (superseded by the DONE design above) ---
 
