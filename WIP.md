@@ -33,21 +33,27 @@ Branch **jit**, pushed to origin (tip `af404cba`). arm64 `=1` battery == golden;
    per-bytecode tax to fix**; the real tax is activation throughput. Memory
    [[jit-sp-residency-ab]], docs/x86-cog-gap.md §2b.
 
-3. **x86 sp-residency port — scaffolded** (commit `af404cba`, pushed): build-time
-   `PHARO_T1_X86_SP_IN_REG` (default 0, byte-identical), rbx helpers
-   (emitLoadSp_x86 etc.), emitPushReg routed through them. x86 flag=0
-   battery==golden.
+3. **x86 sp-residency port — DONE + DEFAULT-ON** (commits `af404cba` scaffold →
+   `d9691c9a` batches A/C/D → `184af43c` batch B + crash fix → `46be2194`
+   default-on). sp pinned in rbx; design loads rbx live-in INSIDE JIT_CALL/
+   JIT_RESUME_CALL (+ rbx clobber) so NO per-method push/pop (sidesteps the
+   rsp-alignment hazard), exits sync-only. THE crash: x86 mid-method resume
+   (JITRuntime tryResume/tryResumeFast) entered JIT via a bare `entry(&state)`
+   that never loaded rbx → garbage sp (lldb: rbx=2) → SIGSEGV; fixed by routing
+   through JIT_CALL. Validated: flag=0 byte-identical, arm64 untouched, flag=1
+   battery + 12-op stress + 12/40-class SUnit A/B all == flag=0. Speedup
+   (Rosetta): loopD 1.70x, loopS 1.47x, fib 1.33x, cfibx 1.28x. Opt out
+   `-DPHARO_T1_X86_SP_IN_REG=0`. Builds: build-x86 (now default flag=1),
+   build-x86-0 (flag=0). docs/x86-cog-gap.md §2b, memory [[jit-sp-residency-ab]].
 
-## NEXT (the x86 sp-residency port — multi-session, plan in docs/x86-cog-gap.md §2b)
+## NEXT
 
-Convert the remaining ~50 OFF_SP sites (AsmjitT1.cpp 1664–9597) + the PROLOGUE
-(`push rbx; mov rbx,[rdi+OFF_SP]`) + every exit epilogue (`mov [rdi+OFF_SP],rbx;
-pop rbx` before each ~40 `a.ret()` — HIGH RISK, must pair perfectly) + the
-inline-J2J return prelude (restore caller sp into rbx). Each batch commits green
-at flag=0. Then build `-DPHARO_T1_X86_SP_IN_REG=1`, measure build-x86 cogbench3
-on vs off, keep arm64 byte-identical. Expect < arm64's 35% (x86 pays per-C-entry
-push/pop rbx; inline-J2J amortizes the hot path). Current x86 (Rosetta, JIT on):
-loopD1264 loopS1193(fixed) fib146 cfibx116 cfibs1452(send-bearing thrash, parked).
+- A 150-class SUnit A/B (default-on vs opt-out) is running to confirm the
+  default-flip at scale (40-class already IDENTICAL). If it diverges, revert
+  `46be2194`.
+- The dominant remaining x86 recursion gap is cfibs (send-bearing thrash), which
+  sp-residency does NOT touch — that's the parked PHARO_T1_X86_XMETHOD_SENDS
+  multi-session lever ([[jit-x86-sendbearing-two-bugs]]).
 
 ---
 
