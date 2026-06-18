@@ -6435,6 +6435,31 @@ void Interpreter::pushLiteralVariable(int index) {
     // Normal case: Association with key in slot 0, value in slot 1
     // assoc validated above (isObject, not bytes, not nil)
     Oop value = memory_.fetchPointerUnchecked(1, assoc);  // Association>>value
+    // BUG probe (PHARO_LITVAR_PROBE): dump the binding + slots for the cold-startup
+    // corruption suspect (#current = OSPlatform's `^Current` class-variable read,
+    // which returns layout-sensitive garbage 0x20/0xc).  Shows whether `assoc` (the
+    // literal binding) is a valid ClassVariable and what slot1(value) holds.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LITVAR_PROBE), 0)
+            && method_.isObject() && method_.rawBits() > 0x10000
+            && memory_.selectorOf(method_) == "current") {
+        static int n = 0;
+        if (++n <= 20) {
+            std::string aCls = (assoc.isObject() && memory_.isValidPointer(assoc))
+                ? memory_.classNameOf(assoc) : "BAD";
+            int nslots = (assoc.isObject() && memory_.isValidPointer(assoc))
+                ? (int)assoc.asObjectPtr()->slotCount() : -1;
+            std::string vCls = (value.isObject() && value.rawBits() >= 0x10000
+                && memory_.isValidPointer(value)) ? memory_.classNameOf(value)
+                : (value.isSmallInteger() ? "SmI" : "BAD/imm");
+            fprintf(stderr, "[LITVAR] #current value=0x%llx vCls=%s valid=%d | assoc=0x%llx aCls=%s "
+                "slot1=0x%llx mCls=%s\n",
+                (unsigned long long)value.rawBits(), vCls.c_str(),
+                (int)(value.isObject() && memory_.isValidPointer(value)),
+                (unsigned long long)assoc.rawBits(), aCls.c_str(),
+                (unsigned long long)value.rawBits(),
+                classNameOfMethod(method_).c_str());
+        }
+    }
     push(value);
 }
 
@@ -6484,6 +6509,23 @@ void Interpreter::pushSpecial(int which) {
 bool g_retValArmed = true;
 int  g_retValN = 0;
 void Interpreter::returnValue(Oop value) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_LITVAR_PROBE), 0)
+            && method_.isObject() && method_.rawBits() > 0x10000) {
+        std::string ms = memory_.selectorOf(method_);
+        if (ms == "os" || ms == "current" || ms == "platformName") {
+            static int rn = 0;
+            if (++rn <= 30) {
+                std::string vc = (value.isObject() && value.rawBits() >= 0x10000
+                    && memory_.isValidPointer(value)) ? memory_.classNameOf(value)
+                    : value.isSmallInteger() ? "SmI" : "BAD/imm";
+                fprintf(stderr, "[RETV] #%s returns 0x%llx (%s) recvCls=%s\n",
+                    ms.c_str(), (unsigned long long)value.rawBits(), vc.c_str(),
+                    receiver_.isObject() && receiver_.rawBits() > 0x10000
+                        && memory_.isValidPointer(receiver_)
+                        ? memory_.classNameOf(receiver_).c_str() : "imm");
+            }
+        }
+    }
     if (__builtin_expect(g_retValArmed, 0) && g_retValN < 400
             && method_.isObject() && method_.rawBits() > 0x10000
             && receiver_.isObject() && receiver_.rawBits() > 0x10000
