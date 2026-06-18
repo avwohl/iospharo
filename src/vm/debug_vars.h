@@ -237,6 +237,7 @@ DEBUG_STR(PHARO_T1_NOJIT_SEL)               // cold-startup bisect: comma-separa
 DEBUG_STR(PHARO_T1_NOJIT_CLASS)             // cold-startup bisect: like PHARO_T1_NOJIT_SEL but matches the method's DEFINING CLASS name (exact). Narrows a NOJIT_SEL hit to one class when the selector is overloaded.
 DEBUG_BOOL(PHARO_T1_SEND_RECV_AUDIT)        // cascade-origin detector: at the chain-loop send activation, when state.icDataPtr is set, verify classIndexOf(calleeRecv=sp[-(nArgs+1)]) == icDataPtr[0] (the IC's dispatched class). The FIRST mismatch names where the JIT operand stack first shifted (the cold-boot cascade origin). Reports caller method + selector + nArgs + sp + expected/actual classIndex, then stops on PHARO_T1_SEND_RECV_AUDIT_STOP.
 DEBUG_BOOL(PHARO_T1_SEND_RECV_AUDIT_STOP)   // stop the VM (running_=false) at the first SEND_RECV_AUDIT mismatch.
+DEBUG_BOOL(PHARO_T1_RET_FP_AUDIT)           // cascade-origin detector (JIT->interp return): at every ExitReturn, before popFrame, assert framePointer_ == state.tempBase-1 (the returning JIT method's fp). A divergence means the C++ framePointer_ global drifted from the JIT method's actual fp, so popFrame's `sp=fp` collapses to the WRONG slot and the result lands shifted on the caller stack. Reports the FIRST divergence (returning method + caller + fp/tempBase + delta).
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT

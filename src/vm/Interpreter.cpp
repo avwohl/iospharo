@@ -25707,6 +25707,34 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
         switch (state.exitReason) {
         case jit::ExitReturn: {
+            // CASCADE-ORIGIN AUDIT (PHARO_T1_RET_FP_AUDIT): the returning JIT
+            // method's fp (C++ framePointer_) MUST equal state.tempBase-1.  If
+            // it drifted, popFrame's `sp = framePointer_` collapses to the
+            // wrong slot -> the pushed result lands shifted on the caller's
+            // operand stack (the cold-boot cascade origin).  Report the FIRST.
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_RET_FP_AUDIT), 0)
+                    && state.tempBase) {
+                Oop* jitFP = state.tempBase - 1;
+                if (jitFP != framePointer_) {
+                    static int retFpN = 0;
+                    if (++retFpN <= 20) {
+                        long delta = (long)(framePointer_ - jitFP);
+                        std::string caller = (frameDepth_ > 0
+                            && savedFrames_[frameDepth_-1].savedMethod.isObject())
+                            ? memory_.selectorOf(savedFrames_[frameDepth_-1].savedMethod)
+                            : "?";
+                        fprintf(stderr,
+                            "[RET-FP-AUDIT #%d] DRIFT: returning=#%s caller=#%s "
+                            "framePointer_=%p state.tempBase-1=%p delta=%ld slots "
+                            "chainCallDepth=%d fd=%zu retVal=0x%llx\n",
+                            retFpN, memory_.selectorOf(state.method).c_str(),
+                            caller.c_str(), (void*)framePointer_, (void*)jitFP, delta,
+                            (int)chainCallDepth, frameDepth_,
+                            (unsigned long long)state.returnValue.rawBits());
+                        if (GET_DEBUG_BOOL(PHARO_T1_SEND_RECV_AUDIT_STOP)) running_ = false;
+                    }
+                }
+            }
             // Bug-14 diagnostic: PHARO_B5_TRACE=1 logs where JIT landed on
             // every ExitReturn — sp/retVal/chainCallDepth/localFrameDepth
             // plus caller-method identity so we can pinpoint the transition
