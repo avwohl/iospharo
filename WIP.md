@@ -1,3 +1,56 @@
+# RESUME POINT — 2026-06-18 (session: =0 baseline repaired + sp-residency A/B + x86 port scaffolded)
+
+Branch **jit**, pushed to origin (tip `af404cba`). arm64 `=1` battery == golden;
+`=0` (build-fsr0) battery == golden == `=1`.
+
+## DONE + VALIDATED this session
+
+1. **Repaired the arm64 `PHARO_T1_SP_IN_X25=0` (memory-sp) baseline** (commit
+   `fd8bfc94`, pushed). It had bit-rotted: SIX JIT-entry sites stored the live-in
+   x25 back to JS_SP after the `blr` UNCONDITIONALLY, but at `=0` the emit keeps
+   sp in memory and x25 is stale → the writeback clobbered JS_SP with the pre-call
+   sp. Surfaced as a `value:`-send reading old-space base `0x300000000` as receiver
+   in SnapshotOperation>>executeStoringError:>>onErrorDo: → DNU-recursion → stack
+   overflow → P80 terminate → timer wedge. Fixed: guarded all 6 behind
+   `PHARO_T1_SP_IN_X25` — TrampolineAsm.S (3 store-backs from prior session +
+   `pharo_jit_osr_resume`) + JITState.hpp `JIT_CALL`/`JIT_RESUME_CALL` (the
+   DOMINANT corruptor, the primary C++→JIT entry via tryJITActivation; a `#if`
+   can't sit in a macro body → conditional `_JIT_CALL_SP_WB` string). `=1`
+   byte-identical (battery==golden after rebuild). AsmjitT1.cpp's define is now
+   `#ifndef`-overridable so `-DPHARO_T1_SP_IN_X25=0` builds without editing.
+
+2. **sp-residency A/B (the deliverable)** — arm64 `=1` vs `=0`, cogbench3 min-of-9:
+
+       bench       =1(x25)  =0(mem)  =0 penalty
+       loopD100M     75       75       0%     flat loop (already ≈Cog)
+       loopS100M    100      104      +4%
+       fib33         86      133      +55%    recursion
+       cfibx32       70      105      +50%
+       cfibs32       99      163      +65%
+
+   FINDING: sp-residency does NOTHING for the flat per-bytecode loop (it's already
+   at parity) and +50-65% for recursion/activation. So there is **no flat
+   per-bytecode tax to fix**; the real tax is activation throughput. Memory
+   [[jit-sp-residency-ab]], docs/x86-cog-gap.md §2b.
+
+3. **x86 sp-residency port — scaffolded** (commit `af404cba`, pushed): build-time
+   `PHARO_T1_X86_SP_IN_REG` (default 0, byte-identical), rbx helpers
+   (emitLoadSp_x86 etc.), emitPushReg routed through them. x86 flag=0
+   battery==golden.
+
+## NEXT (the x86 sp-residency port — multi-session, plan in docs/x86-cog-gap.md §2b)
+
+Convert the remaining ~50 OFF_SP sites (AsmjitT1.cpp 1664–9597) + the PROLOGUE
+(`push rbx; mov rbx,[rdi+OFF_SP]`) + every exit epilogue (`mov [rdi+OFF_SP],rbx;
+pop rbx` before each ~40 `a.ret()` — HIGH RISK, must pair perfectly) + the
+inline-J2J return prelude (restore caller sp into rbx). Each batch commits green
+at flag=0. Then build `-DPHARO_T1_X86_SP_IN_REG=1`, measure build-x86 cogbench3
+on vs off, keep arm64 byte-identical. Expect < arm64's 35% (x86 pays per-C-entry
+push/pop rbx; inline-J2J amortizes the hot path). Current x86 (Rosetta, JIT on):
+loopD1264 loopS1193(fixed) fib146 cfibx116 cfibs1452(send-bearing thrash, parked).
+
+---
+
 # RESUME POINT — 2026-06-17 (session: LOCAL Rosetta x86 JIT + DEFAULT-ON flip)
 
 Branch **jit** (== origin/jit-x86 tip). arm64 battery == `/tmp/battery_golden.txt`
