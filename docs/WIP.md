@@ -1,3 +1,40 @@
+# WIP RESUME (2026-06-18e) — cold-image-boot corruption REFRAMED: JIT operand-stack cascade, NOT a heap wild-write
+
+Goal: finish WIP, make the JIT add-on work for arm + x86. Blocker for image
+testing = the 0x300000000 cold-image-startup corruption. This session OVERTURNED
+the prior "raw wild write" model. See memory [[vm-cold-image-startup-operand-corruption]].
+
+ESTABLISHED (commits a28259f0, 537e8dfd — diag tooling, pushed):
+- NOT a heap wild-write: a malformed-tag-aware full-heap+eden scan
+  (PHARO_HEAP_SCAN_EVERY) is CLEAN at every checkpoint up to the DNU. The bad
+  receivers (0x9=SmI 1, 0x3=Char 0, nil) are LEGAL oops in WRONG frame slots.
+- JIT-SPECIFIC: PHARO_NO_JIT boots /tmp/h3 (and the /tmp/h3/warm.image I made
+  via a NO_JIT snapshot) cleanly to eval; JIT-on => 9 DNUs. NOT stock-vs-our
+  context format (the warm image is OUR snapshot and still fails under JIT) —
+  our VM forces isImageStarting=true on resume so startup handlers always re-run.
+- PERVASIVE CASCADE, not one method: PHARO_T1_NOJIT_SEL=do: just relocates the
+  first DNU (#value: rcvr=0x9 in #do: -> #new: rcvr=nil in #growAtLast). No
+  single feature toggle fixes it (inline-J2J/FSR-cursor/patched-sends/ALL resume
+  variants/native-backjump/block-create/inline at:+size all NO effect).
+- SYMPTOM PINNED: DNU#1 = `FFIStructure subclasses do: aBlock`. Decoded
+  Array>>do: (oop 0x3002d5420): offset-11 bytecode PushTemp0 (=aBlock) is the
+  value: receiver. Frame: fp[1]=aBlock, fp[2]=limit3, fp[3]=i1, operands from
+  fp[4]. At value:, fp[4] holds 0x9 (=i) and aBlock is NOWHERE on the operand
+  stack -> the operand stack was ALREADY SHIFTED on entry to #do:. #do: is NOT
+  resumed (DO-RESUME probe never fires) -> the shift is INHERITED from the caller.
+  => ONE upstream JIT operand-stack shift in cold startup that CASCADES.
+
+NEXT (precise): build a per-JIT-send operand-DEPTH checker (after each send/
+chain-return, assert sp matches the bytecode's expected depth via
+src/vm/jit/BcDepthMap.hpp) to catch the FIRST send that leaves the wrong sp
+depth = the cascade origin. Prime suspects: chain-loop send-return/activation
+(Interpreter.cpp 27147 tempBase=sp-nArgs, 27381 sp[-(nArgs+1)]=retVal) with a
+miscounted nArgs. Tools all env-gated on a FIXED binary (no relocation):
+PHARO_HEAP_SCAN_EVERY, PHARO_DNU_DUMP_COLL, PHARO_T1_NOJIT_SEL/_CLASS.
+Repro: `PHARO_DET_SCHED=1 PHARO_DNU_DUMP_COLL=1 build/test_load_image /tmp/h3/warm.image eval "3 + 4"`.
+
+---
+
 # WIP — Cog-speed /goal (2026-06-14, ongoing): arm64 zone wins landed; x86 blocked
 
 /goal "JIT as fast as cog on arm AND x86". This session's landed wins (all
