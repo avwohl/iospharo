@@ -120,6 +120,13 @@ static bool g_emitX86Xmethod = false;
 // cross-method (getters, class, size, isNil, ...) is the bulk of real sends and
 // is the safe default-on subset.  Opt in to re-test the broken path.
 static bool g_emitX86XmethodAllArgs = false;
+// BUG-2 bisect (PHARO_T1_X86_SENDS_SEL): scope the SEND-BEARING admit (the
+// Increment-2 gate at ~3072) to matching CALLER selectors, while keeping full
+// inline-J2J emission everywhere (so there is NO caller-J2J/callee-no-J2J
+// mismatch artifact).  Lets the real menu-path send-bearing corruptor be
+// isolated by caller selector.  Empty/unset => the raw PHARO_T1_X86_XMETHOD_SENDS
+// behavior (all callers).  Set per-compile in compileViaAsmjit.
+static bool g_emitX86SendsOk = false;
 // FSR M1 per-compile gates (set in compileViaAsmjit).
 static bool g_fsrX19 = false;
 static bool g_fsrCursor = false;  // FSR M2 v1: x23 cursor residency (write-through)
@@ -3069,7 +3076,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     + (int)offsetof(JITMethod, compiledMethodOop)));
                 a.cmp(r10, qword_ptr(rsi, 8));
                 a.jne(notJ2J);
-                if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_SENDS)) {
+                if (g_emitX86SendsOk) {
                     // Increment 2 (opt-in): admit SEND-BEARING callees instead
                     // of the canSkipJ2JSave (numIC==0) leaf-only gate.  When
                     // inct's inner send is itself J2J-able (the common case) it
@@ -10928,6 +10935,61 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // no-ops (kept for script compat).
     g_emitX86Xmethod = g_emitX86J2JOk && !GET_DEBUG_BOOL(PHARO_T1_X86_NO_XMETHOD);
     g_emitX86XmethodAllArgs = !GET_DEBUG_BOOL(PHARO_T1_X86_NO_XMETHOD_ALLARGS);
+    // BUG-2 bisect: gate the send-bearing admit (~3072) on the CALLER selector
+    // (and/or class) when PHARO_T1_X86_SENDS_SEL / _CLASS is set; full inline-J2J
+    // emission stays on, so no mismatch artifact.  Unset => raw XMETHOD_SENDS.
+    g_emitX86SendsOk = GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_SENDS);
+    if (g_emitX86SendsOk) {
+        const char* sendsSel = GET_DEBUG_STR(PHARO_T1_X86_SENDS_SEL);
+        const char* sendsCls = GET_DEBUG_STR(PHARO_T1_X86_SENDS_CLASS);
+        if ((sendsSel && *sendsSel) || (sendsCls && *sendsCls)) {
+            std::string sel = memory.selectorOf(compiledMethod);
+            std::string cls = interp.classNameOfMethod(compiledMethod);
+            bool selOk = !sendsSel || !*sendsSel;
+            if (sendsSel && *sendsSel) {
+                std::string js(sendsSel);
+                size_t start = 0;
+                while (start <= js.size()) {
+                    size_t comma = js.find(',', start);
+                    std::string tok = js.substr(start,
+                        comma == std::string::npos ? std::string::npos : comma - start);
+                    if (tok == sel) { selOk = true; break; }
+                    if (comma == std::string::npos) break;
+                    start = comma + 1;
+                }
+            }
+            bool clsOk = !sendsCls || !*sendsCls;
+            if (sendsCls && *sendsCls) {
+                std::string js(sendsCls);
+                size_t start = 0;
+                while (start <= js.size()) {
+                    size_t comma = js.find(',', start);
+                    std::string tok = js.substr(start,
+                        comma == std::string::npos ? std::string::npos : comma - start);
+                    if (tok == cls) { clsOk = true; break; }
+                    if (comma == std::string::npos) break;
+                    start = comma + 1;
+                }
+            }
+            g_emitX86SendsOk = selOk && clsOk;
+        }
+        // BUG-2 hash-bucket bisect: admit send-bearing only for callers whose
+        // (class>>selector) hashes into bucket HVAL mod HMOD.  Binary-search the
+        // corruptor by doubling HMOD.  Mismatch-free (emission stays full).
+        int hmod = GET_DEBUG_INT(PHARO_T1_X86_SENDS_HMOD);
+        if (g_emitX86SendsOk && hmod > 0) {
+            std::string sel = memory.selectorOf(compiledMethod);
+            std::string cls = interp.classNameOfMethod(compiledMethod);
+            std::string key = cls + ">>" + sel;
+            uint64_t h = 1469598103934665603ULL;          // FNV-1a
+            for (char c : key) { h ^= (uint8_t)c; h *= 1099511628211ULL; }
+            if ((int)(h % (uint64_t)hmod) != GET_DEBUG_INT(PHARO_T1_X86_SENDS_HVAL))
+                g_emitX86SendsOk = false;
+            else if (GET_DEBUG_BOOL(PHARO_J2J_NEST_TRACE))
+                fprintf(stderr, "[SENDS-BUCKET] %s -> bucket %d/%d\n",
+                    key.c_str(), (int)(h % (uint64_t)hmod), hmod);
+        }
+    }
 #endif
     // M1 x19 invariant: UNCONDITIONAL since 2026-06-11 (five one-cycle
     // movs at activation commits, gate-verified by the 2468-test soak)
