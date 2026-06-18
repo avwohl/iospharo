@@ -19204,7 +19204,30 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
                 g_primCallCount[primitiveIndex]++;
             }
             uint64_t spBefore = (uint64_t)stackPointer_;
+            void* fpBefore = framePointer_;
             PrimitiveResult result = (this->*prim)(argCount);
+            // PRIM-SP-AUDIT (PHARO_PRIM_SP_AUDIT): a Success primitive that does
+            // NOT switch frames must leave sp decreased by exactly argCount*8
+            // (consume receiver+args, push 1 result).  A wrong delta is the
+            // operand-stack-shift root cause (e.g. a pop()/push() that forgot the
+            // receiver).  Skip context-switching prims (fp changed) — they
+            // legitimately leave sp in a different frame.
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_PRIM_SP_AUDIT), 0)
+                    && result == PrimitiveResult::Success
+                    && framePointer_ == fpBefore) {
+                int64_t delta = (int64_t)spBefore - (int64_t)(uint64_t)stackPointer_;
+                int64_t expected = (int64_t)argCount * 8;
+                if (delta != expected) {
+                    static int auditN = 0;
+                    if (++auditN <= 60)
+                        fprintf(stderr,
+                            "[PRIM-SP-AUDIT] prim=%d argc=%d delta=%lld expected=%lld "
+                            "(off by %lld slots) method=#%s\n",
+                            primitiveIndex, argCount, (long long)delta,
+                            (long long)expected, (long long)((delta - expected) / 8),
+                            memory_.selectorOf(method_).c_str());
+                }
+            }
             if (__builtin_expect(traceSpCorrupt_, 0)) {
                 uint64_t spAfter = (uint64_t)stackPointer_;
                 if ((spAfter & 7) == 1 && (spBefore & 7) != 1) {

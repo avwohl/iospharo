@@ -9947,76 +9947,77 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
         return obj;
     };
 
-    // Negative indices: VM parameters (flags like --headless) at -1, -2, ...
+    // ROOT CAUSE of the 0x300000000 cold-image-startup corruption (2026-06-18):
+    // every case popped ONLY the arg (pop()) and pushed the result, leaving the
+    // RECEIVER on the operand stack -> a +1 operand-stack shift on EVERY
+    // getSystemAttribute:/vmParameterAt: (prim 149) call.  Harmless for a trivial
+    // `^...getSystemAttribute: i` (the stray item dies with the returning frame),
+    // but cold-image startup queries prim 149 heavily inside larger expressions
+    // (OSPlatform family detection, DiskStore>>checkVMVersion, FFI resetAll-
+    // Structures), so the shift accumulates into pervasive operand corruption
+    // (receivers read as nil(0x300000000)/false/true/SmI from the wrong slots) ->
+    // handleError: -> dead image.  Warm images (past platform detection) skip the
+    // heavy querying, which is why a saved/warm image booted but cold ones did not.
+    // FIX: primitiveSuccess() pops receiver+args (popN(argCount_+1)) and pushes the
+    // result — the idiomatic helper (matches primitiveAt etc).  Found via the
+    // PHARO_PRIM_SP_AUDIT delta check (prim 149: delta=0, expected=8, off by -1).
     if (index < 0) {
         int paramIdx = static_cast<int>(-index) - 1;
         const auto& params = vmParameters_;
-        pop();
         if (paramIdx >= 0 && paramIdx < static_cast<int>(params.size())) {
-            push(makeBytes(params[paramIdx]));
+            primitiveSuccess(makeBytes(params[paramIdx]));
         } else {
-            push(memory_.nil());
+            primitiveSuccess(memory_.nil());
         }
         return PrimitiveResult::Success;
     }
 
     // 0: VM path, 1: image path, 2+: image arguments, 1000+: VM info
     if (index == 0) {
-        pop();
-        push(makeBytes(vmPath_.empty() ? "PharoSmalltalk" : vmPath_));
+        primitiveSuccess(makeBytes(vmPath_.empty() ? "PharoSmalltalk" : vmPath_));
         return PrimitiveResult::Success;
     }
     if (index == 1) {
-        pop();
-        push(makeBytes(imageName_.empty() ? "Pharo.image" : imageName_));
+        primitiveSuccess(makeBytes(imageName_.empty() ? "Pharo.image" : imageName_));
         return PrimitiveResult::Success;
     }
     if (index >= 2 && index < 1000) {
         int argIdx = static_cast<int>(index) - 2;
         const auto& args = imageArguments_;
-        pop();
         if (!args.empty() && argIdx < static_cast<int>(args.size())) {
-            push(makeBytes(args[argIdx]));
+            primitiveSuccess(makeBytes(args[argIdx]));
         } else {
-            push(memory_.nil());
+            primitiveSuccess(memory_.nil());
         }
         return PrimitiveResult::Success;
     }
 
     switch (index) {
         case 1001:  // Operating system name — MacOSXPlatform.isActivePlatform matches "Mac OS"
-            pop();
-            push(makeBytes("Mac OS"));
+            primitiveSuccess(makeBytes("Mac OS"));
             return PrimitiveResult::Success;
         case 1002:
-            pop();
-            push(makeBytes("PharoSmalltalk 1.0"));
+            primitiveSuccess(makeBytes("PharoSmalltalk 1.0"));
             return PrimitiveResult::Success;
         case 1003:
-            pop();
-            push(makeBytes("StackInterpreter"));
+            primitiveSuccess(makeBytes("StackInterpreter"));
             return PrimitiveResult::Success;
         case 1004:
-            pop();
-            push(Oop::fromSmallInteger(1));
+            primitiveSuccess(Oop::fromSmallInteger(1));
             return PrimitiveResult::Success;
         case 1005:
-            pop();
-            push(makeBytes("Quartz"));
+            primitiveSuccess(makeBytes("Quartz"));
             return PrimitiveResult::Success;
         case 1006:
         case 1007:
         case 1008:
-            pop();
-            push(makeBytes("PharoSmalltalk 2025-01-28"));
+            primitiveSuccess(makeBytes("PharoSmalltalk 2025-01-28"));
             return PrimitiveResult::Success;
         case 1009:
-            pop();
-            push(makeBytes("v1.0.0 - Commit: iospharo - Date: 2026-04-06 12:00:00 +0000"));
+            primitiveSuccess(makeBytes("v1.0.0 - Commit: iospharo - Date: 2026-04-06 12:00:00 +0000"));
             return PrimitiveResult::Success;
         case 1201:
-            pop();
-            push(memory_.nil());
+            primitiveSuccess(memory_.nil());
             return PrimitiveResult::Success;
         default:
             return PrimitiveResult::Failure;
