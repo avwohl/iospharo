@@ -127,3 +127,4 @@ docs/results/jitpkg/*_clean_*.log
 build-dbg/
 .sweep-state/
 build-opt/
+build-fsr0/

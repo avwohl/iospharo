@@ -74,7 +74,11 @@ static bool g_emitGetterTrace = false;
 //     migration is all-or-nothing at runtime; this flag makes it
 //     incremental at the SOURCE level — each converted batch commits
 //     green with the flag at 0).
+// Overridable via the build so the =0 (memory-sp) baseline can be A/B'd
+// without editing this file: cmake ... -DPHARO_T1_SP_IN_X25=0.
+#ifndef PHARO_T1_SP_IN_X25
 #define PHARO_T1_SP_IN_X25 1
+#endif
 // tempBase residency (x26) — same pattern, same contract sites.
 #define PHARO_T1_TB_IN_X26 0
 // simStack claims x26 as the TOS mirror (docs/simstack-design.md §4);

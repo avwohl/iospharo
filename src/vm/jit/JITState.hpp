@@ -337,6 +337,23 @@ typedef void (*StencilFunc)(JITState*);
 // JIT entry on Apple Silicon.
 #define _JIT_CALL_PRE() do { } while (0)
 
+// sp-residency live-out writeback (mirrors AsmjitT1.cpp's PHARO_T1_SP_IN_X25
+// and the trampoline's guarded `str x25`).  At =1 the emit maintains x25 as
+// state.sp, so publish it after the blr.  At =0 the emit keeps sp in memory
+// and x25 is stale here — a writeback would corrupt JS_SP (the snapshot-resume
+// onErrorDo: corruption).  A preprocessor #if can't live inside a macro body,
+// so this conditional string is concatenated into the asm by adjacency.
+// `%[s]` is still referenced by the leading `mov x0, %[s]` in both macros, so
+// dropping this line never leaves an unused operand.
+#ifndef PHARO_T1_SP_IN_X25
+#define PHARO_T1_SP_IN_X25 1
+#endif
+#if PHARO_T1_SP_IN_X25
+#define _JIT_CALL_SP_WB "str x25, [%[s], #0]"
+#else
+#define _JIT_CALL_SP_WB ""
+#endif
+
 #ifdef __aarch64__
 #define JIT_CALL(entry_ptr, state_ptr) do { \
     _JIT_CALL_PRE(); \
@@ -369,7 +386,8 @@ typedef void (*StencilFunc)(JITState*);
         "ldur x26, [x25, #-8]\n\t" \
         "blr %[e]\n\t" \
         /* sp-residency live-out: JIT code maintained x25; publish it */ \
-        "str x25, [%[s], #0]" \
+        /* (=0: x25 stale, _JIT_CALL_SP_WB is empty — sp stays in mem) */ \
+        _JIT_CALL_SP_WB \
         : \
         : [s] "r"(_jit_s), [e] "r"(_jit_e) \
         : "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10","x11", \
@@ -403,7 +421,7 @@ typedef void (*StencilFunc)(JITState*);
         "ldr x23, [x0, #144]\n\t" \
         "ldur x26, [x25, #-8]\n\t" \
         "blr %[e]\n\t" \
-        "str x25, [%[s], #0]" \
+        _JIT_CALL_SP_WB \
         : \
         : [s] "r"(_jit_s), [e] "r"(_jit_e), [rv] "r"(_jit_rv) \
         : "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10","x11", \

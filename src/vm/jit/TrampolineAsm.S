@@ -25,6 +25,16 @@
 
 #if defined(__aarch64__) && PHARO_JIT_ENABLED
 
+// sp-residency Phase-1 switch (mirrors AsmjitT1.cpp's PHARO_T1_SP_IN_X25).
+// 1 = x25 is register-resident state.sp, so the live-out store-back below
+//     propagates the emit's updates.  0 = the emit keeps sp in memory only,
+//     so the post-blr `str x25` would write back a STALE x25 and corrupt sp
+//     (see the WARN comment at Ltramp_return) — guarded out.  Overridable so
+//     the =0 baseline can be built: -DPHARO_T1_SP_IN_X25=0 on the ASM flags.
+#ifndef PHARO_T1_SP_IN_X25
+#define PHARO_T1_SP_IN_X25 1
+#endif
+
     .text
     .p2align 4
 
@@ -233,7 +243,9 @@ Ltramp_return:
     ldur    x26, [x25, #-8]           // simStack: TOS mirror live-in (design §4)
     mov     x0,  x21
     blr     x7
+#if PHARO_T1_SP_IN_X25
     str     x25, [x21, #JS_SP]
+#endif
     b       Ltramp_loop
 #else
     // Load save fields. JSV_JITMETHOD(32) and JSV_RESUMEADDR(40) are
@@ -300,7 +312,9 @@ Lret_after_restore:
     ldur    x26, [x25, #-8]           // simStack: TOS mirror live-in
     mov     x0,  x21
     blr     x7
+#if PHARO_T1_SP_IN_X25
     str     x25, [x21, #JS_SP]        // sp-residency: x25 live-out from JIT code
+#endif
     b       Ltramp_loop
 #endif  // PHARO_J2J_SAVE_V2 (Ltramp_return)
 
@@ -518,7 +532,9 @@ Lcall_enter_callee:
     ldur    x26, [x25, #-8]           // simStack: TOS mirror live-in
     mov     x0,  x21                       // JITState* arg
     blr     x7
+#if PHARO_T1_SP_IN_X25
     str     x25, [x21, #JS_SP]        // sp-residency: x25 live-out from JIT code
+#endif
     b       Ltramp_loop
 
 
@@ -614,7 +630,11 @@ SYMBOL(pharo_jit_osr_resume):
     ldr     x23, [x0, #JS_J2J_SAVE_CURSOR]
     blr     x1                         // call JIT'd code
     ldr     x9,  [sp, #40]
+#if PHARO_T1_SP_IN_X25
     str     x25, [x9, #JS_SP]         // writeback BEFORE restoring caller's regs
+#endif                                // (=0: JIT kept sp in memory; x25 is stale
+                                      //  here — a writeback would corrupt JS_SP,
+                                      //  the snapshot-resume onErrorDo: corruption)
     ldr     x23, [sp, #56]            // restore x23 for our caller
     ldr     x26, [sp, #48]            // restore x26 for our caller
     ldr     x25, [sp, #32]            // restore x25 for our caller
