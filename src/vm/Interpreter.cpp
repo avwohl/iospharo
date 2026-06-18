@@ -20272,6 +20272,26 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         jit::spDepthCheck(sstate, "perBcSista-backjump");
         switch (sstate.exitReason) {
         case jit::ExitReturn: {
+            // BUG-2 asString corruption probe (PHARO_J2J_NEST_TRACE): log every
+            // asString JIT return — its receiver class + the returned value's
+            // class.  A class-valued return (val cls="X class") for a receiver
+            // that should produce a string IS the send-bearing receiver swap.
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_J2J_NEST_TRACE), 0)
+                    && method_.isObject() && method_.rawBits() > 0x10000
+                    && memory_.selectorOf(method_) == "asString") {
+                static int g_asRetN = 0;
+                if (++g_asRetN <= 80) {
+                    Oop v = sstate.returnValue;
+                    fprintf(stderr, "[ASRET #%d] recv=%s -> valCls=%s mOop=0x%llx\n",
+                        g_asRetN,
+                        receiver_.isObject() && receiver_.rawBits() > 0x10000
+                            ? memory_.classNameOf(receiver_).c_str() : "imm",
+                        v.isNil() ? "NIL" : v.isSmallInteger() ? "SmI"
+                          : v.isObject() && v.rawBits() > 0x10000
+                              ? memory_.classNameOf(v).c_str() : "imm",
+                        (unsigned long long)method_.rawBits());
+                }
+            }
             if (__builtin_expect(g_retValArmed, 0) && g_retValN < 400
                     && method_.isObject() && method_.rawBits() > 0x10000
                     && receiver_.isObject() && receiver_.rawBits() > 0x10000

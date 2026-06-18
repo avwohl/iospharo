@@ -461,10 +461,29 @@ typedef void (*StencilFunc)(JITState*);
           "memory","cc" \
     ); \
 } while(0)
-// x86 resume call ignores the retval parameter (the V2 prelude / C++ pop already
-// placed it); the rbx-load is the only sp-residency addition.
-#define JIT_RESUME_CALL(entry_ptr, state_ptr, retval_bits) \
-    JIT_CALL(entry_ptr, state_ptr)
+// x86 resume call: the V2 resumeAfterCall continuation reads the return value
+// from RAX (it pops args + writes *(newSp-8)=rax).  On the in-JIT prelude path
+// the returning method already left retval in rax, but on the C++ rj2j/chain
+// ExitReturn path (Interpreter.cpp ~21478, ~25127) nothing sets it — so x86
+// MUST load rax=retval here (V1 wrote the slot in C++ and ignored this; V2 does
+// not, which silently fed resumeAfterCall a garbage retval -> the send-bearing
+// cross-method receiver/value swap, BUG-2).  Plus the sp-residency rbx-load.
+#define JIT_RESUME_CALL(entry_ptr, state_ptr, retval_bits) do { \
+    _JIT_CALL_PRE(); \
+    void* _jit_e = reinterpret_cast<void*>(entry_ptr); \
+    void* _jit_s = reinterpret_cast<void*>(state_ptr); \
+    uint64_t _jit_rv = (retval_bits); \
+    asm volatile( \
+        "movq %[s], %%rdi\n\t"           /* rdi = state */ \
+        "movq (%%rdi), %%rbx\n\t"        /* rbx = state.sp live-in */ \
+        "movq %[rv], %%rax\n\t"          /* rax = retval for resumeAfterCall */ \
+        "callq *%[e]\n\t" \
+        : \
+        : [s] "r"(_jit_s), [e] "r"(_jit_e), [rv] "r"(_jit_rv) \
+        : "rax","rcx","rdx","rsi","rdi","r8","r9","r10","r11","rbx", \
+          "memory","cc" \
+    ); \
+} while(0)
 #else
 // NOTE: must fully qualify ::pharo::jit::JITState — this macro is invoked
 // from member functions of pharo::Interpreter (Interpreter.cpp), where
@@ -474,9 +493,22 @@ typedef void (*StencilFunc)(JITState*);
     _JIT_CALL_PRE(); \
     ((void(*)(::pharo::jit::JITState*))(entry_ptr))(state_ptr); \
 } while(0)
-// x86: V2 not ported yet — resume calls ignore the retval parameter.
-#define JIT_RESUME_CALL(entry_ptr, state_ptr, retval_bits) \
-    JIT_CALL(entry_ptr, state_ptr)
+// x86 (memory-sp): same V2 fix — resumeAfterCall reads retval from RAX, so load
+// it here (the rj2j/chain ExitReturn resume path doesn't otherwise set it).
+#define JIT_RESUME_CALL(entry_ptr, state_ptr, retval_bits) do { \
+    _JIT_CALL_PRE(); \
+    void* _jit_e = reinterpret_cast<void*>(entry_ptr); \
+    ::pharo::jit::JITState* _jit_s = (state_ptr); \
+    uint64_t _jit_rv = (retval_bits); \
+    asm volatile( \
+        "movq %[s], %%rdi\n\t" \
+        "movq %[rv], %%rax\n\t"          /* rax = retval for resumeAfterCall */ \
+        "callq *%[e]\n\t" \
+        : \
+        : [s] "r"(_jit_s), [e] "r"(_jit_e), [rv] "r"(_jit_rv) \
+        : "rax","rcx","rdx","rsi","rdi","r8","r9","r10","r11","memory","cc" \
+    ); \
+} while(0)
 #endif
 #endif
 
