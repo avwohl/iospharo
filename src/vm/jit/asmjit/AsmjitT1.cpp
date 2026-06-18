@@ -1667,9 +1667,11 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
 //     caller sp into rbx.  All-or-nothing at runtime; this flag makes the
 //     migration incremental at the SOURCE level (each batch commits green at
 //     0).  See docs/x86-cog-gap.md "x86 sp-residency port plan".
-// Overridable via the build: cmake ... -DPHARO_T1_X86_SP_IN_REG=1.
+// DEFAULT-ON 2026-06-18: validated correctness-identical to memory-sp (battery +
+// 12-op NLR/closure/recursion/exception stress + 40-class/3509-test SUnit A/B all
+// IDENTICAL) and 1.3-1.7x faster on x86 (Rosetta).  Opt out: -DPHARO_T1_X86_SP_IN_REG=0.
 #ifndef PHARO_T1_X86_SP_IN_REG
-#define PHARO_T1_X86_SP_IN_REG 0
+#define PHARO_T1_X86_SP_IN_REG 1
 #endif
 #if PHARO_T1_X86_SP_IN_REG
 #define X86_SP_REG asmjit::x86::rbx

@@ -444,7 +444,7 @@ typedef void (*StencilFunc)(JITState*);
 // so the C compiler preserves its OWN rbx across the call; the JIT body syncs
 // rbx->[rdi+OFF_SP] at every exit so memory sp is current when we return here.
 #ifndef PHARO_T1_X86_SP_IN_REG
-#define PHARO_T1_X86_SP_IN_REG 0
+#define PHARO_T1_X86_SP_IN_REG 1   // DEFAULT-ON 2026-06-18 (see AsmjitT1.cpp); opt out -D=0
 #endif
 #if (defined(__x86_64__) || defined(_M_X64)) && PHARO_T1_X86_SP_IN_REG
 #define JIT_CALL(entry_ptr, state_ptr) do { \

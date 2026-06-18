@@ -70,7 +70,44 @@ secondary lever — NOT a per-bytecode-tax fix (there is no per-bytecode tax to
 fix; flat code is already at parity). The PRIMARY x86 recursion lever remains
 the send-bearing caller-resume fix in §6.
 
-### x86 sp-residency port plan (scoped 2026-06-18; not yet started)
+### x86 sp-residency port — DONE 2026-06-18 (PHARO_T1_X86_SP_IN_REG, opt-in)
+
+LANDED and validated. The design DIFFERS from the push/pop sketch below in one
+decisive way that made it both simpler and safer: instead of `push rbx`/`pop
+rbx` per method (which would break the rsp≡8-mod-16-at-entry invariant the
+in-body C-calls' odd-push realignment relies on — the workflow critic's Risk
+R1), the port loads rbx live-in INSIDE the JIT_CALL/JIT_RESUME_CALL macro (like
+arm64 loads x25) and lists rbx clobbered, so the C compiler preserves its own
+rbx. Method exits then only `sync rbx→mem` (no pop). Commits: af404cba
+(scaffolding) → d9691c9a (batches A/C/D) → 184af43c (batch B + the crash fix).
+
+THE crash fix (lldb-traced): the x86 mid-method resume entered JIT via a bare
+`entry(&state)` in JITRuntime tryResume/tryResumeFast (the `#else` of the arm64
+asm-trampoline branch) — it never loaded rbx, so resumed code ran with a garbage
+sp register (rbx=2 → SIGSEGV reading [rbx-8] in the first send IC probe; memory
+state.sp was valid the whole time). Routed both through JIT_CALL.
+
+MEASURED (build-x86-sp -DPHARO_T1_X86_SP_IN_REG=1 vs build-x86, Rosetta, min-9):
+
+    bench       flag=0(mem)  flag=1(rbx)   speedup
+    loopD100M     1277          749         1.70x
+    loopS100M     1092          745         1.47x
+    fib33          150          113         1.33x
+    cfibx32        119           93         1.28x
+    cfibs32       1501         1449         1.04x  (send-bearing thrash, untouched)
+
+SURPRISE vs the arm64 prediction: on x86 sp-residency helps the FLAT loop too
+(loopD 1.70x), unlike arm64 where the OoO store-forwarding fully hid it. (These
+are Rosetta numbers; native x86 wins are likely smaller but same direction.)
+
+VALIDATION: flag=0 byte-identical (battery==golden); arm64 untouched
+(battery==golden); flag=1 battery==golden, a 12-op closure/NLR/recursion/
+exception stress == golden, and a 12-class/1938-test SUnit A/B IDENTICAL to
+flag=0 (same 1934 P, same pre-existing testIsClean E / testSourceNodeOptimized
+F). Still OPT-IN (build-time -DPHARO_T1_X86_SP_IN_REG=1); flipping the default
+mirrors arm64's default-on sp-residency once a broader SUnit A/B confirms.
+
+--- original port plan (superseded by the DONE design above) ---
 
 Register: rbx (SysV callee-saved; rbx/r12-r15 are ALL unused in the x86 emit —
 grep count 0). Mirror arm64's PHARO_T1_SP_IN_X25 with a build-time
