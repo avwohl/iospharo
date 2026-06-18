@@ -62,6 +62,11 @@ extern "C" void jit_rt_verify_spec(uint64_t statep, uint64_t recv,
 // FINDNODE_WATCH, so the recorder BLR is emitted at just asTuple's 2 getter
 // sites (no global code bloat).  Read at emit time in the inline getter.
 static bool g_emitGetterTrace = false;
+// Per-compile gate for PHARO_T1_SP_TRACE: set in compileViaAsmjit when the
+// method's selector matches PHARO_T1_SP_TRACE_SEL, read at emit time so only
+// the targeted method gets per-bytecode sp-trace BLRs (non-relocating: other
+// methods emit identically).
+static bool g_emitSpTrace = false;
 // ===== sp-residency Phase-1 emit sweep (build-time switch) =====
 // 0 = sp lives in memory at [x0, OFF_SP] (today's behavior; the
 //     helpers below produce byte-identical codegen to the raw
@@ -390,6 +395,32 @@ extern "C" void jit_rt_store_ring(uint64_t state, uint64_t recv,
     }
 }
 
+// PHARO_T1_SP_TRACE helper: log the live operand-stack state at a bytecode
+// boundary.  The emit (emitSpTrace) calls emitSyncSpToState first, so state.sp
+// holds the live x25 value here.  Logs sp-depth (sp-tempBase), the top operands
+// (TOS/NOS/N3), and tempBase[0..2] (the args/temps) so a wrong push/pop delta
+// or a wrong temp read can be spotted by diffing successive bytecodes.
+extern "C" void jit_rt_sp_trace(uint64_t statev, uint64_t bcOff) {
+    if (!GET_DEBUG_BOOL(PHARO_T1_SP_TRACE)) return;
+    auto* st = reinterpret_cast<pharo::jit::JITState*>(statev);
+    // Per-method-oop cap: each distinct do: method gets its own budget so a hot
+    // do: doesn't starve the one we care about (the FFIStructure subclasses do:).
+    static std::unordered_map<uint64_t,int> perOop;
+    uint64_t mb = st->method.rawBits();
+    if (++perOop[mb] > 120) return;
+    pharo::Oop* sp = st->sp;
+    pharo::Oop* tb = st->tempBase;
+    fprintf(stderr,
+        "[SPTRACE] m=0x%llx bc=%llu depth=%ld TOS=0x%llx NOS=0x%llx N3=0x%llx | "
+        "tb0=0x%llx tb1=0x%llx tb2=0x%llx\n",
+        (unsigned long long)st->method.rawBits(), (unsigned long long)bcOff,
+        (long)(sp - tb),
+        (unsigned long long)sp[-1].rawBits(), (unsigned long long)sp[-2].rawBits(),
+        (unsigned long long)sp[-3].rawBits(),
+        (unsigned long long)tb[0].rawBits(), (unsigned long long)tb[1].rawBits(),
+        (unsigned long long)tb[2].rawBits());
+}
+
 // Shadow-slot verify for JIT ivar reads.  Receiver read from the state
 // (OFF_RECEIVER) so the emit hook only needs the value + slot.
 extern "C" void jit_rt_shadow_verify(uint64_t state, uint64_t value,
@@ -459,6 +490,44 @@ static void emitStoreRingLog(asmjit::a64::Assembler& a, int slotIdx) {
     a.mov(x3, asmjit::Imm(slotIdx));
     a.ldr(x4, ptr(x0, 56));                 // state.jitMethod (OFF_JITMETHOD)
     a.mov(x16, asmjit::Imm((uint64_t)&jit_rt_store_ring));
+    a.blr(x16);
+    a.ldp(x0, x1,   ptr(sp, 0));
+    a.ldp(x2, x3,   ptr(sp, 16));
+    a.ldp(x4, x5,   ptr(sp, 32));
+    a.ldp(x6, x7,   ptr(sp, 48));
+    a.ldp(x8, x9,   ptr(sp, 64));
+    a.ldp(x10, x11, ptr(sp, 80));
+    a.ldp(x12, x13, ptr(sp, 96));
+    a.ldp(x14, x15, ptr(sp, 112));
+    a.ldr(x30,      ptr(sp, 128));
+    a.add(sp, sp, asmjit::Imm(144));
+}
+
+// PHARO_T1_SP_TRACE: emit a non-perturbing per-bytecode call to jit_rt_sp_trace.
+// First publish the live x25 sp into state.sp (so the helper reads the live
+// value, not the stale memory mirror), then the standard caller-saved save/
+// restore frame brackets the BLR.  x25/x26 (sp/tempBase) are callee-saved and
+// untouched, so the traced method's execution is unchanged.  The published
+// state.sp is re-synced from x25 at the next real JIT->C++ edge, so writing it
+// here is harmless.
+static void emitSpTrace(asmjit::a64::Assembler& a, int bcOff) {
+    using namespace asmjit::a64;
+#if PHARO_T1_SP_IN_X25
+    a.str(x25, ptr(x0, 0));                  // OFF_SP=0: publish live sp; helper reads state.sp
+#endif
+    a.sub(sp, sp, asmjit::Imm(144));
+    a.stp(x0, x1,   ptr(sp, 0));
+    a.stp(x2, x3,   ptr(sp, 16));
+    a.stp(x4, x5,   ptr(sp, 32));
+    a.stp(x6, x7,   ptr(sp, 48));
+    a.stp(x8, x9,   ptr(sp, 64));
+    a.stp(x10, x11, ptr(sp, 80));
+    a.stp(x12, x13, ptr(sp, 96));
+    a.stp(x14, x15, ptr(sp, 112));
+    a.str(x30,      ptr(sp, 128));
+    // x0 already = state (preserved); arg1 = bcOff.
+    a.mov(x1, asmjit::Imm((uint64_t)(uint32_t)bcOff));
+    a.mov(x16, asmjit::Imm((uint64_t)&jit_rt_sp_trace));
     a.blr(x16);
     a.ldp(x0, x1,   ptr(sp, 0));
     a.ldp(x2, x3,   ptr(sp, 16));
@@ -9973,6 +10042,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             uint8_t op = bcReal[i];
             a.bind(bcLabels[globalIdx]);
 
+            // PHARO_T1_SP_TRACE: log live operand sp at the top of each
+            // bytecode of the scoped method (before any per-op codegen).
+            if (g_emitSpTrace) emitSpTrace(a, globalIdx);
+
             // simStack §3/§5: jump targets are cold (bind-time rule),
             // then snapshot-then-clear for this bytecode's emit.
             if (g_tosJumpTargetsPtr && globalIdx >= 0
@@ -11232,6 +11305,13 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // so just its 2 getter sites get the BLR (no global code-size bloat).
     g_emitGetterTrace = GET_DEBUG_BOOL(PHARO_FINDNODE_WATCH)
         && memory.selectorOf(compiledMethod) == "asTuple";
+    // PHARO_T1_SP_TRACE: scope the per-bytecode sp trace to one selector.
+    g_emitSpTrace = false;
+    if (GET_DEBUG_BOOL(PHARO_T1_SP_TRACE)) {
+        const char* tsel = GET_DEBUG_STR(PHARO_T1_SP_TRACE_SEL);
+        if (tsel && *tsel)
+            g_emitSpTrace = (memory.selectorOf(compiledMethod) == tsel);
+    }
     // PMS B1: pre-size the patch-record buffer with the same send-site
     // scan the payload layout uses below (the two counts MUST agree —
     // they index the same IC-site space).

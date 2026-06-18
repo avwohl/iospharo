@@ -27171,6 +27171,31 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         ObjectHeader* calleeMethObj = chainTarget.asObjectPtr();
                         Oop* fp = stackPointer_ - (nArgs + 1);
 
+                        // do:-operand bisect (PHARO_DNU_DUMP_COLL): at EVERY send
+                        // issued BY a JIT do: (savedMethod==do:), dump the operand
+                        // window going into the send.  With NO_INLINE_AT_READ the
+                        // at: (0x70) becomes a real send so it appears here too;
+                        // comparing the at: send vs the value: send tells us
+                        // whether aBlock is at the right depth BEFORE at: (=> the
+                        // shift is in bytecodes 11-13) or only wrong at value:
+                        // (=> the shift is in at:'s emit/return).
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_DNU_DUMP_COLL), 0)
+                                && savedMethod.isObject()
+                                && memory_.selectorOf(savedMethod) == "do:") {
+                            static int doSendN = 0;
+                            if (++doSendN <= 12) {
+                                Oop* sp = stackPointer_;
+                                auto sb = [&](int i) -> unsigned long long {
+                                    return (unsigned long long)sp[i].rawBits();
+                                };
+                                fprintf(stderr,
+                                    "[DO-SEND #%d] target=#%s nArgs=%d sp=%p | "
+                                    "sp[-1]=0x%llx sp[-2]=0x%llx sp[-3]=0x%llx sp[-4]=0x%llx | calleeRecv=0x%llx\n",
+                                    doSendN, memory_.selectorOf(chainTarget).c_str(), nArgs,
+                                    (void*)sp, sb(-1), sb(-2), sb(-3), sb(-4),
+                                    (unsigned long long)calleeRecv.rawBits());
+                            }
+                        }
                         // CASCADE-ORIGIN AUDIT (PHARO_T1_SEND_RECV_AUDIT): the
                         // cold-boot corruption is an operand-stack SHIFT that
                         // cascades.  When the IC is set, the receiver we just
