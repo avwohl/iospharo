@@ -1,169 +1,87 @@
-# BUG-2 next-session handoff — x86 send-bearing inline-J2J `asString` corruption
+# BUG-2 — x86 send-bearing inline-J2J (`PHARO_T1_X86_XMETHOD_SENDS`)
 
 **Goal:** make `PHARO_T1_X86_XMETHOD_SENDS=1` (send-bearing cross-method
-inline-J2J) correct on x86, so send-bearing callees (e.g. `incs ^(self+1) max: 0`)
-inline-J2J instead of round-tripping through C++. That unlocks the cfibs ~12x
-speedup (leaf-only `cfibs28=174ms` vs the cfibx-shape ~14ms). The knob is
-**default-OFF**, so the shipped leaf-only x86 JIT is unaffected — any fix here is
-fully gated and safe to iterate on.
+inline-J2J) correct on x86, so send-bearing callees inline-J2J instead of
+round-tripping through C++ — unlocking the cfibs ~12x speedup. Default-OFF/gated;
+the shipped leaf-only x86 JIT is unaffected.
 
-## TL;DR of the prior session (2026-06-18)
+## CRITICAL CORRECTION (2026-06-18d) — the `asString` repro was a SCOPING ARTIFACT
 
-- The nested send-bearing **mechanism is SOUND** — `./run.sh clean` (xfib→xinc→xmax:,
-  all inline-J2J'd, returning via the V2 prelude) computes `xfib10=143` correctly.
-  No architectural rewrite needed. (This refutes the old "port arm64 saveless/blr"
-  framing in `memory/jit-x86-sendbearing-two-bugs.md`.)
-- The corruption is isolated to **one selector: `#asString`** (and `s*` has a
-  second, unbisected one). `./run.sh corrupt` → a send-bearing `asString` resume
-  **swaps a string-producing value to a CLASS** (`#capitalized` / `#asForm` DNU
-  on `ByteString class`). Same signature as the LEAF cross-method receiver swap
-  that was a GC-stale-pointer bug (fixed via literals=CM+16-fresh; see
-  `memory/jit-x86-xmethod-receiver-corruption`).
-- A real **latent retval bug was found+fixed** this session (commit `1094ed6f`):
-  x86 `JIT_RESUME_CALL` dropped the retval, so the C++ resume path fed
-  `resumeAfterCall` a garbage rax. NECESSARY but **NOT** the root — corruption
-  persists with it in.
+The `asString` corruption that this directory was built around (and that 2-3
+prior sessions chased as "BUG-2") is **NOT a real bug**. It is an artifact of the
+`PHARO_T1_X86_J2J_SEL=asString` debug knob:
 
-## Repro
+  - `J2J_SEL=asString` enables inline-J2J emission for `Symbol>>asString` but
+    compiles its callees (`species`, `size`, `new:`, `replaceFrom:to:with:start…`)
+    WITHOUT inline-J2J. The mismatch (caller-inline-J2J / callee-NOT-inline-J2J)
+    is what corrupts — `Symbol>>asString`'s `self species` resume returns
+    `ByteString` (the class, = `Symbol>>species`'s result) instead of continuing
+    to `new:`, so `^tmp1` is the class → `#capitalized`/`#asForm` DNU.
+  - PROOF (deterministic, det-sched): scoping inline-J2J to the caller AND ALL
+    its callees makes it clean, with SENDS on OR off:
 
-```
-cmake --build build-x86 --target test_load_image    # x86 JIT build (default flag=1)
-cp /tmp/harness/Pharo-prepped.image /tmp/harness/Pharo.image   # if /tmp was reaped
-scripts/bug2-asString-repro/run.sh corrupt    # -> #capitalized DNU on ByteString class
-scripts/bug2-asString-repro/run.sh clean      # -> EVAL-RESULT='xfib10=143' (control)
-```
-Deterministic under `PHARO_DET_SCHED=1` (so lldb/traces don't move it — the
-Heisenbug rule, CLAUDE.md). The `PHARO_T1_X86_J2J_SEL=<sel>` / `<pfx>*` knob
-scopes inline-J2J EMISSION to matching compiled-method selectors, isolating a
-chain from startup interference (AsmjitT1.cpp ~10874).
+        SCOPE="asString,species,size,new:,replaceFrom:to:with:startingAt:"
+        J2J_SEL=$SCOPE                      SENDS off -> EVAL-RESULT=7   (clean)
+        J2J_SEL=$SCOPE  XMETHOD_SENDS=1     SENDS on  -> EVAL-RESULT=7   (clean)
+        J2J_SEL=asString J2J_CLASS=Symbol   SENDS off -> #capitalized DNU (artifact)
 
-## DO NOT RE-CHASE (ruled out by measurement, prior session)
+    (The comma-separated `J2J_SEL` list and the `PHARO_T1_X86_J2J_CLASS` bisect
+    knob were added this session for exactly this isolation.)
+  - Full default config (everything inline-J2J, SENDS off) is CLEAN — the
+    mismatch never occurs in production, only under the partial-scope debug knob.
 
-1. Architectural port (saveless/blr) — mechanism sound, all clean shapes pass.
-2. The retval-pass — fixed (1094ed6f), still corrupts.
-3. Literals staleness — V2 admit (AsmjitT1 ~3222) + resumeAfterCall (~3539) use
-   FRESH calleeCM+16; the `literalsCache` read at AsmjitT1 ~1818 is V1 dead code.
-4. `compiledMethodOop` staleness — same GC-updated field the WORKING leaf path uses.
-5. Polymorphism — the IC probe guards the class (`cmp rdx,[rsi]; jne miss`, ~2973).
-6. sp-residency — IDENTICAL corruption on build-x86 (=1) and build-x86-0 (=0).
-7. ExtSend emit — `PHARO_T1_X86_EMIT_EXTSEND=1` doesn't change it.
-8. Every clean SHAPE: `^self <0/1-arg-send>`, `^Class sel: self` (class-literal
-   inner receiver), `^Class tailSend: self`, inner-send-bails-mid-method,
-   4-deep nesting — ALL correct in isolation (`x*` scope).
-9. The cursor-orphan at the precomputed-resume reset (Interpreter.cpp ~27257-59)
-   alone — xfib→xinc→xbig (depth-1 inner-send bail) works.
+DO NOT re-chase `asString`. The prior "orphaned save / route-through-rj2j /
+codeOffsetForResume" hypotheses were all chasing this artifact and are DEAD. The
+`PHARO_T1_X86_XMETHOD_PROBE` leak detector confirms the J2J save BALANCES
+(`j2jDepth == j2jEntryDepth`) on the asString path — there is no orphan/leak.
 
-## ROOT CAUSE LOCATED (2026-06-18b session 2) — NOT GC. It's the precomputed-resume.
+## THE REAL BUG — full config + `SENDS=1` corrupts the menu path
 
-Decisive diagnostic: a `[ASRET-JIT]` probe (a `jit_rt_asret_dbg(statep, retvalBits)`
-helper called from the emitted `resumeAfterCall` at AsmjitT1.cpp ~3526, gated
-PHARO_J2J_NEST_TRACE — RE-ADD IT, it's the key tool) logs each resumeAfterCall's
-in=#sel / recvCls / retValCls. Findings:
-  - LEAF inner sends (e.g. `#isString ^true`) resume CORRECTLY via the in-JIT
-    return prelude → resumeAfterCall (probe fires: `in=#isString retValCls=True`).
-  - `#asString`'s inner sends are NON-LEAF (printString etc.): they ExitReturn to
-    C++ and the probe NEVER shows asString → asString's resume does NOT reach
-    resumeAfterCall.
-THE PATH: a non-leaf inline-J2J'd callee ExitReturns; the caller is resumed by the
-chain-loop PRECOMPUTED-RESUME (Interpreter.cpp ~26900-27372 — the `savedResumeEntry`
-machinery; `[RES]`/`[RESUME]` traces show it active). That site computes the resume
-entry with PLAIN `codeOffsetForBC(pastSendOff)` and enters via `JIT_CALL` (no
-retval). But for an inline-J2J SEND SITE the correct entry is the resumeAfterCall
-OVERRIDE (`codeOffsetForResume`), which re-establishes the caller's method/literals
-(fresh CM+16) + does the arg-pop + retval-write. Skipping it → the caller continues
-with the CALLEE's stale literals → reads a class literal wrongly → `ByteString
-class` → #capitalized/#asForm DNU.
+Faithful, deterministic repro (no scoping):
 
-PROVEN: changing 26900's `codeOffsetForBC` → `codeOffsetForResume` MAKES THE asString
-DNU DISAPPEAR. BUT it BREAKS the default (no EVAL-RESULT) — the "non-retval
-poisoning" (AsmjitT1 ~10642): the SAME precomputed-resume also handles plain
-DISPATCHED sends (result already PUSHED, not in rax); routing those to
-resumeAfterCall double-handles. An override-conditional variant (use
-codeOffsetForResume only when `codeOffsetForResume != codeOffsetForBC`, and enter
-via JIT_RESUME_CALL passing `state.returnValue`) gave CONTRADICTORY results
-(asString broke, default broke) — so the result-push/sp/retval bookkeeping at this
-shared site is subtle and trial-and-error isn't enough.
+    env PHARO_T1_X86_XMETHOD_SENDS=1 PHARO_X86_JIT=1 PHARO_DET_SCHED=1 \
+        PHARO_MAX_STEPS=2000000000000 \
+        build-x86/test_load_image /tmp/harness/Pharo.image eval "3 + 4"
 
-THE FIX (next session): the chain-loop rj2j loop (Interpreter.cpp ~21370) ALREADY
-resumes inline-J2J returns CORRECTLY — it pops the J2J save, uses `save.addr()`
-(= the packed resumeAfterCall) + `JIT_RESUME_CALL(..., retVal)` + restores the
-saved frame. So the real fix is to ensure a non-leaf inline-J2J'd callee's
-ExitReturn is handled by the rj2j-style save-pop path (which goes to
-resumeAfterCall with the retval), NOT the dispatched precomputed-resume. I.e. when
-the caller has a pending J2J save at this bcOff, route to the save-pop resume.
-Instrument: at 26900, log when `savedJitMethod->codeOffsetForResume(pastSendOff)
-!= codeOffsetForBC(...)` (an override site reached via the dispatched path) — those
-are exactly the mis-routed inline-J2J returns. The retval-pass fix already landed
-(commit 1094ed6f) is a prerequisite. NOTE: a clean `[ASJ2JRET]` probe at the rj2j
-V2 ExitReturn (~21389, `state.method==asString`) does NOT fire for asString,
-confirming asString currently MISSES the rj2j path.
+→ `#asForm` DNU on a `PragmaMenuAndShortcutRegistrationItem`, call stack:
 
-## SESSION-3 PROGRESS (2026-06-18c) — rj2j-route built (safe), cursor-orphan is the blocker
+    ToggleMenuItemMorph>>icon -> MenubarMenuMorph>>ifNotNil: -> Array>>do:
+      -> MenubarMenuMorph>>layoutItems -> PluggableMenuSpec>>asMenubarMenuMorph
+      -> ByteSymbol>>cull: -> PluggableMenuSpec>>ifNotNil:
+      -> MenubarMorph>>ifTrue: -> OrderedCollection>>do: ... #asForm
 
-Implemented the "route through rj2j" directive and proved TWO pieces SAFE (default
-battery==golden both) but INSUFFICIENT alone — asString still corrupts:
+This is the genuine send-bearing inline-J2J defect: a NON-LEAF inline-J2J'd
+callee does its own send (exits to C++ mid-callee), and the mid-callee resume
+swaps a value/receiver. `NO_XMETHOD` (self-rec only) is CLEAN, so it is in the
+CROSS-METHOD admit; `NO_XMETHOD_ALLARGS` does not clear it.
 
-  PIECE 1 (rj2j-route, SAFE): the rj2j loop (Interpreter.cpp ~21052) only fires on
-  the C++ `rj2jDepth>0`; the EMIT inline-J2J save lives in a SEPARATE j2jPool_ slice
-  (resumeSliceBase, tracked by `state.j2jDepth`), so an EMIT save the in-JIT prelude
-  didn't consume (non-leaf callee, no prelude) is missed.  FIX (works, no regression):
-    - condition: `(rj2jDepth > 0 || state.j2jDepth > 0)`
-    - ExitReturn branch (~21371): when rj2jDepth==0, pop the EMIT save instead:
-        `state.j2jSaveCursor -= JSV_SIZE; if (state.j2jDepth) state.j2jDepth--;
-         save = *reinterpret_cast<J2JSave*>(state.j2jSaveCursor);`
-      then the existing restore + `JIT_RESUME_CALL(save.addr(), retVal)` runs.
+## NEXT STEP — isolate the real menu-path corruptor
 
-  PIECE 2 (cursor-preserve, SAFE but not asString's site): the precomputed-resume
-  RESETS `state.j2jDepth=0` + `j2jSaveCursor=base` (~27299) — the CURSOR-ORPHAN.
-  Guarding it `if (state.j2jDepth==0)` is safe (default golden) but did NOT fix
-  asString → by the time control reaches THAT reset, state.j2jDepth is ALREADY 0.
-  So asString's EMIT save is orphaned at a DIFFERENT reset.
+Use the clean-scope technique (NO mismatch artifact): enable inline-J2J + SENDS
+for the menu-chain caller(s) AND their callees via the comma-list `J2J_SEL`,
+then bisect which send-bearing caller's mid-resume swaps the value. Candidate
+chain methods: `icon`, `cull:`, `ifNotNil:`, `do:`, `layoutItems`,
+`asMenubarMenuMorph`, `ifTrue:`. Add their callees so there is no
+caller-J2J/callee-no-J2J mismatch, confirm SENDS-off clean / SENDS-on corrupt at
+that scope, then narrow. The defect is the MID-CALLEE resume of a send-bearing
+callee — compare the leaf path (works, default-on) vs the send-bearing path at
+the fast-rj2j entryDepth/entryCursor pin (Interpreter.cpp ~25024-25035) and the
+materialize (`materializeJ2JSaveIntoFrame`, ~23936).
 
-  THE BLOCKER (next): pin WHICH reset orphans asString's save.  There are several
-  cursor/depth resets: the rj2j loop entry (~20632), inline-activate (~26999), the
-  precomputed-resume (~27299), and a fallback (~27349).  INSTRUMENT each: log
-  `[ORPHAN] site=X depth %d->0` whenever `state.j2jDepth` is reset from >0 to 0
-  while the resumed/saved method is in asString's tree (selectorOf contains
-  asString/printString/getSystemAttribute:/utf8/=). Preserve at THAT site (like
-  Piece 2) + keep Piece 1 (rj2j-route) + the retval fix (1094ed6f). The memory
-  warned the reset is "load-bearing for arm64 / pinning didn't converge" — but with
-  Piece 1 (the rj2j save-pop) now in place to consume the preserved save, the
-  preservation should converge where the prior single-site pin (without a consumer)
-  didn't. Both pieces compiled + default-golden; re-apply from this diff.
+## Tooling added this session (all x86-only, gated; arm64 untouched)
 
-## EXACT NEXT STEP (lldb / instrument)
-
-`run.sh lldb` launches the corrupt repro under lldb (Rosetta x86). The `[ASRET]`
-probe added at Interpreter.cpp ~20276 (ExitReturn, gated `PHARO_J2J_NEST_TRACE`)
-does NOT fire — **so `asString` returns via a NON-`tryJITActivation` exit; find
-that exit first** (likely the rj2j/chain ExitReturn ~21370 or the slow chain
-loop). Move/duplicate the `[ASRET]` probe to the real exit, confirm it logs
-`asString recv=ByteString class -> valCls=ByteString class` (returning the class).
-Then:
-1. Break where `asString`'s send-bearing inner send resumes (the in-JIT
-   `resumeAfterCall`, AsmjitT1.cpp ~3524 — JIT code, no symbol: set a hardware
-   bp on the resumeAfterCall address from a `PHARO_T1_DUMP_SEL=asString` dump,
-   or break at the C++ precomputed-resume Interpreter.cpp ~27230 which `[RES]`
-   shows active, conditional on `savedMethod` being one of the 5 asString oops:
-   `0x2051abf30 0x205280390 0x205192550 0x2051fd458 0x2051d6d38`).
-2. Dump `state.receiver`, `save.receiver`, `state.literals`, and the popped-save
-   cursor pre/post the resume. Find where `ByteString class` enters.
-3. Check whether a GC ran between admit and resume (compare a heap epoch / object
-   address). If a saved pointer moved, that's the fix site (refresh it post-GC,
-   like the leaf literals=CM+16-fresh fix).
-
-## SUCCESS CRITERION
-
-`run.sh corrupt` prints `EVAL-RESULT` (no DNU); then the full
-`PHARO_T1_X86_XMETHOD_SENDS=1` startup completes clean; then cfibs SENDS=1 runs
-fast (`/tmp/cogbench3.st`). Keep arm64 untouched (build battery==golden) and the
-default x86 (build-x86, knob-off) battery==golden + SUnit A/B identical.
+- `PHARO_T1_X86_J2J_SEL` now accepts a COMMA-SEPARATED exact list (scope a caller
+  + all callees → no mismatch artifact). Single trailing `*` still = prefix.
+- `PHARO_T1_X86_J2J_CLASS=<ClassName>` — additionally restrict emission to one
+  defining class (bisect which impl of an overloaded selector corrupts).
+- `[J2J-EMIT]` trace (gated `PHARO_J2J_NEST_TRACE`) names each method getting
+  inline-J2J emission (class + sel + nLits).
 
 ## Key code locations
 
 - x86 send emit / cross-method admit / resumeAfterCall: `AsmjitT1.cpp` ~2951,
-  ~3155, ~3524; V2 return prelude ~1751.
-- C++ resume paths: `Interpreter.cpp` rj2j ~21359 (pins entryDepth/Cursor),
-  ~21478 (JIT_RESUME_CALL), precomputed-resume ~27230 (cursor reset ~27257).
-- `JIT_RESUME_CALL` / `JIT_CALL` macros: `JITState.hpp` ~440.
+  ~3155, ~3526; comma-list/class scope ~10874-10905.
+- fast-rj2j chain loop + entryDepth/cursor pin: `Interpreter.cpp` ~24829-25035.
+- materialize: `Interpreter.cpp` ~23936 (`materializeJ2JSaveIntoFrame`),
+  j2jBase-materialize site ~25196.
 - Memory: `jit-x86-sendbearing-two-bugs`, `jit-x86-xmethod-receiver-corruption`.

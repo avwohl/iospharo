@@ -10877,13 +10877,46 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         } else {
             std::string sel = memory.selectorOf(compiledMethod);
             std::string js(j2jSel);
-            if (!js.empty() && js.back() == '*') {
+            // Comma-separated EXACT list: scope inline-J2J to a caller AND all
+            // its callees at once, so a clean (no caller-J2J/callee-no-J2J
+            // mismatch) repro can isolate the real send-bearing bug.  A single
+            // trailing '*' still means prefix-match (no commas in that form).
+            if (js.find(',') != std::string::npos) {
+                g_emitX86J2JOk = false;
+                size_t start = 0;
+                while (start <= js.size()) {
+                    size_t comma = js.find(',', start);
+                    std::string tok = js.substr(start,
+                        comma == std::string::npos ? std::string::npos
+                                                   : comma - start);
+                    if (tok == sel) { g_emitX86J2JOk = true; break; }
+                    if (comma == std::string::npos) break;
+                    start = comma + 1;
+                }
+            } else if (!js.empty() && js.back() == '*') {
                 std::string pfx = js.substr(0, js.size() - 1);
                 g_emitX86J2JOk = (sel.size() >= pfx.size() &&
                                   sel.compare(0, pfx.size(), pfx) == 0);
             } else {
                 g_emitX86J2JOk = (sel == js);
             }
+        }
+        // BUG-2 bisect: optionally restrict emission to one defining class.
+        if (g_emitX86J2JOk) {
+            const char* j2jCls = GET_DEBUG_STR(PHARO_T1_X86_J2J_CLASS);
+            if (j2jCls && *j2jCls) {
+                std::string cls = interp.classNameOfMethod(compiledMethod);
+                if (cls != j2jCls) g_emitX86J2JOk = false;
+            }
+        }
+        // BUG-2: name the asString method(s) actually getting inline-J2J
+        // emission, so the corrupting class/impl can be pinned.
+        if (g_emitX86J2JOk && GET_DEBUG_BOOL(PHARO_J2J_NEST_TRACE)) {
+            std::string sel = memory.selectorOf(compiledMethod);
+            std::string cls = interp.classNameOfMethod(compiledMethod);
+            fprintf(stderr, "[J2J-EMIT] class=%s sel=#%s nLits=%d nBC=%u\n",
+                cls.c_str(), sel.c_str(), numLiterals,
+                (unsigned)(methObj->byteSize()));
         }
     }
     // Cross-method inline-J2J (admit canSkipJ2JSave callees): DEFAULT-ON since
