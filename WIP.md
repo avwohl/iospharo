@@ -1,14 +1,32 @@
-# RESUME POINT — 2026-06-18b (NEXT: BUG-2 x86 asString send-bearing corruption)
+# RESUME POINT — 2026-06-18d (BUG-2: asString repro was a SCOPING ARTIFACT)
 
-**START HERE next session:** `scripts/bug2-asString-repro/README.md` — a
-self-contained handoff for the x86 send-bearing inline-J2J corruption
-(`PHARO_T1_X86_XMETHOD_SENDS`). Has the deterministic repro (`run.sh corrupt` →
-`ByteString class>>doesNotUnderstand: #capitalized`), the clean control
-(`run.sh clean` → `xfib10=143`, proving the mechanism is sound), the 9-item
-"DO NOT RE-CHASE" ruled-out list, the GC-interaction hypothesis, and the exact
-lldb plan. Goal: send-bearing inline-J2J correct → cfibs ~12x. Default-OFF/gated.
+**MAJOR CORRECTION this session (commit `c01f3506`):** the `asString`
+`#capitalized`/`#asForm` corruption that the prior 3-4 sessions (and the old
+`run.sh corrupt`) chased as "BUG-2" is **NOT a real bug** — it is a debug-knob
+SCOPING ARTIFACT. `PHARO_T1_X86_J2J_SEL=asString` inline-J2Js `Symbol>>asString`
+but compiles its callees (`species`/`size`/`new:`/`replaceFrom:`) WITHOUT
+inline-J2J; that caller-J2J/callee-no-J2J mismatch swaps `self species` (=
+`ByteString` the class) into `^tmp1`. PROVEN clean when the callees are also
+scoped (comma-list `J2J_SEL`), SENDS on OR off; full default config is clean.
+The "orphaned save" theory is ALSO disproven (`PHARO_T1_X86_XMETHOD_PROBE` shows
+the save BALANCES). **Do not re-chase asString / orphan-save / cursor / rj2j /
+codeOffsetForResume.**
 
-This session also: x86 sp-residency port DONE + default-on (1.3-1.7x, commit
+**The REAL send-bearing bug** (still open, gated default-OFF): full config +
+`PHARO_T1_X86_XMETHOD_SENDS=1` corrupts the MENU path — `#asForm` DNU on a
+`PragmaMenuAndShortcutRegistrationItem` (`ToggleMenuItemMorph>>icon` → … →
+`ByteSymbol>>cull:`). Faithful repro: `scripts/bug2-asString-repro/run.sh real`.
+`NO_XMETHOD` (self-rec only) is CLEAN → cross-method admit; it's a mid-callee
+resume of a non-leaf inline-J2J'd cross-method callee swapping a receiver.
+
+**START HERE next session:** `scripts/bug2-asString-repro/README.md` (rewritten).
+Isolate the real menu-path bug with the clean-scope technique: comma-list
+`J2J_SEL` over the menu-chain caller(s) + their callees (NO mismatch), confirm
+SENDS-off-clean / SENDS-on-corrupt at that scope, narrow. Tooling added this
+session: comma-list `J2J_SEL`, `PHARO_T1_X86_J2J_CLASS=<Class>`, `[J2J-EMIT]`
+trace. Goal: send-bearing inline-J2J correct → cfibs ~12x. Default-OFF/gated.
+
+Earlier this session: x86 sp-residency port DONE + default-on (1.3-1.7x, commit
 `46be2194`, 150-class A/B clean); a latent x86 V2 retval bug fixed (`1094ed6f`).
 
 ---
