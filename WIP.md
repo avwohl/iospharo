@@ -1,3 +1,32 @@
+# RESUME POINT — 2026-06-18f (BUG-2 menu corruption ROOT-CAUSED + FIXED; verify blocked on image)
+
+The real full-config `SENDS=1` menu corruption is **root-caused and fixed**
+(commit `55f28039`), but EMPIRICAL verification is **blocked by a broken test
+image** and must be re-run next session.
+
+ROOT CAUSE: `PragmaMenuAndShortcutRegistrationItem>>icon:` inline-J2Js
+`FormSet class>>form:` (nArgs=1, send-bearing); form:'s own `forms:` send
+round-trips C++ while icon:'s J2J save is pending; the C++ mid-callee resume
+leaks icon:'s `self` into form:'s arg → `#asForm` DNU. Pinned by mismatch-free
+hash-bisect (`PHARO_T1_X86_SENDS_HMOD/_HVAL`) + `SENDS_SEL`. THE FIX: restrict
+the x86 send-bearing admit to **nArgs==0** (AsmjitT1 ~3094); nArgs>0 falls to the
+leaf gate. x86-only, arm64 byte-identical, NO-OP for default (g_emitX86SendsOk
+false unless `XMETHOD_SENDS=1`; confirmed via a `[SENDSOK-ON]` probe).
+
+**VERIFY FIRST next session (BLOCKER):** `/tmp/harness/Pharo.image` was
+accidentally overwritten with a non-prepped image — ALL available images now fail
+startup with a `handleError`/`#=`-corrupt-receiver in the ExternalObject install
+loop, **even on the untouched stable arm64 `build/` VM** (proving it's the IMAGE,
+not the fix). Re-prep a working image (the prior working one was a saved/prepped
+snapshot; bare fresh Pharo-13 images hit the headless-startup handleError), then:
+  - `scripts/bug2-asString-repro/run.sh real`  → want `EVAL-RESULT=7` (not #asForm)
+  - `/tmp/verify_bug2_fix.sh`  (icon: clean / full SENDS clean / default 7 / cfibx ok)
+If `run.sh real` still shows `#asForm`, the fix is wrong — but the logic (admit
+boundary mirroring x86HasMidBail) is sound. NOTE: SENDS has no cfibs perf payoff
+(it's a correctness-completeness fix on a default-OFF lever).
+
+---
+
 # RESUME POINT — 2026-06-18d (BUG-2: asString repro was a SCOPING ARTIFACT)
 
 **MAJOR CORRECTION this session (commit `c01f3506`):** the `asString`
