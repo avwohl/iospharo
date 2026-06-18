@@ -3076,7 +3076,29 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     + (int)offsetof(JITMethod, compiledMethodOop)));
                 a.cmp(r10, qword_ptr(rsi, 8));
                 a.jne(notJ2J);
-                if (g_emitX86SendsOk) {
+                // BUG-2 nArgs>0 exclusion (ROOT CAUSE, 2026-06-18e): the
+                // send-bearing admit is UNSOUND for nArgs>0 callees.  When a
+                // send-bearing nArgs>0 callee makes its OWN send that round-trips
+                // C++ (ExitSendCached) while the caller's J2J save is pending, the
+                // C++ mid-callee resume leaks the CALLER's receiver (which sits on
+                // the caller's operand stack BELOW the send) into the callee's
+                // arg/result.  Deterministic repro: PragmaMenuAndShortcutRegistration-
+                // Item>>icon: inline-J2J'ing FormSet class>>form: (nArgs=1) ->
+                // self leaks -> #asForm DNU.  SENDS_SEL=icon: corrupts;
+                // icon:+NO_XMETHOD_ALLARGS clean; SENDS_SEL=form:/forms: clean.
+                // nArgs==0 send-bearing (e.g. incs ^(self+1) max:0) is correct.
+                // Restrict the send-bearing admit to nArgs==0; nArgs>0 falls to the
+                // leaf gate (canSkipJ2JSave), which correctly excludes send-bearing
+                // callees like form:.  Mirrors the existing send-bearing exclusions
+                // (canBailMidMethod / x86HasMidBail / isStubOnEntry).  NO-OP for
+                // default: g_emitX86SendsOk is false unless XMETHOD_SENDS=1 (the
+                // send-bearing gate provably never fires in default — confirmed via
+                // a [SENDSOK-ON] probe).  LOGICALLY VERIFIED; the icon: repro could
+                // not be RUN to confirm this session — a flaky x86-JIT-startup
+                // Heisenbug (#= corrupt-receiver in the ExternalObject install loop)
+                // flipped clean<->broken across rebuilds independent of source,
+                // breaking ALL x86-JIT configs before any eval completes.
+                if (g_emitX86SendsOk && nArgs == 0) {
                     // Increment 2 (opt-in): admit SEND-BEARING callees instead
                     // of the canSkipJ2JSave (numIC==0) leaf-only gate.  When
                     // inct's inner send is itself J2J-able (the common case) it

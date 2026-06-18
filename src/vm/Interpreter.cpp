@@ -24183,20 +24183,6 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
                 (int)saveJM->tempCount, (int)saveJM->argCount,
                 (void*)save.sp, (void*)save.tempBase, depthW,
                 (void*)frame.materializedRetSlot, (void*)frame.savedFP);
-            // BUG-2: dump the actual operand-stack slot classes so an
-            // off-by-one (self leaking into an operand) is visible.
-            if (save.sp && save.tempBase) {
-                auto cn = [&](Oop o) -> std::string {
-                    if (o.isSmallInteger()) return "SmI";
-                    if (!o.isObject() || o.rawBits() < 0x10000) return "imm";
-                    if (!memory_.isValidPointer(o)) return "bad";
-                    return memory_.classNameOf(o);
-                };
-                fprintf(stderr, "  [MAT-STK]");
-                for (long k = 1; k <= depthW + 1 && k <= 8; k++)
-                    fprintf(stderr, " sp[-%ld]=%s", k, cn(save.sp[-k]).c_str());
-                fprintf(stderr, "  recv=%s\n", cn(save.receiver).c_str());
-            }
             fflush(stderr);
         }
     }
