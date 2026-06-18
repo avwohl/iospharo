@@ -53,15 +53,52 @@ chain from startup interference (AsmjitT1.cpp ~10874).
 9. The cursor-orphan at the precomputed-resume reset (Interpreter.cpp ~27257-59)
    alone — xfib→xinc→xbig (depth-1 inner-send bail) works.
 
-## LEADING HYPOTHESIS — GC interaction
+## ROOT CAUSE LOCATED (2026-06-18b session 2) — NOT GC. It's the precomputed-resume.
 
-Tight-loop repros never GC; startup (the `asString` path) does. The LEAF variant
-was exactly a GC-stale pointer. Suspect: a saved field (receiver, cursor, or a
-resume address) that the x86 EMIT side caches goes stale across a GC between an
-`asString` inline-J2J admit and its resume, OR the x86 in-JIT prelude restores
-the wrong save (cursor vs entryCursor) only in `asString`'s real nesting shape.
+Decisive diagnostic: a `[ASRET-JIT]` probe (a `jit_rt_asret_dbg(statep, retvalBits)`
+helper called from the emitted `resumeAfterCall` at AsmjitT1.cpp ~3526, gated
+PHARO_J2J_NEST_TRACE — RE-ADD IT, it's the key tool) logs each resumeAfterCall's
+in=#sel / recvCls / retValCls. Findings:
+  - LEAF inner sends (e.g. `#isString ^true`) resume CORRECTLY via the in-JIT
+    return prelude → resumeAfterCall (probe fires: `in=#isString retValCls=True`).
+  - `#asString`'s inner sends are NON-LEAF (printString etc.): they ExitReturn to
+    C++ and the probe NEVER shows asString → asString's resume does NOT reach
+    resumeAfterCall.
+THE PATH: a non-leaf inline-J2J'd callee ExitReturns; the caller is resumed by the
+chain-loop PRECOMPUTED-RESUME (Interpreter.cpp ~26900-27372 — the `savedResumeEntry`
+machinery; `[RES]`/`[RESUME]` traces show it active). That site computes the resume
+entry with PLAIN `codeOffsetForBC(pastSendOff)` and enters via `JIT_CALL` (no
+retval). But for an inline-J2J SEND SITE the correct entry is the resumeAfterCall
+OVERRIDE (`codeOffsetForResume`), which re-establishes the caller's method/literals
+(fresh CM+16) + does the arg-pop + retval-write. Skipping it → the caller continues
+with the CALLEE's stale literals → reads a class literal wrongly → `ByteString
+class` → #capitalized/#asForm DNU.
 
-## EXACT NEXT STEP (lldb)
+PROVEN: changing 26900's `codeOffsetForBC` → `codeOffsetForResume` MAKES THE asString
+DNU DISAPPEAR. BUT it BREAKS the default (no EVAL-RESULT) — the "non-retval
+poisoning" (AsmjitT1 ~10642): the SAME precomputed-resume also handles plain
+DISPATCHED sends (result already PUSHED, not in rax); routing those to
+resumeAfterCall double-handles. An override-conditional variant (use
+codeOffsetForResume only when `codeOffsetForResume != codeOffsetForBC`, and enter
+via JIT_RESUME_CALL passing `state.returnValue`) gave CONTRADICTORY results
+(asString broke, default broke) — so the result-push/sp/retval bookkeeping at this
+shared site is subtle and trial-and-error isn't enough.
+
+THE FIX (next session): the chain-loop rj2j loop (Interpreter.cpp ~21370) ALREADY
+resumes inline-J2J returns CORRECTLY — it pops the J2J save, uses `save.addr()`
+(= the packed resumeAfterCall) + `JIT_RESUME_CALL(..., retVal)` + restores the
+saved frame. So the real fix is to ensure a non-leaf inline-J2J'd callee's
+ExitReturn is handled by the rj2j-style save-pop path (which goes to
+resumeAfterCall with the retval), NOT the dispatched precomputed-resume. I.e. when
+the caller has a pending J2J save at this bcOff, route to the save-pop resume.
+Instrument: at 26900, log when `savedJitMethod->codeOffsetForResume(pastSendOff)
+!= codeOffsetForBC(...)` (an override site reached via the dispatched path) — those
+are exactly the mis-routed inline-J2J returns. The retval-pass fix already landed
+(commit 1094ed6f) is a prerequisite. NOTE: a clean `[ASJ2JRET]` probe at the rj2j
+V2 ExitReturn (~21389, `state.method==asString`) does NOT fire for asString,
+confirming asString currently MISSES the rj2j path.
+
+## EXACT NEXT STEP (lldb / instrument)
 
 `run.sh lldb` launches the corrupt repro under lldb (Rosetta x86). The `[ASRET]`
 probe added at Interpreter.cpp ~20276 (ExitReturn, gated `PHARO_J2J_NEST_TRACE`)
