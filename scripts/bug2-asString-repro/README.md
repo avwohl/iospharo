@@ -98,6 +98,39 @@ are exactly the mis-routed inline-J2J returns. The retval-pass fix already lande
 V2 ExitReturn (~21389, `state.method==asString`) does NOT fire for asString,
 confirming asString currently MISSES the rj2j path.
 
+## SESSION-3 PROGRESS (2026-06-18c) — rj2j-route built (safe), cursor-orphan is the blocker
+
+Implemented the "route through rj2j" directive and proved TWO pieces SAFE (default
+battery==golden both) but INSUFFICIENT alone — asString still corrupts:
+
+  PIECE 1 (rj2j-route, SAFE): the rj2j loop (Interpreter.cpp ~21052) only fires on
+  the C++ `rj2jDepth>0`; the EMIT inline-J2J save lives in a SEPARATE j2jPool_ slice
+  (resumeSliceBase, tracked by `state.j2jDepth`), so an EMIT save the in-JIT prelude
+  didn't consume (non-leaf callee, no prelude) is missed.  FIX (works, no regression):
+    - condition: `(rj2jDepth > 0 || state.j2jDepth > 0)`
+    - ExitReturn branch (~21371): when rj2jDepth==0, pop the EMIT save instead:
+        `state.j2jSaveCursor -= JSV_SIZE; if (state.j2jDepth) state.j2jDepth--;
+         save = *reinterpret_cast<J2JSave*>(state.j2jSaveCursor);`
+      then the existing restore + `JIT_RESUME_CALL(save.addr(), retVal)` runs.
+
+  PIECE 2 (cursor-preserve, SAFE but not asString's site): the precomputed-resume
+  RESETS `state.j2jDepth=0` + `j2jSaveCursor=base` (~27299) — the CURSOR-ORPHAN.
+  Guarding it `if (state.j2jDepth==0)` is safe (default golden) but did NOT fix
+  asString → by the time control reaches THAT reset, state.j2jDepth is ALREADY 0.
+  So asString's EMIT save is orphaned at a DIFFERENT reset.
+
+  THE BLOCKER (next): pin WHICH reset orphans asString's save.  There are several
+  cursor/depth resets: the rj2j loop entry (~20632), inline-activate (~26999), the
+  precomputed-resume (~27299), and a fallback (~27349).  INSTRUMENT each: log
+  `[ORPHAN] site=X depth %d->0` whenever `state.j2jDepth` is reset from >0 to 0
+  while the resumed/saved method is in asString's tree (selectorOf contains
+  asString/printString/getSystemAttribute:/utf8/=). Preserve at THAT site (like
+  Piece 2) + keep Piece 1 (rj2j-route) + the retval fix (1094ed6f). The memory
+  warned the reset is "load-bearing for arm64 / pinning didn't converge" — but with
+  Piece 1 (the rj2j save-pop) now in place to consume the preserved save, the
+  preservation should converge where the prior single-site pin (without a consumer)
+  didn't. Both pieces compiled + default-golden; re-apply from this diff.
+
 ## EXACT NEXT STEP (lldb / instrument)
 
 `run.sh lldb` launches the corrupt repro under lldb (Rosetta x86). The `[ASRET]`
