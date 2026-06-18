@@ -920,11 +920,15 @@ private:
     /// Return the number of pointer slots in an object (based on format).
     size_t pointerSlotsOf(ObjectHeader* obj) const;
 
+public:
     /// Diagnostic (PHARO_HEAP_CHECK): walk every object; flag any pointer slot
     /// whose target is out-of-heap (dangling) or has an invalid classIndex
     /// (free chunk / garbage). Returns true if clean. For the test-execution
     /// heap-corruption hunt — localizes structural corruption deterministically.
+    /// Public so the Interpreter's wild-write detector (PHARO_HEAP_SCAN_EVERY)
+    /// can call it from the per-checkpoint hook.
     bool checkHeapIntegrity(const char* when);
+private:
 
     /// Process weak objects: nil out slots pointing to unmarked objects.
     /// Queues as mourners any weak object that had slots nilled.

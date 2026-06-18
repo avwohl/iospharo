@@ -3298,6 +3298,38 @@ void Interpreter::interpret() {
         g_stepNum += 1024;
         g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
 
+        // WILD-WRITE DETECTOR (PHARO_HEAP_SCAN_EVERY=N): every N checkpoints
+        // (N*1024 bytecodes) walk the heap (checkHeapIntegrity) and report the
+        // FIRST CLEAN->CORRUPT transition — the victim object/slot + the
+        // g_stepNum window + recent bytecodes + current method.  Catches the
+        // raw wild write that bypasses storePointer.  Coarse N finds the window;
+        // narrow N (or PHARO_HEAP_SCAN_FROM) to pinpoint the operation.
+        if (__builtin_expect(GET_DEBUG_INT(PHARO_HEAP_SCAN_EVERY) > 0, 0)) {
+            int every = GET_DEBUG_INT(PHARO_HEAP_SCAN_EVERY);
+            uint64_t from = (uint64_t)GET_DEBUG_INT(PHARO_HEAP_SCAN_FROM) * 1024;
+            static uint64_t scanCtr = 0;
+            static bool wasClean = true;
+            if (g_stepNum >= from && ++scanCtr >= (uint64_t)every) {
+                scanCtr = 0;
+                bool clean = memory_.checkHeapIntegrity("scan");
+                if (wasClean && !clean) {
+                    fprintf(stderr, "[WILD-WRITE] *** FIRST CORRUPTION detected by g_stepNum=%llu "
+                        "method=#%s cls=%s fd=%zu\n", (unsigned long long)g_stepNum,
+                        method_.isObject() && method_.rawBits() > 0x10000
+                            ? memory_.selectorOf(method_).c_str() : "?",
+                        method_.isObject() && method_.rawBits() > 0x10000
+                            ? classNameOfMethod(method_).c_str() : "?", frameDepth_);
+                    fprintf(stderr, "[WILD-WRITE] recent bytecodes:");
+                    for (int j = 0; j < 24; j++)
+                        fprintf(stderr, " %02x", recentBytecodes_[(recentBytecodeIdx_ - 1 - j) & 0xFF]);
+                    fprintf(stderr, "\n");
+                    fflush(stderr);
+                    if (GET_DEBUG_BOOL(PHARO_HEAP_SCAN_STOP)) running_ = false;
+                }
+                wasClean = clean;
+            }
+        }
+
         // PHARO_DET_SCHED: deterministic round-robin.  Drive the force-yield
         // from this bytecode-count checkpoint instead of the wall-clock
         // heartbeat (see stopHeartbeat path), so scheduling — and any
@@ -13940,6 +13972,52 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                                                             : "DUPLICATE!",
                             (void*)stackPointer_, (void*)framePointer_,
                             (long long)(stackPointer_ - framePointer_));
+                    }
+                    // Cold-startup diag: dump the current method's receiver as
+                    // a collection.  The recurring failure is iterating a
+                    // collection (subclasses / a handler list) that holds a
+                    // legal-but-wrong element (SmI 1 = 0x9 where a class
+                    // belongs).  Dumping the container's header + every slot
+                    // tells us (a) WHICH index is wrong, (b) whether the bad
+                    // value is WITHIN slotCount (a stored-garbage logic bug) or
+                    // the read ran past the end (undersized/OOB), (c) whether
+                    // the neighbours form a valid list with one bad entry.
+                    if (GET_DEBUG_BOOL(PHARO_DNU_DUMP_COLL)) {
+                        try {
+                            Oop coll = receiver_;
+                            uint64_t cb = coll.rawBits();
+                            if ((cb & 7) == 0 && cb >= 0x10000) {
+                                ObjectHeader* ch = coll.asObjectPtr();
+                                size_t nslots = ch->slotCount();
+                                fprintf(stderr,
+                                    "[DNU-COLL] receiver_=0x%llx cls=%s fmt=%u slotCount=%zu validPtr=%d\n",
+                                    (unsigned long long)cb,
+                                    memory_.classNameOf(coll).c_str(),
+                                    (unsigned)ch->format(), nslots,
+                                    (int)memory_.isValidPointer(coll));
+                                size_t lim = nslots < 40 ? nslots : 40;
+                                for (size_t s = 0; s < lim; s++) {
+                                    Oop v = ch->slotAt(s);
+                                    uint64_t vb = v.rawBits();
+                                    const char* kind = "?";
+                                    if (v.isNil()) kind = "nil";
+                                    else if (v.isSmallInteger()) kind = "SmI";
+                                    else if (v.isCharacter()) kind = "Char";
+                                    else if (v.isSmallFloat()) kind = "Flt";
+                                    else if ((vb & 7) == 0) kind = memory_.isValidPointer(v) ? "obj" : "BAD-PTR";
+                                    else kind = "MALFORMED";
+                                    std::string vcls = "";
+                                    if ((vb & 7) == 0 && vb >= 0x10000 && memory_.isValidPointer(v)) {
+                                        try { vcls = memory_.classNameOf(v); } catch (...) { vcls = "(err)"; }
+                                    }
+                                    fprintf(stderr, "[DNU-COLL]   slot[%zu]=0x%llx %s %s\n",
+                                            s, (unsigned long long)vb, kind, vcls.c_str());
+                                }
+                            } else {
+                                fprintf(stderr, "[DNU-COLL] receiver_=0x%llx not a heap object\n",
+                                        (unsigned long long)cb);
+                            }
+                        } catch (...) { fprintf(stderr, "[DNU-COLL] dump failed\n"); }
                     }
                     fprintf(stderr, "[DNU-STACK] Full call stack for #%s (DNU #%d):\n", selName.c_str(), dnuLogCount);
                     for (size_t f = 0; f <= frameDepth_ && f < 30; f++) {

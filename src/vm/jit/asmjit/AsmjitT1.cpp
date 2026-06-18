@@ -10753,6 +10753,41 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // (its emit rarely permanently fails — no extended-bytecode disagree).
     if (interp.jitRuntime().initialCompileFailedContains(compiledMethod.rawBits()))
         return nullptr;
+    // PHARO_T1_NOJIT_SEL / _CLASS (cold-startup bisect): refuse to T1-compile
+    // methods whose selector (and/or defining class) match, so they stay
+    // interpreted.  Used to pin WHICH method's compilation triggers the
+    // cold-boot corruption.  Env-gated on a fixed binary -> no relocation.
+    {
+        const char* noJitSel = GET_DEBUG_STR(PHARO_T1_NOJIT_SEL);
+        const char* noJitCls = GET_DEBUG_STR(PHARO_T1_NOJIT_CLASS);
+        if ((noJitSel && *noJitSel) || (noJitCls && *noJitCls)) {
+            bool selMatch = !(noJitSel && *noJitSel);  // no sel filter => match
+            if (noJitSel && *noJitSel) {
+                std::string sel = memory.selectorOf(compiledMethod);
+                std::string js(noJitSel);
+                size_t start = 0;
+                while (start <= js.size()) {
+                    size_t comma = js.find(',', start);
+                    std::string tok = js.substr(start,
+                        comma == std::string::npos ? std::string::npos : comma - start);
+                    if (tok == sel) { selMatch = true; break; }
+                    if (comma == std::string::npos) break;
+                    start = comma + 1;
+                }
+            }
+            bool clsMatch = !(noJitCls && *noJitCls);  // no class filter => match
+            if (selMatch && noJitCls && *noJitCls) {
+                clsMatch = (interp.classNameOfMethod(compiledMethod) == noJitCls);
+            }
+            if (selMatch && clsMatch) {
+                if (pharo::g_debug.jitFailReasons)
+                    fprintf(stderr, "[NOJIT-SEL] bailed #%s (%s)\n",
+                        memory.selectorOf(compiledMethod).c_str(),
+                        interp.classNameOfMethod(compiledMethod).c_str());
+                return nullptr;
+            }
+        }
+    }
     g_t1CompileSeq2++;
     g_emitPrologueLeaf = false;
     const int ibcBefore = g_ibcEmits;

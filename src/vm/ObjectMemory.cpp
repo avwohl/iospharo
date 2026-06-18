@@ -2019,13 +2019,30 @@ bool ObjectMemory::checkHeapIntegrity(const char* when) {
             nptr = pointerSlotsOf(h);
             for (size_t i = 0; i < nptr; ++i) {
                 Oop v = h->slotAt(i);
-                if (!v.isObject()) continue;          // immediate (SmallInt/Char/Float) or nil-bits
-                if (v.isNil()) continue;
-                bool ok = isValidPointer(v);
-                const char* why = "out-of-heap(dangling)";
-                if (ok) {
-                    uint32_t tci = v.asObjectPtr()->classIndex();
-                    if (tci == 0 || tci >= maxClass) { ok = false; why = "invalid-class(free/garbage)"; }
+                if (v.isNil()) continue;              // nil is always a legal slot value
+                uint64_t b = v.rawBits();
+                uint64_t tag = b & 0x7;
+                bool ok = true;
+                const char* why = "";
+                // A well-formed oop is: nil (handled above), a tag-0 heap pointer,
+                // or an immediate with tag 1 (SmallInt) / 3 (Character) / 5 (SmallFloat).
+                // Tags 2/4/6/7 are MALFORMED — no valid oop has them.  This is the
+                // fingerprint of the cold-startup wild write (raw C++ ints 0x4/0x6/0xc
+                // = tag 4/6/4 leaking into oop slots).  The old check skipped these as
+                // "immediates" (if (!v.isObject()) continue), which is why it never
+                // caught the corruption.
+                if (tag == 1 || tag == 3 || tag == 5) {
+                    // legit immediate (SmallInteger / Character / SmallFloat)
+                } else if (tag == 0) {
+                    ok = isValidPointer(v);
+                    why = "out-of-heap(dangling)";
+                    if (ok) {
+                        uint32_t tci = v.asObjectPtr()->classIndex();
+                        if (tci == 0 || tci >= maxClass) { ok = false; why = "invalid-class(free/garbage)"; }
+                    }
+                } else {
+                    ok = false;
+                    why = "malformed-tag(raw-int?)";   // tag 2/4/6/7 — the wild-write fingerprint
                 }
                 if (!ok) {
                     if (badSlots < 12) {
