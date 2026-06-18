@@ -128,3 +128,4 @@ build-dbg/
 .sweep-state/
 build-opt/
 build-fsr0/
+build-x86-sp/

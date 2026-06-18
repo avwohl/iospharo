@@ -4441,7 +4441,13 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     pharo_jit_osr_resume(&state, reinterpret_cast<void*>(entry));
     fsrLazyRefresh(state);  // FSR M4
 #else
-    entry(&state);
+    // x86 sp-residency: route the mid-method resume through JIT_CALL so it
+    // loads rbx=state.sp live-in (PHARO_T1_X86_SP_IN_REG).  At flag=0 / non-
+    // residency builds JIT_CALL is the plain `entry(state)` call — byte-
+    // identical.  Without this, tryResume/tryResumeFast entered resumed JIT
+    // code with a garbage sp register (the arm64 #if branch uses
+    // pharo_jit_osr_resume for the analogous x25 hoist).
+    JIT_CALL(reinterpret_cast<void*>(entry), &state);
 #endif
 
     if (__builtin_expect(g_debug.traceResumeSp, 0)) {
@@ -4484,7 +4490,13 @@ bool JITRuntime::tryResumeFast(JITMethod* jm, uint32_t bcOffset, JITState& state
     pharo_jit_osr_resume(&state, reinterpret_cast<void*>(entry));
     fsrLazyRefresh(state);  // FSR M4
 #else
-    entry(&state);
+    // x86 sp-residency: route the mid-method resume through JIT_CALL so it
+    // loads rbx=state.sp live-in (PHARO_T1_X86_SP_IN_REG).  At flag=0 / non-
+    // residency builds JIT_CALL is the plain `entry(state)` call — byte-
+    // identical.  Without this, tryResume/tryResumeFast entered resumed JIT
+    // code with a garbage sp register (the arm64 #if branch uses
+    // pharo_jit_osr_resume for the analogous x25 hoist).
+    JIT_CALL(reinterpret_cast<void*>(entry), &state);
 #endif
     return true;
 }

@@ -433,6 +433,39 @@ typedef void (*StencilFunc)(JITState*);
 #endif
 
 #else
+// x86 sp-residency (mirrors AsmjitT1.cpp's PHARO_T1_X86_SP_IN_REG): at =1 the
+// x86 emit keeps state.sp in rbx (callee-saved).  Every x86 JIT entry — whether
+// at the method prologue (g_codeStartLabel) OR mid-method (resume/IC-miss enter
+// at codeStart()+codeOff and BYPASS the prologue) — must therefore receive rbx
+// loaded live-in.  Loading it HERE (in the entry macro, like arm64 loads x25)
+// covers BOTH cases uniformly and lets the JIT body use rbx without any per-
+// method `push rbx` (which would break the "rsp == 8 mod 16 at entry" invariant
+// the in-body C-call odd-push realignment relies on).  rbx is listed clobbered
+// so the C compiler preserves its OWN rbx across the call; the JIT body syncs
+// rbx->[rdi+OFF_SP] at every exit so memory sp is current when we return here.
+#ifndef PHARO_T1_X86_SP_IN_REG
+#define PHARO_T1_X86_SP_IN_REG 0
+#endif
+#if (defined(__x86_64__) || defined(_M_X64)) && PHARO_T1_X86_SP_IN_REG
+#define JIT_CALL(entry_ptr, state_ptr) do { \
+    _JIT_CALL_PRE(); \
+    void* _jit_e = reinterpret_cast<void*>(entry_ptr); \
+    void* _jit_s = reinterpret_cast<void*>(state_ptr); \
+    asm volatile( \
+        "movq %[s], %%rdi\n\t"           /* rdi = state (SysV arg0) */ \
+        "movq (%%rdi), %%rbx\n\t"        /* rbx = state.sp live-in (OFF_SP==0) */ \
+        "callq *%[e]\n\t" \
+        : \
+        : [s] "r"(_jit_s), [e] "r"(_jit_e) \
+        : "rax","rcx","rdx","rsi","rdi","r8","r9","r10","r11","rbx", \
+          "memory","cc" \
+    ); \
+} while(0)
+// x86 resume call ignores the retval parameter (the V2 prelude / C++ pop already
+// placed it); the rbx-load is the only sp-residency addition.
+#define JIT_RESUME_CALL(entry_ptr, state_ptr, retval_bits) \
+    JIT_CALL(entry_ptr, state_ptr)
+#else
 // NOTE: must fully qualify ::pharo::jit::JITState — this macro is invoked
 // from member functions of pharo::Interpreter (Interpreter.cpp), where
 // `JITState` is not visible without the qualifier.  The arm64 branch
@@ -444,6 +477,7 @@ typedef void (*StencilFunc)(JITState*);
 // x86: V2 not ported yet — resume calls ignore the retval parameter.
 #define JIT_RESUME_CALL(entry_ptr, state_ptr, retval_bits) \
     JIT_CALL(entry_ptr, state_ptr)
+#endif
 #endif
 
 } // namespace jit
