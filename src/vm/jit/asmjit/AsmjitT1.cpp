@@ -9605,6 +9605,59 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     i += 1;
                     continue;
                 }
+                // x86 coverage (2026-06-17): native remote-temp access
+                // PushTempAtInVec 0xFB / StoreTempAtInVec 0xFC /
+                // PopStoreTempAtInVec 0xFD (3-byte: op + tempIdx + vecIdx) —
+                // read/write a slot in a temp vector held by an enclosing
+                // closure.  Bailing these ran any closure-write loop
+                // (`s := s + i`) entirely in interp (loopS 28x Cog vs arm64's
+                // 0.4x).  Inline mirrors arm64 (~10052): vec = tempBase[vecIdx];
+                // if vec is a real Object (tag 0), push/store vec[tempIdx]; if
+                // vec is non-Object (nil), push nil / no-op the store.  No GC
+                // write barrier (same as arm64): captured-vector stores
+                // typically hit eden.  Naked + prefixed both fine (operands are
+                // tempIdx/vecIdx, not extA/extB-extended).
+                if ((op == SistaV1::PushTempAtInVec
+                        || op == SistaV1::StoreTempAtInVec
+                        || op == SistaV1::PopStoreTempAtInVec)
+                        && (size_t)(i + 2) < bcRealLen) {
+                    uint8_t tempIdx = bcReal[i + 1];
+                    uint8_t vecIdx  = bcReal[i + 2];
+                    if (op == SistaV1::PushTempAtInVec) {
+                        asmjit::Label vecObj  = a.new_label();
+                        asmjit::Label pushDone = a.new_label();
+                        a.mov(rcx, ptr(rdi, OFF_TEMPBASE));
+                        a.mov(rdx, ptr(rcx, vecIdx * 8));        // vec = temps[vecIdx]
+                        a.test(rdx, asmjit::Imm(0x7));
+                        a.je(vecObj);                            // tag==0 → object
+                        a.mov(rax, asmjit::Imm(nilBits));        // non-object → nil
+                        a.jmp(pushDone);
+                        a.bind(vecObj);
+                        a.mov(rax, ptr(rdx, OBJ_SLOT_0 + tempIdx * 8));  // vec[tempIdx]
+                        a.bind(pushDone);
+                        emitPushReg(a, rax);
+                    } else {
+                        asmjit::Label vecNotObj = a.new_label();
+                        a.mov(rcx, ptr(rdi, OFF_SP));
+                        a.mov(rax, ptr(rcx, -8));                // stackTop (TOS)
+                        if (op == SistaV1::PopStoreTempAtInVec) {
+                            a.sub(rcx, asmjit::Imm(8));
+                            a.mov(ptr(rdi, OFF_SP), rcx);        // pop
+                        }
+                        a.mov(rcx, ptr(rdi, OFF_TEMPBASE));
+                        a.mov(rdx, ptr(rcx, vecIdx * 8));        // vec
+                        a.test(rdx, asmjit::Imm(0x7));
+                        a.jne(vecNotObj);                        // non-object → skip
+                        a.mov(ptr(rdx, OBJ_SLOT_0 + tempIdx * 8), rax);  // vec[tempIdx]=TOS
+                        a.bind(vecNotObj);
+                    }
+                    if ((size_t)(globalIdx + 1) < bcLabels.size())
+                        a.bind(bcLabels[globalIdx + 1]);
+                    if ((size_t)(globalIdx + 2) < bcLabels.size())
+                        a.bind(bcLabels[globalIdx + 2]);
+                    i += 2;
+                    continue;
+                }
                 // x86 coverage (2026-06-15): native ExtendB+ExtJump BACK-EDGE.
                 // Loops (`1 to: N do:` / whileTrue) compile to ExtendB+ExtJump
                 // backward; the generic prefix-bail dropped every loop back edge
