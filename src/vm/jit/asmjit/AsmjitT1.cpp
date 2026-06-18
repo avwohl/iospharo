@@ -1657,23 +1657,81 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
 
 #if defined(__x86_64__) || defined(_M_X64)
 
+// ===== x86 sp-residency (build-time switch, mirrors arm64 PHARO_T1_SP_IN_X25)
+// 0 = sp lives in memory at [rdi+OFF_SP] (today's behavior; the helpers below
+//     produce byte-identical codegen to the raw mov they replace).
+// 1 = sp lives in rbx (SysV callee-saved; rbx/r12-r15 are unused in this emit).
+//     Flip ONLY when EVERY OFF_SP access goes through these helpers, the
+//     prologue does `push rbx; mov rbx,[rdi+OFF_SP]`, every exit syncs
+//     rbx->mem and `pop rbx`, and the inline-J2J return prelude restores the
+//     caller sp into rbx.  All-or-nothing at runtime; this flag makes the
+//     migration incremental at the SOURCE level (each batch commits green at
+//     0).  See docs/x86-cog-gap.md "x86 sp-residency port plan".
+// Overridable via the build: cmake ... -DPHARO_T1_X86_SP_IN_REG=1.
+#ifndef PHARO_T1_X86_SP_IN_REG
+#define PHARO_T1_X86_SP_IN_REG 0
+#endif
+#if PHARO_T1_X86_SP_IN_REG
+#define X86_SP_REG asmjit::x86::rbx
+#endif
+
+// sp-residency helpers.  At =0 these emit the exact ldr/str-equivalent the raw
+// `mov ...,[rdi+OFF_SP]` they replace, so the converted code is byte-identical;
+// at =1 they become rbx register moves.
+static inline void emitLoadSp_x86(asmjit::x86::Assembler& a,
+                                  asmjit::x86::Gp dst) {
+#if PHARO_T1_X86_SP_IN_REG
+    a.mov(dst, X86_SP_REG);
+#else
+    a.mov(dst, asmjit::x86::ptr(asmjit::x86::rdi, OFF_SP));
+#endif
+}
+static inline void emitStoreSp_x86(asmjit::x86::Assembler& a,
+                                   asmjit::x86::Gp src) {
+#if PHARO_T1_X86_SP_IN_REG
+    a.mov(X86_SP_REG, src);
+#else
+    a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_SP), src);
+#endif
+}
+// At exits (ret to C++) and before sp-reading helper calls, sp must be visible
+// in memory regardless of mode.
+static inline void emitSyncSpToState_x86(asmjit::x86::Assembler& a) {
+#if PHARO_T1_X86_SP_IN_REG
+    a.mov(asmjit::x86::ptr(asmjit::x86::rdi, OFF_SP), X86_SP_REG);
+#else
+    (void)a;
+#endif
+}
+// After a call that may CHANGE state.sp (anything that can run Smalltalk),
+// reload the register mirror from memory.
+static inline void emitReloadSpFromState_x86(asmjit::x86::Assembler& a) {
+#if PHARO_T1_X86_SP_IN_REG
+    a.mov(X86_SP_REG, asmjit::x86::ptr(asmjit::x86::rdi, OFF_SP));
+#else
+    (void)a;
+#endif
+}
+
 // Emit a "push value into Smalltalk stack" sequence on x86_64.  The
 // value to push must already be in `valReg` (any 64-bit gp reg
-// other than rdi/rcx).  Sequence:
+// other than rdi/rcx).  Sequence (=0):
 //
 //   mov rcx, [rdi+OFF_SP]       ; load sp
 //   mov [rcx], valReg           ; *sp = value
 //   add rcx, 8                  ; sp++
 //   mov [rdi+OFF_SP], rcx       ; store sp back
 //
-// rcx is clobbered.  (If we ever cache sp across multiple bytecodes
-// we'll factor this differently; Phase 2 reloads on every push.)
+// rcx is clobbered.  At =1 the load/store become rbx moves (the add still
+// advances rbx through rcx; a one-instruction `mov [rbx],val; add rbx,8`
+// form is a later optimization, kept identical-shape here for the byte-
+// identical =0 guarantee).
 void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
     using namespace asmjit::x86;
-    a.mov(rcx, ptr(rdi, OFF_SP));
+    emitLoadSp_x86(a, rcx);
     a.mov(ptr(rcx), valReg);
     a.add(rcx, 8);
-    a.mov(ptr(rdi, OFF_SP), rcx);
+    emitStoreSp_x86(a, rcx);
 }
 
 // x86 inline-J2J (knob PHARO_T1_X86_INLINE_J2J) RETURN PRELUDE.  Emitted at
