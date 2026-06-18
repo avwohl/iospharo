@@ -13,12 +13,20 @@ the x86 send-bearing admit to **nArgs==0** (AsmjitT1 ~3094); nArgs>0 falls to th
 leaf gate. x86-only, arm64 byte-identical, NO-OP for default (g_emitX86SendsOk
 false unless `XMETHOD_SENDS=1`; confirmed via a `[SENDSOK-ON]` probe).
 
-**VERIFY FIRST next session (BLOCKER):** `/tmp/harness/Pharo.image` was
-accidentally overwritten with a non-prepped image — ALL available images now fail
-startup with a `handleError`/`#=`-corrupt-receiver in the ExternalObject install
-loop, **even on the untouched stable arm64 `build/` VM** (proving it's the IMAGE,
-not the fix). Re-prep a working image (the prior working one was a saved/prepped
-snapshot; bare fresh Pharo-13 images hit the headless-startup handleError), then:
+**VERIFY FIRST next session (BLOCKER — image/startup, NOT the fix):** the working
+test image was lost (I overwrote `/tmp/harness/Pharo.image`). Re-prep attempts
+hit a VM **startup corruption** that blocks ALL images: `#new:` sent to
+`0x300000000` (old-space base) in `FFIStructure class>>resetAllStructures` →
+`allSubclassesDo:` during snapshot resume (`SnapshotOperation>>executeStoringError:`),
+which trips `StartupUIManager>>handleError:log:` BEFORE `StartupPreferencesLoader`
+loads `startup.st` (so `[STARTUP-ST-FIRED]` never fires and eval never runs).
+REPRODUCES WITH `PHARO_NO_JIT` (interpreter) on BOTH arches, on a freshly
+downloaded Pharo-13.1 image AND a stock-VM-prepped one — so it is a VM/image
+startup-compat issue, INDEPENDENT of the SENDS fix. The lost Jun-17 image did not
+trip it (its FFI startup state was clean). A complete fresh setup with sources is
+staged at `/tmp/h3` (image+changes+sources+stock-pharo). NEXT: either find/restore
+a startup-clean image, or root-cause the `0x300000000`-in-`resetAllStructures`
+startup corruption (interpreter-level), THEN:
   - `scripts/bug2-asString-repro/run.sh real`  → want `EVAL-RESULT=7` (not #asForm)
   - `/tmp/verify_bug2_fix.sh`  (icon: clean / full SENDS clean / default 7 / cfibx ok)
 If `run.sh real` still shows `#asForm`, the fix is wrong — but the logic (admit
