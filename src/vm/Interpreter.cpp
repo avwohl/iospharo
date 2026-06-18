@@ -14019,6 +14019,23 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                             }
                         } catch (...) { fprintf(stderr, "[DNU-COLL] dump failed\n"); }
                     }
+                    // Decisive: at a JIT-raised DNU, dump the live JITState so
+                    // we can tell tempBase-miscompute from an operand-stack
+                    // shift.  If tempBase[0]==aBlock but sp[-(argCount+1)] is
+                    // garbage, the operand stack shifted; if tempBase[0] is
+                    // itself garbage, tempBase/arg placement is wrong.
+                    if (GET_DEBUG_BOOL(PHARO_DNU_DUMP_COLL) && currentJITState_) {
+                        jit::JITState* js = currentJITState_;
+                        auto sb = [](Oop* p, int i) -> unsigned long long {
+                            return (p && p+i) ? (unsigned long long)p[i].rawBits() : 0ULL;
+                        };
+                        fprintf(stderr,
+                            "[DNU-JSTATE] tempBase=%p tb[0]=0x%llx tb[1]=0x%llx tb[2]=0x%llx "
+                            "recv=0x%llx argCount=%d sp=%p sp[-1]=0x%llx sp[-2]=0x%llx sp[-3]=0x%llx\n",
+                            (void*)js->tempBase, sb(js->tempBase,0), sb(js->tempBase,1), sb(js->tempBase,2),
+                            (unsigned long long)js->receiver.rawBits(), js->argCount,
+                            (void*)js->sp, sb(js->sp,-1), sb(js->sp,-2), sb(js->sp,-3));
+                    }
                     fprintf(stderr, "[DNU-STACK] Full call stack for #%s (DNU #%d):\n", selName.c_str(), dnuLogCount);
                     for (size_t f = 0; f <= frameDepth_ && f < 30; f++) {
                         SavedFrame& sf = savedFrames_[f];
@@ -27477,6 +27494,35 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                             }
                                         }
                                     }
+                                }
+                                // Cold-boot diag (PHARO_DNU_DUMP_COLL): for #do:
+                                // resumes, compare savedTempBase to framePointer_+1
+                                // and show whether tempBase[0] (=arg0/aBlock) is the
+                                // real block.  If savedTempBase != fp+1 OR
+                                // savedTempBase[0] != fp[1], the resume reconstructed
+                                // tempBase off by the inlined-temp count -> PushTemp0
+                                // reads the wrong slot (the 0x9=to:do:-index bug).
+                                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_DNU_DUMP_COLL), 0)
+                                        && savedMethod.isObject()
+                                        && memory_.selectorOf(savedMethod) == "do:") {
+                                    Oop* tb = savedTempBase;
+                                    Oop* fp = framePointer_;
+                                    long fpDelta = tb ? (long)((Oop*)tb - (Oop*)fp) : -999;
+                                    fprintf(stderr,
+                                        "[DO-RESUME] savedTempBase=%p fp=%p (tb-fp=%ld slots, expect 1) "
+                                        "tc=%d nArgs=%d | tb[0]=0x%llx tb[1]=0x%llx tb[2]=0x%llx | "
+                                        "fp[1]=0x%llx fp[2]=0x%llx fp[3]=0x%llx | sp=%p sp[-1]=0x%llx sp[-2]=0x%llx\n",
+                                        (void*)tb, (void*)fp, fpDelta,
+                                        savedJitMethod ? (int)savedJitMethod->tempCount : -1, (int)nArgs,
+                                        (unsigned long long)(tb?tb[0].rawBits():0),
+                                        (unsigned long long)(tb?tb[1].rawBits():0),
+                                        (unsigned long long)(tb?tb[2].rawBits():0),
+                                        (unsigned long long)fp[1].rawBits(),
+                                        (unsigned long long)fp[2].rawBits(),
+                                        (unsigned long long)fp[3].rawBits(),
+                                        (void*)stackPointer_,
+                                        (unsigned long long)stackPointer_[-1].rawBits(),
+                                        (unsigned long long)stackPointer_[-2].rawBits());
                                 }
                                 // Direct resume — no hash lookup or codeOffsetForBC.
                                 // Stay in X — W^X audit 2026-04-26.
