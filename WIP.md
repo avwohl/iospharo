@@ -1,3 +1,18 @@
+# RESUME POINT — 2026-06-18b (NEXT: BUG-2 x86 asString send-bearing corruption)
+
+**START HERE next session:** `scripts/bug2-asString-repro/README.md` — a
+self-contained handoff for the x86 send-bearing inline-J2J corruption
+(`PHARO_T1_X86_XMETHOD_SENDS`). Has the deterministic repro (`run.sh corrupt` →
+`ByteString class>>doesNotUnderstand: #capitalized`), the clean control
+(`run.sh clean` → `xfib10=143`, proving the mechanism is sound), the 9-item
+"DO NOT RE-CHASE" ruled-out list, the GC-interaction hypothesis, and the exact
+lldb plan. Goal: send-bearing inline-J2J correct → cfibs ~12x. Default-OFF/gated.
+
+This session also: x86 sp-residency port DONE + default-on (1.3-1.7x, commit
+`46be2194`, 150-class A/B clean); a latent x86 V2 retval bug fixed (`1094ed6f`).
+
+---
+
 # RESUME POINT — 2026-06-18 (session: =0 baseline repaired + sp-residency A/B + x86 port scaffolded)
 
 Branch **jit**, pushed to origin (tip `af404cba`). arm64 `=1` battery == golden;
