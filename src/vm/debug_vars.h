@@ -235,6 +235,8 @@ DEBUG_BOOL(PHARO_HEAP_SCAN_STOP)            // wild-write detector: stop the VM 
 DEBUG_BOOL(PHARO_DNU_DUMP_COLL)             // cold-startup diag: at each of the first DNUs, dump the CURRENT method's receiver as a collection (class/format/slotCount + all slots) so a legal-but-wrong element (e.g. SmallInteger 1 = 0x9 where a class belongs) can be located, and undersized-read vs stored-garbage distinguished. Env-gated → toggling does NOT relocate the victim on a fixed binary.
 DEBUG_STR(PHARO_T1_NOJIT_SEL)               // cold-startup bisect: comma-separated EXACT selector list; compileViaAsmjit bails (stays interpreted) for any method whose selector matches. Lets us find WHICH method's T1 compilation triggers the cold-boot corruption by selectively NOT compiling it (env-gated on a fixed binary → no relocation). Pairs with PHARO_T1_NOJIT_CLASS.
 DEBUG_STR(PHARO_T1_NOJIT_CLASS)             // cold-startup bisect: like PHARO_T1_NOJIT_SEL but matches the method's DEFINING CLASS name (exact). Narrows a NOJIT_SEL hit to one class when the selector is overloaded.
+DEBUG_BOOL(PHARO_T1_SEND_RECV_AUDIT)        // cascade-origin detector: at the chain-loop send activation, when state.icDataPtr is set, verify classIndexOf(calleeRecv=sp[-(nArgs+1)]) == icDataPtr[0] (the IC's dispatched class). The FIRST mismatch names where the JIT operand stack first shifted (the cold-boot cascade origin). Reports caller method + selector + nArgs + sp + expected/actual classIndex, then stops on PHARO_T1_SEND_RECV_AUDIT_STOP.
+DEBUG_BOOL(PHARO_T1_SEND_RECV_AUDIT_STOP)   // stop the VM (running_=false) at the first SEND_RECV_AUDIT mismatch.
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT

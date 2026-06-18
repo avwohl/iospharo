@@ -25687,6 +25687,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // Handle exit reason
         Oop chainTarget;  // Set by ExitSend/ExitSendCached/ExitJ2JCall, used by shared chain code after switch
         bool ipAlreadyAdvanced = false;  // ExitJ2JCall: stencil already advanced IP past send
+        bool sendWasCached = false;  // SEND_RECV_AUDIT: true ONLY on the ExitSendCached (IC-HIT) path, where the JIT already class-matched, so calleeRecv class MUST == icDataPtr[0]; the cold ExitSend path leaves a stale icDataPtr so its mismatch is benign (legit IC miss, re-resolved).
         jit::spDepthCheck(state, "tryJITActivation-exit");
         if (__builtin_expect(g_debug.jitTraceOop != nullptr, 0)) {
             static uint64_t traceBits = strtoull(g_debug.jitTraceOop, nullptr, 0);
@@ -26446,6 +26447,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount, state.method);
 
             chainTarget = cached;
+            sendWasCached = true;  // IC-HIT path: JIT already class-matched (SEND_RECV_AUDIT)
             jitRuntime_.noteMethodEntry(cached);
             break;  // → shared send-chain code after switch
         }
@@ -27140,6 +27142,40 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         Oop calleeRecv = stackPointer_[-(nArgs + 1)];
                         ObjectHeader* calleeMethObj = chainTarget.asObjectPtr();
                         Oop* fp = stackPointer_ - (nArgs + 1);
+
+                        // CASCADE-ORIGIN AUDIT (PHARO_T1_SEND_RECV_AUDIT): the
+                        // cold-boot corruption is an operand-stack SHIFT that
+                        // cascades.  When the IC is set, the receiver we just
+                        // popped (sp[-(nArgs+1)]) MUST be an instance of the
+                        // class the IC dispatched on (icDataPtr[0]).  The FIRST
+                        // mismatch is at/just after the shift origin and names
+                        // the caller + send.
+                        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_SEND_RECV_AUDIT), 0)
+                                && sendWasCached && state.icDataPtr) {
+                            uint64_t expectCls = state.icDataPtr[0];
+                            uint64_t rb = calleeRecv.rawBits();
+                            uint32_t actualCls = ((rb & 7) == 0 && rb >= 0x10000)
+                                ? calleeRecv.asObjectPtr()->classIndex()
+                                : 0;  // immediate receiver -> 0 (won't match a heap class key)
+                            // Immediates legitimately have classIndex 0 in the IC
+                            // (SmallInteger key etc.), so only flag when the IC key
+                            // is a heap class but the popped receiver disagrees.
+                            bool immRecv = (rb & 7) != 0;
+                            if (expectCls != 0 && !immRecv && actualCls != (uint32_t)expectCls) {
+                                static int auditN = 0;
+                                if (++auditN <= 20) {
+                                    fprintf(stderr,
+                                        "[SEND-RECV-AUDIT #%d] SHIFT: caller=#%s target=#%s nArgs=%d "
+                                        "calleeRecv=0x%llx actualCls=%u expectCls(IC)=%llu sp=%p\n",
+                                        auditN,
+                                        savedMethod.isObject() ? memory_.selectorOf(savedMethod).c_str() : "?",
+                                        memory_.selectorOf(chainTarget).c_str(), nArgs,
+                                        (unsigned long long)rb, actualCls,
+                                        (unsigned long long)expectCls, (void*)stackPointer_);
+                                    if (GET_DEBUG_BOOL(PHARO_T1_SEND_RECV_AUDIT_STOP)) running_ = false;
+                                }
+                            }
+                        }
 
                         state.sp = stackPointer_;
                         state.receiver = calleeRecv;
