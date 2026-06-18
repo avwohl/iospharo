@@ -12,19 +12,20 @@ The "orphaned save" theory is ALSO disproven (`PHARO_T1_X86_XMETHOD_PROBE` shows
 the save BALANCES). **Do not re-chase asString / orphan-save / cursor / rj2j /
 codeOffsetForResume.**
 
-**The REAL send-bearing bug** (still open, gated default-OFF): full config +
-`PHARO_T1_X86_XMETHOD_SENDS=1` corrupts the MENU path — `#asForm` DNU on a
-`PragmaMenuAndShortcutRegistrationItem` (`ToggleMenuItemMorph>>icon` → … →
-`ByteSymbol>>cull:`). Faithful repro: `scripts/bug2-asString-repro/run.sh real`.
-`NO_XMETHOD` (self-rec only) is CLEAN → cross-method admit; it's a mid-callee
-resume of a non-leaf inline-J2J'd cross-method callee swapping a receiver.
+**The PERF PREMISE is invalid — SENDS does not deliver the cfibs win.** Measured
+(clean-scope, no artifact): cfibs28 is FLAT — 171 ms SENDS-off / 184 ms SENDS-on
+— vs cfibx (leaf-inlinable `incc`) 13 ms. `incs` (send-bearing, calls `max:`
+which mid-bails) is NOT inlined even with SENDS=1 because the admit correctly
+excludes mid-bailing callees, so the 13× cfibs gap is INTRINSIC and a fix would
+not close it. **RECOMMENDATION: stop pursuing SENDS** — correctly default-OFF;
+the shipped leaf + leaf-cross-method x86 JIT (default-on) already captures the
+inlinable recursion win.
 
-**START HERE next session:** `scripts/bug2-asString-repro/README.md` (rewritten).
-Isolate the real menu-path bug with the clean-scope technique: comma-list
-`J2J_SEL` over the menu-chain caller(s) + their callees (NO mismatch), confirm
-SENDS-off-clean / SENDS-on-corrupt at that scope, narrow. Tooling added this
-session: comma-list `J2J_SEL`, `PHARO_T1_X86_J2J_CLASS=<Class>`, `[J2J-EMIT]`
-trace. Goal: send-bearing inline-J2J correct → cfibs ~12x. Default-OFF/gated.
+There IS a separate, real full-config `SENDS=1` startup corruption (menu
+`#asForm` DNU, `ToggleMenuItemMorph>>icon` → … → `ByteSymbol>>cull:`; faithful
+repro `scripts/bug2-asString-repro/run.sh real`) — but it has no perf payoff to
+unlock, so it is LOW priority. Tooling added this session for any future
+isolation: comma-list `J2J_SEL`, `PHARO_T1_X86_J2J_CLASS=<Class>`, `[J2J-EMIT]`.
 
 Earlier this session: x86 sp-residency port DONE + default-on (1.3-1.7x, commit
 `46be2194`, 150-class A/B clean); a latent x86 V2 retval bug fixed (`1094ed6f`).

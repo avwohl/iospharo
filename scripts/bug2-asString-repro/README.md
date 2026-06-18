@@ -55,18 +55,30 @@ callee does its own send (exits to C++ mid-callee), and the mid-callee resume
 swaps a value/receiver. `NO_XMETHOD` (self-rec only) is CLEAN, so it is in the
 CROSS-METHOD admit; `NO_XMETHOD_ALLARGS` does not clear it.
 
-## NEXT STEP — isolate the real menu-path corruptor
+## THE PERF PREMISE IS INVALID — SENDS does not deliver the cfibs win
 
-Use the clean-scope technique (NO mismatch artifact): enable inline-J2J + SENDS
-for the menu-chain caller(s) AND their callees via the comma-list `J2J_SEL`,
-then bisect which send-bearing caller's mid-resume swaps the value. Candidate
-chain methods: `icon`, `cull:`, `ifNotNil:`, `do:`, `layoutItems`,
-`asMenubarMenuMorph`, `ifTrue:`. Add their callees so there is no
-caller-J2J/callee-no-J2J mismatch, confirm SENDS-off clean / SENDS-on corrupt at
-that scope, then narrow. The defect is the MID-CALLEE resume of a send-bearing
-callee — compare the leaf path (works, default-on) vs the send-bearing path at
-the fast-rj2j entryDepth/entryCursor pin (Interpreter.cpp ~25024-25035) and the
-materialize (`materializeJ2JSaveIntoFrame`, ~23936).
+Measured this session (clean-scope, NO mismatch artifact), cfibs28
+[`incs ^(self+1) max: 0`; `cfibs ^…((self-1)cfibs+(self-2)cfibs) incs`]:
+
+    SENDS off -> 171 ms     SENDS on -> 184 ms     (FLAT, within noise)
+    cfibx (incc `^self+1`, a LEAF cross-method callee) -> 13 ms
+
+So the 13x cfibs gap is INTRINSIC: `incs` is send-bearing (calls `max:`, which
+bails mid-method), and the admit gate correctly EXCLUDES mid-bailing callees
+(`x86HasMidBail`) — `incs` is NOT inlined into `cfibs` even with SENDS=1. Fixing
+the real menu-path corruption would NOT close the cfibs gap. RECOMMENDATION: do
+not pursue SENDS — it is correctly default-OFF; the shipped leaf + leaf-cross-
+method x86 JIT (default-on) already captures the inlinable recursion win.
+
+## If you do isolate the real menu-path bug anyway
+
+It is a genuine (separate) correctness defect, but with no perf payoff. Use the
+clean-scope technique: comma-list `J2J_SEL` over the menu-chain caller(s)
+(`icon`/`cull:`/`ifNotNil:`/`do:`/`layoutItems`/`asMenubarMenuMorph`) AND their
+callees (no mismatch), confirm SENDS-off clean / SENDS-on corrupt at that scope,
+narrow. The defect is the MID-CALLEE resume of a send-bearing callee — compare
+the leaf path (works) vs send-bearing at the fast-rj2j entryDepth/entryCursor pin
+(Interpreter.cpp ~25024-25035) and `materializeJ2JSaveIntoFrame` (~23936).
 
 ## Tooling added this session (all x86-only, gated; arm64 untouched)
 
