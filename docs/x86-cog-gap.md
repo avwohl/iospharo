@@ -35,6 +35,71 @@ WORKS (JIT clearly beats interp): loopD (3.0x Cog), fib33 (5.8x), cfibx (5.8x;
 cfibx=187ms confirms the literalsCache cross-method fix is real). REGRESSES:
 cfibs (0.72x = slower than interp), loopS (0.97x = no gain).
 
+## 2b. sp-residency A/B — what porting x25-sp to x86 is actually worth (2026-06-18)
+
+x86 has NEVER had sp-residency (sp lives in memory at [rdi+OFF_SP], every
+push/pop is a load+store — exactly the arm64 `PHARO_T1_SP_IN_X25=0` shape).
+arm64 IS sp-resident by default (=1). To measure the slice that the port would
+buy, the arm64 `=0` (memory-sp) baseline was repaired (commit fd8bfc94 — it had
+bit-rotted: six JIT-entry sites wrote a stale x25 back to JS_SP; guarded behind
+PHARO_T1_SP_IN_X25) and A/B'd against `=1` on the same dev build, same image:
+
+    bench       =1 (x25 sp)  =0 (mem sp)   =0 penalty   character
+    loopD100M      75            75            0%        flat inlined loop
+    loopS100M     100           104           +4%        closure-temp write
+    fib33          86           133           +55%       self-recursion
+    cfibx32        70           105           +50%       recursion, leaf callee
+    cfibs32        99           163           +65%       recursion, send-bearing
+
+THE FINDING, and it is sharp:
+  - sp-residency does **nothing** for the flat per-bytecode loop (loopD
+    identical). That loop is already ≈Cog (inlined arithmetic, no sp traffic in
+    the hot path) — there is no "flat per-bytecode tax" left to fix, and
+    sp-residency was never the lever for it. The OoO core's store-forwarding
+    fully hides the redundant sp load/store (the same reason M4 store-deletion
+    and TOS_REG were washes).
+  - sp-residency is worth **+50–65% on recursion/activation** (fib, cfibx,
+    cfibs). Recursion pumps sp hard across the J2J call/return dance; keeping
+    sp in a register removes the per-activation memory round-trips.
+
+CONSEQUENCE FOR x86: x86's worst gaps are exactly the activation-heavy ones
+(cfibs 54x, loopS was 32x pre-fix). The arm64 `=0`→`=1` step (133→86 on fib =
+−35%) is the upside a faithful x86 sp-residency port would add **on top of**
+fixing the send-bearing operand-stack leak (§3/§5). It is a real, measured,
+secondary lever — NOT a per-bytecode-tax fix (there is no per-bytecode tax to
+fix; flat code is already at parity). The PRIMARY x86 recursion lever remains
+the send-bearing caller-resume fix in §6.
+
+### x86 sp-residency port plan (scoped 2026-06-18; not yet started)
+
+Register: rbx (SysV callee-saved; rbx/r12-r15 are ALL unused in the x86 emit —
+grep count 0). Mirror arm64's PHARO_T1_SP_IN_X25 with a build-time
+`PHARO_T1_X86_SP_IN_REG` (default 0 = today's memory-sp, byte-identical; each
+converted batch commits green at 0, flag=1 correct only once ALL sites convert —
+the same all-or-nothing-at-runtime / incremental-at-source model).
+
+Helpers (mirror emitLoadSp/emitStoreSp/emitSyncSpToState/emitReloadSpFromState):
+load = `mov dst, rbx` (=1) / `mov dst,[rdi+OFF_SP]` (=0); sync = `mov
+[rdi+OFF_SP], rbx` (=1) / nop (=0).
+
+Sites (the work): (1) emitPushReg + every raw `mov rcx,[rdi+OFF_SP]` push/pop
+(~50, lines 1664–9597); (2) PROLOGUE — `push rbx; mov rbx,[rdi+OFF_SP]` at
+method entry; (3) EVERY exit — `mov [rdi+OFF_SP], rbx; pop rbx` before each of
+the ~40 `a.ret()` that return to C++ (MUST pair perfectly or the C caller's rbx
+is corrupted → crash; this is the high-risk part); (4) the inline-J2J return
+prelude (~1693) restores caller sp into rbx, not OFF_SP; (5) before any BLR/call
+to a C helper that can change sp, sync rbx→mem then reload.
+
+OVERHEAD NUANCE (why x86 won't get the full arm64 35%): arm64 pins x25 ONCE in
+the trampoline, so recursion pays no per-activation pin cost. x86 has no asm
+trampoline — JIT_CALL is a plain C call, so each C-entered activation pays
+`push rbx`/`pop rbx`. The inline-J2J hot path AMORTIZES this (self-recursion
+stays in-JIT, rbx live across all levels, paid once at the outer entry), so
+cfibx-style recursion should still see most of the win; but cold/IC-miss/
+cross-method C-entries pay it per call. Net x86 expectation: meaningful but
+< arm64's 35%. Validate empirically (build-x86 cogbench3, flag on vs off) before
+declaring victory — and gate-keep arm64 byte-identical (battery==golden).
+
 ## 3. Root cause of the regressions — send-bearing cross-method callees
 
 The split is leaf vs send-bearing callee, confirmed by a controlled A/B
