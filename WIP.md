@@ -34,15 +34,19 @@ BUILD + LAUNCH recipe:
     # managed images live in ~/Library/Containers/com.awohl.pharo/Data/Library/Images/<name>/<name>.image
     open "$APP"        # launcher; double-click an image row to boot it
 
-REMAINING (next session) — the morphic WORLD does not render in the app: after the
-launcher boots an image (double-click row, OR --image CLI arg), the launcher window
-closes and the VM boots but NO World window appears (app stays alive, no crash, no
-container log).  This is a Metal/SDL2-stub rendering or boot-stall integration issue
-in the app shell (NOT the VM/JIT — the headless test_load_image renders the World
-fine: syncDisplay frames + OSSDL2Driver>>eventLoop, 0 DNUs, 3/3 reliable).  Start by
-capturing the VM's stderr from the app (route to a container file) to see how far the
-in-app boot gets; check the OSSDL2Driver→Metal surface handoff (FFI.cpp SDL2 stubs,
-WorldRenderer.cpp, syncDisplay).
+WORLD RENDER — RESOLVED (commit 51462632): the morphic World DOES render in the app.
+The "doesn't render" reports were a CAPTURE limitation — `screencapture` can't grab a
+Mac Catalyst Metal layer (MetalRenderer.swift:218 documents this), and CGWindowList
+doesn't enumerate the Metal canvas window, so every screenshot came back blank/
+launcher.  PROOF via the app's own `saveDisplayBufferAsPNG` (gDisplaySurface→PNG,
+wired into MetalRenderer.draw behind PHARO_DUMP_DISPLAY=1): the dump shows the full
+Pharo 13 World (menu bar, desktop watermark, Welcome window + lighthouse).  Render
+path intact: VM boots JIT-active (8279 methods/20M sends), morphic render loop runs,
+SDL2 stubs→gDisplaySurface, MetalRenderer draws every frame.  To SEE it: run the
+binary DIRECTLY with a SANDBOX-READABLE image path (inside the container — the macabi
+sandbox blocks /tmp; the app copies via NSData) + PHARO_DUMP_DISPLAY=1, then read
+~/Library/Containers/com.awohl.pharo/Data/tmp/iospharo-frameNNN.png.  Memory:
+catalyst-gui-app-build-restored.md.
 
 ---
 
