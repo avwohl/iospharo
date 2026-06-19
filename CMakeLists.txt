@@ -243,10 +243,25 @@ endif()
 # arch divergence out of the OS-specific platform .cpp files.
 #
 # Only relevant when JIT is enabled (the helpers reference JITMethod).
-# iOS builds set PHARO_JIT_ENABLED=0 so neither file is needed there.
-# CMake doesn't know the value of PHARO_JIT_ENABLED yet (it's set on
-# the target below), so use the same source-of-truth gate cmake does.
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" OR (DEFINED PHARO_JIT_ENABLED AND PHARO_JIT_ENABLED))
+# Single source-of-truth for "is the JIT on for this build" (_PHARO_JIT_ON),
+# used both here (trampoline source selection) and for the compile define below:
+#   - command-line -DPHARO_JIT_ENABLED=... wins;
+#   - Mac Catalyst (macabi) runs on macOS arm64 where the JIT works (W^X via
+#     MAP_JIT + the app's JIT entitlement) -> ON (gives the GUI app the JIT);
+#   - real iOS devices (ios-arm64 slice) -> OFF (no MAP_JIT / JIT entitlement);
+#   - native macOS / Linux -> ON.
+if(DEFINED PHARO_JIT_ENABLED)
+    set(_PHARO_JIT_ON ${PHARO_JIT_ENABLED})
+elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    if(XCFRAMEWORK_PLATFORM STREQUAL "ios-arm64_x86_64-maccatalyst")
+        set(_PHARO_JIT_ON 1)
+    else()
+        set(_PHARO_JIT_ON 0)
+    endif()
+else()
+    set(_PHARO_JIT_ON 1)
+endif()
+if(_PHARO_JIT_ON)
     if(PHARO_TARGET_ARM64)
         list(APPEND VM_SOURCES src/platform/jit_jmsize_arm64.cpp)
     else()
@@ -257,17 +272,10 @@ endif()
 add_library(PharoVMCore STATIC ${VM_SOURCES})
 target_link_libraries(PharoVMCore asmjit::asmjit)
 
-# JIT: respect command-line override, default to enabled on non-iOS
-if(DEFINED PHARO_JIT_ENABLED)
-    target_compile_definitions(PharoVMCore PUBLIC PHARO_JIT_ENABLED=${PHARO_JIT_ENABLED})
-    message(STATUS "JIT: ${PHARO_JIT_ENABLED} (command-line override)")
-elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    target_compile_definitions(PharoVMCore PUBLIC PHARO_JIT_ENABLED=0)
-    message(STATUS "JIT: disabled (iOS)")
-else()
-    target_compile_definitions(PharoVMCore PUBLIC PHARO_JIT_ENABLED=1)
-    message(STATUS "JIT: enabled")
-endif()
+# JIT: use the unified _PHARO_JIT_ON decision computed above (command-line
+# override, ON for native + Mac Catalyst, OFF for real iOS devices).
+target_compile_definitions(PharoVMCore PUBLIC PHARO_JIT_ENABLED=${_PHARO_JIT_ON})
+message(STATUS "JIT: ${_PHARO_JIT_ON} (native/Catalyst=on, iOS-device=off; -DPHARO_JIT_ENABLED overrides)")
 
 # PHARO_ASM_TRAMPOLINE: use the hand-written ARM64 J2J trampoline instead of
 # the C++ while-loop inside Interpreter::tryJITActivation. Default OFF so

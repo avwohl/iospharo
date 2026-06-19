@@ -8614,6 +8614,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // reaches this C++ path is a JIT escape; dump the top selectors
     // periodically to find the dominant escape edges (diagnosis only —
     // map insert per send distorts absolute timing).
+#if PHARO_JIT_ENABLED
     if (__builtin_expect(g_debug.jitFailReasons, 0)) {
         static std::unordered_map<uint64_t, uint64_t> counts;
         static std::unordered_map<std::string, uint64_t> senders;
@@ -8678,6 +8679,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             fprintf(stderr, "\n");
         }
     }
+#endif  // PHARO_JIT_ENABLED (jitFailReasons census)
     // PHARO_SORTSTR_WATCH: catch the FIRST time sendSelector receives
     // a non-Symbol selector — that's where the bad send originates.
     if (__builtin_expect(g_debug.sortstrWatch, 0)) {
@@ -13659,7 +13661,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 size_t nl = memory_.numLiteralsOf(method_);
                 if (instructionPointer_)
                     ipOff = (long)(instructionPointer_ - (mo->bytes() + (1+nl)*8));
+#if PHARO_JIT_ENABLED
                 jitC = jitRuntime_.methodMap().lookup(method_.rawBits()) ? 1 : 0;
+#endif
             }
             fprintf(stderr, "[FIRST-DNU #%d] sel=#%s rcvrCls=%s argCount=%d "
                 "inMethod=#%s ipOff=%ld jitCompiled=%d sp-fp=%ld opstack:",
@@ -14045,6 +14049,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     // shift.  If tempBase[0]==aBlock but sp[-(argCount+1)] is
                     // garbage, the operand stack shifted; if tempBase[0] is
                     // itself garbage, tempBase/arg placement is wrong.
+#if PHARO_JIT_ENABLED
                     if (GET_DEBUG_BOOL(PHARO_DNU_DUMP_COLL) && currentJITState_) {
                         jit::JITState* js = currentJITState_;
                         auto sb = [](Oop* p, int i) -> unsigned long long {
@@ -14057,6 +14062,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                             (unsigned long long)js->receiver.rawBits(), js->argCount,
                             (void*)js->sp, sb(js->sp,-1), sb(js->sp,-2), sb(js->sp,-3));
                     }
+#endif  // PHARO_JIT_ENABLED (DNU-JSTATE dump)
                     fprintf(stderr, "[DNU-STACK] Full call stack for #%s (DNU #%d):\n", selName.c_str(), dnuLogCount);
                     for (size_t f = 0; f <= frameDepth_ && f < 30; f++) {
                         SavedFrame& sf = savedFrames_[f];
@@ -14202,6 +14208,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                         }
                     }
                 }
+#if PHARO_JIT_ENABLED
                 // PHARO_T1_LOG_SELFREC_PUSH: name the self-recursive methods
                 // whose inline-J2J save-push ran just before this crash.
                 if (GET_DEBUG_BOOL(PHARO_T1_LOG_SELFREC_PUSH)) {
@@ -14218,6 +14225,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                                     ? memory_.selectorOf(m).c_str() : "?");
                     }
                 }
+#endif  // PHARO_JIT_ENABLED (self-rec push ring dump)
             }
 
             // PHARO_J2J_STACK_SCAN: global-inline-J2J corruption provenance.
@@ -14625,6 +14633,7 @@ void Interpreter::sendMustBeBoolean(Oop value) {
             // site<->IC mapping shifts (recompile copies icBuffer
             // positionally) and wrong-kind fills (bit61 returnsSelf on a
             // ^true method).
+#if PHARO_JIT_ENABLED
             if (jit::JITMethod* fJM =
                     jitRuntime_.methodMap().lookup(method_.rawBits())) {
                 fprintf(stderr, "[MB-IC] jm=%p tier=%d numIC=%u\n",
@@ -14661,6 +14670,7 @@ void Interpreter::sendMustBeBoolean(Oop value) {
             } else {
                 fprintf(stderr, "[MB-IC] no JM for method\n");
             }
+#endif  // PHARO_JIT_ENABLED (MB-IC dump)
             for (int k = 0; k < 3 && frameDepth_ >= (size_t)(k + 1); k++) {
                 SavedFrame& sf = savedFrames_[frameDepth_ - 1 - k];
                 fprintf(stderr, "[MB-FORENSICS]   frame[-%d] m=#%s ipOff=%lld\n",
@@ -19652,8 +19662,10 @@ void Interpreter::prepareForGC() {
     // a foreign site with a stale classification — the inline-getter
     // IC-poisoning family.  A dropped patch just re-derives on the
     // next send; zero correctness cost.
+#if PHARO_JIT_ENABLED
     pendingICPatch_ = nullptr;
     pendingICOwnerMethod_ = Oop::nil();
+#endif
     gcPrepared_ = true;
 }
 

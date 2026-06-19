@@ -1191,6 +1191,7 @@ public:
     //   if position < writeLimit: position++; collection[position] := arg; ^arg
     //   else: PrimitiveFailure (caller activates the full method for grow)
     PrimitiveResult primitiveWSNextPut(int argCount);
+#if PHARO_JIT_ENABLED
     /// Inline block-create helper (called from emitted T1 code via
     /// jit_rt wrapper): create the FullBlockClosure for a PushFullBlock
     /// WITHOUT a JIT exit/resume round trip.  Pushes the closure onto
@@ -1205,6 +1206,7 @@ public:
     uint64_t jitPrimAtFull(jit::JITState& state, uint64_t rcvBits,
                            uint64_t idxTagged, uint64_t* out,
                            bool isPut, uint64_t valBits);
+#endif  // PHARO_JIT_ENABLED (jit::JITState-typed helpers)
     /// Blocker #4 test: sync C++ interpreter globals from a live JITState (def
     /// in Interpreter.cpp where jit::JITState is fully visible).
 #if PHARO_JIT_ENABLED

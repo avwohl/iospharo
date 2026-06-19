@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict/>
+<dict>
+	<!-- Mac Catalyst runs on macOS with the hardened runtime; the tier-1 JIT
+	     uses mmap(MAP_JIT) + pthread_jit_write_protect_np for W^X, which
+	     requires the allow-jit entitlement.  Real iOS-device builds keep the
+	     JIT disabled (PHARO_JIT_ENABLED=0), so this is a no-op there. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
 </plist>
