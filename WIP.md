@@ -1,3 +1,51 @@
+# RESUME POINT — 2026-06-19b (Mac Catalyst GUI app RESTORED + JIT-enabled; World-render TODO)
+
+The Mac Catalyst GUI app — completely UNBUILDABLE on the jit branch (it had never
+been built for iOS/Catalyst during the June JIT work) — now BUILDS, LAUNCHES,
+renders its native SwiftUI launcher, and LISTS imported images, with the tier-1
+JIT ENABLED and the allow-jit entitlement.  Verified visually (screenshots).
+
+Chain of fixes (all committed, pushed to jit):
+- 050ecf13 FFI headers: the iOS SDK <ffi.h> marks ffi_type_sint16/sshort/...
+  API_UNAVAILABLE(ios); under macabi those are hard errors.  CMakeLists now uses
+  the bundled macos (unrestricted) ffi header for Catalyst/iOS (SDK-header
+  injection scoped to native x86 ABI fix only).
+- b7a68459 JIT-off bit-rot: the June JIT diagnostics added 6 unguarded JIT-member
+  references (jitFailReasons census, FIRST-DNU jitC, DNU-JSTATE, MB-IC, prepareForGC
+  IC-patch reset, self-rec-push ring) + 2 jit::JITState-typed decls that broke the
+  JIT-disabled (iOS-device) build.  Gated them #if PHARO_JIT_ENABLED.  Native
+  -DPHARO_JIT_ENABLED=0 now builds+links+evals 7; JIT-on unchanged.  ALSO: enabled
+  JIT for Mac Catalyst (macabi runs on macOS arm64 where the JIT works) via one
+  _PHARO_JIT_ON decision; real iOS devices stay JIT-off.  + allow-jit entitlement.
+- d98e7fe8 asmjit merge: build-xcframework.sh now merges the CMake-built libasmjit.a
+  into PharoVMCore.a (JIT-on Catalyst references asmjit::*; it was omitted -> app
+  link failed on asmjit::CodeHolder::*).
+
+ENVIRONMENT steps done (not code, won't persist in git): regenerated the
+incomplete Frameworks/libffi.xcframework (was macos-only, no Info.plist) with all
+slices incl. maccatalyst via `scripts/build-libffi.sh`; installed the Metal
+Toolchain (`xcodebuild -downloadComponent MetalToolchain`).
+
+BUILD + LAUNCH recipe:
+    DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+      xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug \
+      -destination 'platform=macOS,variant=Mac Catalyst' -derivedDataPath /tmp/iospharo-dd build
+    # app = "/tmp/iospharo-dd/Build/Products/Debug-maccatalyst/Pharo Smalltalk.app"
+    # managed images live in ~/Library/Containers/com.awohl.pharo/Data/Library/Images/<name>/<name>.image
+    open "$APP"        # launcher; double-click an image row to boot it
+
+REMAINING (next session) — the morphic WORLD does not render in the app: after the
+launcher boots an image (double-click row, OR --image CLI arg), the launcher window
+closes and the VM boots but NO World window appears (app stays alive, no crash, no
+container log).  This is a Metal/SDL2-stub rendering or boot-stall integration issue
+in the app shell (NOT the VM/JIT — the headless test_load_image renders the World
+fine: syncDisplay frames + OSSDL2Driver>>eventLoop, 0 DNUs, 3/3 reliable).  Start by
+capturing the VM's stderr from the app (route to a container file) to see how far the
+in-app boot gets; check the OSSDL2Driver→Metal surface handoff (FFI.cpp SDL2 stubs,
+WorldRenderer.cpp, syncDisplay).
+
+---
+
 # RESUME POINT — 2026-06-19 (COLD-BOOT startup corruption ROOT-CAUSED + FIXED — commit 656b3896)
 
 The `0x300000000` / operand-SHIFT **cold-image-startup corruption** flagged as
