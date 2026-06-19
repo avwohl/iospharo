@@ -121,6 +121,22 @@ build_slice() {
         fi
     done
 
+    # asmjit: the JIT's code generator, built by CMake (third_party/asmjit) into
+    # the slice build dir rather than a Frameworks xcframework.  PharoVMCore
+    # references asmjit only on JIT-enabled slices (Mac Catalyst), so before this
+    # the app link failed with undefined asmjit::* symbols once Catalyst JIT was
+    # turned on.  Merge it so PharoVMCore.a is self-contained.
+    local asmjit_lib="$builddir/third_party/asmjit/libasmjit.a"
+    if [ -f "$asmjit_lib" ]; then
+        local asmjit_thin="$thindir/asmjit-libasmjit.a"
+        if lipo -info "$asmjit_lib" 2>&1 | grep -q "Non-fat"; then
+            cp "$asmjit_lib" "$asmjit_thin"
+        else
+            lipo -thin "$arch" "$asmjit_lib" -output "$asmjit_thin" 2>/dev/null || cp "$asmjit_lib" "$asmjit_thin"
+        fi
+        third_party_libs+=("$asmjit_thin")
+    fi
+
     if [ ${#third_party_libs[@]} -gt 0 ]; then
         echo "  Merging ${#third_party_libs[@]} third-party libraries into PharoVMCore.a"
         mv "$lib" "$builddir/libPharoVMCore-vm-only.a"
