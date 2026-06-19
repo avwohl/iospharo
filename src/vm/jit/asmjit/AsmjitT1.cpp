@@ -403,12 +403,47 @@ extern "C" void jit_rt_store_ring(uint64_t state, uint64_t recv,
 extern "C" void jit_rt_sp_trace(uint64_t statev, uint64_t bcOff) {
     if (!GET_DEBUG_BOOL(PHARO_T1_SP_TRACE)) return;
     auto* st = reinterpret_cast<pharo::jit::JITState*>(statev);
+    uint64_t mb = st->method.rawBits();
+    pharo::Oop* sp = st->sp;
+
+    // GENERIC OVER-POP DETECTOR + targeted trap (Array>>do: at: send): at bc14
+    // (at:) record aBlock = sp[-3]; at bc15 (value:) the value: receiver = sp[-2]
+    // MUST equal that aBlock — if not, the at: send over-popped (consumed aBlock).
+    // All in-process (no lldb breakpoint stops) so the IC-warming-timing-sensitive
+    // bug is NOT perturbed.  Pass 1 (PHARO_T1_SP_TRAP_K=0) prints [OVERPOP] with
+    // the over-popping bc14 index K; pass 2 (=K) __builtin_debugtrap()s at exactly
+    // that bc14 so lldb can single-step the at: send from a single, clean stop.
+    {
+        static std::unordered_map<uint64_t,int> n14;
+        static std::unordered_map<uint64_t,uint64_t> ab14;
+        if (bcOff == 14) {
+            ab14[mb] = sp[-3].rawBits();
+            int k = ++n14[mb];
+            int trapK = GET_DEBUG_INT(PHARO_T1_SP_TRAP_K);
+            if (trapK > 0 && k == trapK) {
+                fprintf(stderr, "[SP-TRAP] bc14 K=%d oop=0x%llx aBlock=0x%llx sp=%p — trapping\n",
+                        k, (unsigned long long)mb, (unsigned long long)sp[-3].rawBits(), (void*)sp);
+                fflush(stderr);
+                __builtin_debugtrap();
+            }
+        } else if (bcOff == 15) {
+            auto it = ab14.find(mb);
+            if (it != ab14.end() && sp[-2].rawBits() != it->second) {
+                static int reported = 0;
+                if (++reported <= 4)
+                    fprintf(stderr, "[OVERPOP] oop=0x%llx K(bc14#)=%d aBlock=0x%llx "
+                            "value:recv(sp-2)=0x%llx\n",
+                            (unsigned long long)mb, n14[mb],
+                            (unsigned long long)it->second,
+                            (unsigned long long)sp[-2].rawBits());
+            }
+        }
+    }
+
     // Per-method-oop cap: each distinct do: method gets its own budget so a hot
     // do: doesn't starve the one we care about (the FFIStructure subclasses do:).
     static std::unordered_map<uint64_t,int> perOop;
-    uint64_t mb = st->method.rawBits();
     if (++perOop[mb] > 120) return;
-    pharo::Oop* sp = st->sp;
     pharo::Oop* tb = st->tempBase;
     fprintf(stderr,
         "[SPTRACE] m=0x%llx bc=%llu depth=%ld TOS=0x%llx NOS=0x%llx N3=0x%llx | "
