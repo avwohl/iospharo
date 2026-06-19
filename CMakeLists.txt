@@ -445,27 +445,43 @@ if(APPLE)
         message(STATUS "Using libffi: ${LIBFFI_LIBRARY}")
     else()
         # Fall back to the universal system libffi (SDK .tbd → dyld shared cache;
-        # works under Rosetta).  CRUCIAL: also compile against the SDK's
-        # ARCH-AWARE ffi headers (its ffitarget.h dispatches arm64/x86) with
-        # precedence over the xcframework's arm64-only ffitarget.h.  Otherwise an
-        # x86 build would compile FFI_DEFAULT_ABI as arm64's FFI_SYSV (=1) while
-        # the x86 system libffi runtime expects FFI_UNIX64 (=2) — ffi_prep_cif
-        # then returns FFI_BAD_ABI and every FFI call fails (header/runtime ABI
-        # mismatch).  BEFORE => this dir wins over the xcframework Headers above.
+        # works under Rosetta / Mac Catalyst).  The COMPILE-time ffi headers are
+        # chosen per platform:
         target_link_libraries(PharoVMCore ffi)
-        # Resolve the real SDK path (CMAKE_OSX_SYSROOT can be empty; modern macOS
-        # has no /usr/include).  The SDK ships arch-aware ffi headers.
-        set(_PHARO_SDK "${CMAKE_OSX_SYSROOT}")
-        if(NOT _PHARO_SDK OR NOT EXISTS "${_PHARO_SDK}/usr/include/ffi/ffi.h")
-            execute_process(COMMAND xcrun --show-sdk-path
-                OUTPUT_VARIABLE _PHARO_SDK OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-        endif()
-        if(EXISTS "${_PHARO_SDK}/usr/include/ffi/ffi.h")
-            target_include_directories(PharoVMCore BEFORE PUBLIC
-                "${_PHARO_SDK}/usr/include/ffi")
-            message(STATUS "libffi slice for '${_PHARO_ONE_ARCH}' not in prebuilt .a — using system -lffi + SDK arch-aware ffi headers (${_PHARO_SDK})")
+        if(XCFRAMEWORK_PLATFORM STREQUAL "macos-arm64_x86_64")
+            # NATIVE dev build (e.g. x86_64 under Rosetta): compile against the
+            # SDK's ARCH-AWARE ffi headers (its ffitarget.h dispatches arm64/x86)
+            # so FFI_DEFAULT_ABI matches the target arch.  Otherwise an x86 build
+            # would compile FFI_DEFAULT_ABI as arm64's FFI_SYSV (=1) while the x86
+            # system libffi runtime expects FFI_UNIX64 (=2) — ffi_prep_cif returns
+            # FFI_BAD_ABI and every FFI call fails (the f317dd0b ABI fix).  BEFORE
+            # => this dir wins over the xcframework Headers above.
+            set(_PHARO_SDK "${CMAKE_OSX_SYSROOT}")
+            if(NOT _PHARO_SDK OR NOT EXISTS "${_PHARO_SDK}/usr/include/ffi/ffi.h")
+                execute_process(COMMAND xcrun --show-sdk-path
+                    OUTPUT_VARIABLE _PHARO_SDK OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            endif()
+            if(EXISTS "${_PHARO_SDK}/usr/include/ffi/ffi.h")
+                target_include_directories(PharoVMCore BEFORE PUBLIC
+                    "${_PHARO_SDK}/usr/include/ffi")
+                message(STATUS "libffi slice for '${_PHARO_ONE_ARCH}' not in prebuilt .a — using system -lffi + SDK arch-aware ffi headers (${_PHARO_SDK})")
+            else()
+                message(WARNING "libffi: no SDK ffi headers found; x86 FFI ABI may be wrong (using arm64 xcframework headers)")
+            endif()
         else()
-            message(WARNING "libffi: no SDK ffi headers found; x86 FFI ABI may be wrong (using arm64 xcframework headers)")
+            # Mac Catalyst (macabi) / iOS: the bundled libffi.xcframework has no
+            # matching slice, and the SDK's <ffi.h> marks ffi_type_sint16/sshort/
+            # ... API_UNAVAILABLE(ios) — under macabi (iOS availability semantics)
+            # those are HARD compile errors.  Use the bundled MACOS slice's
+            # UNRESTRICTED header (no Apple availability annotations; arm64
+            # FFI_SYSV is correct for arm64 Catalyst, and macabi is ABI-compatible
+            # with macos for the libffi calling convention).  The runtime symbols
+            # come from the system -lffi (macabi shared cache).  Without this the
+            # whole Catalyst app fails to build (regression after an SDK update
+            # added the iOS availability attributes).
+            target_include_directories(PharoVMCore BEFORE PUBLIC
+                "${CMAKE_SOURCE_DIR}/Frameworks/libffi.xcframework/macos-arm64_x86_64/Headers")
+            message(STATUS "libffi: Catalyst/iOS ('${XCFRAMEWORK_PLATFORM}') using system -lffi + bundled macos (unrestricted) ffi headers")
         endif()
     endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
