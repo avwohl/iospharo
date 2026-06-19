@@ -72,22 +72,41 @@ failures that also fail on Cog.)
 ### Bugs surfaced (each confirmed JIT-specific by re-running the failing test
 under `PHARO_NO_JIT`, which passes — unless noted)
 
-1. **STON deep-recursion operand corruption** (JIT).
-   `STONReaderTest>>testDeepStructure` reads back a 1024-level-deep nested Array
-   (with a back-reference). Under the JIT an operand is corrupted during the deep
-   recursive descent, surfacing as `MessageNotUnderstood: True >> #\\` (the class
-   `True` lands where a SmallInteger is expected, then modulo is sent during
-   Dictionary hashing). Deterministic across runs. A bare-eval repro of the test
-   body shows the corruption escapes even an enclosing `on: Exception do:`
-   (consistent with stack corruption — the SUnit harness only catches it because
-   `valueWithin:` forks the test into an isolated process).
-   **STILL OPEN after the #2 fix** — a DISTINCT inline-J2J bug: with #2 fixed the
-   error merely changes signature (`True>>#\\` -> `KeyNotFound: key 0 not found in
-   IdentityDictionary`), so the 1024-deep recursion corrupts via a different
-   inline-J2J path (deep self-recursion / deep chains), not the mid-bail one. The
-   pre-existing kernel failures `ArrayTest>>testPrintingRecursive` and
-   `IntegerTest>>testSlowFactorial` (recursion/printing) are likely the same
-   class — a separate follow-up.
+1. **STON deep-recursion failure — VM-CORE, NOT JIT** (re-classified 2026-06-19).
+   `STONReaderTest>>testDeepStructure` serializes a 1024-level-deep nested Array.
+   It FAILS on our VM and succeeds on Cog (2059-char STON) — but it fails
+   IDENTICALLY under `PHARO_NO_JIT` (interpreter), so it is a VM-core defect, not
+   JIT codegen. (My earlier "JIT operand corruption" label was wrong — I had never
+   completed a NO_JIT run; the -O0/-O2 interpreter runs timed out on the 1024-deep
+   test.) The failure is in the STON WRITER: at deep nesting our VM either
+   hard-crashes (no catchable error) or throws `PrimitiveFailed: basicNew:
+   ByteString`. Fresh-process threshold: depth 400 OK, depth >=600 crashes; Cog
+   handles 1024+. The writer recurses through many method+block frames per level
+   (`nextPut:`->`writeList:`->`with:do:`->`encodeList:`-> `indentedDo:`/`do:`/
+   `separatedBy:` blocks), so it exhausts our stack handling around ~500 levels.
+   Ruled out as generic causes (all reach much deeper on our VM): plain recursion
+   20000, large-frame recursion 2000, block recursion 1000, IdentityDictionary
+   2000, recursion+alloc+GC 1500 — so it is the STON writer's specific
+   high-frames-per-level pattern, where Cog's growable stack pages cope and ours
+   does not. Under the JIT the overflow ALSO corrupts JIT frame state
+   (`0x300000000`), which is why it earlier looked like a JIT operand-corruption
+   bug and why the error signature varied (`True>>#\\` / `KeyNotFound` /
+   `STONReaderError`). FIX DIRECTION (VM-core, separate from JIT): grow the call
+   stack like Cog's stack pages, or make stack-overflow raise a clean catchable
+   `Error` instead of crashing/corrupting. NOT attempted (risky shipping-arch VM
+   change, out of JIT scope).
+
+   Genuine JIT bug found in the same area: **`IntegerTest>>testSlowFactorial`**
+   fails because `Integer>>factorial` (the 2-partition divide-and-conquer
+   algorithm) miscompiles under the JIT — ONE value (n varies 164-181 run to run)
+   comes out wrong; `slowFactorial` (plain recursion) is correct. JIT-specific
+   (`PHARO_NO_JIT` clean). NOT inline-J2J (`NO_INLINE_J2J` doesn't fix it), NOT
+   scheduler-timing (`PHARO_DET_SCHED` doesn't pin it). The non-deterministic,
+   allocation-heavy (LargeInteger), shallow-recursion profile points at a
+   GC-safety bug in JIT'd `factorial` (a live oop/raw value across an allocation
+   point). Fast repro: `(1 to: 1000) detect: [:i | i factorial ~= (running
+   product)]`. `ArrayTest>>testPrintingRecursive` is likely related. This is the
+   real JIT target here (separate from the VM-core STON issue).
 
 2. **PolyMath off-by-one subscript corruption** (JIT, 51 occurrences) —
    **ROOT-CAUSED + FIXED 2026-06-19.**
