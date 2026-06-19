@@ -208,6 +208,17 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         if drawCount <= 3 || drawCount % 1800 == 0 {
             NSLog("[METAL-DRAW] #%d tex=%dx%d", drawCount, texture.width, texture.height)
         }
+        // PHARO_DUMP_DISPLAY=1: dump the VM display buffer to a PNG at a few
+        // frames — the ONLY reliable way to SEE the rendered World, since
+        // screencapture can't grab the Metal layer on Mac Catalyst (verified
+        // 2026-06-19: the World renders fine; the "doesn't render" reports were
+        // this capture limitation).  Lands in the sandbox temp dir as
+        // iospharo-frameNNN.png.  Run the binary directly with the env var set.
+        if ProcessInfo.processInfo.environment["PHARO_DUMP_DISPLAY"] != nil,
+           drawCount == 60 || drawCount == 300 || drawCount == 900 {
+            saveDisplayBufferAsPNG(tag: "frame\(drawCount)")
+            NSLog("[METAL-DRAW] auto-dumped buffer at frame %d", drawCount)
+        }
         #endif
     }
 

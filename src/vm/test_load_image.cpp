@@ -165,9 +165,34 @@ public:
 
     void update() override {
         updateCount_++;
+        // PHARO_DUMP_DISPLAY: dump the surface to a PPM at a few render-present
+        // points so we can SEE what the VM draws (screencapture can't grab the
+        // app's Metal layer; this proves whether the World reaches gDisplaySurface).
+        if (GET_DEBUG_BOOL(PHARO_DUMP_DISPLAY)
+                && (updateCount_ == 20 || updateCount_ == 60 || updateCount_ == 150)) {
+            char path[80];
+            snprintf(path, sizeof(path), "/tmp/vm-display-%d.ppm", updateCount_);
+            savePPM(path);
+            fprintf(stderr, "[DISPLAY-DUMP] wrote %s (update #%d, changed=%d)\n",
+                    path, updateCount_, hasPixelsChanged() ? 1 : 0);
+        }
     }
 
     int getUpdateCount() const { return updateCount_; }
+
+    void savePPM(const char* path) const {
+        FILE* f = fopen(path, "wb");
+        if (!f) return;
+        fprintf(f, "P6\n%d %d\n255\n", width_, height_);
+        for (int i = 0; i < width_ * height_; i++) {
+            uint32_t p = pixels_[i];
+            uint8_t rgb[3] = { (uint8_t)((p >> 16) & 0xFF),
+                               (uint8_t)((p >> 8) & 0xFF),
+                               (uint8_t)(p & 0xFF) };
+            fwrite(rgb, 1, 3, f);
+        }
+        fclose(f);
+    }
 
     uint32_t checksum() const {
         uint32_t sum = 0;
