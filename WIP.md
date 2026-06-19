@@ -1,4 +1,65 @@
-# RESUME POINT — 2026-06-19b (Mac Catalyst GUI app RESTORED + JIT-enabled; World-render TODO)
+# RESUME POINT — 2026-06-19c (SESSION STATE / pre-reboot snapshot)
+
+Everything below is COMMITTED + PUSHED to branch `jit` (tip `28bdd01e`).  Working
+tree is clean except the pre-existing `third_party/asmjit` submodule pointer (NOT
+mine — leave it).  This snapshot is reboot-aware: the build artifacts are in `/tmp`
+and will be GONE after reboot — see REBUILD below.
+
+## What got done this session (all DONE + verified, nothing half-finished)
+
+1. COLD-BOOT JIT corruption FIXED (`656b3896`) — THE headline.  The 5-month
+   `0x300000000`/operand-SHIFT was a chain-loop precomputed-resume DOUBLE-POP:
+   `Interpreter::tryJITActivation` C++-pops nArgs+writes retVal (~27540) then
+   resumed at the popping `resumeAfterCall` override via plain JIT_CALL — a 2nd
+   stack-effect on V2.  Fix: resume at plain `codeOffsetForBC`.  Opt-out
+   `PHARO_T1_NO_CHAIN_RESUME_PLAIN=1`.  Warm-blind (actChain≈4/89M), cold-only.
+   AUDITED correct+complete (7-agent workflow, 0 sibling bugs).  x86 EMPIRICALLY
+   confirmed (V2 too).  SUnit ~168 classes/~9600 tests 0-fail.  Memory:
+   `vm-cold-image-startup-operand-corruption.md`.
+2. #fillRectangle/#isTransparent "cascade" RESOLVED (`1feb6764`) — recovered
+   `SpStyleEnvironmentColorProxy` doesNotUnderstand: forwarding, NOT a fatal
+   cascade.  DNU trace now skips proxy forwards (only genuine DNUs traced).
+3. Mac Catalyst GUI app RESTORED + JIT-ENABLED (`050ecf13`,`b7a68459`,`d98e7fe8`)
+   — was completely unbuildable on the jit branch; now builds+launches+renders
+   with the JIT on + allow-jit entitlement.  Fixes: FFI iOS-availability headers,
+   JIT-off bit-rot gating (6 sites + 2 hpp decls), enable-JIT-for-macabi, asmjit
+   merge into PharoVMCore.a.  Memory: `catalyst-gui-app-build-restored.md`.
+4. WORLD RENDER confirmed WORKING (`51462632`,`28bdd01e`) — "doesn't render" was a
+   `screencapture`-can't-grab-Metal-Catalyst limitation, NOT a bug.  Proven via
+   `saveDisplayBufferAsPNG` (PHARO_DUMP_DISPLAY=1) — full Pharo 13 World renders
+   with the JIT.
+
+## REBUILD after reboot (the /tmp artifacts are gone)
+
+- Native arm64 (the SUnit/battery/cold-boot harness):  `cmake --build build`
+  (or build-rel for -O2).  `cmake -B build` if the dir is gone.
+- x86 under Rosetta:  `cmake -B build-x86 -DCMAKE_OSX_ARCHITECTURES=x86_64 ...`
+  then `cmake --build build-x86 --target test_load_image`.
+- JIT-off portability check:  `cmake -B build-nojit -DPHARO_JIT_ENABLED=0` (this
+  is what catches the iOS-device bit-rot fast — keep it green).
+- Catalyst GUI app:  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+  xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug
+  -destination 'platform=macOS,variant=Mac Catalyst' -derivedDataPath /tmp/iospharo-dd build`.
+  PERSISTS across reboot (NOT in /tmp): the Metal Toolchain (installed via
+  `xcodebuild -downloadComponent MetalToolchain`) and the regenerated
+  `Frameworks/libffi.xcframework` (all slices incl. maccatalyst, via
+  `scripts/build-libffi.sh`).  Test images at `/tmp/guitest`,`/tmp/h3` ARE gone —
+  re-download with `curl -sL https://get.pharo.org/64/130 | bash`.
+
+## Possible NEXT items (none urgent; pick from docs/deferred.md)
+
+- The cold standalone GUI boot (non-app, non-eval) is heisenbug-fragile (SUnit-
+  runner watchdog #suspend-on-nil + render-loop scheduler starvation) — a separate
+  headless-boot concern, not the JIT.  Run cold images headless via eval mode or
+  the marker-gated runner (both work).
+- The BUG-2 x86 SENDS verify (2026-06-18f below) is now UNBLOCKED by the cold-boot
+  fix, but it's a gated/default-OFF lever previously recommended-stopped.
+- Full 565-class SUnit run to reconfirm the 12689 baseline with FIX-A (the 168-class
+  sample was clean).
+
+---
+
+# RESUME POINT — 2026-06-19b (Mac Catalyst GUI app RESTORED + JIT-enabled)
 
 The Mac Catalyst GUI app — completely UNBUILDABLE on the jit branch (it had never
 been built for iOS/Catalyst during the June JIT work) — now BUILDS, LAUNCHES,
