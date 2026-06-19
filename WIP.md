@@ -77,8 +77,21 @@ VALIDATION (knob-only A/B on ONE binary — REAL diff, not the layout-heisenbug)
   FIX-A OFF the harness crashes at startup before any test runs.
 
 This UNBLOCKS the 2026-06-18f BUG-2 verify (which needed a startup-clean image).
-RESIDUAL: cold boot still cascades — next layer is the morphic `#fillRectangle:`
-rendering DNU (fd=42), a separate bug.  Memory:
+
+`#fillRectangle:` / `#isTransparent` "cascade" — RESOLVED (commit 1feb6764): it is
+NOT a blocker, just RECOVERED proxy-forwarding noise.  `SpStyleEnvironmentColorProxy`
+(Spec2 theme-color proxy) is a `ProtoObject` TRANSPARENT FORWARDER — color messages
+miss and trigger its own `doesNotUnderstand:` which resolves+forwards (real Pharo
+does this silently).  Our first-60-DNU debug trace mislabeled the recovered
+dispatches as "not understood".  PROOF the cold image works: the battery via EVAL
+MODE on /tmp/h3/Pharo.image under JIT+FIX-A is fully correct with ZERO DNUs (eval
+mode stops the render loop); standalone boot reaches `EVAL-RESULT=7` with forwards
+recovered.  FIX: `sendDoesNotUnderstand` traces only GENUINE DNUs (default
+`Object>>doesNotUnderstand:`); proxy forwards (overridden DNU) are skipped.
+Validated: genuine DNUs still traced, proxy forwards not; SUnit 2329 pass.  The
+SEPARATE standalone-headless-boot fragility (SUnit-runner watchdog #suspend-on-nil
++ render-loop starvation) is heisenbug-sensitive — run cold images headless via
+EVAL MODE or the marker-gated runner.  Memory:
 `vm-cold-image-startup-operand-corruption.md`.
 
 NOTE the layout-heisenbug: the cold DNU identity flips with every rebuild (JIT
