@@ -109,8 +109,12 @@ inline bool xmethodGateOk(const JITMethod* t) {
         int maxIC = GET_DEBUG_INT(PHARO_T1_XMETHOD_MAX_IC);
         if (maxIC > 0 ? (t->numICEntries > (uint32_t)maxIC)
                       : (t->numICEntries != 0)) return false;
+        // Default EXCLUDE mid-bailing callees (see AsmjitT1.cpp gate +
+        // docs/jit-test-packages.md): an ExitArithOverflow mid-bail leaves the
+        // caller's pending J2J save un-popped -> stack +1 -> SubscriptOutOfBounds.
+        // Opt-in PHARO_T1_ADMIT_BAILMID_CALLEES restores the faster-but-wrong admit.
         if (t->canBailMidMethod
-                && GET_DEBUG_BOOL(PHARO_T1_NO_BAILMID_CALLEES))
+                && !GET_DEBUG_BOOL(PHARO_T1_ADMIT_BAILMID_CALLEES))
             return false;
     }
     if (t->isStubOnEntry) return false;

@@ -80,19 +80,45 @@ under `PHARO_NO_JIT`, which passes — unless noted)
    Dictionary hashing). Deterministic across runs. A bare-eval repro of the test
    body shows the corruption escapes even an enclosing `on: Exception do:`
    (consistent with stack corruption — the SUnit harness only catches it because
-   `valueWithin:` forks the test into an isolated process). Same operand-corruption
-   family as #2, which IS confirmed JIT-specific by NO_JIT.
+   `valueWithin:` forks the test into an isolated process).
+   **STILL OPEN after the #2 fix** — a DISTINCT inline-J2J bug: with #2 fixed the
+   error merely changes signature (`True>>#\\` -> `KeyNotFound: key 0 not found in
+   IdentityDictionary`), so the 1024-deep recursion corrupts via a different
+   inline-J2J path (deep self-recursion / deep chains), not the mid-bail one. The
+   pre-existing kernel failures `ArrayTest>>testPrintingRecursive` and
+   `IntegerTest>>testSlowFactorial` (recursion/printing) are likely the same
+   class — a separate follow-up.
 
-2. **PolyMath off-by-one subscript corruption** (JIT, 51 occurrences).
+2. **PolyMath off-by-one subscript corruption** (JIT, 51 occurrences) —
+   **ROOT-CAUSED + FIXED 2026-06-19.**
    `SubscriptOutOfBounds: N in a PMVector(...)` where N is exactly one past the
-   end (e.g. index 4 in a 3-element vector, index 3 in a 2-element vector). A
-   miscompiled loop bound / index in the iterative linear-algebra algorithms
-   (eigenvalues, pseudoinverse, multivariate-normal, determinant paths).
-   Confirmed JIT-specific: `PMMultivariateNormalDistributionTest>>testAverage`
-   and `PMNumericalMethodsTestCase>>testDeterminant` FAIL under JIT, PASS under
-   `PHARO_NO_JIT`. Basic `determinant`/`*`/`transpose` on small matrices pass —
-   the bug is in the deeper iterative kernels, repro not yet minimized below the
-   test level.
+   end. Confirmed JIT-specific (passes under `PHARO_NO_JIT`); determinant/matmul
+   in isolation are clean, so it is a cumulative-JIT-state bug, not data-dependent.
+
+   Root cause (found via knob-bisection + the `PHARO_SP_DEPTH_CHECK` sp-desync
+   detector + reading the gate, no lldb needed): the arm64 **send-bearing
+   cross-method inline-J2J gate admitted `canBailMidMethod` callees** by default
+   (`AsmjitT1.cpp` ~6787 force-set the gate to admit). When such a callee/block
+   bails mid-body via `ExitArithOverflow` — SmallInteger arithmetic overflowing
+   to a Fraction/Float, which is pervasive in numeric code and is exactly why the
+   failing data is all `PMVector(0.25 0.25)` / `((1/2)(1/2) 0 0)` — the caller's
+   pending inline-J2J save is never popped, leaving the operand stack +1 word.
+   `PHARO_SP_DEPTH_CHECK` shows one `tryJITActivation-exit exit=6` (ExitArith-
+   Overflow), `isBlock=1`, `delta=1 words` line immediately before EVERY
+   SubscriptOutOfBounds; that signature is absent under `PHARO_T1_NO_INLINE_J2J`.
+   Knob bisection: `NO_INLINE_J2J` and `XMETHOD_MAX_IC=0` both eliminate it (=>
+   send-bearing inline-J2J); `NO_INLINE_AT_READ` does not (=> `at:` is the
+   symptom, not the cause). The V2 (arm64) `ExitArithOverflow` handler does NOT
+   materialize the pending save — the existing `PHARO_T1_AO_MAT_J2J` fix is
+   V1/x86-only (the naive materialize "double-handles and corrupts" on V2).
+
+   Fix: default-EXCLUDE `canBailMidMethod` callees from the send-bearing gate
+   (`AsmjitT1.cpp` + `JITRuntime.hpp`), the arm64 twin of the x86 `x86HasMidBail`
+   exclusion. Opt-in `PHARO_T1_ADMIT_BAILMID_CALLEES` restores the old admit.
+   Cost: +5% recursion/int, +31% collection_protocols (mid-bailing callees no
+   longer inlined). The perf-preserving fix (correctly pop the save on V2
+   `ExitArithOverflow`) is a documented follow-up. Verified: PolyMath 11-class
+   repro 48 SubscriptOutOfBounds -> 0; kernel SUnit subset + NeoJSON unchanged.
 
 3. **Fuel Bitmap-serialization subscript corruption** (JIT).
    `FLBinaryFileStreamBasicSerializationTest>>testBitmap` →

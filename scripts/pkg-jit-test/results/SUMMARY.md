@@ -18,10 +18,18 @@ Soil       ~30      ~425/6/2/1     SIGABRT            VM FFI file-lock crash (no
 
 ## Bugs found (JIT-confirmed = fails JIT, passes PHARO_NO_JIT)
 
-- JIT off-by-one subscript: PolyMath ×51 + Fuel testBitmap. Index = end+1 (or 0).
-  Confirmed JIT-specific (testAverage/testDeterminant pass under NO_JIT).
-- JIT deep-recursion operand corruption: STON testDeepStructure (1024-deep),
-  `True >> #\\`. Deterministic.
+- JIT off-by-one subscript: PolyMath ×51 + Fuel testBitmap. **ROOT-CAUSED + FIXED
+  2026-06-19.** Root cause: the arm64 send-bearing inline-J2J gate admitted
+  `canBailMidMethod` callees; an `ExitArithOverflow` mid-bail (SmallInt arith ->
+  Fraction/Float) left the caller's J2J save un-popped -> operand stack +1 ->
+  wrong index to at:. Fix: default-exclude mid-bailing callees (AsmjitT1.cpp +
+  JITRuntime.hpp), opt-in `PHARO_T1_ADMIT_BAILMID_CALLEES` restores the old admit.
+  Cost +5-31%. Found via PHARO_SP_DEPTH_CHECK differential + knob bisection.
+  Verified: 11-class repro 48->0; kernel + NeoJSON unchanged.
+- JIT deep-recursion operand corruption: STON testDeepStructure (1024-deep).
+  STILL OPEN — distinct from the above (with the fix the error changes signature
+  `True>>#\\` -> `KeyNotFound: key 0`). Likely same class as the pre-existing
+  kernel failures ArrayTest>>testPrintingRecursive / IntegerTest>>testSlowFactorial.
 - VM-core (not JIT): SmallFloat64 >> #inject:into: ×18 in PolyMath (interp fails too,
   Cog passes).
 - VM FFI gap (not JIT): Soil-File LibC flock/fsync → SIGABRT.

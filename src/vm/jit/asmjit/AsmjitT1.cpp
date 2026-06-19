@@ -6779,12 +6779,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     }
                     // canBailMidMethod — mid-method bails corrupt the
                     // caller frame via the inline-activate path.
-                    // Default ADMIT since 2026-06-12 (the corruption
-                    // this gate guarded was the PMS/NO_INLINE_J2J
-                    // interaction, fixed; requalified 0/6+0/8 ladders,
-                    // sieve 1028, suite soak).  Opt-out restores the
-                    // refusal.
-                    if (!GET_DEBUG_BOOL(PHARO_T1_NO_BAILMID_CALLEES)) {
+                    // Default EXCLUDE since 2026-06-19 (was ADMIT 2026-06-12):
+                    // PolyMath proved the 2026-06-12 admit is UNSOUND — when an
+                    // admitted callee/block bails mid-body via ExitArithOverflow
+                    // (SmallInteger arith overflowing to Fraction/Float, pervasive
+                    // in numeric code), the caller's pending inline-J2J save is
+                    // left un-popped -> operand stack +1 (see [SP-DEPTH] exit=6) ->
+                    // a shifted operand becomes a wrong index to at: ->
+                    // SubscriptOutOfBounds (51 PolyMath + Fuel failures). The V2
+                    // ExitArithOverflow handler (Interpreter.cpp ~26781) does NOT
+                    // materialize the pending save (PHARO_T1_AO_MAT_J2J is V1-only),
+                    // so the only safe fix today is to not inline mid-bailing
+                    // callees here.  Opt-in PHARO_T1_ADMIT_BAILMID_CALLEES restores
+                    // the faster-but-wrong admit for A/B.
+                    if (GET_DEBUG_BOOL(PHARO_T1_ADMIT_BAILMID_CALLEES)) {
                         a.mov(w4, asmjit::Imm(0));
                     } else
                     a.ldrb(w4, ptr(x10,
