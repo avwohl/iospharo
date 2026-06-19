@@ -1,3 +1,48 @@
+# RESUME POINT — 2026-06-19 (COLD-BOOT startup corruption ROOT-CAUSED + FIXED — commit 656b3896)
+
+The `0x300000000` / operand-SHIFT **cold-image-startup corruption** flagged as
+the blocker in the 2026-06-18f resume point below is **FIXED** (commit
+`656b3896`, pushed to `jit`).
+
+ROOT CAUSE — chain-loop precomputed-resume **DOUBLE-POP** (arm64/V2). In
+`Interpreter::tryJITActivation` the inline-activate ExitReturn fast path ALREADY
+pops nArgs + writes retVal in C++ (`~27540: state.sp[-(nArgs+1)] = retVal;
+state.sp -= nArgs`) and re-enters the caller via plain `JIT_CALL` (x1 undefined),
+yet it resumed at `savedResumeEntry = codeOffsetForResume(...)` (~27162) = the
+per-site `resumeAfterCall` continuation, which on V2 pops nArgs + writes x1 AGAIN
+(AsmjitT1 ~9297) → a SECOND stack-effect.  The override is ONLY for the option-2
+consumers that DON'T C++-pop and pass x1 via `JIT_RESUME_CALL` (rj2j trampoline
+~21672; emitted prelude `br x8`).  The chain-loop **tryResume fallback** twin
+(~27727) already uses plain `codeOffsetForBC` on top of the same C++ pop.
+
+Warm code never hits this (emitted inline-J2J tail-jumps; `actChain≈4/89M`), so
+benches were blind; a COLD IC miss of an nArgs>0 send (do:-loop `self at: index`
+/ `aBlock value:`) over-popped by nArgs → `#value: rcvr=0x9` (SmI 1 = to:do:
+index in the receiver slot) / `#platformName` corrupt-rcvr in `#do:`.
+
+FIX: precompute resumes at `codeOffsetForBC` (plain endOfSend), matching the
+fallback.  Opt-out `PHARO_T1_NO_CHAIN_RESUME_PLAIN=1`.  V1/x86 no-op (override
+table is `#if PHARO_J2J_SAVE_V2`).
+
+VALIDATION (knob-only A/B on ONE binary — REAL diff, not the layout-heisenbug):
+- Cold boot (`PHARO_DET_SCHED=1 ./build/test_load_image /tmp/h3/warm.image`):
+  OFF = `#value: rcvr=0x9 in #do:`; ON boots PAST session startup into morphic
+  rendering (`#isTransparent in #fillRectangle:...`, fd=42).
+- Warm collection/block battery (-O2, harness eval) 3/3 correct; OFF fails.
+- SUnit subset (10 collection/block/string classes, -O2): ON 2259 pass / 1 fail /
+  1 error (both pre-existing compiler-AST nuances); OFF crashes at startup.
+
+This UNBLOCKS the 2026-06-18f BUG-2 verify (which needed a startup-clean image).
+RESIDUAL: cold boot still cascades — next layer is the morphic `#fillRectangle:`
+rendering DNU (fd=42), a separate bug.  Memory:
+`vm-cold-image-startup-operand-corruption.md`.
+
+NOTE the layout-heisenbug: the cold DNU identity flips with every rebuild (JIT
+bakes helper addrs as immediates), so ONLY knob-only A/B on the SAME binary is a
+valid signal — never compare across builds.
+
+---
+
 # RESUME POINT — 2026-06-18f (BUG-2 menu corruption ROOT-CAUSED + FIXED; verify blocked on image)
 
 The real full-config `SENDS=1` menu corruption is **root-caused and fixed**
