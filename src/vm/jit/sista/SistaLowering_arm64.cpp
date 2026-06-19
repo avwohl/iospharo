@@ -56,6 +56,9 @@ extern "C" uint64_t jit_rt_store_inst_var(void* state,
                                             uint64_t recvBits,
                                             uint64_t ivarIdx,
                                             uint64_t valBits);
+// Debug localizers (gated): verify a monotonic accumulator across loop stores/loads.
+extern "C" void jit_rt_sista_verify_store(void* state, uint64_t tempIdx);
+extern "C" void jit_rt_sista_verify_load(void* state, uint64_t tempIdx);
 extern "C" uint64_t jit_rt_sista_complete_array_do_accum(
     void* state,
     uint64_t rcvBits,
@@ -505,6 +508,22 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kLoadTemp: {
+                // Debug localizer: log the in-memory value at this load point
+                // (reads tempBase[idx]) so a shrinking-store dump shows whether
+                // the load read big (multiply corrupted) or small (memory did).
+                if (GET_DEBUG_BOOL(PHARO_SISTA_VERIFY_LOAD)) {
+                    Gp vlIdx = cc.new_gp64("vl_idx");
+                    cc.mov(vlIdx, Imm((uint64_t)v.literal));
+                    Gp vlFn = cc.new_gp64("vl_fn");
+                    cc.mov(vlFn, Imm((uint64_t)&jit_rt_sista_verify_load));
+                    asmjit::InvokeNode* vlInv = nullptr;
+                    if (cc.invoke(asmjit::Out(vlInv), vlFn,
+                            asmjit::FuncSignature::build<void, void*, uint64_t>())
+                            == asmjit::kErrorOk && vlInv) {
+                        vlInv->set_arg(0, state);
+                        vlInv->set_arg(1, vlIdx);
+                    }
+                }
                 auto cached = tempCache.find(v.literal);
                 if (cached != tempCache.end()) {
                     regFor[v.id] = cached->second;
@@ -610,6 +629,21 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // Update CSE cache so a subsequent kLoadTemp(slot)
                 // reuses the stored value without re-reading memory.
                 tempCache[v.literal] = it->second;
+                // Debug localizer: verify the stored value (reads tempBase[idx]
+                // from memory) — flags a monotonic accumulator that shrank.
+                if (GET_DEBUG_BOOL(PHARO_SISTA_VERIFY_STORE)) {
+                    Gp vsIdx = cc.new_gp64("vs_idx");
+                    cc.mov(vsIdx, Imm((uint64_t)v.literal));
+                    Gp vsFn = cc.new_gp64("vs_fn");
+                    cc.mov(vsFn, Imm((uint64_t)&jit_rt_sista_verify_store));
+                    asmjit::InvokeNode* vsInv = nullptr;
+                    if (cc.invoke(asmjit::Out(vsInv), vsFn,
+                            asmjit::FuncSignature::build<void, void*, uint64_t>())
+                            == asmjit::kErrorOk && vsInv) {
+                        vsInv->set_arg(0, state);
+                        vsInv->set_arg(1, vsIdx);
+                    }
+                }
                 break;
             }
             case Op::kStoreInstVar: {
@@ -699,10 +733,30 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // is redundant.  Skip codegen — kPrimTagCheckInt's
                 // output value isn't used by anyone (arith ops carry
                 // their own deopt info via overflow check).
-                if (method.values[v.operands[0]].type
-                    == Type::kOopSmallInt) {
-                    regFor[v.id] = itVal->second;  // unused but well-formed
-                    break;
+                //
+                // SOUNDNESS (2026-06-19 factorial fix): the narrowed SmI type
+                // is only trustworthy for values produced *within* this compiled
+                // region (constants, checked-arith results).  A value that READS
+                // the frame — kLoadTemp / kPhi (loop-carried) / kLoadStackSlot
+                // (OSR-materialised) — can be RE-ENTERED with a type-violating
+                // value: e.g. Integer>>factorial's accumulator is narrowed SmI,
+                // but its `acc := acc * nex` overflows, deopts to the interpreter,
+                // and a later yield/re-dispatch re-enters Sista with `acc` now a
+                // LargeInteger.  Skipping the tag check then lets the Large value
+                // be used as a SmallInteger -> a valid-but-wrong partial product
+                // (1/20000, GC/timing-correlated).  So NEVER skip the guard for a
+                // frame-reading operand; only skip for region-local SmI values.
+                {
+                    Op operandOp = method.values[v.operands[0]].op;
+                    bool frameReading = (operandOp == Op::kLoadTemp
+                                      || operandOp == Op::kPhi
+                                      || operandOp == Op::kLoadStackSlot);
+                    if (method.values[v.operands[0]].type == Type::kOopSmallInt
+                        && !frameReading
+                        && !GET_DEBUG_BOOL(PHARO_SISTA_NO_TAGCHECK_SKIP)) {
+                        regFor[v.id] = itVal->second;  // unused but well-formed
+                        break;
+                    }
                 }
 
                 using namespace asmjit::a64;

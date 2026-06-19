@@ -96,31 +96,28 @@ under `PHARO_NO_JIT`, which passes — unless noted)
    `Error` instead of crashing/corrupting. NOT attempted (risky shipping-arch VM
    change, out of JIT scope).
 
-   Bug found in the same area, ROOT-CAUSED to SISTA (tier-2), not tier-1 JIT
-   codegen, NOT yet fixed: **`IntegerTest>>testSlowFactorial`** fails because
-   `Integer>>factorial` (2-partition loop) miscompiles — ONE value per run comes
-   out a VALID PARTIAL PRODUCT (the accumulator `acc` loses its value at ~iteration
-   60, then keeps multiplying; oracle = badval × a ~211-digit ratio). `slowFactorial`
-   (plain recursion) is correct. Bisection verdict: **only `PHARO_NO_SISTA=1` fixes
-   it** (both JIT and interpreter). It is the Sista dispatch hook (`compile=0
-   dispatch=1`, arm64-default-on, experimental) — Sista tier-up-dispatches an
-   asmjit-compiled `fn` for factorial (`Interpreter.cpp` ~11524) and that compiled
-   loop drops `acc`. RULED OUT (none fix it): `NO_INLINE_J2J`, `XMETHOD_MAX_IC=0`,
-   all 11 Sista sub-knobs, scavenge-off (`NO_YG`), huge GC headroom, `DET_SCHED`
-   (the Sista loop doesn't hit the 1024-bc checkpoint). `NO_JIT` is NOT actually
-   clean — the interpreter also fails under GC pressure (Sista runs in both modes),
-   so the bug is ~rare (1/20000 default). The accum/splice/inject recognizers all
-   REJECT factorial, so it's the compiled-code machinery, not a recognized fusion.
-   MECHANISM not fully pinned (asmjit keeps SSA values in callee-saved regs across
-   sends; the Large `acc` is lost intermittently in the compiled loop — a live-oop /
-   register-preservation issue across an allocating send is the leading theory, but
-   NO_YG/headroom not changing the rate is unexplained). Fast repro:
-   `scripts/pkg-jit-test/repro_factorial_jit.st`. Sista is perf-NEUTRAL here (OFF
-   faster on largeint_factorial/dict) and has a bug history. FIX paths: (a) default
-   Sista off (pragmatic correctness, perf-neutral), or (b) Sista-codegen
-   instrumentation (verify-on-store of the accumulator in compiled code) to catch
-   the exact corrupting instruction — a dedicated session.
-   `ArrayTest>>testPrintingRecursive` is likely the same Sista class.
+   Bug found in the same area — ROOT-CAUSED to a SISTA tier-2 unsound type
+   narrowing, and **FIXED 2026-06-19**: **`IntegerTest>>testSlowFactorial`** failed
+   because `Integer>>factorial` (2-partition loop) miscompiled — ONE value per run
+   came out a VALID PARTIAL PRODUCT (the accumulator `acc` lost its value at ~iter
+   60; oracle = badval × a ~211-digit ratio). `slowFactorial` (plain recursion) is
+   correct. ROOT CAUSE: Sista's type inference narrows the loop-carried accumulator
+   `acc` to `kOopSmallInt`, so the `kPrimTagCheckInt` deopt guard is SKIPPED at
+   lowering (`SistaLowering_arm64.cpp` ~730). But `acc` CAN become a LargeInteger:
+   `acc * nex` overflows, deopts to the interpreter, and a later yield/re-dispatch
+   re-enters the Sista-compiled loop with `acc` now Large. The skipped guard lets the
+   Large value be used as a SmallInteger → corruption. CONFIRMED: the verify-on-store
+   instrumentation (`PHARO_SISTA_VERIFY_STORE/LOAD`, this commit) showed exactly ONE
+   Large `acc` load in 20000 calls (coinciding with the one bad result), and
+   `PHARO_SISTA_NO_TAGCHECK_SKIP=1` made it 0. FIX: never skip the tag-check guard for
+   a FRAME-READING operand (`kLoadTemp`/`kPhi`/`kLoadStackSlot`) — those can be
+   re-entered with a type-violating value; only skip for region-local SmI values
+   (constants, checked-arith results). Perf-neutral (~1-2%, within noise). Opt-out
+   `PHARO_SISTA_NO_TAGCHECK_SKIP` forces the guard always. Validated: factorial repro
+   1→0, hammer (177! ×20000) 1→0, `testSlowFactorial` FAIL→PASS, NeoJSON 116/116,
+   PolyMath 0 SubscriptOutOfBounds (off-by-one fix intact).
+   `ArrayTest>>testPrintingRecursive` is a SEPARATE bug — NOT fixed by this and NOT a
+   Sista bug (`PHARO_NO_SISTA` doesn't fix it); still open.
 
 2. **PolyMath off-by-one subscript corruption** (JIT, 51 occurrences) —
    **ROOT-CAUSED + FIXED 2026-06-19.**

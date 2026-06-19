@@ -2227,6 +2227,97 @@ extern "C" uint64_t jit_rt_sista_basic_at_put(JITState* state,
 // return chain is ~150ns.  Recognizing the selector + SmI receiver
 // and computing inline saves that overhead.
 extern "C" uint64_t g_sistaShortcut_evenOdd_hits = 0;
+
+// ---- Sista accumulator verify-on-store/load (debug localizer, gated by
+//      PHARO_SISTA_VERIFY_STORE / PHARO_SISTA_VERIFY_LOAD) ----
+// Catches the factorial miscompile: a monotonic LargeInteger accumulator
+// (acc, strictly growing via acc := acc * nex) that SHRINKS mid-loop.  The
+// ring records only Large-valued (byte-object) loads/stores, so it's
+// dominated by the accumulator; on a shrinking store we dump the ring so the
+// LOAD byte-size right before the bad STORE distinguishes "multiply produced
+// wrong" (load big, store small) from "memory corrupted between store+load"
+// (load already small).
+namespace {
+struct SistaVerifyEvent { bool isStore; uint32_t tempIdx; uint64_t methodBits; size_t byteSize; };
+static SistaVerifyEvent g_sistaVerifyRing[64] = {};
+static int g_sistaVerifyRingPos = 0;
+static std::unordered_map<uint64_t, size_t> g_sistaLastStore;  // key -> last STORE byte-size
+static int g_sistaAnomalyLogged = 0;
+
+static inline size_t sistaByteSizeOf(Oop val) {
+    if (val.isObject() && val.rawBits() > 0x10000) {
+        auto* hdr = val.asObjectPtr();
+        if (hdr->isBytesObject()) return hdr->byteSize();
+    }
+    return 0;
+}
+static inline uint64_t sistaVerifyKey(JITState* s, uint64_t tempIdx) {
+    return s->method.rawBits() + tempIdx * 0x9E3779B97F4A7C15ULL;
+}
+static void sistaVerifyPush(JITState* s, uint64_t tempIdx, size_t bs, bool isStore) {
+    g_sistaVerifyRing[g_sistaVerifyRingPos] =
+        { isStore, (uint32_t)tempIdx, s->method.rawBits(), bs };
+    g_sistaVerifyRingPos = (g_sistaVerifyRingPos + 1) & 63;
+}
+static void sistaVerifyDump(JITState* s, const char* why) {
+    fprintf(stderr, "[SISTA-VERIFY-DUMP] %s -- recent Large load/store events (oldest first):\n", why);
+    for (int i = 0; i < 64; i++) {
+        int idx = (g_sistaVerifyRingPos + i) & 63;
+        auto& e = g_sistaVerifyRing[idx];
+        if (e.methodBits == 0) continue;
+        std::string sel = s->interp
+            ? s->interp->memory().selectorOf(Oop::fromRawBits(e.methodBits)) : std::string("?");
+        fprintf(stderr, "    %s #%s temp=%u bytes=%zu\n",
+            e.isStore ? "STORE" : "LOAD ", sel.c_str(), e.tempIdx, e.byteSize);
+    }
+}
+}  // namespace
+
+static int g_sistaVerifyEventLog = 0;
+extern "C" void jit_rt_sista_verify_store(JITState* state, uint64_t tempIdx) {
+    if (!state || !state->tempBase) return;
+    size_t bs = sistaByteSizeOf(state->tempBase[tempIdx]);
+    if (bs > 0) {
+        sistaVerifyPush(state, tempIdx, bs, true);
+        if (g_sistaVerifyEventLog < 120) {
+            g_sistaVerifyEventLog++;
+            std::string sel = state->interp
+                ? state->interp->memory().selectorOf(state->method) : std::string("?");
+            fprintf(stderr, "[SISTA-EVT] STORE #%s temp=%llu bytes=%zu\n",
+                sel.c_str(), (unsigned long long)tempIdx, bs);
+        }
+    }
+    uint64_t key = sistaVerifyKey(state, tempIdx);
+    auto it = g_sistaLastStore.find(key);
+    size_t prev = (it != g_sistaLastStore.end()) ? it->second : 0;
+    if (prev >= 32 && bs > 0 && bs < prev && g_sistaAnomalyLogged < 8) {
+        g_sistaAnomalyLogged++;
+        std::string sel = state->interp
+            ? state->interp->memory().selectorOf(state->method) : std::string("?");
+        fprintf(stderr,
+            "[SISTA-STORE-ANOMALY] #%s temp=%llu prevStoreBytes=%zu newStoreBytes=%zu "
+            "(monotonic accumulator shrank at a store)\n",
+            sel.c_str(), (unsigned long long)tempIdx, prev, bs);
+        sistaVerifyDump(state, "store-anomaly");
+    }
+    g_sistaLastStore[key] = bs;
+}
+
+extern "C" void jit_rt_sista_verify_load(JITState* state, uint64_t tempIdx) {
+    if (!state || !state->tempBase) return;
+    size_t bs = sistaByteSizeOf(state->tempBase[tempIdx]);
+    if (bs > 0) {
+        sistaVerifyPush(state, tempIdx, bs, false);
+        if (g_sistaVerifyEventLog < 120) {
+            g_sistaVerifyEventLog++;
+            std::string sel = state->interp
+                ? state->interp->memory().selectorOf(state->method) : std::string("?");
+            fprintf(stderr, "[SISTA-EVT] LOAD  #%s temp=%llu bytes=%zu\n",
+                sel.c_str(), (unsigned long long)tempIdx, bs);
+        }
+    }
+}
+
 extern "C" uint64_t jit_rt_sista_call_send(JITState* state,
                                              uint64_t selBits,
                                              uint64_t nArgs) {

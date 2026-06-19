@@ -50,6 +50,9 @@ DEBUG_BOOL(PHARO_SISTA_NO_SPLICE)        // bisect: disable the multi-block spli
 DEBUG_BOOL(PHARO_SISTA_CHECK_STACK)      // verify each tryInlineConstReturn inline leaves stack_ at (before - nArgs); logs [ICR-STACKBAL] on a mis-balanced shape
 DEBUG_BOOL(PHARO_SISTA_VERIFY_INLINE)    // wrap each 0-arg const-return inline in a runtime check: do the REAL send, log [INLINE-MISMATCH] when it differs from the speculated value, use the real value (definitive blocker-#4 localizer)
 DEBUG_INT(PHARO_SISTA_ARM_BAIL_OP, -1)   // bisect: fail arm64 lowering of this Op num so methods containing it bail to interp (localizes downstream miscompiled op)
+DEBUG_BOOL(PHARO_SISTA_VERIFY_STORE)     // localizer: at each Sista kStoreTemp, call jit_rt_sista_verify_store which reads tempBase[idx] and flags a monotonic LargeInteger accumulator that SHRANK mid-loop ([SISTA-STORE-ANOMALY]) — pins the factorial miscompile to a store (multiply produced wrong) vs between-store-and-load (memory/GC)
+DEBUG_BOOL(PHARO_SISTA_VERIFY_LOAD)      // localizer companion: at each Sista kLoadTemp, call jit_rt_sista_verify_load which logs the loaded value's byte-size for the same monotonic-accumulator slot ([SISTA-LOAD]); a load reading SMALLER than the prior store == corruption between store and load (GC/memory)
+DEBUG_BOOL(PHARO_SISTA_NO_TAGCHECK_SKIP) // bisect: never skip the kPrimTagCheckInt deopt even when the operand IR type is kOopSmallInt — tests whether a mis-narrowed (loop-carried, can-go-Large) accumulator typed SmI is slipping a Large value past the guard (the factorial miscompile)
 DEBUG_INT(PHARO_SISTA_BAIL_INLINE_LO, 0)  // bisect: low bound of inline-method compile-order indices to bail
 DEBUG_INT(PHARO_SISTA_BAIL_INLINE_HI, -1) // bisect: high bound (exclusive); -1=off. bail inline-methods with idx in [LO,HI)
 DEBUG_BOOL(PHARO_SISTA_LOG_INLINE_IDX)   // log [INLINE-METHOD] idx+methodOop for each inline-bearing method compiled
