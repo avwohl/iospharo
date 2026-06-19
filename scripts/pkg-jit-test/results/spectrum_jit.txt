@@ -1,0 +1,14 @@
+BENCH allocation ms=1061 reps=20
+BENCH block_recursion_fib28 ms=3792 reps=20
+BENCH collection_protocols ms=660 reps=20
+BENCH dictionary_ops ms=2736 reps=20
+BENCH float_loop ms=4005 reps=20
+BENCH int_loop ms=277 reps=20
+BENCH largeint_factorial ms=241 reps=20
+BENCH method_recursion_fib30 ms=558 reps=20
+BENCH orderedcollection_churn ms=1041 reps=20
+BENCH polymorphic_sends ms=14526 reps=20
+BENCH set_ops ms=1667 reps=20
+BENCH sort ms=423 reps=20
+BENCH string_build ms=1947 reps=20
+BENCH-DONE
