@@ -27127,11 +27127,34 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             // register-reading (_N) stencil offset —
                             // see JITRuntime::tryResume / deferred.md A1.
                             if (jitRuntime_.getBcEntryState(savedJitMethod, pastSendOff) == 0) {
-                                // RETVAL-CARRYING caller-resume after a send: use
-                                // codeOffsetForResume (per-site resumeAfterCall that
-                                // pops nArgs + writes retval), not the plain bcToCode
-                                // entry — the send-bearing nArgs>0 operand-swap fix.
-                                uint32_t codeOff = savedJitMethod->codeOffsetForResume(pastSendOff);
+                                // COLD-BOOT DOUBLE-POP FIX (2026-06-19): this
+                                // precomputed-resume fast path ALREADY pops nArgs +
+                                // writes retVal in C++ (just below, ~27540:
+                                // `state.sp[-(nArgs+1)] = retVal; state.sp -= nArgs`)
+                                // and re-enters via plain JIT_CALL (x1 undefined).
+                                // The per-site resumeAfterCall continuation (the
+                                // codeOffsetForResume override) pops nArgs + writes x1
+                                // AGAIN — a SECOND stack-effect (V2-only).  On warm
+                                // sends this path is never taken (emitted inline-J2J
+                                // tail-jumps), so it was invisible to the benches; on
+                                // a COLD IC miss of an nArgs>0 send (the do:-loop's
+                                // `self at: index` / `aBlock value:`) it over-pops by
+                                // nArgs -> the nested do:/on:do: cold-startup operand
+                                // SHIFT (#value: rcvr=0x9 / #platformName corrupt-
+                                // rcvr).  The tryResume FALLBACK twin (~27727) already
+                                // resumes at the PLAIN bcToCode entry (codeOffsetForBC,
+                                // JITRuntime::tryResume) on top of the same C++ pop —
+                                // so the precompute must match it.  The per-site
+                                // resumeAfterCall override is for the option-2
+                                // consumers that DON'T C++-pop and pass x1 via
+                                // JIT_RESUME_CALL (the rj2j trampoline ~21672 and the
+                                // emitted prelude `br x8`), not this path.  Opt-out
+                                // PHARO_T1_NO_CHAIN_RESUME_PLAIN=1 restores the
+                                // (double-popping) override lookup.
+                                uint32_t codeOff =
+                                    GET_DEBUG_BOOL(PHARO_T1_NO_CHAIN_RESUME_PLAIN)
+                                        ? savedJitMethod->codeOffsetForResume(pastSendOff)
+                                        : savedJitMethod->codeOffsetForBC(pastSendOff);
                                 if (codeOff > 0 && codeOff < savedJitMethod->codeSize)
                                     savedResumeEntry = savedJitMethod->codeStart() + codeOff;
                                 // BUG-2 resume trace (PHARO_J2J_NEST_TRACE): the
