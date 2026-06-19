@@ -1,3 +1,34 @@
+# RESUME POINT — 2026-06-19d (package JIT testing + off-by-one bug FIXED)
+
+Branch `jit`, pushed (tip `937d8301`). Built a package-based JIT test harness
+(`scripts/pkg-jit-test/`, `docs/jit-test-packages.md`) that loads real Pharo
+packages via stock Cog and runs them on both VMs. It surfaced bugs the kernel
+suite missed, and I ROOT-CAUSED + FIXED the highest-impact one:
+
+- **off-by-one SubscriptOutOfBounds (PolyMath ×51 + Fuel) — FIXED `937d8301`.**
+  Root cause: arm64 send-bearing inline-J2J admitted `canBailMidMethod` callees;
+  an `ExitArithOverflow` mid-bail (SmallInt arith -> Fraction/Float) left the
+  caller's J2J save un-popped -> operand stack +1 -> wrong index to at:. Fix:
+  default-exclude mid-bailing callees (AsmjitT1.cpp + JITRuntime.hpp); opt-in
+  `PHARO_T1_ADMIT_BAILMID_CALLEES`. Cost +5%/+31% (recursion/collections). Found
+  via `PHARO_SP_DEPTH_CHECK` differential + knob bisection (no lldb). Fast repro:
+  `run_classes.st` over the 11 SubscriptOutOfBounds classes (48->0). Memory
+  `jit-package-testing-harness.md`.
+
+STILL OPEN (next): (1) STON `testDeepStructure` (1024-deep) is a DISTINCT
+inline-J2J deep-recursion bug (the fix only changes its error signature); likely
+same class as pre-existing kernel fails `ArrayTest>>testPrintingRecursive` +
+`IntegerTest>>testSlowFactorial`. (2) the perf-preserving fix = materialize the
+pending save on V2 `ExitArithOverflow` (PHARO_T1_AO_MAT_J2J is V1-only). (3) the
+SmallFloat64>>inject:into: VM-core bug (×18 PolyMath, fails in interp too).
+(4) Soil FFI flock SIGABRT. (5) wire SMark/Zinc/Microdown/AWFY.
+
+Validation: 11-class repro 48->0; kernel SUnit subset 2861 pass (unchanged vs
+old behavior, 2 pre-existing fails); NeoJSON 116/116; battery clean; opt-in
+restores the bug. Full 565-class suite re-validation not yet run.
+
+---
+
 # RESUME POINT — 2026-06-19c (SESSION STATE / pre-reboot snapshot)
 
 Everything below is COMMITTED + PUSHED to branch `jit` (tip `28bdd01e`).  Working
