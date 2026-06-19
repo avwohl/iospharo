@@ -96,17 +96,31 @@ under `PHARO_NO_JIT`, which passes — unless noted)
    `Error` instead of crashing/corrupting. NOT attempted (risky shipping-arch VM
    change, out of JIT scope).
 
-   Genuine JIT bug found in the same area: **`IntegerTest>>testSlowFactorial`**
-   fails because `Integer>>factorial` (the 2-partition divide-and-conquer
-   algorithm) miscompiles under the JIT — ONE value (n varies 164-181 run to run)
-   comes out wrong; `slowFactorial` (plain recursion) is correct. JIT-specific
-   (`PHARO_NO_JIT` clean). NOT inline-J2J (`NO_INLINE_J2J` doesn't fix it), NOT
-   scheduler-timing (`PHARO_DET_SCHED` doesn't pin it). The non-deterministic,
-   allocation-heavy (LargeInteger), shallow-recursion profile points at a
-   GC-safety bug in JIT'd `factorial` (a live oop/raw value across an allocation
-   point). Fast repro: `(1 to: 1000) detect: [:i | i factorial ~= (running
-   product)]`. `ArrayTest>>testPrintingRecursive` is likely related. This is the
-   real JIT target here (separate from the VM-core STON issue).
+   Bug found in the same area, ROOT-CAUSED to SISTA (tier-2), not tier-1 JIT
+   codegen, NOT yet fixed: **`IntegerTest>>testSlowFactorial`** fails because
+   `Integer>>factorial` (2-partition loop) miscompiles — ONE value per run comes
+   out a VALID PARTIAL PRODUCT (the accumulator `acc` loses its value at ~iteration
+   60, then keeps multiplying; oracle = badval × a ~211-digit ratio). `slowFactorial`
+   (plain recursion) is correct. Bisection verdict: **only `PHARO_NO_SISTA=1` fixes
+   it** (both JIT and interpreter). It is the Sista dispatch hook (`compile=0
+   dispatch=1`, arm64-default-on, experimental) — Sista tier-up-dispatches an
+   asmjit-compiled `fn` for factorial (`Interpreter.cpp` ~11524) and that compiled
+   loop drops `acc`. RULED OUT (none fix it): `NO_INLINE_J2J`, `XMETHOD_MAX_IC=0`,
+   all 11 Sista sub-knobs, scavenge-off (`NO_YG`), huge GC headroom, `DET_SCHED`
+   (the Sista loop doesn't hit the 1024-bc checkpoint). `NO_JIT` is NOT actually
+   clean — the interpreter also fails under GC pressure (Sista runs in both modes),
+   so the bug is ~rare (1/20000 default). The accum/splice/inject recognizers all
+   REJECT factorial, so it's the compiled-code machinery, not a recognized fusion.
+   MECHANISM not fully pinned (asmjit keeps SSA values in callee-saved regs across
+   sends; the Large `acc` is lost intermittently in the compiled loop — a live-oop /
+   register-preservation issue across an allocating send is the leading theory, but
+   NO_YG/headroom not changing the rate is unexplained). Fast repro:
+   `scripts/pkg-jit-test/repro_factorial_jit.st`. Sista is perf-NEUTRAL here (OFF
+   faster on largeint_factorial/dict) and has a bug history. FIX paths: (a) default
+   Sista off (pragmatic correctness, perf-neutral), or (b) Sista-codegen
+   instrumentation (verify-on-store of the accumulator in compiled code) to catch
+   the exact corrupting instruction — a dedicated session.
+   `ArrayTest>>testPrintingRecursive` is likely the same Sista class.
 
 2. **PolyMath off-by-one subscript corruption** (JIT, 51 occurrences) —
    **ROOT-CAUSED + FIXED 2026-06-19.**
