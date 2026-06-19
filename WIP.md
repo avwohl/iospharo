@@ -54,6 +54,15 @@ failure mode vs arm64 (the garbage-RAX TOS write). (c) the opt-in x86 ExtSend pa
 (`PHARO_T1_X86_EMIT_EXTSEND`, override keyed globalIdx+2) was also double-popping
 and is now fixed.
 
+x86 EMPIRICALLY CONFIRMED (2026-06-19): built `build-x86`
+(`cmake -DCMAKE_OSX_ARCHITECTURES=x86_64`, Rosetta) and ran the collection/block
+battery with `PHARO_X86_JIT=1`.  FIX-A ON = fully correct
+(`30! | 42925 | #(2 3 5 7 11 13 17 19) | 23 | #(1 2 3 5 7 8 9)`); FIX-A OFF
+(`PHARO_T1_NO_CHAIN_RESUME_PLAIN=1`) = deterministic corruption (`#= not understood
+by rcvr=0x1044707a0` — a code-pointer in the receiver slot, same operand-shift
+class as arm64).  So the chain-loop double-pop fix is validated on BOTH arches.
+(x86 JIT remains default-OFF behind `PHARO_X86_JIT` / the GUI flip.)
+
 VALIDATION (knob-only A/B on ONE binary — REAL diff, not the layout-heisenbug):
 - Cold boot (`PHARO_DET_SCHED=1 ./build/test_load_image /tmp/h3/warm.image`):
   OFF = `#value: rcvr=0x9 in #do:`; ON boots PAST session startup into morphic
