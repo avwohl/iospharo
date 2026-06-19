@@ -21,8 +21,38 @@ benches were blind; a COLD IC miss of an nArgs>0 send (do:-loop `self at: index`
 index in the receiver slot) / `#platformName` corrupt-rcvr in `#do:`.
 
 FIX: precompute resumes at `codeOffsetForBC` (plain endOfSend), matching the
-fallback.  Opt-out `PHARO_T1_NO_CHAIN_RESUME_PLAIN=1`.  V1/x86 no-op (override
-table is `#if PHARO_J2J_SAVE_V2`).
+fallback.  Opt-out `PHARO_T1_NO_CHAIN_RESUME_PLAIN=1`.
+
+x86 CORRECTION (audit workflow, 2026-06-19): the commit's "V1/x86 unaffected"
+wording is WRONG.  x86 is ALSO V2 (`J2JSaveLayout.h:38`, ported 2026-06-15) with
+inline-J2J default-ON, so the resumeOverride table IS populated and FIX-A (shared
+C++ chain loop) fixes the IDENTICAL double-pop on x86 — plus a garbage-rax TOS
+write there (x86 `JIT_CALL` doesn't set rax; only `JIT_RESUME_CALL` does).  x86
+JIT is default-OFF so it's dormant, but FIX-A HELPS x86 when enabled.  Only a
+forced-V1 build (`-DPHARO_X86_FORCE_V1`) is truly unaffected.  (Also corrected a
+stale comment at `AsmjitT1.cpp:9612` that claimed the x86 override table stays
+empty.)
+
+AUDIT (2026-06-19, 7-agent workflow across 4 dimensions — resume-sites,
+emitted-contract, x86-parity, fix-edge-cases): **FIX-A is fully correct and
+complete; `confirmedBugs: []` — ZERO sibling double-pop/under-pop bugs.** All 13
+JIT re-entry sites + 7 emitted entry points verified protocol-consistent. Key
+confirmations: (1) the C++ restores the caller context (jitMethod/method/
+literals/argCount, Interpreter.cpp ~27460-27463) UNCONDITIONALLY before re-entry,
+so resuming at plain `endOfSend` loses nothing the old `resumeAfterCall` xmethod-
+reestablishment (~9306-9321) did — no gap; (2) `codeOffsetForBC` is strictly
+SAFER than the old override (it's the getBcEntryState-validated post-send entry,
+byte-identical to the proven `tryResume` twin); (3) the two legitimate Option-2
+consumers (rj2j trampoline 21460/21672, j2j trampoline 25129/25358) correctly
+KEEP `codeOffsetForResume` + `JIT_RESUME_CALL` (no C++ pop) and are untouched.
+REFINEMENTS the audit surfaced: (a) **nArgs==0 was ALSO at-risk pre-fix on BOTH
+arches** — resumeAfterCall's unconditional `stur x1`/`mov rax`-write clobbers the
+C++-written retVal at sp[-1] with undefined x1/rax under plain `JIT_CALL`; usually
+MASKED when x1≈retVal (why unary sends mostly survived), but FIX-A removes the
+risk. So the "nArgs>0" framing understates the fixed surface. (b) x86 had an EXTRA
+failure mode vs arm64 (the garbage-RAX TOS write). (c) the opt-in x86 ExtSend path
+(`PHARO_T1_X86_EMIT_EXTSEND`, override keyed globalIdx+2) was also double-popping
+and is now fixed.
 
 VALIDATION (knob-only A/B on ONE binary — REAL diff, not the layout-heisenbug):
 - Cold boot (`PHARO_DET_SCHED=1 ./build/test_load_image /tmp/h3/warm.image`):

@@ -9606,12 +9606,16 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     x86::Assembler a(&code);
     // V2 self-identification anchor: bind g_codeStartLabel at code offset 0
     // (STEP 1 of the V2 save port, docs/x86-v2-save-port.md; mirrors arm64
-    // 9417-9418).  The V2 resumeAfterCall continuation will self-identify the
+    // 9417-9418).  The V2 resumeAfterCall continuation self-identifies the
     // caller JITMethod PC-relatively via lea(scratch, g_codeStartLabel) -
-    // sizeof(JITMethod).  Harmless dead anchor until the V2 emit (STEP 3):
-    // resumeOverrides stays empty on V1 x86, so the override-apply loop is a
-    // no-op.  resumeOverrides + g_resumeOverridesPtr are already wired in the
-    // shared pre-arch section (8943/8947).
+    // sizeof(JITMethod).  NOTE (corrected 2026-06-19): the V2 emit (STEP 3) is
+    // DONE and inline-J2J is default-ON on x86 (g_emitX86J2JOk), so
+    // resumeOverrides is POPULATED here and codeOffsetForResume != codeOffsetForBC
+    // at x86 inline-J2J send sites — the chain-loop double-pop fix
+    // (PHARO_T1_NO_CHAIN_RESUME_PLAIN, Interpreter.cpp ~27156) therefore applies
+    // to x86 too.  The table only stays empty on a forced-V1 build
+    // (-DPHARO_X86_FORCE_V1).  resumeOverrides + g_resumeOverridesPtr are wired
+    // in the shared pre-arch section (8943/8947).
     g_codeStartLabel = a.new_label();
     a.bind(g_codeStartLabel);
     // Always allocate per-bytecode labels when emitting real code.
