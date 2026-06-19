@@ -13903,10 +13903,31 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
     }
 
-    // Log first 60 DNU messages to debug startup issues
+    // Log first 60 GENUINE DNU messages to debug startup issues.  A DNU whose
+    // receiver's class OVERRIDES doesNotUnderstand: (defining class != Object)
+    // is a TRANSPARENT-PROXY FORWARD — e.g. SpStyleEnvironmentColorProxy, the
+    // Spec2 theme-color proxy (a ProtoObject subclass) which forwards every
+    // color message (isTransparent, fillRectangle:on:, ...) to its resolved
+    // Color via doesNotUnderstand:.  Those are RECOVERED, normal Pharo behavior
+    // (real Pharo does it silently); tracing them as "not understood" made the
+    // recovered cold-boot proxy forwarding look like a fatal #fillRectangle /
+    // #isTransparent cascade (it is NOT — the boot completes and computes
+    // correctly).  Only trace genuine DNUs (the default Object>>doesNotUnderstand:
+    // path, which signals MessageNotUnderstood).  The extra lookup is bounded to
+    // the first-60 window (short-circuits once the trace budget is spent), so
+    // there is no steady-state cost.
     {
         static int dnuLogCount = 0;
-        if (dnuLogCount++ < 60) {
+        bool proxyForward = false;
+        if (dnuLogCount < 60) {
+            Oop dnuRcvr = stackValue(argCount);
+            Oop dnuM = lookupMethod(selectors_.doesNotUnderstand,
+                                    memory_.classOf(dnuRcvr));
+            if (dnuM.isObject() && dnuM.rawBits() > 0x10000
+                    && classNameOfMethod(dnuM) != "Object")
+                proxyForward = true;
+        }
+        if (!proxyForward && dnuLogCount++ < 60) {
             std::string selName = "(unknown)";
             try {
                 if (selector.isObject() && selector.rawBits() > 0x10000) {
