@@ -400,6 +400,18 @@ extern "C" void jit_rt_store_ring(uint64_t state, uint64_t recv,
 // holds the live x25 value here.  Logs sp-depth (sp-tempBase), the top operands
 // (TOS/NOS/N3), and tempBase[0..2] (the args/temps) so a wrong push/pop delta
 // or a wrong temp read can be spotted by diffing successive bytecodes.
+// PHARO_T1_SP_TRAP_K marker: jit_rt_sp_trace calls this ONCE at the over-popping
+// bc14, passing the aBlock slot address.  An lldb breakpoint here (a NORMAL stop,
+// unlike __builtin_debugtrap's SIGTRAP which makes lldb --batch hang) lets a
+// Python callback set a hardware watchpoint on that slot and continue, so the
+// watchpoint fires at the exact instruction that clobbers aBlock.  noinline +
+// the asm keep the call (and its x0 arg) from being optimized away.
+extern "C" volatile uint64_t g_overpop_slot = 0;   // unique side effect: prevents ICF
+extern "C" __attribute__((noinline)) void jit_rt_overpop_marker(uint64_t slotAddr) {
+    g_overpop_slot = slotAddr;     // lldb callback reads THIS global (reliable, no reg/ICF issue)
+    asm volatile("" :: "r"(slotAddr) : "memory");
+}
+
 extern "C" void jit_rt_sp_trace(uint64_t statev, uint64_t bcOff) {
     if (!GET_DEBUG_BOOL(PHARO_T1_SP_TRACE)) return;
     auto* st = reinterpret_cast<pharo::jit::JITState*>(statev);
@@ -421,10 +433,13 @@ extern "C" void jit_rt_sp_trace(uint64_t statev, uint64_t bcOff) {
             int k = ++n14[mb];
             int trapK = GET_DEBUG_INT(PHARO_T1_SP_TRAP_K);
             if (trapK > 0 && k == trapK) {
-                fprintf(stderr, "[SP-TRAP] bc14 K=%d oop=0x%llx aBlock=0x%llx sp=%p — trapping\n",
-                        k, (unsigned long long)mb, (unsigned long long)sp[-3].rawBits(), (void*)sp);
+                uint64_t slot = reinterpret_cast<uint64_t>(&sp[-3]);  // aBlock's slot address
+                g_overpop_slot = slot;       // set BEFORE the marker so the lldb bp reads it
+                fprintf(stderr, "[SP-TRAP] bc14 K=%d oop=0x%llx aBlock=0x%llx slot=0x%llx sp=%p — marker\n",
+                        k, (unsigned long long)mb, (unsigned long long)sp[-3].rawBits(),
+                        (unsigned long long)slot, (void*)sp);
                 fflush(stderr);
-                __builtin_debugtrap();
+                jit_rt_overpop_marker(slot);
             }
         } else if (bcOff == 15) {
             auto it = ab14.find(mb);
