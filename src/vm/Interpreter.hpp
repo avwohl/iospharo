@@ -2082,6 +2082,15 @@ private:
     /// Execute a primitive
     PrimitiveResult executePrimitive(int primitiveIndex, int argCount);
 
+    // PHARO_T1_PRIM_OVERPOP: shared over-pop detector for the three in-place
+    // chain primitive-send sites. spBefore = stackPointer_ captured BEFORE
+    // executePrimitive; argCountBefore = argCount_ at that point. Flags when the
+    // realized operand-sp delta != -argCountBefore (the cold-boot at: over-pop).
+    void auditChainPrim(Oop* spBefore, int argCountBefore, int primIdx,
+                        bool success, size_t callerDepth,
+                        uint64_t callerBits, uint64_t targetBits,
+                        const char* site);
+
 public:
     /// Get primitive index from method (public so jit_rt_fill_ic can
     /// decode callee primitives during cold-IC mega-cache fill).

@@ -1828,6 +1828,27 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     Oop index = stackValue(0);
     Oop rcvr = stackValue(1);
 
+    // PHARO_T1_PRIM_OVERPOP: does do:'s at: reach C++ primitiveAt? If so, log the
+    // operand depth + argCount_ so the over-pop (net -2) can be localized: if
+    // depth==tempCount+4 and argCount_==1, primitiveSuccess is net -1 (correct)
+    // and the shift is elsewhere; if argCount_==2 or depth is short, it's here.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_PRIM_OVERPOP), 0)
+            && method_.isObject() && method_.rawBits() > 0x10000
+            && memory_.selectorOf(method_) == "do:") {
+        static int n = 0;
+        if (++n <= 16)
+            fprintf(stderr,
+                "[PRIMAT-FROM-DO #%d] argCount=%d argCount_=%d sp=%p depth=%ld(sp-tb) | "
+                "TOS=0x%llx NOS=0x%llx N3=0x%llx | idx=0x%llx rcvr=0x%llx rcvrIsObj=%d\n",
+                n, argCount, argCount_, (void*)stackPointer_,
+                (long)(stackPointer_ - (framePointer_ + 1)),
+                (unsigned long long)stackPointer_[-1].rawBits(),
+                (unsigned long long)stackPointer_[-2].rawBits(),
+                (unsigned long long)stackPointer_[-3].rawBits(),
+                (unsigned long long)index.rawBits(), (unsigned long long)rcvr.rawBits(),
+                (int)rcvr.isObject());
+    }
+
     // Handle SmallFloat64 immediates: basicAt: returns 32-bit word halves
     if (rcvr.isSmallFloat() && index.isSmallInteger()) {
         int64_t idx = index.asSmallInteger();

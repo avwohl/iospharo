@@ -18890,6 +18890,40 @@ void Interpreter::primitiveSuccess(Oop result) {
     push(result);
 }
 
+void Interpreter::auditChainPrim(Oop* spBefore, int argCountBefore, int primIdx,
+                                 bool success, size_t callerDepth,
+                                 uint64_t callerBits, uint64_t targetBits,
+                                 const char* site) {
+    if (!GET_DEBUG_BOOL(PHARO_T1_PRIM_OVERPOP)) return;
+    // Only in-place prims (no frame pushed) have the simple net=-argCount_ contract.
+    if (!success || frameDepth_ != callerDepth) return;
+    long delta    = (long)(stackPointer_ - spBefore);   // realized net, in slots
+    long expected = -(long)argCountBefore;              // primitiveSuccess: net -argCount_
+    auto sel = [&](uint64_t b) -> std::string {
+        Oop m = Oop::fromRawBits(b);
+        return (m.isObject() && b > 0x10000) ? memory_.selectorOf(m) : std::string("?");
+    };
+    std::string callerSel = sel(callerBits);
+    // Fire on a mismatch (over/under-pop) OR verbosely for every do:-issued prim
+    // send (do: is the victim on this binary; shows whether the at: send is net
+    // -1 here and what the entry depth is, to localize the shift before/at/after).
+    if (delta == expected && callerSel != "do:") return;
+    static int n = 0;
+    if (++n > 24) return;
+    fprintf(stderr,
+        "[PRIM-OVERPOP #%d @%s] caller=#%s target=#%s prim=%d argCountBefore=%d "
+        "argCount_after=%d delta=%ld expected=%ld | spBefore=%p spAfter=%p "
+        "depthBefore=%ld(sp-tb) | TOS=0x%llx NOS=0x%llx N3=0x%llx\n",
+        n, site, sel(callerBits).c_str(), sel(targetBits).c_str(), primIdx,
+        argCountBefore, argCount_, delta, expected,
+        (void*)spBefore, (void*)stackPointer_,
+        (long)(spBefore - (framePointer_ + 1)),
+        (unsigned long long)stackPointer_[-1].rawBits(),
+        (unsigned long long)stackPointer_[-2].rawBits(),
+        (unsigned long long)stackPointer_[-3].rawBits());
+    if (GET_DEBUG_BOOL(PHARO_T1_PRIM_OVERPOP_STOP)) running_ = false;
+}
+
 void Interpreter::primitiveFail() {
     primitiveFailed_ = true;
 }
@@ -22050,7 +22084,11 @@ void Interpreter::tryJITResumeInCaller() {
                     primitiveFailed_ = false;
                     primFailCode_ = 0;
                     newMethod_ = cached;
+                    Oop* opSpBefore = stackPointer_; int opArgBefore = argCount_;
                     PrimitiveResult result = executePrimitive(primIdx, state.sendArgCount);
+                    auditChainPrim(opSpBefore, opArgBefore, primIdx,
+                                   result == PrimitiveResult::Success, primCallerDepth,
+                                   state.method.rawBits(), cached.rawBits(), "ExitSendCached");
                     if (result == PrimitiveResult::Success) {
                         // Frame-pushing primitives (closure activation prims 81/82/
                         // 201-209, perform: prims 83/84, etc.) call activateBlock/
@@ -22385,7 +22423,11 @@ void Interpreter::tryJITResumeInCaller() {
                     primitiveFailed_ = false;
                     primFailCode_ = 0;
                     newMethod_ = cached;
+                    Oop* opSpBefore = stackPointer_; int opArgBefore = argCount_;
                     PrimitiveResult result = executePrimitive(primIdx, state.sendArgCount);
+                    auditChainPrim(opSpBefore, opArgBefore, primIdx,
+                                   result == PrimitiveResult::Success, primCallerDepth,
+                                   state.method.rawBits(), cached.rawBits(), "J2JCached");
                     if (result == PrimitiveResult::Success) {
                         if (frameDepth_ != primCallerDepth) {
                             jitJ2JFallbacks_++;
@@ -27871,7 +27913,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     primitiveFailed_ = false;
                     primFailCode_ = 0;
                     newMethod_ = chainTarget;
+                    Oop* opSpBefore = stackPointer_; int opArgBefore = argCount_;
                     PrimitiveResult result = executePrimitive(primIdx, nArgs);
+                    auditChainPrim(opSpBefore, opArgBefore, primIdx,
+                                   result == PrimitiveResult::Success, primCallerDepth,
+                                   state.method.rawBits(), chainTarget.rawBits(), "ExitSendFallback");
                     chainTarget = newMethod_;  // Refresh: GC during prim may have moved it
 
                     if (result == PrimitiveResult::Success) {
@@ -28038,7 +28084,25 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     atRec(14, (uint8_t)nArgs, primitiveIndexOf(chainTarget),
                           chainTarget.rawBits(),
                           framePointer_ ? framePointer_[1].rawBits() : 0);
+                Oop* amSpBefore = stackPointer_;
                 activateMethod(chainTarget, nArgs);
+                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_PRIM_OVERPOP), 0)
+                        && state.method.isObject() && state.method.rawBits() > 0x10000
+                        && memory_.selectorOf(state.method) == "do:") {
+                    static int n = 0;
+                    if (++n <= 16)
+                        fprintf(stderr,
+                            "[ACTMETH-DO #%d] target=#%s prim=%d nArgs=%d framePushed=%d | "
+                            "amDelta=%ld spDepthAfter=%ld(sp-tb) | TOS=0x%llx NOS=0x%llx N3=0x%llx\n",
+                            n, memory_.selectorOf(chainTarget).c_str(),
+                            primitiveIndexOf(chainTarget), nArgs,
+                            (int)(frameDepth_ != callerDepth),
+                            (long)(stackPointer_ - amSpBefore),
+                            (long)(stackPointer_ - (framePointer_ + 1)),
+                            (unsigned long long)stackPointer_[-1].rawBits(),
+                            (unsigned long long)stackPointer_[-2].rawBits(),
+                            (unsigned long long)stackPointer_[-3].rawBits());
+                }
 
                 if (frameDepth_ != callerDepth) {
                     // Target pushed a frame — interpreter dispatch loop handles it
