@@ -68,8 +68,13 @@ VALIDATION (knob-only A/B on ONE binary — REAL diff, not the layout-heisenbug)
   OFF = `#value: rcvr=0x9 in #do:`; ON boots PAST session startup into morphic
   rendering (`#isTransparent in #fillRectangle:...`, fd=42).
 - Warm collection/block battery (-O2, harness eval) 3/3 correct; OFF fails.
-- SUnit subset (10 collection/block/string classes, -O2): ON 2259 pass / 1 fail /
-  1 error (both pre-existing compiler-AST nuances); OFF crashes at startup.
+- SUnit (harness, -O2, FIX-A on): 10 collection/block/string classes = 2259 pass
+  / 1 fail / 1 error (both pre-existing compiler-AST nuances: testSourceNodeOptimized
+  decompiler var-name, testIsClean OCCascadeNode>>#isClean MNU); batch 1-80 (58
+  reached before 600s timeout) = 3915 pass / 0 fail / 0 error; batch 81-180 = 100
+  classes, 3441 pass / 0 fail / 0 error / 9 skip / 1 slow-test timeout.  Total
+  ~168 distinct classes, ~9,600 tests, ZERO operand-corruption failures.  With
+  FIX-A OFF the harness crashes at startup before any test runs.
 
 This UNBLOCKS the 2026-06-18f BUG-2 verify (which needed a startup-clean image).
 RESIDUAL: cold boot still cascades — next layer is the morphic `#fillRectangle:`
