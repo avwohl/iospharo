@@ -16552,6 +16552,22 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
     ObjectHeader* destHdr = destOop.asObjectPtr();
     ObjectHeader* srcHdr = sourceOop.asObjectPtr();
 
+    // Forward-overlapping self-copy detection (2026-06-20 correctness fix).
+    // replaceFrom:to:with:startingAt: is specified as a FORWARD element loop, so
+    // earlier writes feed later reads: an in-place copy whose destination overlaps
+    // AHEAD of the source must PROPAGATE (e.g. LZ77 back-references in inflate, RLE
+    // expansion, buffer shift-up).  std::memmove copies BACKWARD on a dst>src
+    // overlap (preserving the source bytes), which silently breaks propagation ->
+    // gzip/inflate corruption (FLGZipped* serialization, low-entropy payloads of
+    // any size) and wrong results for any forward-overlapping self-copy.  Verified
+    // vs Cog: `b at:1 put:65; at:2 put:66; b replaceFrom:3 to:8 with:b startingAt:1`
+    // -> Cog #[65 66 65 66 65 66 65 66 0 0] (propagation), old memmove gave
+    // #[65 66 65 66 0 0 0 0 0 0].  In that ONE case use a forward element loop;
+    // otherwise memmove stays (correct for cross-object / disjoint / backward
+    // overlap, and faster).
+    bool fwdOverlapSelfCopy = (destOop.rawBits() == sourceOop.rawBits())
+        && (dstStartIdx > srcIdx) && (dstStartIdx < srcIdx + count);
+
     // Handle POINTER objects (Arrays, etc.)
     if (destHdr->isPointersObject() && srcHdr->isPointersObject()) {
         ObjectFormat destFmt = destHdr->format();
@@ -16611,7 +16627,11 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
                 }
             }
         }
-        std::memmove(dstPtrs, srcPtrs, count * sizeof(Oop));
+        if (fwdOverlapSelfCopy) {
+            for (size_t i = 0; i < count; i++) dstPtrs[i] = srcPtrs[i];
+        } else {
+            std::memmove(dstPtrs, srcPtrs, count * sizeof(Oop));
+        }
 
         popN(4);  // Pop 4 args, leave dest
         return PrimitiveResult::Success;
@@ -16627,9 +16647,15 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
             return PrimitiveResult::Failure;
         }
 
-        // Bulk byte copy via memmove (was per-byte loop).
-        std::memmove(destHdr->bytes() + dstStartIdx,
-                     srcHdr->bytes() + srcIdx, count);
+        // Bulk byte copy via memmove (was per-byte loop); forward element loop
+        // for the forward-overlapping self-copy case (propagation, see above).
+        if (fwdOverlapSelfCopy) {
+            uint8_t* db = destHdr->bytes();
+            for (size_t i = 0; i < count; i++) db[dstStartIdx + i] = db[srcIdx + i];
+        } else {
+            std::memmove(destHdr->bytes() + dstStartIdx,
+                         srcHdr->bytes() + srcIdx, count);
+        }
 
         popN(4);  // Pop 4 args, leave dest
         return PrimitiveResult::Success;
@@ -16655,8 +16681,13 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
         // Access as 32-bit words — bulk copy via memmove.
         uint32_t* destData = reinterpret_cast<uint32_t*>(destHdr + 1);
         uint32_t* srcData = reinterpret_cast<uint32_t*>(srcHdr + 1);
-        std::memmove(destData + dstStartIdx, srcData + srcIdx,
-                     count * sizeof(uint32_t));
+        if (fwdOverlapSelfCopy) {
+            for (size_t i = 0; i < count; i++)
+                destData[dstStartIdx + i] = destData[srcIdx + i];
+        } else {
+            std::memmove(destData + dstStartIdx, srcData + srcIdx,
+                         count * sizeof(uint32_t));
+        }
 
         popN(4);
         return PrimitiveResult::Success;
@@ -16675,8 +16706,13 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
         // Access as 64-bit words — bulk copy via memmove.
         uint64_t* destData = reinterpret_cast<uint64_t*>(destHdr + 1);
         uint64_t* srcData = reinterpret_cast<uint64_t*>(srcHdr + 1);
-        std::memmove(destData + dstStartIdx, srcData + srcIdx,
-                     count * sizeof(uint64_t));
+        if (fwdOverlapSelfCopy) {
+            for (size_t i = 0; i < count; i++)
+                destData[dstStartIdx + i] = destData[srcIdx + i];
+        } else {
+            std::memmove(destData + dstStartIdx, srcData + srcIdx,
+                         count * sizeof(uint64_t));
+        }
 
         popN(4);
         return PrimitiveResult::Success;
