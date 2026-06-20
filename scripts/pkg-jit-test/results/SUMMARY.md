@@ -148,14 +148,18 @@ above). The prim-105 branch did not hurt string_build. Lever ranking for the
      bottleneck is the BASE per-send cost, NOT polymorphism — poly adds only 1.8x:
      ours 778 vs Cog 95). Component breakdown (1.6M iters): baseline loop+arith 12ms;
      +`o class` 180ms; +`name size` 440ms. So TWO sub-levers:
-       (a) IMMEDIATE-RECEIVER `class` (~168ms): tryPrimClass (AsmjitT1.cpp:9199)
-           inlines only HEAP receivers (reads header.classIndex). Immediates
-           (SmallInteger/Character/SmallFloat) have no header -> full send (slow).
-           classOf maps tag->class (ClassSmallInteger/ClassCharacter/classAtIndex 4).
-           TRACTABLE but more involved than the heap inline: the IC/dispatch EXCLUDES
-           immediates, so it needs a new immediate fast-path at the class send site
-           (not just extending tryPrimClass). Memory flagged this as a deferred ~28x
-           lever.
+       (a) IMMEDIATE-RECEIVER `class` (~168ms) — DONE 2026-06-20 (commit 8e81d57c,
+           default-on, opt-out PHARO_T1_NO_INLINE_IMM_CLASS). tryPrimClass is heap-only
+           (reads header.classIndex); immediates have no header -> used the full C++
+           send. Added an immediate fast-path at the IC-hit split (AsmjitT1.cpp:6394):
+           for 0-arg, tag==1 (SmallInteger) + primKind 24 -> classTable[idx] (idx baked
+           per-compile, VERIFIED classTable[idx]==SmallInteger; GC-safe runtime load;
+           x6/x4, preserves x5=icDataPtr). Other immediates (Character/SmallFloat) +
+           non-class sends fall through to dispatchCached. WIN: MONO `o class name size`
+           433->330ms (-24%); heap class neutral (predictor-free branch); poly neutral
+           (the earlier 5% was bench_spectrum noise). 0 regressions: kernel 2580/0/0,
+           NeoJSON 116, STON 317. Sub-piece remaining: Character/SmallFloat class
+           (rarer) still full-send.
        (b) CROSS-METHOD SEND ACTIVATION (`Class>>name` etc., ~260ms): the deep "send
            tax". Non-self-recursive cross-method sends that aren't inline-J2J'd go
            through the full activation path. This is the DEEPEST, most-studied lever
@@ -163,9 +167,10 @@ above). The prim-105 branch did not hurt string_build. Lever ranking for the
            instruction-count cuts"). Levers: out-of-line dispatch (needs a design
            pass) / gate-bit fold into PMS (fold the 8-load JM gate cascade into the
            patched IC) / FSR M3c. ALL multi-session design efforts.
-     STATUS: measured + decomposed; the core (1b) is a genuine multi-session design
-     effort confirmed with current numbers — NOT a marathon-tail change. (a) is the
-     tractable next increment for a fresh focused session.
+     STATUS: measured + decomposed; (a) SHIPPED (SmallInteger class -24%, 0 regress).
+     The core (1b) cross-method send-activation tax is the genuine multi-session design
+     effort (out-of-line dispatch / gate-bit fold / FSR M3c) — confirmed with current
+     numbers, NOT a marathon-tail change.
   2. ALLOCATION — BOTH sub-levers built, BOTH modest (~5% each), confirming the gap
      is dispatch not new: (a) DONE default-on (b52dbf14): jit_rt_new_prim -> eden
      (was old-space trap). (b) DONE DEFAULT-ON (0ecf51fa, opt-out
