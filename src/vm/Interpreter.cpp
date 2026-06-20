@@ -6649,7 +6649,7 @@ void Interpreter::returnValue(Oop value) {
             {
                 Oop ctx = senderOfCurrent;
                 int depth = 0;
-                while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+                while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
                     if (ctx.rawBits() == homeCtx.rawBits()) break;
                     Oop method = memory_.fetchPointer(3, ctx);
                     if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
@@ -6666,7 +6666,7 @@ void Interpreter::returnValue(Oop value) {
                 Oop c = senderOfCurrent;
                 int safety = 0;
                 while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                       c.rawBits() != nextEnsureCtx.rawBits() && safety++ < 200) {
+                       c.rawBits() != nextEnsureCtx.rawBits() && safety++ < 70000) {
                     Oop next = memory_.fetchPointer(0, c);
                     memory_.storePointer(0, c, nilObj);
                     memory_.storePointer(1, c, nilObj);
@@ -6698,7 +6698,7 @@ void Interpreter::returnValue(Oop value) {
                 Oop c = senderOfCurrent;
                 int safety = 0;
                 while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                       c.rawBits() != homeCtx.rawBits() && safety++ < 200) {
+                       c.rawBits() != homeCtx.rawBits() && safety++ < 70000) {
                     Oop next = memory_.fetchPointer(0, c);
                     memory_.storePointer(0, c, nilObj);
                     memory_.storePointer(1, c, nilObj);
@@ -6747,11 +6747,20 @@ void Interpreter::returnValue(Oop value) {
             memory_.storePointer(0, activeContext_, nilObj);
             memory_.storePointer(1, activeContext_, nilObj);
 
-            // Search sender chain for home context (method match)
+            // Search sender chain for home context (method match).
+            // Bound raised 200 -> 70000 (2026-06-19): a LEGITIMATE deep non-local
+            // return can have its home thousands of contexts up the chain — e.g.
+            // recursive `printString`'s LimitedWriteStream limit-block does `^` to
+            // truncate from ~14000 frames deep (ArrayTest>>testPrintingRecursive).
+            // The old 200 cap stopped the search early, so the home was never found
+            // and we spuriously sent cannotReturn: (uncatchable BlockCannotReturn).
+            // 70000 > MaxFrameDepth(65536) covers the whole possible chain; it is
+            // still a finite guard against a corrupted/cyclic sender chain.  (All
+            // the sibling 200 bounds in this NLR block were raised to match.)
             Oop homeCtx = Oop::nil();
             Oop ctx = senderOfCurrent;
             int depth = 0;
-            while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+            while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
                 if (memory_.fetchPointer(3, ctx).rawBits() == homeMethodOop.rawBits()) {
                     homeCtx = ctx;
                     break;
@@ -6765,7 +6774,7 @@ void Interpreter::returnValue(Oop value) {
                 Oop nextEnsure = Oop::nil();
                 ctx = senderOfCurrent;
                 depth = 0;
-                while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+                while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
                     if (ctx.rawBits() == homeCtx.rawBits()) break;
                     Oop method = memory_.fetchPointer(3, ctx);
                     if (method.isObject() && !method.isNil() && primitiveIndexOf(method) == 198) {
@@ -6782,7 +6791,7 @@ void Interpreter::returnValue(Oop value) {
                     Oop c = senderOfCurrent;
                     int safety = 0;
                     while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                           c.rawBits() != nextEnsure.rawBits() && safety++ < 200) {
+                           c.rawBits() != nextEnsure.rawBits() && safety++ < 70000) {
                         Oop next = memory_.fetchPointer(0, c);
                         memory_.storePointer(0, c, nilObj);
                         memory_.storePointer(1, c, nilObj);
@@ -6808,7 +6817,7 @@ void Interpreter::returnValue(Oop value) {
                     Oop c = senderOfCurrent;
                     int safety = 0;
                     while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-                           c.rawBits() != homeCtx.rawBits() && safety++ < 200) {
+                           c.rawBits() != homeCtx.rawBits() && safety++ < 70000) {
                         Oop next = memory_.fetchPointer(0, c);
                         memory_.storePointer(0, c, nilObj);
                         memory_.storePointer(1, c, hasBeenReturnedPC);
@@ -7586,7 +7595,7 @@ void Interpreter::returnFromMethod() {
                     if (!(och.isObject() && !och.isNil() && och.rawBits() > 0x10000)) och = Oop::nil();
                 }
                 Oop fallbackCtx = Oop::nil();
-                while (ctx.isObject() && !ctx.isNil() && searchDepth < 200) {
+                while (ctx.isObject() && !ctx.isNil() && searchDepth < 70000) {
                     Oop ctxMethod = memory_.fetchPointer(3, ctx);
                     if (!och.isNil() && ctx.rawBits() == och.rawBits()
                         && ctxMethod.rawBits() == homeMethodOop.rawBits()) {

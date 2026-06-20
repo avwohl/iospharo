@@ -111,23 +111,23 @@ under `PHARO_NO_JIT`, which passes — unless noted)
    `PHARO_SISTA_NO_TAGCHECK_SKIP` forces the guard always. Validated: factorial repro
    1→0, hammer (177! ×20000) 1→0, `testSlowFactorial` FAIL→PASS, NeoJSON 116/116,
    PolyMath 0 SubscriptOutOfBounds (off-by-one fix intact).
-   `ArrayTest>>testPrintingRecursive` — the 4096-overflow part is FIXED by the
-   `StackOverflowLimit` raise above (the built-in `[MUSTBOOL]`/`[MB-FORENSICS]` dump
-   pinned the corruption at `fd=4094-4100` = the old 4096 cap, in `Array>>printOn:`
-   reading `SmallInteger 0` for a conditional; with the raise the recursion no longer
-   overflows). But a SEPARATE, STILL-OPEN bug is now unmasked: when the
+   `ArrayTest>>testPrintingRecursive` — FULLY FIXED 2026-06-19 (two parts):
+   (a) the 4096-overflow, fixed by the `StackOverflowLimit` raise above; and
+   (b) a deep-NLR `BlockCannotReturn`, unmasked once (a) was fixed. When the
    LimitedWriteStream hits the ~50000-char limit it does a non-local return (`^`) to
-   truncate, and that **deep NLR through ~14000 frames raises `BlockCannotReturn`**
-   (uncatchable — escapes `on: Exception do:`, so it aborts the test batch). It is
-   VM-core (fails under `PHARO_NO_JIT` too), distinct from the overflow. NOT generic
-   deep-NLR: a uniform self-recursive NLR (`recurseNLR:withReturn:` invoking a
-   passed-down `[:v | ^v]`) works to depth 40000 on our VM and on Cog. So it is
-   specific to the limit-block's `^` unwinding the print's deep HETEROGENEOUS frame
-   chain (printOn:/do:/blocks + any materialized contexts) — likely a home-context
-   resolution failure across a frame-type/materialization boundary (cf. memory
-   `nlr-nested-valuewithexit-bug`). NEXT: walk the `cannotReturn:` signaler in the
-   print path (the limit fires ~14000 deep). Repro:
-   `scripts/pkg-jit-test/repro_cyclicprint_jit.st`.
+   truncate, from ~14000 frames deep. ROOT CAUSE of (b): the **context-NLR
+   home-context search was capped at `depth < 200`** (Interpreter.cpp ~6754 + 7
+   sibling bounds in the same NLR block). The print's frames materialize to contexts,
+   so the `^` takes the context-NLR path; with the home ~14000 contexts up, the 200
+   cap stopped the search early -> home never found -> spurious `cannotReturn:`
+   (uncatchable `BlockCannotReturn`, escapes `on: Exception do:`, aborts the batch).
+   NOT generic deep-NLR (a uniform self-recursive `recurseNLR:withReturn:` stays on
+   the inline stack and works to 40000) — specific to the context-NLR path. FIX:
+   raise all the NLR context-search bounds 200 -> 70000 (> MaxFrameDepth=65536; still
+   a finite guard against a cyclic sender chain). Validated: TPR PASS; kernel 2871
+   pass / 0 fail / 0 err (incl ArrayTest, no batch abort) + a 2129-test NLR/ensure:
+   re-run clean; NeoJSON 116/116; STON 317/0/0; factorial + PolyMath fixes intact.
+   Repro: `scripts/pkg-jit-test/repro_cyclicprint_jit.st`.
 
 2. **PolyMath off-by-one subscript corruption** (JIT, 51 occurrences) —
    **ROOT-CAUSED + FIXED 2026-06-19.**
