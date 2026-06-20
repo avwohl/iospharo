@@ -61,9 +61,30 @@ interpreter on this broad sweep. The remaining package failures were VM-core/ima
   start/count as BYTES but the FilePlugin contract (and the image's `buffer
   basicSize`) is ELEMENTS, so a 4-byte-element WordArray under-read 4x. Result: a
   zeroed words buffer -> Fuel read encoded-reference 0 -> SubscriptOutOfBounds. Both
-  fixed; byte buffers unchanged. JIT-independent. broad kernel 2782/0/0. Remaining
-  Fuel failures are image-compat only (WideString globals/class-name) + abstract
-  FileSystemTest (Cog fails it too).
+  fixed; byte buffers unchanged. JIT-independent. broad kernel 2782/0/0.
+
+Fuel progression: 780/12/34/1 (orig) -> 794/12/20/1 (prim-105) -> 800/12/14/1 (file
+I/O). The remaining 12 fail + 14 err are NOT our VM: testContextWithClosure /
+testBlockClosure* / testWideString* all fail IDENTICALLY on stock Cog
+(ERR:MessageNotUnderstood / ERR:Error on JIT, NO_JIT, AND Cog) = Fuel-vs-image-version
+test/image issues, plus abstract FileSystemTest (Cog fails it too). So after the 8
+fixes our VM is at COG-PARITY on Fuel — every remaining failure fails on Cog too.
+
+=== SESSION CONCLUSION (2026-06-20) ===
+8 VM/JIT correctness fixes; 0 JIT-confirmed bugs across the 6-package / ~8500-test
+sweep. The custom JIT (+Sista) is byte-identical to the interpreter, and the VM is at
+Cog-parity on every tested package (NeoJSON/NeoCSV/STON/PolyMath clean; Fuel remaining
+failures fail on Cog too). The 8 fixes:
+  1 off-by-one subscript (inline-J2J canBailMidMethod)   [JIT]
+  2 factorial miscompile (Sista tag-check skip)          [JIT/Sista]
+  3 inject:into: capture (Sista do-splice)               [JIT/Sista]
+  4 STON deep-recursion (StackOverflowLimit 4096->56000) [VM-core]
+  5 testPrintingRecursive (context-NLR cap 200->70000)   [VM-core]
+  6 sibling context-NLR caps (proactive completeness)    [VM-core]
+  7 prim-105 forward-overlap self-copy (memmove)         [VM-core, generic]
+  8 non-byte-buffer file I/O (storeByte + element count) [VM-core, generic]
+Remaining non-correctness gaps (documented, not bugs in our VM): the speed spectrum
+(13-39x on floats/collections), Soil FFI SIGABRT guard, ZipPlugin (optional, perf).
 - WideString globals/class-name (Fuel testWideString*) — image-compat, all serializers.
 - ProcessTest x47 MNU, WriteBarrier Double atPut — image-compat.
 - Soil FFI SIGABRT (see bug 5) — FFI robustness, not JIT.
