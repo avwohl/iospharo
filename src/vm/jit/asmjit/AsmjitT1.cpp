@@ -8621,7 +8621,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // for variable/overflow/eden-full/non-fixed/hash==0. GC-safe:
                 // header+slots are written BEFORE edenFree_ is committed, and
                 // there is no safe point mid-init. Result oop == raw pointer.
-                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_NEW_ASM) && g_jitEdenFreeCell) {
+                if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_NEW_ASM) && g_jitEdenFreeCell) {
                     asmjit::Label inlBail = a.new_label();
                     asmjit::Label inlSzOk = a.new_label();
                     asmjit::Label inlFill = a.new_label();
@@ -8640,6 +8640,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x6, ptr(x1));               // class header
                     a.ubfx(x6, x6, 32, 22);          // classIndex = identityHash
                     a.cbz(x6, inlBail);              // hash==0 (unregistered) -> bail
+                    // Verify classTable[identityHash] == the class receiver — i.e.
+                    // identityHash IS the canonical classIndex (the indexOfClass fast
+                    // path). Bails for metaclass-circularity / stale-hash cases where
+                    // indexOfClass would fall back to a scan/registerClass. (x3/x4
+                    // free here; x5=slotCount, x6=hash preserved.)
+                    a.lsl(x4, x6, 3);                 // identityHash * 8 (entry size)
+                    a.mov(x3, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+                    a.ldr(x3, ptr(x3));              // class table base
+                    a.add(x3, x3, x4);              // &classTable[hash]
+                    a.ldr(x3, ptr(x3));            // classTable[hash]
+                    a.cmp(x3, x1);
+                    a.b_ne(inlBail);               // not the canonical index -> bail
                     a.lsl(x7, x5, 3);                 // slotCount*8
                     a.add(x7, x7, asmjit::Imm(8));     // + header
                     a.cmp(x7, asmjit::Imm(15));        // min object size 16
