@@ -10,6 +10,7 @@ package    classes  Cog P/F/E      JIT P/F/E/T       JIT-only failures
 NeoJSON    11       116/0/0        116/0/0           0   CLEAN PARITY
 NeoCSV     ~3       66/0/0         66/0/0            0   CLEAN PARITY
 STON       11       317/0/0        316/0/1           1   testDeepStructure (deep-recursion)
+STON       11       317/0/0        317/0/0           0   FIXED (StackOverflowLimit 4096->56000)
 PolyMath   90       777/0/0        707/0/69/1        51 SubscriptOutOfBounds (JIT)
                                                      +18 SmallFloat64 inject:into: (VM-core, not JIT)
 PolyMath   90       777/0/0        757/1/18/1        off-by-one fix: 0 SubscriptOutOfBounds
@@ -32,12 +33,16 @@ Soil       ~30      ~425/6/2/1     SIGABRT            VM FFI file-lock crash (no
   JITRuntime.hpp), opt-in `PHARO_T1_ADMIT_BAILMID_CALLEES` restores the old admit.
   Cost +5-31%. Found via PHARO_SP_DEPTH_CHECK differential + knob bisection.
   Verified: 11-class repro 48->0; kernel + NeoJSON unchanged.
-- JIT deep-recursion operand corruption: STON testDeepStructure (1024-deep).
-  STILL OPEN — distinct from the above (with the fix the error changes signature
-  `True>>#\\` -> `KeyNotFound: key 0`). Likely same class as the pre-existing
-  kernel failures ArrayTest>>testPrintingRecursive / IntegerTest>>testSlowFactorial.
-- VM-core (not JIT): SmallFloat64 >> #inject:into: ×18 in PolyMath (interp fails too,
-  Cog passes).
+- Deep-recursion: STON testDeepStructure + ArrayTest>>testPrintingRecursive — BOTH
+  FIXED 2026-06-19. Two VM-core causes: (1) StackOverflowLimit was an over-aggressive
+  4096 though savedFrames_ holds 65536 -> raised to 56000 (fixes STON + the
+  overflow-corruption class); (2) the context-NLR home-context search was capped at
+  depth<200 -> deep printString's limit-block ^ (~14000 contexts up) hit an uncatchable
+  BlockCannotReturn -> raised to 70000 (fixes testPrintingRecursive). Neither was JIT
+  codegen (both failed under PHARO_NO_JIT). IntegerTest>>testSlowFactorial was a
+  separate Sista tag-check miscompile, also fixed.
+- SmallFloat64 >> #inject:into: ×18 in PolyMath — FIXED (Sista do-splice captured-var;
+  was mislabeled VM-core).
 - VM FFI gap (not JIT): Soil-File LibC flock/fsync → SIGABRT.
 
 ## Speed spectrum (ms, lower better)
