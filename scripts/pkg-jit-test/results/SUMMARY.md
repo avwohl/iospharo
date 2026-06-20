@@ -143,16 +143,18 @@ set 1614, string_build 1876, alloc 1014, factorial 333, sort 521 ms; ratios 2-39
 above). The prim-105 branch did not hurt string_build. Lever ranking for the
 "as-fast-as-Cog" half (all DEEP, multi-session JIT work — consistent with memory
 "Cog-speed lever CLOSED / no safe quick win"):
-  1. ALLOCATION (highest ROI): TWO sub-levers. (a) The JIT `new` fast-path helper
-     jit_rt_new_prim (JITRuntime.cpp:1771) bump-allocates from OLD SPACE
-     (oldSpaceFree(), line 1866), NOT eden — so JIT-allocated short-lived objects
-     skip the young generation and pile into old space -> full-GC pressure. This is
-     the SAME "old-space trap" memory vm-shallowcopy-old-space-trap.md documents for
-     clones (fixed by moving them to eden, ~12% on SHA256); applying that pattern to
-     jit_rt_new_prim is the tractable first step BUT needs scavenge-mid-JIT-call
-     safepoint handling (the reason it's old-space today). (b) Cog further INLINES the
-     bump in emitted code (no case 70/71 in AsmjitT1; we call the C++ helper per new).
-     Underlies allocation(20x)+string_build(22x)+collection(17x)+dict(18x)+set(39x).
+  1. ALLOCATION (highest ROI): TWO sub-levers. (a) DONE 2026-06-20 (b52dbf14):
+     jit_rt_new_prim now allocates to EDEN (young) via ObjectMemory::allocateRawYoung
+     (old-space fallback for overflow/eden-full; needsScavenge_ deferred to a safe
+     point -> GC-safe). Was old-space-only -> full-GC pressure (shallowCopy old-space
+     trap). MODEST win ~4-7% (allocation 1014->974, collection 881->820, sort
+     521->486) -> GC pressure was NOT the dominant cost. (b) THE BIG REMAINING LEVER:
+     the JIT emits an inline stencil at each new/new: site that CALLS the C++ helper
+     jit_rt_new_prim (helpers.newPrim, stencils.cpp:1586); the ~18x residual is that
+     per-alloc C++ call + the helper's size/format/header/nil-fill work. Cog inlines
+     the whole bump in emitted asm (no call). Inlining jit_rt_new_prim's body into the
+     new-stencil is the deep win. Underlies allocation(19x)+string_build(22x)+
+     collection(17x)+dict(18x)+set(39x).
   2. Block activation: first-class block #value: not inlined (block_recursion 37x).
   3. Float unboxing: every float op boxes a heap Float / SmallFloat64 (float_loop 17x).
   4. Per-send dispatch tax: the residual ~1.5x send tax (polymorphic_sends 8x).
