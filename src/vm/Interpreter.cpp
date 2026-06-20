@@ -7767,7 +7767,7 @@ void Interpreter::returnFromMethod() {
         Oop ctx = activeContext_;
         Oop homeCtx = Oop::nil();
         int depth = 0;
-        while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+        while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
             Oop ctxMethod = memory_.fetchPointer(3, ctx);
             if (ctxMethod.rawBits() == homeMethodForCR.rawBits()) {
                 homeCtx = ctx;
@@ -7951,7 +7951,7 @@ void Interpreter::returnFromBlock() {
             Oop och = memory_.fetchPointer(0, closure_);
             if (!(och.isObject() && !och.isNil() && och.rawBits() > 0x10000)) och = Oop::nil();
             Oop fallbackCtx = Oop::nil();
-            while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+            while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
                 Oop ctxMethod = memory_.fetchPointer(3, ctx);
                 if (!och.isNil() && ctx.rawBits() == och.rawBits()
                     && ctxMethod.rawBits() == homeMethod.rawBits()) {
@@ -8030,8 +8030,17 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
     int depth = 0;
     Oop ensureCtx = Oop::nil();
 
-    // Find the first ensure: (prim 198) context between start and home
-    while (ctx.isObject() && !ctx.isNil() && depth < 200) {
+    // Find the first ensure: (prim 198) context between start and home.
+    // Bound 200 -> 70000 (2026-06-20): a MUST-FIND-home/ensure search — the home
+    // can legitimately be thousands of contexts up for a deep non-local return
+    // through materialized contexts. Same fix + reason as the home-context search
+    // at the ~6754 NLR block (the testPrintingRecursive fix); the old 200 cap would
+    // stop early on deep NLR and miss the ensure: / leave an incomplete unwind.
+    // Sibling home-searches at the two context-NLR sites above raised to match.
+    // 70000 > MaxFrameDepth(65536) covers the chain; still a finite cyclic guard.
+    // (Proactive: the proven trigger used the ~6754 path; this materialized-context
+    // path (frameDepth_==0) is the same pattern, regression-validated.)
+    while (ctx.isObject() && !ctx.isNil() && depth < 70000) {
         if (ctx.rawBits() == homeCtx.rawBits()) break;
 
         Oop method = memory_.fetchPointer(3, ctx);
@@ -8065,7 +8074,7 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
         Oop c = startCtx;
         int safety = 0;
         while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
-               c.rawBits() != ensureCtx.rawBits() && safety++ < 200) {
+               c.rawBits() != ensureCtx.rawBits() && safety++ < 70000) {
             Oop nextSender = memory_.fetchPointer(0, c);
             memory_.storePointer(0, c, nilObj);  // sender = nil
             memory_.storePointer(1, c, hasBeenReturnedPC);  // pc = sentinel
