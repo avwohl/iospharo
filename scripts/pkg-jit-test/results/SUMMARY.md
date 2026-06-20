@@ -174,6 +174,17 @@ above). The prim-105 branch did not hurt string_build. Lever ranking for the
      351/0/0, NeoJSON 116, STON 317, GC-stress 50000 Arrays = 1250025000.
      LESSON: inline emits MUST preserve x5 (icDataPtr) for the bail->dispatchCached
      path; only clobber x3/x4/x6/x7/x9-x17.
+     ALSO basicNew: BYTE objects (ByteArray/ByteString new:N, instFormat 16-23)
+     inlined DEFAULT-ON (c95544ca): slotCount=ceil(N/8), format=16+padding, zero-fill,
+     eden (allocateBytes used old space). Format dispatch (2=pointer / 16-23=byte) ->
+     common bump. Validated via parallel workflow, 0 regressions: Collections 6068/0/52,
+     Kernel 1453/0/51, NeoJSON 116, STON 317, Fuel 800/12/14/1, byte GC-stress 50000
+     ByteArrays survive scavenges; ByteArray new: 0/7/8/9/16/2032 correct padding.
+     (PolyMath err=2 PCA fit: PROVEN inline-independent — same with knob off.)
+     Coverage now: basicNew (0-arg fixed pointer) + basicNew: (Array + ByteArray/
+     ByteString). Still bail: words(WideString)/indexable-with-fixed/CompiledMethod/
+     overflow(>2032 bytes or >254 slots). ~6-8% alloc, ~1-2% collection — `new` is a
+     small fraction of send-heavy code; dispatch tax (#1) still dominates the gap.
   3. Block activation: first-class block #value: not inlined (block_recursion 37x).
   4. Float unboxing: every float op boxes a heap Float / SmallFloat64 (float_loop 17x).
 The allocation levers (2a/2b) are built/shipped; the rest are focused multi-session
