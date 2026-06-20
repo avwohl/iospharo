@@ -23,6 +23,32 @@ Fuel       46       733/10/5       aborted@testBitmap >=1 (SubscriptOutOfBounds:
 Soil       ~30      ~425/6/2/1     SIGABRT            VM FFI file-lock crash (not JIT)
 ```
 
+## Broad JIT-correctness sweep — 2026-06-20 (post all 6 fixes)
+
+Method: per target, run the whole category JIT vs PHARO_NO_JIT; a failure is a
+JIT bug ONLY if it fails JIT, passes NO_JIT, AND passes Cog. (workflow:
+jit-correctness-sweep)
+
+```
+target            JIT result                 JIT-confirmed bugs
+Fuel (47 cls)     780/12/34/1                0  (all 12 fail + 34 err reproduce under NO_JIT)
+Collections(63)   6068/0/52/0                0  (JIT == NO_JIT byte-identical; 52 err = abstract CollectionRootTest)
+Kernel (90)       1453/0/51/0                0  (JIT == NO_JIT; 51 err = ProcessTest/WriteBarrier image-compat)
+Text/Intl (17)    134/0/0/1                  0  (1 timeout = offline URL fetch, both configs)
+NeoCSV (3)        66/0/0/0                   0  CLEAN
+Zinc (49)         no-sockets in sandbox      0  (env, not VM)
+```
+
+RESULT: **ZERO JIT-confirmed correctness bugs across ~8,500 tests in 6 packages.**
+After the 6 fixes this session, the tier-1 JIT (+ Sista) is byte-identical to the
+interpreter on this broad sweep. The remaining package failures are VM-core/image:
+- ZipPlugin NOT implemented (Interpreter.cpp:19093) -> Fuel GZip (deflate/inflate/
+  CRC) falls back to pure-Smalltalk codec that corrupts large high-entropy payloads
+  -> CRCError / SubscriptOutOfBounds. Cog has the native plugin. (fixes ~12 Fuel tests)
+- WideString globals/class-name (Fuel testWideString*) — image-compat, all serializers.
+- ProcessTest x47 MNU, WriteBarrier Double atPut — image-compat.
+- Soil FFI SIGABRT (see bug 5) — FFI robustness, not JIT.
+
 ## Bugs found (JIT-confirmed = fails JIT, passes PHARO_NO_JIT)
 
 - JIT off-by-one subscript: PolyMath ×51 + Fuel testBitmap. **ROOT-CAUSED + FIXED
