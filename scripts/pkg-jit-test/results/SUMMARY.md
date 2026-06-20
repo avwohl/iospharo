@@ -40,11 +40,22 @@ Zinc (49)         no-sockets in sandbox      0  (env, not VM)
 ```
 
 RESULT: **ZERO JIT-confirmed correctness bugs across ~8,500 tests in 6 packages.**
-After the 6 fixes this session, the tier-1 JIT (+ Sista) is byte-identical to the
-interpreter on this broad sweep. The remaining package failures are VM-core/image:
-- ZipPlugin NOT implemented (Interpreter.cpp:19093) -> Fuel GZip (deflate/inflate/
-  CRC) falls back to pure-Smalltalk codec that corrupts large high-entropy payloads
-  -> CRCError / SubscriptOutOfBounds. Cog has the native plugin. (fixes ~12 Fuel tests)
+After the JIT fixes this session, the tier-1 JIT (+ Sista) is byte-identical to the
+interpreter on this broad sweep. The remaining package failures were VM-core/image
+(NOT JIT codegen); investigating them surfaced a 7th VM bug (prim 105), now fixed:
+- **prim 105 (replaceFrom:to:with:startingAt:) forward-overlap self-copy — FIXED
+  2026-06-20 (1fb18d67).** The Fuel GZip family was NOT plugin-absence: gzip inflate's
+  LZ77 self-copy hit primitiveStringReplace which used memmove (copies backward on a
+  dst>src overlap, preserving the source) instead of the spec'd FORWARD propagation ->
+  inflate produced wrong bytes -> CRCError/SubscriptOutOfBounds on low-entropy/repeated
+  payloads of ANY size. Generic (RLE/buffer-shift/LZ77), not Zip-specific. Proven not
+  plugin-absence by forcing Cog onto the same pure-Smalltalk inflate fallback (Cog
+  correct, our VM corrupted). ZipPlugin remains unimplemented but is NOT needed for
+  correctness — the Smalltalk fallback round-trips correctly once prim 105 is fixed.
+  Fuel improved 780/12/34/1 -> 794/12/20/1 (CRCError ~12 -> 0). Remaining Fuel
+  failures are image-compat (WideString x13) + FLBinaryFileStream* file-I/O
+  SubscriptOutOfBounds (VM-core, fails NO_JIT too — separate, not prim 105/JIT;
+  basic non-file testWordArray passes JIT/NO_JIT/Cog).
 - WideString globals/class-name (Fuel testWideString*) — image-compat, all serializers.
 - ProcessTest x47 MNU, WriteBarrier Double atPut — image-compat.
 - Soil FFI SIGABRT (see bug 5) — FFI robustness, not JIT.
