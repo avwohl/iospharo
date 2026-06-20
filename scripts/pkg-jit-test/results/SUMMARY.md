@@ -143,27 +143,28 @@ set 1614, string_build 1876, alloc 1014, factorial 333, sort 521 ms; ratios 2-39
 above). The prim-105 branch did not hurt string_build. Lever ranking for the
 "as-fast-as-Cog" half (all DEEP, multi-session JIT work — consistent with memory
 "Cog-speed lever CLOSED / no safe quick win"):
-  1. ALLOCATION (highest ROI): TWO sub-levers. (a) DONE 2026-06-20 (b52dbf14):
-     jit_rt_new_prim now allocates to EDEN (young) via ObjectMemory::allocateRawYoung
-     (old-space fallback for overflow/eden-full; needsScavenge_ deferred to a safe
-     point -> GC-safe). Was old-space-only -> full-GC pressure (shallowCopy old-space
-     trap). MODEST win ~4-7% (allocation 1014->974, collection 881->820, sort
-     521->486; re-measured eden-on ~996 vs eden-off ~1064 = real ~5-6%, noisy) -> GC
-     pressure was NOT the dominant cost. (b) THE BIG REMAINING LEVER = per-site class
-     SPECIALIZATION + inline asm alloc (a MAJOR JIT feature, multi-session). Tier-1
-     `basicNew` (AsmjitT1.cpp:8610) calls jit_rt_basic_new -> Interpreter::jitBasicNew
-     -> allocateSlots (already eden). Per-alloc ~250ns vs Cog ~12ns (20x). The class
-     isn't known at emit time, so a GENERIC inline still reads instanceSpec at runtime
-     + computes size -> saves only the call overhead (modest). Cog's speed = baking
-     slotCount/format/classIndex into the emitted code when the IC monomorphizes, then
-     a ~3-instr inline eden bump + N nil-stores, NO call. Requires: IC-driven per-site
-     specialization + recompile + GC-safe inline bump (eden overflow -> call the C++
-     fallback; the deferred-needsScavenge_ design from 1a makes the bump GC-safe).
-     Underlies allocation(20x)+string_build(22x)+collection(17x)+dict(18x)+set(39x).
-     NOT attempted: a contained generic-inline is GC-risky for a modest win, and the
-     real (specialization) win is a dedicated effort — not a marathon-tail change.
-  2. Block activation: first-class block #value: not inlined (block_recursion 37x).
-  3. Float unboxing: every float op boxes a heap Float / SmallFloat64 (float_loop 17x).
-  4. Per-send dispatch tax: the residual ~1.5x send tax (polymorphic_sends 8x).
-None attempted this session (each is a focused multi-session effort); correctness was
+  1. PER-SEND DISPATCH TAX = the REAL #1 lever (re-ranked 2026-06-20 after building
+     the allocation levers below). polymorphic_sends is 8x directly, and it ALSO
+     dominates the "allocation"(20x)/collection(17x)/dict(18x)/set(39x) workloads —
+     those are SEND-heavy (e.g. the allocation bench is `Association key:value:` = 3
+     sends + new per iter), so the surrounding sends, not `new`, are the bulk. Proof:
+     inlining `new` entirely (1b below) only moved the allocation bench ~5%. Lever =
+     the ~1.5x residual per-send dispatch cost (cf. memory cog-speed-lever-closed:
+     cross-method activation is done at 2.65x; this is the remaining per-send tax).
+     Candidate: out-of-line dispatch / IC fast-path tightening. Multi-session.
+  2. ALLOCATION — BOTH sub-levers built, BOTH modest (~5% each), confirming the gap
+     is dispatch not new: (a) DONE default-on (b52dbf14): jit_rt_new_prim -> eden
+     (was old-space trap). (b) DONE opt-in PHARO_T1_INLINE_NEW_ASM (3428bafc): tier-1
+     basicNew (0-arg fixed-size) eden bump + header + nil-fill emitted inline in asm
+     (AsmjitT1.cpp:8610), skipping the jit_rt_basic_new->jitBasicNew->primitiveNew C++
+     chain; bails to the helper for variable/overflow/eden-full/non-fixed/hash==0.
+     GC-safe (init before commit; no mid-init safe point). Validated: GC-stress 100000
+     Associations across scavenges = 5000050000; kernel 2720/0/0; Association/Point
+     correct. Win only ~5% (961 vs 1012) -> `new` is a small fraction of send-heavy
+     allocation. Kept opt-in (modest win doesn't justify defaulting a GC-touching asm
+     emit without a full SUnit A/B soak). basicNew: (variable) not inlined.
+  3. Block activation: first-class block #value: not inlined (block_recursion 37x).
+  4. Float unboxing: every float op boxes a heap Float / SmallFloat64 (float_loop 17x).
+The allocation levers (2a/2b) are built/shipped; the rest are focused multi-session
+efforts. Correctness was
 the productive vein (8 fixes, Cog-parity).
