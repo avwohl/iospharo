@@ -119,10 +119,15 @@ under `PHARO_NO_JIT`, which passes — unless noted)
    LimitedWriteStream hits the ~50000-char limit it does a non-local return (`^`) to
    truncate, and that **deep NLR through ~14000 frames raises `BlockCannotReturn`**
    (uncatchable — escapes `on: Exception do:`, so it aborts the test batch). It is
-   VM-core (fails under `PHARO_NO_JIT` too), distinct from the overflow. Likely the
-   deep-NLR home-context resolution failing through a very deep frame chain
-   (cf. memory `nlr-nested-valuewithexit-bug`). NEXT: investigate `BlockCannotReturn`
-   / `cannotReturn:` at deep NLR. Repro: `scripts/pkg-jit-test/repro_cyclicprint_jit.st`.
+   VM-core (fails under `PHARO_NO_JIT` too), distinct from the overflow. NOT generic
+   deep-NLR: a uniform self-recursive NLR (`recurseNLR:withReturn:` invoking a
+   passed-down `[:v | ^v]`) works to depth 40000 on our VM and on Cog. So it is
+   specific to the limit-block's `^` unwinding the print's deep HETEROGENEOUS frame
+   chain (printOn:/do:/blocks + any materialized contexts) — likely a home-context
+   resolution failure across a frame-type/materialization boundary (cf. memory
+   `nlr-nested-valuewithexit-bug`). NEXT: walk the `cannotReturn:` signaler in the
+   print path (the limit fires ~14000 deep). Repro:
+   `scripts/pkg-jit-test/repro_cyclicprint_jit.st`.
 
 2. **PolyMath off-by-one subscript corruption** (JIT, 51 occurrences) —
    **ROOT-CAUSED + FIXED 2026-06-19.**
