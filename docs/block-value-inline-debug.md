@@ -96,9 +96,8 @@ restore which BV's resume=endOfSend currently SKIPS).
 
 RUNAWAY SIDE-EFFECT SUSPECTS (codegen flips from the flag, active without BV firing):
 - AsmjitT1.cpp:7707 `spLiveInX2 = !t1InlineBlockValue && !t1InlineJ2JXmethodLog` — BV ON
-  forces the sp-reload-into-x12 path (spReg=x12) instead of reusing x2. This path is
-  RARELY exercised by default (default reuses x2), so it may be bit-rotted. **Prime
-  suspect** for the runaway (a wrong sp on returns corrupts a loop → non-termination).
+  forces the sp-reload-into-x12 path. **RULED OUT 2026-06-20**: forcing spLiveInX2 true
+  with BV on (dropping the BV term) did NOT stop the runaway.
 - AsmjitT1.cpp:11623 `staticJ2JArgCount = -1` when BV ON — forces the dynamic arg-count
   path in the prelude for ALL methods (but that path is the default for varying-arg
   methods, so less suspect).
