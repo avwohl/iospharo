@@ -116,8 +116,23 @@ under `PHARO_NO_JIT`, which passes — unless noted)
    `PHARO_SISTA_NO_TAGCHECK_SKIP` forces the guard always. Validated: factorial repro
    1→0, hammer (177! ×20000) 1→0, `testSlowFactorial` FAIL→PASS, NeoJSON 116/116,
    PolyMath 0 SubscriptOutOfBounds (off-by-one fix intact).
-   `ArrayTest>>testPrintingRecursive` is a SEPARATE bug — NOT fixed by this and NOT a
-   Sista bug (`PHARO_NO_SISTA` doesn't fix it); still open.
+   `ArrayTest>>testPrintingRecursive` is a SEPARATE, STILL-OPEN tier-1 JIT bug
+   (characterized 2026-06-19): a **deep-recursion operand corruption**.
+   `printString` of a self-referential array recurses ~15000 levels (to fill the
+   ~50000-char limit); under the JIT an operand is corrupted deep in the recursion —
+   a boolean slot for a conditional jump gets a non-boolean -> `NonBooleanReceiver`
+   (the signature SHIFTS to MNU `True`/`False` under other configs = operand
+   corruption). JIT-CONFIRMED (passes under `PHARO_NO_JIT`). NOT knob-isolatable:
+   `NO_SISTA`, `NO_INLINE_J2J`, `XMETHOD_MAX_IC=0`, `NO_CAN_SKIP_J2J_SAVE`,
+   `SP_IN_X25=0`, `FSR_LAZY=0`, `NO_NATIVE_BACKJUMP` all still fail (only shift the
+   error); ONLY `NO_JIT` fixes it -> a fundamental deep-recursion corruption in
+   tier-1 base codegen, not one feature. Non-cyclic deep nesting (8000-deep array)
+   also misbehaves (hangs) under the JIT, so it is deep-recursion-general, not
+   cyclic-specific. Signaler-context walk shows `0x300000000` (corrupted frames),
+   same family as the STON deep-recursion issue. Minimal repro:
+   `scripts/pkg-jit-test/repro_cyclicprint_jit.st` (deterministic, fast: a 3-element
+   self-ref array). NEXT: needs lldb — break at the mustBeBoolean / non-boolean
+   conditional-jump site and walk the JIT frames; knob bisection is exhausted.
 
 2. **PolyMath off-by-one subscript corruption** (JIT, 51 occurrences) —
    **ROOT-CAUSED + FIXED 2026-06-19.**
