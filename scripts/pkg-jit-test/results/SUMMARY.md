@@ -154,15 +154,18 @@ above). The prim-105 branch did not hurt string_build. Lever ranking for the
      Candidate: out-of-line dispatch / IC fast-path tightening. Multi-session.
   2. ALLOCATION — BOTH sub-levers built, BOTH modest (~5% each), confirming the gap
      is dispatch not new: (a) DONE default-on (b52dbf14): jit_rt_new_prim -> eden
-     (was old-space trap). (b) DONE opt-in PHARO_T1_INLINE_NEW_ASM (3428bafc): tier-1
-     basicNew (0-arg fixed-size) eden bump + header + nil-fill emitted inline in asm
-     (AsmjitT1.cpp:8610), skipping the jit_rt_basic_new->jitBasicNew->primitiveNew C++
-     chain; bails to the helper for variable/overflow/eden-full/non-fixed/hash==0.
-     GC-safe (init before commit; no mid-init safe point). Validated: GC-stress 100000
-     Associations across scavenges = 5000050000; kernel 2720/0/0; Association/Point
-     correct. Win only ~5% (961 vs 1012) -> `new` is a small fraction of send-heavy
-     allocation. Kept opt-in (modest win doesn't justify defaulting a GC-touching asm
-     emit without a full SUnit A/B soak). basicNew: (variable) not inlined.
+     (was old-space trap). (b) DONE DEFAULT-ON (0ecf51fa, opt-out
+     PHARO_T1_NO_INLINE_NEW_ASM): tier-1 basicNew (0-arg fixed-size) eden bump +
+     header + nil-fill emitted inline in asm (AsmjitT1.cpp:8610), skipping the
+     jit_rt_basic_new->jitBasicNew->primitiveNew C++ chain; verifies
+     classTable[identityHash]==class; bails to the helper for variable/overflow/
+     eden-full/non-fixed/hash==0/non-canonical-index. GC-safe (init before commit; no
+     mid-init safe point). VALIDATED default-on (zero regressions, ~4000+ tests):
+     NeoJSON 116/0/0, STON 317/0/0, kernel 2782/0/0, PolyMath 776/0/0/1, Fuel
+     800/12/14/1, GC-stress 100000 Associations = 5000050000, Object new/Assoc/Point.
+     Win ~8% on the allocation bench (974 vs 1058), ~1-2% collection/dict/set -> `new`
+     is a small fraction of send-heavy allocation (the dispatch tax #1 dominates).
+     basicNew: (1-arg variable) not inlined (more complex; small marginal value).
   3. Block activation: first-class block #value: not inlined (block_recursion 37x).
   4. Float unboxing: every float op boxes a heap Float / SmallFloat64 (float_loop 17x).
 The allocation levers (2a/2b) are built/shipped; the rest are focused multi-session
