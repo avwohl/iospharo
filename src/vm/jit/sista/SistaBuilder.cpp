@@ -1225,7 +1225,21 @@ public:
                         (uint32_t)(lastFullBlockFlags & 0x3F);
                     uint32_t injectOuterVecTemp = 0;
                     bool injectHasCapture = false;
-                    if (ok && numCopied == 1) {
+                    // 2026-06-19 correctness fix: REJECT any captured value by
+                    // default.  numCopied==1 was treated as a writable temp-VECTOR
+                    // (block-body refs lowered as kLoadTempInVec), but a block that
+                    // merely READS an outer method arg/temp
+                    // ([:sum :each | sum * factor + each]) captures a SCALAR copied
+                    // value, not a vector.  Mis-mapping it (and the extra capture
+                    // push) desyncs the simulator stack and swaps the inject
+                    // receiver with the captured scalar -> PMPolynomial>>value:
+                    // (erf) `coefficients inject: 0 into: [... aNumber ...]` raised
+                    // SmallFloat64>>inject:into:.  Closed blocks (numCopied==0) are
+                    // unaffected; captured-var blocks now fall back to the normal
+                    // (correct) inject:into: send.  Opt back in with
+                    // PHARO_SISTA_INJECT_CAPTURE (the old, unsound path).
+                    if (ok && numCopied == 1
+                        && GET_DEBUG_BOOL(PHARO_SISTA_INJECT_CAPTURE)) {
                         if (lastPushFullBlockStart < 1) {
                             ok = false;
                             rejectReason = "no room for vec push";
@@ -1243,7 +1257,7 @@ public:
                         }
                     } else if (ok && numCopied != 0) {
                         ok = false;
-                        rejectReason = "numCopied > 1";
+                        rejectReason = "inject block captures outer var";
                     }
 
                     // Sub-lift the block (with blockReturnAsLocal so

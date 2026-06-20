@@ -515,7 +515,15 @@ DebugSettings::DebugSettings() {
     // (Same correctness-over-a-broken-Sista-opt pattern as HELPER_SENDS.)
     noSistaCollect                   = !envEq1("PHARO_SISTA_COLLECT");
     noSistaCollectResume             = envPresent("PHARO_NO_SISTA_COLLECT_RESUME");
-    noSistaDoSplice                  = envPresent("PHARO_NO_SISTA_DO_SPLICE");
+    // Default OFF since 2026-06-19: the do-splice (inject:into:/do:/collect:
+    // block inlining) miscompiles blocks that CAPTURE an outer method arg/temp
+    // — a read-only scalar copied value is treated as a writable temp-VECTOR and
+    // the extra capture push desyncs the simulator stack, swapping the receiver
+    // with the captured scalar (PMPolynomial>>value: erf -> SmallFloat64 >>
+    // #inject:into', PolyMath x18).  Perf-neutral on the spectrum (incl.
+    // collection_protocols).  Opt back in with PHARO_SISTA_DO_SPLICE=1 (then the
+    // inject path is still guarded unless PHARO_SISTA_INJECT_CAPTURE is also set).
+    noSistaDoSplice                  = !envEq1("PHARO_SISTA_DO_SPLICE");
     sistaDoSpliceNoHint              = envEq1("PHARO_SISTA_DO_SPLICE_NO_HINT");
     noSistaDoAccumResume             = envPresent("PHARO_NO_SISTA_DOACCUM_RESUME");
     // 2026-06-04: HELPER_SENDS is now DEFAULT-OFF.  A Sista helper-send

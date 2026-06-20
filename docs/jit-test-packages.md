@@ -171,12 +171,26 @@ under `PHARO_NO_JIT`, which passes — unless noted)
    family as #2 and severe enough to abort the whole runner process, which is why
    the Fuel JIT pass-count is incomplete.
 
-4. **PolyMath SmallFloat64 type confusion** (VM-CORE, NOT JIT, 18 occurrences).
-   `MessageNotUnderstood: SmallFloat64 >> #inject:into:` — a float lands where a
-   collection is expected. Fails under BOTH the custom JIT and the custom
-   interpreter, but PASSES on Cog → a custom-VM core defect (float primitive /
-   method-resolution), independent of the JIT. Tracked separately from the JIT
-   bugs.
+4. **PolyMath SmallFloat64 / inject:into:** (18 occurrences) — RE-CLASSIFIED to a
+   SISTA do-splice bug and **FIXED 2026-06-19**. `MessageNotUnderstood:
+   SmallFloat64 >> #inject:into:`. The earlier "VM-core" label was wrong — it
+   reproduced under NO_JIT only because the Sista dispatch hook runs in the
+   interpreter too; `PHARO_NO_SISTA` (and `PHARO_NO_SISTA_DO_SPLICE`) fix it. ROOT
+   CAUSE: the Sista inject:into: do-splice inlines the block, and when the block
+   CAPTURES an outer method arg/temp that it only READS (e.g.
+   `coefficients inject: 0 into: [:sum :each | sum * aNumber + each]` in
+   `PMPolynomial>>value:` / erf), the splice treats the read-only SCALAR copied
+   value as a writable temp-VECTOR (block-body refs lowered as `kLoadTempInVec`)
+   and the extra capture push desyncs the simulator stack — swapping the inject
+   receiver (`coefficients`) with the captured scalar (2.0) -> `inject:into:` sent
+   to a SmallFloat64. Minimal repro: `(PMPolynomial coefficients: #(1 2 3)) value:
+   2.0` / `1.28 errorFunction`. FIX: default the do-splice OFF (`DebugSettings.cpp`
+   `noSistaDoSplice` flipped; opt-in `PHARO_SISTA_DO_SPLICE=1`) — perf-neutral on
+   the spectrum (the do:-accum path that legitimately writes a vec is also under
+   this flag); plus a targeted guard in the inject path that rejects captured-var
+   blocks (`PHARO_SISTA_INJECT_CAPTURE` to override) for the opt-in case. Validated:
+   PolyMath SmallFloat64 18->0, NeoJSON 116/116, kernel 2862 pass, off-by-one +
+   factorial fixes intact.
 
 5. **Soil FFI file-lock crash** (VM FFI gap). Soil-File uses uFFI→LibC
    (`flock`/`fcntl`/`fsync`) for durable file locking; the custom VM SIGABRTs
