@@ -165,7 +165,15 @@ above). The prim-105 branch did not hurt string_build. Lever ranking for the
      800/12/14/1, GC-stress 100000 Associations = 5000050000, Object new/Assoc/Point.
      Win ~8% on the allocation bench (974 vs 1058), ~1-2% collection/dict/set -> `new`
      is a small fraction of send-heavy allocation (the dispatch tax #1 dominates).
-     basicNew: (1-arg variable) not inlined (more complex; small marginal value).
+     ALSO basicNew: (1-arg, pointer-indexable Array new:N, format 2) inlined
+     DEFAULT-ON (b8c4af44): slotCount=size, format 2, sp net -1. Found+fixed an
+     x5/icDataPtr register-clobber crash on the bail path (both inlines used x5 for
+     slotCount, but x5=icDataPtr which dispatchCached needs -> SIGSEGV on
+     bail->fail->dispatchCached, e.g. `OrderedCollection new: -2`); moved slotCount to
+     x17. Re-validated: kernel incl OC/LinkedList/Heap 3130/0/0, OrderedCollectionTest
+     351/0/0, NeoJSON 116, STON 317, GC-stress 50000 Arrays = 1250025000.
+     LESSON: inline emits MUST preserve x5 (icDataPtr) for the bail->dispatchCached
+     path; only clobber x3/x4/x6/x7/x9-x17.
   3. Block activation: first-class block #value: not inlined (block_recursion 37x).
   4. Float unboxing: every float op boxes a heap Float / SmallFloat64 (float_loop 17x).
 The allocation levers (2a/2b) are built/shipped; the rest are focused multi-session
