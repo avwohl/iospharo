@@ -303,6 +303,34 @@ UPDATE 9 — HIT-path bisect + a fix attempt (necessary but NOT sufficient).
   (Interpreter.cpp ~10568) field-by-field for a single BV hit, plus the caller-JM restore
   above — a focused multi-step effort, not a one-line fix.
 
+UPDATE 10 — field-by-field validation of the helper setup vs activateBlock / value-prim.
+The value-prim (primitiveFullClosureValue, Primitives.cpp:3751) general path delegates to
+activateBlock (Interpreter.cpp:12236), which sets up via pushFrame. Compared each field of
+jit_rt_inline_block_value_prep (JITRuntime.cpp:2090-2181):
+- RECEIVER: CORRECT. Resolved the slot-3 ambiguity empirically — FullBlockClosure
+  allInstVarNames = (outerContext, compiledBlock, numArgs, receiver), instSize 4. So slot 3
+  IS the receiver (fixed instVar); copied values are indexed slots 4+. The helper's
+  blockRecv = closureObj.slotAt(3) and copies = slots 4+ MATCH the layout. (The value-prim
+  fast-path comments saying "copies at slot 3+" / "closure.slot(3+M)" look off-by-one vs
+  this layout, but that fast path is narrow and BV-off works, so it's not the lever.)
+- ip / method / literals / jitMethod / argCount: MATCH activateBlock.
+- NLR home: N/A — the helper bails on blockJM->hasNLR (blocks with ^).
+- CAPTURE-COPY (2160-2180): TESTED nil-init-all (no copy) via a temp knob -> did NOT fix
+  the runaway -> the copy is NOT the (sole) bug; copied values appear to be frame-resident
+  (the block reads them from the frame), so the copy is needed.
+- CALLER-JM restore (resume=endOfSend skips the restore at 9540): NECESSARY but NOT
+  SUFFICIENT (UPDATE 9).
+- CONCLUSION: the HIT-path corruption is NONE of receiver/ip/method/literals/argCount/
+  capture-copy/caller-JM-restore individually. It is subtle — remaining suspects: the V2
+  J2J save push (2090-2123: the packed resumeAddr/bcOff + closure fields), the closure
+  side-stack interaction (2133-2142, bvClosureSaveStack push without a matching pop on the
+  BV fast-prelude return), or the block-execution/return interaction. Likely a COMBINATION
+  (caller-JM-restore + one more) since single fixes don't clear it. A real fix needs
+  single-stepping ONE BV hit's block from entry to return under lldb with PHARO_DET_SCHED,
+  diffing the live interp state at each bytecode vs a non-inlined activateBlock run of the
+  same block — the field-level static comparison is now exhausted.
+  Two safe-disables confirmed: PHARO_NO_BLOCK_BIT, PHARO_BV_FORCE_BAIL.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
