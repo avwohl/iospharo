@@ -198,6 +198,32 @@ materialization bug to fix; (c) cross-check materializeFrameStack's handling of 
 saves vs the V2 save layout (Interpreter.hpp:681). The exception-search loop, not a send
 loop, is THE thing to fix.
 
+UPDATE 6 — NOT a cycle / not prim-197; it's an infinite exception RE-HANDLE loop.
+- Dumped the pri-40 suspendedContext SENDER chain (slot 0) with address cycle detection:
+  250 frames, NO repeated address — so NOT a tight cycle. The 250 frames are
+  185x `nextHandlerContext` + 184x `findNextHandlerContext` alternating = deep/unbounded
+  MUTUAL RECURSION of the handler search.
+- Used prim 197's built-in diag (PHARO_T1_TRACE_HANDLER=1, Primitives.cpp:10852): prim 197
+  WORKS — it repeatedly logs `FOUND handler #on:do:` / `FOUND handler #evaluateSignal:`
+  (exhausted=0). So the search primitive is NOT failing and the chain DOES reach handlers.
+- Selector frequencies in the runaway stack: besides find/nextHandlerContext, there are
+  19x handleSignal:, 11x signal, 5x defaultAction, 4x evaluateSignal:/handleError:/cull:/
+  signal:/ensure:/logDuring:. => the loop is at the HANDLING level: an exception is found
+  AND handled (handleSignal: -> evaluateSignal: -> handleError: -> cull: the handler block)
+  but then RE-SIGNALS -> re-search -> re-handle -> forever.
+- CONCLUSION: the corruption is a BLOCK executed in the exception path (the handler block
+  via cull:/value, or a block inside the signal/handle machinery) returning wrong / not
+  consuming the signal under BV, so the exception is re-raised infinitely. NOT prim 197,
+  NOT a sender-chain cycle, NOT the codegen side-effects already ruled out.
+- NEXT (different strategy needed — one-level-deeper lldb dives are hitting diminishing
+  returns): (a) get the Pharo source of the handler path (handleSignal:/evaluateSignal:/
+  return:/Signal>>return:) and find which block's wrong result re-raises; (b) compare the
+  exception path BV-on vs BV-off at the Smalltalk level (e.g. trap the SECOND signal of the
+  same exception — BV-off signals once, BV-on signals repeatedly); (c) the BV block-value
+  inline corrupts a value/cull: result specifically in the handler-return path — likely a
+  non-local-return or a wrong retval from a BV-inlined block (ties to the J2J-save/return
+  value handling). The exception is real (some startup error); BV makes its HANDLING loop.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
