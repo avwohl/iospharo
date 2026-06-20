@@ -206,8 +206,20 @@ above). The prim-105 branch did not hurt string_build. Lever ranking for the
      ByteString). Still bail: words(WideString)/indexable-with-fixed/CompiledMethod/
      overflow(>2032 bytes or >254 slots). ~6-8% alloc, ~1-2% collection — `new` is a
      small fraction of send-heavy code; dispatch tax (#1) still dominates the gap.
-  3. Block activation: first-class block #value: not inlined (block_recursion 37x).
+  3. Block activation: first-class block #value: not inlined (block_recursion 37x;
+     `[b] value: i` loop 366ms vs Cog 18ms = 20x). The block-value inline machinery
+     EXISTS (PHARO_T1_INLINE_BLOCK_VALUE, AsmjitT1.cpp:6550) but is OPT-IN BECAUSE IT'S
+     BROKEN: enabling it errors even on `[:x | x*2+1] value: 20` (-> Error, not 41),
+     2-arg, and loops alike. So this is NOT a default-on flip — it needs a base-level
+     correctness fix of the block-value inline (closures/captures/NLR; memory warns
+     dispatch-A/block inline specs were a 5-month crash source). Dedicated session.
   4. Float unboxing: every float op boxes a heap Float / SmallFloat64 (float_loop 17x).
-The allocation levers (2a/2b) are built/shipped; the rest are focused multi-session
-efforts. Correctness was
-the productive vein (8 fixes, Cog-parity).
+     The bytecode-float fast path (+/-, PHARO_T1_NO_BC_FLOAT opt-out) is default-on, but
+     each result still boxes, and non-arith float prims (sqrt, asFloat) aren't inlined.
+     The real lever is keeping floats UNBOXED in registers across a loop (value tracking
+     / register allocation) — deep, multi-session.
+STATUS 2026-06-20: the TRACTABLE levers are exhausted — immediate-class (1a) was the
+last clean default-on win. The remaining levers (1b cross-method send tax, 3 block-value
+FIX, 4 float unboxing) are each focused multi-session efforts, not marathon-tail flips.
+The allocation levers (2a/2b) + dispatch (1a) are built/shipped. Correctness was the
+most productive vein (8 fixes, Cog-parity).
