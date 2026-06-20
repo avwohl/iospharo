@@ -259,6 +259,12 @@ extern "C" uint64_t g_primBasicNewZero_bails;
 // Eden bump cells for the inline-alloc emit (set in ObjectMemory::initializeHeap).
 extern "C" uint8_t** g_jitEdenFreeCell;
 extern "C" uint8_t** g_jitSurvivorStartCell;
+// Class-table index of SmallInteger, baked into the immediate-`class` inline.
+// Set per-compile in compileViaAsmjit from memory (verified classTable[idx]==
+// SmallInteger), 0 => disabled (the emit falls back to dispatchCached). The
+// emitted inline loads g_classTableBase[idx] at runtime (GC-safe), so a moving
+// class object is fine; only the index is constant.
+static uint64_t g_jitSmallIntClassIndex = 0;
 extern "C" uint64_t jit_rt_t1_sista_dispatch(void* state, uint64_t fnPtr,
                                               uint64_t methodBits,
                                               uint64_t nArgs);
@@ -6394,6 +6400,35 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.tst(x1, asmjit::Imm(0x7));
                     if (nArgs == 1 && g_debug.t1InlinePrimBitOps) {
                         a.b_ne(fallSmIBranch);
+                    } else if (nArgs == 0
+                               && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_IMM_CLASS)
+                               && g_jitSmallIntClassIndex != 0) {
+                        // Immediate-receiver `class` inline (sub-lever (a) of the
+                        // dispatch tax): the heap-only tryPrimClass below can't
+                        // serve an immediate (no header), so `42 class` used to
+                        // take the C++ send (the measured ~18x gap). Here we
+                        // inline SmallInteger>>class fully: tag==1 + primKind 24
+                        // -> classTable[g_jitSmallIntClassIndex]. Other immediates
+                        // (Character/SmallFloat) and non-class sends bail to
+                        // dispatchCached. Uses x6/x4 only (NOT x5=icDataPtr) so the
+                        // bail paths keep the IC pointer dispatchCached needs.
+                        asmjit::Label imcHeap = a.new_label();
+                        a.b_eq(imcHeap);                       // heap -> heap path
+                        a.and_(x6, x1, asmjit::Imm(0x7));
+                        a.cmp(x6, asmjit::Imm(1));             // tag 1 = SmallInteger
+                        a.b_ne(dispatchCached);
+                        a.lsr(x6, x7, asmjit::Imm(48));
+                        a.and_(x6, x6, asmjit::Imm(0x1F));
+                        a.cmp(x6, asmjit::Imm(kPrimKindClass)); // 24 = #class
+                        a.b_ne(dispatchCached);
+                        a.mov(x6, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+                        a.ldr(x6, ptr(x6));                    // class table base
+                        a.mov(x4, asmjit::Imm(g_jitSmallIntClassIndex << 3));
+                        a.add(x6, x6, x4);
+                        a.ldr(x6, ptr(x6));                    // SmallInteger class
+                        a.stur(x6, ptr(x2, rcvrOffsetBytes));  // result -> sp[-1]
+                        a.b(tosSendRes ? tosLrearm : endOfSend);
+                        a.bind(imcHeap);
                     } else {
                         a.b_ne(dispatchCached);
                     }
@@ -11489,6 +11524,16 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     size_t emitted = 0;
     bool   isReal  = false;
     uint64_t nilBits = memory.nil().rawBits();
+    // Bake the SmallInteger class-table index for the immediate-`class` inline,
+    // but only if classTable[idx] actually resolves back to the SmallInteger
+    // class (robust against a lazy/relocated identityHash). 0 => inline disabled.
+    {
+        Oop siClass = memory.specialObject(pharo::SpecialObjectIndex::ClassSmallInteger);
+        uint64_t idx = siClass.isObject() ? siClass.asObjectPtr()->identityHash() : 0;
+        g_jitSmallIntClassIndex =
+            (idx != 0 && memory.classAtIndex((uint32_t)idx).rawBits() == siClass.rawBits())
+                ? idx : 0;
+    }
     // Offset of bc[0] from the CompiledMethod object's address.
     //   methObj layout:  [ObjectHeader 8B][slot 0 = header][slot 1..N = lits][bytes...]
     //   bc[0] address  = methObj + 8 (header) + 8 * (1 + numLiterals)
