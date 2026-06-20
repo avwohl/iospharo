@@ -361,6 +361,23 @@ THE FIX (two coordinated parts on the BV return):
 This is the exact, localized defect. block-value remains correctly opt-in; safe-disables
 PHARO_NO_BLOCK_BIT and PHARO_BV_FORCE_BAIL.
 
+UPDATE 12 — implemented the two-part return fix (bvResume); necessary, STILL not sufficient.
+Added jit_rt_pop_bv_closure_state(JITState*) wrapper + a BV-only resume label `bvResume`
+(AsmjitT1.cpp): the BV resume now routes to bvResume which (1) pops the closure side-stack
+via the wrapper and (2) restores the caller's JM PC-relatively — the two restores the asm
+fast-prelude skips (the C++ return paths do both). DEFAULT config UNAFFECTED + passes
+(3+4 -> R<7>, kernel 9-class 1937/0/0; bvResume is dead code when BV off, skipped by a
+b endOfSend). BUT BV-on STILL runs away (104M sends, hits=7973). So the return restores are
+necessary (the C++ paths do them) but the PRIMARY HIT corruption is UPSTREAM — in the
+helper's frame SETUP (the V2 J2J save push 2090-2123, esp. the packed resumeAddr's pre-send
+bcOff which on a GC/bail mid-block would re-execute the value: send) or the block's
+mid-protocol EXECUTION (entered via br x9 with no prologue, 6623). The setup FIELDS
+(receiver/ip/method/literals/argCount) were validated equal to activateBlock (UPDATE 10),
+so the remaining suspect is the J2J-save packed-resume/bcOff semantics or the no-prologue
+block entry — needs single-stepping the block's first bytecodes under lldb+DET_SCHED vs a
+non-inlined run. block-value stays opt-in; the kept bvResume code is correct + default-safe
+(a partial fix), the runaway is a separate upstream defect.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro

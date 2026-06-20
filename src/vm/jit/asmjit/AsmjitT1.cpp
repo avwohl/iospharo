@@ -254,6 +254,7 @@ extern "C" void* jit_rt_inline_block_value_prep(
 // on success (state.sp updated), 0 on failure (caller bails).
 extern "C" uint64_t jit_rt_basic_new_with_arg(void* state);
 extern "C" uint64_t jit_rt_basic_new(void* state);
+extern "C" void jit_rt_pop_bv_closure_state(void* state);  // BV-return closure-pop
 extern "C" uint64_t g_primBasicNewZero_hits;
 extern "C" uint64_t g_primBasicNewZero_bails;
 // Eden bump cells for the inline-alloc emit (set in ObjectMemory::initializeHeap).
@@ -6029,6 +6030,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             asmjit::Label tosLrearm = a.new_label();
 #if PHARO_J2J_SAVE_V2
             asmjit::Label resumeAfterCall = a.new_label();
+            // BV-only return resume: pops the closure side-stack + restores the
+            // caller's JM (both skipped by the asm fast-prelude). See docs UPDATE 11.
+            asmjit::Label bvResume = a.new_label();
 #endif
 
             emitLoadSp(a, x2);
@@ -6578,14 +6582,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.str(x0,  ptr(sp, 0));
                     a.str(x30, ptr(sp, 8));
                     a.mov(w1, asmjit::Imm(nArgs));
-                    // resumeAddr points directly at endOfSend (skip the
-                    // afterSend `b endOfSend` indirection).
-                    // NOTE 2026-06-20: this SKIPS the caller-JM restore at
-                    // resumeAfterCall (9549), so after a BV inline the caller runs
-                    // under the BLOCK's JM. Routing here to a restore-only label was
-                    // tried — necessary but NOT sufficient (HIT path has more
-                    // corruption). See docs/block-value-inline-debug.md UPDATE 9.
+                    // resumeAddr: BV resumes at bvResume, which pops the closure
+                    // side-stack + restores the caller's JM — the two restores the
+                    // asm fast-prelude skips (FIX 2026-06-20, docs UPDATE 11).
+#if PHARO_J2J_SAVE_V2
+                    a.adr(x2, bvResume);
+#else
                     a.adr(x2, endOfSend);
+#endif
                     emitSyncSpToState(a);  // sp-residency: helper reads state.sp
                     a.mov(x9, asmjit::Imm((uint64_t)
                         &jit_rt_inline_block_value_prep));
@@ -9570,6 +9574,39 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             if (g_resumeOverridesPtr)
                 g_resumeOverridesPtr->emplace_back(
                     (uint32_t)globalIdx + 1, resumeAfterCall);
+            // === BV-only return resume (FIX 2026-06-20, docs UPDATE 11) ===
+            // BV-inlined blocks return via the asm fast-prelude, which (unlike the
+            // C++ return paths) pops neither the BV closure side-stack nor restores
+            // the caller's JM -> closure leak + caller runs under the block's JM ->
+            // exception-handler block returns wrong -> FileWriteError re-handle
+            // runaway. The prelude already did pop+retval, so resumeAfterCall above
+            // is skipped; here we do ONLY the two missing restores.
+            a.b(endOfSend);                 // resumeAfterCall path done — skip bvResume
+            a.bind(bvResume);
+            // (1) closure-pop: jit_rt_pop_bv_closure_state(state). x0=state in; no
+            // GC (setCurrentClosure doesn't allocate), so no sp sync needed.
+            a.sub(sp, sp, asmjit::Imm(16));
+            a.str(x0, ptr(sp, 0));
+            a.str(x30, ptr(sp, 8));
+            a.mov(x9, asmjit::Imm((uint64_t)&jit_rt_pop_bv_closure_state));
+            a.blr(x9);
+            a.ldr(x0, ptr(sp, 0));
+            a.ldr(x30, ptr(sp, 8));
+            a.add(sp, sp, asmjit::Imm(16));
+            // (2) caller-JM restore (PC-relative; after the call so x19 survives).
+            a.adr(x19, g_codeStartLabel);
+            a.sub(x19, x19, asmjit::Imm((int)sizeof(JITMethod)));
+            a.str(x19, ptr(x0, OFF_JITMETHOD));
+            a.ldr(x12, ptr(x19, 0));
+            a.str(x12, ptr(x0, OFF_METHOD));
+            a.add(x12, x12, asmjit::Imm(16));
+            a.str(x12, ptr(x0, OFF_LITERALS));
+            a.mov(w12, asmjit::Imm(callerArgCount));
+            a.str(w12, ptr(x0, OFF_ARGCOUNT));
+            // (3) reload operand sp; retval was written to the stack by the prelude.
+            emitLoadSp(a, x2);
+            if (tosSendRes) a.ldur(x26, ptr(x2, -8));
+            // falls through to endOfSend
 #endif
             a.bind(endOfSend);
             // Blocker #4 test (PHARO_T1_INLINE_SYNC): inline-spec continuations

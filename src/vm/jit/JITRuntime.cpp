@@ -1976,6 +1976,14 @@ extern "C" uint64_t g_bvBail_canBail = 0;
 extern "C" uint64_t g_bvBail_prim = 0;
 extern "C" uint64_t g_bvBail_savefull = 0;
 
+extern "C" void jit_rt_pop_bv_closure(pharo::Interpreter*, int);  // fwd decl
+// State-taking wrapper so the asm BV-return resume can pop the closure
+// side-stack with a single x0=state arg (no OFF_INTERP/OFF_J2J_DEPTH in asm).
+// j2jDepth is read AFTER the prelude popped the save (= the popped save's depth).
+extern "C" void jit_rt_pop_bv_closure_state(JITState* s) {
+    if (s && s->interp) jit_rt_pop_bv_closure(s->interp, (int)s->j2jDepth);
+}
+
 extern "C" void jit_rt_pop_bv_closure(pharo::Interpreter* interp,
                                       int callerJ2jDepth) {
     // Called from J2J_INLINE_RETURN_IMPL when popping a J2J save that
