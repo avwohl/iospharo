@@ -147,6 +147,32 @@ UPDATE 3 (end of session) — bail-loop hypothesis WEAKENED + a new direction:
   BV bail to catch it cheaply (lldb too slow); (c) the latent 4764 V1/V2 closure-as-
   jitMethod bug is real + still worth fixing (extend V2 save to carry callerJitMethod).
 
+UPDATE 4 — [XFER] diff CONFIRMS a process ping-pong (the runaway is scheduler-level):
+- BV-OFF: 21 XFER transfers then DONE (R<7>). The pri-40<->pri-80 exchange (XFER 14-21)
+  runs ~4 times and RESOLVES.
+- BV-ON: XFER count grows without bound (49+ in a 25s sample) in a PERFECT INFINITE
+  cycle: `pri=40 -> pri=80, pri=80 -> pri=40, …` forever. Two processes ping-pong and
+  never terminate.
+- Addresses: the pri-80 process **0x302c52a18 is CONSTANT across both configs**. BV-off:
+  it ping-pongs with pri-40 0x55b54ef10 then resolves. BV-on: it ping-pongs with a
+  DIFFERENT pri-40 process 0x303e281f8 forever. So the pri-40 partner (the eval/work
+  process) never completes its work with BV on → the pri-80<->pri-40 signal/wait
+  handshake (a semaphore / Delay / timer) loops indefinitely.
+- INTERPRETATION: the runaway is NOT a tight send loop — it's a non-terminating
+  process handshake. Some computation in the pri-40 process doesn't finish (or a
+  wait-condition never resolves) under BV on, so the pri-80 partner keeps being
+  signalled/rescheduled. Connects to the scheduler/timer family
+  ([[vm-scheduler-cog-parity]], [[timer-scheduler-wedge]], [[sunit-headless-renderloop-wedge]]).
+- NEXT: (a) dump the pri-40 process 0x303e281f8's Smalltalk context/method chain (what
+  is it looping on?) and the pri-80 process 0x302c52a18's wait object (which semaphore/
+  Delay?) — break in the scheduler transfer (the [XFER] print site) and walk
+  suspendedContext_ of each (the "suspend + walk suspendedContext" technique in
+  [[sunit-fullrun-clynotebook-blocker]]); (b) since BV's runtime bail routes to
+  dispatchCached (advances) and the codegen side-effects are ruled out, suspect a
+  CORRECTNESS divergence in a block-using computation that changes a loop/wait condition
+  (e.g. a `whileTrue:`/`Delay`/semaphore predicate that reads a wrong value). The
+  [XFER] print site is the cheap entry point (no lldb slowness).
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
