@@ -698,6 +698,23 @@ public:
     /// Set the free pointer (for image loading)
     void setOldSpaceFreePointer(uint8_t* ptr) { oldSpaceFree_ = ptr; }
 
+    /// Public young-gen bump for the JIT new fast-path (jit_rt_new_prim).
+    /// Allocates `size` bytes in eden and returns the raw header pointer, or
+    /// nullptr if young-gen is disabled or eden is full — in which case it sets
+    /// needsScavenge_ so a scavenge runs at the NEXT SAFE POINT (never mid-call,
+    /// so it is GC-safe to call from JIT-emitted code). Mirrors allocateRaw's
+    /// Space::New case. The caller must fall back to old space on nullptr.
+    ObjectHeader* allocateRawYoung(size_t size) {
+        if (!enableYoungGen_) return nullptr;
+        if (edenFree_ + size <= survivorStart_) {
+            ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(edenFree_);
+            edenFree_ += size;
+            return obj;
+        }
+        needsScavenge_ = true;
+        return nullptr;
+    }
+
     /// Wrap a raw pointer as an Oop with correct space encoding
     Oop oopFromPointer(ObjectHeader* ptr) const;
 

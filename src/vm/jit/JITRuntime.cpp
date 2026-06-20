@@ -1862,19 +1862,29 @@ extern "C" uint64_t jit_rt_new_prim(JITState* s, uint64_t info) {
     uint32_t classIndex = mem.indexOfClass(Oop::fromRawBits(classBits));
     if (classIndex == 0) return 0;
 
-    // Bump allocation from old space
-    uint8_t* freePtr = mem.oldSpaceFree();
-    uint8_t* endPtr = freePtr + totalSize;
-    if (endPtr > mem.oldSpaceEnd()) return 0;
-
-    // Allocate
-    ObjectHeader* obj;
-    if (hasOverflow) {
-        uint64_t* overflow = reinterpret_cast<uint64_t*>(freePtr);
-        *overflow = slotCount | (0xFFULL << 56);
-        obj = reinterpret_cast<ObjectHeader*>(freePtr + 8);
-    } else {
-        obj = reinterpret_cast<ObjectHeader*>(freePtr);
+    // Allocate: prefer EDEN (young, scavengeable); fall back to old space.
+    // Overflow objects (>=255 slots) stay in old space — scavenge copy isn't
+    // validated against the overflow-word layout (see allocateSlots).  Eden-full
+    // sets needsScavenge_ (deferred to a safe point, never mid-call -> GC-safe),
+    // and this allocation falls back to old space.  Was old-space-only, so
+    // short-lived JIT-allocated objects skipped the young generation -> full-GC
+    // pressure (the shallowCopy old-space trap).  Opt-out PHARO_T1_NO_EDEN_NEW.
+    ObjectHeader* obj = nullptr;
+    if (!hasOverflow && !GET_DEBUG_BOOL(PHARO_T1_NO_EDEN_NEW)) {
+        obj = mem.allocateRawYoung(totalSize);  // commits edenFree_ on success
+    }
+    if (!obj) {
+        uint8_t* freePtr = mem.oldSpaceFree();
+        uint8_t* endPtr = freePtr + totalSize;
+        if (endPtr > mem.oldSpaceEnd()) return 0;
+        if (hasOverflow) {
+            uint64_t* overflow = reinterpret_cast<uint64_t*>(freePtr);
+            *overflow = slotCount | (0xFFULL << 56);
+            obj = reinterpret_cast<ObjectHeader*>(freePtr + 8);
+        } else {
+            obj = reinterpret_cast<ObjectHeader*>(freePtr);
+        }
+        mem.setOldSpaceFreePointer(endPtr);  // commit old-space allocation
     }
 
     // Build header: slotCount | hash | format | classIndex | flags
@@ -1899,8 +1909,7 @@ extern "C" uint64_t jit_rt_new_prim(JITState* s, uint64_t info) {
         }
     }
 
-    // Commit allocation
-    mem.setOldSpaceFreePointer(endPtr);
+    // (allocation already committed above: eden via allocateRawYoung, or old space)
 
     // Convert to Oop
     Oop newObj = mem.oopFromPointer(obj);
