@@ -331,6 +331,36 @@ jit_rt_inline_block_value_prep (JITRuntime.cpp:2090-2181):
   same block — the field-level static comparison is now exhausted.
   Two safe-disables confirmed: PHARO_NO_BLOCK_BIT, PHARO_BV_FORCE_BAIL.
 
+UPDATE 11 — DECISIVE: the BV HIT-path RETURN is missing TWO restores (why single fixes fail).
+The asm fast-prelude return (emitJ2JReturnPrelude_arm64, AsmjitT1.cpp:4647-4806) — the path
+a BV-inlined block takes when it returns — is missing BOTH restores that the C++ return
+paths perform:
+  (1) CALLER-JM restore. The prelude's restore branch reads save[32] as jitMethod (V1
+      layout) but under V2 save[32]=closure; and the BV resume=endOfSend skips the
+      PC-relative caller-JM restore at resumeAfterCall/9540. So after a BV return the caller
+      runs under the BLOCK's JM. (UPDATE 9.)
+  (2) CLOSURE side-stack POP. The helper pushes the block's closure on bvClosureSaveStack
+      (JITRuntime.cpp:2137) + sets s->closure (2140). The pop/restore exists ONLY in the
+      C++ return paths (JITRuntime.cpp:932 fast-path, :1992 J2J_INLINE_RETURN_IMPL) — the
+      ASM prelude (4647) does NOT pop it. So a BV return via the asm prelude LEAKS the
+      block's closure (bvClosureSaveDepth_ grows, s->closure stays the block's). (CONFIRMED
+      this update by grepping the prelude: zero bvClosure/setCurrentClosure/block_value_post
+      refs.)
+=> BOTH are needed; that's why caller-JM-restore alone (UPDATE 9) and capture-copy changes
+   (UPDATE 10) each failed to clear the runaway. The C++ fast path (JITRuntime.cpp:918) does
+   BOTH correctly; the asm fast-prelude does NEITHER.
+THE FIX (two coordinated parts on the BV return):
+  (a) route the BV resume to a label that does the PC-relative caller-JM restore (the
+      bvRestoreOnly approach from UPDATE 9), AND
+  (b) make the asm BV return pop the closure side-stack — emit a call to
+      jit_rt_inline_block_value_post (JITRuntime.cpp:1981, the existing closure-pop helper)
+      on the BV resume, OR route BV returns through the C++ fast path (918) which already
+      does both. (a) without (b) leaves the closure leak; (b) without (a) leaves the JM
+      wrong — must do both, then re-validate (BV-on 3+4 -> R<7>, block loops correct, full
+      kernel/packages A/B).
+This is the exact, localized defect. block-value remains correctly opt-in; safe-disables
+PHARO_NO_BLOCK_BIT and PHARO_BV_FORCE_BAIL.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
