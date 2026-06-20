@@ -5825,6 +5825,15 @@ PrimitiveResult Interpreter::primitiveStringAtPut(int argCount) {
 PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     // replaceFrom:to:with:startingAt:
     // rcvr[start..stop] := replacement[repStart..]
+    //
+    // NOTE (2026-06-20): this function is currently UNREGISTERED — prim 105 is
+    // wired to primitiveStringReplace (generated_primitives.inc:113), not this one.
+    // The byte path below uses the correct forward element loop, but the 32/16/64-bit
+    // word paths use std::memmove, which breaks a FORWARD-OVERLAPPING self-copy
+    // (memmove copies backward on dst>src overlap, so it does not propagate). If this
+    // is ever wired up, apply the same `fwdOverlapSelfCopy` guard added to
+    // primitiveStringReplace (forward element loop when rcvr==replacement &&
+    // start>repStart && start<repStart+count) to those three word paths.
 
     Oop repStart = stackValue(0);
     Oop replacement = stackValue(1);
