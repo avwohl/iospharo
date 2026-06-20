@@ -8576,6 +8576,85 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Only emitted for nArgs == 1 paths.
             if (nArgs == 1 && g_debug.t1InlinePrimBasicNew) {
                 a.bind(tryPrimBasicNew);
+                // === Inline eden allocation for basicNew: (1-arg) — POINTER-
+                // indexable classes only (instFormat 2 = Indexable, fixedSize 0:
+                // Array and friends). PHARO_T1_NO_INLINE_NEW_ASM opt-out. x1 =
+                // receiver (the class), x2 = SP; size arg at [x2,-8], class at
+                // [x2,-16]. Bails to the C++ helper below for non-SmI/negative/
+                // oversize(>=254)/non-format-2/fixedSize!=0/eden-full/non-canonical.
+                // slotCount = size; format byte = 2; nil-fill; sp net -1 (pop
+                // class+size, push result). GC-safe (init before commit).
+                if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_NEW_ASM) && g_jitEdenFreeCell) {
+                    asmjit::Label nbBail = a.new_label();
+                    asmjit::Label nbSzOk = a.new_label();
+                    asmjit::Label nbFill = a.new_label();
+                    asmjit::Label nbFillDone = a.new_label();
+                    a.ldur(x3, ptr(x2, -8));          // size arg (tagged)
+                    a.ubfx(x4, x3, 0, 3);
+                    a.cmp(x4, asmjit::Imm(1));         // SmI?
+                    a.b_ne(nbBail);
+                    a.asr(x17, x3, 3);                  // x5 = size (slotCount)
+                    a.cmp(x17, asmjit::Imm(254));       // cap (also bails negative as unsigned-hi)
+                    a.b_hi(nbBail);
+                    a.ldr(x3, ptr(x1, 24));           // class slot 2 = instSpec
+                    a.ubfx(x4, x3, 0, 3);
+                    a.cmp(x4, asmjit::Imm(1));
+                    a.b_ne(nbBail);
+                    a.asr(x3, x3, 3);                  // instSpec
+                    a.ubfx(x4, x3, 16, 5);           // instFormat
+                    a.cmp(x4, asmjit::Imm(2));         // 2 = Indexable (pure pointer)
+                    a.b_ne(nbBail);
+                    a.ubfx(x4, x3, 0, 16);           // fixedSize
+                    a.cbnz(x4, nbBail);             // format 2 must have fixedSize 0
+                    a.ldr(x6, ptr(x1));               // class header
+                    a.ubfx(x6, x6, 32, 22);          // classIndex = identityHash
+                    a.cbz(x6, nbBail);
+                    a.lsl(x4, x6, 3);                 // classTable[hash]==class guard
+                    a.mov(x3, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+                    a.ldr(x3, ptr(x3));
+                    a.add(x3, x3, x4);
+                    a.ldr(x3, ptr(x3));
+                    a.cmp(x3, x1);
+                    a.b_ne(nbBail);
+                    a.lsl(x7, x17, 3);                 // slotCount*8
+                    a.add(x7, x7, asmjit::Imm(8));
+                    a.cmp(x7, asmjit::Imm(15));
+                    a.b_hi(nbSzOk);
+                    a.mov(x7, asmjit::Imm(16));
+                    a.bind(nbSzOk);
+                    a.mov(x11, asmjit::Imm((uint64_t)g_jitEdenFreeCell));
+                    a.ldr(x9, ptr(x11));
+                    a.add(x10, x9, x7);
+                    a.mov(x12, asmjit::Imm((uint64_t)g_jitSurvivorStartCell));
+                    a.ldr(x12, ptr(x12));
+                    a.cmp(x10, x12);
+                    a.b_hi(nbBail);
+                    a.lsl(x13, x17, 56);             // slotCount << 56
+                    a.orr(x13, x13, asmjit::Imm(2ULL << 24));  // Indexable << 24
+                    a.orr(x13, x13, x6);
+                    a.str(x13, ptr(x9));
+                    a.mov(x14, asmjit::Imm(nilBits));
+                    a.add(x15, x9, asmjit::Imm(8));
+                    a.mov(x16, x17);
+                    a.bind(nbFill);
+                    a.cbz(x16, nbFillDone);
+                    a.str(x14, ptr(x15));
+                    a.add(x15, x15, asmjit::Imm(8));
+                    a.sub(x16, x16, asmjit::Imm(1));
+                    a.b(nbFill);
+                    a.bind(nbFillDone);
+                    a.str(x10, ptr(x11));          // commit edenFree_
+                    a.stur(x9, ptr(x2, -16));      // result replaces class at sp[-2]
+                    a.sub(x2, x2, asmjit::Imm(8)); // pop 1 net (popped class+size, pushed result)
+                    emitStoreSp(a, x2);
+                    a.mov(x14, asmjit::Imm((uint64_t)&g_primBasicNew_hits));
+                    a.ldr(x15, ptr(x14));
+                    a.add(x15, x15, asmjit::Imm(1));
+                    a.str(x15, ptr(x14));
+                    a.b(tosSendRes ? tosLrearm : endOfSend);
+                    a.bind(nbBail);
+                    // fall through to the C++ jit_rt_basic_new_with_arg path
+                }
                 // Save x0 (state) + x30 (LR) across BLR.  Mirror the
                 // jit_rt_inline_block_value_prep pattern at line ~3375.
                 a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
@@ -8634,8 +8713,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ubfx(x4, x3, 16, 5);            // instFormat
                     a.cmp(x4, asmjit::Imm(1));         // 1 = FixedSize only
                     a.b_ne(inlBail);
-                    a.ubfx(x5, x3, 0, 16);           // slotCount (instSize)
-                    a.cmp(x5, asmjit::Imm(254));       // non-overflow cap
+                    a.ubfx(x17, x3, 0, 16);           // slotCount (instSize)
+                    a.cmp(x17, asmjit::Imm(254));       // non-overflow cap
                     a.b_hi(inlBail);
                     a.ldr(x6, ptr(x1));               // class header
                     a.ubfx(x6, x6, 32, 22);          // classIndex = identityHash
@@ -8652,7 +8731,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x3, ptr(x3));            // classTable[hash]
                     a.cmp(x3, x1);
                     a.b_ne(inlBail);               // not the canonical index -> bail
-                    a.lsl(x7, x5, 3);                 // slotCount*8
+                    a.lsl(x7, x17, 3);                 // slotCount*8
                     a.add(x7, x7, asmjit::Imm(8));     // + header
                     a.cmp(x7, asmjit::Imm(15));        // min object size 16
                     a.b_hi(inlSzOk);
@@ -8665,13 +8744,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.ldr(x12, ptr(x12));            // survivorStart_ (eden limit)
                     a.cmp(x10, x12);
                     a.b_hi(inlBail);                // eden full -> bail
-                    a.lsl(x13, x5, 56);             // slotCount << 56
+                    a.lsl(x13, x17, 56);             // slotCount << 56
                     a.orr(x13, x13, asmjit::Imm(1ULL << 24));  // FixedSize << 24
                     a.orr(x13, x13, x6);           // | classIndex (shift 0)
                     a.str(x13, ptr(x9));           // header (before commit)
                     a.mov(x14, asmjit::Imm(nilBits));
                     a.add(x15, x9, asmjit::Imm(8)); // first slot
-                    a.mov(x16, x5);                // counter = slotCount
+                    a.mov(x16, x17);                // counter = slotCount
                     a.bind(inlFill);
                     a.cbz(x16, inlFillDone);
                     a.str(x14, ptr(x15));
