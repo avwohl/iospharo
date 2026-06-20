@@ -259,12 +259,15 @@ extern "C" uint64_t g_primBasicNewZero_bails;
 // Eden bump cells for the inline-alloc emit (set in ObjectMemory::initializeHeap).
 extern "C" uint8_t** g_jitEdenFreeCell;
 extern "C" uint8_t** g_jitSurvivorStartCell;
-// Class-table index of SmallInteger, baked into the immediate-`class` inline.
-// Set per-compile in compileViaAsmjit from memory (verified classTable[idx]==
-// SmallInteger), 0 => disabled (the emit falls back to dispatchCached). The
-// emitted inline loads g_classTableBase[idx] at runtime (GC-safe), so a moving
-// class object is fine; only the index is constant.
-static uint64_t g_jitSmallIntClassIndex = 0;
+// Class-table indices of the immediate classes, baked into the immediate-`class`
+// inline (tag 1=SmallInteger, 3=Character, 5=SmallFloat). Set per-compile in
+// compileViaAsmjit from memory, each VERIFIED classTable[idx]==theClass; 0 =>
+// that tag disabled (emit falls back to dispatchCached). The emitted inline loads
+// g_classTableBase[idx] at runtime (GC-safe), so a moving class object is fine;
+// only the index is constant.
+static uint64_t g_jitSmallIntClassIndex   = 0;
+static uint64_t g_jitCharClassIndex       = 0;
+static uint64_t g_jitSmallFloatClassIndex = 0;
 extern "C" uint64_t jit_rt_t1_sista_dispatch(void* state, uint64_t fnPtr,
                                               uint64_t methodBits,
                                               uint64_t nArgs);
@@ -6405,28 +6408,42 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                                && g_jitSmallIntClassIndex != 0) {
                         // Immediate-receiver `class` inline (sub-lever (a) of the
                         // dispatch tax): the heap-only tryPrimClass below can't
-                        // serve an immediate (no header), so `42 class` used to
-                        // take the C++ send (the measured ~18x gap). Here we
-                        // inline SmallInteger>>class fully: tag==1 + primKind 24
-                        // -> classTable[g_jitSmallIntClassIndex]. Other immediates
-                        // (Character/SmallFloat) and non-class sends bail to
+                        // serve an immediate (no header), so `42 class` / `$a class`
+                        // / `1.5 class` used to take the C++ send (the measured ~18x
+                        // gap). Map the immediate tag (1=SmallInteger, 3=Character,
+                        // 5=SmallFloat) to classTable[idx] (idx baked + verified
+                        // per-compile). Non-class sends + unbaked tags bail to
                         // dispatchCached. Uses x6/x4 only (NOT x5=icDataPtr) so the
-                        // bail paths keep the IC pointer dispatchCached needs.
+                        // bail paths keep the IC pointer dispatchCached needs; the
+                        // heap path stays branch-free (b_eq is predictor-free).
                         asmjit::Label imcHeap = a.new_label();
-                        a.b_eq(imcHeap);                       // heap -> heap path
-                        a.and_(x6, x1, asmjit::Imm(0x7));
-                        a.cmp(x6, asmjit::Imm(1));             // tag 1 = SmallInteger
-                        a.b_ne(dispatchCached);
+                        asmjit::Label imcLoad = a.new_label();
+                        a.b_eq(imcHeap);                        // heap -> heap path
                         a.lsr(x6, x7, asmjit::Imm(48));
                         a.and_(x6, x6, asmjit::Imm(0x1F));
-                        a.cmp(x6, asmjit::Imm(kPrimKindClass)); // 24 = #class
-                        a.b_ne(dispatchCached);
-                        a.mov(x6, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
-                        a.ldr(x6, ptr(x6));                    // class table base
+                        a.cmp(x6, asmjit::Imm(kPrimKindClass));  // 24 = #class
+                        a.b_ne(dispatchCached);                 // non-class -> C++ send
+                        a.and_(x6, x1, asmjit::Imm(0x7));        // immediate tag
                         a.mov(x4, asmjit::Imm(g_jitSmallIntClassIndex << 3));
-                        a.add(x6, x6, x4);
-                        a.ldr(x6, ptr(x6));                    // SmallInteger class
-                        a.stur(x6, ptr(x2, rcvrOffsetBytes));  // result -> sp[-1]
+                        a.cmp(x6, asmjit::Imm(1));               // tag 1 = SmallInteger
+                        a.b_eq(imcLoad);
+                        if (g_jitCharClassIndex != 0) {
+                            a.mov(x4, asmjit::Imm(g_jitCharClassIndex << 3));
+                            a.cmp(x6, asmjit::Imm(3));           // tag 3 = Character
+                            a.b_eq(imcLoad);
+                        }
+                        if (g_jitSmallFloatClassIndex != 0) {
+                            a.mov(x4, asmjit::Imm(g_jitSmallFloatClassIndex << 3));
+                            a.cmp(x6, asmjit::Imm(5));           // tag 5 = SmallFloat
+                            a.b_eq(imcLoad);
+                        }
+                        a.b(dispatchCached);                    // unbaked tag -> C++
+                        a.bind(imcLoad);
+                        a.mov(x6, asmjit::Imm((uint64_t)&pharo::g_classTableBase));
+                        a.ldr(x6, ptr(x6));                     // class table base
+                        a.add(x6, x6, x4);                      // &classTable[idx]
+                        a.ldr(x6, ptr(x6));                     // immediate class oop
+                        a.stur(x6, ptr(x2, rcvrOffsetBytes));   // result -> sp[-1]
                         a.b(tosSendRes ? tosLrearm : endOfSend);
                         a.bind(imcHeap);
                     } else {
@@ -11524,15 +11541,21 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     size_t emitted = 0;
     bool   isReal  = false;
     uint64_t nilBits = memory.nil().rawBits();
-    // Bake the SmallInteger class-table index for the immediate-`class` inline,
-    // but only if classTable[idx] actually resolves back to the SmallInteger
-    // class (robust against a lazy/relocated identityHash). 0 => inline disabled.
+    // Bake the immediate class-table indices for the immediate-`class` inline,
+    // each only if classTable[idx] actually resolves back to that class (robust
+    // against a lazy/relocated identityHash). 0 => that tag's inline disabled.
+    // Sources mirror ObjectMemory::classOf (SmI/Char are special objects;
+    // SmallFloat is classAtIndex(4)).
     {
-        Oop siClass = memory.specialObject(pharo::SpecialObjectIndex::ClassSmallInteger);
-        uint64_t idx = siClass.isObject() ? siClass.asObjectPtr()->identityHash() : 0;
-        g_jitSmallIntClassIndex =
-            (idx != 0 && memory.classAtIndex((uint32_t)idx).rawBits() == siClass.rawBits())
-                ? idx : 0;
+        auto bakeIdx = [&](Oop cls) -> uint64_t {
+            uint64_t idx = cls.isObject() ? cls.asObjectPtr()->identityHash() : 0;
+            return (idx != 0 &&
+                    memory.classAtIndex((uint32_t)idx).rawBits() == cls.rawBits())
+                       ? idx : 0;
+        };
+        g_jitSmallIntClassIndex   = bakeIdx(memory.specialObject(pharo::SpecialObjectIndex::ClassSmallInteger));
+        g_jitCharClassIndex       = bakeIdx(memory.specialObject(pharo::SpecialObjectIndex::ClassCharacter));
+        g_jitSmallFloatClassIndex = bakeIdx(memory.classAtIndex(4));
     }
     // Offset of bc[0] from the CompiledMethod object's address.
     //   methObj layout:  [ObjectHeader 8B][slot 0 = header][slot 1..N = lits][bytes...]
