@@ -158,8 +158,10 @@ above). The prim-105 branch did not hurt string_build. Lever ranking for the
            non-class sends fall through to dispatchCached. WIN: MONO `o class name size`
            433->330ms (-24%); heap class neutral (predictor-free branch); poly neutral
            (the earlier 5% was bench_spectrum noise). 0 regressions: kernel 2580/0/0,
-           NeoJSON 116, STON 317. Sub-piece remaining: Character/SmallFloat class
-           (rarer) still full-send.
+           NeoJSON 116, STON 317. EXTENDED to Character + SmallFloat (b4c99459): tag
+           cascade 1/3/5 -> SmI/Char/SmallFloat class index (each baked+verified). Char
+           444->332 (-25%), Float 441->324 (-26%); poly still neutral (IC walk dominates
+           a polymorphic site). ALL immediate `class` now inlined.
        (b) CROSS-METHOD SEND ACTIVATION (`Class>>name` etc., ~260ms): the deep "send
            tax". Non-self-recursive cross-method sends that aren't inline-J2J'd go
            through the full activation path. This is the DEEPEST, most-studied lever
