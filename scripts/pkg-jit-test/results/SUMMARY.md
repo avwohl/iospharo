@@ -148,13 +148,20 @@ above). The prim-105 branch did not hurt string_build. Lever ranking for the
      (old-space fallback for overflow/eden-full; needsScavenge_ deferred to a safe
      point -> GC-safe). Was old-space-only -> full-GC pressure (shallowCopy old-space
      trap). MODEST win ~4-7% (allocation 1014->974, collection 881->820, sort
-     521->486) -> GC pressure was NOT the dominant cost. (b) THE BIG REMAINING LEVER:
-     the JIT emits an inline stencil at each new/new: site that CALLS the C++ helper
-     jit_rt_new_prim (helpers.newPrim, stencils.cpp:1586); the ~18x residual is that
-     per-alloc C++ call + the helper's size/format/header/nil-fill work. Cog inlines
-     the whole bump in emitted asm (no call). Inlining jit_rt_new_prim's body into the
-     new-stencil is the deep win. Underlies allocation(19x)+string_build(22x)+
-     collection(17x)+dict(18x)+set(39x).
+     521->486; re-measured eden-on ~996 vs eden-off ~1064 = real ~5-6%, noisy) -> GC
+     pressure was NOT the dominant cost. (b) THE BIG REMAINING LEVER = per-site class
+     SPECIALIZATION + inline asm alloc (a MAJOR JIT feature, multi-session). Tier-1
+     `basicNew` (AsmjitT1.cpp:8610) calls jit_rt_basic_new -> Interpreter::jitBasicNew
+     -> allocateSlots (already eden). Per-alloc ~250ns vs Cog ~12ns (20x). The class
+     isn't known at emit time, so a GENERIC inline still reads instanceSpec at runtime
+     + computes size -> saves only the call overhead (modest). Cog's speed = baking
+     slotCount/format/classIndex into the emitted code when the IC monomorphizes, then
+     a ~3-instr inline eden bump + N nil-stores, NO call. Requires: IC-driven per-site
+     specialization + recompile + GC-safe inline bump (eden overflow -> call the C++
+     fallback; the deferred-needsScavenge_ design from 1a makes the bump GC-safe).
+     Underlies allocation(20x)+string_build(22x)+collection(17x)+dict(18x)+set(39x).
+     NOT attempted: a contained generic-inline is GC-risky for a modest win, and the
+     real (specialization) win is a dedicated effort — not a marathon-tail change.
   2. Block activation: first-class block #value: not inlined (block_recursion 37x).
   3. Float unboxing: every float op boxes a heap Float / SmallFloat64 (float_loop 17x).
   4. Per-send dispatch tax: the residual ~1.5x send tax (polymorphic_sends 8x).
