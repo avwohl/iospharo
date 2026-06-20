@@ -116,23 +116,28 @@ under `PHARO_NO_JIT`, which passes — unless noted)
    `PHARO_SISTA_NO_TAGCHECK_SKIP` forces the guard always. Validated: factorial repro
    1→0, hammer (177! ×20000) 1→0, `testSlowFactorial` FAIL→PASS, NeoJSON 116/116,
    PolyMath 0 SubscriptOutOfBounds (off-by-one fix intact).
-   `ArrayTest>>testPrintingRecursive` is a SEPARATE, STILL-OPEN tier-1 JIT bug
-   (characterized 2026-06-19): a **deep-recursion operand corruption**.
-   `printString` of a self-referential array recurses ~15000 levels (to fill the
-   ~50000-char limit); under the JIT an operand is corrupted deep in the recursion —
-   a boolean slot for a conditional jump gets a non-boolean -> `NonBooleanReceiver`
-   (the signature SHIFTS to MNU `True`/`False` under other configs = operand
-   corruption). JIT-CONFIRMED (passes under `PHARO_NO_JIT`). NOT knob-isolatable:
-   `NO_SISTA`, `NO_INLINE_J2J`, `XMETHOD_MAX_IC=0`, `NO_CAN_SKIP_J2J_SAVE`,
-   `SP_IN_X25=0`, `FSR_LAZY=0`, `NO_NATIVE_BACKJUMP` all still fail (only shift the
-   error); ONLY `NO_JIT` fixes it -> a fundamental deep-recursion corruption in
-   tier-1 base codegen, not one feature. Non-cyclic deep nesting (8000-deep array)
-   also misbehaves (hangs) under the JIT, so it is deep-recursion-general, not
-   cyclic-specific. Signaler-context walk shows `0x300000000` (corrupted frames),
-   same family as the STON deep-recursion issue. Minimal repro:
-   `scripts/pkg-jit-test/repro_cyclicprint_jit.st` (deterministic, fast: a 3-element
-   self-ref array). NEXT: needs lldb — break at the mustBeBoolean / non-boolean
-   conditional-jump site and walk the JIT frames; knob bisection is exhausted.
+   `ArrayTest>>testPrintingRecursive` — ROOT-CAUSED 2026-06-19 (lldb-equivalent
+   forensics): it is the **VM frame-stack-overflow handling**, the SAME deep-
+   recursion class as STON, NOT a separate JIT codegen bug. `printString` of a
+   self-referential array recurses to fill the ~50000-char limit — far more than
+   `StackOverflowLimit = 4096` (`Interpreter.hpp:641`) frames. The built-in
+   `[MUSTBOOL]`/`[MB-FORENSICS]` dump (PHARO_SP_DEPTH_TRAP) pinned the corruption at
+   `fd=4094-4100` (= the 4096 limit) in `Array>>printOn:` (a conditional jump reads
+   `SmallInteger 0` instead of a boolean). At the limit the JIT inline-activate bails
+   `ExitStackOverflow`, which falls to the chain-loop `default: return false`
+   (Interpreter.cpp ~27056) — NO dedicated handler — leaving the half-set-up call's
+   args + a half-pushed J2J save on the operand stack, so the interpreter resumes
+   desynced -> `NonBooleanReceiver` / `BlockCannotReturn` (the signature shifts with
+   config and recursion depth; the do-splice fix shifted it so NO_JIT now hits the
+   overflow too -> earlier "JIT-only" framing was a boundary artifact). Our VM's
+   FIXED 4096-frame `savedFrames_` + terminate-or-corrupt overflow handling can't
+   grow for legitimate deep recursion; Cog uses growable stack pages. FIX (VM-core,
+   substantial, NOT attempted — high regression risk on the shipping arch's core
+   recursion path): grow the frame stack / spill JIT frames to heap Smalltalk
+   contexts and continue (Cog's stack-page approach), or at minimum give
+   `ExitStackOverflow` a dedicated handler that cleanly materializes + continues
+   instead of `default: return false`. Merges with the STON deep-recursion fix.
+   Repro: `scripts/pkg-jit-test/repro_cyclicprint_jit.st`.
 
 2. **PolyMath off-by-one subscript corruption** (JIT, 51 occurrences) —
    **ROOT-CAUSED + FIXED 2026-06-19.**
