@@ -224,6 +224,34 @@ UPDATE 6 — NOT a cycle / not prim-197; it's an infinite exception RE-HANDLE lo
   non-local-return or a wrong retval from a BV-inlined block (ties to the J2J-save/return
   value handling). The exception is real (some startup error); BV makes its HANDLING loop.
 
+UPDATE 7 — the re-signaled exception is FileWriteError (BV-on only); divergence pinned.
+Trapped the handled exception via prim 197's FOUND path (PHARO_T1_TRACE_HANDLER, temp
+[HFOUND] dump of handler selector + the exception class found by walking startContext to
+the #signal* context). Diff:
+- BV-OFF (completes -> R<7>): 14 handled exceptions then DONE — FileDoesNotExistException
+  (boot file probes), Error, PrimitiveFailed, STONReaderError, FileDoesNotExistException.
+  All boot-expected, each handled once, boot proceeds.
+- BV-ON (runaway): identical up to PrimitiveFailed (HFOUND 7), then DIVERGES: PrimitiveFailed
+  (8) -> FileWriteError (9, evaluateSignal:) -> FileWriteError re-handled repeatedly
+  (12,13,17,21,24…) + UnhandledError (16,22), forever. **FileWriteError appears ONLY with
+  BV on.**
+- So: BV-on, the PrimitiveFailed handler diverges and produces a FileWriteError whose
+  handler (evaluateSignal:) never consumes it -> re-signal -> re-handle -> infinite,
+  escalating to UnhandledError. The loop is the boot's error-LOGGING / file-write path
+  (logDuring: seen in the stack) re-raising under BV. FileWriteError = a file write failing
+  (the error logger writes a file; under BV the write/handler corrupts and loops).
+- PERSISTENT CONTRADICTION to resolve for the fix: the BV helper ALWAYS bails (no 2180
+  hit, even over 112M sends) and the bail routes to dispatchCached (advances) — yet BV-on
+  diverges. CANDIDATE MECHANISM: the bit-59 BV CLASSIFICATION corrupts the IC even when the
+  helper bails (e.g. dispatchCached re-dispatches a value: send to a wrong cached target
+  because bit-59 is set), so the handler/log block returns wrong WITHOUT a BV "hit".
+- NEXT (decisive, fresh session): (a) disable the bit-59 classification (so value: sends
+  are never BV-classified -> helper never called) while keeping t1InlineBlockValue's other
+  codegen — if the runaway stops, the bit-59/IC-classification is the cause (not a hit, not
+  a codegen side-effect); find where bit 59 is SET and why it corrupts the bailed
+  dispatchCached. (b) Otherwise trace the FileWriteError's first signal BV-on vs BV-off to
+  see what write fails + which block returns wrong.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
