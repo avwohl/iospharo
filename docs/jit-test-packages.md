@@ -187,10 +187,26 @@ under `PHARO_NO_JIT`, which passes — unless noted)
    PolyMath SmallFloat64 18->0, NeoJSON 116/116, kernel 2862 pass, off-by-one +
    factorial fixes intact.
 
-5. **Soil FFI file-lock crash** (VM FFI gap). Soil-File uses uFFI→LibC
-   (`flock`/`fcntl`/`fsync`) for durable file locking; the custom VM SIGABRTs
-   during those tests. Not a JIT bug — a missing/!broken FFI path. STON+NeoCSV
-   (no FFI) run clean, so this is isolated to Soil's file layer.
+5. **Soil FFI file-lock SIGABRT** (VM FFI robustness gap, NOT a missing symbol —
+   re-analyzed 2026-06-20). Soil-File uses uFFI→LibC (`flock`/`fcntl`/`fsync`).
+   CORRECTION: these are NOT stubbed/missing — `ffi::lookupFunction` resolves them
+   via `dlsym(RTLD_DEFAULT)` (`FFI.cpp:379`) to the real macOS libc, and the call
+   runs through real libffi (`ffi_call` via `primitiveSameThreadCallout`,
+   `Primitives.cpp:28891-29142`). The SIGABRT is UNCATCHABLE: the only guard around
+   `ffi_call` is an ObjC `@try/@catch` (`ObjCExceptionGuard.m:11`) which catches
+   ObjC/C++ exceptions but NOT POSIX signals, and the harness installs
+   SIGSEGV/SIGBUS/SIGILL/SIGTERM handlers but deliberately not SIGABRT
+   (`test_load_image.cpp:768-771`). So when a real libc callout aborts (leading
+   hypothesis: a variadic-`fcntl(fd,F_SETLK,struct flock*)` declared via the fixed
+   (non-variadic) `primitiveDefineFunction` path -> `ffi_cif` ABI mismatch /
+   bad-pointer marshalling at `Primitives.cpp:28947-29094`; libffi can `abort()` on a
+   malformed cif) the process dies uncatchably and takes the test batch with it.
+   FIX DIRECTION: (a) wrap the FFI call boundary (`Primitives.cpp:29132`) in a
+   `sigsetjmp`/SIGABRT guard mirroring the existing SIGSEGV recovery
+   (`Interpreter.cpp:2469`) -> converts the crash into a recoverable primitive
+   failure (easy-medium, general VM robustness win, not just Soil); then (b) trace
+   with `PHARO_FFI_TRACE` to confirm the variadic-`fcntl`/struct-`flock` ABI path and
+   fix the cif selection. NOT a JIT bug; STON+NeoCSV (no FFI) run clean.
 
 These are exactly the classes of bug the kernel micro-suite never reached: deep
 recursion, iterative numeric loops, binary serialization, and FFI.
