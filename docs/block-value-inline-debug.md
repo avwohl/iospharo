@@ -102,6 +102,25 @@ RUNAWAY SIDE-EFFECT SUSPECTS (codegen flips from the flag, active without BV fir
   path in the prelude for ALL methods (but that path is the default for varying-arg
   methods, so less suspect).
 
+UPDATE 2 (later same session) — two corrections + one more suspect ruled out:
+- "BV helper NEVER fires" was WRONG (it was based on the HIT bp at 2180). With the
+  correct image path, breaking on the helper ENTRY (`jit_rt_inline_block_value_prep`)
+  DOES fire: the helper is CALLED from JIT'd code (bt: JIT frame -> tryJITActivation ->
+  activateMethod -> sendSelector -> interpret) and BAILS before 2180 (bit-59 IS set on
+  startup `value:` sends; they bail, e.g. block-not-compiled). So the BV runtime bail
+  path (`b j2jBail` at AsmjitT1.cpp ~6605) IS exercised — it's not a pure no-BV-runtime
+  codegen side effect.
+- staticJ2JArgCount=-1 (11623): RULED OUT — dropping the BV term (keep the static value
+  with BV on) did NOT stop the runaway.
+- REFINED PRIME SUSPECT: the BV bail -> j2jBail path for a `value:` send. j2jBail is the
+  inline-J2J bail; a BV-classified `value:` that bails may be re-dispatched there without
+  advancing (re-classify BV -> re-bail -> loop) -> the 112M-send runaway. NEXT: lldb a
+  breakpoint just after a BV bail (the bailBV/j2jBail site) and watch whether the SAME
+  send re-enters; if so, fix the BV bail to fall to the normal value: dispatch
+  (dispatchCached) instead of j2jBail, or ensure j2jBail advances the ip past the send.
+  Ruled out to date: closure side-stack, 4764 V1/V2 jitMethod misread, spLiveInX2 (7707),
+  staticJ2JArgCount (11623).
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
