@@ -135,3 +135,21 @@ NeoJSON real roundtrip (2000x): Cog 5.7s / JIT 155s = 27x.
 Verdict: JIT competitive (2-5x) only on inlinable integer arithmetic + method
 recursion; 13-39x slower on floats/blocks/collections/hashing/allocation — the
 real-world levers. Build -O0 vs -O2 barely matters (hot loop is JIT-emitted).
+
+2026-06-20 re-measure (build-rel, all 8 correctness fixes): spectrum essentially
+UNCHANGED — the fixes are PERF-NEUTRAL (int_loop 264, float_loop 3787, fib30 544,
+block_fib28 3961, polymorphic 14204, collection 881, oc_churn 1010, dict 2852,
+set 1614, string_build 1876, alloc 1014, factorial 333, sort 521 ms; ratios 2-39x as
+above). The prim-105 branch did not hurt string_build. Lever ranking for the
+"as-fast-as-Cog" half (all DEEP, multi-session JIT work — consistent with memory
+"Cog-speed lever CLOSED / no safe quick win"):
+  1. INLINE ALLOCATION (highest ROI): the JIT does NOT emit an inline eden
+     bump-pointer alloc (no case 70/71 in AsmjitT1; `new` calls a C++ fast-path
+     helper, JITRuntime.cpp:1829/1908). Cog inlines it. This tax underlies
+     allocation(20x)+string_build(22x)+collection(17x)+dict(18x)+set(39x). Risky
+     (GC-safepoint correctness in emitted code).
+  2. Block activation: first-class block #value: not inlined (block_recursion 37x).
+  3. Float unboxing: every float op boxes a heap Float / SmallFloat64 (float_loop 17x).
+  4. Per-send dispatch tax: the residual ~1.5x send tax (polymorphic_sends 8x).
+None attempted this session (each is a focused multi-session effort); correctness was
+the productive vein (8 fixes, Cog-parity).
