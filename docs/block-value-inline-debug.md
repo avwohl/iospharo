@@ -252,6 +252,32 @@ the #signal* context). Diff:
   dispatchCached. (b) Otherwise trace the FileWriteError's first signal BV-on vs BV-off to
   see what write fails + which block returns wrong.
 
+UPDATE 8 — ROOT CAUSE CONFIRMED: the bit-59 BLOCK_VALUE_BIT classification.
+Decisive A/B (existing runtime knob PHARO_NO_BLOCK_BIT, gates the bit-59 set at
+Interpreter.cpp:23338):
+  BV-on + PHARO_NO_BLOCK_BIT=1  -> R<7>   (runaway GONE)
+  BV-on alone                   -> runaway (no result)
+  PHARO_NO_BLOCK_BIT=1 alone    -> R<7>   (sanity)
+So the runaway is caused by the bit-59 CLASSIFICATION of value: sends — NOT a BV inline
+"hit" (the helper always bails), NOT a codegen side-effect (all ruled out). With bit-59
+omitted, BV-on is safe.
+- The IC fill for a BV site (Interpreter.cpp:23814-23816) sets icData[e*3+1]=value: method
+  (cached target is CORRECT) and icData[e*3+2] = (1ULL<<59) "BLOCK_VALUE_BIT only" (the
+  extra is OVERWRITTEN to bit-59-only, losing other classification bits). The cached target
+  being correct means the corruption is in the bit-59 DISPATCH PATH (tbnz 59 -> tryBlockValue
+  -> helper bails -> j2jBail -> dispatchCached), not the target — it corrupts the handler-
+  block value: send's state/resume even though the helper bailed.
+- PHARO_NO_BLOCK_BIT is a SAFE-BUT-USELESS workaround: with it, BV-on never runs the inline
+  (bit-59 never set -> tbnz never fires -> helper never called), so no runaway AND no
+  benefit. It is NOT a fix; it confirms the bug is in the bit-59 classification/dispatch.
+- THE FIX (next focused step): correct the bit-59 value: dispatch so a BV-classified send
+  that bails dispatches the value: send cleanly (the cached target is already value:
+  method, so the corruption is in the path's state handling / the resume after
+  dispatchCached, or the overwrite at 23816 losing needed extra bits). Trace ONE bit-59
+  handler-block value: send through bail -> j2jBail -> dispatchCached -> value: method ->
+  block -> return, diffing interp state vs the PHARO_NO_BLOCK_BIT (normal) path, to find
+  the divergent field. The exception (FileWriteError) re-handle loop is downstream of this.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
