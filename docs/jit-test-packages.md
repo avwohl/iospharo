@@ -72,29 +72,24 @@ failures that also fail on Cog.)
 ### Bugs surfaced (each confirmed JIT-specific by re-running the failing test
 under `PHARO_NO_JIT`, which passes — unless noted)
 
-1. **STON deep-recursion failure — VM-CORE, NOT JIT** (re-classified 2026-06-19).
+1. **STON deep-recursion failure — VM-CORE stack limit, FIXED 2026-06-19.**
    `STONReaderTest>>testDeepStructure` serializes a 1024-level-deep nested Array.
-   It FAILS on our VM and succeeds on Cog (2059-char STON) — but it fails
-   IDENTICALLY under `PHARO_NO_JIT` (interpreter), so it is a VM-core defect, not
-   JIT codegen. (My earlier "JIT operand corruption" label was wrong — I had never
-   completed a NO_JIT run; the -O0/-O2 interpreter runs timed out on the 1024-deep
-   test.) The failure is in the STON WRITER: at deep nesting our VM either
-   hard-crashes (no catchable error) or throws `PrimitiveFailed: basicNew:
-   ByteString`. Fresh-process threshold: depth 400 OK, depth >=600 crashes; Cog
-   handles 1024+. The writer recurses through many method+block frames per level
-   (`nextPut:`->`writeList:`->`with:do:`->`encodeList:`-> `indentedDo:`/`do:`/
-   `separatedBy:` blocks), so it exhausts our stack handling around ~500 levels.
-   Ruled out as generic causes (all reach much deeper on our VM): plain recursion
-   20000, large-frame recursion 2000, block recursion 1000, IdentityDictionary
-   2000, recursion+alloc+GC 1500 — so it is the STON writer's specific
-   high-frames-per-level pattern, where Cog's growable stack pages cope and ours
-   does not. Under the JIT the overflow ALSO corrupts JIT frame state
-   (`0x300000000`), which is why it earlier looked like a JIT operand-corruption
-   bug and why the error signature varied (`True>>#\\` / `KeyNotFound` /
-   `STONReaderError`). FIX DIRECTION (VM-core, separate from JIT): grow the call
-   stack like Cog's stack pages, or make stack-overflow raise a clean catchable
-   `Error` instead of crashing/corrupting. NOT attempted (risky shipping-arch VM
-   change, out of JIT scope).
+   It failed on our VM (and IDENTICALLY under `PHARO_NO_JIT`), succeeded on Cog.
+   ROOT CAUSE: the soft recursion cap `StackOverflowLimit` was **4096**, but the
+   `savedFrames_` array already holds `MaxFrameDepth=65536` — so legitimate deep
+   recursion that fit the array (STON's ~600-level nested write = ~4200 method+block
+   frames; `with:do:`/`encodeList:`/`do:`/`separatedBy:` push ~7 frames/level) hit
+   the over-aggressive 4096 cap, and the buggy `ExitStackOverflow` spill corrupted
+   the operand stack (`basicNew: ByteString` PrimitiveFailed / `0x300000000`
+   frames, varying signatures). FIX: raise `StackOverflowLimit` 4096 -> 56000
+   (Interpreter.hpp:641), using the already-allocated capacity (no new memory;
+   56000+8192 headroom < 65536). Validated: STON 316/1 -> **317/0/0**; kernel
+   regression 2379 pass / 0 fail (incl. RecursionStopperTest / LocalRecursionStopper);
+   NeoJSON 116/116; factorial + off-by-one + do-splice fixes intact. This is NOT
+   the full root fix (truly-unbounded recursion still can't grow like Cog's stack
+   pages, and the `ExitStackOverflow` spill is still buggy AT the cap) — it stops
+   rejecting recursion the array can already hold. The proper fix (growable stack /
+   spill JIT frames to heap contexts) remains future work.
 
    Bug found in the same area — ROOT-CAUSED to a SISTA tier-2 unsound type
    narrowing, and **FIXED 2026-06-19**: **`IntegerTest>>testSlowFactorial`** failed
@@ -116,28 +111,18 @@ under `PHARO_NO_JIT`, which passes — unless noted)
    `PHARO_SISTA_NO_TAGCHECK_SKIP` forces the guard always. Validated: factorial repro
    1→0, hammer (177! ×20000) 1→0, `testSlowFactorial` FAIL→PASS, NeoJSON 116/116,
    PolyMath 0 SubscriptOutOfBounds (off-by-one fix intact).
-   `ArrayTest>>testPrintingRecursive` — ROOT-CAUSED 2026-06-19 (lldb-equivalent
-   forensics): it is the **VM frame-stack-overflow handling**, the SAME deep-
-   recursion class as STON, NOT a separate JIT codegen bug. `printString` of a
-   self-referential array recurses to fill the ~50000-char limit — far more than
-   `StackOverflowLimit = 4096` (`Interpreter.hpp:641`) frames. The built-in
-   `[MUSTBOOL]`/`[MB-FORENSICS]` dump (PHARO_SP_DEPTH_TRAP) pinned the corruption at
-   `fd=4094-4100` (= the 4096 limit) in `Array>>printOn:` (a conditional jump reads
-   `SmallInteger 0` instead of a boolean). At the limit the JIT inline-activate bails
-   `ExitStackOverflow`, which falls to the chain-loop `default: return false`
-   (Interpreter.cpp ~27056) — NO dedicated handler — leaving the half-set-up call's
-   args + a half-pushed J2J save on the operand stack, so the interpreter resumes
-   desynced -> `NonBooleanReceiver` / `BlockCannotReturn` (the signature shifts with
-   config and recursion depth; the do-splice fix shifted it so NO_JIT now hits the
-   overflow too -> earlier "JIT-only" framing was a boundary artifact). Our VM's
-   FIXED 4096-frame `savedFrames_` + terminate-or-corrupt overflow handling can't
-   grow for legitimate deep recursion; Cog uses growable stack pages. FIX (VM-core,
-   substantial, NOT attempted — high regression risk on the shipping arch's core
-   recursion path): grow the frame stack / spill JIT frames to heap Smalltalk
-   contexts and continue (Cog's stack-page approach), or at minimum give
-   `ExitStackOverflow` a dedicated handler that cleanly materializes + continues
-   instead of `default: return false`. Merges with the STON deep-recursion fix.
-   Repro: `scripts/pkg-jit-test/repro_cyclicprint_jit.st`.
+   `ArrayTest>>testPrintingRecursive` — the 4096-overflow part is FIXED by the
+   `StackOverflowLimit` raise above (the built-in `[MUSTBOOL]`/`[MB-FORENSICS]` dump
+   pinned the corruption at `fd=4094-4100` = the old 4096 cap, in `Array>>printOn:`
+   reading `SmallInteger 0` for a conditional; with the raise the recursion no longer
+   overflows). But a SEPARATE, STILL-OPEN bug is now unmasked: when the
+   LimitedWriteStream hits the ~50000-char limit it does a non-local return (`^`) to
+   truncate, and that **deep NLR through ~14000 frames raises `BlockCannotReturn`**
+   (uncatchable — escapes `on: Exception do:`, so it aborts the test batch). It is
+   VM-core (fails under `PHARO_NO_JIT` too), distinct from the overflow. Likely the
+   deep-NLR home-context resolution failing through a very deep frame chain
+   (cf. memory `nlr-nested-valuewithexit-bug`). NEXT: investigate `BlockCannotReturn`
+   / `cannotReturn:` at deep NLR. Repro: `scripts/pkg-jit-test/repro_cyclicprint_jit.st`.
 
 2. **PolyMath off-by-one subscript corruption** (JIT, 51 occurrences) —
    **ROOT-CAUSED + FIXED 2026-06-19.**

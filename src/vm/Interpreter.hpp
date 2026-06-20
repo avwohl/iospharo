@@ -638,7 +638,19 @@ private:
         ptrdiff_t savedBytecodeEndOffset;
     };
     static constexpr size_t MaxFrameDepth = 65536;
-    static constexpr size_t StackOverflowLimit = 4096;  // Graceful overflow limit — catch infinite recursion fast
+    // Soft recursion limit.  Raised 4096 -> 56000 (2026-06-19): the
+    // savedFrames_ array already holds MaxFrameDepth=65536 frames, but the old
+    // 4096 limit false-positived on LEGITIMATE deep recursion that fits the
+    // array — e.g. ArrayTest>>testPrintingRecursive (printString of a self-ref
+    // array fills the ~50000-char limit) and STON>>testDeepStructure (1024-deep
+    // nested write).  Both hit the 4096 cap and the buggy ExitStackOverflow spill
+    // corrupted the operand stack (NonBooleanReceiver / basicNew:) instead of
+    // completing.  56000 leaves 65536-56000=9536 > StackOverflowSignalHeadroom
+    // (8192) for the terminate/unwind to run.  This uses the already-allocated
+    // capacity; it does NOT make truly-infinite recursion safe (the proper fix is
+    // growable stack pages / spilling JIT frames to heap contexts like Cog) — it
+    // just stops rejecting recursion the array can already hold.
+    static constexpr size_t StackOverflowLimit = 56000;
     // Extra frame budget granted WHILE signaling a stack-overflow error, so the
     // image's exception machinery + ensure:/ifCurtailed: unwinds can run above
     // the soft limit (4096+8192=12288, still well under MaxFrameDepth). Without
