@@ -121,6 +121,32 @@ UPDATE 2 (later same session) — two corrections + one more suspect ruled out:
   Ruled out to date: closure side-stack, 4764 V1/V2 jitMethod misread, spLiveInX2 (7707),
   staticJ2JArgCount (11623).
 
+UPDATE 3 (end of session) — bail-loop hypothesis WEAKENED + a new direction:
+- Code-reading the bail path: BV bail (bailBV ~6603) -> `b j2jBail` (7826) -> for a
+  `value:` send the receiver is a heap FullBlockClosure (tag 0) so it takes the heap
+  path (7833/7850) -> not getter/setter/at -> `b dispatchCached`. dispatchCached
+  re-dispatches normally (sets EXIT_SEND_CACHED, chain loop activates the cached
+  target) — i.e. it ADVANCES. So the "tight bail re-dispatch loop" is unlikely the
+  cause; the bail routes to a normal dispatch. (Not 100% confirmed at runtime — see next.)
+- Tried to catch the runaway steady-state (break helper, ignore-count 500000, compare
+  caller ip across calls) but it TIMED OUT: under lldb the runaway is slow (~1.18M sends
+  in 160s), so 500k helper calls weren't reached. lldb single-stepping is too slow for
+  this — prefer light gated instrumentation (e.g. a counter on re-entry of the same ip,
+  or dump the Smalltalk context chain) over lldb for the next attempt.
+- NEW CLUE: the runaway log shows `[XFER-N]` scheduler process-transfer traces walking
+  DOWN priorities (80->70->60->50->40->40, two pri-40 processes at the end). This MAY
+  indicate the runaway is process/scheduler-level (processes cycling / not terminating)
+  rather than a single hot send loop — which would connect to the known scheduler-
+  deadlock / process-leak family ([[vm-scheduler-cog-parity]], [[timer-scheduler-wedge]]).
+  UNCONFIRMED: [XFER] may also be normal boot scheduling; needs a BV-on vs BV-off diff of
+  the [XFER] sequence to tell.
+- RULED OUT this session: closure side-stack, 4764 V1/V2 jitMethod misread, spLiveInX2,
+  staticJ2JArgCount, and (by code-reading) the tight bail->j2jBail re-dispatch loop.
+- NEXT: (a) diff the [XFER] scheduler trace BV-on vs BV-off to confirm/deny the process-
+  cycling angle; (b) if it's a send loop, add a gated "same-ip re-entry" counter at the
+  BV bail to catch it cheaply (lldb too slow); (c) the latent 4764 V1/V2 closure-as-
+  jitMethod bug is real + still worth fixing (extend V2 save to carry callerJitMethod).
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
