@@ -52,10 +52,18 @@ interpreter on this broad sweep. The remaining package failures were VM-core/ima
   plugin-absence by forcing Cog onto the same pure-Smalltalk inflate fallback (Cog
   correct, our VM corrupted). ZipPlugin remains unimplemented but is NOT needed for
   correctness — the Smalltalk fallback round-trips correctly once prim 105 is fixed.
-  Fuel improved 780/12/34/1 -> 794/12/20/1 (CRCError ~12 -> 0). Remaining Fuel
-  failures are image-compat (WideString x13) + FLBinaryFileStream* file-I/O
-  SubscriptOutOfBounds (VM-core, fails NO_JIT too — separate, not prim 105/JIT;
-  basic non-file testWordArray passes JIT/NO_JIT/Cog).
+  Fuel improved 780/12/34/1 -> 794/12/20/1 (CRCError ~12 -> 0).
+- **File I/O into/from non-byte buffers (WordArray/Bitmap/FloatArray) — FIXED
+  2026-06-20 (09528ecf).** The FLBinaryFileStream*/FLFileReferenceStream*
+  testWordArray/testBitmap SubscriptOutOfBounds was TWO coupled VM-core defects:
+  (1) ObjectMemory::storeByte/fetchByte guarded on isBytesObject() so byte access to
+  a words/shorts object was a no-op/0; (2) primitiveFileRead/Write treated
+  start/count as BYTES but the FilePlugin contract (and the image's `buffer
+  basicSize`) is ELEMENTS, so a 4-byte-element WordArray under-read 4x. Result: a
+  zeroed words buffer -> Fuel read encoded-reference 0 -> SubscriptOutOfBounds. Both
+  fixed; byte buffers unchanged. JIT-independent. broad kernel 2782/0/0. Remaining
+  Fuel failures are image-compat only (WideString globals/class-name) + abstract
+  FileSystemTest (Cog fails it too).
 - WideString globals/class-name (Fuel testWideString*) — image-compat, all serializers.
 - ProcessTest x47 MNU, WriteBarrier Double atPut — image-compat.
 - Soil FFI SIGABRT (see bug 5) — FFI robustness, not JIT.
