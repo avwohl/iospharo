@@ -143,11 +143,16 @@ set 1614, string_build 1876, alloc 1014, factorial 333, sort 521 ms; ratios 2-39
 above). The prim-105 branch did not hurt string_build. Lever ranking for the
 "as-fast-as-Cog" half (all DEEP, multi-session JIT work — consistent with memory
 "Cog-speed lever CLOSED / no safe quick win"):
-  1. INLINE ALLOCATION (highest ROI): the JIT does NOT emit an inline eden
-     bump-pointer alloc (no case 70/71 in AsmjitT1; `new` calls a C++ fast-path
-     helper, JITRuntime.cpp:1829/1908). Cog inlines it. This tax underlies
-     allocation(20x)+string_build(22x)+collection(17x)+dict(18x)+set(39x). Risky
-     (GC-safepoint correctness in emitted code).
+  1. ALLOCATION (highest ROI): TWO sub-levers. (a) The JIT `new` fast-path helper
+     jit_rt_new_prim (JITRuntime.cpp:1771) bump-allocates from OLD SPACE
+     (oldSpaceFree(), line 1866), NOT eden — so JIT-allocated short-lived objects
+     skip the young generation and pile into old space -> full-GC pressure. This is
+     the SAME "old-space trap" memory vm-shallowcopy-old-space-trap.md documents for
+     clones (fixed by moving them to eden, ~12% on SHA256); applying that pattern to
+     jit_rt_new_prim is the tractable first step BUT needs scavenge-mid-JIT-call
+     safepoint handling (the reason it's old-space today). (b) Cog further INLINES the
+     bump in emitted code (no case 70/71 in AsmjitT1; we call the C++ helper per new).
+     Underlies allocation(20x)+string_build(22x)+collection(17x)+dict(18x)+set(39x).
   2. Block activation: first-class block #value: not inlined (block_recursion 37x).
   3. Float unboxing: every float op boxes a heap Float / SmallFloat64 (float_loop 17x).
   4. Per-send dispatch tax: the residual ~1.5x send tax (polymorphic_sends 8x).
