@@ -67,3 +67,46 @@ callee state setup (2144-2180) and/or its interaction with the asm return prelud
 37x lever if fixed (block_recursion); a plain `[b] value: i` loop is 20x
 (366ms vs Cog 18ms). Leaf-only by default; `PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF`
 relaxes the gate (also broken).
+
+## lldb session 2026-06-20 — findings (BV still broken, but narrowed a lot)
+
+TOOLING LESSON: lldb runs from its cwd, so a RELATIVE image arg fails SILENTLY as
+"Cannot open image file" → exit status 1 (looks like a VM crash but isn't). Always
+`cd` to the image dir or pass an ABSOLUTE image path. (Burned several runs on this.)
+
+KEY FINDING — the failure is NOT the BV inline path:
+- With BV ON, a breakpoint on `jit_rt_inline_block_value_prep` / JITRuntime.cpp:2180
+  (the hit) NEVER fires during the failing `Stdio … (3+4) printString` eval, yet the
+  eval still fails — it RUNS AWAY (112M+ sends for a 3+4 eval, no result), no SIGSEGV,
+  no `terminateCurrentProcess`. So the bug is a **side effect of the
+  `t1InlineBlockValue` flag changing global codegen**, exercised even when no block-
+  value send fires. My earlier "core BV inline" framing was wrong.
+
+REAL BUG FOUND (latent, not the runaway): the asm return prelude restore branch
+`emitJ2JReturnPrelude_arm64` (AsmjitT1.cpp ~4764) does `ldr x7, [x4, 32]` expecting
+`jitMethod` (V1 J2JSave layout), but under PHARO_J2J_SAVE_V2 **offset 32 is `closure`**
+(V1: jitMethod@32; V2: closure@32, resumeAddr-packed@24; struct in Interpreter.hpp:681).
+Since nil's rawBits != 0, the `cbz x7` guard never skips → it would restore
+state.jitMethod=closure (garbage) for xmethod/BV. The branch is `if (xmethod || bv)`
+(both opt-in) so default config is unaffected. Making it V1-only did NOT fix the BV
+runaway, so this is a SEPARATE latent bug (flagged with a NOTE at the site; not fixed
+because the proper V2 fix needs a caller-JM source the 40-byte V2 save lacks — likely
+extend the save to 48B with a callerJitMethod field, or rely on the 9558 PC-relative
+restore which BV's resume=endOfSend currently SKIPS).
+
+RUNAWAY SIDE-EFFECT SUSPECTS (codegen flips from the flag, active without BV firing):
+- AsmjitT1.cpp:7707 `spLiveInX2 = !t1InlineBlockValue && !t1InlineJ2JXmethodLog` — BV ON
+  forces the sp-reload-into-x12 path (spReg=x12) instead of reusing x2. This path is
+  RARELY exercised by default (default reuses x2), so it may be bit-rotted. **Prime
+  suspect** for the runaway (a wrong sp on returns corrupts a loop → non-termination).
+- AsmjitT1.cpp:11623 `staticJ2JArgCount = -1` when BV ON — forces the dynamic arg-count
+  path in the prelude for ALL methods (but that path is the default for varying-arg
+  methods, so less suspect).
+
+NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
+(force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
+4764 branch) and find which neutralization stops the 112M-send runaway. Repro
+(MUST cd to the image dir): `cd /tmp/pkgtest && PHARO_T1_INLINE_BLOCK_VALUE=1
+.../test_load_image neojson.image eval "Stdio stdout nextPutAll: 'R<', (3+4) printString,
+'>'; lf; flush."` → want R<7>, currently blank. lldb attaches cleanly from /tmp/pkgtest
+with an absolute VM path.

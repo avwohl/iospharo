@@ -4760,6 +4760,9 @@ static void emitJ2JReturnPrelude_arm64(asmjit::a64::Assembler& a,
             // zero-init.  Without this guard, the ldr x6, [x7] below
             // dereferences NULL and SIGSEGVs — was masked by the
             // warm-J2J gate which prevented the push from happening.
+            // NOTE 2026-06-20: under PHARO_J2J_SAVE_V2 offset 32 is `closure`,
+            // NOT `jitMethod` (V1 layout) — this read is a latent V1/V2 bug for
+            // xmethod/block-value (both opt-in). See docs/block-value-inline-debug.md.
             asmjit::Label skipJMRestore = a.new_label();
             a.ldr(x7, ptr(x4, 32));   // jitMethod
             a.cbz(x7, skipJMRestore);
