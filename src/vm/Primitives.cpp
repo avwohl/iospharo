@@ -12509,27 +12509,43 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Buffer must be a byte object
+    // Buffer must be a raw (non-pointer) indexable object.
     if (!bufferOop.isObject()) {
         return PrimitiveResult::Failure;
     }
-
+    ObjectHeader* bufHdr = bufferOop.asObjectPtr();
+    if (bufHdr->isPointersObject()) {
+        return PrimitiveResult::Failure;
+    }
+    // FilePlugin contract: `start` and `count` are in ELEMENTS of the buffer, not
+    // bytes (a WordArray element is 4 bytes, etc.); the return value is ELEMENTS
+    // read.  The old code treated them as bytes, so reads into non-byte buffers
+    // (WordArray/Bitmap/FloatArray/ShortArray) under-read by the element-size
+    // factor and left the tail zeroed -> Fuel FLBinaryFileStream SubscriptOutOfBounds.
+    // Byte buffers (elemSize 1) are byte-for-byte unchanged.  2026-06-20 fix.
+    auto bfmt = bufHdr->format();
+    size_t elemSize = (bfmt == ObjectFormat::Indexable64) ? 8
+        : (bfmt >= ObjectFormat::Indexable32 && bfmt <= ObjectFormat::Indexable32Odd) ? 4
+        : (bfmt >= ObjectFormat::Indexable16 && bfmt <= ObjectFormat::Indexable16_3) ? 2
+        : 1;
     size_t bufferSize = memory_.byteSizeOf(bufferOop);
-    if (static_cast<size_t>(start - 1 + count) > bufferSize) {
+    size_t byteStart = static_cast<size_t>(start - 1) * elemSize;
+    size_t byteCount = static_cast<size_t>(count) * elemSize;
+    if (byteStart + byteCount > bufferSize) {
         return PrimitiveResult::Failure;
     }
 
     // Read into a temporary buffer
-    std::vector<uint8_t> tempBuffer(count);
-    size_t bytesRead = fread(tempBuffer.data(), 1, count, file);
+    std::vector<uint8_t> tempBuffer(byteCount);
+    size_t bytesRead = fread(tempBuffer.data(), 1, byteCount, file);
 
     // Copy to the Smalltalk buffer
     for (size_t i = 0; i < bytesRead; i++) {
-        memory_.storeByte(start - 1 + i, bufferOop, tempBuffer[i]);
+        memory_.storeByte(byteStart + i, bufferOop, tempBuffer[i]);
     }
 
     popN(argCount + 1);
-    push(Oop::fromSmallInteger(static_cast<int64_t>(bytesRead)));
+    push(Oop::fromSmallInteger(static_cast<int64_t>(bytesRead / elemSize)));
     return PrimitiveResult::Success;
 }
 
@@ -12652,25 +12668,38 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Buffer must be a byte object
+    // Buffer must be a raw (non-pointer) indexable object.
     if (!bufferOop.isObject()) {
         return PrimitiveResult::Failure;
     }
-
+    ObjectHeader* bufHdr = bufferOop.asObjectPtr();
+    if (bufHdr->isPointersObject()) {
+        return PrimitiveResult::Failure;
+    }
+    // FilePlugin contract: `start`/`count` are in ELEMENTS, return is ELEMENTS
+    // written (symmetric with primitiveFileRead).  Byte buffers (elemSize 1) are
+    // unchanged.  2026-06-20 fix (was: writing nothing from a WordArray buffer).
+    auto bfmt = bufHdr->format();
+    size_t elemSize = (bfmt == ObjectFormat::Indexable64) ? 8
+        : (bfmt >= ObjectFormat::Indexable32 && bfmt <= ObjectFormat::Indexable32Odd) ? 4
+        : (bfmt >= ObjectFormat::Indexable16 && bfmt <= ObjectFormat::Indexable16_3) ? 2
+        : 1;
     size_t bufferSize = memory_.byteSizeOf(bufferOop);
-    if (static_cast<size_t>(start - 1 + count) > bufferSize) {
+    size_t byteStart = static_cast<size_t>(start - 1) * elemSize;
+    size_t byteCount = static_cast<size_t>(count) * elemSize;
+    if (byteStart + byteCount > bufferSize) {
         return PrimitiveResult::Failure;
     }
 
     // Copy from Smalltalk buffer to temp buffer
-    std::vector<uint8_t> tempBuffer(count);
-    for (int64_t i = 0; i < count; i++) {
-        tempBuffer[i] = memory_.fetchByte(start - 1 + i, bufferOop);
+    std::vector<uint8_t> tempBuffer(byteCount);
+    for (size_t i = 0; i < byteCount; i++) {
+        tempBuffer[i] = memory_.fetchByte(byteStart + i, bufferOop);
     }
 
     // For stdout/stderr, buffer line output with [IMAGE] prefix
     if (fileId == 1 || fileId == 2) {
-        for (size_t i = 0; i < static_cast<size_t>(count); i++) {
+        for (size_t i = 0; i < byteCount; i++) {
             char c = static_cast<char>(tempBuffer[i]);
             if (c == '\n' || c == '\r') {
                 if (!g_imageOutputBuffer.empty()) {
@@ -12714,11 +12743,11 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
         }
     }
 
-    size_t bytesWritten = fwrite(tempBuffer.data(), 1, count, it->second);
+    size_t bytesWritten = fwrite(tempBuffer.data(), 1, byteCount, it->second);
     fflush(it->second);
 
     popN(argCount + 1);
-    push(Oop::fromSmallInteger(static_cast<int64_t>(bytesWritten)));
+    push(Oop::fromSmallInteger(static_cast<int64_t>(bytesWritten / elemSize)));
     return PrimitiveResult::Success;
 }
 

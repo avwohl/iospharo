@@ -1084,7 +1084,15 @@ void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
 uint8_t ObjectMemory::fetchByte(size_t index, Oop obj) const {
     if (!obj.isObject()) return 0;
     ObjectHeader* header = obj.asObjectPtr();
-    if (!header->isBytesObject()) return 0;  // Must be bytes object for byteAt
+    // Byte access is valid for ANY non-pointer indexable object (bytes, words,
+    // shorts) — byteAt() only requires !isPointersObject() && index<byteSize().
+    // The old !isBytesObject() guard (Indexable8 only) made byte-level file I/O
+    // silently READ 0 into WordArray/Bitmap/FloatArray/ShortArray buffers:
+    // primitiveFileRead reported a full read but stored nothing -> buffer left
+    // zeroed -> Fuel read encoded-reference index 0 -> SubscriptOutOfBounds
+    // (FLBinaryFileStream testWordArray/testBitmap).  byteSize() bounds words/shorts
+    // correctly (8 for a 2-element WordArray).  2026-06-20 fix.
+    if (header->isPointersObject()) return 0;
     if (index >= header->byteSize()) return 0;
     return header->byteAt(index);
 }
@@ -1092,7 +1100,10 @@ uint8_t ObjectMemory::fetchByte(size_t index, Oop obj) const {
 void ObjectMemory::storeByte(size_t index, Oop obj, uint8_t value) {
     if (!obj.isObject()) return;
     ObjectHeader* header = obj.asObjectPtr();
-    if (!header->isBytesObject()) return;  // Must be bytes object for byteAtPut
+    // See fetchByte: accept any non-pointer indexable object (bytes/words/shorts);
+    // the old !isBytesObject() guard made primitiveFileWrite silently WRITE nothing
+    // from a WordArray/Bitmap/FloatArray buffer.  2026-06-20 fix.
+    if (header->isPointersObject()) return;
     if (index >= header->byteSize()) return;
     header->byteAtPut(index, value);
 }
