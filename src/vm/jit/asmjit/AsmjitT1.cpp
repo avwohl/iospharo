@@ -6580,6 +6580,11 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     a.mov(w1, asmjit::Imm(nArgs));
                     // resumeAddr points directly at endOfSend (skip the
                     // afterSend `b endOfSend` indirection).
+                    // NOTE 2026-06-20: this SKIPS the caller-JM restore at
+                    // resumeAfterCall (9549), so after a BV inline the caller runs
+                    // under the BLOCK's JM. Routing here to a restore-only label was
+                    // tried — necessary but NOT sufficient (HIT path has more
+                    // corruption). See docs/block-value-inline-debug.md UPDATE 9.
                     a.adr(x2, endOfSend);
                     emitSyncSpToState(a);  // sp-residency: helper reads state.sp
                     a.mov(x9, asmjit::Imm((uint64_t)

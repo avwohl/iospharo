@@ -278,6 +278,31 @@ omitted, BV-on is safe.
   block -> return, diffing interp state vs the PHARO_NO_BLOCK_BIT (normal) path, to find
   the divergent field. The exception (FileWriteError) re-handle loop is downstream of this.
 
+UPDATE 9 — HIT-path bisect + a fix attempt (necessary but NOT sufficient).
+- New diagnostic knob PHARO_BV_FORCE_BAIL (jit_rt_inline_block_value_prep returns nullptr
+  immediately): keeps the bit-59 classification + the tryBlockValue detour, but the BV
+  inline HIT never executes. BV-on + PHARO_BV_FORCE_BAIL=1 -> R<7> (no runaway). So the
+  corruption is in the HIT path (helper success -> br into block -> J2J save/state setup
+  -> block runs -> return), NOT the classification/bail (corrects the "always bails"
+  confusion from UPDATE 5/6 — hits DO occur and corrupt). PHARO_NO_BLOCK_BIT and
+  PHARO_BV_FORCE_BAIL are both safe-disables (BV-on stops looping) but neither enables the
+  inline.
+- IDENTIFIED + ATTEMPTED one real HIT-path bug: the BV resume = endOfSend (AsmjitT1.cpp
+  ~6583) SKIPS the caller-JM PC-relative restore at resumeAfterCall/9549. After a BV
+  inline the block ran with x19 = the BLOCK's JM; resuming at endOfSend leaves the caller
+  under the block's JM. FIX TRIED: route BV resume to a restore-only label (bound after
+  resumeAfterCall's pop+retval, before the restore) so the prelude's pop+retval isn't
+  doubled. Default-safe (BV opt-in). RESULT: did NOT stop the runaway -> NECESSARY but NOT
+  SUFFICIENT; reverted (left a NOTE at 6583). The HIT path has ADDITIONAL corruption
+  beyond the return restore — in the helper's setup (receiver/temps/literals/ip at
+  2144-2180, the J2J save 2090-2123, the closure side-stack 2133-2142) and/or the block's
+  execution/return interaction.
+- CONCLUSION: block-value's HIT path is a genuine MULTI-bug mechanism. It is correctly
+  opt-in/off; both PHARO_NO_BLOCK_BIT and PHARO_BV_FORCE_BAIL safely neutralize it. A real
+  fix needs systematically validating the helper's setup against activateBlock
+  (Interpreter.cpp ~10568) field-by-field for a single BV hit, plus the caller-JM restore
+  above — a focused multi-step effort, not a one-line fix.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro

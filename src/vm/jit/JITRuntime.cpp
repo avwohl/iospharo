@@ -1996,6 +1996,7 @@ extern "C" void jit_rt_pop_bv_closure(pharo::Interpreter* interp,
 
 extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
                                                  void* resumeAddr) {
+    if (GET_DEBUG_BOOL(PHARO_BV_FORCE_BAIL)) return nullptr;  // BISECT: force always-bail (no HIT)
     void* callerJM = s->jitMethod;
     // Receiver is at sp[-(nArgs+1)] — same as a regular send.
     uint64_t rcvBits = s->sp[-(nArgs + 1)].rawBits();
