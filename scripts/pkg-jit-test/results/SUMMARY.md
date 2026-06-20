@@ -12,8 +12,12 @@ NeoCSV     ~3       66/0/0         66/0/0            0   CLEAN PARITY
 STON       11       317/0/0        316/0/1           1   testDeepStructure (deep-recursion)
 PolyMath   90       777/0/0        707/0/69/1        51 SubscriptOutOfBounds (JIT)
                                                      +18 SmallFloat64 inject:into: (VM-core, not JIT)
-PolyMath   90       777/0/0        757/1/18/1        AFTER FIX: 0 SubscriptOutOfBounds;
-  (fixed build)                                      only the SmallFloat64 VM-core gap remains vs Cog
+PolyMath   90       777/0/0        757/1/18/1        off-by-one fix: 0 SubscriptOutOfBounds
+PolyMath   90       777/0/0        775/1/0/1         +Sista fixes: 0 errors (51 off-by-one + 18
+  (all 3 fixes)                                      SmallFloat64 gone); gap=1 flake + 1 slow-timeout
+
+3 JIT/Sista bugs fixed (all committed): off-by-one (inline-J2J canBailMidMethod),
+factorial (Sista tag-check skip), inject-capture (Sista do-splice). PolyMath 707->775.
 Fuel       46       733/10/5       aborted@testBitmap >=1 (SubscriptOutOfBounds:0, halts runner)
 Soil       ~30      ~425/6/2/1     SIGABRT            VM FFI file-lock crash (not JIT)
 ```
