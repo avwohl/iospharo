@@ -143,15 +143,29 @@ set 1614, string_build 1876, alloc 1014, factorial 333, sort 521 ms; ratios 2-39
 above). The prim-105 branch did not hurt string_build. Lever ranking for the
 "as-fast-as-Cog" half (all DEEP, multi-session JIT work — consistent with memory
 "Cog-speed lever CLOSED / no safe quick win"):
-  1. PER-SEND DISPATCH TAX = the REAL #1 lever (re-ranked 2026-06-20 after building
-     the allocation levers below). polymorphic_sends is 8x directly, and it ALSO
-     dominates the "allocation"(20x)/collection(17x)/dict(18x)/set(39x) workloads —
-     those are SEND-heavy (e.g. the allocation bench is `Association key:value:` = 3
-     sends + new per iter), so the surrounding sends, not `new`, are the bulk. Proof:
-     inlining `new` entirely (1b below) only moved the allocation bench ~5%. Lever =
-     the ~1.5x residual per-send dispatch cost (cf. memory cog-speed-lever-closed:
-     cross-method activation is done at 2.65x; this is the remaining per-send tax).
-     Candidate: out-of-line dispatch / IC fast-path tightening. Multi-session.
+  1. PER-SEND DISPATCH TAX = the REAL #1 lever. MEASURED + DECOMPOSED 2026-06-20.
+     Microbench `o class name size` x1.6M: ours MONO 431ms vs Cog 12ms = 36x (the
+     bottleneck is the BASE per-send cost, NOT polymorphism — poly adds only 1.8x:
+     ours 778 vs Cog 95). Component breakdown (1.6M iters): baseline loop+arith 12ms;
+     +`o class` 180ms; +`name size` 440ms. So TWO sub-levers:
+       (a) IMMEDIATE-RECEIVER `class` (~168ms): tryPrimClass (AsmjitT1.cpp:9199)
+           inlines only HEAP receivers (reads header.classIndex). Immediates
+           (SmallInteger/Character/SmallFloat) have no header -> full send (slow).
+           classOf maps tag->class (ClassSmallInteger/ClassCharacter/classAtIndex 4).
+           TRACTABLE but more involved than the heap inline: the IC/dispatch EXCLUDES
+           immediates, so it needs a new immediate fast-path at the class send site
+           (not just extending tryPrimClass). Memory flagged this as a deferred ~28x
+           lever.
+       (b) CROSS-METHOD SEND ACTIVATION (`Class>>name` etc., ~260ms): the deep "send
+           tax". Non-self-recursive cross-method sends that aren't inline-J2J'd go
+           through the full activation path. This is the DEEPEST, most-studied lever
+           (memory cog-speed-lever-closed: "NO safe quick win, OoO hides naive
+           instruction-count cuts"). Levers: out-of-line dispatch (needs a design
+           pass) / gate-bit fold into PMS (fold the 8-load JM gate cascade into the
+           patched IC) / FSR M3c. ALL multi-session design efforts.
+     STATUS: measured + decomposed; the core (1b) is a genuine multi-session design
+     effort confirmed with current numbers — NOT a marathon-tail change. (a) is the
+     tractable next increment for a fresh focused session.
   2. ALLOCATION — BOTH sub-levers built, BOTH modest (~5% each), confirming the gap
      is dispatch not new: (a) DONE default-on (b52dbf14): jit_rt_new_prim -> eden
      (was old-space trap). (b) DONE DEFAULT-ON (0ecf51fa, opt-out
