@@ -173,6 +173,31 @@ UPDATE 4 — [XFER] diff CONFIRMS a process ping-pong (the runaway is scheduler-
   (e.g. a `whileTrue:`/`Delay`/semaphore predicate that reads a wrong value). The
   [XFER] print site is the cheap entry point (no lldb slowness).
 
+UPDATE 5 — ROOT NAMED: infinite exception-handler search on a corrupted Context chain.
+Walked both processes' suspendedContext at the XFER site (temp dump, reverted). The two
+ping-pong partners are:
+- pri-80 0x302c52a18 (CONSTANT): `waitForUserSignalled:orExpired: ... ensure:
+  runBackendLoopAtTimingPriority` — the Morphic/SDL2 backend event loop, waking on a
+  Delay (NORMAL; it's just the high-pri timing loop).
+- pri-40 (the runaway process): alternates between
+  `raiseUnhandledError -> defaultAction -> signalForException: -> signal` and
+  `findContextSuchThat: / isHandlerContext / findNextHandlerContext / nextHandlerContext
+  / findNextHandlerContext`. It is STUCK IN AN INFINITE EXCEPTION-HANDLER SEARCH.
+=> The runaway is the EXCEPTION MACHINERY looping: an UnhandledError's handler search
+   (`findNextHandlerContext` walking the Context SENDER chain, slot 0) never terminates —
+   a corrupted / cyclic sender chain. Classic "broken Context sender chain so handler
+   search can't reach/terminate" — the SAME failure family as the HELPER_SENDS bug
+   ([[sunit-full-suite-run]]) and the NLR sender-chain bugs
+   ([[nlr-nested-valuewithexit-bug]]). BV on corrupts the materialized sender chain
+   (materializeFrameStack + the BV/J2J-save -> Context materialization; suspect a V1/V2
+   save-field misread like the 4764 closure-as-jitMethod bug feeding a wrong sender).
+NEXT (the actual fix path): (a) find the exception being raised under BV (why
+raiseUnhandledError at all — likely a BV-induced wrong value/DNU); (b) dump the Context
+SENDER chain (slot 0) of the pri-40 process and find the CYCLE / broken link — that's the
+materialization bug to fix; (c) cross-check materializeFrameStack's handling of BV J2J
+saves vs the V2 save layout (Interpreter.hpp:681). The exception-search loop, not a send
+loop, is THE thing to fix.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
