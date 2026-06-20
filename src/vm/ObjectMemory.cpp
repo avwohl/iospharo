@@ -27,6 +27,11 @@ namespace pharo {
 
 extern uint64_t g_stepNum;
 
+// Eden bump-cell addresses for the JIT inline-alloc emit (PHARO_T1_INLINE_NEW_ASM);
+// set in initializeHeap once the (single) ObjectMemory instance exists.
+extern "C" uint8_t** g_jitEdenFreeCell = nullptr;
+extern "C" uint8_t** g_jitSurvivorStartCell = nullptr;
+
 // Base address of the (resize-once, never-reallocated) class table, captured at
 // init so the JIT `class` inline-prim can index it directly. See
 // AsmjitT1.cpp tryPrimClass and memory/vm-speed-lever-dispatch.
@@ -106,6 +111,12 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
     edenStart_ = newSpaceStart_;
     edenFree_ = edenStart_;
     survivorStart_ = newSpaceStart_ + edenSize;
+
+    // Publish the eden bump-cell addresses for the JIT inline-alloc emit
+    // (PHARO_T1_INLINE_NEW_ASM). One ObjectMemory instance per VM, and these
+    // fields' addresses are stable after construction, so the emit bakes them.
+    g_jitEdenFreeCell = &edenFree_;
+    g_jitSurvivorStartCell = &survivorStart_;
 
     // Initialize class table
     classTable_.resize(config.classTableSize, Oop::nil());

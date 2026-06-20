@@ -698,6 +698,13 @@ public:
     /// Set the free pointer (for image loading)
     void setOldSpaceFreePointer(uint8_t* ptr) { oldSpaceFree_ = ptr; }
 
+    /// Addresses of the eden bump cells, for the JIT inline-alloc emit
+    /// (PHARO_T1_INLINE_NEW_ASM). The emitted code loads/stores edenFree_ and
+    /// compares against survivorStart_ (the eden limit) directly — one stable
+    /// ObjectMemory instance, so these addresses can be baked at emit time.
+    uint8_t** edenFreeCellAddr() { return &edenFree_; }
+    uint8_t** survivorStartCellAddr() { return &survivorStart_; }
+
     /// Public young-gen bump for the JIT new fast-path (jit_rt_new_prim).
     /// Allocates `size` bytes in eden and returns the raw header pointer, or
     /// nullptr if young-gen is disabled or eden is full — in which case it sets
