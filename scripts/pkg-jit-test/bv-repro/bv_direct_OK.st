@@ -1,0 +1,1 @@
+| o n | Object compile: 'cmpat | arr | arr := Array with: 5 with: 999999. ^[:a :b | a <= b] value: (arr at: 1) value: (arr at: 2)'. o := Object new. n := 0. 1 to: 90000 do: [:k | (o cmpat) ifFalse: [n := n + 1]]. Stdio stdout nextPutAll: 'DIRFALSES[', n printString, ']'; lf; flush.

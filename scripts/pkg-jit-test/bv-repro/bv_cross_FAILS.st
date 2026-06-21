@@ -1,0 +1,1 @@
+| o n | Object compile: 'cmpat2: arr ^[:a :b | a <= b] value: (arr at: 1) value: (arr at: 2)'. Object compile: 'cmpatTop | arr | arr := Array with: 5 with: 999999. ^self cmpat2: arr'. o := Object new. n := 0. 1 to: 90000 do: [:k | (o cmpatTop) ifFalse: [n := n + 1]]. Stdio stdout nextPutAll: 'CROSSFALSES[', n printString, ']'; lf; flush.

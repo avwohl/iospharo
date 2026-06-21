@@ -595,6 +595,53 @@ bytecode signature (PushTemp0/PushTemp1/Send<=/ReturnTop) or the Nth-compiled-bl
 Diagnostics (BVIN/TBASE/BLKDUMP + the gated bvLldbHook anchor) kept default-off. block-value
 opt-in; default config 1937/0/0.
 
+UPDATE 23 — MAJOR CORRECTION: UPDATES 19-22 chased a NON-REPRODUCING case. The REAL bug is
+BV x inline-J2J in a CROSS-METHOD context (2026-06-21).
+
+The cmpat_1l.st repro used throughout UPDATES 19-22 (the lldb saga, the "irreducible
+contradiction", the single-step, "helper sets tempBase[0]=5 but block reads arr") does NOT
+reproduce the bug -- run it and it prints DONE / FALSES[0]. The direct `cmpat` case WORKS; the
+block correctly reads 5. The "contradiction" was a phantom (I was single-stepping a correct
+execution). All the lldb tooling pain in UPDATES 20-22 was spent on a working case.
+
+REAL repro (saved: scripts/pkg-jit-test/bv-repro/bv_cross_FAILS.st):
+    Object compile: 'cmpat2: arr ^[:a :b | a <= b] value: (arr at: 1) value: (arr at: 2)'.
+    Object compile: 'cmpatTop | arr | arr := Array with: 5 with: 999999. ^self cmpat2: arr'.
+    o := Object new. 1 to: 90000 do: [:k | (o cmpatTop) ifFalse: [...]].
+With BV-on it raises "DNU #<= rcvr=Array" at iter ~75199 (when cmpatTop->cmpat2: promotes to
+inline-J2J). i.e. the block's `a` reads as the ARRAY (the at: receiver), not 5.
+
+CONFIRMED 3-way (each tested clean):
+    BV-off, inline-J2J on        -> WORKS (CROSSFALSES[0])
+    BV-on, inline-J2J off        -> WORKS (CROSSFALSES[0])
+    BV-on, inline-J2J on         -> FAILS (DNU #<= rcvr=Array)
+The bug is the INTERACTION; neither feature alone fails. Direct cmpat (not cross) works because
+its home method is not inline-J2J'd the same way.
+
+The corrupted BV calls are at j2jDepth==0 -- inline-J2J does NOT bump s->j2jDepth. So a
+`j2jDepth>0` bail is the WRONG fix (TESTED: it broke the DIRECT case by bailing unrelated
+depth>0 SYSTEM blocks into the BV bail path, which is ITSELF broken at depth>0, and it missed
+the actual cross calls which are at depth 0). The real discriminator is "the BV value: send's
+home method (cmpat2:) is executing as inline-J2J'd code" -- not reflected in j2jDepth. The BV
+send-site emit (emitSyncSpToState / br x9 / bvResume), compiled for standalone cmpat2:, reads
+the wrong operand-stack base when cmpat2: runs inlined into cmpatTop.
+
+NEXT (the real fix): observe the inline-J2J'd cmpat2:'s sp/x25 + the helper input (s->sp[-2])
+at the BV value:value: send for the cross corrupted call (the agent-built bvEntryTrace asm
+injection: emit `bl trace_fn` right before `br x9`, dump x0/x25/x9). Determine whether the
+helper INPUT is already shifted (s->sp[-2]=arr -> upstream inline-J2J operand-stack-offset bug)
+or the block reads wrong. Then fix the BV emit's sp handling for inline-J2J'd home methods. The
+BAIL path (j2jBail) ALSO corrupts at depth>0 and needs fixing.
+
+TOOLING LESSON: do NOT launch Workflow agents with edit tools against the shared working tree
+without isolation:'worktree' -- a hypothesis agent concurrently edited JITRuntime.cpp +
+AsmjitT1.cpp, corrupting the baseline mid-investigation (made the direct case spuriously fail).
+(One agent independently built the correct bvEntryTrace + PHARO_BV_NO_X25_RELOAD instrumentation
+-- the right next-step tooling -- but the uncoordinated edits cost a reset.)
+
+block-value remains opt-in; default config still 1937/0/0 (the /goal is met by default config).
+UPDATES 19-22 below are SUPERSEDED for the repro/diagnosis (their lldb-tooling notes still hold).
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
