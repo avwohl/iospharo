@@ -482,6 +482,30 @@ the cached-send resume restore x25 correctly in the inline-J2J context, OR have 
 derive the receiver/args fp-relative (stable) rather than from the residency sp. Repro
 /tmp/cmpat_1l.st; lldb recipe above. block-value still opt-in; default config UNAFFECTED.
 
+UPDATE 19 — x25-sync fix attempt: WRONG premise; corrected understanding (2026-06-21).
+Tried to implement the "x25-sync fix" from UPDATE 17/18. Findings that INVALIDATE the
+earlier inline-J2J framing:
+ - The defensive x25 reload before the block `br x9` (committed df022704) does NOT fix the
+   bug. For cap=0 blocks spOut==s->sp, so the reload is a no-op; x25 was already the block's
+   operand base. The corruption is NOT a stale block-entry x25.
+ - A bail on s->j2jDepth>0 does NOT fix the 12 sort tests (kernel still 1925/12). So the
+   failing BV `value:` runs at j2jDepth==0 — the preceding cached `at:` send's J2J (if any)
+   has already returned. So "inside an inline-J2J call" is the wrong condition.
+ - PHARO_T1_NO_INLINE_J2J=1 prints NO block-value stats at all -> it effectively DISABLES BV
+   (BV uses the J2J save infra). So "NO_INLINE_J2J fixes cmpat" only means "BV-off fixes it"
+   — it does NOT prove an at:/inline-J2J interaction. UPDATE 16/17's framing is unconfirmed.
+ What IS solid: BV-on corrupts ONLY with SEND-COMPUTED value: args (constant args work:
+ bvhit/bvcmpL); BV-OFF cmpat is correct (so the at: sends leave a correct stack [closure,5,
+ 999999]); yet BV-ON the block's inline-prim reads arr (the at: RECEIVER) not 5. So the BV
+ emit/helper, between the (correct) args-on-stack and the block's operand read, corrupts for
+ send-computed args. The exact site is unresolved (lldb at the DNU was UNGATED so it may have
+ shown a downstream corruption; a GATED single-step INTO the block's bytecodes is needed but
+ the -O2 build blocks lldb expr/condition eval). FIX NOT LANDED. Reverted the depth-bail +
+ its knob. NEXT: gated lldb single-step into the block on a -O0 build (build/test_load_image),
+ OR bisect the BV emit's send-dispatch vs the helper arg-read. Bail-only fixes (depth/
+ send-arg) make BV correct but bail its main use (do: blocks w/ send-computed args), so they
+ don't make BV useful — the real BV-path fix is required. block-value opt-in; default 1937/0/0.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
