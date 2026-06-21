@@ -890,7 +890,18 @@ VALIDATION (deterministic): cf_cross CROSSFALSES[0] 3/3 + DET_SCHED (was DNU 5/5
 DIRFALSES[0] (was DNU); a real `a sort: [:x:y|x<=y]` x90000 -> #(1..9) correctly sorted (with
 KEEP_INLINE_J2J it returns the UNSORTED #(5 3 8 1 9 2 7 4 6) — the exact original "sort doesn't
 sort" symptom); DEFAULT (BV off) R<7> byte-identical (the gate is g_debug.t1InlineBlockValue, so
-BV-off codegen is unchanged).  ROOT CAUSE (final): a cross-method inline-J2J'd home that contains
+BV-off codegen is unchanged).
+SUNIT A/B CONFIRMATION (2026-06-21, the definitive test): ran the 9 collection classes
+(OrderedCollectionTest/ArrayTest/SortedCollectionTest/IntervalTest/HeapTest/LinkedListTest/
+CollectionTest/SortFunctionTest/ChainedSortFunctionTest — these hold the sort tests) via
+scripts/pharo-headless-test/run_sunit_tests.st on /tmp/harness/Pharo.image (build-rel VM):
+  BV-OFF: Pass 1648 / Fail 0 / Error 0
+  BV-ON : Pass 1648 / Fail 0 / Error 0   <-- IDENTICAL
+The exact 12-failure sort tests (testSort, testSorted, testAsSortedArray,
+testAsSortedCollectionWithSortBlock, testSortUsingSortBlock, testSortedUsingBlock,
+testIndexOfIfAbsentUsing, testIndexOfStartingAtIfAbsentUsing, ...) all RAN and PASSED under
+BV-on.  So the 12 BV-on sort failures (UPDATE 15) are RESOLVED; BV-on now equals BV-off on the
+sort/collection suite.  ROOT CAUSE (final): a cross-method inline-J2J'd home that contains
 a value:value: clean-inlines the block, and the inlined block reads its first temp from the home
 frame at the inline-J2J-shifted offset -> the at: RECEIVER (arr) -> DNU #<=.  The scoping fix
 sidesteps it by keeping such homes un-inlined so the block runs as a SEPARATE (correct)
