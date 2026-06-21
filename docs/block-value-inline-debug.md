@@ -709,6 +709,62 @@ deterministic repro (the inline-J2J warmup is timing-flaky) — run cf_cross + c
 times, or force inline-J2J. Reverted to clean HEAD (e0c23340); default config 1937/0/0 (goal met
 by default config); block-value remains opt-in. Repro: scripts/pkg-jit-test/bv-repro/.
 
+UPDATE 26 — deeper fix LOCATED to a single line; naive injection HANGS; correct fix needs the
+bail-path sequence (2026-06-21). Traced the chain-loop send/activation in Interpreter.cpp:
+  - The shared send-chain code (~27110-28172) ends in C++ fallbacks: the PRIM-execution path
+    (~27977, executePrimitive -> for prim 209 value:value: -> activateBlock) and activateMethod
+    (~28162).  Both read the operand stack via stackPointer_/framePointer_.
+  - There are TWO adjacent paths: the chain-FALLBACK BAIL path (~27875-27969) which, when
+    state.j2jDepth>0, materializes pending saves into SavedFrames (site7, ~27918), syncs
+    stackPointer_=state.sp / framePointer_=state.tempBase-1 / argCount_ / method_ etc., and
+    `return true` (hands the callee to the interp dispatch loop).  The PRIM path (~27977) has
+    NO such materialize.
+  => EXACT BUG: value:value: reaches the PRIM path with state.j2jDepth>0 (cmpat2:'s pending
+     inline-J2J save), and executePrimitive(209)/activateBlock reads operands +1-shifted (block
+     arg = the at: RECEIVER arr) because the save is un-reconciled.  The bail path would have
+     fixed it; the prim path doesn't run it.
+
+FIX ATTEMPT (commit reverted): inject `if (state.j2jDepth>0) materializeJ2J();` at the prim path
+(~27977), opt-out PHARO_T1_NO_J2J_PRIM_MAT.  RESULT: HANGS (timeout; block-value inline
+tries=1.9M bails=1.9M lookup, ~20x the ~90k expected).  materializeJ2J sets up an INTERP-RESUME
+(method_/ip_/sp_ for the callee + j2jDepth=0) but the prim path then CONTINUES INLINE
+(executePrimitive) instead of returning to the interp — the two resume protocols conflict and
+loop (the re-entered value:value: can't find its block -> lookup-bail -> retry).  ALSO risky:
+the inject fires for ALL j2jDepth>0 prims (not just BV), so it could regress the default config.
+
+CORRECT FIX (still multi-session, but now a SCOPED edit, not a mystery): at the prim path, for
+the j2jDepth>0 case, REPLICATE THE BAIL PATH (~27875-27968) — materialize pending saves +
+full interp-state setup + `return true` — so the interp dispatches value:value: with the
+reconciled stack, rather than executing the prim inline.  Key subtleties to get right: the
+resume IP protocol for an ExitSendCached bail (does the interp re-dispatch the pending send, or
+resume after it?), whether the OUTER frame (~27900-27915) also needs materializing, and gating
+so non-BV inline-J2J prims are unaffected (or proven safe).  Validate with cf_cross + cf_dir
+3x each (both reliably FAIL now -> must reliably pass) + the default config (R<7>) + a bench/
+SUnit non-regression (the prim path is hot).  Reverted to clean HEAD (485f05ca); default config
+1937/0/0 (goal met by default); block-value opt-in.  Repro: scripts/pkg-jit-test/bv-repro/.
+
+UPDATE 26b — EMPIRICAL REFUTATION of the chain-loop "pending save" fix location (2026-06-21).
+Three deeper-fix variants at the chain-loop prim path ALL failed: (a) materializeJ2J() inline ->
+HANG (loops: 1.9M BV bails; the materialize sets an interp-resume but the prim path continues
+inline); (b) materializeJ2J()+return true -> breaks STARTUP (fires for ALL j2jDepth>0 prims
+during boot); (c) scoped to prims 201-209 + j2jDepth>0 -> did NOT fire (so didn't fix cross),
+which led to the decisive diagnostic.  Instrumented the chain-loop block-value activation:
+  - cmpat2:'s value:value: is PRIM 207 (the general block-value prim, all arities; prim 209 is
+    a DIFFERENT 0-arg value here).  nArgs=2.
+  - At the chain loop, for the first N (working) calls: j2jDepth=0, chainCallDepth=0, and
+    operands CORRECT (a=0x29=5, b=0x7a11f9=999999).
+  - For the CORRUPTED calls (a = a heap object): STILL j2jDepth=0 AND chainCallDepth=0, and the
+    corrupted operand (a=arr) is ALREADY on the stack when it ARRIVES at the chain loop.
+=> The synthesis's "pending inline-J2J save +1 at the chain-loop activation" is REFUTED: there
+   is NO pending save at the chain-loop value:value: (both counters 0), and the operand is
+   already corrupted on arrival.  The corruption happens UPSTREAM, in cmpat2:'s JIT execution
+   (the inlined at:/value: operand setup) BEFORE the value:value: send exits to the chain loop,
+   for SOME calls (not the first N) — i.e. it is a JIT-EMIT bug (AsmjitT1.cpp), not a chain-loop
+   activation bug.  NEXT: instrument cmpat2:'s inlined JIT code (the value:value: arg push +
+   the at: result placement) when cmpat2: runs as inline-J2J'd code, to catch the call where
+   the operand stack first holds arr instead of 5 — that emit site is the real fix.  ALL deeper-
+   fix code reverted; default config 1937/0/0; block-value opt-in.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
