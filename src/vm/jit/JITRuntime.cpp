@@ -2004,6 +2004,24 @@ extern "C" void jit_rt_pop_bv_closure(pharo::Interpreter* interp,
 
 extern "C" { volatile void* g_bvDbgBlockEntry = nullptr; }  // TEMP: block codeStart for lldb (volatile: survive -O2)
 extern "C" __attribute__((noinline)) void bvLldbHook(void* e) { __asm__ __volatile__("" :: "r"(e)); }  // TEMP lldb anchor (e=block entry in x0)
+extern "C" __attribute__((noinline)) void bvEntryTrace(void* state, void* spReg, void* entry) {
+    // TEMP: called from the BV emit right before `br x9` (block entry), gated PHARO_BV_DUMP_REAL.
+    // Logs the corrupted entries (tempBase[0] is a heap obj -> block will read it as `a`).
+    auto* s = reinterpret_cast<JITState*>(state);
+    uint64_t t0 = s->tempBase[0].rawBits(), t1 = s->tempBase[1].rawBits();
+    static void* cmpat2Entry = nullptr;
+    if (t1 == 0x7a11f9 && t0 == 0x29 && !cmpat2Entry) cmpat2Entry = entry;  // record cmpat2:'s block
+    if (entry == cmpat2Entry && cmpat2Entry && t0 != 0x29) {  // cmpat2:'s block, CORRUPTED entry
+        static int n = 0;
+        if (n++ < 8)
+            fprintf(stderr, "[BVentry-BAD] state=%p spReg(x25)=%p entry=%p  s->tempBase=%p "
+                    "t0=0x%llx t1=0x%llx  s->sp=%p s->sp[-2]=0x%llx s->sp[-1]=0x%llx\n",
+                    state, spReg, entry, (void*)s->tempBase,
+                    (unsigned long long)t0, (unsigned long long)t1,
+                    (void*)s->sp, (unsigned long long)s->sp[-2].rawBits(),
+                    (unsigned long long)s->sp[-1].rawBits());
+    }
+}
 extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
                                                  void* resumeAddr) {
     if (GET_DEBUG_BOOL(PHARO_BV_FORCE_BAIL)) return nullptr;  // BISECT: force always-bail (no HIT)
@@ -2055,6 +2073,20 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     if ((numArgsBits & 7) != 1) { g_bvBail_args++; return nullptr; }
     int64_t closureNumArgs = (int64_t)numArgsBits >> 3;
     if (closureNumArgs != nArgs) { g_bvBail_args++; return nullptr; }
+
+    if (GET_DEBUG_BOOL(PHARO_BV_TRACE_HITS) && nArgs == 2) {  // TEMP: cmpat2: leak probe
+        static uint64_t cmpat2Block = 0;
+        uint64_t aa = s->sp[-2].rawBits(), bb = s->sp[-1].rawBits();
+        if (bb == 0x7a11f9 && aa == 0x29 && cmpat2Block == 0) cmpat2Block = compiledBlockBits;
+        if (compiledBlockBits == cmpat2Block && cmpat2Block != 0) {
+            static int c = 0; c++;
+            int clodep = (int)s->interp->bvClosureSaveDepth_;
+            if (c <= 3 || (c % 15000) == 0 || clodep > 1 || aa != 0x29)
+                fprintf(stderr, "[BVleak c=%d] a=0x%llx j2jDepth=%d clodep=%d cursor=%p limit=%p\n",
+                        c, (unsigned long long)aa, (int)s->j2jDepth, clodep,
+                        (void*)s->j2jSaveCursor, (void*)s->j2jSaveLimit);
+        }
+    }
 
     auto* mm = reinterpret_cast<MethodMap*>(s->methodMapPtr);
     if (!mm) { g_bvBail_lookup++; return nullptr; }

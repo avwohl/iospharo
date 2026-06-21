@@ -249,6 +249,7 @@ extern "C" uint64_t jit_rt_block_create(pharo::jit::JITState*, uint64_t);
 extern "C" void jit_rt_prim_body_entry(pharo::jit::JITState*, uint64_t);
 extern "C" void* jit_rt_inline_block_value_prep(
     void* state, int nArgs, void* resumeAddr);
+extern "C" void bvEntryTrace(void* state, void* sp, void* entry);  // TEMP: BV br-entry observe
 
 // jit-may20b Step 10: inline-prim 18 (basicNew:) helper.  Returns 1
 // on success (state.sp updated), 0 on failure (caller bails).
@@ -6646,6 +6647,24 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // value: 5 value: 9 worked and at:-computed args did not.)
                     a.ldr(asmjit::a64::x25, ptr(x0, OFF_SP));
 #endif
+                    if (GET_DEBUG_BOOL(PHARO_BV_DUMP_REAL)) {  // TEMP: observe block-entry state
+                        a.sub(sp, sp, asmjit::Imm(48));
+                        a.str(x0, ptr(sp, 0));
+                        a.str(x9, ptr(sp, 8));
+                        a.str(x30, ptr(sp, 16));
+                        a.str(asmjit::a64::x25, ptr(sp, 24));
+                        a.str(x19, ptr(sp, 32));
+                        a.mov(x1, asmjit::a64::x25);   // bvEntryTrace(x0=state, x1=sp, x2=entry)
+                        a.mov(x2, x9);
+                        a.mov(x10, asmjit::Imm((uint64_t)&bvEntryTrace));
+                        a.blr(x10);
+                        a.ldr(x0, ptr(sp, 0));
+                        a.ldr(x9, ptr(sp, 8));
+                        a.ldr(x30, ptr(sp, 16));
+                        a.ldr(asmjit::a64::x25, ptr(sp, 24));
+                        a.ldr(x19, ptr(sp, 32));
+                        a.add(sp, sp, asmjit::Imm(48));
+                    }
                     a.br(x9);
                     a.bind(blockValueDone);
                 }

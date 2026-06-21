@@ -642,6 +642,32 @@ AsmjitT1.cpp, corrupting the baseline mid-investigation (made the direct case sp
 block-value remains opt-in; default config still 1937/0/0 (the /goal is met by default config).
 UPDATES 19-22 below are SUPERSEDED for the repro/diagnosis (their lldb-tooling notes still hold).
 
+UPDATE 24 — the corruption is in the POST-WARMUP inlined path, NOT the BV helper (2026-06-21,
+continuing UPDATE 23's cross-method repro). Re-added the agent-built instrumentation cleanly:
+bvEntryTrace (asm `bl` injected right before the BV `br x9` in AsmjitT1.cpp, gated
+PHARO_BV_DUMP_REAL) dumps x0(state)/x25(sp)/x9(entry) + s->tempBase[0/1] + s->sp[-2/-1] at the
+block entry; plus a helper-side leak probe (PHARO_BV_TRACE_HITS) identifying cmpat2:'s block by
+its compiledBlock oop. Findings on cf_cross (the cross repro):
+  - bvEntryTrace: cmpat2:'s BV block entries ALWAYS have tempBase[0]=5 (correct) -- NO corrupted
+    BV entry ever fires. So the helper-based BV HIT path is clean.
+  - leak probe: jit_rt_inline_block_value_prep is called for cmpat2:'s block only ~3 times, then
+    STOPS (no call past iter ~3 in the 90000-iter loop), while the DNU happens at ~75k. So after
+    cmpatTop->cmpat2: warms to inline-J2J, cmpat2:'s value:value: NO LONGER routes through the
+    helper -- it is re-emitted/inlined differently.
+  - PHARO_BV_FORCE_BAIL (helper always bails) makes cf_cross WORK -- but only because it alters
+    warmup so cmpat2: is not inlined the same way (NOT a real fix; the helper was never the bug).
+  - input probe: when cmpat2: DOES reach the helper, the input (s->sp[-2]) is always 5 (no
+    [BVin-corrupt]) -- consistent with the at: sends leaving a correct [closure,5,999999] stack.
+=> ROOT CAUSE LOCATION: the inline-J2J re-emission / clean-block-inline of cmpat2:'s
+`[:a:b|a<=b] value:(arr at:1) value:(arr at:2)` (the post-warmup, no-helper path) reads the at:
+RECEIVER (arr) instead of the at: RESULT (5) -- an operand-stack-offset bug in the inlined value:
+emission, NOT the BV helper. The fix is in AsmjitT1.cpp's inline-J2J / value:value: emit, or a
+correct refuse-to-inline-J2J-a-value-bearing-callee scoping. A j2jDepth>0 bail is WRONG (UPDATE
+23: corrupted calls are at j2jDepth==0; it broke the direct case). A read-only Explore workflow
+is mapping the inline-J2J x value: emit interaction to pin the exact offset bug + fix.
+Instrumentation kept gated default-off (bvEntryTrace/PHARO_BV_DUMP_REAL + PHARO_BV_TRACE_HITS).
+block-value opt-in; default config still 1937/0/0 (goal met by default).
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
