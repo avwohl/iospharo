@@ -668,6 +668,47 @@ is mapping the inline-J2J x value: emit interaction to pin the exact offset bug 
 Instrumentation kept gated default-off (bvEntryTrace/PHARO_BV_DUMP_REAL + PHARO_BV_TRACE_HITS).
 block-value opt-in; default config still 1937/0/0 (goal met by default).
 
+UPDATE 25 — root cause CONFIRMED (workflow synthesis) + scoping fix ATTEMPTED & REVERTED; the
+real fix is the deeper save-reconciliation (2026-06-21). A read-only Explore workflow
+(wf_1a755a9e-a87) mapped the emit; its synthesis agent re-instrumented and CORRECTED the mapping
+agents' x25 theory. ROOT CAUSE (high confidence): cmpat2: (2 IC sites) is admitted for
+cross-method inline-J2J. Its value:value: BV helper is called only ~1-3x then the block JM
+compiles, a<=b sets canBailMidMethod, so the helper BAILS (g_bvBail_canBail) -> j2jBail -> the
+value:value: is serviced as a normal cached send to BlockClosure>>value:value: (prim 209),
+activated via the C++/chain-loop path WHILE cmpat2:'s inline-J2J save is still pending. That
+activation reads operands +1-shifted -> the block's first arg = the at: RECEIVER (arr) not the
+result (5) -> DNU #<= rcvr=Array.  SAME un-reconciled-pending-save / operand +1 family already
+gated off for canBailMidMethod and ExitArithOverflow callees (xmethodGateOk).
+
+FIX ATTEMPTS (all FAILED — recorded so they are not repeated):
+  (1) j2jDepth>0 bail (UPDATE 23): WRONG — corrupted calls are at j2jDepth==0; broke direct.
+  (2) Runtime hasBlockValueSend write in the BV helper (mark s->jitMethod): SIGSEGV. The
+      JITMethod header is in MAP_JIT (RX) memory; a C++ write without the JIT write-window
+      faults. Any per-method flag must be set at COMPILE time (finalize writes in-window).
+  (3) Compile-time hasBlockValueSend (scan the method's literals via memory.oopToString for
+      value:value:/value:value:value:/valueWithArguments:; value/value: are special-selectors)
+      + xmethodGateOk refuse: does NOT work. ADMIT=1 bisect proves the compile-time flag-set is
+      harmless (==baseline); the REFUSE itself (a) breaks the direct case and (b) does not fix
+      cross. The gate IS consistent (xmethodGateOk feeds kXGateOkBit at Interpreter 23441/23918/
+      24039 + JITRuntime 3673), so refuse-breaks-direct is the gate-refuse FALLBACK (j2jBailSelf2)
+      being itself buggy for these methods, not an inconsistency.
+
+CORRECTION to UPDATE 23/24: the "direct works, cross fails" split was FLAKY — the direct case is
+timing-dependent (inline-J2J engagement varies) and now fails 3/3 at the same commit where it
+earlier passed. So the bug affects BOTH direct and cross; the +1 shift occurs in the C++
+value:value: activation whenever a pending inline-J2J save exists, INDEPENDENT of which method is
+the inline-J2J callee. => refusing inline-J2J of value-bearing callees is the WRONG layer.
+
+THE REAL FIX (synthesis's "primary", multi-session): reconcile the caller's pending inline-J2J
+save with the foreign value:value: (prim 209) activation in the chain loop — Interpreter.cpp
+~27094-27130 (inline-activate gate / fallback) and ~25900-25960 (site4 materialize). Pop/adjust
+the pending save (or push a proper C++ frame) so the activation reads operands at the right sp.
+This is the SAME class as PHARO_T1_AO_MAT_J2J (the V1-only arith-overflow save-pop); a V2
+equivalent for the BV-bail-to-prim-209 path is needed. Validation must be done with a
+deterministic repro (the inline-J2J warmup is timing-flaky) — run cf_cross + cf_dir multiple
+times, or force inline-J2J. Reverted to clean HEAD (e0c23340); default config 1937/0/0 (goal met
+by default config); block-value remains opt-in. Repro: scripts/pkg-jit-test/bv-repro/.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
