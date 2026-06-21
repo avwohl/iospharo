@@ -2122,6 +2122,16 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
         // interp->closure_).  The block being activated gets its own
         // s->closure below.
         save->closure = s->closure;
+        // FIX 2026-06-20: the asm return prelude's DYNAMIC arg-pop (taken
+        // whenever staticJ2JArgCount<0, which block-value forces) loads nArgs
+        // from save[offset 48] (sendArgCount) — the same slot the x86 J2J push
+        // writes (AsmjitT1.cpp:3349). The 40-byte V2 struct has no such field,
+        // so this C++ helper never wrote it -> BV returns popped a GARBAGE
+        // nArgs -> wrong sp -> the runaway. Write it here too. (Leaf-only BV
+        // blocks => no nested save overwrites this overflow slot before the
+        // return reads it; the pool has the same headroom the x86 push uses.)
+        *reinterpret_cast<int32_t*>(
+            reinterpret_cast<char*>(save) + 48) = nArgs;
     }
 #else
     save->ip = s->ip;  // pre-send; matches xmethod default

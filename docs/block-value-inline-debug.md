@@ -378,6 +378,26 @@ block entry — needs single-stepping the block's first bytecodes under lldb+DET
 non-inlined run. block-value stays opt-in; the kept bvResume code is correct + default-safe
 (a partial fix), the runaway is a separate upstream defect.
 
+UPDATE 13 — third return-path fix (nArgs/offset-48); BV runaway is in EXECUTION, not return.
+Found + fixed a real V1/V2 bug in the dynamic arg-pop: the asm return prelude's dynamic
+path (taken whenever staticJ2JArgCount<0, which block-value FORCES via 11623) loads nArgs
+with `ldr w9, [x4, 48]` (the V1 sendArgCount slot, also written by the x86 J2J push at
+AsmjitT1.cpp:3349). The 40-byte V2 save has no offset-48 field and the C++ BV helper never
+wrote it -> BV returns popped a GARBAGE nArgs. FIX: the BV helper now writes save[48]=nArgs
+(JITRuntime.cpp, matching the x86 push; leaf-only BV blocks => the overflow slot survives
+to the return). Default-safe (helper only runs BV-on; default 3+4 R<7>, kernel clean).
+RESULT: BV runaway STILL persists. So all THREE return-path bugs are now fixed (closure-pop
+UPDATE 12, caller-JM restore UPDATE 9/12, nArgs UPDATE 13) — each real + necessary (they
+match the C++/x86 canonical paths) but NONE is the primary cause. Combined with FORCE_BAIL
+(no-hit => clean), this localizes the PRIMARY corruption to the block's EXECUTION (entered
+via `br x9` at codeStart with the helper's setup) — NOT the setup fields (validated equal,
+UPDATE 10) and NOT the return (now correct). The block runs wrong despite a correct frame.
+NEXT: a CONTROLLED-hit lldb single-step is now required — gate BV hits to one test selector
+(so startup bails, no runaway) then break at the helper return (2183) and step the block's
+prologue + first bytecodes, diffing receiver/sp/temps vs a non-inlined activateBlock run.
+The return-path is fully fixed; the execution defect is the last piece. block-value remains
+opt-in/off; all fixes are default-safe + committed.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
