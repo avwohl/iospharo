@@ -463,6 +463,25 @@ where the Array comes from (likely the at: receiver left in a simStack-tracked r
 mid-protocol block entry inherits). Minimal repro: /tmp/cmpat.st. block-value still opt-in;
 default config UNAFFECTED.
 
+UPDATE 17 — lldb single-step of cmpat NAILS the mechanism (2026-06-21). Broke at
+Interpreter::sendDoesNotUnderstand (entry, --skip-prologue false; -O2 makes `this` unusable
+post-prologue, so read members via (pharo::Interpreter*)$x0). At the cmpat `<=` DNU dumped
+the frame (sp=0x..ab88, fp=0x..ab50):
+    fp[1]=arr(0x..66448)  fp[2]=0x..66460  fp[3]=0x29(=5)  fp[4]=0x300000020
+    fp[5]=arr(0x..66448)  fp[6]=0x..66460  <- sp[-2],sp[-1] = the <= operands a,b
+The `<=` operands a,b = arr (the Array) + the next heap object — NOT the at: RESULTS
+5 (0x29) and 999999 (0x7a11f9), which ARE present in the frame ~2 slots away. So the
+BV-inlined block read its args from a ~2-slot-STALE operand sp: it got the lingering at:
+RECEIVER (arr) instead of the at: RESULT. ROOT: when the enclosing method (cmpat) is
+inline-J2J'd, its preceding cached `at:` send leaves x25 (the SP_IN_X25 residency register,
+the fresher source — state.sp is only a mirror synced at exits, so it's even staler) off by
+the send's net pop; the BV emit's emitSyncSpToState then publishes the stale x25 -> state.sp,
+and jit_rt_inline_block_value_prep reads the wrong receiver/args. PHARO_T1_NO_INLINE_J2J=1
+avoids it (the cached send keeps x25 in sync when cmpat isn't inline-J2J'd). FIX (next): make
+the cached-send resume restore x25 correctly in the inline-J2J context, OR have the BV helper
+derive the receiver/args fp-relative (stable) rather than from the residency sp. Repro
+/tmp/cmpat_1l.st; lldb recipe above. block-value still opt-in; default config UNAFFECTED.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
