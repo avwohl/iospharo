@@ -765,6 +765,26 @@ which led to the decisive diagnostic.  Instrumented the chain-loop block-value a
    the operand stack first holds arr instead of 5 — that emit site is the real fix.  ALL deeper-
    fix code reverted; default config 1937/0/0; block-value opt-in.
 
+UPDATE 27 — operand stack at the send is CORRECT; corruption is in the BLOCK FRAME/execution
+(2026-06-21).  Instrumented cmpat2:'s value:value: at the chain loop, isolating cmpat2:'s block
+by its compiledBlock oop (recorded from a correct a=5,b=999999 call), then logging only its
+CORRUPTED calls (a!=5).  RESULT: that trace NEVER fires — i.e. at the chain-loop prim-207
+activation, cmpat2:'s block ALWAYS has the correct operands (a=0x29=5, b=0x7a11f9=999999,
+j2jDepth=0, chainCallDepth=0) — yet the block's <= still gets arr (the DNU still happens).
+=> The corruption is NOT in the operand stack at the value:value: send (it is correct there);
+it is DOWNSTREAM, in the BLOCK's frame setup / JIT execution after activateBlock (prim 207),
+when cmpat2: (the block's home) is inline-J2J'd.  The block is activated with a=5 but reads its
+first temp as arr.  This CONFIRMS UPDATE 22's "the block reads tempBase[0]=arr despite the
+helper setting it=5" hypothesis was on the right track — it just couldn't reproduce on cmpat_1l
+(direct), and now reproduces via cf_cross (cmpat2: inline-J2J'd).  (NB the earlier [CLbad]
+a=heap,b=1 hits were UNRELATED 2-arg blocks, not cmpat2: — isolation by block oop was needed.)
+NEXT: instrument the block's frame setup — activateBlock (Interpreter.cpp:12236) for cmpat2:'s
+block (log the args it reads from the stack vs the temps it writes to the new frame) AND the
+block's JIT entry tempBase (when the block runs JIT'd after activateBlock, with cmpat2: as an
+inline-J2J'd home).  The fix is in the block's frame-temp addressing in the inline-J2J'd-home
+context (AsmjitT1.cpp block entry / activateBlock), NOT the chain loop and NOT the operand
+stack at the send.  Default config 1937/0/0 (goal met); block-value opt-in.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
