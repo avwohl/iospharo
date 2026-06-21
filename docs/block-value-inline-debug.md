@@ -785,6 +785,31 @@ inline-J2J'd home).  The fix is in the block's frame-temp addressing in the inli
 context (AsmjitT1.cpp block entry / activateBlock), NOT the chain loop and NOT the operand
 stack at the send.  Default config 1937/0/0 (goal met); block-value opt-in.
 
+UPDATE 28 — the corrupted call runs PURE-JIT; C++ instrumentation can't see it (2026-06-21).
+Instrumented (this turn) cmpat2:'s value:value: at EVERY C++ path, isolating cmpat2:'s block by
+its compiledBlock oop and logging only the CORRUPTED calls (a!=5):
+  - operand stack at the value:value: send (chain loop, prim 207): correct (a=5,b=999999),
+    j2jDepth=0, chainCallDepth=0 — UPDATE 27.
+  - activateBlock(Interpreter.cpp:12236): cmpat2:'s 2-arg block NEVER reaches it (only AC=1
+    1-arg blocks with arg 999999 do).  So the 2-arg value:value: does not use this activateBlock.
+  - chain-loop block inline-activate tryExecute path (Interpreter.cpp ~28064-28104,
+    state.tempBase=framePointer_+1, tryExecute): the CORRECT calls reach it with tempBase[0]=5;
+    the corrupted ones DON'T fire the trace.
+  - the block-activate branch (frameDepth_!=primCallerDepth, ~28023): corrupted calls DON'T
+    reach it either.
+=> Across ALL C++ instrumentation points, the corrupted cmpat2: call never appears — only the
+   CORRECT (early) calls (the ones that exit JIT to the C++ chain loop) do.  CONCLUSION: the
+   corrupted calls run ENTIRELY in JIT'd code (cmpat2: inline-J2J'd -> the block chained/inlined
+   in JIT) and NEVER exit to the C++ paths.  So C++-side instrumentation is structurally blind to
+   the bug; the C++ chain loop only ever sees the correct calls.  This brings it FULL CIRCLE to
+   UPDATE 22: the corruption is in the BLOCK's JIT execution (reading tempBase[0]=arr from a
+   stale base/register in the inline-J2J'd-home context), reachable ONLY by asm-level
+   instrumentation (the bvEntryTrace approach), NOT C++ traces and NOT lldb (JIT code, no
+   debug info).  NEXT: asm-inject a trace at the block's JIT tempBase read (the `ldr x1,[x0,#0x18]
+   ; ldr x1,[x1]` from UPDATE 22's disasm) on the chain/inline-J2J block-entry path (not the BV
+   helper br x9), capturing x0 + state.tempBase + the loaded value for the corrupted call — that
+   pins the stale base.  Default config 1937/0/0 (goal met); block-value opt-in.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
