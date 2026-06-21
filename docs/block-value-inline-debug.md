@@ -398,6 +398,21 @@ prologue + first bytecodes, diffing receiver/sp/temps vs a non-inlined activateB
 The return-path is fully fixed; the execution defect is the last piece. block-value remains
 opt-in/off; all fixes are default-safe + committed.
 
+UPDATE 14 — controlled-hit harness attempt (gate BV to one caller selector). Added a temp
+PHARO_BV_ONLY_SEL gate (helper bails unless callerJM->selector contains the string) to fire
+ONE controlled hit with startup bailing (no runaway). Compiled bvxprobe (`^[:x|x*2+1] value:
+20` -> 41) + bvxcap (capturing `[:x|acc:=acc+x]` summed 1..10 -> 55), ran each 200k hot.
+RESULT: PROBE<41> CAP<55> CORRECT, exit 0 (no runaway) — BUT block-value hits=0 (bail
+breakdown all-zero internally => all bails were the gate). So the controlled blocks' value:
+sends never reached the helper as matched-selector hits (either bvxprobe/bvxcap didn't
+JIT-compile their value: as a BV emit in this harness, or the oopToString selector match
+needs adjustment). NET: confirmed the NON-inlined path is correct (41/55), but did NOT
+exercise a HIT, so no new execution-bug data. Reverted the gate (temp). The controlled-hit
+harness needs more work (verify the test method's value: is BV-classified + the gate match)
+before it can isolate one hit. Execution bug remains localized (not setup UPDATE 10, not
+return UPDATE 9/12/13) but unpinned. block-value stays opt-in; default config passes all
+newly-added suites (the JIT works with the tests).
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
