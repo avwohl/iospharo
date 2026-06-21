@@ -6632,6 +6632,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // DNU, RESUME-MISMATCH forensics 2026-06-11).
                     if (g_fsrX19)
                         a.ldr(x19, ptr(x0, OFF_JITMETHOD));
+#if PHARO_T1_SP_IN_X25
+                    // FIX 2026-06-21: the block executes its operand-stack ops via
+                    // the sp register (x25), but the br enters mid-protocol (no
+                    // prologue) so x25 still holds the CALLER's sp.  That sp is
+                    // stale whenever a value: arg was computed by a cached send
+                    // (e.g. `aBlock value: (src at: i) value: (src at: j)` in
+                    // mergeSort) — the block's inline-prim then read the wrong
+                    // operands (sort's `a <= b` got the Array -> wrong sort, the
+                    // last 12 SUnit fails).  The helper set state.sp to the block's
+                    // operand base; reload x25 from it.  (With constant args the
+                    // caller sp coincidentally matched, which is why simple
+                    // value: 5 value: 9 worked and at:-computed args did not.)
+                    a.ldr(asmjit::a64::x25, ptr(x0, OFF_SP));
+#endif
                     a.br(x9);
                     a.bind(blockValueDone);
                 }

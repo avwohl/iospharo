@@ -439,6 +439,30 @@ test-CONTEXT corruption (SUnit-forked test method calling sort+assert) the isola
 don't reproduce. Needs running ONE failing test (e.g. ArrayTest>>testSort) under the
 trace/lldb to see which in-context hit corrupts. block-value remains opt-in.
 
+UPDATE 16 — last-12 PRECISELY characterized (2026-06-21): BV + inline-J2J + SEND-COMPUTED
+args. The 12 sort fails reproduce OUTSIDE SUnit as a hot JIT'd method (the fork was a red
+herring): `stsort ^c sort asArray = #(...)` -> BV-OFF true, BV-ON returns the UNSORTED
+order. Narrowed: `c sort` from a hot JIT'd method does not sort (the comparison corrupts);
+`=` is fine. Then minimized to `cmpat ^[:a :b | a <= b] value: (arr at: 1) value: (arr at:
+2)` -> BV-ON errors "Array did not understand #<=" (the block's inline-prim <= read the
+ARRAY as an operand). KEY isolation:
+  - The block ARGS arrive CORRECT: `[:a:b|a]`->5 and `[:a:b|b]`->999999 both right. Only the
+    block's INLINE-PRIM (a<=b, operand-stack op) reads a bad operand.
+  - CONSTANT args work (`[:a:b|a<=b] value: 5 value: 999999` -> true). Only SEND-computed
+    args (`arr at: i`) corrupt -> the preceding cached send leaves state the BV block reads.
+  - **PHARO_T1_NO_INLINE_J2J=1 FIXES IT** (sort + cmpat both correct). So the bug is the
+    inline-J2J <-> BV interaction (the at: send + the value: BV inline at j2jDepth>=1), NOT
+    BV alone. Constant-arg BV at depth>=1 works (recw/D2/D3), so it's specifically the
+    cached-send-computed arg at depth>=1 feeding the BV block's operand-stack op.
+Added a defensive x25 (sp) reload before the block `br x9` (AsmjitT1.cpp ~6635) — correct
+for cap>0 operand-stack blocks, default-safe, but does NOT fix this bug (x25 was already the
+block base for cap=0). The real defect is a register/send-resume state the inline-J2J'd at:
+leaves that the BV block's inline-prim reads (a stale operand). NEXT: lldb single-step
+cmpat's `<=` (BV-on, inline-J2J on) — watch which register/slot the inline-prim reads and
+where the Array comes from (likely the at: receiver left in a simStack-tracked register the
+mid-protocol block entry inherits). Minimal repro: /tmp/cmpat.st. block-value still opt-in;
+default config UNAFFECTED.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
