@@ -527,6 +527,38 @@ single-step the block's ASM from codeStart (the helper returns blockJM+sizeof; b
 addr) watching the pushTemp/inline-prim operand read on the -O0 build. block-value opt-in;
 default config 1937/0/0. BVIN trace kept (gated, default-off) for the asm step.
 
+UPDATE 21 — block ASM disassembled + bug localized to the helper-return->block transition
+(2026-06-21). Dumped the cmpat block's code (BLKDUMP: blockJM->codeStart(), gated) +
+capstone-disassembled it:
+    +000 ldr x1,[x0,#0x18]   ; x1 = s->tempBase           (OFF_TEMPBASE=0x18)
+    +004 ldr x1,[x1]         ; pushTemp 0 -> a = tempBase[0]
+    +008 str x1,[x25],#8     ; push a onto operand stack (x25)
+    +00c ldr x1,[x0,#0x18]   ; s->tempBase
+    +010 ldr x1,[x1,#8]      ; pushTemp 1 -> b = tempBase[1]
+    +014 str x1,[x25],#8     ; push b
+    +018 mov x2,x25 / ldur x1,[x2,#-0x10] / ldur x4,[x2,#-8]  ; <= reads a,b
+    +024.. eor/sub/orr/tst #7 / b.ne ->DNU   ; SmI check; non-SmI -> "Array DNU #<="
+So the block reads a,b from s->tempBase[0/1] (x0=state). TBASE trace at the helper END:
+tempBase[0]=0x29(5), tempBase[1]=0x7a11f9(999999) -- CORRECT; j2jDepth=1 (the BV save;
+cmpat itself is depth 0). And only ONE TBASE line prints => cmpat's FIRST nArgs=2 call BAILS
+(not cumulative). So: the helper sets tempBase[0]=5 correctly, the block reads s->tempBase[0]
+(x0=state, no prologue, immediate), yet the SmI check sees a non-SmI (arr). => the corruption
+is in the ~40-instruction HELPER-RETURN -> BLOCK transition: BV emit AsmjitT1.cpp 6597-6635
+(restore x0 from C-stack, hit/bail counters, reload x19, the x25 reload, br x9) and/or the
+block's first read -- something makes the block's `ldr x1,[x0,#0x18]; ldr x1,[x1]` yield arr
+(x0 wrong, or s->tempBase overwritten, or the tempBase memory (=s->sp[-2]) overwritten)
+between line 2230 (helper) and +004 (block).
+LIVE single-step BLOCKED by lldb tooling (tried ~8 ways): per-hit helper bp times out on the
+startup value: volume; the block codeStart is NOT stable across lldb runs (no capture-then-
+break); line breakpoints don't resolve (no DWARF line info in the Mach-O binary -- it's in the
+.o debug map, which lldb isn't loading); var/type eval fails on both -O2 and -O0; a gated
+__builtin_debugtrap fires but the batch -o python (lldb.debugger.GetSelectedTarget) returns
+null so the dynamic bp + pc-advance fail -> continue re-traps. NEXT: register a python bp
+callback at the debugtrap ADDRESS (helper+744, stable) that reads g_bvDbgBlockEntry via
+frame.GetThread().GetProcess().GetTarget(), sets the block bp, advances pc -- OR inspect
+6597-6635 + the block prologue directly (40 insns). Diagnostic suite (BVIN/TBASE/BLKDUMP/
+debugtrap, all gated default-off) kept. block-value opt-in; default config 1937/0/0.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro

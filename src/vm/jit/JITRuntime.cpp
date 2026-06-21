@@ -2002,6 +2002,7 @@ extern "C" void jit_rt_pop_bv_closure(pharo::Interpreter* interp,
     }
 }
 
+void* g_bvDbgBlockEntry = nullptr;  // TEMP: block codeStart for lldb single-step
 extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
                                                  void* resumeAddr) {
     if (GET_DEBUG_BOOL(PHARO_BV_FORCE_BAIL)) return nullptr;  // BISECT: force always-bail (no HIT)
@@ -2069,6 +2070,20 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
         }
         g_bvBail_lookup++;
         return nullptr;
+    }
+    if (GET_DEBUG_INT(PHARO_BV_ONLY_ARG) != 0 && nArgs == 2) {  // TEMP: dump cmpat block code
+        static int blkd = 0;
+        if (blkd++ == 0) {
+            if (FILE* f = std::fopen("/tmp/jit_block.bin", "wb")) {
+                std::fwrite(blockJM->codeStart(), 1, 256, f);
+                std::fclose(f);
+            }
+            fprintf(stderr, "[BLKDUMP] block codeStart=%p numIC=%d tempCount=%d argCount=%d\n",
+                    (void*)blockJM->codeStart(), (int)blockJM->numICEntries,
+                    (int)blockJM->tempCount, (int)blockJM->argCount);
+            g_bvDbgBlockEntry = blockJM->codeStart();
+            if (GET_DEBUG_BOOL(PHARO_BV_DBGTRAP)) __builtin_debugtrap();
+        }
     }
     // Leaf-only gate: opt-in via PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1.
     // Relaxed gate previously crashed after ~820 fires (iter N+16,
@@ -2216,6 +2231,16 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     Oop* fp = s->sp - (nArgs + 1);
     s->receiver = blockRecv;
     s->tempBase = fp + 1;
+    if (GET_DEBUG_INT(PHARO_BV_ONLY_ARG) != 0 && nArgs == 2) {  // TEMP UPDATE 21
+        static int td = 0;
+        if (td++ < 24)
+            fprintf(stderr, "[TBASE %d] t[0]=0x%llx t[1]=0x%llx  j2jDepth=%d cursor=%p "
+                    "clodep=%d sp=%p\n", td,
+                    (unsigned long long)s->tempBase[0].rawBits(),
+                    (unsigned long long)s->tempBase[1].rawBits(),
+                    (int)s->j2jDepth, (void*)s->j2jSaveCursor,
+                    (int)s->interp->bvClosureSaveDepth_, (void*)s->sp);
+    }
 
     auto* blockMethObj =
         reinterpret_cast<pharo::ObjectHeader*>(compiledBlockBits);
