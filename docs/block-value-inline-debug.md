@@ -559,6 +559,42 @@ frame.GetThread().GetProcess().GetTarget(), sets the block bp, advances pc -- OR
 6597-6635 + the block prologue directly (40 insns). Diagnostic suite (BVIN/TBASE/BLKDUMP/
 debugtrap, all gated default-off) kept. block-value opt-in; default config 1937/0/0.
 
+UPDATE 22 — 6597-6635 (BV emit transition) + helper tail INSPECTED = CORRECT; the bug is an
+irreducible static contradiction; lldb fundamentally cannot single-step this VM's JIT code
+(2026-06-21). Read AsmjitT1.cpp 6571-6640 (the BV emit) instruction by instruction:
+  6581-6583  sub sp,16 / str x0,[sp,0] / str x30,[sp,8]   ; save state+LR on the C-STACK
+             (hardware sp ~0x16fdf..., FAR from the operand stack x25 ~0x4157... — no overlap)
+  6593       emitSyncSpToState                              ; state.sp = x25 (helper reads it)
+  6596       blr helper                                     ; x0 = block entry
+  6599-6602  mov x9,x0 / ldr x0,[sp,0] / ldr x30,[sp,8] / add sp,16  ; x9=entry, x0=state RESTORED
+  6603-6619  hit/bail counters (x14,x15)                    ; x0 untouched
+  6633       ldr x19,[x0,OFF_JITMETHOD]                     ; x19 = block JM (x0 untouched)
+  x25 reload ldr x25,[x0,OFF_SP]                            ; x25 = state.sp (x0 untouched)
+  6635       br x9                                          ; -> block, with x0=state
+So at br x9: x0=state, x25=state.sp, x19=block JM. NOTHING writes the operand stack or
+s->tempBase. Helper tail (JITRuntime 2245-2275): for cmpat cap=0 the copy loop has 0 iters,
+s->sp=spOut unchanged — no operand-stack write either. And codeStart()==this+sizeof(JITMethod)
+== the helper's return (line 2290), so the disassembled block IS the executed code.
+=> AIRTIGHT static chain: helper sets tempBase[0]=5 (TBASE), transition+tail preserve it, the
+block reads s->tempBase[0] with x0=state — yet the SmI-bail at block+0x34 fires (tempBase[0]
+is even/non-SmI = arr). EVERY code path is correct, but the block reads arr. The corruption is
+in NO code path I can read; it requires OBSERVING the block's runtime x0 + *(x0+0x18).
+lldb CANNOT do that here (~12 walls hit): DWARF line/type info doesn't load from the Mach-O
+(line bps unresolved, var eval fails); DATA symbols are stripped (FindFirstGlobalVariable=0,
+FindSymbols=NOSYM, even for an extern-C volatile global -> nm shows no g_bvDbgBlockEntry);
+JIT frames have NO unwind info (thread step-out lands in asmjit/garbage); stepping inside a bp
+callback invalidates the frame (pc=0xffff...); JIT codeStart is unstable across runs (capture-
+then-break fails); per-hit helper bp times out on the startup value: volume; a debugtrap fires
+but batch -o python lldb.debugger=null; passing the entry via bvLldbHook's x0 arg read back a
+C-stack addr (0x16fdfbcf8), not the arg, then EXC_BAD_ACCESS. lldb is a dead end for this.
+NEXT (NOT lldb): inject a C++ trace into the block EMIT — emit `stp x0,x1,[sp,#-16]! ; bl
+bvBlockEntryTrace ; ldp x0,x1,[sp],#16` at the cmpat block's codeStart (gated), where
+bvBlockEntryTrace(JITState* s) logs s (==x0?), s->tempBase, s->tempBase[0]. That observes the
+block's real entry state with zero lldb. Gate it to the cmpat block via a knob + the block's
+bytecode signature (PushTemp0/PushTemp1/Send<=/ReturnTop) or the Nth-compiled-block counter.
+Diagnostics (BVIN/TBASE/BLKDUMP + the gated bvLldbHook anchor) kept default-off. block-value
+opt-in; default config 1937/0/0.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro

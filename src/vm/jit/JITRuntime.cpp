@@ -2002,7 +2002,8 @@ extern "C" void jit_rt_pop_bv_closure(pharo::Interpreter* interp,
     }
 }
 
-void* g_bvDbgBlockEntry = nullptr;  // TEMP: block codeStart for lldb single-step
+extern "C" { volatile void* g_bvDbgBlockEntry = nullptr; }  // TEMP: block codeStart for lldb (volatile: survive -O2)
+extern "C" __attribute__((noinline)) void bvLldbHook(void* e) { __asm__ __volatile__("" :: "r"(e)); }  // TEMP lldb anchor (e=block entry in x0)
 extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
                                                  void* resumeAddr) {
     if (GET_DEBUG_BOOL(PHARO_BV_FORCE_BAIL)) return nullptr;  // BISECT: force always-bail (no HIT)
@@ -2081,8 +2082,7 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
             fprintf(stderr, "[BLKDUMP] block codeStart=%p numIC=%d tempCount=%d argCount=%d\n",
                     (void*)blockJM->codeStart(), (int)blockJM->numICEntries,
                     (int)blockJM->tempCount, (int)blockJM->argCount);
-            g_bvDbgBlockEntry = blockJM->codeStart();
-            if (GET_DEBUG_BOOL(PHARO_BV_DBGTRAP)) __builtin_debugtrap();
+            if (GET_DEBUG_BOOL(PHARO_BV_DBGTRAP)) bvLldbHook(blockJM->codeStart());
         }
     }
     // Leaf-only gate: opt-in via PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1.
