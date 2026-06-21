@@ -506,6 +506,27 @@ earlier inline-J2J framing:
  send-arg) make BV correct but bail its main use (do: blocks w/ send-computed args), so they
  don't make BV useful — the real BV-path fix is required. block-value opt-in; default 1937/0/0.
 
+UPDATE 20 — DECISIVE (2026-06-21): BV helper INPUT is correct -> the bug is the block's
+mid-protocol EXECUTION. Built a true -O0 -g build (build-dbg, CMAKE_BUILD_TYPE=Debug; the
+"build/" dir is RelWithDebInfo, NOT -O0). lldb breakpoints at the BV helper resolve, but a
+per-hit callback/condition TIMES OUT on the startup volume of value: sends, and -O2/extern-C
+hide the params. So pivoted to a gated C++ trace (BVIN, gated on PHARO_BV_ONLY_ARG, in the
+helper just after the gate). For cmpat's nArgs=2 helper call it prints:
+    [BVIN] nArgs=2 rcv(sp[-3])=<closure> a(sp[-2])=0x29 b(sp[-1])=0x7a11f9
+i.e. a=5 (0x29), b=999999 (0x7a11f9), receiver=the closure — ALL CORRECT. So the helper
+sets up the block frame (tempBase[0]=5, tempBase[1]=999999) correctly, yet gated cmpat STILL
+errors "Array DNU #<=". => the corruption is in the BLOCK's EXECUTION after `br x9` (the
+inline-prim reads the wrong operand DESPITE correct args), NOT the helper input, NOT the at:
+sends, NOT an inline-J2J stack scramble. This CORRECTS UPDATE 16-19 (which variously blamed
+the helper input / inline-J2J / x25-at-the-BV-emit). The defensive x25 reload (df022704) does
+NOT fix it, so the block's operand read uses a base/register that's stale after the
+mid-protocol br x9 — but tempBase residency is DEAD (memory), so pushTemp reads s->tempBase
+(correct). The remaining suspect: the inline-prim `<=` (or the block's pushTemp) reading from
+a simStack-tracked REGISTER (not memory) that the mid-protocol entry inherits stale. NEXT:
+single-step the block's ASM from codeStart (the helper returns blockJM+sizeof; break at that
+addr) watching the pushTemp/inline-prim operand read on the -O0 build. block-value opt-in;
+default config 1937/0/0. BVIN trace kept (gated, default-off) for the asm step.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro

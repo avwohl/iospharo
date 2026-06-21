@@ -2026,6 +2026,17 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
             if (!pass) return nullptr;
         }
     }
+    if (GET_DEBUG_INT(PHARO_BV_ONLY_ARG) != 0) {   // TEMP UPDATE 20: log isolated call's input
+        static int bvin = 0;
+        if (bvin++ < 6) {
+            fprintf(stderr, "[BVIN %d] nArgs=%d rcv(sp[-%d])=0x%llx a(sp[-2])=0x%llx "
+                    "b(sp[-1])=0x%llx  [5=0x29 999999=0x7a11f9]\n",
+                    bvin, nArgs, nArgs + 1,
+                    (unsigned long long)s->sp[-(nArgs + 1)].rawBits(),
+                    (unsigned long long)s->sp[-2].rawBits(),
+                    (unsigned long long)s->sp[-1].rawBits());
+        }
+    }
     void* callerJM = s->jitMethod;
     // Receiver is at sp[-(nArgs+1)] — same as a regular send.
     uint64_t rcvBits = s->sp[-(nArgs + 1)].rawBits();
