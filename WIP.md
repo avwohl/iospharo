@@ -1,3 +1,69 @@
+# RESUME POINT — 2026-06-21 (BLOCK-VALUE × inline-J2J corruption FIXED)
+
+Branch `jit`, pushed. Tip `bc2df667`. Tree clean (only `build-rel/` untracked).
+Build: `build-rel` (RelWithDebInfo, has the fix). `cmake --build build-rel --target test_load_image`.
+
+## THE WIN: BV-on block-value corruption FIXED (commit `45304f53`; SUnit confirm `bc2df667`)
+
+The long-standing block-value (`PHARO_T1_INLINE_BLOCK_VALUE=1`) corruption — the "12 sort
+failures" where a sortBlock `value:value:` with `at:`-computed args read the `at:` RECEIVER
+instead of its result (`DNU #<=` / `sort` returns UNSORTED) — is FIXED.
+
+- **Root cause (final):** a cross-method inline-J2J'd home (`cmpatTop -> cmpat2:`) that contains
+  a `value:value:` clean-inlines the block; the inlined block reads its first temp from the home
+  frame at the inline-J2J-SHIFTED offset -> `arr`. The SEPARATE block activation is always
+  correct (proved by an asm-injected codeStart trace, UPDATE 30); only the INLINED path corrupts.
+  The corrupting inline-J2J is the non-value-bearing CALLER (`cmpatTop`), so refusing the
+  value-bearing CALLEE doesn't help.
+- **The fix (UPDATE 31, docs/block-value-inline-debug.md):** make BV-on imply NO_INLINE_J2J at
+  ALL FOUR `GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)` gating reads in `AsmjitT1.cpp` (3 `inlineJ2J`
+  vars ~4654/5149/6294 + the PMS `patchedShape` ~5941 — missing the 4th = inconsistent
+  partial-disable that ERRORS), each `&& !(g_debug.t1InlineBlockValue &&
+  !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))`. Disable at the EMIT (not `xmethodGateOk`, whose
+  refuse fallback is buggy). Gated on `g_debug.t1InlineBlockValue` so BV-OFF codegen is
+  byte-identical. Opt-out knob `PHARO_T1_BV_KEEP_INLINE_J2J` (restores the bug for A/B).
+- **Validated:** (a) deterministic repros `cf_cross` CROSSFALSES[0] 3/3 + DET_SCHED (was DNU 5/5),
+  `cf_dir` DIRFALSES[0]; (b) real `a sort:[:x:y|x<=y]` x90000 -> `#(1..9)` (KEEP_INLINE_J2J ->
+  unsorted = original symptom); (c) SUnit A/B on the 9 collection classes (hold all sort tests):
+  **BV-OFF == BV-ON == Pass 1648 / Fail 0 / Error 0** — the 12 sort tests run + pass under BV-on.
+- **COST:** BV-on loses cross-method inline-J2J (acceptable — BV is OPT-IN). Default config
+  (BV off) UNAFFECTED, still 1937/0/0. Repro: `scripts/pkg-jit-test/bv-repro/` + `/tmp/cf_cross.st`,
+  `/tmp/cf_dir.st`, `/tmp/sorttest.st`.
+
+## IN PROGRESS (killed by shutdown — RE-RUN to finish): full 565-class A/B with BV-on
+
+Was running the full 565-class suite BV-off vs BV-on for the comprehensive no-regression number
+(the 9-class A/B already confirms the sort fix; this is extra coverage). BV-off was progressing
+clean (3400+ result lines, Behavior/Class tests, no failures seen) when shutdown was requested.
+Re-run (each ~minutes on build-rel):
+
+    cd ~/src/iospharo
+    cp scripts/pharo-headless-test/test_classes.txt /tmp/sunit_test_classes.txt
+    rm -f /tmp/sunit_class_names.txt /tmp/sunit_batch.txt   # run ALL 565
+    VM=build-rel/test_load_image
+    # BV-OFF baseline:
+    rm -f /tmp/sunit_run_completed.txt /tmp/harness/startup.st /tmp/sunit_test_results.txt
+    PHARO_MAX_STEPS=2e12 $VM /tmp/harness/Pharo.image; cp /tmp/sunit_test_results.txt /tmp/sunit_full_off.txt
+    # BV-ON:
+    rm -f /tmp/sunit_run_completed.txt /tmp/sunit_test_results.txt
+    PHARO_T1_INLINE_BLOCK_VALUE=1 PHARO_BV_MAX_CAP=1 PHARO_MAX_STEPS=2e12 $VM /tmp/harness/Pharo.image
+    cp /tmp/sunit_test_results.txt /tmp/sunit_full_on.txt
+    # compare: python3 sum of 'Pass: N'/'Fail: N'/'Error: N' in each (BV-off baseline ~12689, memory)
+
+Expect BV-ON == BV-OFF (fix is gated on BV-on; only difference is BV-on loses cross-method
+inline-J2J). If BV-on shows NEW failures vs BV-off -> investigate (the fix should be regression-free).
+
+## NEXT / OPEN
+- (optional) finish the full 565 A/B above for the comprehensive no-regression number.
+- IDEAL future fix (keep BOTH BV + cross-method inline-J2J): correct the inlined-block
+  tempBase/operand addressing in the inline-J2J'd-home context (AsmjitT1 inline-J2J emit), so
+  BV-on doesn't have to disable inline-J2J. See docs/block-value-inline-debug.md UPDATE 30/31.
+- block-value stays OPT-IN (default config met regardless; BV-on now correct for the sort class).
+- Full BV saga: docs/block-value-inline-debug.md UPDATES 15-31. Memory:
+  jit-package-testing-harness.md (updated with the fix).
+
+---
+
 # RESUME POINT — 2026-06-19d (package JIT testing + off-by-one bug FIXED)
 
 Branch `jit`, pushed (tip `937d8301`). Built a package-based JIT test harness
