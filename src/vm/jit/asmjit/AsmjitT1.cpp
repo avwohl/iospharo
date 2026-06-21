@@ -4650,7 +4650,8 @@ static void emitJ2JReturnPrelude_arm64(asmjit::a64::Assembler& a,
                                        int staticJ2JArgCount = -1) {
     using namespace asmjit::a64;
     (void)staticJ2JArgCount;
-    const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J);
+    const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
+                && !(g_debug.t1InlineBlockValue && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  /* SCOPING FIX #2 (UPDATE 31): BV-on disables cross-method inline-J2J (the value:value:-block-clean-inline corruptor); BV still works, just no inline-J2J */;
         if (!inlineJ2J) return;
         if (GET_DEBUG_BOOL(PHARO_T1_NO_J2J_RETPRELUDE)) return;  // bisect knob
         asmjit::Label normalReturn = a.new_label();
@@ -5144,7 +5145,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // When off, the ldr+cbz is still emitted but j2jDepth is always 0
     // so we fall through to normal-return — tiny overhead, zero
     // semantic change.
-    const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J);
+    const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
+                && !(g_debug.t1InlineBlockValue && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  /* SCOPING FIX #2 (UPDATE 31): BV-on disables cross-method inline-J2J (the value:value:-block-clean-inline corruptor); BV still works, just no inline-J2J */;
     auto emitJ2JReturnPreludeIfEnabled = [&]() {
         emitJ2JReturnPrelude_arm64(a, staticJ2JArgCount);
     };
@@ -5936,6 +5938,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         const bool patchedShape =
             !GET_DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS)
             && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
+            && !(g_debug.t1InlineBlockValue && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  // SCOPING FIX #2 (UPDATE 31)
             && probeThis;
         auto emitMaterializeX5 = [&]() {
             asmjit::a64::Gp jmReg = asmjit::a64::x19;
@@ -6289,6 +6292,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Mirrors stencils.cpp:1733-1877's `j2j_direct_call:` block.
             // See deferred.md A6 for full design.
             const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
+                && !(g_debug.t1InlineBlockValue && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  /* SCOPING FIX #2 (UPDATE 31): BV-on disables cross-method inline-J2J (the value:value:-block-clean-inline corruptor); BV still works, just no inline-J2J */
                 && !GET_DEBUG_BOOL(PHARO_T1_NO_J2J_BRANCH);  // TEST: NO_J2J_BRANCH now gates the WHOLE block
             if (inlineJ2J) {
                 asmjit::Label tryInlineJ2J = a.new_label();

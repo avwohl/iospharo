@@ -1,8 +1,11 @@
 # Block-value inline (`PHARO_T1_INLINE_BLOCK_VALUE`) — debug map
 
-Status 2026-06-20: **opt-in because BROKEN**. Enabling it corrupts the image
-during **startup** — even a no-block eval fails. This file maps the mechanism and
-records what's been ruled out, so the next (dedicated, lldb) session starts informed.
+Status 2026-06-21: **FIXED (scoping) — BV-on now correct; still opt-in for perf.** The
+startup runaway was fixed earlier (cap>=2 + remote-temp bails); the last class of failures
+(the "12 sort" / cross-method `value:value:` corruption) is FIXED by UPDATE 31's scoping fix:
+when BV inline is ON, cross-method inline-J2J is disabled (it was the value:value:-block-clean-
+inline corruptor).  BV stays OPT-IN because BV-on now trades cross-method inline-J2J for
+correctness; the default config (BV off) is byte-identical and unaffected.  See UPDATE 31.
 
 ## Symptom
 
@@ -869,6 +872,32 @@ the inlined block's operand read.  The fix is the inlined-block operand/tempBase
 the inline-J2J'd-home context — OR, as a correct scoping fallback, refuse to inline-J2J / clean-
 inline a callee that contains a block-value send (the bug needs both; either disabled fixes it).
 Default config 1937/0/0 (goal met); block-value remains OPT-IN.
+
+UPDATE 31 — SCOPING FIX #2 WORKS: BV-on disables cross-method inline-J2J (2026-06-21).
+Built on UPDATE 30 (the SEPARATE block run is correct; only the INLINED path corrupts) + the
+deterministic repro (cf_cross reliably DNU 5/5).  First confirmed the precise lever: the
+value-bearing-CALLEE refuse (mark cmpat2: canBailMidMethod) does NOT fix it (cf_cross still DNU
+3/3+DET_SCHED) — the corrupting inline-J2J is the cross-method CALLER (cmpatTop, no value:
+literal, not caught by a callee scan).  The proven lever is PHARO_T1_NO_INLINE_J2J (UPDATE 23:
+BV-on + that = WORKS), which disables inline-J2J at the EMIT (not xmethodGateOk, whose refuse
+fallback is buggy — UPDATE 25).  FIX: make BV-on imply NO_INLINE_J2J, at ALL FOUR gating reads
+of GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J) in AsmjitT1.cpp (the 3 `const bool inlineJ2J = ...`
+at ~4653/5148/6293 AND the PMS `patchedShape` at ~5940 — missing the 4th left an INCONSISTENT
+partial-disable that errored).  Each gets `&& !(g_debug.t1InlineBlockValue &&
+!GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))`.  Opt-out PHARO_T1_BV_KEEP_INLINE_J2J restores
+the buggy admit (for A/B).
+VALIDATION (deterministic): cf_cross CROSSFALSES[0] 3/3 + DET_SCHED (was DNU 5/5); cf_dir
+DIRFALSES[0] (was DNU); a real `a sort: [:x:y|x<=y]` x90000 -> #(1..9) correctly sorted (with
+KEEP_INLINE_J2J it returns the UNSORTED #(5 3 8 1 9 2 7 4 6) — the exact original "sort doesn't
+sort" symptom); DEFAULT (BV off) R<7> byte-identical (the gate is g_debug.t1InlineBlockValue, so
+BV-off codegen is unchanged).  ROOT CAUSE (final): a cross-method inline-J2J'd home that contains
+a value:value: clean-inlines the block, and the inlined block reads its first temp from the home
+frame at the inline-J2J-shifted offset -> the at: RECEIVER (arr) -> DNU #<=.  The scoping fix
+sidesteps it by keeping such homes un-inlined so the block runs as a SEPARATE (correct)
+activation.  COST: BV-on loses cross-method inline-J2J (acceptable — BV is opt-in).  The IDEAL
+fix (keep BOTH: correct the inlined-block operand/tempBase addressing in the inline-J2J'd-home
+context) remains future work.  block-value still OPT-IN; default 1937/0/0; with BV-on the cross/
+sort corruption is resolved.
 
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
