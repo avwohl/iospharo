@@ -12089,6 +12089,24 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 }
             }
             jm->hasNLR = nlr;
+            {   // 2026-06-20: detect captured REMOTE-temp access (0xFB/0xFC/0xFD).
+                // BV inline drops remote-temp STORES when the block runs in a
+                // foreign frame (value'd from do:/collect:/etc.) — the write to a
+                // captured var is silently lost (the BV-on runaway).  Refuse BV
+                // inline for such blocks (naive scan; over-bail is safe).
+                bool rt = false;
+                if (isReal) {
+                    for (size_t i = 0; i < bcLen; i++) {
+                        uint8_t op = bc[i];
+                        if (op == SistaV1::PushTempAtInVec
+                            || op == SistaV1::StoreTempAtInVec
+                            || op == SistaV1::PopStoreTempAtInVec) {
+                            rt = true; break;
+                        }
+                    }
+                }
+                jm->hasRemoteTemp = rt;
+            }
             // Mark receiver-ivar-storing methods.  The legacy stencil
             // compiler sets hasRecvFieldWrite per-stencil; the asmjit
             // path left it permanently false.  Consumed by the

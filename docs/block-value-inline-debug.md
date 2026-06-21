@@ -413,6 +413,32 @@ before it can isolate one hit. Execution bug remains localized (not setup UPDATE
 return UPDATE 9/12/13) but unpinned. block-value stays opt-in; default config passes all
 newly-added suites (the JIT works with the tests).
 
+UPDATE 15 — BREAKTHROUGH (2026-06-20): startup runaway FIXED; BV-on total-runaway -> 99.4%.
+Built a controlled-hit harness (PHARO_BV_ONLY_ARG gates hits to one value:-arg/home-receiver
+so startup bails -> no runaway; PHARO_BV_TRACE_HITS logs hit shapes). Proved the simple
+cases CORRECT under BV inline (identity, capture-read, multi-arg, nArgs=0, home+foreign
+frame, deep j2jDepth — all return right values). Then found TWO real corruptors by shape:
+  1. REMOTE-TEMP WRITE (FIXED). A block that STORES a captured remote temp (0xFB/0xFC/0xFD,
+     e.g. `c do: [:x | s := x]`) loses the write when BV-inlined in a foreign frame
+     (`bvcolldo` -> 0 instead of the last element; BV-off correct). FIX: JITMethod->
+     hasRemoteTemp (scanned at compile, AsmjitT1.cpp ~12091) + bail in the helper.
+  2. MULTI-CAPTURE cap>=2 (BAILED). Blocks with >=2 copied values corrupt under BV inline
+     (bisected: PHARO_BV_MAX_CAP<=1 stops the runaway). The C++ capture-copy was verified
+     IDENTICAL to activateBlock (firstCopiedSlot=4, order, count all match), so the defect
+     is in the JIT block's emitted multi-copied-value ACCESS, not the copy. FIX (interim):
+     PHARO_BV_MAX_CAP default 1 (bail cap>=2). The proper fix (emit-level) would re-enable
+     cap>=2 inline.
+  3. ALSO: the asm BV return does the closure-pop + caller-JM restore + nArgs/offset-48
+     (UPDATEs 12-13), all necessary.
+RESULT: BV-on 3+4 -> R<7> (the months-old startup runaway is GONE). Kernel A/B: BV-OFF
+1937/0/0, BV-ON 1925/1937 (12 sort-related fails: testSort/testSorted/testAsSortedArray/
+testSortUsingSortBlock/testIndexOf...Using). Default config UNAFFECTED (BV off -> 1937/0/0).
+REMAINING (the last 12): deterministic (DET_SCHED same), NOT a closure/j2jDepth leak
+(clodep stays 1), and every sort/=/isSorted op is CORRECT in isolated evals — so it's a
+test-CONTEXT corruption (SUnit-forked test method calling sort+assert) the isolated evals
+don't reproduce. Needs running ONE failing test (e.g. ArrayTest>>testSort) under the
+trace/lldb to see which in-context hit corrupts. block-value remains opt-in.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro

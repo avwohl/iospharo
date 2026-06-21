@@ -2005,6 +2005,27 @@ extern "C" void jit_rt_pop_bv_closure(pharo::Interpreter* interp,
 extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
                                                  void* resumeAddr) {
     if (GET_DEBUG_BOOL(PHARO_BV_FORCE_BAIL)) return nullptr;  // BISECT: force always-bail (no HIT)
+    {   // TEMP: isolate one controlled BV hit — gate on the last value: arg,
+        // or (nArgs==0) the block's home receiver (closure.slot[3]).
+        int onlyArg = GET_DEBUG_INT(PHARO_BV_ONLY_ARG);
+        if (onlyArg != 0) {
+            bool pass = false;
+            if (nArgs >= 1) {
+                pharo::Oop a0 = s->sp[-1];
+                pass = a0.isSmallInteger() && a0.asSmallInteger() == onlyArg;
+            } else {
+                uint64_t rb = s->sp[-1].rawBits();   // closure at sp[-1] for nArgs==0
+                if ((rb & 7) == 0 && rb >= 0x10000) {
+                    auto* clo = reinterpret_cast<pharo::ObjectHeader*>(rb);
+                    if (clo->slotCount() >= 4) {
+                        pharo::Oop hr = clo->slotAt(3);
+                        pass = hr.isSmallInteger() && hr.asSmallInteger() == onlyArg;
+                    }
+                }
+            }
+            if (!pass) return nullptr;
+        }
+    }
     void* callerJM = s->jitMethod;
     // Receiver is at sp[-(nArgs+1)] — same as a regular send.
     uint64_t rcvBits = s->sp[-(nArgs + 1)].rawBits();
@@ -2074,6 +2095,25 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     // Pre-computed at JIT-compile time in blockJM->hasNLR; one bit
     // check at the call site, no per-call bytecode scan.
     if (blockJM->hasNLR) { g_bvBail_canBail++; return nullptr; }
+
+    // 2026-06-20: refuse blocks that access a captured REMOTE temp vector
+    // (0xFB/0xFC/0xFD).  When such a block is BV-inlined in a FOREIGN frame
+    // (value'd from do:/collect:/etc.), the remote-temp store is loaded from a
+    // stale frame base and the write to the captured variable is LOST -> the
+    // BV-on startup runaway.  Pre-computed in blockJM->hasRemoteTemp.
+    if (blockJM->hasRemoteTemp) { g_bvBail_canBail++; return nullptr; }
+
+    {   // FIX 2026-06-20: bail multi-capture blocks (numCopied > PHARO_BV_MAX_CAP,
+        // default 1).  cap>=2 blocks corrupt under BV inline in a foreign frame —
+        // the JIT block mis-accesses the 2nd+ copied value (the C++ capture-copy
+        // here matches activateBlock, so the defect is in the block's emitted
+        // multi-copied-value reads).  MAX_CAP<=1 stops the BV-on startup runaway.
+        int mc = GET_DEBUG_INT(PHARO_BV_MAX_CAP);
+        if (mc >= 0) {
+            int nc = (int)closureObj->slotCount() - 4;
+            if (nc > mc) { g_bvBail_canBail++; return nullptr; }
+        }
+    }
 
     // Save stack space check.
     if ((uintptr_t)s->j2jSaveCursor >= (uintptr_t)s->j2jSaveLimit)
@@ -2197,6 +2237,31 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
         spOut++;
     }
     s->sp = spOut;
+
+    if (GET_DEBUG_BOOL(PHARO_BV_TRACE_HITS)) {   // TEMP: characterize inlined blocks
+        static int bvtn = 0;
+        if (bvtn < 8000) {
+            bvtn++;
+            auto* mem2 = reinterpret_cast<pharo::ObjectMemory*>(s->memory);
+            std::string rcls = mem2 ? mem2->classNameOf(s->receiver) : std::string("?");
+            char capbuf[96] = "";
+            if (numCopied > 0) {
+                pharo::Oop cap0 = closureObj->slotAt(4);
+                uint64_t cb = cap0.rawBits();
+                if ((cb & 7) == 0 && cb >= 0x10000) {
+                    auto* capObj = reinterpret_cast<pharo::ObjectHeader*>(cb);
+                    if (capObj->slotCount() >= 1)
+                        snprintf(capbuf, sizeof capbuf, " cap0@%llx[0]=%llx",
+                                 (unsigned long long)cb,
+                                 (unsigned long long)capObj->slotAt(0).rawBits());
+                }
+            }
+            fprintf(stderr, "[BVHIT %d] rcvCls=%s nArgs=%d temps=%d cap=%d numIC=%d j2jd=%d clodep=%d%s\n",
+                    bvtn, rcls.c_str(), nArgs, (int)totalTemps, numCopied,
+                    (int)blockJM->numICEntries, (int)s->j2jDepth,
+                    (int)s->interp->bvClosureSaveDepth_, capbuf);
+        }
+    }
 
     // Return the JIT entry address.  asmjit emit issues `br x0` to it.
     return reinterpret_cast<uint8_t*>(blockJM) + sizeof(JITMethod);

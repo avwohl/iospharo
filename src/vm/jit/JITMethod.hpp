@@ -230,6 +230,17 @@ struct JITMethod {
                                     // Computed at JIT-compile time, checked by
                                     // jit_rt_inline_block_value_prep to refuse BV
                                     // inline for blocks with non-local return.
+    bool        hasRemoteTemp;      // 2026-06-20: contains 0xFB/0xFC/0xFD
+                                    // (push/store/popStore Temp inVectorAt) — i.e.
+                                    // accesses a captured REMOTE temp vector.  The
+                                    // BV inline copies the vector ref into a frame
+                                    // temp, but the remote-temp inline-prim loads
+                                    // the vector from a stale frame base when the
+                                    // block runs in a FOREIGN frame (e.g. value'd
+                                    // from OrderedCollection>>do:), so the store is
+                                    // LOST (write to a captured var silently dropped
+                                    // -> the BV-on runaway).  jit_rt_inline_block_
+                                    // value_prep refuses BV inline when set.
     bool        canBailMidMethod;   // Emits ExitMustBool (and similar) mid-body.  The chain-loop
                                     // inline-activate path at Interpreter.cpp:18807-18809 invokes
                                     // a callee without pushing a C++ frame; a mid-method bail
