@@ -844,6 +844,32 @@ have not pinned the exact emit site; lldb can't step JIT (no debug info), C++ tr
 (pure-JIT), and the codeStart asm trace didn't surface cmpat2:'s block cleanly.  Default config
 1937/0/0 (goal met); block-value remains OPT-IN with this documented, precisely-bounded bug.
 
+UPDATE 30 — codeStart trace at the REAL block entry: the SEPARATE block run is CORRECT; the
+corrupted run is an INLINED/pure-JIT path that evades codeStart (2026-06-21).  Fixed the
+isolation: record cmpat2:'s block oop in the BV HELPER (where compiledBlockBits is definitively
+cmpat2:'s, identified by a=5/b=999999; the helper computes it at line 2086 BEFORE bailing on
+canBailMidMethod at 2146), into a regular C++ global g_cmpat2BlockOop.  Then the asm-injected
+codeStart trace (bvBlockStart at emit-loop globalIdx==0) filters state.method==g_cmpat2BlockOop.
+RESULT: exactly ONE [BLKCS] fires: t0=0x29(5), t1=0x7a11f9(999999), OK(a=5) — then the DNU, with
+NO further [BLKCS].  So cmpat2:'s SEPARATE block run (via tryExecute->codeStart, state.method =
+the block oop) is CORRECT (a=5).  The CORRUPTED run never reaches the block's codeStart with
+state.method==the block oop.
+=> CONCLUSION: the corrupted run is NOT a separate block activation — it is an INLINED path
+   (the block clean-inlined, or value:value: re-emitted within the inline-J2J'd home cmpat2:/
+   cmpatTop), where state.method is the HOME method, not the block, and the block's bytecodes
+   run mid-method (not at globalIdx==0).  It runs entirely in JIT and evades codeStart exactly
+   as it evaded all C++ paths (UPDATE 28) and the BV helper (always input a=5).  The separate
+   block path is correct; only the inlined path corrupts.  This is consistent across the whole
+   investigation: the corruption is the inline-J2J re-emission of cmpat2: that inlines its
+   value:value: block, and the inlined block reads its first temp from the home frame at the
+   wrong (inline-J2J-shifted) offset -> arr.
+NEXT: instrument the INLINE-J2J RE-EMIT of a value:value:/block bytecode (AsmjitT1.cpp inline-J2J
+emit path), or the PushTemp emit for an inlined block (mid-method, state.method==home), to catch
+the inlined block's operand read.  The fix is the inlined-block operand/tempBase addressing in
+the inline-J2J'd-home context — OR, as a correct scoping fallback, refuse to inline-J2J / clean-
+inline a callee that contains a block-value send (the bug needs both; either disabled fixes it).
+Default config 1937/0/0 (goal met); block-value remains OPT-IN.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
