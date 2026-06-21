@@ -810,6 +810,40 @@ its compiledBlock oop and logging only the CORRUPTED calls (a!=5):
    helper br x9), capturing x0 + state.tempBase + the loaded value for the corrupted call — that
    pins the stale base.  Default config 1937/0/0 (goal met); block-value opt-in.
 
+UPDATE 29 — asm-injected the tempBase trace at the block JIT codeStart; result inconclusive
+(2026-06-21).  Added bvBlockStart(state) (JITRuntime.cpp) + asm-injected `bl bvBlockStart` at
+the emit-loop globalIdx==0 (AsmjitT1.cpp ~10416, codeStart, gated PHARO_BV_DUMP_REAL, save/
+restore x0/x30/x25/x19).  It builds + runs clean.  At codeStart, logging (A) t1==999999 [BLKE-OK]
+and (B) heap-t0 [BLKE-BAD]:
+  - [BLKE-OK] (t1=999999) fires for MANY DIFFERENT block oops with varying t0 (mostly heap) —
+    999999 is NOT a unique cmpat2: signature (it propagates from `Array with: 5 with: 999999`
+    into many blocks' temps).
+  - NO codeStart entry has t0=0x29 (5).  So cmpat2:'s block with its CORRECT args (a=5,
+    b=999999) NEVER appears at this codeStart — even though the chain-loop traces (UPDATE 27,
+    [CLcmp]/[BLKTB]) showed cmpat2:'s value:value: + tryExecute with a=5.
+=> CONTRADICTION / inconclusive: cmpat2:'s block does not surface at the emit-loop globalIdx==0
+   codeStart with a=5.  Likely either (i) the chain-loop tryExecute / inline-J2J enters the
+   block at a point that is NOT the emit-loop globalIdx==0 (a trampoline/prologue, or a resume
+   offset), so the injection point is wrong; or (ii) cmpat2:'s block reaches codeStart with an
+   already-different tempBase (the corruption is in the tryExecute/inline-J2J tempBase setup,
+   between the chain-loop trace point and codeStart); or (iii) the block's bytecodes are
+   clean-inlined into cmpat2: (no separate codeStart) for the corrupted path.  The trace point
+   needs to be the block's ACTUAL runtime entry — verify by dumping blockJM->codeStart() for
+   cmpat2:'s block and asm-injecting at THAT exact address (or in the PushTemp emit itself),
+   not the emit-loop globalIdx==0 which may differ from the entry the chain/inline-J2J uses.
+
+SESSION SUMMARY of the BV x inline-J2J bug (UPDATES 19-29): root cause CONFIRMED (BV value:value:
+in an inline-J2J'd home corrupts the block's first arg to the at: receiver, arr).  RULED OUT as
+fix layers / not-the-bug: scoping gate (xmethodGateOk refuse), runtime flag write (MAP_JIT
+fault), j2jDepth>0 bail, chain-loop pending-save reconcile (j2jDepth=0/chainCallDepth=0 at the
+site), the operand stack at the value:value: send (correct, a=5), activateBlock(12236) (2-arg
+block doesn't use it), and the C++ paths generally (corrupted call runs pure-JIT, never exits
+to C++).  The corruption is in the block's JIT execution (tempBase read / register handling) in
+the inline-J2J'd-home context.  ~6 fix attempts + ~11 instrumentation layers (C++, lldb, asm)
+have not pinned the exact emit site; lldb can't step JIT (no debug info), C++ traces are blind
+(pure-JIT), and the codeStart asm trace didn't surface cmpat2:'s block cleanly.  Default config
+1937/0/0 (goal met); block-value remains OPT-IN with this documented, precisely-bounded bug.
+
 NEXT SESSION: bisect the side effects — build BV-ON but neutralize each in turn
 (force spLiveInX2 true at 7707; force staticJ2JArgCount through at 11623; V1-only the
 4764 branch) and find which neutralization stops the 112M-send runaway. Repro
