@@ -121,12 +121,19 @@ report-sunit 0-regression vs the 12,898-test Cog baseline + cpu_ms-neutral.
 
 ## Phases 2+ (only the corrected levers)
 
-- **Phase 2 — trim the universal probe head (1–2 sess, MEDIUM risk).** Default
-  `PHARO_T1_LEAK_GUARD_OFF` ON (leaks root-caused, `6068`) and avoid re-deriving the
-  class key when the receiver class is known. Recovers ~2–5 instr on EVERY send
-  (helps fib too). Done: knob flipped + benchFib cpu_ms REPEAT=5 drops + report-sunit
-  0-worse. Risk: the leak guard caught stale classifier-bit receivers (Roassal3
-  SIGSEGV history) — full SUnit + Roassal under DET_SCHED before defaulting.
+- **Phase 2 — trim the universal probe head. ✅ EXECUTED (2026-06-23) — PERF-NEUTRAL,
+  NOT pursued.** Measured the leak-guard removal with zero code change (it's already
+  gated by `PHARO_T1_LEAK_GUARD_OFF`): REPEAT=5 min cpu_ms, guard ON vs OFF —
+  fib(28) 6→6 (tie, the most send-bound case), sum 60→64, sort 165→178, dict 120→125
+  (within noise / slightly worse), 1M blocks 206→184 (the one improvement, but block
+  activation not send dispatch). The 2 saved instructions (`lsr #48; cbnz miss`) are
+  predicted-not-taken branches that cost ~0 cycles out-of-order — instruction-count
+  reduction ≠ cpu_ms when the removed instrs aren't on the critical path (same lesson
+  as TOS-in-register). The class-key recompute is similarly cheap ALU + a header load
+  that is fundamental (Cog also loads the receiver class). So head-trim does NOT
+  deliver a measurable win, and flipping the leak-guard default would add the Roassal3
+  SIGSEGV-history risk for no benefit. NOT flipped. The real send cost is the MEMORY
+  traffic + the dispatchCached C++ round-trip, not the cheap probe-head ALU.
 - **Phase 3 (CORRECTED) — B6 classifier / compiler coverage for quick-prims (3–5
   sess, HIGH risk).** NOT PMS (already done). Make the `extras==0` dispatchCached
   quick-prims (`#class`/`#==`/`#isNil`/prim 111) get classified+inlined (an extras
