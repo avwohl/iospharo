@@ -1,3 +1,16 @@
+# RESUME POINT — 2026-06-23 (perf tracking DB + getter-inlining WIN)
+
+**SHIPPED WIN: getter inlining default-on** (commit, `AsmjitT1.cpp:6485` flipped to
+opt-out `PHARO_T1_NO_GETTER_IN_J2J`). 8–10x on getter-bound code (`1M getter+yourself`
+40→5ms; 43x→~5x vs Cog). The dispatch-A getter entry was default-off since
+2026-06-10 for a MAX_IC=1 corruption; full-suite validation at HEAD shows it no
+longer manifests (12674 P / 0 F, ZERO new regressions vs baseline JIT — later
+frame-state fixes resolved it). Found via the `PHARO_T1_SEND_CENSUS` getter=0 thread
+after every other perf lever was measured + refuted. Details: docs/send-path-plan.md,
+docs/results-perfdb.md.
+
+---
+
 # RESUME POINT — 2026-06-23 (perf tracking DB built; JIT < interp finding)
 
 Branch `jit`. Built **`vmperf`** — a MySQL results DB on awohl.com (port 24, root

@@ -1,5 +1,16 @@
 # Perf tracking DB (vmperf) + JIT-vs-Cog baseline
 
+> **WIN (2026-06-23): getter inlining default-on — 8–10x on getter-bound code.**
+> The `PHARO_T1_SEND_CENSUS` `getter=0` thread found getters were the one clear
+> missed-inline slice (falling to the dispatchCached round-trip). The dispatch-A
+> getter entry was default-off since 2026-06-10 for a MAX_IC=1 corruption that
+> full-suite validation showed no longer manifests at HEAD (12674 P / 0 F, zero
+> new regressions). Flipped default-on (opt-out `PHARO_T1_NO_GETTER_IN_J2J`):
+> `1M getter+yourself` 40ms → 5ms; broad SUnit CPU neutral (199 vs 201s). The
+> first shippable perf win after every other lever was measured + refuted. See
+> `docs/send-path-plan.md`.
+
+
 The `vmperf` MySQL DB (on awohl.com, schema `scripts/perfdb/schema.sql`) records
 every test/benchmark run keyed by (vm_build git-sha, test_source+url, machine,
 knobs) with CPU + wall time, so unchanged Cog results are never re-run.  Tooling:
