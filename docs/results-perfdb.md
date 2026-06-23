@@ -89,22 +89,49 @@ the known JIT Heisenbug class (see CLAUDE.md `PHARO_DET_SCHED`), not clean
 reproducible bugs. The diff flags candidates; confirming needs DET_SCHED + the
 full-suite interleaving. Not on the perf path.
 
-## Worklist (the real perf project, in impact order)
+## Worklist — root-caused (codegen analysis, file:line in src/vm/jit/asmjit/AsmjitT1.cpp)
 
-1. **JIT codegen quality for straight-line/loop bytecode** — the 21x bytecode
-   gap.  Keep the operand stack / TOS in registers across a basic block instead
-   of load/op/store per bytecode; inline SmallInt arithmetic without the
-   per-op memory round-trip.  TOS_REG is the start of this but is incomplete and
-   currently a net loss — finish or replace it.  This lifts EVERY bytecode-heavy
-   benchmark and is the only path to Cog parity.
-2. **Block activation cost** — `1M blocks` JIT 181ms vs interp 33ms.  The JIT's
-   block `value`/activation path is ~5x heavier than the interpreter's.  Make
-   block invocation cheap (the BLOCK_VALUE inline is the intended fix but
-   currently sacrifices cross-method inline-J2J; needs the both-on fix from
-   docs/block-value-inline-debug.md UPDATE 31).
-3. **Interpreter send rate** — interp sends are 16M/s (~60ns/send).  Not on the
-   Cog-parity path (the JIT handles sends) but explains why JIT-off is unusable
-   for send-heavy code.
+ROOT CAUSE: the JIT keeps the stack POINTER in x25 (`PHARO_T1_SP_IN_X25`, ON) but
+round-trips operand VALUES through frame memory every bytecode. A simple `a+b`
+(pushTemp a; pushTemp b; send +) does ~8 stack/temp memory accesses where Cog
+does ~1-2. The inlined arithmetic itself is cheap (~6 ALU instrs, `5285-5293`);
+the stack plumbing around it is the cost. The interpreter wins on bytecodes
+(651M vs 303M) because it holds FP/SP/temps in registers across its dispatch
+loop with no tempBase indirection (`Interpreter.cpp:2708`, `3005-3019`).
+
+1. **Enable + FINISH the TOS-in-register (x26 simStack) scheme — THE lever.**
+   `PHARO_T1_TOS_REG` caches top-of-stack VALUE in x26 so consecutive bytecodes
+   pass operands without memory. Fully written but compiled OFF: `g_useTos =
+   GET_DEBUG_BOOL(PHARO_T1_TOS_REG) && real` (`9845`); every `tosFam(bit)` gate
+   (`216-219`) is false by default. Enabling it AS-IS is net-negative (measured:
+   291M vs 303M) because the per-family conversion is incomplete — the real work
+   is completing+validating all families (kTosFamArith/Push/PopStore/SendHead/
+   SendRes/FuseCmpJ). Removes ~4-6 of the ~8 memory ops per `a+b`; this is Cog's
+   model and the only path to closing the 21x bytecode gap. RISK HIGH (stale-TOS
+   = the classic frame-corruption source) but defenses exist (`PHARO_T1_TOS_VERIFY`
+   ldur/cmp/brk net `3916-3925`, `_POISON`, per-family `_MASK` bisect); validate
+   with `PHARO_DET_SCHED=1` + the SUnit harness (report-sunit diff vs baseline).
+2. **JIT fast path for `[x:=x+1] value`** — the 5.5x block regression. JIT
+   heap-allocates a closure + does a real IC send + builds an `activateBlock`
+   frame per iteration (`10713-10789`); the interpreter pattern-matches the 9-byte
+   body and does the read-modify-write in C++ with no alloc/send/frame
+   (`Primitives.cpp:3790-3863`, ~50ns). Add the JIT analog (recognize
+   PushFullBlock-then-`value` at compile time). RISK MEDIUM (closures/NLR
+   minefield) — restrict to the exact local-return `0x5E` pattern.
+3. **Keep tempBase in a register** (not reloaded per temp access). `emitLoadTempBase`
+   (`3889-3896`) is `ldr [x0,OFF_TEMPBASE]` every pushTemp/popStoreTemp because
+   `PHARO_T1_TB_IN_X26` is hardwired off (x26 went to TOS). Use another callee-saved
+   reg (x27/x28), load once in prologue, mirror the x25 reload-after-relocation
+   pattern (`3876-3886`). RISK LOW-MEDIUM. Removes 1 load per temp access.
+4. **cmp→branch fusion default-on** (`5350-5377`, `kTosFamFuseCmpJ`) — emits
+   `cmp + b.cond` with no boolean materialization. Sub-case of #1 but the agent
+   notes it can be enabled independently (depends only on lookahead, not a valid
+   cached value). RISK LOW alone. The interpreter already fuses always
+   (`Interpreter.cpp:3042-3073`).
+
+Not on the Cog-parity path: per-bytecode IP writes / step counter — the JIT
+already avoids these (IP written only at sends/exits). Back-edge yield poll
+(`10558-10565`, 3 instrs/iter) is necessary for preemption.
 
 ## How to reproduce / extend
 
