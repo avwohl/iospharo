@@ -13,6 +13,7 @@
  */
 
 #include "Interpreter.hpp"
+#include <unordered_map>
 #include "../platform/Platform.hpp"
 #include "DebugSettings.hpp"
 #include "DebugVars.hpp"
@@ -488,6 +489,12 @@ namespace pharo {
 constexpr bool ENABLE_DEBUG_LOGGING = false;
 
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
+
+// Phase-1 send census (docs/send-path-plan.md), gated by PHARO_T1_SEND_CENSUS.
+// Counts the per-execution dispatchCached round-trips (the addressable B6 bucket)
+// at the ExitSendCached activation, with a per-selector histogram.
+static uint64_t g_sendCensus_dispatch = 0;
+static std::unordered_map<std::string, uint64_t> g_sendCensusHisto;
 
 // Setter write-barrier counters (defined in JITRuntime.cpp).
 extern "C" {
@@ -1860,6 +1867,26 @@ void Interpreter::dumpJITStats() {
             resumeTotal > 0 ? 100.0 * jitJ2JChains_ / resumeTotal : 0.0);
     fprintf(stderr, "  J2J stencil: calls=%zu returns=%zu patches=%zu\n",
             jitJ2JStencilCalls_, jitJ2JStencilReturns_, jitJ2JDirectPatches_);
+    if (GET_DEBUG_BOOL(PHARO_T1_SEND_CENSUS)) {
+        // docs/send-path-plan.md Phase 1: dispatchCached = the addressable bucket
+        // (per-execution JIT->C++->JIT round-trip); emitted-J2J = the inline fast
+        // path. F_addr = dispatch / (dispatch + emitted-J2J).
+        uint64_t disp = g_sendCensus_dispatch;
+        double fAddr = (double)disp / (double)(disp + jitJ2JStencilCalls_ + 1);
+        fprintf(stderr,
+            "[SEND-CENSUS] emitted-J2J-calls=%zu dispatchCached=%llu "
+            "F_addr(dispatch/(dispatch+emittedJ2J))=%.3f\n",
+            jitJ2JStencilCalls_, (unsigned long long)disp, fAddr);
+        std::vector<std::pair<std::string, uint64_t>> v(
+            g_sendCensusHisto.begin(), g_sendCensusHisto.end());
+        std::sort(v.begin(), v.end(),
+                  [](const auto& a, const auto& b) { return a.second > b.second; });
+        fprintf(stderr, "[SEND-CENSUS] top dispatch selectors:");
+        for (size_t i = 0; i < v.size() && i < 14; i++)
+            fprintf(stderr, " #%s=%llu", v[i].first.c_str(),
+                    (unsigned long long)v[i].second);
+        fprintf(stderr, "\n");
+    }
     fprintf(stderr, "  materialize: count=%zu totalDepth=%zu\n",
             jitMaterializeCount_, jitMaterializeTotalDepth_);
     fprintf(stderr, "  chain: actChain=%zu actFall=%zu | primChain=%zu primFall=%zu\n",
@@ -22004,6 +22031,14 @@ void Interpreter::tryJITResumeInCaller() {
         case jit::ExitSendCached: {
             // IC hit during resume — activate cached method, then resume caller
             Oop cached = state.cachedTarget;
+            // Phase-1 send census (docs/send-path-plan.md): this per-execution
+            // dispatchCached round-trip is the addressable B6 bucket — the send
+            // that exited emitted code to a JIT->C++->JIT activation instead of
+            // an inline-J2J/inline-prim/PMS-direct path.  Counted by selector.
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_SEND_CENSUS), 0)) {
+                g_sendCensus_dispatch++;
+                g_sendCensusHisto[memory_.selectorOf(cached)]++;
+            }
             // Audit 3b: identity sync hoisted to the case head so BOTH
             // bail returns (stale-IC here, WRONGSEL below) hand the
             // dispatch loop a coherent frame.  External mode: no-op.
