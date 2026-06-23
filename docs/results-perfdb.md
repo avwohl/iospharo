@@ -59,17 +59,29 @@ re-running (`record-sunit.sh --skip-cog-if-present` honors it):
 
     Cog v10.3.9, 544 classes / 12,898 tests:  P12778 F4 E96 S20   25.8s CPU / 31.1s wall
 
-The perf gap shows up on real test code too. ArrayTest (324 tests), same set on
-both VMs, both clean:
+Full kernel suite, both VMs (same class list), both completed clean:
 
-    vm            tests   CPU      wall    vs Cog
-    Cog            324     0.2s     0.2s    —
-    our JIT        323     1.1s     8.2s    5.5x CPU / 41x wall slower
+    vm            pass    fail  error  skip    CPU      wall
+    Cog          12778     4     96    20     25.8s    31.1s
+    our JIT      12671     0      4    29    200.7s   278.6s    = 7.8x CPU / 9x wall slower
 
-CPU (5.5x) is the stable cross-machine metric; wall (41x) is inflated by the
-custom-VM SUnit harness's Delay/watchdog machinery. Either way our VM is several
-times slower than Cog at executing real Smalltalk — the same codegen-quality
-story as the microbenchmarks.
+CPU (7.8x) is the stable cross-machine metric. The SUnit gap (7.8x) is milder
+than the microbench bytecode gap (21x) because real code mixes sends (JIT wins)
+with bytecode/blocks (JIT loses). Same codegen-quality story.
+
+### JIT correctness vs Cog (per-test diff, `report-sunit`)
+
+12,898 common tests, 12,692 agree. Only **4 JIT regressions** (Cog passes, JIT
+doesn't) — all in compiler/closure/crypto code, concrete leads for the
+correctness side:
+
+    OCASTAndOrTranslatorTest>>testFalseAndAnythingReturnsFalse   cog=pass jit=error
+    OCBlockNodeTest>>testIsClean                                 cog=pass jit=error
+    OCClosureCompilerTest>>testDebuggerTempAccess                cog=pass jit=error
+    SHA256Test>>testFips180Example3                              cog=pass jit=timeout
+
+9 tests the JIT passes that Cog fails/errors; 193 cog-only (JIT run didn't reach
+them). Diff stored — re-checkable any time without re-running Cog.
 
 ## Worklist (the real perf project, in impact order)
 
