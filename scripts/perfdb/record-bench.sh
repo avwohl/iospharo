@@ -94,8 +94,12 @@ fi
 if $RUN_OURS; then
   cp "$IMAGE" /tmp/bench_suite-ours.image
   cp "${IMAGE%.image}.changes" /tmp/bench_suite-ours.changes 2>/dev/null || true
-  run_one ours "$JIT_VM" "$JIT_KNOBS" \
-    "cd /tmp && exec env $JIT_KNOBS '$OUR_VM' /tmp/bench_suite-ours.image"
+  # --repeat N gathers N independent samples (each a separate run row) so a
+  # codegen A/B can compare median CPU — single samples are too noisy (±7% wall).
+  for i in $(seq 1 "${REPEAT:-1}"); do
+    run_one ours "$JIT_VM" "$JIT_KNOBS" \
+      "cd /tmp && exec env $JIT_KNOBS '$OUR_VM' /tmp/bench_suite-ours.image"
+  done
 fi
 
 echo "=== JIT vs Cog (latest, in-image CPU ms) ==="

@@ -57,6 +57,25 @@ host exposes hardware perf counters).
     python3 scripts/perfdb/perfdb.py query "SELECT ..."
     python3 scripts/perfdb/perfdb.py have-correctness --source <id> --vm <cog_id>
 
+## Codegen A/B (multi-sample — single runs are too noisy)
+
+`tinyBenchmarks` wall rate varies ±7% run-to-run; do not A/B codegen on it. Use
+the in-image `cpu_ms` per fixed benchmark (stable ±1-2%) and take several
+samples:
+
+    REPEAT=5 JIT_KNOBS="PHARO_JIT_DEFER=15"                scripts/perfdb/record-bench.sh --ours-only
+    REPEAT=5 JIT_KNOBS="PHARO_JIT_DEFER=15 PHARO_T1_TOS_REG=1" scripts/perfdb/record-bench.sh --ours-only
+    # compare min/median cpu_ms per benchmark across the samples of each config:
+    python3 scripts/perfdb/perfdb.py query "
+      SELECT b.bench_name, r.knobs, COUNT(*) n,
+             MIN(b.cpu_ms) min_cpu, ROUND(AVG(b.cpu_ms),1) avg_cpu, MAX(b.cpu_ms) max_cpu
+      FROM bench_result b JOIN run r ON r.id=b.run_id JOIN vm_build v ON v.id=r.vm_build_id
+      WHERE v.kind='jit' AND b.bench_name IN ('sum 1M','sort 100K','dict 50K')
+      GROUP BY b.bench_name, r.knobs ORDER BY b.bench_name, r.knobs;"
+
+A change is real only if its min/median CPU separates from the other config's
+range across the samples.
+
 ## Metrics
 
 Two timings per run: in-image (the benched block only — CPU ms via prim 247 on
