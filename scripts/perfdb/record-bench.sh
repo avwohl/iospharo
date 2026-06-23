@@ -49,8 +49,8 @@ MACHINE=$(python3 "$PERFDB" register-machine)
 SHA=$(git -C "$PROJECT_ROOT" rev-parse HEAD)
 GITDESC=$(git -C "$PROJECT_ROOT" describe --always --dirty 2>/dev/null || echo "$SHA")
 JIT_VM=$(python3 "$PERFDB" register-vm --kind jit --git-sha "$SHA" \
-           --build-config RelWithDebInfo --arch "$(uname -m)" --vm-version "iospharo-jit@${SHA:0:9}")
-COG_VER=$("$COG_VM" --version 2>/dev/null | head -1 | grep -oE 'v[0-9.]+\+[0-9.]+[a-f0-9]+' | head -1)
+           --build-config RelWithDebInfo --arch "$(uname -m)" --binary "$OUR_VM" --vm-version "iospharo-jit@${SHA:0:9}")
+COG_VER=$("$COG_VM" --version 2>/dev/null | grep -oE 'v[0-9.]+\+[0-9.]+[a-f0-9]+' | head -1)
 COG_VM_ID=$(python3 "$PERFDB" register-vm --kind cog --build-config Release \
            --arch "$(uname -m)" --vm-version "Pharo-${COG_VER:-unknown}" --git-sha "${COG_VER##*+}")
 BENCH_SRC=$(python3 "$PERFDB" register-source --name bench-suite --kind bench \

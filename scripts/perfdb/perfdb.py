@@ -256,6 +256,37 @@ def parse_bench(path):
     return out, complete
 
 
+def parse_sunit_tsv(path):
+    """Our runner's detail file: TSV `runNum<TAB>Class<TAB>selector<TAB>STATUS`,
+    one row per (test, run). Keep the latest run's verdict per (class, selector)."""
+    latest = {}   # (class, selector) -> (runNum, status)
+    with open(path) as f:
+        for raw in f:
+            parts = raw.rstrip("\n").split("\t")
+            if len(parts) != 4:
+                continue
+            run_s, cls, sel, status = parts
+            try:
+                rn = int(run_s)
+            except ValueError:
+                continue
+            st = status.strip().lower()
+            if st not in ("pass", "fail", "error", "skip", "timeout"):
+                continue
+            key = (cls, sel)
+            if key not in latest or rn >= latest[key][0]:
+                latest[key] = (rn, st)
+    return [dict(class_name=c, selector=s, status=st)
+            for (c, s), (_, st) in latest.items()]
+
+
+def parse_sunit_any(path):
+    """Parse either runner's per-test format; return whichever yields tests."""
+    block = parse_sunit_detail(path)
+    tsv = parse_sunit_tsv(path)
+    return block if len(block) >= len(tsv) else tsv
+
+
 def parse_sunit_detail(path):
     """detail file -> list of dict(class_name, selector, status). Mirrors classify-sunit.py."""
     import re
@@ -397,6 +428,8 @@ def main():
     p = sub.add_parser("register-vm")
     p.add_argument("--kind", required=True, choices=["jit", "cog", "interp"])
     p.add_argument("--git-sha")
+    p.add_argument("--binary", help="VM binary path; its sha256 is the true identity "
+                                    "(git HEAD churns on unrelated commits)")
     p.add_argument("--build-config")
     p.add_argument("--arch", default=platform.machine())
     p.add_argument("--vm-version")
@@ -455,11 +488,20 @@ def main():
     elif args.cmd == "register-machine":
         print(register_machine())
     elif args.cmd == "register-vm":
-        fp = fingerprint(args.kind, args.git_sha, args.build_config, args.arch,
-                         args.vm_version)
+        bin_sha = None
+        if args.binary and os.path.exists(args.binary):
+            h = hashlib.sha256()
+            with open(args.binary, "rb") as bf:
+                for chunk in iter(lambda: bf.read(1 << 20), b""):
+                    h.update(chunk)
+            bin_sha = h.hexdigest()
+        # Fingerprint on the binary content when available (git HEAD churns on
+        # unrelated script/doc commits); fall back to git_sha/vm_version.
+        ident = bin_sha or args.git_sha or args.vm_version
+        fp = fingerprint(args.kind, ident, args.build_config, args.arch)
         print(upsert("vm_build", fp, dict(
-            kind=args.kind, git_sha=args.git_sha, git_dirty=args.dirty,
-            build_config=args.build_config, arch=args.arch,
+            kind=args.kind, git_sha=args.git_sha, binary_sha256=bin_sha,
+            git_dirty=args.dirty, build_config=args.build_config, arch=args.arch,
             vm_version=args.vm_version, built_at=args.built_at,
             repo_url=args.repo_url)))
     elif args.cmd == "register-source":
@@ -501,8 +543,15 @@ def do_record(args):
     if args.kind == "bench":
         results = parse_bench(args.result)
     else:
-        detail = args.detail or args.result
-        results = parse_sunit_detail(detail)
+        # Runners disagree on which file holds the per-test blocks: our runner
+        # writes them to the detail file, stock Cog's to the results file. Parse
+        # each candidate and keep the one that actually has tests.
+        results = []
+        for cand in (args.detail, args.result):
+            if cand and os.path.exists(cand):
+                parsed = parse_sunit_any(cand)
+                if len(parsed) > len(results):
+                    results = parsed
 
     run_id = record_run(args.kind, args.vm, args.machine, args.source, args.knobs,
                         timing, results, status=status, log_path=args.log,
