@@ -122,6 +122,36 @@ the stack plumbing around it is the cost. The interpreter wins on bytecodes
 (651M vs 303M) because it holds FP/SP/temps in registers across its dispatch
 loop with no tempBase indirection (`Interpreter.cpp:2708`, `3005-3019`).
 
+### ⚠️ Fix #1 (TOS-in-register) is REFUTED by rigorous measurement — net-negative
+
+The codegen agent called TOS-in-register "THE lever." A rigorous multi-sample
+A/B (4 runs each, stable cpu_ms) says otherwise — **TOS-on is net-negative on
+EVERY real benchmark; OFF is fastest everywhere:**
+
+    bench (min cpu_ms)   OFF   MASK=101   MASK=-1(all)
+    1M blocks            184   181        223
+    dict 50K             121   125        129
+    floatSum 1M           65    70         70
+    sort 100K            165   176        174
+    sum 1M                60    65         64
+    1M getter+yourself    41    42         43
+
+The TOS cache's management overhead (invalidation tracking, the per-inline-send
+`tosLrearm` reload, the rearm churn at send/block boundaries) exceeds the
+memory-traffic it saves — on send/block-heavy code, which is exactly the goal's
+workloads (SUnit/soogle). Completing the conversion (eliminating the per-site
+rearm, the planned "fix #1 mechanism" below) would at best recover the rearm
+loads, not the broader overhead. **Do not pursue fix #1.** Bolting a TOS cache
+onto a stencil-per-bytecode JIT costs more than it saves; Cog's TOS works because
+its whole codegen (register allocator, no per-bytecode cache bookkeeping) is
+built around it. Closing the 21x gap likely needs a deeper codegen rethink, not
+this incremental.
+
+→ The remaining concrete lever is **fix #2 (block fast path)** — the block gap is
+real and independent of TOS (`1M blocks` 197ms vs interp 33ms). Pursue that next.
+
+(Historical mechanism notes for fix #1, kept for the record:)
+
 ### Fix #1 mechanism (read for the implementation) — the per-inline-send rearm
 
 Why all-families is net-negative and loop-body-only is neutral: with the
