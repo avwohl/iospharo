@@ -255,10 +255,17 @@ ROOT CAUSE (corrects the stale "un-popped save at ExitArithOverflow" diagnosis):
   retro-save recovery (AsmjitT1.cpp:7257), NOT the C++ AO handler (where naive
   materializeJ2J is documented to double-handle + break battery_golden).
 
-FIX LOCATION (focused follow-up): the inline-J2J block-callee entry sp computation
-for the canBailMidMethod case — verify the block callee's own tempCount (not
-callerTempCount) drives the entry sp, so ExitArithOverflow restores the correct
-callee sp. Validate: PMAdditionalTest 3->0, SP_DEPTH 15->~0, battery_golden clean,
-full SUnit report-sunit 0 new regressions, PolyMath full (the 51), then flip
-ADMIT_BAILMID default-on for +26% select. NOT shipped: delicate emit surgery on
-the BV-saga arith-overflow/J2J-save path; rushing it risks new corruption.
+FIX LOCATION (focused follow-up): NARROWED. The inline-J2J block ENTRY sp is NOT the
+bug — the crossSaveless entry (AsmjitT1.cpp:7196-7211) loads the callee's OWN tempCount
+at runtime and sets sp = tempBase + tempCount*8 correctly (only the self-rec path at
+7215 uses compile-time callerTempCount, valid since callee==caller). So the +1 is in
+EITHER (a) the arith-overflow STENCIL exit-sp for a frame entered via inline-J2J (it
+restores entry-SP for C++ re-execution; verify it matches the block's actual frame),
+OR (b) the non-RETURN retro-save recovery (AsmjitT1.cpp:7257) that rebuilds the elided
+save on the ExitArithOverflow bail. Needs lldb-level tracing of state.sp at the arith
+stencil's overflow exit vs the depth-map expected, on the deterministic repro (break
+at g_mismatches++, BcDepthMap.cpp:569, exit=6 isBlock=1). Validate any fix:
+PMAdditionalTest 3->0, SP_DEPTH 15->~0, battery_golden clean, full SUnit report-sunit
+0 new regressions, PolyMath full (the 51), then flip ADMIT_BAILMID default-on for +26%
+select. NOT shipped: delicate emit surgery on the BV-saga arith-overflow/J2J-save path;
+rushing it risks new corruption.
