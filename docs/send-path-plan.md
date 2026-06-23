@@ -226,3 +226,39 @@ KEY FINDINGS:
   un-popped J2J save on V2 ExitArithOverflow). The fix (materialize/pop the save
   on V2 ExitArithOverflow — AO_MAT_J2J is currently V1-only) is a SCOPED CODEGEN
   FIX that would unlock the +26% AND the 51 PolyMath failures. Implement-first.**
+
+## ADMIT_BAILMID fix — root-caused with a deterministic repro (2026-06-23)
+
+Took on the ADMIT_BAILMID fix (the +26% `select` win). Built a DETERMINISTIC
+repro and root-caused the bug far past the stale 2026-06-19 docs.
+
+DETERMINISTIC REPRO (100% across reps):
+- Image: /tmp/pkgtest/polymath.image (PolyMath loaded via Cog; 103 test classes).
+- `printf 'PMAdditionalTest\n' > /tmp/sunit_class_names.txt` (+ test_classes.txt)
+- ADMIT_BAILMID OFF -> 3 PASS;  PHARO_T1_ADMIT_BAILMID_CALLEES=1 -> 3 ERROR
+  (testMatrixInversionSmall/testMatrixSquared/testTensorProduct), each
+  "SubscriptOutOfBounds: 6 in a PMVector" — the off-by-one (index +1).
+- ORACLE: PHARO_SP_DEPTH_CHECK=1 reports 15 JIT-side mismatches, ALL delta=+1.
+
+ROOT CAUSE (corrects the stale "un-popped save at ExitArithOverflow" diagnosis):
+- [AO-DIVERGED] (j2jDepth>0 at the AO handlers) NEVER fires -> j2jDepth==0 at
+  every ExitArithOverflow. The save is NOT pending at the bail.
+- The +1 originates in an INLINE-J2J'd canBailMidMethod BLOCK (isBlock=1,
+  tempCount=3, op=0x5e BlockReturnTop, exit=6 ExitArithOverflow): when the block
+  arith-overflows, its callee `state.sp` is left +1. The chain-loop handler
+  (Interpreter.cpp:28413) faithfully copies `stackPointer_ = state.sp`, so the
+  +1 propagates UP the call stack (observed at exit=2/7 sends in closed/close as
+  the corrupted stack unwinds) until it becomes a wrong `at:` index.
+- STRICTLY requires inline-J2J: ADMIT_BAILMID + PHARO_T1_NO_INLINE_J2J=1 -> 3 PASS.
+  So the +1 is in the inline-J2J block-ENTRY sp setup (AsmjitT1.cpp:7225-7240, the
+  extras-init loop + emitStoreSp(x15) using callerTempCount) or the non-RETURN
+  retro-save recovery (AsmjitT1.cpp:7257), NOT the C++ AO handler (where naive
+  materializeJ2J is documented to double-handle + break battery_golden).
+
+FIX LOCATION (focused follow-up): the inline-J2J block-callee entry sp computation
+for the canBailMidMethod case — verify the block callee's own tempCount (not
+callerTempCount) drives the entry sp, so ExitArithOverflow restores the correct
+callee sp. Validate: PMAdditionalTest 3->0, SP_DEPTH 15->~0, battery_golden clean,
+full SUnit report-sunit 0 new regressions, PolyMath full (the 51), then flip
+ADMIT_BAILMID default-on for +26% select. NOT shipped: delicate emit surgery on
+the BV-saga arith-overflow/J2J-save path; rushing it risks new corruption.
