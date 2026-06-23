@@ -9842,6 +9842,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     size_t bcRealLen = (bcLen >= (size_t)emitSkip) ? (bcLen - emitSkip) : 0;
     bool real = (bcRealLen > 0) && allBytecodesSupported(bcReal, bcRealLen);
     // simStack: per-compile master switch (stub emits never convert).
+    // Stays OPT-IN: a 2026-06-23 measured A/B (in-image CPU, the stable metric)
+    // found the loop-body subset (MASK=101) PERF-NEUTRAL — operands still spill
+    // to memory at every send/jump boundary, so partial conversion buys nothing;
+    // only the full conversion (incl. the net-negative Send families) could help.
     g_useTos = GET_DEBUG_BOOL(PHARO_T1_TOS_REG) && real;
     // Sieve correctness gate (2026-05-19): methods with prim 60/61/62
     // declared at method entry AND conditional jumps in the body trigger

@@ -89,6 +89,29 @@ the known JIT Heisenbug class (see CLAUDE.md `PHARO_DET_SCHED`), not clean
 reproducible bugs. The diff flags candidates; confirming needs DET_SCHED + the
 full-suite interleaving. Not on the perf path.
 
+## Measurement methodology (learned the hard way, 2026-06-23)
+
+`tinyBenchmarks` bytecodes/sec is WALL-based and iteration-scaled — it varies
+**±7% run-to-run** on this machine (observed 301/303/308/317/322M for the *same*
+config). Do NOT A/B codegen changes on it; a single-sample "+6%" is noise.
+
+The **in-image CPU metric** (`cpu_ms` per fixed benchmark, prim 247, best-of-3)
+is stable to **±1-2%** — this is the metric to use for codegen A/B (it confirms
+the user's "CPU varies less than wall" guidance). Even so, take several samples
+and compare min/median, not one run.
+
+### TOS-in-register partial enable (MASK=101) — tried, PERF-NEUTRAL, reverted
+
+Enabling the loop-body TOS families (Push|Dup|PopStore|Arith, MASK=101, the
+subset that excludes the fragile CondJump/FuseCmpJ and net-negative Send
+families) and rebuilding as default: on the stable CPU metric it was neutral
+(sort 173→170, sum 62→60, stringHash 78→80, dict 124→123 — all within noise).
+Correctness was clean (1538 collection/number tests + `PHARO_T1_TOS_VERIFY`
+brk-net active, no corruption). Reverted — partial conversion buys nothing
+because operands still spill to memory at every send/jump boundary; only the
+FULL conversion (including the Send families, currently net-negative/incomplete)
+moves the needle. Confirms fix #1 is the big-but-hard item, not a quick enable.
+
 ## Worklist — root-caused (codegen analysis, file:line in src/vm/jit/asmjit/AsmjitT1.cpp)
 
 ROOT CAUSE: the JIT keeps the stack POINTER in x25 (`PHARO_T1_SP_IN_X25`, ON) but
