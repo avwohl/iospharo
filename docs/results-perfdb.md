@@ -52,6 +52,25 @@ correctness levers, not the speed lever.  Most speed-relevant inlinings
 (inline-J2J, at:/at:put:/size, getter/setter, basicNew, class) are already
 DEFAULT-ON, and the gap persists with them on.
 
+## SUnit — Cog baseline (permanent; never re-run) + the SUnit perf gap
+
+Full kernel suite recorded once on Cog and stored per-test, so it never needs
+re-running (`record-sunit.sh --skip-cog-if-present` honors it):
+
+    Cog v10.3.9, 544 classes / 12,898 tests:  P12778 F4 E96 S20   25.8s CPU / 31.1s wall
+
+The perf gap shows up on real test code too. ArrayTest (324 tests), same set on
+both VMs, both clean:
+
+    vm            tests   CPU      wall    vs Cog
+    Cog            324     0.2s     0.2s    —
+    our JIT        323     1.1s     8.2s    5.5x CPU / 41x wall slower
+
+CPU (5.5x) is the stable cross-machine metric; wall (41x) is inflated by the
+custom-VM SUnit harness's Delay/watchdog machinery. Either way our VM is several
+times slower than Cog at executing real Smalltalk — the same codegen-quality
+story as the microbenchmarks.
+
 ## Worklist (the real perf project, in impact order)
 
 1. **JIT codegen quality for straight-line/loop bytecode** — the 21x bytecode

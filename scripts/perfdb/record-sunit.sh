@@ -29,6 +29,9 @@ JIT_KNOBS="${JIT_KNOBS:-PHARO_JIT_DEFER=15}"
 
 RUN_REF=true; RUN_OURS=true; SKIP_COG_IF_PRESENT=false
 CLASSES=""; CLASSES_FILE=""
+# Source identity — defaults to the kernel suite; override for soogle packages
+# (which, once Metacello-loaded into an image, are just SUnit TestCases).
+SOURCE_NAME="sunit-kernel"; SOURCE_KIND="sunit"; SOURCE_URL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --ours-only) RUN_REF=false ;;
@@ -37,6 +40,10 @@ while [ $# -gt 0 ]; do
     --classes-file) CLASSES_FILE="$2"; shift ;;
     --jit-knobs) JIT_KNOBS="$2"; shift ;;
     --skip-cog-if-present) SKIP_COG_IF_PRESENT=true ;;
+    --image)       IMAGE_SRC="$2"; shift ;;       # package-loaded image
+    --source-name) SOURCE_NAME="$2"; shift ;;     # e.g. soogle:PolyMath
+    --source-kind) SOURCE_KIND="$2"; shift ;;     # sunit | package
+    --source-url)  SOURCE_URL="$2"; shift ;;      # git URL the package came from
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
   shift
@@ -69,8 +76,8 @@ JIT_VM=$(python3 "$PERFDB" register-vm --kind jit --git-sha "$SHA" \
 COG_VER=$("$COG_VM" --version 2>/dev/null | grep -oE 'v[0-9.]+\+[0-9.]+[a-f0-9]+' | head -1)
 COG_VM_ID=$(python3 "$PERFDB" register-vm --kind cog --build-config Release \
            --arch "$(uname -m)" --vm-version "Pharo-${COG_VER:-unknown}" --git-sha "${COG_VER##*+}")
-SUNIT_SRC=$(python3 "$PERFDB" register-source --name sunit-kernel --kind sunit \
-           --pharo-version 13.1 --image-sig "$IMAGE_SIG")
+SUNIT_SRC=$(python3 "$PERFDB" register-source --name "$SOURCE_NAME" --kind "$SOURCE_KIND" \
+           --pharo-version 13.1 --image-sig "$IMAGE_SIG" ${SOURCE_URL:+--url "$SOURCE_URL"})
 echo "[ids] machine=$MACHINE jit_vm=$JIT_VM cog_vm=$COG_VM_ID sunit_src=$SUNIT_SRC classes=$NCLASSES"
 
 record_run() {  # label vm_id knobs status
