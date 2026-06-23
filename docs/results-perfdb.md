@@ -122,6 +122,23 @@ the stack plumbing around it is the cost. The interpreter wins on bytecodes
 (651M vs 303M) because it holds FP/SP/temps in registers across its dispatch
 loop with no tempBase indirection (`Interpreter.cpp:2708`, `3005-3019`).
 
+### Fix #1 mechanism (read for the implementation) — the per-inline-send rearm
+
+Why all-families is net-negative and loop-body-only is neutral: with the
+send-result family on (`kTosFamSendRes`), every INLINE-spec send (getter, at:,
+size, class, …) stores its result to the memory stack and then branches through
+`tosLrearm` (AsmjitT1.cpp:6034) which does `ldur x26` to reload the cache — a
+redundant load per inline send. The NON-inlined C++ send path is fine: it
+`resumeAfterCall`-rearms x26 from x1 (the result reg) load-free (:6031). So the
+concrete fix #1 work is: make each inline-spec result path PRODUCE its result
+into x26 directly (mov x26, result; store to mem) and branch to `endOfSend`
+(skip `tosLrearm`), instead of store-then-reload. ~12 sites (the `b tosSendRes ?
+tosLrearm : endOfSend` list at :6459/7416/8097/8192/8238/8255/8350/8388/8473/
+8535/8583/8668/8778). First target: the inline GETTER (drives `1M getter+yourself`,
+JIT 43ms vs interp 37ms). Validate each site: report-sunit diff + PHARO_DET_SCHED
++ REPEAT=5 cpu_ms. RE-MEASURE the all-families baseline with REPEAT+cpu_ms first —
+the "net-negative" was single-sample wall (noisy).
+
 1. **Enable + FINISH the TOS-in-register (x26 simStack) scheme — THE lever.**
    `PHARO_T1_TOS_REG` caches top-of-stack VALUE in x26 so consecutive bytecodes
    pass operands without memory. Fully written but compiled OFF: `g_useTos =
