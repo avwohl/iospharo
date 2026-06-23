@@ -481,6 +481,10 @@ def main():
     p = sub.add_parser("report-bench")
     p.add_argument("--source")
 
+    p = sub.add_parser("report-sunit")
+    p.add_argument("--source", required=True, help="test_source name, e.g. sunit-kernel")
+    p.add_argument("--limit", type=int, default=40, help="max divergent tests to list")
+
     args = ap.parse_args()
 
     if args.cmd == "machine-info":
@@ -527,6 +531,8 @@ def main():
         sys.stdout.write(run_sql(args.sql))
     elif args.cmd == "report-bench":
         report_bench(args.source)
+    elif args.cmd == "report-sunit":
+        report_sunit(args.source, args.limit)
 
 
 def do_record(args):
@@ -601,6 +607,59 @@ ORDER BY s.name, b.bench_name, v.kind;
         print("\nslowest JIT-vs-Cog (by wall ratio):")
         for ratio, bench, cw, jw in sorted(worst, reverse=True)[:8]:
             print(f"  {ratio:5.2f}x  {bench:<22} cog={cw:.0f}ms jit={jw:.0f}ms")
+
+
+def report_sunit(source_name, limit):
+    """Compare the latest JIT run's per-test verdicts vs the latest Cog run's,
+    for a source. Surfaces JIT regressions without re-running Cog."""
+    def latest_run(kind):
+        rows = query(
+            "SELECT r.id FROM run r JOIN vm_build v ON v.id=r.vm_build_id "
+            "JOIN test_source s ON s.id=r.source_id "
+            f"WHERE r.kind='sunit' AND v.kind='{kind}' AND s.name={sql(source_name)} "
+            "ORDER BY r.id DESC LIMIT 1;")
+        return int(rows[0]["id"]) if rows else None
+
+    cog_run, jit_run = latest_run("cog"), latest_run("jit")
+    if not cog_run or not jit_run:
+        print(f"need both a cog and jit sunit run for '{source_name}' "
+              f"(cog={cog_run}, jit={jit_run})")
+        return
+
+    def verdicts(run_id):
+        return {(r["class_name"], r["selector"]): r["status"]
+                for r in query("SELECT class_name, selector, status "
+                               f"FROM test_result WHERE run_id={run_id};")}
+
+    cog, jit = verdicts(cog_run), verdicts(jit_run)
+    keys = set(cog) | set(jit)
+    OKS = {"pass", "skip"}
+    agree = jit_worse = jit_better = cog_only = jit_only = 0
+    regressions = []
+    for k in keys:
+        c, j = cog.get(k), jit.get(k)
+        if c is None:
+            jit_only += 1
+        elif j is None:
+            cog_only += 1
+        elif c == j:
+            agree += 1
+        elif c in OKS and j not in OKS:
+            jit_worse += 1
+            regressions.append((k[0], k[1], c, j))
+        elif c not in OKS and j in OKS:
+            jit_better += 1
+        else:
+            agree += 1  # both non-ok, different flavor — not a regression
+    print(f"source '{source_name}'  cog_run={cog_run} jit_run={jit_run}")
+    print(f"  common tests: {len(keys)}   agree: {agree}")
+    print(f"  JIT REGRESSIONS (cog ok, jit not): {jit_worse}")
+    print(f"  jit recovered (cog not ok, jit ok): {jit_better}")
+    print(f"  cog-only: {cog_only}   jit-only: {jit_only}")
+    if regressions:
+        print(f"\n  regressions (up to {limit}):")
+        for cls, sel, c, j in sorted(regressions)[:limit]:
+            print(f"    {cls}>>{sel}   cog={c} jit={j}")
 
 
 if __name__ == "__main__":
