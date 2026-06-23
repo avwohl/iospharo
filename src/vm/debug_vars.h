@@ -91,12 +91,20 @@ DEBUG_BOOL(PHARO_T1_NO_CHAIN_RESUME_PLAIN) // opt-OUT (default = plain bcToCode 
 // (tryMultiSlot writes a wild receiver -> the global-inline-J2J #extent crash;
 // the set also yields mustBeBoolean).  DEFAULT-OFF (opt-in) so global inline-J2J
 // is correct.  Re-enable a spec only after validating its emit.  (2026-06-09)
-DEBUG_BOOL(PHARO_T1_INLINE_MULTISLOT)        // bit 57: ^ self[A] op1 self[B] op2 const
-DEBUG_BOOL(PHARO_T1_INLINE_RETURNS_LITERAL)  // bit 58: ^ nil/true/false/0/1
-DEBUG_BOOL(PHARO_T1_INLINE_TEMP_RETURN)      // bit 54: ^ arg N
-DEBUG_BOOL(PHARO_T1_INLINE_INT_CMP_RETURN)   // bit 53: ^ self cmp arg
-DEBUG_BOOL(PHARO_T1_INLINE_INT_ARITH_RETURN) // bit 52: ^ self op arg
-DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)         // bit 51: Integer>>even/odd
+DEBUG_BOOL(PHARO_T1_INLINE_MULTISLOT)        // bit 57: ^ self[A] op1 self[B] op2 const. STILL OPT-IN: tryMultiSlot's wild receiver-slot write (#extent crash) is the one named defect not yet emit-fixed.
+// bits 58/54/52 (returnsLiteral/tempReturn/intArith) FLIPPED DEFAULT-ON 2026-06-23
+// via the NO_ opt-outs below.  The shared 2026-06-09 disable cause was a broken
+// dispatch-A path (now fixed — proven by the getter flip riding it); these three
+// carry no spec-specific defect (no receiver-slot write, no boolean-as-condition).
+// Full-suite re-validation: 12674 P / 0 F, zero new regressions, 193.0s CPU (faster
+// than baseline 200.7s).  The boolean-returning specs (intCmp bit 53, evenOdd bit 51)
+// STAY opt-in — they are the named mustBeBoolean corruptors, needing the boolean
+// emit audited first.
+DEBUG_BOOL(PHARO_T1_NO_INLINE_RETURNS_LITERAL)  // opt-OUT (default ON 2026-06-23): bit 58 ^ nil/true/false/0/1
+DEBUG_BOOL(PHARO_T1_NO_INLINE_TEMP_RETURN)      // opt-OUT (default ON 2026-06-23): bit 54 ^ arg N
+DEBUG_BOOL(PHARO_T1_INLINE_INT_CMP_RETURN)   // bit 53: ^ self cmp arg (STAYS opt-in: named mustBeBoolean corruptor)
+DEBUG_BOOL(PHARO_T1_NO_INLINE_INT_ARITH_RETURN) // opt-OUT (default ON 2026-06-23): bit 52 ^ self op arg (+/-/*)
+DEBUG_BOOL(PHARO_T1_INLINE_EVEN_ODD)         // bit 51: Integer>>even/odd (STAYS opt-in: named mustBeBoolean corruptor)
 DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)    // EXPERIMENT (v2, still corrupts): J2J pool slice for resumed methods; handler-protocol audit pending
 DEBUG_BOOL(PHARO_T1_RESUME_EXTERNAL_J2J)    // opt-out: restore the null-slice external-J2J mode for tryResume-resumed methods (one C++ round trip per send)
 DEBUG_BOOL(PHARO_T1_NO_IC_POLY_WALK)        // opt-out: probe IC slot 0 only (default walks slots 0-2 since 2026-06-12; poly sites missed once per activation -> interp residency)

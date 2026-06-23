@@ -6377,14 +6377,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // (SmI Integer>>isInteger etc. is the common case).
                     // F5 R83: extended to all nArgs.  retLit emit now
                     // handles arg-dropping like returnsSelf does.
-                    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_RETURNS_LITERAL)) {
+                    if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_RETURNS_LITERAL)) {
                         a.tbnz(x7, asmjit::Imm(58), tryReturnsLiteral);
                     }
                     // W1: bit 54 = TempReturn `^ arg N` — works for any
                     // receiver (no class-specific dispatch needed; the
                     // target body just reads tempBase[N]).  Dispatched
                     // BEFORE the heap/SmI split.
-                    if (nArgs >= 1 && GET_DEBUG_BOOL(PHARO_T1_INLINE_TEMP_RETURN)) {
+                    if (nArgs >= 1 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_TEMP_RETURN)) {
                         a.tbnz(x7, asmjit::Imm(54), tryTempReturn);
                     }
                     // W2: bit 53 = IntCmpReturn `^ self cmp arg`.  Needs
@@ -6394,7 +6394,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.tbnz(x7, asmjit::Imm(53), tryIntCmpReturn);
                     }
                     // W3: bit 52 = IntArithReturn `^ self op arg` (+/-/*).
-                    if (nArgs == 1 && GET_DEBUG_BOOL(PHARO_T1_INLINE_INT_ARITH_RETURN)) {
+                    if (nArgs == 1 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_INT_ARITH_RETURN)) {
                         a.tbnz(x7, asmjit::Imm(52), tryIntArithReturn);
                     }
                     // W6: even/odd predicate (nArgs == 0).  B6 review F1:
@@ -8278,7 +8278,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // on PHARO_T1_INLINE_RETURNS_LITERAL (default OFF); without the same
             // gate the body was emitted UNREACHABLE at every send site.  Gate to
             // match (self-contained, exits via b endOfSend).
-            if (GET_DEBUG_BOOL(PHARO_T1_INLINE_RETURNS_LITERAL)) {
+            if (!GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_RETURNS_LITERAL)) {
                 asmjit::Label retLitDone = a.new_label();
                 a.bind(tryReturnsLiteral);
                 bumpRetLitCounter();
@@ -8364,7 +8364,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // sp[-nArgs..sp-1].  After inline: result = sp[-(nArgs - N)]
             // (the Nth arg, since temps[N] for N < argCount = args[N]).
             // Then drop args, store result at rcvr slot.
-            if (nArgs >= 1 && GET_DEBUG_BOOL(PHARO_T1_INLINE_TEMP_RETURN)) {
+            if (nArgs >= 1 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_TEMP_RETURN)) {
                 a.bind(tryTempReturn);
                 a.mov(x14, asmjit::Imm((uint64_t)&g_t1TempReturn_hits));
                 a.ldr(x15, ptr(x14));
@@ -8487,7 +8487,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // (a_val+b_val)<<3 + 2 → subtract 1 to fix tag.
             // For mul: untag both, multiply, retag.
             // Overflow → bail to dispatchCached.
-            if (nArgs == 1 && GET_DEBUG_BOOL(PHARO_T1_INLINE_INT_ARITH_RETURN)) {
+            if (nArgs == 1 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_INT_ARITH_RETURN)) {
                 a.bind(tryIntArithReturn);
                 a.mov(x14, asmjit::Imm((uint64_t)&g_t1IntArithReturn_hits));
                 a.ldr(x15, ptr(x14));
