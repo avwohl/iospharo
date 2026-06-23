@@ -166,10 +166,25 @@ Cogit), not a tuning task. Closing it is a deep, multi-session codegen effort �
 either a real register-allocating T1 rewrite or maturing the Sista Tier-2 (make
 it stop bailing and actually optimize). The measurement infra + this rigorous
 elimination of the plausible-but-ineffective options is the value delivered here;
-it saves the next effort from re-walking these dead ends. Next concrete probe:
-multi-sample Tier-2 with bail tracing (PHARO_SISTA_BAIL_LOG) to see whether the
-bench methods actually reach optimized T2 code or bail to T1 — if they bail,
-fixing the bails is the highest-leverage path.
+it saves the next effort from re-walking these dead ends. ### THE actionable direction: Tier-2 bails 87% — fix the bails
+
+Ran the bench under `PHARO_T2=1 PHARO_SISTA_BAIL_LOG=1`. Census:
+
+    T2 (asmjit): compiled=627  bailed=4220        (87% bail to T1)
+    sista compile: total=11836 ok=625
+      bails: sendNoSplice=9812  lowerFail=839  liftFail=560  arrayDoHelper=0
+
+The optimizing tier exists and runs but **bails on 87% of methods** — so the hot
+code stays on the slow T1 path, which is why enabling T2 is ~neutral. The
+DOMINANT bail is `sendNoSplice` (9812) — a send the Tier-2 can't splice/inline.
+
+**This is the highest-leverage perf direction for the project:** reduce the Sista
+Tier-2 bail rate so the optimizing tier actually optimizes the hot methods.
+Concrete, measurable (compiled-vs-bailed ratio, trackable in vmperf), and the
+only evaluated path with real upside (every T1 lever is refuted). Start by
+characterizing `sendNoSplice` (src/vm/jit/sista/SistaBuilder.cpp / lowering) —
+what send shapes trigger it and which are fixable. THEN re-measure T2 perf
+(multi-sample cpu_ms) as the bail rate drops.
 
 (Historical mechanism notes for fix #1, kept for the record:)
 
