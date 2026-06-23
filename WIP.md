@@ -30,12 +30,25 @@ registers across a basic block; inline arith without per-op memory traffic), not
 more inline knobs. Full numbers + worklist: `docs/results-perfdb.md`. Memory:
 `perfdb-jit-slower-than-interp.md`.
 
+## DONE this session (all committed)
+- vmperf DB + perfdb.py recorder + record-bench.sh + record-sunit.sh + README.
+- VM identity = binary sha256 (not git HEAD); machine identity auto-detects
+  cloud/instance-type/perf-counters; CPU+wall recorded per run.
+- **Permanent Cog baselines** (never re-run): bench-suite + full SUnit kernel
+  (544 classes / 12,898 tests, P12778 F4 E96 S20, 25.8s CPU). `--skip-cog-if-present`.
+- `report-bench` (JIT-vs-Cog wall ratio) + `report-sunit` (per-test JIT-vs-Cog
+  diff vs stored baseline — find regressions without re-running Cog).
+- record-sunit.sh generalized to soogle packages (--image/--source-name/-url).
+- AWS path documented (perfdb.py portable; wire scripts/aws/ run scripts to it).
+
 ## NEXT
-- Extend recording to SUnit kernel + soogle packages (record-sunit.sh, mirror
-  record-bench.sh; use `have-correctness` to skip unchanged Cog). Biggest
-  "stop repeating cog tests" win.
-- Attack worklist item 1/2 in docs/results-perfdb.md (codegen quality / block cost).
-- AWS spot runners: perfdb.py works from any host with ssh to awohl.com.
+- Attack worklist item 1/2 in docs/results-perfdb.md: JIT codegen quality
+  (operand stack in registers across a basic block) + block activation cost.
+  This is the only path to Cog parity (21x bytecode gap). A codegen-overhead
+  analysis agent's findings land in this session's notes.
+- Run full JIT SUnit, then `report-sunit --source sunit-kernel` for the complete
+  correctness diff vs the 12,898-test Cog baseline.
+- Wire soogle packages (scripts/pkg-jit-test/ loads them) through record-sunit.sh.
 
 ---
 
