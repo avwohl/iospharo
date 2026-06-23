@@ -53,6 +53,43 @@ After the head the send diverges by terminal outcome:
    floor. **Cog parity needs the native-call/checked-entry rewrite** the plan
    correctly excludes (the multi-session corruption surface behind the BV saga).
 
+## ✅ Phase 1 EXECUTED (2026-06-23) — verdict: LARGE surface, but the safe lever is small
+
+Implemented `PHARO_T1_SEND_CENSUS` (pure C++, no codegen change, counts the
+per-execution dispatchCached round-trip at `Interpreter.cpp case ExitSendCached`
+with a per-selector histogram). Correctness-neutral (SUnit 1988 pass / 0 fail / 0
+error). Measured:
+
+    workload   emitted-J2J     dispatchCached   F_addr
+    bench      547,061,403     6,390,885        0.012   (fib recursion = all J2J)
+    SUnit      3,308,199       2,237,309        0.403   (real send-heavy code)
+
+**`F_addr=0.40` HITS the GO threshold** — 40% of real-code sends take the
+JIT→C++→JIT dispatchCached round-trip (vs operand-stack E's 3%). The round-trip
+overhead is a genuinely large, real-code cost. BUT two follow-ups correct the lever:
+
+- **The dispatch bucket is NOT quick-prims** (the plan's B6 premise, refuted). Top
+  selectors: `#at: #do: #nextPut: #value: #at:put: #buffer #nextPutAll: #value:value:
+  #wordSize #cull: #instVarNamed:put: #size #basicAt:` — mostly REAL polymorphic
+  method/block sends.
+- **The inline-prim/getter candidates mostly already fire.** With
+  `PHARO_T1_INLINE_PRIM_COUNTERS=1` on SUnit: at=607K, atPut=166K, size=48K,
+  class=110K all fire — so the dispatchCached `#at:`/`#at:put:` are the NON-Array
+  collection methods (`OrderedCollection>>at:`, `Dictionary>>at:`), real sends, not
+  missed inline-prims. **getter=0, setter=0** — the only clear missed-inline slice
+  (getters like `#buffer`).
+
+**VERDICT (nuanced):** the addressable surface is large (40% round-trips) but the
+chunk needing only SAFE incremental work is small. The big chunk is real method/
+block sends whose round-trip cost is reducible mainly by the **native-call/checked-
+entry rewrite the plan deliberately excludes** (the BV/sender-chain corruption
+surface). The SAFE levers — Phase 2 head-trim (helps ALL sends incl. the 40%
+round-trips) and inline-getter coverage (the getter=0 slice) — capture a meaningful
+but bounded fraction. So: more promising than E, but Cog parity still needs the
+excluded rewrite. Recommended next: **Phase 2 (head-trim)** — it's low-risk, helps
+every send (the universal probe head), and is independent of the round-trip
+question; measure its cpu_ms on benchFib + the send-bound bench.
+
 ## Phase 1 (CORRECTED) — cheap decisive send census (1 session)
 
 Measure the **execution-weighted terminal-outcome split** on benchFib (send-bound)
