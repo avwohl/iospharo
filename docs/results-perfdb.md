@@ -184,10 +184,19 @@ Two follow-up empirical tests settle it:
 - **All `PHARO_SISTA_INLINE_*` knobs on → bail rate unchanged** (sendNoSplice
   9812→9808, compiled 627→626). Sista's inliner only handles narrow special
   cases (arith/self/==), never general polymorphic sends.
-- **Tier-2 on real SUnit code is SLOWER + incomplete (2 confirming runs).**
-  ArrayTest: T1 323 tests/1.12s clean vs T2 280 tests/2.59s TIMEOUT. SetTest+
-  SmallIntegerTest: T1 201 tests/0.95s clean vs T2 201 tests/2.15s TIMEOUT
-  (~2.3x slower CPU both times). The 87%
+- **Tier-2 doesn't fire for test/bench workloads (CORRECTED mechanism).** The
+  earlier "T2 2.3x slower on SUnit" runs all used `PHARO_T2_WARMUP=0`, which
+  forces T2 to compile a method IMMEDIATELY — before its inline caches warm up,
+  so it compiles on cold ICs (98% empty: `[SISTA-POLY] empty=996 mono=20`) and
+  bails / adds overhead = the slowdown. At the SHIPPED default (warmup=3), T2
+  compiles ~NOTHING for bench/tests (`compiled=0`, CPU identical to T1): the
+  warmup gate counts method ACTIVATIONS, and test/bench methods are activated
+  only a few times (a bench block ~3×, a test method a handful), never crossing
+  the threshold. So Tier-2 is a HOT-LOOP optimizer (fires after many activations
+  of the same method) — it structurally does not apply to the goal's workloads
+  (tests activate methods few times). Forcing it (warmup=0) is worse, not better.
+  The synth's "broaden recognizers" (option A) is moot here: T2 doesn't fire, and
+  even when forced the ICs are cold so there are no hints to recognize. The 87%
   sendNoSplice bails mean T2 adds compile+dispatch overhead with no benefit on
   send-heavy code; it only wins on the loop-splice microbenchmarks. So enabling
   T2 is not just neutral on the goal's workloads — it's a regression.
