@@ -41,14 +41,26 @@ more inline knobs. Full numbers + worklist: `docs/results-perfdb.md`. Memory:
 - record-sunit.sh generalized to soogle packages (--image/--source-name/-url).
 - AWS path documented (perfdb.py portable; wire scripts/aws/ run scripts to it).
 
-## NEXT
-- Attack worklist item 1/2 in docs/results-perfdb.md: JIT codegen quality
-  (operand stack in registers across a basic block) + block activation cost.
-  This is the only path to Cog parity (21x bytecode gap). A codegen-overhead
-  analysis agent's findings land in this session's notes.
-- Run full JIT SUnit, then `report-sunit --source sunit-kernel` for the complete
-  correctness diff vs the 12,898-test Cog baseline.
-- Wire soogle packages (scripts/pkg-jit-test/ loads them) through record-sunit.sh.
+## PERF gap — root-caused + first fix tried (perf-neutral, reverted)
+
+Full JIT-vs-Cog: 21x bytecodes, 7.8x SUnit CPU (12671P/4E vs Cog 12778P; 4 diffs
+are flaky). Root cause (codegen agent): JIT round-trips operand VALUES through
+frame memory every bytecode (~8 mem ops for a+b vs Cog ~1-2); the TOS-in-x26
+simStack fix is written but OFF + incomplete. Tried flipping it default-on with
+the safe loop-body subset (MASK=101) — rebuilt, measured PERF-NEUTRAL on the
+stable CPU metric (partial conversion spills at send/jump boundaries), reverted.
+Methodology learned: tinyBenchmarks wall is ±7% noise — A/B on in-image cpu_ms
+(±1-2%) with REPEAT=N. Full worklist+numbers: docs/results-perfdb.md.
+
+## NEXT (the perf parity work — multi-session, frame-state-fragile)
+- Fix #1 (THE lever): complete the FULL TOS-in-reg conversion incl. the Send
+  families (currently net-negative) — AsmjitT1.cpp kTosFam* paths, validate per
+  CLAUDE.md PHARO_DET_SCHED + `report-sunit` diff vs the stored Cog baseline,
+  measure with `REPEAT=5` cpu_ms. Partial subsets don't help (proven).
+- Fix #2: JIT fast path for `[x:=x+1] value` (5.5x block gap) — mirror the
+  interpreter's primitiveFullClosureValue pattern; restrict to local-return 0x5E.
+- Wire soogle packages (scripts/pkg-jit-test/ loads them) through record-sunit.sh
+  --image/--source-name/--source-url.
 
 ---
 
