@@ -178,8 +178,29 @@ The optimizing tier exists and runs but **bails on 87% of methods** — so the h
 code stays on the slow T1 path, which is why enabling T2 is ~neutral. The
 DOMINANT bail is `sendNoSplice` (9812) — a send the Tier-2 can't splice/inline.
 
-**This is the highest-leverage perf direction for the project:** reduce the Sista
-Tier-2 bail rate so the optimizing tier actually optimizes the hot methods.
+### Decisive: Tier-2 HURTS real code, and the inline knobs are a no-op
+
+Two follow-up empirical tests settle it:
+- **All `PHARO_SISTA_INLINE_*` knobs on → bail rate unchanged** (sendNoSplice
+  9812→9808, compiled 627→626). Sista's inliner only handles narrow special
+  cases (arith/self/==), never general polymorphic sends.
+- **Tier-2 on real SUnit code is SLOWER + incomplete.** ArrayTest: T1 = 323
+  tests / 1.12s CPU clean; T2 = 280 tests / 2.59s CPU and TIMED OUT. The 87%
+  sendNoSplice bails mean T2 adds compile+dispatch overhead with no benefit on
+  send-heavy code; it only wins on the loop-splice microbenchmarks. So enabling
+  T2 is not just neutral on the goal's workloads — it's a regression.
+
+Root reason (SistaRuntime.cpp:264): `kSendUnspeculated` DEOPTS the whole method
+to the interpreter at the first general send. Sista is a narrow speculative
+loop-splicer + special-case inliner, NOT a general optimizing method compiler.
+Making it help real code needs general method inlining or real-send-with-return
+capability — a major architectural feature, not a knob.
+
+### The highest-leverage perf direction (multi-month, no shortcut found)
+
+Reduce the Sista Tier-2 bail rate so the optimizing tier actually optimizes the
+hot methods — BUT only via making sends run in optimized code (general inlining /
+real-call capability), since merely compiling more methods just deopts them.
 Concrete, measurable (compiled-vs-bailed ratio, trackable in vmperf), and the
 only evaluated path with real upside (every T1 lever is refuted). Start by
 characterizing `sendNoSplice` (src/vm/jit/sista/SistaBuilder.cpp / lowering) —
