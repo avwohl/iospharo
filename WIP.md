@@ -74,12 +74,23 @@ direction:
   (98% empty: [SISTA-POLY] empty=996 mono=20) → bails → the earlier "T2 slower"
   artifact. So T2 is a hot-LOOP optimizer, inapplicable to the goal's workloads.
 
-→ **No available lever closes the gap on tests/soogle.** The two real paths are
-both multi-month codegen efforts: (a) a register-allocating T1 rewrite (so
-compiled bytecode beats interpretation — the ~8-mem-op-per-`a+b` stencil is the
-2x-vs-interp root), or (b) make Sista apply to test workloads (lower/rework the
-warmup-vs-activation model + warm ICs + general inlining maturity). Track via
-vmperf (compiled/bailed ratio + REPEAT=5 cpu_ms + report-sunit diff).
+→ **No available lever closes the gap on tests/soogle.** Path (a), a register-
+allocating T1 rewrite (static stack-to-register, mirroring Cog's
+StackToRegisterMappingCogit, driven by the existing BcDepthMap), was scoped as an
+11-16 session plan (docs/t1-codegen-plan.md) AND its decisive Phase 1 EXECUTED:
+`PHARO_T1_REGSTACK_CENSUS` (pure instrumentation, BcDepthMap.cpp regStackCensus)
+measured that only ~20% of operand loads are removable on real send-heavy code
+(bench 18%, SUnit 21%) — inline-arith is 3.3x rarer than sends (≈60 vs ≈204/Kbc)
+and every send flushes — projecting ~3% cpu_ms, far below the 10% go-gate.
+**VERDICT: NO-GO** (correctness-neutral, tests green). The static stack-to-reg
+rewrite helps bytecode-bound microbenchmarks (~1.5-2.5x) but NOT the goal's
+send-heavy workloads; confirms "deeper rethink, not this incremental" with data.
+
+→ **The real send-heavy gap is the SEND PATH** (JIT sends 3.5x slower than Cog vs
+21x on bytecodes; real code is send-dense at 204/Kbc, so 3.5x dominates the 7.8x
+SUnit gap) + block activation (fix #2). NEITHER is operand-stack codegen. Path (b)
+(mature Sista to fire for tests) remains the other multi-month option. Track via
+vmperf (REPEAT=5 cpu_ms + report-sunit diff).
 
 ## NEXT
 - Characterize + reduce Sista Tier-2 `sendNoSplice` bails (above).

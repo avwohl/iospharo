@@ -67,7 +67,48 @@ method.
    x26, tempBase, x19 (JM identity, asserted every exit `3854`), and send arg regs.
    Confirm a stable callee-saved pool exists BEFORE relying on multi-slot residency.
 
-## Phase 1 (REVISED) — measure the addressable ceiling on REAL workloads (1 session, decisive)
+## ✅ Phase 1 EXECUTED (2026-06-23) — verdict: NO-GO
+
+Implemented the census (`PHARO_T1_REGSTACK_CENSUS`, `BcDepthMap.cpp`
+`regStackCensus`/`regStackCensusDump`, wired into the compile entry +
+`dumpJITStats`). Pure instrumentation, correctness-neutral (census-on SUnit =
+1988 pass / 0 fail / 0 error). Measured `[REGSTACK-CENSUS]`:
+
+    workload   methods  mappable  removable-loads  arith/Kbc  sends/Kbc  send-consumed
+    bench      5388     100%      18.1%            53         208        56% of loads
+    SUnit(10c) 6397     100%      21.1%            61         204        54% of loads
+
+Key reads:
+- **Only ~20% of operand loads are removable** on real code (consumed by inlined
+  arith within a straight-line run). 71% of arith sites DO have both operands
+  block-local (capture is efficient) — the limiter is that **inline-arith is 3.3x
+  rarer than sends** (≈60 vs ≈204/Kbc), and every send flushes (the flush-at-send
+  ceiling, now measured).
+- Generous static projection: removable × ~2 mem-ops each ≈ **~3% instruction
+  reduction → ~3% cpu_ms**, far below the plan's ≥10% go gate.
+- mappable=100% passes the >40% gate, but the removable→cpu_ms gate FAILS.
+
+**VERDICT: NO-GO** for the goal's send-heavy workloads (SUnit/soogle). The static
+stack-to-register rewrite would help bytecode-bound microbenchmarks (~1.5–2.5x)
+but those are rare in real Smalltalk; on send-heavy real code the win is ~3%. This
+confirms the adversarial verify's prediction and the project's standing "deeper
+codegen rethink, not this incremental" conclusion — now with measured data, at
+~zero risk (no codegen change, tests green). Phase 1 did exactly its job: one
+cheap session closed an 11–16 session direction.
+
+**Redirect (where the real send-heavy gap is):** the SEND path itself — our JIT
+sends are 3.5x slower than Cog (vs 21x on bytecodes), and real code is send-dense
+(204/Kbc), so the 3.5x dominates the 7.8x SUnit-CPU gap. Plus block activation
+(fix #2). Neither is touched by operand-stack codegen. Phases 2–5 below are NOT
+pursued.
+
+(Bonus: mappable=100% means `computeDepthMap` handled every compiled method; the
+ExtJump-decoder reconciliation assert — the "free bug find" — was not wired this
+pass since the decisive number landed without it.)
+
+---
+
+## Phase 1 (REVISED, as designed) — measure the addressable ceiling on REAL workloads (1 session, decisive)
 
 Pure instrumentation, knob-gated `PHARO_T1_REGSTACK_CENSUS`, zero codegen change.
 This is the cheap go/no-go the original plan lacked.
