@@ -193,3 +193,36 @@ work here is to FIX that bug (the MAX_IC=1 dispatch-A-side register/state corrup
 so the win ships. Next: broad correctness validation (full SUnit + DET_SCHED, report-
 sunit diff vs the 12,898-test Cog baseline) to see whether the bug still manifests at
 HEAD or was mitigated by later fixes.
+
+## Disabled-for-correctness re-validation sweep (2026-06-23) — full results
+
+Survey workflow + empirical test of every arm64 perf opt disabled for a
+correctness bug. Each candidate: enable via knob, confirm it FIRES (counter),
+run its named repro + full SUnit (report-sunit diff vs the Cog baseline).
+
+    candidate                       fires?   correctness@HEAD      perf            action
+    getter (GETTER_IN_J2J)          220K     CLEAN (bug fixed)     10x getters     FLIPPED default-on
+    returnsLiteral (bit 58)         yes      CLEAN                 ~3% SUnit CPU    FLIPPED (trio)
+    tempReturn (bit 54)             yes      CLEAN                 (trio)           FLIPPED (trio)
+    intArith (bit 52)               yes      CLEAN (overflow ok)   (trio)           FLIPPED (trio)
+    multiSlot (bit 57)              9154x    CLEAN (#extent fixed) NEUTRAL on SUnit DEFERRED (no demo win)
+    intCmp (bit 53)                 0        n/a (never fires)     -               SKIP (no coverage)
+    evenOdd (bit 51)                0        n/a (never fires)     -               SKIP (no coverage)
+    ADMIT_BAILMID_CALLEES           yes      STILL-BROKEN          +26% select!    SKIP (needs the fix)
+    BLOCK_VALUE                     -        fixed but trade-off   block+ send-    SKIP (disables inline-J2J)
+    SHARED_RETPRELUDE               -        clean (byte-id off)   zone-only        DEFERRED (unmeasurable)
+
+KEY FINDINGS:
+- Two clean wins shipped (getter 10x, the safe trio ~3% on real SUnit CPU). The
+  shared 2026-06-09 dispatch-A disable cause is fixed at HEAD; the getter proved
+  the path, and returnsLiteral/tempReturn/intArith carry no spec-specific defect.
+- multiSlot's #extent wild-write bug is ALSO fixed at HEAD (fires 9154x, full
+  SUnit 0 fail) — but perf-neutral on SUnit/bench (its benefit is geometry/GUI
+  code), so deferred until a demonstrable win.
+- intCmp/evenOdd never fire (integer comparisons are primitives, not `^self cmp
+  arg` user methods) — no coverage, unvalidatable, skip.
+- **ADMIT_BAILMID is the highest-value remaining opportunity: +26% on `select`
+  (273->201ms), but CONFIRMED still-broken (SP_DEPTH_CHECK = 1 violation = the
+  un-popped J2J save on V2 ExitArithOverflow). The fix (materialize/pop the save
+  on V2 ExitArithOverflow — AO_MAT_J2J is currently V1-only) is a SCOPED CODEGEN
+  FIX that would unlock the +26% AND the 51 PolyMath failures. Implement-first.**
