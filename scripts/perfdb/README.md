@@ -66,4 +66,19 @@ metric** (the user's guidance: CPU varies less with machine/load than wall). Cog
 lacks the CPU primitive, so per-benchmark cross-VM comparison uses wall; our VM's
 own progress is tracked on CPU.
 
+## AWS spot instances
+
+`perfdb.py` runs unchanged on a spot instance (it only needs `ssh -p 24
+wohl@awohl.com`). `register-machine` auto-detects `cloud=aws`, the instance
+type/id (via IMDS), and whether the host exposes hardware perf counters
+(`supports_perf_counters` — some instance types don't), so cross-machine results
+are distinguishable. The CPU metric is the one to compare across machines (it
+varies far less than wall with instance type / neighbor load).
+
+To wire the existing spot pipeline (`scripts/aws/` — bootstrap builds the Linux
+arm64/x86 VM, `sunit-ab-box.sh` etc. run suites): have those run scripts invoke
+`record-bench.sh` / `record-sunit.sh` instead of (or alongside) their ad-hoc
+result files. The Linux VM build is a distinct `vm_build` (different binary
+sha256 + arch), so its results never collide with the macOS rows.
+
 See `docs/results-perfdb.md` for the current JIT-vs-Cog baseline + worklist.
