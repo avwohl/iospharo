@@ -30,6 +30,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 
 namespace pharo {
 
@@ -79,6 +80,13 @@ void bcDepthMapsClearAfterGC();
 
 // Print check/mismatch/unmappable counters (called from dumpJITStats).
 void spDepthStatsDump();
+
+// Phase-1 reg-stack census (docs/t1-codegen-plan.md): pure measurement of how
+// many operand loads a static stack-to-register map could keep out of memory.
+// Called per compiled method (gated by PHARO_T1_REGSTACK_CENSUS); dump prints
+// the accumulated [REGSTACK-CENSUS] line. No codegen effect.
+void regStackCensus(const uint8_t* bc, size_t bcLen, ObjectMemory* memory);
+void regStackCensusDump();
 
 }  // namespace jit
 }  // namespace pharo

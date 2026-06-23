@@ -243,6 +243,129 @@ bool computeDepthMap(const uint8_t* bc, size_t bcLen,
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Phase-1 reg-stack census (docs/t1-codegen-plan.md).  Pure measurement, no
+// codegen change.  Counts, over compiled methods, how many operand LOADS a
+// static stack-to-register map could keep out of memory.  A load is
+// "removable" ONLY if it is consumed by an INLINED arith op within the same
+// straight-line run (no intervening send/merge — Cog's flush-at-send/flush-at-
+// merge invariant).  removable/total is the go/no-go number: small on
+// send-heavy code => the register map cannot help (the same ceiling that
+// refuted the dynamic TOS cache).
+// ---------------------------------------------------------------------------
+uint64_t g_rsMethods = 0, g_rsUnmappable = 0, g_rsBytecodes = 0;
+uint64_t g_rsTotalLoads = 0, g_rsRemovableLoads = 0, g_rsSendConsumed = 0;
+uint64_t g_rsLoadsSpilledAtBoundary = 0;
+uint64_t g_rsArithSites = 0, g_rsNosResidentArith = 0, g_rsSendSites = 0;
+
+// A "load push" is a +1 push that today emits a frame/literal memory read.
+static bool rsIsLoadPush(uint8_t op) {
+    namespace SV1 = SistaV1;
+    if (op <= SV1::PushTempLast) return true;                        // 0x00-0x4B
+    if (op >= SV1::PushReceiver && op <= SV1::PushThisContext) return true; // 0x4C-0x52
+    if (op >= SV1::ExtPushRecvVar && op <= SV1::ExtPushTemp) return true;
+    if (op == SV1::PushInteger || op == SV1::PushCharacter) return true;
+    if (op == SV1::PushTempAtInVec) return true;
+    return false;
+}
+
+// Census over one method's bytecodes.  Assumes g_specialArgs is loaded.
+void regStackCensusImpl(const uint8_t* bc, size_t bcLen) {
+    namespace SV1 = SistaV1;
+    std::vector<int16_t> depth;
+    if (!computeDepthMap(bc, bcLen, depth)) { g_rsUnmappable++; return; }
+    g_rsMethods++;
+
+    struct Ent { bool isLoad; bool blockLocal; };
+    std::vector<Ent> sim;
+    int extB = 0; bool extBSet = false;
+
+    auto spillAll = [&]() {
+        for (auto& e : sim) {
+            if (e.isLoad && e.blockLocal) g_rsLoadsSpilledAtBoundary++;
+            e.blockLocal = false;
+        }
+    };
+    auto pop1 = [&]() -> Ent {
+        if (sim.empty()) return Ent{false, false};
+        Ent e = sim.back(); sim.pop_back(); return e;
+    };
+    auto consumeSend = [&](int operands) {     // operands = nArgs+1 (recv+args)
+        for (int k = 0; k < operands; k++) {
+            Ent e = pop1();
+            if (e.isLoad && e.blockLocal) g_rsSendConsumed++;
+        }
+        spillAll();                            // flush-at-send: remaining spill too
+        sim.push_back({false, false});         // result came from a real send
+    };
+
+    for (size_t pc = 0; pc < bcLen; ) {
+        if (depth[pc] < 0) { pc += SV1::bytecodeLength(bc[pc]); continue; }
+        // Merge point: a static reg-stack flushes all live operands here, so
+        // resync the sim-stack to the static depth as all-spilled entries.
+        // Targets are reached via branches; depth[] is the authoritative height.
+        uint8_t op = bc[pc];
+        int len = SV1::bytecodeLength(op);
+        g_rsBytecodes++;
+
+        if (rsIsLoadPush(op)) { sim.push_back({true, true}); g_rsTotalLoads++; }
+        else if (op == SV1::Dup) {
+            sim.push_back({false, sim.empty() ? true : sim.back().blockLocal});
+        }
+        else if (SV1::isArithSelector(op)) {           // inlined binary arith
+            g_rsArithSites++;
+            Ent a = pop1(), b = pop1();
+            if (a.blockLocal && a.isLoad) g_rsRemovableLoads++;
+            if (b.blockLocal && b.isLoad) g_rsRemovableLoads++;
+            if (a.blockLocal && b.blockLocal) g_rsNosResidentArith++;
+            sim.push_back({false, true});              // result is register-resident
+        }
+        else if (SV1::isSpecialSelector(op)) {         // 0x70-0x7F: real send (conservative)
+            g_rsSendSites++;
+            consumeSend(g_specialArgs[op - SV1::SpecialSendBase] + 1);
+        }
+        else if (SV1::isSend0(op)) { g_rsSendSites++; consumeSend(1); }
+        else if (SV1::isSend1(op)) { g_rsSendSites++; consumeSend(2); }
+        else if (SV1::isSend2(op)) { g_rsSendSites++; consumeSend(3); }
+        else if (op == SV1::ExtSend || op == SV1::ExtSuperSend) {
+            g_rsSendSites++;
+            int nArgs = (bc[pc + 1] & 7) + (extBSet ? extB * 8 : 0);
+            consumeSend(nArgs < 0 ? 1 : nArgs + 1);
+        }
+        else if (SV1::isConditionalShortJump(op)
+                 || op == SV1::ExtJumpTrue || op == SV1::ExtJumpFalse) {
+            pop1(); spillAll();                        // branch point: split block
+        }
+        else if (SV1::isPopStoreRecv(op) || SV1::isPopStoreTemp(op) || op == SV1::Pop
+                 || (op >= SV1::ExtPopStoreRecv && op <= SV1::ExtPopStoreTemp)
+                 || op == SV1::PopStoreTempAtInVec) {
+            pop1();
+        }
+        else if (op == SV1::PushArray) {
+            uint8_t desc = bc[pc + 1];
+            if (desc & 0x80) { int n = desc & 0x7F; for (int k = 0; k < n; k++) pop1(); }
+            sim.push_back({false, true});
+        }
+        else if (op == SV1::PushFullBlock) {
+            uint8_t flags = bc[pc + 2];
+            int n = (flags & 0x3F) + ((flags >> 7) & 1);
+            for (int k = 0; k < n; k++) pop1();
+            sim.push_back({false, false});
+        }
+        // returns / unconditional jumps / CallPrimitive / ExtStore(net 0) /
+        // Extend*: no removable-relevant stack change tracked here.
+
+        if (op == SV1::ExtendB) {
+            int b = bc[pc + 1];
+            extB = (!extBSet && b > 127) ? b - 256 : extB * 256 + b;
+            extBSet = true;
+        } else if (op != SV1::ExtendA) {
+            extB = 0; extBSet = false;
+        }
+        pc += static_cast<size_t>(len);
+    }
+}
+
 // Fill `e` with the depth map for the CompiledMethod at oopBits.
 // Leaves e.unmappable = true on any failure.
 void buildEntryForMethodOop(uint64_t oopBits, DepthEntry& e) {
@@ -639,6 +762,30 @@ void spDepthStatsDump() {
             (unsigned long long)g_saveMismatches);
 }
 
+// Phase-1 reg-stack census public entry points (docs/t1-codegen-plan.md).
+void regStackCensus(const uint8_t* bc, size_t bcLen, ObjectMemory* memory) {
+    if (!loadSpecialArgCounts(memory)) return;   // need special-selector arg counts
+    regStackCensusImpl(bc, bcLen);
+}
+
+void regStackCensusDump() {
+    uint64_t total = g_rsMethods + g_rsUnmappable;
+    if (total == 0) return;
+    double mappablePct  = 100.0 * (double)g_rsMethods / (double)total;
+    double removablePct = g_rsTotalLoads ? 100.0 * (double)g_rsRemovableLoads / (double)g_rsTotalLoads : 0.0;
+    double sendPerKbc   = g_rsBytecodes ? 1000.0 * (double)g_rsSendSites / (double)g_rsBytecodes : 0.0;
+    double arithPerKbc  = g_rsBytecodes ? 1000.0 * (double)g_rsArithSites / (double)g_rsBytecodes : 0.0;
+    fprintf(stderr,
+        "[REGSTACK-CENSUS] methods=%llu mappable=%.1f%% | loads=%llu removable=%llu(%.1f%%) "
+        "send-consumed=%llu spilled-at-merge=%llu | arith=%llu(%.1f/Kbc) nos-resident=%llu | "
+        "sends=%llu(%.1f/Kbc) bc=%llu\n",
+        (unsigned long long)total, mappablePct,
+        (unsigned long long)g_rsTotalLoads, (unsigned long long)g_rsRemovableLoads, removablePct,
+        (unsigned long long)g_rsSendConsumed, (unsigned long long)g_rsLoadsSpilledAtBoundary,
+        (unsigned long long)g_rsArithSites, arithPerKbc, (unsigned long long)g_rsNosResidentArith,
+        (unsigned long long)g_rsSendSites, sendPerKbc, (unsigned long long)g_rsBytecodes);
+}
+
 }  // namespace jit
 }  // namespace pharo
 
@@ -653,6 +800,8 @@ void spDepthCheckJ2JSave(uint64_t, const uint8_t*, void*, void*, int, int,
                          pharo::ObjectMemory*, const char*) {}
 void bcDepthMapsClearAfterGC() {}
 void spDepthStatsDump() {}
+void regStackCensus(const uint8_t*, size_t, pharo::ObjectMemory*) {}
+void regStackCensusDump() {}
 }}
 
 #endif  // PHARO_JIT_ENABLED

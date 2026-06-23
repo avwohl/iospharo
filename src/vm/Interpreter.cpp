@@ -2016,6 +2016,7 @@ void Interpreter::dumpJITStats() {
                 (unsigned long long)g_shadowMismatches);
     }
     jit::spDepthStatsDump();
+    jit::regStackCensusDump();
     if (g_xgate_enter > 0) {
         fprintf(stderr,
                 "  xmethod gates: enter=%llu bail_prim=%llu bail_numic=%llu "

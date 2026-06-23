@@ -35,6 +35,7 @@
 #include "../JITState.hpp"
 #include "../PlatformJIT.hpp"
 #include "../SistaV1.hpp"
+#include "../BcDepthMap.hpp"
 #include "../J2JSaveLayout.h"
 #include "../../ObjectMemory.hpp"
 #include "../../Interpreter.hpp"
@@ -11723,6 +11724,10 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     }
     SendSitePatch* patchRecPtr =
         patchRecords.empty() ? nullptr : patchRecords.data();
+    // Phase-1 reg-stack census (docs/t1-codegen-plan.md): pure measurement,
+    // no codegen effect.  Counts removable operand loads per compiled method.
+    if (GET_DEBUG_BOOL(PHARO_T1_REGSTACK_CENSUS))
+        jit::regStackCensus(bc, bcLen, &memory);
     std::vector<std::pair<uint32_t,uint32_t>> resumeOvPairs;
     bool emitOk = emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
                          callerArgCount, callerTempCount, staticJ2JArgCount,
