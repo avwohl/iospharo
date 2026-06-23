@@ -170,3 +170,26 @@ per-bytecode/per-send IC machinery of a from-scratch JIT vs mature Cogit). Closi
 needs a native-frame send rewrite (the corruption surface the project avoids) or a
 matured Sista that fires for tests. The cheap executed Phase-1 measurements are what
 let us say this with data instead of speculation.
+
+## 🎯 getter=0 thread — a REAL 10x win behind a fixable correctness bug
+
+Following the send-census `getter=0`: inline-getter IS default-on (`t1InlineGetter`),
+but getter sends still hit dispatchCached because the dispatch-A-side getter entry
+(`PHARO_T1_GETTER_IN_J2J`) is default-OFF for correctness (debug_vars.h:81 — corrupts
+under MAX_IC=1, bail paths reach it with inconsistent register/state).
+
+Enabling `PHARO_T1_GETTER_IN_J2J=1` and measuring (REPEAT=5 cpu_ms):
+
+    1M getter+yourself (pt x):  default 40ms -> 4ms  = 10x  (Cog ~1ms: 43x->4x gap)
+    dict 50K / sum 1M:          neutral
+
+220K getters inline on SUnit (correctness-clean on the 10-class set: 1988 P/0 F/0 E),
+dispatchCached drops ~5%. (#buffer stays in dispatch — it's a lazy-init method, not a
+plain ^ivar getter, so not getter-classifiable.)
+
+This is the FIRST genuine large lever found: a 10x getter win. It's gated off behind a
+SPECIFIC documented bug, not a structural floor — so unlike the other directions, the
+work here is to FIX that bug (the MAX_IC=1 dispatch-A-side register/state corruption)
+so the win ships. Next: broad correctness validation (full SUnit + DET_SCHED, report-
+sunit diff vs the 12,898-test Cog baseline) to see whether the bug still manifests at
+HEAD or was mitigated by later fixes.
