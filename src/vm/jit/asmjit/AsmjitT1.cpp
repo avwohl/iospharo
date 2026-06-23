@@ -6482,8 +6482,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // getter-classified sends on this path take
                     // dispatchCached — a path they were already on after
                     // the J2J bail; benchFib/cfib are unaffected.
+                    // 2026-06-23: flipped DEFAULT-ON (opt-out PHARO_T1_NO_GETTER_IN_J2J).
+                    // The 2026-06-10 MAX_IC=1 corruption (catch22/23) no longer
+                    // manifests at HEAD — full-suite validation: 12674 P / 0 F,
+                    // ZERO new regressions vs the baseline JIT (later frame-state
+                    // fixes resolved the partial-state-commit issue).  Win:
+                    // `1M getter+yourself` 40ms -> 4ms (10x; 43x->4x vs Cog).
                     if (g_debug.t1InlineGetter && nArgs == 0
-                            && GET_DEBUG_BOOL(PHARO_T1_GETTER_IN_J2J)) {
+                            && !GET_DEBUG_BOOL(PHARO_T1_NO_GETTER_IN_J2J)) {
                         asmjit::Label notGetter63 = a.new_label();
                         a.tbz(x7, asmjit::Imm(63), notGetter63);
                         emitLoadSp(a, x2);
