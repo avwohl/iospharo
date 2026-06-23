@@ -184,8 +184,10 @@ Two follow-up empirical tests settle it:
 - **All `PHARO_SISTA_INLINE_*` knobs on → bail rate unchanged** (sendNoSplice
   9812→9808, compiled 627→626). Sista's inliner only handles narrow special
   cases (arith/self/==), never general polymorphic sends.
-- **Tier-2 on real SUnit code is SLOWER + incomplete.** ArrayTest: T1 = 323
-  tests / 1.12s CPU clean; T2 = 280 tests / 2.59s CPU and TIMED OUT. The 87%
+- **Tier-2 on real SUnit code is SLOWER + incomplete (2 confirming runs).**
+  ArrayTest: T1 323 tests/1.12s clean vs T2 280 tests/2.59s TIMEOUT. SetTest+
+  SmallIntegerTest: T1 201 tests/0.95s clean vs T2 201 tests/2.15s TIMEOUT
+  (~2.3x slower CPU both times). The 87%
   sendNoSplice bails mean T2 adds compile+dispatch overhead with no benefit on
   send-heavy code; it only wins on the loop-splice microbenchmarks. So enabling
   T2 is not just neutral on the goal's workloads — it's a regression.
