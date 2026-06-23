@@ -83,6 +83,12 @@ correctness side:
 9 tests the JIT passes that Cog fails/errors; 193 cog-only (JIT run didn't reach
 them). Diff stored — re-checkable any time without re-running Cog.
 
+NOTE: `OCBlockNodeTest>>testIsClean` PASSES when run in isolation on the JIT — so
+these 4 are context/timing-dependent (full-suite forked-process interleaving),
+the known JIT Heisenbug class (see CLAUDE.md `PHARO_DET_SCHED`), not clean
+reproducible bugs. The diff flags candidates; confirming needs DET_SCHED + the
+full-suite interleaving. Not on the perf path.
+
 ## Worklist (the real perf project, in impact order)
 
 1. **JIT codegen quality for straight-line/loop bytecode** — the 21x bytecode
