@@ -150,6 +150,27 @@ this incremental.
 → The remaining concrete lever is **fix #2 (block fast path)** — the block gap is
 real and independent of TOS (`1M blocks` 197ms vs interp 33ms). Pursue that next.
 
+### Every available lever rigorously evaluated — none closes the gap
+
+    lever                          rigorous verdict (multi-sample cpu_ms)
+    T1 inline knobs (BLOCK_VALUE,  neutral/negative (BV: blocks 184→174 min but
+      method-pattern, eager)         avg worse, sort 165→187 WORSE)
+    TOS-in-register (agent's #1)   net-NEGATIVE on every benchmark (REFUTED)
+    Tier-2/Sista optimizing JIT    works (no crash); ~neutral single-sample
+      (PHARO_T2=1 +REPLACE+WARMUP=0)  (fib 7→6, sum 65→60, sort in-range) — NOT
+                                     the ~10x an optimizing tier would need
+
+**Conclusion:** no existing lever shortcuts the 21x bytecode / 7.8x SUnit-CPU gap.
+It is a fundamental codegen-maturity gap (a from-scratch JIT vs Cog's mature
+Cogit), not a tuning task. Closing it is a deep, multi-session codegen effort —
+either a real register-allocating T1 rewrite or maturing the Sista Tier-2 (make
+it stop bailing and actually optimize). The measurement infra + this rigorous
+elimination of the plausible-but-ineffective options is the value delivered here;
+it saves the next effort from re-walking these dead ends. Next concrete probe:
+multi-sample Tier-2 with bail tracing (PHARO_SISTA_BAIL_LOG) to see whether the
+bench methods actually reach optimized T2 code or bail to T1 — if they bail,
+fixing the bails is the highest-leverage path.
+
 (Historical mechanism notes for fix #1, kept for the record:)
 
 ### Fix #1 mechanism (read for the implementation) — the per-inline-send rearm
