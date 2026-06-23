@@ -21,8 +21,38 @@ image. Harness: `scripts/pkg-jit-test/` (see `docs/jit-test-packages.md`).
     Fuel       46       733/10/5       aborted early     >=1 JIT bug halts the runner (testBitmap)
     Soil       ~30      ~425/6/2/1     SIGABRT           VM FFI file-lock crash (not JIT)
 
-Of the 6, four run to completion (NeoJSON/NeoCSV/STON clean, PolyMath completes
-with bugs); Fuel and Soil hit VM-level aborts.
+### UPDATE 2026-06-23 — re-run on HEAD (getter/trio shipped): most prior bugs GONE
+
+    package    JIT result @ HEAD       was            status
+    PolyMath   942/942 PASS            707/0/69/1     FIXED (all 69 VM-core + 51 subscript gone)
+    STON       310/310 PASS            316/0/1        FIXED (deep-recursion True>>\\ gone; testDeepStructure PASS)
+    NeoJSON    112/112 PASS            116/0/0        CLEAN PARITY (re-confirmed)
+    Fuel       724/751 (15 F / 10 E)   aborted        testBitmap now PASS; runner completes; 24 NEW-visible fails
+
+KEY: PolyMath/STON/NeoJSON are now CLEAN on the JIT branch — HEAD fixes (incl. this
+session's getter+trio) resolved every previously-tracked bug. Fuel's runner-halt
+(testBitmap) is fixed, exposing 24 failures underneath.
+
+Fuel's 24 failures are **VM-CORE, NOT JIT** (verified: identical under PHARO_NO_JIT=1;
+the getter/trio flips do NOT cause them). Cog passes all but 1. They cluster into:
+  - WideString/WideSymbol serialization (18): wide-char identifiers as class names /
+    global keys. Basic wide ops are correct (our interp == Cog: WideString/WideSymbol/
+    at:/asSymbol/isSymbol/hash all match); the bug is in the serialize+materialize
+    round-trip of exotic wide-char identifiers. Niche.
+  - BlockClosure/Context serialization (7): `OCAssignmentNode DNU sourceNodeForPC:`.
+    Root-caused: the ORIGINAL closure's source-node mapping is CORRECT on our VM
+    (pcInOuter=33 -> OCBlockNode, == Cog), but the MATERIALIZED (deserialized) closure
+    has a wrong pcInOuter, so CompiledBlock>>sourceNodeForPC: resolves the adjacent
+    assignment node (`x := [...]`) and DNUs. The Fuel materialize round-trip itself
+    errors on our VM. Deep VM-core: closure/CompiledBlock reconstruction via object-
+    creation primitives. Multi-session.
+  - misc (testSerializingShortDelay, SortedCollection x2).
+
+VERDICT for the JIT branch: HEALTHY. Kernel SUnit at parity with Cog (the only
+regression is SHA256Test>>testFips180Example3, a PERF timeout — our VM ~18x slower,
+1M-char hash 10.77s vs the test's 10s self-limit; not a miscompile). All previously-
+tracked soogle JIT bugs are fixed. The remaining Fuel failures are deep VM-core Spur-
+compatibility bugs in exotic-object serialization, present in the interpreter too.
 
 ## Candidates to add (8 curated, not yet wired)
 
