@@ -201,6 +201,24 @@ capability — a major architectural feature, not a knob.
 Reduce the Sista Tier-2 bail rate so the optimizing tier actually optimizes the
 hot methods — BUT only via making sends run in optimized code (general inlining /
 real-call capability), since merely compiling more methods just deopts them.
+
+Other directions considered + their ceilings:
+- **Selective JIT (skip-JIT bytecode-heavy methods, run them interpreted where
+  interp is 2x faster).** Not implemented — the JIT trigger is a pure hotness
+  counter (`count >= CompileThreshold=2`, JITRuntime.cpp:3824/3894), no
+  method-shape gate. Limited upside: an interpreted method does SLOW sends
+  (16M/s), so only PURELY-computational methods (no sends) win interpreted —
+  rare in real code. Won't move the SUnit/soogle gap.
+- **Improve T1 per-bytecode codegen quality directly** (the real root): the
+  ~8-mem-op-per-`a+b` stencil codegen is the 2x-vs-interp problem, but the
+  obvious fix (TOS-in-register) is refuted. A genuine register-allocating
+  rewrite of T1 is the multi-month alternative to maturing Sista.
+
+Bottom line across ALL explored levers: no shortcut. Cog parity is a fundamental
+codegen-maturity effort (mature Sista inlining OR a register-allocating T1),
+multi-month. The value this investigation delivers is the rigorous elimination
+of every plausible-but-ineffective shortcut, so the effort goes to the one real
+path instead of re-walking dead ends.
 Concrete, measurable (compiled-vs-bailed ratio, trackable in vmperf), and the
 only evaluated path with real upside (every T1 lever is refuted). Start by
 characterizing `sendNoSplice` (src/vm/jit/sista/SistaBuilder.cpp / lowering) —
