@@ -1,3 +1,44 @@
+# RESUME POINT — 2026-06-23 (perf tracking DB built; JIT < interp finding)
+
+Branch `jit`. Built **`vmperf`** — a MySQL results DB on awohl.com (port 24, root
+via local socket; creds `~/src/soogle/.env` on remote) that records every
+test/bench run keyed by (vm git-sha, test source+url, machine, knobs) with CPU +
+wall, so **unchanged Cog runs are never repeated**. Tooling: `scripts/perfdb/`
+(schema.sql, perfdb.py = ssh+mysql recorder, record-bench.sh, bench_inject.st).
+Commit `4f4d37d7`.
+
+## THE FINDING (the DB paid off immediately): our T1 JIT is SLOWER than our own interpreter
+
+tinyBenchmarks (Apple A18 arm64, Pharo 13.1):
+
+    vm            bytecodes/sec   sends/sec
+    Cog v10.3.9   6385M           445M
+    our JIT        303M           128M      (21x / 3.5x slower than Cog)
+    our interp     651M            16M      (PHARO_NO_JIT=1)
+
+JIT is **2.1x slower than our interpreter on bytecodes**, 8x faster on sends.
+`1M blocks` JIT 181ms vs interp 33ms (5.5x worse). fib(28) JIT 10ms vs interp
+62ms (6x better). So the T1 JIT helps SEND-bound code only; its compiled
+loop/arithmetic code is no better than interpreting it, and block activation is
+~5x heavier. **None of the opt-in knobs close the gap** (BLOCK_VALUE,
+method-pattern bit51-58, TOS_REG, eager DEFER=0 — all swept + recorded in
+vmperf, marginal or negative). The speed-relevant inlinings (J2J, at:/size,
+getter, basicNew, class) are already default-ON.
+
+→ The real perf project is **JIT codegen quality** (keep operand stack/TOS in
+registers across a basic block; inline arith without per-op memory traffic), not
+more inline knobs. Full numbers + worklist: `docs/results-perfdb.md`. Memory:
+`perfdb-jit-slower-than-interp.md`.
+
+## NEXT
+- Extend recording to SUnit kernel + soogle packages (record-sunit.sh, mirror
+  record-bench.sh; use `have-correctness` to skip unchanged Cog). Biggest
+  "stop repeating cog tests" win.
+- Attack worklist item 1/2 in docs/results-perfdb.md (codegen quality / block cost).
+- AWS spot runners: perfdb.py works from any host with ssh to awohl.com.
+
+---
+
 # RESUME POINT — 2026-06-21 (BLOCK-VALUE × inline-J2J corruption FIXED)
 
 Branch `jit`, pushed. Tip `bc2df667`. Tree clean (only `build-rel/` untracked).
