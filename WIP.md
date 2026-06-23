@@ -52,15 +52,27 @@ stable CPU metric (partial conversion spills at send/jump boundaries), reverted.
 Methodology learned: tinyBenchmarks wall is ±7% noise — A/B on in-image cpu_ms
 (±1-2%) with REPEAT=N. Full worklist+numbers: docs/results-perfdb.md.
 
-## NEXT (the perf parity work — multi-session, frame-state-fragile)
-- Fix #1 (THE lever): complete the FULL TOS-in-reg conversion incl. the Send
-  families (currently net-negative) — AsmjitT1.cpp kTosFam* paths, validate per
-  CLAUDE.md PHARO_DET_SCHED + `report-sunit` diff vs the stored Cog baseline,
-  measure with `REPEAT=5` cpu_ms. Partial subsets don't help (proven).
-- Fix #2: JIT fast path for `[x:=x+1] value` (5.5x block gap) — mirror the
-  interpreter's primitiveFullClosureValue pattern; restrict to local-return 0x5E.
-- Wire soogle packages (scripts/pkg-jit-test/ loads them) through record-sunit.sh
-  --image/--source-name/--source-url.
+## PERF — every lever rigorously evaluated; the real direction found
+
+Rigorous multi-sample cpu_ms A/B REFUTED all the obvious fixes: T1 inline knobs
+(neutral/neg), TOS-in-register (the agent's "lever" — net-NEGATIVE on every
+benchmark), block-value inline (neutral/neg). Tier-2/Sista optimizing JIT
+(`PHARO_T2=1`) is ~neutral BECAUSE **it bails on 87% of methods** (compiled=627
+bailed=4220; dominant `sendNoSplice=9812`) — hot code stays on slow T1.
+
+→ **THE actionable perf direction (highest leverage, only path with upside):**
+reduce the Sista Tier-2 bail rate so the optimizing tier actually runs. Start by
+characterizing `sendNoSplice` (9812 hits) in src/vm/jit/sista/SistaBuilder.cpp —
+which send shapes trigger it, which are fixable. Track the compiled/bailed ratio
+in vmperf; re-measure T2 cpu_ms (REPEAT=5) as it drops. The 21x/7.8x gap is
+codegen-maturity (from-scratch JIT vs mature Cogit), a deep multi-session effort.
+
+## NEXT
+- Characterize + reduce Sista Tier-2 `sendNoSplice` bails (above).
+- Soogle: NeoJSON wired (116/116 parity). Add more curated packages via
+  record-sunit.sh --image/--source-name/--source-url (docs/soogle.md list).
+- Methodology: A/B codegen ONLY on multi-sample in-image cpu_ms (REPEAT=N);
+  tinyBenchmarks wall is ±7% noise.
 
 ---
 
