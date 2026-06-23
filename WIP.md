@@ -60,12 +60,26 @@ benchmark), block-value inline (neutral/neg). Tier-2/Sista optimizing JIT
 (`PHARO_T2=1`) is ~neutral BECAUSE **it bails on 87% of methods** (compiled=627
 bailed=4220; dominant `sendNoSplice=9812`) — hot code stays on slow T1.
 
-→ **THE actionable perf direction (highest leverage, only path with upside):**
-reduce the Sista Tier-2 bail rate so the optimizing tier actually runs. Start by
-characterizing `sendNoSplice` (9812 hits) in src/vm/jit/sista/SistaBuilder.cpp —
-which send shapes trigger it, which are fixable. Track the compiled/bailed ratio
-in vmperf; re-measure T2 cpu_ms (REPEAT=5) as it drops. The 21x/7.8x gap is
-codegen-maturity (from-scratch JIT vs mature Cogit), a deep multi-session effort.
+Deep multi-agent investigation (workflow) + empirical follow-up settled the Sista
+direction:
+- `kSendUnspeculated` is a hard non-resumable exit (deopts whole method at first
+  generic send) — SistaLowering_arm64.cpp:1789. Lifting the sendNoSplice gate
+  gains nothing. `kSendCallHelper` runs the callee via the interpreter (zero
+  callee speedup) and is default-OFF anyway.
+- The only direction that speeds real code is general inlining — but Sista's
+  inline hints come from T1 inline-cache data, and **Tier-2 STRUCTURALLY doesn't
+  fire for test/bench workloads**: the warmup gate counts method ACTIVATIONS, and
+  tests activate methods only a few times, so at default warmup=3 T2 compiles
+  ~nothing (compiled=0, CPU==T1). Forcing it (warmup=0) compiles on COLD ICs
+  (98% empty: [SISTA-POLY] empty=996 mono=20) → bails → the earlier "T2 slower"
+  artifact. So T2 is a hot-LOOP optimizer, inapplicable to the goal's workloads.
+
+→ **No available lever closes the gap on tests/soogle.** The two real paths are
+both multi-month codegen efforts: (a) a register-allocating T1 rewrite (so
+compiled bytecode beats interpretation — the ~8-mem-op-per-`a+b` stencil is the
+2x-vs-interp root), or (b) make Sista apply to test workloads (lower/rework the
+warmup-vs-activation model + warm ICs + general inlining maturity). Track via
+vmperf (compiled/bailed ratio + REPEAT=5 cpu_ms + report-sunit diff).
 
 ## NEXT
 - Characterize + reduce Sista Tier-2 `sendNoSplice` bails (above).
