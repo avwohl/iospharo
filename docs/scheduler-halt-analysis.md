@@ -74,36 +74,38 @@ Highest value = #1 + #2 (gate + escalate-to-restart):
    `relinquishProcessorForMicroseconds:`, like the liveness probe at 547-552), so a dead-Delay
    test still counts as a TIMEOUT and trips the BAIL → the run completes instead of freezing.
 
-## IMPLEMENTED: runner keepalive watchdog (#4), verified on native x86 (2026-06-24)
+## IMPLEMENTED: VM-core self-heal (#2), verified on native x86 (2026-06-24)
 
-Implemented fix #4 (the stack-safe, runner-side option) rather than the VM-core #1+#2.
-Rationale: driving `Delay scheduler restartTimerEventLoop` from C++ in checkTimerSemaphore is
-NOT stack-safe — `push + sendSelector` from a side-path leaves the send's result on the
-running process's operand stack (handleStackOverflow only works because it *replaces* a failed
-send). The runner fix is pure Smalltalk, needs no VM rebuild, and was verifiable on the box.
+The first attempt was a runner-side busy-poll keepalive — it fixed PolyMath but REGRESSED Fuel
+(P70 busy-poll slows reflective class/trait-creation: Fuel 266/700s with it vs 733/242s without),
+so it had to be opt-in. It is now REPLACED by the proper VM-core self-heal (synthesis #2), which
+is default-on, zero-overhead, and fixes PolyMath without regressing Fuel.
 
-`scripts/pharo-headless-test/run_sunit_tests.st`: fork an independent keepalive process
-(`forkAt: 70`) that busy-polls the WALLCLOCK (not Delay), probes whether a 100ms Delay still
-fires within 4s, and drives `Delay scheduler restartTimerEventLoop` when it doesn't — recovering
-the wedge mid-class instead of waiting for an unreachable class boundary.
+Mechanism (commit 06234763, submodule f5dc144):
+- `delayRecoverySemaphore_` (GC-rooted) + named primitive `primitiveRegisterDelayRecoverySemaphore`
+  (Interpreter/Primitives.cpp): an image-side recovery process registers a Semaphore it waits on.
+- `checkTimerSemaphore` [DELAY-DEATH] detector (Interpreter.cpp:~4331): in addition to the futile
+  timing-semaphore re-signal, `synchronousSignal(delayRecoverySemaphore_)` to wake the recovery
+  process. This is STACK-SAFE (a semaphore signal, not a C++→Smalltalk send). Opt-out:
+  `PHARO_NO_DELAY_HARD_RESTART`.
+- `run_sunit_tests.st`: the recovery process just `wait`s on that Semaphore, then drives
+  `Delay scheduler restartTimerEventLoop` (a fresh scheduler). It uses ZERO CPU when healthy —
+  it only wakes when the VM signals a genuine wedge — so no busy-poll, no Fuel regression.
 
-**OPT-IN (default OFF), enabled with `PHARO_DELAY_KEEPALIVE=1`.** It is NOT safe to default-on:
-the P70 busy-poll measurably slows reflective class/trait-creation suites. Enable it per-suite
-for the wedge-prone ones (PolyMath); leave it off elsewhere.
+Why it is selective (the key over the keepalive): the VM's [DELAY-DEATH] detector fires ONLY on a
+real wedge (timer signaled but never re-armed for >5s), so the recovery process is woken only when
+the scheduler is actually stuck. Healthy suites never signal it.
 
-VERIFICATION (native AWS x86_64, AMD EPYC 7R13):
-- PolyMath WITHOUT keepalive: FREEZES at 166-462, marker=NO; VM [DELAY-DEATH] fires 18+ times,
-  every re-signal futile.
-- PolyMath WITH `PHARO_DELAY_KEEPALIVE=1`: completes **942/942** (941 PASS + 1 TIMEOUT for the
-  genuinely-slow testPrintAndEvaluate), marker=YES, VM [DELAY-DEATH] fires **0 times**. perfdb run 97.
-- Kernel SUnit WITH keepalive: **12673/0/2** — identical to the no-keepalive baseline (run 93).
-  perfdb run 98. (Kernel is not class-creation-heavy, so it is unaffected.)
-- **Fuel REGRESSES with the keepalive** (why it must be opt-in): WITHOUT = **733/10/6 in 242s**,
-  marker=YES (matches Rosetta run 88); WITH = stalls at **266/700s**, the FLCreateClass/Trait
-  SerializationTest reflective tests time out. perfdb run 99 (default, no keepalive).
+VERIFICATION (native AWS x86_64, AMD EPYC 7R13; self-heal default-on, vm_build 114):
+- PolyMath: **942/942** (940 PASS + 2 TIMEOUT), marker=YES; VM signalled the recovery **once**
+  ([DELAY-RESTART]=1) and a single scheduler restart un-wedged it. perfdb run 100. (Was 166-462 FREEZE.)
+- Fuel: **734/10/5 in 243s**, marker=YES — NO regression (same speed as no-fix 242s; the busy-poll
+  keepalive stalled it at 266/700s). [DELAY-RESTART]=1 (a brief wedge, recovered with no overhead).
+  perfdb run 101.
+- Kernel SUnit: **12672/1/2**, marker=YES — at parity with baseline 12673/0/2 (the 1 FAIL/1 TIMEOUT
+  are unrelated flaky tests — SemaphoreTest>>testUnCategorizedMethods, ClassDescriptionProtocols,
+  trait/closure compiler — not Delay/scheduler, despite 1 [DELAY-RESTART]). perfdb run 102.
 
-REMAINING (optional, deeper): the VM-core root-cause fix #1+#2 (overdue-aware gate + non-futile
-recovery via a fork-based or semaphore-signalled restart) would make the VM self-heal for
-non-SUnit Delay users too. It needs a stack-safe way to drive the restart from C++ (e.g. signal
-a dedicated semaphore that an image-side recovery process waits on). Not required for the SUnit
-harness, which the keepalive now makes robust.
+This self-heals for ANY Delay user (not just the SUnit harness — any image that registers a
+recovery semaphore), with zero steady-state cost. The earlier gate fix (#1) proved unnecessary:
+the [DELAY-DEATH] detector already engages reliably; only the recovery action was futile.
