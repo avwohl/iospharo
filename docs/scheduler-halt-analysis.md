@@ -74,14 +74,31 @@ Highest value = #1 + #2 (gate + escalate-to-restart):
    `relinquishProcessorForMicroseconds:`, like the liveness probe at 547-552), so a dead-Delay
    test still counts as a TIMEOUT and trips the BAIL → the run completes instead of freezing.
 
-## Why not implemented here
+## IMPLEMENTED: runner keepalive watchdog (#4), verified on native x86 (2026-06-24)
 
-Every fix site is in the timer/scheduler core; the bug is timing-exposed (native Linux only).
-Rosetta recovers by luck and the native AWS box was torn down, so the wedge cannot be
-reproduced locally to verify a fix or rule out scheduling regressions. Per the project's
-verify-don't-claim rule, implementing blind is not acceptable.
+Implemented fix #4 (the stack-safe, runner-side option) rather than the VM-core #1+#2.
+Rationale: driving `Delay scheduler restartTimerEventLoop` from C++ in checkTimerSemaphore is
+NOT stack-safe — `push + sendSelector` from a side-path leaves the send's result on the
+running process's operand stack (handleStackOverflow only works because it *replaces* a failed
+send). The runner fix is pure Smalltalk, needs no VM rebuild, and was verifiable on the box.
 
-**To implement+verify:** re-provision a native x86 box (scripts/aws/provision.sh), reproduce
-the wedge deterministically with `PHARO_DET_SCHED=1` on the PolyMath suite (forces the timing
-race per the heartbeat-Heisenbug note in CLAUDE.md), apply #1+#2(+#3), and confirm the run
-reaches 942/942 AND the kernel SUnit stays at parity (no scheduling regression).
+`scripts/pharo-headless-test/run_sunit_tests.st`: fork an independent keepalive process
+(`forkAt: 70`) that busy-polls the WALLCLOCK (not Delay), probes whether a 100ms Delay still
+fires within 4s, and drives `Delay scheduler restartTimerEventLoop` when it doesn't — recovering
+the wedge mid-class instead of waiting for an unreachable class boundary. Installed once per run
+(guarded by `Smalltalk globals at: #SUnitDelayKeepaliveRunning`).
+
+VERIFICATION (native AWS x86_64, AMD EPYC 7R13):
+- Baseline (no fix): PolyMath FREEZES at 166-462 tests, marker=NO; VM [DELAY-DEATH] recovery
+  fires 18+ times, every re-signal futile.
+- With keepalive: PolyMath completes **942/942** (941 PASS + 1 TIMEOUT for the genuinely-slow
+  testPrintAndEvaluate), marker=YES, and the VM [DELAY-DEATH] recovery fires **0 times** (the
+  keepalive keeps the scheduler alive). perfdb run 97.
+- No regression: kernel SUnit with the keepalive active = **12673 PASS / 0 F / 2 E** — identical
+  to the no-keepalive baseline (run 93); keepalive logged 1 (benign) restart. perfdb run 98.
+
+REMAINING (optional, deeper): the VM-core root-cause fix #1+#2 (overdue-aware gate + non-futile
+recovery via a fork-based or semaphore-signalled restart) would make the VM self-heal for
+non-SUnit Delay users too. It needs a stack-safe way to drive the restart from C++ (e.g. signal
+a dedicated semaphore that an image-side recovery process waits on). Not required for the SUnit
+harness, which the keepalive now makes robust.
