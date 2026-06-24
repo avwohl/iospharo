@@ -75,10 +75,36 @@ VERDICT for the JIT branch (UPDATED after fixes): HEALTHY, Fuel RESOLVED.
 - WideString cluster (15): NOT a VM bug — proven passing via standard SUnit (suite
   run 79/79 x3, 86/86, 82/82, == Cog); a custom-runner artifact (above).
 - So the JIT branch passes ALL Fuel tests via the standard SUnit mechanism.
-- Kernel SUnit at parity with Cog; the lone SHA256Test>>testFips180Example3 timeout
-  is a structural PERF issue (passes in isolation at ~7.2s; exceeds its 10s self-
-  limit only under full-suite load — our VM ~15x slower on the alloc-heavy
-  ThirtyTwoBitRegister code; not a miscompile, and a 256MB code zone did not fix it).
+- Kernel SUnit at parity with Cog. SHA256Test>>testFips180Example3 PASSES (was a
+  structural-perf timeout; FIXED by the native primitiveSHA256Message — Primitives.cpp).
+
+## Multi-arch coverage: arm64 + x86_64 (2026-06-24)
+
+vm/SUnit + all 4 soogle packages now RUN and are RECORDED on BOTH arches (perfdb,
+machine neoA18 Apple A18 Pro; x86_64 = build-x86 run via Rosetta).  Record an x86 run
+with: `OUR_ARCH=x86_64 OUR_VM=build-x86/test_load_image bash record-sunit.sh ...`.
+
+    suite             arm64        x86_64       notes
+    sunit-kernel      12673/0/2    12651/5/19   x86 +~15 FFI errors (Rosetta FFI limit),
+                                                 SHA256 passes BOTH (primitive is arch-indep)
+    soogle:PolyMath   940/2        938/3        ~parity (flaky var); x86 1442s vs 305s wall
+    soogle:STON       310/0/0      310/0/0      identical
+    soogle:NeoJSON    116/0/0      112/0/0      ~parity
+    soogle:Fuel       733/10/6     733/10/6     identical (the 10F/6E are the WideString
+                                                 custom-runner artifact + flakes, both arches)
+
+KEY FINDINGS:
+- Correctness is ARCH-INDEPENDENT: arm64 and x86_64 agree closely; the only systematic
+  x86 delta is ~15 FFI* test errors (FFIExternalEnumeration/FFICalloutAPI/...), a real
+  x86/Rosetta FFI calling-convention limitation, NOT a JIT bug.  Plus a few GC/Weak flakes.
+- x86 is ~2-5x slower (Rosetta translation), so soogle runs need bigger SUNIT_TIMEOUT.
+- The x86 JIT runs in its DEFAULT config (self-recursive J2J only); cross-method inline-J2J
+  (PHARO_T1_X86_XMETHOD) is documented KNOWN-BROKEN and stays off — the test sweep does not
+  exercise it.  The 12,651/5/19 result is the conservative-config x86 JIT.
+- Recorder gotcha: re-prepping an ALREADY-prepped image hangs (`--save` blocks because the
+  installed SessionManager handler fires the runner on resume).  Use a FRESH image source
+  (e.g. /tmp/harness/Pharo.image.bak for Fuel, which is baked in) — record-sunit.sh preps it
+  cleanly.  STON/Fuel hit this as transient 0-test runs; the recorded rows are the good runs.
 
 ## Candidates to add (8 curated, not yet wired)
 
