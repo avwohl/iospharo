@@ -7074,6 +7074,21 @@ terminate_process:
         ? savedFrames_[frameDepth_ - 1].materializedRetSlot
         : nullptr;
 
+    // Mark the returning (current) frame's materialized context dead, mirroring
+    // the fd==0 context-return path at ~6940.  currentFrameMaterializedCtx_ is THIS
+    // frame's reified heap Context (nil if the frame was never materialized — the
+    // hot path, so this is a no-op there).  On return it is a dead context; nil'ing
+    // its sender/pc (isDead) breaks the live sender chain that a capturing closure
+    // would otherwise keep alive — without which Fuel serializes the entire call
+    // stack (250KB + SubscriptOutOfBounds, docs/soogle.md closure cluster).
+    if (currentFrameMaterializedCtx_.isObject()
+            && !currentFrameMaterializedCtx_.isNil()
+            && currentFrameMaterializedCtx_.rawBits() > 0x10000
+            && memory_.isValidPointer(currentFrameMaterializedCtx_)) {
+        memory_.storePointer(0, currentFrameMaterializedCtx_, memory_.nil());  // sender = nil
+        memory_.storePointer(1, currentFrameMaterializedCtx_, memory_.nil());  // pc = nil → isDead
+    }
+
     // Debug: track method_ changes through popFrame
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static FILE* methodChangeLog = nullptr;
