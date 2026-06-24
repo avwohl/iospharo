@@ -28865,6 +28865,27 @@ PrimitiveResult Interpreter::primitiveTypeByteSize(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Correct the libffi ABI for the target architecture.
+//
+// The x86_64 Apple/Catalyst build compiles against the AARCH64 libffi
+// ffitarget.h — the maccatalyst libffi.xcframework ships a single (aarch64)
+// Headers dir, shared by both slices — so FFI_DEFAULT_ABI resolves to
+// FFI_SYSV (=1).  On x86_64, FFI_SYSV is the *32-bit* ABI and is never valid
+// for a 64-bit cif; the 64-bit ABI is FFI_UNIX64 (=2).  ffi_prep_cif then
+// returns FFI_BAD_ABI and every TFFI callout fails (observed: FFICalloutAPITest
+// errors under the Rosetta/Catalyst x86_64 build, while native Linux x86_64 —
+// which uses the correct system libffi header — passes 40/40).  Map the stale
+// 32-bit value to the 64-bit one.  No-op on arm64 (guarded out) and on any build
+// whose header already resolves the ABI correctly (abi != 1).  Literals are used
+// so this compiles even under a wrong-arch ffitarget.h that omits FFI_UNIX64.
+static inline ffi_abi tffi_correctAbi(ffi_abi abi) {
+#if defined(__x86_64__) || defined(_M_X64)
+    if (abi == static_cast<ffi_abi>(1) /* FFI_SYSV: 32-bit, wrong for x86_64 */)
+        return static_cast<ffi_abi>(2); /* FFI_UNIX64 */
+#endif
+    return abi;
+}
+
 // primitiveDefineFunction (2-3 args)
 // Stack: receiver, paramsArray, returnType [, abi]
 // Creates ffi_cif via ffi_prep_cif, stores in receiver's handler
@@ -28924,6 +28945,7 @@ PrimitiveResult Interpreter::primitiveDefineFunction(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    abiToUse = tffi_correctAbi(abiToUse);
     ffi_status status = ffi_prep_cif(cif, abiToUse,
                                      static_cast<unsigned int>(paramCount),
                                      returnType, paramTypes);
@@ -29025,6 +29047,7 @@ PrimitiveResult Interpreter::primitiveDefineVariadicFunction(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    abiToUse = tffi_correctAbi(abiToUse);
     ffi_status status = ffi_prep_cif_var(cif, abiToUse, fixedArgs,
                                          static_cast<unsigned int>(paramCount),
                                          returnType, paramTypes);
