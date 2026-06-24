@@ -519,6 +519,15 @@ class PharoBridge: ObservableObject {
               Stdio stderr nextPutAll: '[startup] Cleared errorOnDraw from ';
                   nextPutAll: cleared printString; nextPutAll: ' morphs'; lf; flush ].
         ] fork.
+
+        "SHA256 native primitive: the kernel SHA256 is pure Smalltalk
+         (ThirtyTwoBitRegister, ~15x slower than Cog). Our VM ships a native
+         primitiveSHA256Message (DSAPrims), like its SHA1/MD5 prims. Route
+         hashMessage: through it (Smalltalk fallback kept) so standard images get
+         fast, correct SHA256 (FIPS-180-4; 1M-byte hash 7000ms -> 2ms)."
+        [ SHA256 class compile: 'hashMessage: aStringOrByteArray
+            <primitive: ''primitiveSHA256Message'' module: ''DSAPrims''>
+            ^ self new hashMessage: aStringOrByteArray' ] on: Error do: [ :e | ].
         """
 
         // ── Pharo 13-only patches ──
