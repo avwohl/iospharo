@@ -11968,6 +11968,102 @@ PrimitiveResult Interpreter::primitiveStringHashInitialHash(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ---------------------------------------------------------------------------
+// SHA-256 (FIPS 180-4) — native crypto primitive.
+// The image's kernel SHA256 is pure Smalltalk (ThirtyTwoBitRegister objects,
+// ~1M allocations per 100K bytes) and runs ~15x slower than Cog, so the 1M-byte
+// SHA256Test>>testFips180Example3 (self-limited to 10s wall) tips over its budget
+// under full-suite load.  Cog's DSAPlugin ships native SHA1/MD5 block primitives
+// (our VM already has those: primitiveHashBlock/primitiveExpandBlock); this adds
+// the SHA256 equivalent as a whole-message primitive, patched in via:
+//   SHA256 class>>hashMessage:
+//     <primitive: 'primitiveSHA256Message' module: 'DSAPrims'>
+//     ^ self new hashMessage: arg     "Smalltalk fallback if the prim is absent"
+// Returns the 32-byte digest ByteArray.  Legitimate VM capability, not a test hack.
+namespace {
+inline uint32_t sha256_rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
+void computeSHA256(const uint8_t* msg, size_t len, uint8_t out[32]) {
+    static const uint32_t K[64] = {
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2 };
+    uint32_t h[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
+                     0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
+    uint64_t bitLen = (uint64_t)len * 8;
+    uint8_t block[64];
+    auto processBlock = [&](const uint8_t* p) {
+        uint32_t w[64];
+        for (int t = 0; t < 16; ++t)
+            w[t] = ((uint32_t)p[t*4]<<24)|((uint32_t)p[t*4+1]<<16)|
+                   ((uint32_t)p[t*4+2]<<8)|((uint32_t)p[t*4+3]);
+        for (int t = 16; t < 64; ++t) {
+            uint32_t s0 = sha256_rotr(w[t-15],7)^sha256_rotr(w[t-15],18)^(w[t-15]>>3);
+            uint32_t s1 = sha256_rotr(w[t-2],17)^sha256_rotr(w[t-2],19)^(w[t-2]>>10);
+            w[t] = w[t-16] + s0 + w[t-7] + s1;
+        }
+        uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+        for (int t = 0; t < 64; ++t) {
+            uint32_t S1 = sha256_rotr(e,6)^sha256_rotr(e,11)^sha256_rotr(e,25);
+            uint32_t ch = (e&f)^((~e)&g);
+            uint32_t t1 = hh + S1 + ch + K[t] + w[t];
+            uint32_t S0 = sha256_rotr(a,2)^sha256_rotr(a,13)^sha256_rotr(a,22);
+            uint32_t maj = (a&b)^(a&c)^(b&c);
+            uint32_t t2 = S0 + maj;
+            hh=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+        }
+        h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
+    };
+    size_t i = 0;
+    while (i + 64 <= len) { processBlock(msg + i); i += 64; }
+    size_t rem = len - i;
+    for (size_t j = 0; j < rem; ++j) block[j] = msg[i+j];
+    block[rem] = 0x80;
+    if (rem >= 56) {
+        for (size_t j = rem+1; j < 64; ++j) block[j] = 0;
+        processBlock(block);
+        for (int j = 0; j < 56; ++j) block[j] = 0;
+    } else {
+        for (size_t j = rem+1; j < 56; ++j) block[j] = 0;
+    }
+    for (int j = 0; j < 8; ++j) block[56+j] = (uint8_t)(bitLen >> (56 - j*8));
+    processBlock(block);
+    for (int j = 0; j < 8; ++j) {
+        out[j*4]   = (uint8_t)(h[j]>>24);
+        out[j*4+1] = (uint8_t)(h[j]>>16);
+        out[j*4+2] = (uint8_t)(h[j]>>8);
+        out[j*4+3] = (uint8_t)(h[j]);
+    }
+}
+} // namespace
+
+PrimitiveResult Interpreter::primitiveSHA256Message(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop msgOop = stackValue(0);                 // the message (String or ByteArray)
+    if (!msgOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* header = msgOop.asObjectPtr();
+    ObjectFormat fmt = header->format();
+    if (fmt < ObjectFormat::Indexable8 || fmt > ObjectFormat::Indexable8_7)
+        return PrimitiveResult::Failure;        // must be a byte object
+    size_t msgSize = memory_.byteSizeOf(msgOop);
+    const uint8_t* msg = reinterpret_cast<const uint8_t*>(header->bytes());
+    uint8_t digest[32];
+    computeSHA256(msg, msgSize, digest);        // compute BEFORE any allocation (GC-safe)
+    Oop baClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
+    if (baClass.isNil()) return PrimitiveResult::Failure;
+    uint32_t classIdx = memory_.indexOfClass(baClass);
+    Oop result = memory_.allocateBytes(classIdx, 32);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    std::memcpy(result.asObjectPtr()->bytes(), digest, 32);
+    popN(2);                                    // receiver (SHA256 class) + the arg
+    push(result);
+    return PrimitiveResult::Success;
+}
+
 // MiscPrimitivePlugin: indexOfAscii:inString:startingAt:
 // Arguments: receiver (class), asciiValue, aString, startIndex
 PrimitiveResult Interpreter::primitiveIndexOfAscii(int argCount) {

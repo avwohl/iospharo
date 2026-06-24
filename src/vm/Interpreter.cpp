@@ -19186,6 +19186,10 @@ void Interpreter::initializeNamedPrimitives() {
 
     // MiscPrimitivePlugin
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveStringHash", &Interpreter::primitiveStringHashInitialHash);
+    // Native SHA-256 (the image's kernel SHA256 is pure Smalltalk + ~15x slower
+    // than Cog; Cog ships native SHA1/MD5 prims, this is the SHA256 equivalent).
+    // Named-prim lookup is by name, so the module string is not load-bearing.
+    registerNamedPrimitive("DSAPrims", "primitiveSHA256Message", &Interpreter::primitiveSHA256Message);
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveFindSubstring", &Interpreter::primitiveFindSubstring);
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveIndexOfAsciiInString", &Interpreter::primitiveIndexOfAscii);
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveTranslateStringWithTable", &Interpreter::primitiveTranslateStringWithTable);
