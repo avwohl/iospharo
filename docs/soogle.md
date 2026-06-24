@@ -85,7 +85,7 @@ machine neoA18 Apple A18 Pro; x86_64 = build-x86 run via Rosetta).  Record an x8
 with: `OUR_ARCH=x86_64 OUR_VM=build-x86/test_load_image bash record-sunit.sh ...`.
 
     suite             arm64        x86_64       notes
-    sunit-kernel      12673/0/2    12651/5/19   x86 +~15 FFI errors (Rosetta FFI limit),
+    sunit-kernel      12673/0/2    12651/5/19   x86 19E was FFI_BAD_ABI (now FIXED, see below),
                                                  SHA256 passes BOTH (primitive is arch-indep)
     soogle:PolyMath   940/2        938/3        ~parity (flaky var); x86 1442s vs 305s wall
     soogle:STON       310/0/0      310/0/0      identical
@@ -93,10 +93,25 @@ with: `OUR_ARCH=x86_64 OUR_VM=build-x86/test_load_image bash record-sunit.sh ...
     soogle:Fuel       733/10/6     733/10/6     identical (the 10F/6E are the WideString
                                                  custom-runner artifact + flakes, both arches)
 
+### x86 FFI: native works; Rosetta build had a real FFI_BAD_ABI bug (FIXED 2026-06-24)
+
+The 19 x86 kernel errors in run 80 were ~21 FFI* tests.  Investigated on a NATIVE
+x86_64 AWS box (m6a.4xlarge, Ubuntu, NOT Rosetta) — they are NOT a VM/FFI limitation:
+- NATIVE x86_64 FFI works: FFICalloutAPITest 18/18, FFIExternalEnumeration 6/6,
+  FFIExternalStructure 12/12, FFIConstantHandle 2/2, FFIExternalValueHolder 2/2 = 40/40.
+- The NATIVE failures in the /tmp harness were a .SOURCES ARTIFACT: copying the image
+  to /tmp without the shared Pharo13.x.sources file makes FFICalloutAPITest>>setUp's
+  resetFFIMethods recompile-from-nil-source (MNU 'receiver of contents is nil'), NOT FFI.
+- The Rosetta/Catalyst build-x86 errors were a REAL FFI_BAD_ABI BUILD BUG: the x86_64
+  Catalyst build compiles against the maccatalyst xcframework's AARCH64 libffi
+  ffitarget.h, so FFI_DEFAULT_ABI=FFI_SYSV(1) — invalid for x86_64 (needs FFI_UNIX64=2)
+  — ffi_prep_cif returns FFI_BAD_ABI and every TFFI callout fails.  FIXED: tffi_correctAbi
+  in Primitives.cpp maps SYSV(1)->UNIX64(2) on x86_64 (commit 61b6adc1).  Verified: build-x86
+  FFI 40/40 (was 0), arm64 unchanged 40/40, native x86 unchanged 40/40 (no-op there).
+
 KEY FINDINGS:
-- Correctness is ARCH-INDEPENDENT: arm64 and x86_64 agree closely; the only systematic
-  x86 delta is ~15 FFI* test errors (FFIExternalEnumeration/FFICalloutAPI/...), a real
-  x86/Rosetta FFI calling-convention limitation, NOT a JIT bug.  Plus a few GC/Weak flakes.
+- Correctness is ARCH-INDEPENDENT: arm64 and x86_64 agree closely.  After the FFI_BAD_ABI
+  fix there is NO systematic x86 correctness delta — only a few GC/Weak/probabilistic flakes.
 - x86 is ~2-5x slower (Rosetta translation), so soogle runs need bigger SUNIT_TIMEOUT.
 - The x86 JIT runs in its DEFAULT config (self-recursive J2J only); cross-method inline-J2J
   (PHARO_T1_X86_XMETHOD) is documented KNOWN-BROKEN and stays off — the test sweep does not
