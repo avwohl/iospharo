@@ -39,7 +39,18 @@ the getter/trio flips do NOT cause them). Cog passes all but 1. They cluster int
     global keys. Basic wide ops are correct (our interp == Cog: WideString/WideSymbol/
     at:/asSymbol/isSymbol/hash all match); the bug is in the serialize+materialize
     round-trip of exotic wide-char identifiers. Niche.
-  - BlockClosure/Context serialization (7): `OCAssignmentNode DNU sourceNodeForPC:`.
+  - BlockClosure/Context serialization (14, ROOT-CAUSED 2026-06-23): when a method
+    RETURNS a closure, our VM does NOT clean the closure's captured outerContext —
+    it retains pc (36 vs Cog's nil) and the FULL live sender chain (50+ deep vs Cog's
+    nil/1-deep). So Fuel serializes the entire call stack: the test closure is 638
+    bytes on Cog but ERRORs (SubscriptOutOfBounds: 36 in Array>>do:) on our VM, and
+    its outerContext is 446 bytes on Cog vs 249591 (250KB) on our VM. VM-core context-
+    return-cleanup bug (a returned context held by a closure must have IP/sender
+    cleared, the "dead context" semantics). Isolated cleanly: baseline assoc / class-
+    ref / clean-block all serialize IDENTICALLY (244/280/15491 bytes both VMs); only
+    the closure-with-live-outerContext diverges. NOT a JIT bug (interp identical).
+    Likely fixes the FLMethodChanged DNU too (downstream of the bloated context).
+  - [superseded] earlier symptom: `OCAssignmentNode DNU sourceNodeForPC:`.
     Root-caused: the ORIGINAL closure's source-node mapping is CORRECT on our VM
     (pcInOuter=33 -> OCBlockNode, == Cog), but the MATERIALIZED (deserialized) closure
     has a wrong pcInOuter, so CompiledBlock>>sourceNodeForPC: resolves the adjacent
