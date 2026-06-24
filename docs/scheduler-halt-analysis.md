@@ -85,17 +85,22 @@ send). The runner fix is pure Smalltalk, needs no VM rebuild, and was verifiable
 `scripts/pharo-headless-test/run_sunit_tests.st`: fork an independent keepalive process
 (`forkAt: 70`) that busy-polls the WALLCLOCK (not Delay), probes whether a 100ms Delay still
 fires within 4s, and drives `Delay scheduler restartTimerEventLoop` when it doesn't — recovering
-the wedge mid-class instead of waiting for an unreachable class boundary. Installed once per run
-(guarded by `Smalltalk globals at: #SUnitDelayKeepaliveRunning`).
+the wedge mid-class instead of waiting for an unreachable class boundary.
+
+**OPT-IN (default OFF), enabled with `PHARO_DELAY_KEEPALIVE=1`.** It is NOT safe to default-on:
+the P70 busy-poll measurably slows reflective class/trait-creation suites. Enable it per-suite
+for the wedge-prone ones (PolyMath); leave it off elsewhere.
 
 VERIFICATION (native AWS x86_64, AMD EPYC 7R13):
-- Baseline (no fix): PolyMath FREEZES at 166-462 tests, marker=NO; VM [DELAY-DEATH] recovery
-  fires 18+ times, every re-signal futile.
-- With keepalive: PolyMath completes **942/942** (941 PASS + 1 TIMEOUT for the genuinely-slow
-  testPrintAndEvaluate), marker=YES, and the VM [DELAY-DEATH] recovery fires **0 times** (the
-  keepalive keeps the scheduler alive). perfdb run 97.
-- No regression: kernel SUnit with the keepalive active = **12673 PASS / 0 F / 2 E** — identical
-  to the no-keepalive baseline (run 93); keepalive logged 1 (benign) restart. perfdb run 98.
+- PolyMath WITHOUT keepalive: FREEZES at 166-462, marker=NO; VM [DELAY-DEATH] fires 18+ times,
+  every re-signal futile.
+- PolyMath WITH `PHARO_DELAY_KEEPALIVE=1`: completes **942/942** (941 PASS + 1 TIMEOUT for the
+  genuinely-slow testPrintAndEvaluate), marker=YES, VM [DELAY-DEATH] fires **0 times**. perfdb run 97.
+- Kernel SUnit WITH keepalive: **12673/0/2** — identical to the no-keepalive baseline (run 93).
+  perfdb run 98. (Kernel is not class-creation-heavy, so it is unaffected.)
+- **Fuel REGRESSES with the keepalive** (why it must be opt-in): WITHOUT = **733/10/6 in 242s**,
+  marker=YES (matches Rosetta run 88); WITH = stalls at **266/700s**, the FLCreateClass/Trait
+  SerializationTest reflective tests time out. perfdb run 99 (default, no keepalive).
 
 REMAINING (optional, deeper): the VM-core root-cause fix #1+#2 (overdue-aware gate + non-futile
 recovery via a fork-based or semaphore-signalled restart) would make the VM self-heal for
