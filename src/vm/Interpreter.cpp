@@ -4329,6 +4329,20 @@ void Interpreter::checkTimerSemaphore() {
                                   << std::endl;
                     }
                     synchronousSignal(lastKnownTimerSemaphore_);
+                    // VM-core self-heal (synthesis #2): re-signaling the timing semaphore is
+                    // FUTILE when the scheduler is suspended/dead rather than waiting on it
+                    // (empirically it fires 18+ times and never re-arms). Wake the registered
+                    // image-side recovery process to drive a real `Delay scheduler
+                    // restartTimerEventLoop` (a fresh timer-event-loop process), which un-wedges
+                    // both the suspended and the dead case. Only reached on a genuine wedge, and
+                    // a no-op unless an image registered a recovery semaphore — zero overhead
+                    // otherwise (unlike a busy-poll keepalive). Opt out: PHARO_NO_DELAY_HARD_RESTART.
+                    if (delayRecoverySemaphore_.isObject() && !delayRecoverySemaphore_.isNil()
+                            && !GET_DEBUG_BOOL(PHARO_NO_DELAY_HARD_RESTART)) {
+                        std::cout << "[DELAY-RESTART] waking image recovery process to restart"
+                                     " the timer-event-loop" << std::endl;
+                        synchronousSignal(delayRecoverySemaphore_);
+                    }
                     // Give it 5 more seconds to re-arm
                     lastTimerSignalTime_ = std::chrono::steady_clock::now();
                     schedulerDeathLogged_ = false;
@@ -19345,6 +19359,7 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("", "primitiveFreeDefinition", &Interpreter::primitiveFreeDefinition);
     registerNamedPrimitive("", "primitiveDefineVariadicFunction", &Interpreter::primitiveDefineVariadicFunction);
     registerNamedPrimitive("", "primitiveGetSameThreadRunnerAddress", &Interpreter::primitiveGetSameThreadRunnerAddress);
+    registerNamedPrimitive("", "primitiveRegisterDelayRecoverySemaphore", &Interpreter::primitiveRegisterDelayRecoverySemaphore);
     registerNamedPrimitive("", "primitiveSameThreadCallout", &Interpreter::primitiveSameThreadCallout);
     registerNamedPrimitive("", "primitiveSameThreadCallbackInvoke", &Interpreter::primitiveSameThreadCallout);
     registerNamedPrimitive("", "primitiveCopyFromTo", &Interpreter::primitiveCopyFromTo);

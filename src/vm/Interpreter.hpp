@@ -1063,6 +1063,11 @@ private:
     bool timerWasArmed_ = false;  // true after primitive 136/242 arms the timer
     bool schedulerDeathLogged_ = false;  // only log once
     int schedulerRecoveryAttempts_ = 0;  // count recovery attempts
+    // VM-core self-heal: an image-side recovery process registers a Semaphore here
+    // (primitiveRegisterDelayRecoverySemaphore); on a futile wedge the VM signals it
+    // so the image drives `Delay scheduler restartTimerEventLoop` (a fresh scheduler
+    // process). Zero overhead — the process only wakes on a genuine [DELAY-DEATH].
+    Oop delayRecoverySemaphore_ = Oop::nil();
 
     // GC-safe temporary storage for Oops that need to survive allocation.
     // Used in transferTo() to protect newProcess across materializeFrameStack().
@@ -3133,6 +3138,7 @@ private:
     PrimitiveResult primitiveDefineVariadicFunction(int argCount);   // Named: create variadic ffi_cif
     PrimitiveResult primitiveGetSameThreadRunnerAddress(int argCount); // Named: return runner address
     PrimitiveResult primitiveSameThreadCallout(int argCount);        // Named: ffi_call via same-thread runner
+    PrimitiveResult primitiveRegisterDelayRecoverySemaphore(int argCount); // Named: register Delay-wedge recovery semaphore
     PrimitiveResult primitiveCopyFromTo(int argCount);               // Named: memcpy between addr/bytearray
     PrimitiveResult primitiveInitializeStructType(int argCount);     // Named: build ffi_type for struct
     PrimitiveResult primitiveFreeStruct(int argCount);               // Named: free struct ffi_type
@@ -3384,6 +3390,7 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     visitor(displayForm_);
     visitor(timerSemaphore_);
     visitor(lastKnownTimerSemaphore_);
+    visitor(delayRecoverySemaphore_);
     visitor(gcTempOop_);
     visitor(pendingWorldMenuMethod_);
     visitor(pendingWorldMenuReceiver_);

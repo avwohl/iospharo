@@ -29078,6 +29078,20 @@ PrimitiveResult Interpreter::primitiveGetSameThreadRunnerAddress(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// primitiveRegisterDelayRecoverySemaphore (0 args)
+// Receiver is a Semaphore that an image-side recovery process waits on. Stored so the VM's
+// checkTimerSemaphore [DELAY-DEATH] detector can signal it on a futile Delay-scheduler wedge,
+// driving `Delay scheduler restartTimerEventLoop` (a fresh scheduler) from a stack-safe context.
+// Zero overhead when healthy: the process only wakes when the VM signals a genuine wedge.
+PrimitiveResult Interpreter::primitiveRegisterDelayRecoverySemaphore(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    Oop sema = stackValue(0);  // receiver
+    if (!sema.isObject()) return PrimitiveResult::Failure;
+    delayRecoverySemaphore_ = sema;
+    primitiveSuccess(sema);  // return self
+    return PrimitiveResult::Success;
+}
+
 // primitiveSameThreadCallout (2 args)
 // Stack: receiver, externalFunction, argumentsArray
 // This is the core FFI call primitive.
