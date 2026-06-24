@@ -19,6 +19,10 @@ RUNNERS="$PROJECT_ROOT/scripts/pharo-headless-test"
 
 OUR_VM="${OUR_VM:-$PROJECT_ROOT/build-rel/test_load_image}"
 [ -x "$OUR_VM" ] || OUR_VM="$PROJECT_ROOT/build/test_load_image"
+# OUR_ARCH labels the JIT vm_build in the perfdb.  Defaults to the host arch, but
+# the x86_64 binary (build-x86, run via Rosetta on Apple Silicon) must be recorded
+# as x86_64, not the host arm64 — set OUR_ARCH=x86_64 OUR_VM=build-x86/test_load_image.
+OUR_ARCH="${OUR_ARCH:-$(uname -m)}"
 HARNESS_DIR="${HARNESS_DIR:-/tmp/harness}"
 COG_VM="$HARNESS_DIR/pharo"
 IMAGE_SRC="$HARNESS_DIR/Pharo.image.bak"
@@ -72,7 +76,7 @@ MACHINE=$(python3 "$PERFDB" register-machine)
 SHA=$(git -C "$PROJECT_ROOT" rev-parse HEAD)
 GITDESC=$(git -C "$PROJECT_ROOT" describe --always --dirty 2>/dev/null || echo "$SHA")
 JIT_VM=$(python3 "$PERFDB" register-vm --kind jit --git-sha "$SHA" \
-           --build-config RelWithDebInfo --arch "$(uname -m)" --binary "$OUR_VM" --vm-version "iospharo-jit@${SHA:0:9}")
+           --build-config RelWithDebInfo --arch "$OUR_ARCH" --binary "$OUR_VM" --vm-version "iospharo-jit@${SHA:0:9}-${OUR_ARCH}")
 COG_VER=$("$COG_VM" --version 2>/dev/null | grep -oE 'v[0-9.]+\+[0-9.]+[a-f0-9]+' | head -1)
 COG_VM_ID=$(python3 "$PERFDB" register-vm --kind cog --build-config Release \
            --arch "$(uname -m)" --vm-version "Pharo-${COG_VER:-unknown}" --git-sha "${COG_VER##*+}")
