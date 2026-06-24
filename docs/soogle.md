@@ -109,6 +109,15 @@ x86_64 AWS box (m6a.4xlarge, Ubuntu, NOT Rosetta) — they are NOT a VM/FFI limi
   in Primitives.cpp maps SYSV(1)->UNIX64(2) on x86_64 (commit 61b6adc1).  Verified: build-x86
   FFI 40/40 (was 0), arm64 unchanged 40/40, native x86 unchanged 40/40 (no-op there).
 
+perfdb proof (sunit-kernel; FFI-ok / FFI-bad = FFI tests pass / not-pass):
+    config                       pass   F  E   FFI-ok  FFI-bad
+    Rosetta BEFORE fix (run 80)  12651  5  19  160     21      <- FFI_BAD_ABI
+    Rosetta AFTER fix  (run 92)  12674  0   1  181      0
+    NATIVE x86 AWS     (run 93)  12673  0   2  181      0      <- AMD EPYC 7R13, NOT Rosetta
+The native run (run 93) is recorded against a real AWS x86_64 machine (ip-172-31-24-43,
+vm_build iospharo-jit@61b6adc1-x86_64-linux-native).  Provision/test x86 natively with
+scripts/aws/provision.sh; do NOT reboot the box (trips the idle/spot preserve+terminate).
+
 KEY FINDINGS:
 - Correctness is ARCH-INDEPENDENT: arm64 and x86_64 agree closely.  After the FFI_BAD_ABI
   fix there is NO systematic x86 correctness delta — only a few GC/Weak/probabilistic flakes.
