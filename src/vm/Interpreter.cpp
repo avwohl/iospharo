@@ -24566,6 +24566,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (g_debug.noJitStrict) return false;
     jitActivations_++;
 
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ACTIVATION_LOG), 0)) {
+        static uint64_t actN = 0;
+        if ((++actN & 0xFFF) == 0)
+            fprintf(stderr, "[ACT] %s\n", memory_.selectorOf(method).c_str());
+    }
+
 
     // PHARO_BASICAT_TRACE=1: log basicAt: activations from JIT'd
     // scanFor: callers, with the receiver+index args.  Catches the

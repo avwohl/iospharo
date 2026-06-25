@@ -158,6 +158,7 @@ DEBUG_BOOL(PHARO_NO_DELAY_RECOVERY)      // diagnose full-suite wedge: skip chec
 DEBUG_BOOL(PHARO_NO_DELAY_HARD_RESTART)  // opt out of the VM-core self-heal: don't signal the registered image-side recovery semaphore (which drives Delay scheduler restartTimerEventLoop) on a [DELAY-DEATH] wedge
 DEBUG_BOOL(PHARO_COMPILE_LOG)            // DIAGNOSTIC: log [COMPILE]/[RECOMPILE] <selector> for each JIT compile, to find run-once / transient-method compile waste
 DEBUG_BOOL(PHARO_SISTA_RECOMPILE_ADMITTED) // A/B: restore the old behavior where kSistaGateAdmitted methods re-run extractInlineHints+sista->compile on EVERY entry (the recompile churn). Default OFF = skip already-Sista-processed methods.
+DEBUG_BOOL(PHARO_ACTIVATION_LOG)         // DIAGNOSTIC: sample (every 4096th) the selector entering tryJITActivation (the interp->JIT boundary) to see what's bouncing -- warm (J2J-linkable, fixable) vs cold/transient (inherent)
 DEBUG_BOOL(PHARO_TRACE_DELAY_SUSPEND)    // diagnose full-suite wedge: log when a Delay-handshake process (schedule:/wait/runTimerEventLoop) is suspended/terminated mid-handshake
 DEBUG_BOOL(PHARO_TRACE_IDLE_YIELD)        // diagnose full-suite wedge: log handleForceYield reschedule decision when idle (P10) is active (does it transfer to a ready higher-pri process?)
 DEBUG_BOOL(PHARO_TRACE_DELAY_NIL)        // diagnose full-suite wedge: at the `1000 * nil` MNU, dump the Delay sender chain + ivars to find store-vs-read of millisecondDelayDuration
