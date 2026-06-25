@@ -61,20 +61,31 @@ Three independent oracles, used together:
 
 ### Current baseline numbers
 
-Measured per ~5000-compile run (from fall-taxonomy map):
+M0-MEASURED 2026-06-25 (CORRECTS an earlier mislabel). The pre-M0 estimate
+"continuity ~5%" was a MISREAD: it read the dumpJITStats `chain: actChain=10011`
+field, which is the jitChainActivate* counter (site 3, negligible volume), NOT the
+overall jitJ2JActChains_. The self-contained `[M0-ATTRIB]` dump (dumpJITStats,
+fires at shutdown for any run) measures it correctly per 5000-compile run:
 
 ```
-jitJ2JActChains_  ~=  10k
-jitJ2JActFalls_   ~= 195k
-continuity        ~= 10k / 205k  ~= 5%
+continuity = jitJ2JActChains_ / (actChain + actFall)
+           = 2,210,222 / 3,918,124  =  56.4%          <- NOT 5%
 
-jitChainPrimChains_ / (chains+falls)  ~= 94%   (primitives already chain well)
-jitChainActivateFalls_ (site 3)        ~= 0 in AWFY (structural, rare)
+site1 stencil-fall: cached=729,916  send=675,599  j2j=0  other=22,907
+site2 block-resume: chains=1,387,006  falls=88,565  (94.0%)    <- already chains well
+site3 activate:     chains=10,011    falls=190,915             <- the old "5%", low volume
+site2 top prim-falls: p207(blockValue)=82,786  p83(perform:)=5,421  p209=241
+
+PHARO_T1_NO_BLOCK_RESUME=1 A/B: continuity 56.4% -> 50.9%; site2 falls 88k -> 292k;
+  p207 prim-fall 83k -> 275k  -- block-resume (site 2) provides real value, keep it.
 ```
 
-Re-establish these exact numbers in M0 before any change (the run above predates
-several emit knobs; the M0 deliverable is a *fresh* baseline plus per-site
-attribution).
+So overall continuity is 56.4%, not 5% -- there is still real headroom (1.71M
+falls/run, and the interp<->JIT boundary is ~40% of the profile), but the wall is
+less dire than first stated. M1 TARGET CONFIRMED: site1 `stencil-fall send`
+(675,599) is the largest single missed-opt fall (uncached/mismatched send target
+materializing + falling to interp instead of resolving + re-entering in JIT).
+site2 block-resume already chains 94%; site3 is negligible volume.
 
 ---
 

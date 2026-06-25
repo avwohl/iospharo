@@ -1895,6 +1895,41 @@ void Interpreter::dumpJITStats() {
     fprintf(stderr, "  stencil-fall: cached=%zu send=%zu j2j=%zu other=%zu\n",
             jitStencilFallSendCached_, jitStencilFallSend_,
             jitStencilFallJ2JCall_, jitStencilFallOther_);
+    {   // M0 (J2J chain-continuity project, docs/j2j-chain-continuity.md §5):
+        // self-contained per-site fall attribution for ANY run (measurement
+        // only -- no behavior change).  Maps the chain-loop fall sites:
+        //   site1 = stencil non-return (Interpreter.cpp:28043) -> stencil-fall split
+        //   site2 = block-frame-push prim (28171) -> primChain/primFall + histo
+        //   site3 = activateMethod frame-push (28269) -> activate chains/falls
+        size_t actTot  = jitJ2JActChains_ + jitJ2JActFalls_;
+        size_t primTot = jitChainPrimChains_ + jitChainPrimFalls_;
+        fprintf(stderr, "  [M0-ATTRIB] continuity=%.1f%% (actChain=%zu actFall=%zu)\n",
+                actTot ? 100.0 * jitJ2JActChains_ / actTot : 0.0,
+                jitJ2JActChains_, jitJ2JActFalls_);
+        fprintf(stderr, "  [M0-ATTRIB] site1 stencil-fall cached=%zu send=%zu j2j=%zu other=%zu"
+                " | site2 block-resume chains=%zu falls=%zu (%.1f%%)"
+                " | site3 activate chains=%zu falls=%zu\n",
+                jitStencilFallSendCached_, jitStencilFallSend_,
+                jitStencilFallJ2JCall_, jitStencilFallOther_,
+                jitChainPrimChains_, jitChainPrimFalls_,
+                primTot ? 100.0 * jitChainPrimChains_ / primTot : 0.0,
+                jitChainActivateChains_, jitChainActivateFalls_);
+        struct PF { int idx; size_t count; };
+        PF top[10] = {};
+        for (int i = 0; i < 600; i++) {
+            if (jitPrimFallHisto_[i] > 0)
+                for (int t = 0; t < 10; t++)
+                    if (jitPrimFallHisto_[i] > top[t].count) {
+                        for (int s = 9; s > t; s--) top[s] = top[s - 1];
+                        top[t] = {i, jitPrimFallHisto_[i]};
+                        break;
+                    }
+        }
+        fprintf(stderr, "  [M0-ATTRIB] site2 top prim-falls:");
+        for (int t = 0; t < 10 && top[t].count > 0; t++)
+            fprintf(stderr, " p%d=%zu", top[t].idx, top[t].count);
+        fprintf(stderr, "\n");
+    }
     // x86 cross-method inline-J2J admit: reached (IC hit) vs J2J_ENTRY_BIT set —
     // diagnoses the inner-send-bail-rate (reliable here vs the static-init-order-
     // fragile atexit dump).  Globals declared file-scope above; 0 on arm64.
