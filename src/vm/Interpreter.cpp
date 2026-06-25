@@ -28045,7 +28045,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // verify-clean (zero [CHAIN-RESEND-VERIFY]) before enabling the
                         // re-enter (PHARO_T1_CHAIN_RESEND, lands next).
                         if (state.exitReason == jit::ExitSend
-                                && GET_DEBUG_BOOL(PHARO_T1_CHAIN_RESEND_VERIFY)) {
+                                && (GET_DEBUG_BOOL(PHARO_T1_CHAIN_RESEND)
+                                    || GET_DEBUG_BOOL(PHARO_T1_CHAIN_RESEND_VERIFY))) {
                             Oop reSel;
                             if (state.icDataPtr) {
                                 uint64_t selBits = state.icDataPtr[18];
@@ -28081,32 +28082,51 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                     MethodCacheEntry* ce = probeCache(reSel, rc);
                                     reResolved = ce ? ce->method : lookupMethod(reSel, rc);
                                 }
-                                static int vN = 0;
-                                // (1) nil = DNU (OLD path / interp handles); anything
-                                // non-nil must be a standard CompiledMethod, else the
-                                // M1 resolver diverged from what interp would dispatch.
-                                if (!reResolved.isNil()
-                                        && !(reResolved.isObject() && reResolved.rawBits() >= 0x10000
-                                             && reResolved.asObjectPtr()->classIndex() == compiledMethodClassIndex_)) {
-                                    if (++vN <= 40)
-                                        fprintf(stderr, "[CHAIN-RESEND-VERIFY] non-method resolve "
-                                                "sel=0x%llx rcv=0x%llx caller=#%s\n",
-                                                (unsigned long long)reSel.rawBits(),
-                                                (unsigned long long)reRcvr.rawBits(),
-                                                memory_.selectorOf(state.method).c_str());
+                                bool reMethodOk = reResolved.isObject()
+                                    && reResolved.rawBits() >= 0x10000
+                                    && reResolved.asObjectPtr()->classIndex() == compiledMethodClassIndex_;
+
+                                // M1 ENABLE (PHARO_T1_CHAIN_RESEND): the callee's send-site
+                                // IC fell cold and is NOT warming naturally (site1 send is a
+                                // persistent ~664k/run).  Warm it here -- mirror the caller's
+                                // -send IC patch at 26387-26390 -- so the callee's NEXT
+                                // invocation hits ExitSendCached/J2J and chains instead of
+                                // re-falling cold.  No re-enter this iteration (still falls
+                                // through to the OLD path below); the win is in subsequent
+                                // invocations.  Non-super, real-CompiledMethod only.
+                                if (GET_DEBUG_BOOL(PHARO_T1_CHAIN_RESEND)
+                                        && reMethodOk && !reSuper && state.icDataPtr) {
+                                    pendingICPatch_ = state.icDataPtr;
+                                    pendingICSendArgCount_ = reArgs;
+                                    pendingICOwnerMethod_ = state.method;
+                                    patchJITICAfterSend(reResolved, reRcvr, reSel);
                                 }
-                                // (2) the callee resume ip must lie in the callee's bytecode.
-                                if (state.method.isObject() && state.ip) {
-                                    ObjectHeader* mO = state.method.asObjectPtr();
-                                    size_t nL = memory_.numLiteralsOf(state.method);
-                                    uint8_t* bcS = mO->bytes() + (1 + nL) * 8;
-                                    uint8_t* bcE = mO->bytes() + mO->byteSize();
-                                    if (state.ip < bcS || state.ip >= bcE) {
+
+                                if (GET_DEBUG_BOOL(PHARO_T1_CHAIN_RESEND_VERIFY)) {
+                                    static int vN = 0;
+                                    // (1) nil = DNU (OLD path / interp handles); non-nil must
+                                    // be a standard CompiledMethod else the M1 resolver diverged.
+                                    if (!reResolved.isNil() && !reMethodOk) {
                                         if (++vN <= 40)
-                                            fprintf(stderr, "[CHAIN-RESEND-VERIFY] ip out of callee "
-                                                    "range ip=%p [%p,%p) m=#%s\n", (void*)state.ip,
-                                                    (void*)bcS, (void*)bcE,
+                                            fprintf(stderr, "[CHAIN-RESEND-VERIFY] non-method resolve "
+                                                    "sel=0x%llx rcv=0x%llx caller=#%s\n",
+                                                    (unsigned long long)reSel.rawBits(),
+                                                    (unsigned long long)reRcvr.rawBits(),
                                                     memory_.selectorOf(state.method).c_str());
+                                    }
+                                    // (2) the callee resume ip must lie in the callee's bytecode.
+                                    if (state.method.isObject() && state.ip) {
+                                        ObjectHeader* mO = state.method.asObjectPtr();
+                                        size_t nL = memory_.numLiteralsOf(state.method);
+                                        uint8_t* bcS = mO->bytes() + (1 + nL) * 8;
+                                        uint8_t* bcE = mO->bytes() + mO->byteSize();
+                                        if (state.ip < bcS || state.ip >= bcE) {
+                                            if (++vN <= 40)
+                                                fprintf(stderr, "[CHAIN-RESEND-VERIFY] ip out of callee "
+                                                        "range ip=%p [%p,%p) m=#%s\n", (void*)state.ip,
+                                                        (void*)bcS, (void*)bcE,
+                                                        memory_.selectorOf(state.method).c_str());
+                                        }
                                     }
                                 }
                             }
