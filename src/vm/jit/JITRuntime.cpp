@@ -3159,6 +3159,10 @@ size_t JITRuntime::drainInitialCompileQueue() {
                     (unsigned long long)method.rawBits());
             }
         }
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_COMPILE_LOG), 0) && interp_) {
+            fprintf(stderr, "[COMPILE] %s\n",
+                    interp_->memory().selectorOf(method).c_str());
+        }
         if (!compiler_->compile(method)) {
             // Compile bailed (unsupported bytecode/prim, etc.) — record so
             // queueInitialCompile won't re-submit it every drain.  See the

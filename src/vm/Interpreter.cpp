@@ -11243,7 +11243,17 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             auto gateIt = sistaGateCache_.find(method.rawBits());
             if (gateIt != sistaGateCache_.end()
                 && (gateIt->second == kSistaGateRejected
-                    || gateIt->second == kSistaGateBlacklisted)) {
+                    || gateIt->second == kSistaGateBlacklisted
+                    || (!GET_DEBUG_BOOL(PHARO_SISTA_RECOMPILE_ADMITTED)
+                        && gateIt->second == kSistaGateAdmitted))) {
+                // FIX 2026-06-25: kSistaGateAdmitted was NOT skipped here, so
+                // every warm method Sista can handle re-ran extractInlineHints
+                // + sista->compile + makeExecutable on EVERY entry (measured:
+                // 942k sista-compiles of only 8249 distinct methods in an 8000-
+                // evaluate: compiler run, top method recompiled 390k times).
+                // Skipping admitted methods kills that recompile churn (~30% of
+                // the compiler profile).  PHARO_SISTA_RECOMPILE_ADMITTED=1
+                // restores the old per-entry-recompile behavior for A/B.
                 goto past_sista_block;
             }
         }
