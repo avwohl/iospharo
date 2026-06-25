@@ -28035,6 +28035,83 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             materializedFrameCount_++;
                         }
 
+                        // M1 (J2J chain-continuity, docs/j2j-m1-guide.md): on this
+                        // chain-loop ExitSend fall the inline-J2J callee bailed with
+                        // its OWN uncached send.  PHARO_T1_CHAIN_RESEND_VERIFY resolves
+                        // that send (mirroring case-ExitSend 26309-26373, but receiver
+                        // from state.sp -- the interp globals are NOT synced until
+                        // 28066) and sanity-checks the result.  NO re-enter, NO side
+                        // effects -> falls through to the OLD path below.  Run
+                        // verify-clean (zero [CHAIN-RESEND-VERIFY]) before enabling the
+                        // re-enter (PHARO_T1_CHAIN_RESEND, lands next).
+                        if (state.exitReason == jit::ExitSend
+                                && GET_DEBUG_BOOL(PHARO_T1_CHAIN_RESEND_VERIFY)) {
+                            Oop reSel;
+                            if (state.icDataPtr) {
+                                uint64_t selBits = state.icDataPtr[18];
+                                if (selBits == 0) {
+                                    if (auto* jm = jitRuntime_.methodMap().lookup(state.method.rawBits())) {
+                                        if (jm->numICEntries > 0) {
+                                            uint8_t* icStart = jm->icZoneStart();
+                                            ptrdiff_t off = reinterpret_cast<uint8_t*>(state.icDataPtr) - icStart;
+                                            if (off >= 0 && (off % jit::IC_BYTES_PER_SITE) == 0) {
+                                                uint32_t si = static_cast<uint32_t>(off / jit::IC_BYTES_PER_SITE);
+                                                if (si < jm->numICEntries)
+                                                    if (uint64_t* sba = jm->selBitsArray()) selBits = sba[si];
+                                            }
+                                        }
+                                    }
+                                }
+                                reSel = Oop::fromRawBits(selBits);
+                            } else {
+                                reSel = state.cachedTarget;
+                            }
+                            if (reSel.isObject() && reSel.rawBits() >= 0x10000) {
+                                int reArgs = state.sendArgCount;
+                                Oop reRcvr = state.sp[-(reArgs + 1)];
+                                bool reSuper = (state.ip && *state.ip == 0xEB);
+                                Oop reResolved;
+                                if (reSuper) {
+                                    Oop mc = methodClassOf(state.method);
+                                    Oop sc = (mc.isNil() || !mc.isObject())
+                                        ? superclassOf(memory_.classOf(reRcvr)) : superclassOf(mc);
+                                    reResolved = lookupMethod(reSel, sc);
+                                } else {
+                                    Oop rc = memory_.classOf(reRcvr);
+                                    MethodCacheEntry* ce = probeCache(reSel, rc);
+                                    reResolved = ce ? ce->method : lookupMethod(reSel, rc);
+                                }
+                                static int vN = 0;
+                                // (1) nil = DNU (OLD path / interp handles); anything
+                                // non-nil must be a standard CompiledMethod, else the
+                                // M1 resolver diverged from what interp would dispatch.
+                                if (!reResolved.isNil()
+                                        && !(reResolved.isObject() && reResolved.rawBits() >= 0x10000
+                                             && reResolved.asObjectPtr()->classIndex() == compiledMethodClassIndex_)) {
+                                    if (++vN <= 40)
+                                        fprintf(stderr, "[CHAIN-RESEND-VERIFY] non-method resolve "
+                                                "sel=0x%llx rcv=0x%llx caller=#%s\n",
+                                                (unsigned long long)reSel.rawBits(),
+                                                (unsigned long long)reRcvr.rawBits(),
+                                                memory_.selectorOf(state.method).c_str());
+                                }
+                                // (2) the callee resume ip must lie in the callee's bytecode.
+                                if (state.method.isObject() && state.ip) {
+                                    ObjectHeader* mO = state.method.asObjectPtr();
+                                    size_t nL = memory_.numLiteralsOf(state.method);
+                                    uint8_t* bcS = mO->bytes() + (1 + nL) * 8;
+                                    uint8_t* bcE = mO->bytes() + mO->byteSize();
+                                    if (state.ip < bcS || state.ip >= bcE) {
+                                        if (++vN <= 40)
+                                            fprintf(stderr, "[CHAIN-RESEND-VERIFY] ip out of callee "
+                                                    "range ip=%p [%p,%p) m=#%s\n", (void*)state.ip,
+                                                    (void*)bcS, (void*)bcE,
+                                                    memory_.selectorOf(state.method).c_str());
+                                    }
+                                }
+                            }
+                        }
+
                         // Materialize any J2J frames the callee accumulated
                         if (state.j2jDepth > 0) {
                             J2JSave* _stateSaves4 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
