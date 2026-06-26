@@ -30,9 +30,13 @@ if [ -n "${PHARO_DISABLE_LTO:-}" ]; then
     EXTRA_FLAGS+=(-DPHARO_DISABLE_LTO=ON)
 fi
 
+# Crypto ON: native SHA1/MD5/DSA (DSAPrims) + a real OpenSSL SqueakSSL backend
+# (sqGenericSSL.c, linked against system libssl/libcrypto — needs libssl-dev).
+# Was OFF, which silently disabled native SHA1 and left HTTPS as ZdcPluginMissing.
+# Override with PHARO_WITH_CRYPTO=OFF in the environment for a crypto-less build.
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
-    -DPHARO_WITH_CRYPTO=OFF \
+    -DPHARO_WITH_CRYPTO="${PHARO_WITH_CRYPTO:-ON}" \
     "${EXTRA_FLAGS[@]}"
 
 cmake --build . -j"$(nproc)"

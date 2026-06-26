@@ -147,12 +147,11 @@ if(PHARO_WITH_CRYPTO)
         src/vm/plugins/SqueakSSL.c
     )
     # SSL platform backend: sqMacSSL (Darwin, Security.framework) on Apple;
-    # a portable no-op stub elsewhere (Linux) so SqueakSSL.c LINKS with crypto
-    # ON — which is what makes the DSAPlugin's native SHA1/MD5/DSA primitives
-    # available.  Without a backend the sqAcceptSSL/... symbols are undefined
-    # and the link fails (the reason Linux boxes were forced to crypto-OFF,
-    # which silently disabled native SHA1 — see docs/sunit-3way-comparison.md).
-    # A real OpenSSL backend can replace sqGenericSSL.c later.
+    # sqGenericSSL.c — a real OpenSSL backend — on Linux (linked against system
+    # libssl/libcrypto in the Linux section below; needs libssl-dev).  Enabling
+    # crypto also brings in the DSAPlugin's native SHA1/MD5/DSA primitives.
+    # (sqGenericSSL.c was a no-op stub until 2026-06-26; HTTPS now works for
+    # TLS 1.2 — see docs/sunit-3way-comparison.md and the SqueakSSL notes.)
     if(APPLE)
         list(APPEND PLUGIN_C_SOURCES src/vm/plugins/sqMacSSL.c)
     else()
@@ -510,6 +509,14 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
     # Linux requires explicit pthread + dl for dlopen / mutex / etc.
     target_link_libraries(PharoVMCore pthread dl m)
+    # Linux SSL/TLS backend: real OpenSSL (sqGenericSSL.c). Needs libssl-dev.
+    if(PHARO_WITH_CRYPTO)
+        pkg_check_modules(OPENSSL REQUIRED openssl)
+        target_include_directories(PharoVMCore PUBLIC ${OPENSSL_INCLUDE_DIRS})
+        target_link_libraries(PharoVMCore ${OPENSSL_LIBRARIES})
+        set_source_files_properties(src/vm/plugins/sqGenericSSL.c PROPERTIES COMPILE_FLAGS "-w")
+        message(STATUS "Using OpenSSL from pkg-config: ${OPENSSL_LIBRARIES}")
+    endif()
 endif()
 
 # Platform-specific frameworks
