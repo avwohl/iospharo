@@ -31,9 +31,14 @@ all 14 gave `jit-caused=0` (identical failures with and without the JIT).
    returned `SQSSL_GENERIC_ERROR`). Fix: a real OpenSSL mem-BIO backend in
    `sqGenericSSL.c` + crypto ON by default + link system libssl/libcrypto +
    `libssl-dev` in bootstrap. HTTPS now works (example.org, google 81 KB, github
-   API, httpbin) with the x86 JIT off **and** on. Capped at TLS 1.2 for now (the
-   mem-BIO glue doesn't yet drive TLS 1.3 post-handshake tickets — a follow-up).
-   This unblocks the HTTPS packages: `evref-bl-*-pharo-api`, `ba-st-stargate`,
+   API, httpbin, raw.githubusercontent) over **TLS 1.2 and TLS 1.3**, x86 JIT off
+   **and** on. The TLS 1.3 fix (commit after f26d45a2): on handshake completion
+   the backend leaves the client Finished in the write BIO (returns `SQSSL_OK`
+   without draining) so the image flushes it *with* the request — required because
+   Cloudflare/Google send `NewSessionTicket`+`close_notify` right after the
+   handshake and close unless the request is pipelined with the Finished (matches
+   upstream `sqUnixOpenSSL.inc`). This unblocks the HTTPS packages:
+   `evref-bl-*-pharo-api`, `ba-st-stargate`,
    `smalltalkweb-myprecious`, `newapplesho-google-cloud`, `juliendelplanque-jrpc`,
    network half of `svenvc-p3`.
 

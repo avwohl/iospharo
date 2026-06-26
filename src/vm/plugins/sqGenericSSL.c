@@ -68,12 +68,6 @@ sqInt sqCreateSSL(void) {
     ssl->ctx = SSL_CTX_new(TLS_method());
     if (!ssl->ctx) { free(ssl); return 0; }
     SSL_CTX_set_options(ssl->ctx, SSL_OP_NO_SSLv3 | SSL_OP_ALL);
-    /* Cap at TLS 1.2 for now: this mem-BIO backend doesn't yet drive TLS 1.3's
-       post-handshake messages (NewSessionTicket arrives after the handshake and
-       the image's connect/decrypt split mishandles it). TLS 1.2 with modern AEAD
-       ciphers is universally supported and fully secure; lifting the cap is a
-       follow-up once the post-handshake read path is correct. */
-    SSL_CTX_set_max_proto_version(ssl->ctx, TLS1_2_VERSION);
     SSL_CTX_set_default_verify_paths(ssl->ctx);     /* system CA store */
     ssl->ssl = SSL_new(ssl->ctx);
     if (!ssl->ssl) { SSL_CTX_free(ssl->ctx); free(ssl); return 0; }
@@ -116,16 +110,11 @@ sqInt sqConnectSSL(sqInt handle, char *srcBuf, sqInt srcLen, char *dstBuf, sqInt
            (ssl && ssl->serverName) ? ssl->serverName : "(none)");
     if (!ssl) return SQSSL_INVALID_STATE;
     if (ssl->state == SQSSL_CONNECTED) {
-        /* Handshake done, but the peer sent more right after it (TLS 1.3
-           NewSessionTicket) and the image fed it to connect once more. Process it
-           now (SSL_read drives post-handshake handling) so it doesn't sit unread
-           in the BIO and confuse the later app-data read. No app data is expected
-           yet, so a WANT_READ here is the normal, successful outcome. */
+        /* Already connected; extra bytes are post-handshake data (a TLS 1.3
+           NewSessionTicket). Just buffer them for the next SSL_read (decrypt) --
+           do NOT SSL_read here, so app-data framing stays intact. */
         if (srcLen > 0) BIO_write(ssl->bioIn, srcBuf, (int)srcLen);
-        char tmp[16384];
-        int r = SSL_read(ssl->ssl, tmp, sizeof tmp);
-        SSLDBG("connect: post-handshake SSL_read=%d err=%d (fed %ld)\n",
-               r, (r <= 0) ? SSL_get_error(ssl->ssl, r) : 0, (long)srcLen);
+        SSLDBG("connect: %ld post-handshake bytes buffered (CONNECTED)\n", (long)srcLen);
         return SQSSL_OK;
     }
     if (ssl->state != SQSSL_UNUSED && ssl->state != SQSSL_CONNECTING)
@@ -155,11 +144,24 @@ sqInt sqConnectSSL(sqInt handle, char *srcBuf, sqInt srcLen, char *dstBuf, sqInt
         SSLDBG("connect: WANT more, returning out=%ld\n", (long)out);
         return (out == 0) ? SQSSL_NEED_MORE_DATA : out;
     }
+    /* rc == 1: handshake complete.  Critically, do NOT drain the final handshake
+       output here -- leave the client Finished sitting in bioOut.  The image's
+       connect loop (ZdcSecureSocketStream>>connect) stops as soon as we return 0,
+       so it does NOT do another socket read; the next sqEncryptSSL (the HTTP
+       request) then appends to bioOut and flushes the Finished + request TOGETHER,
+       so the peer receives them pipelined.  This matches the upstream SqueakSSL
+       OpenSSL backend (sqUnixOpenSSL.inc) and is REQUIRED for TLS 1.3: Cloudflare/
+       Google send a NewSessionTicket + close_notify immediately after the
+       handshake and close the connection unless the request rides in with the
+       Finished.  Returning the Finished as separate output (what we did before)
+       made the image flush it, read the close_notify, then send the request too
+       late -> "connect failed" / ZnUnknownHttpVersion.  (TLS 1.2 leaves nothing
+       pending here, so this is a no-op for it.) */
     ssl->state = SQSSL_CONNECTED;
-    long v = SSL_get_verify_result(ssl->ssl);
-    ssl->certFlags = (v == X509_V_OK) ? 0 : SQSSL_OTHER_ISSUE;
-    SSLDBG("connect: CONNECTED verify=%ld\n", v);
-    return copyOut(ssl, dstBuf, dstLen);
+    ssl->certFlags = (SSL_get_verify_result(ssl->ssl) == X509_V_OK) ? 0 : SQSSL_OTHER_ISSUE;
+    SSLDBG("connect: CONNECTED (left %d bytes in bioOut to pipeline with request)\n",
+           (int)BIO_ctrl_pending(ssl->bioOut));
+    return SQSSL_OK;
 }
 
 sqInt sqAcceptSSL(sqInt handle, char *srcBuf, sqInt srcLen, char *dstBuf, sqInt dstLen) {
