@@ -23,18 +23,19 @@ all 14 gave `jit-caused=0` (identical failures with and without the JIT).
 
 ## What the divergences actually are (all VM-core, none JIT)
 
-1. **SSL/TLS backend is a no-op stub** — the biggest cluster. `src/vm/plugins/
-   sqGenericSSL.c` has every function (`sqCreateSSL`/`sqConnectSSL`/`sqEncryptSSL`
-   /…) just `return SQSSL_GENERIC_ERROR;`, and the binary doesn't link OpenSSL
-   (despite `libssl.so.3` on the box). The SqueakSSL *plugin* is fully wired
-   (`PHARO_WITH_CRYPTO=ON`, primitives registered), but the backend does nothing,
-   so any HTTPS handshake fails → the image raises `ZdcPluginMissing`. (A SIGSEGV
-   appears only at VM *shutdown* after an SSL attempt — secondary, from teardown
-   touching the dead session.) Affected: `evref-bl-*-pharo-api`, `ba-st-stargate`,
+1. **SSL/TLS — FIXED (commit f26d45a2).** The biggest cluster. Root cause was
+   TWO build gates, neither a JIT bug: `build-linux.sh` hardcoded
+   `PHARO_WITH_CRYPTO=OFF` (so SqueakSSL was never compiled/registered → HTTPS =
+   `ZdcPluginMissing`, and native SHA1/MD5/DSA were off too), and the non-Apple
+   backend `src/vm/plugins/sqGenericSSL.c` was a no-op stub (every `sq*SSL`
+   returned `SQSSL_GENERIC_ERROR`). Fix: a real OpenSSL mem-BIO backend in
+   `sqGenericSSL.c` + crypto ON by default + link system libssl/libcrypto +
+   `libssl-dev` in bootstrap. HTTPS now works (example.org, google 81 KB, github
+   API, httpbin) with the x86 JIT off **and** on. Capped at TLS 1.2 for now (the
+   mem-BIO glue doesn't yet drive TLS 1.3 post-handshake tickets — a follow-up).
+   This unblocks the HTTPS packages: `evref-bl-*-pharo-api`, `ba-st-stargate`,
    `smalltalkweb-myprecious`, `newapplesho-google-cloud`, `juliendelplanque-jrpc`,
-   network half of `svenvc-p3`. **Fix:** implement a real OpenSSL backend in
-   `sqGenericSSL.c` (`SSL_CTX_new`/`SSL_new`/`SSL_connect`/`SSL_read`/`SSL_write`,
-   mem-BIO model) + link `-lssl -lcrypto`; the scaffolding is all in place.
+   network half of `svenvc-p3`.
 
 2. **SQLite3 FFI module not loading** — `Error: Module not found.` Affected:
    `pharo-rdbms-pharo-sqlite3`, `rko281-restoreforpharo` (the 2356 count is one
