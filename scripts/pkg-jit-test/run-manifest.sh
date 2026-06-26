@@ -25,6 +25,14 @@ OUT="${OUT:-/tmp/pkg200}"; mkdir -p "$OUT"
 SUMMARY="$OUT/summary.tsv"
 [ -f "$SUMMARY" ] || printf 'label\tload\tcog_RESULT\tjit_RESULT\tjit_only_fails\n' > "$SUMMARY"
 
+# Pharo finds its .sources next to the image; copy the base image's .sources into
+# OUT once (a REAL file, not a symlink — the source map can be flaky over one) so
+# every per-package image copy resolves it.  Same for the shared base .changes.
+base_dir="$(cd "$(dirname "$BASE_IMAGE")" && pwd)"
+src_file="$(ls "$base_dir"/*.sources 2>/dev/null | head -1)"
+if [ -n "$src_file" ] && [ ! -f "$OUT/$(basename "$src_file")" ]; then
+    cp -f "$src_file" "$OUT/"
+fi
 base_changes="${BASE_IMAGE%.image}.changes"
 row=0
 # columns: label owner repo branch baseline test_path category risk p13 n_tests stars test_prefix jit_value risk_reason load_expr
@@ -52,7 +60,7 @@ tail -n +2 "$MANIFEST" | while IFS=$'\t' read -r label owner repo branch baselin
 
     prelude=""; [ "$test_path" = gui ] && prelude="$FAKE_GUI"
     PHARO="$PHARO" CUSTOM_VM="$CUSTOM_VM" OUT="$OUT" PRELUDE="$prelude" \
-        "$HERE/run-pkg-jit-test.sh" "$img" "$label" "$test_prefix" > "$OUT/$label.test.log" 2>&1 || true
+        bash "$HERE/run-pkg-jit-test.sh" "$img" "$label" "$test_prefix" > "$OUT/$label.test.log" 2>&1 || true
     cog=$(grep -aE '^RESULT' "$OUT/${label}_cog.log" 2>/dev/null | tail -1)
     jit=$(grep -aE '^RESULT' "$OUT/${label}_jit.log" 2>/dev/null | grep -avE '\[JIT\]' | tail -1)
     jitonly=$(comm -13 "$OUT/${label}_cog.fails" "$OUT/${label}_jit.fails" 2>/dev/null | wc -l | tr -d ' ')
