@@ -29,8 +29,10 @@ IMAGE="${1:?image path}"
 LABEL="${2:?label}"
 PREFIXES="${3:?comma-separated package-name prefixes}"
 
-# stage the external prefix file (the fairness contract: prefixes never appear
-# as literals in the runner, so both VMs select the same classes)
+# Pass the prefixes to the runner via the env (per-process, so parallel workers
+# don't race) AND the legacy /tmp file.  Either way they stay OUT of the runner's
+# literal pool (the fairness contract), so both VMs select the same classes.
+export PKG_PREFIXES="$PREFIXES"
 printf '%s\n' "${PREFIXES//,/$'\n'}" > /tmp/pkg_prefixes.txt
 
 # Optional PRELUDE .st fileIn'd before the runner on BOTH VMs (same on each, so

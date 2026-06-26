@@ -10,13 +10,22 @@
  script, so neither VM's literal pool biases reflective senders — same contract
  as the kernel-suite runners."
 
-| log prefixes classes p f e to perTimeout |
+| log prefixes classes p f e to perTimeout envp |
 log := Stdio stdout.
 perTimeout := 50 seconds.
-prefixes := ('/tmp/pkg_prefixes.txt' asFileReference exists)
-  ifTrue: [ ('/tmp/pkg_prefixes.txt' asFileReference contents lines
-              collect: [:s | s trimBoth]) reject: [:s | s isEmpty] ]
-  ifFalse: [ #() ].
+"Prefixes come from the PKG_PREFIXES env var (comma-separated) when set, else the
+ /tmp/pkg_prefixes.txt file.  The env path lets parallel workers each pass their
+ own prefixes without racing on the shared file.  Either way the prefixes live
+ OUTSIDE this script (the fairness contract), so neither VM's literal pool is
+ biased."
+envp := [ Smalltalk os environment at: 'PKG_PREFIXES' ifAbsent: [ '' ] ]
+          on: Error do: [:e | '' ].
+prefixes := (envp notNil and: [ envp notEmpty ])
+  ifTrue: [ ((envp substrings: ',') collect: [:s | s trimBoth]) reject: [:s | s isEmpty] ]
+  ifFalse: [ ('/tmp/pkg_prefixes.txt' asFileReference exists)
+      ifTrue: [ ('/tmp/pkg_prefixes.txt' asFileReference contents lines
+                  collect: [:s | s trimBoth]) reject: [:s | s isEmpty] ]
+      ifFalse: [ #() ] ].
 log nextPutAll: 'PREFIXES '; nextPutAll: prefixes printString; lf; flush.
 
 classes := (TestCase allSubclasses select: [:c |
