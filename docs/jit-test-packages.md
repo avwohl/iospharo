@@ -9,6 +9,13 @@ additional packages to load and test the JIT against, plus the **real
 correctness and speed results** of doing so — which surfaced multiple JIT bugs
 the kernel suite missed.
 
+> **Scaled up:** this doc's hand-triaged ~10 packages are now a **200-package
+> manifest** — see **[jit-test-packages-200.md](jit-test-packages-200.md)** and
+> `scripts/pkg-jit-test/packages-200.tsv` (maintained, test-bearing Pharo
+> packages mined from soogle; 173 headless-SUnit + 27 visual). Drive them with
+> `scripts/pkg-jit-test/run-manifest.sh`. The notes below remain the deep-dive on
+> the first batch and the bugs it found.
+
 ## How packages are loaded and tested
 
 Our custom VM cannot do HTTPS (its SSL backend is a no-op stub), so it cannot run

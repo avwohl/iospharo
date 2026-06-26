@@ -1,0 +1,529 @@
+owner	repo	branch	stars	pushed	size_kb	license	baseline	srcdir	n_tests	loadable	reason	topics	desc
+feenkcom	gtoolkit	main	1495	2026-04-01	56196	MIT	GToolkit	src	0	0	image/vm/meta,no-tests	["glamorous-toolkit", "ide", "knowledge-management", "moldable-development", "notebook", "pharo", "smalltalk", "visualization"]	Glamorous Toolkit is the Moldable Development Environment. It empowers you to make systems explainable through contextual micro tools.
+pharo-project	pharo	Pharo14	1437	2026-03-31	123802	NOASSERTION	Pharo	src	1757	0	image/vm/meta	["bootstrap", "language", "live-programming", "mit", "object-oriented-programming", "pharo", "reflective", "tools"]	Pharo is a dynamic reflective pure object-oriented language supporting live programming inspired by Smalltalk.
+PolyMathOrg	PolyMath	master	173	2026-03-27	5034	MIT	PolyMath	src	80	1		["mathematics", "numerical-methods", "pharo", "pharo-smalltalk", "smalltalk"]	Scientific Computing with Pharo
+moosetechnology	Moose	development	155	2026-01-30	65452	MIT	Moose	src	0	0	image/vm/meta,no-tests	["data-analysis", "moose", "pharo", "smalltalk", "software-analysis"]	MOOSE - Platform for software and data analysis. 
+pavel-krivanek	PharoChipDesigner	master	150	2025-11-21	3712	MIT	ChipDesigner	src	12	0	image/vm/meta	["pharo"]	A little chip design game inspired by KOHCTPYKTOP: Engineer of the People by Zachtronics
+svenvc	ston	master	143	2026-02-23	603	MIT			0	0	no-baseline,no-tests	["data-exchange", "data-format", "pharo", "serialization", "smalltalk"]	STON - Smalltalk Object Notation - A lightweight text-based, human-readable data interchange format for class-based object-oriented languages like Smalltalk.
+pharo-vcs	iceberg	Pharo14	138	2026-03-26	10433	MIT	Iceberg		107	1		["git", "pharo", "vcs"]	Iceberg is the main toolset for handling VCS in Pharo.
+pharo-project	pharo-vm	pharo-10	128	2026-03-26	262288	NOASSERTION	VMMaker	smalltalksrc	110	0	image/vm/meta	["pharo"]	This is the VM used by Pharo
+pharo-project	pharo-launcher	dev	116	2026-04-01	10764	MIT	PharoLauncher	src	93	0	image/vm/meta	["pharo"]	Lets you manage your pharo images and download new ones
+svenvc	zinc	master	106	2026-02-27	9074	MIT			0	0	no-baseline,no-tests	["client", "http", "https", "pharo", "server", "smalltalk"]	Zinc HTTP Components is an open-source Smalltalk framework to deal with the HTTP networking protocol.
+zeroflag	Teapot	master	103	2026-03-13	551	MIT	Teapot	source	24	1		["http", "pharo", "pharo-smalltalk", "smalltalk", "teapot", "webframework", "webserver"]	Teapot micro web framework for Pharo Smalltalk
+ErikOnBike	CodeParadise	master	96	2026-04-01	3004	MIT	CodeParadise	repository	6	1		["mobile", "mvp-pattern", "no-javascript", "nodejs", "pharo", "smalltalk", "webapplication", "webcomponents"]	Framework for developing web applications and Node.js applications using Smalltalk
+pharo-graphics	Bloc	dev	92	2026-03-25	18972	MIT	Bloc	src	138	1		["2d", "animations", "bloc", "effects", "graphics", "pharo", "smalltalk", "ui"]	Low-level UI infrastructure & framework for Pharo
+svenvc	P3	master	80	2025-11-29	346	MIT	P3		9	1		["database-driver", "glorp", "pharo", "postgresql", "smalltalk"]	A lean and mean PostgreSQL client for Pharo
+pharo-spec	Spec	Pharo14	66	2026-03-28	7245	MIT	Spec2	src	243	1		["gui", "pharo", "smalltalk", "spec"]	Spec is a framework in Pharo for describing user interfaces.
+ApptiveGrid	Soil	main	58	2026-04-01	2460	MIT	Soil	src	31	1		["database", "oop", "pharo"]	An object oriented database that is easy to use and fun to play with
+pillar-markup	pillar	dev	56	2026-03-25	11558	MIT	Pillar	src	168	1		["markup", "markup-language", "pharo", "pillar"]	Markup syntax and associated tools to write and generate documentation, books and slides
+KendrickOrg	kendrick	master	52	2026-03-19	14546	MIT	Kendrick	src	37	1		["dsl", "epidemiology", "infectious-diseases", "mathematical-modelling", "model-driven-engineering", "pharo", "pharo-smalltalk", "smalltalk"]	Domain-Specific Modeling for Epidemiology
+ba-st	Willow	release-candidate	51	2026-02-11	4659	MIT	Willow	source	102	1		["ajax", "html5", "javascript", "jquery", "mit-license", "pharo", "seaside", "web", "web-components"]	The Web Interaction Library that eases the burden of creating AJAX-based web applications
+svenvc	NeoJSON	master	45	2025-09-11	260	MIT	NeoJSON	repository	11	1		["json", "mapping", "pharo", "smalltalk"]	NeoJSON is an elegant and efficient standalone Smalltalk framework to read and write JSON converting to or from Smalltalk objects.
+OpenSmock	Pyramid	main	44	2026-04-01	4778	MIT	Pyramid	src	118	1		["bloc", "graphic-editor", "gui", "gui-builder", "hmi", "pharo", "pharo-smalltalk", "pyramid", "smalltalk", "toplo", "ui", "ui-builder", "ui-editor", "ux", "wysiwyg", "wysiwyg-editor"]	Pyramid is a Graphical User-Interface (GUI) builder and editor for Bloc and Toplo.
+pillar-markup	Microdown	dev	43	2026-03-31	6184	NOASSERTION	Microdown	src	160	1		["document", "markdown", "parser", "pharo"]	Microdown is a cleaned and simpler markdown but with more powerful features such as extensions.
+newapplesho	aws-sdk-smalltalk	main	38	2026-03-30	337	MIT	AWS	src	6	1		["aws", "cloudfront", "dynamodb", "elastic-transcoder", "lambda", "pharo", "pharo-smalltalk", "s3", "smalltalk", "sns", "sts"]	AWS SDK for Smalltalk
+pharo-contributions	OSSubprocess	master	37	2025-12-19	1093	MIT	OSSubprocess	repository	8	1		["pharo"]	Forking Operating System Processes from within Pharo Language
+svenvc	NeoConsole	master	36	2025-09-12	133	MIT	NeoConsole	src	2	1		["command-line", "headless", "pharo", "repl", "smalltalk"]	NeoConsole offers a command line (REPL) interface to a Pharo image, as well as other tools.
+svenvc	NeoCSV	master	36	2025-09-11	194	MIT	NeoCSV	repository	5	1		["csv", "data-interchange", "mapping", "pharo", "smalltalk"]	NeoCSV is an elegant and efficient standalone Smalltalk framework to read and write CSV converting to or from Smalltalk objects.
+ba-st	Stargate	release-candidate	35	2026-02-26	992	MIT	Stargate	source	75	1		["api", "pharo", "rest", "rest-api", "smalltalk"]	A library supporting the creation of HTTP based RESTful APIs. 
+badetitou	Pharo-LanguageServer	v5	35	2026-03-03	407	GPL-3.0	PharoLanguageServer	src	8	1		["language-server-protocol", "pharo"]	A Language Server Protocol implementation in Pharo
+pharo-nosql	voyage	master	35	2025-10-10	1095	MIT			0	0	no-baseline,no-tests	["arangodb", "mongodb", "nosql", "persistence", "pharo"]	Voyage is an object persistence abstraction layer for Pharo.
+rko281	ReStoreForPharo	main	34	2026-03-27	1363	MIT	ReStore		131	1		["pharo"]	Relational database persistence for Pharo objects
+OpenSmock	Molecule	main	33	2026-02-19	1176	MIT	Molecule	src	30	1		["architecture", "component", "components", "connexion", "corba", "events", "framework", "lightweigth", "lwccm", "model", "molecule", "open-smock", "parameters", "pharo", "pharo-smalltalk", "services", "smalltalk", "smock"]	Molecule is a Pharo component framework.
+feenkcom	sparta	main	33	2026-03-26	4381	MIT	Sparta	src	22	1		["pharo", "vector-graphics"]	Sparta is a canvas on top of Skia.
+cormas	cormas	master	33	2026-02-25	49387	MIT	Cormas	src	24	1		["abm", "agent-based-modeling", "common-pool-ressources", "complex-systems", "multi-agent", "multi-agent-simulation", "pharo", "simulation-framework", "smalltalk"]	CORMAS (COmmon pool Ressources and Multi-Agent Simulations)
+j-brant	SmaCC	master	30	2026-03-26	11713	MIT	SmaCC	src	11	1		["parser", "parser-generator", "pharo", "smalltalk"]	
+theseion	Fuel	master	29	2025-12-03	14732	MIT			0	0	no-baseline,no-tests	["pharo", "serializer", "smalltalk", "squeak"]	Fuel, the Smalltalk object serializer
+pharo-ai	graph-algorithms	master	27	2026-03-20	374	MIT	AIGraphAlgorithms	src	35	1		["graph", "graph-algorithms", "pharo", "smalltalk"]	A graph algorithms library implemented in Pharo
+pharo-rdbms	glorp	master	27	2025-07-10	2644	MIT	Glorp	src	141	1		["database", "orm", "pharo"]	Generic Lightweight Object Relational Persistence
+pharo-graphics	Roassal	Pharo14	27	2026-03-18	48491	MIT	Roassal	src	87	1		["pharo", "visualization"]	The Roassal Visualization Engine
+seandenigris	Dynabook	master	26	2026-03-20	325		Dynabook	src	0	0	no-tests	["dynabook", "gtoolkit", "pharo", "smalltalk"]	
+pharo-spec	NewTools	Pharo14	25	2026-03-27	5508		NewTools	src	195	1		["pharo"]	All development tools for Pharo, developed with Spec
+pharo-llm	chatpharo	main	25	2026-04-01	3119	MIT	AIChatPharo	src	91	1		["pharo", "pharo-llm"]	ChatPharo is an AI Assistant inside Pharo.
+pharo-rdbms	Pharo-SQLite3	master	24	2025-07-10	4042	MIT	SQLite3	src	9	1		["pharo", "sqlite3"]	Community-owned official SQLite3 binding for Pharo
+pharo-contributions	mutalk	master	24	2026-02-24	1015		MuTalk	src	95	1		["pharo"]	Mutation Testing in Pharo Smalltalk
+ba-st	Buoy	release-candidate	23	2026-03-16	783	MIT	Buoy	source	46	1		["assertion-library", "mit-license", "optional", "percentage", "percentage-calculations", "pharo"]	A complement to Pharo & GS64 adding useful extensions
+lucretiomsp	Coypu	master	22	2026-03-12	1129		Coypu	src	14	1		[]	Package of convenient methods and classes for Pharo designed for live coding performances using Kyma or other musica languages by sending OSC messages in an eco
+jecisc	Chanel	master	22	2026-01-22	531	GPL-3.0	Chanel	src	27	1		["code-cleaner", "code-cleaning", "code-smells", "lint", "pharo", "smalltalk"]	I am a code cleaner for Pharo Smalltalk
+estebanlm	themes	main	21	2026-01-07	897	MIT	Themes	src	0	0	no-tests	["alternative-pharo-themes", "pharo", "theme"]	A repository for alternative Pharo themes
+hernanmd	BioSmalltalk	master	21	2026-03-23	92783	MIT	BioSmalltalk	repository	180	1		["api", "bioinformatics", "bioinformatics-tool", "biosmalltalk", "pharo", "pharo-smalltalk", "smalltalk"]	Bioinformatics Library for Pharo Smalltalk
+pharo-cig	pharo-cig	main	21	2026-01-30	14006	GPL-3.0	CIG	src	39	1		["ffi", "libclang", "pharo"]	A tool to import C/C++ libraries into Pharo
+pharo-nosql	mongotalk	master	19	2026-01-21	919	MIT	MongoTalk	mc	25	1		[]	A Pharo driver for MongoDB 
+brackendev	ELIZA-Smalltalk	master	18	2025-07-31	807	MIT	ELIZA	src	1	1		["artificial-intelligence", "chatbot", "eliza", "eliza-chatbot", "english", "natural-language-processing", "pharo", "smalltalk"]	A Smalltalk implementation of ELIZA, an early natural language processing computer program
+seandenigris	Simple-Persistence	master	17	2026-03-23	182	MIT	SimplePersistence	src	1	1		["persistence", "pharo", "smalltalk"]	
+noha	JSONWebToken	master	17	2025-12-09	102	MIT	JSONWebToken	source	3	1		["jwt", "pharo"]	A pharo implementation of JSON web token (JWT)
+ba-st	Launchpad	release-candidate	17	2025-07-11	454	MIT	Launchpad	source	24	1		["pharo", "smalltalk"]	A command-line interface to start, list, and explain the applications available within the image
+bouraqadi	PharoMisc	pharo12	16	2026-01-08	521	MIT	PharoMisc	Pharo	66	1		["concurrency", "equality", "pharo", "pharo-smalltalk"]	Small utilities and libraries
+feenkcom	gt4llm	main	16	2026-04-01	5176	MIT	Gt4Llm	src	7	1		["glamorous-toolkit", "ide", "llm", "pharo", "python", "ux-ui", "wardley-maps"]	A GT package for working with LLMs
+moosetechnology	Famix	development	16	2026-03-30	14728	MIT	Famix	src	143	1		["meta-model", "moose", "pharo", "smalltalk"]	An abstract representation of source code. Famix is generic and can describe applications in multiple programming languages.
+tomooda	ViennaTalk	main	16	2026-03-28	52798	MIT	ViennaTalk	repository	307	1		["formal-methods", "formal-models", "formal-specification", "pharo", "smalltalk", "vdm", "vdm-sl"]	ViennaTalk, a LIVE IDE for VDM-SL based on Pharo Smalltalk
+pharo-spec	Spec-Gtk	main	15	2026-03-31	2700		SpecGtk	src	15	1		["gtk3", "pharo", "ui"]	Spec GTK bindings for Pharo
+pharo-project	pharo-beacon	master	15	2026-03-29	356	MIT	Beacon	src	11	1		["pharo"]	Beacon is a small event and logging framework for pharo
+pharo-ai	data-inspector	master	14	2025-09-29	551	MIT	AIDataFrameInspector	src	5	1		["data-frame", "data-inspector", "pharo", "pharo-smalltalk"]	Evaluate and visualize DataFrame directly in the same Inspector window.
+pharo-contributions	XML-XMLParser	master	14	2025-10-26	3061	MIT	XMLParser	src	163	1		[]	XML Parser for Pharo
+astares	Pharo-OS-Windows	master	14	2025-07-16	288	NOASSERTION	OSWindows	src	53	1		["pharo"]	Support for Windows operating system for Pharo
+jecisc	pharo-scripts	master	14	2026-03-18	45853		PharoSettings	settings	0	0	no-tests	["pharo", "scripts", "smalltalk"]	My personal settings for my Pharo images
+ReMobidyc	ReMobidyc	main	14	2026-02-02	20784	MIT	ReMobidyc	src	114	1		["ecotoxicology", "indivisual-based-modeling", "multi-agent-simulation", "multi-agent-systems", "pharo", "population-dynamics", "simulator"]	web based multi-agent simulator for individual-based modeling in population dynamics and ecotoxicology 
+juliendelplanque	JRPC	master	13	2026-01-17	216	MIT	JRPC	src	12	1		["json-rpc", "jsonrpc2", "pharo", "rpc", "rpc-client", "rpc-server"]	Yet another JSON-RPC 2.0 implementation for Pharo Smalltalk
+ThalesGroup	GeoView	main	13	2026-03-27	1279	MIT	GeoView	src	61	1		["alexandrie", "bloc", "cartographic", "cartographic-projection", "component-architecture", "geo", "geographical", "geoview", "geoviews", "map", "mercator", "molecule", "open-smock", "pharo", "projection", "smalltalk", "smock", "tiles", "ui", "view"]	Views to display and interact with geographical objects and cartographic layers for UI
+seandenigris	Computer-World	master	13	2025-12-19	1189	MIT	ComputerWorld	repository	3	1		["dynabook", "pharo", "smalltalk"]	What if interfacing with computing artifacts felt like your  mental models had come alive?
+pharo-project	PharoBootstrap	master	13	2026-02-05	26271	MIT	BootstrapProcess		0	0	no-tests	["pharo"]	
+noha	mustache	master	13	2026-02-24	116	MIT	Mustache	repository	1	1		["pharo", "template-engine"]	A mustache template implementation in smalltalk
+feenkcom	gtoolkit-examples	main	13	2026-03-26	928	MIT	GToolkitExamples	src	5	1		["glamorous-toolkit"]	The engine for example-driven development in Pharo.
+guillermoamaral	Pharo-Webside	main	12	2025-10-20	2692	MIT	Webside		1	1		[]	Webside API implementation in Pharo
+paulwilke	pharo-mcp-server	main	12	2025-06-26	16	MIT			0	0	no-baseline,no-tests	[]	Pharo Smalltalk implementation of Anthropic's Model Context Protocol (MCP) server specification. Enables LLMs like Claude to interact with Pharo applications.
+mumez	PunQLite	develop	12	2026-01-16	1943	MIT	PunQLite	repository	6	1		["pharo", "pharo-smalltalk", "smalltalk", "unqlite"]	UnQLite binding for Pharo Smalltalk
+svenvc	ztimestamp	master	12	2026-01-27	680	MIT	ZTimestamp	repository	9	1		["chronology", "datetime", "formatter", "parser", "pharo", "smalltalk", "smtp-client", "timestamp", "timezone", "timezone-database"]	I am ZTimestamp, a Magnitude, a point in time, an alternative to DateAndTime and TimeStamp
+feenkcom	pharo-futures	main	12	2025-12-18	579	MIT	Futures	src	1	1		[]	Abstractions for asynchronous programming in Pharo
+pharo-rdbms	Pharo-ODBC	master	11	2025-09-12	1546	MIT	ODBC	src	5	1		[]	ODBC Connectivity for Pharo
+badetitou	Casino	v3	11	2025-09-02	3103	MIT	Casino	src	32	1		["metamodel", "migration", "pharo", "smalltalk"]	Casino is a set of tool I'm developping to help developers migrate their applications
+feenkcom	JSLink	main	11	2026-03-30	1214	MIT	JavaScriptLink	src	18	1		[]	A bridge between Pharo and JavaScript
+moosetechnology	MooseIDE	development	11	2026-03-09	4565	MIT	MooseIDE	src	102	1		["moose", "pharo", "smalltalk"]	The Moose Browsers
+mumez	Stick	master	10	2025-07-22	74	MIT	Stick	src	0	0	no-tests	["gemstone", "pharo", "pharo-smalltalk", "reconnect", "socket-io"]	An event-based socket reconnection layer for Pharo smalltalk
+jordanmontt	illimani-memory-profiler	main	10	2026-03-14	1360	MIT	IllimaniProfiler	src	9	1		["allocations", "memory", "object-lifetimes", "oop", "pharo", "profiler", "profiling-library", "smalltalk"]	A Memory Profiler for Pharo
+ba-st	Hyperspace	release-candidate	10	2026-01-14	259	MIT	Hyperspace	source	23	1		["http", "pharo"]	Building blocks for Internet technologies on top of Zinc HTTP Components
+mumez	RediStick	master	10	2026-01-11	618	MIT	RediStick	src	13	1		["gemstone", "pharo", "pharo-smalltalk", "redis-client"]	A Redis client for Pharo using Stick auto-reconnection layer
+pharo-ai	datasets	master	10	2025-09-29	2390	MIT	AIDatasets	src	1	1		["dataset", "machine-learning", "pharo", "smalltalk"]	Loading datasets into Pharo
+pharo-contributions	SingularizePluralize	master	10	2026-03-04	58	MIT	SingularizePluralize	src	4	1		["language", "natural-language-processing", "nlp", "pharo", "pharo-smalltalk", "smalltalk"]	Transforming singular nouns to their plural form and vice versa.
+ba-st	Willow-Playground	release-candidate	10	2026-03-30	2138	MIT	WillowPlayground	source	0	0	no-tests	["ajax", "pharo", "smalltalk", "web", "willow"]	Examples on how to use Willow to develop a complete interactive web application
+Alamvic	druid	main	10	2026-03-12	3773		Druid		82	1		["meta-compiler", "pharo", "virtual-machine"]	Metacompiler to generate an optimised JIT compiler frontend based on an Interpreter definition
+Peter-H-Meadows	GtMetamath	master	10	2026-03-29	15674	MIT			0	0	no-baseline,no-tests	["game", "glamorous-toolkit", "pharo", "smalltalk", "tutorial"]	Metamath logic game
+maxwills	SeekerDebugger	main	10	2026-03-23	2504		Seeker		22	1		["pharo", "smalltalk"]	A Queryable Time-Traveling Debugger for Pharo 9.0, 10 and 11.
+svenvc	zodiac	master	10	2025-10-27	190	MIT			0	0	no-baseline,no-tests	["pharo", "smalltalk", "ssl", "streams", "tls"]	Zodiac is an open-source Smalltalk framework implementing TLS/SSL secure as well as regular socket streams.
+pharo-contributions	DeepTraverser	development	9	2025-10-10	79	MIT	DeepTraverser	src	10	1		["deep-traverser", "graph", "pharo", "smalltalk", "traversing"]	DeepTraverser offers a library for traversing object graphs. It is inspired from an original implementation by Mariano Martinez Peck.
+pharo-project	pharo-llvmDisassembler	master	9	2025-11-05	85	MIT	LLVMDisassembler	src	3	1		[]	Pharo bindings to the LLVM disassembler
+tomooda	Micromaid	main	9	2026-02-21	245	MIT	Micromaid	src	4	1		[]	A simple Mermaid-like chart generator for Pharo
+ba-st	Superluminal	release-candidate	9	2026-02-18	337	MIT	Superluminal	source	26	1		["http", "http-api-client", "http-client", "pharo", "smalltalk"]	Building blocks for creating HTTP requests and API clients
+pharo-graphics	Tutorials	master	9	2026-03-12	497	MIT	BlocTutorials	src	7	1		["bloc", "memory-game", "pharo", "tutorial"]	I contain the code that results from tutorials on Bloc.
+tesonep	PharoApplicationGenerator	master	9	2026-01-12	350	MIT	ApplicationGenerator	src	0	0	no-tests	[]	
+pharo-contributions	MethodProxies	master	9	2026-02-18	140		MethodProxies	src	5	1		["pharo"]	A library to decorate and control method execution.
+robvanlopik	Pots	main	8	2026-02-18	265	MIT	Pots	src	6	1		["arduino", "electronics", "pharo", "raspberry-pi"]	
+ThalesGroup	PharoOWS	main	8	2026-02-08	2180	MIT	OWS	src	4	1		["cartography", "map", "open-smock", "pharo", "pharo-smalltalk", "qgis", "qgis-server", "smalltalk", "smock", "tile-server", "tilemap", "tiles", "tileserver", "wms", "wms-service"]	OGC Web Services (OWS) support for Pharo
+pharo-contributions	OSWinSubprocess	master	8	2025-08-11	73	MIT	OSWinSubprocess	src	1	1		["pharo"]	Forking Windows System Processes from within Pharo Language 
+feenkcom	gtoolkit-remote	main	8	2026-03-30	2755	MIT	GToolkitRemote	src	0	0	no-tests	["glamorous-toolkit"]	The engine to work with remote systems (like remote a Pharo image).
+yannij	Seaside-Quasar	main	8	2026-03-14	733	MIT	SeasideQuasar	src	4	1		["magritte", "material-design", "pharo", "quasar-framework", "seaside", "smalltalk"]	Pharo/Smalltalk code to use Quasar Framework in Seaside. Also, some demo apps using Magritte are provided.
+ba-st	Kepler	release-candidate	8	2026-03-20	314	MIT	Kepler	source	11	1		["architecture", "dependency-injection", "dynamic-components-architecture", "pharo", "smalltalk"]	An architecture to organize your software as a set of loose-coupled systems, where each can be easily accessed and has a well-defined responsibility
+Ducasse	OSC	master	8	2025-09-29	451		OSC	src	6	1		["pharo"]	Originally developed and license under MIT by Markus Gaelli and then Simon Holland. Now cleaned and maintained by S. Ducasse. If you want to take the responsibi
+akgrant43	GeoSphere	master	8	2025-06-29	32	MIT	GeoSphere	src	2	1		["pharo"]	Compute distances, parse coordinates, etc. for Pharo
+Evref-BL	Pharo-LLMAPI	main	7	2026-03-02	196	MIT	LLMAPI	src	2	1		["llm", "pharo"]	Use LLM API from Pharo
+tinchodias	pharo-rita-history	Pharo13	7	2026-01-30	2689	MIT	Rita	src	3	1		["pharo", "visualization"]	Tools for understanding code changes using Pharo9, Iceberg, Roassal3 and Spec2.
+tinchodias	BaselineBuilder	master	7	2026-02-08	56	MIT	BaselineBuilder	src	1	1		["boilerplate", "metacello", "pharo"]	Quickly create a BaselineOf for your new Pharo project
+mumez	PharoSmalltalkInteropServer	main	7	2026-03-19	105	MIT	PharoSmalltalkInteropServer	src	3	1		["pharo-smalltalk"]	API server that bridges Pharo Smalltalk environments with external tools
+Ducasse	Chrysal	master	7	2026-03-25	180		Chrysal	src	3	1		["configuration-management", "configurations", "pharo"]	To manage application configurations
+pharo-graphics	pharo-sdl-experiments	master	7	2026-03-10	482	MIT	SDLExperiments		17	1		["pharo", "sdl2", "smalltalk"]	Experiment SDL2 layer composition from Pharo
+Ducasse	Cozy	master	7	2025-08-07	283		Cozy	src	2	1		["pharo"]	A little package to create a more cozy working environment
+shingarov	Pharo-ArchC	pure-z3	7	2025-08-26	374	MIT	ArchC	src	17	1		[]	Generate binutils from formal spec
+feenkcom	PharoLink	main	7	2026-03-30	1189	MIT	PharoLink	src	25	1		[]	A PythonBridge / JSLink style server for Pharo
+ba-st	Willow-Bootstrap	release-candidate	7	2026-03-27	7940	MIT	WillowBootstrap	source	91	1		["ajax", "bootstrap", "bootstrap3", "javascript", "pharo", "smalltalk", "web", "willow"]	Integration between Willow & Bootstrap 3/4
+feenkcom	gt4pharo	main	7	2026-04-01	7008	MIT	GToolkit4Pharo	src	8	1		[]	The development environment for Pharo based on the Glamorous Toolkit.
+feenkcom	gtoolkit-coder	main	7	2026-04-01	6105	MIT	GToolkitCoder	src	0	0	no-tests	["glamorous-toolkit"]	The GT set of tools for writing Pharo code.
+pharo-graphics	Alexandrie	dev	7	2026-03-11	4998	MIT	Alexandrie	src	40	1		["cairo", "freetype", "harfbuzz", "pharo", "smalltalk"]	FFI bindings and a 2D canvas for Pharo based on Cairo, Freetype and Harfbuzz
+ba-st	Sagan	release-candidate	6	2026-03-30	536	MIT	Sagan	source	13	1		["persistence", "pharo", "smalltalk"]	Sagan is aimed to help solutions implementing polyglot persistence.
+OpenSmock	OpenSmock	main	6	2026-03-20	467	MIT	OpenSmock	src	82	1		["components", "framework", "hmi", "ihm", "open", "open-smock", "pharo", "prototyping", "smalltalk", "smock", "toolbox", "tools", "ui", "ux", "widgets"]	OpenSmock is a collection of tools and workshops designed to streamline the development of applications - especially user interfaces (UI) - within the Pharo pro
+OpenSmock	Iconography	main	6	2025-08-07	116	MIT	OpenSmockIconography		5	1		["ant-design", "ant-design-icons", "graphic", "graphics", "icon", "icons", "image", "images", "library", "material-design", "material-design-icons", "opensmock", "pharo", "smalltalk", "smock"]	Use icons libraries (Material Design, Ant Design) in your project : Import, manage, get and store.
+pharo-contributions	Soup	master	6	2026-02-16	325	MIT			0	0	no-baseline,no-tests	["html", "pharo", "scraping"]	A Pharo implementation of beautiful Soup
+ba-st	Ansible	release-candidate	6	2026-03-24	765	MIT	Ansible	source	6	1		["amqp", "broker", "messaging", "pharo", "queue", "rabbitmq", "smalltalk"]	an AMQP client for Pharo
+kasperosterbye	PharoAIActions	master	6	2026-03-31	1750		PharoAIActions	src	29	1		[]	AIActions is a Pharo tool that uses AI to generate meaningful comments for methods, classes, and packages. It integrates with AI APIs (such as Mistral and Ollam
+pharo-ai	data-partitioners	master	6	2025-09-29	79	MIT	AIDataPartitioners	src	4	1		["data-science", "machine-learning", "pharo", "statistical-analysis"]	Pharo library for partitioning a collection. Given a set of proportions (e.g. 50%, 30%, and 20%), it shuffles the collection and divides it into non-empty subse
+pavel-krivanek	RefsHunter	master	6	2025-07-11	26	MIT	RefsHunter	src	1	1		["pharo"]	Object references investigation tool for Pharo
+tomooda	HoneyGinger	main	6	2025-12-01	773	MIT	HoneyGinger	repository	7	1		["cg", "fluid-dynamics", "fluid-simulation", "pharo", "smalltalk", "sph"]	A SPH simulator with rich visualization and interactivity
+lucretiomsp	nature-of-code-pharo	main	5	2026-01-08	62	MIT			2	0	no-baseline	[]	A Pharo/Bloc port of the exaxmple code from Th Nature of Code book by Daniel Shiffman
+pharo-graphics	Spec-Toplo	dev	5	2026-03-20	260	MIT	SpecToplo	src	10	1		["pharo"]	Toplo backend for Spec (Pharo)
+ThalesGroup	GeoTools	main	5	2026-01-16	143	MIT	GeoTools	src	15	1		["absolute-coordinates", "cartesian-coordinates", "coordinates", "course", "geodesic", "geodesics", "geodesics-equation", "geographic", "heading", "kinematics", "open-smock", "pharo", "polar-coordinates", "position", "smalltalk", "smock", "speed"]	Geographic Tools as Coordinates, Kinematics and Geodesic utilities for GIS.
+Gabriel-Darbord	opentelemetry-pharo	main	5	2026-03-18	122	MIT	OpenTelemetry	src	6	1		["opentelemetry", "pharo"]	OpenTelemetry SDK and instrumentations for Pharo
+fuhrmanator	FamixTypeScript	master	5	2026-01-14	2096		FamixTypeScript	src	16	1		["moose", "pharo"]	
+newapplesho	twilio-smalltalk	main	5	2026-03-30	73	MIT	Twilio	src	6	1		["pharo", "pharo-smalltalk", "smalltalk", "twilio"]	Smalltalk library for communicating with the Twilio REST API
+newapplesho	google-cloud-smalltalk	main	5	2026-03-30	60	Apache-2.0	GoogleCloud	src	11	1		["bigquery", "gcp", "gemini", "pharo-smalltalk", "smalltalk"]	Pharo Smalltalk client libraries for Google Cloud Platform services.
+tesonep	ParametrizedTests	master	5	2025-10-06	14	MIT	ParametrizedTests	src	10	1		["pharo", "testing"]	
+ErikOnBike	CP-Bootstrap	master	5	2026-02-13	335	MIT			0	0	no-baseline,no-tests	["pharo", "smalltalk"]	Bootstrap code for tiny Smalltalk image
+Ducasse	Citezen	master	5	2026-03-15	536				0	0	no-baseline,no-tests	["bibtex", "parser", "pharo", "tools"]	Citezen is a bib parser and tool suite
+Evref-BL	Modest	main	5	2026-02-11	246	MIT	Modest	src	0	0	no-tests	["language-agnostic", "moose", "pharo", "test-generation"]	Modular, multi-language, model-based unit test generation
+seandenigris	Living-Library	master	4	2026-03-23	1226	MIT	LivingLibrary	src	0	0	no-tests	["dynabook", "gtoolkit", "pharo", "smalltalk"]	
+rko281	DolphinToPharo	master	4	2025-12-17	33	MIT	DolphinToPharo		0	0	no-tests	[]	Allows Dolphin packages and fileouts to be loaded into Pharo
+pharo-ai	NgramModel	master	4	2025-09-29	8448	MIT	NgramModel	src	8	1		["language-model", "natural-language-processing", "ngram-language-model", "ngrams", "pharo", "statistics"]	Ngram language model implemented in Pharo
+Ducasse	Myg	master	4	2025-11-06	4451		Myg	src	19	1		["pharo"]	
+GemTalk	JadeiteForPharo	main375	4	2026-03-31	4135	MIT	JadeiteForPharo		65	1		[]	IDE for GemStone Smalltalk application development in Pharo using Rowan code management 
+tinchodias	Sauco	master	4	2025-12-04	120	MIT	Sauco	src	8	1		["pharo", "profiler"]	Visual tools to help reading Pharo profiler
+feenkcom	gtoolkit-external-process	main	4	2026-03-26	154	MIT	GToolkitExternalProcess	src	0	0	no-tests	[]	A Pharo library for cross-platform running of external commands and getting their output.
+jecisc	PharoBackwardCompatibility	master	4	2026-02-09	40	MIT	PharoBackwardCompatibility	src	1	1		["backward-compatibility", "pharo", "smalltalk"]	I am a project to backport some really useful methods to older versions of Pharo
+moosetechnology	Fame	development	4	2026-03-17	11205	MIT	Fame	src	23	1		["meta-model", "moose", "pharo", "smalltalk"]	Fame is a meta-modeling framework for executable models.
+seandenigris	Resources-Live	master	4	2026-03-21	1227	GPL-3.0	ResourcesLive	src	0	0	no-tests	["dynabook", "gtoolkit", "pharo", "smalltalk"]	
+pharo-containers	Containers-OrderedSet	master	4	2026-03-20	66	MIT	ContainersOrderedSet	src	1	1		["collection", "containers", "data-structures", "pharo", "set"]	A Set where an order of elements matters or an OrderedCollection with no duplicates. Supports the complete API of Set and OrderedCollection
+vonbecmann	earley-parser	master	4	2025-08-31	3302	MIT	EarleyParser	repository	64	1		["earley-parser", "pharo", "smalltalk"]	Jay Clark Earley Parser
+ba-st	Stargate-Consul	release-candidate	4	2025-07-12	259	MIT	StargateConsul	source	9	1		["consul", "pharo", "stargate"]	Integration with Consul HTTP API to register and deregister services
+pharo-ai	decision-tree-model	master	4	2025-10-06	249	MIT	DecisionTreeModel	src	17	1		["decision-trees-learning", "decisiontreemodel", "pharo"]	Model for Decision Trees Learning in Pharo
+moosetechnology	FAST	v3	4	2026-03-09	907	MIT	FAST	src	3	1		["ast", "meta-model", "moose", "pharo"]	Represent the AST of programing language
+pharo-containers	Containers-Trie	master	4	2026-03-20	76		ContainersTrie	src	5	1		["pharo"]	A trie implementation (original version from Benoit St-Jean).
+ba-st	Mole	release-candidate	4	2026-03-24	218	MIT	Mole	source	8	1		["directed-graph", "graph", "pharo", "smalltalk", "topological-sort"]	A model for graphs, both directed and undirected.
+lucretiomsp	MasterLu	main	4	2025-12-29	7156	MIT	MasterLu		0	0	no-tests	[]	MasterLu is your electronic music teacher in Pharo. MasterLu will teach you Phausto, to program you own DSP (Digital Signal Processors) and Coypu to program mus
+pharo-ai	linear-algebra	master	4	2026-02-06	54	MIT	AILinearAlgebra	src	2	1		["linear-algebra", "pharo", "smalltalk"]	Fast linear algebra implemented using Pharo Lapack.
+moosetechnology	GitProjectHealth	main	4	2026-03-31	2374		GitLabHealth	src	71	1		["mining", "mining-software-repository", "mining-source-code", "moose", "msr", "pharo"]	A Mining Software Repository and Ticket management Platform tool, in Pharo
+seandenigris	Virtual-Stash	master	4	2026-03-05	647	MIT	VirtualStash	src	6	1		["dynabook", "gtoolkit", "pharo", "smalltalk"]	Picture GnuCash, minus the application stovepipe, running on GToolkit (Smalltalk)
+seandenigris	Quote-Me	master	3	2026-03-26	1467	MIT	QuoteMe	src	0	0	no-tests	["dynabook", "gtoolkit", "pharo", "smalltalk"]	Quotation DB with no "application" stovepipe, in GToolkit (Smalltalk)
+pharo-spec	gtk-bindings	main	3	2026-03-29	3519		Glib	src	69	1		["gtk3", "pharo", "ui"]	Gtk3 bindings for Pharo
+pharo-ai	stopwords	master	3	2025-09-29	47	MIT	AIStopwords	src	4	1		["nlp", "nlp-machine-learning", "pharo", "pharo-smalltalk", "stopwords", "tf-idf"]	Load the stopwords that you need in Pharo
+Nyan11	BaselineLocker	master	3	2025-11-21	34		BaselineLocker	src	0	0	no-tests	[]	Generate a dependency methods for baseline
+OpenSmock	OS-Windows	main	3	2025-12-16	109	MIT	OSWindowsOpenSmock		1	1		["clipboard", "dialog-window", "extension", "extensions", "file-dialog", "opensmock", "os-windows", "pharo", "smalltalk", "smock", "window", "windows"]	Extensions for Pharo-OS-Windows.
+pharo-graphics	PharoSDL3	dev	3	2026-04-01	1589	MIT	SDL3	src	16	1		[]	
+moosetechnology	MoosePy	master	3	2026-02-10	822		MoosePy	src	7	1		["meta-model", "moose", "pharo", "python"]	To manage importing Python code into moose python metamodel
+pharo-ai	tf-idf	master	3	2025-09-29	40	MIT	AITfIdf	src	1	1		["pharo", "statistics", "term-frequency", "tf-idf"]	Implementation of TF-IDF in Pharo
+mumez	SState	master	3	2025-07-21	44	MIT	SState	src	1	1		["fsm", "pharo", "smalltalk"]	A simple Finite State Machine for Smalltalk
+seandenigris	Pharo-Enhancements	master	3	2026-03-07	4335	MIT	PharoEnhancements	src	2	1		["pharo", "smalltalk"]	
+ba-st	Willow-Auth0	release-candidate	3	2026-03-27	110	MIT	WillowAuth0	source	3	1		["auth0", "authentication", "authorization", "login-automation", "pharo", "willow"]	Integration between Willow and Auth0 Universal Login
+pharo-ai	k-means	master	3	2025-09-29	92	MIT	AIKMeans	src	1	1		["clustering", "kmeans", "kmeans-clustering", "pharo"]	K-means clustering in Pharo
+botwhytho	LepiterBuildingBlocs	main	3	2025-09-24	66	MIT	LepiterBuildingBlocs	src	0	0	no-tests	["gtoolkit", "knowledge-management", "pharo"]	A collection of community-built tools and utilities to add additional functionality & super-powers to Lepiter snippets & pages in Glamorous Toolkit.
+rvillemeur	GtGraphicsAndTools	main	3	2026-01-26	924	CC0-1.0	GtGraphicsAndTools	src	1	1		[]	Description of graphics stacks in pharo
+hernanmd	MetacelloFileDownload	master	3	2026-03-16	69	MIT			0	0	no-baseline,no-tests	["metacello", "metacello-configurations", "pharo", "pharo-smalltalk", "smalltalk"]	Helpers to download resources in Baseline or Metacello Configurations (Pharo Smalltalk)
+ironirc	pharox-dependency-visualizer	main	3	2025-11-30	144	MIT	PharoXDependencyVisualizer		1	1		[]	
+ba-st	Willow-SpinKit	release-candidate	3	2026-03-25	120	MIT	WillowSpinKit	source	17	1		["pharo", "spinkit", "throbber", "willow"]	Integration between Willow and SpinKit
+labordep	PharoGameye	main	3	2025-11-09	128	MIT	Gameye		11	1		["app", "collection", "collector", "game", "games", "gameye", "gameye-app", "gameye-application", "gameye-collection", "parser", "parsing", "peripherals", "pharo", "pharo-smalltalk", "print-media", "smalltalk", "systems", "toys-to-life"]	GAMEYE.app tools for Pharo
+Pharo-XP-Tools	DebuggingSpy	P12	3	2026-03-31	548	MIT	DebuggingSpy		6	1		["pharo", "smalltalk"]	A tool to spy on debugging actions for research experiments.
+seandenigris	Tesseract-St	master	3	2025-12-19	150	MIT	Tesseract	src	0	0	no-tests	["ocr", "pharo", "smalltalk", "tesseract"]	Smalltalk wrapper of Google's Tesseract OCR Library
+pharo-containers	Containers-Array2D	master	3	2026-03-23	113		ContainersArray2D	src	5	1		["collections", "pharo"]	A better Array2D implementation 
+pavel-krivanek	Turbo	master	3	2026-02-14	1729	MIT	Turbo	src	22	1		[]	Text based interface for Pharo
+ba-st	Cannon	release-candidate	3	2026-03-27	167	MIT	Cannon	source	8	1		["mit-license", "pharo", "smalltalk", "state-machine"]	State Machine implementation
+moosetechnology	Famix-ExecutionFlow	main	3	2026-03-25	48	MIT	FamixExecutionFlow	src	4	1		["callgraph", "dynamic", "meta-model", "moose", "pharo", "smalltalk"]	
+pharo-ai	edit-distances	master	3	2025-09-29	175	MIT	AIEditDistances	src	17	1		["edit-distances", "pharo", "pharo-smalltalk", "smalltalk"]	Several edit distances algorithms implemented in Pharo
+pharo-ai	lapack	master	3	2025-09-29	61	MIT	Lapack	src	2	1		["lapack", "pharo", "smalltalk"]	A minimal FFI binding for LAPACK (http://www.netlib.org/lapack/) in Pharo
+seandenigris	My-People	master	3	2026-03-05	286	MIT	MyPeople	src	1	1		["dynabook", "gtoolkit", "pharo", "smalltalk"]	Address Book service, minus the usual application stovepipe, running on GT (Smalltalk)
+seandenigris	The-Project-Project	master	3	2026-03-05	632	MIT	TheProjectProject	src	0	0	no-tests	["dynabook", "gtoolkit", "pharo", "smalltalk"]	Project Management unleashed from an "application" stovepipe, running on GToolkit (Smalltalk)
+pharo-cig	pharo-archive	main	2	2025-08-07	22	MIT	Archive	src	0	0	no-tests	["archive", "libarchive", "pharo", "zip"]	Pharo bindings for https://libarchive.org
+pharo-ai	viz	master	2	2025-09-29	67	MIT	AIViz	src	0	0	no-tests	[]	Machine-Learning Visualization API for Pharo
+pharo-ai	metrics	master	2	2025-09-29	93	MIT	AIMetrics	src	20	1		["adjusted-rand-index", "fowlkes-mallow", "jaccard", "machine-learning", "pharo", "pharo-smalltalk", "randindex"]	Implementation of Machine Learning metrics for Pharo
+JhonAQ	SmallMines	main	2	2025-10-12	4				0	0	no-baseline,no-tests	[]	A pharo game
+pharo-ai	nlp	master	2	2025-09-29	61	MIT	AINLP	src	3	1		[]	NLP for Pharo
+scopeo-project	scopeo	main	2	2025-08-10	440	MIT	Scopeo	src	0	0	no-tests	["debugging", "pharo", "pharo-debugging", "pharo-smalltalk", "smalltalk", "smalltalk-debugging"]	Object-centric debugger providing developers with objects-scope
+seandenigris	Pharo-Preferences	master	2	2026-01-22	439	MIT	DeNigrisPreferences	src	1	1		["pharo", "smalltalk"]	
+CleverCloud	seaside-example	master	2	2026-03-13	8				0	0	no-baseline,no-tests	["clevercloud-example", "pharo", "seaside", "smalltalk"]	Run Seaside web application with Pharo Smalltalk on Clever Cloud
+FedeLoch	Ume	main	2	2026-03-27	80353		Ume		74	1		["input-minimization", "performance-fuzzing", "property-based-testing", "tests-generation"]	Property Based Testing Framework for Pharo with Performance Fuzzing, Input Minimization and Automatic Tests Generation
+koendehondt	hera-for-pharo	main	2	2026-03-29	633	MIT	Hera		111	1		[]	Cucumber-like tools for Pharo
+feenkcom	pharo-telemetry	main	2	2026-03-25	138	MIT	Telemetry	src	0	0	no-tests	[]	Performance telemetry collection infrastructure based on Beacon
+seandenigris	Small-World	master	2	2025-06-28	334		SmallWorld	src	0	0	no-tests	["pharo", "project-management", "smalltalk"]	Project catalog akin to Squeak Map. The idea is that, with one click, you can load your favorite projects in the best way for that particular image (dialect, ve
+pharo-contributions	CSSParser	main	2	2026-02-11	500	MIT	CSSParser		17	1		["cascading-style-sheets", "css", "parser", "pharo", "pharo-smalltalk"]	CSSParser is a Pharo library that provides an object model and tools to read, interpret, and manipulate CSS stylesheets, including support for parsing .css file
+OpenPonk	fsm-editor	master	2	2026-01-05	623	MIT	OpenPonkFsmEditor	repository	10	1		["finite-state-machine", "modeling", "pharo", "smalltalk"]	Finite-state machine diagrams for OpenPonk tool
+koendehondt	iris-for-pharo	main	2	2026-03-15	13	MIT	Iris	src	16	1		[]	
+moosetechnology	FAMIX2Java	v6	2	2025-08-26	156	MIT	Famix2Java	src	1	1		["java", "moose", "pharo", "smalltalk"]	A visitor to export Java Model to Java code
+SmalltalkWeb	MyPrecious	pharo12	2	2026-04-01	223	MIT	MyPrecious		13	1		["middleware", "modularity", "pharo", "pharo-smalltalk"]	A middleware framework to rule them all... according to Gollum ;-)
+pharo-ai	open-ai	release-candidate	2	2025-09-29	94	MIT	OpenAI	source	5	1		["open-ai", "pharo", "smalltalk"]	Open AI API client for Pharo
+olekscode	MicroUML	main	2	2026-03-30	641	MIT	MicroUML	src	10	1		[]	A UML model and DSL in Pharo
+tomooda	Phleeter	main	2	2026-01-14	16	MIT	Phleeter	src	0	0	no-tests	["application-packaging", "deployment", "pharo"]	Ship Pharo application to multiple target platforms
+pharo-ai	a-priori	master	2	2025-09-29	142	MIT	AIAPriori	src	11	1		["apriori-algorithm", "data-mining", "data-science", "frequent-itemsets", "pharo"]	Implementation of A-Priori algorithm in Pharo
+evilcorp-ga	EvilBot	master	2	2026-02-19	13167	MIT			0	0	no-baseline,no-tests	[]	IRC Bot built in Pharo
+moosetechnology	Famix-Value	main	2	2026-02-11	564	MIT	FamixValue	src	2	1		["meta-model", "moose", "pharo", "runtime", "smalltalk"]	Famix metamodel for runtime values 
+feenkcom	JavaScriptGenerator	main	2	2025-07-23	80	MIT	JavaScriptGenerator	src	12	1		[]	A toolkit to generate JavaScript source code from Pharo.
+ba-st	Boardwalk	release-candidate	2	2026-01-09	178	MIT	Boardwalk	source	15	1		["javascript", "pharo", "seaside", "web"]	A couple of facilities on top of Seaside
+ba-st	Willow-Mixpanel	release-candidate	2	2026-03-26	66	MIT	WillowMixpanel	source	6	1		["mixpanel", "pharo", "willow"]	Integration between Willow and Mixpanel
+ba-st	Stardust	release-candidate	2	2026-03-30	225	MIT	Stardust	source	13	1		["architecture", "pharo", "smalltalk"]	A framework to describe how to create models
+leostera	sloptalk	main	2	2026-04-21	76				0	0	no-baseline,no-tests	[]	an agent living inside your pharo image
+Evref-BL	Jira-Pharo-API	main	2	2026-03-30	155		JiraPharoAPI	src	1	1		[]	Analyze data from Jira
+PolyMathOrg	vector-matrix	master	2	2026-03-18	185	MIT	MathVectorMatrix	src	9	1		["pharo"]	A separate repository containing PMMatrix and PMVector - two custom data structures of PolyMath
+mumez	pharo-agentic-browser	develop	2	2026-05-22	732		AgenticBrowser	src	31	1		["coding-agents", "pharo-smalltalk"]	Multiple AI agent session browser for Pharo Smalltalk
+terpon	PharoDarkerDawnTheme	pharo13	1	2025-09-03	57		DarkerDawnTheme	src	0	0	no-tests	[]	A theme for Pharo, based on PharoDawnTheme
+pharo-ai	hierarchical-clustering	master	1	2025-09-29	66	MIT	AIHierarchicalClustering	src	5	1		["agglomerative-clustering", "dendrogram", "hierarchical-clustering", "pharo", "pharo-smalltalk", "similarity-matrix"]	Hierarchical Clustering algorithms for Pharo
+dweinstein	gtoolkit-acp	master	1	2026-03-01	597		GtoolkitAcp	src	0	0	no-tests	["acp", "ai-agents", "claude", "glamorous-toolkit", "pharo", "smalltalk"]	A Glamorous Toolkit client for the Agent Client Protocol (ACP).
+rvillemeur	BlBreakOut	main	1	2025-07-14	775	MIT	BlBreakOut	src	3	1		[]	Breakout game in Pharo Bloc
+feenkcom	gtoolkit-utility	main	1	2026-03-25	1710	MIT	GToolkitUtility	src	1	1		["glamorous-toolkit"]	Pharo integrations
+pharo-cig	UnifiedFFI	main	1	2026-01-30	390		UnifiedFFI	src	57	1		["ffi", "pharo"]	standalone version of the uFFI package of Pharo
+Ducasse	Pastels	master	1	2025-08-08	1036		Pastels	src	0	0	no-tests	[]	This repository contains some nice theme for Pharo
+511NetworkAuthenticationRequired	Paradigmas-de-la-Programacion	main	1	2026-02-11	67				0	0	no-baseline,no-tests	[]	Repositorio con ejercicios resueltos —salvo que se indique lo contrario— en Pharo 8.0.
+pharo-ai	gaussian-mixture-model	master	1	2025-09-29	58	MIT	AIGaussianMixtureModel	src	4	1		["classification", "gaussian-mixture-models", "machine-learning", "maximum-likelihood", "pharo", "statistical-learning", "statistics"]	Gaussian Mixture Model (GMM) is an iterative algorithm for fitting the data with multiple normal distributions (gaussians). Can be used for classification
+jecisc	FlagBrowser	master	1	2025-08-12	226	MIT	FlagBrowser	src	0	0	no-tests	["development-tools", "pharo", "pragma", "pragmas", "smalltalk", "tool"]	
+pharo-ai	naive-bayes-classifier	master	1	2025-09-29	40	MIT	AINaiveBayesClassifier	src	1	1		["machine-learning", "naive-bayes-classifier", "natural-language-processing", "pharo"]	A multinomial Naive Bayes classifier implemented in Pharo
+moosetechnology	FAST-JAVA	v4	1	2026-02-27	1362	MIT	FASTJava	src	117	1		["ast", "java", "meta-model", "moose", "pharo", "smalltalk"]	Represent the Java AST with Famix
+jecisc	SymbolResolver	main	1	2025-10-13	337	NOASSERTION	SymbolResolver	src	1	1		["parsing", "pharo", "smalltalk", "symbol-resolution"]	A parsing helper to manage symbol resolution by handling scope resolution and finding the right entity from symbols in parsers
+pharo-ai	data-preprocessing	master	1	2025-09-29	33	MIT	AIDataPreProcessing	src	3	1		["data", "pharo", "pharo-smalltalk", "preprocessing", "smalltalk"]	Project including data pre-processing algo. We aim to include scaling, centering, normalization, binarization methods.
+Driolar	SoccerTheory-Pharo	master	1	2026-03-15	3527	MIT	SoccerTheory	src	19	1		["2d", "graphics", "pharo", "smalltalk", "soccer", "strategy"]	Software application to visualize the Theory of Soccer. It is written in Pharo.
+pharo-ai	data-imputers	master	1	2025-09-29	46	MIT	AIDataImputers	src	2	1		["ai", "data", "data-science", "imputer", "pharo", "pharo-smalltalk", "smalltalk"]	This project contains transformers for missing value imputation
+pharo-spec	gtk-bundle-builder	main	1	2026-03-18	33		BundleBuilder	src	0	0	no-tests	[]	a small tool in #pharo to collect library dependences and make bundles with it
+ironirc	Spec2-Web-UI	main	1	2025-11-30	206	MIT	Spec2WebUi		2	1		[]	An attempt to use PharoJS as backend for Spec
+uca-argentina	2026-buscandoElPharo	master	1	2026-05-20	151	MIT	IngSoft2	repository	12	1		[]	
+punt-labs	postern	main	1	2026-04-26	422	MIT	Postern	src	8	1		["claude-code", "codex-cli", "pharo", "pharo-smalltalk", "smalltalk"]	Drive a live Pharo image from Claude Code, Codex or any HTTP client — full development cycle, no GUI required.
+moosetechnology	Famix-Cpp	main	1	2026-02-10	621	MIT	FamixCpp	src	5	1		["moose", "pharo", "smalltalk"]	Famix metamodel for C/C++
+seandenigris	Superuser	master	1	2026-03-21	317	MIT	Superuser	src	0	0	no-tests	["pharo", "shell-command", "smalltalk"]	
+pharo-llm	pharo-agent	main	1	2026-04-17	83	MIT	LLMPharoAgent	src	2	1		["agents", "pharo", "pharo-llm"]	A agent for interacting with the Pharo image from the terminal.
+NathanFrund	Conduit	main	1	2026-04-12	71		Conduit	src	3	1		[]	A lightweight, hybrid template-loading engine for Pharo.
+pharo-cig	pharo-libsdl3	main	1	2026-01-29	468	MIT	SDL3	src	3	1		["libsdl3", "pharo"]	Pharo bindings for https://www.libsdl.org/
+svenvc	GoogleAuthenticator	main	1	2025-09-14	11	MIT			2	0	no-baseline	[]	Implementing Time-based One-Time Passwords in Pharo
+seandenigris	Open-Government	master	1	2025-10-29	116	MIT	OpenGovernment	src	0	0	no-tests	["pharo"]	
+guillep	espell	master	1	2025-12-02	433	MIT	Espell	src	9	1		["metaprogramming", "pharo", "runtime"]	High-level interface of a pharo runtime
+KentBeck	SmalltalkGenie	main	1	2026-06-12	78	MIT	Genie	src	2	1		[]	An MCP server for coding in a live Pharo image
+iciiwhite	petri-simulator	main	1	2026-05-26	31				0	0	no-baseline	["awesomeproject", "iciiwhite", "random", "rare-languages", "smalltalk"]	A complete Petri net simulation and analysis environment written in Pharo Smalltalk.
+OpenSmock	Bloc-Serialization	main	1	2026-03-12	179	MIT	BlocSerialization	src	21	1		["bloc", "graphics", "graphics-library", "hmi", "ihm", "open-smock", "pharo", "pharo-smalltalk", "serialization", "serialization-library", "serialize", "serializer", "smalltalk", "smock", "ston", "ui", "ux"]	Bloc serialization features to store/unstore BlElements.
+OpenPonk	petrinets	master	1	2026-01-05	803	MIT	OpenPonkPetriNets	repository	23	1		["modeling", "petri-nets", "pharo", "smalltalk"]	Petri nets diagrams for OpenPonk tool
+ApptiveGrid	FluxBase	main	1	2025-08-19	192		FluxBase	source	6	1		["pharo", "workflow-engine"]	
+ba-st	Willow-JQueryUI	release-candidate	1	2026-03-27	1641	MIT	WillowJQueryUI	source	11	1		["jquery-ui", "pharo", "willow"]	Integration between Willow and JQuery UI
+Evref-BL	AI4Pharo	main	1	2025-07-09	82	MIT	AI4Pharo	src	2	1		[]	
+NathanFrund	Datastar-Pharo-SDK	main	1	2026-04-18	21		DatastarSDK	src	3	1		[]	Datastar SDK for Pharo Smalltalk
+ba-st	Willow-SemanticUI	release-candidate	1	2026-03-29	7352	MIT	WillowSemanticUI	source	7	1		["pharo", "willow"]	Integration between Willow and SemanticUI
+NathanFrund	blenny	main	1	2026-04-20	157		Blenny	src	7	1		[]	Web Framework for Pharo Smalltalk
+chicoary	PharoWiki	main	1	2026-05-04	134		PharoWiki	src	12	1		[]	
+pharo-llm	pharo-infer	main	1	2026-02-15	73	MIT	AIPharoInfer	src	6	1		["pharo", "pharo-llm"]	pharo-infer is a inference engine inside Pharo
+rko281	Portishead	main	1	2026-01-14	73	MIT			0	0	no-baseline,no-tests	[]	Pharo portability for Dolphin Smalltalk
+pharo-llm	pharo-llmstudio	main	1	2026-02-20	135	MIT	LLMStudio	src	23	1		["pharo", "pharo-llm"]	Visual LLM builder in Pharo
+OpenSmock	Toplo-Serialization	main	1	2026-03-30	68	MIT	ToploSerialization	src	1	1		["bloc", "graphics", "hmi", "ihm", "open-smock", "pharo", "pharo-smalltalk", "serialization", "serialization-library", "serialize", "serializer", "smalltalk", "smock", "ston", "toplo", "ui", "ui-library", "ux"]	Toplo serialization features to store/unstore ToElements. 
+vendethiel	WatchList.pharo	main	1	2025-09-30	17		WatchList	src	0	1		["bloc", "garage", "glorp", "pharo", "pharo-bloc", "pharo-garage", "pharo-glorp", "pharo-smalltalk", "pharo-toplo", "smalltalk", "sqlite3", "toplo"]	A small Watch List app in Pharo Smalltalk, using Glorp (SQLite3 via Garage) and Bloc+Toplo
+seandenigris	Ideas	master	1	2025-11-29	96	MIT	Ideas	src	0	0	no-tests	["gtoolkit", "pharo", "smalltalk"]	
+LinqLover	squeak-appframework	main	1	2025-12-29	47	NOASSERTION	CtAppFramework	packages	0	0	no-tests	[]	Tiny framework for Squeak apps that can be updated via Metacello and receive feedback on GitHub
+punt-labs	anthropic-sdk-pharo	main	1	2026-05-11	1650	MIT	ClaudeSDK	src	118	1		["claude", "claude-sdk", "pharo", "pharo-llm"]	Claude SDK for Pharo — Anthropic API client
+Evref-BL	MCP	main	1	2026-04-27	988		MCP	src	48	1		[]	A MCP server for Pharo
+NathanFrund	nexus	main	1	2026-04-30	93		Nexus		6	1		[]	A minimal, graph-based spatial engine for Pharo. Nodes, edges, presence, witnessing, and path hazards — all driven by plain JSON maps
+seandenigris	Bookmark-Magic	master	1	2025-12-19	38	MIT	BookmarkMagic	src	0	0	no-tests	["pharo", "smalltalk"]	
+StefanKrecher	PharoCodex	main	1	2026-04-03	422		OpenAICodex	src	4	1		["codex", "codex-cli", "pharo", "pharo-smalltalk"]	Use codex app-server within Pharo
+tomooda	gOLAP	main	1	2026-03-19	5440	MIT	Golap	src	6	1		["bascket-analysis", "cooccurrence", "marketing-analytics", "online-analytical-processing", "pharo"]	a graph-based OLAP tool
+pharo-ai	linear-models	master	1	2026-03-01	200	MIT	AILinearModels	src	7	1		["ai", "classification", "linear-regression", "logistic-regression", "models", "pharo", "regression", "regression-models", "smalltalk"]	Linear models like linear and logistic regression implementation
+Driolar	SoccerDrills-Pharo	master	0	2026-02-27	97	MIT	SoccerDrills	src	3	1		[]	Simulation of Soccer Drills based on Pharo's OpenPonk Modeling Platform.
+Evref-BL	BitbucketCloud-Pharo-Api	develop	0	2025-10-07	36		BitbucketCloudPharoAPI	src	4	1		[]	
+ApptiveGrid	PharoDEVS	main	0	2025-06-30	203	MIT	PharoDEVS	source	6	1		[]	An implementation of discrete event system specification
+omarabedelkader	HeuristicCompletion-Weights	main	0	2026-01-27	26	MIT	ExtendedHeuristicCompletionWeights	src	0	1		["pharo", "pharo-smalltalk"]	HeuristicCompletion-Weights introduces a new methodology that assigns a specific weight to each feature.
+Evref-BL	Bitbucket-Pharo-API	develop	0	2025-11-25	56		BitbucketPharoAPI	src	8	1		[]	
+pharo-ai	k-nearest-neighbors	master	0	2025-09-29	51	MIT	AIKNearestNeighbors	src	2	1		[]	k nearest neighbours implementation in Pharo
+pharo-ai	moose-linear-algebra	master	0	2025-09-29	139	MIT	AIMooseLinearAlgebra	src	15	1		["linear-algebra", "matrix-calculations", "sparse-vectors"]	Linear Algebra classes for Pharo
+PhilipWoulfe	pharo-mooc	main	0	2026-03-02	2				1	0	no-baseline	[]	
+olekscode	Clio	master	0	2025-10-15	116	MIT	Clio	src	1	1		["pharo"]	A tool for exploring the history of a project (e.g. getting API entities that were available at a given commit)
+mohaTlg	TinyBlogPharo	master	0	2026-04-15	9				2	0	no-baseline	[]	
+timosarkar	web.st	main	0	2026-05-13	5				0	0	no-baseline,no-tests	[]	pharo + seaside
+kjx	pharo-readonly	master	0	2026-05-18	17		Readonly	src	1	1		[]	experiments in pharo
+EiichiroIto	Avr-Pharo	main	0	2025-08-29	495	MIT	Avr	src	157	1		[]	Supporting tools for AVR assembly programming
+punt-labs	tictactoe	main	0	2026-04-10	14				2	0	no-baseline	[]	Pharo 12 TicTacToe with minimax AI — built by a Claude agent during a claude-agent-sdk-smalltalk eval session
+HossamSaberr	PersistentQueue	master	0	2026-05-15	11		ContainersPersistentQueue	src	1	1		[]	PersistentQueue for Pharo
+mor3245	pharo_occt	master	0	2026-05-19	86				1	0	no-baseline	[]	
+ApptiveGrid	Canopy	main	0	2025-10-09	61	MIT	Canopy	source	2	1		[]	A foundation for managing global values in pharo
+lucretiomsp	Bloc5	main	0	2026-03-04	36	MIT	Bloc5		4	1		[]	A high-level visual arts API for Pharo, inspired by Processing/p5.js, designed to make creating interactive graphics and animations simple and fun.
+omarabedelkader	HistoryCompletionV2	main	0	2025-11-05	26	MIT			0	0	no-baseline,no-tests	[]	A repository that implement the history in the Completion Engine in Pharo
+Dorisranjaratiana	MyDemoPharo	master	0	2026-02-16	14				1	0	no-baseline	[]	Démonstrateur  - Formulaire Médical Adaptif
+pharo-containers	Containers-Stack	master	0	2025-07-23	80		ContainersStack	src	3	1		["collection", "containers", "datastructures", "pharo", "stack"]	An Array-based Stack implementation with LIFO order (Last in, First Out)
+rko281	Porpoise	master	0	2026-01-05	96	MIT	Porpoise		3	1		[]	Dolphin Smalltalk portability for Pharo
+souravdatta	SDUtils	main	0	2025-07-15	20	MIT			0	0	no-baseline,no-tests	[]	A set of Pharo smalltalk classes
+omarabedelkader	Senders-Sorter	main	0	2025-12-27	7	MIT	SendersSorter	src	0	1		["pharo", "pharo-smalltalk"]	Completion sorting by message usage
+pharo-containers	Containers-RedBlackTree	main	0	2025-08-19	70	MIT	ContainersRedBlackTree	src	1	1		[]	An Efficient Red Black Tree Implementation for Pharo
+FedeLoch	PBP	main	0	2025-08-19	16		PBP		0	0	no-tests	[]	Pharo Bytecode Profiler
+Yesplan	DevelopInPharoDeployInGemStone	main	0	2026-03-13	12	MIT	DevelopInPharoDeployInGemStone	repository	0	0	no-tests	[]	Compatibility project to develop in Pharo with deployment in GemStone
+omarabedelkader	HeuristicCompletion-Analyser	main	0	2026-01-13	136	MIT	ExtendedHeuristicCompletionAnalyser	src	3	1		["pharo", "pharo-smalltalk"]	HeuristicCompletion-Analyser analyzes software packages, identifying patterns and reporting metrics like class count and unique methods to provide insights into
+lucretiomsp	MoofLODforPharo	master	0	2026-03-06	50		Mooflod	src	12	1		[]	
+feenkcom	pharo-debugadapterprotocol	main	0	2026-03-23	632	MIT	DAPChromeDevTools	src	0	0	no-tests	[]	Debug Adapter Protocol client for Pharo
+StevenCostiou	PharoJDTLSClient	main	0	2026-03-09	6	MIT			0	0	no-baseline,no-tests	[]	Experimenting with JDTLS.
+omarabedelkader	HeuristicCompletion-Prefix	main	0	2025-10-15	17	MIT	ExtendedHeuristicCompletionPrefix	src	2	1		["pharo", "pharo-smalltalk"]	HeuristicCompletion-Prefix introduces a new fetcher that improves the Completion engine’s capability to analyze the prefix segment during code completion.
+fouziray	staticCallPharo	master	0	2026-03-17	9829		StaticCallExp	src	3	1		[]	
+omarabedelkader	HeuristicCompletion-Model	main	0	2025-10-15	9	MIT	ExtendedHeuristicCompletionModel	src	0	0	no-tests	["pharo", "pharo-smalltalk"]	
+cormas	cormas-telegram	master	0	2025-09-07	40	MIT	CormasTelegram	src	1	1		["pharo"]	
+jainoshika	pharo-moocs	master	0	2026-03-10	1				0	0	no-baseline,no-tests	[]	i am learning Pharo through MOOCs to deepen my understanding in it.
+moosetechnology	Famix-Fortran	master	0	2025-10-10	402	MIT	FamixFortran	src	1	1		["moose", "pharo", "smalltalk"]	Famix-Fortran
+badetitou	PharoArrow	main	0	2026-03-10	30		PharoArrow	src	0	0	no-tests	[]	A FFI binding to Apache Arrow project
+moosetechnology	InteractiveNotebook	master	0	2025-10-10	42		InteractiveNotebook	src	0	0	no-tests	["pharo", "smalltalk"]	
+omarabedelkader	HeuristicCompletion-History	main	0	2026-04-01	311	MIT	ExtendedHeuristicCompletionHistory	src	22	1		["pharo", "pharo-smalltalk"]	HeuristicCompletion-History introduces a new fetcher that improves Completion’s access to the user’s history.
+Major1709	Pharo	master	0	2025-08-28	2009				0	0	no-baseline,no-tests	[]	
+labordep	Collectable	main	0	2025-11-09	185	MIT	Collectable	src	6	1		["application", "collect", "collectable", "collectible", "collection", "collector", "display", "manage", "pharo", "project", "retro", "retrogaming", "smalltalk", "video-game"]	Collectable is an application project to manage / display / get informations for stuff collector in Pharo. Targeting is video games collection.
+Evref-BL	Gitlab-Pharo-API	develop	0	2026-04-01	147		GitlabAPI	src	15	1		[]	
+sigfriedCub1990	ui-challenges	master	0	2025-10-17	3				0	0	no-baseline,no-tests	[]	7 UI Challenges using Pharo and Seaside
+georghagn	TSF-Showcase	main	0	2025-12-11	261	Apache-2.0	TsfShowcase	src	0	0	no-tests	["jsonrpc", "lightweight", "log-rotation", "logging", "microservices", "pharo", "scheduler", "smalltalk", "websocket"]	The Self-Maintaining Service Node serves as a reference implementation, illustrating how the four specialized TSF components (Logger, Scheduler, FileRotator, Ne
+moosetechnology	FAST-Fortran	master	0	2025-11-21	2029	MIT	FASTFortran	src	10	1		["moose", "pharo", "smalltalk"]	
+ronsaldo	pharo-memfile	main	0	2025-08-28	2				0	0	no-baseline,no-tests	[]	
+GemTalk	RowanStubForJadeite	main375	0	2026-03-02	517	MIT			0	0	no-baseline,no-tests	[]	support for Rowan-less JadeiteForPharo
+omarabedelkader	HeuristicCompletion-Benchmarks	main	0	2026-03-30	605	MIT	ExtendedHeuristicCompletionBenchmarks	src	3	1		["pharo", "pharo-smalltalk"]	HeuristicCompletion-Benchmarks measures the accuracy and other metrics of code completion suggestions by testing various prefix lengths on method calls within a
+JavierLarre	pharo-test-analysis	master	0	2026-03-13	327		FirstToFix	src	23	1		[]	
+jordanmontt	PharoVeritasBenchSuite	main	0	2026-03-09	2268	MIT	VeritasBenchSuite	src	0	0	no-tests	[]	
+moosetechnology	Esope	master	0	2026-03-30	853	MIT	Esope	src	11	1		["moose", "pharo", "smalltalk"]	Esope
+svenvc	pharo-containers	main	0	2025-12-16	10	MIT			0	0	no-baseline,no-tests	[]	Experiments with OCI (docker/podman) containers for Pharo
+mahmood1996	TinyBlog	master	0	2026-05-29	7				3	0	no-baseline	[]	Tiny Blog Project (Mini Project of Pharo MOOC)
+pharo-cig	pharo-librsvg	main	0	2026-03-19	41	MIT	RSVG	src	0	0	no-tests	["gnome", "pharo", "svg"]	Pharo bindings for https://wiki.gnome.org/Projects/LibRsvg
+AminRannen	TinyBlog-PHARO	master	0	2026-04-10	5				3	0	no-baseline	[]	
+cormas	example-models	main	0	2025-11-14	1216	MIT	CormasExampleModels	src	1	1		[]	Central repository with links to all example models and a common baseline to load them into the Pharo image.
+terryc321	PBE-LightsOut	main	0	2025-09-05	9				2	0	no-baseline	[]	pharo lights out game
+mumez	pharo-acp	develop	0	2026-03-21	106		ACP	src	10	1		["acp", "pharo-smalltalk"]	ACP (Agent Client Protocol) client library for Pharo Smalltalk.
+LeoDefossez	NTME_pharo	master	0	2025-09-06	4				1	0	no-baseline	[]	NTME = Not My FIrst Experience
+jgallud	laberinto26-Pharo	master	0	2026-03-24	44				1	0	no-baseline	[]	
+rko281	SeasideExtras-Pharo	main	0	2025-12-19	16	MIT	SeasideExtras		0	0	no-tests	[]	Minor additions and enhancements to Seaside and related repositories for Pharo
+jainoshika	Kanban-Board-Pharo	main	0	2026-03-26	23	MIT	KanbanBoard	src	1	1		[]	
+mumez	pharo-acp-chat-ui	main	0	2026-03-27	178		ACPChatUI	src	0	0	no-tests	["acp", "chat-ui", "claude-code", "gemini-cli", "opencode", "pharo-smalltalk"]	A minimal chat GUI for pharo-acp
+omarabedelkader	Implementors-Sorter	main	0	2025-12-27	6	MIT	ImplementorsSorter	src	0	1		["pharo", "pharo-smalltalk"]	Completion sorting by method definitions
+pharo-llm	pharo-dataset	main	0	2026-03-29	103	MIT	HeuristicCompletionGenerator	src	3	1		["pharo", "pharo-llm"]	Generate structured Pharo code completion datasets
+seandenigris	ClickUp-St	master	0	2025-10-04	87	MIT	ClickUp	src	0	0	no-tests	[]	Pharo Smalltalk bindings to the ClickUp API
+omarabedelkader	Levenshtein-Sorter	main	0	2025-12-27	10	MIT	LevenshteinSorter	src	1	1		[]	Levenshtein-Sorter implement in Pharo Sorter
+JanBliznicenko	pharo-uml-generator	master	0	2025-08-26	283	MIT	UMLGenerator	repository	0	0	no-tests	[]	
+reugalabf	OpenWeatherAPI4Pharo	main	0	2025-08-11	82	GPL-3.0	OpenWeatherMap		2	1		[]	
+scopeo-project	scopeo-instrumentation	main	0	2025-10-17	164		ScopeoInstrumentation	src	1	1		["debugging", "instrumentation", "pharo", "pharo-smalltalk", "smalltalk"]	Instrumentation library to install indirection on AST nodes of chosen methods
+Evref-BL	Github-Pharo-API	main	0	2025-09-26	97		GithubAPI	src	12	1		[]	A pharo implementation of the github api 
+reugalabf	Shinjuku	main	0	2025-08-11	98	GPL-3.0	GoogleAPIClient	source	3	1		[]	Google API Client for Pharo Smalltalk based on Zinc
+omarabedelkader	AI-Sorter	main	0	2025-12-28	89	MIT	AISorter	src	0	1		["pharo", "pharo-smalltalk"]	AI-Sorter is a sorter that is based on LLM
+pharo-llm	pharo-mcp	main	0	2026-03-31	64	MIT	LLMPharoMCP	src	18	1		["pharo", "pharo-llm"]	MCP protocol inside Pharo
+l4e21	pharo-counter-example	master	0	2025-12-30	3				1	0	no-baseline	[]	pharo counter example from 'pharo 9 by example'
+ironirc	pharox-pj-basics	main	0	2026-02-14	169	MIT	PharoXBasics		2	1		[]	
+reugalabf	DatasetUtilities4Pharo	main	0	2026-01-07	129		DatasetUtilities		5	1		[]	
+shnarazk	AoCVisualizer	main	0	2026-01-10	61	CC0-1.0	AoCVisualizer		0	0	no-tests	["advent-of-code", "pharo", "roassal", "visualization"]	Visualize AoC problems in Pharo/Roassal (not solutions nor solving processes)
+unicompute	GemStone-Pharo-Bridge	master	0	2026-03-31	1070		GemStonePharo	src	74	1		[]	
+RalfBarkow	pharo-code-emitter	main	0	2025-11-05	8		PharoCodeEmitter	src	0	0	no-tests	[]	
+guille123giles-cloud	smalltalk-game-logic	main	0	2026-03-10	222				0	0	no-baseline,no-tests	["enterprise-architect", "object-oriented-design", "opp", "pharo", "smalltalk", "uml", "utn-la-plata"]	Implementación de un motor de juego en Smalltalk (Pharo) aplicando polimorfismo, encapsulamiento estricto y diseño orientado a objetos. Incluye modelado UML en 
+antonindeloison	PharoProjects	main	0	2025-11-16	47				9	0	no-baseline	[]	
+prasu-baran	pharo-voice-assistant	master	0	2026-03-11	3				0	0	no-baseline,no-tests	[]	
+StevenCostiou	CVGenerator	master	0	2025-10-19	480	MIT			2	0	no-baseline	[]	My private HTML/LATEX CV generator in Pharo
+TomSpencerLondon	Dice	master	0	2026-01-09	1				1	0	no-baseline	[]	Dice rolling exercise in Pharo Smalltalk
+Olesia32	pharo-spec-components	master	0	2025-07-04	1020		SpecComponentsLibrary	src	19	1		["gui", "library", "pharo", "smalltalk", "spec"]	An extension of Spec 2 in Pharo that provides additional UI components and styling tools.
+seandenigris	TempfileSt	master	0	2026-02-05	65	MIT	Tempfile	repository	0	0	no-tests	["pharo", "smalltalk", "temporary-files"]	
+moosetechnology	FamixReplication	master	0	2025-11-18	132	MIT	FamixReplication	src	10	1		["duplication", "duplication-finder", "famix", "moose", "pharo", "replication-finder", "smalltalk"]	A Famix extension to detect duplication in a Famix model and represent the replicas.
+moosetechnology	FamixTagging	development	0	2025-12-02	141	MIT	FamixTagging	src	12	1		["moose", "pharo", "smalltalk"]	A Famix extension to be able to tag entities.
+prasu-baran	pharo-chuck-demo	master	0	2026-03-12	2				0	0	no-baseline,no-tests	[]	
+Ducasse	Galets	master	0	2025-12-26	12		Galets	src	1	1		["collection", "extension", "goodies", "pharo"]	a collection of little extensions for Pharo. "Galets" are stone you find on the beach
+HossamSaberr	PriorityQueue	master	0	2026-05-16	9		ContainersPriorityQueue	src	1	1		[]	Priority Queue for Pharo
+Maiwaiikou	PharoJamSession	master	0	2025-07-17	234		PharoJamSession	src	3	1		[]	
+Evref-BL	PharoCompatibility	main	0	2026-06-03	42		PharoCompatibility	src	6	1		[]	Compatibility shims between Pharo versions
+seandenigris	Ukulele-Pharo	master	0	2026-01-19	67	GPL-3.0	Ukulele	src	0	0	no-tests	["pharo", "smalltalk"]	A small DB-like app to manage things related to playing e.g. songs, lessons, tabs
+shnarazk	AoC-in-Pharo	main	0	2026-01-12	41		AdventOfCode	src	7	1		["advent-of-code", "pharo"]	
+OlyaMraka	PharoQuiz	master	0	2026-06-13	96				0	0	no-baseline,no-tests	[]	
+LNUitTutor	CopyComparisonPharo	master	0	2026-03-15	5				0	0	no-baseline,no-tests	[]	
+vonbecmann	linked-list	master	0	2025-08-24	268	MIT	LinkedList	repository	17	1		["pharo", "smalltalk"]	a crappy linked list
+joeygibson	aoc-st-base	main	0	2025-12-12	51	MIT			1	0	no-baseline	[]	Pharo code and utilities for Advent Of Code
+pharo-cig	pharo-fontconfig	main	0	2025-11-10	17		Fontconfig	src	0	0	no-tests	["fontconfig", "pharo"]	Pharo bindings for https://www.freedesktop.org/wiki/Software/fontconfig
+HossamSaberr	B-Tree	master	0	2026-05-18	14		BPlusTree	src	1	1		[]	B+ Tree for Pharo
+rwilcox	notes-mode-pharo-smalltalk	master	0	2026-02-26	141				1	0	no-baseline	[]	
+tmenges	pharo-tutorial	main	0	2025-11-07	3				1	0	no-baseline	[]	
+omarabedelkader	pharo-lexicon	main	0	2026-06-13	261	MIT	PharoLexicon	src	4	1		["pharo", "pharo-smalltalk"]	Empirical Analysis on Pharo 14 code 
+ronsaldo	pharo-newfile	main	0	2026-01-14	125		NewFiles	tonel	6	1		[]	
+estebanlm	metametacello	main	0	2026-01-21	14	MIT	MetaMetacello	src	0	0	no-tests	["pharo", "vcs"]	a small tool to batch the load (and lock versions) of projects. 
+rnicle	Pharo	main	0	2025-08-02	11	MIT			4	0	no-baseline	[]	
+Mercap	pharo-pending-patches	release-candidate	0	2025-09-01	6	MIT	PharoPendingPatches	source	0	0	no-tests	[]	
+LeBens03	objvlisp-implementation	master	0	2026-01-14	1066				5	0	no-baseline	[]	Reflective ObjVlisp micro-kernel implemented in Pharo with advanced metaclasses and core object mechanisms
+Arush-Banerjee	GSoC-Pharo	main	0	2026-04-04	26				0	0	no-baseline,no-tests	[]	Tileset Renderer in Pharo:  A simple grid containing cells having basic environment (grass, flower, puddle, rocks) with a wandering walker.
+pharo-cig	pharo-resvg	main	0	2026-01-29	100	MIT	Resvg	src	0	0	no-tests	["graphics", "pharo", "resvg", "svg"]	Pharo bindings for https://github.com/linebender/resvg
+neerja-1984	PAM-GSoC-25-Project	master	0	2025-08-30	831		PAM	src	9	1		["audio-processing", "dsp", "iceberg", "pharo-smalltalk", "phausto", "phonetic-conversion", "rulesets"]	This is the repository that is my entire work in GSoC 25 project. 🌞 Org Name : Pharo Consortium |  Project Name : PAM - Pharos' TTS model 🎼🎤
+tromenArarat	Pharo	master	0	2026-01-30	245				14	0	no-baseline	[]	
+tromenArarat	Cormas	main	0	2026-01-14	1136	MIT	RobotForagerModel	src	1	1		[]	Para simulaciones con Pharo
+FedeLoch	PBA	main	0	2026-02-03	238		PBA		1	1		[]	Pharo Benchmark Analyzer. Static and dynamic benchmark feature analyzer for Pharo
+robvanlopik	Telemetrix-Pharo	main	0	2026-02-18	197	MIT	TMX		1	1		[]	Pharo interfaces to Telemetrix Servers
+FedeLoch	PBE	main	0	2025-09-22	77		BenchEvaluation		0	0	no-tests	[]	Pharo Benchmark Evaluator
+MatFluor	klima-auswertung	master	0	2025-11-15	42		FilliKlima		0	0	no-tests	[]	Pharo-based analysis of sensor logger data
+bouraqadi	PharoJsMisc	pharo12	0	2025-10-14	382	MIT	HydrogenComponentsJS	Pharo	2	1		[]	
+santiaaba	pharo_SGameEngine	master	0	2026-01-18	72				0	0	no-baseline,no-tests	[]	
+GsDevKit	Rowancello	master	0	2025-10-14	767	MIT	Magritte	tonel	0	0	no-tests	[]	Project to provide support for using a Metacello BaselineOf to create Rowan meta data with (hopfully) equivalent sematics
+fgogow	ExercicePharoM1Miage	main	0	2025-11-16	13				5	0	no-baseline	[]	
+pharo-containers	Containers-BinarySearchTree	main	0	2026-03-24	69	MIT	ContainersBinarySearchTree	src	1	1		[]	An Efficient Binary Search Tree Implementation for Pharo
+jecisc	Bazard	master	0	2025-08-14	10930		OOnozDeployer	src	10	1		["pharo", "smalltalk"]	
+moosetechnology	Famix-C-Importer	master	0	2025-11-21	563		FamixCImporter	src	2	1		["c", "meta-model", "moose", "pharo", "tree-sitter"]	C code importer for the Famix C metamodel, based on Tree-sitter
+NahelMzg	TP-MGL843-PharoR	master	0	2026-01-20	36		FamixTypeScript	src	16	1		[]	
+botwhytho	LeSerializedObjectSnippet	master	0	2026-01-21	18	MIT	LeSerializedObjectSnippet	src	0	0	no-tests	[]	A Lepiter snippet that stores JSON data or arbitrary Pharo objects (that have JSON mappings)
+reugalabf	OpenMeteo4Pharo	main	0	2025-12-30	18	GPL-3.0	OpenMeteo		0	0	no-tests	[]	OpenMeteo client for Pharo Smalltalk
+Enzo-Demeulenaere	Pharo-Bingo	master	0	2025-09-09	2				0	0	no-baseline,no-tests	[]	
+asdmundt	AsdCoreLib	master	0	2025-07-09	87				0	0	no-baseline,no-tests	[]	Smalltalk Pharo Core Lib
+Guettaf-Mazigh	Meta	main	0	2026-01-23	2				3	0	no-baseline	[]	pharo language
+Abdelhakkhalifa	gestion-hopital-pharo	main	0	2026-01-23	3				1	0	no-baseline	[]	Projet Pharo (G-O)
+sbaka	game_pharo	master	0	2026-01-05	1395				0	0	no-baseline,no-tests	[]	
+neAnasteisha	Pharotales_Books	master	0	2025-11-20	109		Pharotales_Books	src	3	1		[]	Books by Pharotales
+PierretteKengle	compteurPharo	master	0	2025-09-11	0				1	0	no-baseline	[]	i learn pharo
+RomaShmyhelskyi	PharoAthleteProject	main	0	2025-11-20	90		ProjectAthlete	src	4	1		[]	Створено для ознайомлення з особливостями взаємодії Pharo та GitHub.
+rko281	BootstrapTable-Pharo	main	0	2026-02-04	111	MIT	BootstrapTable		0	0	no-tests	[]	A Seaside component for Pharo wrapping Bootstrap Table
+jpsandoval	LeTest	main	0	2026-05-24	46	MIT			1	0	no-baseline	[]	LLM-Based Test Generation for Pharo
+feenkcom	gtoolkit-constrainer	main	0	2025-09-26	188	MIT			0	0	no-baseline,no-tests	["glamorous-toolkit"]	Apply constraints on Pharo object models and reveal rule breakers. 
+Pharo-XP-Tools	Sindarin-DAP	main	0	2026-05-28	102	MIT	PharoDAPClient		3	1		[]	Debugging Adapter Protocol (DAP) using Sindarin API. It allows to send requests provided by Sindarin to adapters on many langages (Pharo, Python, JS, Java, ...)
+carlogaratti	Pharo-Counter	master	0	2025-09-12	1				1	0	no-baseline	[]	
+rv82	pharo-firebird	master	0	2026-01-27	5		Firebird	src	2	1		[]	Pharo client for Firebird database
+rrobbes	PharoCLI	main	0	2026-03-27	32425		PharoCLI	src	2	1		[]	PharoCLI - Command-line interface for Pharo image inspection
+terryc321	Pharo-Advent-Of-Code	main	0	2025-11-25	164		PharoAdventOfCode	src	47	1		[]	advent of code in pharo 13 stable
+estebanlm	Spec-LibAdwaita	main	0	2026-03-27	37		Adwaita	src	0	0	no-tests	[]	#pharo spec bindings for #libadwaita
+ninokiers	smalltalk-project	main	0	2026-04-05	11	MIT			3	0	no-baseline	[]	A SmallTalk project made in Pharo 12.0 for the course "Meta Programming and Reflection" at the VUB, spring term 2026.
+estebanlm	Spec-LibPanel	main	0	2026-03-31	214		Panel	src	1	1		["gtk", "libpanel", "pharo"]	Pharo bindings for libpanel (the gtk library)
+ebirdyx	mgl843-TP1-Pharo	master	0	2026-02-23	3				0	0	no-baseline,no-tests	[]	
+dr-schlange	nallely-pharo	main	0	2026-01-31	5	BSD-3-Clause	Nallely	src	0	0	no-tests	[]	Nallely connector for Pharo, define your neurons (modules) in Pharo and control Nallely session from Pharo
+tkouadio	tp1-mgl843-pharo-visualizations	main	0	2026-02-01	90				1	0	no-baseline	[]	Repos de visualisation TP1-MGL843
+terryc321	pharo-sha1	master	0	2025-09-14	28				1	0	no-baseline	[]	explore sha1 in pharo
+apexpdl	pharo-bytecode-cfg	main	0	2026-04-07	8				0	0	no-baseline,no-tests	[]	
+sullivanfrancois01-arch	MTG-Pharo-App	main	0	2026-02-01	4		MTGApp	src	0	0	no-tests	[]	My own MTG App
+apexpdl	pharo-regalloc-sim	main	0	2026-04-07	5				0	0	no-baseline,no-tests	[]	
+apexpdl	pharo-merge-state-proto	main	0	2026-04-07	9				0	0	no-baseline,no-tests	[]	
+moosetechnology	Carrefour	v6	0	2025-12-02	476	MIT	Carrefour	src	31	1		["moose", "pharo", "smalltalk"]	Binding between Famix and FAST
+pharo-cig	pharo-libmongoc	main	0	2025-11-28	68	MIT	LibMongoC	src	0	0	no-tests	["mongo", "mongoc", "pharo"]	Pharo bindings for https://mongoc.org/
+aagammodi	pharo-graph-basics	main	0	2026-03-30	1				0	0	no-baseline,no-tests	[]	
+pharo-cig	pharo-libbson	main	0	2025-11-28	45	MIT	LibBSON	src	0	0	no-tests	["bson", "mongo", "pharo"]	Pharo bindings for https://mongoc.org/libbson/current
+luciacardin58-adv	DJAudio-Formats	master	0	2026-06-11	33				3	0	no-baseline	[]	Audio file format infrastructure for Pharo: metadata reading, format detection, and file browsing for a DJ application. GSoC 2026 / Pharo Consortium
+anshiq	pharo-smalltalk	master	0	2026-04-05	6				0	0	tree-fetch-failed:gh: Not Found (HTTP 404)	[]	A Todo App using pharo and  smalltalk
+terryc321	pharo-ffi-notes	main	0	2025-09-15	3				0	0	no-baseline,no-tests	[]	experiment with pharo-ffi tutorials also try build uml diagrams showing classes and inheritance
+TomSpencerLondon	RockPaperScissorsPharo	master	0	2025-11-28	20				2	0	no-baseline	[]	
+rvillemeur	PharoMCP	main	0	2026-06-12	74		PharoMCP	src	12	1		[]	MCP implementation server in Pharo
+terryc321	pharo-ffi-tutorial	master	0	2025-09-16	13				0	0	no-baseline,no-tests	[]	pharo ffi tutorial
+StefanKrecher	PharoMCPServer	master	0	2026-04-03	6		PharoMCPServer	src	0	0	no-tests	["mcp-server", "pharo", "pharo-smalltalk"]	
+kenjirofukuda	imaging-pharo	master	0	2025-09-17	113		KFImaging		0	0	no-tests	[]	
+carlogaratti	PharoByExample_Building_Little_Game	master	0	2025-09-16	1				0	0	no-baseline,no-tests	[]	
+terryc321	pharo-concurrency-tutorial	master	0	2025-09-16	1				0	0	no-baseline,no-tests	[]	concurrency in pharo 
+alesshosry	PharoLLMBridge	master	0	2026-05-28	25		PharoLLMBridge	src	3	1		[]	
+kenjirofukuda	geom-pharo	Pharo6.1	0	2025-09-12	15		GeometryUtils		1	1		[]	
+seandenigris	PDFtk-ST	master	0	2025-12-19	53	MIT	PDFtk	src	1	1		["pharo", "smalltalk"]	Smalltalk wrapper for the PDFtk Server command line tool
+Ducasse	mybecher	master	0	2025-07-28	314				45	0	no-baseline	["pharo"]	to hold experiences
+TopNiz	meoblog	master	0	2026-02-26	34				6	0	no-baseline	[]	Tinyblog tutorial from pharo
+dstp	MyScrabbleGame	master	0	2026-03-27	115				0	0	no-baseline,no-tests	[]	Jeu de Scrabble (Pharo)
+ba-st	Ecosystem	release-candidate	0	2026-03-28	24	MIT	BAStEcosystem	source	0	0	no-tests	["pharo"]	
+gobith	waterpolo-pharo	main	0	2025-09-17	13				1	0	no-baseline	[]	
+AntoninGoslin	PharoExercises	master	0	2026-02-08	21				2	0	no-baseline	[]	My repository to learn the Pharo 
+stella-pas-rose	PharoExercices	main	0	2026-02-08	15				2	0	no-baseline	[]	Exercices Pharo: LinkedList et JavaDocGenerator
+carlogaratti	PharoCounterByBook	master	0	2025-09-17	0				0	0	no-baseline,no-tests	[]	
+AryaK21	pharo-DJ-prototype	main	0	2026-04-01	6				0	0	no-baseline,no-tests	[]	This is a prototype made for Pharo GSOC application.
+vonbecmann	fisher-parser	master	0	2026-01-19	706	MIT	FisherParser	repository	47	1		["pharo", "smalltalk"]	Anthony J. Fisher: Parsing van Wijngaarden grammars
+gustadev24	PBE-LightsOut	main	0	2025-09-17	3				0	0	no-baseline,no-tests	[]	Pharo game example
+mohaTlg	IntroPharo	main	0	2026-04-02	1				1	0	no-baseline	[]	week1: counter
+Gabriel-Darbord	arrow-syntax-rendering	main	0	2026-05-30	18		ArrowSyntaxRendering	src	1	1		["code-renderer", "pharo"]	Render Smalltalk assignment and return tokens as arrows in Pharo code editors.
+bartom21	Ailan-Pharo-Client	master	0	2025-12-01	4				0	0	no-baseline,no-tests	[]	
+hernanmd	StNER	master	0	2025-07-20	5	MIT			1	0	no-baseline	["pharo", "pharo-smalltalk", "smalltalk", "stanford-ner"]	Pharo Smalltalk interface to the Stanford Named Entity Recognizer
+pharo-containers	Containers-KeyedTree	master	0	2026-03-20	50	MIT	ContainersKeyedTree	src	1	1		["collections", "pharo"]	An implementation of KeyedTree
+pharo-containers	Containers-Queue	master	0	2026-03-23	46		ContainersQueue	src	1	1		["collections", "pharo"]	
+PierretteKengle	TPFlagCathy	master	0	2025-09-19	3				0	0	no-baseline,no-tests	[]	TP des pays sur pharo
+pharo-llm	pharo-huggingface	main	0	2026-04-14	69	MIT	HuggingFace	src	9	1		["hugging-face", "pharo", "pharo-llm"]	Hugging Face API in Pharo
+rwilcox	PharoDeskAccessories	main	0	2026-02-13	2				0	0	no-baseline,no-tests	[]	Pharo Implementations of small "desk accessory" type windows that may remind you of classic MacOS
+pharo-llm	pharo-rag	main	0	2026-04-14	24	MIT			8	0	no-baseline	["pharo", "pharo-llm"]	Retrieval Augmented Generation in Pharo
+pharo-llm	pharo-llm	main	0	2026-04-30	43	MIT	PharoLLM	src	0	0	no-tests	["pharo", "pharo-llm"]	Baseline of all pharo-llm repositories
+pharo-cig	pharo-openssl	main	0	2025-10-14	550	MIT	OpenSSL	src	0	0	no-tests	["openssl", "pharo"]	pharo bindings for https://www.openssl.org/
+exercism	pharo-smalltalk-test-runner	main	0	2025-06-30	71	AGPL-3.0	ExercismTestRunner	src	20	1		["community-contributions-accepted", "exercism-test-runner", "exercism-tooling", "maintained-solitary"]	
+terryc321	pharo-bloc-breakout	master	0	2025-09-19	71				0	0	no-baseline,no-tests	[]	break using bloc in pharo
+albertlee	pharo-tyxonq	main	0	2025-07-04	4		Tyxonq	src	0	0	no-tests	[]	A Quantum Computing library for Pharo.
+avwohl	pharo-headless-test	main	0	2026-04-19	166	MIT			0	0	no-baseline,no-tests	["gui-testing", "headless", "pharo", "smalltalk", "sunit", "testing"]	Headless Pharo test runner with fake GUI — click menus, take screenshots, run SUnit without a display
+SmalltalkHF	PDFDetach	main	0	2025-07-04	13	MIT			1	0	no-baseline	[]	Smalltalk package for extracting content from pdf-files, written for Pharo.
+kasperosterbye	MicroSequenceDiagram	dev	0	2026-04-27	99	MIT	MicroSequenceDiagram	src	0	0	no-tests	[]	Interactive UML sequence diagrams for Pharo. Generate diagrams from running code using runtime tracing, with drill-down navigation between packages and clickabl
+jordanmontt	pharo-instrumentation	main	0	2025-08-25	189	MIT	InstrumentationProfilers	src	3	1		[]	Instrumentation techniques for Pharo
+mahmood1996	Dice	master	0	2026-04-20	7				2	0	no-baseline	[]	Dice rolling made with Pharo (Smalltalk)
+pharo-ai	spelling-correction	master	0	2025-09-29	187	MIT	AISpellingCorrection	src	1	1		["natural-language-processing", "pharo", "spelling", "spelling-correction"]	A spelling correction algorithm that can identify and fix spelling mistakes
+fellag-aghiles	StartPharo	main	0	2026-02-16	7				1	0	no-baseline	[]	StartPharo
+moosetechnology	Famix-Coverage	main	0	2026-02-11	52	MIT	FamixCoverage	src	1	1		["coverage", "meta-model", "moose", "pharo", "smalltalk"]	Famix metamodel for coverage
+alkalinan	pharo-openapi-generator	main	0	2025-07-10	10		OpenAPI	src	10	1		[]	
+LNUitTutor	ShapesByPharo	master	0	2025-10-09	34		ShapesByPharo	src	5	1		[]	
+Ducasse	PharoPossibleExtensions	master	0	2025-10-16	16				2	0	no-baseline	[]	To play with extensions
+pharo-llm	pharo-acp	main	0	2026-02-16	123	MIT	LLMPharoACP	src	8	1		["pharo", "pharo-llm"]	ACP protocol inside Pharo
+Ducasse	Comix2	master	0	2026-03-26	140		Comix	src	8	1		["book", "pharo"]	To manage comix collection...
+Evref-BL	pharo-openapi-generator	main	0	2025-07-11	1814		OpenAPIGenerator	src	1	1		[]	A tiny tool to generate Pharo classes from an OpenAPI json schema description
+RyanValdivia	to-pharo-2025b	main	0	2025-09-24	1				0	0	no-baseline,no-tests	[]	
+Mael-Schiemsky	my-pharo-repo	main	0	2026-04-20	1				0	0	no-baseline,no-tests	[]	
+georghagn	TSF-Logger	main	0	2025-12-10	96	Apache-2.0	TsfLogger	src	3	1		["levels", "logging", "pharo", "smalltalk", "structured-logging"]	The TSF-Logger Frameworkis a simple, lightweight, and ready-to-use logger with log-level support. It follows a modular approach based on the Strategy and Decora
+georghagn	TSF-Scheduler	main	0	2025-12-10	149	Apache-2.0	TsfScheduler	src	6	1		["cron-alternative", "lightweight", "pharo", "scheduler", "smalltalk"]	A robust, thread-safe, lightweight and zero-dependency task scheduling framework for Pharo Smalltalk
+GsDevKit	OrderedDictionary	master	0	2026-03-27	109	MIT			0	0	no-baseline,no-tests	[]	A port of the Pharo OrderedDictionary for compatibility with other smalltalks such as Gemstone
+georghagn	TSF-FileRotator	main	0	2025-12-10	140	Apache-2.0	TsfFileRotator	src	4	1		["file-rotation", "log-rotation", "pharo", "policy-based", "rotation", "smalltalk"]	A robust, process-independent file rotator for Pharo Smalltalk. It monitors files (e.g., logs), rotates them based on configurable policies (size, age), and arc
+georghagn	TSF-NexIO	main	0	2025-12-11	146	Apache-2.0	TsfNexIO	src	4	1		["jsonrpc", "pharo", "smalltalk", "websocket"]	TSF-NexIO is a lightweight, robust framework for JSON-RPC 2.0 communication over WebSockets in Pharo Smalltalk. It is designed to enable 'synchronous semantics 
+terryc321	pharo-bloc-tutorial	master	0	2025-09-26	383				0	0	no-baseline,no-tests	[]	pharo bloc graphical low level useful for glamorous toolkit too
+Zadamsa	PharoShark	master	0	2025-12-11	91		PharoShark	src	9	1		[]	
+NathanMalenge	apprentissage-pharo	master	0	2026-02-19	28				1	0	no-baseline	[]	Quelques exercices pour s'inititier à Pharo 
+tinchodias	Ficus	mini	0	2025-07-16	4239	MIT	Ficus	src	19	1		["pharo"]	Library to define tree-like immutable objects in Pharo
+sbiickert	AdventOfCode2025-Pharo	master	0	2025-12-12	134				11	0	no-baseline	[]	Trying managing Smalltalk code with Git
+Yara02	Pharo-edu-2025	main	0	2025-12-15	6				0	0	no-baseline,no-tests	[]	
+fouziray	EscapeAnalysisPharo	main	0	2025-09-18	488		EscapeAnalysis		5	1		[]	Escape analysis prototype for Pharo
+pharo-completion	group-entries	main	0	2026-05-07	22	MIT	GroupEntries	src	1	1		["completion", "pharo"]	Group Entries extension for COMPLISHON
+Lesykhaievskiy	PharoFarm	master	0	2025-12-17	15				0	0	no-baseline,no-tests	[]	
+vonbecmann	multi-valued-dictionary	master	0	2025-08-24	431		MultiValuedDictionary	repository	30	1		["multidict", "pharo", "smalltalk"]	 a crappy multi-valued dictionary
+kyrylo-ly	PharoSportsTeam	master	0	2025-12-17	49				1	0	no-baseline	[]	
+pharo-contributions	JNIPort	master	0	2025-09-28	144	NOASSERTION			0	0	no-baseline,no-tests	[]	NIPort is a Smalltalk library which allows Java code to be invoked from Pharo
+mahmood1996	Counter	master	0	2026-04-29	3				1	0	no-baseline	[]	Small counter example in pharo
+aminrannen7-collab	pharo-geometry	master	0	2026-04-01	0				0	0	no-baseline,no-tests	[]	
+mahmood1996	Challenges	dev	0	2026-05-14	7				0	0	no-baseline,no-tests	[]	Pharo MOOC Challenges (Weekly Challenges)
+Dorisranjaratiana	demonstration-pharo	master	0	2026-02-23	9				1	0	no-baseline	[]	dodo
+Pakarati	pharo-gsoc2025	main	0	2025-09-30	368		DrTest20		16	1		[]	
+jordanmontt	Pretenuring-Advice-Algorithm	main	0	2026-04-02	14	MIT	PretenuringAdviceAlgorithm	src	2	1		[]	Implementation of Blackburn's Pretenuring Advice algorithm for Pharo
+pharo-completion	camel-case-matching	main	0	2026-04-30	23	MIT	CamelCaseMatching	src	2	1		["completion", "pharo"]	Camel Case Matching extension for COMPLISHON
+MercuricChloride	Small-APL	master	0	2025-07-27	14		SmallAPL	src	0	0	no-tests	[]	A library to add array programming support to pharo smalltalk and glamorous toolkit
+Biljcica	pharo-tinyblog	main	0	2026-04-07	6				1	0	no-baseline	[]	
+olekscode	DeprecationVisitor	master	0	2025-10-15	24	MIT	DeprecationVisitor	src	1	1		[]	A visitor for collecting deprecations from Pharo methods
+Nyan11	Quizz	master	0	2026-02-23	3		Quizz	src	0	0	no-tests	[]	A simple Quizz engine in Pharo.
+AminRannen	Pharo-Challenges	master	0	2026-04-15	5				1	0	no-baseline	[]	
+mohaTlg	Pharo2	main	0	2026-04-08	8				3	0	no-baseline	[]	
+AquillaRT	ART-LightsOut	master	0	2026-02-25	6				0	0	no-baseline,no-tests	[]	In Pharo13, I redrawn PBE's LightsOut as a one-dimensional array without using Array2D.
+mumez	Ripple	develop	0	2026-06-13	101		Ripple	src	7	1		["pharo-smalltalk", "websocket"]	Pharo Smalltalk micro library for building WebSocket-based APIs easily
+janvrany	pharo8	Pharo8.0	0	2025-07-28	60341	NOASSERTION	PharoBootstrapProcess	src	1675	1		[]	Fork of Pharo 8 used for ST25 development
+JBenjamin01	Pharo-Counter	master	0	2025-10-02	0				1	0	no-baseline	[]	
+omarabedelkader	HeuristicCompletion-Dependency	main	0	2025-12-30	50	MIT	ExtendedHeuristicCompletionDependency	src	2	1		["pharo", "pharo-smalltalk"]	HeuristicCompletion-Dependency introduces a new fetcher that enhances Completion’s ability to access package dependencies.
+rbagdazian	PharoCounter	main	0	2025-07-31	4				1	0	no-baseline	[]	
+Evref-BL	Evref-Pharo-Linter	master	0	2025-10-03	3				0	0	no-baseline,no-tests	[]	
+Dorisranjaratiana	doris	main	0	2026-04-04	6		TestSimpleRene	src	0	0	no-tests	[]	pharo
+rbagdazian	PBE-LightsOut	master	0	2025-08-01	5				0	0	no-baseline,no-tests	[]	From Pharo with Style
+alkalinan	Pharo-12-project-template	main	0	2025-08-03	30				1	0	no-baseline	[]	This is a template project with GitHub action for a simple for pharo 12 project. 

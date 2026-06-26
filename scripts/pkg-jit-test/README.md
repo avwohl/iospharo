@@ -5,8 +5,31 @@ third-party Pharo packages (parsers, serializers, numerics) and runs their test
 suites + benchmark kernels on BOTH the custom JIT VM and stock Cog, to find JIT
 correctness bugs and measure speed vs Cog.
 
-See `docs/jit-test-packages.md` for the package ranking, load expressions, the
+See `docs/jit-test-packages.md` for the original ranking, load expressions, the
 measured results, and the bugs found so far.
+
+## The 200-package sweep
+
+`packages-200.tsv` is a manifest of **200 maintained Pharo packages with tests**
+(mined from the soogle index — see `soogle-mining/` for provenance, and
+`docs/jit-test-packages-200.md` for the human-readable list + funnel). Columns
+include the verified Metacello `load_expr`, the SUnit `test_prefix`, a `test_path`
+(`sunit` headless or `gui` via `pharo-headless-test`), and a headless-load risk.
+
+Drive the whole sweep (resumable) with `run-manifest.sh` — per package it has the
+stock Cog VM Metacello-load+save a clean image, then runs the suite on both VMs
+and records load status + JIT-only failures:
+
+```
+PHARO=/tmp/h3/pharo BASE_IMAGE=/tmp/h3/Pharo.image \
+  CUSTOM_VM=$PWD/build-rel/test_load_image \
+  scripts/pkg-jit-test/run-manifest.sh        # writes /tmp/pkg200/summary.tsv
+```
+
+Best run on the AWS build box (16 vCPU) as a long backgrounded job — the
+keep-alive lease keeps the box up while a Claude drives it. The 27 `gui` packages
+(Spec/Bloc/Roassal/Morphic/…) get the `pharo-headless-test` fake-GUI prelude
+automatically.
 
 ## Why this exists
 

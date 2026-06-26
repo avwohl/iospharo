@@ -33,12 +33,21 @@ PREFIXES="${3:?comma-separated package-name prefixes}"
 # as literals in the runner, so both VMs select the same classes)
 printf '%s\n' "${PREFIXES//,/$'\n'}" > /tmp/pkg_prefixes.txt
 
+# Optional PRELUDE .st fileIn'd before the runner on BOTH VMs (same on each, so
+# it never biases the diff) -- used for visual packages to install the headless
+# fake-GUI (scripts/pharo-headless-test/setup_fake_gui.st) so Morphic/Spec tests
+# can run without a display.
+PRELUDE="${PRELUDE:-}"
+prelude_expr=""
+[ -n "$PRELUDE" ] && prelude_expr="'$PRELUDE' asFileReference fileIn. "
+EVAL="${prelude_expr}$(cat "$RUNNER")"
+
 echo "== $LABEL: stock Cog =="
-timeout 600 "$PHARO" "$IMAGE" eval "$(cat "$RUNNER")" > "$OUT/${LABEL}_cog.log" 2>&1
+timeout 600 "$PHARO" "$IMAGE" eval "$EVAL" > "$OUT/${LABEL}_cog.log" 2>&1
 grep -aE "^CLASSES|^RESULT" "$OUT/${LABEL}_cog.log"
 
 echo "== $LABEL: custom JIT VM =="
-PHARO_MAX_STEPS=2000000000000 timeout 900 "$CUSTOM_VM" "$IMAGE" eval "$(cat "$RUNNER")" > "$OUT/${LABEL}_jit.log" 2>&1
+PHARO_MAX_STEPS=2000000000000 timeout 900 "$CUSTOM_VM" "$IMAGE" eval "$EVAL" > "$OUT/${LABEL}_jit.log" 2>&1
 # the custom VM interleaves [JIT]/[DIAG] telemetry; filter to the runner's lines
 grep -aE "^CLASSES|^RESULT" "$OUT/${LABEL}_jit.log" | grep -avE "\[JIT\]"
 

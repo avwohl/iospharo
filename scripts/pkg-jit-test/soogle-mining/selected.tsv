@@ -1,0 +1,241 @@
+owner	repo	branch	baseline	srcdir	n_tests	stars	ghpath	topics	desc
+tomooda	ViennaTalk	main	ViennaTalk	repository	307	16	github://tomooda/ViennaTalk:main/repository	["formal-methods", "formal-models", "formal-specification", "pharo", "smalltalk", "vdm", "vdm-sl"]	ViennaTalk, a LIVE IDE for VDM-SL based on Pharo Smalltalk
+pharo-spec	Spec	Pharo14	Spec2	src	243	66	github://pharo-spec/Spec:Pharo14/src	["gui", "pharo", "smalltalk", "spec"]	Spec is a framework in Pharo for describing user interfaces.
+pharo-spec	NewTools	Pharo14	NewTools	src	195	25	github://pharo-spec/NewTools:Pharo14/src	["pharo"]	All development tools for Pharo, developed with Spec
+hernanmd	BioSmalltalk	master	BioSmalltalk	repository	180	21	github://hernanmd/BioSmalltalk:master/repository	["api", "bioinformatics", "bioinformatics-tool", "biosmalltalk", "pharo", "pharo-smalltalk", "smalltalk"]	Bioinformatics Library for Pharo Smalltalk
+pillar-markup	pillar	dev	Pillar	src	168	56	github://pillar-markup/pillar:dev/src	["markup", "markup-language", "pharo", "pillar"]	Markup syntax and associated tools to write and generate documentation, books and slides
+pharo-contributions	XML-XMLParser	master	XMLParser	src	163	14	github://pharo-contributions/XML-XMLParser:master/src	[]	XML Parser for Pharo
+pillar-markup	Microdown	dev	Microdown	src	160	43	github://pillar-markup/Microdown:dev/src	["document", "markdown", "parser", "pharo"]	Microdown is a cleaned and simpler markdown but with more powerful features such as extensions.
+EiichiroIto	Avr-Pharo	main	Avr	src	157	0	github://EiichiroIto/Avr-Pharo:main/src	[]	Supporting tools for AVR assembly programming
+moosetechnology	Famix	development	Famix	src	143	16	github://moosetechnology/Famix:development/src	["meta-model", "moose", "pharo", "smalltalk"]	An abstract representation of source code. Famix is generic and can describe applications in multiple programming languages.
+pharo-rdbms	glorp	master	Glorp	src	141	27	github://pharo-rdbms/glorp:master/src	["database", "orm", "pharo"]	Generic Lightweight Object Relational Persistence
+pharo-graphics	Bloc	dev	Bloc	src	138	92	github://pharo-graphics/Bloc:dev/src	["2d", "animations", "bloc", "effects", "graphics", "pharo", "smalltalk", "ui"]	Low-level UI infrastructure & framework for Pharo
+rko281	ReStoreForPharo	main	ReStore		131	34	github://rko281/ReStoreForPharo:main	["pharo"]	Relational database persistence for Pharo objects
+OpenSmock	Pyramid	main	Pyramid	src	118	44	github://OpenSmock/Pyramid:main/src	["bloc", "graphic-editor", "gui", "gui-builder", "hmi", "pharo", "pharo-smalltalk", "pyramid", "smalltalk", "toplo", "ui", "ui-builder", "ui-editor", "ux", "wysiwyg", "wysiwyg-editor"]	Pyramid is a Graphical User-Interface (GUI) builder and editor for Bloc and Toplo.
+punt-labs	anthropic-sdk-pharo	main	ClaudeSDK	src	118	1	github://punt-labs/anthropic-sdk-pharo:main/src	["claude", "claude-sdk", "pharo", "pharo-llm"]	Claude SDK for Pharo — Anthropic API client
+moosetechnology	FAST-JAVA	v4	FASTJava	src	117	1	github://moosetechnology/FAST-JAVA:v4/src	["ast", "java", "meta-model", "moose", "pharo", "smalltalk"]	Represent the Java AST with Famix
+ReMobidyc	ReMobidyc	main	ReMobidyc	src	114	14	github://ReMobidyc/ReMobidyc:main/src	["ecotoxicology", "indivisual-based-modeling", "multi-agent-simulation", "multi-agent-systems", "pharo", "population-dynamics", "simulator"]	web based multi-agent simulator for individual-based modeling in population dynamics and ecotoxicology 
+koendehondt	hera-for-pharo	main	Hera		111	2	github://koendehondt/hera-for-pharo:main	[]	Cucumber-like tools for Pharo
+pharo-vcs	iceberg	Pharo14	Iceberg		107	138	github://pharo-vcs/iceberg:Pharo14	["git", "pharo", "vcs"]	Iceberg is the main toolset for handling VCS in Pharo.
+ba-st	Willow	release-candidate	Willow	source	102	51	github://ba-st/Willow:release-candidate/source	["ajax", "html5", "javascript", "jquery", "mit-license", "pharo", "seaside", "web", "web-components"]	The Web Interaction Library that eases the burden of creating AJAX-based web applications
+moosetechnology	MooseIDE	development	MooseIDE	src	102	11	github://moosetechnology/MooseIDE:development/src	["moose", "pharo", "smalltalk"]	The Moose Browsers
+pharo-contributions	mutalk	master	MuTalk	src	95	24	github://pharo-contributions/mutalk:master/src	["pharo"]	Mutation Testing in Pharo Smalltalk
+pharo-llm	chatpharo	main	AIChatPharo	src	91	25	github://pharo-llm/chatpharo:main/src	["pharo", "pharo-llm"]	ChatPharo is an AI Assistant inside Pharo.
+pharo-graphics	Roassal	Pharo14	Roassal	src	87	27	github://pharo-graphics/Roassal:Pharo14/src	["pharo", "visualization"]	The Roassal Visualization Engine
+Alamvic	druid	main	Druid		82	10	github://Alamvic/druid:main	["meta-compiler", "pharo", "virtual-machine"]	Metacompiler to generate an optimised JIT compiler frontend based on an Interpreter definition
+OpenSmock	OpenSmock	main	OpenSmock	src	82	6	github://OpenSmock/OpenSmock:main/src	["components", "framework", "hmi", "ihm", "open", "open-smock", "pharo", "prototyping", "smalltalk", "smock", "toolbox", "tools", "ui", "ux", "widgets"]	OpenSmock is a collection of tools and workshops designed to streamline the development of applications - especially user interfaces (UI) - within the Pharo pro
+PolyMathOrg	PolyMath	master	PolyMath	src	80	173	github://PolyMathOrg/PolyMath:master/src	["mathematics", "numerical-methods", "pharo", "pharo-smalltalk", "smalltalk"]	Scientific Computing with Pharo
+ba-st	Stargate	release-candidate	Stargate	source	75	35	github://ba-st/Stargate:release-candidate/source	["api", "pharo", "rest", "rest-api", "smalltalk"]	A library supporting the creation of HTTP based RESTful APIs. 
+FedeLoch	Ume	main	Ume		74	2	github://FedeLoch/Ume:main	["input-minimization", "performance-fuzzing", "property-based-testing", "tests-generation"]	Property Based Testing Framework for Pharo with Performance Fuzzing, Input Minimization and Automatic Tests Generation
+unicompute	GemStone-Pharo-Bridge	master	GemStonePharo	src	74	0	github://unicompute/GemStone-Pharo-Bridge:master/src	[]	
+moosetechnology	GitProjectHealth	main	GitLabHealth	src	71	4	github://moosetechnology/GitProjectHealth:main/src	["mining", "mining-software-repository", "mining-source-code", "moose", "msr", "pharo"]	A Mining Software Repository and Ticket management Platform tool, in Pharo
+pharo-spec	gtk-bindings	main	Glib	src	69	3	github://pharo-spec/gtk-bindings:main/src	["gtk3", "pharo", "ui"]	Gtk3 bindings for Pharo
+bouraqadi	PharoMisc	pharo12	PharoMisc	Pharo	66	16	github://bouraqadi/PharoMisc:pharo12/Pharo	["concurrency", "equality", "pharo", "pharo-smalltalk"]	Small utilities and libraries
+GemTalk	JadeiteForPharo	main375	JadeiteForPharo		65	4	github://GemTalk/JadeiteForPharo:main375	[]	IDE for GemStone Smalltalk application development in Pharo using Rowan code management 
+vonbecmann	earley-parser	master	EarleyParser	repository	64	4	github://vonbecmann/earley-parser:master/repository	["earley-parser", "pharo", "smalltalk"]	Jay Clark Earley Parser
+ThalesGroup	GeoView	main	GeoView	src	61	13	github://ThalesGroup/GeoView:main/src	["alexandrie", "bloc", "cartographic", "cartographic-projection", "component-architecture", "geo", "geographical", "geoview", "geoviews", "map", "mercator", "molecule", "open-smock", "pharo", "projection", "smalltalk", "smock", "tiles", "ui", "view"]	Views to display and interact with geographical objects and cartographic layers for UI
+pharo-cig	UnifiedFFI	main	UnifiedFFI	src	57	1	github://pharo-cig/UnifiedFFI:main/src	["ffi", "pharo"]	standalone version of the uFFI package of Pharo
+astares	Pharo-OS-Windows	master	OSWindows	src	53	14	github://astares/Pharo-OS-Windows:master/src	["pharo"]	Support for Windows operating system for Pharo
+Evref-BL	MCP	main	MCP	src	48	1	github://Evref-BL/MCP:main/src	[]	A MCP server for Pharo
+terryc321	Pharo-Advent-Of-Code	main	PharoAdventOfCode	src	47	0	github://terryc321/Pharo-Advent-Of-Code:main/src	[]	advent of code in pharo 13 stable
+vonbecmann	fisher-parser	master	FisherParser	repository	47	0	github://vonbecmann/fisher-parser:master/repository	["pharo", "smalltalk"]	Anthony J. Fisher: Parsing van Wijngaarden grammars
+ba-st	Buoy	release-candidate	Buoy	source	46	23	github://ba-st/Buoy:release-candidate/source	["assertion-library", "mit-license", "optional", "percentage", "percentage-calculations", "pharo"]	A complement to Pharo & GS64 adding useful extensions
+pharo-graphics	Alexandrie	dev	Alexandrie	src	40	7	github://pharo-graphics/Alexandrie:dev/src	["cairo", "freetype", "harfbuzz", "pharo", "smalltalk"]	FFI bindings and a 2D canvas for Pharo based on Cairo, Freetype and Harfbuzz
+pharo-cig	pharo-cig	main	CIG	src	39	21	github://pharo-cig/pharo-cig:main/src	["ffi", "libclang", "pharo"]	A tool to import C/C++ libraries into Pharo
+KendrickOrg	kendrick	master	Kendrick	src	37	52	github://KendrickOrg/kendrick:master/src	["dsl", "epidemiology", "infectious-diseases", "mathematical-modelling", "model-driven-engineering", "pharo", "pharo-smalltalk", "smalltalk"]	Domain-Specific Modeling for Epidemiology
+pharo-ai	graph-algorithms	master	AIGraphAlgorithms	src	35	27	github://pharo-ai/graph-algorithms:master/src	["graph", "graph-algorithms", "pharo", "smalltalk"]	A graph algorithms library implemented in Pharo
+badetitou	Casino	v3	Casino	src	32	11	github://badetitou/Casino:v3/src	["metamodel", "migration", "pharo", "smalltalk"]	Casino is a set of tool I'm developping to help developers migrate their applications
+ApptiveGrid	Soil	main	Soil	src	31	58	github://ApptiveGrid/Soil:main/src	["database", "oop", "pharo"]	An object oriented database that is easy to use and fun to play with
+mumez	pharo-agentic-browser	develop	AgenticBrowser	src	31	2	github://mumez/pharo-agentic-browser:develop/src	["coding-agents", "pharo-smalltalk"]	Multiple AI agent session browser for Pharo Smalltalk
+moosetechnology	Carrefour	v6	Carrefour	src	31	0	github://moosetechnology/Carrefour:v6/src	["moose", "pharo", "smalltalk"]	Binding between Famix and FAST
+OpenSmock	Molecule	main	Molecule	src	30	33	github://OpenSmock/Molecule:main/src	["architecture", "component", "components", "connexion", "corba", "events", "framework", "lightweigth", "lwccm", "model", "molecule", "open-smock", "parameters", "pharo", "pharo-smalltalk", "services", "smalltalk", "smock"]	Molecule is a Pharo component framework.
+vonbecmann	multi-valued-dictionary	master	MultiValuedDictionary	repository	30	0	github://vonbecmann/multi-valued-dictionary:master/repository	["multidict", "pharo", "smalltalk"]	 a crappy multi-valued dictionary
+kasperosterbye	PharoAIActions	master	PharoAIActions	src	29	6	github://kasperosterbye/PharoAIActions:master/src	[]	AIActions is a Pharo tool that uses AI to generate meaningful comments for methods, classes, and packages. It integrates with AI APIs (such as Mistral and Ollam
+jecisc	Chanel	master	Chanel	src	27	22	github://jecisc/Chanel:master/src	["code-cleaner", "code-cleaning", "code-smells", "lint", "pharo", "smalltalk"]	I am a code cleaner for Pharo Smalltalk
+ba-st	Superluminal	release-candidate	Superluminal	source	26	9	github://ba-st/Superluminal:release-candidate/source	["http", "http-api-client", "http-client", "pharo", "smalltalk"]	Building blocks for creating HTTP requests and API clients
+pharo-nosql	mongotalk	master	MongoTalk	mc	25	19	github://pharo-nosql/mongotalk:master/mc	[]	A Pharo driver for MongoDB 
+feenkcom	PharoLink	main	PharoLink	src	25	7	github://feenkcom/PharoLink:main/src	[]	A PythonBridge / JSLink style server for Pharo
+zeroflag	Teapot	master	Teapot	source	24	103	github://zeroflag/Teapot:master/source	["http", "pharo", "pharo-smalltalk", "smalltalk", "teapot", "webframework", "webserver"]	Teapot micro web framework for Pharo Smalltalk
+cormas	cormas	master	Cormas	src	24	33	github://cormas/cormas:master/src	["abm", "agent-based-modeling", "common-pool-ressources", "complex-systems", "multi-agent", "multi-agent-simulation", "pharo", "simulation-framework", "smalltalk"]	CORMAS (COmmon pool Ressources and Multi-Agent Simulations)
+ba-st	Launchpad	release-candidate	Launchpad	source	24	17	github://ba-st/Launchpad:release-candidate/source	["pharo", "smalltalk"]	A command-line interface to start, list, and explain the applications available within the image
+ba-st	Hyperspace	release-candidate	Hyperspace	source	23	10	github://ba-st/Hyperspace:release-candidate/source	["http", "pharo"]	Building blocks for Internet technologies on top of Zinc HTTP Components
+moosetechnology	Fame	development	Fame	src	23	4	github://moosetechnology/Fame:development/src	["meta-model", "moose", "pharo", "smalltalk"]	Fame is a meta-modeling framework for executable models.
+OpenPonk	petrinets	master	OpenPonkPetriNets	repository	23	1	github://OpenPonk/petrinets:master/repository	["modeling", "petri-nets", "pharo", "smalltalk"]	Petri nets diagrams for OpenPonk tool
+pharo-llm	pharo-llmstudio	main	LLMStudio	src	23	1	github://pharo-llm/pharo-llmstudio:main/src	["pharo", "pharo-llm"]	Visual LLM builder in Pharo
+JavierLarre	pharo-test-analysis	master	FirstToFix	src	23	0	github://JavierLarre/pharo-test-analysis:master/src	[]	
+feenkcom	sparta	main	Sparta	src	22	33	github://feenkcom/sparta:main/src	["pharo", "vector-graphics"]	Sparta is a canvas on top of Skia.
+maxwills	SeekerDebugger	main	Seeker		22	10	github://maxwills/SeekerDebugger:main	["pharo", "smalltalk"]	A Queryable Time-Traveling Debugger for Pharo 9.0, 10 and 11.
+pavel-krivanek	Turbo	master	Turbo	src	22	3	github://pavel-krivanek/Turbo:master/src	[]	Text based interface for Pharo
+omarabedelkader	HeuristicCompletion-History	main	ExtendedHeuristicCompletionHistory	src	22	0	github://omarabedelkader/HeuristicCompletion-History:main/src	["pharo", "pharo-smalltalk"]	HeuristicCompletion-History introduces a new fetcher that improves Completion’s access to the user’s history.
+OpenSmock	Bloc-Serialization	main	BlocSerialization	src	21	1	github://OpenSmock/Bloc-Serialization:main/src	["bloc", "graphics", "graphics-library", "hmi", "ihm", "open-smock", "pharo", "pharo-smalltalk", "serialization", "serialization-library", "serialize", "serializer", "smalltalk", "smock", "ston", "ui", "ux"]	Bloc serialization features to store/unstore BlElements.
+pharo-ai	metrics	master	AIMetrics	src	20	2	github://pharo-ai/metrics:master/src	["adjusted-rand-index", "fowlkes-mallow", "jaccard", "machine-learning", "pharo", "pharo-smalltalk", "randindex"]	Implementation of Machine Learning metrics for Pharo
+exercism	pharo-smalltalk-test-runner	main	ExercismTestRunner	src	20	0	github://exercism/pharo-smalltalk-test-runner:main/src	["community-contributions-accepted", "exercism-test-runner", "exercism-tooling", "maintained-solitary"]	
+Ducasse	Myg	master	Myg	src	19	4	github://Ducasse/Myg:master/src	["pharo"]	
+Driolar	SoccerTheory-Pharo	master	SoccerTheory	src	19	1	github://Driolar/SoccerTheory-Pharo:master/src	["2d", "graphics", "pharo", "smalltalk", "soccer", "strategy"]	Software application to visualize the Theory of Soccer. It is written in Pharo.
+Olesia32	pharo-spec-components	master	SpecComponentsLibrary	src	19	0	github://Olesia32/pharo-spec-components:master/src	["gui", "library", "pharo", "smalltalk", "spec"]	An extension of Spec 2 in Pharo that provides additional UI components and styling tools.
+tinchodias	Ficus	mini	Ficus	src	19	0	github://tinchodias/Ficus:mini/src	["pharo"]	Library to define tree-like immutable objects in Pharo
+feenkcom	JSLink	main	JavaScriptLink	src	18	11	github://feenkcom/JSLink:main/src	[]	A bridge between Pharo and JavaScript
+pharo-llm	pharo-mcp	main	LLMPharoMCP	src	18	0	github://pharo-llm/pharo-mcp:main/src	["pharo", "pharo-llm"]	MCP protocol inside Pharo
+pharo-graphics	pharo-sdl-experiments	master	SDLExperiments		17	7	github://pharo-graphics/pharo-sdl-experiments:master	["pharo", "sdl2", "smalltalk"]	Experiment SDL2 layer composition from Pharo
+shingarov	Pharo-ArchC	pure-z3	ArchC	src	17	7	github://shingarov/Pharo-ArchC:pure-z3/src	[]	Generate binutils from formal spec
+pharo-ai	decision-tree-model	master	DecisionTreeModel	src	17	4	github://pharo-ai/decision-tree-model:master/src	["decision-trees-learning", "decisiontreemodel", "pharo"]	Model for Decision Trees Learning in Pharo
+ba-st	Willow-SpinKit	release-candidate	WillowSpinKit	source	17	3	github://ba-st/Willow-SpinKit:release-candidate/source	["pharo", "spinkit", "throbber", "willow"]	Integration between Willow and SpinKit
+pharo-ai	edit-distances	master	AIEditDistances	src	17	3	github://pharo-ai/edit-distances:master/src	["edit-distances", "pharo", "pharo-smalltalk", "smalltalk"]	Several edit distances algorithms implemented in Pharo
+pharo-contributions	CSSParser	main	CSSParser		17	2	github://pharo-contributions/CSSParser:main	["cascading-style-sheets", "css", "parser", "pharo", "pharo-smalltalk"]	CSSParser is a Pharo library that provides an object model and tools to read, interpret, and manipulate CSS stylesheets, including support for parsing .css file
+vonbecmann	linked-list	master	LinkedList	repository	17	0	github://vonbecmann/linked-list:master/repository	["pharo", "smalltalk"]	a crappy linked list
+fuhrmanator	FamixTypeScript	master	FamixTypeScript	src	16	5	github://fuhrmanator/FamixTypeScript:master/src	["moose", "pharo"]	
+pharo-graphics	PharoSDL3	dev	SDL3	src	16	3	github://pharo-graphics/PharoSDL3:dev/src	[]	
+koendehondt	iris-for-pharo	main	Iris	src	16	2	github://koendehondt/iris-for-pharo:main/src	[]	
+NahelMzg	TP-MGL843-PharoR	master	FamixTypeScript	src	16	0	github://NahelMzg/TP-MGL843-PharoR:master/src	[]	
+Pakarati	pharo-gsoc2025	main	DrTest20		16	0	github://Pakarati/pharo-gsoc2025:main	[]	
+pharo-spec	Spec-Gtk	main	SpecGtk	src	15	15	github://pharo-spec/Spec-Gtk:main/src	["gtk3", "pharo", "ui"]	Spec GTK bindings for Pharo
+ThalesGroup	GeoTools	main	GeoTools	src	15	5	github://ThalesGroup/GeoTools:main/src	["absolute-coordinates", "cartesian-coordinates", "coordinates", "course", "geodesic", "geodesics", "geodesics-equation", "geographic", "heading", "kinematics", "open-smock", "pharo", "polar-coordinates", "position", "smalltalk", "smock", "speed"]	Geographic Tools as Coordinates, Kinematics and Geodesic utilities for GIS.
+ba-st	Boardwalk	release-candidate	Boardwalk	source	15	2	github://ba-st/Boardwalk:release-candidate/source	["javascript", "pharo", "seaside", "web"]	A couple of facilities on top of Seaside
+pharo-ai	moose-linear-algebra	master	AIMooseLinearAlgebra	src	15	0	github://pharo-ai/moose-linear-algebra:master/src	["linear-algebra", "matrix-calculations", "sparse-vectors"]	Linear Algebra classes for Pharo
+Evref-BL	Gitlab-Pharo-API	develop	GitlabAPI	src	15	0	github://Evref-BL/Gitlab-Pharo-API:develop/src	[]	
+lucretiomsp	Coypu	master	Coypu	src	14	22	github://lucretiomsp/Coypu:master/src	[]	Package of convenient methods and classes for Pharo designed for live coding performances using Kyma or other musica languages by sending OSC messages in an eco
+mumez	RediStick	master	RediStick	src	13	10	github://mumez/RediStick:master/src	["gemstone", "pharo", "pharo-smalltalk", "redis-client"]	A Redis client for Pharo using Stick auto-reconnection layer
+ba-st	Sagan	release-candidate	Sagan	source	13	6	github://ba-st/Sagan:release-candidate/source	["persistence", "pharo", "smalltalk"]	Sagan is aimed to help solutions implementing polyglot persistence.
+SmalltalkWeb	MyPrecious	pharo12	MyPrecious		13	2	github://SmalltalkWeb/MyPrecious:pharo12	["middleware", "modularity", "pharo", "pharo-smalltalk"]	A middleware framework to rule them all... according to Gollum ;-)
+ba-st	Stardust	release-candidate	Stardust	source	13	2	github://ba-st/Stardust:release-candidate/source	["architecture", "pharo", "smalltalk"]	A framework to describe how to create models
+juliendelplanque	JRPC	master	JRPC	src	12	13	github://juliendelplanque/JRPC:master/src	["json-rpc", "jsonrpc2", "pharo", "rpc", "rpc-client", "rpc-server"]	Yet another JSON-RPC 2.0 implementation for Pharo Smalltalk
+feenkcom	JavaScriptGenerator	main	JavaScriptGenerator	src	12	2	github://feenkcom/JavaScriptGenerator:main/src	[]	A toolkit to generate JavaScript source code from Pharo.
+uca-argentina	2026-buscandoElPharo	master	IngSoft2	repository	12	1	github://uca-argentina/2026-buscandoElPharo:master/repository	[]	
+chicoary	PharoWiki	main	PharoWiki	src	12	1	github://chicoary/PharoWiki:main/src	[]	
+lucretiomsp	MoofLODforPharo	master	Mooflod	src	12	0	github://lucretiomsp/MoofLODforPharo:master/src	[]	
+Evref-BL	Github-Pharo-API	main	GithubAPI	src	12	0	github://Evref-BL/Github-Pharo-API:main/src	[]	A pharo implementation of the github api 
+moosetechnology	FamixTagging	development	FamixTagging	src	12	0	github://moosetechnology/FamixTagging:development/src	["moose", "pharo", "smalltalk"]	A Famix extension to be able to tag entities.
+rvillemeur	PharoMCP	main	PharoMCP	src	12	0	github://rvillemeur/PharoMCP:main/src	[]	MCP implementation server in Pharo
+svenvc	NeoJSON	master	NeoJSON	repository	11	45	github://svenvc/NeoJSON:master/repository	["json", "mapping", "pharo", "smalltalk"]	NeoJSON is an elegant and efficient standalone Smalltalk framework to read and write JSON converting to or from Smalltalk objects.
+j-brant	SmaCC	master	SmaCC	src	11	30	github://j-brant/SmaCC:master/src	["parser", "parser-generator", "pharo", "smalltalk"]	
+pharo-project	pharo-beacon	master	Beacon	src	11	15	github://pharo-project/pharo-beacon:master/src	["pharo"]	Beacon is a small event and logging framework for pharo
+ba-st	Kepler	release-candidate	Kepler	source	11	8	github://ba-st/Kepler:release-candidate/source	["architecture", "dependency-injection", "dynamic-components-architecture", "pharo", "smalltalk"]	An architecture to organize your software as a set of loose-coupled systems, where each can be easily accessed and has a well-defined responsibility
+newapplesho	google-cloud-smalltalk	main	GoogleCloud	src	11	5	github://newapplesho/google-cloud-smalltalk:main/src	["bigquery", "gcp", "gemini", "pharo-smalltalk", "smalltalk"]	Pharo Smalltalk client libraries for Google Cloud Platform services.
+labordep	PharoGameye	main	Gameye		11	3	github://labordep/PharoGameye:main	["app", "collection", "collector", "game", "games", "gameye", "gameye-app", "gameye-application", "gameye-collection", "parser", "parsing", "peripherals", "pharo", "pharo-smalltalk", "print-media", "smalltalk", "systems", "toys-to-life"]	GAMEYE.app tools for Pharo
+pharo-ai	a-priori	master	AIAPriori	src	11	2	github://pharo-ai/a-priori:master/src	["apriori-algorithm", "data-mining", "data-science", "frequent-itemsets", "pharo"]	Implementation of A-Priori algorithm in Pharo
+ba-st	Willow-JQueryUI	release-candidate	WillowJQueryUI	source	11	1	github://ba-st/Willow-JQueryUI:release-candidate/source	["jquery-ui", "pharo", "willow"]	Integration between Willow and JQuery UI
+moosetechnology	Esope	master	Esope	src	11	0	github://moosetechnology/Esope:master/src	["moose", "pharo", "smalltalk"]	Esope
+pharo-contributions	DeepTraverser	development	DeepTraverser	src	10	9	github://pharo-contributions/DeepTraverser:development/src	["deep-traverser", "graph", "pharo", "smalltalk", "traversing"]	DeepTraverser offers a library for traversing object graphs. It is inspired from an original implementation by Mariano Martinez Peck.
+pharo-graphics	Spec-Toplo	dev	SpecToplo	src	10	5	github://pharo-graphics/Spec-Toplo:dev/src	["pharo"]	Toplo backend for Spec (Pharo)
+tesonep	ParametrizedTests	master	ParametrizedTests	src	10	5	github://tesonep/ParametrizedTests:master/src	["pharo", "testing"]	
+OpenPonk	fsm-editor	master	OpenPonkFsmEditor	repository	10	2	github://OpenPonk/fsm-editor:master/repository	["finite-state-machine", "modeling", "pharo", "smalltalk"]	Finite-state machine diagrams for OpenPonk tool
+olekscode	MicroUML	main	MicroUML	src	10	2	github://olekscode/MicroUML:main/src	[]	A UML model and DSL in Pharo
+moosetechnology	FAST-Fortran	master	FASTFortran	src	10	0	github://moosetechnology/FAST-Fortran:master/src	["moose", "pharo", "smalltalk"]	
+mumez	pharo-acp	develop	ACP	src	10	0	github://mumez/pharo-acp:develop/src	["acp", "pharo-smalltalk"]	ACP (Agent Client Protocol) client library for Pharo Smalltalk.
+moosetechnology	FamixReplication	master	FamixReplication	src	10	0	github://moosetechnology/FamixReplication:master/src	["duplication", "duplication-finder", "famix", "moose", "pharo", "replication-finder", "smalltalk"]	A Famix extension to detect duplication in a Famix model and represent the replicas.
+jecisc	Bazard	master	OOnozDeployer	src	10	0	github://jecisc/Bazard:master/src	["pharo", "smalltalk"]	
+alkalinan	pharo-openapi-generator	main	OpenAPI	src	10	0	github://alkalinan/pharo-openapi-generator:main/src	[]	
+svenvc	P3	master	P3		9	80	github://svenvc/P3:master	["database-driver", "glorp", "pharo", "postgresql", "smalltalk"]	A lean and mean PostgreSQL client for Pharo
+pharo-rdbms	Pharo-SQLite3	master	SQLite3	src	9	24	github://pharo-rdbms/Pharo-SQLite3:master/src	["pharo", "sqlite3"]	Community-owned official SQLite3 binding for Pharo
+svenvc	ztimestamp	master	ZTimestamp	repository	9	12	github://svenvc/ztimestamp:master/repository	["chronology", "datetime", "formatter", "parser", "pharo", "smalltalk", "smtp-client", "timestamp", "timezone", "timezone-database"]	I am ZTimestamp, a Magnitude, a point in time, an alternative to DateAndTime and TimeStamp
+jordanmontt	illimani-memory-profiler	main	IllimaniProfiler	src	9	10	github://jordanmontt/illimani-memory-profiler:main/src	["allocations", "memory", "object-lifetimes", "oop", "pharo", "profiler", "profiling-library", "smalltalk"]	A Memory Profiler for Pharo
+ba-st	Stargate-Consul	release-candidate	StargateConsul	source	9	4	github://ba-st/Stargate-Consul:release-candidate/source	["consul", "pharo", "stargate"]	Integration with Consul HTTP API to register and deregister services
+PolyMathOrg	vector-matrix	master	MathVectorMatrix	src	9	2	github://PolyMathOrg/vector-matrix:master/src	["pharo"]	A separate repository containing PMMatrix and PMVector - two custom data structures of PolyMath
+guillep	espell	master	Espell	src	9	1	github://guillep/espell:master/src	["metaprogramming", "pharo", "runtime"]	High-level interface of a pharo runtime
+neerja-1984	PAM-GSoC-25-Project	master	PAM	src	9	0	github://neerja-1984/PAM-GSoC-25-Project:master/src	["audio-processing", "dsp", "iceberg", "pharo-smalltalk", "phausto", "phonetic-conversion", "rulesets"]	This is the repository that is my entire work in GSoC 25 project. 🌞 Org Name : Pharo Consortium |  Project Name : PAM - Pharos' TTS model 🎼🎤
+pharo-llm	pharo-huggingface	main	HuggingFace	src	9	0	github://pharo-llm/pharo-huggingface:main/src	["hugging-face", "pharo", "pharo-llm"]	Hugging Face API in Pharo
+Zadamsa	PharoShark	master	PharoShark	src	9	0	github://Zadamsa/PharoShark:master/src	[]	
+pharo-contributions	OSSubprocess	master	OSSubprocess	repository	8	37	github://pharo-contributions/OSSubprocess:master/repository	["pharo"]	Forking Operating System Processes from within Pharo Language
+badetitou	Pharo-LanguageServer	v5	PharoLanguageServer	src	8	35	github://badetitou/Pharo-LanguageServer:v5/src	["language-server-protocol", "pharo"]	A Language Server Protocol implementation in Pharo
+feenkcom	gt4pharo	main	GToolkit4Pharo	src	8	7	github://feenkcom/gt4pharo:main/src	[]	The development environment for Pharo based on the Glamorous Toolkit.
+pharo-ai	NgramModel	master	NgramModel	src	8	4	github://pharo-ai/NgramModel:master/src	["language-model", "natural-language-processing", "ngram-language-model", "ngrams", "pharo", "statistics"]	Ngram language model implemented in Pharo
+tinchodias	Sauco	master	Sauco	src	8	4	github://tinchodias/Sauco:master/src	["pharo", "profiler"]	Visual tools to help reading Pharo profiler
+ba-st	Mole	release-candidate	Mole	source	8	4	github://ba-st/Mole:release-candidate/source	["directed-graph", "graph", "pharo", "smalltalk", "topological-sort"]	A model for graphs, both directed and undirected.
+punt-labs	postern	main	Postern	src	8	1	github://punt-labs/postern:main/src	["claude-code", "codex-cli", "pharo", "pharo-smalltalk", "smalltalk"]	Drive a live Pharo image from Claude Code, Codex or any HTTP client — full development cycle, no GUI required.
+Evref-BL	Bitbucket-Pharo-API	develop	BitbucketPharoAPI	src	8	0	github://Evref-BL/Bitbucket-Pharo-API:develop/src	[]	
+pharo-llm	pharo-acp	main	LLMPharoACP	src	8	0	github://pharo-llm/pharo-acp:main/src	["pharo", "pharo-llm"]	ACP protocol inside Pharo
+Ducasse	Comix2	master	Comix	src	8	0	github://Ducasse/Comix2:master/src	["book", "pharo"]	To manage comix collection...
+feenkcom	gt4llm	main	Gt4Llm	src	7	16	github://feenkcom/gt4llm:main/src	["glamorous-toolkit", "ide", "llm", "pharo", "python", "ux-ui", "wardley-maps"]	A GT package for working with LLMs
+pharo-graphics	Tutorials	master	BlocTutorials	src	7	9	github://pharo-graphics/Tutorials:master/src	["bloc", "memory-game", "pharo", "tutorial"]	I contain the code that results from tutorials on Bloc.
+tomooda	HoneyGinger	main	HoneyGinger	repository	7	6	github://tomooda/HoneyGinger:main/repository	["cg", "fluid-dynamics", "fluid-simulation", "pharo", "smalltalk", "sph"]	A SPH simulator with rich visualization and interactivity
+moosetechnology	MoosePy	master	MoosePy	src	7	3	github://moosetechnology/MoosePy:master/src	["meta-model", "moose", "pharo", "python"]	To manage importing Python code into moose python metamodel
+NathanFrund	blenny	main	Blenny	src	7	1	github://NathanFrund/blenny:main/src	[]	Web Framework for Pharo Smalltalk
+pharo-ai	linear-models	master	AILinearModels	src	7	1	github://pharo-ai/linear-models:master/src	["ai", "classification", "linear-regression", "logistic-regression", "models", "pharo", "regression", "regression-models", "smalltalk"]	Linear models like linear and logistic regression implementation
+shnarazk	AoC-in-Pharo	main	AdventOfCode	src	7	0	github://shnarazk/AoC-in-Pharo:main/src	["advent-of-code", "pharo"]	
+mumez	Ripple	develop	Ripple	src	7	0	github://mumez/Ripple:develop/src	["pharo-smalltalk", "websocket"]	Pharo Smalltalk micro library for building WebSocket-based APIs easily
+ErikOnBike	CodeParadise	master	CodeParadise	repository	6	96	github://ErikOnBike/CodeParadise:master/repository	["mobile", "mvp-pattern", "no-javascript", "nodejs", "pharo", "smalltalk", "webapplication", "webcomponents"]	Framework for developing web applications and Node.js applications using Smalltalk
+newapplesho	aws-sdk-smalltalk	main	AWS	src	6	38	github://newapplesho/aws-sdk-smalltalk:main/src	["aws", "cloudfront", "dynamodb", "elastic-transcoder", "lambda", "pharo", "pharo-smalltalk", "s3", "smalltalk", "sns", "sts"]	AWS SDK for Smalltalk
+mumez	PunQLite	develop	PunQLite	repository	6	12	github://mumez/PunQLite:develop/repository	["pharo", "pharo-smalltalk", "smalltalk", "unqlite"]	UnQLite binding for Pharo Smalltalk
+robvanlopik	Pots	main	Pots	src	6	8	github://robvanlopik/Pots:main/src	["arduino", "electronics", "pharo", "raspberry-pi"]	
+Ducasse	OSC	master	OSC	src	6	8	github://Ducasse/OSC:master/src	["pharo"]	Originally developed and license under MIT by Markus Gaelli and then Simon Holland. Now cleaned and maintained by S. Ducasse. If you want to take the responsibi
+Gabriel-Darbord	opentelemetry-pharo	main	OpenTelemetry	src	6	5	github://Gabriel-Darbord/opentelemetry-pharo:main/src	["opentelemetry", "pharo"]	OpenTelemetry SDK and instrumentations for Pharo
+newapplesho	twilio-smalltalk	main	Twilio	src	6	5	github://newapplesho/twilio-smalltalk:main/src	["pharo", "pharo-smalltalk", "smalltalk", "twilio"]	Smalltalk library for communicating with the Twilio REST API
+seandenigris	Virtual-Stash	master	VirtualStash	src	6	4	github://seandenigris/Virtual-Stash:master/src	["dynabook", "gtoolkit", "pharo", "smalltalk"]	Picture GnuCash, minus the application stovepipe, running on GToolkit (Smalltalk)
+Pharo-XP-Tools	DebuggingSpy	P12	DebuggingSpy		6	3	github://Pharo-XP-Tools/DebuggingSpy:P12	["pharo", "smalltalk"]	A tool to spy on debugging actions for research experiments.
+ApptiveGrid	FluxBase	main	FluxBase	source	6	1	github://ApptiveGrid/FluxBase:main/source	["pharo", "workflow-engine"]	
+pharo-llm	pharo-infer	main	AIPharoInfer	src	6	1	github://pharo-llm/pharo-infer:main/src	["pharo", "pharo-llm"]	pharo-infer is a inference engine inside Pharo
+NathanFrund	nexus	main	Nexus		6	1	github://NathanFrund/nexus:main	[]	A minimal, graph-based spatial engine for Pharo. Nodes, edges, presence, witnessing, and path hazards — all driven by plain JSON maps
+tomooda	gOLAP	main	Golap	src	6	1	github://tomooda/gOLAP:main/src	["bascket-analysis", "cooccurrence", "marketing-analytics", "online-analytical-processing", "pharo"]	a graph-based OLAP tool
+ApptiveGrid	PharoDEVS	main	PharoDEVS	source	6	0	github://ApptiveGrid/PharoDEVS:main/source	[]	An implementation of discrete event system specification
+labordep	Collectable	main	Collectable	src	6	0	github://labordep/Collectable:main/src	["application", "collect", "collectable", "collectible", "collection", "collector", "display", "manage", "pharo", "project", "retro", "retrogaming", "smalltalk", "video-game"]	Collectable is an application project to manage / display / get informations for stuff collector in Pharo. Targeting is video games collection.
+Evref-BL	PharoCompatibility	main	PharoCompatibility	src	6	0	github://Evref-BL/PharoCompatibility:main/src	[]	Compatibility shims between Pharo versions
+ronsaldo	pharo-newfile	main	NewFiles	tonel	6	0	github://ronsaldo/pharo-newfile:main/tonel	[]	
+georghagn	TSF-Scheduler	main	TsfScheduler	src	6	0	github://georghagn/TSF-Scheduler:main/src	["cron-alternative", "lightweight", "pharo", "scheduler", "smalltalk"]	A robust, thread-safe, lightweight and zero-dependency task scheduling framework for Pharo Smalltalk
+svenvc	NeoCSV	master	NeoCSV	repository	5	36	github://svenvc/NeoCSV:master/repository	["csv", "data-interchange", "mapping", "pharo", "smalltalk"]	NeoCSV is an elegant and efficient standalone Smalltalk framework to read and write CSV converting to or from Smalltalk objects.
+pharo-ai	data-inspector	master	AIDataFrameInspector	src	5	14	github://pharo-ai/data-inspector:master/src	["data-frame", "data-inspector", "pharo", "pharo-smalltalk"]	Evaluate and visualize DataFrame directly in the same Inspector window.
+feenkcom	gtoolkit-examples	main	GToolkitExamples	src	5	13	github://feenkcom/gtoolkit-examples:main/src	["glamorous-toolkit"]	The engine for example-driven development in Pharo.
+pharo-rdbms	Pharo-ODBC	master	ODBC	src	5	11	github://pharo-rdbms/Pharo-ODBC:master/src	[]	ODBC Connectivity for Pharo
+pharo-contributions	MethodProxies	master	MethodProxies	src	5	9	github://pharo-contributions/MethodProxies:master/src	["pharo"]	A library to decorate and control method execution.
+OpenSmock	Iconography	main	OpenSmockIconography		5	6	github://OpenSmock/Iconography:main	["ant-design", "ant-design-icons", "graphic", "graphics", "icon", "icons", "image", "images", "library", "material-design", "material-design-icons", "opensmock", "pharo", "smalltalk", "smock"]	Use icons libraries (Material Design, Ant Design) in your project : Import, manage, get and store.
+pharo-containers	Containers-Trie	master	ContainersTrie	src	5	4	github://pharo-containers/Containers-Trie:master/src	["pharo"]	A trie implementation (original version from Benoit St-Jean).
+pharo-containers	Containers-Array2D	master	ContainersArray2D	src	5	3	github://pharo-containers/Containers-Array2D:master/src	["collections", "pharo"]	A better Array2D implementation 
+pharo-ai	open-ai	release-candidate	OpenAI	source	5	2	github://pharo-ai/open-ai:release-candidate/source	["open-ai", "pharo", "smalltalk"]	Open AI API client for Pharo
+pharo-ai	hierarchical-clustering	master	AIHierarchicalClustering	src	5	1	github://pharo-ai/hierarchical-clustering:master/src	["agglomerative-clustering", "dendrogram", "hierarchical-clustering", "pharo", "pharo-smalltalk", "similarity-matrix"]	Hierarchical Clustering algorithms for Pharo
+moosetechnology	Famix-Cpp	main	FamixCpp	src	5	1	github://moosetechnology/Famix-Cpp:main/src	["moose", "pharo", "smalltalk"]	Famix metamodel for C/C++
+reugalabf	DatasetUtilities4Pharo	main	DatasetUtilities		5	0	github://reugalabf/DatasetUtilities4Pharo:main	[]	
+LNUitTutor	ShapesByPharo	master	ShapesByPharo	src	5	0	github://LNUitTutor/ShapesByPharo:master/src	[]	
+fouziray	EscapeAnalysisPharo	main	EscapeAnalysis		5	0	github://fouziray/EscapeAnalysisPharo:main	[]	Escape analysis prototype for Pharo
+pharo-contributions	SingularizePluralize	master	SingularizePluralize	src	4	10	github://pharo-contributions/SingularizePluralize:master/src	["language", "natural-language-processing", "nlp", "pharo", "pharo-smalltalk", "smalltalk"]	Transforming singular nouns to their plural form and vice versa.
+tomooda	Micromaid	main	Micromaid	src	4	9	github://tomooda/Micromaid:main/src	[]	A simple Mermaid-like chart generator for Pharo
+ThalesGroup	PharoOWS	main	OWS	src	4	8	github://ThalesGroup/PharoOWS:main/src	["cartography", "map", "open-smock", "pharo", "pharo-smalltalk", "qgis", "qgis-server", "smalltalk", "smock", "tile-server", "tilemap", "tiles", "tileserver", "wms", "wms-service"]	OGC Web Services (OWS) support for Pharo
+yannij	Seaside-Quasar	main	SeasideQuasar	src	4	8	github://yannij/Seaside-Quasar:main/src	["magritte", "material-design", "pharo", "quasar-framework", "seaside", "smalltalk"]	Pharo/Smalltalk code to use Quasar Framework in Seaside. Also, some demo apps using Magritte are provided.
+pharo-ai	data-partitioners	master	AIDataPartitioners	src	4	6	github://pharo-ai/data-partitioners:master/src	["data-science", "machine-learning", "pharo", "statistical-analysis"]	Pharo library for partitioning a collection. Given a set of proportions (e.g. 50%, 30%, and 20%), it shuffles the collection and divides it into non-empty subse
+pharo-ai	stopwords	master	AIStopwords	src	4	3	github://pharo-ai/stopwords:master/src	["nlp", "nlp-machine-learning", "pharo", "pharo-smalltalk", "stopwords", "tf-idf"]	Load the stopwords that you need in Pharo
+moosetechnology	Famix-ExecutionFlow	main	FamixExecutionFlow	src	4	3	github://moosetechnology/Famix-ExecutionFlow:main/src	["callgraph", "dynamic", "meta-model", "moose", "pharo", "smalltalk"]	
+pharo-ai	gaussian-mixture-model	master	AIGaussianMixtureModel	src	4	1	github://pharo-ai/gaussian-mixture-model:master/src	["classification", "gaussian-mixture-models", "machine-learning", "maximum-likelihood", "pharo", "statistical-learning", "statistics"]	Gaussian Mixture Model (GMM) is an iterative algorithm for fitting the data with multiple normal distributions (gaussians). Can be used for classification
+StefanKrecher	PharoCodex	main	OpenAICodex	src	4	1	github://StefanKrecher/PharoCodex:main/src	["codex", "codex-cli", "pharo", "pharo-smalltalk"]	Use codex app-server within Pharo
+Evref-BL	BitbucketCloud-Pharo-Api	develop	BitbucketCloudPharoAPI	src	4	0	github://Evref-BL/BitbucketCloud-Pharo-Api:develop/src	[]	
+lucretiomsp	Bloc5	main	Bloc5		4	0	github://lucretiomsp/Bloc5:main	[]	A high-level visual arts API for Pharo, inspired by Processing/p5.js, designed to make creating interactive graphics and animations simple and fun.
+omarabedelkader	pharo-lexicon	main	PharoLexicon	src	4	0	github://omarabedelkader/pharo-lexicon:main/src	["pharo", "pharo-smalltalk"]	Empirical Analysis on Pharo 14 code 
+RomaShmyhelskyi	PharoAthleteProject	main	ProjectAthlete	src	4	0	github://RomaShmyhelskyi/PharoAthleteProject:main/src	[]	Створено для ознайомлення з особливостями взаємодії Pharo та GitHub.
+georghagn	TSF-FileRotator	main	TsfFileRotator	src	4	0	github://georghagn/TSF-FileRotator:main/src	["file-rotation", "log-rotation", "pharo", "policy-based", "rotation", "smalltalk"]	A robust, process-independent file rotator for Pharo Smalltalk. It monitors files (e.g., logs), rotates them based on configurable policies (size, age), and arc
+georghagn	TSF-NexIO	main	TsfNexIO	src	4	0	github://georghagn/TSF-NexIO:main/src	["jsonrpc", "pharo", "smalltalk", "websocket"]	TSF-NexIO is a lightweight, robust framework for JSON-RPC 2.0 communication over WebSockets in Pharo Smalltalk. It is designed to enable 'synchronous semantics 
+noha	JSONWebToken	master	JSONWebToken	source	3	17	github://noha/JSONWebToken:master/source	["jwt", "pharo"]	A pharo implementation of JSON web token (JWT)
+seandenigris	Computer-World	master	ComputerWorld	repository	3	13	github://seandenigris/Computer-World:master/repository	["dynabook", "pharo", "smalltalk"]	What if interfacing with computing artifacts felt like your  mental models had come alive?
+pharo-project	pharo-llvmDisassembler	master	LLVMDisassembler	src	3	9	github://pharo-project/pharo-llvmDisassembler:master/src	[]	Pharo bindings to the LLVM disassembler
+tinchodias	pharo-rita-history	Pharo13	Rita	src	3	7	github://tinchodias/pharo-rita-history:Pharo13/src	["pharo", "visualization"]	Tools for understanding code changes using Pharo9, Iceberg, Roassal3 and Spec2.
+mumez	PharoSmalltalkInteropServer	main	PharoSmalltalkInteropServer	src	3	7	github://mumez/PharoSmalltalkInteropServer:main/src	["pharo-smalltalk"]	API server that bridges Pharo Smalltalk environments with external tools
+Ducasse	Chrysal	master	Chrysal	src	3	7	github://Ducasse/Chrysal:master/src	["configuration-management", "configurations", "pharo"]	To manage application configurations
+moosetechnology	FAST	v3	FAST	src	3	4	github://moosetechnology/FAST:v3/src	["ast", "meta-model", "moose", "pharo"]	Represent the AST of programing language
+rvillemeur	BlBreakOut	main	BlBreakOut	src	3	1	github://rvillemeur/BlBreakOut:main/src	[]	Breakout game in Pharo Bloc
+NathanFrund	Conduit	main	Conduit	src	3	1	github://NathanFrund/Conduit:main/src	[]	A lightweight, hybrid template-loading engine for Pharo.
+pharo-cig	pharo-libsdl3	main	SDL3	src	3	1	github://pharo-cig/pharo-libsdl3:main/src	["libsdl3", "pharo"]	Pharo bindings for https://www.libsdl.org/
+NathanFrund	Datastar-Pharo-SDK	main	DatastarSDK	src	3	1	github://NathanFrund/Datastar-Pharo-SDK:main/src	[]	Datastar SDK for Pharo Smalltalk
+Driolar	SoccerDrills-Pharo	master	SoccerDrills	src	3	0	github://Driolar/SoccerDrills-Pharo:master/src	[]	Simulation of Soccer Drills based on Pharo's OpenPonk Modeling Platform.
+pharo-containers	Containers-Stack	master	ContainersStack	src	3	0	github://pharo-containers/Containers-Stack:master/src	["collection", "containers", "datastructures", "pharo", "stack"]	An Array-based Stack implementation with LIFO order (Last in, First Out)
+rko281	Porpoise	master	Porpoise		3	0	github://rko281/Porpoise:master	[]	Dolphin Smalltalk portability for Pharo
+omarabedelkader	HeuristicCompletion-Analyser	main	ExtendedHeuristicCompletionAnalyser	src	3	0	github://omarabedelkader/HeuristicCompletion-Analyser:main/src	["pharo", "pharo-smalltalk"]	HeuristicCompletion-Analyser analyzes software packages, identifying patterns and reporting metrics like class count and unique methods to provide insights into
+fouziray	staticCallPharo	master	StaticCallExp	src	3	0	github://fouziray/staticCallPharo:master/src	[]	
+omarabedelkader	HeuristicCompletion-Benchmarks	main	ExtendedHeuristicCompletionBenchmarks	src	3	0	github://omarabedelkader/HeuristicCompletion-Benchmarks:main/src	["pharo", "pharo-smalltalk"]	HeuristicCompletion-Benchmarks measures the accuracy and other metrics of code completion suggestions by testing various prefix lengths on method calls within a
+pharo-llm	pharo-dataset	main	HeuristicCompletionGenerator	src	3	0	github://pharo-llm/pharo-dataset:main/src	["pharo", "pharo-llm"]	Generate structured Pharo code completion datasets
+reugalabf	Shinjuku	main	GoogleAPIClient	source	3	0	github://reugalabf/Shinjuku:main/source	[]	Google API Client for Pharo Smalltalk based on Zinc
+Maiwaiikou	PharoJamSession	master	PharoJamSession	src	3	0	github://Maiwaiikou/PharoJamSession:master/src	[]	
+neAnasteisha	Pharotales_Books	master	Pharotales_Books	src	3	0	github://neAnasteisha/Pharotales_Books:master/src	[]	Books by Pharotales
+Pharo-XP-Tools	Sindarin-DAP	main	PharoDAPClient		3	0	github://Pharo-XP-Tools/Sindarin-DAP:main	[]	Debugging Adapter Protocol (DAP) using Sindarin API. It allows to send requests provided by Sindarin to adapters on many langages (Pharo, Python, JS, Java, ...)
+alesshosry	PharoLLMBridge	master	PharoLLMBridge	src	3	0	github://alesshosry/PharoLLMBridge:master/src	[]	
+jordanmontt	pharo-instrumentation	main	InstrumentationProfilers	src	3	0	github://jordanmontt/pharo-instrumentation:main/src	[]	Instrumentation techniques for Pharo
+georghagn	TSF-Logger	main	TsfLogger	src	3	0	github://georghagn/TSF-Logger:main/src	["levels", "logging", "pharo", "smalltalk", "structured-logging"]	The TSF-Logger Frameworkis a simple, lightweight, and ready-to-use logger with log-level support. It follows a modular approach based on the Strategy and Decora
+svenvc	NeoConsole	master	NeoConsole	src	2	36	github://svenvc/NeoConsole:master/src	["command-line", "headless", "pharo", "repl", "smalltalk"]	NeoConsole offers a command line (REPL) interface to a Pharo image, as well as other tools.
+akgrant43	GeoSphere	master	GeoSphere	src	2	8	github://akgrant43/GeoSphere:master/src	["pharo"]	Compute distances, parse coordinates, etc. for Pharo
+Evref-BL	Pharo-LLMAPI	main	LLMAPI	src	2	7	github://Evref-BL/Pharo-LLMAPI:main/src	["llm", "pharo"]	Use LLM API from Pharo
+Ducasse	Cozy	master	Cozy	src	2	7	github://Ducasse/Cozy:master/src	["pharo"]	A little package to create a more cozy working environment
+seandenigris	Pharo-Enhancements	master	PharoEnhancements	src	2	3	github://seandenigris/Pharo-Enhancements:master/src	["pharo", "smalltalk"]	
+ironirc	Spec2-Web-UI	main	Spec2WebUi		2	1	github://ironirc/Spec2-Web-UI:main	[]	An attempt to use PharoJS as backend for Spec
+pharo-llm	pharo-agent	main	LLMPharoAgent	src	2	1	github://pharo-llm/pharo-agent:main/src	["agents", "pharo", "pharo-llm"]	A agent for interacting with the Pharo image from the terminal.
+KentBeck	SmalltalkGenie	main	Genie	src	2	1	github://KentBeck/SmalltalkGenie:main/src	[]	An MCP server for coding in a live Pharo image
+Evref-BL	AI4Pharo	main	AI4Pharo	src	2	1	github://Evref-BL/AI4Pharo:main/src	[]	
+ApptiveGrid	Canopy	main	Canopy	source	2	0	github://ApptiveGrid/Canopy:main/source	[]	A foundation for managing global values in pharo
+omarabedelkader	HeuristicCompletion-Prefix	main	ExtendedHeuristicCompletionPrefix	src	2	0	github://omarabedelkader/HeuristicCompletion-Prefix:main/src	["pharo", "pharo-smalltalk"]	HeuristicCompletion-Prefix introduces a new fetcher that improves the Completion engine’s capability to analyze the prefix segment during code completion.
+reugalabf	OpenWeatherAPI4Pharo	main	OpenWeatherMap		2	0	github://reugalabf/OpenWeatherAPI4Pharo:main	[]	
+ironirc	pharox-pj-basics	main	PharoXBasics		2	0	github://ironirc/pharox-pj-basics:main	[]	
+bouraqadi	PharoJsMisc	pharo12	HydrogenComponentsJS	Pharo	2	0	github://bouraqadi/PharoJsMisc:pharo12/Pharo	[]	
