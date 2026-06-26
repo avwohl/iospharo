@@ -5,6 +5,11 @@
 # when a box's own idle-shutdown timer is disabled/broken — which is exactly
 # how the x64 box ran 50h idle (its iospharo-idle.timer was 'disabled').
 #
+# A box with a LIVE keep-alive lease (heartbeated by an actively-working Claude,
+# see lease.sh / aws-lease-beat-hook.sh) is spared.  Reap=skip forever-tags are
+# no longer used or honored here — the lease replaces them.  This mirrors the
+# central reaper on awohl.com (aws_watch.py reap); either can run.
+#
 # Safe to run by hand or from a local cron (e.g. every 15 min):
 #   */15 * * * * /Users/wohl/src/iospharo/scripts/aws/reap.sh >>/tmp/iospharo-reap.log 2>&1
 #
@@ -14,8 +19,9 @@
 # Tunables (env):
 #   IDLE_CPU=5      avg %CPU over LOOKBACK_MIN below which a box counts as idle
 #   LOOKBACK_MIN=60 CPU averaging window (minutes)
-#   MAX_AGE_H=12    hard cap: terminate at this age regardless of activity
-#   GRACE_MIN=30    never touch a box younger than this (still booting/building)
+#   MAX_AGE_H=12    hard cap: terminate at this age regardless of activity/lease
+#   GRACE_MIN=10    never touch a box younger than this (still booting/building)
+#   STALE_MIN=30    a lease heartbeat older than this no longer spares a box
 #   REGIONS="us-east-2"   space-separated regions to sweep
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -29,9 +35,16 @@ export AWS_DEFAULT_REGION
 IDLE_CPU="${IDLE_CPU:-5}"
 LOOKBACK_MIN="${LOOKBACK_MIN:-60}"
 MAX_AGE_H="${MAX_AGE_H:-12}"
-GRACE_MIN="${GRACE_MIN:-30}"
+GRACE_MIN="${GRACE_MIN:-10}"
+STALE_MIN="${STALE_MIN:-30}"
 REGIONS="${REGIONS:-${AWS_DEFAULT_REGION:-us-east-2}}"
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+
+# Instance ids with a LIVE keep-alive lease right now (heartbeated by an actively-
+# working Claude).  A read failure => empty set => fall back to pure idle/age
+# rules (fail toward reaping here, since this is the client-side backstop; the
+# central aws_watch reaper fails the other way, toward keeping).
+FRESH="$(bash "$HERE/lease.sh" fresh "$STALE_MIN" 2>/dev/null || true)"
 
 now=$(date -u +%s)
 start_iso=$(python3 -c "import datetime,sys;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=int(sys.argv[1]))).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$LOOKBACK_MIN")
@@ -43,19 +56,11 @@ for REGION in $REGIONS; do
     rows=$(aws ec2 describe-instances --region "$REGION" \
         --filters "Name=tag:Project,Values=iospharo-*" \
                   "Name=instance-state-name,Values=running" \
-        --query 'Reservations[].Instances[].[InstanceId,LaunchTime,Tags[?Key==`Name`]|[0].Value,Tags[?Key==`Reap`]|[0].Value]' \
+        --query 'Reservations[].Instances[].[InstanceId,LaunchTime,Tags[?Key==`Name`]|[0].Value]' \
         --output text 2>/dev/null)
     [ -z "$rows" ] && continue
-    while IFS=$'\t' read -r IID LAUNCH NAME REAPTAG; do
+    while IFS=$'\t' read -r IID LAUNCH NAME; do
         [ -n "$IID" ] || continue
-        # Reap=skip exempts a box from CPU-idle reaping. Required for boxes
-        # running genuinely-low-CPU-but-active work — e.g. the SUnit suite runs
-        # at ~4% CPU (fork/Delay/watchdog-bound) and was once false-reaped here.
-        # Such boxes self-terminate via the on-box (process-based) idle-shutdown.
-        if [ "$REAPTAG" = "skip" ]; then
-            echo "keep   $IID ($NAME) [$REGION]: Reap=skip (exempt)"
-            kept=$((kept+1)); continue
-        fi
         launch_s=$(python3 -c "import datetime,sys;print(int(datetime.datetime.strptime(sys.argv[1].replace('+00:00','Z'),'%Y-%m-%dT%H:%M:%S%z').timestamp()))" "$LAUNCH" 2>/dev/null || echo "$now")
         age_min=$(( (now - launch_s) / 60 ))
         if [ "$age_min" -lt "$GRACE_MIN" ]; then
@@ -64,8 +69,18 @@ for REGION in $REGIONS; do
         fi
         reason=""
         if [ "$age_min" -ge "$(( MAX_AGE_H * 60 ))" ]; then
+            # Hard age cap wins over EVERYTHING, including a live lease (mirrors
+            # aws_watch.py: a fresh lease spares only the idle path, not the cap).
             reason="age $((age_min/60))h >= max ${MAX_AGE_H}h"
         else
+            # A LIVE keep-alive lease spares an otherwise-idle box.  This replaces
+            # the old Reap=skip forever-tag and correctly protects low-CPU-but-
+            # active work (e.g. the ~4% CPU SUnit suite) only while a Claude is
+            # actually heartbeating it -- and only below the hard age cap above.
+            if printf '%s\n' "$FRESH" | grep -qxF "$IID"; then
+                echo "keep   $IID ($NAME) [$REGION]: live keep-alive lease"
+                kept=$((kept+1)); continue
+            fi
             cpu=$(aws cloudwatch get-metric-statistics --region "$REGION" --namespace AWS/EC2 \
                 --metric-name CPUUtilization --dimensions Name=InstanceId,Value="$IID" \
                 --start-time "$start_iso" --end-time "$end_iso" --period "$(( LOOKBACK_MIN*60 ))" \

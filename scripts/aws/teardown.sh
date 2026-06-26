@@ -28,9 +28,12 @@ IDS=$(aws ec2 describe-instances \
 if [ -n "$IDS" ]; then
     echo "terminating: $IDS"
     aws ec2 terminate-instances --instance-ids $IDS >/dev/null
-    # Clean up each box's server-side idle failsafe alarm (idle-alarm.sh).
     for id in $IDS; do
+        # Clean up each box's server-side idle failsafe alarm (idle-alarm.sh).
         aws cloudwatch delete-alarms --alarm-names "iospharo-idle-terminate-$id" >/dev/null 2>&1 || true
+        # Release the keep-alive lease so the row doesn't linger (best-effort;
+        # a stale lease would expire on its own, but releasing is tidy).
+        bash "$HERE/lease.sh" release "$id" >/dev/null 2>&1 || true
     done
     aws ec2 wait instance-terminated --instance-ids $IDS
 fi

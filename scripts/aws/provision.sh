@@ -98,12 +98,12 @@ if [ -n "$EXISTING" ]; then
 else
     # --- 7. Launch: spot across types x AZs, then on-demand as last resort ---
     BDM="[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_VOLUME_GB},\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]"
-    # REAP_SKIP=1 tags the box Reap=skip so the CPU-idle reaper leaves it alone
-    # (for low-CPU-but-active work like the SUnit suite ~4% CPU); such a box
-    # relies on the on-box, process-based idle-shutdown instead.
-    REAP_TAG=""
-    [ "${REAP_SKIP:-0}" = "1" ] && REAP_TAG=",{Key=Reap,Value=skip}"
-    TAGS="ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=Project,Value=$PROJECT_TAG}${REAP_TAG}]"
+    # NO Reap=skip tag.  Boxes are no longer exempted from reaping by a forever
+    # tag (which is exactly how idle boxes got left running for days).  Protection
+    # now comes from a keep-alive LEASE that ONLY an actively-working Claude
+    # heartbeats -- registered just below, beaten by a PostToolUse hook on the
+    # box, released at teardown.  See scripts/aws/README.md "Keep-alive leases".
+    TAGS="ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=Project,Value=$PROJECT_TAG}]"
     VTAGS="ResourceType=volume,Tags=[{Key=Project,Value=$PROJECT_TAG}]"
     SPOT_MARKET='MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}'
     SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
@@ -174,14 +174,21 @@ PUBIP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
 note PUBLIC_IP "$PUBIP"
 echo "instance $INSTANCE_ID @ $PUBIP"
 
-# --- 8b. Server-side idle failsafe: CloudWatch low-CPU -> terminate ----------
-# Independent of the box's own idle-shutdown timer (which can be disabled and
-# silently let an idle box run for days — see reap.sh / idle-alarm.sh notes).
-# REAP_SKIP=1 boxes are exempt (the CPU-idle alarm has the same blind spot as the
-# reaper for low-CPU-but-active work); they rely on the on-box idle-shutdown.
-if [ "${REAP_SKIP:-0}" = "1" ]; then
-    echo "REAP_SKIP=1 -> not arming CloudWatch idle-alarm (on-box idle-shutdown governs)"
-else
+# --- 8b. Register the keep-alive LEASE (within the reaper's grace window) -----
+# Lists this box in the central instance_lease table on awohl.com so aws_watch
+# treats it as a managed box.  From here on, ONLY an actively-working Claude
+# heartbeats the lease (via the PostToolUse hook shipped to the box in step 12);
+# when that Claude finishes, the lease goes stale and aws_watch reaps the box.
+# This replaces the old Reap=skip tag AND the per-box CloudWatch idle-alarm
+# (which was CPU-blind and false-killed low-CPU-but-active SUnit boxes).
+bash "$HERE/lease.sh" register "$INSTANCE_ID" "$AWS_DEFAULT_REGION" \
+    && echo "registered keep-alive lease for $INSTANCE_ID" \
+    || echo "WARN: could not register keep-alive lease (continuing; box still reapable)"
+
+# Optional CPU-only CloudWatch idle backstop.  Default OFF: it cannot see leases
+# and would false-kill low-CPU-but-active work (the very reason Reap=skip existed).
+# Set ARM_CPU_ALARM=1 only for boxes you KNOW stay CPU-busy when wanted.
+if [ "${ARM_CPU_ALARM:-0}" = "1" ]; then
     bash "$HERE/idle-alarm.sh" "$INSTANCE_ID" "$AWS_DEFAULT_REGION" || \
         echo "WARN: could not arm idle alarm (continuing)"
 fi
@@ -234,6 +241,37 @@ ssh -i "$PEM" ubuntu@"$PUBIP" "sudo install -d /opt/iospharo && \
     sudo systemctl daemon-reload && \
     sudo systemctl enable --now iospharo-idle.timer iospharo-spot-watch.service"
 
+# --- 12b. Ship the keep-alive HEARTBEAT hook + restricted lease key ----------
+# The box's Claude (run on the box for the JIT work) heartbeats its own lease via
+# a PostToolUse hook, so the box stays alive exactly while that Claude is working
+# and is reaped once it finishes.  The hook beats through the locked-down
+# aws-lease key (it can ONLY upsert lease rows on awohl.com).  Best-effort: a
+# failure here leaves the box reapable, which is the safe direction.
+LEASE_KEY="${AWS_LEASE_KEY:-$HOME/.ssh/aws-lease}"
+if [ -f "$LEASE_KEY" ]; then
+    scp -i "$PEM" "$HERE/aws-lease-beat-hook.sh" "$LEASE_KEY" ubuntu@"$PUBIP":/tmp/ \
+    && ssh -i "$PEM" ubuntu@"$PUBIP" "
+        sudo install -m755 /tmp/aws-lease-beat-hook.sh /opt/iospharo/aws-lease-beat-hook.sh && \
+        install -m700 -d /home/ubuntu/.ssh && install -m600 /tmp/aws-lease /home/ubuntu/.ssh/aws-lease && rm -f /tmp/aws-lease && \
+        install -m700 -d /home/ubuntu/.claude && \
+        HOOKS='{\"hooks\":{\"PreToolUse\":[{\"matcher\":\".*\",\"hooks\":[{\"type\":\"command\",\"command\":\"/opt/iospharo/aws-lease-beat-hook.sh pre\"}]}],\"PostToolUse\":[{\"matcher\":\".*\",\"hooks\":[{\"type\":\"command\",\"command\":\"/opt/iospharo/aws-lease-beat-hook.sh post\"}]}]}}' && \
+        if grep -q aws-lease-beat-hook /home/ubuntu/.claude/settings.json 2>/dev/null; then
+            echo 'keep-alive hook already present'
+        elif [ ! -f /home/ubuntu/.claude/settings.json ]; then
+            printf '%s\n' \"\$HOOKS\" > /home/ubuntu/.claude/settings.json && echo 'keep-alive hook installed'
+        elif command -v jq >/dev/null; then
+            jq --argjson h \"\$HOOKS\" '.hooks.PreToolUse=((.hooks.PreToolUse//[])+\$h.hooks.PreToolUse) | .hooks.PostToolUse=((.hooks.PostToolUse//[])+\$h.hooks.PostToolUse)' \
+                /home/ubuntu/.claude/settings.json > /tmp/s.json && mv /tmp/s.json /home/ubuntu/.claude/settings.json && echo 'keep-alive hook merged'
+        else
+            echo 'WARN: jq missing and settings.json present -- keep-alive hook NOT installed' >&2; false
+        fi" \
+    || echo "WARN: could not install keep-alive hook on box (continuing; box still reapable)"
+else
+    echo "WARN: lease key $LEASE_KEY missing -- box will NOT self-heartbeat."
+    echo "      Generate it (see scripts/aws/README.md 'Keep-alive leases') and re-run,"
+    echo "      or the box will be reaped after the lease grace window."
+fi
+
 # --- 13. Clone + build (backgrounded on the box; tail with ssh) -------------
 echo "kicking off clone-and-build on the instance (logs: build/build.log) ..."
 ssh -i "$PEM" ubuntu@"$PUBIP" \
@@ -249,6 +287,13 @@ cat <<EOF
   bucket   : s3://$BUCKET
   branch   : $WORK_BRANCH (off $BASE_BRANCH)
   idle term: ${IDLE_SECONDS}s
+  lease    : registered; box self-heartbeats while a Claude works ON it.
 State written to $STATE_FILE
 Watch the build:  ssh -i $PEM ubuntu@$PUBIP 'tail -f clone-and-build.log'
+
+Keep-alive: the box stays up only while an actively-working Claude heartbeats its
+lease.  When that Claude finishes, aws_watch reaps the box.  To keep it alive
+from a Claude running HERE (driving the box from this Mac) instead of on the box:
+  export AWS_LEASE_IID=$INSTANCE_ID AWS_LEASE_PROJECT=$PROJECT_TAG AWS_LEASE_REGION=$AWS_DEFAULT_REGION
+When done: ./scripts/aws/teardown.sh   (terminates + releases the lease)
 EOF
