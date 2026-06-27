@@ -64,12 +64,21 @@ isolation (no suite watchdog):
     FILE_SHARE_READ|WRITE|DELETE (+ _open_osfhandle/_fdopen) on Windows; plain
     fopen elsewhere. (The earlier "passes individually" read was wrong —
     TestCase>>run swallows the error into the TestResult; `debug` revealed it.)
-  - [ ] **`isHidden` / file-attributes slot** — 3 residual file errors
-    (FileSystemTest/FileReferenceTest/FileLocatorTest, `testIsHidden*`):
-    `SubscriptOutOfBounds: 13` on a 12-element stat array. The image's Windows
-    isHidden path reads attribute index 13 (the Windows hidden/file-attributes
-    flag) but our VM's file-attributes/stat primitive returns fewer slots. Add
-    the missing Windows attribute slot(s) to the stat array.
+  - [x] **`isHidden` / file-attributes slot** — FIXED. `WindowsStore>>isHidden:`
+    reads `(statAttributes at: 13) anyMask: 16r2` (FILE_ATTRIBUTE_HIDDEN), but
+    the VM's stat array had only 12 slots -> SubscriptOutOfBounds:13. Added slot
+    13 = the Windows file-attributes DWORD (GetFileAttributesA, fallback
+    FILE_ATTRIBUTE_NORMAL on INVALID) to both `primitiveFileAttributes` and
+    `primitiveReaddir` (Windows-only growth; POSIX arrays unchanged). Verified
+    testIsHiddenWithRealFilesystem passes; file/stream classes 1112/1113.
+  - [ ] residual file/hidden errors (separate from the above):
+    - `DiskFileSystemTest>>testLongFilename` — Windows long-path (MAX_PATH)
+      limitation; needs long-path support (\\?\ prefix or the manifest opt-in).
+    - `StFileFilterTest>>testHiddenFiles`, `StNavigationSystemTest>>...NotHiddenFile`
+      — fail in setUp with `PrimitiveFailed: File class>>signalError:for:` while
+      CREATING a hidden file (setting the hidden attribute), not reading it.
+      Needs the set-hidden-attribute path (SetFileAttributes) and/or the
+      signalError:for: primitive wired on Windows.
   - RESULT (run #2, JIT on, before the sqInt fix): ~130 classes, 1702 PASS / 0
     FAIL / 15 ERROR = 99.1%, then crashed exit 139 at `CoCompletionEngineTest` —
     NOW FIXED
