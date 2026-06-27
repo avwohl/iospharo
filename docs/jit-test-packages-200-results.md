@@ -79,16 +79,21 @@ like Cog*; google-cloud is now clean). The **residual** divergences
 those packages' **local HTTP-server** tests (server-framework SUnit that binds a
 `Zinc`/`Teapot` server on localhost and connects to it).
 
-That `SocketError: Success` was separately **root-caused and largely fixed**
-(commit `f30ed9f7`): the VM lacked Pharo 13's split bind/listen socket primitives
-(`primitiveSocketBindToPort` / `primitiveSocketListenWithBacklog`), mishandled a
-listening socket in the I/O thread (must select for *read* and report `Connected`
-on a pending connection), and returned socket addresses as a SmallInteger instead
-of a 4-byte ByteArray. With those six fixes the server binds, listens, accepts,
-and serves a full request→971-byte-response cycle. A **flaky hang after ~1-2
-sequential connections** remains — a process-scheduler/concurrency race (no socket
-activity during the hang, unchanged by `PHARO_RR_SCHED`), which is the next
-follow-up for full server-framework coverage.
+That `SocketError: Success` was separately **root-caused and fixed**: the VM
+lacked Pharo 13's split bind/listen socket primitives (`primitiveSocketBindToPort`
+/ `primitiveSocketListenWithBacklog`), mishandled a listening socket in the I/O
+thread (must select for *read* and report `Connected` on a pending connection),
+and returned socket addresses as a SmallInteger instead of a 4-byte ByteArray
+(six fixes, commit `f30ed9f7`). A subsequent **flaky hang after ~1-2 sequential
+connections** — initially suspected to be a scheduler race — turned out to be a
+**seventh socket bug** (commit `6857cbe6`): the I/O thread never finished a
+`ThisEndClosed` disconnection, so `Socket>>waitForDisconnectionFor:` (during
+`closeAndDestroy:`) blocked for its full multi-second timeout whenever both ends
+are in-image. A high-priority watchdog process-dump showed both the client and the
+server worker stuck in `closeAndDestroy:`; teaching the I/O thread to detect the
+peer FIN on a closing socket fixed it. **20/20 sequential in-image ZnClient GETs to
+a local ZnServer now complete deterministically** — the server-framework socket
+path is functional end-to-end for repeated connections.
 
 ## Takeaway
 
