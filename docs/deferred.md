@@ -39,8 +39,21 @@ isolation (no suite watchdog):
   per debug_vars.h:260 ("only nondeterministic weak-ref/GC-timing tests differ"
   under the x86 JIT, same on arm64-JIT). Not a Windows-specific regression.
 - [x] **Full suite on Windows — RUNS** (recipe below). 2047 non-abstract
-  TestCase subclasses. The blocker chain is solved; a full per-test-watchdog run
-  is in progress / reproducible. WORKING RECIPE:
+  TestCase subclasses.
+  - RESULT (run #1, JIT on, ~45 min outer cap): got through the first **111
+    classes** (A*..Ci*) before a Morphic GUI test (`CircleMorphTest`) hung past
+    the per-test watchdog and the outer timeout killed the run. Of those 111:
+    **1477 PASS, 0 FAIL, 42 ERROR, 3 SKIP = 97.2%**. The 42 errors are
+    EXPECTED-category: 27 are Athens/**Cairo** graphics (FFI to the Cairo lib —
+    GUI/graphics gap) and 15 are `BinaryFileStreamTest` (binary file I/O — the
+    one NON-gui item to investigate; possible Windows binary-mode issue). 0
+    real test FAILURES.
+  - To get the WHOLE 2047-class number, exclude the GUI packages (Morphic/Spec/
+    Calypso/Roassal/Athens) that hang the watchdog headless — stage a curated
+    class list to `/tmp/sunit_class_names.txt` (the runner honors it), or fix
+    the watchdog so it can terminate a Morphic World-loop spin. GUI is deferred
+    anyway (no display). Also investigate the BinaryFileStreamTest errors.
+  WORKING RECIPE:
   1. `mkdir C:\tmp` (the runner writes there; "/tmp" resolves to C:\tmp).
   2. Download the reference Pharo Windows VM: `curl -sL https://get.pharo.org/64/vm130 | bash` (gives `pharo-vm/PharoConsole.exe`).
   3. Copy the image, then inject the runner with the REFERENCE VM (its compiler
