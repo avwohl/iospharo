@@ -273,10 +273,45 @@ isolation (no suite watchdog):
   deadlock).  Resolved by the SDL2/GUI milestone (4) + the TestLibrary.dll fixture.
 
 ### Networking / TLS
-- [ ] **SocketPlugin** — replaced by `SocketPlugin_win_stub.cpp` on Windows:
-  every socket primitive fails (primitiveFail) and `hasSocketAccess` reports
-  false. No TCP/UDP networking. Needs a winsock2 port (milestone 3). NOTE: the
-  core DNS path (getaddrinfo in Primitives.cpp) IS wired (ws2_32 + WSAStartup).
+- [ ] **SocketPlugin (winsock2 port)** — replaced by `SocketPlugin_win_stub.cpp`
+  on Windows: every socket primitive fails (primitiveFail) and `hasSocketAccess`
+  reports false. No TCP/UDP networking (~95 tests: UDPSocket*, TCPSocket*,
+  Zdc*SocketStream*, ZnStaticFileServer*). The real plugin
+  (`src/vm/plugins/SocketPlugin.cpp`, 1338 lines BSD sockets) is excluded from
+  the Windows build; winsock2 is BSD-compatible so it ports rather than rewrites.
+  DNS getaddrinfo + WSAStartup are ALREADY wired (Primitives.cpp / windows.cpp).
+  EXECUTABLE PORT PLAN (inventory done 2026-06-27, keep the stub in CMake until
+  the real plugin compiles+links so the Windows build never regresses):
+  1. New `src/vm/plugins/winsock_compat.h`: on _WIN32 include winsock2.h/
+     ws2tcpip.h; `#define SHUT_RDWR SD_BOTH` (+SHUT_RD/WR), `#define MSG_DONTWAIT 0`
+     (sockets are already non-blocking); macros `SOCK_LAST_ERROR`=WSAGetLastError(),
+     `SOCK_EWOULDBLOCK`/`SOCK_EAGAIN`/`SOCK_EINPROGRESS`=WSAEWOULDBLOCK (non-blocking
+     connect returns WSAEWOULDBLOCK, not EINPROGRESS); `sockClose`=closesocket,
+     `sockSetNonBlocking`=ioctlsocket(FIONBIO). On POSIX the same names alias
+     errno / EWOULDBLOCK / ::close / fcntl and `typedef int SOCKET; #define
+     INVALID_SOCKET -1` so the file stays byte-identical there.
+  2. SocketPlugin.cpp: replace the POSIX include block (lines 12-26) with
+     `#include "winsock_compat.h"`. `struct PrivateSocket` `int fd` -> `SOCKET fd`
+     (line 34); `int fd = socket(...)` -> `SOCKET fd` (378, 540ish, 1156ish);
+     change every `ps->fd < 0` / `>= 0` / `== -1` to `== INVALID_SOCKET` /
+     `!= INVALID_SOCKET` (133, 184, 440, 592, 607, ...).
+  3. Mechanical replace_all: `errno`->`SOCK_LAST_ERROR`, `EWOULDBLOCK`->
+     `SOCK_EWOULDBLOCK`, `EAGAIN`->`SOCK_EAGAIN`, `EINPROGRESS`->`SOCK_EINPROGRESS`,
+     `close(`->`sockClose(` (all close() in the file are socket/pipe fds), and
+     `setNonBlocking` body -> `sockSetNonBlocking` (signature int->SOCKET).
+  4. THE HARD PART — the self-pipe. `gWakePipe[2]` (pipe(), read/write, watched by
+     select()) does NOT work on winsock (select watches only sockets). Replace
+     with a connected loopback UDP socketpair `gWakeSend`/`gWakeRecv`
+     (socket(AF_INET,SOCK_DGRAM); bind 127.0.0.1:0; getsockname; connect send->recv):
+     init at lines 283-289, FD_SET gWakeRecv (120), drain via recvfrom (177-179),
+     wake via sendto in wakeIOThread (86), closesocket in shutdown (311-312),
+     `int maxfd = (int)gWakeRecv` (119). Keep POSIX on the real pipe via #ifdef.
+  5. CMakeLists.txt WIN32 branch: remove SocketPlugin_win_stub.cpp, add the real
+     SocketPlugin.cpp (ws2_32 already linked). Build, fix residual compile errors.
+  6. Runtime-validate on our JIT VM: `hasSocketAccess` true, a TCP connect +
+     HTTP GET (ZnClient), then re-run TCPSocketTest / ZdcSocketStreamTest. The
+     I/O monitor thread + `signalSemaphoreWithIndex` model is unchanged — verify
+     the semaphores fire (read/write/conn readiness) under the select() loop.
 - [ ] **Crypto / SqueakSSL** — `PHARO_WITH_CRYPTO=OFF` on Windows; no OpenSSL
   link, so HTTPS/TLS is unavailable. Needs vcpkg/MSYS2 OpenSSL (milestone 3).
 
