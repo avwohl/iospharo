@@ -56,13 +56,20 @@ isolation (no suite watchdog):
     timeout — the per-test-watchdog runner is SLOW (~20s/class: fork a watchdog
     process + wait, per test). To run all 1400 either raise the timeout (hours)
     or speed up the watchdog. The pass RATE is the parity signal; it's solid.
-  - `BinaryFileStreamTest` (15 errors) — odd: every test PASSES run
-    individually (even 4 in sequence), and the class has NO TestResource and
-    setUp works, yet `BinaryFileStreamTest suite run` errors 29/29. Looks like a
-    suite-context file-handle / GC-timing issue specific to Windows (handles not
-    closed/released between tests in one TestResult -> later opens fail). Needs
-    the actual per-test exception captured in suite context (TestCase>>run
-    swallows it into the TestResult; use a custom result or instrument setUp).
+  - [x] `BinaryFileStreamTest` — FIXED (29 errors -> 15/15 pass). Root cause:
+    `primitiveFileOpen` used plain `fopen`, which on Windows omits
+    FILE_SHARE_DELETE, so a file held open by a stream could not be deleted
+    (`CannotDeleteFileException: ... Check the file is not open`); POSIX allows
+    delete-while-open. Fixed: `pharoSharedFopen` opens via CreateFileA with
+    FILE_SHARE_READ|WRITE|DELETE (+ _open_osfhandle/_fdopen) on Windows; plain
+    fopen elsewhere. (The earlier "passes individually" read was wrong —
+    TestCase>>run swallows the error into the TestResult; `debug` revealed it.)
+  - [ ] **`isHidden` / file-attributes slot** — 3 residual file errors
+    (FileSystemTest/FileReferenceTest/FileLocatorTest, `testIsHidden*`):
+    `SubscriptOutOfBounds: 13` on a 12-element stat array. The image's Windows
+    isHidden path reads attribute index 13 (the Windows hidden/file-attributes
+    flag) but our VM's file-attributes/stat primitive returns fewer slots. Add
+    the missing Windows attribute slot(s) to the stat array.
   - RESULT (run #2, JIT on, before the sqInt fix): ~130 classes, 1702 PASS / 0
     FAIL / 15 ERROR = 99.1%, then crashed exit 139 at `CoCompletionEngineTest` —
     NOW FIXED
