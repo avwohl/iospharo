@@ -375,3 +375,59 @@ endif()
   vs provision a dedicated `iospharo-public` profile under the same
   `ms-code-sign-account`. Also confirm whether the Individual->Public Trust
   identity validation has been marked Completed in Azure.
+
+---
+
+## Milestone 1 — STATUS (2026-06-27): builds + runs, blocked on Delay timer
+
+The Windows port went from "does not build at all" to a clean clang/LLVM-MinGW
+build that loads and runs a standard Pharo 13 image. Toolchain: MSYS2 CLANG64
+(install via `winget install MSYS2.MSYS2` then
+`pacman -S mingw-w64-clang-x86_64-{toolchain,cmake,ninja,libffi,dlfcn,unzip}`).
+Build: `scripts/build-windows.sh` (configures into `build-win/`, JIT off).
+
+DONE:
+- Clean build of `build-win/test_load_image.exe` (0 errors/0 warnings, JIT off).
+- New `src/platform/windows.cpp` (W^X seam over VirtualAlloc RWX) +
+  `win_compat.h` (sigjmp/backtrace) + `win_mman.h` (mmap over VirtualAlloc,
+  MEM_RESET=MADV_DONTNEED) + `win_posix_compat.h` (getrusage/statvfs/uname/
+  sysconf/setenv/localtime_r/arc4random_buf + cross-platform tm_gmtoff/tm_zone).
+- WIN32 CMake branch; `SocketPlugin_win_stub.cpp` (honest failing stubs, sockets
+  deferred to milestone 3); links libffi + ws2_32 + dl (dlfcn-win32).
+- Loads a standard fresh Pharo 13 image (740k objects), resumes the snapshot,
+  executes 38M+ bytecode steps of startup.
+- FIXED: 4 "unrelocated pointer" heuristics hardcoded the [1TiB,2TiB) old-image
+  window; Windows VirtualAlloc ASLR maps the new heap there ~50% of runs,
+  false-positiving valid pointers. Now gated by `!memory_.isValidPointer()` —
+  robust across ASLR (5/5 runs).
+- FIXED: platform reported as "Mac OS" -> Pharo used Unix paths on Windows and
+  could not find sibling files (.sources/startup.st). Now reports "Win32"
+  (getSystemAttribute 1001 + primitiveGetPlatformName) -> WindowsResolver
+  active, .sources found, startup runs WITHOUT the "UndefinedObject not
+  indexable" error.
+
+NEXT BLOCKER (the milestone-1 done-condition gate): the Delay/microsecond-timer
+subsystem never arms on Windows. Symptom: a pri-80 process sits forever in
+`DelayMicrosecondTicker>>waitForUserSignalled:orExpired:`; the
+`[DIAG-TIMER]` line shows `timerSem=nil usecArmed=0 timerWasArmed=0
+nextUsec=0x7fffffffffffffff`. The interpreter spins in the ProcessorScheduler
+idle loop (steps keep advancing) because the delay never fires, so any startup
+step using `Delay` hangs and full startup never completes (so the eval-mode
+`startup.st` never fires and no EVAL-RESULT is produced).
+  - The microsecond CLOCK is portable (`std::chrono::system_clock`,
+    Primitives.cpp ~16259) — not the cause.
+  - Investigate: `Interpreter::checkTimerSemaphore()` (Interpreter.cpp ~4309),
+    how `timerSemaphore_` / `nextWakeupUsec_` get set from
+    `primitiveSignalAtUTCMicroseconds` (prim 242, Primitives.cpp 16224) and the
+    `SpecialObjectIndex::TheTimerSemaphore` special object (Interpreter.cpp
+    ~1203), and the heartbeat thread's role in signaling. Determine why the
+    image never arms the timer on Windows (prim 242 failing? ticker not calling
+    it? VM not signaling TheTimerSemaphore?).
+  - Repro: `MSYSTEM=CLANG64 /c/msys64/usr/bin/bash.exe -lc 'timeout 60
+    /c/temp/src/iospharo-jit/build-win/test_load_image.exe
+    "C:/temp/pharo-win-test/Pharo.image" eval "3+4"'` then look for
+    `[DIAG-TIMER]` / `EVAL-RESULT`.
+
+After the timer fix, the eval should print `EVAL-RESULT=...`; then wire the
+SUnit runner (needs `scripts/pharo-headless-test` submodule init + the reference
+Pharo Windows VM to inject `run_sunit_tests.st`) for the pass-count comparison.
