@@ -38,9 +38,31 @@ isolation (no suite watchdog):
 - [ ] **WeakArrayTest** hangs — KNOWN nondeterministic weak-ref/GC-timing test
   per debug_vars.h:260 ("only nondeterministic weak-ref/GC-timing tests differ"
   under the x86 JIT, same on arm64-JIT). Not a Windows-specific regression.
-- [~] **Full suite on Windows** — 2047 non-abstract TestCase subclasses in this
-  Pharo 13 image. Partial validation done; the DEFINITIVE number is still
-  blocked on the watchdog runner (below).
+- [x] **Full suite on Windows — RUNS** (recipe below). 2047 non-abstract
+  TestCase subclasses. The blocker chain is solved; a full per-test-watchdog run
+  is in progress / reproducible. WORKING RECIPE:
+  1. `mkdir C:\tmp` (the runner writes there; "/tmp" resolves to C:\tmp).
+  2. Download the reference Pharo Windows VM: `curl -sL https://get.pharo.org/64/vm130 | bash` (gives `pharo-vm/PharoConsole.exe`).
+  3. Copy the image, then inject the runner with the REFERENCE VM (its compiler
+     handles the huge runAllTests; ours can't — see convertStorePop below) —
+     run from a NATIVE shell (USERPROFILE set), NOT the MSYS2 login shell:
+     `./PharoConsole.exe Pharo-sunit.image eval --save "'<repo>/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn"`
+  4. Run the prepped image with OUR VM, invoking the now-PRE-COMPILED runAllTests
+     directly (bypasses the startUp-hook handoff, which didn't drive it):
+     `build-win/test_load_image.exe Pharo-sunit.image eval "(Smalltalk at: #SUnitRunner) runAllTests"`
+     -> writes C:\tmp\sunit_test_results.txt / sunit_test_detail.txt.
+  Gotchas hit along the way: the exe needs its 5 runtime DLLs present (AV may
+  quarantine the .exe — rebuild if missing); run everything from a native shell.
+
+- [ ] **VM can't compile very large methods** (convertStorePop) — surfaced by
+  the above: OUR VM's OpalCompiler errors compiling the runner's ~380-line
+  `runAllTests` (`OCIRSimpleOptimizerVisitor>>convertStorePop:` ->
+  `OCIRSequence>>remove:` element-not-found -> `Error: 'Error!'`). Fails with the
+  JIT OFF too (interpreter-level), and is almost certainly cross-platform (the
+  Linux/Mac flow injects via the reference VM, so our VM never compiles it
+  there). Worth fixing so our VM can compile large methods directly. Earlier
+  ~3800-test validation was unaffected (those methods were already compiled in
+  the image).
   - PARTIAL RESULT (synchronous batches via `scripts/win-sunit-batches.sh`):
     the 3 batches that finished within the 200s/batch timeout = 2709/2882
     passed; representative batch-1 (first 100 classes) = 1433/1495 (96%), 1
@@ -55,15 +77,29 @@ isolation (no suite watchdog):
     forked watchdog + timeout) and calls `Smalltalk exitSuccess` itself at the
     end, but on Windows it throws an opaque `Error: Error: Error!` (nested error
     in its own error handler) after ~1.9B bytecodes — so no results file is
-    written. NARROWED: the runner's `fileIn` ITSELF errors on Windows (before
-    any test runs) — `'<runner>.st' asFileReference fileIn` throws the same
-    `Error: Error: Error!`. NOT a line-ending issue (an LF-converted copy fails
-    identically). So one of the chunk-format patches/definitions in
-    run_sunit_tests.st (the ClassDescription/FileReference/Context/FFIArchitecture
-    shims or the SUnitRunner class defs) fails to compile/run via chunk fileIn on
-    Windows. Next: bisect the script's `!`-chunks (or wrap each in error-printing)
-    to find which chunk errors, and instrument the eval-mode handler to print the
-    real error class/message instead of the opaque cascade. Even the runner's `runDiagnostic:` (a minimal fork +
+    written. ROOT CAUSE FOUND (bisected to one chunk + captured the real stack):
+    the runner's `fileIn` fails while **compiling the huge `runAllTests`
+    method** (chunk 13, ~380 lines). The real error is
+    `OCIRSimpleOptimizerVisitor>>convertStorePop:forInstructionSequence:` ->
+    `OCIRSequence>>remove:` -> `OrderedCollection>>remove:ifAbsent:` (element not
+    found) -> `Error: 'Error!'`. i.e. OUR VM's OpalCompiler IR optimizer mis-
+    handles this large method. Fails with the JIT OFF too, so it is an
+    INTERPRETER-level compiler bug, almost certainly NOT Windows-specific —
+    the Linux/macOS workflow never hits it because it injects the runner with
+    the **reference Pharo VM** (`pharo image eval --save "... fileIn"`), so our
+    VM only ever RUNS the pre-compiled methods, never compiles them.
+    IMPLICATION FOR PARITY: this is NOT a Windows-JIT parity gap — the JIT is at
+    parity (validated). It's (a) a pre-existing cross-platform limitation of our
+    VM's compiler on very large methods, and (b) a Windows tooling gap: to run
+    the full suite we likewise need reference-VM injection. The reference Pharo
+    Windows VM IS downloaded (`pharo-win-test/refvm/pharo-vm/PharoConsole.exe`),
+    but `eval --save` injection on Windows hit file-locking friction (lingering
+    PharoConsole holds the image/.changes). Next: get one clean reference-VM
+    `eval --save "<runner> fileIn"` (kill stray PharoConsole first; use the LF
+    runner copy), then run the prepped image with OUR VM (delete the
+    `/tmp/sunit_run_completed.txt` marker so the startUp hook fires) -> the
+    per-test-watchdog full-suite number. Separately worth fixing the
+    convertStorePop compiler bug so our VM can compile large methods directly. Even the runner's `runDiagnostic:` (a minimal fork +
     on:ZeroDivide:do: + `sem waitTimeoutSeconds:` sanity check) does NOT complete
     on Windows — so the likely root cause is the forked-process + semaphore-
     timeout mechanism the watchdog is built on, the SAME area as the ProcessTest
