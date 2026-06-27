@@ -39,20 +39,41 @@ isolation (no suite watchdog):
   per debug_vars.h:260 ("only nondeterministic weak-ref/GC-timing tests differ"
   under the x86 JIT, same on arm64-JIT). Not a Windows-specific regression.
 - [~] **Full suite on Windows** — 2047 non-abstract TestCase subclasses in this
-  Pharo 13 image. Being run via `scripts/win-sunit-batches.sh` (timeout-
-  protected synchronous batches; results in C:/tmp/win_sunit_batches.txt).
+  Pharo 13 image. Partial validation done; the DEFINITIVE number is still
+  blocked on the watchdog runner (below).
+  - PARTIAL RESULT (synchronous batches via `scripts/win-sunit-batches.sh`):
+    the 3 batches that finished within the 200s/batch timeout = 2709/2882
+    passed; representative batch-1 (first 100 classes) = 1433/1495 (96%), 1
+    failure, 61 errors. Most "TIMEOUT" batches were NOT real hangs — 100-class
+    batches simply need >200s (image load + JIT + thousands of tests), so the
+    fixed-timeout synchronous approach undercounts badly. Batch-21's 101 errors
+    are mostly `Zn*` (Zinc networking) — EXPECTED, sockets are stubbed.
   - `/tmp/...` paths DO resolve on Windows (image WindowsStore maps "/tmp" to
     `C:\tmp` on the current drive — create `C:\tmp`).
-  - The pharo-headless-test **watchdog runner** (`run_sunit_tests.st`
-    `SUnitRunner runAllTests`) does NOT yet drive cleanly on Windows: it installs
-    a SessionManager startUp hook and manages its own lifecycle, but our eval
-    mode calls `Smalltalk exitSuccess` right after the expression, killing the
-    run before results are written; and `Smalltalk saveAs:` (to prep a
-    runner-installed image) errors on our VM. So the per-test-watchdog path
-    (which survives unknown hangers) isn't usable yet — TODO: either make eval
-    mode not exitSuccess when running the suite, or fix saveAs/snapshot prep.
-    The batch script is the interim workaround (a batch containing an unknown
-    hanger times out and is skipped, ~100 classes lost per hanger-batch).
+  - **BLOCKER — the pharo-headless-test watchdog runner errors on Windows.**
+    `run_sunit_tests.st` `SUnitRunner runAllTests` runs synchronously (per-test
+    forked watchdog + timeout) and calls `Smalltalk exitSuccess` itself at the
+    end, but on Windows it throws an opaque `Error: Error: Error!` (nested error
+    in its own error handler) after ~1.9B bytecodes — so no results file is
+    written. NARROWED: the runner's `fileIn` ITSELF errors on Windows (before
+    any test runs) — `'<runner>.st' asFileReference fileIn` throws the same
+    `Error: Error: Error!`. NOT a line-ending issue (an LF-converted copy fails
+    identically). So one of the chunk-format patches/definitions in
+    run_sunit_tests.st (the ClassDescription/FileReference/Context/FFIArchitecture
+    shims or the SUnitRunner class defs) fails to compile/run via chunk fileIn on
+    Windows. Next: bisect the script's `!`-chunks (or wrap each in error-printing)
+    to find which chunk errors, and instrument the eval-mode handler to print the
+    real error class/message instead of the opaque cascade. Even the runner's `runDiagnostic:` (a minimal fork +
+    on:ZeroDivide:do: + `sem waitTimeoutSeconds:` sanity check) does NOT complete
+    on Windows — so the likely root cause is the forked-process + semaphore-
+    timeout mechanism the watchdog is built on, the SAME area as the ProcessTest
+    hang. Fixing fork/process-timeout semantics on Windows would unblock BOTH the
+    runner (-> full-suite number) and ProcessTest>>testResumeAfterBCR. Also
+    `Smalltalk saveAs:` (to prep a runner-installed image) errors on our VM.
+    Until this is fixed, the full per-test-watchdog number vs the 99.1% Linux
+    baseline isn't obtainable. The 61 batch-1 errors and 5 batch-21 failures
+    also want characterization (Windows-specific vs missing-feature like
+    sockets/GUI).
 
 ### Networking / TLS
 - [ ] **SocketPlugin** — replaced by `SocketPlugin_win_stub.cpp` on Windows:
