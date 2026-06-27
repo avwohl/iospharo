@@ -12540,6 +12540,40 @@ PrimitiveResult Interpreter::primitiveFileGetPosition(int argCount) {
 }
 
 // Primitive 93: Open a file
+// Open a file like fopen, but on Windows with FILE_SHARE_DELETE so the file can
+// be deleted/renamed while still open — matching POSIX delete-while-open
+// semantics.  Plain fopen() on Windows omits FILE_SHARE_DELETE, so a file held
+// open by a Smalltalk stream could not be deleted (CannotDeleteFileException),
+// which broke e.g. BinaryFileStreamTest (passes on POSIX).  On non-Windows this
+// is just fopen — behavior byte-identical.
+#ifdef _WIN32
+static FILE* pharoSharedFopen(const char* path, const char* mode) {
+    const bool wr   = std::strchr(mode, 'w') != nullptr;
+    const bool ap   = std::strchr(mode, 'a') != nullptr;
+    const bool plus = std::strchr(mode, '+') != nullptr;
+    DWORD access = GENERIC_READ;
+    if (wr || ap || plus) access |= GENERIC_WRITE;
+    if (wr && !plus) access = GENERIC_WRITE;             // "wb": write-only
+    const DWORD disposition = wr ? CREATE_ALWAYS : (ap ? OPEN_ALWAYS : OPEN_EXISTING);
+    const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    HANDLE h = CreateFileA(path, access, share, nullptr, disposition,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return nullptr;
+    int oflags = _O_BINARY;
+    if (!wr && !ap && !plus) oflags |= _O_RDONLY;
+    if (ap) oflags |= _O_APPEND;
+    int fd = _open_osfhandle(reinterpret_cast<intptr_t>(h), oflags);
+    if (fd < 0) { CloseHandle(h); return nullptr; }
+    FILE* f = _fdopen(fd, mode);
+    if (!f) { _close(fd); return nullptr; }
+    return f;
+}
+#else
+static inline FILE* pharoSharedFopen(const char* path, const char* mode) {
+    return fopen(path, mode);
+}
+#endif
+
 // filename writable primitiveFileOpen -> fileHandle (or nil on failure)
 PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
     if (argCount < 2) {
@@ -12559,11 +12593,11 @@ PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
     bool writable = (writableOop == memory_.trueObject());
     const char* mode = writable ? "r+b" : "rb";
 
-    FILE* file = fopen(filename.c_str(), mode);
+    FILE* file = pharoSharedFopen(filename.c_str(), mode);
 
     // If opening for write failed, try creating the file
     if (!file && writable) {
-        file = fopen(filename.c_str(), "w+b");
+        file = pharoSharedFopen(filename.c_str(), "w+b");
     }
 
     if (!file) {
