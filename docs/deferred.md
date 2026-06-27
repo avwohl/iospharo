@@ -22,6 +22,27 @@ gaps vs macOS/Linux.
     (Win64 5-arg stack layout) but NOT runtime-tested — they don't fire in
     normal operation. Runtime-test before relying on those knobs on Windows.
 
+### SUnit parity (JIT on, vs Linux/macOS 99.1% baseline)
+Validated ~3800 Kernel/Collections/Exceptions/Context/Stream/Reflection tests
+on Windows with the JIT enabled, 0 failures / 0 errors (run via `eval "(X suite
+run) printString"` on a fresh Pharo 13 image). Batches: numbers+collections
+3150/3150; exceptions+contexts+streams+reflection 461/461; Semaphore 18/18,
+Mutex 7/7, Delay 5/5, ProcessSpecific 8/8. Two test classes hang when run in
+isolation (no suite watchdog):
+- [ ] **ProcessTest>>testResumeAfterBCR** spins (billions of bytecodes) — resume
+  after BlockCannotReturn. Spins with the JIT OFF too, so it is NOT the Win64
+  JIT fix; it's a pre-existing Windows interpreter/process-termination edge
+  case (the BCR sentinel fix from Build 80, executeFromContext, is
+  platform-independent C++, so this needs investigation on Windows). Low
+  priority (single niche test).
+- [ ] **WeakArrayTest** hangs — KNOWN nondeterministic weak-ref/GC-timing test
+  per debug_vars.h:260 ("only nondeterministic weak-ref/GC-timing tests differ"
+  under the x86 JIT, same on arm64-JIT). Not a Windows-specific regression.
+- [ ] **Full 19k-test suite on Windows** — not yet run end-to-end. The
+  pharo-headless-test runner writes to `/tmp/sunit_test_results.txt`; on native
+  Windows `/tmp` doesn't resolve, so the runner needs a Windows result path (or
+  set TMPDIR). Run for the complete pass-count vs the 99.1% Linux baseline.
+
 ### Networking / TLS
 - [ ] **SocketPlugin** — replaced by `SocketPlugin_win_stub.cpp` on Windows:
   every socket primitive fails (primitiveFail) and `hasSocketAccess` reports
