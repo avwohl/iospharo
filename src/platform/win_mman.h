@@ -36,6 +36,7 @@ extern "C" __declspec(dllimport) int __stdcall
 #define PHARO_MEM_COMMIT   0x00001000UL
 #define PHARO_MEM_RESERVE  0x00002000UL
 #define PHARO_MEM_RESET    0x00080000UL
+#define PHARO_MEM_DECOMMIT 0x00004000UL
 #define PHARO_MEM_RELEASE  0x00008000UL
 #define PHARO_PAGE_READONLY            0x02UL
 #define PHARO_PAGE_READWRITE           0x04UL
@@ -71,11 +72,25 @@ static inline int munmap(void* addr, size_t /*len*/) {
 
 static inline int madvise(void* addr, size_t len, int advice) {
     if (advice == MADV_DONTNEED) {
-        // MEM_RESET keeps the range committed but lets the OS discard its
-        // physical pages — the Win32 analogue of MADV_DONTNEED.  VirtualAlloc
-        // with MEM_RESET returns the base on success; ignore the result (this
-        // is an advisory RSS hint, exactly like madvise).
-        VirtualAlloc(addr, len, PHARO_MEM_RESET, PHARO_PAGE_READWRITE);
+        // CRITICAL: MADV_DONTNEED on an anonymous mapping discards the pages AND
+        // zero-fills them on next access.  The VM's bump allocator relies on
+        // that zero-fill to cheaply nil-initialize new objects in the reclaimed
+        // free gap.  MEM_RESET does NOT zero — it leaves page content UNDEFINED
+        // on re-access, which gave new objects garbage slots (corrupt class
+        // indices -> DNU -> crash).  Decommit + recommit instead: it drops the
+        // physical pages (the RSS win) and guarantees zero-filled pages on next
+        // touch, matching MADV_DONTNEED exactly.  Page-align so we never
+        // decommit a partially-live page.
+        const uintptr_t pg = 4096;
+        uintptr_t lo = (reinterpret_cast<uintptr_t>(addr) + (pg - 1)) & ~(pg - 1);
+        uintptr_t hi = (reinterpret_cast<uintptr_t>(addr) + len) & ~(pg - 1);
+        if (hi > lo) {
+            void* p = reinterpret_cast<void*>(lo);
+            size_t n = static_cast<size_t>(hi - lo);
+            if (VirtualFree(p, n, PHARO_MEM_DECOMMIT)) {
+                VirtualAlloc(p, n, PHARO_MEM_COMMIT, PHARO_PAGE_READWRITE);
+            }
+        }
     }
     return 0;
 }

@@ -59,10 +59,23 @@ isolation (no suite watchdog):
     `g_sigsegvRecovery` handler catches such a fault (e.g. a Character-immediate
     deref or a stale pointer) and longjmps back; on Windows that handler is
     compiled out, so the same fault crashes the process and ends the run.
-    NEXT TO COMPLETE THE SUITE: re-enable SIGSEGV recovery on Windows via a
-    Vectored Exception Handler (the deferred item below) — that should let the
-    run survive the fault and continue, the way Linux does. Then run the full
-    2047 with GUI excluded (or a watchdog that can kill Morphic spins).
+    INVESTIGATED: the crash is a HEAP CORRUPTION, not a recovery-window fault —
+    `CoCompletionEngineTest` runs `EFFormatter` (code formatter) and a DNU fires
+    (`#isEmpty` to a receiver whose class index (3075) resolves to nil, i.e. a
+    corrupt object header), then the DNU machinery segfaults. It crashes with
+    the JIT OFF too, so NOT the JIT. Ruled out: my `win_mman.h`
+    MADV_DONTNEED->MEM_RESET shim (MEM_RESET left page content undefined on
+    re-access instead of zero-filling like Linux — a real latent bug, FIXED to
+    decommit+recommit, but it was NOT this crash's cause). So this is a deeper
+    heap/GC/class-table corruption bug exposed by the formatter path; could be
+    Windows-specific (another memory shim: the mmap layout, or
+    aligned_alloc->malloc) or a pre-existing cross-platform VM bug (unknown
+    whether CoCompletionEngineTest passes on Linux with our VM). NEXT: get a
+    crash backtrace (the SIGSEGV handler is compiled out on Windows — add a
+    Vectored Exception Handler that at least DUMPS the fault before exiting), and
+    trace where the corrupt object header is produced. SIGSEGV recovery (below)
+    won't cleanly fix a corruption like this; it would only let the run skip the
+    crashing test.
   WORKING RECIPE:
   1. `mkdir C:\tmp` (the runner writes there; "/tmp" resolves to C:\tmp).
   2. Download the reference Pharo Windows VM: `curl -sL https://get.pharo.org/64/vm130 | bash` (gives `pharo-vm/PharoConsole.exe`).
