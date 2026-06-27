@@ -55,9 +55,38 @@ all 14 gave `jit-caused=0` (identical failures with and without the JIT).
 29 packages didn't load headless (heavy GUI/FFI/native deps: Bloc, iceberg,
 kendrick, biosmalltalk, the `pharo-sdl`/graphics ones, etc.).
 
+## SSL-package re-run after the fix (2026-06-26)
+
+After the SSL work (real OpenSSL backend, crypto ON, TLS 1.2+1.3 — commits
+`f26d45a2`/`3af37640`), the 5 HTTPS/SSL packages were re-run on a fresh x86 box
+(custom VM built from the `jit` branch, x86 JIT **on**, vs stock Cog on the same
+Metacello-loaded image). **Decisive result: zero `ZdcPluginMissing` in any
+package** — the SSL plugin works in real package tests.
+
+| package | before (broken SSL) | after the fix |
+|---------|--------------------:|---------------|
+| `evref-bl-github-pharo-api` | `pass=0` — every test died on `ZdcPluginMissing` | reaches GitHub over TLS; failures are 30× **HTTP 403** (rate-limited, no auth token) — same as stock Cog |
+| `newapplesho-google-cloud-smalltalk` | 1 jit-only | **0 — clean parity** |
+| `ba-st-stargate` | 111 jit-only | 111 (unchanged) |
+| `juliendelplanque-jrpc` | 12 jit-only | 12 (unchanged) |
+| `smalltalkweb-myprecious` | 51 jit-only | 50 (unchanged) |
+
+Reading: the SSL fix did its job — it eliminated the SSL-plugin failures and the
+HTTPS-dependent tests now reach their servers (github-api went from *every test
+failing on `ZdcPluginMissing`* to *only the rate-limited ones failing, exactly
+like Cog*; google-cloud is now clean). The **residual** divergences
+(stargate/jrpc/myprecious) are **not SSL** and are **identical to the pre-fix
+baseline**: the error is `SocketError: Success` on those packages' **local
+HTTP-server** tests (server-framework SUnit that binds a `Zinc`/`Teapot` server on
+localhost and connects to it). That's a separate, pre-existing VM-core socket
+behavior — neither caused by nor related to the SSL work — and is the next
+follow-up for these server-framework packages.
+
 ## Takeaway
 
 The sweep did its two jobs: (a) **broadly validated x86-JIT correctness** — 143
 clean-parity packages, 0 JIT bugs; and (b) surfaced the real gaps that block
-broader coverage, all VM-core: the **stub SSL backend** (highest-value fix) and
-**SQLite3 FFI loading**.
+broader coverage, all VM-core: the **stub SSL backend** (now FIXED — TLS 1.2+1.3
+HTTPS works, re-run confirms no `ZdcPluginMissing`) and **SQLite3 FFI loading**.
+Remaining package-test gap for the server-framework packages is a local-server
+`SocketError: Success` (VM-core sockets), unrelated to SSL.
