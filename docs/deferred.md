@@ -38,10 +38,21 @@ isolation (no suite watchdog):
 - [ ] **WeakArrayTest** hangs — KNOWN nondeterministic weak-ref/GC-timing test
   per debug_vars.h:260 ("only nondeterministic weak-ref/GC-timing tests differ"
   under the x86 JIT, same on arm64-JIT). Not a Windows-specific regression.
-- [ ] **Full 19k-test suite on Windows** — not yet run end-to-end. The
-  pharo-headless-test runner writes to `/tmp/sunit_test_results.txt`; on native
-  Windows `/tmp` doesn't resolve, so the runner needs a Windows result path (or
-  set TMPDIR). Run for the complete pass-count vs the 99.1% Linux baseline.
+- [~] **Full suite on Windows** — 2047 non-abstract TestCase subclasses in this
+  Pharo 13 image. Being run via `scripts/win-sunit-batches.sh` (timeout-
+  protected synchronous batches; results in C:/tmp/win_sunit_batches.txt).
+  - `/tmp/...` paths DO resolve on Windows (image WindowsStore maps "/tmp" to
+    `C:\tmp` on the current drive — create `C:\tmp`).
+  - The pharo-headless-test **watchdog runner** (`run_sunit_tests.st`
+    `SUnitRunner runAllTests`) does NOT yet drive cleanly on Windows: it installs
+    a SessionManager startUp hook and manages its own lifecycle, but our eval
+    mode calls `Smalltalk exitSuccess` right after the expression, killing the
+    run before results are written; and `Smalltalk saveAs:` (to prep a
+    runner-installed image) errors on our VM. So the per-test-watchdog path
+    (which survives unknown hangers) isn't usable yet — TODO: either make eval
+    mode not exitSuccess when running the suite, or fix saveAs/snapshot prep.
+    The batch script is the interim workaround (a batch containing an unknown
+    hanger times out and is skipped, ~100 classes lost per hanger-batch).
 
 ### Networking / TLS
 - [ ] **SocketPlugin** — replaced by `SocketPlugin_win_stub.cpp` on Windows:
