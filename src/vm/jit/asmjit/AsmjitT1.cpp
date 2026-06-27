@@ -1856,6 +1856,74 @@ static inline void emitReloadSpFromState_x86(asmjit::x86::Assembler& a) {
 #endif
 }
 
+// ===== C-helper call ABI: Win64 vs System V AMD64 =====
+// The JIT pins the VM state pointer in RDI and the Smalltalk sp in RBX (see
+// X86_SP_REG / the JIT_CALL entry macro in JITState.hpp).  When emitted JIT
+// code calls a C runtime helper (jit_rt_*), the helper is compiled for the
+// HOST C ABI, which differs between platforms:
+//
+//   System V AMD64 (Linux/macOS): int args in RDI,RSI,RDX,RCX,R8,R9; a 128-byte
+//     red zone below RSP; NO shadow space.  RDI/RSI are caller-saved.
+//   Win64 (Windows):              int args in RCX,RDX,R8,R9 then the STACK; NO
+//     red zone; the CALLER must reserve 32 bytes of shadow ("home") space below
+//     the return address and keep RSP 16-byte aligned at the CALL.  RSI/RDI/RBX
+//     are callee-saved — so the pinned state(RDI) and sp(RBX) SURVIVE a helper
+//     call on Win64 (the existing `push rdi`/`pop rdi` brackets that preserve
+//     state on System V are redundant but harmless on Win64, and they keep RSP
+//     alignment identical across both ABIs).
+//
+// kCArgN names the physical register that holds C-call integer arg N on the
+// host ABI.  Routing every marshal through these aliases makes one instruction
+// sequence correct on both platforms; the System V expansion is byte-for-byte
+// identical to the original open-coded emit (RDI,RSI,RDX,RCX,R8).
+#if defined(_WIN32)
+[[maybe_unused]] static const asmjit::x86::Gp kCArg0 = asmjit::x86::rcx;
+[[maybe_unused]] static const asmjit::x86::Gp kCArg1 = asmjit::x86::rdx;
+[[maybe_unused]] static const asmjit::x86::Gp kCArg2 = asmjit::x86::r8;
+[[maybe_unused]] static const asmjit::x86::Gp kCArg3 = asmjit::x86::r9;
+// Win64 has no register for the 5th+ integer arg: it is passed on the stack,
+// just ABOVE the 32-byte shadow space (at [rsp+32] at the moment of the CALL).
+#else
+[[maybe_unused]] static const asmjit::x86::Gp kCArg0 = asmjit::x86::rdi;
+[[maybe_unused]] static const asmjit::x86::Gp kCArg1 = asmjit::x86::rsi;
+[[maybe_unused]] static const asmjit::x86::Gp kCArg2 = asmjit::x86::rdx;
+[[maybe_unused]] static const asmjit::x86::Gp kCArg3 = asmjit::x86::rcx;
+[[maybe_unused]] static const asmjit::x86::Gp kCArg4 = asmjit::x86::r8;
+#endif
+
+// Win64 caller-reserved shadow ("home") space, in bytes.  A multiple of 16, so
+// reserving/restoring it preserves the 16-byte RSP alignment the helper CALL
+// requires.  Unused on System V.
+static constexpr int kWin64ShadowSpace = 32;
+
+// Emit `mov rax, fn ; call rax`, bracketed on Win64 by the 32-byte shadow-space
+// reserve/restore the Microsoft ABI mandates.  The caller must already hold RSP
+// 16-byte aligned at the point this runs (the surrounding push/pop brackets do
+// that: JIT entry RSP == 8 mod 16, one push -> 16-aligned).  On System V this
+// expands to exactly `mov rax,imm; call rax` — byte-identical to the original.
+static inline void emitCallCHelper_x86(asmjit::x86::Assembler& a,
+                                       const void* fn) {
+    a.mov(asmjit::x86::rax, asmjit::Imm((uint64_t)fn));
+#if defined(_WIN32)
+    a.sub(asmjit::x86::rsp, asmjit::Imm(kWin64ShadowSpace));
+    a.call(asmjit::x86::rax);
+    a.add(asmjit::x86::rsp, asmjit::Imm(kWin64ShadowSpace));
+#else
+    a.call(asmjit::x86::rax);
+#endif
+}
+
+// Emit `mov kCArg0, rdi` only on Win64 (arg0 = state).  On System V arg0 is
+// already RDI=state, so nothing is emitted and codegen stays byte-identical.
+// Must be called AFTER any marshal that reads the Win64 arg0 register (RCX).
+static inline void emitCArg0State_x86(asmjit::x86::Assembler& a) {
+#if defined(_WIN32)
+    a.mov(kCArg0, asmjit::x86::rdi);
+#else
+    (void)a;
+#endif
+}
+
 // Emit a "push value into Smalltalk stack" sequence on x86_64.  The
 // value to push must already be in `valReg` (any 64-bit gp reg
 // other than rdi/rcx).  Sequence (=0):
@@ -1926,10 +1994,10 @@ static void emitJ2JReturnPrelude_x86(asmjit::x86::Assembler& a,
         // are dead here.  3 pushes keep rsp 16-aligned.
         emitSyncSpToState_x86(a);  // publish rbx so the trace's s->sp read is current (nop at =0)
         a.push(rdi); a.push(r11); a.push(rax);
-        a.mov(rsi, asmjit::Imm(1));                  // kind = POP
-        a.mov(rdx, asmjit::Imm(0));
-        a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_j2j_dbg));
-        a.call(rax);
+        a.mov(kCArg1, asmjit::Imm(1));               // arg1 = kind = POP
+        a.mov(kCArg2, asmjit::Imm(0));               // arg2 = id = 0
+        emitCArg0State_x86(a);                       // arg0 = state (Win64 only)
+        emitCallCHelper_x86(a, (const void*)&jit_rt_j2j_dbg);
         a.pop(rax); a.pop(r11); a.pop(rdi);
     }
     a.jmp(r11);                             // -> caller's resumeAfterCall (retval in rax)
@@ -2189,14 +2257,14 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         a.jae(fail);                             // unsigned: only fmt-3 in {0,1,2}
 
         // jit_rt_primsize_ptr(state, rcvBits, &state.returnValue).
-        // SysV: rdi=state(already), rsi=rcvBits, rdx=out.  One `push rdi`
-        // both saves state and realigns rsp to 16 (JIT entry rsp == 8 mod 16,
-        // see line 2385), so it is 0 mod 16 at the `call`.
+        // arg0=state, arg1=rcvBits, arg2=out.  One `push rdi` both saves state
+        // and realigns rsp to 16 (JIT entry rsp == 8 mod 16), so it is 0 mod 16
+        // at the `call`; emitCallCHelper_x86 adds the Win64 shadow space.
         a.push(rdi);                             // save state + align rsp to 16
-        a.mov(rsi, rcx);                         // arg2 = rcvBits (receiver)
-        a.lea(rdx, ptr(rdi, OFF_RETVAL));        // arg3 = &state.returnValue
-        a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_primsize_ptr));
-        a.call(rax);                             // returns 1 on success (rax)
+        a.mov(kCArg1, rcx);                      // arg1 = rcvBits (receiver)
+        a.lea(kCArg2, ptr(rdi, OFF_RETVAL));     // arg2 = &state.returnValue
+        emitCArg0State_x86(a);                   // arg0 = state (Win64 only; reads rdi)
+        emitCallCHelper_x86(a, (const void*)&jit_rt_primsize_ptr);  // returns 1 in rax
         a.mov(r9, rax);                          // r9 = success flag
         a.pop(rdi);                              // restore state (re-aligns rsp)
         a.test(r9, r9);
@@ -2333,14 +2401,14 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     a.mov(rax, rdx);
     a.sar(rax, asmjit::Imm(3));          // rax = untagged idx (helper wants untagged i)
     a.push(rdi);                         // save state (1 push => rsp 16-aligned at call)
-    // Marshal args: read sources before overwriting them; rdi(arg0=state)
-    // stays untouched until after rcx(arg3) is derived from it.
-    a.mov(rsi, rcx);                     // arg1 = rcvBits (receiver still in rcx)
-    a.mov(rdx, rax);                     // arg2 = idx (untagged)
-    a.lea(rcx, ptr(rdi, OFF_RETVAL));    // arg3 = &state.returnValue (rdi=state)
-    // arg0 = rdi is already state.
-    a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_primat_ptr));
-    a.call(rax);
+    // Marshal args into the host ABI's arg registers (kCArgN).  Read each
+    // source before it can be overwritten: on Win64 kCArg0(rcx)=state is set
+    // LAST (via emitCArg0State_x86) because rcx still holds rcvBits here.
+    a.mov(kCArg1, rcx);                  // arg1 = rcvBits (receiver still in rcx)
+    a.mov(kCArg2, rax);                  // arg2 = idx (untagged)
+    a.lea(kCArg3, ptr(rdi, OFF_RETVAL)); // arg3 = &state.returnValue (rdi=state)
+    emitCArg0State_x86(a);               // arg0 = state (Win64 only; after rcx read above)
+    emitCallCHelper_x86(a, (const void*)&jit_rt_primat_ptr);
     a.mov(r11d, eax);                    // r11d = helper result (caller-saved-safe)
     a.pop(rdi);                          // restore state ptr
     a.test(r11d, r11d);
@@ -3305,10 +3373,10 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     // r10/r11 are scratch, recomputed below.)  5 pushes (40B) keep
                     // rsp 16-aligned for the C call (JIT entry rsp == 8 mod 16).
                     a.push(rcx); a.push(rsi); a.push(r8); a.push(r9); a.push(rdi);
-                    a.mov(rsi, r9);                       // arg1 = entryAddr
-                    a.mov(rdx, rax);                      // arg2 = receiver
-                    a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_xm_fire_trace));
-                    a.call(rax);                          // arg0 rdi = state
+                    a.mov(kCArg1, r9);                    // arg1 = entryAddr
+                    a.mov(kCArg2, rax);                   // arg2 = receiver
+                    emitCArg0State_x86(a);                // arg0 = state (Win64 only)
+                    emitCallCHelper_x86(a, (const void*)&jit_rt_xm_fire_trace);
                     a.pop(rdi); a.pop(r9); a.pop(r8); a.pop(rsi); a.pop(rcx);
                 }
                 if (GET_DEBUG_BOOL(PHARO_T1_X86_XMETHOD_COUNTERS)) {
@@ -3358,10 +3426,10 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                     // callee-state setup below); 5 pushes keep rsp 16-aligned.
                     emitSyncSpToState_x86(a);  // publish rbx for the trace's s->sp read (nop at =0)
                     a.push(rdi); a.push(r8); a.push(rcx); a.push(rsi); a.push(rax);
-                    a.mov(rsi, asmjit::Imm(0));                  // kind = PUSH
-                    a.mov(rdx, asmjit::Imm((uint64_t)(globalIdx)));
-                    a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_j2j_dbg));
-                    a.call(rax);
+                    a.mov(kCArg1, asmjit::Imm(0));               // arg1 = kind = PUSH
+                    a.mov(kCArg2, asmjit::Imm((uint64_t)(globalIdx)));  // arg2 = id
+                    emitCArg0State_x86(a);                       // arg0 = state (Win64 only)
+                    emitCallCHelper_x86(a, (const void*)&jit_rt_j2j_dbg);
                     a.pop(rax); a.pop(rsi); a.pop(rcx); a.pop(r8); a.pop(rdi);
                 }
                 // --- set CALLEE state (E2: AFTER the push+depth, so a save-room
@@ -3572,6 +3640,22 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.push(rax); a.push(rcx); a.push(rdx); a.push(rsi);
                 a.push(r8); a.push(rdi); a.push(r9);
                 // stack top->bottom: r9,rdi,r8,rsi,rdx,rcx,rax (offsets 0..48)
+#if defined(_WIN32)
+                // Win64: 4 int args in rcx/rdx/r8/r9, the 5th (entryPtr) on the
+                // stack at [rsp+32] (just above the 32B shadow space).  Reserve
+                // 48B (32 shadow + 8 arg + 8 pad) keeping rsp 16-aligned; the
+                // 7 pushes left rsp 0 mod 16, so saved regs are at [rsp+48+k].
+                a.sub(rsp, asmjit::Imm(48));
+                a.mov(rcx, ptr(rsp, 48 + 8));    // arg0 statep   = saved rdi
+                a.mov(rdx, ptr(rsp, 48 + 48));   // arg1 recv     = saved rax
+                a.mov(r8,  ptr(rsp, 48 + 32));   // arg2 val      = saved rdx
+                a.mov(r9,  ptr(rsp, 48 + 16));   // arg3 extra    = saved r8
+                a.mov(rax, ptr(rsp, 48 + 24));   // arg4 entryPtr = saved rsi
+                a.mov(qword_ptr(rsp, 32), rax);  // 5th arg -> stack slot
+                a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_verify_getter));
+                a.call(rax);
+                a.add(rsp, asmjit::Imm(48));
+#else
                 a.mov(rdi, ptr(rsp, 8));    // arg0 statep
                 a.mov(rsi, ptr(rsp, 48));   // arg1 recv (rax)
                 a.mov(rdx, ptr(rsp, 32));   // arg2 val
@@ -3579,6 +3663,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(r8,  ptr(rsp, 24));   // arg4 entryPtr (rsi=icDataPtr)
                 a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_verify_getter));
                 a.call(rax);
+#endif
                 a.pop(r9); a.pop(rdi); a.pop(r8); a.pop(rsi);
                 a.pop(rdx); a.pop(rcx); a.pop(rax);
             }
@@ -3602,6 +3687,19 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.push(rax); a.push(rcx); a.push(rsi); a.push(r8);
                 a.push(rdi); a.push(rdx); a.push(r9);
                 // top->: r9(0) rdx(8) rdi(16) r8(24) rsi(32) rcx(40) rax(48)
+#if defined(_WIN32)
+                // Win64: 4 int args in rcx/rdx/r8/r9, 5th (kind imm) on the
+                // stack at [rsp+32].  See verify_getter above for the layout.
+                a.sub(rsp, asmjit::Imm(48));
+                a.mov(rcx, ptr(rsp, 48 + 16));  // arg0 statep    = saved rdi
+                a.mov(rdx, ptr(rsp, 48 + 48));  // arg1 recv       = saved rax
+                a.mov(r8,  ptr(rsp, 48 + 24));  // arg2 extra      = saved r8
+                a.mov(r9,  ptr(rsp, 48 + 32));  // arg3 entryPtr   = saved rsi
+                a.mov(qword_ptr(rsp, 32), asmjit::Imm(1));  // arg4 kind=setter
+                a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_verify_spec));
+                a.call(rax);
+                a.add(rsp, asmjit::Imm(48));
+#else
                 a.mov(rdi, ptr(rsp, 16));   // statep
                 a.mov(rsi, ptr(rsp, 48));   // recv
                 a.mov(rdx, ptr(rsp, 24));   // extra (r8)
@@ -3609,6 +3707,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(r8, asmjit::Imm(1));  // kind=setter
                 a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_verify_spec));
                 a.call(rax);
+#endif
                 a.pop(r9); a.pop(rdx); a.pop(rdi); a.pop(r8);
                 a.pop(rsi); a.pop(rcx); a.pop(rax);
             }
@@ -3629,6 +3728,19 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             if (GET_DEBUG_BOOL(PHARO_VERIFY_GETTER)) {
                 a.push(rax); a.push(rcx); a.push(rsi); a.push(r8);
                 a.push(rdi); a.push(rdx); a.push(r9);
+#if defined(_WIN32)
+                // Win64: 4 int args in rcx/rdx/r8/r9, 5th (kind imm) on the
+                // stack at [rsp+32].  See verify_getter above for the layout.
+                a.sub(rsp, asmjit::Imm(48));
+                a.mov(rcx, ptr(rsp, 48 + 16));  // arg0 statep    = saved rdi
+                a.mov(rdx, ptr(rsp, 48 + 48));  // arg1 recv       = saved rax
+                a.mov(r8,  ptr(rsp, 48 + 24));  // arg2 extra      = saved r8
+                a.mov(r9,  ptr(rsp, 48 + 32));  // arg3 entryPtr   = saved rsi
+                a.mov(qword_ptr(rsp, 32), asmjit::Imm(2));  // arg4 kind=returnsSelf
+                a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_verify_spec));
+                a.call(rax);
+                a.add(rsp, asmjit::Imm(48));
+#else
                 a.mov(rdi, ptr(rsp, 16));   // statep
                 a.mov(rsi, ptr(rsp, 48));   // recv
                 a.mov(rdx, ptr(rsp, 24));   // extra (r8)
@@ -3636,6 +3748,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                 a.mov(r8, asmjit::Imm(2));  // kind=returnsSelf
                 a.mov(rax, asmjit::Imm((uint64_t)&jit_rt_verify_spec));
                 a.call(rax);
+#endif
                 a.pop(r9); a.pop(rdx); a.pop(rdi); a.pop(r8);
                 a.pop(rsi); a.pop(rcx); a.pop(rax);
             }
