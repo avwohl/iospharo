@@ -10044,7 +10044,23 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             primitiveSuccess(makeBytes("PharoSmalltalk 1.0"));
             return PrimitiveResult::Success;
         case 1003:
-            primitiveSuccess(makeBytes("StackInterpreter"));
+            // Processor architecture.  Pharo's TFFI builds its libffi ABI-lookup
+            // tuple as #(platformName  <this attribute>  callingConvention), so
+            // this MUST be the CPU arch (e.g. "x86_64") — returning the
+            // interpreter name made every callout fail "The requested ABI is not
+            // available for this architecture: #(#Win32 #StackInterpreter #cdecl)".
+            // The reference Cog VM returns "x86_64" here.
+#if defined(__aarch64__) || defined(_M_ARM64)
+            primitiveSuccess(makeBytes("aarch64"));
+#elif defined(__x86_64__) || defined(_M_X64)
+            primitiveSuccess(makeBytes("x86_64"));
+#elif defined(__arm__) || defined(_M_ARM)
+            primitiveSuccess(makeBytes("armv7l"));
+#elif defined(__i386__) || defined(_M_IX86)
+            primitiveSuccess(makeBytes("i686"));
+#else
+            primitiveSuccess(makeBytes("x86_64"));
+#endif
             return PrimitiveResult::Success;
         case 1004:
             primitiveSuccess(Oop::fromSmallInteger(1));

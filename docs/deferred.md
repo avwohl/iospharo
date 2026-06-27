@@ -206,6 +206,27 @@ isolation (no suite watchdog):
   `#'bad argument'` error selector / `IllegalFileName`. Fix is an error-signal
   fidelity pass in the named-primitive failure path, not Windows-specific.
 
+### FFI (libffi / TFFI)
+- [x] **FFI ABI resolution** — FIXED. `FFICalloutMethodBuilderTest` (10/10, was
+  0/10) and `FFIFunctionParserTest` (45/45, was 44/45) failed with `Error: The
+  requested ABI is not available for this architecture: #(#Win32
+  #StackInterpreter #cdecl)`. Pharo's TFFI builds its libffi ABI-lookup tuple as
+  `#(platformName  getSystemAttribute:1003  callingConvention)`; attribute 1003
+  is the CPU architecture and we returned the literal `"StackInterpreter"` instead
+  of `"x86_64"` (the reference Cog VM returns `"x86_64"`). Fixed `getSystemAttribute`
+  case 1003 to report the real arch (x86_64/aarch64/armv7l/i686). Cross-platform
+  correctness fix (also right for our ARM/Linux builds). No regression
+  (SystemVersionTest 17/17, SmalltalkImageTest 9/9, OSEnvironmentTest 9/9).
+- [ ] **`TFUFFIStructuresTest` (22) / `TFUFFIMethodRegistryTest` (2)** — these do
+  real callouts into `TestLibrary.dll` (the Pharo FFI unit-test C library):
+  `SymbolNotFoundError: Could not find symbol named: #newPoint searching in
+  module: 'TestLibrary.dll'`. The library is a test fixture not present on this
+  machine; setUp opens it and fails, so all tests in the class error. This is a
+  MISSING TEST FIXTURE, not a VM bug (the reference VM fails identically without
+  it) — the VM's FFI callout path itself is proven working by
+  FFICalloutMethodBuilderTest. To run them, build/stage the iceberg
+  `pharo-ffi`/`libtcommon` TestLibrary.dll next to the exe.
+
 ### Networking / TLS
 - [ ] **SocketPlugin** — replaced by `SocketPlugin_win_stub.cpp` on Windows:
   every socket primitive fails (primitiveFail) and `hasSocketAccess` reports

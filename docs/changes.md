@@ -2,6 +2,21 @@
 
 2026-06-27
 
+## win: FFI ABI resolution fixed (FFICalloutMethodBuilderTest 10/10)
+
+Pharo's TFFI (libffi) callouts all failed on Windows with `Error: The requested
+ABI is not available for this architecture: #(#Win32 #StackInterpreter #cdecl)`.
+TFFI builds its ABI-lookup tuple as `#(platformName  getSystemAttribute:1003
+callingConvention)`; system attribute 1003 is the CPU architecture, but our VM
+returned the literal `"StackInterpreter"` instead of `"x86_64"` (the reference
+Cog VM returns `"x86_64"`). Fixed `getSystemAttribute` case 1003 to report the
+real arch (x86_64 / aarch64 / armv7l / i686) — a cross-platform correctness fix.
+Result: FFICalloutMethodBuilderTest 10/10 (was 0/10), FFIFunctionParserTest
+45/45 (was 44/45). No regression (SystemVersionTest 17/17, SmalltalkImageTest
+9/9, OSEnvironmentTest 9/9). Remaining FFI failures (TFUFFIStructuresTest,
+TFUFFIMethodRegistryTest) are a missing test fixture — `TestLibrary.dll`, the
+FFI unit-test C library — not a VM bug (tracked in docs/deferred.md).
+
 ## win: long-path (>MAX_PATH) file support — DiskFileSystemTest 59/59
 
 `DiskFileSystemTest>>testLongFilename` (the last failing file test on Windows)
