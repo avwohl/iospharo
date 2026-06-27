@@ -2,6 +2,31 @@
 
 2026-06-27
 
+## win: long-path (>MAX_PATH) file support — DiskFileSystemTest 59/59
+
+`DiskFileSystemTest>>testLongFilename` (the last failing file test on Windows)
+now passes; `DiskFileSystemTest` is fully green (59/59). The test builds a
+~284-char path (130-char dir inside a 130-char dir) which exceeds Windows
+`MAX_PATH` (260); `LongPathsEnabled` is 0 on this machine so a manifest opt-in
+won't help. Added `\\?\` extended-length support in Primitives.cpp:
+- `winLongPath(path)` — prepends `\\?\` (or `\\?\UNC\`) to an absolute path of
+  >= 248 chars; no-op on POSIX and short paths. It canonicalizes slashes itself
+  for absolute drive paths rather than calling `GetFullPathNameA`, whose ANSI
+  form is itself MAX_PATH-limited and fails on the long input.
+- Applied at every file syscall: `_mkdir`, `CreateFileA`, `remove`, `rmdir`,
+  `rename`, `stat`/`lstat` (exists/attributes/lookup/readdir), and
+  `GetFileAttributesA`.
+- Directory enumeration needed the wide API: `opendir`/`readdir` use the ANSI
+  `FindFirstFileA`, which can't open a `\\?\` path, so long dirs listed as empty
+  and recursive cleanup failed with `DirectoryIsNotEmpty`. Added `winListDir`
+  (FindFirstFileW/FindNextFileW); `primitiveDirectoryLookup` and the
+  `primitiveOpendir`/`Readdir`/`Closedir`/`Rewinddir` group now use a
+  pre-enumerated `WinDirIter*` on Windows instead of a libc `DIR*`.
+No regression: FileSystemTest 126/126, FileReferenceTest 112/112, FileLocator
+38/38, PathTest 76/76. (The 6 `FileAttributesPluginPrimsTest` failures are
+PRE-EXISTING error-signal-fidelity gaps — verified identical on a baseline
+build — and are tracked in docs/deferred.md, not Windows-specific.)
+
 ## win: JIT works on Windows + SUnit parity (~3800 tests, 0 fail/0 err)
 
 The x86-64 JIT is now enabled by default on Windows (parity with Linux/macOS).

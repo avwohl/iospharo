@@ -77,20 +77,31 @@ isolation (no suite watchdog):
     `WindowsStore>>directoryAt:nodesDo:` (lists drive letters as browser roots)
     -> PrimitiveFailed -> signalError:for: in setUp. Implemented it to return the
     Win32 GetLogicalDrives() bitmask. All hidden tests now 8 pass / 1 skip / 0 err.
-  - [ ] `DiskFileSystemTest>>testLongFilename` — the last file residual; Windows
-    `MAX_PATH` (260) limitation. The test builds a ~284-char path (130-char dir
-    inside a 130-char dir); `primitiveDirectoryCreate`'s `_mkdir` fails
-    (PrimitiveFailed createDirectory:). Manifest `longPathAware` is NOT enough
-    here — `HKLM\...\FileSystem\LongPathsEnabled` is 0 on this machine, so the
-    standard APIs still cap at 260. Reliable fix = the `\\?\` extended-length
-    prefix, which needs: a helper that canonicalizes to an absolute backslash
-    path (GetFullPathNameA) and prepends `\\?\` (or `\\?\UNC\` for UNC) when the
-    path length >= ~248; applied across ALL path-taking primitives the test
-    touches — primitiveDirectoryCreate (_mkdir), primitiveFileOpen
-    (pharoSharedFopen/CreateFileA), primitiveFileAttributes + primitiveReaddir
-    (stat), primitiveFileDelete, primitiveDirectoryDelete, exists. Gate on
-    length so short paths (the 99% case) are byte-identical. Deferred as a
-    distinct feature (broad change to the file subsystem; niche >260-char case).
+  - [x] `DiskFileSystemTest>>testLongFilename` — FIXED. Windows `MAX_PATH` (260)
+    long-path support. The test builds a ~284-char path (130-char dir inside a
+    130-char dir, then `hello.txt`); `LongPathsEnabled` is 0 on this machine so a
+    manifest opt-in is insufficient. Implemented the `\\?\` extended-length
+    prefix via a `winLongPath(path)` helper (Primitives.cpp): for an absolute
+    drive path >= 248 chars it canonicalizes slashes and prepends `\\?\`
+    (`\\?\UNC\` for UNC). Crucially it does NOT route absolute long paths through
+    `GetFullPathNameA` — the ANSI form is itself MAX_PATH-limited and fails on a
+    long input. Applied at every file syscall site (no-op on POSIX / short
+    paths): `_mkdir`, `CreateFileA` (pharoSharedFopen), `remove`, `rmdir`,
+    `rename`, `stat`/`lstat` (exists/attributes/lookup/readdir),
+    `GetFileAttributesA` (winFileAttributes). Directory ENUMERATION needed more:
+    `opendir`/`readdir` go through the ANSI `FindFirstFileA`, which cannot open a
+    `\\?\` path, so long dirs listed as empty (cleanup then failed with
+    `DirectoryIsNotEmpty`). Added a wide-API enumerator `winListDir`
+    (FindFirstFileW/FindNextFileW) and routed both enumeration primitives through
+    it on Windows: `primitiveDirectoryLookup`, and `primitiveOpendir`/`Readdir`/
+    `Closedir`/`Rewinddir` now hand out a pre-enumerated `WinDirIter*` instead of
+    a libc `DIR*`. Verified: testLongFilename PASS via canonical `TestCase>>run`;
+    `DiskFileSystemTest` 59/59; FileSystemTest 126/126, FileReferenceTest 112/112,
+    FileLocatorTest 38/38, PathTest 76/76 — no regression. (The 6
+    `FileAttributesPluginPrimsTest` error-fidelity failures are PRE-EXISTING —
+    confirmed identical on a stash-rebuilt baseline; they want `IllegalFileName`/
+    `#'bad argument'` exception selectors our VM doesn't yet raise, unrelated to
+    long paths. Tracked separately below.)
   - RESULT (run #2, JIT on, before the sqInt fix): ~130 classes, 1702 PASS / 0
     FAIL / 15 ERROR = 99.1%, then crashed exit 139 at `CoCompletionEngineTest` —
     NOW FIXED
@@ -182,6 +193,18 @@ isolation (no suite watchdog):
     baseline isn't obtainable. The 61 batch-1 errors and 5 batch-21 failures
     also want characterization (Windows-specific vs missing-feature like
     sockets/GUI).
+
+### Primitive error-signal fidelity (cross-platform, pre-existing)
+- [ ] **`FileAttributesPluginPrimsTest`** — 6 tests (run=6 pass=0 fail=5 err=1),
+  confirmed IDENTICAL on a pre-long-path baseline (stash + rebuild), so NOT a
+  regression. They assert exact VM-raised exceptions our clean VM doesn't yet
+  produce: `primExists: nil` / `primClosedir: nil|aString|wrongLenByteArray`
+  expect `PrimitiveFailed` with `exception selector == #'bad argument'`;
+  `fileAttribute:number:` out of range expects `PrimitiveFailed`; and
+  `exists:` on a path of `primPathMax * 2` expects `IllegalFileName`. Our
+  primitives return a generic failure instead of the named-primitive
+  `#'bad argument'` error selector / `IllegalFileName`. Fix is an error-signal
+  fidelity pass in the named-primitive failure path, not Windows-specific.
 
 ### Networking / TLS
 - [ ] **SocketPlugin** — replaced by `SocketPlugin_win_stub.cpp` on Windows:

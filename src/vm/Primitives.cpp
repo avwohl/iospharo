@@ -12546,7 +12546,78 @@ PrimitiveResult Interpreter::primitiveFileGetPosition(int argCount) {
 // open by a Smalltalk stream could not be deleted (CannotDeleteFileException),
 // which broke e.g. BinaryFileStreamTest (passes on POSIX).  On non-Windows this
 // is just fopen — behavior byte-identical.
+
+// Convert a path to the Windows \\?\ extended-length form when it approaches
+// MAX_PATH (260), so file ops on long paths succeed (fixes
+// DiskFileSystemTest>>testLongFilename, which builds a ~284-char path; the
+// machine's LongPathsEnabled registry flag is off, so a manifest opt-in is not
+// enough).  Short paths and already-prefixed paths pass through unchanged, and
+// on non-Windows the path is returned verbatim — so this is safe to apply at
+// every file syscall site.  GetFullPathNameA canonicalizes first because the
+// \\?\ form disables the normalization (./.. , forward slashes, relative paths)
+// that the Win32 path layer would otherwise perform.
+static std::string winLongPath(const std::string& path) {
 #ifdef _WIN32
+    if (path.size() >= 248 && path.rfind("\\\\?\\", 0) != 0) {
+        std::string abs;
+        if (path.size() >= 3 && path[1] == ':' &&
+            (path[2] == '\\' || path[2] == '/')) {
+            // Already an absolute drive path — canonicalize slashes ourselves.
+            // GetFullPathNameA is itself MAX_PATH-limited and FAILS on a long
+            // input (the very case we are here to handle), so an absolute long
+            // path must NOT be routed through it.
+            abs = path;
+            for (char& c : abs) if (c == '/') c = '\\';
+        } else {
+            // Relative / drive-relative: GetFullPathNameA is safe only because
+            // the *resolved* result is what is long, not the short input.
+            char full[32768];
+            DWORD n = GetFullPathNameA(path.c_str(), (DWORD)sizeof(full), full, nullptr);
+            if (n != 0 && n < sizeof(full)) abs.assign(full, n);
+        }
+        if (!abs.empty()) {
+            if (abs.rfind("\\\\", 0) == 0)         // UNC: \\srv\share -> \\?\UNC\srv\share
+                return "\\\\?\\UNC\\" + abs.substr(2);
+            if (abs.size() >= 2 && abs[1] == ':')  // drive: C:\.. -> \\?\C:\..
+                return "\\\\?\\" + abs;
+        }
+    }
+#endif
+    return path;
+}
+
+#ifdef _WIN32
+// Enumerate a directory's entry names via the WIDE Win32 API.  opendir()/
+// readdir() in the MinGW CRT go through the ANSI FindFirstFileA, which does NOT
+// understand the \\?\ extended-length prefix — so a directory whose path is
+// longer than MAX_PATH (260) lists as empty.  FindFirstFileW does understand it,
+// so long-path enumeration (e.g. DiskFileSystemTest>>testLongFilename's 284-char
+// dir) works here.  Names are returned as bytes in the CRT's ANSI code page, to
+// match what readdir() produced for short paths (ASCII names round-trip identically).
+static bool winListDir(const std::string& path, std::vector<std::string>& out) {
+    std::string pat = winLongPath(path);
+    if (!pat.empty() && pat.back() != '\\' && pat.back() != '/') pat += '\\';
+    pat += '*';
+    int wlen = MultiByteToWideChar(CP_ACP, 0, pat.c_str(), -1, nullptr, 0);
+    if (wlen <= 0) return false;
+    std::wstring wpat((size_t)wlen, L'\0');
+    MultiByteToWideChar(CP_ACP, 0, pat.c_str(), -1, &wpat[0], wlen);
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(wpat.c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0)
+            continue;
+        int nlen = WideCharToMultiByte(CP_ACP, 0, fd.cFileName, -1, nullptr, 0, nullptr, nullptr);
+        if (nlen <= 1) continue;
+        std::string name((size_t)(nlen - 1), '\0');
+        WideCharToMultiByte(CP_ACP, 0, fd.cFileName, -1, &name[0], nlen, nullptr, nullptr);
+        out.push_back(name);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return true;
+}
+
 static FILE* pharoSharedFopen(const char* path, const char* mode) {
     const bool wr   = std::strchr(mode, 'w') != nullptr;
     const bool ap   = std::strchr(mode, 'a') != nullptr;
@@ -12556,7 +12627,8 @@ static FILE* pharoSharedFopen(const char* path, const char* mode) {
     if (wr && !plus) access = GENERIC_WRITE;             // "wb": write-only
     const DWORD disposition = wr ? CREATE_ALWAYS : (ap ? OPEN_ALWAYS : OPEN_EXISTING);
     const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-    HANDLE h = CreateFileA(path, access, share, nullptr, disposition,
+    std::string lp = winLongPath(path);
+    HANDLE h = CreateFileA(lp.c_str(), access, share, nullptr, disposition,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return nullptr;
     int oflags = _O_BINARY;
@@ -12734,7 +12806,7 @@ PrimitiveResult Interpreter::primitiveFileDelete(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    int result = remove(filename.c_str());
+    int result = remove(winLongPath(filename).c_str());
 
     pop();
     push(result == 0 ? memory_.trueObject() : memory_.falseObject());
@@ -12912,7 +12984,7 @@ PrimitiveResult Interpreter::primitiveFileRename(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    if (rename(oldName.c_str(), newName.c_str()) != 0) {
+    if (rename(winLongPath(oldName).c_str(), winLongPath(newName).c_str()) != 0) {
         osErrorCode_ = errno;
         return PrimitiveResult::Failure;
     }
@@ -12941,7 +13013,7 @@ PrimitiveResult Interpreter::primitiveDirectoryCreate(int argCount) {
     }
 
 #ifdef _WIN32
-    if (_mkdir(path.c_str()) != 0) {  // Windows _mkdir takes no mode argument
+    if (_mkdir(winLongPath(path).c_str()) != 0) {  // Windows _mkdir takes no mode argument
 #else
     if (mkdir(path.c_str(), 0755) != 0) {
 #endif
@@ -12997,6 +13069,24 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    std::string entryName;
+#ifdef _WIN32
+    // Wide-API enumeration so directories past MAX_PATH list correctly.
+    {
+        std::vector<std::string> names;
+        if (!winListDir(path, names)) {            // directory can't be opened
+            popN(argCount + 1);
+            push(memory_.nil());
+            return PrimitiveResult::Success;
+        }
+        if ((size_t)targetIndex > names.size()) {  // index out of range
+            popN(argCount + 1);
+            push(memory_.nil());
+            return PrimitiveResult::Success;
+        }
+        entryName = names[(size_t)targetIndex - 1];
+    }
+#else
     DIR* dir = opendir(path.c_str());
     if (!dir) {
         // Directory doesn't exist or can't be opened
@@ -13026,13 +13116,16 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
         push(memory_.nil());
         return PrimitiveResult::Success;
     }
+    entryName = entry->d_name;
+    closedir(dir);
+#endif
 
     // Get file info
     std::string fullPath = path;
-    if (!fullPath.empty() && fullPath.back() != '/') {
+    if (!fullPath.empty() && fullPath.back() != '/' && fullPath.back() != '\\') {
         fullPath += '/';
     }
-    fullPath += entry->d_name;
+    fullPath += entryName;
 
     struct stat statBuf;
     bool isDir = false;
@@ -13040,7 +13133,7 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
     int64_t modTime = 0;
     int64_t createTime = 0;
 
-    if (stat(fullPath.c_str(), &statBuf) == 0) {
+    if (stat(winLongPath(fullPath).c_str(), &statBuf) == 0) {
         isDir = S_ISDIR(statBuf.st_mode);
         fileSize = isDir ? 0 : statBuf.st_size;
         modTime = statBuf.st_mtime;
@@ -13050,8 +13143,6 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
         createTime = statBuf.st_ctime;  // Use ctime as fallback on Linux
 #endif
     }
-
-    closedir(dir);
 
     // Create the result array with 5 elements:
     // 1: name (String)
@@ -13075,7 +13166,7 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
     push(resultArray);
 
     // Create name string
-    Oop nameString = createStringObject(memory_, entry->d_name);
+    Oop nameString = createStringObject(memory_, entryName.c_str());
     if (nameString.isNil()) {
         pop();  // resultArray
         return PrimitiveResult::Failure;
@@ -13107,7 +13198,7 @@ PrimitiveResult Interpreter::primitiveDirectoryDelete(int argCount) {
     }
 
     // rmdir only works on empty directories
-    int result = rmdir(path.c_str());
+    int result = rmdir(winLongPath(path).c_str());
 
     pop();
     push(result == 0 ? memory_.trueObject() : memory_.falseObject());
@@ -13128,7 +13219,7 @@ PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount
 
     // Check if path exists
     struct stat statBuf;
-    if (stat(path.c_str(), &statBuf) != 0) {
+    if (stat(winLongPath(path).c_str(), &statBuf) != 0) {
         pop();
         push(memory_.nil());
         return PrimitiveResult::Success;
@@ -27721,7 +27812,7 @@ static bool isBuiltInLibrary(const std::string& path) {
 // FILE_ATTRIBUTE_NORMAL (0x80, not hidden).
 static int64_t winFileAttributes(const std::string& path) {
 #ifdef _WIN32
-    DWORD a = GetFileAttributesA(path.c_str());
+    DWORD a = GetFileAttributesA(winLongPath(path).c_str());
     if (a == INVALID_FILE_ATTRIBUTES) a = FILE_ATTRIBUTE_NORMAL;
     return static_cast<int64_t>(a);
 #else
@@ -27781,7 +27872,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
     // Attribute 16 uses lstat for symlink check
     if (attrNum == 16) {
         struct stat st;
-        bool isSymlink = (lstat(path.c_str(), &st) == 0) && S_ISLNK(st.st_mode);
+        bool isSymlink = (lstat(winLongPath(path).c_str(), &st) == 0) && S_ISLNK(st.st_mode);
         popN(3);
         push(isSymlink ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
@@ -27791,7 +27882,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
     // Must use lstat to detect the link itself, then readlink to get target.
     if (attrNum == 1) {
         struct stat lst;
-        if (lstat(path.c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
+        if (lstat(winLongPath(path).c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
             char buf[4096];
             ssize_t n = readlink(path.c_str(), buf, sizeof(buf));
             if (n < 0) {
@@ -27812,7 +27903,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
 
     // Attributes 1-12 use stat()
     struct stat st;
-    if (stat(path.c_str(), &st) != 0) {
+    if (stat(winLongPath(path).c_str(), &st) != 0) {
         // File doesn't exist on disk — check if it's a built-in library
         if (isBuiltInLibrary(path)) {
             fillSyntheticStat(&st);
@@ -27876,7 +27967,7 @@ PrimitiveResult Interpreter::primitiveFileExists(int argCount) {
     std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
 
     struct stat st;
-    bool exists = (stat(path.c_str(), &st) == 0);
+    bool exists = (stat(winLongPath(path).c_str(), &st) == 0);
 
     // Built-in libraries (SDL2/cairo stubs) exist as compiled-in code
     if (!exists && isBuiltInLibrary(path)) {
@@ -27902,7 +27993,25 @@ static std::set<DIR*> g_openDirHandles;
 // must rebuild its full path.  Remember each open DIR*'s directory path so
 // primitiveReaddir can do "dir/entry" + stat().  Single-threaded VM: no lock.
 static std::map<DIR*, std::string> g_openDirPaths;
+
+// On Windows the handle handed back by primitiveOpendir is a WinDirIter*, not a
+// libc DIR* — because the only way to enumerate a >MAX_PATH directory is the
+// wide FindFirstFileW API (opendir() uses the ANSI form, which cannot open \\?\
+// paths, so long dirs list as empty).  We pre-enumerate at opendir() time and
+// hand out a cursor; readdir/closedir/rewinddir branch on _WIN32 accordingly.
+struct WinDirIter { std::string path; std::vector<std::string> names; size_t cursor; };
 #endif
+
+// Release a directory handle from primitiveOpendir — a real DIR* on POSIX, a
+// pre-enumerated WinDirIter* on Windows.  Used by the alloc-failure cleanup in
+// primitiveOpendir and by primitiveClosedir.
+static inline void closeDirHandle(DIR* d) {
+#ifdef _WIN32
+    delete reinterpret_cast<WinDirIter*>(d);
+#else
+    closedir(d);
+#endif
+}
 
 // Stack: receiver, pathString -> ExternalAddress (DIR* wrapped in bytes object) or nil
 PrimitiveResult Interpreter::primitiveOpendir(int argCount) {
@@ -27917,16 +28026,25 @@ PrimitiveResult Interpreter::primitiveOpendir(int argCount) {
     size_t len = memory_.byteSizeOf(pathOop);
     std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
 
+#ifdef _WIN32
+    // Pre-enumerate via the wide API so directories past MAX_PATH open correctly.
+    std::vector<std::string> winNames;
+    if (!winListDir(path, winNames)) {
+        return PrimitiveResult::Failure;
+    }
+    DIR* dir = reinterpret_cast<DIR*>(new WinDirIter{path, std::move(winNames), 0});
+#else
     DIR* dir = opendir(path.c_str());
     if (!dir) {
         return PrimitiveResult::Failure;
     }
+#endif
 
     // Create a ByteArray-like object to hold the DIR* pointer
     // ExternalAddress is a subclass of ByteArray, format 16 (Bytes_0 for 8 bytes aligned)
     Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
     if (byteArrayClass.isNil()) {
-        closedir(dir);
+        closeDirHandle(dir);
         return PrimitiveResult::Failure;
     }
 
@@ -27934,7 +28052,7 @@ PrimitiveResult Interpreter::primitiveOpendir(int argCount) {
     // Allocate 8 bytes to hold a pointer
     Oop result = memory_.allocateBytes(classIndex, sizeof(void*));
     if (result.isNil()) {
-        closedir(dir);
+        closeDirHandle(dir);
         return PrimitiveResult::Failure;
     }
 
@@ -27977,6 +28095,36 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
     if (!dir || g_openDirHandles.count(dir) == 0) return PrimitiveResult::Failure;
 
     errno = 0;
+    const char* dName = nullptr;
+    struct stat st;
+    bool haveStat = false;
+#ifdef _WIN32
+    // 'dir' is a WinDirIter* (see primitiveOpendir): advance its pre-enumerated
+    // cursor rather than calling libc readdir, so long (>MAX_PATH) dirs iterate.
+    WinDirIter* it = reinterpret_cast<WinDirIter*>(dir);
+    std::string nameHolder;
+    while (it->cursor < it->names.size()) {
+        const std::string& nm = it->names[it->cursor++];
+        if (nm == "." || nm == "..") continue;  // winListDir already skips these
+        nameHolder = nm;
+        dName = nameHolder.c_str();
+        break;
+    }
+    if (!dName) {
+        // End of directory
+        popN(2);  // pop arg + receiver
+        push(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+    // Windows has no dirfd()/fstatat(); rebuild the full path and stat() it.
+    // lstat==stat here (milestone 1 has no symlink support), so following is fine.
+    std::string entryPath = it->path;
+    if (!entryPath.empty() && entryPath.back() != '/' && entryPath.back() != '\\') {
+        entryPath += '/';
+    }
+    entryPath += dName;
+    haveStat = (stat(winLongPath(entryPath).c_str(), &st) == 0);
+#else
     struct dirent* entry = nullptr;
     while ((entry = readdir(dir)) != nullptr) {
         // Skip "." and ".." — upstream FileAttributesPlugin filters them
@@ -27994,33 +28142,21 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
         push(memory_.nil());
         return PrimitiveResult::Success;
     }
-
+    dName = entry->d_name;
     // fstatat against the DIR's fd gives us the stat data without having to
-    // rebuild the full path.  Use AT_SYMLINK_NOFOLLOW so symlinks aren't
-    // chased — matches lstat behavior that FileAttributesPluginUnix uses
-    // when probing directory entries.
-    struct stat st;
-#ifdef _WIN32
-    // Windows has no dirfd()/fstatat(); rebuild the full path and stat() it.
-    // lstat==stat here (milestone 1 has no symlink support), so following is fine.
-    std::string entryPath = g_openDirPaths[dir];
-    if (!entryPath.empty() && entryPath.back() != '/' && entryPath.back() != '\\') {
-        entryPath += '/';
-    }
-    entryPath += entry->d_name;
-    bool haveStat = (stat(entryPath.c_str(), &st) == 0);
-#else
-    bool haveStat = (fstatat(dirfd(dir), entry->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0);
+    // rebuild the full path.  AT_SYMLINK_NOFOLLOW matches the lstat behavior
+    // FileAttributesPluginUnix uses when probing directory entries.
+    haveStat = (fstatat(dirfd(dir), entry->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0);
 #endif
 
     // Create ByteArray for the entry name (Pharo expects ByteArray, not String)
-    size_t nameLen = strlen(entry->d_name);
+    size_t nameLen = strlen(dName);
     Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
     if (byteArrayClass.isNil()) return PrimitiveResult::Failure;
     uint32_t baClassIndex = memory_.indexOfClass(byteArrayClass);
     Oop nameBytes = memory_.allocateBytes(baClassIndex, nameLen);
     if (nameBytes.isNil()) return PrimitiveResult::Failure;
-    memcpy(nameBytes.asObjectPtr()->bytes(), entry->d_name, nameLen);
+    memcpy(nameBytes.asObjectPtr()->bytes(), dName, nameLen);
 
     // GC safety: push nameBytes so it survives subsequent allocations
     push(nameBytes);
@@ -28160,7 +28296,7 @@ PrimitiveResult Interpreter::primitiveClosedir(int argCount) {
     // Only close a handle we actually opened (guards bogus/stale/double-close —
     // closedir on arbitrary bytes SIGSEGVs inside libc).
     if (!dir || g_openDirHandles.count(dir) == 0) return PrimitiveResult::Failure;
-    closedir(dir);
+    closeDirHandle(dir);
     g_openDirHandles.erase(dir);
 #ifdef _WIN32
     g_openDirPaths.erase(dir);
@@ -28191,7 +28327,11 @@ PrimitiveResult Interpreter::primitiveRewinddir(int argCount) {
     // Only operate on a handle we actually opened.
     if (!dir || g_openDirHandles.count(dir) == 0) return PrimitiveResult::Failure;
 
+#ifdef _WIN32
+    reinterpret_cast<WinDirIter*>(dir)->cursor = 0;
+#else
     rewinddir(dir);
+#endif
 
     pop();  // pop arg, leave receiver
     return PrimitiveResult::Success;
@@ -28308,7 +28448,7 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
 
     struct stat st;
     bool useLstat = (mask & 4) != 0;
-    int statResult = useLstat ? lstat(path.c_str(), &st) : stat(path.c_str(), &st);
+    int statResult = useLstat ? lstat(winLongPath(path).c_str(), &st) : stat(winLongPath(path).c_str(), &st);
     if (statResult != 0) {
         // File doesn't exist on disk — check if it's a built-in library
         if (isBuiltInLibrary(path)) {
