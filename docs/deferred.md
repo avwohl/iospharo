@@ -71,14 +71,15 @@ isolation (no suite watchdog):
     FILE_ATTRIBUTE_NORMAL on INVALID) to both `primitiveFileAttributes` and
     `primitiveReaddir` (Windows-only growth; POSIX arrays unchanged). Verified
     testIsHiddenWithRealFilesystem passes; file/stream classes 1112/1113.
-  - [ ] residual file/hidden errors (separate from the above):
-    - `DiskFileSystemTest>>testLongFilename` — Windows long-path (MAX_PATH)
-      limitation; needs long-path support (\\?\ prefix or the manifest opt-in).
-    - `StFileFilterTest>>testHiddenFiles`, `StNavigationSystemTest>>...NotHiddenFile`
-      — fail in setUp with `PrimitiveFailed: File class>>signalError:for:` while
-      CREATING a hidden file (setting the hidden attribute), not reading it.
-      Needs the set-hidden-attribute path (SetFileAttributes) and/or the
-      signalError:for: primitive wired on Windows.
+  - [x] `StFileFilterTest`/`StNavigationSystemTest` hidden tests — FIXED. The
+    real cause wasn't hidden-file creation: `File class>>primLogicalDrives`
+    (`primitiveLogicalDrives`, FileAttributesPlugin) was unimplemented, so
+    `WindowsStore>>directoryAt:nodesDo:` (lists drive letters as browser roots)
+    -> PrimitiveFailed -> signalError:for: in setUp. Implemented it to return the
+    Win32 GetLogicalDrives() bitmask. All hidden tests now 8 pass / 1 skip / 0 err.
+  - [ ] `DiskFileSystemTest>>testLongFilename` — the last file residual; Windows
+    long-path (MAX_PATH) limitation. Needs long-path support (\\?\ prefix or the
+    manifest longPathAware opt-in).
   - RESULT (run #2, JIT on, before the sqInt fix): ~130 classes, 1702 PASS / 0
     FAIL / 15 ERROR = 99.1%, then crashed exit 139 at `CoCompletionEngineTest` —
     NOW FIXED
