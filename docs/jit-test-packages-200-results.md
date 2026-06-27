@@ -75,12 +75,20 @@ Reading: the SSL fix did its job — it eliminated the SSL-plugin failures and t
 HTTPS-dependent tests now reach their servers (github-api went from *every test
 failing on `ZdcPluginMissing`* to *only the rate-limited ones failing, exactly
 like Cog*; google-cloud is now clean). The **residual** divergences
-(stargate/jrpc/myprecious) are **not SSL** and are **identical to the pre-fix
-baseline**: the error is `SocketError: Success` on those packages' **local
-HTTP-server** tests (server-framework SUnit that binds a `Zinc`/`Teapot` server on
-localhost and connects to it). That's a separate, pre-existing VM-core socket
-behavior — neither caused by nor related to the SSL work — and is the next
-follow-up for these server-framework packages.
+(stargate/jrpc/myprecious) are **not SSL**: the error is `SocketError: Success` on
+those packages' **local HTTP-server** tests (server-framework SUnit that binds a
+`Zinc`/`Teapot` server on localhost and connects to it).
+
+That `SocketError: Success` was separately **root-caused and largely fixed**
+(commit `f30ed9f7`): the VM lacked Pharo 13's split bind/listen socket primitives
+(`primitiveSocketBindToPort` / `primitiveSocketListenWithBacklog`), mishandled a
+listening socket in the I/O thread (must select for *read* and report `Connected`
+on a pending connection), and returned socket addresses as a SmallInteger instead
+of a 4-byte ByteArray. With those six fixes the server binds, listens, accepts,
+and serves a full request→971-byte-response cycle. A **flaky hang after ~1-2
+sequential connections** remains — a process-scheduler/concurrency race (no socket
+activity during the hang, unchanged by `PHARO_RR_SCHED`), which is the next
+follow-up for full server-framework coverage.
 
 ## Takeaway
 
