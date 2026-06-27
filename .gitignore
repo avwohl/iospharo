@@ -136,3 +136,5 @@ build-x86-0/
 # perf-db machine-local ids + rel build dir
 build-rel/
 scripts/perfdb/ids.local.env
+build-win-jit/
+build-jit-log.txt
