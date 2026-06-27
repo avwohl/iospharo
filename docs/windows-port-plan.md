@@ -431,3 +431,40 @@ step using `Delay` hangs and full startup never completes (so the eval-mode
 After the timer fix, the eval should print `EVAL-RESULT=...`; then wire the
 SUnit runner (needs `scripts/pharo-headless-test` submodule init + the reference
 Pharo Windows VM to inject `run_sunit_tests.st`) for the pass-count comparison.
+
+---
+
+## Milestone 1 — UPDATE (2026-06-27): Smalltalk eval WORKS on Windows
+
+Milestone 1's core execution goal is met. The Delay-timer "blocker" above was a
+misdiagnosis (the timer arms/fires fine — 995 fires/35s; the snapshot caught it
+between arm cycles). The real chain of blockers, all now fixed, was in the
+Windows FileSystem startup:
+
+1. Platform reported "Mac OS" -> Pharo used Unix paths. Fixed: report "Win32".
+2. Prim 123 directory delimiter returned '/' -> WindowsStore>>isActiveClass
+   rejected itself -> infinite currentFileSystem/delimiter recursion (stack
+   overflow) in FileLocator>>startUp:. Fixed: return '\' on Windows.
+3. Home/temp env: prim 510/511 read HOME/TMPDIR (unset on Windows). Fixed:
+   DebugSettings falls back to USERPROFILE/USERNAME/TEMP.
+4. RUN-ENVIRONMENT (not a code bug): launching via the MSYS2 *login* shell
+   (`bash -lc`) strips USERPROFILE/APPDATA and sets TEMP=/tmp, so
+   WindowsResolver>>home failed ("Can't find the requested origin"). Run from a
+   native Windows shell instead.
+
+Verified evals (build-win/test_load_image.exe <image> eval "<expr>"):
+  (3 + 4) * 6                                  -> 42
+  100 factorial printString size               -> 158
+  (1 to: 10) inject: 0 into: [:a :b | a + b]   -> 55
+  String new: 3 withAll: $x                    -> 'xxx'
+
+How to run (native shell, e.g. Git Bash / cmd / PowerShell):
+  build-win/test_load_image.exe "C:/path/Pharo.image" eval "3 + 4"
+CMake copies the LLVM-MinGW runtime DLLs next to the exe, so it is
+self-contained (no need for C:\msys64\clang64\bin on PATH).
+
+Remaining for full milestone-1 validation: run the official SUnit suite (inject
+scripts/pharo-headless-test/run_sunit_tests.st via the reference Pharo Windows
+VM) and compare the pass count to the Linux interpreter-only baseline. Then
+milestone 2 (enable the x86-64 JIT — Win64 ABI rework of the two AsmjitT1
+helper sites).

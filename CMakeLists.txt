@@ -661,6 +661,25 @@ endif()
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(test_load_image src/vm/test_load_image.cpp)
     target_link_libraries(test_load_image PharoVMCore)
+
+    # Windows: copy the LLVM-MinGW runtime DLLs next to the exe so it runs
+    # self-contained from any NATIVE Windows shell (cmd/PowerShell/Git Bash) —
+    # without needing C:\msys64\clang64\bin on PATH.  IMPORTANT: run the exe
+    # from a native shell, NOT the MSYS2 *login* shell (`bash -lc`), which
+    # strips USERPROFILE/APPDATA and sets TEMP=/tmp, breaking Pharo's
+    # WindowsResolver home/preferences resolution.
+    if(WIN32)
+        get_filename_component(_CLANG_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        foreach(_dll libc++ libdl libffi-8 libunwind libwinpthread-1)
+            if(EXISTS "${_CLANG_BIN}/${_dll}.dll")
+                add_custom_command(TARGET test_load_image POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_CLANG_BIN}/${_dll}.dll" "$<TARGET_FILE_DIR:test_load_image>"
+                    VERBATIM)
+            endif()
+        endforeach()
+    endif()
+
     # Force export testlib symbols so they're available via dlsym.
     # The `-Wl,-u,SYM` syntax is Mach-O (Apple ld); Linux ld uses
     # `--undefined=SYM` (also accepts -u SYM).  Apple-only for now —

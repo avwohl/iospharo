@@ -2,6 +2,28 @@
 
 2026-06-27
 
+## win: VM evaluates Smalltalk correctly on Windows (EVAL-RESULT=42)
+
+Milestone 1 core goal reached: the clang/LLVM-MinGW build loads a standard
+Pharo 13 image, completes startup, and correctly evaluates arbitrary Smalltalk.
+Verified: `(3+4)*6`->42, `100 factorial printString size`->158, `(1 to: 10)
+inject: 0 into: [:a :b| a+b]`->55, `String new: 3 withAll: $x`->'xxx'. Three
+Windows startup bugs were fixed to get here:
+- Prim 123 (directory delimiter) returned '/'; WindowsStore>>isActiveClass
+  compares it against $\ and rejected itself, so DiskStore>>activeClass fell to
+  the abstract base and currentFileSystem/delimiter recursed to a stack
+  overflow during FileLocator>>startUp:. Return '\\' on Windows.
+- getSystemAttribute 1001 + primitiveGetPlatformName reported "Mac OS";
+  reporting "Win32" makes Pharo use WindowsResolver/WindowsStore (backslash
+  paths) so it can find sibling files (.sources, startup.st).
+- Home/temp (prim 510/511) read HOME/TMPDIR (unset on Windows); DebugSettings
+  now falls back to USERPROFILE/USERNAME/TEMP on _WIN32.
+Operational note: BUILD in the MSYS2 CLANG64 shell, but RUN the exe from a
+NATIVE Windows shell — the MSYS2 *login* shell strips USERPROFILE/APPDATA and
+sets TEMP=/tmp, which breaks Pharo's WindowsResolver. CMake now copies the
+LLVM-MinGW runtime DLLs (libc++, libdl, libffi-8, libunwind, libwinpthread-1)
+next to test_load_image.exe so it runs self-contained.
+
 ## win: initial Windows port scaffolding (clang/LLVM-MinGW, headless, JIT off)
 
 First Windows support for the `jit` branch.  Toolchain is clang
