@@ -34,6 +34,13 @@
 #include <fstream>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>   // Vectored Exception Handler crash dump (pharoWinCrashHandler)
 #include <cstdlib>   // _fullpath
 // dirname / realpath shims (no MinGW equivalents).  Only the small subset
 // this file uses: dirname() for the imagePath chdir, realpath(path, nullptr)
@@ -785,6 +792,47 @@ static void sigtermHandler(int) {
     _exit(0);
 }
 
+#ifdef _WIN32
+// Windows crash diagnostics.  POSIX SIGSEGV recovery is compiled out here, so
+// without this a fault just exits 139 with no info.  This Vectored Exception
+// Handler DUMPS the fault (address, faulting RIP, step count, the VM's active
+// method oop, and a native backtrace) then lets the process crash
+// (CONTINUE_SEARCH) — it does NOT attempt longjmp recovery (a VEH can't safely
+// unwind, and the failures we see are heap corruption, not recoverable faults).
+// Re-entrancy-guarded so a fault inside the handler can't loop.
+static LONG WINAPI pharoWinCrashHandler(EXCEPTION_POINTERS* ep) {
+    const DWORD code = ep->ExceptionRecord->ExceptionCode;
+    if (code != EXCEPTION_ACCESS_VIOLATION &&
+        code != EXCEPTION_ILLEGAL_INSTRUCTION &&
+        code != EXCEPTION_IN_PAGE_ERROR &&
+        code != EXCEPTION_STACK_OVERFLOW) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    static volatile LONG inHandler = 0;
+    if (InterlockedExchange(&inHandler, 1) != 0) return EXCEPTION_CONTINUE_SEARCH;
+
+    void* faultAddr = (ep->ExceptionRecord->NumberParameters >= 2)
+        ? reinterpret_cast<void*>(ep->ExceptionRecord->ExceptionInformation[1])
+        : nullptr;
+    void* rip = reinterpret_cast<void*>(ep->ContextRecord->Rip);
+    unsigned long long methBits = 0;
+    if (gTestInterpreter) methBits = gTestInterpreter->activeMethod().rawBits();
+    void* modBase = reinterpret_cast<void*>(GetModuleHandleA(nullptr));
+    std::fprintf(stderr,
+        "\n[WIN-CRASH] code=0x%lx faultAddr=%p rip=%p rva=0x%llx base=%p steps=%lld activeMethod=0x%llx\n",
+        static_cast<unsigned long>(code), faultAddr, rip,
+        (unsigned long long)((char*)rip - (char*)modBase), modBase,
+        static_cast<long long>(g_watchdogSteps.load()), methBits);
+    void* frames[32];
+    USHORT n = RtlCaptureStackBackTrace(0, 32, frames, nullptr);
+    for (USHORT i = 0; i < n; ++i)
+        std::fprintf(stderr, "[WIN-CRASH]   #%u %p\n", i, frames[i]);
+    std::fflush(stderr);
+    InterlockedExchange(&inHandler, 0);
+    return EXCEPTION_CONTINUE_SEARCH;  // proceed to crash, but diagnosed
+}
+#endif  // _WIN32
+
 int main(int argc, char* argv[]) {
 #ifndef _WIN32
     struct sigaction sa;
@@ -794,7 +842,9 @@ int main(int argc, char* argv[]) {
     sigaction(SIGSEGV, &sa, nullptr);
     sigaction(SIGBUS, &sa, nullptr);
     sigaction(SIGILL, &sa, nullptr);
-#endif  // !_WIN32 — SIGSEGV/BUS/ILL recovery is POSIX-only (milestone 1)
+#else
+    AddVectoredExceptionHandler(1, pharoWinCrashHandler);
+#endif  // SIGSEGV/BUS/ILL recovery is POSIX-only; Windows gets a crash-dump VEH
     signal(SIGTERM, sigtermHandler);
 #ifdef __APPLE__
     activateMacOSApp();

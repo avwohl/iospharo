@@ -9,14 +9,20 @@
 #define SQ_IMAGE64 1
 #define SQ_HOST64 1
 
-typedef long sqInt;
-typedef unsigned long usqInt;
+/* sqInt MUST be pointer-sized (it holds oops/pointers).  `long` is 64-bit on
+ * LP64 (Linux/macOS/ARM64) but only 32-bit on Windows (LLP64), which truncated
+ * every oop passed through the plugin/InterpreterProxy interface (e.g.
+ * proxy_isBytes(sqInt) -> garbage ObjectHeader* -> crash).  intptr_t/int64_t
+ * are 64-bit on all 64-bit hosts and identical to `long` on LP64, so this is
+ * byte-for-byte unchanged on Linux/macOS and fixes Windows. */
+typedef intptr_t sqInt;
+typedef uintptr_t usqInt;
 
-#define sqLong long
-#define usqLong unsigned long
+#define sqLong int64_t
+#define usqLong uint64_t
 
-typedef long sqIntptr_t;
-typedef unsigned long usqIntptr_t;
+typedef intptr_t sqIntptr_t;
+typedef uintptr_t usqIntptr_t;
 
 /* Memory access macros - direct access since same endianness */
 #define byteAtPointer(ptr)       ((unsigned char)(*(ptr)))
