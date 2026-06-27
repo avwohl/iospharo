@@ -184,8 +184,14 @@ set(ASMJIT_TEST OFF CACHE BOOL "Skip asmjit's own test suite")
 
 # Apply local patches to asmjit submodule (idempotent).
 # See third_party/patches/ for the patch set + rationale.
+#
+# Apple-only: every patch here is an Apple/Catalyst fix (the lone one adds
+# <libkern/OSCacheControl.h>, inside asmjit's #if defined(__APPLE__) block).
+# The patched code is inert on Linux/Windows, and `git apply` can spuriously
+# fail on a freshly cloned (CRLF) Windows working tree — so skip on non-Apple.
 file(GLOB _asmjit_patches "${CMAKE_SOURCE_DIR}/third_party/patches/asmjit-*.patch")
 list(SORT _asmjit_patches)
+if(APPLE)
 foreach(_patch IN LISTS _asmjit_patches)
     # Already-applied? `git apply --reverse --check` exits 0 if so.
     execute_process(
@@ -207,6 +213,7 @@ foreach(_patch IN LISTS _asmjit_patches)
         message(STATUS "Applied asmjit patch: ${_patch_name}")
     endif()
 endforeach()
+endif()  # APPLE: asmjit patches are Apple-only
 
 add_subdirectory(third_party/asmjit EXCLUDE_FROM_ALL)
 

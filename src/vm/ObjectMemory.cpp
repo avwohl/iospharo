@@ -21,7 +21,11 @@
 #include <unordered_set>
 #include <dlfcn.h>
 #include <functional>
+#ifdef _WIN32
+#include "../platform/win_mman.h"  // mmap/munmap/madvise over VirtualAlloc
+#else
 #include <sys/mman.h>
+#endif
 
 namespace pharo {
 
@@ -63,7 +67,13 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
     // Use aligned allocation for 8-byte alignment requirement
 
     permSpaceStart_ = static_cast<uint8_t*>(
+#ifdef _WIN32
+        // MinGW/UCRT has no C11 aligned_alloc; malloc is 16-byte aligned on
+        // x64 (>= the 8-byte need) and pairs with the std::free below.
+        std::malloc(config.permSpaceSize));
+#else
         std::aligned_alloc(8, config.permSpaceSize));
+#endif
     if (!permSpaceStart_) return false;
     permSpaceEnd_ = permSpaceStart_ + config.permSpaceSize;
 
@@ -96,7 +106,11 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
     oldSpaceFree_ = oldSpaceStart_;
     oldSpaceInitialTarget_ = oldSpaceStart_ + config.oldSpaceInitialSize;
     newSpaceStart_ = static_cast<uint8_t*>(
+#ifdef _WIN32
+        std::malloc(config.newSpaceSize));   // see permSpace note above
+#else
         std::aligned_alloc(8, config.newSpaceSize));
+#endif
     if (!newSpaceStart_) {
         std::free(permSpaceStart_);
         munmap(oldSpaceStart_, oldSpaceMmapSize_);

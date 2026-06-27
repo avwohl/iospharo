@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/temp/src/iospharo-jit/build-win/cmake_install.cmake",
+		"C:/temp/src/iospharo-jit/build-win/third_party/asmjit/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

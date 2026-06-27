@@ -1,0 +1,93 @@
+[1/10] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/Profiler.cpp.obj
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:44:18: warning: unused variable 'kProbeLimit' [-Wunused-const-variable]
+   44 | constexpr size_t kProbeLimit = 32;
+      |                  ^~~~~~~~~~~
+1 warning generated.
+[2/10] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/Primitives.cpp.obj
+FAILED: [code=1] CMakeFiles/PharoVMCore.dir/src/vm/Primitives.cpp.obj 
+C:\msys64\clang64\bin\clang++.exe -DPHARO_JIT_ENABLED=0 -DPHARO_WITH_CRYPTO=0 -IC:/temp/src/iospharo-jit/src/vm -IC:/temp/src/iospharo-jit/src/vm/jit -IC:/temp/src/iospharo-jit/src/vm/plugins -IC:/temp/src/iospharo-jit/src/vm/plugins/jpeg -IC:/temp/src/iospharo-jit/src/vm/plugins/testlib -IC:/temp/src/iospharo-jit/src/platform -IC:/temp/src/iospharo-jit/third_party/asmjit -O2 -g -DNDEBUG -std=gnu++17 -Wall -Wextra -Wno-unused-parameter -DASMJIT_STATIC -includeC:/temp/src/iospharo-jit/src/vm/no_getenv.hpp -MD -MT CMakeFiles/PharoVMCore.dir/src/vm/Primitives.cpp.obj -MF CMakeFiles\PharoVMCore.dir\src\vm\Primitives.cpp.obj.d -o CMakeFiles/PharoVMCore.dir/src/vm/Primitives.cpp.obj -c C:/temp/src/iospharo-jit/src/vm/Primitives.cpp
+C:/temp/src/iospharo-jit/src/vm/Primitives.cpp:53:10: fatal error: 'sys/resource.h' file not found
+   53 | #include <sys/resource.h>
+      |          ^~~~~~~~~~~~~~~~
+1 error generated.
+[3/10] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/ObjectMemory.cpp.obj
+FAILED: [code=1] CMakeFiles/PharoVMCore.dir/src/vm/ObjectMemory.cpp.obj 
+C:\msys64\clang64\bin\clang++.exe -DPHARO_JIT_ENABLED=0 -DPHARO_WITH_CRYPTO=0 -IC:/temp/src/iospharo-jit/src/vm -IC:/temp/src/iospharo-jit/src/vm/jit -IC:/temp/src/iospharo-jit/src/vm/plugins -IC:/temp/src/iospharo-jit/src/vm/plugins/jpeg -IC:/temp/src/iospharo-jit/src/vm/plugins/testlib -IC:/temp/src/iospharo-jit/src/platform -IC:/temp/src/iospharo-jit/third_party/asmjit -O2 -g -DNDEBUG -std=gnu++17 -Wall -Wextra -Wno-unused-parameter -DASMJIT_STATIC -includeC:/temp/src/iospharo-jit/src/vm/no_getenv.hpp -MD -MT CMakeFiles/PharoVMCore.dir/src/vm/ObjectMemory.cpp.obj -MF CMakeFiles\PharoVMCore.dir\src\vm\ObjectMemory.cpp.obj.d -o CMakeFiles/PharoVMCore.dir/src/vm/ObjectMemory.cpp.obj -c C:/temp/src/iospharo-jit/src/vm/ObjectMemory.cpp
+C:/temp/src/iospharo-jit/src/vm/ObjectMemory.cpp:70:14: error: reference to unresolved using declaration
+   70 |         std::aligned_alloc(8, config.permSpaceSize));
+      |              ^
+C:/msys64/clang64/include/c++/v1/cstdlib:152:1: note: using declaration annotated with 'using_if_exists' here
+  152 | using ::aligned_alloc _LIBCPP_USING_IF_EXISTS;
+      | ^
+C:/temp/src/iospharo-jit/src/vm/ObjectMemory.cpp:70:9: error: excess elements in scalar initializer
+   70 |         std::aligned_alloc(8, config.permSpaceSize));
+      |         ^                   ~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/ObjectMemory.cpp:103:14: error: reference to unresolved using declaration
+  103 |         std::aligned_alloc(8, config.newSpaceSize));
+      |              ^
+C:/msys64/clang64/include/c++/v1/cstdlib:152:1: note: using declaration annotated with 'using_if_exists' here
+  152 | using ::aligned_alloc _LIBCPP_USING_IF_EXISTS;
+      | ^
+C:/temp/src/iospharo-jit/src/vm/ObjectMemory.cpp:103:9: error: excess elements in scalar initializer
+  103 |         std::aligned_alloc(8, config.newSpaceSize));
+      |         ^                   ~~~~~~~~~~~~~~~~~~~~~
+4 errors generated.
+[4/10] Building CXX object CMakeFiles/test_load_image.dir/src/vm/test_load_image.cpp.obj
+FAILED: [code=1] CMakeFiles/test_load_image.dir/src/vm/test_load_image.cpp.obj 
+C:\msys64\clang64\bin\clang++.exe -DPHARO_JIT_ENABLED=0 -DPHARO_WITH_CRYPTO=0 -IC:/temp/src/iospharo-jit/src/vm -IC:/temp/src/iospharo-jit/src/vm/jit -IC:/temp/src/iospharo-jit/src/vm/plugins -IC:/temp/src/iospharo-jit/src/vm/plugins/jpeg -IC:/temp/src/iospharo-jit/src/vm/plugins/testlib -IC:/temp/src/iospharo-jit/src/platform -IC:/temp/src/iospharo-jit/third_party/asmjit -O2 -g -DNDEBUG -std=gnu++17 -DASMJIT_STATIC -MD -MT CMakeFiles/test_load_image.dir/src/vm/test_load_image.cpp.obj -MF CMakeFiles\test_load_image.dir\src\vm\test_load_image.cpp.obj.d -o CMakeFiles/test_load_image.dir/src/vm/test_load_image.cpp.obj -c C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp
+C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp:497:36: error: unknown type name 'siginfo_t'
+  497 | static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
+      |                                    ^
+C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp:765:22: error: variable has incomplete type 'struct sigaction'
+  765 |     struct sigaction sa;
+      |                      ^
+C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp:765:12: note: forward declaration of 'sigaction'
+  765 |     struct sigaction sa;
+      |            ^
+C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp:767:19: error: use of undeclared identifier 'SA_SIGINFO'
+  767 |     sa.sa_flags = SA_SIGINFO;
+      |                   ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp:770:15: error: use of undeclared identifier 'SIGBUS'
+  770 |     sigaction(SIGBUS, &sa, nullptr);
+      |               ^~~~~~
+C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp:819:27: error: use of undeclared identifier 'dirname'
+  819 |         const char* dir = dirname(pathCopy);
+      |                           ^~~~~~~
+C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp:966:26: error: use of undeclared identifier 'realpath'
+  966 |         char* resolved = realpath(imagePath, nullptr);
+      |                          ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp:993:26: error: use of undeclared identifier 'realpath'
+  993 |         char* resolved = realpath(execPath.c_str(), nullptr);
+      |                          ^~~~~~~~
+7 errors generated.
+[5/10] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/JITRuntime.cpp.obj
+[6/10] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/JITCompiler.cpp.obj
+[7/10] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/InterpreterProxy.cpp.obj
+C:/temp/src/iospharo-jit/src/vm/InterpreterProxy.cpp:431:56: warning: result of comparison of constant 4503599627370495 with expression of type 'sqInt' (aka 'long') is always true [-Wtautological-constant-out-of-range-compare]
+  431 |     return (intValue >= -0x1000000000000LL && intValue <= 0x0FFFFFFFFFFFFFLL) ? 1 : 0;
+      |                                               ~~~~~~~~ ^  ~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/InterpreterProxy.cpp:431:22: warning: result of comparison of constant -281474976710656 with expression of type 'sqInt' (aka 'long') is always true [-Wtautological-constant-out-of-range-compare]
+  431 |     return (intValue >= -0x1000000000000LL && intValue <= 0x0FFFFFFFFFFFFFLL) ? 1 : 0;
+      |             ~~~~~~~~ ^  ~~~~~~~~~~~~~~~~~~
+2 warnings generated.
+[8/10] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/Interpreter.cpp.obj
+C:/temp/src/iospharo-jit/src/vm/Interpreter.cpp:6560:17: warning: unused variable 'nslots' [-Wunused-variable]
+ 6560 |             int nslots = (assoc.isObject() && memory_.isValidPointer(assoc))
+      |                 ^~~~~~
+C:/temp/src/iospharo-jit/src/vm/Interpreter.cpp:8502:38: warning: variable 'realSz' set but not used [-Wunused-but-set-variable]
+ 8502 |                                 long realSz = -1;
+      |                                      ^
+C:/temp/src/iospharo-jit/src/vm/Interpreter.cpp:14381:18: warning: variable 'suspiciousRcvr' set but not used [-Wunused-but-set-variable]
+ 14381 |             bool suspiciousRcvr = false;
+       |                  ^
+C:/temp/src/iospharo-jit/src/vm/Interpreter.cpp:166:15: warning: unused variable 'kFpushCap' [-Wunused-const-variable]
+  166 | constexpr int kFpushCap = 600000;
+      |               ^~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/Interpreter.cpp:498:17: warning: unused variable 'g_sendCensus_dispatch' [-Wunused-variable]
+  498 | static uint64_t g_sendCensus_dispatch = 0;
+      |                 ^~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/Interpreter.cpp:1814:20: warning: unused function 'countICHitDbg' [-Wunused-function]
+ 1814 | static inline void countICHitDbg(const uint64_t* ic) {
+      |                    ^~~~~~~~~~~~~
+6 warnings generated.
+ninja: build stopped: cannot make progress due to previous errors.

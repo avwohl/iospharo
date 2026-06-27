@@ -1,0 +1,1477 @@
+[1/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/errorhandler.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[2/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/globals.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[3/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/osutils.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[4/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/operand.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[5/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/logger.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[6/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/constpool.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[7/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/environment.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[8/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/func.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[9/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/jitruntime.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[10/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/inst.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[11/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/instdb.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[12/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/codewriter.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[13/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/funcargscontext.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[14/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/archtraits.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[15/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/emitter.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[16/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/emitterutils.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[17/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/cpuinfo.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[18/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/formatter.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[19/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/assembler.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[20/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/emithelper.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[21/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/jitallocator.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[22/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/builder.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[23/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/compiler.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[24/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/ralocal.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[25/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/string.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[26/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/type.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[27/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/target.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[28/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/support/arenahash.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[29/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/support/arenatree.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[30/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/support/arenalist.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[31/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/support/arenavector.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[32/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/support/arena.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[33/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/support/arenabitset.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[34/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/support/support.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[35/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/virtmem.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[36/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/rastack.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[37/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/codeholder.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[38/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/arm/armformatter.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[39/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/DebugSettings.cpp.obj
+[40/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/arm/a64instdb.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[41/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/arm/a64operand.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[42/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/arm/a64func.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[43/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/DebugVars.cpp.obj
+[44/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/arm/a64instapi.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[45/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/arm/a64builder.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[46/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/ShadowSlots.cpp.obj
+[47/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/arm/a64compiler.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[48/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/core/rapass.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[49/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/arm/a64formatter.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[50/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/arm/a64emithelper.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[51/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/BcDepthMap.cpp.obj
+[52/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/platform/MotionData.cpp.obj
+[53/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/ujit/vecconsttable.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[54/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/x86/x86operand.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[55/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/x86/x86builder.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[56/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/SendSitePatcher.cpp.obj
+[57/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/asmjit/AsmjitT1.cpp.obj
+[58/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/arm/a64rapass.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[59/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/x86/x86emithelper.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[60/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/ujit/unicompiler_a64.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[61/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/x86/x86formatter.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[62/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/x86/x86compiler.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[63/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/x86/x86instdb.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[64/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/x86/x86func.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[65/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/x86/x86instapi.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[66/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/Error.c.obj
+[67/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/JPEGReadWriter2Plugin.c.obj
+[68/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcapimin.c.obj
+[69/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/JPEGReaderPlugin.c.obj
+In file included from C:/temp/src/iospharo-jit/src/vm/plugins/JPEGReaderPlugin.c:37:
+C:/temp/src/iospharo-jit/src/vm/plugins/sqVirtualMachine.h:199:5: warning: 'volatile' type qualifier on return type has no effect [-Wignored-qualifiers]
+  199 |     volatile unsigned long long (*utcMicroseconds)(void);
+      |     ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/JPEGReaderPlugin.c:753:12: warning: comparison of integers of different signs: 'sqInt' (aka 'long') and 'unsigned int' [-Wsign-compare]
+  753 |                 if (bits < (1U << (byte - 1))) {
+      |                     ~~~~ ^  ~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/JPEGReaderPlugin.c:813:13: warning: comparison of integers of different signs: 'sqInt' (aka 'long') and 'unsigned int' [-Wsign-compare]
+  813 |                         if (bits < (1U << (byte - 1))) {
+      |                             ~~~~ ^  ~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/JPEGReaderPlugin.c:21:13: warning: unused variable '__buildInfo' [-Wunused-variable]
+   21 | static char __buildInfo[] = "JPEGReaderPlugin VMMaker.oscog-eem.2480 uuid: bb3ffda7-8241-4dea-b886-d656e474b6c1 " __DATE__ ;
+      |             ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/JPEGReaderPlugin.c:113:14: warning: unused variable 'cbSampleStream' [-Wunused-variable]
+  113 | static sqInt cbSampleStream;
+      |              ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/JPEGReaderPlugin.c:116:14: warning: unused variable 'crSampleStream' [-Wunused-variable]
+  116 | static sqInt crSampleStream;
+      |              ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/JPEGReaderPlugin.c:183:14: warning: unused variable 'ySampleStream' [-Wunused-variable]
+  183 | static sqInt ySampleStream;
+      |              ^~~~~~~~~~~~~
+7 warnings generated.
+[70/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcapistd.c.obj
+[71/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/CodeZone.cpp.obj
+[72/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jccolor.c.obj
+[73/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/ObjectMemory.cpp.obj
+FAILED: [code=1] CMakeFiles/PharoVMCore.dir/src/vm/ObjectMemory.cpp.obj 
+C:\msys64\clang64\bin\clang++.exe -DPHARO_JIT_ENABLED=0 -DPHARO_WITH_CRYPTO=0 -IC:/temp/src/iospharo-jit/src/vm -IC:/temp/src/iospharo-jit/src/vm/jit -IC:/temp/src/iospharo-jit/src/vm/plugins -IC:/temp/src/iospharo-jit/src/vm/plugins/jpeg -IC:/temp/src/iospharo-jit/src/vm/plugins/testlib -IC:/temp/src/iospharo-jit/src/platform -IC:/temp/src/iospharo-jit/third_party/asmjit -O2 -g -DNDEBUG -std=gnu++17 -Wall -Wextra -Wno-unused-parameter -DASMJIT_STATIC -includeC:/temp/src/iospharo-jit/src/vm/no_getenv.hpp -MD -MT CMakeFiles/PharoVMCore.dir/src/vm/ObjectMemory.cpp.obj -MF CMakeFiles\PharoVMCore.dir\src\vm\ObjectMemory.cpp.obj.d -o CMakeFiles/PharoVMCore.dir/src/vm/ObjectMemory.cpp.obj -c C:/temp/src/iospharo-jit/src/vm/ObjectMemory.cpp
+In file included from C:/temp/src/iospharo-jit/src/vm/ObjectMemory.cpp:14:
+C:/temp/src/iospharo-jit/src/vm/Interpreter.hpp:3334:5: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+ 3334 |     sigjmp_buf reenterInterpreter_;
+      |     ^~~~~~~~~~
+      |     jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+C:/temp/src/iospharo-jit/src/vm/ObjectMemory.cpp:24:10: fatal error: 'sys/mman.h' file not found
+   24 | #include <sys/mman.h>
+      |          ^~~~~~~~~~~~
+2 errors generated.
+[74/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/platform/EventQueue.cpp.obj
+[75/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jccoefct.c.obj
+[76/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/InterpreterProxy.cpp.obj
+FAILED: [code=1] CMakeFiles/PharoVMCore.dir/src/vm/InterpreterProxy.cpp.obj 
+C:\msys64\clang64\bin\clang++.exe -DPHARO_JIT_ENABLED=0 -DPHARO_WITH_CRYPTO=0 -IC:/temp/src/iospharo-jit/src/vm -IC:/temp/src/iospharo-jit/src/vm/jit -IC:/temp/src/iospharo-jit/src/vm/plugins -IC:/temp/src/iospharo-jit/src/vm/plugins/jpeg -IC:/temp/src/iospharo-jit/src/vm/plugins/testlib -IC:/temp/src/iospharo-jit/src/platform -IC:/temp/src/iospharo-jit/third_party/asmjit -O2 -g -DNDEBUG -std=gnu++17 -Wall -Wextra -Wno-unused-parameter -DASMJIT_STATIC -includeC:/temp/src/iospharo-jit/src/vm/no_getenv.hpp -MD -MT CMakeFiles/PharoVMCore.dir/src/vm/InterpreterProxy.cpp.obj -MF CMakeFiles\PharoVMCore.dir\src\vm\InterpreterProxy.cpp.obj.d -o CMakeFiles/PharoVMCore.dir/src/vm/InterpreterProxy.cpp.obj -c C:/temp/src/iospharo-jit/src/vm/InterpreterProxy.cpp
+In file included from C:/temp/src/iospharo-jit/src/vm/InterpreterProxy.cpp:8:
+C:/temp/src/iospharo-jit/src/vm/Interpreter.hpp:3334:5: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+ 3334 |     sigjmp_buf reenterInterpreter_;
+      |     ^~~~~~~~~~
+      |     jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+C:/temp/src/iospharo-jit/src/vm/InterpreterProxy.cpp:431:56: warning: result of comparison of constant 4503599627370495 with expression of type 'sqInt' (aka 'long') is always true [-Wtautological-constant-out-of-range-compare]
+  431 |     return (intValue >= -0x1000000000000LL && intValue <= 0x0FFFFFFFFFFFFFLL) ? 1 : 0;
+      |                                               ~~~~~~~~ ^  ~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/InterpreterProxy.cpp:431:22: warning: result of comparison of constant -281474976710656 with expression of type 'sqInt' (aka 'long') is always true [-Wtautological-constant-out-of-range-compare]
+  431 |     return (intValue >= -0x1000000000000LL && intValue <= 0x0FFFFFFFFFFFFFLL) ? 1 : 0;
+      |             ~~~~~~~~ ^  ~~~~~~~~~~~~~~~~~~
+2 warnings and 1 error generated.
+[77/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcdctmgr.c.obj
+[78/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcmainct.c.obj
+[79/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcinit.c.obj
+[80/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/Profiler.cpp.obj
+FAILED: [code=1] CMakeFiles/PharoVMCore.dir/src/vm/Profiler.cpp.obj 
+C:\msys64\clang64\bin\clang++.exe -DPHARO_JIT_ENABLED=0 -DPHARO_WITH_CRYPTO=0 -IC:/temp/src/iospharo-jit/src/vm -IC:/temp/src/iospharo-jit/src/vm/jit -IC:/temp/src/iospharo-jit/src/vm/plugins -IC:/temp/src/iospharo-jit/src/vm/plugins/jpeg -IC:/temp/src/iospharo-jit/src/vm/plugins/testlib -IC:/temp/src/iospharo-jit/src/platform -IC:/temp/src/iospharo-jit/third_party/asmjit -O2 -g -DNDEBUG -std=gnu++17 -Wall -Wextra -Wno-unused-parameter -DASMJIT_STATIC -includeC:/temp/src/iospharo-jit/src/vm/no_getenv.hpp -MD -MT CMakeFiles/PharoVMCore.dir/src/vm/Profiler.cpp.obj -MF CMakeFiles\PharoVMCore.dir\src\vm\Profiler.cpp.obj.d -o CMakeFiles/PharoVMCore.dir/src/vm/Profiler.cpp.obj -c C:/temp/src/iospharo-jit/src/vm/Profiler.cpp
+In file included from C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:23:
+C:/temp/src/iospharo-jit/src/vm/Interpreter.hpp:3334:5: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+ 3334 |     sigjmp_buf reenterInterpreter_;
+      |     ^~~~~~~~~~
+      |     jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:105:22: error: variable has incomplete type 'struct sigaction'
+  105 |     struct sigaction sa{};
+      |                      ^
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:105:12: note: forward declaration of 'sigaction'
+  105 |     struct sigaction sa{};
+      |            ^
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:108:19: error: use of undeclared identifier 'SA_RESTART'
+  108 |     sa.sa_flags = SA_RESTART;
+      |                   ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:109:15: error: use of undeclared identifier 'SIGPROF'
+  109 |     sigaction(SIGPROF, &sa, nullptr);
+      |               ^~~~~~~
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:113:22: error: variable has incomplete type 'struct itimerval'
+  113 |     struct itimerval timer{};
+      |                      ^
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:113:12: note: forward declaration of 'itimerval'
+  113 |     struct itimerval timer{};
+      |            ^
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:117:15: error: use of undeclared identifier 'ITIMER_PROF'
+  117 |     setitimer(ITIMER_PROF, &timer, nullptr);
+      |               ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:127:22: error: variable has incomplete type 'struct itimerval'
+  127 |     struct itimerval timer{};
+      |                      ^
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:127:12: note: forward declaration of 'itimerval'
+  127 |     struct itimerval timer{};
+      |            ^
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:128:15: error: use of undeclared identifier 'ITIMER_PROF'
+  128 |     setitimer(ITIMER_PROF, &timer, nullptr);
+      |               ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:131:22: error: variable has incomplete type 'struct sigaction'
+  131 |     struct sigaction sa{};
+      |                      ^
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:131:12: note: forward declaration of 'sigaction'
+  131 |     struct sigaction sa{};
+      |            ^
+C:/temp/src/iospharo-jit/src/vm/Profiler.cpp:133:15: error: use of undeclared identifier 'SIGPROF'
+  133 |     sigaction(SIGPROF, &sa, nullptr);
+      |               ^~~~~~~
+10 errors generated.
+[81/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcomapi.c.obj
+[82/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jchuff.c.obj
+[83/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcmarker.c.obj
+[84/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcmaster.c.obj
+[85/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcprepct.c.obj
+[86/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/ImageWriter.cpp.obj
+[87/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/x86/x86rapass.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[88/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/arm/a64assembler.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[89/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcparam.c.obj
+[90/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcphuff.c.obj
+[91/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jctrans.c.obj
+[92/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdapimin.c.obj
+[93/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/ImageLoader.cpp.obj
+[94/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/Primitives.cpp.obj
+FAILED: [code=1] CMakeFiles/PharoVMCore.dir/src/vm/Primitives.cpp.obj 
+C:\msys64\clang64\bin\clang++.exe -DPHARO_JIT_ENABLED=0 -DPHARO_WITH_CRYPTO=0 -IC:/temp/src/iospharo-jit/src/vm -IC:/temp/src/iospharo-jit/src/vm/jit -IC:/temp/src/iospharo-jit/src/vm/plugins -IC:/temp/src/iospharo-jit/src/vm/plugins/jpeg -IC:/temp/src/iospharo-jit/src/vm/plugins/testlib -IC:/temp/src/iospharo-jit/src/platform -IC:/temp/src/iospharo-jit/third_party/asmjit -O2 -g -DNDEBUG -std=gnu++17 -Wall -Wextra -Wno-unused-parameter -DASMJIT_STATIC -includeC:/temp/src/iospharo-jit/src/vm/no_getenv.hpp -MD -MT CMakeFiles/PharoVMCore.dir/src/vm/Primitives.cpp.obj -MF CMakeFiles\PharoVMCore.dir\src\vm\Primitives.cpp.obj.d -o CMakeFiles/PharoVMCore.dir/src/vm/Primitives.cpp.obj -c C:/temp/src/iospharo-jit/src/vm/Primitives.cpp
+In file included from C:/temp/src/iospharo-jit/src/vm/Primitives.cpp:16:
+C:/temp/src/iospharo-jit/src/vm/Interpreter.hpp:3334:5: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+ 3334 |     sigjmp_buf reenterInterpreter_;
+      |     ^~~~~~~~~~
+      |     jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+In file included from C:/temp/src/iospharo-jit/src/vm/Primitives.cpp:24:
+C:/temp/src/iospharo-jit/src/vm/../include/vmCallback.h:35:2: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+   35 |         sigjmp_buf      trampoline;
+      |         ^~~~~~~~~~
+      |         jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+In file included from C:/temp/src/iospharo-jit/src/vm/Primitives.cpp:24:
+C:/temp/src/iospharo-jit/src/vm/../include/vmCallback.h:36:2: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+   36 |         sigjmp_buf      savedReenterInterpreter;
+      |         ^~~~~~~~~~
+      |         jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+C:/temp/src/iospharo-jit/src/vm/Primitives.cpp:53:10: fatal error: 'sys/resource.h' file not found
+   53 | #include <sys/resource.h>
+      |          ^~~~~~~~~~~~~~~~
+4 errors generated.
+[95/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdatadst.c.obj
+[96/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdapistd.c.obj
+[97/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdatasrc.c.obj
+[98/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jcsample.c.obj
+[99/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jddctmgr.c.obj
+[100/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdcolor.c.obj
+[101/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdinput.c.obj
+[102/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdmainct.c.obj
+[103/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdhuff.c.obj
+[104/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdcoefct.c.obj
+[105/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdmaster.c.obj
+[106/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdmerge.c.obj
+[107/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdpostct.c.obj
+[108/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdtrans.c.obj
+[109/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/Tier2Compiler_x86_64.cpp.obj
+[110/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdsample.c.obj
+[111/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdphuff.c.obj
+[112/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jfdctflt.c.obj
+[113/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jfdctfst.c.obj
+[114/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jerror.c.obj
+[115/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/sista/SistaLowering_x86_64.cpp.obj
+[116/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/Interpreter.cpp.obj
+FAILED: [code=1] CMakeFiles/PharoVMCore.dir/src/vm/Interpreter.cpp.obj 
+C:\msys64\clang64\bin\clang++.exe -DPHARO_JIT_ENABLED=0 -DPHARO_WITH_CRYPTO=0 -IC:/temp/src/iospharo-jit/src/vm -IC:/temp/src/iospharo-jit/src/vm/jit -IC:/temp/src/iospharo-jit/src/vm/plugins -IC:/temp/src/iospharo-jit/src/vm/plugins/jpeg -IC:/temp/src/iospharo-jit/src/vm/plugins/testlib -IC:/temp/src/iospharo-jit/src/platform -IC:/temp/src/iospharo-jit/third_party/asmjit -O2 -g -DNDEBUG -std=gnu++17 -Wall -Wextra -Wno-unused-parameter -DASMJIT_STATIC -includeC:/temp/src/iospharo-jit/src/vm/no_getenv.hpp -MD -MT CMakeFiles/PharoVMCore.dir/src/vm/Interpreter.cpp.obj -MF CMakeFiles\PharoVMCore.dir\src\vm\Interpreter.cpp.obj.d -o CMakeFiles/PharoVMCore.dir/src/vm/Interpreter.cpp.obj -c C:/temp/src/iospharo-jit/src/vm/Interpreter.cpp
+In file included from C:/temp/src/iospharo-jit/src/vm/Interpreter.cpp:15:
+C:/temp/src/iospharo-jit/src/vm/Interpreter.hpp:3334:5: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+ 3334 |     sigjmp_buf reenterInterpreter_;
+      |     ^~~~~~~~~~
+      |     jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+In file included from C:/temp/src/iospharo-jit/src/vm/Interpreter.cpp:31:
+C:/temp/src/iospharo-jit/src/vm/../include/vmCallback.h:35:2: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+   35 |         sigjmp_buf      trampoline;
+      |         ^~~~~~~~~~
+      |         jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+In file included from C:/temp/src/iospharo-jit/src/vm/Interpreter.cpp:31:
+C:/temp/src/iospharo-jit/src/vm/../include/vmCallback.h:36:2: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+   36 |         sigjmp_buf      savedReenterInterpreter;
+      |         ^~~~~~~~~~
+      |         jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+C:/temp/src/iospharo-jit/src/vm/Interpreter.cpp:38:10: fatal error: 'execinfo.h' file not found
+   38 | #include <execinfo.h>
+      |          ^~~~~~~~~~~~
+4 errors generated.
+[117/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jdmarker.c.obj
+[118/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jfdctint.c.obj
+[119/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jmemdatadst.c.obj
+[120/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jidctred.c.obj
+[121/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jmemdatasrc.c.obj
+[122/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jidctfst.c.obj
+[123/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jmemnobs.c.obj
+[124/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jidctint.c.obj
+[125/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jidctflt.c.obj
+[126/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jutils.c.obj
+[127/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/JITRuntime.cpp.obj
+FAILED: [code=1] CMakeFiles/PharoVMCore.dir/src/vm/jit/JITRuntime.cpp.obj 
+C:\msys64\clang64\bin\clang++.exe -DPHARO_JIT_ENABLED=0 -DPHARO_WITH_CRYPTO=0 -IC:/temp/src/iospharo-jit/src/vm -IC:/temp/src/iospharo-jit/src/vm/jit -IC:/temp/src/iospharo-jit/src/vm/plugins -IC:/temp/src/iospharo-jit/src/vm/plugins/jpeg -IC:/temp/src/iospharo-jit/src/vm/plugins/testlib -IC:/temp/src/iospharo-jit/src/platform -IC:/temp/src/iospharo-jit/third_party/asmjit -O2 -g -DNDEBUG -std=gnu++17 -Wall -Wextra -Wno-unused-parameter -DASMJIT_STATIC -includeC:/temp/src/iospharo-jit/src/vm/no_getenv.hpp -MD -MT CMakeFiles/PharoVMCore.dir/src/vm/jit/JITRuntime.cpp.obj -MF CMakeFiles\PharoVMCore.dir\src\vm\jit\JITRuntime.cpp.obj.d -o CMakeFiles/PharoVMCore.dir/src/vm/jit/JITRuntime.cpp.obj -c C:/temp/src/iospharo-jit/src/vm/jit/JITRuntime.cpp
+In file included from C:/temp/src/iospharo-jit/src/vm/jit/JITRuntime.cpp:17:
+C:/temp/src/iospharo-jit/src/vm/jit/../Interpreter.hpp:3334:5: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+ 3334 |     sigjmp_buf reenterInterpreter_;
+      |     ^~~~~~~~~~
+      |     jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+1 error generated.
+[128/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/JITCompiler.cpp.obj
+FAILED: [code=1] CMakeFiles/PharoVMCore.dir/src/vm/jit/JITCompiler.cpp.obj 
+C:\msys64\clang64\bin\clang++.exe -DPHARO_JIT_ENABLED=0 -DPHARO_WITH_CRYPTO=0 -IC:/temp/src/iospharo-jit/src/vm -IC:/temp/src/iospharo-jit/src/vm/jit -IC:/temp/src/iospharo-jit/src/vm/plugins -IC:/temp/src/iospharo-jit/src/vm/plugins/jpeg -IC:/temp/src/iospharo-jit/src/vm/plugins/testlib -IC:/temp/src/iospharo-jit/src/platform -IC:/temp/src/iospharo-jit/third_party/asmjit -O2 -g -DNDEBUG -std=gnu++17 -Wall -Wextra -Wno-unused-parameter -DASMJIT_STATIC -includeC:/temp/src/iospharo-jit/src/vm/no_getenv.hpp -MD -MT CMakeFiles/PharoVMCore.dir/src/vm/jit/JITCompiler.cpp.obj -MF CMakeFiles\PharoVMCore.dir\src\vm\jit\JITCompiler.cpp.obj.d -o CMakeFiles/PharoVMCore.dir/src/vm/jit/JITCompiler.cpp.obj -c C:/temp/src/iospharo-jit/src/vm/jit/JITCompiler.cpp
+In file included from C:/temp/src/iospharo-jit/src/vm/jit/JITCompiler.cpp:16:
+C:/temp/src/iospharo-jit/src/vm/jit/../Interpreter.hpp:3334:5: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+ 3334 |     sigjmp_buf reenterInterpreter_;
+      |     ^~~~~~~~~~
+      |     jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+1 error generated.
+[129/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jmemmgr.c.obj
+[130/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/sqJPEGReadWriter2Plugin.c.obj
+[131/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/plugins/MIDIPlugin.cpp.obj
+[132/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jquant1.c.obj
+[133/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/plugins/SoundPlugin.cpp.obj
+[134/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/x86/x86assembler.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[135/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/sista/SistaIR.cpp.obj
+[136/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/jpeg/jquant2.c.obj
+[137/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/B2DPlugin.c.obj
+In file included from C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:38:
+C:/temp/src/iospharo-jit/src/vm/plugins/sqVirtualMachine.h:199:5: warning: 'volatile' type qualifier on return type has no effect [-Wignored-qualifiers]
+  199 |     volatile unsigned long long (*utcMicroseconds)(void);
+      |     ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1710:13: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 1710 |                 value = (((int*) bits))[(bmRaster * yp) + xp];
+      |                           ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1720:12: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 1720 |         value = (((int*) bits))[(bmRaster * yp) + (((usqInt) xp) >> rShift)];
+      |                   ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4424:9: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4424 |         ds = (((int*) deltaST))[0];
+      |                ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4425:9: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4425 |         dt = (((int*) deltaST))[1];
+      |                ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4427:16: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4427 |         rampValue = (((int *) ramp))[rampIndex];
+      |                       ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4448:18: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4448 |                         rampValue = (((int *) ramp))[rampIndex];
+      |                                       ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4452:4: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4452 |         (((int *) deltaST))[0] = ds;
+      |           ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4453:4: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4453 |         (((int *) deltaST))[1] = dt;
+      |           ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4834:9: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4834 |         ds = (((int*) deltaST))[0];
+      |                ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4835:9: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4835 |         dt = (((int*) deltaST))[1];
+      |                ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4837:16: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4837 |         rampValue = (((int *) ramp))[rampIndex];
+      |                       ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4861:18: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4861 |                         rampValue = (((int *) ramp))[rampIndex];
+      |                                       ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4865:4: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4865 |         (((int *) deltaST))[0] = ds;
+      |           ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4866:4: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 4866 |         (((int *) deltaST))[1] = dt;
+      |           ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6731:15: warning: comparison of integers of different signs: 'sqInt' (aka 'long') and 'unsigned int' [-Wsign-compare]
+ 6731 |                  || (cmSize == (1U << bmDepth)))) {
+      |                      ~~~~~~ ^   ~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6921:10: warning: cast to 'short *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6921 |                 x0 = (((short *) points))[index];
+      |                        ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6923:10: warning: cast to 'short *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6923 |                 y0 = (((short *) points))[index + 1];
+      |                        ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6925:10: warning: cast to 'short *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6925 |                 x1 = (((short *) points))[index + 2];
+      |                        ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6927:10: warning: cast to 'short *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6927 |                 y1 = (((short *) points))[index + 3];
+      |                        ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6929:10: warning: cast to 'short *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6929 |                 x2 = (((short *) points))[index + 4];
+      |                        ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6931:10: warning: cast to 'short *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6931 |                 y2 = (((short *) points))[index + 5];
+      |                        ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6934:10: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6934 |                 x0 = (((int *) points))[index];
+      |                        ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6935:10: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6935 |                 y0 = (((int *) points))[index + 1];
+      |                        ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6936:10: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6936 |                 x1 = (((int *) points))[index + 2];
+      |                        ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6937:10: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6937 |                 y1 = (((int *) points))[index + 3];
+      |                        ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6938:10: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6938 |                 x2 = (((int *) points))[index + 4];
+      |                        ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6939:10: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 6939 |                 y2 = (((int *) points))[index + 5];
+      |                        ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:8082:11: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 8082 |         return (((int *) intArray))[index];
+      |                  ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:8092:11: warning: cast to 'short *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 8092 |         return (((short *) shortArray))[index];
+      |                  ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9689:15: warning: comparison of integers of different signs: 'sqInt' (aka 'long') and 'unsigned int' [-Wsign-compare]
+ 9689 |                  || (cmSize == (1U << bmDepth)))) {
+      |                      ~~~~~~ ^   ~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12657:22: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 12657 |         return ((usqInt) ((((int *) runArray))[i]) >> 16);
+       |                             ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12669:12: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 12669 |         return ((((int *) runArray))[i]) & 0xFFFF;
+       |                   ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13506:11: warning: variable 'yValue' set but not used [-Wunused-but-set-variable]
+ 13506 |     sqInt yValue;
+       |           ^
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13684:11: warning: variable 'yValue' set but not used [-Wunused-but-set-variable]
+ 13684 |     sqInt yValue;
+       |           ^
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14652:24: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 14652 |         xValue = ((double) ((((int *) srcPoint))[0]) );
+       |                               ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14653:24: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 14653 |         yValue = ((double) ((((int *) srcPoint))[1]) );
+       |                               ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14658:4: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 14658 |         (((int *) dstPoint))[0] = x;
+       |           ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14659:4: warning: cast to 'int *' from smaller integer type 'sqInt' (aka 'long') [-Wint-to-pointer-cast]
+ 14659 |         (((int *) dstPoint))[1] = y;
+       |           ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:22:13: warning: unused variable '__buildInfo' [-Wunused-variable]
+   22 | static char __buildInfo[] = "BalloonEnginePlugin VMMaker.oscog-eem.2480 uuid: bb3ffda7-8241-4dea-b886-d656e474b6c1 " __DATE__ ;
+      |             ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:867:1: warning: unused function 'aaColorMaskGet' [-Wunused-function]
+  867 | aaColorMaskGet(void)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:874:1: warning: unused function 'aaColorMaskPut' [-Wunused-function]
+  874 | aaColorMaskPut(sqInt value)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:881:1: warning: unused function 'aaColorShiftGet' [-Wunused-function]
+  881 | aaColorShiftGet(void)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:888:1: warning: unused function 'aaColorShiftPut' [-Wunused-function]
+  888 | aaColorShiftPut(sqInt value)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:898:1: warning: unused function 'aaFirstPixelFromto' [-Wunused-function]
+  898 | aaFirstPixelFromto(sqInt leftX, sqInt rightX)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:913:1: warning: unused function 'aaHalfPixelGet' [-Wunused-function]
+  913 | aaHalfPixelGet(void)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:920:1: warning: unused function 'aaHalfPixelPut' [-Wunused-function]
+  920 | aaHalfPixelPut(sqInt value)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:930:1: warning: unused function 'aaLastPixelFromto' [-Wunused-function]
+  930 | aaLastPixelFromto(sqInt leftX, sqInt rightX)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:937:1: warning: unused function 'aaLevelGet' [-Wunused-function]
+  937 | aaLevelGet(void)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:944:1: warning: unused function 'aaLevelPut' [-Wunused-function]
+  944 | aaLevelPut(sqInt value)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:951:1: warning: unused function 'aaScanMaskGet' [-Wunused-function]
+  951 | aaScanMaskGet(void)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:958:1: warning: unused function 'aaScanMaskPut' [-Wunused-function]
+  958 | aaScanMaskPut(sqInt value)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:965:1: warning: unused function 'aaShiftGet' [-Wunused-function]
+  965 | aaShiftGet(void)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:972:1: warning: unused function 'aaShiftPut' [-Wunused-function]
+  972 | aaShiftPut(sqInt value)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:983:1: warning: unused function 'absoluteSquared8Dot24' [-Wunused-function]
+  983 | absoluteSquared8Dot24(sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1052:1: warning: unused function 'adjustAALevel' [-Wunused-function]
+ 1052 | adjustAALevel(void)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1191:1: warning: unused function 'aetStartGet' [-Wunused-function]
+ 1191 | aetStartGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1198:1: warning: unused function 'aetStartPut' [-Wunused-function]
+ 1198 | aetStartPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1205:1: warning: unused function 'aetUsedGet' [-Wunused-function]
+ 1205 | aetUsedGet(void)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1212:1: warning: unused function 'aetUsedPut' [-Wunused-function]
+ 1212 | aetUsedPut(sqInt value)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1222:1: warning: unused function 'allocateAETEntry' [-Wunused-function]
+ 1222 | allocateAETEntry(sqInt nSlots)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1236:1: warning: unused function 'allocateBezier' [-Wunused-function]
+ 1236 | allocateBezier(void)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1256:1: warning: unused function 'allocateBezierStackEntry' [-Wunused-function]
+ 1256 | allocateBezierStackEntry(void)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1270:1: warning: unused function 'allocateBitmapFillcolormap' [-Wunused-function]
+ 1270 | allocateBitmapFillcolormap(sqInt cmSize, int *cmBits)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1337:1: warning: unused function 'allocateGradientFillrampWidthisRadial' [-Wunused-function]
+ 1337 | allocateGradientFillrampWidthisRadial(int *ramp, sqInt rampWidth, sqInt isRadial)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1380:1: warning: unused function 'allocateLine' [-Wunused-function]
+ 1380 | allocateLine(void)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1432:1: warning: unused function 'allocateStackEntry' [-Wunused-function]
+ 1432 | allocateStackEntry(sqInt nSlots)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1446:1: warning: unused function 'allocateStackFillEntry' [-Wunused-function]
+ 1446 | allocateStackFillEntry(void)
+      | ^~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1459:1: warning: unused function 'allocateWideBezier' [-Wunused-function]
+ 1459 | allocateWideBezier(void)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1479:1: warning: unused function 'allocateWideLine' [-Wunused-function]
+ 1479 | allocateWideLine(void)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1499:1: warning: unused function 'areEdgeFillsValid' [-Wunused-function]
+ 1499 | areEdgeFillsValid(sqInt edge)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1509:1: warning: unused function 'assureValuebetweenand' [-Wunused-function]
+ 1509 | assureValuebetweenand(sqInt val1, sqInt val2, sqInt val3)
+      | ^~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1532:1: warning: unused function 'bezierEndXOf' [-Wunused-function]
+ 1532 | bezierEndXOf(sqInt bezier)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1539:1: warning: unused function 'bezierEndXOfput' [-Wunused-function]
+ 1539 | bezierEndXOfput(sqInt bezier, sqInt value)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1546:1: warning: unused function 'bezierEndYOf' [-Wunused-function]
+ 1546 | bezierEndYOf(sqInt bezier)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1553:1: warning: unused function 'bezierEndYOfput' [-Wunused-function]
+ 1553 | bezierEndYOfput(sqInt bezier, sqInt value)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1560:1: warning: unused function 'bezierFinalXOf' [-Wunused-function]
+ 1560 | bezierFinalXOf(sqInt bezier)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1567:1: warning: unused function 'bezierFinalXOfput' [-Wunused-function]
+ 1567 | bezierFinalXOfput(sqInt bezier, sqInt value)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1574:1: warning: unused function 'bezierUpdateDataOf' [-Wunused-function]
+ 1574 | bezierUpdateDataOf(sqInt bezier)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1581:1: warning: unused function 'bezierViaXOf' [-Wunused-function]
+ 1581 | bezierViaXOf(sqInt bezier)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1588:1: warning: unused function 'bezierViaXOfput' [-Wunused-function]
+ 1588 | bezierViaXOfput(sqInt bezier, sqInt value)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1595:1: warning: unused function 'bezierViaYOf' [-Wunused-function]
+ 1595 | bezierViaYOf(sqInt bezier)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1602:1: warning: unused function 'bezierViaYOfput' [-Wunused-function]
+ 1602 | bezierViaYOfput(sqInt bezier, sqInt value)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1609:1: warning: unused function 'bitmapCmSizeOf' [-Wunused-function]
+ 1609 | bitmapCmSizeOf(sqInt bmFill)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1616:1: warning: unused function 'bitmapCmSizeOfput' [-Wunused-function]
+ 1616 | bitmapCmSizeOfput(sqInt bmFill, sqInt value)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1623:1: warning: unused function 'bitmapDepthOf' [-Wunused-function]
+ 1623 | bitmapDepthOf(sqInt bmFill)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1630:1: warning: unused function 'bitmapDepthOfput' [-Wunused-function]
+ 1630 | bitmapDepthOfput(sqInt bmFill, sqInt value)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1637:1: warning: unused function 'bitmapHeightOf' [-Wunused-function]
+ 1637 | bitmapHeightOf(sqInt bmFill)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1644:1: warning: unused function 'bitmapHeightOfput' [-Wunused-function]
+ 1644 | bitmapHeightOfput(sqInt bmFill, sqInt value)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1651:1: warning: unused function 'bitmapRasterOf' [-Wunused-function]
+ 1651 | bitmapRasterOf(sqInt bmFill)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1658:1: warning: unused function 'bitmapRasterOfput' [-Wunused-function]
+ 1658 | bitmapRasterOfput(sqInt bmFill, sqInt value)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1665:1: warning: unused function 'bitmapSizeOf' [-Wunused-function]
+ 1665 | bitmapSizeOf(sqInt bmFill)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1672:1: warning: unused function 'bitmapSizeOfput' [-Wunused-function]
+ 1672 | bitmapSizeOfput(sqInt bmFill, sqInt value)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1679:1: warning: unused function 'bitmapTileFlagOf' [-Wunused-function]
+ 1679 | bitmapTileFlagOf(sqInt bmFill)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1686:1: warning: unused function 'bitmapTileFlagOfput' [-Wunused-function]
+ 1686 | bitmapTileFlagOfput(sqInt bmFill, sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1693:1: warning: unused function 'bitmapValuebitsatXy' [-Wunused-function]
+ 1693 | bitmapValuebitsatXy(sqInt bmFill, sqInt bits, sqInt xp, sqInt yp)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1756:1: warning: unused function 'bitmapWidthOf' [-Wunused-function]
+ 1756 | bitmapWidthOf(sqInt bmFill)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1763:1: warning: unused function 'bitmapWidthOfput' [-Wunused-function]
+ 1763 | bitmapWidthOfput(sqInt bmFill, sqInt value)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1770:1: warning: unused function 'bzEndX' [-Wunused-function]
+ 1770 | bzEndX(sqInt index)
+      | ^~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1781:1: warning: unused function 'bzEndXput' [-Wunused-function]
+ 1781 | bzEndXput(sqInt index, sqInt value)
+      | ^~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1792:1: warning: unused function 'bzEndY' [-Wunused-function]
+ 1792 | bzEndY(sqInt index)
+      | ^~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1803:1: warning: unused function 'bzEndYput' [-Wunused-function]
+ 1803 | bzEndYput(sqInt index, sqInt value)
+      | ^~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1814:1: warning: unused function 'bzStartX' [-Wunused-function]
+ 1814 | bzStartX(sqInt index)
+      | ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1825:1: warning: unused function 'bzStartXput' [-Wunused-function]
+ 1825 | bzStartXput(sqInt index, sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1836:1: warning: unused function 'bzStartY' [-Wunused-function]
+ 1836 | bzStartY(sqInt index)
+      | ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1847:1: warning: unused function 'bzStartYput' [-Wunused-function]
+ 1847 | bzStartYput(sqInt index, sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1858:1: warning: unused function 'bzViaX' [-Wunused-function]
+ 1858 | bzViaX(sqInt index)
+      | ^~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1869:1: warning: unused function 'bzViaXput' [-Wunused-function]
+ 1869 | bzViaXput(sqInt index, sqInt value)
+      | ^~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1880:1: warning: unused function 'bzViaY' [-Wunused-function]
+ 1880 | bzViaY(sqInt index)
+      | ^~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:1891:1: warning: unused function 'bzViaYput' [-Wunused-function]
+ 1891 | bzViaYput(sqInt index, sqInt value)
+      | ^~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2046:1: warning: unused function 'checkedAddBezierToGET' [-Wunused-function]
+ 2046 | checkedAddBezierToGET(sqInt bezier)
+      | ^~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2074:1: warning: unused function 'checkedAddEdgeToGET' [-Wunused-function]
+ 2074 | checkedAddEdgeToGET(sqInt edge)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2126:1: warning: unused function 'checkedAddLineToGET' [-Wunused-function]
+ 2126 | checkedAddLineToGET(sqInt line)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2186:1: warning: unused function 'clampValuemax' [-Wunused-function]
+ 2186 | clampValuemax(sqInt value, sqInt maxValue)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2234:1: warning: unused function 'clearSpanBufferGet' [-Wunused-function]
+ 2234 | clearSpanBufferGet(void)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2241:1: warning: unused function 'clearSpanBufferPut' [-Wunused-function]
+ 2241 | clearSpanBufferPut(sqInt value)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2248:1: warning: unused function 'clipMaxXGet' [-Wunused-function]
+ 2248 | clipMaxXGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2255:1: warning: unused function 'clipMaxXPut' [-Wunused-function]
+ 2255 | clipMaxXPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2262:1: warning: unused function 'clipMaxYGet' [-Wunused-function]
+ 2262 | clipMaxYGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2269:1: warning: unused function 'clipMaxYPut' [-Wunused-function]
+ 2269 | clipMaxYPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2276:1: warning: unused function 'clipMinXGet' [-Wunused-function]
+ 2276 | clipMinXGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2283:1: warning: unused function 'clipMinXPut' [-Wunused-function]
+ 2283 | clipMinXPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2290:1: warning: unused function 'clipMinYGet' [-Wunused-function]
+ 2290 | clipMinYGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2297:1: warning: unused function 'clipMinYPut' [-Wunused-function]
+ 2297 | clipMinYPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2304:1: warning: unused function 'colormapOf' [-Wunused-function]
+ 2304 | colormapOf(sqInt bmFill)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2311:1: warning: unused function 'colorTransform' [-Wunused-function]
+ 2311 | colorTransform(void)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2591:1: warning: unused function 'computeSqrt' [-Wunused-function]
+ 2591 | computeSqrt(sqInt length2)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2686:1: warning: unused function 'currentYGet' [-Wunused-function]
+ 2686 | currentYGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2693:1: warning: unused function 'currentYPut' [-Wunused-function]
+ 2693 | currentYPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2700:1: warning: unused function 'currentZGet' [-Wunused-function]
+ 2700 | currentZGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2707:1: warning: unused function 'currentZPut' [-Wunused-function]
+ 2707 | currentZPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2714:1: warning: unused function 'destOffsetXGet' [-Wunused-function]
+ 2714 | destOffsetXGet(void)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2721:1: warning: unused function 'destOffsetXPut' [-Wunused-function]
+ 2721 | destOffsetXPut(sqInt value)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2728:1: warning: unused function 'destOffsetYGet' [-Wunused-function]
+ 2728 | destOffsetYGet(void)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2735:1: warning: unused function 'destOffsetYPut' [-Wunused-function]
+ 2735 | destOffsetYPut(sqInt value)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2780:1: warning: unused function 'drawWideEdgefrom' [-Wunused-function]
+ 2780 | drawWideEdgefrom(sqInt edge, sqInt leftX)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2827:1: warning: unused function 'edgeFillsInvalidate' [-Wunused-function]
+ 2827 | edgeFillsInvalidate(sqInt edge)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2838:1: warning: unused function 'edgeFillsValidate' [-Wunused-function]
+ 2838 | edgeFillsValidate(sqInt edge)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2849:1: warning: unused function 'edgeLeftFillOf' [-Wunused-function]
+ 2849 | edgeLeftFillOf(sqInt edge)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2856:1: warning: unused function 'edgeLeftFillOfput' [-Wunused-function]
+ 2856 | edgeLeftFillOfput(sqInt edge, sqInt value)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2863:1: warning: unused function 'edgeNumLinesOf' [-Wunused-function]
+ 2863 | edgeNumLinesOf(sqInt edge)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2870:1: warning: unused function 'edgeNumLinesOfput' [-Wunused-function]
+ 2870 | edgeNumLinesOfput(sqInt edge, sqInt value)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2877:1: warning: unused function 'edgeRightFillOf' [-Wunused-function]
+ 2877 | edgeRightFillOf(sqInt edge)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2884:1: warning: unused function 'edgeRightFillOfput' [-Wunused-function]
+ 2884 | edgeRightFillOfput(sqInt edge, sqInt value)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2891:1: warning: unused function 'edgeTransform' [-Wunused-function]
+ 2891 | edgeTransform(void)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2901:1: warning: unused function 'edgeTypeOf' [-Wunused-function]
+ 2901 | edgeTypeOf(sqInt edge)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2908:1: warning: unused function 'edgeXValueOf' [-Wunused-function]
+ 2908 | edgeXValueOf(sqInt edge)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2915:1: warning: unused function 'edgeXValueOfput' [-Wunused-function]
+ 2915 | edgeXValueOfput(sqInt edge, sqInt value)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2922:1: warning: unused function 'edgeYValueOf' [-Wunused-function]
+ 2922 | edgeYValueOf(sqInt edge)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2929:1: warning: unused function 'edgeYValueOfput' [-Wunused-function]
+ 2929 | edgeYValueOfput(sqInt edge, sqInt value)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2936:1: warning: unused function 'edgeZValueOf' [-Wunused-function]
+ 2936 | edgeZValueOf(sqInt edge)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2943:1: warning: unused function 'edgeZValueOfput' [-Wunused-function]
+ 2943 | edgeZValueOfput(sqInt edge, sqInt value)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2967:1: warning: unused function 'estimatedLengthOfwith' [-Wunused-function]
+ 2967 | estimatedLengthOfwith(sqInt deltaX, sqInt deltaY)
+      | ^~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:2997:1: warning: unused function 'fillAllFromto' [-Wunused-function]
+ 2997 | fillAllFromto(sqInt leftX, sqInt rightX)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:3100:1: warning: unused function 'fillBitmapSpan' [-Wunused-function]
+ 3100 | fillBitmapSpan(void)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:3848:1: warning: unused function 'fillColorSpanfromto' [-Wunused-function]
+ 3848 | fillColorSpanfromto(sqInt pixelValue32, sqInt leftX, sqInt rightX)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:3878:1: warning: unused function 'fillDirectionXOf' [-Wunused-function]
+ 3878 | fillDirectionXOf(sqInt fill)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:3885:1: warning: unused function 'fillDirectionXOfput' [-Wunused-function]
+ 3885 | fillDirectionXOfput(sqInt fill, sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:3892:1: warning: unused function 'fillDirectionYOf' [-Wunused-function]
+ 3892 | fillDirectionYOf(sqInt fill)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:3899:1: warning: unused function 'fillDirectionYOfput' [-Wunused-function]
+ 3899 | fillDirectionYOfput(sqInt fill, sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:3906:1: warning: unused function 'fillLinearGradient' [-Wunused-function]
+ 3906 | fillLinearGradient(void)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4134:1: warning: unused function 'fillMaxXGet' [-Wunused-function]
+ 4134 | fillMaxXGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4141:1: warning: unused function 'fillMaxXPut' [-Wunused-function]
+ 4141 | fillMaxXPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4148:1: warning: unused function 'fillMaxYGet' [-Wunused-function]
+ 4148 | fillMaxYGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4155:1: warning: unused function 'fillMaxYPut' [-Wunused-function]
+ 4155 | fillMaxYPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4162:1: warning: unused function 'fillMinXGet' [-Wunused-function]
+ 4162 | fillMinXGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4169:1: warning: unused function 'fillMinXPut' [-Wunused-function]
+ 4169 | fillMinXPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4176:1: warning: unused function 'fillMinYGet' [-Wunused-function]
+ 4176 | fillMinYGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4183:1: warning: unused function 'fillMinYPut' [-Wunused-function]
+ 4183 | fillMinYPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4190:1: warning: unused function 'fillNormalXOf' [-Wunused-function]
+ 4190 | fillNormalXOf(sqInt fill)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4197:1: warning: unused function 'fillNormalXOfput' [-Wunused-function]
+ 4197 | fillNormalXOfput(sqInt fill, sqInt value)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4204:1: warning: unused function 'fillNormalYOf' [-Wunused-function]
+ 4204 | fillNormalYOf(sqInt fill)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4211:1: warning: unused function 'fillNormalYOfput' [-Wunused-function]
+ 4211 | fillNormalYOfput(sqInt fill, sqInt value)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4218:1: warning: unused function 'fillOffsetXGet' [-Wunused-function]
+ 4218 | fillOffsetXGet(void)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4225:1: warning: unused function 'fillOffsetXPut' [-Wunused-function]
+ 4225 | fillOffsetXPut(sqInt value)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4232:1: warning: unused function 'fillOffsetYGet' [-Wunused-function]
+ 4232 | fillOffsetYGet(void)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4239:1: warning: unused function 'fillOffsetYPut' [-Wunused-function]
+ 4239 | fillOffsetYPut(sqInt value)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4246:1: warning: unused function 'fillOriginXOf' [-Wunused-function]
+ 4246 | fillOriginXOf(sqInt fill)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4253:1: warning: unused function 'fillOriginXOfput' [-Wunused-function]
+ 4253 | fillOriginXOfput(sqInt fill, sqInt value)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4260:1: warning: unused function 'fillOriginYOf' [-Wunused-function]
+ 4260 | fillOriginYOf(sqInt fill)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4267:1: warning: unused function 'fillOriginYOfput' [-Wunused-function]
+ 4267 | fillOriginYOfput(sqInt fill, sqInt value)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4413:1: warning: unused function 'fillRadialDecreasingrampdeltaSTdsXdtXfromto' [-Wunused-function]
+ 4413 | fillRadialDecreasingrampdeltaSTdsXdtXfromto(sqInt fill, sqInt ramp, sqInt deltaST, sqInt dsX, sqInt dtX, sqInt leftX, sqInt rightX)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4459:1: warning: unused function 'fillRadialGradient' [-Wunused-function]
+ 4459 | fillRadialGradient(void)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4821:1: warning: unused function 'fillRadialIncreasingrampdeltaSTdsXdtXfromto' [-Wunused-function]
+ 4821 | fillRadialIncreasingrampdeltaSTdsXdtXfromto(sqInt fill, sqInt ramp, sqInt deltaST, sqInt dsX, sqInt dtX, sqInt leftX, sqInt rightX)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:4993:1: warning: unused function 'fillTypeOf' [-Wunused-function]
+ 4993 | fillTypeOf(sqInt fill)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5000:1: warning: unused function 'findNextAETEdgeFrom' [-Wunused-function]
+ 5000 | findNextAETEdgeFrom(sqInt leftEdge)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5433:1: warning: unused function 'finishedProcessing' [-Wunused-function]
+ 5433 | finishedProcessing(void)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5440:1: warning: unused function 'firstPointListGet' [-Wunused-function]
+ 5440 | firstPointListGet(void)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5447:1: warning: unused function 'firstPointListPut' [-Wunused-function]
+ 5447 | firstPointListPut(sqInt value)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5454:1: warning: unused function 'freeStackFillEntry' [-Wunused-function]
+ 5454 | freeStackFillEntry(void)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5496:1: warning: unused function 'getStartGet' [-Wunused-function]
+ 5496 | getStartGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5503:1: warning: unused function 'getStartPut' [-Wunused-function]
+ 5503 | getStartPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5510:1: warning: unused function 'getUsedGet' [-Wunused-function]
+ 5510 | getUsedGet(void)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5517:1: warning: unused function 'getUsedPut' [-Wunused-function]
+ 5517 | getUsedPut(sqInt value)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5524:1: warning: unused function 'gradientRampLengthOf' [-Wunused-function]
+ 5524 | gradientRampLengthOf(sqInt fill)
+      | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5531:1: warning: unused function 'gradientRampLengthOfput' [-Wunused-function]
+ 5531 | gradientRampLengthOfput(sqInt fill, sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5538:1: warning: unused function 'gradientRampOf' [-Wunused-function]
+ 5538 | gradientRampOf(sqInt fill)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5545:1: warning: unused function 'hasColorTransform' [-Wunused-function]
+ 5545 | hasColorTransform(void)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5552:1: warning: unused function 'hasColorTransformGet' [-Wunused-function]
+ 5552 | hasColorTransformGet(void)
+      | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5559:1: warning: unused function 'hasColorTransformPut' [-Wunused-function]
+ 5559 | hasColorTransformPut(sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5566:1: warning: unused function 'hasEdgeTransform' [-Wunused-function]
+ 5566 | hasEdgeTransform(void)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5573:1: warning: unused function 'hasEdgeTransformGet' [-Wunused-function]
+ 5573 | hasEdgeTransformGet(void)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5580:1: warning: unused function 'hasEdgeTransformPut' [-Wunused-function]
+ 5580 | hasEdgeTransformPut(sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5664:1: warning: unused function 'incrementPointby' [-Wunused-function]
+ 5664 | incrementPointby(int *point, sqInt delta)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5673:1: warning: unused function 'incrementStatby' [-Wunused-function]
+ 5673 | incrementStatby(sqInt statIndex, sqInt value)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5886:1: warning: unused function 'isBezier' [-Wunused-function]
+ 5886 | isBezier(sqInt bezier)
+      | ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5906:1: warning: unused function 'isFillColor' [-Wunused-function]
+ 5906 | isFillColor(sqInt fill)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5925:1: warning: unused function 'isFill' [-Wunused-function]
+ 5925 | isFill(sqInt fill)
+      | ^~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5933:1: warning: unused function 'isLine' [-Wunused-function]
+ 5933 | isLine(sqInt line)
+      | ^~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5940:1: warning: unused function 'isObject' [-Wunused-function]
+ 5940 | isObject(sqInt obj)
+      | ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5948:1: warning: unused function 'isRealFill' [-Wunused-function]
+ 5948 | isRealFill(sqInt fill)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5955:1: warning: unused function 'isStackEntry' [-Wunused-function]
+ 5955 | isStackEntry(sqInt entry)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5963:1: warning: unused function 'isStackIndex' [-Wunused-function]
+ 5963 | isStackIndex(sqInt index)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5971:1: warning: unused function 'isWideBezier' [-Wunused-function]
+ 5971 | isWideBezier(sqInt bezier)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5979:1: warning: unused function 'isWideLine' [-Wunused-function]
+ 5979 | isWideLine(sqInt line)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5987:1: warning: unused function 'isWide' [-Wunused-function]
+ 5987 | isWide(sqInt object)
+      | ^~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:5994:1: warning: unused function 'lastExportedEdgeGet' [-Wunused-function]
+ 5994 | lastExportedEdgeGet(void)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6001:1: warning: unused function 'lastExportedEdgePut' [-Wunused-function]
+ 6001 | lastExportedEdgePut(sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6008:1: warning: unused function 'lastExportedFillGet' [-Wunused-function]
+ 6008 | lastExportedFillGet(void)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6015:1: warning: unused function 'lastExportedFillPut' [-Wunused-function]
+ 6015 | lastExportedFillPut(sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6022:1: warning: unused function 'lastExportedLeftXGet' [-Wunused-function]
+ 6022 | lastExportedLeftXGet(void)
+      | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6029:1: warning: unused function 'lastExportedLeftXPut' [-Wunused-function]
+ 6029 | lastExportedLeftXPut(sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6036:1: warning: unused function 'lastExportedRightXGet' [-Wunused-function]
+ 6036 | lastExportedRightXGet(void)
+      | ^~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6043:1: warning: unused function 'lastExportedRightXPut' [-Wunused-function]
+ 6043 | lastExportedRightXPut(sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6050:1: warning: unused function 'lineEndXOf' [-Wunused-function]
+ 6050 | lineEndXOf(sqInt line)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6057:1: warning: unused function 'lineEndXOfput' [-Wunused-function]
+ 6057 | lineEndXOfput(sqInt line, sqInt value)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6064:1: warning: unused function 'lineEndYOf' [-Wunused-function]
+ 6064 | lineEndYOf(sqInt line)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6071:1: warning: unused function 'lineEndYOfput' [-Wunused-function]
+ 6071 | lineEndYOfput(sqInt line, sqInt value)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6078:1: warning: unused function 'lineErrorAdjDownOf' [-Wunused-function]
+ 6078 | lineErrorAdjDownOf(sqInt line)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6085:1: warning: unused function 'lineErrorAdjDownOfput' [-Wunused-function]
+ 6085 | lineErrorAdjDownOfput(sqInt line, sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6092:1: warning: unused function 'lineErrorAdjUpOf' [-Wunused-function]
+ 6092 | lineErrorAdjUpOf(sqInt line)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6099:1: warning: unused function 'lineErrorAdjUpOfput' [-Wunused-function]
+ 6099 | lineErrorAdjUpOfput(sqInt line, sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6106:1: warning: unused function 'lineErrorOf' [-Wunused-function]
+ 6106 | lineErrorOf(sqInt line)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6113:1: warning: unused function 'lineErrorOfput' [-Wunused-function]
+ 6113 | lineErrorOfput(sqInt line, sqInt value)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6120:1: warning: unused function 'lineXDirectionOf' [-Wunused-function]
+ 6120 | lineXDirectionOf(sqInt line)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6127:1: warning: unused function 'lineXDirectionOfput' [-Wunused-function]
+ 6127 | lineXDirectionOfput(sqInt line, sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6134:1: warning: unused function 'lineXIncrementOf' [-Wunused-function]
+ 6134 | lineXIncrementOf(sqInt line)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6141:1: warning: unused function 'lineXIncrementOfput' [-Wunused-function]
+ 6141 | lineXIncrementOfput(sqInt line, sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6148:1: warning: unused function 'lineYDirectionOf' [-Wunused-function]
+ 6148 | lineYDirectionOf(sqInt line)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6155:1: warning: unused function 'lineYDirectionOfput' [-Wunused-function]
+ 6155 | lineYDirectionOfput(sqInt line, sqInt value)
+      | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6224:1: warning: unused function 'loadArrayPolygonnPointsfilllineWidthlineFill' [-Wunused-function]
+ 6224 | loadArrayPolygonnPointsfilllineWidthlineFill(sqInt points, sqInt nPoints, sqInt fillIndex, sqInt lineWidth, sqInt lineFill)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6678:1: warning: unused function 'loadBitmapFillcolormaptilefromalongnormalxIndex' [-Wunused-function]
+ 6678 | loadBitmapFillcolormaptilefromalongnormalxIndex(sqInt formOop, sqInt cmOop, sqInt tileFlag, int *point1, int *point2, int *point3, sqInt xIndex)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6821:1: warning: unused function 'loadColorTransformFrom' [-Wunused-function]
+ 6821 | loadColorTransformFrom(sqInt transformOop)
+      | ^~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:6848:1: warning: unused function 'loadCompressedSegmentfromshortleftFillrightFilllineWidthlineColor' [-Wunused-function]
+ 6848 | loadCompressedSegmentfromshortleftFillrightFilllineWidthlineColor(sqInt segmentIndex, sqInt points, sqInt pointsShort, sqInt leftFill, sqInt rightFill, sqInt lineWidth, sqInt lineFill)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:7855:1: warning: unused function 'loadLinefromtooffsetleftFillrightFill' [-Wunused-function]
+ 7855 | loadLinefromtooffsetleftFillrightFill(sqInt line, int *point1, int *point2, sqInt yOffset, sqInt leftFill, sqInt rightFill)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:8080:1: warning: unused function 'loadPointIntAtfrom' [-Wunused-function]
+ 8080 | loadPointIntAtfrom(sqInt index, sqInt intArray)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:8090:1: warning: unused function 'loadPointShortAtfrom' [-Wunused-function]
+ 8090 | loadPointShortAtfrom(sqInt index, sqInt shortArray)
+      | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:8134:1: warning: unused function 'loadPolygonnPointsfilllineWidthlineFillpointsShort' [-Wunused-function]
+ 8134 | loadPolygonnPointsfilllineWidthlineFillpointsShort(int *points, sqInt nPoints, sqInt fillIndex, sqInt lineWidth, sqInt lineFill, sqInt isShort)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:8303:1: warning: unused function 'loadRectanglelineFillleftFillrightFill' [-Wunused-function]
+ 8303 | loadRectanglelineFillleftFillrightFill(sqInt lineWidth, sqInt lineFill, sqInt leftFill, sqInt rightFill)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:8960:1: warning: unused function 'magicNumberGet' [-Wunused-function]
+ 8960 | magicNumberGet(void)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:8967:1: warning: unused function 'magicNumberPut' [-Wunused-function]
+ 8967 | magicNumberPut(sqInt value)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:8974:1: warning: unused function 'makeRectFromPoints' [-Wunused-function]
+ 8974 | makeRectFromPoints(void)
+      | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:8985:1: warning: unused function 'makeUnsignedFrom' [-Wunused-function]
+ 8985 | makeUnsignedFrom(sqInt someIntegerValue)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9045:1: warning: unused function 'needsFlush' [-Wunused-function]
+ 9045 | needsFlush(void)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9052:1: warning: unused function 'needsFlushGet' [-Wunused-function]
+ 9052 | needsFlushGet(void)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9059:1: warning: unused function 'needsFlushPut' [-Wunused-function]
+ 9059 | needsFlushPut(sqInt value)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9066:1: warning: unused function 'objectHeaderOf' [-Wunused-function]
+ 9066 | objectHeaderOf(sqInt obj)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9077:1: warning: unused function 'objectIndexOf' [-Wunused-function]
+ 9077 | objectIndexOf(sqInt obj)
+      | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9084:1: warning: unused function 'objectIndexOfput' [-Wunused-function]
+ 9084 | objectIndexOfput(sqInt obj, sqInt value)
+      | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9091:1: warning: unused function 'objectLengthOf' [-Wunused-function]
+ 9091 | objectLengthOf(sqInt obj)
+      | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9098:1: warning: unused function 'objectLengthOfput' [-Wunused-function]
+ 9098 | objectLengthOfput(sqInt obj, sqInt value)
+      | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9105:1: warning: unused function 'objectTypeOf' [-Wunused-function]
+ 9105 | objectTypeOf(sqInt obj)
+      | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9112:1: warning: unused function 'objectTypeOfput' [-Wunused-function]
+ 9112 | objectTypeOfput(sqInt obj, sqInt value)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9119:1: warning: unused function 'objStartGet' [-Wunused-function]
+ 9119 | objStartGet(void)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9126:1: warning: unused function 'objStartPut' [-Wunused-function]
+ 9126 | objStartPut(sqInt value)
+      | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9133:1: warning: unused function 'objUsedGet' [-Wunused-function]
+ 9133 | objUsedGet(void)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9140:1: warning: unused function 'objUsedPut' [-Wunused-function]
+ 9140 | objUsedPut(sqInt value)
+      | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9147:1: warning: unused function 'objat' [-Wunused-function]
+ 9147 | objat(sqInt object, sqInt index)
+      | ^~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9154:1: warning: unused function 'objatput' [-Wunused-function]
+ 9154 | objatput(sqInt object, sqInt index, sqInt value)
+      | ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9165:1: warning: unused function 'offsetFromWidth' [-Wunused-function]
+ 9165 | offsetFromWidth(sqInt lineWidth)
+      | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9172:1: warning: unused function 'point1Get' [-Wunused-function]
+ 9172 | point1Get(void)
+      | ^~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9179:1: warning: unused function 'point2Get' [-Wunused-function]
+ 9179 | point2Get(void)
+      | ^~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9186:1: warning: unused function 'point3Get' [-Wunused-function]
+ 9186 | point3Get(void)
+      | ^~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:9193:1: warning: unused function 'point4Get' [-Wunused-function]
+ 9193 | point4Get(void)
+      | ^~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12269:1: warning: unused function 'quickRemoveInvalidFillsAt' [-Wunused-function]
+ 12269 | quickRemoveInvalidFillsAt(sqInt leftX)
+       | ^~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12415:1: warning: unused function 'repeatValuemax' [-Wunused-function]
+ 12415 | repeatValuemax(sqInt delta, sqInt maxValue)
+       | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12482:1: warning: unused function 'returnWideBezierFill' [-Wunused-function]
+ 12482 | returnWideBezierFill(void)
+       | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12489:1: warning: unused function 'returnWideBezierWidth' [-Wunused-function]
+ 12489 | returnWideBezierWidth(void)
+       | ^~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12499:1: warning: unused function 'returnWideLineFill' [-Wunused-function]
+ 12499 | returnWideLineFill(void)
+       | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12509:1: warning: unused function 'returnWideLineWidth' [-Wunused-function]
+ 12509 | returnWideLineWidth(void)
+       | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12655:1: warning: unused function 'shortRunLengthAtfrom' [-Wunused-function]
+ 12655 | shortRunLengthAtfrom(sqInt i, sqInt runArray)
+       | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12667:1: warning: unused function 'shortRunValueAtfrom' [-Wunused-function]
+ 12667 | shortRunValueAtfrom(sqInt i, sqInt runArray)
+       | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12735:1: warning: unused function 'sortGlobalEdgeTable' [-Wunused-function]
+ 12735 | sortGlobalEdgeTable(void)
+       | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12743:1: warning: unused function 'spanEndAAGet' [-Wunused-function]
+ 12743 | spanEndAAGet(void)
+       | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12750:1: warning: unused function 'spanEndAAPut' [-Wunused-function]
+ 12750 | spanEndAAPut(sqInt value)
+       | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12757:1: warning: unused function 'spanEndGet' [-Wunused-function]
+ 12757 | spanEndGet(void)
+       | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12764:1: warning: unused function 'spanEndPut' [-Wunused-function]
+ 12764 | spanEndPut(sqInt value)
+       | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12771:1: warning: unused function 'spanSizeGet' [-Wunused-function]
+ 12771 | spanSizeGet(void)
+       | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12778:1: warning: unused function 'spanSizePut' [-Wunused-function]
+ 12778 | spanSizePut(sqInt value)
+       | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12785:1: warning: unused function 'spanStartGet' [-Wunused-function]
+ 12785 | spanStartGet(void)
+       | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12792:1: warning: unused function 'spanStartPut' [-Wunused-function]
+ 12792 | spanStartPut(sqInt value)
+       | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12799:1: warning: unused function 'squaredLengthOfwith' [-Wunused-function]
+ 12799 | squaredLengthOfwith(sqInt deltaX, sqInt deltaY)
+       | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12806:1: warning: unused function 'stackFillDepth' [-Wunused-function]
+ 12806 | stackFillDepth(sqInt index)
+       | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12813:1: warning: unused function 'stackFillDepthput' [-Wunused-function]
+ 12813 | stackFillDepthput(sqInt index, sqInt value)
+       | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12820:1: warning: unused function 'stackFillEntryLength' [-Wunused-function]
+ 12820 | stackFillEntryLength(void)
+       | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12827:1: warning: unused function 'stackFillRightX' [-Wunused-function]
+ 12827 | stackFillRightX(sqInt index)
+       | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12834:1: warning: unused function 'stackFillRightXput' [-Wunused-function]
+ 12834 | stackFillRightXput(sqInt index, sqInt value)
+       | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12841:1: warning: unused function 'stackFillSize' [-Wunused-function]
+ 12841 | stackFillSize(void)
+       | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12848:1: warning: unused function 'stackFillValue' [-Wunused-function]
+ 12848 | stackFillValue(sqInt index)
+       | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12855:1: warning: unused function 'stackFillValueput' [-Wunused-function]
+ 12855 | stackFillValueput(sqInt index, sqInt value)
+       | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12862:1: warning: unused function 'stateGet' [-Wunused-function]
+ 12862 | stateGet(void)
+       | ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12869:1: warning: unused function 'statePut' [-Wunused-function]
+ 12869 | statePut(sqInt value)
+       | ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:12881:1: warning: unused function 'stepToFirstBezier' [-Wunused-function]
+ 12881 | stepToFirstBezier(void)
+       | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13019:1: warning: unused function 'stepToFirstLine' [-Wunused-function]
+ 13019 | stepToFirstLine(void)
+       | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13126:1: warning: unused function 'stepToFirstWideBezier' [-Wunused-function]
+ 13126 | stepToFirstWideBezier(void)
+       | ^~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13230:1: warning: unused function 'stepToFirstWideLine' [-Wunused-function]
+ 13230 | stepToFirstWideLine(void)
+       | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13374:1: warning: unused function 'stepToNextBezier' [-Wunused-function]
+ 13374 | stepToNextBezier(void)
+       | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13420:1: warning: unused function 'stepToNextBezierForwardat' [-Wunused-function]
+ 13420 | stepToNextBezierForwardat(int *updateData, sqInt yValue)
+       | ^~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13501:1: warning: unused function 'stepToNextLine' [-Wunused-function]
+ 13501 | stepToNextLine(void)
+       | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13671:1: warning: unused function 'stepToNextWideLine' [-Wunused-function]
+ 13671 | stepToNextWideLine(void)
+       | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13799:1: warning: unused function 'stopBecauseOf' [-Wunused-function]
+ 13799 | stopBecauseOf(sqInt stopReason)
+       | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13808:1: warning: unused function 'stopReasonGet' [-Wunused-function]
+ 13808 | stopReasonGet(void)
+       | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13815:1: warning: unused function 'stopReasonPut' [-Wunused-function]
+ 13815 | stopReasonPut(sqInt value)
+       | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13839:1: warning: unused function 'storeEngineStateInto' [-Wunused-function]
+ 13839 | storeEngineStateInto(sqInt oop)
+       | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:13915:1: warning: unused function 'storeStopStateIntoEdgefill' [-Wunused-function]
+ 13915 | storeStopStateIntoEdgefill(sqInt edgeOop, sqInt fillOop)
+       | ^~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14319:1: warning: unused function 'topFillDepth' [-Wunused-function]
+ 14319 | topFillDepth(void)
+       | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14330:1: warning: unused function 'topFillDepthPut' [-Wunused-function]
+ 14330 | topFillDepthPut(sqInt value)
+       | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14341:1: warning: unused function 'topFillRightX' [-Wunused-function]
+ 14341 | topFillRightX(void)
+       | ^~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14352:1: warning: unused function 'topFillRightXPut' [-Wunused-function]
+ 14352 | topFillRightXPut(sqInt value)
+       | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14363:1: warning: unused function 'topFillValue' [-Wunused-function]
+ 14363 | topFillValue(void)
+       | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14374:1: warning: unused function 'topFillValuePut' [-Wunused-function]
+ 14374 | topFillValuePut(sqInt value)
+       | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14453:1: warning: unused function 'transformPoints' [-Wunused-function]
+ 14453 | transformPoints(sqInt n)
+       | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14582:1: warning: unused function 'transformPointXyinto' [-Wunused-function]
+ 14582 | transformPointXyinto(double xValue, double yValue, int *dstPoint)
+       | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14604:1: warning: unused function 'transformPoint' [-Wunused-function]
+ 14604 | transformPoint(int *point)
+       | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14643:1: warning: unused function 'transformPointinto' [-Wunused-function]
+ 14643 | transformPointinto(sqInt srcPoint, sqInt dstPoint)
+       | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14857:1: warning: unused function 'wbSizeGet' [-Wunused-function]
+ 14857 | wbSizeGet(void)
+       | ^~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14864:1: warning: unused function 'wbSizePut' [-Wunused-function]
+ 14864 | wbSizePut(sqInt value)
+       | ^~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14871:1: warning: unused function 'wbStackClear' [-Wunused-function]
+ 14871 | wbStackClear(void)
+       | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14880:1: warning: unused function 'wbStackPop' [-Wunused-function]
+ 14880 | wbStackPop(sqInt nItems)
+       | ^~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14901:1: warning: unused function 'wbStackSize' [-Wunused-function]
+ 14901 | wbStackSize(void)
+       | ^~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14908:1: warning: unused function 'wbStackValue' [-Wunused-function]
+ 14908 | wbStackValue(sqInt index)
+       | ^~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14915:1: warning: unused function 'wbStackValueput' [-Wunused-function]
+ 14915 | wbStackValueput(sqInt index, sqInt value)
+       | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14922:1: warning: unused function 'wbTopGet' [-Wunused-function]
+ 14922 | wbTopGet(void)
+       | ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14929:1: warning: unused function 'wbTopPut' [-Wunused-function]
+ 14929 | wbTopPut(sqInt value)
+       | ^~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14936:1: warning: unused function 'wideBezierEntryOf' [-Wunused-function]
+ 14936 | wideBezierEntryOf(sqInt line)
+       | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14944:1: warning: unused function 'wideBezierEntryOfput' [-Wunused-function]
+ 14944 | wideBezierEntryOfput(sqInt line, sqInt value)
+       | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14952:1: warning: unused function 'wideBezierExitOf' [-Wunused-function]
+ 14952 | wideBezierExitOf(sqInt line)
+       | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14960:1: warning: unused function 'wideBezierExitOfput' [-Wunused-function]
+ 14960 | wideBezierExitOfput(sqInt line, sqInt value)
+       | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14968:1: warning: unused function 'wideBezierExtentOf' [-Wunused-function]
+ 14968 | wideBezierExtentOf(sqInt bezier)
+       | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14976:1: warning: unused function 'wideBezierExtentOfput' [-Wunused-function]
+ 14976 | wideBezierExtentOfput(sqInt bezier, sqInt value)
+       | ^~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:14992:1: warning: unused function 'wideBezierFillOfput' [-Wunused-function]
+ 14992 | wideBezierFillOfput(sqInt bezier, sqInt value)
+       | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:15000:1: warning: unused function 'wideBezierUpdateDataOf' [-Wunused-function]
+ 15000 | wideBezierUpdateDataOf(sqInt bezier)
+       | ^~~~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:15015:1: warning: unused function 'wideBezierWidthOfput' [-Wunused-function]
+ 15015 | wideBezierWidthOfput(sqInt line, sqInt value)
+       | ^~~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:15023:1: warning: unused function 'wideLineEntryOf' [-Wunused-function]
+ 15023 | wideLineEntryOf(sqInt line)
+       | ^~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:15031:1: warning: unused function 'wideLineEntryOfput' [-Wunused-function]
+ 15031 | wideLineEntryOfput(sqInt line, sqInt value)
+       | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:15039:1: warning: unused function 'wideLineExitOf' [-Wunused-function]
+ 15039 | wideLineExitOf(sqInt line)
+       | ^~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:15047:1: warning: unused function 'wideLineExitOfput' [-Wunused-function]
+ 15047 | wideLineExitOfput(sqInt line, sqInt value)
+       | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:15055:1: warning: unused function 'wideLineExtentOf' [-Wunused-function]
+ 15055 | wideLineExtentOf(sqInt line)
+       | ^~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:15063:1: warning: unused function 'wideLineExtentOfput' [-Wunused-function]
+ 15063 | wideLineExtentOfput(sqInt line, sqInt value)
+       | ^~~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:15079:1: warning: unused function 'wideLineFillOfput' [-Wunused-function]
+ 15079 | wideLineFillOfput(sqInt line, sqInt value)
+       | ^~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:15095:1: warning: unused function 'wideLineWidthOfput' [-Wunused-function]
+ 15095 | wideLineWidthOfput(sqInt line, sqInt value)
+       | ^~~~~~~~~~~~~~~~~~
+C:/temp/src/iospharo-jit/src/vm/plugins/B2DPlugin.c:15103:1: warning: unused function 'workBufferPut' [-Wunused-function]
+ 15103 | workBufferPut(sqInt wbOop)
+       | ^~~~~~~~~~~~~
+352 warnings generated.
+[138/153] Building CXX object third_party/asmjit/CMakeFiles/asmjit.dir/asmjit/ujit/unicompiler_x86.cpp.obj
+clang++: warning: argument unused during compilation: '-fno-semantic-interposition' [-Wunused-command-line-argument]
+[139/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/platform/windows.cpp.obj
+[140/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/testlib/registerCallback.c.obj
+[141/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/testlib/structures.c.obj
+[142/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/testlib/callbacks.c.obj
+[143/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/testlib/callback_types.c.obj
+[144/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/testlib/callout.c.obj
+[145/153] Building C object CMakeFiles/PharoVMCore.dir/src/vm/plugins/testlib/basic_types.c.obj
+[146/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/sista/SistaRuntime.cpp.obj
+[147/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/WorldRenderer_linux_stub.cpp.obj
+In file included from C:/temp/src/iospharo-jit/src/vm/WorldRenderer_linux_stub.cpp:15:
+C:/temp/src/iospharo-jit/src/vm/WorldRenderer.hpp:72:19: warning: private field 'memory_' is not used [-Wunused-private-field]
+   72 |     ObjectMemory& memory_;
+      |                   ^
+1 warning generated.
+[148/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/FFI.cpp.obj
+[149/153] Building CXX object CMakeFiles/test_load_image.dir/src/vm/test_load_image.cpp.obj
+FAILED: [code=1] CMakeFiles/test_load_image.dir/src/vm/test_load_image.cpp.obj 
+C:\msys64\clang64\bin\clang++.exe -DPHARO_JIT_ENABLED=0 -DPHARO_WITH_CRYPTO=0 -IC:/temp/src/iospharo-jit/src/vm -IC:/temp/src/iospharo-jit/src/vm/jit -IC:/temp/src/iospharo-jit/src/vm/plugins -IC:/temp/src/iospharo-jit/src/vm/plugins/jpeg -IC:/temp/src/iospharo-jit/src/vm/plugins/testlib -IC:/temp/src/iospharo-jit/src/platform -IC:/temp/src/iospharo-jit/third_party/asmjit -O2 -g -DNDEBUG -std=gnu++17 -DASMJIT_STATIC -MD -MT CMakeFiles/test_load_image.dir/src/vm/test_load_image.cpp.obj -MF CMakeFiles\test_load_image.dir\src\vm\test_load_image.cpp.obj.d -o CMakeFiles/test_load_image.dir/src/vm/test_load_image.cpp.obj -c C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp
+In file included from C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp:9:
+C:/temp/src/iospharo-jit/src/vm/Interpreter.hpp:3334:5: error: unknown type name 'sigjmp_buf'; did you mean 'jmp_buf'?
+ 3334 |     sigjmp_buf reenterInterpreter_;
+      |     ^~~~~~~~~~
+      |     jmp_buf
+C:/msys64/clang64/include/setjmp.h:202:19: note: 'jmp_buf' declared here
+  202 |   typedef _JBTYPE jmp_buf[_JBLEN];
+      |                   ^
+C:/temp/src/iospharo-jit/src/vm/test_load_image.cpp:24:10: fatal error: 'execinfo.h' file not found
+   24 | #include <execinfo.h>
+      |          ^~~~~~~~~~~~
+2 errors generated.
+[150/153] Linking CXX static library third_party\asmjit\libasmjit.a
+[151/153] Building CXX object CMakeFiles/PharoVMCore.dir/src/vm/jit/sista/SistaBuilder.cpp.obj
+ninja: build stopped: cannot make progress due to previous errors.

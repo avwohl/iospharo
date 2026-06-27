@@ -74,6 +74,7 @@
 #include <chrono>
 #include <dlfcn.h>
 #include <csetjmp>
+#include "../platform/win_compat.h"  // sigjmp_buf/backtrace shims on Windows (no-op elsewhere)
 #include <cstdint>
 #include <cstdio>
 #include <functional>

@@ -35,7 +35,9 @@
 #include <cmath>
 #include <csetjmp>
 #include <csignal>
-#include <execinfo.h>
+#ifndef _WIN32
+#include <execinfo.h>   // backtrace(); stubbed via win_compat.h on Windows
+#endif
 #include <cxxabi.h>
 #include <iostream>
 #include <iomanip>

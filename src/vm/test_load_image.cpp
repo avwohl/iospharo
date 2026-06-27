@@ -21,16 +21,39 @@
 #include <csignal>
 #include <csetjmp>
 #include <sys/stat.h>
-#include <execinfo.h>
-#include <libgen.h>   // dirname
+#ifndef _WIN32
+#include <execinfo.h>   // backtrace (stubbed via win_compat.h on Windows)
+#include <libgen.h>     // dirname  (no MinGW equivalent; see win shim below)
+#endif
 #include <unistd.h>   // chdir
-#include <unistd.h>
 #include <thread>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
 #include <atomic>
 #include <fstream>
+
+#ifdef _WIN32
+#include <cstdlib>   // _fullpath
+// dirname / realpath shims (no MinGW equivalents).  Only the small subset
+// this file uses: dirname() for the imagePath chdir, realpath(path, nullptr)
+// to canonicalize the image + executable paths.
+static inline char* dirname(char* path) {
+    if (!path || !*path) return const_cast<char*>(".");
+    char* lastSep = nullptr;
+    for (char* p = path; *p; ++p)
+        if (*p == '/' || *p == '\\') lastSep = p;
+    if (!lastSep) return const_cast<char*>(".");
+    if (lastSep == path) { path[1] = '\0'; return path; }  // root
+    *lastSep = '\0';
+    return path;
+}
+static inline char* realpath(const char* path, char* resolved) {
+    // _fullpath mallocs when resolved==nullptr (caller frees), matching
+    // realpath(path, nullptr) — the only form this file uses.
+    return _fullpath(resolved, path, resolved ? 260 : 0);
+}
+#endif
 
 #ifdef __APPLE__
 #include <dlfcn.h>
@@ -493,6 +516,7 @@ void testOopTagging() {
     std::cout << "  Character tag:    " << (ch.rawBits() & 7) << " (expected 3)" << std::endl;
 }
 
+#ifndef _WIN32
 static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
     if (g_sigsegvRecoveryEnabled) {
         // Recoverable SIGSEGV during executeFromContext - jump back
@@ -754,6 +778,7 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
     backtrace_symbols_fd(callstack, frames, 2);
     _exit(139);
 }
+#endif  // !_WIN32 (POSIX SIGSEGV handler; Windows uses default crash behavior for milestone 1)
 
 static void sigtermHandler(int) {
     if (gTestInterpreter) gTestInterpreter->dumpJITStats();
@@ -761,6 +786,7 @@ static void sigtermHandler(int) {
 }
 
 int main(int argc, char* argv[]) {
+#ifndef _WIN32
     struct sigaction sa;
     sa.sa_sigaction = sigsegvAction;
     sa.sa_flags = SA_SIGINFO;
@@ -768,6 +794,7 @@ int main(int argc, char* argv[]) {
     sigaction(SIGSEGV, &sa, nullptr);
     sigaction(SIGBUS, &sa, nullptr);
     sigaction(SIGILL, &sa, nullptr);
+#endif  // !_WIN32 — SIGSEGV/BUS/ILL recovery is POSIX-only (milestone 1)
     signal(SIGTERM, sigtermHandler);
 #ifdef __APPLE__
     activateMacOSApp();

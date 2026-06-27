@@ -30,7 +30,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <sys/time.h>
+#ifndef _WIN32
+#include <sys/time.h>   // setitimer/itimerval — POSIX-only
+#endif
 #include <unistd.h>
 #include <vector>
 
@@ -53,6 +55,7 @@ static std::atomic<uint64_t> g_droppedNoInterp{0};
 Interpreter* g_profilingInterp = nullptr;
 bool g_profilerActive = false;
 
+#ifndef _WIN32
 void sigprofHandler(int /*sig*/) {
     Interpreter* interp = g_profilingInterp;
     if (!interp) { g_droppedNoInterp.fetch_add(1, std::memory_order_relaxed); return; }
@@ -94,6 +97,7 @@ void sigprofHandler(int /*sig*/) {
     }
     g_overflowCount.fetch_add(1, std::memory_order_relaxed);
 }
+#endif  // !_WIN32
 
 }  // namespace
 
@@ -101,6 +105,13 @@ void Profiler::enable(Interpreter* interp) {
     if (g_profilerActive) return;
     g_profilingInterp = interp;
 
+#ifdef _WIN32
+    // SIGPROF/setitimer sampling is POSIX-only.  The profiler is a
+    // diagnostic (PHARO_PROFILE-gated) feature, so leave it disarmed on
+    // Windows rather than emulate it with a timer thread (milestone 1).
+    fprintf(stderr, "[PROFILE] sampling profiler not supported on Windows\n");
+    return;
+#else
     // Install signal handler.  SA_RESTART = restart interrupted syscalls.
     struct sigaction sa{};
     sa.sa_handler = sigprofHandler;
@@ -118,12 +129,14 @@ void Profiler::enable(Interpreter* interp) {
 
     g_profilerActive = true;
     fprintf(stderr, "[PROFILE] enabled, interval=%dus\n", us);
+#endif
 }
 
 void Profiler::dump() {
     if (!g_profilerActive) return;
 
     // Disable timer first.
+#ifndef _WIN32
     struct itimerval timer{};
     setitimer(ITIMER_PROF, &timer, nullptr);
 
@@ -131,6 +144,7 @@ void Profiler::dump() {
     struct sigaction sa{};
     sa.sa_handler = SIG_IGN;
     sigaction(SIGPROF, &sa, nullptr);
+#endif
     g_profilerActive = false;
 
     // Collect non-empty entries.
