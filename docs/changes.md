@@ -2,6 +2,20 @@
 
 2026-06-27
 
+## win: JIT works on Windows + SUnit parity (~3800 tests, 0 fail/0 err)
+
+The x86-64 JIT is now enabled by default on Windows (parity with Linux/macOS).
+The Win64 ABI fix (AsmjitT1.cpp): Tier-1 open-coded helper calls in System V
+order (args RDI/RSI/..., no shadow space); on Win64 the jit_rt_* helpers use
+the MS ABI (RCX/RDX/R8/R9, 32-byte shadow space), so JIT code corrupted state
+on the at:/size paths. Added platform-gated emit infra (kCArg0..kCArg4
+arg-register aliases + emitCallCHelper_x86 shadow-space bracket); SysV emit
+reduces byte-for-byte to the original (Linux/macOS unchanged). Tier-2/Sista use
+asmjit's high-level Compiler (ABI auto-derived). Validated ~3800 Kernel/
+Collections/Exception/Context/Stream/Reflection tests with the JIT on, 0
+failures / 0 errors. Known not-at-parity items tracked in docs/deferred.md
+(sockets, crypto, SDL2/GUI, profiler, full 19k suite, ProcessTest BCR spin).
+
 ## win: VM evaluates Smalltalk correctly on Windows (EVAL-RESULT=42)
 
 Milestone 1 core goal reached: the clang/LLVM-MinGW build loads a standard
