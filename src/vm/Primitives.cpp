@@ -28702,6 +28702,22 @@ PrimitiveResult Interpreter::primitivePlatToStPath(int argCount) {
     } else {
         memcpy(result.asObjectPtr()->bytes(), normalized.data(), normalized.size());
     }
+#elif defined(_WIN32)
+    // Windows platform path encoding is UTF-16LE; produce UTF-8 for the image.
+    int wcount = (int)(len / 2);
+    int u8len = wcount ? WideCharToMultiByte(CP_UTF8, 0,
+                  reinterpret_cast<const wchar_t*>(pathHdr->bytes()), wcount,
+                  nullptr, 0, nullptr, nullptr) : 0;
+    Oop result = memory_.allocateBytes(classIndex, (size_t)u8len);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    pathOop = stackTop();
+    pathHdr = pathOop.asObjectPtr();
+    if (u8len > 0) {
+        WideCharToMultiByte(CP_UTF8, 0,
+            reinterpret_cast<const wchar_t*>(pathHdr->bytes()), wcount,
+            reinterpret_cast<char*>(result.asObjectPtr()->bytes()), u8len, nullptr, nullptr);
+    }
 #else
     Oop result = memory_.allocateBytes(classIndex, len);
     if (result.isNil()) return PrimitiveResult::Failure;
@@ -28745,6 +28761,21 @@ PrimitiveResult Interpreter::primitiveStToPlatPath(int argCount) {
         memcpy(result.asObjectPtr()->bytes(), pathHdr->bytes(), len);
     } else {
         memcpy(result.asObjectPtr()->bytes(), normalized.data(), normalized.size());
+    }
+#elif defined(_WIN32)
+    // Image hands us UTF-8; Windows platform path encoding is UTF-16LE.
+    int wlen = len ? MultiByteToWideChar(CP_UTF8, 0,
+                  reinterpret_cast<const char*>(pathHdr->bytes()), (int)len,
+                  nullptr, 0) : 0;
+    Oop result = memory_.allocateBytes(classIndex, (size_t)wlen * 2);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    pathOop = stackTop();
+    pathHdr = pathOop.asObjectPtr();
+    if (wlen > 0) {
+        MultiByteToWideChar(CP_UTF8, 0,
+            reinterpret_cast<const char*>(pathHdr->bytes()), (int)len,
+            reinterpret_cast<wchar_t*>(result.asObjectPtr()->bytes()), wlen);
     }
 #else
     Oop result = memory_.allocateBytes(classIndex, len);

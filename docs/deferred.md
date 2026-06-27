@@ -23,6 +23,19 @@ gaps vs macOS/Linux.
     normal operation. Runtime-test before relying on those knobs on Windows.
 
 ### SUnit parity (JIT on, vs Linux/macOS 99.1% baseline)
+
+**Windows-sensitive catalog (2026-06-27).** After the file subsystem reached
+100%, ran all 245 Windows-sensitive TestCase subclasses (file/OS/process/time/
+path/FFI/socket) out of the full 2047 to map the remaining gaps. Buckets, each
+detailed in its section below: file subsystem = 100% (long-path + isHidden +
+FILE_SHARE_DELETE + logical-drives all fixed); FFI ABI fixed (+11), FFI struct
+tests need the TestLibrary.dll fixture; platform-path UTF-16 fixed (+2),
+nLink/permissions niche-deferred; sockets/HTTP/TLS (~95 tests) await the
+winsock2 milestone and fail-fast (no hangs); 8 GUI/headless presenter+debugger
+tests HANG (GUI milestone); MicFileResourceReferenceTest (16) hits a BitBlt
+"Fraction" graphics bug. Net: every non-green Windows item is now either fixed
+or categorized below with a root cause.
+
 Validated ~3800 Kernel/Collections/Exceptions/Context/Stream/Reflection tests
 on Windows with the JIT enabled, 0 failures / 0 errors (run via `eval "(X suite
 run) printString"` on a fresh Pharo 13 image). Batches: numbers+collections
@@ -226,6 +239,38 @@ isolation (no suite watchdog):
   it) — the VM's FFI callout path itself is proven working by
   FFICalloutMethodBuilderTest. To run them, build/stage the iceberg
   `pharo-ffi`/`libtcommon` TestLibrary.dll next to the exe.
+
+### File attributes (Windows semantics)
+- [x] **`DiskFileAttributesTest>>testToPlatformPath` / `testFromPlatformPath`** —
+  FIXED. `File toPlatformPath:` = `primToPlatformPath:` (= named primitive
+  `primitiveStToPlatPath`); on Windows the platform path encoding is UTF-16LE but
+  our primitive returned the UTF-8 bytes unchanged (identity, correct only on
+  POSIX). Implemented UTF-8<->UTF-16LE conversion in `primitiveStToPlatPath`
+  (MultiByteToWideChar) and `primitivePlatToStPath` (WideCharToMultiByte) under
+  `#elif defined(_WIN32)`; macOS NFC/NFD and POSIX identity branches unchanged.
+  DiskFileAttributesTest 20->22; DiskFileSystemTest still 59/59.
+- [ ] **`testNLink` (DiskFileAttributesTest + FileReferenceAttributeTest) /
+  `testPermissions`** — 3 niche tests that assert Windows must RAISE on
+  unsupported attributes: `file numberOfHardLinks` -> `FileAttributeNotSupported`,
+  `fileReference permissions: p` -> `Error`.  `FileSystemDirectoryEntry>>
+  numberOfHardLinks` already always raises, but the `File`-level path returns our
+  stat `st_nlink`/mode instead of signalling unsupported.  Matching the reference
+  Windows VM means leaving the nlink / permission stat slots absent/nil so the
+  image raises FileAttributeNotSupported — a subtle stat-array-contract change for
+  3 niche tests.  Deferred.
+
+### GUI / headless display — tests that HANG (not just fail)
+- [ ] A focused scan of 245 Windows-sensitive classes (2026-06-27) found 8 that
+  HANG under a 30s isolation timeout (a hang is worse than a failure — it wedges a
+  naive suite run; the official runner's per-test watchdog masks it).  All are the
+  GUI/headless gap (Spec presenters / debugger tree-builders block on a World /
+  display that does not exist headless — same family as the known CircleMorphTest
+  hang): `StOpenFilePresenterTest`, `StOpenDirectoryPresenterTest`,
+  `StNavigationSystemTest`, `StUnifiedProcessorTest`,
+  `StDebuggerStackCommandTreeBuilderTest`, `StDebuggerToolbarCommandTreeBuilderTest`.
+  Plus `TFUFFIFunctionCallTest` (FFI callout into the missing TestLibrary.dll) and
+  `SystemDependenciesTest` (likely just slow scanning all 2047 classes, not a true
+  deadlock).  Resolved by the SDL2/GUI milestone (4) + the TestLibrary.dll fixture.
 
 ### Networking / TLS
 - [ ] **SocketPlugin** — replaced by `SocketPlugin_win_stub.cpp` on Windows:

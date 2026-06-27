@@ -2,6 +2,20 @@
 
 2026-06-27
 
+## win: platform-path UTF-16LE conversion (DiskFileAttributesTest +2)
+
+`File toPlatformPath:` / `fromPlatformPath:` (named primitives
+`primitiveStToPlatPath` / `primitivePlatToStPath`, FileAttributesPlugin)
+returned the UTF-8 bytes unchanged on Windows — but the Windows platform path
+encoding is UTF-16LE (e.g. `'1234žřč'` -> `#[49 0 50 0 51 0 52 0 126 1 89 1 13
+1]`). Our identity passthrough is correct only on POSIX (and macOS does NFC/NFD).
+Added `#elif defined(_WIN32)` branches doing UTF-8<->UTF-16LE via
+MultiByteToWideChar / WideCharToMultiByte. testToPlatformPath + testFromPlatformPath
+now pass (DiskFileAttributesTest 20->22/25); DiskFileSystemTest still 59/59. The
+remaining nLink/permissions failures are niche Windows "attribute not supported"
+semantics (tracked in docs/deferred.md). This and the catalog of remaining
+Windows gaps came from a 245-class Windows-sensitive SUnit scan.
+
 ## win: FFI ABI resolution fixed (FFICalloutMethodBuilderTest 10/10)
 
 Pharo's TFFI (libffi) callouts all failed on Windows with `Error: The requested
