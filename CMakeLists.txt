@@ -298,14 +298,11 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     else()
         set(_PHARO_JIT_ON 0)
     endif()
-elseif(WIN32)
-    # Milestone 1 is interpreter-only on Windows.  The x86-64 Tier-1 JIT
-    # (AsmjitT1.cpp) hardcodes the System V ABI — wrong arg registers and no
-    # Win64 32-byte shadow space at its two always-live helper call sites
-    # (jit_rt_primsize_ptr, jit_rt_primat_ptr).  Enabling the JIT is
-    # milestone 2.  See docs/windows-port-plan.md section 3.
-    set(_PHARO_JIT_ON 0)
 else()
+    # Windows included: the x86-64 Tier-1 JIT now emits Win64-correct helper
+    # calls (AsmjitT1.cpp arg-register aliases + shadow space), so the JIT is
+    # on by default for parity with Linux/macOS.  Override with
+    # -DPHARO_JIT_ENABLED=0 for an interpreter-only build.
     set(_PHARO_JIT_ON 1)
 endif()
 if(_PHARO_JIT_ON)
