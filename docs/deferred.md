@@ -78,8 +78,19 @@ isolation (no suite watchdog):
     -> PrimitiveFailed -> signalError:for: in setUp. Implemented it to return the
     Win32 GetLogicalDrives() bitmask. All hidden tests now 8 pass / 1 skip / 0 err.
   - [ ] `DiskFileSystemTest>>testLongFilename` — the last file residual; Windows
-    long-path (MAX_PATH) limitation. Needs long-path support (\\?\ prefix or the
-    manifest longPathAware opt-in).
+    `MAX_PATH` (260) limitation. The test builds a ~284-char path (130-char dir
+    inside a 130-char dir); `primitiveDirectoryCreate`'s `_mkdir` fails
+    (PrimitiveFailed createDirectory:). Manifest `longPathAware` is NOT enough
+    here — `HKLM\...\FileSystem\LongPathsEnabled` is 0 on this machine, so the
+    standard APIs still cap at 260. Reliable fix = the `\\?\` extended-length
+    prefix, which needs: a helper that canonicalizes to an absolute backslash
+    path (GetFullPathNameA) and prepends `\\?\` (or `\\?\UNC\` for UNC) when the
+    path length >= ~248; applied across ALL path-taking primitives the test
+    touches — primitiveDirectoryCreate (_mkdir), primitiveFileOpen
+    (pharoSharedFopen/CreateFileA), primitiveFileAttributes + primitiveReaddir
+    (stat), primitiveFileDelete, primitiveDirectoryDelete, exists. Gate on
+    length so short paths (the 99% case) are byte-identical. Deferred as a
+    distinct feature (broad change to the file subsystem; niche >260-char case).
   - RESULT (run #2, JIT on, before the sqInt fix): ~130 classes, 1702 PASS / 0
     FAIL / 15 ERROR = 99.1%, then crashed exit 139 at `CoCompletionEngineTest` —
     NOW FIXED
