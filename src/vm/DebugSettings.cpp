@@ -484,6 +484,7 @@ DebugSettings::DebugSettings() {
     jitFailReasons                   = envPresent("PHARO_JIT_FAIL_REASONS");
     jitKeepICs                       = envEq1("PHARO_JIT_KEEP_ICS");
     jitStaleLog                      = envEq1("PHARO_JIT_STALE_LOG");
+    socketDebug                      = envEq1("SOCK_DEBUG");
     jitTraceRecompile                = envPresent("PHARO_JIT_TRACE_RECOMPILE");
     jitValidateEntry                 = envPresent("PHARO_JIT_VALIDATE_ENTRY");
     mnuAllocDbg                      = envPresent("PHARO_MNU_ALLOC_DBG");

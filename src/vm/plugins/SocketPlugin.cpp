@@ -7,6 +7,7 @@
  */
 
 #include "SocketPlugin.h"
+#include "../DebugSettings.hpp"
 #include <algorithm>
 #include <arpa/inet.h>
 #include <atomic>
@@ -38,6 +39,9 @@ struct PrivateSocket {
     int sockError;       // errno after socket error
     bool writeSignaled;  // true after write-ready signaled; reset on EAGAIN
     bool eofDetected;    // true after I/O thread sees MSG_PEEK return 0 (FIN)
+    bool listening;      // true once listen() called: WAITING_FOR_CONNECTION here
+                         // means a pending *incoming* connection (readable), not a
+                         // connecting client socket (writable).
 };
 
 // =====================================================================
@@ -46,6 +50,11 @@ struct PrivateSocket {
 
 static VirtualMachine* vm = nullptr;
 static int gSessionID = 1;
+
+// Gated tracing for the server accept/listen/data path: set SOCK_DEBUG=1
+// (via the sanctioned DebugSettings env reader, since getenv is poisoned here).
+#define SOCKDBG(...) do { if (pharo::g_debug.socketDebug) { \
+    fprintf(stderr, "[SOCKDBG] " __VA_ARGS__); fflush(stderr); } } while (0)
 
 // Active socket tracking for I/O monitor thread
 static std::mutex gSocketMutex;
@@ -122,8 +131,18 @@ static void ioMonitorLoop() {
 
         for (auto* ps : snapshot) {
             if (ps->fd < 0) continue;
-            if (ps->sockState == SOCK_WAITING_FOR_CONNECTION) {
-                // Monitor for connect completion (writable = connected)
+            if (ps->listening) {
+                // Listening server socket: watch for readable = a pending incoming
+                // connection, but ONLY while it's still WAITING.  Once we promote it
+                // to CONNECTED (below) it stays readable until the image accepts, so
+                // continuing to select() it would spin — stop watching until accept
+                // resets it to WAITING.
+                if (ps->sockState != SOCK_CONNECTED) {
+                    FD_SET(ps->fd, &readfds);
+                    if (ps->fd > maxfd) maxfd = ps->fd;
+                }
+            } else if (ps->sockState == SOCK_WAITING_FOR_CONNECTION) {
+                // Connecting client socket: connect completes when WRITABLE.
                 FD_SET(ps->fd, &writefds);
                 if (ps->fd > maxfd) maxfd = ps->fd;
             } else if (ps->sockState == SOCK_CONNECTED) {
@@ -155,7 +174,19 @@ static void ioMonitorLoop() {
         for (auto* ps : snapshot) {
             if (ps->fd < 0) continue;
 
-            if (ps->sockState == SOCK_WAITING_FOR_CONNECTION && FD_ISSET(ps->fd, &writefds)) {
+            if (ps->listening) {
+                // A pending incoming connection: report the listening socket as
+                // CONNECTED.  The image's waitForConnectionFor: loops while the
+                // status is WaitingForConnection and returns (→ accept) on
+                // Connected; the accept primitive resets it to WaitingForConnection.
+                if (FD_ISSET(ps->fd, &readfds)) {
+                    ps->sockState = SOCK_CONNECTED;
+                    if (ps->connSema > 0 && vm) {
+                        SOCKDBG("io: listen fd=%d pending -> CONNECTED, signal connSema=%d\n", ps->fd, ps->connSema);
+                        vm->signalSemaphoreWithIndex(ps->connSema);
+                    }
+                }
+            } else if (ps->sockState == SOCK_WAITING_FOR_CONNECTION && FD_ISSET(ps->fd, &writefds)) {
                 // Connect completed — check for errors
                 int err = 0;
                 socklen_t len = sizeof(err);
@@ -170,6 +201,7 @@ static void ioMonitorLoop() {
                             err, strerror(err), ps->fd);
 #endif
                 }
+                SOCKDBG("io: client connect fd=%d complete err=%d -> state=%d\n", ps->fd, err, ps->sockState);
                 if (ps->connSema > 0 && vm) {
                     vm->signalSemaphoreWithIndex(ps->connSema);
                 }
@@ -178,7 +210,7 @@ static void ioMonitorLoop() {
                 }
             }
 
-            if (ps->sockState == SOCK_CONNECTED) {
+            if (ps->sockState == SOCK_CONNECTED && !ps->listening) {
                 if (FD_ISSET(ps->fd, &readfds)) {
                     if (!ps->eofDetected) {
                         // First time seeing readability — peek to detect EOF
@@ -342,6 +374,7 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     ps->sockError = 0;
     ps->writeSignaled = false;
     ps->eofDetected = false;
+    ps->listening = false;
 
     // Allocate ByteArray for SQSocket handle
     sqInt classBA = vm->classByteArray();
@@ -592,10 +625,12 @@ extern "C" sqInt sp_primitiveSocketSendDataBufCount(void) {
             ps->writeSignaled = false; // Re-arm write notification
         } else {
             ps->sockError = errno;
+            SOCKDBG("send: fd=%d count=%ld -> ERR errno=%d\n", ps->fd, (long)count, errno);
             return vm->primitiveFail();
         }
     }
 
+    SOCKDBG("send: fd=%d count=%ld -> sent=%zd\n", ps->fd, (long)count, sent);
     vm->popthenPush(5, vm->integerObjectOf((sqInt)sent));
     return 0;
 }
@@ -675,6 +710,8 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
         ps->sockState = SOCK_OTHER_END_CLOSED;
     }
 
+    SOCKDBG("recv: fd=%d count=%ld -> received=%zd errno=%d state=%d\n",
+            ps->fd, (long)count, received, (received < 0 ? errno : 0), ps->sockState);
     vm->popthenPush(5, vm->integerObjectOf((sqInt)received));
     return 0;
 }
@@ -718,46 +755,43 @@ extern "C" sqInt sp_primitiveSocketLocalPort(void) {
 
 // primitiveSocketLocalAddress
 // Stack: receiver, socketHandle
-// Returns: SmallInteger (32-bit IPv4 address in network byte order — the
-//          standard VM uses host byte order here)
+// Returns: a 4-byte ByteArray IPv4 address in network byte order.  Pharo's
+// SocketAddress model is byte-array based (e.g. ZnNetworkingUtils>>ipAddressToString:
+// iterates the bytes with #do:separatedBy:); returning a SmallInteger here, as the
+// old code did, makes the server path DNU on #do:separatedBy:.
 extern "C" sqInt sp_primitiveSocketLocalAddress(void) {
     sqInt socketOop = vm->stackValue(0);
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) {
-        vm->popthenPush(2, vm->integerObjectOf(0));
-        return 0;
-    }
-
+    uint32_t netAddr = 0;  // 0.0.0.0 when unbound/unknown
     struct sockaddr_in sa;
     socklen_t len = sizeof(sa);
-    if (getsockname(ps->fd, (struct sockaddr*)&sa, &len) < 0) {
-        vm->popthenPush(2, vm->integerObjectOf(0));
-        return 0;
+    if (ps && ps->fd >= 0 && getsockname(ps->fd, (struct sockaddr*)&sa, &len) == 0) {
+        netAddr = sa.sin_addr.s_addr;  // already network byte order
     }
-
-    vm->popthenPush(2, vm->positive32BitIntegerFor(ntohl(sa.sin_addr.s_addr)));
+    sqInt addrOop = vm->instantiateClassindexableSize(vm->classByteArray(), 4);
+    if (vm->failed()) return vm->primitiveFail();
+    memcpy(vm->firstIndexableField(addrOop), &netAddr, 4);
+    vm->popthenPush(2, addrOop);
     return 0;
 }
 
 // primitiveSocketRemoteAddress
 // Stack: receiver, socketHandle
-// Returns: SmallInteger (32-bit IPv4 address in host byte order)
+// Returns: a 4-byte ByteArray IPv4 address in network byte order (see
+// primitiveSocketLocalAddress for why this is a ByteArray, not a SmallInteger).
 extern "C" sqInt sp_primitiveSocketRemoteAddress(void) {
     sqInt socketOop = vm->stackValue(0);
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) {
-        vm->popthenPush(2, vm->integerObjectOf(0));
-        return 0;
-    }
-
+    uint32_t netAddr = 0;  // 0.0.0.0 when not connected
     struct sockaddr_in sa;
     socklen_t len = sizeof(sa);
-    if (getpeername(ps->fd, (struct sockaddr*)&sa, &len) < 0) {
-        vm->popthenPush(2, vm->integerObjectOf(0));
-        return 0;
+    if (ps && ps->fd >= 0 && getpeername(ps->fd, (struct sockaddr*)&sa, &len) == 0) {
+        netAddr = sa.sin_addr.s_addr;  // already network byte order
     }
-
-    vm->popthenPush(2, vm->positive32BitIntegerFor(ntohl(sa.sin_addr.s_addr)));
+    sqInt addrOop = vm->instantiateClassindexableSize(vm->classByteArray(), 4);
+    if (vm->failed()) return vm->primitiveFail();
+    memcpy(vm->firstIndexableField(addrOop), &netAddr, 4);
+    vm->popthenPush(2, addrOop);
     return 0;
 }
 
@@ -919,6 +953,81 @@ extern "C" sqInt sp_primitiveSocketSetOptions(void) {
     return 0;
 }
 
+// primitiveSocketBindToPort  (Pharo's split bind/listen server API)
+// Stack: receiver, socketHandle, address, port
+// Binds the socket to a local address+port WITHOUT listening — the image then
+// calls primitiveSocketListenWithBacklog separately.  We only ever implemented
+// the combined listenOnPortBacklog before, so this primitive was missing and
+// Socket>>bindTo:port: fell through to `SocketError signal:` with errno 0 (the
+// "SocketError: Undefined error: 0" / "Success" seen in ZnServer/Teapot tests).
+extern "C" sqInt sp_primitiveSocketBindToPort(void) {
+    sqInt port      = vm->stackIntegerValue(0);
+    sqInt addrOop   = vm->stackValue(1);
+    sqInt socketOop = vm->stackValue(2);
+    if (vm->failed()) return vm->primitiveFail();
+
+    PrivateSocket* ps = privateSocketFrom(socketOop);
+    if (!ps || ps->fd < 0) return vm->primitiveFail();
+
+    // Allow address reuse (mirrors listenOnPortBacklog; avoids TIME_WAIT binds
+    // failing when a test re-binds the same port).
+    int reuse = 1;
+    setsockopt(ps->fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((uint16_t)port);
+    sa.sin_addr.s_addr = INADDR_ANY;   // default: all interfaces (SocketAddress zero)
+
+    // Address handling mirrors primitiveSocketConnectToPort: a 4-byte ByteArray
+    // is the raw network-order IPv4 address; an empty address means "any"; a
+    // SmallInteger is a host-order IPv4 address.
+    if (vm->isBytes(addrOop)) {
+        sqInt n = vm->byteSizeOf(addrOop);
+        if (n == 4) {
+            memcpy(&sa.sin_addr.s_addr, vm->firstIndexableField(addrOop), 4);
+        } else if (n != 0) {
+            return vm->primitiveFail();   // IPv6/other not handled on this bind path
+        }
+    } else if (vm->isIntegerObject(addrOop)) {
+        sa.sin_addr.s_addr = htonl((uint32_t)vm->integerValueOf(addrOop));
+    }
+
+    if (bind(ps->fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) {
+        ps->sockError = errno;
+        return vm->primitiveFail();
+    }
+
+    // bind() does not change connection status — leave it UNCONNECTED so the
+    // image's listenWithBacklog: precondition (status == Unconnected) holds.
+    vm->pop(3); // pop port, address, socketHandle; leave receiver
+    return 0;
+}
+
+// primitiveSocketListenWithBacklog  (listen on an already-bound socket)
+// Stack: receiver, socketHandle, backlogSize
+extern "C" sqInt sp_primitiveSocketListenWithBacklog(void) {
+    sqInt backlog   = vm->stackIntegerValue(0);
+    sqInt socketOop = vm->stackValue(1);
+    if (vm->failed()) return vm->primitiveFail();
+
+    PrivateSocket* ps = privateSocketFrom(socketOop);
+    if (!ps || ps->fd < 0) return vm->primitiveFail();
+
+    if (listen(ps->fd, (int)backlog) < 0) {
+        ps->sockError = errno;
+        return vm->primitiveFail();
+    }
+
+    ps->listening = true;
+    ps->sockState = SOCK_WAITING_FOR_CONNECTION;
+    wakeIOThread();
+
+    vm->pop(2); // pop backlog, socketHandle; leave receiver
+    return 0;
+}
+
 // primitiveSocketListenOnPortBacklog
 // Stack: receiver, socketHandle, port, backlogSize
 extern "C" sqInt sp_primitiveSocketListenOnPortBacklog(void) {
@@ -950,6 +1059,7 @@ extern "C" sqInt sp_primitiveSocketListenOnPortBacklog(void) {
         return vm->primitiveFail();
     }
 
+    ps->listening = true;
     ps->sockState = SOCK_WAITING_FOR_CONNECTION;
     wakeIOThread();
 
@@ -988,6 +1098,7 @@ extern "C" sqInt sp_primitiveSocketListenOnPortBacklogInterface(void) {
         return vm->primitiveFail();
     }
 
+    ps->listening = true;
     ps->sockState = SOCK_WAITING_FOR_CONNECTION;
     wakeIOThread();
 
@@ -1013,6 +1124,7 @@ extern "C" sqInt sp_primitiveSocketAccept3Semaphores(void) {
     struct sockaddr_in clientAddr;
     socklen_t addrLen = sizeof(clientAddr);
     int clientFd = accept(serverPs->fd, (struct sockaddr*)&clientAddr, &addrLen);
+    SOCKDBG("accept: serverFd=%d -> clientFd=%d errno=%d\n", serverPs->fd, clientFd, errno);
     if (clientFd < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             // No pending connection — create an unconnected socket handle
@@ -1022,6 +1134,11 @@ extern "C" sqInt sp_primitiveSocketAccept3Semaphores(void) {
     }
 
     setNonBlocking(clientFd);
+
+    // The listening socket returns to waiting; the IO thread re-promotes it to
+    // CONNECTED when another incoming connection is pending.
+    serverPs->sockState = SOCK_WAITING_FOR_CONNECTION;
+    SOCKDBG("accept: reset listen fd=%d -> WAITING\n", serverPs->fd);
 
     PrivateSocket* ps = new PrivateSocket();
     ps->fd = clientFd;

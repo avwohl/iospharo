@@ -452,6 +452,7 @@ struct DebugSettings {
     bool jitFailReasons = false;                   // PHARO_JIT_FAIL_REASONS
     bool jitKeepICs = false;                       // PHARO_JIT_KEEP_ICS (strict =1)
     bool jitStaleLog = false;                      // PHARO_JIT_STALE_LOG (strict =1)
+    bool socketDebug = false;                      // SOCK_DEBUG (strict =1): trace the socket accept/listen/data path
     bool jitTraceRecompile = false;                // PHARO_JIT_TRACE_RECOMPILE
     bool jitValidateEntry = false;                 // PHARO_JIT_VALIDATE_ENTRY
     bool mnuAllocDbg = false;                      // PHARO_MNU_ALLOC_DBG
