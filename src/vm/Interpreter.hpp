@@ -3177,6 +3177,7 @@ private:
     PrimitiveResult primitiveChangeOwner(int argCount);              // Named: FileAttributesPlugin changeOwner
     PrimitiveResult primitiveSymlinkChangeOwner(int argCount);       // Named: FileAttributesPlugin symlinkChangeOwner
     PrimitiveResult primitiveFileAttributes(int argCount);           // Named: FileAttributesPlugin file attributes (batch)
+    PrimitiveResult primitiveLogicalDrives(int argCount);            // Named: FileAttributesPlugin Windows logical-drive bitmask
     PrimitiveResult primitivePlatToStPath(int argCount);             // Named: FileAttributesPlugin platToStPath
     PrimitiveResult primitiveStToPlatPath(int argCount);             // Named: FileAttributesPlugin stToPlatPath
     PrimitiveResult primitivePathMax(int argCount);                  // Named: FileAttributesPlugin pathMax

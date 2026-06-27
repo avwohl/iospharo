@@ -28469,6 +28469,24 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// FileAttributesPlugin>>primitiveLogicalDrives
+// File class>>primLogicalDrives -> SmallInteger bitmask of available drive
+// letters (bit 0 = A:, bit 1 = B:, ... bit 25 = Z:).  WindowsStore uses this to
+// list drive roots in the file browser.  This IS the value Win32
+// GetLogicalDrives() returns.  POSIX has no drive letters (WindowsStore is not
+// the active store there), so fail -> the image keeps its non-Windows path.
+PrimitiveResult Interpreter::primitiveLogicalDrives(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+#ifdef _WIN32
+    DWORD mask = GetLogicalDrives();
+    pop();  // pop receiver (File class)
+    push(Oop::fromSmallInteger(static_cast<int64_t>(mask)));
+    return PrimitiveResult::Success;
+#else
+    return PrimitiveResult::Failure;
+#endif
+}
+
 #if defined(__APPLE__)
 // Convert UTF-8 bytes between Unicode normal forms via CoreFoundation.
 // Returns a fresh std::string holding the normalized UTF-8; empty on failure.

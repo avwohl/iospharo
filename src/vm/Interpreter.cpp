@@ -19336,6 +19336,7 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("FileAttributesPlugin", "primitiveChangeOwner", &Interpreter::primitiveChangeOwner);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveSymlinkChangeOwner", &Interpreter::primitiveSymlinkChangeOwner);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveFileAttributes", &Interpreter::primitiveFileAttributes);
+    registerNamedPrimitive("FileAttributesPlugin", "primitiveLogicalDrives", &Interpreter::primitiveLogicalDrives);
     registerNamedPrimitive("FileAttributesPlugin", "primitivePlatToStPath", &Interpreter::primitivePlatToStPath);
     registerNamedPrimitive("FileAttributesPlugin", "primitiveStToPlatPath", &Interpreter::primitiveStToPlatPath);
     registerNamedPrimitive("FileAttributesPlugin", "primitivePathMax", &Interpreter::primitivePathMax);
