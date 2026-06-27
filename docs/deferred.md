@@ -282,14 +282,18 @@ isolation (no suite watchdog):
   DNS getaddrinfo + WSAStartup are ALREADY wired (Primitives.cpp / windows.cpp).
   EXECUTABLE PORT PLAN (inventory done 2026-06-27, keep the stub in CMake until
   the real plugin compiles+links so the Windows build never regresses):
-  1. New `src/vm/plugins/winsock_compat.h`: on _WIN32 include winsock2.h/
-     ws2tcpip.h; `#define SHUT_RDWR SD_BOTH` (+SHUT_RD/WR), `#define MSG_DONTWAIT 0`
-     (sockets are already non-blocking); macros `SOCK_LAST_ERROR`=WSAGetLastError(),
-     `SOCK_EWOULDBLOCK`/`SOCK_EAGAIN`/`SOCK_EINPROGRESS`=WSAEWOULDBLOCK (non-blocking
-     connect returns WSAEWOULDBLOCK, not EINPROGRESS); `sockClose`=closesocket,
-     `sockSetNonBlocking`=ioctlsocket(FIONBIO). On POSIX the same names alias
-     errno / EWOULDBLOCK / ::close / fcntl and `typedef int SOCKET; #define
-     INVALID_SOCKET -1` so the file stays byte-identical there.
+  1. [x] DONE — `src/vm/plugins/winsock_compat.h` written: on _WIN32 includes
+     winsock2.h/ws2tcpip.h FIRST (before any windows.h); `#define SHUT_RDWR
+     SD_BOTH` (+SHUT_RD/WR), `#define MSG_DONTWAIT 0` (sockets already non-blocking);
+     macros `SOCK_LAST_ERROR`=WSAGetLastError(), `SOCK_EWOULDBLOCK`/`SOCK_EAGAIN`/
+     `SOCK_EINPROGRESS`=WSAEWOULDBLOCK (non-blocking connect returns WSAEWOULDBLOCK,
+     not EINPROGRESS); `sockClose`=closesocket, `sockSetNonBlocking`=ioctlsocket
+     (FIONBIO). On POSIX the same names alias errno / EWOULDBLOCK / ::close / fcntl
+     and `typedef int SOCKET; #define INVALID_SOCKET -1` so the file is byte-
+     identical there. (Header is standalone/unused until step 2, so zero build risk.)
+     CAUTION for steps 2-4: SocketPlugin.cpp is ALSO compiled on macOS/Linux, so
+     the cross-platform edits must keep the POSIX build green — do/verify them where
+     a POSIX build is available (this machine is Windows-only and can't test it).
   2. SocketPlugin.cpp: replace the POSIX include block (lines 12-26) with
      `#include "winsock_compat.h"`. `struct PrivateSocket` `int fd` -> `SOCKET fd`
      (line 34); `int fd = socket(...)` -> `SOCKET fd` (378, 540ish, 1156ish);
