@@ -48,12 +48,24 @@ isolation (no suite watchdog):
     GUI/graphics gap) and 15 are `BinaryFileStreamTest` (binary file I/O — the
     one NON-gui item to investigate; possible Windows binary-mode issue). 0
     real test FAILURES.
-  - RESULT (run #2, JIT on, curated to 1400 NON-GUI classes via
-    `/tmp/sunit_class_names.txt`): got through ~130 classes (A*..Co*) =
-    **1702 PASS, 0 FAIL, 15 ERROR, 1 SKIP = 99.1% pass rate — MATCHES the Linux
-    99.1% baseline**, ZERO real failures. The 15 errors are all
-    `BinaryFileStreamTest` (binary file I/O — investigate). BUT the run then
-    crashed with exit 139 (SIGSEGV) at ~`CoCompletionEngineTest` — NOW FIXED
+  - RESULT (run #3, JIT on, after the sqInt LLP64 fix, curated 1400 NON-GUI):
+    NO CRASH (exit 0; the CoCompletionEngine SIGSEGV is gone). Got through 152
+    classes = **1961 PASS, 0 FAIL, 15 ERROR, 1 SKIP = 99.2% pass — at/above the
+    Linux 99.1% baseline, ZERO failures.** Errors: 15 `BinaryFileStreamTest` + 1
+    `CodeSimulationTest`. It stopped at 152 (not all 1400) on the ~50-min outer
+    timeout — the per-test-watchdog runner is SLOW (~20s/class: fork a watchdog
+    process + wait, per test). To run all 1400 either raise the timeout (hours)
+    or speed up the watchdog. The pass RATE is the parity signal; it's solid.
+  - `BinaryFileStreamTest` (15 errors) — odd: every test PASSES run
+    individually (even 4 in sequence), and the class has NO TestResource and
+    setUp works, yet `BinaryFileStreamTest suite run` errors 29/29. Looks like a
+    suite-context file-handle / GC-timing issue specific to Windows (handles not
+    closed/released between tests in one TestResult -> later opens fail). Needs
+    the actual per-test exception captured in suite context (TestCase>>run
+    swallows it into the TestResult; use a custom result or instrument setUp).
+  - RESULT (run #2, JIT on, before the sqInt fix): ~130 classes, 1702 PASS / 0
+    FAIL / 15 ERROR = 99.1%, then crashed exit 139 at `CoCompletionEngineTest` —
+    NOW FIXED
     (root cause was the sqInt LLP64 truncation, below). Re-running the suite
     with the fix should get far past this point.
     RESOLVED — root cause = **`sqInt` LLP64 truncation**. Added a Windows
