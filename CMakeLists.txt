@@ -26,6 +26,19 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Windows is a clang-only target.  Interpreter.cpp uses computed gotos
+# (goto *table[bc]) and GNU inline asm, neither of which MSVC cl.exe /
+# clang-cl-in-MSVC-mode accept.  Fail early with a clear message instead
+# of a wall of syntax errors.  Build with LLVM-MinGW / MSYS2 CLANG64
+# (-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++).
+# See docs/windows-port-plan.md.
+if(WIN32 AND MSVC)
+    message(FATAL_ERROR
+        "MSVC/clang-cl is unsupported on Windows: the VM uses computed gotos "
+        "and GNU inline asm.  Configure with clang (LLVM-MinGW or MSYS2 "
+        "CLANG64), e.g. -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++.")
+endif()
+
 # Crypto build option — controls DSAPrims, SqueakSSL, and bundled OpenSSL
 option(PHARO_WITH_CRYPTO "Include cryptographic libraries (DSAPrims, SqueakSSL, OpenSSL)" ON)
 
@@ -235,6 +248,24 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         src/vm/plugins/SoundPlugin.cpp
         src/vm/plugins/MIDIPlugin.cpp
     )
+elseif(WIN32)
+    # Windows is closely analogous to Linux: headless, RWX JIT pages.
+    list(APPEND VM_SOURCES
+        src/platform/windows.cpp
+        # Reuses the platform-neutral Linux headless stub (no Apple frameworks);
+        # Interpreter.cpp constructs a WorldRenderer member unconditionally.
+        src/vm/WorldRenderer_linux_stub.cpp
+        # SoundPlugin/MIDIPlugin compile their non-Apple #else stubs; needed or
+        # Primitives.cpp won't link.
+        src/vm/plugins/SoundPlugin.cpp
+        src/vm/plugins/MIDIPlugin.cpp
+    )
+    # SocketPlugin is a large winsock2 port deferred to milestone 3.
+    list(REMOVE_ITEM VM_SOURCES src/vm/plugins/SocketPlugin.cpp)
+    # TrampolineAsm.S is the ARM64-only hand-written J2J trampoline (it
+    # preprocesses to empty on x86-64); drop it to sidestep the GAS-vs-MASM
+    # assembler-dialect question for milestone 1.
+    list(REMOVE_ITEM VM_SOURCES src/vm/jit/TrampolineAsm.S)
 endif()
 
 # Per-arch helper for the JIT trampoline JM_SIZE sentinel.  Only one of
@@ -257,6 +288,13 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     else()
         set(_PHARO_JIT_ON 0)
     endif()
+elseif(WIN32)
+    # Milestone 1 is interpreter-only on Windows.  The x86-64 Tier-1 JIT
+    # (AsmjitT1.cpp) hardcodes the System V ABI — wrong arg registers and no
+    # Win64 32-byte shadow space at its two always-live helper call sites
+    # (jit_rt_primsize_ptr, jit_rt_primat_ptr).  Enabling the JIT is
+    # milestone 2.  See docs/windows-port-plan.md section 3.
+    set(_PHARO_JIT_ON 0)
 else()
     set(_PHARO_JIT_ON 1)
 endif()
@@ -517,6 +555,19 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set_source_files_properties(src/vm/plugins/sqGenericSSL.c PROPERTIES COMPILE_FLAGS "-w")
         message(STATUS "Using OpenSSL from pkg-config: ${OPENSSL_LIBRARIES}")
     endif()
+elseif(WIN32)
+    # Windows (LLVM-MinGW / MSYS2 CLANG64): libffi via pkg-config.  The pacman
+    # package mingw-w64-clang-x86_64-libffi provides ffi.h with FFI_WIN64 as
+    # FFI_DEFAULT_ABI — the correct ABI for x86-64 Windows.  No SDL2 or OpenSSL
+    # for milestone 1 (headless; configure with -DPHARO_WITH_CRYPTO=OFF).
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBFFI REQUIRED libffi)
+    target_include_directories(PharoVMCore PUBLIC ${LIBFFI_INCLUDE_DIRS})
+    target_link_libraries(PharoVMCore ${LIBFFI_LIBRARIES})
+    message(STATUS "Using libffi from pkg-config: ${LIBFFI_LIBRARIES}")
+    # Winsock for the core getaddrinfo/DNS path in Primitives.cpp (reached even
+    # with SocketPlugin excluded); WSAStartup is called in platformInit().
+    target_link_libraries(PharoVMCore ws2_32)
 endif()
 
 # Platform-specific frameworks

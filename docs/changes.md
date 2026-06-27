@@ -1,5 +1,24 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-06-27
+
+## win: initial Windows port scaffolding (clang/LLVM-MinGW, headless, JIT off)
+
+First Windows support for the `jit` branch.  Toolchain is clang
+(LLVM-MinGW via MSYS2 CLANG64) — MSVC cannot compile the VM because
+`Interpreter.cpp` uses computed gotos and GNU inline asm.  Milestone 1 is a
+headless, interpreter-only `test_load_image.exe`: the x86-64 Tier-1 JIT
+hardcodes the System V ABI (wrong arg registers + no Win64 shadow space at the
+two always-live helper sites in `AsmjitT1.cpp`), so the WIN32 CMake branch sets
+`PHARO_JIT_ENABLED=0`; enabling the JIT is milestone 2.  Added
+`src/platform/windows.cpp` (the ~9 platform-seam functions over VirtualAlloc /
+GetCurrentThreadStackLimits / FlushInstructionCache / WSAStartup, mirroring
+`linux.cpp` with RWX code pages), a WIN32 CMakeLists branch (reuses the
+platform-neutral `WorldRenderer_linux_stub.cpp`, links libffi via pkg-config +
+ws2_32, excludes SocketPlugin and the ARM64-only `TrampolineAsm.S`), an MSVC
+fast-fail guard, and `scripts/build-windows.sh`.  Full analysis and milestone
+plan in `docs/windows-port-plan.md`.
+
 2026-06-08
 
 ## jit: negative-cache failed initial block compiles (op_value re-queue thrash)
