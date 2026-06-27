@@ -19,6 +19,8 @@ build_nojit/
 build-x86/
 build-opt/
 build-xcframework/
+build-win/
+build-win-log*.txt
 third-party-build/
 
 # Generated source (large)
