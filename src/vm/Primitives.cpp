@@ -10029,8 +10029,16 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
     }
 
     switch (index) {
-        case 1001:  // Operating system name — MacOSXPlatform.isActivePlatform matches "Mac OS"
+        case 1001:  // Operating system name — Pharo OSPlatform.isActivePlatform matches this
+#if defined(_WIN32)
+            // Win32Platform matches "Win32"; this drives Pharo to use WindowsStore
+            // (backslash paths) so it can parse the image path and locate sibling
+            // files (.sources, startup.st).  Reporting "Mac OS" here put Pharo in
+            // Unix path mode on Windows and broke sibling-file resolution.
+            primitiveSuccess(makeBytes("Win32"));
+#else
             primitiveSuccess(makeBytes("Mac OS"));
+#endif
             return PrimitiveResult::Success;
         case 1002:
             primitiveSuccess(makeBytes("PharoSmalltalk 1.0"));
@@ -24094,6 +24102,10 @@ PrimitiveResult Interpreter::primitiveGetPlatformName(int argCount) {
     // breaks platform detection and removes MenubarMorph during startup.
     // Our FFI stubs provide the same SDL2 interface on both iOS and Mac Catalyst.
     const char* platform = "Mac OS";
+#elif defined(_WIN32)
+    // "Win32" selects Pharo's WindowsStore (backslash paths) — required so the
+    // image can parse the Windows image path and find sibling files.
+    const char* platform = "Win32";
 #elif defined(__linux__)
     const char* platform = "linux";
 #else
