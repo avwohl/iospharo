@@ -53,29 +53,25 @@ isolation (no suite watchdog):
     **1702 PASS, 0 FAIL, 15 ERROR, 1 SKIP = 99.1% pass rate — MATCHES the Linux
     99.1% baseline**, ZERO real failures. The 15 errors are all
     `BinaryFileStreamTest` (binary file I/O — investigate). BUT the run then
-    **crashed with exit 139 (SIGSEGV)** at ~`CoCompletionEngineTest` (code-
-    completion, compiler/reflection-heavy). This is almost certainly the
-    **disabled SIGSEGV recovery** (see below): on Linux/Mac the
-    `g_sigsegvRecovery` handler catches such a fault (e.g. a Character-immediate
-    deref or a stale pointer) and longjmps back; on Windows that handler is
-    compiled out, so the same fault crashes the process and ends the run.
-    INVESTIGATED: the crash is a HEAP CORRUPTION, not a recovery-window fault —
-    `CoCompletionEngineTest` runs `EFFormatter` (code formatter) and a DNU fires
-    (`#isEmpty` to a receiver whose class index (3075) resolves to nil, i.e. a
-    corrupt object header), then the DNU machinery segfaults. It crashes with
-    the JIT OFF too, so NOT the JIT. Ruled out: my `win_mman.h`
-    MADV_DONTNEED->MEM_RESET shim (MEM_RESET left page content undefined on
-    re-access instead of zero-filling like Linux — a real latent bug, FIXED to
-    decommit+recommit, but it was NOT this crash's cause). So this is a deeper
-    heap/GC/class-table corruption bug exposed by the formatter path; could be
-    Windows-specific (another memory shim: the mmap layout, or
-    aligned_alloc->malloc) or a pre-existing cross-platform VM bug (unknown
-    whether CoCompletionEngineTest passes on Linux with our VM). NEXT: get a
-    crash backtrace (the SIGSEGV handler is compiled out on Windows — add a
-    Vectored Exception Handler that at least DUMPS the fault before exiting), and
-    trace where the corrupt object header is produced. SIGSEGV recovery (below)
-    won't cleanly fix a corruption like this; it would only let the run skip the
-    crashing test.
+    crashed with exit 139 (SIGSEGV) at ~`CoCompletionEngineTest` — NOW FIXED
+    (root cause was the sqInt LLP64 truncation, below). Re-running the suite
+    with the fix should get far past this point.
+    RESOLVED — root cause = **`sqInt` LLP64 truncation**. Added a Windows
+    crash-dump Vectored Exception Handler (test_load_image.cpp); the fault
+    address was a sign-extended 32-bit value and addr2line put it in
+    `proxy_isBytes(long)` / `ObjectHeader::isBytesObject`. `sqMemoryAccess.h`
+    typedef'd `sqInt`/`usqInt`/`sqLong`/`sqIntptr_t` to `long`, which is 64-bit
+    on LP64 (Linux/macOS/ARM64) but only 32-bit on Windows (LLP64). sqInt holds
+    oops/pointers throughout the plugin/InterpreterProxy interface, so every oop
+    above 4 GB (heap at ~2.7 TiB) truncated to 32 bits + sign-extended into a
+    garbage pointer -> corruption. Fixed: typedef to intptr_t/int64_t
+    (byte-identical on LP64; 64-bit on Windows). Verified CoCompletionEngineTest
+    65/65 (was a hard SIGSEGV), 996/996 sanity, no regression. This systemic fix
+    likely clears other latent Windows oop-truncation failures too.
+    (The old note kept for history: it was NOT the disabled SIGSEGV recovery and
+    NOT the MADV_DONTNEED/MEM_RESET shim — though that shim was a real latent bug
+    also fixed. SIGSEGV recovery wouldn't have cleanly fixed a corruption; it
+    would only have let the run skip the crashing test.)
   WORKING RECIPE:
   1. `mkdir C:\tmp` (the runner writes there; "/tmp" resolves to C:\tmp).
   2. Download the reference Pharo Windows VM: `curl -sL https://get.pharo.org/64/vm130 | bash` (gives `pharo-vm/PharoConsole.exe`).
