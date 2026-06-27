@@ -952,10 +952,18 @@ bool Interpreter::initialize() {
     //   slot 2 = priority
     Oop context = memory_.fetchPointer(1, activeProcess);  // suspendedContext is slot 1 in modern Pharo
 
-    // If context pointer is still at old image base, ImageLoader failed to relocate
+    // If the ImageLoader failed to relocate the suspendedContext it would be
+    // left at the SAVED image base.  Detect that, but DON'T flag a valid
+    // pointer that merely lands in the old-base address window because the OS
+    // mapped the new heap there — Windows VirtualAlloc's ASLR base can fall in
+    // [0x10000000000, 0x20000000000), which used to false-positive every load.
+    // The !isValidPointer guard distinguishes a real unrelocated pointer (not
+    // in any heap region) from a valid one.  See docs/windows-port-plan.md.
     {
-        uint64_t contextAddr = context.rawBits() & ~7ULL;
-        if (contextAddr >= 0x10000000000ULL && contextAddr < 0x20000000000ULL) {
+        const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
+        uint64_t ctxAddr = context.rawBits() & ~7ULL;
+        if (context.isObject() && ctxAddr >= OLD_IMAGE_BASE && ctxAddr < OLD_IMAGE_BASE * 2
+                && !memory_.isValidPointer(context)) {
             stopVM("Unrelocated pointer in active process suspendedContext — ImageLoader bug");
             return false;
         }
@@ -6969,7 +6977,10 @@ void Interpreter::returnValue(Oop value) {
                 {
                     const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
                     uint64_t sndAddr = sender.rawBits() & ~7ULL;
-                    if (sndAddr >= OLD_IMAGE_BASE && sndAddr < OLD_IMAGE_BASE * 2) {
+                    // !isValidPointer guard: a valid relocated pointer can land
+                    // in this window on Windows (VirtualAlloc ASLR).  See below.
+                    if (sndAddr >= OLD_IMAGE_BASE && sndAddr < OLD_IMAGE_BASE * 2
+                            && !memory_.isValidPointer(sender)) {
                         stopVM("Unrelocated sender pointer — ImageLoader bug");
                         return;
                     }
@@ -18655,7 +18666,11 @@ bool Interpreter::executeFromContext(Oop context) {
     {
         const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
         uint64_t ctxAddr = context.rawBits() & ~7ULL;
-        if (context.isObject() && ctxAddr >= OLD_IMAGE_BASE && ctxAddr < OLD_IMAGE_BASE * 2) {
+        // !isValidPointer guard: on Windows a valid relocated pointer can land
+        // in the old-base window (VirtualAlloc ASLR); only a pointer that is NOT
+        // in any heap region is genuinely unrelocated.  See docs/windows-port-plan.md.
+        if (context.isObject() && ctxAddr >= OLD_IMAGE_BASE && ctxAddr < OLD_IMAGE_BASE * 2
+                && !memory_.isValidPointer(context)) {
             stopVM("Unrelocated context pointer in executeFromContext — ImageLoader bug");
             return false;
         }
@@ -18690,9 +18705,13 @@ bool Interpreter::executeFromContext(Oop context) {
     {
         const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
         auto checkUnrelocated = [&](Oop o, const char* name) {
+            // !isValidPointer guard: a valid relocated pointer can land in the
+            // old-base window on Windows (VirtualAlloc ASLR); only flag pointers
+            // that are NOT in any heap region.  See docs/windows-port-plan.md.
             if (o.isObject()) {
                 uint64_t addr = o.rawBits() & ~7ULL;
-                if (addr >= OLD_IMAGE_BASE && addr < OLD_IMAGE_BASE * 2) {
+                if (addr >= OLD_IMAGE_BASE && addr < OLD_IMAGE_BASE * 2
+                        && !memory_.isValidPointer(o)) {
                     fprintf(stderr, "[VM] Unrelocated %s pointer 0x%llx — ImageLoader bug\n",
                             name, (unsigned long long)o.rawBits());
                     stopVM("Unrelocated pointer in context slots — ImageLoader bug");

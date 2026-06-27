@@ -267,8 +267,11 @@ elseif(WIN32)
         src/vm/plugins/SoundPlugin.cpp
         src/vm/plugins/MIDIPlugin.cpp
     )
-    # SocketPlugin is a large winsock2 port deferred to milestone 3.
+    # SocketPlugin is a large winsock2 port deferred to milestone 3; swap in a
+    # stub that supplies the symbols InterpreterProxy's table references (each
+    # socket primitive fails honestly; hasSocketAccess reports false).
     list(REMOVE_ITEM VM_SOURCES src/vm/plugins/SocketPlugin.cpp)
+    list(APPEND VM_SOURCES src/vm/plugins/SocketPlugin_win_stub.cpp)
     # TrampolineAsm.S is the ARM64-only hand-written J2J trampoline (it
     # preprocesses to empty on x86-64); drop it to sidestep the GAS-vs-MASM
     # assembler-dialect question for milestone 1.
@@ -574,7 +577,9 @@ elseif(WIN32)
     message(STATUS "Using libffi from pkg-config: ${LIBFFI_LIBRARIES}")
     # Winsock for the core getaddrinfo/DNS path in Primitives.cpp (reached even
     # with SocketPlugin excluded); WSAStartup is called in platformInit().
-    target_link_libraries(PharoVMCore ws2_32)
+    # dl: dlopen/dlsym/dladdr via the MSYS2 dlfcn-win32 package (FFI + plugin
+    # symbol lookup); used by FFI.cpp/Interpreter.cpp/ObjectMemory.cpp.
+    target_link_libraries(PharoVMCore ws2_32 dl)
 endif()
 
 # Platform-specific frameworks

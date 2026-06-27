@@ -37,6 +37,7 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include "../platform/win_posix_compat.h"  // POSIX shims + tz helpers (all platforms)
 #include <dlfcn.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -48,16 +49,21 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #endif
 #include <thread>
 #include <set>
+#include <map>
 #include <fstream>
 #include <iostream>
+#ifndef _WIN32
 #include <sys/resource.h>
+#endif
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <sys/statvfs.h>
 #include <sys/socket.h>
 #include <sys/utsname.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#endif
 #include <unistd.h>
 #include <unordered_set>
 #include <vector>
@@ -12892,7 +12898,11 @@ PrimitiveResult Interpreter::primitiveDirectoryCreate(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+#ifdef _WIN32
+    if (_mkdir(path.c_str()) != 0) {  // Windows _mkdir takes no mode argument
+#else
     if (mkdir(path.c_str(), 0755) != 0) {
+#endif
         // Preserve errno so a future primitiveErrorCode could expose it.
         osErrorCode_ = errno;
         return PrimitiveResult::Failure;
@@ -13251,7 +13261,11 @@ PrimitiveResult Interpreter::primitiveFileTruncate(int argCount) {
     // Flush before truncating
     fflush(file);
 
+#ifdef _WIN32
+    if (_chsize_s(fd, static_cast<__int64>(newSize)) != 0) {  // ftruncate equivalent
+#else
     if (ftruncate(fd, static_cast<off_t>(newSize)) != 0) {
+#endif
         return PrimitiveResult::Failure;
     }
 
@@ -16339,7 +16353,7 @@ PrimitiveResult Interpreter::primitiveUtcAndTimezoneOffset(int argCount) {
     time_t nowTime = time(nullptr);
     struct tm local;
     localtime_r(&nowTime, &local);
-    int64_t offsetSeconds = local.tm_gmtoff;
+    int64_t offsetSeconds = pharo_tm_gmtoff(&local);
 
     // Store results
     memory_.storePointer(0, resultArray, Oop::fromSmallInteger(smalltalkUs));
@@ -16392,11 +16406,24 @@ PrimitiveResult Interpreter::primitiveCoarseLocalMicrosecondClock(int argCount) 
 PrimitiveResult Interpreter::primitiveProcessCPUTimeMicroseconds(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
+#ifdef _WIN32
+    // MinGW maps clock_gettime to winpthread's clock_gettime64, which isn't
+    // linked in the headless build.  Process CPU time (user + kernel) comes from
+    // GetProcessTimes via the getrusage shim — same source CLOCK_PROCESS_CPUTIME_ID
+    // uses on POSIX.
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) != 0) {
+        return PrimitiveResult::Failure;
+    }
+    int64_t us = (int64_t)(ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) * 1'000'000
+               + (ru.ru_utime.tv_usec + ru.ru_stime.tv_usec);
+#else
     struct timespec ts;
     if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts) != 0) {
         return PrimitiveResult::Failure;
     }
     int64_t us = (int64_t)ts.tv_sec * 1'000'000 + ts.tv_nsec / 1000;
+#endif
 
     pop();  // receiver
     push(Oop::fromSmallInteger(us));
@@ -16438,7 +16465,7 @@ PrimitiveResult Interpreter::primitiveUtcWithOffset(int argCount) {
     time_t nowTime = time(nullptr);
     struct tm local;
     localtime_r(&nowTime, &local);
-    int64_t offsetSeconds = local.tm_gmtoff;
+    int64_t offsetSeconds = pharo_tm_gmtoff(&local);
 
     // Store UTC microseconds since Posix epoch (NOT Smalltalk epoch)
     // The image expects Posix epoch microseconds here
@@ -22482,8 +22509,8 @@ PrimitiveResult Interpreter::primitiveLocaleTimezone(int argCount) {
     std::string tz = "UTC";
     time_t now = time(nullptr);
     struct tm local;
-    if (localtime_r(&now, &local) && local.tm_zone) {
-        tz = local.tm_zone;
+    if (localtime_r(&now, &local) && pharo_tm_zone(&local)) {
+        tz = pharo_tm_zone(&local);
     }
 
     Oop result = createStringObject(memory_, tz);
@@ -22502,7 +22529,7 @@ PrimitiveResult Interpreter::primitiveLocaleTimezoneOffset(int argCount) {
     time_t now = time(nullptr);
     struct tm local;
     localtime_r(&now, &local);
-    int64_t offsetMinutes = local.tm_gmtoff / 60;
+    int64_t offsetMinutes = pharo_tm_gmtoff(&local) / 60;
 
     pop();
     push(Oop::fromSmallInteger(offsetMinutes));
@@ -27733,7 +27760,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
     auto toSqueakLocal = [&](time_t unixTime) -> int64_t {
         struct tm local;
         localtime_r(&unixTime, &local);
-        return static_cast<int64_t>(unixTime) + local.tm_gmtoff + squeakEpochDelta;
+        return static_cast<int64_t>(unixTime) + pharo_tm_gmtoff(&local) + squeakEpochDelta;
     };
 
     switch (attrNum) {
@@ -27799,6 +27826,13 @@ PrimitiveResult Interpreter::primitiveFileExists(int argCount) {
 // turns those into a graceful primitive Failure.  Single-threaded VM: no lock.
 static std::set<DIR*> g_openDirHandles;
 
+#ifdef _WIN32
+// Windows lacks dirfd()/fstatat()/readlinkat(); to stat a directory entry we
+// must rebuild its full path.  Remember each open DIR*'s directory path so
+// primitiveReaddir can do "dir/entry" + stat().  Single-threaded VM: no lock.
+static std::map<DIR*, std::string> g_openDirPaths;
+#endif
+
 // Stack: receiver, pathString -> ExternalAddress (DIR* wrapped in bytes object) or nil
 PrimitiveResult Interpreter::primitiveOpendir(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
@@ -27837,6 +27871,9 @@ PrimitiveResult Interpreter::primitiveOpendir(int argCount) {
     ObjectHeader* resultHdr = result.asObjectPtr();
     memcpy(resultHdr->bytes(), &dir, sizeof(void*));
     g_openDirHandles.insert(dir);  // register as a valid handle
+#ifdef _WIN32
+    g_openDirPaths[dir] = path;    // remember path for fstatat-less stat()
+#endif
 
     popN(2);  // pop arg + receiver
     push(result);
@@ -27892,7 +27929,18 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
     // chased — matches lstat behavior that FileAttributesPluginUnix uses
     // when probing directory entries.
     struct stat st;
+#ifdef _WIN32
+    // Windows has no dirfd()/fstatat(); rebuild the full path and stat() it.
+    // lstat==stat here (milestone 1 has no symlink support), so following is fine.
+    std::string entryPath = g_openDirPaths[dir];
+    if (!entryPath.empty() && entryPath.back() != '/' && entryPath.back() != '\\') {
+        entryPath += '/';
+    }
+    entryPath += entry->d_name;
+    bool haveStat = (stat(entryPath.c_str(), &st) == 0);
+#else
     bool haveStat = (fstatat(dirfd(dir), entry->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0);
+#endif
 
     // Create ByteArray for the entry name (Pharo expects ByteArray, not String)
     size_t nameLen = strlen(entry->d_name);
@@ -27923,14 +27971,19 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
         auto toSqueakLocal = [&](time_t unixTime) -> int64_t {
             struct tm local;
             localtime_r(&unixTime, &local);
-            return static_cast<int64_t>(unixTime) + local.tm_gmtoff + squeakEpochDelta;
+            return static_cast<int64_t>(unixTime) + pharo_tm_gmtoff(&local) + squeakEpochDelta;
         };
 
         // Slot 0: readlink target name for symlinks, else nil.
         if (S_ISLNK(st.st_mode)) {
             // fstatat doesn't readlink for us; use readlinkat relative to dirfd.
             char buf[4096];
+#ifdef _WIN32
+            // Unreachable on Windows (S_ISLNK is always 0); no symlinks in milestone 1.
+            ssize_t n = -1;
+#else
             ssize_t n = readlinkat(dirfd(dir), entry->d_name, buf, sizeof(buf));
+#endif
             if (n < 0) {
                 newStatArray = stackTop();
                 memory_.storePointer(0, newStatArray, Oop::nil());
@@ -28026,6 +28079,9 @@ PrimitiveResult Interpreter::primitiveClosedir(int argCount) {
     if (!dir || g_openDirHandles.count(dir) == 0) return PrimitiveResult::Failure;
     closedir(dir);
     g_openDirHandles.erase(dir);
+#ifdef _WIN32
+    g_openDirPaths.erase(dir);
+#endif
     // Zero out the pointer to prevent double-close
     void* null = nullptr;
     memcpy(dirHdr->bytes(), &null, sizeof(void*));
@@ -28189,7 +28245,7 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
     auto toSqueakLocal = [&](time_t unixTime) -> int64_t {
         struct tm local;
         localtime_r(&unixTime, &local);
-        return static_cast<int64_t>(unixTime) + local.tm_gmtoff + squeakEpochDelta;
+        return static_cast<int64_t>(unixTime) + pharo_tm_gmtoff(&local) + squeakEpochDelta;
     };
 
     // Build stat array (12 elements) if mask & 1

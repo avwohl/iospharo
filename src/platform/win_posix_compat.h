@@ -63,9 +63,12 @@ static inline const char* pharo_tm_zone(const struct tm* lt) {
 #include <windows.h>    // GetProcessTimes, GetDiskFreeSpaceExA, GetSystemInfo
 #include <sys/types.h>  // ssize_t
 #include <sys/stat.h>
+#include <direct.h>     // _mkdir
+#include <io.h>         // _chsize_s
 #include <cstring>
 #include <cstdint>
 #include <cerrno>
+#include <random>      // std::random_device for arc4random_buf
 
 // ---- getrusage (process CPU time) via GetProcessTimes ----------------------
 #define RUSAGE_SELF 0
@@ -157,6 +160,48 @@ static inline int setenv(const char* name, const char* value, int /*overwrite*/)
 #endif
 static inline ssize_t readlink(const char* /*path*/, char* /*buf*/, size_t /*n*/) {
     errno = EINVAL;   // EINVAL == "not a symbolic link"
+    return -1;
+}
+
+// ---- localtime_r via UCRT localtime_s ---------------------------------------
+// POSIX form: struct tm* localtime_r(const time_t*, struct tm*) returns the
+// out param (or null on failure).  Windows localtime_s has the args SWAPPED
+// (struct tm* first) and returns errno_t.
+static inline struct tm* localtime_r(const time_t* t, struct tm* result) {
+    return (localtime_s(result, t) == 0) ? result : nullptr;
+}
+
+// ---- arc4random_buf via std::random_device (OS CSPRNG on Windows) -----------
+static inline void arc4random_buf(void* buf, size_t n) {
+    static thread_local std::random_device rd;   // non-deterministic OS entropy
+    unsigned char* p = static_cast<unsigned char*>(buf);
+    while (n > 0) {
+        unsigned int r = rd();
+        size_t take = (n < sizeof(r)) ? n : sizeof(r);
+        std::memcpy(p, &r, take);
+        p += take;
+        n -= take;
+    }
+}
+
+// ---- unsetenv (POSIX) via UCRT _putenv_s with empty value ------------------
+// On Windows _putenv_s(name, "") removes the variable from the CRT environment.
+static inline int unsetenv(const char* name) {
+    return _putenv_s(name, "");
+}
+
+// ---- POSIX ownership: types + chown/lchown ---------------------------------
+// Windows has no POSIX uid/gid ownership model; chown/lchown honestly fail with
+// ENOSYS.  Callers (primitiveChangeOwner / primitiveSymlinkChangeOwner) already
+// turn a non-zero return into a primitive Failure.
+typedef int uid_t;
+typedef int gid_t;
+static inline int chown(const char* /*path*/, uid_t /*uid*/, gid_t /*gid*/) {
+    errno = ENOSYS;
+    return -1;
+}
+static inline int lchown(const char* /*path*/, uid_t /*uid*/, gid_t /*gid*/) {
+    errno = ENOSYS;
     return -1;
 }
 
