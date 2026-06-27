@@ -27713,6 +27713,23 @@ static bool isBuiltInLibrary(const std::string& path) {
     return false;
 }
 
+// Index 13 (1-based) of the file-attributes stat array: the Windows
+// file-attributes bitmask (FILE_ATTRIBUTE_*), which WindowsStore>>isHidden:
+// tests for FILE_ATTRIBUTE_HIDDEN (0x2).  0 on non-Windows (never read there).
+// GetFileAttributesA returns INVALID_FILE_ATTRIBUTES (0xFFFFFFFF) on failure —
+// that has bit 0x2 set and would falsely report hidden, so fall back to
+// FILE_ATTRIBUTE_NORMAL (0x80, not hidden).
+static int64_t winFileAttributes(const std::string& path) {
+#ifdef _WIN32
+    DWORD a = GetFileAttributesA(path.c_str());
+    if (a == INVALID_FILE_ATTRIBUTES) a = FILE_ATTRIBUTE_NORMAL;
+    return static_cast<int64_t>(a);
+#else
+    (void)path;
+    return 0;
+#endif
+}
+
 static void fillSyntheticStat(struct stat* st) {
     memset(st, 0, sizeof(*st));
     st->st_mode = S_IFREG | 0444;  // regular file, read-only
@@ -28016,7 +28033,13 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
 
     Oop statArray = memory_.nil();
     if (haveStat) {
+#ifdef _WIN32
+        // +1 slot for the Windows file-attributes DWORD at index 13 (1-based),
+        // matching primitiveFileAttributes; lets DiskDirectoryEntry>>isHidden work.
+        Oop newStatArray = memory_.allocateSlots(arrayClassIndex, 13, ObjectFormat::Indexable);
+#else
         Oop newStatArray = memory_.allocateSlots(arrayClassIndex, 12, ObjectFormat::Indexable);
+#endif
         if (newStatArray.isNil()) { pop(); return PrimitiveResult::Failure; }
         push(newStatArray);  // protect
 
@@ -28089,6 +28112,12 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
 #else
         newStatArray = stackTop();
         memory_.storePointer(11, newStatArray, Oop::nil());
+#endif
+
+#ifdef _WIN32
+        // Slot 12 (1-based index 13): Windows file-attributes DWORD for this entry.
+        { Oop v = int64ToOop(memory_, winFileAttributes(entryPath));
+          newStatArray = stackTop(); memory_.storePointer(12, newStatArray, v); }
 #endif
 
         statArray = pop();  // unprotect, still valid
@@ -28302,10 +28331,19 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
         return static_cast<int64_t>(unixTime) + pharo_tm_gmtoff(&local) + squeakEpochDelta;
     };
 
-    // Build stat array (12 elements) if mask & 1
+    // Build stat array (12 elements; 13 on Windows) if mask & 1.
+    // Windows gets one extra slot (index 13, 1-based) holding the Windows
+    // file-attributes DWORD — WindowsStore>>isHidden:attributes: reads it as
+    // `(attrs at: 13) anyMask: 16r2` (FILE_ATTRIBUTE_HIDDEN).  Without it the
+    // image's isHidden hits SubscriptOutOfBounds:13.  POSIX layout unchanged.
+#ifdef _WIN32
+    const size_t kStatSlots = 13;
+#else
+    const size_t kStatSlots = 12;
+#endif
     Oop statArray = memory_.nil();
     if (mask & 1) {
-        statArray = memory_.allocateSlots(arrayClassIdx, 12, ObjectFormat::Indexable);
+        statArray = memory_.allocateSlots(arrayClassIdx, kStatSlots, ObjectFormat::Indexable);
         if (statArray.isNil()) return PrimitiveResult::Failure;
         push(statArray);  // GC protect on operand stack
 
@@ -28366,6 +28404,13 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
 #else
         statArray = stackTop();
         memory_.storePointer(11, statArray, Oop::nil());
+#endif
+
+#ifdef _WIN32
+        // Slot 12 (1-based index 13): Windows file-attributes DWORD, read by
+        // WindowsStore>>isHidden:attributes: as `(attrs at: 13) anyMask: 16r2`.
+        { Oop v = int64ToOop(memory_, winFileAttributes(path));
+          statArray = stackTop(); memory_.storePointer(12, statArray, v); }
 #endif
 
         statArray = pop();  // restore from GC protection
