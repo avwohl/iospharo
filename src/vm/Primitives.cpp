@@ -12925,7 +12925,15 @@ PrimitiveResult Interpreter::primitiveDirectoryCreate(int argCount) {
 // primitiveDirectoryDelimitor -> Character
 PrimitiveResult Interpreter::primitiveDirectoryDelimitor(int argCount) {
     pop();  // pop receiver
+#ifdef _WIN32
+    // Pharo's WindowsStore class>>isActiveClass compares its own delimiter ($\)
+    // against this primitive's value; returning '/' made WindowsStore reject
+    // itself, so DiskStore>>activeClass fell back to the abstract DiskStore and
+    // currentFileSystem/delimiter recursed forever during FileLocator startUp:.
+    push(Oop::fromCharacter('\\'));
+#else
     push(Oop::fromCharacter('/'));
+#endif
     return PrimitiveResult::Success;
 }
 

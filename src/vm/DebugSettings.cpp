@@ -663,6 +663,16 @@ DebugSettings::DebugSettings() {
     envLang                          = std::getenv("LANG");
     envLcAll                         = std::getenv("LC_ALL");
     envTmpdir                        = std::getenv("TMPDIR");
+#ifdef _WIN32
+    // Windows uses USERPROFILE/TEMP rather than HOME/TMPDIR; fall back so the
+    // home/temp primitives (510/511) and Pharo's WindowsResolver can resolve
+    // the user home + temp dirs.  Without this, home defaulted to "/" and
+    // WindowsResolver>>preferences failed with "Can't find the requested origin".
+    if (!envHome)   envHome   = std::getenv("USERPROFILE");
+    if (!envUser)   envUser   = std::getenv("USERNAME");
+    if (!envTmpdir) envTmpdir = std::getenv("TEMP");
+    if (!envTmpdir) envTmpdir = std::getenv("TMP");
+#endif
 }
 
 const char* DebugSettings::envRuntime(const char* name) {
