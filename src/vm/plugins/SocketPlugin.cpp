@@ -154,6 +154,15 @@ static void ioMonitorLoop() {
                 if (!ps->eofDetected) {
                     FD_SET(ps->fd, &writefds);
                 }
+            } else if (ps->sockState == SOCK_THIS_END_CLOSED) {
+                // We've closed our end; watch for readable so we can detect the
+                // peer's FIN and finish the disconnection.  Without this, the
+                // image's waitForDisconnectionFor: (which loops while status is
+                // ThisEndClosed, waiting on readSemaphore) blocks for its full
+                // multi-second timeout whenever both ends are in-image — both
+                // sides closing at once, neither seeing the other's FIN.
+                FD_SET(ps->fd, &readfds);
+                if (ps->fd > maxfd) maxfd = ps->fd;
             }
         }
 
@@ -247,6 +256,17 @@ static void ioMonitorLoop() {
                     }
                     ps->writeSignaled = true;
                 }
+            }
+
+            if (ps->sockState == SOCK_THIS_END_CLOSED && FD_ISSET(ps->fd, &readfds)) {
+                // We closed our end and the socket is now readable (peer FIN /
+                // EOF after our shutdown): the disconnection is complete.  Move to
+                // UNCONNECTED and wake the closer — waitForDisconnectionFor: loops
+                // while status is ThisEndClosed and waits on readSemaphore.
+                ps->sockState = SOCK_UNCONNECTED;
+                if (ps->readSema > 0 && vm) vm->signalSemaphoreWithIndex(ps->readSema);
+                if (ps->connSema > 0 && vm) vm->signalSemaphoreWithIndex(ps->connSema);
+                SOCKDBG("io: this-end-closed fd=%d peer FIN -> UNCONNECTED\n", ps->fd);
             }
         }
     }
