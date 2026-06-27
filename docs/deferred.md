@@ -48,11 +48,21 @@ isolation (no suite watchdog):
     GUI/graphics gap) and 15 are `BinaryFileStreamTest` (binary file I/O — the
     one NON-gui item to investigate; possible Windows binary-mode issue). 0
     real test FAILURES.
-  - To get the WHOLE 2047-class number, exclude the GUI packages (Morphic/Spec/
-    Calypso/Roassal/Athens) that hang the watchdog headless — stage a curated
-    class list to `/tmp/sunit_class_names.txt` (the runner honors it), or fix
-    the watchdog so it can terminate a Morphic World-loop spin. GUI is deferred
-    anyway (no display). Also investigate the BinaryFileStreamTest errors.
+  - RESULT (run #2, JIT on, curated to 1400 NON-GUI classes via
+    `/tmp/sunit_class_names.txt`): got through ~130 classes (A*..Co*) =
+    **1702 PASS, 0 FAIL, 15 ERROR, 1 SKIP = 99.1% pass rate — MATCHES the Linux
+    99.1% baseline**, ZERO real failures. The 15 errors are all
+    `BinaryFileStreamTest` (binary file I/O — investigate). BUT the run then
+    **crashed with exit 139 (SIGSEGV)** at ~`CoCompletionEngineTest` (code-
+    completion, compiler/reflection-heavy). This is almost certainly the
+    **disabled SIGSEGV recovery** (see below): on Linux/Mac the
+    `g_sigsegvRecovery` handler catches such a fault (e.g. a Character-immediate
+    deref or a stale pointer) and longjmps back; on Windows that handler is
+    compiled out, so the same fault crashes the process and ends the run.
+    NEXT TO COMPLETE THE SUITE: re-enable SIGSEGV recovery on Windows via a
+    Vectored Exception Handler (the deferred item below) — that should let the
+    run survive the fault and continue, the way Linux does. Then run the full
+    2047 with GUI excluded (or a watchdog that can kill Morphic spins).
   WORKING RECIPE:
   1. `mkdir C:\tmp` (the runner writes there; "/tmp" resolves to C:\tmp).
   2. Download the reference Pharo Windows VM: `curl -sL https://get.pharo.org/64/vm130 | bash` (gives `pharo-vm/PharoConsole.exe`).
