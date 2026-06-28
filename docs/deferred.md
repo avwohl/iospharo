@@ -462,11 +462,13 @@ isolation (no suite watchdog):
 ### Diagnostics / platform features (honest stubs)
 - [ ] **Sampling profiler** (`Profiler.cpp`) — `enable()` is a no-op on Windows
   (POSIX SIGPROF/setitimer). `PHARO_PROFILE=1` prints "not supported on Windows".
-- [ ] **SIGSEGV crash recovery** (`test_load_image.cpp`) — the POSIX
-  `sigaction` SIGSEGV/BUS/ILL handler + `g_sigsegvRecovery` longjmp recovery is
-  compiled out on Windows; a fault crashes with the default Windows behavior
-  instead of the diagnostic dump / Character-deref recovery. Could add a
-  Vectored Exception Handler later.
+- [ ] **SIGSEGV crash recovery** (`test_load_image.cpp:804` `pharoWinCrashHandler`)
+  — Windows installs a Vectored Exception Handler that DUMPS fault info (code,
+  fault addr, rip, rva, step count, active method, RtlCaptureStackBackTrace) but
+  returns `EXCEPTION_CONTINUE_SEARCH` so the process still crashes.  The POSIX
+  `sigaction` + `siglongjmp` RECOVERY path is not replicated (a VEH can't safely
+  unwind, and the Windows faults seen were heap corruption, not recoverable). So:
+  diagnostic dump yes, recovery no.
 - [ ] **execinfo backtrace** (`win_compat.h`) — `backtrace()`/
   `backtrace_symbols()` are no-op stubs; crash/DNU dumps print no native frames.
   Could use RtlCaptureStackBackTrace + DbgHelp.
@@ -477,6 +479,29 @@ isolation (no suite watchdog):
 - [ ] **POSIX file ownership** — `chown`/`lchown` return ENOSYS (Windows has no
   POSIX uid/gid model); the two calling primitives turn that into a primitive
   Failure, which the image handles.
+- [ ] **Clipboard** (`windows.cpp:54-55`) — `vm_getClipboardText()` returns "" and
+  `vm_setClipboardText()` is a no-op.  No real Win32 clipboard
+  (OpenClipboard/GetClipboardData) — copy/paste between Pharo and the OS doesn't
+  work.  Headless milestone; needed for the GUI milestone (4).
+- [ ] **Text input / IME** (`windows.cpp:56-57`) — `vm_startTextInput()` /
+  `vm_stopTextInput()` are no-ops.  No IME / text-composition support (GUI-only).
+- [ ] **SoundPlugin** (`SoundPlugin.cpp:230-241`) — all sound primitives
+  (`soundInit`/`soundPlaySamples`/`soundSetVolume`/...) are honest stubs returning
+  false/empty on non-Apple.  No audio output on Windows (no WASAPI/DirectSound
+  backend; Apple uses CoreAudio).
+- [ ] **MIDIPlugin** (`MIDIPlugin.cpp:294-308`) — all MIDI primitives
+  (`midiInit`/`midiOpenPort`/`midiRead`/`midiWrite`/...) are honest stubs.  No MIDI
+  on Windows (no winmm/midiOut backend; Apple uses CoreMIDI).
+- [ ] **WorldRenderer native draw** (`WorldRenderer_linux_stub.cpp`, reused on
+  Windows per CMakeLists.txt:264) — `render()`/`renderMorph()`/`renderMenuBar()`/
+  glyph + color/rect extraction are no-ops.  This is the C++ "native morph
+  rasterization" fast-path (Apple uses CoreText/CoreGraphics); Windows would need
+  FreeType + GDI/Direct2D.  Separate from, and subordinate to, the GUI milestone.
+- [ ] **ARM64-Windows J2J trampoline** (`CMakeLists.txt:277`) — `TrampolineAsm.S`
+  (the hand-written ARM64 J2J trampoline) is REMOVE_ITEM'd on Windows; it
+  preprocesses to empty on x86-64 anyway (the C++ while-loop fallback is used), so
+  this is a no-op for the current x86-64 Windows target — but a real gap if an
+  ARM64-Windows build is ever attempted (GAS-vs-MASM assembler-dialect question).
 
 ### Memory
 - [ ] **Old-space heap commit** — `win_mman.h` `mmap` does
