@@ -361,12 +361,17 @@ ACTIVATION RECIPE (reproducible headlessly, no on-screen window needed):
      live desktop.  Confirmed: 1 SDL window, 122 RenderPresents (all main renderer
      + valid texture), Pharo BitBlts directly into gDisplaySurface via LockTexture.
 
-REMAINING for a real interactive GUI (the render itself is done):
-  A. **On-screen window** — gDisplaySurface is currently an in-memory
-     `TestDisplaySurface`.  Subclass DisplaySurface to own a Win32 HWND and blit
-     `pixels()` to it on `update()` via GDI `StretchDIBits` (or Direct2D); point
-     gDisplaySurface at it.  (Until then the GUI renders correctly but is only
-     captured to PPM, not shown.)
+REMAINING for a real interactive GUI (render + on-screen window now DONE):
+  A. [x] **On-screen window — DONE (2026-06-28).** `src/platform/Win32DisplaySurface.hpp`
+     is a DisplaySurface that owns a Win32 HWND and blits `pixels()` to it on
+     `update()` via GDI `StretchDIBits` (top-down 32bpp BI_RGB DIB — Pharo's XRGB
+     is BGRA byte order on little-endian, matching the DIB).  Enable with
+     `PHARO_GUI_WINDOW=1` (debug_vars.h); test_load_image points gDisplaySurface at
+     it instead of TestDisplaySurface.  VERIFIED: the live Pharo desktop appears in
+     a real on-screen window titled "Pharo (Windows VM)" — see
+     docs/images/windows-gui-onscreen-window.png.  Messages are pumped in update()
+     (works while the World is rendering; a static idle World stops calling update()
+     so the window would freeze until input — addressed by B/C).
   B. **Auto-activate in interactive mode** — fold the activation recipe (step 3)
      into the interactive run path / a startup-script patch so the World comes up
      on the SDL2 renderer without the manual eval, and run the morphic loop

@@ -8,6 +8,9 @@
 #include "ImageLoader.hpp"
 #include "Interpreter.hpp"
 #include "../platform/Platform.hpp"
+#ifdef _WIN32
+#include "../platform/Win32DisplaySurface.hpp"
+#endif
 #include "DebugSettings.hpp"
 #include "DebugVars.hpp"
 #include "Profiler.hpp"
@@ -1025,13 +1028,22 @@ int main(int argc, char* argv[]) {
     }
 
     // Create test display surface for Morphic rendering (skip in headless mode
-    // so Morphic's render loop detects no display and CLI handlers activate)
-    if (!headlessMode || GET_DEBUG_BOOL(PHARO_FORCE_DISPLAY)) {
+    // so Morphic's render loop detects no display and CLI handlers activate).
+    // PHARO_GUI_WINDOW backs it with a real on-screen Win32 window instead.
+    if (!headlessMode || GET_DEBUG_BOOL(PHARO_FORCE_DISPLAY) || GET_DEBUG_BOOL(PHARO_GUI_WINDOW)) {
         std::cout << "\n=== Display Surface Setup ===" << std::endl;
-        gTestSurface = new TestDisplaySurface(1024, 768);
-        gDisplaySurface = gTestSurface;
-        std::cout << "Created " << gTestSurface->width() << "x" << gTestSurface->height()
-                  << " test display surface" << std::endl;
+#ifdef _WIN32
+        if (GET_DEBUG_BOOL(PHARO_GUI_WINDOW)) {
+            gDisplaySurface = new pharo::Win32DisplaySurface(1024, 768);
+            std::cout << "Created 1024x768 Win32 on-screen display surface" << std::endl;
+        } else
+#endif
+        {
+            gTestSurface = new TestDisplaySurface(1024, 768);
+            gDisplaySurface = gTestSurface;
+            std::cout << "Created " << gTestSurface->width() << "x" << gTestSurface->height()
+                      << " test display surface" << std::endl;
+        }
     } else {
         std::cout << "\n=== Headless Mode (no display) ===" << std::endl;
     }

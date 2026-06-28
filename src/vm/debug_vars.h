@@ -276,6 +276,7 @@ DEBUG_BOOL(PHARO_T1_PRIM_OVERPOP)           // cold-boot over-pop detector: at e
 DEBUG_BOOL(PHARO_T1_PRIM_OVERPOP_STOP)      // stop the VM at the first PRIM_OVERPOP mismatch.
 DEBUG_BOOL(PHARO_DUMP_DISPLAY)              // test_load_image: dump the TestDisplaySurface (gDisplaySurface) to /tmp/vm-display-{20,60,150}.ppm at those render-present counts — proves whether the VM actually draws the morphic World into gDisplaySurface (which screencapture can't grab from the app's Metal layer). Headless GUI-render verification.
 DEBUG_BOOL(PHARO_FORCE_DISPLAY)             // test_load_image: create gTestSurface/gDisplaySurface even in headless/eval mode, so a forced render (OSWorldRenderer doActivate) can present into it and be captured via PHARO_DUMP_DISPLAY. Proved the Windows GUI render path headlessly (the morphic World draws). See docs/deferred.md GUI section.
+DEBUG_BOOL(PHARO_GUI_WINDOW)                // test_load_image (Windows): back gDisplaySurface with a real on-screen Win32 HWND (Win32DisplaySurface, GDI StretchDIBits present) instead of the in-memory TestDisplaySurface — so the rendered morphic World is actually shown in a window. Implies the display surface is created. Input events not yet wired.
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT
