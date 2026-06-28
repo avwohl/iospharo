@@ -292,23 +292,32 @@ isolation (no suite watchdog):
   SocketAddressTest 5/5, TCPSocketEchoTest 1/1, SocketStreamTest 17/19,
   ZdcSocketStreamTest 9/15, ZdcOptimizedSocketStreamTest 10/15 (~80+ tests
   recovered, 0 -> majority passing). No hangs.
-- [ ] **Socket read-path / half-close refinements** — PARTIALLY fixed.  Treating
-  recv() `ECONNRESET`/`ECONNABORTED` as a clean EOF (Windows closesocket() with
-  unread inbound data sends RST, not FIN) took `ZdcReferenceSocketStreamTest` to
-  15/15.  The REMAINING failures (`ZdcSocketStream`/`ZdcOptimized`
-  `testPlainClientRead*`/`testPlainClientSkip*`/`testReverseEchoUpToEnd`;
-  `SocketStreamTest` testFlushOtherEndClosed ×2; UDPSocketEcho `testEcho`,
-  UDPSocket `testUDPBroadcastError`) are TIMING-SENSITIVE races: the failing set
-  ROTATES run-to-run (ZdcOptimized 9<->10), so it is a concurrency race between the
-  in-image client+server green threads and the C++ select() I/O thread, not a
-  deterministic logic bug.  Core path is solid (ZdcSimple 15/15, ZdcReference
-  15/15, TCPSocketTest 9/9).  This is exactly the JIT-Heisenbug class CLAUDE.md's
-  `PHARO_DET_SCHED=1` was built for — repro deterministically (printf
-  'ZdcSocketStreamTest' > sunit_class_names.txt; PHARO_DET_SCHED=1 ...) then trace
-  the readSema/connSema signalling vs the recv()/connectionStatus poll order.
-  Likely the I/O thread signals readSema before the green thread parks on it, or
-  the 100ms select() timeout delays an EOF transition.  Plus UDP echo/broadcast
-  (separate, UDP-specific).  Refinement, not a blocker — TCP works.
+- [ ] **Socket read-path EOF reporting** — ROOT CAUSE DIAGNOSED (not a race; the
+  ECONNRESET fix above already took ZdcReference to 15/15).  Remaining failures
+  (`ZdcSocketStream`/`ZdcOptimized` `testPlainClientRead*`/`testPlainClientSkip*`/
+  `testReverseEchoUpToEnd`) are DETERMINISTIC in isolation (testPlainClientRead
+  fails every run) and PASS on the reference Pharo Windows VM — so it's a real VM
+  behaviour difference, not flakiness.  SOCKDBG tracing shows the client reads all
+  data correctly (received=6), hits EOF (recv 0 -> OtherEndClosed), but then a
+  buffered stream's read loop raises an UNCAUGHT ConnectionClosed.  Cause:
+  `primitiveSocketReceiveDataAvailable` uses a bare `select()`, which reports a
+  peer-closed socket as readable (recv would return 0) — so `dataAvailable` is
+  `true` at EOF.  The buffered Zdc/ZdcOptimized streams poll dataAvailable, keep
+  trying to read past EOF, and raise ConnectionClosed.  THE FIX (verified
+  partially): make dataAvailable MSG_PEEK after select and return false when the
+  peek is 0 (EOF) — that makes testPlainClientRead PASS.  BUT it then breaks the
+  server-side `upToEnd` (`[isConnected] whileTrue: [receiveData]` in
+  testPlainClientWrite): with dataAvailable false at EOF the image never recv()s
+  the 0 that flips the state, so isConnected stays true and it ConnectionTimedOut/
+  crashes.  The COMPLETE fix needs BOTH: dataAvailable=false at EOF AND the I/O
+  thread setting `SOCK_OTHER_END_CLOSED` when it detects EOF (MSG_PEEK==0 at
+  SocketPlugin.cpp ~287), so connectionStatus reflects the close without the image
+  having to read 0.  That I/O-thread change touches the deliberate "don't change
+  state on EOF" SSL workaround (comment ~288) and MUST be verified on macOS/Linux
+  SSL (ZdcSecureSocketStream) — this machine is Windows-only and can't.  Deferred
+  to a POSIX-capable session.  Core path solid: TCPSocketTest 9/9, ZdcSimple 15/15,
+  ZdcReference 15/15.  Plus UDP echo/broadcast (separate, UDP-specific).  Not a
+  blocker — TCP works.
 - [ ] **Crypto / SqueakSSL** — `PHARO_WITH_CRYPTO=OFF` on Windows; no OpenSSL
   link, so HTTPS/TLS is unavailable. Needs vcpkg/MSYS2 OpenSSL (milestone 3).
 
