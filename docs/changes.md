@@ -1,5 +1,19 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-06-28
+
+## win: crypto/TLS enabled — HTTPS works (ZnClient -> HTTP 200 over TLS)
+
+With the winsock2 SocketPlugin working, TLS-over-TCP now functions on Windows.
+Turned PHARO_WITH_CRYPTO ON (was OFF): MSYS2 CLANG64 provides OpenSSL 3.6.3 via
+pkg-config, and the three crypto sources (SqueakSSL.c, DSAPrims.c, and the real
+OpenSSL backend sqGenericSSL.c) are POSIX-clean — they compiled + linked
+unchanged once the OpenSSL include/link was added to the WIN32 CMake branch
+(mirroring Linux). Verified end to end: `ZnClient get: 'https://example.com'`
+returns HTTP 200 with the page body (full TLS handshake over our TCP sockets).
+Native SSL plugin now detected (ZdcSecureSocketStreamTest 2/2); SHA1 9/9, MD5
+9/9, SHA256 11/12. Milestone 3 (networking: sockets + crypto/TLS) is complete.
+
 2026-06-27
 
 ## win: TCP networking — SocketPlugin ported to winsock2 (milestone 3)

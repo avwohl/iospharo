@@ -576,6 +576,16 @@ elseif(WIN32)
     # dl: dlopen/dlsym/dladdr via the MSYS2 dlfcn-win32 package (FFI + plugin
     # symbol lookup); used by FFI.cpp/Interpreter.cpp/ObjectMemory.cpp.
     target_link_libraries(PharoVMCore ws2_32 dl)
+    # SSL/TLS backend: real OpenSSL (sqGenericSSL.c) — now usable since the
+    # winsock2 SocketPlugin works (TLS runs over our TCP sockets).  MSYS2
+    # CLANG64 provides openssl via pkg-config (3.x).
+    if(PHARO_WITH_CRYPTO)
+        pkg_check_modules(OPENSSL REQUIRED openssl)
+        target_include_directories(PharoVMCore PUBLIC ${OPENSSL_INCLUDE_DIRS})
+        target_link_libraries(PharoVMCore ${OPENSSL_LIBRARIES})
+        set_source_files_properties(src/vm/plugins/sqGenericSSL.c PROPERTIES COMPILE_FLAGS "-w")
+        message(STATUS "Using OpenSSL from pkg-config: ${OPENSSL_LIBRARIES}")
+    endif()
 endif()
 
 # Platform-specific frameworks

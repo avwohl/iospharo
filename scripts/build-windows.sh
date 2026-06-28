@@ -43,7 +43,7 @@ cmake -G Ninja -B "${BUILD_DIR}" -S "${REPO_ROOT}" \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-    -DPHARO_WITH_CRYPTO=OFF \
+    -DPHARO_WITH_CRYPTO=ON \
     -DPHARO_DISABLE_LTO=ON
 
 echo "== Build (${TARGET}) =="

@@ -325,8 +325,16 @@ isolation (no suite watchdog):
   a loopback-datagram delivery/binding difference or the classic Windows
   SIO_UDP_CONNRESET behaviour (a UDP recvfrom after an ICMP port-unreachable
   returns WSAECONNRESET).  Needs tracing; UDP-specific, separate from TCP.
-- [ ] **Crypto / SqueakSSL** — `PHARO_WITH_CRYPTO=OFF` on Windows; no OpenSSL
-  link, so HTTPS/TLS is unavailable. Needs vcpkg/MSYS2 OpenSSL (milestone 3).
+- [x] **Crypto / SqueakSSL / HTTPS** — DONE (2026-06-28). `PHARO_WITH_CRYPTO=ON`
+  on Windows now (was OFF); MSYS2 CLANG64 ships OpenSSL 3.6.3 via pkg-config. The
+  three crypto sources (SqueakSSL.c, DSAPrims.c, sqGenericSSL.c — the real OpenSSL
+  TLS backend) are POSIX-clean and compiled + linked unchanged; added the OpenSSL
+  pkg-config include/link to the WIN32 CMake branch mirroring Linux. With the
+  winsock2 SocketPlugin already working, TLS runs over our TCP sockets:
+  **`ZnClient get: 'https://example.com'` returns HTTP 200 with the page body** —
+  a full TLS handshake end to end.  Also: native SSL plugin now detected
+  (ZdcSecureSocketStreamTest 2/2, was 1/2 — testIsNativeSSLPluginPresent passes);
+  SHA1 9/9, MD5 9/9, SHA256 11/12 (one FIPS vector, minor).
 
 ### GUI
 - [ ] **SDL2 / Morphic display** — headless only. No window/rendering surface;
