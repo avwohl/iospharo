@@ -423,6 +423,28 @@ isolation (no suite watchdog):
     (4) for the stub path only, a Win32 HWND present backend behind gDisplaySurface
     + Win32->SDL event injection.  Every gate is now identified — this is a
     focused milestone-4 build-out with visual (windowed) verification.
+  - PROGRESS (2026-06-28): gates 1+2 CLEARED.  Dropping any file named `SDL2.dll`
+    into the IMAGE directory (the FFIWindowsLibraryFinder searches the image dir
+    first; a copy of any DLL works since our FFI routes "SDL" symbols to the
+    built-in stubs and never dlopens the file) flips `SDL2 isAvailable` -> true and
+    `OSSDL2Driver isSuitable` -> true.  Then running the harness with NO args
+    (interactive mode, line ~1100) activates the SDL2 driver: the log shows
+    `OSSDL2Driver>>eventLoop` running, a 1024x768 display surface + 32bpp Display
+    Form created.  NOTE: the finder checks the image dir, NOT the exe dir, so the
+    build can't auto-provide SDL2.dll there — either stage it next to the image or
+    add a startup-script patch (PharoBridge.writeStartupScript) that stubs
+    `SDL2Library>>libraryName`/`SDL2 class>>isAvailable`.
+  - NEXT SUB-PROBLEM (the real remaining gap): in interactive mode the World does
+    NOT draw a frame.  `displayFormReady_` stays false (so neither primitiveBeDisplay
+    nor primitiveShowDisplayRect at Primitives.cpp:5185/14105 was called) AND there
+    is no SDL_RenderPresent — i.e. NEITHER display path fires.  The OSSDL2Driver
+    eventLoop is polling (stub_SDL_PollEvent returns 0), but the morphic UI draw
+    process never produces a frame.  So the gap is now a Morphic draw/scheduling
+    issue (the World renderer/main-loop not drawing in interactive mode), not the
+    SDL bridge.  Investigate: is World worldState worldRenderer switched to
+    OSWorldRenderer (vs still NullWorldRenderer) under interactive mode, and is the
+    morphic UI process actually running doOneCycle / getting an initial full-damage
+    redraw.  Verify headlessly via PHARO_DUMP_DISPLAY once a frame is produced.
 
 ### Diagnostics / platform features (honest stubs)
 - [ ] **Sampling profiler** (`Profiler.cpp`) — `enable()` is a no-op on Windows
