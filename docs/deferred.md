@@ -316,8 +316,15 @@ isolation (no suite watchdog):
   state on EOF" SSL workaround (comment ~288) and MUST be verified on macOS/Linux
   SSL (ZdcSecureSocketStream) — this machine is Windows-only and can't.  Deferred
   to a POSIX-capable session.  Core path solid: TCPSocketTest 9/9, ZdcSimple 15/15,
-  ZdcReference 15/15.  Plus UDP echo/broadcast (separate, UDP-specific).  Not a
-  blocker — TCP works.
+  ZdcReference 15/15.  Not a blocker — TCP works.
+- [ ] **UDP echo/broadcast** (`UDPSocketEchoTest>>testEcho`,
+  `UDPSocketTest>>testUDPBroadcastError`) — passes on the reference Windows VM,
+  fails on ours with `SocketError: The operation completed successfully` (i.e.
+  WSAGetLastError()==0: the image reads `socketError` after a UDP op that returned
+  no data, and our sockError is 0).  send/recvfrom primitives look correct; likely
+  a loopback-datagram delivery/binding difference or the classic Windows
+  SIO_UDP_CONNRESET behaviour (a UDP recvfrom after an ICMP port-unreachable
+  returns WSAECONNRESET).  Needs tracing; UDP-specific, separate from TCP.
 - [ ] **Crypto / SqueakSSL** — `PHARO_WITH_CRYPTO=OFF` on Windows; no OpenSSL
   link, so HTTPS/TLS is unavailable. Needs vcpkg/MSYS2 OpenSSL (milestone 3).
 
