@@ -391,6 +391,19 @@ isolation (no suite watchdog):
     depend on EXE symbol export.  But that only flips the FFI gate — the World still
     won't render until the image runs non-headless on an OSSDL2Driver window (the
     interactive-mode milestone-4 work).
+  - THE PRECISE ACTIVATION GATE (2026-06-28): `OSWorldRenderer class>>isApplicableFor:`
+    is literally `^ Smalltalk isHeadless and: [CommandLineArguments new hasOption:
+    'interactive']`.  So the morphic OS-window renderer activates only when the
+    image is launched with `--interactive`.  The image currently boots via
+    `NonInteractiveUIManager` (no --interactive), so it stays on NullWorldRenderer.
+    Therefore the concrete milestone-4 FIRST STEP is an INTERACTIVE RUN MODE in
+    test_load_image: pass `--interactive` through to the image's CommandLineArguments
+    AND run the image's World/event loop instead of eval-then-exit, so the image
+    opens an OSSDL2Driver OSWindow (-> SDL_CreateWindow stub sizes gDisplaySurface ->
+    RenderPresent fills it).  Then verify headlessly with PHARO_DUMP_DISPLAY before
+    adding the real Win32 HWND present + Win32->SDL event injection.  (OSSDL2Driver
+    class>>isSuitable = `SDL2 isAvailable`, so the isModuleLoaded/SDL-symbol fix
+    above is also needed for the driver to be picked.)
 
 ### Diagnostics / platform features (honest stubs)
 - [ ] **Sampling profiler** (`Profiler.cpp`) — `enable()` is a no-op on Windows
