@@ -768,13 +768,22 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
 
     ssize_t received = recv(ps->fd, buf + offset, (size_t)count, 0);
     if (received < 0) {
-        if (SOCK_LAST_ERROR == SOCK_EAGAIN || SOCK_LAST_ERROR == SOCK_EWOULDBLOCK) {
+        int e = SOCK_LAST_ERROR;
+        if (e == SOCK_EAGAIN || e == SOCK_EWOULDBLOCK) {
             received = 0; // No data available yet
+        } else if (e == SOCK_ECONNRESET || e == SOCK_ECONNABORTED) {
+            // Peer reset/aborted the connection.  On Windows closesocket() with
+            // unread inbound data sends an RST (where a graceful close would FIN),
+            // so a normal "other end closed" surfaces here as ECONNRESET.  Treat it
+            // as a clean EOF (0 bytes + OtherEndClosed) instead of failing the
+            // primitive — otherwise the image raises ConnectionClosed mid-read.
+            received = 0;
+            ps->sockState = SOCK_OTHER_END_CLOSED;
         } else {
-            ps->sockError = SOCK_LAST_ERROR;
+            ps->sockError = e;
 #ifdef DEBUG
             fprintf(stderr, "[SOCK] recv fd=%d error=%d (%s)\n",
-                    ps->fd, SOCK_LAST_ERROR, strerror(SOCK_LAST_ERROR));
+                    ps->fd, e, strerror(e));
 #endif
             return vm->primitiveFail();
         }

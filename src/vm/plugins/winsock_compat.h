@@ -50,6 +50,8 @@
 #define SOCK_EWOULDBLOCK  WSAEWOULDBLOCK
 #define SOCK_EAGAIN       WSAEWOULDBLOCK
 #define SOCK_EINPROGRESS  WSAEWOULDBLOCK   // non-blocking connect reports WSAEWOULDBLOCK
+#define SOCK_ECONNRESET   WSAECONNRESET
+#define SOCK_ECONNABORTED WSAECONNABORTED
 
 static inline int sockClose(SOCKET fd) { return closesocket(fd); }
 static inline int sockSetNonBlocking(SOCKET fd) {
@@ -90,6 +92,8 @@ typedef int SOCKET;
 #define SOCK_EWOULDBLOCK  EWOULDBLOCK
 #define SOCK_EAGAIN       EAGAIN
 #define SOCK_EINPROGRESS  EINPROGRESS
+#define SOCK_ECONNRESET   ECONNRESET
+#define SOCK_ECONNABORTED ECONNABORTED
 
 static inline int sockClose(int fd) { return ::close(fd); }
 static inline int sockSetNonBlocking(int fd) {

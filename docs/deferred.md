@@ -292,16 +292,23 @@ isolation (no suite watchdog):
   SocketAddressTest 5/5, TCPSocketEchoTest 1/1, SocketStreamTest 17/19,
   ZdcSocketStreamTest 9/15, ZdcOptimizedSocketStreamTest 10/15 (~80+ tests
   recovered, 0 -> majority passing). No hangs.
-- [ ] **Socket read-path / half-close refinements** — the residual socket
-  failures (ZdcSocketStream/ZdcOptimized `testPlainClientRead*`/`testPlainClientSkip*`/
-  `testReverseEchoUpToEnd`; `SocketStreamTest` testFlushOtherEndClosed ×2;
-  UDPSocketEcho `testEcho`, UDPSocket `testUDPBroadcastError`) fail with
-  `ConnectionClosed: Cannot read data` — the read sees the connection closed before
-  draining buffered data. The core path works (ZdcSimpleSocketStream 15/15), so
-  this is the I/O-thread EOF/half-close detection (MSG_PEEK==0 -> eofDetected vs
-  buffered-data-still-readable) interacting with the buffering stream modes, plus
-  UDP echo/broadcast. Subtle async-timing; investigate with the in-image
-  client+server under PHARO_DET_SCHED. Refinement, not a blocker.
+- [ ] **Socket read-path / half-close refinements** — PARTIALLY fixed.  Treating
+  recv() `ECONNRESET`/`ECONNABORTED` as a clean EOF (Windows closesocket() with
+  unread inbound data sends RST, not FIN) took `ZdcReferenceSocketStreamTest` to
+  15/15.  The REMAINING failures (`ZdcSocketStream`/`ZdcOptimized`
+  `testPlainClientRead*`/`testPlainClientSkip*`/`testReverseEchoUpToEnd`;
+  `SocketStreamTest` testFlushOtherEndClosed ×2; UDPSocketEcho `testEcho`,
+  UDPSocket `testUDPBroadcastError`) are TIMING-SENSITIVE races: the failing set
+  ROTATES run-to-run (ZdcOptimized 9<->10), so it is a concurrency race between the
+  in-image client+server green threads and the C++ select() I/O thread, not a
+  deterministic logic bug.  Core path is solid (ZdcSimple 15/15, ZdcReference
+  15/15, TCPSocketTest 9/9).  This is exactly the JIT-Heisenbug class CLAUDE.md's
+  `PHARO_DET_SCHED=1` was built for — repro deterministically (printf
+  'ZdcSocketStreamTest' > sunit_class_names.txt; PHARO_DET_SCHED=1 ...) then trace
+  the readSema/connSema signalling vs the recv()/connectionStatus poll order.
+  Likely the I/O thread signals readSema before the green thread parks on it, or
+  the 100ms select() timeout delays an EOF transition.  Plus UDP echo/broadcast
+  (separate, UDP-specific).  Refinement, not a blocker — TCP works.
 - [ ] **Crypto / SqueakSSL** — `PHARO_WITH_CRYPTO=OFF` on Windows; no OpenSSL
   link, so HTTPS/TLS is unavailable. Needs vcpkg/MSYS2 OpenSSL (milestone 3).
 
