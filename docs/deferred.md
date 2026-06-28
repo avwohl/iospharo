@@ -368,6 +368,16 @@ isolation (no suite watchdog):
     PPM (proves parts of the path), then add the HWND present, then events.
   - SDL2 is NOT installed in MSYS2 (no real-SDL2 reroute needed — the built-in
     stub bridge is the design; we add a Win32 backend behind it, like Apple/Metal).
+  - EMPIRICALLY CONFIRMED (2026-06-28): the image already HAS the pieces —
+    `Smalltalk includesKey: #OSSDL2Driver` and `#OSWindowDriver` are both true,
+    `World` is a live WorldMorph, and `200 timesRepeat: [World doOneCycle]` runs
+    without error — BUT produces zero RenderPresents / zero PPM dumps under
+    PHARO_DUMP_DISPLAY=1.  So the World draws into its Form but nothing presents to
+    SDL/gDisplaySurface: the image is on a headless display driver, never opening an
+    OSSDL2Driver OSWindow.  Part 1 of the plan is therefore really "open an
+    OSSDL2Driver-backed OSWindow and run its event/display loop", which then
+    activates the existing SDL-stub -> gDisplaySurface path.  (OSPlatform reports
+    Win64Platform.)
 
 ### Diagnostics / platform features (honest stubs)
 - [ ] **Sampling profiler** (`Profiler.cpp`) — `enable()` is a no-op on Windows
