@@ -57,6 +57,15 @@ static inline int sockSetNonBlocking(SOCKET fd) {
     return ioctlsocket(fd, FIONBIO, &mode);   // 0 on success
 }
 
+// winsock get/setsockopt take a (const) char* optval and an int optlen, where
+// BSD uses void* and socklen_t.  Wrap them so the BSD-style call sites compile
+// unchanged.  The macro name is re-used but the body calls ::getsockopt, so it
+// expands only once (no recursion).
+#define getsockopt(s, lvl, opt, val, len) \
+    (::getsockopt((s), (lvl), (opt), (char*)(val), (len)))
+#define setsockopt(s, lvl, opt, val, len) \
+    (::setsockopt((s), (lvl), (opt), (const char*)(val), (int)(len)))
+
 #else  // ---------------------------------------------------------------- POSIX
 
 #include <arpa/inet.h>

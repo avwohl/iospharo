@@ -7,6 +7,7 @@
 #include "ObjectMemory.hpp"
 #include "ImageLoader.hpp"
 #include "Interpreter.hpp"
+#include "../platform/Platform.hpp"
 #include "DebugSettings.hpp"
 #include "DebugVars.hpp"
 #include "Profiler.hpp"
@@ -844,6 +845,10 @@ int main(int argc, char* argv[]) {
     sigaction(SIGILL, &sa, nullptr);
 #else
     AddVectoredExceptionHandler(1, pharoWinCrashHandler);
+    // One-time platform startup hook — on Windows this runs WSAStartup, which
+    // MUST happen before any socket()/getaddrinfo() (SocketPlugin + the DNS
+    // resolver).  It was previously never called (sockets/DNS silently failed).
+    pharo::platform::platformInit();
 #endif  // SIGSEGV/BUS/ILL recovery is POSIX-only; Windows gets a crash-dump VEH
     signal(SIGTERM, sigtermHandler);
 #ifdef __APPLE__

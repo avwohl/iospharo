@@ -267,11 +267,10 @@ elseif(WIN32)
         src/vm/plugins/SoundPlugin.cpp
         src/vm/plugins/MIDIPlugin.cpp
     )
-    # SocketPlugin is a large winsock2 port deferred to milestone 3; swap in a
-    # stub that supplies the symbols InterpreterProxy's table references (each
-    # socket primitive fails honestly; hasSocketAccess reports false).
-    list(REMOVE_ITEM VM_SOURCES src/vm/plugins/SocketPlugin.cpp)
-    list(APPEND VM_SOURCES src/vm/plugins/SocketPlugin_win_stub.cpp)
+    # SocketPlugin is the real BSD-sockets plugin ported to winsock2 via
+    # src/vm/plugins/winsock_compat.h (milestone 3).  It stays in VM_SOURCES;
+    # ws2_32 is linked below.  (The old SocketPlugin_win_stub.cpp remains in the
+    # tree as a fallback but is no longer compiled.)
     # TrampolineAsm.S is the ARM64-only hand-written J2J trampoline (it
     # preprocesses to empty on x86-64); drop it to sidestep the GAS-vs-MASM
     # assembler-dialect question for milestone 1.

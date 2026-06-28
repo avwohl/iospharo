@@ -6,24 +6,16 @@
  * when connections complete.
  */
 
+#include "winsock_compat.h"  // FIRST: winsock2 before any windows.h; net headers + BSD<->winsock shims
 #include "SocketPlugin.h"
 #include "../DebugSettings.hpp"
 #include <algorithm>
-#include <arpa/inet.h>
 #include <atomic>
-#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <mutex>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <sys/select.h>
-#include <sys/socket.h>
 #include <thread>
-#include <unistd.h>
 #include <vector>
 
 // =====================================================================
@@ -31,13 +23,13 @@
 // =====================================================================
 
 struct PrivateSocket {
-    int fd;              // POSIX socket file descriptor
+    SOCKET fd;           // socket descriptor (int on POSIX, SOCKET on winsock)
     int connSema;        // connection semaphore index
     int readSema;        // read semaphore index
     int writeSema;       // write semaphore index
     int sockState;       // one of SOCK_* constants
-    int sockError;       // errno after socket error
-    bool writeSignaled;  // true after write-ready signaled; reset on EAGAIN
+    int sockError;       // SOCK_LAST_ERROR after socket error
+    bool writeSignaled;  // true after write-ready signaled; reset on SOCK_EAGAIN
     bool eofDetected;    // true after I/O thread sees MSG_PEEK return 0 (FIN)
     bool listening;      // true once listen() called: WAITING_FOR_CONNECTION here
                          // means a pending *incoming* connection (readable), not a
@@ -64,16 +56,82 @@ static std::vector<PrivateSocket*> gDeleteQueue; // deferred deletion
 // I/O monitor thread
 static std::thread gIOThread;
 static std::atomic<bool> gIORunning{false};
-static int gWakePipe[2] = {-1, -1};  // self-pipe to wake select()
+
+// Self-wake channel for the select() loop.  On POSIX a classic self-pipe; on
+// Windows select() can watch only sockets (not pipes), so we use a connected
+// loopback UDP socket pair instead.
+#ifdef _WIN32
+static SOCKET gWakeSend = INVALID_SOCKET;   // sendto() side
+static SOCKET gWakeRecv = INVALID_SOCKET;   // FD_SET / recvfrom() side
+#else
+static int gWakePipe[2] = {-1, -1};
+#endif
 
 // =====================================================================
 // Helper: set socket to non-blocking
 // =====================================================================
 
-static bool setNonBlocking(int fd) {
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0) return false;
-    return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+static bool setNonBlocking(SOCKET fd) {
+    return sockSetNonBlocking(fd) == 0;
+}
+
+// =====================================================================
+// Helpers: the I/O-thread self-wake channel
+// =====================================================================
+
+// The readable end of the wake channel, to add to the select() read set.
+static SOCKET gWakeReadFd() {
+#ifdef _WIN32
+    return gWakeRecv;
+#else
+    return gWakePipe[0];
+#endif
+}
+
+// Drain any pending wake bytes (the channel is non-blocking).
+static void drainWake() {
+    char buf[64];
+#ifdef _WIN32
+    while (recvfrom(gWakeRecv, buf, sizeof(buf), 0, nullptr, nullptr) > 0) {}
+#else
+    while (read(gWakePipe[0], buf, sizeof(buf)) > 0) {}
+#endif
+}
+
+// Create the wake channel with both ends non-blocking.  Returns false on failure.
+static bool initWakePair() {
+#ifdef _WIN32
+    gWakeRecv = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    gWakeSend = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (gWakeRecv == INVALID_SOCKET || gWakeSend == INVALID_SOCKET) return false;
+    sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    if (bind(gWakeRecv, (sockaddr*)&addr, sizeof(addr)) != 0) return false;
+    int alen = (int)sizeof(addr);
+    if (getsockname(gWakeRecv, (sockaddr*)&addr, &alen) != 0) return false;
+    if (connect(gWakeSend, (sockaddr*)&addr, sizeof(addr)) != 0) return false;
+    sockSetNonBlocking(gWakeRecv);
+    sockSetNonBlocking(gWakeSend);
+    return true;
+#else
+    if (pipe(gWakePipe) < 0) return false;
+    setNonBlocking(gWakePipe[0]);
+    setNonBlocking(gWakePipe[1]);
+    return true;
+#endif
+}
+
+static void closeWakePair() {
+#ifdef _WIN32
+    if (gWakeRecv != INVALID_SOCKET) { sockClose(gWakeRecv); gWakeRecv = INVALID_SOCKET; }
+    if (gWakeSend != INVALID_SOCKET) { sockClose(gWakeSend); gWakeSend = INVALID_SOCKET; }
+#else
+    if (gWakePipe[0] >= 0) { sockClose(gWakePipe[0]); gWakePipe[0] = -1; }
+    if (gWakePipe[1] >= 0) { sockClose(gWakePipe[1]); gWakePipe[1] = -1; }
+#endif
 }
 
 // =====================================================================
@@ -81,10 +139,12 @@ static bool setNonBlocking(int fd) {
 // =====================================================================
 
 static void wakeIOThread() {
-    if (gWakePipe[1] >= 0) {
-        char c = 'w';
-        (void)write(gWakePipe[1], &c, 1);
-    }
+    char c = 'w';
+#ifdef _WIN32
+    if (gWakeSend != INVALID_SOCKET) (void)send(gWakeSend, &c, 1, 0);
+#else
+    if (gWakePipe[1] >= 0) (void)write(gWakePipe[1], &c, 1);
+#endif
 }
 
 // =====================================================================
@@ -116,8 +176,8 @@ static void ioMonitorLoop() {
         FD_ZERO(&readfds);
         FD_ZERO(&writefds);
 
-        int maxfd = gWakePipe[0];
-        FD_SET(gWakePipe[0], &readfds);
+        SOCKET maxfd = gWakeReadFd();
+        FD_SET(gWakeReadFd(), &readfds);
 
         // Snapshot active sockets and drain deletion queue under lock
         std::vector<PrivateSocket*> snapshot;
@@ -130,7 +190,7 @@ static void ioMonitorLoop() {
         }
 
         for (auto* ps : snapshot) {
-            if (ps->fd < 0) continue;
+            if (ps->fd == INVALID_SOCKET) continue;
             if (ps->listening) {
                 // Listening server socket: watch for readable = a pending incoming
                 // connection, but ONLY while it's still WAITING.  Once we promote it
@@ -170,18 +230,17 @@ static void ioMonitorLoop() {
         tv.tv_sec = 0;
         tv.tv_usec = 100000; // 100ms timeout
 
-        int ready = select(maxfd + 1, &readfds, &writefds, nullptr, &tv);
+        int ready = select((int)(maxfd + 1), &readfds, &writefds, nullptr, &tv);
         if (ready <= 0) continue;
 
-        // Drain wake pipe
-        if (FD_ISSET(gWakePipe[0], &readfds)) {
-            char buf[64];
-            (void)read(gWakePipe[0], buf, sizeof(buf));
+        // Drain wake channel
+        if (FD_ISSET(gWakeReadFd(), &readfds)) {
+            drainWake();
         }
 
         // Process socket events
         for (auto* ps : snapshot) {
-            if (ps->fd < 0) continue;
+            if (ps->fd == INVALID_SOCKET) continue;
 
             if (ps->listening) {
                 // A pending incoming connection: report the listening socket as
@@ -235,9 +294,9 @@ static void ioMonitorLoop() {
                             if (ps->connSema > 0 && vm) {
                                 vm->signalSemaphoreWithIndex(ps->connSema);
                             }
-                        } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                        } else if (n < 0 && SOCK_LAST_ERROR != SOCK_EAGAIN && SOCK_LAST_ERROR != SOCK_EWOULDBLOCK) {
                             // Actual socket error — set state immediately
-                            ps->sockError = errno;
+                            ps->sockError = SOCK_LAST_ERROR;
                             ps->sockState = SOCK_OTHER_END_CLOSED;
                             if (ps->connSema > 0 && vm) {
                                 vm->signalSemaphoreWithIndex(ps->connSema);
@@ -279,14 +338,12 @@ static void ioMonitorLoop() {
 void socketPluginInit() {
     if (gIORunning.load()) return;
 
-    // Create self-pipe for waking select()
-    if (pipe(gWakePipe) < 0) {
-        fprintf(stderr, "[SOCK] socketPluginInit: pipe() failed errno=%d (%s)\n",
-                errno, strerror(errno));
+    // Create the self-wake channel for the select() loop.
+    if (!initWakePair()) {
+        fprintf(stderr, "[SOCK] socketPluginInit: wake-channel init failed err=%d\n",
+                SOCK_LAST_ERROR);
         return;
     }
-    setNonBlocking(gWakePipe[0]);
-    setNonBlocking(gWakePipe[1]);
 
     gIORunning.store(true);
     gIOThread = std::thread(ioMonitorLoop);
@@ -295,8 +352,7 @@ void socketPluginInit() {
     gIOThread.detach();
 
 #ifdef DEBUG
-    fprintf(stderr, "[SOCK] socketPluginInit OK (pipe=%d/%d, I/O thread started)\n",
-            gWakePipe[0], gWakePipe[1]);
+    fprintf(stderr, "[SOCK] socketPluginInit OK (I/O thread started)\n");
 #endif
 }
 
@@ -308,14 +364,13 @@ void socketPluginShutdown() {
     // Thread is detached, so just give it a moment to notice the flag
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-    if (gWakePipe[0] >= 0) { close(gWakePipe[0]); gWakePipe[0] = -1; }
-    if (gWakePipe[1] >= 0) { close(gWakePipe[1]); gWakePipe[1] = -1; }
+    closeWakePair();
 
     // Clean up any remaining sockets
     {
         std::lock_guard<std::mutex> lock(gSocketMutex);
         for (auto* ps : gActiveSockets) {
-            if (ps->fd >= 0) close(ps->fd);
+            if (ps->fd != INVALID_SOCKET) sockClose(ps->fd);
             delete ps;
         }
         gActiveSockets.clear();
@@ -374,11 +429,11 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     // Create the OS socket
     int domain = AF_INET;
     int type = (socketType == UDP_SOCKET_TYPE) ? SOCK_DGRAM : SOCK_STREAM;
-    int fd = socket(domain, type, 0);
-    if (fd < 0) return vm->primitiveFail();
+    SOCKET fd = socket(domain, type, 0);
+    if (fd == INVALID_SOCKET) return vm->primitiveFail();
 
     if (!setNonBlocking(fd)) {
-        close(fd);
+        sockClose(fd);
         return vm->primitiveFail();
     }
 
@@ -400,7 +455,7 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     sqInt classBA = vm->classByteArray();
     sqInt socketOop = vm->instantiateClassindexableSize(classBA, sizeof(SQSocket));
     if (vm->failed()) {
-        close(fd);
+        sockClose(fd);
         delete ps;
         return vm->primitiveFail();
     }
@@ -412,7 +467,7 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     socketOop = vm->popRemappableOop();
     SQSocket* s = (SQSocket*)vm->firstIndexableField(socketOop);
     if (!s) {
-        close(fd);
+        sockClose(fd);
         delete ps;
         return vm->primitiveFail();
     }
@@ -436,9 +491,9 @@ extern "C" sqInt sp_primitiveSocketDestroy(void) {
     if (!ps) return vm->primitiveFail();
 
     // Close fd first so I/O thread skips this socket (fd < 0 check)
-    if (ps->fd >= 0) {
-        close(ps->fd);
-        ps->fd = -1;
+    if (ps->fd != INVALID_SOCKET) {
+        sockClose(ps->fd);
+        ps->fd = INVALID_SOCKET;
     }
 
     // Clear the handle so it can't be reused
@@ -472,7 +527,7 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
     if (!ps) return vm->primitiveFail();
-    if (ps->fd < 0) return vm->primitiveFail();
+    if (ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     struct sockaddr_storage ss;
     socklen_t ssLen;
@@ -530,19 +585,19 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
 
     // If address family changed (IPv4→IPv6 via NAT64), re-create the socket
     if (chosen->ai_family == AF_INET6) {
-        int oldFd = ps->fd;
-        int newFd = socket(AF_INET6, SOCK_STREAM, 0);
-        if (newFd < 0) {
-            ps->sockError = errno;
+        SOCKET oldFd = ps->fd;
+        SOCKET newFd = socket(AF_INET6, SOCK_STREAM, 0);
+        if (newFd == INVALID_SOCKET) {
+            ps->sockError = SOCK_LAST_ERROR;
             freeaddrinfo(aiResult);
             return vm->primitiveFail();
         }
         if (!setNonBlocking(newFd)) {
-            close(newFd);
+            sockClose(newFd);
             freeaddrinfo(aiResult);
             return vm->primitiveFail();
         }
-        close(oldFd);
+        sockClose(oldFd);
         ps->fd = newFd;
     }
 
@@ -553,11 +608,11 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
         // Immediate connection (unlikely for TCP but possible on localhost)
         ps->sockState = SOCK_CONNECTED;
         if (ps->connSema > 0) vm->signalSemaphoreWithIndex(ps->connSema);
-    } else if (errno == EINPROGRESS) {
+    } else if (SOCK_LAST_ERROR == SOCK_EINPROGRESS) {
         ps->sockState = SOCK_WAITING_FOR_CONNECTION;
         wakeIOThread(); // ensure monitor notices
     } else {
-        ps->sockError = errno;
+        ps->sockError = SOCK_LAST_ERROR;
         return vm->primitiveFail();
     }
 
@@ -588,7 +643,7 @@ extern "C" sqInt sp_primitiveSocketCloseConnection(void) {
     PrivateSocket* ps = privateSocketFrom(socketOop);
     if (!ps) return vm->primitiveFail();
 
-    if (ps->fd >= 0) {
+    if (ps->fd != INVALID_SOCKET) {
         shutdown(ps->fd, SHUT_RDWR);
         ps->sockState = SOCK_THIS_END_CLOSED;
     }
@@ -604,12 +659,12 @@ extern "C" sqInt sp_primitiveSocketAbortConnection(void) {
     PrivateSocket* ps = privateSocketFrom(socketOop);
     if (!ps) return vm->primitiveFail();
 
-    if (ps->fd >= 0) {
+    if (ps->fd != INVALID_SOCKET) {
         // Set SO_LINGER to 0 for immediate RST
         struct linger lin = {1, 0};
         setsockopt(ps->fd, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
-        close(ps->fd);
-        ps->fd = -1;
+        sockClose(ps->fd);
+        ps->fd = INVALID_SOCKET;
         ps->sockState = SOCK_THIS_END_CLOSED;
     }
 
@@ -628,7 +683,7 @@ extern "C" sqInt sp_primitiveSocketSendDataBufCount(void) {
     if (vm->failed()) return vm->primitiveFail();
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) return vm->primitiveFail();
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     if (!vm->isBytes(dataOop)) return vm->primitiveFail();
     char* buf = (char*)vm->firstIndexableField(dataOop);
@@ -640,12 +695,12 @@ extern "C" sqInt sp_primitiveSocketSendDataBufCount(void) {
 
     ssize_t sent = send(ps->fd, buf + offset, (size_t)count, 0);
     if (sent < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (SOCK_LAST_ERROR == SOCK_EAGAIN || SOCK_LAST_ERROR == SOCK_EWOULDBLOCK) {
             sent = 0; // Nothing sent yet, try again later
             ps->writeSignaled = false; // Re-arm write notification
         } else {
-            ps->sockError = errno;
-            SOCKDBG("send: fd=%d count=%ld -> ERR errno=%d\n", ps->fd, (long)count, errno);
+            ps->sockError = SOCK_LAST_ERROR;
+            SOCKDBG("send: fd=%d count=%ld -> ERR SOCK_LAST_ERROR=%d\n", ps->fd, (long)count, SOCK_LAST_ERROR);
             return vm->primitiveFail();
         }
     }
@@ -675,7 +730,7 @@ extern "C" sqInt sp_primitiveSocketSendDone(void) {
 extern "C" sqInt sp_primitiveSocketReceiveDataAvailable(void) {
     sqInt socketOop = vm->stackValue(0);
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) {
+    if (!ps || ps->fd == INVALID_SOCKET) {
         vm->popthenPush(2, vm->falseObject());
         return 0;
     }
@@ -685,7 +740,7 @@ extern "C" sqInt sp_primitiveSocketReceiveDataAvailable(void) {
     FD_ZERO(&readfds);
     FD_SET(ps->fd, &readfds);
     struct timeval tv = {0, 0};
-    int ready = select(ps->fd + 1, &readfds, nullptr, nullptr, &tv);
+    int ready = select((int)(ps->fd + 1), &readfds, nullptr, nullptr, &tv);
 
     vm->popthenPush(2, (ready > 0) ? vm->trueObject() : vm->falseObject());
     return 0;
@@ -702,7 +757,7 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
     if (vm->failed()) return vm->primitiveFail();
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) return vm->primitiveFail();
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     if (!vm->isBytes(dataOop)) return vm->primitiveFail();
     char* buf = (char*)vm->firstIndexableField(dataOop);
@@ -713,13 +768,13 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
 
     ssize_t received = recv(ps->fd, buf + offset, (size_t)count, 0);
     if (received < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (SOCK_LAST_ERROR == SOCK_EAGAIN || SOCK_LAST_ERROR == SOCK_EWOULDBLOCK) {
             received = 0; // No data available yet
         } else {
-            ps->sockError = errno;
+            ps->sockError = SOCK_LAST_ERROR;
 #ifdef DEBUG
             fprintf(stderr, "[SOCK] recv fd=%d error=%d (%s)\n",
-                    ps->fd, errno, strerror(errno));
+                    ps->fd, SOCK_LAST_ERROR, strerror(SOCK_LAST_ERROR));
 #endif
             return vm->primitiveFail();
         }
@@ -730,8 +785,8 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
         ps->sockState = SOCK_OTHER_END_CLOSED;
     }
 
-    SOCKDBG("recv: fd=%d count=%ld -> received=%zd errno=%d state=%d\n",
-            ps->fd, (long)count, received, (received < 0 ? errno : 0), ps->sockState);
+    SOCKDBG("recv: fd=%d count=%ld -> received=%zd SOCK_LAST_ERROR=%d state=%d\n",
+            ps->fd, (long)count, received, (received < 0 ? SOCK_LAST_ERROR : 0), ps->sockState);
     vm->popthenPush(5, vm->integerObjectOf((sqInt)received));
     return 0;
 }
@@ -757,7 +812,7 @@ extern "C" sqInt sp_primitiveSocketError(void) {
 extern "C" sqInt sp_primitiveSocketLocalPort(void) {
     sqInt socketOop = vm->stackValue(0);
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) {
+    if (!ps || ps->fd == INVALID_SOCKET) {
         vm->popthenPush(2, vm->integerObjectOf(0));
         return 0;
     }
@@ -785,7 +840,7 @@ extern "C" sqInt sp_primitiveSocketLocalAddress(void) {
     uint32_t netAddr = 0;  // 0.0.0.0 when unbound/unknown
     struct sockaddr_in sa;
     socklen_t len = sizeof(sa);
-    if (ps && ps->fd >= 0 && getsockname(ps->fd, (struct sockaddr*)&sa, &len) == 0) {
+    if (ps && ps->fd != INVALID_SOCKET && getsockname(ps->fd, (struct sockaddr*)&sa, &len) == 0) {
         netAddr = sa.sin_addr.s_addr;  // already network byte order
     }
     sqInt addrOop = vm->instantiateClassindexableSize(vm->classByteArray(), 4);
@@ -805,7 +860,7 @@ extern "C" sqInt sp_primitiveSocketRemoteAddress(void) {
     uint32_t netAddr = 0;  // 0.0.0.0 when not connected
     struct sockaddr_in sa;
     socklen_t len = sizeof(sa);
-    if (ps && ps->fd >= 0 && getpeername(ps->fd, (struct sockaddr*)&sa, &len) == 0) {
+    if (ps && ps->fd != INVALID_SOCKET && getpeername(ps->fd, (struct sockaddr*)&sa, &len) == 0) {
         netAddr = sa.sin_addr.s_addr;  // already network byte order
     }
     sqInt addrOop = vm->instantiateClassindexableSize(vm->classByteArray(), 4);
@@ -821,7 +876,7 @@ extern "C" sqInt sp_primitiveSocketRemoteAddress(void) {
 extern "C" sqInt sp_primitiveSocketRemotePort(void) {
     sqInt socketOop = vm->stackValue(0);
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) {
+    if (!ps || ps->fd == INVALID_SOCKET) {
         vm->popthenPush(2, vm->integerObjectOf(0));
         return 0;
     }
@@ -861,7 +916,7 @@ extern "C" sqInt sp_primitiveSocketGetOptions(void) {
     sqInt socketOop = vm->stackValue(1);
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) return vm->primitiveFail();
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     if (!vm->isBytes(nameOop)) return vm->primitiveFail();
     char* optName = (char*)vm->firstIndexableField(nameOop);
@@ -873,26 +928,26 @@ extern "C" sqInt sp_primitiveSocketGetOptions(void) {
     if (optNameIs(optName, nameLen, "TCP_NODELAY")) {
         socklen_t vlen = sizeof(retVal);
         if (getsockopt(ps->fd, IPPROTO_TCP, TCP_NODELAY, &retVal, &vlen) < 0)
-            errCode = errno;
+            errCode = SOCK_LAST_ERROR;
     } else if (optNameIs(optName, nameLen, "SO_LINGER")) {
         struct linger lin;
         socklen_t vlen = sizeof(lin);
         if (getsockopt(ps->fd, SOL_SOCKET, SO_LINGER, &lin, &vlen) < 0)
-            errCode = errno;
+            errCode = SOCK_LAST_ERROR;
         else
             retVal = lin.l_onoff ? lin.l_linger : 0;
     } else if (optNameIs(optName, nameLen, "SO_KEEPALIVE")) {
         socklen_t vlen = sizeof(retVal);
         if (getsockopt(ps->fd, SOL_SOCKET, SO_KEEPALIVE, &retVal, &vlen) < 0)
-            errCode = errno;
+            errCode = SOCK_LAST_ERROR;
     } else if (optNameIs(optName, nameLen, "SO_SNDBUF")) {
         socklen_t vlen = sizeof(retVal);
         if (getsockopt(ps->fd, SOL_SOCKET, SO_SNDBUF, &retVal, &vlen) < 0)
-            errCode = errno;
+            errCode = SOCK_LAST_ERROR;
     } else if (optNameIs(optName, nameLen, "SO_RCVBUF")) {
         socklen_t vlen = sizeof(retVal);
         if (getsockopt(ps->fd, SOL_SOCKET, SO_RCVBUF, &retVal, &vlen) < 0)
-            errCode = errno;
+            errCode = SOCK_LAST_ERROR;
     } else {
         // Unknown option — return 0 with no error (like the standard VM)
     }
@@ -917,7 +972,7 @@ extern "C" sqInt sp_primitiveSocketSetOptions(void) {
     sqInt socketOop = vm->stackValue(2);
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) return vm->primitiveFail();
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     if (!vm->isBytes(nameOop)) return vm->primitiveFail();
     if (!vm->isBytes(valueOop)) return vm->primitiveFail();
@@ -934,7 +989,7 @@ extern "C" sqInt sp_primitiveSocketSetOptions(void) {
     if (optNameIs(optName, nameLen, "TCP_NODELAY")) {
         int val = parseOptValue(optValue, valueLen);
         if (setsockopt(ps->fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val)) < 0)
-            errCode = errno;
+            errCode = SOCK_LAST_ERROR;
         retVal = val;
     } else if (optNameIs(optName, nameLen, "SO_LINGER")) {
         int val = parseOptValue(optValue, valueLen);
@@ -942,22 +997,22 @@ extern "C" sqInt sp_primitiveSocketSetOptions(void) {
         lin.l_onoff = (val > 0) ? 1 : 0;
         lin.l_linger = val;
         if (setsockopt(ps->fd, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin)) < 0)
-            errCode = errno;
+            errCode = SOCK_LAST_ERROR;
         retVal = val;
     } else if (optNameIs(optName, nameLen, "SO_KEEPALIVE")) {
         int val = parseOptValue(optValue, valueLen);
         if (setsockopt(ps->fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) < 0)
-            errCode = errno;
+            errCode = SOCK_LAST_ERROR;
         retVal = val;
     } else if (optNameIs(optName, nameLen, "SO_SNDBUF")) {
         int val = parseOptValue(optValue, valueLen);
         if (setsockopt(ps->fd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val)) < 0)
-            errCode = errno;
+            errCode = SOCK_LAST_ERROR;
         retVal = val;
     } else if (optNameIs(optName, nameLen, "SO_RCVBUF")) {
         int val = parseOptValue(optValue, valueLen);
         if (setsockopt(ps->fd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val)) < 0)
-            errCode = errno;
+            errCode = SOCK_LAST_ERROR;
         retVal = val;
     }
     // Unknown options are silently ignored (return {0. 0})
@@ -978,7 +1033,7 @@ extern "C" sqInt sp_primitiveSocketSetOptions(void) {
 // Binds the socket to a local address+port WITHOUT listening — the image then
 // calls primitiveSocketListenWithBacklog separately.  We only ever implemented
 // the combined listenOnPortBacklog before, so this primitive was missing and
-// Socket>>bindTo:port: fell through to `SocketError signal:` with errno 0 (the
+// Socket>>bindTo:port: fell through to `SocketError signal:` with SOCK_LAST_ERROR 0 (the
 // "SocketError: Undefined error: 0" / "Success" seen in ZnServer/Teapot tests).
 extern "C" sqInt sp_primitiveSocketBindToPort(void) {
     sqInt port      = vm->stackIntegerValue(0);
@@ -987,7 +1042,7 @@ extern "C" sqInt sp_primitiveSocketBindToPort(void) {
     if (vm->failed()) return vm->primitiveFail();
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) return vm->primitiveFail();
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     // Allow address reuse (mirrors listenOnPortBacklog; avoids TIME_WAIT binds
     // failing when a test re-binds the same port).
@@ -1015,7 +1070,7 @@ extern "C" sqInt sp_primitiveSocketBindToPort(void) {
     }
 
     if (bind(ps->fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) {
-        ps->sockError = errno;
+        ps->sockError = SOCK_LAST_ERROR;
         return vm->primitiveFail();
     }
 
@@ -1033,10 +1088,10 @@ extern "C" sqInt sp_primitiveSocketListenWithBacklog(void) {
     if (vm->failed()) return vm->primitiveFail();
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) return vm->primitiveFail();
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     if (listen(ps->fd, (int)backlog) < 0) {
-        ps->sockError = errno;
+        ps->sockError = SOCK_LAST_ERROR;
         return vm->primitiveFail();
     }
 
@@ -1057,7 +1112,7 @@ extern "C" sqInt sp_primitiveSocketListenOnPortBacklog(void) {
     if (vm->failed()) return vm->primitiveFail();
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) return vm->primitiveFail();
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     // Allow address reuse
     int reuse = 1;
@@ -1070,12 +1125,12 @@ extern "C" sqInt sp_primitiveSocketListenOnPortBacklog(void) {
     sa.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(ps->fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) {
-        ps->sockError = errno;
+        ps->sockError = SOCK_LAST_ERROR;
         return vm->primitiveFail();
     }
 
     if (listen(ps->fd, (int)backlog) < 0) {
-        ps->sockError = errno;
+        ps->sockError = SOCK_LAST_ERROR;
         return vm->primitiveFail();
     }
 
@@ -1097,7 +1152,7 @@ extern "C" sqInt sp_primitiveSocketListenOnPortBacklogInterface(void) {
     if (vm->failed()) return vm->primitiveFail();
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) return vm->primitiveFail();
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     int reuse = 1;
     setsockopt(ps->fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
@@ -1109,12 +1164,12 @@ extern "C" sqInt sp_primitiveSocketListenOnPortBacklogInterface(void) {
     sa.sin_addr.s_addr = htonl((uint32_t)interfaceAddr);
 
     if (bind(ps->fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) {
-        ps->sockError = errno;
+        ps->sockError = SOCK_LAST_ERROR;
         return vm->primitiveFail();
     }
 
     if (listen(ps->fd, (int)backlog) < 0) {
-        ps->sockError = errno;
+        ps->sockError = SOCK_LAST_ERROR;
         return vm->primitiveFail();
     }
 
@@ -1139,14 +1194,14 @@ extern "C" sqInt sp_primitiveSocketAccept3Semaphores(void) {
     if (vm->failed()) return vm->primitiveFail();
 
     PrivateSocket* serverPs = privateSocketFrom(serverOop);
-    if (!serverPs || serverPs->fd < 0) return vm->primitiveFail();
+    if (!serverPs || serverPs->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     struct sockaddr_in clientAddr;
     socklen_t addrLen = sizeof(clientAddr);
-    int clientFd = accept(serverPs->fd, (struct sockaddr*)&clientAddr, &addrLen);
-    SOCKDBG("accept: serverFd=%d -> clientFd=%d errno=%d\n", serverPs->fd, clientFd, errno);
-    if (clientFd < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+    SOCKET clientFd = accept(serverPs->fd, (struct sockaddr*)&clientAddr, &addrLen);
+    SOCKDBG("accept: serverFd=%d -> clientFd=%d SOCK_LAST_ERROR=%d\n", (int)serverPs->fd, (int)clientFd, SOCK_LAST_ERROR);
+    if (clientFd == INVALID_SOCKET) {
+        if (SOCK_LAST_ERROR == SOCK_EAGAIN || SOCK_LAST_ERROR == SOCK_EWOULDBLOCK) {
             // No pending connection — create an unconnected socket handle
             // The image will retry
         }
@@ -1171,7 +1226,7 @@ extern "C" sqInt sp_primitiveSocketAccept3Semaphores(void) {
 
     sqInt socketOop = vm->instantiateClassindexableSize(vm->classByteArray(), sizeof(SQSocket));
     if (vm->failed()) {
-        close(clientFd);
+        sockClose(clientFd);
         delete ps;
         return vm->primitiveFail();
     }
@@ -1216,7 +1271,7 @@ extern "C" sqInt sp_primitiveSocketSendUDPDataBufCount(void) {
     if (vm->failed()) return vm->primitiveFail();
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) return vm->primitiveFail();
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     if (!vm->isBytes(dataOop)) return vm->primitiveFail();
     char* buf = (char*)vm->firstIndexableField(dataOop);
@@ -1246,10 +1301,10 @@ extern "C" sqInt sp_primitiveSocketSendUDPDataBufCount(void) {
     ssize_t sent = sendto(ps->fd, buf + offset, (size_t)count, 0,
                           (struct sockaddr*)&dest, sizeof(dest));
     if (sent < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (SOCK_LAST_ERROR == SOCK_EAGAIN || SOCK_LAST_ERROR == SOCK_EWOULDBLOCK) {
             sent = 0;
         } else {
-            ps->sockError = errno;
+            ps->sockError = SOCK_LAST_ERROR;
             return vm->primitiveFail();
         }
     }
@@ -1270,7 +1325,7 @@ extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
     if (vm->failed()) return vm->primitiveFail();
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps || ps->fd < 0) return vm->primitiveFail();
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
 
     if (!vm->isBytes(dataOop)) return vm->primitiveFail();
     char* buf = (char*)vm->firstIndexableField(dataOop);
@@ -1287,10 +1342,10 @@ extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
                                 (struct sockaddr*)&from, &fromLen);
     bool moreData = false;
     if (received < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (SOCK_LAST_ERROR == SOCK_EAGAIN || SOCK_LAST_ERROR == SOCK_EWOULDBLOCK) {
             received = 0;
         } else {
-            ps->sockError = errno;
+            ps->sockError = SOCK_LAST_ERROR;
             return vm->primitiveFail();
         }
     } else if (received > 0) {
