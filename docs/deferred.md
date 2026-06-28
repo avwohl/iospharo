@@ -336,11 +336,38 @@ isolation (no suite watchdog):
   (ZdcSecureSocketStreamTest 2/2, was 1/2 — testIsNativeSSLPluginPresent passes);
   SHA1 9/9, MD5 9/9, SHA256 11/12 (one FIPS vector, minor).
 
-### GUI
-- [ ] **SDL2 / Morphic display** — headless only. No window/rendering surface;
-  `WorldRenderer_linux_stub.cpp` (no-op) is reused. The image runs the Morphic
-  World loop but draws nothing. Needs an SDL2 + Windows rendering surface
-  (milestone 4).
+### GUI (milestone 4 — the last big gap)
+- [ ] **SDL2 / Morphic display** — headless only.  ARCHITECTURE MAPPED
+  (2026-06-28), so this is no longer a black box:
+  - The render path is CROSS-PLATFORM and already present.  The image's
+    `OSSDL2Driver` calls SDL2 via FFI; FFI.cpp implements SDL2 as built-in STUB
+    functions (`stub_SDL_CreateWindow`/`CreateRenderer`/`RenderPresent`/`PollEvent`,
+    FFI.cpp ~590-780, dispatched because FFI special-cases the "SDL2" module).
+    `stub_SDL_RenderPresent` copies the rendered Pharo World into
+    `pharo::gDisplaySurface->pixels()` (FFI.cpp ~735-776).  `gDisplaySurface` is a
+    `DisplaySurface*` (DisplaySurface.hpp); on Apple it's backed by the Metal
+    layer (visible), on Windows the harness points it at an in-memory
+    `TestDisplaySurface` (test_load_image.cpp:172, 1032).  So the Morphic World
+    pixels ALREADY flow to a buffer on Windows — there's just no window to show it.
+  - WHAT'S MISSING on Windows (3 parts):
+    1. **Interactive run mode** — test_load_image evals and exits; the Morphic
+       World main loop never runs, so nothing draws (the "Display Check Pixel
+       count: 0" in the logs is exactly this — not a render bug).  Need a mode that
+       enters the image's World loop and keeps running.
+    2. **A Win32 HWND-backed `DisplaySurface`** — subclass DisplaySurface to own an
+       HWND (RegisterClass/CreateWindow) and present `pixels()` to it on
+       `update()` via GDI `StretchDIBits` (or Direct2D); set `gDisplaySurface` to
+       it instead of TestDisplaySurface.  Mirrors the Apple Metal path.
+    3. **Win32 -> SDL event injection** — pump the window proc (PeekMessage/
+       Dispatch) and translate WM_MOUSEMOVE/WM_*BUTTON*/WM_KEY*/WM_CHAR into the
+       SDL_Event queue that `stub_SDL_PollEvent` (FFI.cpp ~610) drains.
+  - VERIFY HEADLESS FIRST without a window: `PHARO_DUMP_DISPLAY=1` dumps
+    gDisplaySurface to `/tmp/vm-display-{20,60,150}.ppm` at those RenderPresent
+    counts (test_load_image.cpp ~199-205) — but needs the World loop running
+    (part 1) to produce frames.  First increment = get one World render into the
+    PPM (proves parts of the path), then add the HWND present, then events.
+  - SDL2 is NOT installed in MSYS2 (no real-SDL2 reroute needed — the built-in
+    stub bridge is the design; we add a Win32 backend behind it, like Apple/Metal).
 
 ### Diagnostics / platform features (honest stubs)
 - [ ] **Sampling profiler** (`Profiler.cpp`) — `enable()` is a no-op on Windows
