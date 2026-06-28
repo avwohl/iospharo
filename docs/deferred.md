@@ -445,6 +445,19 @@ isolation (no suite watchdog):
     OSWorldRenderer (vs still NullWorldRenderer) under interactive mode, and is the
     morphic UI process actually running doOneCycle / getting an initial full-damage
     redraw.  Verify headlessly via PHARO_DUMP_DISPLAY once a frame is produced.
+  - CONCRETE BLOCKER FOUND (2026-06-28): with SDL2 available, `OSWorldRenderer
+    startUp: true` runs WITHOUT switching the World renderer — it stays
+    NullWorldRenderer — and `OSSDL2Driver allWindows` fails with "receiver of
+    'critical:' is nil".  So OSSDL2Driver's class-side mutex/semaphore (the lock its
+    window registry uses) is NIL: `OSSDL2Driver class>>startUp`/`initialize` never
+    fully ran on our VM, so the driver can't register a window and the renderer
+    can't switch.  THE NEXT STEP is to get OSSDL2Driver's class init/startUp to run
+    (set up its mutex + SDL2 init) — check `OSSDL2Driver class>>initialize` /
+    `startUp:` and why the lock ivar is nil (likely the SDL2 init step or the class
+    startUp wasn't invoked because the image booted headless; may need to call it
+    explicitly in the interactive path or via a startup-script patch).  Once the
+    mutex is non-nil and a window registers, OSWorldRenderer can take over and the
+    World should draw -> SDL_RenderPresent -> gDisplaySurface (PPM-verifiable).
 
 ### Diagnostics / platform features (honest stubs)
 - [ ] **Sampling profiler** (`Profiler.cpp`) — `enable()` is a no-op on Windows
