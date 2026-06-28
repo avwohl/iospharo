@@ -2,6 +2,28 @@
 
 2026-06-28
 
+## win: morphic GUI render path works — Pharo desktop renders (verified visually)
+
+Milestone 4 breakthrough: the full Pharo Morphic World renders pixel-perfect on
+Windows (menu bar + "Welcome to Pharo 13" window with the lighthouse logo) —
+captured to docs/images/windows-gui-pharo-world.png. The render chain World ->
+OSWorldRenderer -> the FFI SDL2 stubs -> gDisplaySurface is fully working;
+Pharo BitBlts directly into gDisplaySurface via the LockTexture stub, and
+RenderPresent drives it (122 presents, 1 SDL window, all main renderer).
+
+Three gates were cleared to get here: (1) SDL2 isAvailable — drop any file named
+SDL2.dll in the image dir (FFIWindowsLibraryFinder needs the file to exist; our
+FFI routes SDL symbols to the built-in stubs); (2) OSSDL2Driver's class-side lock
+was nil — `OSSDL2Driver new` initialises it; (3) gDisplaySurface was NULL in
+eval/headless mode — added the sanctioned `PHARO_FORCE_DISPLAY` debug knob
+(debug_vars.h) so the surface is created for headless render verification. The
+reproducible activation is scripts/win-gui-render-check.st (OSSDL2Driver new +
+OSWorldRenderer forWorld:World + doActivate + a displayWorld loop).
+
+Remaining for an interactive on-screen GUI (the rendering itself is done): a Win32
+HWND-backed DisplaySurface (GDI StretchDIBits present), auto-activation in the
+interactive run mode, and Win32->SDL event injection. Full plan in deferred.md.
+
 ## win: crypto/TLS enabled — HTTPS works (ZnClient -> HTTP 200 over TLS)
 
 With the winsock2 SocketPlugin working, TLS-over-TCP now functions on Windows.

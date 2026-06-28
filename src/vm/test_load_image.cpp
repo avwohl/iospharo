@@ -1026,7 +1026,7 @@ int main(int argc, char* argv[]) {
 
     // Create test display surface for Morphic rendering (skip in headless mode
     // so Morphic's render loop detects no display and CLI handlers activate)
-    if (!headlessMode) {
+    if (!headlessMode || GET_DEBUG_BOOL(PHARO_FORCE_DISPLAY)) {
         std::cout << "\n=== Display Surface Setup ===" << std::endl;
         gTestSurface = new TestDisplaySurface(1024, 768);
         gDisplaySurface = gTestSurface;

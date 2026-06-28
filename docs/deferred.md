@@ -337,6 +337,48 @@ isolation (no suite watchdog):
   SHA1 9/9, MD5 9/9, SHA256 11/12 (one FIPS vector, minor).
 
 ### GUI (milestone 4 — the last big gap)
+
+**BREAKTHROUGH (2026-06-28): the Windows morphic GUI render path WORKS — verified
+visually.** The full Pharo desktop (menu bar + "Welcome to Pharo 13" window with
+the lighthouse logo) renders pixel-perfect into gDisplaySurface on Windows — see
+`docs/images/windows-gui-pharo-world.png`.  The render chain World ->
+OSWorldRenderer -> SDL2 stubs -> gDisplaySurface is fully working; what remains is
+"only" presenting that surface in a real on-screen window + feeding input events.
+
+ACTIVATION RECIPE (reproducible headlessly, no on-screen window needed):
+  1. Put any file named `SDL2.dll` in the IMAGE directory (FFIWindowsLibraryFinder
+     searches it first; our FFI routes SDL symbols to built-in stubs so the file
+     only needs to exist).  This flips `SDL2 isAvailable`/`OSSDL2Driver isSuitable`.
+  2. Run with `PHARO_FORCE_DISPLAY=1` (creates gDisplaySurface even in eval/headless
+     mode — without it gDisplaySurface is NULL and RenderPresent has nowhere to
+     write — this was the last bug) and `PHARO_DUMP_DISPLAY=1` (dumps the frames).
+  3. `eval` the activation in `scripts/win-gui-render-check.st`: `OSSDL2Driver new`
+     (inits the driver — fixes the earlier nil `critical:` lock), then
+     `OSWorldRenderer forWorld: World` + install it on the worldState + `doActivate`
+     (creates the OSWindow via SDL_CreateWindow stub, picks the SDL2 driver, draws
+     the World), then a `World fullRepaintNeeded; displayWorld` loop to force
+     presents.  Result: /tmp/vm-display-{20,60,150}.ppm with `changed=1` showing the
+     live desktop.  Confirmed: 1 SDL window, 122 RenderPresents (all main renderer
+     + valid texture), Pharo BitBlts directly into gDisplaySurface via LockTexture.
+
+REMAINING for a real interactive GUI (the render itself is done):
+  A. **On-screen window** — gDisplaySurface is currently an in-memory
+     `TestDisplaySurface`.  Subclass DisplaySurface to own a Win32 HWND and blit
+     `pixels()` to it on `update()` via GDI `StretchDIBits` (or Direct2D); point
+     gDisplaySurface at it.  (Until then the GUI renders correctly but is only
+     captured to PPM, not shown.)
+  B. **Auto-activate in interactive mode** — fold the activation recipe (step 3)
+     into the interactive run path / a startup-script patch so the World comes up
+     on the SDL2 renderer without the manual eval, and run the morphic loop
+     continuously.
+  C. **Win32 -> SDL event injection** — translate WM_MOUSE*/WM_KEY*/WM_CHAR into the
+     SDL_Event queue `stub_SDL_PollEvent` drains, so the GUI is interactive.
+  D. **SDL2.dll provisioning** — the finder checks the image dir, not the exe dir,
+     so the build can't auto-stage it; a startup-script patch stubbing
+     `SDL2Library>>libraryName`/`SDL2 class>>isAvailable` would remove the manual
+     file (cleaner than shipping a dummy DLL).
+
+Historical scoping notes (how the breakthrough was reached) follow:
 - [ ] **SDL2 / Morphic display** — headless only.  ARCHITECTURE MAPPED
   (2026-06-28), so this is no longer a black box:
   - The render path is CROSS-PLATFORM and already present.  The image's

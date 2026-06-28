@@ -275,6 +275,7 @@ DEBUG_INT(PHARO_T1_SP_TRAP_K, 0)            // with PHARO_T1_SP_TRACE: __builtin
 DEBUG_BOOL(PHARO_T1_PRIM_OVERPOP)           // cold-boot over-pop detector: at every in-place chain primitive send (ExitSendCached 22053, J2J-cached 22388, ExitSend fallback 27874), check the operand-sp delta across executePrimitive == -argCount_ (primitiveSuccess net). Logs the FIRST few mismatches (over/under-pop) with caller/target/prim/argCount before&after/sp depth. Path-generic (not do:-scoped), so it catches whatever method's cold at: over-pops despite rebuild relocation.
 DEBUG_BOOL(PHARO_T1_PRIM_OVERPOP_STOP)      // stop the VM at the first PRIM_OVERPOP mismatch.
 DEBUG_BOOL(PHARO_DUMP_DISPLAY)              // test_load_image: dump the TestDisplaySurface (gDisplaySurface) to /tmp/vm-display-{20,60,150}.ppm at those render-present counts — proves whether the VM actually draws the morphic World into gDisplaySurface (which screencapture can't grab from the app's Metal layer). Headless GUI-render verification.
+DEBUG_BOOL(PHARO_FORCE_DISPLAY)             // test_load_image: create gTestSurface/gDisplaySurface even in headless/eval mode, so a forced render (OSWorldRenderer doActivate) can present into it and be captured via PHARO_DUMP_DISPLAY. Proved the Windows GUI render path headlessly (the morphic World draws). See docs/deferred.md GUI section.
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT
