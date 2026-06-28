@@ -404,6 +404,25 @@ isolation (no suite watchdog):
     adding the real Win32 HWND present + Win32->SDL event injection.  (OSSDL2Driver
     class>>isSuitable = `SDL2 isAvailable`, so the isModuleLoaded/SDL-symbol fix
     above is also needed for the driver to be picked.)
+  - SDL2-AVAILABLE ROOT CAUSE (2026-06-28): `SDL2 isAvailable` =
+    `[(ExternalAddress loadSymbol: 'SDL_Init' from: SDL2Library uniqueInstance
+    libraryName) isNotNil] onErrorDo: [false]`.  Our FFI stubs ARE reachable —
+    `ExternalAddress loadSymbol: 'SDL_Init' from: 'SDL2'` returns a valid stub
+    address — but `SDL2Library uniqueInstance libraryName` RAISES "Cannot locate any
+    of #('SDL2.dll' 'libSDL2.dll')", so isAvailable is false.  The image-side
+    library FINDER requires a real DLL file on disk before it will even hand the
+    module name to FFI.  COMPLETE gate list to light up GUI on Windows:
+    (1) make `SDL2Library>>libraryName` succeed — either drop a findable `SDL2.dll`
+    next to the exe (our FFI routes "SDL" module symbols to the built-in stubs at
+    Primitives.cpp:26401, so the file only needs to EXIST, not be loaded), OR
+    `pacman -S mingw-w64-clang-x86_64-SDL2` and switch to the real-SDL2 path
+    (Primitives.cpp:26401 would need to NOT intercept SDL on Windows so real
+    SDL2.dll drives a real window — the cleaner long-term path, no Win32 GDI
+    backend needed); (2) launch with `--interactive` (OSWorldRenderer gate);
+    (3) the interactive run mode (run the World/event loop, not eval+exit);
+    (4) for the stub path only, a Win32 HWND present backend behind gDisplaySurface
+    + Win32->SDL event injection.  Every gate is now identified — this is a
+    focused milestone-4 build-out with visual (windowed) verification.
 
 ### Diagnostics / platform features (honest stubs)
 - [ ] **Sampling profiler** (`Profiler.cpp`) — `enable()` is a no-op on Windows
