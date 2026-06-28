@@ -2,6 +2,20 @@
 
 2026-06-27
 
+## win: TCP networking — SocketPlugin ported to winsock2 (milestone 3)
+
+Windows went from no networking to working TCP sockets. The real 1338-line
+BSD-sockets SocketPlugin.cpp now compiles + runs on winsock2 (replacing the
+honest-failure stub), via a `winsock_compat.h` shim (SOCKET vs int fd, closesocket,
+ioctlsocket, WSAGetLastError, char* sockopt) and a loopback-UDP-socketpair
+replacement for the select()-incompatible self-pipe. The decisive fix was that
+`platformInit()` (hence `WSAStartup`) was never called — wiring it into main()
+made both sockets AND DNS start working. Results: TCPSocketTest 9/9,
+ZdcSimpleSocketStreamTest 15/15, ZdcReferenceSocketStreamTest 14/15,
+SocketAddressTest 5/5, SocketStreamTest 17/19 — ~80+ socket tests recovered
+(0 -> majority). Remaining read-path/half-close + UDP edge cases tracked in
+docs/deferred.md.
+
 ## win: platform-path UTF-16LE conversion (DiskFileAttributesTest +2)
 
 `File toPlatformPath:` / `fromPlatformPath:` (named primitives
