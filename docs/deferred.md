@@ -378,6 +378,19 @@ isolation (no suite watchdog):
     OSSDL2Driver-backed OSWindow and run its event/display loop", which then
     activates the existing SDL-stub -> gDisplaySurface path.  (OSPlatform reports
     Win64Platform.)
+  - ACTIVATION CHAIN (2026-06-28, deeper probe): `Smalltalk isHeadless` is TRUE and
+    `World worldState worldRenderer` is a `NullWorldRenderer` — the image booted
+    headless, so part 1 ("interactive run mode") is the real gate.  Also a smaller
+    prerequisite: FFI `isModuleLoaded("SDL2")` does `dlsym(RTLD_DEFAULT,"SDL_Init")`
+    (FFI.cpp:265), but our exported `SDL_Init` (FFI.cpp:1386, `SDL_EXPORT` =
+    `__attribute__((weak,used,visibility("default")))`) is NOT dlsym-findable from a
+    Windows EXE (visibility("default") exports nothing on PE; needs
+    `__declspec(dllexport)` or a `-Wl,--export-all-symbols` link flag).  EASIEST
+    FIX: have `isModuleLoaded`'s SDL2 branch also return true when the stub is in
+    our registry (registerSDL2Stubs always registers SDL_Init), so it doesn't
+    depend on EXE symbol export.  But that only flips the FFI gate — the World still
+    won't render until the image runs non-headless on an OSSDL2Driver window (the
+    interactive-mode milestone-4 work).
 
 ### Diagnostics / platform features (honest stubs)
 - [ ] **Sampling profiler** (`Profiler.cpp`) — `enable()` is a no-op on Windows
