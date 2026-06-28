@@ -372,12 +372,24 @@ REMAINING for a real interactive GUI (render + on-screen window now DONE):
      docs/images/windows-gui-onscreen-window.png.  Messages are pumped in update()
      (works while the World is rendering; a static idle World stops calling update()
      so the window would freeze until input — addressed by B/C).
-  B. **Auto-activate in interactive mode** — fold the activation recipe (step 3)
-     into the interactive run path / a startup-script patch so the World comes up
-     on the SDL2 renderer without the manual eval, and run the morphic loop
-     continuously.
-  C. **Win32 -> SDL event injection** — translate WM_MOUSE*/WM_KEY*/WM_CHAR into the
-     SDL_Event queue `stub_SDL_PollEvent` drains, so the GUI is interactive.
+  B. [x] **Auto-activate in interactive mode — DONE (2026-06-28).** No code change
+     needed: once `SDL2.dll` is in the image dir (so SDL2 isAvailable) AND the image
+     runs in interactive mode (the harness passes `--interactive` when launched with
+     no eval args), the image PICKS OSWorldRenderer itself and draws the World.  So
+     `PHARO_GUI_WINDOW=1 test_load_image.exe <image>` (no eval) brings up the full
+     live Pharo desktop in the on-screen window automatically — see
+     docs/images/windows-gui-interactive.png.  The harness already runs the image's
+     morphic loop via interpret() and injects a right-click at 5s (injectMouseClick
+     -> gEventQueue), so events flow.  (The earlier "headless, no draw" was ONLY
+     because SDL2.dll was missing -> SDL2 unavailable -> NullWorldRenderer.)
+  C. **Win32 -> SDL event injection** — the harness can inject synthetic events
+     (injectMouseClick -> pharo::gEventQueue, which stub_SDL_PollEvent converts to
+     SDL events), but REAL mouse/keyboard from the Win32 window isn't wired yet:
+     Win32DisplaySurface's wndProc should translate WM_MOUSEMOVE/WM_*BUTTON*/
+     WM_KEY*/WM_CHAR into pharo::Event{type=Mouse/Keyboard, arg1=x, arg2=y,
+     arg3=buttons, arg4=mods} and push to gEventQueue (EventQueue.hpp).  This is the
+     last piece for a user-interactive GUI; the render/window/auto-activation all
+     work.
   D. **SDL2.dll provisioning** — the finder checks the image dir, not the exe dir,
      so the build can't auto-stage it; a startup-script patch stubbing
      `SDL2Library>>libraryName`/`SDL2 class>>isAvailable` would remove the manual
