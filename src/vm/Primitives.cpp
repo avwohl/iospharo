@@ -18267,6 +18267,15 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     // sa == 0: fully transparent, nothing to do
                     break;
                 }
+                case 40: // fixAlpha:with: — repair alpha after channel-wise decode
+                    // (Form>>fixAlpha, e.g. the PNG 16/32-bit readers): a zero
+                    // word stays fully transparent, a word with any alpha keeps
+                    // it, everything else becomes opaque.
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t d = row[x];
+                        if (d != 0 && (d & 0xFF000000u) == 0) row[x] = d | 0xFF000000u;
+                    }
+                    break;
                 case 30: // alphaBlendConst fill
                 case 31: { // alphaPaintConst fill
                     if (sourceAlpha == 0) break; // fully transparent
@@ -19181,19 +19190,22 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // this path any indexed PNG read/write fails, surfacing as the misleading
     // "Bad BitBlt arg (Fraction?)" error (MicFileResourceReferenceTest).
     {
-        intptr_t adSrc = srcDepth < 0 ? -srcDepth : srcDepth;
+        // NB: srcDepth was normalized to |depth| at extraction; the sign
+        // lives in srcNeedsByteSwap. destDepth keeps its sign.
+        intptr_t adSrc = srcDepth;
         intptr_t adDst = destDepth < 0 ? -destDepth : destDepth;
-        if (adSrc == adDst && (srcDepth < 0 || destDepth < 0) &&
-            (adSrc == 1 || adSrc == 2 || adSrc == 4 || adSrc == 8 || adSrc == 16) &&
+        if (adSrc == adDst && (srcNeedsByteSwap || destDepth < 0) &&
+            (adSrc == 1 || adSrc == 2 || adSrc == 4 || adSrc == 8 || adSrc == 16 ||
+             adSrc == 32) &&   // 32bpp: 1 pixel/word — reversal degenerates to identity (stock-verified)
             !cmTable && !hasShiftMask) {
             intptr_t d = adSrc;
             intptr_t ppw = 32 / d;                       // pixels per word
-            uint32_t pixMask = (1u << d) - 1;
+            uint32_t pixMask = (d == 32) ? 0xFFFFFFFFu : ((1u << d) - 1);
             intptr_t destWordsPerRow = (destWidth + ppw - 1) / ppw;
             intptr_t srcWordsPerRow = (srcWidth + ppw - 1) / ppw;
             uint32_t* srcWords = reinterpret_cast<uint32_t*>(srcBytes);
             uint32_t* destWords = destPixels;
-            bool srcMsb = srcDepth > 0;
+            bool srcMsb = !srcNeedsByteSwap;
             bool dstMsb = destDepth > 0;
 
             size_t requiredDestWords = static_cast<size_t>(destY + height - 1) * destWordsPerRow
@@ -19203,17 +19215,23 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
             if (requiredSrcWords * 4 > srcBitsSize) return PrimitiveResult::Failure;
 
+            // Negative depth = pixel order fully REVERSED within each word:
+            // pixel 0 lives in the LOW bits. Verified against the stock
+            // Windows VM (probe /c/tmp/rev-probe.st): d4 pixels 1..8 give
+            // word 0x12345678 positive and 0x87654321 negative — full
+            // nibble reversal, NOT byte-swap-with-MSB-nibbles (0x78563412).
+            auto pixelShift = [&](bool msb, intptr_t p) -> uint32_t {
+                return static_cast<uint32_t>((msb ? (ppw - 1 - p) : p) * d);
+            };
             for (intptr_t y = 0; y < height; y++) {
                 uint32_t* srcRow = srcWords + (sourceY + y) * srcWordsPerRow;
                 uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
                 for (intptr_t x = 0; x < width; x++) {
                     intptr_t sx = sourceX + x;
                     intptr_t dx = destX + x;
-                    uint32_t srcShift = static_cast<uint32_t>(
-                        (srcMsb ? (ppw - 1 - (sx % ppw)) : (sx % ppw)) * d);
+                    uint32_t srcShift = pixelShift(srcMsb, sx % ppw);
                     uint32_t srcPixel = (srcRow[sx / ppw] >> srcShift) & pixMask;
-                    uint32_t destShift = static_cast<uint32_t>(
-                        (dstMsb ? (ppw - 1 - (dx % ppw)) : (dx % ppw)) * d);
+                    uint32_t destShift = pixelShift(dstMsb, dx % ppw);
                     uint32_t destClear = ~(pixMask << destShift);
                     switch (combinationRule) {
                         case 0:  destRow[dx / ppw] &= destClear | (srcPixel << destShift); break;
