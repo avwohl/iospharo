@@ -957,6 +957,13 @@ extern "C" sqInt sp_primitiveSocketGetOptions(void) {
         socklen_t vlen = sizeof(retVal);
         if (getsockopt(ps->fd, SOL_SOCKET, SO_RCVBUF, &retVal, &vlen) < 0)
             errCode = SOCK_LAST_ERROR;
+    } else if (optNameIs(optName, nameLen, "SO_BROADCAST")) {
+        // Socket>>broadcastMisconfiguredForSendingTo: reads this to decide
+        // whether a failed send to a broadcast address should raise
+        // NoBroadcastAllowed — it must reflect the real option state.
+        socklen_t vlen = sizeof(retVal);
+        if (getsockopt(ps->fd, SOL_SOCKET, SO_BROADCAST, &retVal, &vlen) < 0)
+            errCode = SOCK_LAST_ERROR;
     } else {
         // Unknown option — return 0 with no error (like the standard VM)
     }
@@ -1021,6 +1028,13 @@ extern "C" sqInt sp_primitiveSocketSetOptions(void) {
     } else if (optNameIs(optName, nameLen, "SO_RCVBUF")) {
         int val = parseOptValue(optValue, valueLen);
         if (setsockopt(ps->fd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val)) < 0)
+            errCode = SOCK_LAST_ERROR;
+        retVal = val;
+    } else if (optNameIs(optName, nameLen, "SO_BROADCAST")) {
+        // Required for UDP broadcast sends; without it Windows sendto() to a
+        // broadcast address fails WSAEACCES (UDPSocketTest>>testUDPBroadcastError).
+        int val = parseOptValue(optValue, valueLen);
+        if (setsockopt(ps->fd, SOL_SOCKET, SO_BROADCAST, &val, sizeof(val)) < 0)
             errCode = SOCK_LAST_ERROR;
         retVal = val;
     }
@@ -1112,6 +1126,73 @@ extern "C" sqInt sp_primitiveSocketListenWithBacklog(void) {
     return 0;
 }
 
+// Helper: is this a datagram socket? listen() on SOCK_DGRAM fails with
+// EOPNOTSUPP — stock Cog's sqSocketListenOnPortBacklogSizeInterface binds
+// UDP sockets WITHOUT calling listen(); mirror that in every listen prim.
+static bool isDatagramSocket(PrivateSocket* ps) {
+    int soType = 0;
+    socklen_t tl = sizeof(soType);
+    if (getsockopt(ps->fd, SOL_SOCKET, SO_TYPE, &soType, &tl) < 0) return false;
+    return soType == SOCK_DGRAM;
+}
+
+// primitiveSocketListenWithOrWithoutBacklog
+// The image's UDP `Socket>>setPort:` calls this with 2 args; the legacy
+// TCP single-connection listen also uses the 2-arg form. 3-arg = backlog.
+//   2-arg stack: receiver, socketHandle, port
+//   3-arg stack: receiver, socketHandle, port, backlogSize
+// Missing before 2026-07-02: UDP setPort: failed with sockError 0
+// ("SocketError: The operation completed successfully") and no UDP server
+// could ever bind — UDPSocketEchoTest>>testEcho.
+extern "C" sqInt sp_primitiveSocketListenWithOrWithoutBacklog(void) {
+    sqInt argCount = vm->methodArgumentCount();
+    sqInt backlog = 1;
+    sqInt port, socketOop;
+    if (argCount == 3) {
+        backlog   = vm->stackIntegerValue(0);
+        port      = vm->stackIntegerValue(1);
+        socketOop = vm->stackValue(2);
+    } else if (argCount == 2) {
+        port      = vm->stackIntegerValue(0);
+        socketOop = vm->stackValue(1);
+    } else {
+        return vm->primitiveFail();
+    }
+    if (vm->failed()) return vm->primitiveFail();
+
+    PrivateSocket* ps = privateSocketFrom(socketOop);
+    if (!ps || ps->fd == INVALID_SOCKET) return vm->primitiveFail();
+
+    int reuse = 1;
+    setsockopt(ps->fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((uint16_t)port);
+    sa.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(ps->fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) {
+        ps->sockError = SOCK_LAST_ERROR;
+        return vm->primitiveFail();
+    }
+
+    if (!isDatagramSocket(ps)) {
+        if (listen(ps->fd, (int)backlog) < 0) {
+            ps->sockError = SOCK_LAST_ERROR;
+            return vm->primitiveFail();
+        }
+        ps->listening = true;
+        ps->sockState = SOCK_WAITING_FOR_CONNECTION;
+    }
+    // UDP: bound and ready; stays SOCK_CONNECTED (set at creation) so
+    // isConnected/waitForData behave like stock.
+    wakeIOThread();
+
+    vm->pop(argCount);  // pop args, leave receiver
+    return 0;
+}
+
 // primitiveSocketListenOnPortBacklog
 // Stack: receiver, socketHandle, port, backlogSize
 extern "C" sqInt sp_primitiveSocketListenOnPortBacklog(void) {
@@ -1138,13 +1219,14 @@ extern "C" sqInt sp_primitiveSocketListenOnPortBacklog(void) {
         return vm->primitiveFail();
     }
 
-    if (listen(ps->fd, (int)backlog) < 0) {
-        ps->sockError = SOCK_LAST_ERROR;
-        return vm->primitiveFail();
+    if (!isDatagramSocket(ps)) {   // listen() on UDP is EOPNOTSUPP; bind is all it needs
+        if (listen(ps->fd, (int)backlog) < 0) {
+            ps->sockError = SOCK_LAST_ERROR;
+            return vm->primitiveFail();
+        }
+        ps->listening = true;
+        ps->sockState = SOCK_WAITING_FOR_CONNECTION;
     }
-
-    ps->listening = true;
-    ps->sockState = SOCK_WAITING_FOR_CONNECTION;
     wakeIOThread();
 
     vm->pop(3); // pop args, leave receiver
@@ -1177,13 +1259,14 @@ extern "C" sqInt sp_primitiveSocketListenOnPortBacklogInterface(void) {
         return vm->primitiveFail();
     }
 
-    if (listen(ps->fd, (int)backlog) < 0) {
-        ps->sockError = SOCK_LAST_ERROR;
-        return vm->primitiveFail();
+    if (!isDatagramSocket(ps)) {   // listen() on UDP is EOPNOTSUPP; bind is all it needs
+        if (listen(ps->fd, (int)backlog) < 0) {
+            ps->sockError = SOCK_LAST_ERROR;
+            return vm->primitiveFail();
+        }
+        ps->listening = true;
+        ps->sockState = SOCK_WAITING_FOR_CONNECTION;
     }
-
-    ps->listening = true;
-    ps->sockState = SOCK_WAITING_FOR_CONNECTION;
     wakeIOThread();
 
     vm->pop(4); // pop args, leave receiver

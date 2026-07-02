@@ -82,6 +82,10 @@ public:
         {
             std::lock_guard<std::mutex> g(blitMutex_);
             graveyard_.emplace_back(std::move(pixels_));
+            // Cap the graveyard: only the most recent buffers can still be
+            // referenced (the image re-locks after each SIZE_CHANGED); with
+            // sizemove-debounced publishing this rarely exceeds depth 1-2.
+            if (graveyard_.size() > 16) graveyard_.erase(graveyard_.begin());
             pixels_.assign(static_cast<size_t>(w) * h, 0xFF202020);
             width_ = w;
             height_ = h;
@@ -107,8 +111,16 @@ private:
     std::thread thread_;
     std::atomic<bool> ready_{false};
     std::atomic<uint64_t> pendingSize_{0};        // (w<<32)|h from WM_SIZE; 0 = none
+    bool inSizeMove_ = false;                     // window thread only (wndProc)
     std::mutex blitMutex_;                        // pixels_/dims swap vs WM_PAINT blit
     std::vector<std::vector<uint32_t>> graveyard_;  // superseded buffers (see applyPendingResize)
+
+    // Window thread: hand the VM thread a size to apply (applyPendingResize).
+    void publishSize(int w, int h) {
+        pendingSize_.store((static_cast<uint64_t>(static_cast<uint32_t>(w)) << 32)
+                               | static_cast<uint32_t>(h),
+                           std::memory_order_release);
+    }
 
     void requestPaint() {
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);  // posts WM_PAINT to the window thread
@@ -291,16 +303,32 @@ private:
             }
             case WM_ERASEBKGND: return 1;   // we fully paint; skip background erase (no flicker)
             case WM_SIZE: {
+                // During an interactive frame drag Windows streams WM_SIZE per
+                // mouse move; publishing each one would make the VM thread
+                // swap (and graveyard) a multi-MB buffer per step. Defer to
+                // WM_EXITSIZEMOVE; maximize/restore (no sizemove loop) publish
+                // immediately.
                 if (w != SIZE_MINIMIZED) {
                     int cw = LOWORD(l), ch = HIWORD(l);
                     Win32DisplaySurface* s = self(h);
-                    if (s && cw > 0 && ch > 0) {
-                        // Window thread: just record it. The VM thread applies
-                        // the buffer swap (applyPendingResize) and notifies the
-                        // image, keeping all pixel-buffer use on one thread.
-                        s->pendingSize_.store((static_cast<uint64_t>(static_cast<uint32_t>(cw)) << 32)
-                                                  | static_cast<uint32_t>(ch),
-                                              std::memory_order_release);
+                    if (s && cw > 0 && ch > 0 && !s->inSizeMove_) {
+                        s->publishSize(cw, ch);
+                    }
+                }
+                return 0;
+            }
+            case WM_ENTERSIZEMOVE: {
+                Win32DisplaySurface* s = self(h);
+                if (s) s->inSizeMove_ = true;
+                return 0;
+            }
+            case WM_EXITSIZEMOVE: {
+                Win32DisplaySurface* s = self(h);
+                if (s) {
+                    s->inSizeMove_ = false;
+                    RECT cr;
+                    if (GetClientRect(h, &cr) && cr.right > 0 && cr.bottom > 0) {
+                        s->publishSize(cr.right, cr.bottom);
                     }
                 }
                 return 0;

@@ -317,14 +317,19 @@ isolation (no suite watchdog):
   SSL (ZdcSecureSocketStream) — this machine is Windows-only and can't.  Deferred
   to a POSIX-capable session.  Core path solid: TCPSocketTest 9/9, ZdcSimple 15/15,
   ZdcReference 15/15.  Not a blocker — TCP works.
-- [ ] **UDP echo/broadcast** (`UDPSocketEchoTest>>testEcho`,
-  `UDPSocketTest>>testUDPBroadcastError`) — passes on the reference Windows VM,
-  fails on ours with `SocketError: The operation completed successfully` (i.e.
-  WSAGetLastError()==0: the image reads `socketError` after a UDP op that returned
-  no data, and our sockError is 0).  send/recvfrom primitives look correct; likely
-  a loopback-datagram delivery/binding difference or the classic Windows
-  SIO_UDP_CONNRESET behaviour (a UDP recvfrom after an ICMP port-unreachable
-  returns WSAECONNRESET).  Needs tracing; UDP-specific, separate from TCP.
+- [x] **UDP echo/broadcast — DONE (2026-07-02)** (`UDPSocketEchoTest` 1/1,
+  `UDPSocketTest` 2/2). TWO missing pieces, neither in send/recvfrom:
+  - `Socket>>setPort:` (how a UDP server binds) calls named primitive
+    `primitiveSocketListenWithOrWithoutBacklog`, which the plugin didn't
+    implement — the prim failed with sockError 0, producing exactly
+    "SocketError: The operation completed successfully". Implemented: 2-arg
+    (bind only, the UDP form) and 3-arg (bind+listen) variants; also guarded
+    all listen prims to skip listen() on SOCK_DGRAM (EOPNOTSUPP), matching
+    stock Cog's sqSocketListenOnPortBacklogSizeInterface UDP special-case.
+  - `SO_BROADCAST` was missing from both get/setOptions tables (silently
+    ignored), so broadcast could never be enabled AND
+    `broadcastMisconfiguredForSendingTo:` couldn't detect the misconfig.
+  TCP unaffected: TCPSocketTest 9/9, TCPSocketEchoTest 1/1, ZdcSimple 15/15.
 - [x] **Crypto / SqueakSSL / HTTPS** — DONE (2026-06-28). `PHARO_WITH_CRYPTO=ON`
   on Windows now (was OFF); MSYS2 CLANG64 ships OpenSSL 3.6.3 via pkg-config. The
   three crypto sources (SqueakSSL.c, DSAPrims.c, sqGenericSSL.c — the real OpenSSL

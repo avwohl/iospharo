@@ -54,12 +54,22 @@ namespace pharo {
 DisplaySurface* gDisplaySurface = nullptr;
 }
 
+// Another process holding the clipboard makes OpenClipboard fail
+// transiently; retry briefly (real SDL2 does the same).
+static bool openClipboardWithRetry() {
+    for (int i = 0; i < 10; i++) {
+        if (OpenClipboard(nullptr)) return true;
+        Sleep(5);
+    }
+    return false;
+}
+
 // Returns UTF-8 text; pointer is valid until the next call (the FFI stub
 // strdups it immediately — stub_SDL_GetClipboardText in FFI.cpp).
 extern "C" const char* vm_getClipboardText(void) {
     static std::string sClipboardUtf8;
     sClipboardUtf8.clear();
-    if (!OpenClipboard(nullptr)) return "";
+    if (!openClipboardWithRetry()) return "";
     if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
         if (const wchar_t* w = static_cast<const wchar_t*>(GlobalLock(h))) {
             int len = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
@@ -87,7 +97,7 @@ extern "C" void vm_setClipboardText(const char* text) {
         GlobalFree(hMem);
         return;
     }
-    if (!OpenClipboard(nullptr)) {
+    if (!openClipboardWithRetry()) {
         GlobalFree(hMem);
         return;
     }
