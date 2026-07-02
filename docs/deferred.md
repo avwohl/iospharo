@@ -589,10 +589,13 @@ Historical scoping notes (how the breakthrough was reached) follow:
   `withInternalLineEndings`).
 - [ ] **Text input / IME** (`windows.cpp:56-57`) — `vm_startTextInput()` /
   `vm_stopTextInput()` are no-ops.  No IME / text-composition support (GUI-only).
-- [ ] **SoundPlugin** (`SoundPlugin.cpp:230-241`) — all sound primitives
-  (`soundInit`/`soundPlaySamples`/`soundSetVolume`/...) are honest stubs returning
-  false/empty on non-Apple.  No audio output on Windows (no WASAPI/DirectSound
-  backend; Apple uses CoreAudio).
+- [x] **SoundPlugin — Windows backend DONE (2026-07-02)** (`SoundPlugin.cpp`):
+  waveOut (winmm) implementation mirroring the Apple AudioQueue architecture
+  (lock-free SPSC ring buffer -> CALLBACK_EVENT feeder thread -> WAVEHDR
+  round-robin; waveOut APIs are unsafe inside the waveOut callback, hence the
+  event+thread). Links winmm. NOTE: stock Pharo 13 ships NO sound classes
+  (no SoundPlayer/SoundSystem/Beeper), so nothing in a bare image can drive
+  it — runtime verification pending an image with a sound package loaded.
 - [ ] **MIDIPlugin** (`MIDIPlugin.cpp:294-308`) — all MIDI primitives
   (`midiInit`/`midiOpenPort`/`midiRead`/`midiWrite`/...) are honest stubs.  No MIDI
   on Windows (no winmm/midiOut backend; Apple uses CoreMIDI).
