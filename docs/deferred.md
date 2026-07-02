@@ -648,9 +648,30 @@ Historical scoping notes (how the breakthrough was reached) follow:
   stock's plain <<3 (31 -> 0xF8), not full-range *255/31 — the golden-file
   byte comparison catches the 1-3/channel difference
   (testPngEncodingColors16).
-- [ ] **FastStepThroughTest hangs (pre-existing)** — hangs standalone AND under
-  the suite runner (killed the 2026-07-02 full-suite run at class 349 via the
-  outer timeout). Bisect-verified NOT caused by primitive 218 (pre-218 build
-  hangs identically). Debugger step-through simulation; investigate with
-  PHARO_NLR_TRACE + PHARO_DET_SCHED. Full-suite runs should exclude it (and
-  GUI-opening tests) until fixed.
+- [ ] **Step-through debugger tests hang (pre-existing)** — BOTH
+  `FastStepThroughTest` and `StepThroughTest` hang; the specific test is
+  `testStepThroughLonger` (10 of 11 Fast tests pass; bisect script
+  /c/tmp/fst-bisect.st). Bisect-verified NOT caused by primitive 218.
+  Investigation so far (2026-07-02, probes in /c/tmp/fst-*.st):
+  - It is a BUSY spin (JIT sends grow forever), not a deadlock.
+  - Fast mode path: DebugSession>>fastStepThrough: -> FastStepThroughController
+    prepareContextForStepThrough: (wraps blocks in the suspended context's
+    temps with HaltingBlocks — i.e. MUTATES a materialized context) ->
+    completeStep:inProcess: resumes the process at full speed and waits for
+    the halting block to fire. Instrumented Context>>stepToHome: is never
+    reached in fast mode. Prime suspect: temp mutation on a materialized
+    context is not honored when our VM resumes the frame (savedFrames_ /
+    context write-back), so the halt never fires; secondary suspect: the
+    controller's findNextContext: walk loops.
+  - Slow mode (StepThroughTest, Context>>stepToHome: simulation loop with
+    `home == ctxt home` identity stop) also hangs >300 s.
+  - SIDE FINDING: while probing, image-side Delays never fired while the
+    step-through machinery spun (probes M5/M6 in fst-sample2/3) even from a
+    priority-60 waiter — yet a minimal delay-under-spin repro
+    (/c/tmp/delay-spin.st, P60 waiter over P40 spinner) PASSES. Whatever the
+    debugged process's effective priority/scheduling is during
+    completeStep:/evaluate:onBehalfOf:, it starves the delay machinery in
+    eval mode — characterize with forkAt: 79/80 spinners.
+  Full-suite runs should exclude StepThroughTest/FastStepThroughTest (and
+  GUI-opening tests) until fixed. Needs an interactive debugging session
+  (PHARO_DET_SCHED + targeted VM tracing of context mutation write-back).
