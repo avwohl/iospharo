@@ -111,6 +111,91 @@ extern "C" void vm_setClipboardText(const char* text) {
 extern "C" void vm_startTextInput(void) {}
 extern "C" void vm_stopTextInput(void) {}
 
+// ---- execinfo backtrace (declared in win_compat.h) -------------------------
+// RtlCaptureStackBackTrace for the frames; DbgHelp SymFromAddr for names.
+// Our clang build carries DWARF (not PDB) debug info, so DbgHelp usually
+// only sees exported symbols — frames still print as module+0xOFFSET, which
+// llvm-addr2line resolves against the exe. Diagnostic-only path (crash
+// dumps, DNU traces); a mutex serializes DbgHelp (not thread-safe).
+
+#include <dbghelp.h>
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
+
+extern "C" int backtrace(void** buf, int size) {
+    if (size <= 0) return 0;
+    return (int)RtlCaptureStackBackTrace(1, (ULONG)size, buf, nullptr);
+}
+
+extern "C" char** backtrace_symbols(void* const* buf, int size) {
+    static std::mutex symMutex;
+    std::lock_guard<std::mutex> g(symMutex);
+
+    static bool symInited = false;
+    HANDLE proc = GetCurrentProcess();
+    if (!symInited) {
+        SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+        SymInitialize(proc, nullptr, TRUE);
+        symInited = true;
+    }
+
+    // glibc contract: one malloc'd block the caller free()s — the pointer
+    // array up front, the strings packed behind it.
+    const size_t lineMax = 512;
+    size_t total = (size_t)size * sizeof(char*) + (size_t)size * lineMax;
+    char** result = (char**)malloc(total);
+    if (!result) return nullptr;
+    char* strArea = (char*)(result + size);
+
+    char symBuf[sizeof(SYMBOL_INFO) + 256];
+    for (int i = 0; i < size; i++) {
+        char* line = strArea + (size_t)i * lineMax;
+        result[i] = line;
+        DWORD64 addr = (DWORD64)(uintptr_t)buf[i];
+
+        // Module name + module-relative offset (always available)
+        HMODULE mod = nullptr;
+        char modName[MAX_PATH] = "?";
+        uintptr_t modBase = 0;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               (LPCSTR)buf[i], &mod) && mod) {
+            GetModuleFileNameA(mod, modName, sizeof(modName));
+            modBase = (uintptr_t)mod;
+            const char* slash = strrchr(modName, '\\');
+            if (slash) memmove(modName, slash + 1, strlen(slash + 1) + 1);
+        }
+
+        // Symbol name if DbgHelp can see one (exports; PDBs if present)
+        SYMBOL_INFO* sym = (SYMBOL_INFO*)symBuf;
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0;
+        if (SymFromAddr(proc, addr, &disp, sym) && sym->NameLen > 0) {
+            snprintf(line, lineMax, "%s!%s+0x%llx [0x%llx]",
+                     modName, sym->Name, (unsigned long long)disp,
+                     (unsigned long long)addr);
+        } else {
+            snprintf(line, lineMax, "%s+0x%llx [0x%llx]",
+                     modName,
+                     (unsigned long long)(addr - (DWORD64)modBase),
+                     (unsigned long long)addr);
+        }
+    }
+    return result;
+}
+
+extern "C" void backtrace_symbols_fd(void* const* buf, int size, int fd) {
+    char** syms = backtrace_symbols(buf, size);
+    if (!syms) return;
+    for (int i = 0; i < size; i++) {
+        FILE* out = (fd == 2) ? stderr : stdout;
+        fprintf(out, "%s\n", syms[i]);
+    }
+    free(syms);
+}
+
 namespace pharo {
 namespace platform {
 

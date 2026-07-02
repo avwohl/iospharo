@@ -576,9 +576,14 @@ Historical scoping notes (how the breakthrough was reached) follow:
   `sigaction` + `siglongjmp` RECOVERY path is not replicated (a VEH can't safely
   unwind, and the Windows faults seen were heap corruption, not recoverable). So:
   diagnostic dump yes, recovery no.
-- [ ] **execinfo backtrace** (`win_compat.h`) — `backtrace()`/
-  `backtrace_symbols()` are no-op stubs; crash/DNU dumps print no native frames.
-  Could use RtlCaptureStackBackTrace + DbgHelp.
+- [x] **Native backtraces — DONE (2026-07-02)** (`windows.cpp` + dbghelp):
+  `backtrace`/`backtrace_symbols` via RtlCaptureStackBackTrace + DbgHelp
+  SymFromAddr. System-DLL frames symbolize fully; our clang exe carries DWARF
+  (not PDB), so its frames print module+0xOFFSET — resolve with
+  `llvm-addr2line -f -C -e test_load_image.exe (0x140000000+offset)`
+  (verified: induced AV resolved to primitiveExternalUint32Read + file:line).
+  The Win32 crash handler (pharoWinCrashHandler) now prints symbolized
+  frames + the resolve recipe; dumpCxxBacktrace/DNU traces work too.
 - [ ] **Symlinks** — `win_posix_compat.h` maps `lstat`->`stat`, `S_ISLNK`->0,
   `readlink`->EINVAL; the directory-attributes primitive (`fstatat`) does a
   full-path `stat` (follows links). So symlinks are treated as regular files —

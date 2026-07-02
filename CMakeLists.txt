@@ -576,7 +576,8 @@ elseif(WIN32)
     # dl: dlopen/dlsym/dladdr via the MSYS2 dlfcn-win32 package (FFI + plugin
     # symbol lookup); used by FFI.cpp/Interpreter.cpp/ObjectMemory.cpp.
     # winmm: waveOut audio backend (SoundPlugin.cpp).
-    target_link_libraries(PharoVMCore ws2_32 dl winmm)
+    # dbghelp: backtrace_symbols via SymFromAddr (windows.cpp).
+    target_link_libraries(PharoVMCore ws2_32 dl winmm dbghelp)
     # SSL/TLS backend: real OpenSSL (sqGenericSSL.c) — now usable since the
     # winsock2 SocketPlugin works (TLS runs over our TCP sockets).  MSYS2
     # CLANG64 provides openssl via pkg-config (3.x).

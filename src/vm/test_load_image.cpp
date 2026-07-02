@@ -829,8 +829,16 @@ static LONG WINAPI pharoWinCrashHandler(EXCEPTION_POINTERS* ep) {
         static_cast<long long>(g_watchdogSteps.load()), methBits);
     void* frames[32];
     USHORT n = RtlCaptureStackBackTrace(0, 32, frames, nullptr);
-    for (USHORT i = 0; i < n; ++i)
-        std::fprintf(stderr, "[WIN-CRASH]   #%u %p\n", i, frames[i]);
+    // Symbolized via the real backtrace_symbols in platform/windows.cpp
+    // (module!symbol+off, or module+off resolvable with llvm-addr2line).
+    char** syms = backtrace_symbols(frames, n);
+    for (USHORT i = 0; i < n; ++i) {
+        if (syms) std::fprintf(stderr, "[WIN-CRASH]   #%u %s\n", i, syms[i]);
+        else      std::fprintf(stderr, "[WIN-CRASH]   #%u %p\n", i, frames[i]);
+    }
+    if (syms) free(syms);
+    std::fprintf(stderr,
+        "[WIN-CRASH] resolve exe offsets: llvm-addr2line -f -C -e test_load_image.exe 0x14XXXXXXX (0x140000000 + offset)\n");
     std::fflush(stderr);
     InterlockedExchange(&inHandler, 0);
     return EXCEPTION_CONTINUE_SEARCH;  // proceed to crash, but diagnosed

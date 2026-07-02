@@ -24,12 +24,14 @@ typedef jmp_buf sigjmp_buf;
 #define siglongjmp(env, val)     longjmp((env), (val))
 
 // ---- execinfo backtrace ----------------------------------------------------
-// glibc's backtrace() is diagnostic-only (crash dumps, DNU traces).  No
-// portable equivalent without DbgHelp; stub to empty so the call sites
-// compile and simply print no frames on Windows.
-static inline int backtrace(void** /*buf*/, int /*size*/) { return 0; }
-static inline char** backtrace_symbols(void* const* /*buf*/, int /*size*/) { return nullptr; }
-static inline void backtrace_symbols_fd(void* const* /*buf*/, int /*size*/, int /*fd*/) {}
+// Real implementations live in src/platform/windows.cpp
+// (RtlCaptureStackBackTrace + DbgHelp SymFromAddr; frames print as
+// module!symbol+0xoff or module+0xoff — the latter resolvable with
+// llvm-addr2line against the DWARF debug info in the exe). Declared here so
+// this header stays <windows.h>-free.
+extern "C" int backtrace(void** buf, int size);
+extern "C" char** backtrace_symbols(void* const* buf, int size);
+extern "C" void backtrace_symbols_fd(void* const* buf, int size, int fd);
 
 #endif  // _WIN32
 #endif  // PHARO_WIN_COMPAT_H
