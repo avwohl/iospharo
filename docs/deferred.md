@@ -556,10 +556,13 @@ Historical scoping notes (how the breakthrough was reached) follow:
 - [ ] **POSIX file ownership** — `chown`/`lchown` return ENOSYS (Windows has no
   POSIX uid/gid model); the two calling primitives turn that into a primitive
   Failure, which the image handles.
-- [ ] **Clipboard** (`windows.cpp:54-55`) — `vm_getClipboardText()` returns "" and
-  `vm_setClipboardText()` is a no-op.  No real Win32 clipboard
-  (OpenClipboard/GetClipboardData) — copy/paste between Pharo and the OS doesn't
-  work.  Headless milestone; needed for the GUI milestone (4).
+- [x] **Clipboard — DONE (2026-07-02)** (`windows.cpp`) — real Win32 clipboard:
+  `vm_getClipboardText`/`vm_setClipboardText` use OpenClipboard +
+  CF_UNICODETEXT with UTF-16<->UTF-8 conversion (mirrors SDL2's
+  SDL_windowsclipboard.c). Round-trip verified both directions via
+  `SDL2 clipboardText` / PowerShell Get-Clipboard. Line-ending normalization
+  is handled image-side (`OSWindowClipboard>>clipboardText` applies
+  `withInternalLineEndings`).
 - [ ] **Text input / IME** (`windows.cpp:56-57`) — `vm_startTextInput()` /
   `vm_stopTextInput()` are no-ops.  No IME / text-composition support (GUI-only).
 - [ ] **SoundPlugin** (`SoundPlugin.cpp:230-241`) — all sound primitives

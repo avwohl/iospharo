@@ -40,19 +40,64 @@
 #include "Platform.hpp"
 #include "DisplaySurface.hpp"
 
+#include <string>
+
 // =====================================================================
-// Headless Windows stubs for symbols normally provided by the iOS /
-// Catalyst host app (PlatformBridge.cpp).  test_load_image runs with no
-// display, clipboard, or IME — these stubs let it link.  Mirrors the
-// Linux block in linux.cpp:32-39.
+// Windows implementations of symbols normally provided by the iOS /
+// Catalyst host app (PlatformBridge.cpp).  Clipboard is the real Win32
+// clipboard (UTF-16 <-> UTF-8, like real SDL2's SDL_windowsclipboard.c);
+// IME/text-input remains a no-op.  Mirrors the Linux block in
+// linux.cpp:32-39.
 // =====================================================================
 
 namespace pharo {
 DisplaySurface* gDisplaySurface = nullptr;
 }
 
-extern "C" const char* vm_getClipboardText(void) { return ""; }
-extern "C" void vm_setClipboardText(const char* /*text*/) {}
+// Returns UTF-8 text; pointer is valid until the next call (the FFI stub
+// strdups it immediately — stub_SDL_GetClipboardText in FFI.cpp).
+extern "C" const char* vm_getClipboardText(void) {
+    static std::string sClipboardUtf8;
+    sClipboardUtf8.clear();
+    if (!OpenClipboard(nullptr)) return "";
+    if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
+        if (const wchar_t* w = static_cast<const wchar_t*>(GlobalLock(h))) {
+            int len = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+            if (len > 1) {
+                sClipboardUtf8.resize(static_cast<size_t>(len) - 1);
+                WideCharToMultiByte(CP_UTF8, 0, w, -1, &sClipboardUtf8[0], len, nullptr, nullptr);
+            }
+            GlobalUnlock(h);
+        }
+    }
+    CloseClipboard();
+    return sClipboardUtf8.c_str();
+}
+
+extern "C" void vm_setClipboardText(const char* text) {
+    if (!text) return;
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+    if (wlen <= 0) return;
+    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, static_cast<size_t>(wlen) * sizeof(wchar_t));
+    if (!hMem) return;
+    if (wchar_t* dst = static_cast<wchar_t*>(GlobalLock(hMem))) {
+        MultiByteToWideChar(CP_UTF8, 0, text, -1, dst, wlen);
+        GlobalUnlock(hMem);
+    } else {
+        GlobalFree(hMem);
+        return;
+    }
+    if (!OpenClipboard(nullptr)) {
+        GlobalFree(hMem);
+        return;
+    }
+    EmptyClipboard();
+    if (!SetClipboardData(CF_UNICODETEXT, hMem)) {
+        GlobalFree(hMem);  // ownership transfers to the system only on success
+    }
+    CloseClipboard();
+}
+
 extern "C" void vm_startTextInput(void) {}
 extern "C" void vm_stopTextInput(void) {}
 
