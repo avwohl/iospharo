@@ -230,15 +230,21 @@ isolation (no suite watchdog):
   case 1003 to report the real arch (x86_64/aarch64/armv7l/i686). Cross-platform
   correctness fix (also right for our ARM/Linux builds). No regression
   (SystemVersionTest 17/17, SmalltalkImageTest 9/9, OSEnvironmentTest 9/9).
-- [ ] **`TFUFFIStructuresTest` (22) / `TFUFFIMethodRegistryTest` (2)** — these do
-  real callouts into `TestLibrary.dll` (the Pharo FFI unit-test C library):
-  `SymbolNotFoundError: Could not find symbol named: #newPoint searching in
-  module: 'TestLibrary.dll'`. The library is a test fixture not present on this
-  machine; setUp opens it and fails, so all tests in the class error. This is a
-  MISSING TEST FIXTURE, not a VM bug (the reference VM fails identically without
-  it) — the VM's FFI callout path itself is proven working by
-  FFICalloutMethodBuilderTest. To run them, build/stage the iceberg
-  `pharo-ffi`/`libtcommon` TestLibrary.dll next to the exe.
+- [x] **TestLibrary.dll FFI fixture — BUILT (2026-07-02)**
+  (`src/vm/plugins/TestLibrary.c`, clean-room from the image tests' signatures
+  and assertions; CMake target `TestLibrary`, staged next to the exe where
+  FFIWindowsLibraryFinder probes). Same-thread TFUFFI results:
+  BasicTypeSizeTest 48/48, MethodRegistryTest 2/2, StructuresTest 11/11
+  same-thread (+11 worker-variant errors), BasicTypeMarshalling 17/18
+  same-thread, DerivedTypeMarshalling 16/16 same-thread, FunctionCall 2/2+1skip.
+  FFICalloutMethodBuilderTest still 10/10.
+- [ ] **TFFI worker runtime (threaded FFI)** — every TFUFFI* class is
+  parameterized over {TFTestLibraryUsingSameThreadRunner,
+  TFTestLibraryUsingWorker}; the WORKER halves (callouts on a dedicated
+  worker thread: TFWorker/primitive support) error because our VM lacks the
+  threaded-FFI runtime. ~55 tests across the family. A real VM feature
+  (worker threads + cross-thread callout queue + callbacks), not a fixture
+  issue.
 
 ### File attributes (Windows semantics)
 - [x] **`DiskFileAttributesTest>>testToPlatformPath` / `testFromPlatformPath`** —

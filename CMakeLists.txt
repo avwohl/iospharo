@@ -686,6 +686,15 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
             endif()
         endforeach()
 
+        # TFFI unit-test fixture library: the image's TFUFFI* tests call out
+        # into TestLibrary.dll (see src/vm/plugins/TestLibrary.c). Staged next
+        # to the exe so FFIWindowsLibraryFinder (`Smalltalk vm directory`)
+        # finds it.
+        add_library(TestLibrary SHARED src/vm/plugins/TestLibrary.c)
+        set_target_properties(TestLibrary PROPERTIES
+            PREFIX ""
+            RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:test_load_image>)
+
         # SDL2 marker: the VM implements SDL2 as built-in FFI stubs (FFI.cpp
         # intercepts any module name containing "SDL2"), but the image's
         # FFIWindowsLibraryFinder must first FIND a file named SDL2.dll — it
