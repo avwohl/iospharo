@@ -592,10 +592,14 @@ Historical scoping notes (how the breakthrough was reached) follow:
   (verified: induced AV resolved to primitiveExternalUint32Read + file:line).
   The Win32 crash handler (pharoWinCrashHandler) now prints symbolized
   frames + the resolve recipe; dumpCxxBacktrace/DNU traces work too.
-- [ ] **Symlinks** — `win_posix_compat.h` maps `lstat`->`stat`, `S_ISLNK`->0,
-  `readlink`->EINVAL; the directory-attributes primitive (`fstatat`) does a
-  full-path `stat` (follows links). So symlinks are treated as regular files —
-  no symlink detection/target resolution. Acceptable for milestone 1.
+- [x] **Symlinks — DONE (2026-07-02)** (`Primitives.cpp` winIsSymlink /
+  winReadSymlinkTarget): detection via FindFirstFileW
+  FILE_ATTRIBUTE_REPARSE_POINT + IO_REPARSE_TAG_SYMLINK (attr 16), target
+  via CreateFileW(OPEN_REPARSE_POINT) + FSCTL_GET_REPARSE_POINT PrintName
+  (attr 1). Verified vs stock on a real mklink symlink: isSymlink=true and
+  the exact target path. (lstat/readlink POSIX shims remain no-ops — the
+  wide Win32 APIs are the mechanism, same as stock's plugin.) File family
+  regression-clean.
 - [ ] **POSIX file ownership** — `chown`/`lchown` return ENOSYS (Windows has no
   POSIX uid/gid model); the two calling primitives turn that into a primitive
   Failure, which the image handles.

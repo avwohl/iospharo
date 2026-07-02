@@ -12671,6 +12671,78 @@ static std::string winLongPath(const std::string& path) {
 // so long-path enumeration (e.g. DiskFileSystemTest>>testLongFilename's 284-char
 // dir) works here.  Names are returned as bytes in the CRT's ANSI code page, to
 // match what readdir() produced for short paths (ASCII names round-trip identically).
+#include <winioctl.h>   // FSCTL_GET_REPARSE_POINT
+
+// Symlink support via reparse points. The POSIX shims map lstat->stat and
+// readlink->EINVAL, so S_ISLNK never fires on Windows; the wide Win32 APIs
+// are the real mechanism (stock's Windows FileAttributesPlugin does the
+// same — `isSymlink` answers true there, probed 2026-07-02).
+static bool winIsSymlink(const std::string& path) {
+    std::string lp = winLongPath(path);
+    int wlen = MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, nullptr, 0);
+    if (wlen <= 0) return false;
+    std::wstring wp((size_t)wlen, L' ');
+    MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, &wp[0], wlen);
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(wp.c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    FindClose(h);
+    return (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 &&
+           fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
+}
+
+// Read a symlink's target (the PrintName of the reparse data). Returns
+// false if the path is not a symlink or the reparse data can't be read.
+static bool winReadSymlinkTarget(const std::string& path, std::string& target) {
+    // REPARSE_DATA_BUFFER lives in ntifs.h (driver kit); define what we need.
+    typedef struct {
+        ULONG  ReparseTag;
+        USHORT ReparseDataLength;
+        USHORT Reserved;
+        USHORT SubstituteNameOffset;
+        USHORT SubstituteNameLength;
+        USHORT PrintNameOffset;
+        USHORT PrintNameLength;
+        ULONG  Flags;
+        WCHAR  PathBuffer[1];
+    } SymlinkReparseBuffer;
+
+    std::string lp = winLongPath(path);
+    int wlen = MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, nullptr, 0);
+    if (wlen <= 0) return false;
+    std::wstring wp((size_t)wlen, L' ');
+    MultiByteToWideChar(CP_ACP, 0, lp.c_str(), -1, &wp[0], wlen);
+
+    HANDLE h = CreateFileW(wp.c_str(), FILE_READ_ATTRIBUTES,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING,
+                           FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+                           nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+
+    char buf[MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
+    DWORD got = 0;
+    BOOL ok = DeviceIoControl(h, FSCTL_GET_REPARSE_POINT, nullptr, 0,
+                              buf, sizeof(buf), &got, nullptr);
+    CloseHandle(h);
+    if (!ok) return false;
+    SymlinkReparseBuffer* rb = reinterpret_cast<SymlinkReparseBuffer*>(buf);
+    if (rb->ReparseTag != IO_REPARSE_TAG_SYMLINK) return false;
+
+    const WCHAR* name = rb->PathBuffer + rb->PrintNameOffset / sizeof(WCHAR);
+    int nameLen = rb->PrintNameLength / sizeof(WCHAR);
+    if (nameLen <= 0) {   // fall back to the substitute name (\??\-prefixed)
+        name = rb->PathBuffer + rb->SubstituteNameOffset / sizeof(WCHAR);
+        nameLen = rb->SubstituteNameLength / sizeof(WCHAR);
+        if (nameLen <= 0) return false;
+    }
+    int alen = WideCharToMultiByte(CP_UTF8, 0, name, nameLen, nullptr, 0, nullptr, nullptr);
+    if (alen <= 0) return false;
+    target.assign((size_t)alen, ' ');
+    WideCharToMultiByte(CP_UTF8, 0, name, nameLen, &target[0], alen, nullptr, nullptr);
+    return true;
+}
+
 static bool winListDir(const std::string& path, std::vector<std::string>& out) {
     std::string pat = winLongPath(path);
     if (!pat.empty() && pat.back() != '\\' && pat.back() != '/') pat += '\\';
@@ -28042,10 +28114,15 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Attribute 16 uses lstat for symlink check
+    // Attribute 16: symlink check. lstat is shimmed to stat on Windows
+    // (S_ISLNK never fires), so use the reparse-point check there.
     if (attrNum == 16) {
+#ifdef _WIN32
+        bool isSymlink = winIsSymlink(path);
+#else
         struct stat st;
         bool isSymlink = (lstat(winLongPath(path).c_str(), &st) == 0) && S_ISLNK(st.st_mode);
+#endif
         popN(3);
         push(isSymlink ? memory_.trueObject() : memory_.falseObject());
         return PrimitiveResult::Success;
@@ -28054,6 +28131,20 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
     // Attribute 1: symlink target path (nil for non-symlinks).
     // Must use lstat to detect the link itself, then readlink to get target.
     if (attrNum == 1) {
+#ifdef _WIN32
+        // Reparse-point read (lstat/readlink are shimmed away on Windows).
+        std::string target;
+        if (winIsSymlink(path) && winReadSymlinkTarget(path, target)) {
+            Oop targetOop = createStringObject(memory_, target);
+            if (targetOop.isNil()) return PrimitiveResult::Failure;
+            popN(3);
+            push(targetOop);
+            return PrimitiveResult::Success;
+        }
+        popN(3);
+        push(memory_.nil());
+        return PrimitiveResult::Success;
+#else
         struct stat lst;
         if (lstat(winLongPath(path).c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
             char buf[4096];
@@ -28072,6 +28163,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
         popN(3);
         push(memory_.nil());
         return PrimitiveResult::Success;
+#endif
     }
 
     // Attributes 1-12 use stat()
