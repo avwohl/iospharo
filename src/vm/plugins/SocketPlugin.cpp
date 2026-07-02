@@ -735,14 +735,40 @@ extern "C" sqInt sp_primitiveSocketReceiveDataAvailable(void) {
         return 0;
     }
 
-    // Use select() with zero timeout to check readability
-    fd_set readfds;
-    FD_ZERO(&readfds);
-    FD_SET(ps->fd, &readfds);
-    struct timeval tv = {0, 0};
-    int ready = select((int)(ps->fd + 1), &readfds, nullptr, nullptr, &tv);
+    // A listening socket selects "readable" when a connection is pending —
+    // keep select() semantics there (recv is invalid on listeners).
+    if (ps->listening) {
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(ps->fd, &readfds);
+        struct timeval tv = {0, 0};
+        int ready = select((int)(ps->fd + 1), &readfds, nullptr, nullptr, &tv);
+        vm->popthenPush(2, (ready > 0) ? vm->trueObject() : vm->falseObject());
+        return 0;
+    }
 
-    vm->popthenPush(2, (ready > 0) ? vm->trueObject() : vm->falseObject());
+    // Data sockets: MSG_PEEK, exactly like stock Cog's socketReadable().
+    // A bare select() reports a peer-closed socket as readable (recv would
+    // return 0), so `Socket>>dataAvailable` answered true at EOF and buffered
+    // streams read into an uncaught ConnectionClosed
+    // (ZdcSocketStreamTest>>testPlainClientRead*, deterministic). Stock
+    // answers false at EOF and flips the state to OtherEndClosed.
+    char peek;
+    int n = recv(ps->fd, &peek, 1, MSG_PEEK);
+    bool available;
+    if (n > 0) {
+        available = true;
+    } else if (n < 0 && (SOCK_LAST_ERROR == SOCK_EAGAIN ||
+                         SOCK_LAST_ERROR == SOCK_EWOULDBLOCK)) {
+        available = false;
+    } else {
+        // 0 = EOF (peer closed), <0 = hard error: no data will ever arrive.
+        if (ps->sockState == SOCK_CONNECTED) ps->sockState = SOCK_OTHER_END_CLOSED;
+        ps->eofDetected = true;
+        available = false;
+    }
+
+    vm->popthenPush(2, available ? vm->trueObject() : vm->falseObject());
     return 0;
 }
 

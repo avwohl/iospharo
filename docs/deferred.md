@@ -292,31 +292,24 @@ isolation (no suite watchdog):
   SocketAddressTest 5/5, TCPSocketEchoTest 1/1, SocketStreamTest 17/19,
   ZdcSocketStreamTest 9/15, ZdcOptimizedSocketStreamTest 10/15 (~80+ tests
   recovered, 0 -> majority passing). No hangs.
-- [ ] **Socket read-path EOF reporting** — ROOT CAUSE DIAGNOSED (not a race; the
-  ECONNRESET fix above already took ZdcReference to 15/15).  Remaining failures
-  (`ZdcSocketStream`/`ZdcOptimized` `testPlainClientRead*`/`testPlainClientSkip*`/
-  `testReverseEchoUpToEnd`) are DETERMINISTIC in isolation (testPlainClientRead
-  fails every run) and PASS on the reference Pharo Windows VM — so it's a real VM
-  behaviour difference, not flakiness.  SOCKDBG tracing shows the client reads all
-  data correctly (received=6), hits EOF (recv 0 -> OtherEndClosed), but then a
-  buffered stream's read loop raises an UNCAUGHT ConnectionClosed.  Cause:
-  `primitiveSocketReceiveDataAvailable` uses a bare `select()`, which reports a
-  peer-closed socket as readable (recv would return 0) — so `dataAvailable` is
-  `true` at EOF.  The buffered Zdc/ZdcOptimized streams poll dataAvailable, keep
-  trying to read past EOF, and raise ConnectionClosed.  THE FIX (verified
-  partially): make dataAvailable MSG_PEEK after select and return false when the
-  peek is 0 (EOF) — that makes testPlainClientRead PASS.  BUT it then breaks the
-  server-side `upToEnd` (`[isConnected] whileTrue: [receiveData]` in
-  testPlainClientWrite): with dataAvailable false at EOF the image never recv()s
-  the 0 that flips the state, so isConnected stays true and it ConnectionTimedOut/
-  crashes.  The COMPLETE fix needs BOTH: dataAvailable=false at EOF AND the I/O
-  thread setting `SOCK_OTHER_END_CLOSED` when it detects EOF (MSG_PEEK==0 at
-  SocketPlugin.cpp ~287), so connectionStatus reflects the close without the image
-  having to read 0.  That I/O-thread change touches the deliberate "don't change
-  state on EOF" SSL workaround (comment ~288) and MUST be verified on macOS/Linux
-  SSL (ZdcSecureSocketStream) — this machine is Windows-only and can't.  Deferred
-  to a POSIX-capable session.  Core path solid: TCPSocketTest 9/9, ZdcSimple 15/15,
-  ZdcReference 15/15.  Not a blocker — TCP works.
+- [x] **Socket read-path EOF reporting — DONE (2026-07-02).**
+  `ZdcSocketStreamTest` 9/15 → 15/15, `ZdcOptimizedSocketStreamTest` 10/15 →
+  15/15. Fix: `primitiveSocketReceiveDataAvailable` now mirrors stock Cog's
+  `socketReadable()` — MSG_PEEK instead of bare select() on data sockets
+  (bare select reports a peer-closed socket readable, so dataAvailable was
+  true at EOF and buffered streams read into an uncaught ConnectionClosed).
+  BOTH halves of the earlier diagnosis land in the primitive itself: EOF →
+  answer false AND set `SOCK_OTHER_END_CLOSED` + eofDetected — so the
+  server-side `[isConnected] whileTrue: [receiveData]` upToEnd loop also
+  terminates (testReverseEchoUpToEnd passes). Listening sockets keep select()
+  semantics (recv is invalid on listeners). The I/O-thread "don't change
+  state on EOF" SSL workaround (~line 288) is UNTOUCHED — the state flip
+  happens only when the image polls dataAvailable. SSL verified ON THIS
+  machine (crypto is on for Windows since 2026-06-28): ZdcSecure 2/2,
+  ZdcReference 15/15, TCPSocketTest 9/9, and `ZnClient get:
+  'https://example.com'` → 200. The old "needs a POSIX session" caveat is
+  moot. Remaining: SocketStreamTest 17/19 (2 pre-existing errors, separate
+  cause).
 - [x] **UDP echo/broadcast — DONE (2026-07-02)** (`UDPSocketEchoTest` 1/1,
   `UDPSocketTest` 2/2). TWO missing pieces, neither in send/recvfrom:
   - `Socket>>setPort:` (how a UDP server binds) calls named primitive
