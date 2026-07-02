@@ -17734,11 +17734,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     auto logFailure = [&](int rule, int srcD, int dstD, const char* reason) {
         bitbltFailCount_++;
-        if (bitbltFailCount_ <= 50 || bitbltFailCount_ % 500 == 0) {
-            #ifdef DEBUG
+        if (GET_DEBUG_BOOL(PHARO_BITBLT_TRACE) &&
+            (bitbltFailCount_ <= 50 || bitbltFailCount_ % 500 == 0)) {
             fprintf(stderr, "[BITBLT-FAIL] #%d rule=%d src=%d dst=%d reason=%s\n",
                     bitbltFailCount_, rule, srcD, dstD, reason);
-            #endif
         }
     };
     #define BITBLT_FAIL(rule, srcD, dstD, reason) do { logFailure(rule, srcD, dstD, reason); return PrimitiveResult::Failure; } while(0)
@@ -19175,6 +19174,60 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     }
 
     // Depth-4 source to depth-4 dest (used by bitPeekerFromForm: for pixel extraction)
+    // Same-|depth| sub-word copy where either side has NEGATIVE depth.
+    // Pharo encodes little-endian pixel order within each 32-bit word as a
+    // negative Form depth. The image's PNG codec pipes every scanline through
+    // Form(depth: -d) strips (encode: d -> -d, decode: -d -> d), so without
+    // this path any indexed PNG read/write fails, surfacing as the misleading
+    // "Bad BitBlt arg (Fraction?)" error (MicFileResourceReferenceTest).
+    {
+        intptr_t adSrc = srcDepth < 0 ? -srcDepth : srcDepth;
+        intptr_t adDst = destDepth < 0 ? -destDepth : destDepth;
+        if (adSrc == adDst && (srcDepth < 0 || destDepth < 0) &&
+            (adSrc == 1 || adSrc == 2 || adSrc == 4 || adSrc == 8 || adSrc == 16) &&
+            !cmTable && !hasShiftMask) {
+            intptr_t d = adSrc;
+            intptr_t ppw = 32 / d;                       // pixels per word
+            uint32_t pixMask = (1u << d) - 1;
+            intptr_t destWordsPerRow = (destWidth + ppw - 1) / ppw;
+            intptr_t srcWordsPerRow = (srcWidth + ppw - 1) / ppw;
+            uint32_t* srcWords = reinterpret_cast<uint32_t*>(srcBytes);
+            uint32_t* destWords = destPixels;
+            bool srcMsb = srcDepth > 0;
+            bool dstMsb = destDepth > 0;
+
+            size_t requiredDestWords = static_cast<size_t>(destY + height - 1) * destWordsPerRow
+                                       + static_cast<size_t>(destX + width + ppw - 1) / ppw;
+            size_t requiredSrcWords = static_cast<size_t>(sourceY + height - 1) * srcWordsPerRow
+                                      + static_cast<size_t>(sourceX + width + ppw - 1) / ppw;
+            if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
+            if (requiredSrcWords * 4 > srcBitsSize) return PrimitiveResult::Failure;
+
+            for (intptr_t y = 0; y < height; y++) {
+                uint32_t* srcRow = srcWords + (sourceY + y) * srcWordsPerRow;
+                uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
+                for (intptr_t x = 0; x < width; x++) {
+                    intptr_t sx = sourceX + x;
+                    intptr_t dx = destX + x;
+                    uint32_t srcShift = static_cast<uint32_t>(
+                        (srcMsb ? (ppw - 1 - (sx % ppw)) : (sx % ppw)) * d);
+                    uint32_t srcPixel = (srcRow[sx / ppw] >> srcShift) & pixMask;
+                    uint32_t destShift = static_cast<uint32_t>(
+                        (dstMsb ? (ppw - 1 - (dx % ppw)) : (dx % ppw)) * d);
+                    uint32_t destClear = ~(pixMask << destShift);
+                    switch (combinationRule) {
+                        case 0:  destRow[dx / ppw] &= destClear | (srcPixel << destShift); break;
+                        case 6:  destRow[dx / ppw] ^= (srcPixel << destShift); break;
+                        case 7: case 25: destRow[dx / ppw] |= (srcPixel << destShift); break;
+                        default: destRow[dx / ppw] = (destRow[dx / ppw] & destClear) | (srcPixel << destShift); break;
+                    }
+                }
+            }
+            showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+            BITBLT_SUCCESS;
+        }
+    }
+
     if (destDepth == 4 && srcDepth == 4) {
         // 4-bit pixels: 8 pixels per 32-bit word, MSB first
         // Pixel i within a word occupies bits (28 - i*4) to (31 - i*4)

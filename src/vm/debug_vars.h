@@ -278,6 +278,7 @@ DEBUG_BOOL(PHARO_DUMP_DISPLAY)              // test_load_image: dump the TestDis
 DEBUG_BOOL(PHARO_FORCE_DISPLAY)             // test_load_image: create gTestSurface/gDisplaySurface even in headless/eval mode, so a forced render (OSWorldRenderer doActivate) can present into it and be captured via PHARO_DUMP_DISPLAY. Proved the Windows GUI render path headlessly (the morphic World draws). See docs/deferred.md GUI section.
 DEBUG_BOOL(PHARO_GUI_WINDOW)                // test_load_image (Windows): back gDisplaySurface with a real on-screen Win32 HWND (Win32DisplaySurface, GDI StretchDIBits present) instead of the in-memory TestDisplaySurface — so the rendered morphic World is actually shown in a window. Implies the display surface is created. Input events not yet wired.
 DEBUG_BOOL(PHARO_WIN_EVENT_TRACE)           // Windows GUI input debug: trace real input events at the producer (Win32 wndProc push into gEventQueue) and the consumer (stub_SDL_PollEvent delivery to the image), so a click's full path is observable. Button/key events log individually; mouse moves are counted (logged every 64th).
+DEBUG_BOOL(PHARO_BITBLT_TRACE)              // log each primitiveCopyBits FAILURE (rule, src/dst depth, reason) — the image's copyBits fallback masks the real cause behind "Bad BitBlt arg (Fraction?)" so this is how you find which rule/depth combination the primitive actually lacks. First 50 + every 500th.
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT
