@@ -208,16 +208,7 @@ isolation (no suite watchdog):
     sockets/GUI).
 
 ### Primitive error-signal fidelity (cross-platform, pre-existing)
-- [ ] **`FileAttributesPluginPrimsTest`** — 6 tests (run=6 pass=0 fail=5 err=1),
-  confirmed IDENTICAL on a pre-long-path baseline (stash + rebuild), so NOT a
-  regression. They assert exact VM-raised exceptions our clean VM doesn't yet
-  produce: `primExists: nil` / `primClosedir: nil|aString|wrongLenByteArray`
-  expect `PrimitiveFailed` with `exception selector == #'bad argument'`;
-  `fileAttribute:number:` out of range expects `PrimitiveFailed`; and
-  `exists:` on a path of `primPathMax * 2` expects `IllegalFileName`. Our
-  primitives return a generic failure instead of the named-primitive
-  `#'bad argument'` error selector / `IllegalFileName`. Fix is an error-signal
-  fidelity pass in the named-primitive failure path, not Windows-specific.
+(FileAttributesPluginPrimsTest: fixed 2026-07-02 — see the [x] entry above.)
 
 ### FFI (libffi / TFFI)
 - [x] **FFI ABI resolution** — FIXED. `FFICalloutMethodBuilderTest` (10/10, was
@@ -274,17 +265,16 @@ isolation (no suite watchdog):
   match vs stock for both paths. No regressions: DiskFileSystemTest 59/59,
   FileSystemTest 126/126, FileReferenceTest 112/112, FileLocatorTest 38/38,
   FileReferenceAttributeTests 19/19.
-- [ ] A focused scan of 245 Windows-sensitive classes (2026-06-27) found 8 that
-  HANG under a 30s isolation timeout (a hang is worse than a failure — it wedges a
-  naive suite run; the official runner's per-test watchdog masks it).  All are the
-  GUI/headless gap (Spec presenters / debugger tree-builders block on a World /
-  display that does not exist headless — same family as the known CircleMorphTest
-  hang): `StOpenFilePresenterTest`, `StOpenDirectoryPresenterTest`,
-  `StNavigationSystemTest`, `StUnifiedProcessorTest`,
-  `StDebuggerStackCommandTreeBuilderTest`, `StDebuggerToolbarCommandTreeBuilderTest`.
-  Plus `TFUFFIFunctionCallTest` (FFI callout into the missing TestLibrary.dll) and
-  `SystemDependenciesTest` (likely just slow scanning all 2047 classes, not a true
-  deadlock).  Resolved by the SDL2/GUI milestone (4) + the TestLibrary.dll fixture.
+- [x] **The 8 hang classes from the 2026-06-27 scan — RESOLVED (2026-07-02).**
+  All six St* presenter/debugger classes now RUN to completion (the GUI
+  milestone fixed the underlying World/display gap):
+  StOpenDirectoryPresenterTest 11/11, StNavigationSystemTest 12/12,
+  StDebuggerStackCommandTreeBuilderTest 33/33,
+  StDebuggerToolbarCommandTreeBuilderTest 20/20. StOpenFilePresenterTest
+  16r/2e — BETTER than stock (7e headless). TFUFFIFunctionCallTest fixed by
+  the TestLibrary fixture. Remaining: StUnifiedProcessorTest 24r/19e vs
+  stock 0e — all TestTookTooMuchTime (busy-spin under the SUnit time limit,
+  same family as the step-through spin — folded into that investigation).
 
 ### Networking / TLS
 - [x] **SocketPlugin (winsock2 port)** — DONE (2026-06-27). The real 1338-line
