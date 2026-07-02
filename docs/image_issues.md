@@ -137,11 +137,15 @@ byte-identical on the stock Cog reference VM, so neither is a VM defect.
   the header is a no-op by design. Hover-expansion verified working in our
   Windows GUI (screenshot evidence in session 2026-07-02).
 
-## Test-dir gotcha: the dummy SDL2.dll breaks the stock reference VM
+## Test-dir gotcha: the dummy SDL2.dll breaks the stock reference VM (RESOLVED)
 
 The zero-real-symbol `SDL2.dll` staged in the image dir (to flip
 `SDL2 isAvailable` for OUR stub-based GUI) makes the STOCK
 `refvm/pharo-vm/PharoConsole.exe` fail at startup: it resolves real symbols
-(`#SDL_SetHint`) from that DLL and errors. When running the reference VM in
-`C:/temp/pharo-win-test/`, temporarily move `SDL2.dll` aside (`mv SDL2.dll
-SDL2.dll.hold`), run, restore.
+(`#SDL_SetHint`) from that DLL and errors.
+
+RESOLVED 2026-07-02: the dummy no longer lives in the image dir at all. CMake
+stages the marker next to test_load_image.exe and `FFIWindowsLibraryFinder`
+locates it via `Smalltalk vm directory` (primitive 142 fixed to return the
+directory, not the exe path). The image dir stays pristine, so the stock
+reference VM runs there unmodified.

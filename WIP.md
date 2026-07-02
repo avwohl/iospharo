@@ -19,14 +19,13 @@ Last updated: 2026-07-01. Build is green.
   a background automation shell — that's a test-harness limitation, not a VM one).
 
 ## GUI — how to reproduce a windowed interactive session
-1. Put any file named `SDL2.dll` in the IMAGE dir (`C:/temp/pharo-win-test/`). The
-   `FFIWindowsLibraryFinder` only checks the image dir; our FFI routes SDL symbols
-   to the built-in stubs so the file just needs to exist. Flips
-   `SDL2 isAvailable`/`OSSDL2Driver isSuitable` true.
-2. `PHARO_GUI_WINDOW=1 build-win/test_load_image.exe C:/temp/pharo-win-test/Pharo.image`
-   (NO eval args → interactive mode → the image auto-picks `OSWorldRenderer`).
-   Add `PHARO_WIN_EVENT_TRACE=1` to trace the input pipeline (wndProc push →
-   stub_SDL_PollEvent delivery).
+`PHARO_GUI_WINDOW=1 build-win/test_load_image.exe C:/temp/pharo-win-test/Pharo.image`
+(NO eval args → interactive mode → the image auto-picks `OSWorldRenderer`).
+Add `PHARO_WIN_EVENT_TRACE=1` to trace the input pipeline (wndProc push →
+stub_SDL_PollEvent delivery). No image-dir prep needed (2026-07-02): CMake
+stages an `SDL2.dll` marker next to the exe and `FFIWindowsLibraryFinder`
+finds it via `Smalltalk vm directory` (primitive 142 fixed to return the
+directory, not the exe path — was splitting on '/' only).
 
 ### The two bugs that made "clicks do nothing" (both fixed 2026-07-01)
 1. **Stale eval-mode `startup.st`** (the big one): every eval run writes a

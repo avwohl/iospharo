@@ -1098,6 +1098,17 @@ int main(int argc, char* argv[]) {
             ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
             if (n > 0) { buf[n] = '\0'; execPath = buf; }
         }
+#elif defined(_WIN32)
+        // argv[0] can be relative, and we already chdir'ed to the image dir
+        // above — resolving it now would produce a wrong path. GetModuleFileName
+        // is cwd-independent. `Smalltalk vm directory` must be right: the
+        // image's FFIWindowsLibraryFinder probes it (e.g. the SDL2.dll marker
+        // CMake stages next to the exe).
+        {
+            char buf[4096];
+            DWORD n = GetModuleFileNameA(nullptr, buf, sizeof(buf));
+            if (n > 0 && n < sizeof(buf)) execPath = buf;
+        }
 #endif
         if (execPath.empty()) execPath = argv[0];
         char* resolved = realpath(execPath.c_str(), nullptr);

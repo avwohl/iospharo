@@ -684,6 +684,24 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
                     VERBATIM)
             endif()
         endforeach()
+
+        # SDL2 marker: the VM implements SDL2 as built-in FFI stubs (FFI.cpp
+        # intercepts any module name containing "SDL2"), but the image's
+        # FFIWindowsLibraryFinder must first FIND a file named SDL2.dll — it
+        # probes the image dir, `Smalltalk vm directory`, and PATH.  Staging a
+        # marker file next to the exe makes the GUI work with a pristine image
+        # dir (no manually-copied dummy DLL, which also poisoned the stock
+        # reference VM when placed in a shared image dir — docs/image_issues.md).
+        file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/sdl2-marker.txt"
+            "iospharo SDL2 marker - NOT a real DLL. The VM provides SDL2 via "
+            "built-in stubs (src/vm/FFI.cpp registerSDL2Stubs); this file only "
+            "satisfies Pharo's FFIWindowsLibraryFinder existence probe of "
+            "'Smalltalk vm directory'. Nothing may actually LoadLibrary it.\n")
+        add_custom_command(TARGET test_load_image POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_BINARY_DIR}/sdl2-marker.txt"
+                "$<TARGET_FILE_DIR:test_load_image>/SDL2.dll"
+            VERBATIM)
     endif()
 
     # Force export testlib symbols so they're available via dlsym.

@@ -398,10 +398,20 @@ REMAINING for a real interactive GUI (render + on-screen window now DONE):
        now delete a startup.st carrying the [STARTUP-ST-FIRED] marker
        (test_load_image.cpp).
      Debug knob: PHARO_WIN_EVENT_TRACE=1 traces push→poll delivery end-to-end.
-  D. **SDL2.dll provisioning** — the finder checks the image dir, not the exe dir,
-     so the build can't auto-stage it; a startup-script patch stubbing
-     `SDL2Library>>libraryName`/`SDL2 class>>isAvailable` would remove the manual
-     file (cleaner than shipping a dummy DLL).
+  D. [x] **SDL2.dll provisioning — DONE (2026-07-02).** No manual staging: CMake
+     writes an `SDL2.dll` marker file next to test_load_image.exe (POST_BUILD),
+     and `FFIWindowsLibraryFinder` finds it via `Smalltalk vm directory` — the
+     image dir stays pristine and the stock reference VM is never poisoned.
+     Two real bugs fixed to make that work:
+     - primitive 142 (primVmPath) split the exe path on '/' only, so on Windows
+       `Smalltalk vm directory` returned the full EXE path (stock returns the
+       DIRECTORY with trailing '\'). Now find_last_of("/\\") — matches stock;
+       SystemResolverTest 7/7.
+     - test_load_image had no Windows branch for exe-path resolution; argv[0]
+       relative + the early chdir(imageDir) produced a wrong vm path. Now
+       GetModuleFileNameA (cwd-independent).
+     GUI verified with a pristine image dir: desktop renders, World menu opens
+     on right-click.
 
 Historical scoping notes (how the breakthrough was reached) follow:
 - [ ] **SDL2 / Morphic display** — headless only.  ARCHITECTURE MAPPED

@@ -5366,10 +5366,13 @@ PrimitiveResult Interpreter::primitiveImageName(int argCount) {
 // Returns the directory containing the VM as a String (with trailing separator)
 PrimitiveResult Interpreter::primitiveVMPath(int argCount) {
     std::string dir = vmPath_;
-    // Extract directory from full path
-    size_t lastSlash = dir.rfind('/');
+    // Extract directory from full path (either separator — Windows paths use
+    // '\'; rfind('/') alone returned the full exe path, so the image's
+    // `Smalltalk vm directory` pointed at the exe and everything probing it,
+    // e.g. FFIWindowsLibraryFinder, missed files staged next to the VM).
+    size_t lastSlash = dir.find_last_of("/\\");
     if (lastSlash != std::string::npos) {
-        dir = dir.substr(0, lastSlash + 1);  // Include trailing /
+        dir = dir.substr(0, lastSlash + 1);  // Include trailing separator
     }
     Oop result = createStringObject(memory_, dir);
     if (result.isNil()) {
