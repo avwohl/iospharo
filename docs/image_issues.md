@@ -115,3 +115,33 @@ primitive reads; the rest of the upstream method is unchanged. Verified
 crypto-OFF: SHA1 of 'a'×{65,100,128,260} now match `shasum`, and
 `testLargeCharacterStream` passes. Moot on crypto-ON builds (native primitive
 used). Upstream-worthy (a one-line fix to Pharo's `SHA1>>hashStream:`).
+
+## Not bugs — expected image behaviors seen while GUI-testing on Windows
+
+Investigated 2026-07-02 after interactive Windows GUI reports; both verified
+byte-identical on the stock Cog reference VM, so neither is a VM defect.
+
+- **"Illegal dependency of Bootstrap Layer" on AST-Core** (System Browser →
+  select AST-Core): that string is `PharoBootstrapRule class>>ruleName`, a
+  Renraku *architectural critique* Calypso evaluates for packages in the
+  bootstrap layer (`BaselineOfPharoBootstrap kernelPackageNames , #('AST-Core')`).
+  Upstream Pharo 13 genuinely ships AST-Core depending on 2 packages outside
+  that layer — both VMs compute `StDependencyChecker new dependenciesOf:
+  'AST-Core'` → 14 deps, extra = `#('Debugging-Utils' 'OpalCompiler-Core')` —
+  so the critique fires on stock Pharo too. Upstream-worthy report, not ours.
+
+- **System → Startup "does nothing" on click**: `#SystemStartup` is a submenu
+  header (children: Run startup scripts / Define a preference file / Version
+  Preferences folder / General Preferences folder, registered via `<worldMenu>`
+  on `StartupPreferencesLoader`). Morphic expands submenus on HOVER; clicking
+  the header is a no-op by design. Hover-expansion verified working in our
+  Windows GUI (screenshot evidence in session 2026-07-02).
+
+## Test-dir gotcha: the dummy SDL2.dll breaks the stock reference VM
+
+The zero-real-symbol `SDL2.dll` staged in the image dir (to flip
+`SDL2 isAvailable` for OUR stub-based GUI) makes the STOCK
+`refvm/pharo-vm/PharoConsole.exe` fail at startup: it resolves real symbols
+(`#SDL_SetHint`) from that DLL and errors. When running the reference VM in
+`C:/temp/pharo-win-test/`, temporarily move `SDL2.dll` aside (`mv SDL2.dll
+SDL2.dll.hold`), run, restore.
