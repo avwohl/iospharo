@@ -272,9 +272,17 @@ isolation (no suite watchdog):
   StDebuggerStackCommandTreeBuilderTest 33/33,
   StDebuggerToolbarCommandTreeBuilderTest 20/20. StOpenFilePresenterTest
   16r/2e — BETTER than stock (7e headless). TFUFFIFunctionCallTest fixed by
-  the TestLibrary fixture. Remaining: StUnifiedProcessorTest 24r/19e vs
-  stock 0e — all TestTookTooMuchTime (busy-spin under the SUnit time limit,
-  same family as the step-through spin — folded into that investigation).
+  the TestLibrary fixture. StUnifiedProcessorTest 24r/19e → **24/24 PASS
+  (2026-07-02)**: not a spin at all — primitive 295
+  (`primitiveTranslateStringWithTable`) required argCount==4, but the modern
+  instance form `String>>translateFrom:to:table:` sends 3 args, so the prim
+  ALWAYS failed and every `asLowercase` ran the per-character Smalltalk
+  fallback (~28x slower; 100k asLowercase 449ms → 137ms after the fix).
+  Spotter's unified search lowercases everything, so each query took ~28s →
+  19x TestTookTooMuchTime. Fix accepts both forms (string at stackValue(3)
+  either way) and pops argCount leaving the receiver, exactly like stock's
+  MiscPrimitivePlugin. String/Symbol/WideString/Character regression: 739
+  tests, 0F/0E.
 
 ### Networking / TLS
 - [x] **SocketPlugin (winsock2 port)** — DONE (2026-06-27). The real 1338-line

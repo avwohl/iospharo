@@ -20714,7 +20714,11 @@ PrimitiveResult Interpreter::primitiveFindFirstInString(int argCount) {
 // Primitive 295: Translate string characters using table
 // aString startIndex stopIndex table primitiveTranslateStringWithTable -> aString
 PrimitiveResult Interpreter::primitiveTranslateStringWithTable(int argCount) {
-    if (argCount != 4) return PrimitiveResult::Failure;
+    // Two forms share this named prim: the instance method
+    // String>>translateFrom:to:table: (argCount 3, receiver = the string) and
+    // the class-side translate:from:to:table: (argCount 4, string = first
+    // arg). The string is at stackValue(3) in both, so one body serves both.
+    if (argCount != 3 && argCount != 4) return PrimitiveResult::Failure;
 
     Oop tableOop = stackTop();
     Oop stopIndexOop = stackValue(1);
@@ -20759,8 +20763,9 @@ PrimitiveResult Interpreter::primitiveTranslateStringWithTable(int argCount) {
         memory_.storeByte(static_cast<size_t>(i), stringOop, translated);
     }
 
-    popN(4);  // arguments
-    push(stringOop);
+    // Stock pops methodArgumentCount and leaves the receiver as the result
+    // (self for the instance form, the class for the class-side form).
+    popN(argCount);
     return PrimitiveResult::Success;
 }
 
