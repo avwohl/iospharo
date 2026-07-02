@@ -16,6 +16,7 @@
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/PlatformBridge.h"
 #include "DebugSettings.hpp"
+#include "DebugVars.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -932,6 +933,9 @@ int stub_SDL_PollEvent(void* event) {
     if (!sSDL2PollEventFlagSet) {
         sSDL2PollEventFlagSet = true;
         pharo::gEventQueue.setSDL2EventPollingActive(true);
+        if (GET_DEBUG_BOOL(PHARO_WIN_EVENT_TRACE)) {
+            fprintf(stderr, "[WIN-EVT] SDL2 event polling ACTIVE (first SDL_PollEvent)\n");
+        }
     }
 
     // Reject null/low event pointers (stale heap address after GC compaction)
@@ -1019,10 +1023,23 @@ nextEvent:
 
         // Pharo: Red=4 Yellow=2 Blue=1 -> SDL: Left=bit0 Middle=bit1 Right=bit2
         // OSSDL2 convertButtonFromEvent: SDL 1->Red(4), SDL 2->Blue(1), SDL 3->Yellow(2)
+        // arg3 is the buttons-CURRENTLY-PRESSED state (Pharo event convention),
+        // not "the button this event is about". Which button went down/up is
+        // the DELTA against the previous state (sMouseButtons). Deriving it
+        // from arg3 directly made every UP (arg3=0) report SDL_BUTTON_LEFT, so
+        // a right-click's release never reached the image and Morphic's hand
+        // kept the right button pressed forever — killing all later clicks.
         uint32_t sdlButtonMask = 0;
         if (pharoEvent.arg3 & 4) sdlButtonMask |= (1 << 0);  // Red -> SDL_BUTTON_LMASK
         if (pharoEvent.arg3 & 1) sdlButtonMask |= (1 << 1);  // Blue -> SDL_BUTTON_MMASK
         if (pharoEvent.arg3 & 2) sdlButtonMask |= (1 << 2);  // Yellow -> SDL_BUTTON_RMASK
+
+        auto buttonFromMask = [](uint32_t mask, uint8_t fallback) -> uint8_t {
+            if (mask & (1 << 0)) return SDL_BUTTON_LEFT;
+            if (mask & (1 << 2)) return SDL_BUTTON_RIGHT;
+            if (mask & (1 << 1)) return SDL_BUTTON_MIDDLE;
+            return fallback;
+        };
 
         if (subtype == 0 || subtype == 3) {
             sdlEvent->motion.type = SDL_MOUSEMOTION;
@@ -1034,8 +1051,10 @@ nextEvent:
             sdlEvent->motion.xrel = pharoEvent.arg1 - prevX;
             sdlEvent->motion.yrel = pharoEvent.arg2 - prevY;
             sdlEvent->motion.state = sdlButtonMask;
+            sMouseButtons = sdlButtonMask;
         } else if (subtype == 1) {
-            sMouseButtons |= sdlButtonMask;
+            uint32_t pressed = sdlButtonMask & ~sMouseButtons;
+            sMouseButtons = sdlButtonMask;
             sdlEvent->button.type = SDL_MOUSEBUTTONDOWN;
             sdlEvent->button.timestamp = pharoEvent.timeStamp;
             sdlEvent->button.windowID = windowID;
@@ -1044,12 +1063,11 @@ nextEvent:
             sdlEvent->button.y = pharoEvent.arg2;
             sdlEvent->button.state = 1;  // SDL_PRESSED
             sdlEvent->button.clicks = 1;
-            if (pharoEvent.arg3 & 4)      sdlEvent->button.button = SDL_BUTTON_LEFT;
-            else if (pharoEvent.arg3 & 2) sdlEvent->button.button = SDL_BUTTON_RIGHT;
-            else if (pharoEvent.arg3 & 1) sdlEvent->button.button = SDL_BUTTON_MIDDLE;
-            else                          sdlEvent->button.button = SDL_BUTTON_LEFT;
+            sdlEvent->button.button = buttonFromMask(pressed ? pressed : sdlButtonMask,
+                                                     SDL_BUTTON_LEFT);
         } else if (subtype == 2) {
-            sMouseButtons &= ~sdlButtonMask;
+            uint32_t released = sMouseButtons & ~sdlButtonMask;
+            sMouseButtons = sdlButtonMask;
             sdlEvent->button.type = SDL_MOUSEBUTTONUP;
             sdlEvent->button.timestamp = pharoEvent.timeStamp;
             sdlEvent->button.windowID = windowID;
@@ -1058,10 +1076,12 @@ nextEvent:
             sdlEvent->button.y = pharoEvent.arg2;
             sdlEvent->button.state = 0;  // SDL_RELEASED
             sdlEvent->button.clicks = 1;
-            if (pharoEvent.arg3 & 4)      sdlEvent->button.button = SDL_BUTTON_LEFT;
-            else if (pharoEvent.arg3 & 2) sdlEvent->button.button = SDL_BUTTON_RIGHT;
-            else if (pharoEvent.arg3 & 1) sdlEvent->button.button = SDL_BUTTON_MIDDLE;
-            else                          sdlEvent->button.button = SDL_BUTTON_LEFT;
+            sdlEvent->button.button = buttonFromMask(released, SDL_BUTTON_LEFT);
+        }
+        if (GET_DEBUG_BOOL(PHARO_WIN_EVENT_TRACE) && (subtype == 1 || subtype == 2)) {
+            fprintf(stderr, "[WIN-EVT] poll delivers mouse %s (%d,%d) sdlButton=%d to image\n",
+                    subtype == 1 ? "DOWN" : "UP",
+                    pharoEvent.arg1, pharoEvent.arg2, sdlEvent->button.button);
         }
         return 1;
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::MouseWheel)) {
@@ -1118,6 +1138,10 @@ nextEvent:
                 *p++ = static_cast<char>(0x80 | (charCode & 0x3F));
             }
             *p = '\0';
+            if (GET_DEBUG_BOOL(PHARO_WIN_EVENT_TRACE)) {
+                fprintf(stderr, "[WIN-EVT] poll delivers TEXTINPUT '%s' to image\n",
+                        sdlEvent->text.text);
+            }
             return 1;
         }
 
@@ -1147,6 +1171,10 @@ nextEvent:
         if (pharoEvent.arg3 & 4) sdlMod |= 0x0100;  // KMOD_LALT
         if (pharoEvent.arg3 & 8) sdlMod |= 0x0400;  // KMOD_LGUI (Cmd)
         sdlEvent->key.keysym.mod = sdlMod;
+        if (GET_DEBUG_BOOL(PHARO_WIN_EVENT_TRACE)) {
+            fprintf(stderr, "[WIN-EVT] poll delivers KEY%s sym=%d scan=%d mod=%d to image\n",
+                    subtype == 0 ? "DOWN" : "UP", charCode, pharoEvent.arg4, sdlMod);
+        }
         return 1;
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
         sdlEvent->window.type = SDL_WINDOWEVENT;

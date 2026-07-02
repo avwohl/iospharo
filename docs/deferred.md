@@ -382,14 +382,22 @@ REMAINING for a real interactive GUI (render + on-screen window now DONE):
      morphic loop via interpret() and injects a right-click at 5s (injectMouseClick
      -> gEventQueue), so events flow.  (The earlier "headless, no draw" was ONLY
      because SDL2.dll was missing -> SDL2 unavailable -> NullWorldRenderer.)
-  C. **Win32 -> SDL event injection** — the harness can inject synthetic events
-     (injectMouseClick -> pharo::gEventQueue, which stub_SDL_PollEvent converts to
-     SDL events), but REAL mouse/keyboard from the Win32 window isn't wired yet:
-     Win32DisplaySurface's wndProc should translate WM_MOUSEMOVE/WM_*BUTTON*/
-     WM_KEY*/WM_CHAR into pharo::Event{type=Mouse/Keyboard, arg1=x, arg2=y,
-     arg3=buttons, arg4=mods} and push to gEventQueue (EventQueue.hpp).  This is the
-     last piece for a user-interactive GUI; the render/window/auto-activation all
-     work.
+  C. [x] **Win32 -> SDL event injection — DONE (2026-07-01).** The wndProc
+     translates WM_MOUSE*/WM_KEY*/WM_CHAR/WM_MOUSEWHEEL into pharo::Event and
+     pushes to gEventQueue; stub_SDL_PollEvent delivers them to OSSDL2Driver.
+     VERIFIED interactively: menubar dropdowns, World menu, Playground typing,
+     Do-it evaluation, debugger-on-DNU, Profiler — see
+     docs/images/windows-gui-menu-click.png / windows-gui-debugger.png.
+     Two root-cause fixes were required (both would silently eat ALL input):
+     - stub_SDL_PollEvent derived WHICH button changed from arg3 (buttons-still-
+       pressed, 0 on UP) → every release reported LEFT → right button stuck
+       pressed forever in Morphic's hand.  Now tracks prev state and uses the
+       delta (FFI.cpp).
+     - a stale eval-mode startup.st in the image dir suspends all Morphic
+       processes → interactive runs rendered but ignored input.  Non-eval runs
+       now delete a startup.st carrying the [STARTUP-ST-FIRED] marker
+       (test_load_image.cpp).
+     Debug knob: PHARO_WIN_EVENT_TRACE=1 traces push→poll delivery end-to-end.
   D. **SDL2.dll provisioning** — the finder checks the image dir, not the exe dir,
      so the build can't auto-stage it; a startup-script patch stubbing
      `SDL2Library>>libraryName`/`SDL2 class>>isAvailable` would remove the manual

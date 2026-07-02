@@ -923,6 +923,23 @@ int main(int argc, char* argv[]) {
     // hang at high priority and block the eval).  Coupled to our runner
     // script's marker convention; harmless on images without it.
     std::string startupStPath;
+    if (!evalMode) {
+        // A previous eval-mode run (or a crash during one) may have left its
+        // startup.st next to the image. Its preamble SUSPENDS every Morphic
+        // process, so an interactive GUI run that auto-loads it renders a
+        // desktop whose UI event loop is dead — clicks silently do nothing.
+        // Detect it by the eval-only marker and remove it. (Found 2026-07-01:
+        // this was why the on-screen Windows GUI ignored all real clicks.)
+        if (std::ifstream f{"startup.st"}) {
+            std::string contents((std::istreambuf_iterator<char>(f)),
+                                 std::istreambuf_iterator<char>());
+            if (contents.find("[STARTUP-ST-FIRED]") != std::string::npos) {
+                f.close();
+                std::remove("startup.st");
+                std::cout << "Removed stale eval-mode startup.st (would suspend the GUI's Morphic processes)" << std::endl;
+            }
+        }
+    }
     if (evalMode) {
         // Touch /tmp/sunit_run_completed.txt so that if the image was
         // prepped via `pharo image eval --save "fileIn run_sunit_tests.st"`,
