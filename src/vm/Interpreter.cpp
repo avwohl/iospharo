@@ -7628,6 +7628,40 @@ void Interpreter::returnFromMethod() {
                 }
             }
 
+            // DYNAMIC home override: the static outerCode-literal walk above is
+            // wrong when the CompiledBlock is SHARED between methods (the
+            // FBDBytecodeDecompiler reuses original blocks in a regenerated
+            // method, so outerCode points at the stale original). The truth is
+            // the running closure's captured outerContext chain: follow
+            // context -> closureOrNil -> outerContext until a context whose
+            // method is a non-block CompiledMethod. Stock's NLR only ever
+            // walks contexts; it never consults outerCode.
+            if (closure_.isObject() && !closure_.isNil() && closure_.rawBits() > 0x10000) {
+                Oop ctxWalk = memory_.fetchPointer(0, closure_);   // outerContext
+                int cChain = 0;
+                while (ctxWalk.isObject() && !ctxWalk.isNil() && ctxWalk.rawBits() > 0x10000 && cChain < 20) {
+                    Oop m = memory_.fetchPointer(3, ctxWalk);
+                    if (!m.isObject() || m.rawBits() <= 0x10000 || !m.asObjectPtr()->isCompiledMethod()) break;
+                    Oop mHeader = memory_.fetchPointer(0, m);
+                    if (!mHeader.isSmallInteger()) break;
+                    int mNumLits = mHeader.asSmallInteger() & 0x7FFF;
+                    bool isBlock = false;
+                    if (mNumLits >= 1) {
+                        Oop lastLit = memory_.fetchPointer(mNumLits, m);
+                        isBlock = lastLit.isObject() && lastLit.rawBits() > 0x10000 &&
+                                  lastLit.asObjectPtr()->isCompiledMethod();
+                    }
+                    if (!isBlock) {
+                        homeMethodOop = m;   // dynamic home wins over the static literal
+                        break;
+                    }
+                    Oop clo = memory_.fetchPointer(4, ctxWalk);   // closureOrNil
+                    if (!clo.isObject() || clo.isNil() || clo.rawBits() <= 0x10000) break;
+                    ctxWalk = memory_.fetchPointer(0, clo);
+                    cChain++;
+                }
+            }
+
             // If we found a home method, search context chain and do context-based NLR
             if (homeMethodOop.isObject() && !homeMethodOop.isNil()) {
                 bool nlrTrace = false;
@@ -12521,28 +12555,43 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         // BlockCannotReturn because the static home isn't on savedFrames_.
         Oop homeMethodOop = homeMethodForNLR;
         Oop altHomeMethod = Oop::nil();
+        Oop tracedOcMethod = Oop::nil();
         if (outerContext.isObject() && !outerContext.isNil()) {
-            Oop ocMethod = memory_.fetchPointer(3, outerContext);
-            if (ocMethod.isObject() && !ocMethod.isNil() && ocMethod.rawBits() > 0x10000 &&
-                ocMethod.rawBits() != homeMethodOop.rawBits()) {
-                // Follow outerContext.method's enclosing-code chain to a non-block
-                // CompiledMethod (same walk pattern as the static chain above).
-                Oop walk = ocMethod;
-                int chain = 0;
-                while (walk.isObject() && walk.rawBits() > 0x10000 && chain < 20) {
-                    ObjectHeader* wHdr = walk.asObjectPtr();
-                    if (!wHdr->isCompiledMethod()) break;
-                    Oop wHeader = memory_.fetchPointer(0, walk);
-                    if (!wHeader.isSmallInteger()) break;
-                    int wNumLits = wHeader.asSmallInteger() & 0xFFFF;
-                    if (wNumLits < 1) { altHomeMethod = walk; break; }
-                    Oop wLastLit = memory_.fetchPointer(wNumLits, walk);
-                    bool lastIsCode = wLastLit.isObject() && wLastLit.rawBits() > 0x10000 &&
-                                      wLastLit.asObjectPtr()->isCompiledMethod();
-                    if (!lastIsCode) { altHomeMethod = walk; break; }
-                    walk = wLastLit;
-                    chain++;
+            // Walk the DYNAMIC outerContext chain (context -> closureOrNil ->
+            // outerContext) until a context whose method is a non-block
+            // CompiledMethod. That method is the runtime home even when the
+            // CompiledBlock's static outerCode literal points at a DIFFERENT
+            // (stale) method — FBDBytecodeDecompiler reuses the original
+            // CompiledBlocks when regenerating a method, and for NESTED blocks
+            // the previous static-literal walk converged back to the stale
+            // home, so NLR failed with BlockCannotReturn
+            // (FBDBytecodeDecompilerExamplesTest testExampleSimpleBlockReturn/
+            // testExampleIfTrue; stock walks contexts, never outerCode).
+            Oop ctxWalk = outerContext;
+            int cChain = 0;
+            while (ctxWalk.isObject() && !ctxWalk.isNil() && ctxWalk.rawBits() > 0x10000 && cChain < 20) {
+                Oop m = memory_.fetchPointer(3, ctxWalk);
+                tracedOcMethod = m;
+                if (!m.isObject() || m.rawBits() <= 0x10000 || !m.asObjectPtr()->isCompiledMethod()) break;
+                // Block or method? A CompiledBlock's last literal is compiled code.
+                Oop mHeader = memory_.fetchPointer(0, m);
+                if (!mHeader.isSmallInteger()) break;
+                int mNumLits = mHeader.asSmallInteger() & 0x7FFF;
+                bool isBlock = false;
+                if (mNumLits >= 1) {
+                    Oop lastLit = memory_.fetchPointer(mNumLits, m);
+                    isBlock = lastLit.isObject() && lastLit.rawBits() > 0x10000 &&
+                              lastLit.asObjectPtr()->isCompiledMethod();
                 }
+                if (!isBlock) {
+                    if (m.rawBits() != homeMethodOop.rawBits()) altHomeMethod = m;
+                    break;
+                }
+                // Enclosing context of a block activation: via its closure.
+                Oop clo = memory_.fetchPointer(4, ctxWalk);   // closureOrNil
+                if (!clo.isObject() || clo.isNil() || clo.rawBits() <= 0x10000) break;
+                ctxWalk = memory_.fetchPointer(0, clo);       // closure's outerContext
+                cChain++;
             }
         }
 
@@ -12564,6 +12613,18 @@ void Interpreter::activateBlock(Oop block, int argCount) {
             }
         }
 
+        if (GET_DEBUG_BOOL(PHARO_NLR_TRACE)) {
+            fprintf(stderr, "[NLR-ACT] home=0x%llx alt=0x%llx outerCtx=0x%llx(%s) fd=%zu preHome=%zu\n",
+                    (unsigned long long)homeMethodOop.rawBits(),
+                    (unsigned long long)altHomeMethod.rawBits(),
+                    (unsigned long long)outerContext.rawBits(),
+                    outerContext.isObject() ? "obj" : (outerContext.isSmallInteger() ? "smi" : "other"),
+                    frameDepth_, homeFrame);
+            for (size_t i2 = frameDepth_; i2 > 0 && i2 + 6 > frameDepth_; i2--) {
+                fprintf(stderr, "[NLR-ACT]   frame[%zu] m=0x%llx\n", i2 - 1,
+                        (unsigned long long)savedFrames_[i2 - 1].savedMethod.rawBits());
+            }
+        }
         for (size_t i = frameDepth_; homeFrame == SIZE_MAX && i > 0; i--) {
             Oop savedMethod = savedFrames_[i - 1].savedMethod;
 
@@ -12639,6 +12700,13 @@ void Interpreter::activateBlock(Oop block, int argCount) {
             fprintf(stderr, "[HFD-W@11911] entry=%zu val=%zu m=#%s\n",
                 frameDepth_ - 1, homeFrame,
                 memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod).c_str());
+        }
+        if (GET_DEBUG_BOOL(PHARO_NLR_TRACE) && homeFrame == SIZE_MAX) {
+            fprintf(stderr, "[NLR-ACT-FINAL] UNRESOLVED home=0x%llx alt=0x%llx block=0x%llx fd=%zu\n",
+                    (unsigned long long)homeMethodOop.rawBits(),
+                    (unsigned long long)altHomeMethod.rawBits(),
+                    (unsigned long long)methodToExecute.rawBits(), frameDepth_);
+            fprintf(stderr, "[NLR-ACT-FINAL]   ocMethod=0x%llx outerCtx=0x%llx\n", (unsigned long long)tracedOcMethod.rawBits(), (unsigned long long)outerContext.rawBits());
         }
         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
         if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
