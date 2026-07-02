@@ -644,3 +644,10 @@ Historical scoping notes (how the breakthrough was reached) follow:
   conversion loops (srcDepth==16->32 at ~19920 etc.). Diagnostics:
   PHARO_BITBLT_TRACE=1 (no prim failures fire — wrong pixels, not errors);
   probes /c/tmp/rev-probe.st, /c/tmp/rev32-probe.st compare vs stock.
+
+- [ ] **FastStepThroughTest hangs (pre-existing)** — hangs standalone AND under
+  the suite runner (killed the 2026-07-02 full-suite run at class 349 via the
+  outer timeout). Bisect-verified NOT caused by primitive 218 (pre-218 build
+  hangs identically). Debugger step-through simulation; investigate with
+  PHARO_NLR_TRACE + PHARO_DET_SCHED. Full-suite runs should exclude it (and
+  GUI-opening tests) until fixed.
