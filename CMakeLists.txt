@@ -575,7 +575,8 @@ elseif(WIN32)
     # with SocketPlugin excluded); WSAStartup is called in platformInit().
     # dl: dlopen/dlsym/dladdr via the MSYS2 dlfcn-win32 package (FFI + plugin
     # symbol lookup); used by FFI.cpp/Interpreter.cpp/ObjectMemory.cpp.
-    target_link_libraries(PharoVMCore ws2_32 dl)
+    # winmm: waveOut audio backend (SoundPlugin.cpp).
+    target_link_libraries(PharoVMCore ws2_32 dl winmm)
     # SSL/TLS backend: real OpenSSL (sqGenericSSL.c) — now usable since the
     # winsock2 SocketPlugin works (TLS runs over our TCP sockets).  MSYS2
     # CLANG64 provides openssl via pkg-config (3.x).

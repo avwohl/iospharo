@@ -317,24 +317,25 @@ isolation (no suite watchdog):
   (UDPSocketEchoTest). WSAEMSGSIZE now counts as "data available" in BOTH
   peek sites (dataAvailable prim + the I/O-thread EOF detector), and datagram
   sockets are exempt from all connection-death transitions.
-- [ ] **SocketStreamTest flush-after-close (2 errors)** —
-  `testFlushOtherEndClosed` / `testNextPutAllFlushOtherEndClosed`
-  (TestTookTooMuchTime on ours; pass on stock). FULLY DIAGNOSED 2026-07-02
-  via side-by-side state probe (/c/tmp/state-probe.st) — stock sequence:
-  peer FIN leaves state "connected" (stock does NOT mark on FIN); the first
-  send after close succeeds (fits the buffer, triggers RST); the SECOND send
-  hits ECONNRESET and stock's send primitive returns 0-sent + flips state to
-  OtherEndClosed WITHOUT failing; the image's sendData loop then re-enters
-  waitForSendDoneFor: whose [self sendDone] whileFalse: loop (sendDone =
-  state==Connected on stock) sees isConnected false and raises
-  ConnectionClosed. Ours: send prim FAILS on ECONNRESET → image fallback
-  raises bare SocketError (not a NetworkError!) → wrong exception class.
-  ATTEMPTED the stock-parity fix (send: dead-error → 0-sent + OtherEndClosed;
-  sendDone → state==Connected): it did NOT cure these two tests and
-  regressed ZdcSocketStream/ZdcOptimized (1 error each) and UDP echo —
-  reverted. The interaction needs SOCKDBG tracing of the exact Zdc failure
-  before retrying; keep the probe script. Impact: 2 niche error-path tests;
-  all data-path suites green.
+- [x] **SocketStreamTest flush-after-close — DONE (2026-07-02), 19/19.**
+  THREE stock-parity pieces (each probed against the reference VM):
+  1. send() on a dead connection (ECONNRESET/ECONNABORTED/EPIPE, TCP only):
+     report 0-sent + flip state to OtherEndClosed instead of failing the prim
+     (a failed prim surfaced bare SocketError — not a NetworkError — which
+     escaped SocketStream>>flush's handler).
+  2. sendDone answers (isDgram or state == Connected) instead of
+     unconditionally true — Socket>>waitForSendDoneFor:'s whileFalse loop is
+     the only place the image converts a dead send into ConnectionClosed.
+  3. Socket close is FIRE-AND-FORGET like stock: shutdown() + state
+     UNCONNECTED immediately (+ semaphore signals). We used to hold
+     THIS_END_CLOSED until the peer's FIN, so closeAndDestroy:'s
+     waitForDisconnectionFor: blocked its full timeout whenever the peer
+     stayed open — every such close cost 30 s (stock: 0 ms), which is what
+     actually produced TestTookTooMuchTime.
+  Also: PrivateSocket.isDgram field; SIO_UDP_CONNRESET disabled at UDP socket
+  creation (stock does the same). Full battery green: TCP 9/9, TCPEcho 1/1,
+  ZdcSocket/Optimized/Reference/Simple 15/15 each, ZdcSecure 2/2, UDP echo
+  1/1 + UDPSocketTest 2/2, HTTPS 200.
 - [x] **UDP echo/broadcast — DONE (2026-07-02)** (`UDPSocketEchoTest` 1/1,
   `UDPSocketTest` 2/2). TWO missing pieces, neither in send/recvfrom:
   - `Socket>>setPort:` (how a UDP server binds) calls named primitive

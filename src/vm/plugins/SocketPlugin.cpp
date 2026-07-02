@@ -34,6 +34,8 @@ struct PrivateSocket {
     bool listening;      // true once listen() called: WAITING_FOR_CONNECTION here
                          // means a pending *incoming* connection (readable), not a
                          // connecting client socket (writable).
+    bool isDgram;        // SOCK_DGRAM (UDP): connectionless - exempt from all
+                         // connection-death state transitions (OtherEndClosed etc.)
 };
 
 // =====================================================================
@@ -443,6 +445,22 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
         return vm->primitiveFail();
     }
 
+#ifdef _WIN32
+    // Windows quirk: a UDP send to an unreachable port gets an ICMP
+    // port-unreachable back, and the NEXT recvfrom/send on the SAME socket
+    // fails WSAECONNRESET - nonsense for a connectionless socket. Stock
+    // sqWin32NewNet disables it the same way.
+    if (socketType == UDP_SOCKET_TYPE) {
+        BOOL behave = FALSE;
+        DWORD bytesReturned = 0;
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
+        WSAIoctl(fd, SIO_UDP_CONNRESET, &behave, sizeof(behave),
+                 nullptr, 0, &bytesReturned, nullptr, nullptr);
+    }
+#endif
+
     // Create private socket struct
     PrivateSocket* ps = new PrivateSocket();
     ps->fd = fd;
@@ -456,6 +474,7 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     ps->writeSignaled = false;
     ps->eofDetected = false;
     ps->listening = false;
+    ps->isDgram = (socketType == UDP_SOCKET_TYPE);
 
     // Allocate ByteArray for SQSocket handle
     sqInt classBA = vm->classByteArray();
@@ -650,8 +669,21 @@ extern "C" sqInt sp_primitiveSocketCloseConnection(void) {
     if (!ps) return vm->primitiveFail();
 
     if (ps->fd != INVALID_SOCKET) {
+        // Stock parity (probed vs the reference VM): close is fire-and-forget.
+        // shutdown() sends our FIN, the kernel completes the handshake in the
+        // background, and the state reports UNCONNECTED immediately. We used
+        // to sit in THIS_END_CLOSED until the PEER's FIN arrived, which made
+        // Socket>>closeAndDestroy: (waitForDisconnectionFor:) block for its
+        // full timeout whenever the peer stayed open — every SocketStream
+        // close against a live peer cost 30 seconds (stock: 0 ms;
+        // SocketStreamTest>>testFlushOtherEndClosed hit TestTookTooMuchTime).
         shutdown(ps->fd, SHUT_RDWR);
-        ps->sockState = SOCK_THIS_END_CLOSED;
+        ps->sockState = SOCK_UNCONNECTED;
+        if (vm) {
+            if (ps->connSema > 0) vm->signalSemaphoreWithIndex(ps->connSema);
+            if (ps->readSema > 0) vm->signalSemaphoreWithIndex(ps->readSema);
+            if (ps->writeSema > 0) vm->signalSemaphoreWithIndex(ps->writeSema);
+        }
     }
 
     vm->pop(1); // leave receiver
@@ -701,12 +733,33 @@ extern "C" sqInt sp_primitiveSocketSendDataBufCount(void) {
 
     ssize_t sent = send(ps->fd, buf + offset, (size_t)count, 0);
     if (sent < 0) {
-        if (SOCK_LAST_ERROR == SOCK_EAGAIN || SOCK_LAST_ERROR == SOCK_EWOULDBLOCK) {
+        int err = SOCK_LAST_ERROR;
+        if (err == SOCK_EAGAIN || err == SOCK_EWOULDBLOCK) {
             sent = 0; // Nothing sent yet, try again later
             ps->writeSignaled = false; // Re-arm write notification
+        } else if (!ps->isDgram && (err == SOCK_ECONNRESET || err == SOCK_ECONNABORTED
+#ifdef EPIPE
+                                    || err == EPIPE
+#endif
+                   )) {
+            // Connection is dead. Stock parity (probed vs the reference VM,
+            // /c/tmp/state-probe.st): stock does NOT fail the primitive - it
+            // reports 0 bytes sent and flips the state to OtherEndClosed. The
+            // image's send loop then re-enters waitForSendDoneFor:, whose
+            // sendDone/isConnected check raises ConnectionClosed - the class
+            // SocketStream>>flush's on: NetworkError handler expects. Failing
+            // the prim instead surfaced a bare SocketError (not a
+            // NetworkError), which escaped those handlers
+            // (SocketStreamTest>>testFlushOtherEndClosed).
+            ps->sockError = err;
+            ps->sockState = SOCK_OTHER_END_CLOSED;
+            ps->eofDetected = true;
+            sent = 0;
+            SOCKDBG("send: fd=%d count=%ld -> DEAD err=%d -> OtherEndClosed, sent=0\n",
+                    ps->fd, (long)count, err);
         } else {
-            ps->sockError = SOCK_LAST_ERROR;
-            SOCKDBG("send: fd=%d count=%ld -> ERR SOCK_LAST_ERROR=%d\n", ps->fd, (long)count, SOCK_LAST_ERROR);
+            ps->sockError = err;
+            SOCKDBG("send: fd=%d count=%ld -> ERR err=%d\n", ps->fd, (long)count, err);
             return vm->primitiveFail();
         }
     }
@@ -724,9 +777,14 @@ extern "C" sqInt sp_primitiveSocketSendDone(void) {
     PrivateSocket* ps = privateSocketFrom(socketOop);
     if (!ps) return vm->primitiveFail();
 
-    // Non-blocking sockets: send is always "done" since we don't buffer
-    // The image retries if not all bytes were sent.
-    vm->popthenPush(2, vm->trueObject());
+    // Non-blocking sockets: send is "done" while the connection is up (we
+    // don't buffer; the image retries if not all bytes were sent). Answering
+    // true UNCONDITIONALLY defeated Socket>>waitForSendDoneFor:'s
+    // [self sendDone] whileFalse: loop - the only place the image turns a
+    // dead send into ConnectionClosed. Stock answers state == Connected.
+    // UDP is connectionless: always done.
+    bool done = ps->isDgram || (ps->sockState == SOCK_CONNECTED);
+    vm->popthenPush(2, done ? vm->trueObject() : vm->falseObject());
     return 0;
 }
 
