@@ -28094,7 +28094,21 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
         case 2: result = int64ToOop(memory_, static_cast<int64_t>(st.st_mode)); break;
         case 3: result = int64ToOop(memory_, static_cast<int64_t>(st.st_ino)); break;
         case 4: result = int64ToOop(memory_, static_cast<int64_t>(st.st_dev)); break;
-        case 5: result = int64ToOop(memory_, static_cast<int64_t>(st.st_nlink)); break;
+        case 5:
+#ifdef _WIN32
+            // Stock-parity: the Windows FileAttributesPlugin does not support
+            // nlink. The image's File class>>signalError:for: maps a
+            // PrimitiveError with errorCode -13 (File unsupportedOperation)
+            // to FileAttributeNotSupported (DiskFileAttributesTest>>testNLink
+            // expects exactly that raise). PrimErrOSError clones the error
+            // template with osErrorCode_ as the code.
+            primFailCode_ = PrimErrOSError;
+            osErrorCode_ = -13;
+            return PrimitiveResult::Failure;
+#else
+            result = int64ToOop(memory_, static_cast<int64_t>(st.st_nlink));
+            break;
+#endif
         case 6: result = int64ToOop(memory_, static_cast<int64_t>(st.st_uid)); break;
         case 7: result = int64ToOop(memory_, static_cast<int64_t>(st.st_gid)); break;
         case 8: result = int64ToOop(memory_, S_ISDIR(st.st_mode) ? (int64_t)0 : static_cast<int64_t>(st.st_size)); break;
@@ -28384,8 +28398,13 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
         // Slot 3: device
         { Oop v = int64ToOop(memory_, (int64_t)st.st_dev);
           newStatArray = stackTop(); memory_.storePointer(3, newStatArray, v); }
-        // Slot 4: nlink
-        { Oop v = int64ToOop(memory_, (int64_t)st.st_nlink);
+        // Slot 4: nlink (nil on Windows — stock-parity, see attrNum 5)
+        {
+#ifdef _WIN32
+          Oop v = Oop::nil();
+#else
+          Oop v = int64ToOop(memory_, (int64_t)st.st_nlink);
+#endif
           newStatArray = stackTop(); memory_.storePointer(4, newStatArray, v); }
         // Slot 5: uid
         { Oop v = int64ToOop(memory_, (int64_t)st.st_uid);
@@ -28505,6 +28524,16 @@ PrimitiveResult Interpreter::primitiveRewinddir(int argCount) {
 // Stack: receiver, pathString, newMode -> nil or fail
 PrimitiveResult Interpreter::primitiveChangeMode(int argCount) {
     if (argCount != 2) return PrimitiveResult::Failure;
+#ifdef _WIN32
+    // Stock-parity: the Windows FileAttributesPlugin has no chmod support.
+    // Fail with PrimitiveError errorCode -13 (File unsupportedOperation) so
+    // the image's signalError:for: raises FileAttributeNotSupported, exactly
+    // like the reference VM (probed 2026-07-02). MinGW's chmod only toggles
+    // the read-only bit anyway, silently ignoring everything else.
+    primFailCode_ = PrimErrOSError;
+    osErrorCode_ = -13;
+    return PrimitiveResult::Failure;
+#endif
 
     Oop modeOop = stackTop();
     Oop pathOop = stackValue(1);
@@ -28680,8 +28709,13 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
         // Slot 3: device
         { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_dev));
           statArray = stackTop(); memory_.storePointer(3, statArray, v); }
-        // Slot 4: nlink
-        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_nlink));
+        // Slot 4: nlink (nil on Windows — stock-parity, see attrNum 5)
+        {
+#ifdef _WIN32
+          Oop v = Oop::nil();
+#else
+          Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_nlink));
+#endif
           statArray = stackTop(); memory_.storePointer(4, statArray, v); }
         // Slot 5: uid
         { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_uid));

@@ -255,17 +255,17 @@ isolation (no suite watchdog):
   (MultiByteToWideChar) and `primitivePlatToStPath` (WideCharToMultiByte) under
   `#elif defined(_WIN32)`; macOS NFC/NFD and POSIX identity branches unchanged.
   DiskFileAttributesTest 20->22; DiskFileSystemTest still 59/59.
-- [ ] **`testNLink` (DiskFileAttributesTest + FileReferenceAttributeTest) /
-  `testPermissions`** — 3 niche tests that assert Windows must RAISE on
-  unsupported attributes: `file numberOfHardLinks` -> `FileAttributeNotSupported`,
-  `fileReference permissions: p` -> `Error`.  `FileSystemDirectoryEntry>>
-  numberOfHardLinks` already always raises, but the `File`-level path returns our
-  stat `st_nlink`/mode instead of signalling unsupported.  Matching the reference
-  Windows VM means leaving the nlink / permission stat slots absent/nil so the
-  image raises FileAttributeNotSupported — a subtle stat-array-contract change for
-  3 niche tests.  Deferred.
-
-### GUI / headless display — tests that HANG (not just fail)
+- [x] **testNLink / testPermissions — DONE (2026-07-02),
+  DiskFileAttributesTest 24/24.** Stock-parity contract (probed): the
+  Windows FileAttributesPlugin supports neither nlink reads nor chmod —
+  both fail with PrimitiveError errorCode -13 (File unsupportedOperation),
+  which the image's File class>>signalError:for: maps to
+  FileAttributeNotSupported. Implemented via primFailCode_=PrimErrOSError +
+  osErrorCode_=-13 in the attrNum-5 read and primitiveChangeMode (Windows
+  only); the stat-ARRAY nlink slot is nil. Verified exact exception class
+  match vs stock for both paths. No regressions: DiskFileSystemTest 59/59,
+  FileSystemTest 126/126, FileReferenceTest 112/112, FileLocatorTest 38/38,
+  FileReferenceAttributeTests 19/19.
 - [ ] A focused scan of 245 Windows-sensitive classes (2026-06-27) found 8 that
   HANG under a 30s isolation timeout (a hang is worse than a failure — it wedges a
   naive suite run; the official runner's per-test watchdog masks it).  All are the
