@@ -638,16 +638,16 @@ Historical scoping notes (how the breakthrough was reached) follow:
   origin"). CMake copies the runtime DLLs next to the exe so it is
   self-contained.
 
-- [ ] **PNG 16-bit conversion trio** (`PNGReadWriterTest`: `test16BitReversed`,
-  `test16BitDisplay`, `testPngEncodingColors16` — 39/42 after the 2026-07-02
-  negative-depth work; stock 42/42). Suspected cause: CROSS-depth conversion
-  paths (e.g. 16->32 for PNG encode, 32->16 on decode) ignore
-  `srcNeedsByteSwap`/negative dest — the reversal path only covers
-  same-|depth| copies. Fixing means threading pixel-order into the
-  conversion loops (srcDepth==16->32 at ~19920 etc.). Diagnostics:
-  PHARO_BITBLT_TRACE=1 (no prim failures fire — wrong pixels, not errors);
-  probes /c/tmp/rev-probe.st, /c/tmp/rev32-probe.st compare vs stock.
-
+- [x] **PNG 16-bit — DONE (2026-07-02), PNGReadWriterTest 42/42** (stock is
+  42/42 too). Three separate 16bpp fixes, each probed byte-level vs stock:
+  (a) 16->32 blits ignored a NEGATIVE source depth — halfword-parity flip
+  when srcNeedsByteSwap (test16BitReversed); (b) our 32->16 conversion set
+  bit 15 as an "alpha" flag — Pharo 16bpp has no alpha bit and the PNG 555
+  roundtrip strips it; stock's rgbMap instead maps non-zero sources that
+  compress to 0 -> pixel 1 (test16BitDisplay); (c) 5->8 bit expansion must be
+  stock's plain <<3 (31 -> 0xF8), not full-range *255/31 — the golden-file
+  byte comparison catches the 1-3/channel difference
+  (testPngEncodingColors16).
 - [ ] **FastStepThroughTest hangs (pre-existing)** — hangs standalone AND under
   the suite runner (killed the 2026-07-02 full-suite run at class 349 via the
   outer timeout). Bisect-verified NOT caused by primitive 218 (pre-218 build

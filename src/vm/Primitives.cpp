@@ -19034,7 +19034,13 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     uint32_t g = (s >> 8) & 0xFF;
                     uint32_t b = s & 0xFF;
                     pixel = static_cast<uint16_t>(((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3));
-                    if (s & 0xFF000000) pixel |= 0x8000; // preserve alpha as MSB
+                    // Stock rgbMap semantics: a NON-zero source pixel never maps
+                    // to 0 (0 = transparent) — near-black compresses to 1.
+                    // We used to set bit 15 as an alpha flag instead; Pharo
+                    // 16bpp has NO alpha bit, and the PNG 555 roundtrip strips
+                    // it, so every World-drawn pixel mismatched on compare
+                    // (PNGReadWriterTest test16BitDisplay).
+                    if (pixel == 0 && s != 0) pixel = 1;
                 }
                 intptr_t destPixIdx = (destY + y) * destWidth + destX + x;
                 uint16_t prev = read16(destWords16, destPixIdx);
@@ -20005,6 +20011,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
             for (intptr_t x = 0; x < width; x++) {
                 intptr_t srcPixIdx = (sourceY + y) * srcWidth + sourceX + x;
+                // Negative source depth = pixel order reversed within the
+                // word; for 16bpp that is exactly a halfword-parity flip.
+                // (PNG encode of a reversed Form blits -16 -> 32 here;
+                // PNGReadWriterTest test16BitReversed.)
+                if (srcNeedsByteSwap) srcPixIdx ^= 1;
                 uint16_t s16 = read16(srcWords16, srcPixIdx);
                 // Convert 5-5-5 to 8-8-8-8 (ARGB)
                 // Pixel value 0 = transparent (no alpha)
@@ -20012,9 +20023,14 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 if (s16 == 0) {
                     srcPixel = 0;  // transparent
                 } else {
-                    uint32_t r = ((s16 >> 10) & 0x1F) * 255 / 31;
-                    uint32_t g = ((s16 >> 5) & 0x1F) * 255 / 31;
-                    uint32_t b = (s16 & 0x1F) * 255 / 31;
+                    // Stock parity: BitBltPlugin expands 5->8 bits with a plain
+                    // <<3 (31 -> 0xF8, NOT 0xFF). PNGReadWriterTest
+                    // testPngEncodingColors16 compares encoded bytes against
+                    // golden files generated with stock semantics, so the
+                    // *255/31 full-range expansion mismatched by 1-3 per channel.
+                    uint32_t r = ((s16 >> 10) & 0x1F) << 3;
+                    uint32_t g = ((s16 >> 5) & 0x1F) << 3;
+                    uint32_t b = (s16 & 0x1F) << 3;
                     srcPixel = 0xFF000000 | (r << 16) | (g << 8) | b;
                 }
                 switch (combinationRule) {
