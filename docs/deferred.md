@@ -255,6 +255,14 @@ isolation (no suite watchdog):
   (MultiByteToWideChar) and `primitivePlatToStPath` (WideCharToMultiByte) under
   `#elif defined(_WIN32)`; macOS NFC/NFD and POSIX identity branches unchanged.
   DiskFileAttributesTest 20->22; DiskFileSystemTest still 59/59.
+- [x] **FileAttributesPluginPrimsTest — DONE (2026-07-02), 6/6** (stock is
+  6/6; the old "pre-existing/cross-platform" note was wrong). Error-code
+  fidelity in three raw prims: primClosedir arg-shape failures and
+  primFileExists non-string args fail with #'bad argument' (primFailCode 3,
+  asserted via the PrimitiveFailed selector); primFileAttribute validates the
+  attribute number (1..16) BEFORE stat'ing (out-of-range surfaced as
+  FileDoesNotExistException); primFileExists paths > PATH_MAX fail with
+  PrimitiveError -1 (stringTooLong -> IllegalFileName).
 - [x] **testNLink / testPermissions — DONE (2026-07-02),
   DiskFileAttributesTest 24/24.** Stock-parity contract (probed): the
   Windows FileAttributesPlugin supports neither nlink reads nor chmod —

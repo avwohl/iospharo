@@ -28014,6 +28014,15 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
     if (!attrNumOop.isSmallInteger()) return PrimitiveResult::Failure;
     int attrNum = static_cast<int>(attrNumOop.asSmallInteger());
 
+    // Validate the attribute number BEFORE touching the path — out-of-range
+    // must fail with #'bad argument' (stock parity; the old code stat()ed the
+    // path first, so attrNum 0 surfaced as FileDoesNotExistException —
+    // FileAttributesPluginPrimsTest>>testFileAttributeNumberOutOfRange).
+    if (attrNum < 1 || attrNum > 16) {
+        primFailCode_ = 3;  // #'bad argument'
+        return PrimitiveResult::Failure;
+    }
+
     if (!pathOop.isObject()) return PrimitiveResult::Failure;
     ObjectHeader* pathHdr = pathOop.asObjectPtr();
     if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
@@ -28135,13 +28144,24 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
 PrimitiveResult Interpreter::primitiveFileExists(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
+    // Non-string args fail with #'bad argument' (stock parity —
+    // FileAttributesPluginPrimsTest>>testPrimExistsNil asserts the selector).
     Oop pathOop = stackTop();
-    if (!pathOop.isObject()) return PrimitiveResult::Failure;
+    if (!pathOop.isObject()) { primFailCode_ = 3; return PrimitiveResult::Failure; }
 
     ObjectHeader* pathHdr = pathOop.asObjectPtr();
-    if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
+    if (!pathHdr->isBytesObject()) { primFailCode_ = 3; return PrimitiveResult::Failure; }
 
     size_t len = memory_.byteSizeOf(pathOop);
+
+    // Paths beyond PATH_MAX fail with PrimitiveError -1 (stringTooLong),
+    // which the image maps to IllegalFileName (stock parity —
+    // FileAttributesPluginPrimsTest>>testExistsPathTooLong).
+    if (len > 4096) {
+        primFailCode_ = PrimErrOSError;
+        osErrorCode_ = -1;
+        return PrimitiveResult::Failure;
+    }
     std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
 
     struct stat st;
@@ -28465,11 +28485,15 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
 PrimitiveResult Interpreter::primitiveClosedir(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
+    // All arg-shape failures report #'bad argument' (stock parity —
+    // FileAttributesPluginPrimsTest>>testPrimCloseDir{Nil,String,WrongLength}
+    // asserts the PrimitiveFailed selector).
     Oop dirOop = stackTop();
-    if (!dirOop.isObject()) return PrimitiveResult::Failure;
+    if (!dirOop.isObject()) { primFailCode_ = 3; return PrimitiveResult::Failure; }
 
     ObjectHeader* dirHdr = dirOop.asObjectPtr();
-    if (!dirHdr->isBytesObject() || memory_.byteSizeOf(dirOop) < sizeof(void*)) {
+    if (!dirHdr->isBytesObject() || memory_.byteSizeOf(dirOop) != sizeof(void*)) {
+        primFailCode_ = 3;
         return PrimitiveResult::Failure;
     }
 
@@ -28478,7 +28502,10 @@ PrimitiveResult Interpreter::primitiveClosedir(int argCount) {
     memcpy(&dir, dirHdr->bytes(), sizeof(void*));
     // Only close a handle we actually opened (guards bogus/stale/double-close —
     // closedir on arbitrary bytes SIGSEGVs inside libc).
-    if (!dir || g_openDirHandles.count(dir) == 0) return PrimitiveResult::Failure;
+    if (!dir || g_openDirHandles.count(dir) == 0) {
+        primFailCode_ = 3;
+        return PrimitiveResult::Failure;
+    }
     closeDirHandle(dir);
     g_openDirHandles.erase(dir);
 #ifdef _WIN32
