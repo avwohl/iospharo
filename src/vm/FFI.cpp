@@ -938,6 +938,16 @@ int stub_SDL_PollEvent(void* event) {
         }
     }
 
+    // Window-frame resize (Win32): swap the surface buffer on THIS (VM)
+    // thread, then queue SIZE_CHANGED+EXPOSED so the image re-layouts the
+    // World and recreates its texture at the new extent.
+    if (pharo::gDisplaySurface) {
+        int newW, newH;
+        if (pharo::gDisplaySurface->applyPendingResize(newW, newH)) {
+            ffi_notifyDisplayResize(newW, newH);
+        }
+    }
+
     // Reject null/low event pointers (stale heap address after GC compaction)
     if (!event || reinterpret_cast<uintptr_t>(event) < 0x10000) {
         return !pharo::gEventQueue.isEmpty() ? 1 : 0;

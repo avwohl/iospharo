@@ -29,6 +29,13 @@ public:
 
     /// Force full redraw
     virtual void update() = 0;
+
+    /// Apply a window-initiated resize, if one is pending (e.g. the user
+    /// dragged the Win32 window frame). Called on the VM thread (from
+    /// stub_SDL_PollEvent) so the buffer swap is ordered before the
+    /// SIZE_CHANGED event the caller then pushes via ffi_notifyDisplayResize.
+    /// Returns true and fills w/h when a resize was applied.
+    virtual bool applyPendingResize(int& /*w*/, int& /*h*/) { return false; }
 };
 
 /// Global display surface (set by platform)

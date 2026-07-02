@@ -17,6 +17,16 @@ Last updated: 2026-07-01. Build is green.
   `docs/images/windows-gui-debugger.png`. Verified via posted WM_* messages to
   the live HWND + PrintWindow screenshots (SetForegroundWindow is blocked from
   a background automation shell — that's a test-harness limitation, not a VM one).
+  User-confirmed with real hardware input 2026-07-02.
+- **Clipboard (2026-07-02)** — real Win32 clipboard (CF_UNICODETEXT,
+  UTF-16<->UTF-8) in `windows.cpp`; round-trip verified both directions.
+- **Window resize (2026-07-02)** — dragging/maximizing the window re-layouts
+  the Pharo World to the new client size: WM_SIZE (window thread) → pending
+  size → VM thread swaps the surface buffer in stub_SDL_PollEvent
+  (old buffer kept in a graveyard — Pharo caches the LockTexture pointer) →
+  ffi_notifyDisplayResize pushes SIZE_CHANGED+EXPOSED → image recreates its
+  texture and re-layouts. Verified: 1024×768 → 1344×921, menubar/taskbar span
+  the new width, World menu opens in the newly exposed region.
 
 ## GUI — how to reproduce a windowed interactive session
 `PHARO_GUI_WINDOW=1 build-win/test_load_image.exe C:/temp/pharo-win-test/Pharo.image`

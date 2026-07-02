@@ -33,6 +33,7 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 
 namespace pharo {
 
@@ -65,6 +66,36 @@ public:
     void invalidateRect(int, int, int, int) override { requestPaint(); }
     void update() override { requestPaint(); }
 
+    // VM thread (stub_SDL_PollEvent). Swaps in a buffer sized to the latest
+    // WM_SIZE. The OLD buffer is kept alive in graveyard_: Pharo caches the
+    // pixel pointer from its first SDL_LockTexture and BitBlts through it
+    // without re-locking, so it keeps writing the old buffer until the
+    // SIZE_CHANGED event (pushed by our caller) makes it recreate the texture
+    // and re-lock — at which point stub_SDL_LockTexture hands out this new
+    // buffer. Freeing the old buffer instead would be a use-after-free.
+    bool applyPendingResize(int& outW, int& outH) override {
+        uint64_t p = pendingSize_.exchange(0, std::memory_order_acq_rel);
+        if (!p) return false;
+        int w = static_cast<int>(p >> 32);
+        int h = static_cast<int>(p & 0xFFFFFFFF);
+        if (w == width_ && h == height_) return false;
+        {
+            std::lock_guard<std::mutex> g(blitMutex_);
+            graveyard_.emplace_back(std::move(pixels_));
+            pixels_.assign(static_cast<size_t>(w) * h, 0xFF202020);
+            width_ = w;
+            height_ = h;
+            bmi_.bmiHeader.biWidth = w;
+            bmi_.bmiHeader.biHeight = -h;
+        }
+        if (GET_DEBUG_BOOL(PHARO_WIN_EVENT_TRACE)) {
+            fprintf(stderr, "[WIN-EVT] surface resized to %dx%d\n", w, h);
+        }
+        outW = w;
+        outH = h;
+        return true;
+    }
+
     HWND hwnd() const { return hwnd_; }
 
 private:
@@ -75,6 +106,9 @@ private:
     HWND hwnd_ = nullptr;
     std::thread thread_;
     std::atomic<bool> ready_{false};
+    std::atomic<uint64_t> pendingSize_{0};        // (w<<32)|h from WM_SIZE; 0 = none
+    std::mutex blitMutex_;                        // pixels_/dims swap vs WM_PAINT blit
+    std::vector<std::vector<uint32_t>> graveyard_;  // superseded buffers (see applyPendingResize)
 
     void requestPaint() {
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);  // posts WM_PAINT to the window thread
@@ -248,6 +282,7 @@ private:
                 PAINTSTRUCT ps;
                 HDC dc = BeginPaint(h, &ps);
                 if (s && dc) {
+                    std::lock_guard<std::mutex> g(s->blitMutex_);
                     StretchDIBits(dc, 0, 0, s->width_, s->height_, 0, 0, s->width_, s->height_,
                                   s->pixels_.data(), &s->bmi_, DIB_RGB_COLORS, SRCCOPY);
                 }
@@ -255,6 +290,21 @@ private:
                 return 0;
             }
             case WM_ERASEBKGND: return 1;   // we fully paint; skip background erase (no flicker)
+            case WM_SIZE: {
+                if (w != SIZE_MINIMIZED) {
+                    int cw = LOWORD(l), ch = HIWORD(l);
+                    Win32DisplaySurface* s = self(h);
+                    if (s && cw > 0 && ch > 0) {
+                        // Window thread: just record it. The VM thread applies
+                        // the buffer swap (applyPendingResize) and notifies the
+                        // image, keeping all pixel-buffer use on one thread.
+                        s->pendingSize_.store((static_cast<uint64_t>(static_cast<uint32_t>(cw)) << 32)
+                                                  | static_cast<uint32_t>(ch),
+                                              std::memory_order_release);
+                    }
+                }
+                return 0;
+            }
             case WM_DESTROY: PostQuitMessage(0); return 0;
             // arg3 = buttons pressed AFTER the event (Pharo convention).
             // wParam's MK_* mask is exactly that for every mouse message —
