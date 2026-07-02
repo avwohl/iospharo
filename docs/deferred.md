@@ -633,3 +633,13 @@ Historical scoping notes (how the breakthrough was reached) follow:
   Pharo's WindowsResolver (home/preferences -> "Can't find the requested
   origin"). CMake copies the runtime DLLs next to the exe so it is
   self-contained.
+
+- [ ] **PNG 16-bit conversion trio** (`PNGReadWriterTest`: `test16BitReversed`,
+  `test16BitDisplay`, `testPngEncodingColors16` — 39/42 after the 2026-07-02
+  negative-depth work; stock 42/42). Suspected cause: CROSS-depth conversion
+  paths (e.g. 16->32 for PNG encode, 32->16 on decode) ignore
+  `srcNeedsByteSwap`/negative dest — the reversal path only covers
+  same-|depth| copies. Fixing means threading pixel-order into the
+  conversion loops (srcDepth==16->32 at ~19920 etc.). Diagnostics:
+  PHARO_BITBLT_TRACE=1 (no prim failures fire — wrong pixels, not errors);
+  probes /c/tmp/rev-probe.st, /c/tmp/rev32-probe.st compare vs stock.
