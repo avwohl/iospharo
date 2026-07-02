@@ -48,6 +48,9 @@ static int gSessionID = 1;
 #define SOCKDBG(...) do { if (pharo::g_debug.socketDebug) { \
     fprintf(stderr, "[SOCKDBG] " __VA_ARGS__); fflush(stderr); } } while (0)
 
+// Fwd decl (defined with the listen primitives below).
+static bool isDatagramSocket(PrivateSocket* ps);
+
 // Active socket tracking for I/O monitor thread
 static std::mutex gSocketMutex;
 static std::vector<PrivateSocket*> gActiveSockets;
@@ -294,7 +297,10 @@ static void ioMonitorLoop() {
                             if (ps->connSema > 0 && vm) {
                                 vm->signalSemaphoreWithIndex(ps->connSema);
                             }
-                        } else if (n < 0 && SOCK_LAST_ERROR != SOCK_EAGAIN && SOCK_LAST_ERROR != SOCK_EWOULDBLOCK) {
+                        } else if (n < 0 && SOCK_LAST_ERROR != SOCK_EAGAIN && SOCK_LAST_ERROR != SOCK_EWOULDBLOCK
+                                   && SOCK_LAST_ERROR != SOCK_EMSGSIZE) {
+                            // (EMSGSIZE = a pending datagram larger than the
+                            // 1-byte peek buffer on Windows — data, not error.)
                             // Actual socket error — set state immediately
                             ps->sockError = SOCK_LAST_ERROR;
                             ps->sockState = SOCK_OTHER_END_CLOSED;
@@ -758,9 +764,20 @@ extern "C" sqInt sp_primitiveSocketReceiveDataAvailable(void) {
     bool available;
     if (n > 0) {
         available = true;
+    } else if (n < 0 && SOCK_LAST_ERROR == SOCK_EMSGSIZE) {
+        // Windows-only: peeking 1 byte of a LARGER pending UDP datagram fails
+        // with WSAEMSGSIZE (POSIX truncates and returns 1 instead). A pending
+        // datagram IS data — treating this as an error killed every UDP
+        // server's waitForData (UDPSocketEchoTest, found by bisect 2026-07-02).
+        available = true;
     } else if (n < 0 && (SOCK_LAST_ERROR == SOCK_EAGAIN ||
                          SOCK_LAST_ERROR == SOCK_EWOULDBLOCK)) {
         available = false;
+    } else if (isDatagramSocket(ps)) {
+        // Connectionless: a 0-byte peek is a 0-byte DATAGRAM (receivable),
+        // and other errors (e.g. a stray ICMP-reset leak) are transient — a
+        // UDP socket has no connection to be "closed".
+        available = (n == 0);
     } else {
         // 0 = EOF (peer closed), <0 = hard error: no data will ever arrive.
         if (ps->sockState == SOCK_CONNECTED) ps->sockState = SOCK_OTHER_END_CLOSED;

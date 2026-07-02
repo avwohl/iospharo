@@ -309,7 +309,32 @@ isolation (no suite watchdog):
   ZdcReference 15/15, TCPSocketTest 9/9, and `ZnClient get:
   'https://example.com'` → 200. The old "needs a POSIX session" caveat is
   moot. Remaining: SocketStreamTest 17/19 (2 pre-existing errors, separate
-  cause).
+  cause — see next item).
+  FOLLOW-UP FIX (same day, found by bisect): the MSG_PEEK approach exposed a
+  Windows UDP quirk — peeking 1 byte of a LARGER pending datagram fails with
+  WSAEMSGSIZE (POSIX truncates and returns 1), which the error branch misread
+  as connection death, killing every UDP server's waitForData
+  (UDPSocketEchoTest). WSAEMSGSIZE now counts as "data available" in BOTH
+  peek sites (dataAvailable prim + the I/O-thread EOF detector), and datagram
+  sockets are exempt from all connection-death transitions.
+- [ ] **SocketStreamTest flush-after-close (2 errors)** —
+  `testFlushOtherEndClosed` / `testNextPutAllFlushOtherEndClosed`
+  (TestTookTooMuchTime on ours; pass on stock). FULLY DIAGNOSED 2026-07-02
+  via side-by-side state probe (/c/tmp/state-probe.st) — stock sequence:
+  peer FIN leaves state "connected" (stock does NOT mark on FIN); the first
+  send after close succeeds (fits the buffer, triggers RST); the SECOND send
+  hits ECONNRESET and stock's send primitive returns 0-sent + flips state to
+  OtherEndClosed WITHOUT failing; the image's sendData loop then re-enters
+  waitForSendDoneFor: whose [self sendDone] whileFalse: loop (sendDone =
+  state==Connected on stock) sees isConnected false and raises
+  ConnectionClosed. Ours: send prim FAILS on ECONNRESET → image fallback
+  raises bare SocketError (not a NetworkError!) → wrong exception class.
+  ATTEMPTED the stock-parity fix (send: dead-error → 0-sent + OtherEndClosed;
+  sendDone → state==Connected): it did NOT cure these two tests and
+  regressed ZdcSocketStream/ZdcOptimized (1 error each) and UDP echo —
+  reverted. The interaction needs SOCKDBG tracing of the exact Zdc failure
+  before retrying; keep the probe script. Impact: 2 niche error-path tests;
+  all data-path suites green.
 - [x] **UDP echo/broadcast — DONE (2026-07-02)** (`UDPSocketEchoTest` 1/1,
   `UDPSocketTest` 2/2). TWO missing pieces, neither in send/recvfrom:
   - `Socket>>setPort:` (how a UDP server binds) calls named primitive
