@@ -1,6 +1,29 @@
 # WIP — Windows JIT parity (branch `jit`)
 
-Last updated: 2026-07-01. Build is green.
+Last updated: 2026-07-02. Build is green.
+
+## 2026-07-02 session tally (all committed, each verified)
+- GUI input user-confirmed working with real hardware ("it works ok").
+- AST-Core "Illegal dependency" + System>Startup no-op: classified as stock
+  image behavior (docs/image_issues.md), not VM bugs.
+- SDL2.dll marker auto-staged next to exe (no image-dir prep; stock refvm
+  unpoisoned); primitive 142 primVmPath returns the DIRECTORY (was exe path —
+  split on '/' only); GetModuleFileNameA for exe path.
+- Real Win32 clipboard (round-trip verified) + live window resize
+  (drag/maximize re-layouts the World; sizemove-debounced).
+- UDP echo+broadcast (missing primitiveSocketListenWithOrWithoutBacklog =
+  UDP setPort:; SO_BROADCAST option; SIO_UDP_CONNRESET off at creation).
+- Socket dataAvailable stock-parity (MSG_PEEK; false at EOF); WSAEMSGSIZE
+  peek = pending datagram (Windows quirk, bisect-found).
+- BitBlt negative-depth (little-endian) support + rule 40 fixAlpha:
+  PNGReadWriterTest 16/42 -> 39/42, MicFileResourceReferenceTest 0/16 -> 16/16
+  (the old "BitBlt Fraction bug"). PHARO_BITBLT_TRACE knob added.
+- Primitive 218 implemented: debugger simulation of named prims
+  (CodeSimulationTest 8/8 — was the full-suite's only error AND its abort
+  point at class 156).
+Remaining trackers: SocketStreamTest 2 flush-after-close errors (diagnosed,
+parity fix attempt regressed Zdc/UDP, reverted — deferred.md); PNG 16-bit
+trio; Spec presenter headless hangs; sound/MIDI/IME stubs.
 
 ## DONE & verified (milestones 1–4)
 - **File subsystem 100%** — long-path `\\?\`; `DiskFileSystemTest` 59/59.
