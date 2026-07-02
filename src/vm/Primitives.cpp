@@ -11266,13 +11266,71 @@ PrimitiveResult Interpreter::primitiveMethodProfilingData(int argCount) {
 // Primitive 218: Call a named primitive with an array of arguments
 // receiver primitiveWithArgs: argArray
 PrimitiveResult Interpreter::primitiveDoNamedPrimitiveWithArgs(int argCount) {
-    // This primitive allows calling another primitive by name with explicit args.
-    // The receiver should be a plugin/module name or nil (for VM primitives).
-    // The first arg is the primitive name (symbol), second is args array.
+    // Primitive 218: Context>>tryNamedPrimitiveIn: aCompiledMethod
+    // for: aReceiver withArgs: args — the debugger/code simulation executes
+    // the NAMED primitive of a method directly, never its fallback bytecode.
     //
-    // This is complex and used primarily for FFI/plugin dispatch.
-    // For now, we fail and let Smalltalk handle it through normal dispatch.
-    return PrimitiveResult::Failure;
+    // Error-code contract (see the image method): failing with NO error code
+    // means "primitive 218 is not implemented", which sends the image down
+    // Context>>withoutPrimitiveTryNamedPrimitiveIn:... — and THAT needs
+    // EncoderForSistaV1 class>>prepareMethod:forSimulationWith:, which
+    // upstream ships as shouldBeImplemented (CodeSimulationTest>>
+    // testTranscriptPrinting errored on it). Failing with errorCode -1 means
+    // "the external primitive itself failed" and simulation proceeds into
+    // the method body normally — that's the stock behavior.
+    if (argCount != 3) {
+        primFailCode_ = 5;  // #'bad number of arguments'
+        return PrimitiveResult::Failure;
+    }
+    Oop argsArrayOop = stackValue(0);
+    Oop theReceiver  = stackValue(1);
+    Oop methodOop    = stackValue(2);
+    Oop ctxOop       = stackValue(3);
+    if (!methodOop.isObject() || !argsArrayOop.isObject()) {
+        primFailCode_ = 3;  // #'bad argument'
+        return PrimitiveResult::Failure;
+    }
+    ObjectHeader* argsHdr = argsArrayOop.asObjectPtr();
+    if (!argsHdr->isPointersObject()) {
+        primFailCode_ = 3;
+        return PrimitiveResult::Failure;
+    }
+    size_t numArgs = argsHdr->slotCount();
+
+    // Rewrite [ctx, method, receiver, argsArray] -> [receiver, args...] so the
+    // named primitive sees a normal send frame (same trick as prim 118 above).
+    popN(4);
+    push(theReceiver);
+    for (size_t i = 0; i < numArgs; ++i) {
+        push(memory_.fetchPointer(i, argsArrayOop));
+    }
+
+    // primitiveExternalCall resolves the named prim from newMethod_'s literals.
+    Oop savedNewMethod = newMethod_;
+    int savedArgCount = argCount_;
+    newMethod_ = methodOop;
+    argCount_ = static_cast<int>(numArgs);
+    PrimitiveResult r = primitiveExternalCall(static_cast<int>(numArgs));
+    newMethod_ = savedNewMethod;
+    argCount_ = savedArgCount;
+
+    if (r == PrimitiveResult::Success) {
+        // The inner prim replaced [receiver, args...] with its result — which
+        // is exactly this primitive's contract (the original 4 entries are
+        // already gone). Nothing left to do.
+        return PrimitiveResult::Success;
+    }
+
+    // Inner prim failed (or was unresolvable): restore the original stack and
+    // fail with -1 = "the external primitive failed" (image maps -1 -> nil).
+    popN(numArgs + 1);
+    push(ctxOop);
+    push(methodOop);
+    push(theReceiver);
+    push(argsArrayOop);
+    primFailCode_ = -1;
+    return (r == PrimitiveResult::Error) ? PrimitiveResult::Error
+                                         : PrimitiveResult::Failure;
 }
 
 // ===== CACHE FLUSHING PRIMITIVES =====
