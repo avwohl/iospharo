@@ -522,6 +522,25 @@ the full run, worth a look if it recurs.
   threaded-FFI runtime. ~55 tests across the family. A real VM feature
   (worker threads + cross-thread callout queue + callbacks), not a fixture
   issue.
+  SCOPED 2026-07-03 (image protocol fully mapped; sources in
+  C:/tmp/tfw-sources*.txt):
+  - 4 named prims: `primitiveCreateWorker` (receiver=TFWorker; create
+    thread+task queue, store ExternalAddress handle into receiver ivar 0
+    `handle`); `primitiveWorkerCallout` (recv worker; args: TFExternalFunction,
+    plain Array of Smalltalk args — SAME shape as primitiveSameThreadCallout —
+    plus external-semaphore INDEX; enqueue heap task, return ExternalAddress
+    of the task); `primitiveWorkerExtractReturnValue` (recv worker; arg task
+    address → return-value Oop, free task); `primitiveReleaseWorker`
+    (stop+join+free).
+  - Completion signal: worker thread → `signalExternalSemaphore(index)` —
+    the SAME mechanism the socket I/O thread already uses (thread-safe).
+    Image side registers the Semaphore via registerExternalObject: and waits.
+  - Implementation: refactor primitiveSameThreadCallout's libffi
+    marshalling (args + return-Oop conversion) into helpers writing into
+    malloc'd task storage (alloca crosses threads today); worker loop:
+    pop → ffi_call → done flag → signal. Callbacks from the worker thread
+    are OUT OF SCOPE for the first cut (the TFUFFI basic-type suites don't
+    need them; TFWorker callback tests may remain red).
 
 ### File attributes (Windows semantics)
 - [x] **`DiskFileAttributesTest>>testToPlatformPath` / `testFromPlatformPath`** —
