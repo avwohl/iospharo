@@ -1,6 +1,6 @@
-// Profiler.cpp - SIGPROF-based sampling profiler.
+// Profiler.cpp - sampling profiler (SIGPROF on POSIX, sampler thread on Windows).
 //
-// Enables setitimer(ITIMER_PROF, ...) to fire SIGPROF every N us of
+// POSIX: enables setitimer(ITIMER_PROF, ...) to fire SIGPROF every N us of
 // process CPU time.  The signal handler reads `g_profilingInterp->method_`
 // and bumps a per-method counter.  At process exit, dumps the top-N
 // methods by sample count with their selector names.
@@ -8,6 +8,14 @@
 // Why ITIMER_PROF (not ITIMER_REAL or ITIMER_VIRTUAL): we want CPU time
 // (user + sys), not wall time, so we don't sample during sleep/idle.
 // Matches our other CPU-time measurement (primitive 247).
+//
+// Windows: no SIGPROF/setitimer.  A sampler THREAD wakes every interval,
+// reads the VM thread's consumed CPU time via GetThreadTimes, and only
+// records a sample when CPU time advanced by at least half an interval —
+// emulating ITIMER_PROF's don't-sample-while-idle semantics.  The sampled
+// read (method_, one aligned 64-bit load) is exactly the same tolerated
+// race as the POSIX signal handler: the sample captures either the old or
+// the new method, both fine.
 //
 // PHARO_PROFILE=1 enables.  PHARO_PROFILE_INTERVAL_US=<n> sets the
 // sample interval (default 1000us = 1ms).  PHARO_PROFILE_TOP=<n> sets
@@ -30,7 +38,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#include <thread>
+#include <chrono>
+#else
 #include <sys/time.h>   // setitimer/itimerval — POSIX-only
 #endif
 #include <unistd.h>
@@ -55,8 +67,10 @@ static std::atomic<uint64_t> g_droppedNoInterp{0};
 Interpreter* g_profilingInterp = nullptr;
 bool g_profilerActive = false;
 
-#ifndef _WIN32
-void sigprofHandler(int /*sig*/) {
+// Record one sample of the active method.  Shared by the POSIX SIGPROF
+// handler and the Windows sampler thread; async-signal-safe (no
+// allocation, no I/O, no locks — fixed-size open-addressing table).
+void recordSample() {
     Interpreter* interp = g_profilingInterp;
     if (!interp) { g_droppedNoInterp.fetch_add(1, std::memory_order_relaxed); return; }
     uint64_t mb = interp->activeMethod().rawBits();
@@ -76,7 +90,7 @@ void sigprofHandler(int /*sig*/) {
             return;
         }
         if (existing == 0) {
-            // Try to claim this slot.  CAS in case another signal
+            // Try to claim this slot.  CAS in case another sampler
             // landed at the same time (unlikely but possible on SMP).
             uint64_t expected = 0;
             if (g_profileTable[idx].methodBits.compare_exchange_strong(
@@ -97,7 +111,41 @@ void sigprofHandler(int /*sig*/) {
     }
     g_overflowCount.fetch_add(1, std::memory_order_relaxed);
 }
-#endif  // !_WIN32
+
+#ifndef _WIN32
+void sigprofHandler(int /*sig*/) {
+    recordSample();
+}
+#else
+// Windows sampler thread state.
+std::thread* g_samplerThread = nullptr;
+std::atomic<bool> g_samplerStop{false};
+HANDLE g_vmThreadHandle = nullptr;
+
+uint64_t vmThreadCpu100ns() {
+    FILETIME creation, exit_, kernel, user;
+    if (!GetThreadTimes(g_vmThreadHandle, &creation, &exit_, &kernel, &user))
+        return 0;
+    ULARGE_INTEGER k, u;
+    k.LowPart = kernel.dwLowDateTime; k.HighPart = kernel.dwHighDateTime;
+    u.LowPart = user.dwLowDateTime;   u.HighPart = user.dwHighDateTime;
+    return k.QuadPart + u.QuadPart;  // 100ns units, user+kernel like ITIMER_PROF
+}
+
+void samplerLoop(int intervalUs) {
+    uint64_t lastCpu = vmThreadCpu100ns();
+    const uint64_t minCpuDelta100ns =
+        static_cast<uint64_t>(intervalUs) * 10 / 2;  // >= half an interval of CPU
+    while (!g_samplerStop.load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(std::chrono::microseconds(intervalUs));
+        uint64_t cpu = vmThreadCpu100ns();
+        if (cpu - lastCpu >= minCpuDelta100ns) {
+            recordSample();
+        }
+        lastCpu = cpu;
+    }
+}
+#endif  // _WIN32
 
 }  // namespace
 
@@ -105,12 +153,22 @@ void Profiler::enable(Interpreter* interp) {
     if (g_profilerActive) return;
     g_profilingInterp = interp;
 
+    int us = g_debug.profileIntervalUs > 0 ? g_debug.profileIntervalUs : 1000;
+
 #ifdef _WIN32
-    // SIGPROF/setitimer sampling is POSIX-only.  The profiler is a
-    // diagnostic (PHARO_PROFILE-gated) feature, so leave it disarmed on
-    // Windows rather than emulate it with a timer thread (milestone 1).
-    fprintf(stderr, "[PROFILE] sampling profiler not supported on Windows\n");
-    return;
+    // enable() runs on the VM thread — capture a real handle to it for
+    // GetThreadTimes (GetCurrentThread() is a pseudo-handle that would
+    // resolve to the SAMPLER thread inside samplerLoop).
+    if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(),
+                         GetCurrentProcess(), &g_vmThreadHandle,
+                         0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        fprintf(stderr, "[PROFILE] DuplicateHandle failed — profiler disabled\n");
+        return;
+    }
+    g_samplerStop.store(false, std::memory_order_release);
+    g_samplerThread = new std::thread(samplerLoop, us);
+    g_profilerActive = true;
+    fprintf(stderr, "[PROFILE] enabled (Windows sampler thread), interval=%dus\n", us);
 #else
     // Install signal handler.  SA_RESTART = restart interrupted syscalls.
     struct sigaction sa{};
@@ -120,7 +178,6 @@ void Profiler::enable(Interpreter* interp) {
     sigaction(SIGPROF, &sa, nullptr);
 
     // Sample interval (microseconds).  Default 1ms.
-    int us = g_debug.profileIntervalUs > 0 ? g_debug.profileIntervalUs : 1000;
     struct itimerval timer{};
     timer.it_interval.tv_sec = us / 1'000'000;
     timer.it_interval.tv_usec = us % 1'000'000;
@@ -135,8 +192,19 @@ void Profiler::enable(Interpreter* interp) {
 void Profiler::dump() {
     if (!g_profilerActive) return;
 
-    // Disable timer first.
-#ifndef _WIN32
+    // Disable sampling first.
+#ifdef _WIN32
+    g_samplerStop.store(true, std::memory_order_release);
+    if (g_samplerThread) {
+        g_samplerThread->join();
+        delete g_samplerThread;
+        g_samplerThread = nullptr;
+    }
+    if (g_vmThreadHandle) {
+        CloseHandle(g_vmThreadHandle);
+        g_vmThreadHandle = nullptr;
+    }
+#else
     struct itimerval timer{};
     setitimer(ITIMER_PROF, &timer, nullptr);
 
