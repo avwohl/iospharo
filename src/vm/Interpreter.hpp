@@ -3169,6 +3169,11 @@ private:
     PrimitiveResult primitiveDefineVariadicFunction(int argCount);   // Named: create variadic ffi_cif
     PrimitiveResult primitiveGetSameThreadRunnerAddress(int argCount); // Named: return runner address
     PrimitiveResult primitiveSameThreadCallout(int argCount);        // Named: ffi_call via same-thread runner
+    // Threaded FFI (TFWorker) — worker thread + task queue + external-semaphore completion
+    PrimitiveResult primitiveCreateWorker(int argCount);             // Named: create worker thread, handle -> ivar 0
+    PrimitiveResult primitiveWorkerCallout(int argCount);            // Named: enqueue callout, returns task address
+    PrimitiveResult primitiveWorkerExtractReturnValue(int argCount); // Named: read completed task's return value
+    PrimitiveResult primitiveReleaseWorker(int argCount);            // Named: stop + join + free worker
     PrimitiveResult primitiveRegisterDelayRecoverySemaphore(int argCount); // Named: register Delay-wedge recovery semaphore
     PrimitiveResult primitiveCopyFromTo(int argCount);               // Named: memcpy between addr/bytearray
     PrimitiveResult primitiveInitializeStructType(int argCount);     // Named: build ffi_type for struct
@@ -3186,13 +3191,17 @@ private:
     PrimitiveResult primitiveProfileSample(int argCount);            // Named: last process
     PrimitiveResult primitiveProfilePrimitive(int argCount);         // Named: last primitive
 
-    // TFFI helpers (private)
+    // TFFI helpers — public: also used by the file-local threaded-FFI worker
+    // machinery in Primitives.cpp (tffiWorkerMarshalArg / tffiWorkerOf /
+    // tffiConvertReturnValue are free functions taking Interpreter&).
+public:
     void* tffi_readAddress(Oop externalAddress);
     void  tffi_writeAddress(Oop externalAddress, void* value);
     void* tffi_getHandler(Oop obj);
     void  tffi_setHandler(Oop obj, void* value);
     Oop   tffi_newExternalAddress(void* ptr);
     void* tffi_getAddressFromExternalAddressOrByteArray(Oop obj);
+private:
 
     // VM info named primitives
     PrimitiveResult primitiveInterpreterSourceVersion(int argCount);  // Named: interpreter source version

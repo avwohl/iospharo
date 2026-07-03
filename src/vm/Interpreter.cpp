@@ -19853,6 +19853,11 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("", "primitiveRegisterDelayRecoverySemaphore", &Interpreter::primitiveRegisterDelayRecoverySemaphore);
     registerNamedPrimitive("", "primitiveSameThreadCallout", &Interpreter::primitiveSameThreadCallout);
     registerNamedPrimitive("", "primitiveSameThreadCallbackInvoke", &Interpreter::primitiveSameThreadCallout);
+    // Threaded FFI (TFWorker) worker runtime
+    registerNamedPrimitive("", "primitiveCreateWorker", &Interpreter::primitiveCreateWorker);
+    registerNamedPrimitive("", "primitiveWorkerCallout", &Interpreter::primitiveWorkerCallout);
+    registerNamedPrimitive("", "primitiveWorkerExtractReturnValue", &Interpreter::primitiveWorkerExtractReturnValue);
+    registerNamedPrimitive("", "primitiveReleaseWorker", &Interpreter::primitiveReleaseWorker);
     registerNamedPrimitive("", "primitiveCopyFromTo", &Interpreter::primitiveCopyFromTo);
     registerNamedPrimitive("", "primitiveInitializeStructType", &Interpreter::primitiveInitializeStructType);
     registerNamedPrimitive("", "primitiveFreeStruct", &Interpreter::primitiveFreeStruct);

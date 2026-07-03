@@ -48,6 +48,10 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #include "ObjCExceptionGuard.h"
 #endif
 #include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <deque>
+#include <memory>
 #include <set>
 #include <map>
 #include <fstream>
@@ -30219,6 +30223,405 @@ PrimitiveResult Interpreter::primitiveGetSameThreadRunnerAddress(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Convert a completed libffi return buffer to a Smalltalk Oop.  Shared by
+// primitiveSameThreadCallout and primitiveWorkerExtractReturnValue.
+// FFI_TYPE_VOID answers receiverForVoid (the runner, matching the historical
+// same-thread behavior).  Returns false on conversion/allocation failure.
+static bool tffiConvertReturnValue(pharo::Interpreter& interp,
+                                   pharo::ObjectMemory& memory, ffi_cif* cif,
+                                   void* returnHolder, Oop receiverForVoid,
+                                   Oop& out) {
+    switch (cif->rtype->type) {
+        case FFI_TYPE_VOID:
+            out = receiverForVoid;
+            return true;
+        case FFI_TYPE_SINT8: {
+            int8_t v; memcpy(&v, returnHolder, sizeof(int8_t));
+            out = Oop::fromSmallInteger(v);
+            return true;
+        }
+        case FFI_TYPE_UINT8: {
+            uint8_t v; memcpy(&v, returnHolder, sizeof(uint8_t));
+            out = Oop::fromSmallInteger(v);
+            return true;
+        }
+        case FFI_TYPE_SINT16: {
+            int16_t v; memcpy(&v, returnHolder, sizeof(int16_t));
+            out = Oop::fromSmallInteger(v);
+            return true;
+        }
+        case FFI_TYPE_UINT16: {
+            uint16_t v; memcpy(&v, returnHolder, sizeof(uint16_t));
+            out = Oop::fromSmallInteger(v);
+            return true;
+        }
+        case FFI_TYPE_SINT32: {
+            int32_t v; memcpy(&v, returnHolder, sizeof(int32_t));
+            out = Oop::fromSmallInteger(v);
+            return true;
+        }
+        case FFI_TYPE_UINT32: {
+            uint32_t v; memcpy(&v, returnHolder, sizeof(uint32_t));
+            out = Oop::fromSmallInteger(static_cast<int64_t>(v));
+            return true;
+        }
+        case FFI_TYPE_SINT64: {
+            int64_t v; memcpy(&v, returnHolder, sizeof(int64_t));
+            if (Oop::canBeSmallInteger(v)) {
+                out = Oop::fromSmallInteger(v);
+            } else {
+                bool neg = v < 0;
+                uint64_t absVal = neg ? static_cast<uint64_t>(-v) : static_cast<uint64_t>(v);
+                std::vector<uint8_t> mag;
+                while (absVal > 0) { mag.push_back(absVal & 0xFF); absVal >>= 8; }
+                if (mag.empty()) mag.push_back(0);
+                out = makeLargeInteger(memory, mag, neg);
+                if (out.isNil()) return false;
+            }
+            return true;
+        }
+        case FFI_TYPE_UINT64: {
+            uint64_t v; memcpy(&v, returnHolder, sizeof(uint64_t));
+            int64_t sv = static_cast<int64_t>(v);
+            if (v <= static_cast<uint64_t>(Oop::smallIntegerMax()) && Oop::canBeSmallInteger(sv)) {
+                out = Oop::fromSmallInteger(sv);
+            } else {
+                std::vector<uint8_t> mag;
+                uint64_t tmp = v;
+                while (tmp > 0) { mag.push_back(tmp & 0xFF); tmp >>= 8; }
+                if (mag.empty()) mag.push_back(0);
+                out = makeLargeInteger(memory, mag, false);
+                if (out.isNil()) return false;
+            }
+            return true;
+        }
+        case FFI_TYPE_INT: {
+            int v; memcpy(&v, returnHolder, sizeof(int));
+            out = Oop::fromSmallInteger(v);
+            return true;
+        }
+        case FFI_TYPE_POINTER: {
+            void* v; memcpy(&v, returnHolder, sizeof(void*));
+            out = interp.tffi_newExternalAddress(v);
+            return !out.isNil();
+        }
+        case FFI_TYPE_FLOAT: {
+            float v; memcpy(&v, returnHolder, sizeof(float));
+            out = makeFloat(memory, static_cast<double>(v));
+            return !out.isNil();
+        }
+        case FFI_TYPE_DOUBLE: {
+            double v; memcpy(&v, returnHolder, sizeof(double));
+            out = makeFloat(memory, v);
+            return !out.isNil();
+        }
+        case FFI_TYPE_STRUCT: {
+            size_t structSize = cif->rtype->size;
+            Oop byteArrayClass = memory.specialObject(pharo::SpecialObjectIndex::ClassByteArray);
+            uint32_t classIndex = memory.indexOfClass(byteArrayClass);
+            if (classIndex == 0) return false;
+            out = memory.allocateBytes(classIndex, structSize);
+            if (out.isNil()) return false;
+            memcpy(out.asObjectPtr()->bytes(), returnHolder, structSize);
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+// ===== TFFI WORKER RUNTIME (threaded FFI / TFWorker) =====
+// A dedicated native thread runs callouts from a task queue; completion is
+// reported by signaling a registered external-semaphore index through the
+// same thread-safe pending-signal ring the socket I/O thread uses.
+// Image protocol (scoped 2026-07-03, docs/deferred.md):
+//   primitiveCreateWorker             recv=TFWorker -> ivar0 handle = ExternalAddress(worker)
+//   primitiveWorkerCallout            recv, fn, argsArray(plain Smalltalk Array), semaIndex
+//                                     -> ExternalAddress(task), enqueued
+//   primitiveWorkerExtractReturnValue recv, taskAddr -> return-value Oop (frees task)
+//   primitiveReleaseWorker            recv -> stop + join + free
+// v1 limitation: ByteArray pointer/struct arguments are DEEP-COPIED into the
+// task (the GC may move heap objects while the worker thread runs), so
+// ByteArray OUT-parameters do not write back.  The TFUFFI suites pass
+// out-params as external memory (ExternalAddress / value holders) — safe.
+namespace tffiworker {
+
+struct Task {
+    ffi_cif* cif = nullptr;
+    void* funcPtr = nullptr;
+    std::vector<void*> argPtrs;
+    std::vector<std::unique_ptr<uint8_t[]>> blobs;  // per-arg storage + copies
+    std::vector<uint8_t> returnHolder;
+    int semaphoreIndex = 0;
+    std::atomic<bool> done{false};
+};
+
+struct Worker {
+    std::mutex mx;
+    std::condition_variable cv;
+    std::deque<Task*> queue;
+    bool stop = false;
+    std::thread thread;
+    pharo::Interpreter* interp = nullptr;
+
+    void run() {
+        for (;;) {
+            Task* task = nullptr;
+            {
+                std::unique_lock<std::mutex> lk(mx);
+                cv.wait(lk, [&] { return stop || !queue.empty(); });
+                if (stop && queue.empty()) return;
+                task = queue.front();
+                queue.pop_front();
+            }
+            try {
+                ffi_call(task->cif, FFI_FN(task->funcPtr),
+                         task->returnHolder.data(), task->argPtrs.data());
+            } catch (...) {
+                std::fill(task->returnHolder.begin(), task->returnHolder.end(), 0);
+            }
+            task->done.store(true, std::memory_order_release);
+            if (task->semaphoreIndex > 0 && interp) {
+                interp->signalExternalSemaphore(task->semaphoreIndex);
+            }
+        }
+    }
+};
+
+}  // namespace tffiworker
+
+// Marshal one Smalltalk argument into task-owned heap storage.  Mirrors the
+// primitiveSameThreadCallout cases, except heap-allocated (the call runs on
+// another thread after this primitive returns) and ByteArrays are copied.
+static bool tffiWorkerMarshalArg(pharo::Interpreter& interp,
+                                 pharo::ObjectMemory& memory, Oop argOop,
+                                 ffi_type* argType, tffiworker::Task& task,
+                                 size_t i) {
+    auto blob = std::make_unique<uint8_t[]>(16);
+    uint8_t* argSlot = blob.get();
+    memset(argSlot, 0, 16);
+
+    switch (argType->type) {
+        case FFI_TYPE_POINTER: {
+            void* ptrVal = nullptr;
+            if (argOop.isNil() || argOop.rawBits() == memory.nil().rawBits()) {
+                // nil -> NULL
+            } else if (argOop.isObject()) {
+                pharo::ObjectHeader* argHdr = argOop.asObjectPtr();
+                if (argHdr->isBytesObject()) {
+                    Oop extAddrClass = memory.specialObject(
+                        pharo::SpecialObjectIndex::ClassExternalAddress);
+                    if (memory.classOf(argOop).rawBits() == extAddrClass.rawBits()) {
+                        ptrVal = interp.tffi_readAddress(argOop);
+                    } else {
+                        // ByteArray: deep-copy — the GC may move it before the
+                        // worker thread performs the call.
+                        size_t nBytes = argHdr->byteSize();
+                        auto copy = std::make_unique<uint8_t[]>(nBytes ? nBytes : 1);
+                        memcpy(copy.get(), argHdr->bytes(), nBytes);
+                        ptrVal = copy.get();
+                        task.blobs.push_back(std::move(copy));
+                    }
+                }
+            } else if (argOop.isSmallInteger()) {
+                ptrVal = reinterpret_cast<void*>(
+                    static_cast<uintptr_t>(argOop.asSmallInteger()));
+            }
+            memcpy(argSlot, &ptrVal, sizeof(void*));
+            break;
+        }
+        case FFI_TYPE_FLOAT: {
+            double d = 0.0;
+            if (!extractFloat(memory, argOop, d)) return false;
+            float f = static_cast<float>(d);
+            memcpy(argSlot, &f, sizeof(float));
+            break;
+        }
+        case FFI_TYPE_DOUBLE: {
+            double d = 0.0;
+            if (!extractFloat(memory, argOop, d)) return false;
+            memcpy(argSlot, &d, sizeof(double));
+            break;
+        }
+        case FFI_TYPE_SINT8: case FFI_TYPE_UINT8:
+        case FFI_TYPE_SINT16: case FFI_TYPE_UINT16:
+        case FFI_TYPE_SINT32: case FFI_TYPE_UINT32:
+        case FFI_TYPE_SINT64: case FFI_TYPE_UINT64:
+        case FFI_TYPE_INT: {
+            int64_t val = 0;
+            if (argOop.isSmallInteger()) {
+                val = argOop.asSmallInteger();
+            } else if (!trySigned64BitValueOf(memory, argOop, val)) {
+                return false;
+            }
+            // libffi reads the exact width from the slot; store the full
+            // 64-bit value little-endian-truncated per type width.
+            memcpy(argSlot, &val, 8);
+            break;
+        }
+        case FFI_TYPE_STRUCT: {
+            void* src = interp.tffi_getAddressFromExternalAddressOrByteArray(argOop);
+            if (!src) return false;
+            size_t structSize = argType->size;
+            auto copy = std::make_unique<uint8_t[]>(structSize ? structSize : 1);
+            memcpy(copy.get(), src, structSize);
+            task.argPtrs[i] = copy.get();
+            task.blobs.push_back(std::move(copy));
+            task.blobs.push_back(std::move(blob));
+            return true;
+        }
+        default:
+            return false;
+    }
+    task.argPtrs[i] = argSlot;
+    task.blobs.push_back(std::move(blob));
+    return true;
+}
+
+// primitiveCreateWorker (0 args): receiver = TFWorker.  Creates the native
+// worker (thread + queue) and stores an ExternalAddress handle into the
+// receiver's `handle` ivar (slot 0).
+PrimitiveResult Interpreter::primitiveCreateWorker(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    Oop receiver = stackValue(0);
+    if (!receiver.isObject() || memory_.slotCountOf(receiver) < 1) {
+        return PrimitiveResult::Failure;
+    }
+
+    auto* worker = new tffiworker::Worker();
+    worker->interp = this;
+    worker->thread = std::thread([worker] { worker->run(); });
+
+    Oop handleOop = tffi_newExternalAddress(worker);
+    if (handleOop.isNil()) {
+        {
+            std::lock_guard<std::mutex> lk(worker->mx);
+            worker->stop = true;
+        }
+        worker->cv.notify_all();
+        worker->thread.join();
+        delete worker;
+        return PrimitiveResult::Failure;
+    }
+    memory_.storePointer(0, receiver, handleOop);
+    primitiveSuccess(receiver);
+    return PrimitiveResult::Success;
+}
+
+// Fetch the Worker* from a TFWorker receiver's handle ivar (slot 0).
+static tffiworker::Worker* tffiWorkerOf(pharo::Interpreter& interp,
+                                        pharo::ObjectMemory& memory, Oop receiver) {
+    if (!receiver.isObject() || memory.slotCountOf(receiver) < 1) return nullptr;
+    Oop handleOop = memory.fetchPointer(0, receiver);
+    return static_cast<tffiworker::Worker*>(interp.tffi_readAddress(handleOop));
+}
+
+// primitiveWorkerCallout (3 args): externalFunction, argsArray, semaphoreIndex.
+// Marshals into a heap task, enqueues it, returns ExternalAddress(task).
+PrimitiveResult Interpreter::primitiveWorkerCallout(int argCount) {
+    if (argCount != 3) return PrimitiveResult::Failure;
+
+    Oop semaIndexOop = stackValue(0);
+    Oop argsArrayOop = stackValue(1);
+    Oop externalFuncOop = stackValue(2);
+    Oop receiver = stackValue(3);
+
+    if (!semaIndexOop.isSmallInteger()) return PrimitiveResult::Failure;
+    tffiworker::Worker* worker = tffiWorkerOf(*this, memory_, receiver);
+    if (!worker) return PrimitiveResult::Failure;
+
+    if (!externalFuncOop.isObject() || memory_.slotCountOf(externalFuncOop) < 2) {
+        return PrimitiveResult::Failure;
+    }
+    Oop funcAddrOop = memory_.fetchPointer(0, externalFuncOop);
+    void* funcPtr = tffi_readAddress(funcAddrOop);
+    if (!funcPtr) return PrimitiveResult::Failure;
+    Oop funcDefOop = memory_.fetchPointer(1, externalFuncOop);
+    ffi_cif* cif = static_cast<ffi_cif*>(tffi_getHandler(funcDefOop));
+    if (!cif) return PrimitiveResult::Failure;
+
+    if (!argsArrayOop.isObject()) return PrimitiveResult::Failure;
+    size_t nargs = memory_.slotCountOf(argsArrayOop);
+    if (nargs != cif->nargs) return PrimitiveResult::Failure;
+
+    auto task = std::make_unique<tffiworker::Task>();
+    task->cif = cif;
+    task->funcPtr = funcPtr;
+    task->semaphoreIndex = static_cast<int>(semaIndexOop.asSmallInteger());
+    task->argPtrs.resize(nargs, nullptr);
+    size_t returnSize = cif->rtype->size;
+    if (returnSize < sizeof(ffi_arg)) returnSize = sizeof(ffi_arg);
+    task->returnHolder.assign(returnSize, 0);
+
+    for (size_t i = 0; i < nargs; i++) {
+        Oop argOop = memory_.fetchPointer(i, argsArrayOop);
+        if (!tffiWorkerMarshalArg(*this, memory_, argOop, cif->arg_types[i], *task, i)) {
+            return PrimitiveResult::Failure;
+        }
+    }
+
+    Oop taskOop = tffi_newExternalAddress(task.get());
+    if (taskOop.isNil()) return PrimitiveResult::Failure;
+
+    {
+        std::lock_guard<std::mutex> lk(worker->mx);
+        worker->queue.push_back(task.release());
+    }
+    worker->cv.notify_one();
+
+    popN(argCount + 1);
+    push(taskOop);
+    return PrimitiveResult::Success;
+}
+
+// primitiveWorkerExtractReturnValue (1 arg): task ExternalAddress.
+// Converts the completed task's return buffer to an Oop and frees the task.
+PrimitiveResult Interpreter::primitiveWorkerExtractReturnValue(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop taskAddrOop = stackValue(0);
+    auto* task = static_cast<tffiworker::Task*>(tffi_readAddress(taskAddrOop));
+    if (!task) return PrimitiveResult::Failure;
+    if (!task->done.load(std::memory_order_acquire)) {
+        // Image waits on the semaphore before extracting; a not-done task
+        // here is a protocol violation — fail rather than race.
+        return PrimitiveResult::Failure;
+    }
+
+    Oop resultOop;
+    Oop receiver = stackValue(1);
+    if (!tffiConvertReturnValue(*this, memory_, task->cif, task->returnHolder.data(),
+                                receiver, resultOop)) {
+        delete task;
+        return PrimitiveResult::Failure;
+    }
+    delete task;
+
+    popN(argCount + 1);
+    push(resultOop);
+    return PrimitiveResult::Success;
+}
+
+// primitiveReleaseWorker (0 args): stop + join + free the native worker.
+PrimitiveResult Interpreter::primitiveReleaseWorker(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    Oop receiver = stackValue(0);
+    tffiworker::Worker* worker = tffiWorkerOf(*this, memory_, receiver);
+    if (!worker) return PrimitiveResult::Failure;
+
+    {
+        std::lock_guard<std::mutex> lk(worker->mx);
+        worker->stop = true;
+    }
+    worker->cv.notify_all();
+    if (worker->thread.joinable()) worker->thread.join();
+    // Free any never-extracted tasks.
+    for (tffiworker::Task* t : worker->queue) delete t;
+    delete worker;
+
+    primitiveSuccess(receiver);
+    return PrimitiveResult::Success;
+}
+
 // primitiveRegisterDelayRecoverySemaphore (0 args)
 // Receiver is a Semaphore that an image-side recovery process waits on. Stored so the VM's
 // checkTimerSemaphore [DELAY-DEATH] detector can signal it on a futile Delay-scheduler wedge,
@@ -30490,116 +30893,12 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
 #endif
 
 
-    // Marshall return value back to Smalltalk
-    unsigned short returnTypeId = cif->rtype->type;
+    // Marshall return value back to Smalltalk (shared with the worker
+    // runtime's primitiveWorkerExtractReturnValue).
     Oop resultOop;
-
-    switch (returnTypeId) {
-        case FFI_TYPE_VOID:
-            // For void, pop args + receiver, push receiver (the runner)
-            resultOop = stackValue(argCount);  // save receiver before popping
-            popN(argCount + 1);
-            push(resultOop);
-            return PrimitiveResult::Success;
-
-        case FFI_TYPE_SINT8: {
-            int8_t v; memcpy(&v, returnHolder, sizeof(int8_t));
-            resultOop = Oop::fromSmallInteger(v);
-            break;
-        }
-        case FFI_TYPE_UINT8: {
-            uint8_t v; memcpy(&v, returnHolder, sizeof(uint8_t));
-            resultOop = Oop::fromSmallInteger(v);
-            break;
-        }
-        case FFI_TYPE_SINT16: {
-            int16_t v; memcpy(&v, returnHolder, sizeof(int16_t));
-            resultOop = Oop::fromSmallInteger(v);
-            break;
-        }
-        case FFI_TYPE_UINT16: {
-            uint16_t v; memcpy(&v, returnHolder, sizeof(uint16_t));
-            resultOop = Oop::fromSmallInteger(v);
-            break;
-        }
-        case FFI_TYPE_SINT32: {
-            int32_t v; memcpy(&v, returnHolder, sizeof(int32_t));
-            resultOop = Oop::fromSmallInteger(v);
-            break;
-        }
-        case FFI_TYPE_UINT32: {
-            uint32_t v; memcpy(&v, returnHolder, sizeof(uint32_t));
-            resultOop = Oop::fromSmallInteger(static_cast<int64_t>(v));
-            break;
-        }
-        case FFI_TYPE_SINT64: {
-            int64_t v; memcpy(&v, returnHolder, sizeof(int64_t));
-            if (Oop::canBeSmallInteger(v)) {
-                resultOop = Oop::fromSmallInteger(v);
-            } else {
-                // Create LargeInteger
-                bool neg = v < 0;
-                uint64_t absVal = neg ? static_cast<uint64_t>(-v) : static_cast<uint64_t>(v);
-                std::vector<uint8_t> mag;
-                while (absVal > 0) { mag.push_back(absVal & 0xFF); absVal >>= 8; }
-                if (mag.empty()) mag.push_back(0);
-                resultOop = makeLargeInteger(memory_, mag, neg);
-                if (resultOop.isNil()) return PrimitiveResult::Failure;
-            }
-            break;
-        }
-        case FFI_TYPE_UINT64: {
-            uint64_t v; memcpy(&v, returnHolder, sizeof(uint64_t));
-            int64_t sv = static_cast<int64_t>(v);
-            if (v <= static_cast<uint64_t>(Oop::smallIntegerMax()) && Oop::canBeSmallInteger(sv)) {
-                resultOop = Oop::fromSmallInteger(sv);
-            } else {
-                std::vector<uint8_t> mag;
-                uint64_t tmp = v;
-                while (tmp > 0) { mag.push_back(tmp & 0xFF); tmp >>= 8; }
-                if (mag.empty()) mag.push_back(0);
-                resultOop = makeLargeInteger(memory_, mag, false);
-                if (resultOop.isNil()) return PrimitiveResult::Failure;
-            }
-            break;
-        }
-        case FFI_TYPE_INT: {
-            int v; memcpy(&v, returnHolder, sizeof(int));
-            resultOop = Oop::fromSmallInteger(v);
-            break;
-        }
-        case FFI_TYPE_POINTER: {
-            void* v; memcpy(&v, returnHolder, sizeof(void*));
-            resultOop = tffi_newExternalAddress(v);
-            if (resultOop.isNil()) return PrimitiveResult::Failure;
-            break;
-        }
-        case FFI_TYPE_FLOAT: {
-            float v; memcpy(&v, returnHolder, sizeof(float));
-            resultOop = makeFloat(memory_, static_cast<double>(v));
-            if (resultOop.isNil()) return PrimitiveResult::Failure;
-            break;
-        }
-        case FFI_TYPE_DOUBLE: {
-            double v; memcpy(&v, returnHolder, sizeof(double));
-            resultOop = makeFloat(memory_, v);
-            if (resultOop.isNil()) return PrimitiveResult::Failure;
-            break;
-        }
-        case FFI_TYPE_STRUCT: {
-            // Return struct as ByteArray
-            size_t structSize = cif->rtype->size;
-            Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
-            uint32_t classIndex = memory_.indexOfClass(byteArrayClass);
-            if (classIndex == 0) return PrimitiveResult::Failure;
-            resultOop = memory_.allocateBytes(classIndex, structSize);
-            if (resultOop.isNil()) return PrimitiveResult::Failure;
-            ObjectHeader* hdr = resultOop.asObjectPtr();
-            memcpy(hdr->bytes(), returnHolder, structSize);
-            break;
-        }
-        default:
-            return PrimitiveResult::Failure;
+    if (!tffiConvertReturnValue(*this, memory_, cif, returnHolder,
+                                stackValue(argCount), resultOop)) {
+        return PrimitiveResult::Failure;
     }
 
     // Pop args + receiver, push result
