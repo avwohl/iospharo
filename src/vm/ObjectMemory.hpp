@@ -568,6 +568,8 @@ public:
     /// Check if there are mourners waiting
     bool hasMourners() const { return !mournQueue_.empty(); }
     size_t mournQueueSize() const { return mournQueue_.size(); }
+    /// Read-only view for GC-pin forensics (PHARO_PIN_DIAG)
+    const std::vector<Oop>& mournQueueEntries() const { return mournQueue_; }
 
     /// Get/clear pending finalization signal count
     int pendingFinalizationSignals() const { return pendingFinalizationSignals_; }

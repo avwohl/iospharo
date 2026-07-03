@@ -8503,6 +8503,15 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
         fprintf(stderr, "[PIN-DIAG] %zu surviving '%s' strings after fullGC\n",
                 targets.size(), pinTarget);
         if (!targets.empty()) {
+            fprintf(stderr, "[PIN-DIAG] mournQ=%zu pendingFin=%zu activeProcPri=%lld\n",
+                    memory_.mournQueueSize(),
+                    (size_t)memory_.pendingFinalizationSignals(),
+                    [&]() -> long long {
+                        Oop p = getActiveProcess();
+                        if (!p.isObject()) return -1;
+                        Oop pri = memory_.fetchPointer(ProcessPriorityIndex, p);
+                        return pri.isSmallInteger() ? pri.asSmallInteger() : -1;
+                    }());
             fprintf(stderr, "[PIN-DIAG] landmarks: stack=[%p,%p) savedFrames=[%p,%p) fd=%zu "
                     "j2jPool=[%p,%p) cursor=%d bvSaves=[%p,%p) depth=%d jitState=%p\n",
                     (void*)stackBase_, (void*)stackPointer_,
@@ -8517,19 +8526,58 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
                     );
         }
         for (Oop target : targets) {
-            fprintf(stderr, "[PIN-DIAG] target oop=0x%llx\n",
-                    (unsigned long long)target.rawBits());
+            void* tp = target.asObjectPtr();
+            fprintf(stderr, "[PIN-DIAG] target oop=0x%llx region=%s\n",
+                    (unsigned long long)target.rawBits(),
+                    memory_.isPermObject(tp) ? "PERM"
+                    : memory_.isYoungObject(tp) ? "young"
+                    : memory_.isOldObject(tp) ? "old" : "???");
             forEachRoot([&](Oop& r) {
                 if (r.rawBits() == target.rawBits()) {
                     fprintf(stderr, "[PIN-DIAG]   ROOT slot at %p holds it\n", (void*)&r);
                 }
             });
+            // Mourn-queue entries are GC roots too ("ephemerons pending
+            // finalization hold their fields alive") — check whether one of
+            // them retains the target directly or via a slot.
+            {
+                const auto& mq = memory_.mournQueueEntries();
+                for (size_t mi = 0; mi < mq.size(); mi++) {
+                    Oop m = mq[mi];
+                    if (!m.isObject()) continue;
+                    if (m.rawBits() == target.rawBits()) {
+                        fprintf(stderr, "[PIN-DIAG]   mournQ[%zu] IS the target\n", mi);
+                        continue;
+                    }
+                    ObjectHeader* mh = m.asObjectPtr();
+                    if (mh->format() > ObjectFormat::WeakWithFixed) continue;
+                    size_t n = mh->slotCount();
+                    Oop* slots = mh->slots();
+                    for (size_t i = 0; i < n; i++) {
+                        if (slots[i].rawBits() == target.rawBits()) {
+                            fprintf(stderr, "[PIN-DIAG]   mournQ[%zu]=0x%llx class=%s slot=%zu holds target\n",
+                                    mi, (unsigned long long)m.rawBits(),
+                                    memory_.classNameOf(m).c_str(), i);
+                        }
+                    }
+                }
+            }
             std::vector<Oop> ctxHolders;
             memory_.allObjectsDo([&](Oop holder) {
                 if (!holder.isObject()) return;
                 ObjectHeader* hh = holder.asObjectPtr();
-                if (hh->format() > ObjectFormat::WeakWithFixed) return;  // pointer formats only
-                size_t n = hh->slotCount();
+                size_t n;
+                if (hh->format() <= ObjectFormat::WeakWithFixed) {
+                    n = hh->slotCount();  // plain pointer formats
+                } else if (hh->format() >= ObjectFormat::CompiledMethod) {
+                    // CompiledMethod/Block: header + literals are pointer slots
+                    Oop hdr = hh->slots()[0];
+                    n = hdr.isSmallInteger()
+                        ? 1 + (size_t)(hdr.asSmallInteger() & 0x7FFF) : 0;
+                    if (n > hh->slotCount()) n = hh->slotCount();
+                } else {
+                    return;  // byte/word indexable: no pointer slots
+                }
                 Oop* slots = hh->slots();
                 for (size_t i = 0; i < n; i++) {
                     if (slots[i].rawBits() == target.rawBits()) {

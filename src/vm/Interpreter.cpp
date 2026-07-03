@@ -12663,6 +12663,20 @@ past_sista_block:
         }
     }
     if (canJITActivate(method) && tryJITActivation(method, argCount)) {
+        // Deferred FinalizationSemaphore signal — same one-shot as the
+        // interpreter path below, which this early return used to SKIP:
+        // once execution went JIT-resident, the flag armed by
+        // primitiveFullGC never fired, the finalization process never
+        // woke, and mourn-queue entries (strong GC roots) pinned their
+        // ephemeron keys forever — WeakAnnouncerTest testWeakObject/
+        // testWeakDoubleAnnouncer failed on every JIT-warm run while
+        // passing cold (2026-07-03).  Firing after tryJITActivation is
+        // safe: the JIT activation completed, so we are at a send
+        // boundary with consistent frame state.
+        if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
+            finalizationCheckAfterGC_ = false;
+            signalFinalizationIfNeeded();
+        }
         return;  // JIT handled it
     }
     sfActFallthrough:;
@@ -20209,6 +20223,17 @@ void Interpreter::prepareForGC() {
             Oop* stackSlot = frame.savedFP + 1 + t;
             if (stackSlot >= stackBase_ && stackSlot < stackPointer_) {
                 memory_.storePointer(ContextFixedFields + t, matCtx, *stackSlot);
+            } else if (GET_DEBUG_STR(PHARO_PIN_DIAG)) {
+                static int skipLog = 0;
+                if (skipLog++ < 30) {
+                    fprintf(stderr,
+                        "[GC-TEMPSYNC-SKIP] frame=%zu/%zu #%s t=%d savedFP=%p "
+                        "slot=%p outside [%p,%p) — ctx temps NOT synced\n",
+                        i, frameDepth_,
+                        memory_.selectorOf(frame.savedMethod).c_str(), t,
+                        (void*)frame.savedFP, (void*)stackSlot,
+                        (void*)stackBase_, (void*)stackPointer_);
+                }
             }
         }
 

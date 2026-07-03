@@ -75,20 +75,32 @@ isolation (no suite watchdog):
   step/exception/process battery green (558 tests), bench identical
   (fib 12ms, ensure 32ms).
 - [ ] **WeakAnnouncerTest testWeakObject/testWeakDoubleAnnouncer fail
-  JIT-warm** (pass cold; 31-33/34 depending on warmth; stock 33/34+1EF).
-  SEPARATE residual pin, evidence so far (2026-07-03): with a marker-string
-  subscriber, PIN_DIAG shows the strong holder is a **Context temp slot
-  (slot 7 = the test's `o` temp) still holding the object after `o := nil`
-  ran** — a stale materialized-context temp snapshot reachable through the
-  heap sender chain at a later fd=0 GC. PHARO_MAT_FULL_RESYNC=1 does NOT fix
-  it (ctxSynced skip exonerated); prepareForGC's temp-sync covers only
-  savedFrames_/current-frame, not this shape. Adding a `thisContext` touch
-  in the test method perturbs it to passing (sync side effect) — confirms
-  desync. Several diag blocks also show the survivor with NO visible
-  referrer — allObjectsDo may not walk EDEN, so young holders are invisible
-  to the referrer scan (improve PIN_DIAG to walk young space too, then
-  re-localize which materialization path snapshots temps without a later
-  sync).
+  JIT-warm** (pass cold; typically 32-33/34 now, was 31-32; stock 33/34).
+  TWO pin mechanisms found with PIN_DIAG (2026-07-03); ONE FIXED:
+  - [x] **Mourn-queue starvation FIXED**: activateMethod's deferred
+    FinalizationSemaphore check (finalizationCheckAfterGC_) sat AFTER the
+    `return` in the tryJITActivation branch — once execution went
+    JIT-resident the signal never fired, the finalization process (pri
+    79/50, would preempt the pri-40 test) never woke, and mourn-queue
+    entries (strong GC roots) pinned their ephemeron keys across every
+    subsequent GC. The JIT branch now performs the same one-shot check
+    before returning. First warm run now reaches stock parity (33/34).
+  - [ ] **Residual: stale materialized-context TEMP pin.** PIN_DIAG shows
+    the surviving subscriber held by a Context's temp slot (slot 7 = the
+    test's `o` temp) AFTER `o := nil` executed; the context is retained by
+    savedFrames_ root slots + the operand stack + a sender-chain Context.
+    prepareForGC's temp-sync loop RUNS over the frame (the savedFP range
+    guard never fires — instrumented [GC-TEMPSYNC-SKIP], zero hits) yet
+    the context temp stays stale — hypothesis: `frame.savedFP + 1 + t` is
+    itself the STALE copy because the frame re-entered JIT with temps
+    live at a different address (JITState.tempBase / J2J save tempBase),
+    so the sync faithfully copies a dead interpreter-layout slot. NEXT:
+    at GC, for frames whose method is JIT-resident, compare
+    frame.savedFP+1 against the JIT-side tempBase for the same
+    activation, and sync from the LIVE location. Note PHARO_MAT_FULL_
+    RESYNC=1 does NOT cure it; a `thisContext` touch in the test method
+    does (forces fresh materialization) — confirming desync, not GC.
+    Diag probes: C:/tmp/weakann-probe*.st, PHARO_PIN_DIAG=weakpinmarker.
 - [x] **Full suite on Windows — RUNS** (recipe below). 2047 non-abstract
   TestCase subclasses.
   - RESULT (run #1, JIT on, ~45 min outer cap): got through the first **111
