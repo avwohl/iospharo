@@ -277,14 +277,28 @@ isolation (no suite watchdog):
       replaceNode: 20/20; prefixes line-identical to the divergence).
       IDENTICAL Smalltalk operations produced DIFFERENT array content
       (+1 element, triplet->closure-run substitution) — so the delta is
-      a VM-level effect inside one of those identical operations. Prime
-      remaining candidate: the OrderedCollection>>growAtLast prim-105
-      copy observed at scav 12/13 (young 160-slot source -> old 320-slot
-      overflow dest) — instrument it to memcmp the copied region against
-      the source post-copy AND dump both arrays' first divergent slot;
-      if the copy is faithful, the divergence predates the grow and
-      binary-search earlier ops the same way (the [P105] log gives the
-      full op sequence).
+      a VM-level effect inside one of those identical operations. growAtLast EXONERATED
+      (srcLive=1, young OC, ocArrIsSrc=1 — healthy fresh-young grow; the
+      [P105] log now prints srcLive/srcOld/oc/ocOld/ocArrIsSrc via
+      ObjectMemory::isLiveYoung). THE SHARPENED CONTRADICTION: the run's
+      slots were appended as DISTINCT nodes (zero DUP-APPEND fires — a
+      whole-prefix scan per append), no instrumented writer ever
+      equalized them, yet they READ equal at first-shift time. Therefore
+      the reads target different memory/object than the appends wrote:
+      an OBJECT-IDENTITY SWITCH between append-time and shift-time for
+      the OC or its array — while the error-time dump shows a CONSISTENT
+      seq->OC->array chain. Reconciliations to test next: (a) TWO OC/
+      array generations where the seq's `sequence` ivar (or the OC's
+      `array` ivar) was re-assigned by a VM-level retarget to the WRONG
+      generation (log OCIRSequence's OC identity at visitSequence: entry
+      vs convertStorePop: entry — image-side or via a VM hook on the
+      selector); (b) the append-time OC being a DIFFERENT object than
+      the shift-time OC because the SEQ was duplicated (tenure double-
+      copy of the seq? check seq identityHash continuity); (c) reads via
+      a stale CACHED ivar in a JIT-free inline path (receiver-ivar read
+      specialization?) — PHARO_NO_METHOD_CACHE already failed, but the
+      [CACHE-n] getter specializations may live elsewhere; test with
+      those knobs off.
       Remaining leads (in order):
       (a) ALL run detectors check LOWER neighbors ([i-1],[i-2]) — a
       DESCENDING fill evades every one of them, and

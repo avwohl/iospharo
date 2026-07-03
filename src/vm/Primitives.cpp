@@ -17178,12 +17178,30 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
             static int p105N = 0;
             if (g_scavengeCount >= 12 && memory_.isOld(destOop) && p105N < 80) {
                 p105N++;
+                // For growAtLast the current frame's receiver IS the OC and
+                // its slot 0 should be the copy SOURCE.  srcLive
+                // distinguishes a fresh young source (below the bump
+                // pointer) from a STALE eden ref (at/above it, or outside).
+                Oop ocRecv = (framePointer_ >= stackBase_) ? framePointer_[0]
+                                                           : Oop::nil();
+                uint64_t ocArr = 0;
+                int ocOld = -1;
+                if (ocRecv.isObject() && ocRecv.rawBits() > 0x10000 &&
+                    ocRecv.asObjectPtr()->slotCount() >= 1) {
+                    ocArr = ocRecv.asObjectPtr()->slotAt(0).rawBits();
+                    ocOld = memory_.isOld(ocRecv) ? 1 : 0;
+                }
                 fprintf(stderr,
                     "[P105] dst=%p src=%p same=%d dstStart=%lld dstEnd=%lld srcStart=%lld "
+                    "srcLive=%d srcOld=%d oc=%llx ocOld=%d ocArrIsSrc=%d "
                     "scav=%llu caller=%s>>%s\n",
                     (void*)destHdr, (void*)srcHdr,
                     destOop.rawBits() == sourceOop.rawBits(),
                     (long long)destStart, (long long)destEnd, (long long)sourceStart,
+                    (int)memory_.isLiveYoung(sourceOop),
+                    (int)memory_.isOld(sourceOop),
+                    (unsigned long long)ocRecv.rawBits(), ocOld,
+                    (int)(ocArr == sourceOop.rawBits()),
                     (unsigned long long)g_scavengeCount,
                     classNameOfMethod(method_).c_str(),
                     memory_.selectorOf(method_).c_str());

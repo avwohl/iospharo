@@ -687,6 +687,14 @@ public:
     uint8_t* newSpaceEnd() const { return newSpaceEnd_; }
     uint8_t* oldSpaceFree() const { return oldSpaceFree_; }
     uint8_t* newSpaceStart() const { return newSpaceStart_; }
+    // Diagnostic: is this oop a plausibly LIVE young object (inside the
+    // active eden allocation window, i.e. below the bump pointer)?  An
+    // eden-range pointer AT/ABOVE edenFree_ is stale by construction.
+    bool isLiveYoung(Oop o) const {
+        if (!o.isObject()) return false;
+        uint8_t* p = reinterpret_cast<uint8_t*>(o.asObjectPtr());
+        return p >= edenAllocBase_ && p < edenFree_;
+    }
     uint8_t* permSpaceStart() const { return permSpaceStart_; }
     uint8_t* permSpaceEnd() const { return permSpaceEnd_; }
 
