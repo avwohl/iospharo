@@ -531,7 +531,18 @@ the full run, worth a look if it recurs.
   TFUFFIConcurrencyTest>>testConcurrentlyCompiling (1) need callbacks
   invoked FROM the worker thread: the worker must block while the VM
   thread runs the callback and resumes it (stock pThreadedFFI's callback
-  forwarding). Original scoping notes follow:
+  forwarding). SCOPED FURTHER 2026-07-03: ALL FIVE image-side callback
+  prims already exist and work same-thread (primitiveRegisterCallback/
+  Unregister/CallbackReturn/ReadNextCallback/InitilizeCallbacks —
+  registrations at Interpreter.cpp ~19884; pending-queue machinery at
+  ~4959-5109 incl. pendingCallbackReturn_). v2 therefore reduces to: in
+  the libffi closure thunk (FFI.cpp/vmCallback.h), detect "not on the VM
+  thread" → enqueue the invocation into the EXISTING pending-callback
+  queue + signal its semaphore → block the worker thread on a
+  condition variable until primitiveCallbackReturn (VM thread) stores
+  the return value and wakes it. Image machinery (TFCallbackQueue's
+  callbackProcess) already drains the queue. Sources in
+  C:/tmp/tfcb-sources.txt. Original scoping notes follow:
   SCOPED 2026-07-03 (image protocol fully mapped; sources in
   C:/tmp/tfw-sources*.txt):
   - 4 named prims: `primitiveCreateWorker` (receiver=TFWorker; create
