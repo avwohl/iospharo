@@ -4264,6 +4264,14 @@ void Interpreter::handleForceYield() {
             }
             if (agingInGrace && now >= agingGraceUntil) {
                 agingInGrace = false;
+                // Restart the slice clock: without this, aging re-fires the
+                // instant grace ends (agingStartTime was reset AT the fire,
+                // exactly one threshold ago), producing CONTIGUOUS grace —
+                // during which every P41-79 preemption is undone, starving
+                // watchdog/timeout machinery (the repeat-run idle-crawl
+                // wedge).  Requiring a fresh full threshold after each
+                // grace caps the grace duty cycle at ~50%.
+                agingStartTime = now;
             }
 
             // Determine aging thresholds based on mode.

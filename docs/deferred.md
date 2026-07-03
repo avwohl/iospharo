@@ -574,7 +574,24 @@ The [STATE-DUMP] wedge diagnostic is armed but this run never reached
 the post-completion phase (timeout kill), so the wedge remains
 un-diagnosed — rerun with TIMEOUT=9000 to get a completing run.
 
-### TFFI v2 residual: testCallbackInLoop(UsingWorker) order-dependent slowdown
+### RESOLVED 2026-07-03 (27186475): the InLoop stall was the aging clock
+handleForceYield's aging-based preemption measured WALL time since the
+tracked process's last aging event; idle interludes never update the
+tracker, so a process that slept ~1s was INSTANTLY aged out to a lower-
+priority process at its first yield check after waking (zero bytecodes —
+the empty-wake signature).  Fixes: slice-clock restart on reschedule,
+grace-undo exempts P80 (the Delay ticker), and grace requires a fresh
+full threshold after each window (caps grace duty cycle at ~50% — was
+CONTIGUOUS, starving P41-79 watchdog machinery).  TFUFFICallbackTest:
+13/13 STOCK PARITY (baseline re-measured 8/13); x2 in one VM both 13/13.
+- [ ] REMAINING (pre-existing; fires on pre-fix binaries too): repeated
+  callback-suite runs in ONE VM wedge into an ~1K steps/s idle crawl at
+  iteration 3+ (was iteration 2 before the grace-duty fix; also seen as
+  ObsoleteTest x4 timeout).  Something accumulates per suite run.  Tools
+  ready: PHARO_STATE_DUMP_PERIOD_MS sampler + PHARO_SEM_SIGNAL_TRACE
+  (3M caps) + [SEM-WAIT]/[XFER-IN] traces.  Next: sample iteration 3.
+
+### TFFI v2 residual notes (historical; resolution above)
 v2 forwarding landed 2026-07-03 (commit 6280deb8): worker/native-thread
 callbacks forward to the VM thread (xtcb queue -> periodic-check adoption
 -> image callback semaphore -> primitiveCallbackReturn wakes the parked
