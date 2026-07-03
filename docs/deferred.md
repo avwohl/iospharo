@@ -197,10 +197,13 @@ isolation (no suite watchdog):
       fills fire, nothing at scav>=12) — so the smear enters via raw
       `slots()[i]=` writes, an uninstrumented memcpy (shallowCopy/clone,
       compact copyAndUnmark), or the OC's array IVAR is switched to a
-      different array entirely (fullGC compact forwarding desync —
-      savedFirstFieldsSpace parallel-walk between planCompact and
-      updatePointersAfterCompact is the prime remaining suspect: a +/-1
-      desync there mis-restores slot-0 first fields wholesale), or
+      different array entirely. The compact savedFirstFieldsSpace
+      parallel-walk desync was RULED OUT (copyAndUnmark now asserts the
+      saved-fields pointer drains fully — [GC-COMPACT-DESYNC] never fires
+      in the failing run). Remaining: raw slots()[i] writers,
+      shallowCopy/clone memcpy paths, updatePointersAfterCompact's
+      unbounded survivor-space garbage walk (writes past newSpaceEnd_ are
+      possible from garbage headers — harden regardless), or
       resume-from-context partial rollback via a path the pc-refresh fix
       doesn't cover.
     - REAL BUGS FIXED during the hunt (all committed, regression-clean):
