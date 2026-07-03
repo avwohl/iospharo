@@ -19946,6 +19946,8 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("SocketPlugin", "primitiveInitializeNetwork", &Interpreter::primitiveInitializeNetwork);
     registerNamedPrimitive("SocketPlugin", "primitiveResolverStatus", &Interpreter::primitiveResolverStatus);
     registerNamedPrimitive("SocketPlugin", "primitiveResolverLocalAddress", &Interpreter::primitiveResolverLocalAddress);
+    registerNamedPrimitive("SocketPlugin", "primitiveResolverHostNameSize", &Interpreter::primitiveResolverHostNameSize);
+    registerNamedPrimitive("SocketPlugin", "primitiveResolverHostNameResult", &Interpreter::primitiveResolverHostNameResult);
     registerNamedPrimitive("SocketPlugin", "primitiveResolverStartNameLookup", &Interpreter::primitiveResolverStartNameLookup);
     registerNamedPrimitive("SocketPlugin", "primitiveResolverNameLookupResult", &Interpreter::primitiveResolverNameLookupResult);
     registerNamedPrimitive("SocketPlugin", "primitiveResolverAbortLookup", &Interpreter::primitiveResolverAbortLookup);

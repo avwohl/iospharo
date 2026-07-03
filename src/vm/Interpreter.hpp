@@ -1084,8 +1084,13 @@ private:
     // but 64 events between drains is small under socket + threaded-FFI +
     // finalization load, and a dropped signal is a lost semaphore wakeup
     // (stuck ZnClient read / TFFI worker wait).  8 KB well spent.
+    // NB: the array MUST be sized by the constant — during the 2026-07-03
+    // capacity raise the array briefly stayed at a hardcoded 64 while the
+    // index arithmetic used 1024; the socket I/O thread's signal writes then
+    // scribbled past the array into adjacent members (deterministic SIGSEGV
+    // ~1.1B steps into the socket suite, faultAddr 0xA0000000A).
     static constexpr int kPendingSignalCapacity = 1024;
-    std::array<std::atomic<int>, 64> pendingSignals_{};
+    std::array<std::atomic<int>, kPendingSignalCapacity> pendingSignals_{};
     std::atomic<int> pendingSignalHead_{0};  // producer writes here (mod capacity)
     std::atomic<int> pendingSignalTail_{0};  // consumer reads here (mod capacity)
 
@@ -3257,6 +3262,8 @@ private:
     PrimitiveResult primitiveInitializeNetwork(int argCount);         // Named: SocketPlugin
     PrimitiveResult primitiveResolverStatus(int argCount);            // Named: SocketPlugin
     PrimitiveResult primitiveResolverLocalAddress(int argCount);      // Named: SocketPlugin
+    PrimitiveResult primitiveResolverHostNameSize(int argCount);      // Named: SocketPlugin
+    PrimitiveResult primitiveResolverHostNameResult(int argCount);    // Named: SocketPlugin
     PrimitiveResult primitiveResolverStartNameLookup(int argCount);   // Named: SocketPlugin
     PrimitiveResult primitiveResolverNameLookupResult(int argCount);  // Named: SocketPlugin
     PrimitiveResult primitiveResolverAbortLookup(int argCount);       // Named: SocketPlugin

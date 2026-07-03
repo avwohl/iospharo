@@ -364,6 +364,15 @@ void socketPluginInit() {
 #endif
 }
 
+extern "C" int sp_getLocalHostName(char* buf, int len) {
+    // gethostname is identical on winsock (post-WSAStartup, done in
+    // platformInit) and POSIX.  Guarantee NUL termination either way.
+    if (!buf || len <= 0) return -1;
+    int rc = gethostname(buf, len);
+    buf[len - 1] = '\0';
+    return rc;
+}
+
 void socketPluginShutdown() {
     if (!gIORunning.load()) return;
 

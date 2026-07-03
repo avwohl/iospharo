@@ -44,4 +44,12 @@ typedef struct {
 void socketPluginInit(void);
 void socketPluginShutdown(void);
 
+// Local host name via gethostname() (winsock/POSIX headers live inside the
+// plugin).  Returns 0 on success; buf is always NUL-terminated.  Backs
+// primitiveResolverHostNameSize/Result (NetNameResolver localHostName).
+#ifdef __cplusplus
+extern "C"
+#endif
+int sp_getLocalHostName(char* buf, int len);
+
 #endif // SOCKET_PLUGIN_H

@@ -29643,6 +29643,41 @@ PrimitiveResult Interpreter::primitiveResolverStatus(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Declared in plugins/SocketPlugin.h; declared locally to avoid pulling the
+// plugin's sqVirtualMachine.h into this TU.
+extern "C" int sp_getLocalHostName(char* buf, int len);
+
+// primitiveResolverHostNameSize (0 args): byte length of the local host
+// name.  Image protocol: NetNameResolver localHostName allocates a String
+// of this size then fills it via primitiveResolverHostNameResult.  Missing
+// prims made localHostName fall back to 'localhost'
+// (NetNameResolverTest>>testLocalHostName, run-#6 triage 2026-07-03).
+PrimitiveResult Interpreter::primitiveResolverHostNameSize(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    char buf[256];
+    if (sp_getLocalHostName(buf, sizeof(buf)) != 0) return PrimitiveResult::Failure;
+    popN(1);  // pop receiver
+    push(Oop::fromSmallInteger(static_cast<int64_t>(strlen(buf))));
+    return PrimitiveResult::Success;
+}
+
+// primitiveResolverHostNameResult (1 arg: a byte String sized by the prim
+// above): fills it with the local host name; answers the receiver.
+PrimitiveResult Interpreter::primitiveResolverHostNameResult(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop strOop = stackValue(0);
+    if (!strOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* hdr = strOop.asObjectPtr();
+    if (!hdr->isBytesObject()) return PrimitiveResult::Failure;
+    char buf[256];
+    if (sp_getLocalHostName(buf, sizeof(buf)) != 0) return PrimitiveResult::Failure;
+    size_t n = strlen(buf);
+    if (memory_.byteSizeOf(strOop) < n) return PrimitiveResult::Failure;
+    memcpy(hdr->bytes(), buf, n);
+    popN(1);  // pop arg, leave receiver
+    return PrimitiveResult::Success;
+}
+
 // primitiveResolverLocalAddress
 // Stack: receiver -> ByteArray (4 bytes, IPv4 address)
 PrimitiveResult Interpreter::primitiveResolverLocalAddress(int argCount) {
