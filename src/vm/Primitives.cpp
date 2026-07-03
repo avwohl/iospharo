@@ -31164,10 +31164,17 @@ static std::thread::id g_vmThreadId;
 // The libffi closure handler - called when C code invokes a registered callback.
 // Uses sigsetjmp/siglongjmp to re-enter the Smalltalk interpreter to process the
 // callback, then returns to C with the computed result.
+
+// Debug-only: monotonic ms for xtcb latency tracing (callbackDebug gated).
+static long long xtcbNowMs() {
+    return (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* userdata) {
     CallbackInfo* cbInfo = static_cast<CallbackInfo*>(userdata);
     if (g_debug.callbackDebug) {
-        fprintf(stderr, "[CALLBACK-HANDLER] enter ret=%p args=%p\n", ret, (void*)args);
+        fprintf(stderr, "[CALLBACK-HANDLER] t=%lld enter ret=%p args=%p\n", xtcbNowMs(), ret, (void*)args);
         fflush(stderr);
     }
 
@@ -31300,8 +31307,8 @@ void Interpreter::adoptPendingWorkerCallbacks() {
             xtcb::g_active[pending->vmcc] = pending;
         }
         if (g_debug.callbackDebug) {
-            fprintf(stderr, "[XTCB-ADOPT] vmcc=%p depth=%d\n",
-                    (void*)pending->vmcc, callbackDepth_);
+            fprintf(stderr, "[XTCB-ADOPT] t=%lld vmcc=%p depth=%d\n",
+                    xtcbNowMs(), (void*)pending->vmcc, callbackDepth_);
             fflush(stderr);
         }
         // Wake the image's TFCallbackQueue process.  Ring + periodic drain
@@ -31345,7 +31352,7 @@ PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
     if (g_debug.callbackDebug) {
-        fprintf(stderr, "[CALLBACK-READNEXT] callbackDepth=%d\n", callbackDepth_);
+        fprintf(stderr, "[CALLBACK-READNEXT] t=%lld callbackDepth=%d\n", xtcbNowMs(), callbackDepth_);
         fflush(stderr);
     }
     if (callbackDepth_ > 0) {
@@ -31533,7 +31540,7 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
         }
         if (pending) {
             if (g_debug.callbackDebug) {
-                fprintf(stderr, "[XTCB-RETURN] vmcc=%p — waking worker\n", (void*)vmcc);
+                fprintf(stderr, "[XTCB-RETURN] t=%lld vmcc=%p — waking worker\n", xtcbNowMs(), (void*)vmcc);
                 fflush(stderr);
             }
             {

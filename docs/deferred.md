@@ -562,6 +562,37 @@ The [STATE-DUMP] wedge diagnostic is armed but this run never reached
 the post-completion phase (timeout kill), so the wedge remains
 un-diagnosed — rerun with TIMEOUT=9000 to get a completing run.
 
+### TFFI v2 residual: testCallbackInLoop(UsingWorker) order-dependent slowdown
+v2 forwarding landed 2026-07-03 (commit 6280deb8): worker/native-thread
+callbacks forward to the VM thread (xtcb queue -> periodic-check adoption
+-> image callback semaphore -> primitiveCallbackReturn wakes the parked
+thread), plus interruptible idle (prim 230 condvar wait, wakeIdleSleep
+from signalExternalSemaphore/adoption) and 25 TestLibrary callback
+fixtures (NB: scripts/build-windows.sh does NOT rebuild TestLibrary.dll —
+run `ninja TestLibrary` in build-win).  Recovered: InCallbacks 36/36 +
+derived 12/12 + Concurrency 2/2 + CallbackTest 12..13/13 (incl. the
+raw-native-thread callbackFromAnotherThread test).  ONE residual vs
+stock's 13/13:
+- [ ] testCallbackInLoop(UsingWorker) trips TestTookTooMuchTime when the
+  OTHER UsingWorker tests run first (standalone: 1.05s PASS).  Evidence
+  (timestamped xtcb traces): adoption and READNEXT are fast; the 5-9 s
+  per callback sits between READNEXT and primitiveCallbackReturn — the
+  image-side TFCallbackForkRunStrategy process (forkAt: highIOPriority-1
+  = P79) stalls before/while executing the invocation.  Meanwhile the VM
+  is idle-dominated (~110K steps/s vs normal 100M+).  `timeLimit: 100
+  seconds` is NOT honored in this in-suite state (defect at exactly
+  10.03s).  PHARO_DET_SCHED wedges the repro entirely (det-sched starves
+  cross-thread wakes — the features conflict by design).  Next: sample
+  the scheduler during the stall (image-side high-pri monitor printing
+  runnable queues + what the P79 process waits on; suspect stackProtect
+  Mutex residue from prior tests' time-limit-killed processes, or a
+  wakeHighestPriority miss).  Repro:
+    pre := TFUFFICallbackTest buildSuite tests select: [:x |
+      (x printString includesSubstring: 'UsingWorker') and: [
+      (x printString includesSubstring: 'InLoop(') not]].
+    pre do: [:x | x run].
+    "now testCallbackInLoop(UsingWorker) -> 10s defect"
+
 ### Silent-cap audit residue (2026-07-03; confirmed-but-deferred findings)
 The 41-agent audit (commit bd306e47 fixed the actionable set; e631d780
 fixed the ring-size regression it introduced) confirmed these additional
