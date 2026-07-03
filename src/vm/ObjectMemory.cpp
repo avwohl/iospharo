@@ -4124,6 +4124,19 @@ void ObjectMemory::copyAndUnmark() {
     }
     // gcCopyGeneration was already incremented at function start
 
+    // Parallel-walk integrity: every saved first field planted by
+    // planCompactSavingForwarders must be consumed here, in order.  A
+    // mismatch means some object's slot 0 was restored from the WRONG
+    // saved entry (and every later restore is off by the same amount) —
+    // silent wholesale slot-0 corruption.
+    if (savedFieldPtr != savedFirstFieldsSpace_.top) {
+        fprintf(stderr,
+            "[GC-COMPACT-DESYNC] copyAndUnmark consumed %td saved fields but "
+            "planCompact saved %td — slot-0 restores are misaligned!\n",
+            (ptrdiff_t)(savedFieldPtr - savedFirstFieldsSpace_.start),
+            (ptrdiff_t)(savedFirstFieldsSpace_.top - savedFirstFieldsSpace_.start));
+    }
+
     // Update oldSpaceFree_ to after the last live object
     oldSpaceFree_ = toFinger;
 }
