@@ -532,12 +532,24 @@ artifact (27/27 standalone); OCClassBuilderTest = stock fails identically
   entries and/or method-cache entries are visited as STRONG marks during
   fullGC and only flushed AFTER (recoverAfterGC / primitive sites) — a
   one-cycle decay for each.  A naive pre-mark flushMethodCache in fullGC
-  REGRESSED ObsoleteTest failures into errors (reverted) — the proper fix
-  is weak-root treatment: skip these caches in the MARK visit, keep them
-  in the pointer-UPDATE visit, purge dead keys mid-GC while mark bits are
-  valid.  Same treatment would eventually cover the JIT count-map /
-  failed-map keys and JITMethod compiledMethodOop headers (true
-  forever-pins for dead methods, bounded only by code-zone eviction).
+  REGRESSED ObsoleteTest failures into errors (reverted 2026-07-03; step
+  0 next session: capture what those errors actually were).  Proper fix —
+  weak-root treatment, concrete plan:
+  1. forEachRoot gains a scope flag (All | StrongOnly).  The weak group =
+     method-cache entries, IC method/selector slots, JIT count-map +
+     failed-map keys, JITMethod header compiledMethodOop.  markPhase
+     (ObjectMemory.cpp:3816 area) visits StrongOnly; the pointer-update
+     pass (line ~2032 area) keeps All so survivors get moved pointers.
+  2. New hook after processMarkStack + ephemeron fixpoint (mark bits
+     final, BEFORE plan/compact): purgeDeadCacheRoots() — void unmarked
+     method-cache entries, reset IC slots with unmarked method/selector,
+     tombstone unmarked count/failed-map keys, invalidate JITMethods
+     whose compiledMethodOop died (eviction reclaims later).
+  3. Keep the pre-compact SCAVENGE treating all roots strong initially
+     (young objects referenced only by caches must tenure, not dangle);
+     revisit after the fullGC path is proven.
+  Payoff beyond the test: dead classes/methods stop being pinned by VM
+  caches entirely (IDE class-redefinition memory leak).
 - [ ] NetNameResolverTest>>testLocalHostName (ours F, stock P) —
   localhost name resolution on winsock; likely a small prim gap.
 - [ ] MicTextPresenterTest>>testHugeFontIsHuge (+ Microdown twin;
