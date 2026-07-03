@@ -492,6 +492,17 @@ ProcessTest, the Weak* family) are now runnable and green. The run went
 WEDGED post-completion (results + completion marker written, then the
 exit path idled at ~800 steps/s until killed) — eval-mode shutdown after
 the full run, worth a look if it recurs.
+RUN #3 (2026-07-03, after the TFFI-worker + diagnostics commits):
+**483 classes / 7874 tests / 7586 pass, 6F/40E — deepest run yet**
+(killed by the 5400s outer timeout mid-Fuel, not by any hang; the
+per-test watchdog runner is the bottleneck). All 46 deviations are the
+SAME known set: 27 Cairo, 15 Cly* + 3 FL* runner-miscounted EXPECTED
+FAILURES (all pass standalone: FL* 76/79+3EF each), 1 DebugPointTest
+(stock fails too). Zero Weak* deviations at suite scale — the GC-pin
+fixes hold. True VM-attributable deviations outside Cairo: ZERO.
+The [STATE-DUMP] wedge diagnostic is armed but this run never reached
+the post-completion phase (timeout kill), so the wedge remains
+un-diagnosed — rerun with TIMEOUT=9000 to get a completing run.
 
 ### Primitive error-signal fidelity (cross-platform, pre-existing)
 (FileAttributesPluginPrimsTest: fixed 2026-07-02 — see the [x] entry above.)
@@ -899,8 +910,15 @@ Historical scoping notes (how the breakthrough was reached) follow:
     World should draw -> SDL_RenderPresent -> gDisplaySurface (PPM-verifiable).
 
 ### Diagnostics / platform features (honest stubs)
-- [ ] **Sampling profiler** (`Profiler.cpp`) — `enable()` is a no-op on Windows
-  (POSIX SIGPROF/setitimer). `PHARO_PROFILE=1` prints "not supported on Windows".
+- [x] **Sampling profiler — Windows backend DONE (2026-07-03, commit
+  0f3bf93c).** Sampler thread wakes every PHARO_PROFILE_INTERVAL_US
+  (default 1ms), gates on the VM thread's consumed CPU time via
+  GetThreadTimes (emulating ITIMER_PROF's don't-sample-while-idle), and
+  records via the same tolerated-race single-word read of method_ the
+  POSIX SIGPROF handler uses. Runtime-verified: PHARO_PROFILE=1 with
+  interpreted 32 benchFib → 381 samples, benchFib top at 19.9%,
+  dropped-when-idle working. (Cosmetic: some entries print "?>>?" when
+  class/selector resolution fails — same as POSIX.)
 - [ ] **SIGSEGV crash recovery** (`test_load_image.cpp:804` `pharoWinCrashHandler`)
   — Windows installs a Vectored Exception Handler that DUMPS fault info (code,
   fault addr, rip, rva, step count, active method, RtlCaptureStackBackTrace) but
