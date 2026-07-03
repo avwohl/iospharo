@@ -10969,11 +10969,19 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Walk from self (the Smalltalk fallback does: context := self)
+    // Walk from self (the Smalltalk fallback does: context := self).
+    // No depth cap: legitimate chains can be arbitrarily deep, and a Break
+    // signaled under a 10000-deep recursion must still reach the handler the
+    // debugger spliced in below it (an old 10000 cap here returned nil and
+    // made FastStepThroughTest>>testStepThroughLonger spin forever on an
+    // unhandled Break). Only a CYCLIC sender chain — heap corruption — is
+    // guarded, via Floyd tortoise-and-hare.
     Oop ctx = startContext;
-    int limit = 10000;  // safety limit
+    Oop slowCtx = startContext;
+    bool advanceSlow = false;
+    bool cycle = false;
 
-    while (ctx.isObject() && !ctx.isNil() && limit-- > 0) {
+    while (ctx.isObject() && !ctx.isNil()) {
         // Check if this context's method has primitive 199 (handler/signaling marker)
         Oop method = memory_.fetchPointer(3, ctx);  // method = slot 3
         if (method.isObject() && !method.isNil()) {
@@ -10991,16 +10999,25 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
             }
         }
         ctx = memory_.fetchPointer(0, ctx);  // sender = slot 0
+        if (advanceSlow) {
+            slowCtx = memory_.fetchPointer(0, slowCtx);
+            if (ctx.isObject() && !ctx.isNil() && slowCtx.rawBits() == ctx.rawBits()) {
+                fprintf(stderr, "[VM] primitiveFindHandlerContext: cyclic sender chain at 0x%llx\n",
+                        (unsigned long long)ctx.rawBits());
+                cycle = true;
+                break;
+            }
+        }
+        advanceSlow = !advanceSlow;
     }
 
     // Not found - return nil.  DIAG: dump the walked chain to pin the
     // x86-JIT sender-chain corruption (cycle vs truncated-before-handler).
     if (GET_DEBUG_BOOL(PHARO_T1_TRACE_HANDLER)) {
         static int calls = 0;
-        bool exhausted = (limit <= 0);
-        if (exhausted || (++calls % 4000) == 1) {
-            fprintf(stderr, "[HCTX] not-found (exhausted=%d call#%d) chain:\n",
-                    exhausted, calls);
+        if (cycle || (++calls % 4000) == 1) {
+            fprintf(stderr, "[HCTX] not-found (cycle=%d call#%d) chain:\n",
+                    cycle, calls);
             Oop c = startContext;
             for (int i = 0; i < 30 && c.isObject() && !c.isNil(); i++) {
                 Oop m = memory_.fetchPointer(3, c);
@@ -11058,11 +11075,15 @@ PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Walk from callee's sender
+    // Walk from callee's sender.  No depth cap (same rationale as
+    // primitiveFindHandlerContext above: deep chains are legitimate; an
+    // ensure: 10000+ frames down must still be found during unwind).  Only
+    // a cyclic sender chain is guarded, via Floyd tortoise-and-hare.
     Oop ctx = memory_.fetchPointer(0, calleeContext);  // sender = slot 0
-    int limit = 10000;  // safety limit
+    Oop slowCtx = ctx;
+    bool advanceSlow = false;
 
-    while (ctx.isObject() && !ctx.isNil() && limit-- > 0) {
+    while (ctx.isObject() && !ctx.isNil()) {
         // If we reached the stop context, not found
         if (ctx.rawBits() == stopContext.rawBits()) {
             break;
@@ -11079,6 +11100,15 @@ PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
             }
         }
         ctx = memory_.fetchPointer(0, ctx);  // sender = slot 0
+        if (advanceSlow) {
+            slowCtx = memory_.fetchPointer(0, slowCtx);
+            if (ctx.isObject() && !ctx.isNil() && slowCtx.rawBits() == ctx.rawBits()) {
+                fprintf(stderr, "[VM] primitiveFindNextUnwindContext: cyclic sender chain at 0x%llx\n",
+                        (unsigned long long)ctx.rawBits());
+                break;
+            }
+        }
+        advanceSlow = !advanceSlow;
     }
 
     // Not found - return nil

@@ -876,30 +876,28 @@ Historical scoping notes (how the breakthrough was reached) follow:
   stock's plain <<3 (31 -> 0xF8), not full-range *255/31 — the golden-file
   byte comparison catches the 1-3/channel difference
   (testPngEncodingColors16).
-- [ ] **Step-through debugger tests hang (pre-existing)** — BOTH
-  `FastStepThroughTest` and `StepThroughTest` hang; the specific test is
-  `testStepThroughLonger` (10 of 11 Fast tests pass; bisect script
-  /c/tmp/fst-bisect.st). Bisect-verified NOT caused by primitive 218.
-  Investigation so far (2026-07-02, probes in /c/tmp/fst-*.st):
-  - It is a BUSY spin (JIT sends grow forever), not a deadlock.
-  - Fast mode path: DebugSession>>fastStepThrough: -> FastStepThroughController
-    prepareContextForStepThrough: (wraps blocks in the suspended context's
-    temps with HaltingBlocks — i.e. MUTATES a materialized context) ->
-    completeStep:inProcess: resumes the process at full speed and waits for
-    the halting block to fire. Instrumented Context>>stepToHome: is never
-    reached in fast mode. Prime suspect: temp mutation on a materialized
-    context is not honored when our VM resumes the frame (savedFrames_ /
-    context write-back), so the halt never fires; secondary suspect: the
-    controller's findNextContext: walk loops.
-  - Slow mode (StepThroughTest, Context>>stepToHome: simulation loop with
-    `home == ctxt home` identity stop) also hangs >300 s.
-  - SIDE FINDING: while probing, image-side Delays never fired while the
-    step-through machinery spun (probes M5/M6 in fst-sample2/3) even from a
-    priority-60 waiter — yet a minimal delay-under-spin repro
-    (/c/tmp/delay-spin.st, P60 waiter over P40 spinner) PASSES. Whatever the
-    debugged process's effective priority/scheduling is during
-    completeStep:/evaluate:onBehalfOf:, it starves the delay machinery in
-    eval mode — characterize with forkAt: 79/80 spinners.
-  Full-suite runs should exclude StepThroughTest/FastStepThroughTest (and
-  GUI-opening tests) until fixed. Needs an interactive debugging session
-  (PHARO_DET_SCHED + targeted VM tracing of context mutation write-back).
+- [x] **Step-through debugger tests hang — FIXED (2026-07-02).**
+  `FastStepThroughTest` 11/11, `StepThroughTest` 11/11 (both previously hung
+  on `testStepThroughLonger`). ROOT CAUSE: `primitiveFindHandlerContext`
+  (prim 197) capped its sender-chain walk at 10000 ("safety limit") and
+  returned NIL when the chain was deeper. `testStepThroughLonger` recurses
+  `evalBlock:afterLoop:` 10000 deep; the `Break` signaled by the debugger's
+  HaltingBlock (fast mode) / the spliced `contextOn:do:` handler (slow mode)
+  sat BELOW those 10000 frames, so the handler search exhausted the cap,
+  the image saw "no handler", the Break surfaced as an unhandled-exception
+  dump, and the step-through machinery never regained control — the busy
+  spin. Depth-bisect nailed it: N=9950 PASS / N=10000 FAIL (recursion +
+  ~50 machinery frames crosses the cap). The earlier "temp mutation not
+  honored" suspicion was WRONG — the log showed Break firing, so the
+  HaltingBlock replacement worked; the handler LOOKUP was the break.
+  FIX: removed the arbitrary cap from prim 197 AND prim 195
+  (findNextUnwindContext, same latent bug for `ensure:` blocks under deep
+  recursion); the walk now ends only at nil, guarded against genuinely
+  cyclic (corrupt) chains via Floyd tortoise-and-hare + one-time stderr
+  warning. Regression battery: ExceptionTest 47/47, ContextTest 34/34,
+  StepIntoTest 7/7, SUnitTest 35/35.
+  DISCOVERED EN ROUTE (pre-existing, stock passes 10/10):
+- [ ] **StepOverTest>>testStepOverNonErrorExceptionSignalWithHandlerDeeperInTheContextStack
+  fails** (ours 9/10, stock 10/10). Same debugger-stepping family; shallow
+  stack, so unrelated to the removed cap (verified identical failure before
+  the prim-197 change). Investigate next.
