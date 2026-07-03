@@ -10887,6 +10887,55 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     memory_.selectorOf(method).c_str(),
                     memory_.classNameOf(rcvr).c_str(), argCount);
         }
+        // PHARO_DUMP_AT_ACT: at the Nth traced activation, snapshot the
+        // nearest convertStorePop frame's sequence collection — a
+        // same-logical-moment capture for failing-vs-passing diffs.
+        static long long actCount = 0;
+        if (__builtin_expect(++actCount == GET_DEBUG_INT(PHARO_DUMP_AT_ACT), 0)) {
+            FILE* df = fopen("C:/tmp/actdump.txt", "w");
+            if (df) {
+                fprintf(df, "activation %lld, old=[%p..) eden=[%p..)\n",
+                        actCount, (void*)memory_.oldSpaceStart(),
+                        (void*)memory_.newSpaceStart());
+                for (size_t i = frameDepth_; i-- > 0 && i + 20 > frameDepth_;) {
+                    SavedFrame& f = savedFrames_[i];
+                    std::string sel = memory_.selectorOf(f.savedMethod);
+                    fprintf(df, "frame[%zu] %s\n", i, sel.c_str());
+                    if (sel == "convertStorePop:forinstructionSequence:" ||
+                        sel == "visitSequence:") {
+                        Oop seqArg = *(f.savedFP + (sel[0] == 'c' ? 2 : 1));
+                        fprintf(df, "seqArg=%llx cls=%s\n",
+                                (unsigned long long)seqArg.rawBits(),
+                                memory_.classNameOf(seqArg).c_str());
+                        if (seqArg.isObject() && seqArg.rawBits() > 0x10000) {
+                            ObjectHeader* sh = seqArg.asObjectPtr();
+                            for (size_t s = 0; s < sh->slotCount(); s++) {
+                                Oop sv = sh->slotAt(s);
+                                if (memory_.classNameOf(sv) == "OrderedCollection") {
+                                    ObjectHeader* oc = sv.asObjectPtr();
+                                    fprintf(df, "OC first=%llx last=%llx\n",
+                                            (unsigned long long)oc->slotAt(1).rawBits(),
+                                            (unsigned long long)oc->slotAt(2).rawBits());
+                                    Oop arr = oc->slotAt(0);
+                                    if (arr.isObject() && arr.rawBits() > 0x10000) {
+                                        ObjectHeader* ah = arr.asObjectPtr();
+                                        for (size_t e = 0; e < ah->slotCount(); e++) {
+                                            Oop el = ah->slotAt(e);
+                                            fprintf(df, "  el[%zu] cls=%s young=%d\n", e,
+                                                    memory_.classNameOf(el).c_str(),
+                                                    el.isObject() && memory_.isYoung(el) ? 1 : 0);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+                fclose(df);
+                fprintf(stderr, "[ACT-DUMP] written at activation %lld\n", actCount);
+            }
+        }
     }
     // PHARO_OCIR_ERROR_DUMP: identity-mismatch forensics for the Opal
     // convertStorePop failure — when #error activates on an OCIRSequence,

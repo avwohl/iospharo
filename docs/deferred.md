@@ -238,9 +238,32 @@ isolation (no suite watchdog):
       the exact pre-conversion array content and localize which 8
       positions held what before the loop; then diff that against what
       the visitor must have seen (the recorded pairs) to pin the rewrite
-      window to either [tenure..first-shift] or mid-loop. Also compare a
-      PASSING run's array content at the same point (PHARO_YG_SKIP_SCAV_FROM=12)
-      — the delta IS the corruption.
+      window to either [tenure..first-shift] or mid-loop. DONE (PHARO_DUMP_AT_ACT=28600, actdump-FAIL vs
+      actdump-PASS): at the identical traced activation, FAIL's sequence
+      has lastIndex 66 vs PASS 65, and where PASS holds
+      [PushLiteral,StoreRemoteTemp,Pop]x4 + PushFullClosure x2, FAIL holds
+      the triplets x3 (phase-shifted) + PushFullClosure x6 — one triplet
+      CONSUMED, the closure-pair GROWN by 4. That is the arithmetic
+      signature of FOUR REPLAYED shift-left operations: each re-executed
+      removeIndex: shift over a region containing an adjacent [C,C] pair
+      extends the run downward by one and eats one element below.
+      CONCLUSION: the interpreter RE-EXECUTES a bytecode range (including
+      the prim-105 shift send) after a GC at request #12 — partial replay
+      (the lastIndex arithmetic suggests the shift replays without a
+      matching extra decrement, i.e. resumption lands mid-removeIndex:).
+      Replayed shifts are idempotent on run-free regions (why 3800 tests
+      pass); only a shifted region containing adjacent equal refs makes
+      the replay visible. PRIME SUSPECT: the ip/offset round-trip or
+      resume-from-context restoring execution to a point BEFORE a
+      completed send when the scavenge safe point fires near a
+      primitive-triggering bytecode; the current-frame GC-VERIFY byte
+      compare cannot catch a systematic restore-to-same-send. NEXT: log
+      (method, bcOffset) at prepareForGC/afterGC for the current frame at
+      request #12 and single-step-trace the following ~200 bytecodes in
+      FAIL vs PASS (PHARO_TRACE_EXTENT_SEL or a new bytecode-window trace)
+      to catch the replayed range red-handed; also audit executeFromContext
+      pc->ip conversion for an off-by-one vs the pc convention (pc points
+      AT the next unexecuted bytecode, 1-based).
       Remaining leads (in order):
       (a) ALL run detectors check LOWER neighbors ([i-1],[i-2]) — a
       DESCENDING fill evades every one of them, and
