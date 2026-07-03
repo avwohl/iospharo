@@ -637,6 +637,9 @@ private:
         // GC: IP offsets (set by prepareForGC, read by afterGC)
         ptrdiff_t savedIPOffset;
         ptrdiff_t savedBytecodeEndOffset;
+        // GC verify (PHARO_GC_FRAME_VERIFY): byte at savedIP stashed by
+        // prepareForGC, checked after afterGC rebuilds savedIP.
+        uint8_t gcVerifyByte;
     };
     static constexpr size_t MaxFrameDepth = 65536;
     // Soft recursion limit.  Raised 4096 -> 56000 (2026-06-19): the

@@ -648,7 +648,7 @@ public:
         };
         scanRegion(permSpaceStart_, permSpaceEnd_);
         scanRegion(oldSpaceStart_, oldSpaceFree_);
-        scanRegion(edenStart_, edenFree_);
+        scanRegion(edenAllocBase_, edenFree_);
     }
 
     /// Return the first accessible object in heap (perm → old → eden)
@@ -713,7 +713,7 @@ public:
     /// Space::New case. The caller must fall back to old space on nullptr.
     ObjectHeader* allocateRawYoung(size_t size) {
         if (!enableYoungGen_) return nullptr;
-        if (edenFree_ + size <= survivorStart_) {
+        if (edenFree_ + size <= edenAllocLimit_) {
             ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(edenFree_);
             edenFree_ += size;
             return obj;
@@ -758,6 +758,13 @@ private:
     uint8_t* newSpaceEnd_ = nullptr;
     uint8_t* edenStart_ = nullptr;
     uint8_t* edenFree_ = nullptr;       // Next allocation in eden
+    // Live eden allocation window.  Normally [edenStart_, survivorStart_);
+    // under PHARO_EDEN_ROTATE it is one half of eden, alternating per
+    // scavenge with the retired half page-protected (stale-young-ref
+    // detector).  ALL live-eden walks and bounds checks use these, never
+    // edenStart_/survivorStart_ directly.
+    uint8_t* edenAllocBase_ = nullptr;
+    uint8_t* edenAllocLimit_ = nullptr;
     uint8_t* survivorStart_ = nullptr;
 
     // Class table.

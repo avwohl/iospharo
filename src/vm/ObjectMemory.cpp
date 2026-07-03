@@ -123,14 +123,20 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
     // Split new space into eden and survivor
     size_t edenSize = (config.newSpaceSize * config.edenRatio) / 100;
     edenStart_ = newSpaceStart_;
-    edenFree_ = edenStart_;
     survivorStart_ = newSpaceStart_ + edenSize;
+    edenAllocBase_ = edenStart_;
+    edenAllocLimit_ = survivorStart_;
+    if (GET_DEBUG_BOOL(PHARO_EDEN_ROTATE)) {
+        size_t half = (static_cast<size_t>(survivorStart_ - edenStart_) / 2) & ~4095ULL;
+        edenAllocLimit_ = edenStart_ + half;
+    }
+    edenFree_ = edenAllocBase_;
 
     // Publish the eden bump-cell addresses for the JIT inline-alloc emit
     // (PHARO_T1_INLINE_NEW_ASM). One ObjectMemory instance per VM, and these
     // fields' addresses are stable after construction, so the emit bakes them.
     g_jitEdenFreeCell = &edenFree_;
-    g_jitSurvivorStartCell = &survivorStart_;
+    g_jitSurvivorStartCell = &edenAllocLimit_;
 
     // Initialize class table
     classTable_.resize(config.classTableSize, Oop::nil());
@@ -166,6 +172,14 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     size_t bodySize = slotCount * sizeof(Oop);
     size_t totalSize = headerSize + bodySize;
     totalSize = (totalSize + 7) & ~7ULL;
+    // Spur minimum object size: 16 bytes.  ObjectHeader::totalSize() and
+    // every linear heap walker (ObjectScanner, allObjectsDo) advance 16 for
+    // a 0-slot object; allocating it as 8 packed the NEXT object 8 bytes
+    // earlier than walkers expect, desyncing every linear walk downstream
+    // (become's write-through, the scavenger's old-space root scan via the
+    // eden-full old-space fallback) — the OpalCompiler large-method
+    // corruption root cause (2026-07-02).
+    if (totalSize < 16) totalSize = 16;
 
     // Allocate in eden (young) for pointer-slot objects except
     // overflow-slot (>= 255 slots, large/stable objects).  Overflow
@@ -203,6 +217,11 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     Oop nilValue = (nilObject_.rawBits() != 0) ? nilObject_ : Oop::nil();
     for (size_t i = 0; i < slotCount; ++i) {
         slots[i] = nilValue;
+    }
+    // Zero the min-16 pad word of a 0-slot object so it never carries
+    // stale bytes (kept tenure-memcpy'd garbage out of diagnostics).
+    if (slotCount == 0) {
+        reinterpret_cast<uint64_t*>(slots)[0] = 0;
     }
 
     bytesAllocated_ += totalSize;
@@ -251,6 +270,7 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
 
     size_t totalSize = headerSize + slotCount * 8;
     totalSize = (totalSize + 7) & ~7ULL;
+    if (totalSize < 16) totalSize = 16;  // Spur minimum (see allocateSlots)
 
     // Allocate in old space (no generational GC — eden is reserved for compacting GC scratch)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
@@ -267,6 +287,9 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
     initializeHeader(obj, classIndex, slotCount, format);
 
     std::memset(obj->bytes(), 0, slotCount * 8);
+    if (slotCount == 0) {
+        reinterpret_cast<uint64_t*>(obj->slots())[0] = 0;  // min-16 pad word
+    }
 
     bytesAllocated_ += totalSize;
     return oopFromPointer(obj);
@@ -307,6 +330,7 @@ Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
 
     size_t totalSize = headerSize + slotCount * 8;
     totalSize = (totalSize + 7) & ~7ULL;
+    if (totalSize < 16) totalSize = 16;  // Spur minimum (see allocateSlots)
 
     // Allocate in old space (no generational GC — eden is reserved for compacting GC scratch)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
@@ -322,6 +346,9 @@ Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
 
     initializeHeader(obj, classIndex, slotCount, ObjectFormat::Indexable64);
     std::memset(obj->bytes(), 0, slotCount * 8);
+    if (slotCount == 0) {
+        reinterpret_cast<uint64_t*>(obj->slots())[0] = 0;  // min-16 pad word
+    }
 
     bytesAllocated_ += totalSize;
     return oopFromPointer(obj);
@@ -349,6 +376,7 @@ Oop ObjectMemory::allocateCompiledMethod(uint32_t classIndex, size_t numSlots, s
 
     size_t totalSize = headerSize + totalSlots * 8;
     totalSize = (totalSize + 7) & ~7ULL;
+    if (totalSize < 16) totalSize = 16;  // Spur minimum (see allocateSlots)
 
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
     if (!obj) return nilObject_;
@@ -1099,6 +1127,32 @@ void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
         }
     }
 
+    // Run-formation forensics (PHARO_WATCH_OLDOFF armed): an object ref
+    // written into an Array slot whose two predecessors already hold the
+    // SAME ref — the smear signature — with a native backtrace naming the
+    // writer.  storePointer is the choke point for all C++ writers.
+    if (__builtin_expect(GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0, 0)) {
+        extern uint64_t g_scavengeCount;
+        if (g_scavengeCount >= 10 && index >= 2 &&
+            value.isObject() && value.rawBits() > 0x10000 && !value.isNil() &&
+            header->format() == ObjectFormat::Indexable) {
+            Oop* sl = header->slots();
+            if (sl[index - 1].rawBits() == value.rawBits() &&
+                sl[index - 2].rawBits() == value.rawBits()) {
+                static int runFormN = 0;
+                if (++runFormN <= 8) {
+                    fprintf(stderr,
+                        "[RUN-FORM] arr=%p idx=%zu val=%llx scav=%llu\n",
+                        (void*)header, index,
+                        (unsigned long long)value.rawBits(),
+                        (unsigned long long)g_scavengeCount);
+                    void dumpCxxBacktrace(const char* tag);
+                    dumpCxxBacktrace("RUN-FORM");
+                }
+            }
+        }
+    }
+
     header->slotAtPut(index, value);
     // Shadow-slot detector (PHARO_SHADOW_SLOTS): track the write.
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {
@@ -1439,6 +1493,11 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
         return false;
     }
 
+    extern uint64_t g_scavengeCount;
+    size_t becomeReplacedCount = 0;
+    const bool becomeTrace =
+        GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0 && g_scavengeCount >= 10;
+
     allObjectsDo([&](Oop obj) {
         if (!obj.isObject()) return;
         ObjectHeader* header = obj.asObjectPtr();
@@ -1468,9 +1527,26 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
         for (size_t i = 0; i < slots; ++i) {
             if (header->slotAt(i) == obj1) {
                 header->slotAtPut(i, obj2);
+                becomeReplacedCount++;
+                if (becomeTrace && becomeReplacedCount <= 12) {
+                    fprintf(stderr,
+                        "[BECOME-SLOT] holder=%p holderCls=%u slot=%zu\n",
+                        (void*)header, header->classIndex(), i);
+                }
             }
         }
     });
+
+    if (becomeTrace) {
+        static int becomeN = 0;
+        if (++becomeN <= 60) {
+            fprintf(stderr,
+                "[BECOME] #%d scav=%llu obj1=%llx obj2=%llx replaced=%zu\n",
+                becomeN, (unsigned long long)g_scavengeCount,
+                (unsigned long long)obj1.rawBits(),
+                (unsigned long long)obj2.rawBits(), becomeReplacedCount);
+        }
+    }
 
     return true;
 }
@@ -1565,6 +1641,11 @@ uint32_t ObjectMemory::generateHash() {
 
 uint64_t g_scavengeCount = 0;  // total scavenges (A/B diagnostic)
 GCResult ObjectMemory::scavenge() {
+    // PHARO_SCAV_QUARANTINE_AT: once eden is quarantined nothing young
+    // exists anymore (allocation falls back to old space) — later scavenge
+    // requests are no-ops, and running one would touch protected pages.
+    static bool scavQuarantineActive = false;
+    if (scavQuarantineActive) return GCResult{0, 0, 0};
     g_scavengeCount++;
     // Copying scavenge: tenure all reachable young objects to old
     // space, reset eden.  Unreachable young objects vanish when
@@ -1584,12 +1665,12 @@ GCResult ObjectMemory::scavenge() {
     GCResult result{0, 0, 0};
 
     // If eden is empty, nothing to do.
-    if (edenFree_ == edenStart_) {
+    if (edenFree_ == edenAllocBase_) {
         result.milliseconds = 0;
         return result;
     }
 
-    size_t edenUsedBefore = static_cast<size_t>(edenFree_ - edenStart_);
+    size_t edenUsedBefore = static_cast<size_t>(edenFree_ - edenAllocBase_);
     static int scavCount = 0;
     int myScavId = ++scavCount;
 
@@ -1624,7 +1705,7 @@ GCResult ObjectMemory::scavenge() {
         if (!oop.isObject()) return oop;
         ObjectHeader* obj = oop.asObjectPtr();
         uint8_t* p = reinterpret_cast<uint8_t*>(obj);
-        if (p < edenStart_ || p >= edenFree_) return oop;
+        if (p < edenAllocBase_ || p >= edenFree_) return oop;
         auto it = forward.find(obj);
         if (it != forward.end()) return Oop::fromObject(it->second);
 
@@ -1647,6 +1728,31 @@ GCResult ObjectMemory::scavenge() {
         ObjectHeader* newHdr = reinterpret_cast<ObjectHeader*>(
             destStart + (overflow ? 8 : 0));
         forward[obj] = newHdr;
+        // Smear forensics (PHARO_WATCH_OLDOFF armed): if a young pointer
+        // array carried a >=4 run of one object ref INTO tenure, the run was
+        // formed in eden before this scavenge.
+        if (__builtin_expect(GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0, 0) &&
+            newHdr->format() == ObjectFormat::Indexable) {
+            Oop* sl = newHdr->slots();
+            size_t n = newHdr->slotCount();
+            size_t run = 1;
+            static int tenureSmearN = 0;
+            for (size_t i = 1; i < n; i++) {
+                if (sl[i].rawBits() == sl[i - 1].rawBits() &&
+                    sl[i].isObject() && sl[i].rawBits() > 0x10000 &&
+                    !sl[i].isNil()) {
+                    if (++run == 4 && tenureSmearN < 20) {
+                        tenureSmearN++;
+                        fprintf(stderr,
+                            "[SMEAR-TENURE] scav=%llu youngArr=%p oldArr=%p slots=%zu "
+                            "runVal=%llx at=[%zu]\n",
+                            (unsigned long long)g_scavengeCount, (void*)obj,
+                            (void*)newHdr, n,
+                            (unsigned long long)sl[i].rawBits(), i);
+                    }
+                } else run = 1;
+            }
+        }
         return Oop::fromObject(newHdr);
     };
 
@@ -1739,7 +1845,7 @@ GCResult ObjectMemory::scavenge() {
                 Oop s = slots[i];
                 if (!s.isObject()) continue;
                 uint8_t* hp = reinterpret_cast<uint8_t*>(s.asObjectPtr());
-                if (hp >= edenStart_ && hp < edenFree_) {
+                if (hp >= edenAllocBase_ && hp < edenFree_) {
                     if (bitAudit && !foundYoungRef) firstYoungSlot = (int)i;
                     if (bitAudit) foundYoungRef = true;
                     Oop newS = tenureIfYoung(s);
@@ -1823,7 +1929,7 @@ GCResult ObjectMemory::scavenge() {
             Oop s = slots[i];
             if (!s.isObject()) continue;
             uint8_t* hp = reinterpret_cast<uint8_t*>(s.asObjectPtr());
-            if (hp >= edenStart_ && hp < edenFree_) {
+            if (hp >= edenAllocBase_ && hp < edenFree_) {
                 Oop newS = tenureIfYoung(s);
                 if (newS.rawBits() != s.rawBits()) {
                     slots[i] = newS;
@@ -1855,7 +1961,7 @@ GCResult ObjectMemory::scavenge() {
         size_t dangCount = 0;
         auto reportSlot = [&](const char* where, ObjectHeader* holder, Oop v) {
             uint8_t* hp = reinterpret_cast<uint8_t*>(v.asObjectPtr());
-            if (hp < edenStart_ || hp >= edenFree_) return;
+            if (hp < edenAllocBase_ || hp >= edenFree_) return;
             dangCount++;
             if (dangCount > 15) return;
             bool tenured = forward.find(v.asObjectPtr()) != forward.end();
@@ -1917,8 +2023,182 @@ GCResult ObjectMemory::scavenge() {
         }
     }
 
+    // DIAGNOSTIC (PHARO_SCAV_RAWSCAN): brute-force superset of the dangle
+    // check above — scan EVERY aligned word of old+perm space for a value
+    // that lands in the eden range, with no object-format assumptions.  The
+    // object-aware dangle check shares pointerSlotsOf/ObjectScanner with the
+    // scavenge itself, so a systematic blind spot (format misclassification,
+    // scanner misparse) is invisible to it; this scan is not.
+    if (GET_DEBUG_BOOL(PHARO_SCAV_RAWSCAN)) {
+        static int rawScav = 0;
+        int sid = ++rawScav;
+        std::vector<uint8_t*> hitAddrs;
+        size_t hits = 0;
+        auto rawScan = [&](uint8_t* a, uint8_t* b) {
+            for (uint8_t* p = a; p + 8 <= b; p += 8) {
+                uint64_t w = *reinterpret_cast<uint64_t*>(p);
+                if ((w & 7) != 0) continue;  // heap oops are 8-aligned, tag 0
+                uint8_t* t = reinterpret_cast<uint8_t*>(w);
+                if (t < edenAllocBase_ || t >= edenFree_) continue;
+                hits++;
+                if (hitAddrs.size() < 25) hitAddrs.push_back(p);
+            }
+        };
+        rawScan(oldSpaceStart_, oldSpaceFree_);
+        if (permSpaceStart_ && permSpaceEnd_ > permSpaceStart_)
+            rawScan(permSpaceStart_, permSpaceEnd_);
+        if (hits) {
+            // Attribute each hit to the nearest object at-or-before it (a hit
+            // beyond that object's extent = dead space between objects, i.e.
+            // likely a harmless stale word; a hit INSIDE an object beyond its
+            // pointerSlotsOf() = the scavenge blind spot).
+            for (uint8_t* p : hitAddrs) {
+                uint64_t w = *reinterpret_cast<uint64_t*>(p);
+                bool tenured =
+                    forward.find(reinterpret_cast<ObjectHeader*>(w)) != forward.end();
+                uint8_t* base = (p >= permSpaceStart_ && p < permSpaceEnd_)
+                    ? permSpaceStart_ : oldSpaceStart_;
+                uint8_t* limit = (base == permSpaceStart_) ? permSpaceEnd_ : oldSpaceFree_;
+                ObjectHeader* prevObj = nullptr;
+                ObjectScanner attr(base, limit);
+                while (ObjectHeader* obj = attr.next()) {
+                    if (reinterpret_cast<uint8_t*>(obj) > p) break;
+                    prevObj = obj;
+                }
+                std::string hcls = "?";
+                size_t hslots = 0, hptrs = 0;
+                int hfmt = -1;
+                bool inside = false;
+                ptrdiff_t off = -1;
+                if (prevObj) {
+                    uint8_t* os = reinterpret_cast<uint8_t*>(prevObj);
+                    uint8_t* oe = os - (prevObj->hasOverflowSlots() ? 8 : 0)
+                        + prevObj->totalSize();
+                    inside = p < oe;
+                    off = p - os;
+                    Oop hc = classAtIndex(prevObj->classIndex());
+                    if (hc.isObject()) hcls = nameOfClass(hc);
+                    hslots = prevObj->slotCount();
+                    hptrs = pointerSlotsOf(prevObj);
+                    hfmt = static_cast<int>(prevObj->format());
+                }
+                // The eden target is still intact (pre-reset) — identify it.
+                std::string vcls = "?";
+                size_t vslots = 0;
+                ObjectHeader* vh = reinterpret_cast<ObjectHeader*>(w);
+                Oop vc = classAtIndex(vh->classIndex());
+                if (vc.isObject()) vcls = nameOfClass(vc);
+                vslots = vh->slotCount();
+                fprintf(stderr,
+                    "[SCAV-RAWSCAN-%d] addr=%p val=%p %s nearest=%s(clsIdx=%u fmt=%d slots=%zu ptrSlots=%zu) off=%td %s target=%s(slots=%zu)\n",
+                    sid, (void*)p, (void*)w,
+                    tenured ? "TENURED-NOT-UPDATED" : "NOT-IN-FORWARD",
+                    hcls.c_str(), prevObj ? prevObj->classIndex() : 0,
+                    hfmt, hslots, hptrs, off,
+                    inside ? "INSIDE" : "IN-GAP",
+                    vcls.c_str(), vslots);
+            }
+            fprintf(stderr, "[SCAV-RAWSCAN-%d] TOTAL %zu eden-range word(s) after scavenge\n",
+                    sid, hits);
+            // Scanner-coverage report: does ObjectScanner actually reach
+            // oldSpaceFree_?  A premature stop truncates the old->young root
+            // scan the same way, which IS the missed-root mechanism.
+            {
+                ObjectScanner cov(oldSpaceStart_, oldSpaceFree_);
+                size_t objCount = 0;
+                uint8_t* lastEnd = oldSpaceStart_;
+                while (ObjectHeader* obj = cov.next()) {
+                    objCount++;
+                    uint8_t* os = reinterpret_cast<uint8_t*>(obj);
+                    lastEnd = os + obj->totalSize() - (obj->hasOverflowSlots() ? 8 : 0);
+                }
+                fprintf(stderr,
+                    "[SCAV-RAWSCAN-%d] scanner coverage: %zu objs, stopped at %p, oldSpaceFree=%p, uncovered=%zd bytes\n",
+                    sid, objCount, (void*)lastEnd, (void*)oldSpaceFree_,
+                    (ptrdiff_t)(oldSpaceFree_ - lastEnd));
+                if (oldSpaceFree_ - lastEnd >= 8) {
+                    fprintf(stderr, "[SCAV-RAWSCAN-%d] words at stop:", sid);
+                    for (int k = 0; k < 8 && lastEnd + (k + 1) * 8 <= oldSpaceFree_; ++k)
+                        fprintf(stderr, " %016llx",
+                            (unsigned long long)*reinterpret_cast<uint64_t*>(lastEnd + k * 8));
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
+    }
+
+    // PHARO_SCAV_DUMP_FORWARD: persist tenure maps for post-mortem
+    // identity-mismatch forensics.  N >= 0: that scavenge only; -2: every
+    // scavenge to fwdmap-<n>.txt.
+    if (myScavId == GET_DEBUG_INT(PHARO_SCAV_DUMP_FORWARD) ||
+        GET_DEBUG_INT(PHARO_SCAV_DUMP_FORWARD) == -2) {
+        char fn[64];
+        snprintf(fn, sizeof fn, "C:/tmp/fwdmap-%d.txt", myScavId);
+        FILE* ff = fopen(fn, "w");
+        if (ff) {
+            for (auto& kv : forward)
+                fprintf(ff, "%llx %llx\n",
+                        (unsigned long long)reinterpret_cast<uintptr_t>(kv.first),
+                        (unsigned long long)reinterpret_cast<uintptr_t>(kv.second));
+            fclose(ff);
+            fprintf(stderr, "[FWD-DUMP] scavenge #%d: %zu entries -> %s\n",
+                    myScavId, forward.size(), fn);
+        }
+    }
+
     // Phase 3: reset eden.  All unreferenced young objects vanish.
-    edenFree_ = edenStart_;
+    if (myScavId == GET_DEBUG_INT(PHARO_SCAV_QUARANTINE_AT)) {
+        // Quarantine: keep eden contents but make every later access fault.
+        // edenFree_ pinned at the limit = eden permanently "full", so
+        // allocateRawYoung always takes the old-space fallback and the
+        // protected pages are never legitimately touched again.  Any fault
+        // in this range afterwards IS the corruption path, caught live.
+        scavQuarantineActive = true;
+        edenFree_ = edenAllocLimit_;
+#ifdef _WIN32
+        uintptr_t pgLo = (reinterpret_cast<uintptr_t>(edenStart_) + 4095) & ~4095ULL;
+        uintptr_t pgHi = reinterpret_cast<uintptr_t>(survivorStart_) & ~4095ULL;
+        unsigned long oldProt = 0;
+        int ok = VirtualProtect(reinterpret_cast<void*>(pgLo), pgHi - pgLo,
+                                PHARO_PAGE_NOACCESS, &oldProt);
+        fprintf(stderr,
+            "[SCAV-QUARANTINE] scavenge #%d: eden [%p..%p) protected (ok=%d) — "
+            "any further access to this range is a stale young reference\n",
+            myScavId, (void*)pgLo, (void*)pgHi, ok);
+#else
+        fprintf(stderr, "[SCAV-QUARANTINE] not implemented on this platform\n");
+#endif
+    } else if (GET_DEBUG_BOOL(PHARO_EDEN_ROTATE)) {
+#ifdef _WIN32
+        // Retire the just-scavenged half (page-protect it) and activate
+        // the other half.  A stale pointer into the retired generation now
+        // faults at first dereference instead of silently aliasing a
+        // reused-eden object.
+        unsigned long rotProt = 0;
+        uintptr_t rLo = (reinterpret_cast<uintptr_t>(edenAllocBase_) + 4095) & ~4095ULL;
+        uintptr_t rHi = reinterpret_cast<uintptr_t>(edenAllocLimit_) & ~4095ULL;
+        if (rHi > rLo)
+            VirtualProtect(reinterpret_cast<void*>(rLo), rHi - rLo,
+                           PHARO_PAGE_NOACCESS, &rotProt);
+        size_t rotHalf = static_cast<size_t>(edenAllocLimit_ - edenAllocBase_);
+        uint8_t* otherBase = (edenAllocBase_ == edenStart_)
+            ? edenAllocLimit_ : edenStart_;
+        edenAllocBase_ = otherBase;
+        edenAllocLimit_ = otherBase + rotHalf;
+        uintptr_t aLo = (reinterpret_cast<uintptr_t>(edenAllocBase_) + 4095) & ~4095ULL;
+        uintptr_t aHi = reinterpret_cast<uintptr_t>(edenAllocLimit_) & ~4095ULL;
+        if (aHi > aLo)
+            VirtualProtect(reinterpret_cast<void*>(aLo), aHi - aLo,
+                           PHARO_PAGE_READWRITE, &rotProt);
+        edenFree_ = edenAllocBase_;
+        fprintf(stderr, "[EDEN-ROTATE] scavenge #%d: active [%p..%p), retired half protected\n",
+                myScavId, (void*)edenAllocBase_, (void*)edenAllocLimit_);
+#else
+        edenFree_ = edenAllocBase_;
+#endif
+    } else {
+        edenFree_ = edenAllocBase_;
+    }
 
     size_t edenUsedAfter = 0;
     (void)edenUsedBefore;
@@ -2144,6 +2424,37 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     if (interpreter_) {
         interpreter_->prepareForGC();
     }
+
+    // 1.5. Pre-compact scavenge when young-gen is active — BEFORE the mark
+    // phase.  Compact repurposes new-space as scratch for forwarding-field
+    // storage, so eden must be empty going into plan/compact.  This used to
+    // run AFTER markPhase (between mark and plan): the scavenge treats weak
+    // slots as strong and tenures every root-reachable young object, so a
+    // young object that was scavenge-reachable but NOT mark-reachable (e.g.
+    // a fresh Symbol held only by the SymbolTable WeakSet) arrived in old
+    // space UNMARKED — planCompact then reclaimed it while the live weak
+    // slots (retargeted by the scavenge) still pointed at it.  Result:
+    // dangling refs into compacted-over memory, surfacing as heap-phase-
+    // dependent corruption in symbol/literal machinery (the OpalCompiler
+    // large-method fileIn failure, root-caused 2026-07-02).  Scavenging
+    // FIRST lets markPhase see the tenured copies and apply true weak
+    // semantics to them.
+    if (enableYoungGen_ && edenFree_ > edenAllocBase_) {
+        scavenge();
+    }
+#ifdef _WIN32
+    // EDEN_ROTATE detector: compact legitimately scribbles scratch over all
+    // of new space — unprotect for the GC's duration (re-protected at the
+    // end) so the detector doesn't false-fault here.
+    if (GET_DEBUG_BOOL(PHARO_EDEN_ROTATE)) {
+        unsigned long rotP = 0;
+        uintptr_t uLo = (reinterpret_cast<uintptr_t>(edenStart_) + 4095) & ~4095ULL;
+        uintptr_t uHi = reinterpret_cast<uintptr_t>(survivorStart_) & ~4095ULL;
+        if (uHi > uLo)
+            VirtualProtect(reinterpret_cast<void*>(uLo), uHi - uLo,
+                           PHARO_PAGE_READWRITE, &rotP);
+    }
+#endif
     uint64_t tClearStart = timeGCPhases ? readTSC() : 0;
 
     // 2. Clear all marks AND grey bits
@@ -2167,13 +2478,8 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
 
     // Symbol class corruption check and stale pointer check disabled (verified clean)
 
-    // 3.5. Pre-compact scavenge when young-gen is active.  Compact
-    // repurposes new-space as scratch for forwarding-field storage,
-    // which would overwrite any live eden objects.  Tenure them
-    // first so eden is truly empty going into plan/compact.
-    if (enableYoungGen_ && edenFree_ > edenStart_) {
-        scavenge();
-    }
+    // (Pre-compact scavenge moved to step 1.5 — it must precede markPhase;
+    // see the comment there.)
 
     // 4. Plan + update + copy (compact)
     planCompactSavingForwarders();
@@ -2208,6 +2514,22 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     }
 
     forceGCFlag_ = false;
+
+#ifdef _WIN32
+    // EDEN_ROTATE detector: re-protect the retired half (its content is now
+    // compact-scratch trash, so a stale pointer still faults on touch).
+    if (GET_DEBUG_BOOL(PHARO_EDEN_ROTATE)) {
+        size_t rotHalf = static_cast<size_t>(edenAllocLimit_ - edenAllocBase_);
+        uint8_t* retBase = (edenAllocBase_ == edenStart_)
+            ? edenAllocLimit_ : edenStart_;
+        unsigned long rotP = 0;
+        uintptr_t rLo = (reinterpret_cast<uintptr_t>(retBase) + 4095) & ~4095ULL;
+        uintptr_t rHi = reinterpret_cast<uintptr_t>(retBase + rotHalf) & ~4095ULL;
+        if (rHi > rLo)
+            VirtualProtect(reinterpret_cast<void*>(rLo), rHi - rLo,
+                           PHARO_PAGE_NOACCESS, &rotP);
+    }
+#endif
 
     size_t usedAfter = oldSpaceFree_ - oldSpaceStart_;
     result.bytesReclaimed = (usedBefore > usedAfter) ? (usedBefore - usedAfter) : 0;
@@ -2321,7 +2643,7 @@ void ObjectMemory::allObjectsDo(std::function<void(Oop)> callback) {
     scanRegion(oldSpaceStart_, oldSpaceFree_);
 
     // Scan eden
-    scanRegion(edenStart_, edenFree_);
+    scanRegion(edenAllocBase_, edenFree_);
 }
 
 void ObjectMemory::collectInstancesOfClass(uint32_t classIndex,
@@ -2380,7 +2702,7 @@ void ObjectMemory::collectInstancesOfClass(uint32_t classIndex,
 
     scanRegion(permSpaceStart_, permSpaceEnd_);
     scanRegion(oldSpaceStart_, oldSpaceFree_);
-    scanRegion(edenStart_, edenFree_);
+    scanRegion(edenAllocBase_, edenFree_);
 }
 
 // ===== OBJECT ITERATION (for primitives 138/139) =====
@@ -2451,7 +2773,7 @@ Oop ObjectMemory::firstObject() {
     Region regions[] = {
         { permSpaceStart_, permSpaceEnd_ },
         { oldSpaceStart_, oldSpaceFree_ },
-        { edenStart_, edenFree_ },
+        { edenAllocBase_, edenFree_ },
     };
     for (auto& r : regions) {
         if (r.start && r.start < r.end) {
@@ -2481,7 +2803,7 @@ Oop ObjectMemory::objectAfter(Oop current) {
     Region regions[] = {
         { permSpaceStart_, permSpaceEnd_ },
         { oldSpaceStart_, oldSpaceFree_ },
-        { edenStart_, edenFree_ },
+        { edenAllocBase_, edenFree_ },
     };
 
     bool foundRegion = false;
@@ -2556,7 +2878,7 @@ ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
 
         case Space::New: {
             // Young-gen bump-pointer allocation in eden.
-            if (edenFree_ + size <= survivorStart_) {
+            if (edenFree_ + size <= edenAllocLimit_) {
                 ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(edenFree_);
                 edenFree_ += size;
                 return obj;
@@ -2695,7 +3017,7 @@ Oop ObjectMemory::firstInstanceOf(uint32_t targetClassIndex) {
     if (scanRegion(oldSpaceStart_, oldSpaceFree_)) return found;
 
     // Search eden
-    if (scanRegion(edenStart_, edenFree_)) return found;
+    if (scanRegion(edenAllocBase_, edenFree_)) return found;
 
     return nilObject_;  // Not found
 }
@@ -2792,20 +3114,20 @@ Oop ObjectMemory::nextInstanceAfter(Oop afterObject, uint32_t targetClassIndex) 
         case Space::Perm:
             if (scanRegion(permSpaceStart_, permSpaceEnd_)) return found;
             if (scanRegion(oldSpaceStart_, oldSpaceFree_)) return found;
-            if (scanRegion(edenStart_, edenFree_)) return found;
+            if (scanRegion(edenAllocBase_, edenFree_)) return found;
             break;
         case Space::Old:
             if (scanRegion(oldSpaceStart_, oldSpaceFree_)) return found;
-            if (scanRegion(edenStart_, edenFree_)) return found;
+            if (scanRegion(edenAllocBase_, edenFree_)) return found;
             break;
         case Space::New:
-            if (scanRegion(edenStart_, edenFree_)) return found;
+            if (scanRegion(edenAllocBase_, edenFree_)) return found;
             break;
         case Space::Reserved:
             // Reserved space - search all spaces
             if (scanRegion(permSpaceStart_, permSpaceEnd_)) return found;
             if (scanRegion(oldSpaceStart_, oldSpaceFree_)) return found;
-            if (scanRegion(edenStart_, edenFree_)) return found;
+            if (scanRegion(edenAllocBase_, edenFree_)) return found;
             break;
     }
 
@@ -2954,7 +3276,7 @@ void ObjectMemory::markAndTrace(Oop oop) {
     // post-compact pass clears them.
     auto p = reinterpret_cast<uint8_t*>(obj);
     bool inOld = (p >= oldSpaceStart_ && p < oldSpaceFree_);
-    bool inEden = (p >= edenStart_ && p < edenFree_);
+    bool inEden = (p >= edenAllocBase_ && p < edenFree_);
     if (!inOld && !inEden) {
         return;
     }
@@ -3700,7 +4022,7 @@ void ObjectMemory::updatePointersAfterCompact() {
             newSpaceUpdated += updatedCount;
         };
         // Scan eden (edenStart_ to edenFree_)
-        scanNewSpaceRegion(edenStart_, edenFree_, "eden");
+        scanNewSpaceRegion(edenAllocBase_, edenFree_, "eden");
         // Scan survivor space (survivorStart_ to newSpaceEnd_)
         scanNewSpaceRegion(survivorStart_, newSpaceEnd_, "survivor");
         (void)newSpaceUpdated;  // suppress unused warning

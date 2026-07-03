@@ -1017,6 +1017,8 @@ int main(int argc, char* argv[]) {
     MemoryConfig config;
     config.oldSpaceSize = 4ULL * 1024 * 1024 * 1024;  // 4 GB virtual (mmap lazy commit)
     config.newSpaceSize = 32 * 1024 * 1024;   // 32 MB (128MB bump reverted: changed Delay-scheduler timing -> arm SUnit wedge on ArrayTest; goal=pass SUnit > 6% compiler win)
+    if (GET_DEBUG_INT(PHARO_NEWSPACE_MB) > 0)
+        config.newSpaceSize = static_cast<size_t>(GET_DEBUG_INT(PHARO_NEWSPACE_MB)) * 1024 * 1024;
     config.permSpaceSize = 8 * 1024 * 1024;   // 8 MB
 
     if (!memory.initialize(config)) {

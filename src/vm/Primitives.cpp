@@ -2186,6 +2186,42 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
 
     size_t arrayIndex = static_cast<size_t>(idx - 1);
 
+    if (__builtin_expect(GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0, 0)) {
+        if (reinterpret_cast<uint8_t*>(header) ==
+            memory_.oldSpaceStart() + GET_DEBUG_INT(PHARO_WATCH_OLDOFF)) {
+            extern uint64_t g_scavengeCount;
+            fprintf(stderr,
+                "[WATCH-ATPUT] obj=%p idx=%lld val=%llx scav=%llu caller=%s\n",
+                (void*)header, (long long)idx,
+                (unsigned long long)value.rawBits(),
+                (unsigned long long)g_scavengeCount,
+                memory_.selectorOf(method_).c_str());
+        }
+        // Smear-formation detector: an object ref stored at:put: forming a
+        // >=3 run of identical values in consecutive Array slots — the
+        // signature seen in the corrupted OCIRSequence collection.
+        if (value.isObject() && value.rawBits() > 0x10000 &&
+            header->format() == ObjectFormat::Indexable &&
+            arrayIndex >= 2 && arrayIndex < header->slotCount()) {
+            Oop* sl = header->slots();
+            if (sl[arrayIndex - 1].rawBits() == value.rawBits() &&
+                sl[arrayIndex - 2].rawBits() == value.rawBits()) {
+                extern uint64_t g_scavengeCount;
+                static int smearAtPutN = 0;
+                if (++smearAtPutN <= 40) {
+                    fprintf(stderr,
+                        "[SMEAR-ATPUT] obj=%p idx=%lld val=%llx cls=%s scav=%llu caller=%s>>%s\n",
+                        (void*)header, (long long)idx,
+                        (unsigned long long)value.rawBits(),
+                        memory_.classNameOf(value).c_str(),
+                        (unsigned long long)g_scavengeCount,
+                        classNameOfMethod(method_).c_str(),
+                        memory_.selectorOf(method_).c_str());
+                }
+            }
+        }
+    }
+
     // Blocker #4 trace: log placement of test-key associations into a dict
     // array.  Reveals the exact slot each Association lands at + array size,
     // so we can see when/why A1DefinedInX is misplaced.
@@ -17078,10 +17114,52 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
                 }
             }
         }
+        if (__builtin_expect(GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0, 0)) {
+            uint8_t* watched = memory_.oldSpaceStart() + GET_DEBUG_INT(PHARO_WATCH_OLDOFF);
+            if (reinterpret_cast<uint8_t*>(destHdr) == watched ||
+                reinterpret_cast<uint8_t*>(srcHdr) == watched) {
+                extern uint64_t g_scavengeCount;
+                fprintf(stderr,
+                    "[WATCH-105] dst=%p src=%p dstStart=%lld dstEnd=%lld srcStart=%lld "
+                    "count=%zu fwdOv=%d scav=%llu caller=%s vals:",
+                    (void*)destHdr, (void*)srcHdr, (long long)destStart,
+                    (long long)destEnd, (long long)sourceStart, count,
+                    (int)fwdOverlapSelfCopy, (unsigned long long)g_scavengeCount,
+                    memory_.selectorOf(method_).c_str());
+                for (size_t i = 0; i < count && i < 6; i++)
+                    fprintf(stderr, " %llx", (unsigned long long)srcPtrs[i].rawBits());
+                fprintf(stderr, "\n");
+            }
+        }
         if (fwdOverlapSelfCopy) {
             for (size_t i = 0; i < count; i++) dstPtrs[i] = srcPtrs[i];
         } else {
             std::memmove(dstPtrs, srcPtrs, count * sizeof(Oop));
+        }
+        if (__builtin_expect(GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0, 0)) {
+            // Smear detector: did this copy WRITE a >=4 run of one object ref?
+            size_t run = 1;
+            for (size_t i = 1; i < count; i++) {
+                if (dstPtrs[i].rawBits() == dstPtrs[i - 1].rawBits() &&
+                    dstPtrs[i].isObject() && dstPtrs[i].rawBits() > 0x10000) {
+                    if (++run >= 4) {
+                        std::string vcls = memory_.classNameOf(dstPtrs[i]);
+                        if (vcls.rfind("OCIR", 0) == 0) {
+                            extern uint64_t g_scavengeCount;
+                            fprintf(stderr,
+                                "[SMEAR-105] dst=%p src=%p dstStart=%lld count=%zu fwdOv=%d "
+                                "runVal=%llx cls=%s scav=%llu caller=%s>>%s\n",
+                                (void*)destHdr, (void*)srcHdr, (long long)destStart,
+                                count, (int)fwdOverlapSelfCopy,
+                                (unsigned long long)dstPtrs[i].rawBits(), vcls.c_str(),
+                                (unsigned long long)g_scavengeCount,
+                                classNameOfMethod(method_).c_str(),
+                                memory_.selectorOf(method_).c_str());
+                        }
+                        break;
+                    }
+                } else run = 1;
+            }
         }
 
         popN(4);  // Pop 4 args, leave dest

@@ -159,6 +159,59 @@ isolation (no suite watchdog):
   there). Worth fixing so our VM can compile large methods directly. Earlier
   ~3800-test validation was unaffected (those methods were already compiled in
   the image).
+  - **2026-07-02 DEEP INVESTIGATION (unresolved, 3 real bugs fixed en route).**
+    Repro: `eval "[['<repo>/scripts/pharo-headless-test/run_sunit_tests.st'
+    asFileReference fileIn. 'FILEIN-OK'] on: Error do: [:e | 'ERR: ', e
+    messageText]] value"` on a fresh Pharo.image. Deterministic per invocation
+    FORM (a big padding chunk compiled first flips it to PASS); flips with
+    `PHARO_NEWSPACE_MB` (16 fail / 24 pass / 32 fail / 48+ pass). EVIDENCE
+    CHAIN (all instrumented, knobs still in tree):
+    - Scavenge-count bisect (`PHARO_YG_SKIP_SCAV_FROM`): first corrupting
+      scavenge = #12. Substituting fullGC at #12 (`PHARO_SCAV_FULLGC_AT`)
+      ALSO fails => any object MOTION there corrupts; prepare/afterGC
+      round-trip WITHOUT motion (`PHARO_GC_ROUNDTRIP_ONLY`) passes.
+    - Post-scavenge state verified clean: raw word-scan of old+perm for
+      eden-range values (`PHARO_SCAV_RAWSCAN`), per-frame ip verify
+      (`PHARO_GC_FRAME_VERIFY`), `PHARO_NO_METHOD_CACHE`, JIT off — all
+      still fail / find nothing.
+    - Eden generation-rotation detector (`PHARO_EDEN_ROTATE`: eden halves
+      alternate, retired half PAGE_NOACCESS): compile STILL FAILS WITH NO
+      FAULT => no stale young pointer is ever DEREFERENCED — the divergence
+      is pure identity-compare (`==` on raw bits).
+    - Activation-trace diff (`PHARO_TRACE_SENDS_FROM_SCAV`, acttrace):
+      failing vs passing runs IDENTICAL for 29,049 activations after
+      scavenge 12, then FAIL's `Object>>=` scan in
+      `OrderedCollection>>remove:ifAbsent:` runs past where PASS matches:
+      the recorded pop's identity is not among the sequence's elements.
+    - Forensics at the error (`PHARO_OCIR_ERROR_DUMP` + heap sweep): the
+      store/pop pair exist ONLY in the recorded Association + materialized
+      Contexts — in NO array anywhere. The sequence's OC array instead has
+      an 8x-repeated ref to ONE young OCIRPushFullClosure at [43..50] and a
+      young tail [51..62]; per `PHARO_SCAV_DUMP_FORWARD` maps the tail
+      values were never tenured (fresh young), the pop was tenured at
+      scavenge 13. The 8x run pre-exists the optimizer's first removeIndex:
+      (SMEAR-105 detector) but was NOT written by storePointer, at:put:,
+      prim 105, prim 145, become, or the tenure memcpy (all instrumented —
+      RUN-FORM/SMEAR detectors silent). Next suspects: raw slotAtPut call
+      sites that bypass storePointer, shallowCopy/clone paths, OC array
+      ivar swapped to a rebuilt/wrong array (fullGC compact forwarding
+      desync — savedFirstFieldsSpace parallel-walk?), or resume-from-context
+      partial rollback via a path the pc-refresh fix doesn't cover.
+    - REAL BUGS FIXED during the hunt (all committed, regression-clean):
+      (1) allocators lacked the Spur 16-byte minimum object size — 0-slot
+      objects (Object new, #(), '') packed at 8 bytes, desyncing every
+      linear heap walk (allObjectsDo/become write-through, old-space scan
+      via the eden-full fallback); (2) fullGC ran its pre-compact scavenge
+      AFTER markPhase — scavenge-tenured-but-unmarked objects (weak-only
+      reachable, e.g. fresh Symbols in the SymbolTable WeakSet) were
+      compacted over while still referenced; (3) prepareForGC's temp-sync
+      wrote through `frame.materializedContext` without verifying it is a
+      Context, and refreshed temps/stackp but never pc — a later
+      resume-from-context replayed already-executed bytecode ranges with
+      current temps (partial rollback). None cured this repro, but each is
+      a genuine correctness fix.
+    Workaround unchanged: inject the runner with the reference VM
+    (scripts/win-run-full-suite.sh does this).
   - PARTIAL RESULT (synchronous batches via `scripts/win-sunit-batches.sh`):
     the 3 batches that finished within the 200s/batch timeout = 2709/2882
     passed; representative batch-1 (first 100 classes) = 1433/1495 (96%), 1

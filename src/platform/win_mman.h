@@ -31,6 +31,9 @@ extern "C" __declspec(dllimport) void* __stdcall
                  unsigned long flAllocationType, unsigned long flProtect);
 extern "C" __declspec(dllimport) int __stdcall
     VirtualFree(void* lpAddress, size_t dwSize, unsigned long dwFreeType);
+extern "C" __declspec(dllimport) int __stdcall
+    VirtualProtect(void* lpAddress, size_t dwSize,
+                   unsigned long flNewProtect, unsigned long* lpflOldProtect);
 
 // Allocation-type / protection / free-type constants (from memoryapi.h).
 #define PHARO_MEM_COMMIT   0x00001000UL
@@ -38,6 +41,7 @@ extern "C" __declspec(dllimport) int __stdcall
 #define PHARO_MEM_RESET    0x00080000UL
 #define PHARO_MEM_DECOMMIT 0x00004000UL
 #define PHARO_MEM_RELEASE  0x00008000UL
+#define PHARO_PAGE_NOACCESS            0x01UL
 #define PHARO_PAGE_READONLY            0x02UL
 #define PHARO_PAGE_READWRITE           0x04UL
 #define PHARO_PAGE_EXECUTE_READWRITE   0x40UL

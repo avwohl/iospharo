@@ -511,6 +511,7 @@ extern "C" {
 Oop* g_sortstrWatchSlot = nullptr;
 uint64_t g_sortstrWatchExpected = 0;
 bool g_sortstrWatchActive = false;
+bool g_traceSendsActive = false;  // PHARO_TRACE_SENDS_FROM_SCAV localizer
 size_t g_sortstrWatchFD = 0;
 size_t g_sortstrWatchEventNum = 0;
 
@@ -3529,7 +3530,29 @@ void Interpreter::interpret() {
         // -- Scavenge safe point (young-gen) --
         if (__builtin_expect(memory_.needsScavenge(), 0)) {
             memory_.clearScavengeFlag();
-            if (!g_debug.ygNoScavenge) {
+            static int scavRequestNum = 0;
+            ++scavRequestNum;
+            if (GET_DEBUG_INT(PHARO_TRACE_SENDS_FROM_SCAV) >= 0 &&
+                scavRequestNum >= GET_DEBUG_INT(PHARO_TRACE_SENDS_FROM_SCAV)) {
+                g_traceSendsActive = true;
+            }
+            if (GET_DEBUG_BOOL(PHARO_SCAV_TRACE_STATE)) {
+                fprintf(stderr,
+                    "[SCAV-STATE-%d] frameDepth=%zu stackDepth=%td method=%s>>#%s\n",
+                    scavRequestNum, frameDepth_,
+                    (ptrdiff_t)(stackPointer_ - stackBase_),
+                    method_.isObject() ? classNameOfMethod(method_).c_str() : "?",
+                    memory_.selectorOf(method_).c_str());
+            }
+            bool skipForBisect = GET_DEBUG_INT(PHARO_YG_SKIP_SCAV_FROM) >= 0 &&
+                scavRequestNum >= GET_DEBUG_INT(PHARO_YG_SKIP_SCAV_FROM);
+            if (GET_DEBUG_BOOL(PHARO_GC_ROUNDTRIP_ONLY)) {
+                prepareForGC();
+                afterGC();
+            } else if (scavRequestNum == GET_DEBUG_INT(PHARO_SCAV_FULLGC_AT)) {
+                memory_.fullGC(/* skipEphemerons */ true);
+                flushMethodCache();
+            } else if (!g_debug.ygNoScavenge && !skipForBisect) {
                 prepareForGC();
                 memory_.scavenge();
                 afterGC();
@@ -8767,6 +8790,17 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    // Send-trace localizer (PHARO_TRACE_SENDS_FROM_SCAV): address-independent
+    // "selector<TAB>receiverClass" stream; diff failing vs passing runs.
+    if (__builtin_expect(g_traceSendsActive, 0)) {
+        static FILE* tf = fopen("C:/tmp/sendtrace.txt", "w");
+        if (tf) {
+            Oop rcvr = stackValue(argCount);
+            fprintf(tf, "%s\t%s\n",
+                    memory_.oopToString(selector).c_str(),
+                    memory_.classNameOf(rcvr).c_str());
+        }
+    }
     // C++-send edge census (PHARO_JIT_FAIL_REASONS=1): every send that
     // reaches this C++ path is a JIT escape; dump the top selectors
     // periodically to find the dominant escape edges (diagnosis only —
@@ -10841,6 +10875,120 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // Activation-trace localizer (PHARO_TRACE_SENDS_FROM_SCAV): every real
+    // activation, uniform regardless of send-path caching — diffable across
+    // runs to find the first semantic divergence.
+    if (__builtin_expect(g_traceSendsActive, 0)) {
+        static FILE* tf = fopen("C:/tmp/acttrace.txt", "w");
+        if (tf) {
+            Oop rcvr = stackValue(argCount);
+            fprintf(tf, "%s>>%s\t%s\t%d\n",
+                    classNameOfMethod(method).c_str(),
+                    memory_.selectorOf(method).c_str(),
+                    memory_.classNameOf(rcvr).c_str(), argCount);
+        }
+    }
+    // PHARO_OCIR_ERROR_DUMP: identity-mismatch forensics for the Opal
+    // convertStorePop failure — when #error activates on an OCIRSequence,
+    // dump the convertStorePop frame's assoc and the sequence contents.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_OCIR_ERROR_DUMP), 0)) {
+        static bool fired = false;
+        if (!fired && memory_.selectorOf(method) == "error") {
+            Oop erx = stackValue(argCount);
+            if (memory_.classNameOf(erx) == "OCIRSequence") {
+                fired = true;
+                FILE* df = fopen("C:/tmp/ocirdump.txt", "w");
+                if (df) {
+                    fprintf(df, "oldSpaceStart=%llx edenStart=%llx\n",
+                            (unsigned long long)reinterpret_cast<uintptr_t>(memory_.oldSpaceStart()),
+                            (unsigned long long)reinterpret_cast<uintptr_t>(memory_.newSpaceStart()));
+                    auto dumpObj = [&](const char* tag, Oop o, int maxSlots) {
+                        fprintf(df, "%s bits=%llx cls=%s", tag,
+                                (unsigned long long)o.rawBits(),
+                                memory_.classNameOf(o).c_str());
+                        if (o.isObject() && o.rawBits() > 0x10000) {
+                            ObjectHeader* h = o.asObjectPtr();
+                            size_t n = h->slotCount();
+                            fprintf(df, " slots=%zu:", n);
+                            for (size_t i = 0; i < n && i < (size_t)maxSlots; i++)
+                                fprintf(df, " [%zu]=%llx", i,
+                                        (unsigned long long)h->slotAt(i).rawBits());
+                        }
+                        fprintf(df, "\n");
+                    };
+                    dumpObj("seq(receiver)", erx, 12);
+                    for (size_t i = frameDepth_; i-- > 0 && i + 12 > frameDepth_;) {
+                        SavedFrame& f = savedFrames_[i];
+                        std::string sel = memory_.selectorOf(f.savedMethod);
+                        fprintf(df, "frame[%zu] %s\n", i, sel.c_str());
+                        if (sel == "convertStorePop:forinstructionSequence:") {
+                            Oop assoc = *(f.savedFP + 1);
+                            Oop seqArg = *(f.savedFP + 2);
+                            dumpObj("assoc", assoc, 4);
+                            if (assoc.isObject()) {
+                                dumpObj("assoc.key(store)", assoc.asObjectPtr()->slotAt(0), 4);
+                                dumpObj("assoc.value(pop)", assoc.asObjectPtr()->slotAt(1), 4);
+                            }
+                            dumpObj("seqArg", seqArg, 12);
+                            if (seqArg.isObject()) {
+                                ObjectHeader* sh = seqArg.asObjectPtr();
+                                for (size_t s = 0; s < sh->slotCount(); s++) {
+                                    Oop sv = sh->slotAt(s);
+                                    if (memory_.classNameOf(sv) == "OrderedCollection") {
+                                        dumpObj("seq.sequence(OC)", sv, 6);
+                                        Oop arr = sv.asObjectPtr()->slotAt(0);
+                                        dumpObj("OC.array", arr, 64);
+                                        if (arr.isObject()) {
+                                            ObjectHeader* ah = arr.asObjectPtr();
+                                            for (size_t e = 0; e < ah->slotCount(); e++) {
+                                                Oop el = ah->slotAt(e);
+                                                if (el.isObject() && el.rawBits() > 0x10000)
+                                                    fprintf(df, "  el[%zu]=%llx cls=%s\n", e,
+                                                            (unsigned long long)el.rawBits(),
+                                                            memory_.classNameOf(el).c_str());
+                                                else
+                                                    fprintf(df, "  el[%zu]=%llx\n", e,
+                                                            (unsigned long long)el.rawBits());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Heap sweep: every object holding a slot equal to
+                            // the pop's bits (or the store's) — locates where
+                            // the REAL sequence content went.
+                            Oop popOop = assoc.asObjectPtr()->slotAt(1);
+                            Oop storeOop = assoc.asObjectPtr()->slotAt(0);
+                            fprintf(df, "HEAP SWEEP for pop=%llx store=%llx\n",
+                                    (unsigned long long)popOop.rawBits(),
+                                    (unsigned long long)storeOop.rawBits());
+                            int sweepHits = 0;
+                            memory_.allObjectsDo([&](Oop o) {
+                                if (sweepHits >= 30 || !o.isObject()) return;
+                                ObjectHeader* h = o.asObjectPtr();
+                                if (h->format() > ObjectFormat::WeakWithFixed) return;
+                                size_t n = h->slotCount();
+                                Oop* sls = h->slots();
+                                for (size_t s = 0; s < n; s++) {
+                                    if (sls[s].rawBits() == popOop.rawBits() ||
+                                        sls[s].rawBits() == storeOop.rawBits()) {
+                                        fprintf(df, "  HOLDER %llx cls=%s slot=%zu holds %s\n",
+                                                (unsigned long long)o.rawBits(),
+                                                memory_.classNameOf(o).c_str(), s,
+                                                sls[s].rawBits() == popOop.rawBits() ? "POP" : "STORE");
+                                        sweepHits++;
+                                    }
+                                }
+                            });
+                            break;
+                        }
+                    }
+                    fclose(df);
+                    fprintf(stderr, "[OCIR-ERROR-DUMP] written to C:/tmp/ocirdump.txt\n");
+                }
+            }
+        }
+    }
     // One-shot resolve: identity probe (gated SP_DEPTH_TRAP): dump the
     // target class + literals 0/1/2 (the sel0/sel1/sel2 of the
     // ifTrue/ifFalse body) + the receiver, so we know what sel0 is and
@@ -19708,9 +19856,24 @@ void Interpreter::prepareForGC() {
             uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
             frame.savedIPOffset = frame.savedIP - methodBytes;
             frame.savedBytecodeEndOffset = frame.savedBytecodeEnd - methodBytes;
+            if (GET_DEBUG_BOOL(PHARO_GC_FRAME_VERIFY)) {
+                frame.gcVerifyByte = *frame.savedIP;
+                size_t mSize = frame.savedMethod.asObjectPtr()->byteSize();
+                if (frame.savedIPOffset < 0 ||
+                    frame.savedIPOffset >= (ptrdiff_t)mSize) {
+                    fprintf(stderr,
+                        "[GC-FRAME-IPRANGE] frame=%zu/%zu ipOff=%lld methodSize=%zu "
+                        "method=%s>>#%s closure=%s\n",
+                        i, frameDepth_, (long long)frame.savedIPOffset, mSize,
+                        classNameOfMethod(frame.savedMethod).c_str(),
+                        memory_.selectorOf(frame.savedMethod).c_str(),
+                        frame.savedClosure.isNil() ? "nil" : "BLOCK");
+                }
+            }
         } else {
             frame.savedIPOffset = 0;
             frame.savedBytecodeEndOffset = 0;
+            frame.gcVerifyByte = 0xFF;
         }
     }
 
@@ -19807,11 +19970,34 @@ void Interpreter::prepareForGC() {
     // context. This causes weak references to survive GC incorrectly because
     // the context keeps the old object marked.
     static constexpr int ContextFixedFields = 6;
+    // The sync WRITES through frame.materializedContext — if that oop is
+    // stale (not actually a Context anymore after motion/reuse), the writes
+    // smear stack values into an arbitrary object's slots.  Verify the class.
+    uint32_t gcCtxClassIdx = 0;
+    {
+        Oop ctxCls = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
+        if (ctxCls.isObject() && ctxCls.rawBits() > 0x10000)
+            gcCtxClassIdx = ctxCls.asObjectPtr()->identityHash();
+    }
     for (size_t i = 0; i < frameDepth_; ++i) {
         SavedFrame& frame = savedFrames_[i];
         Oop matCtx = frame.materializedContext;
         if (!matCtx.isObject() || matCtx.isNil() || matCtx.rawBits() <= 0x10000) continue;
         if (!frame.savedMethod.isObject() || frame.savedMethod.rawBits() <= 0x10000) continue;
+        if (gcCtxClassIdx != 0 &&
+            matCtx.asObjectPtr()->classIndex() != gcCtxClassIdx) {
+            static int nonCtxN = 0;
+            if (++nonCtxN <= 20) {
+                fprintf(stderr,
+                    "[GC-TEMPSYNC-NONCTX] frame=%zu/%zu matCtx=%llx clsIdx=%u (expected %u) "
+                    "cls=%s method=%s — SKIPPING sync into non-Context\n",
+                    i, frameDepth_, (unsigned long long)matCtx.rawBits(),
+                    matCtx.asObjectPtr()->classIndex(), gcCtxClassIdx,
+                    memory_.classNameOf(matCtx).c_str(),
+                    memory_.selectorOf(frame.savedMethod).c_str());
+            }
+            continue;
+        }
 
         ObjectHeader* ctxHdr = matCtx.asObjectPtr();
         size_t ctxSlots = ctxHdr->slotCount();
@@ -19840,11 +20026,41 @@ void Interpreter::prepareForGC() {
         if (numTemps > currentSP) {
             memory_.storePointer(2, matCtx, Oop::fromSmallInteger(numTemps));
         }
+
+        // Refresh the context's pc (slot 1) to the frame's CURRENT resume
+        // point.  The temp sync above makes the snapshot's TEMPS current,
+        // but pc kept its materialization-time value — a later
+        // resume-from-context then re-executes [stalePc..currentPc] with
+        // CURRENT temps, i.e. a partial rollback: loops re-process items
+        // already consumed (OrderedCollection remove: of an
+        // already-removed element -> 'element not found'; bytecode
+        // generator 'stack out of sync'; the OpalCompiler large-method
+        // fileIn corruption, root-caused 2026-07-02).  savedIPOffset was
+        // just computed above from savedIP; the context pc convention is
+        // a 1-based bytecode-relative index, matching pushFrame's fd==1
+        // sync and materializeFrameStack.
+        if (frame.savedMethod.isObject() && frame.savedIP) {
+            ObjectHeader* mObj = frame.savedMethod.asObjectPtr();
+            Oop hdrOop = mObj->slotAt(0);
+            if (hdrOop.isSmallInteger()) {
+                // pc is 1-based from the method body start (literal frame
+                // included), same formula as pushFrame's fd==1 sync.  Only
+                // write when the offset lands inside the bytecode region.
+                int nLits = static_cast<int>(hdrOop.asSmallInteger() & 0x7FFF);
+                if (frame.savedIPOffset >= (ptrdiff_t)((1 + nLits) * 8) &&
+                    frame.savedIPOffset < (ptrdiff_t)mObj->byteSize()) {
+                    memory_.storePointer(1, matCtx,
+                        Oop::fromSmallInteger(frame.savedIPOffset + 1));
+                }
+            }
+        }
     }
 
     // Also sync current frame's materialized context
     if (currentFrameMaterializedCtx_.isObject() && !currentFrameMaterializedCtx_.isNil() &&
         currentFrameMaterializedCtx_.rawBits() > 0x10000 &&
+        (gcCtxClassIdx == 0 ||
+         currentFrameMaterializedCtx_.asObjectPtr()->classIndex() == gcCtxClassIdx) &&
         method_.isObject() && method_.rawBits() > 0x10000) {
 
         ObjectHeader* ctxHdr = currentFrameMaterializedCtx_.asObjectPtr();
@@ -19917,6 +20133,18 @@ void Interpreter::afterGC(bool fullGC) {
             uint8_t* methodBytes = frame.savedMethod.asObjectPtr()->bytes();
             frame.savedIP = methodBytes + frame.savedIPOffset;
             frame.savedBytecodeEnd = methodBytes + frame.savedBytecodeEndOffset;
+            if (GET_DEBUG_BOOL(PHARO_GC_FRAME_VERIFY) &&
+                frame.gcVerifyByte != 0xFF && frame.savedIP &&
+                *frame.savedIP != frame.gcVerifyByte) {
+                fprintf(stderr,
+                    "[GC-FRAME-VERIFY-FAIL] frame=%zu/%zu saved=0x%02X actual=0x%02X "
+                    "ipOff=%lld method=%s>>#%s closure=%s\n",
+                    i, frameDepth_, frame.gcVerifyByte, *frame.savedIP,
+                    (long long)frame.savedIPOffset,
+                    classNameOfMethod(frame.savedMethod).c_str(),
+                    memory_.selectorOf(frame.savedMethod).c_str(),
+                    frame.savedClosure.isNil() ? "nil" : "BLOCK");
+            }
         }
     }
 
