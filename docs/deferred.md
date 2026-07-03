@@ -528,6 +528,34 @@ The [STATE-DUMP] wedge diagnostic is armed but this run never reached
 the post-completion phase (timeout kill), so the wedge remains
 un-diagnosed — rerun with TIMEOUT=9000 to get a completing run.
 
+### Silent-cap audit residue (2026-07-03; confirmed-but-deferred findings)
+The 41-agent audit (commit bd306e47 fixed the actionable set; e631d780
+fixed the ring-size regression it introduced) confirmed these additional
+findings, deferred with rationale — all medium/low, none reachable from
+green-suite workloads today:
+- [ ] ObjectMemory.cpp:1103 storePointer/fetchPointer slot bounds check
+  silently no-ops the store / returns nil — should assert loudly in debug.
+- [ ] ObjectMemory.hpp:290 followForwarded 10-hop chain cap (forwarding
+  chains are usually 1 deep; becomes real only under chained become:).
+- [ ] ObjectMemory.cpp:760 findGlobal heuristic caps (VM-internal lookups
+  of well-known globals only).
+- [ ] ObjectMemory.cpp:4049 updatePointersAfterCompact 256MB plausibility
+  scan terminator (defensive; garbage-header walk).
+- [ ] Interpreter.cpp:4531 unblockStuckSnapshotCallers scans first 10000
+  heap objects only (recovery diagnostic).
+- [ ] Chain-loop degrade paths log-capped at 5 then silent
+  (Interpreter.cpp ~24926/26216/26239 area) — raise caps or rate-limit.
+- [ ] setSenderSafe 200-deep cycle walk (materialize) — deliberate
+  HELPER_SENDS cycle-breaker; revisit if CYCLE-BREAK ever fires in logs.
+- [ ] JITRuntime bvClosureSaveStack_ 256-entry guard; JITCompiler
+  getStackBounds/eviction interplay now fail-safe (skip eviction).
+- [ ] primitiveGetNextEvent 15-slot ivar scan, primitiveInputSemaphore2
+  4-slot scan, primitiveCalloutToFFI 19-literal scan — heuristic
+  object-shape probes; replace with proper layout lookups.
+- [ ] TFFI callback-polling prims hardcoded nil/0 interceptions
+  (Primitives.cpp ~14983/15291) — superseded once TFFI v2 callback
+  forwarding lands.
+
 ### Primitive error-signal fidelity (cross-platform, pre-existing)
 (FileAttributesPluginPrimsTest: fixed 2026-07-02 — see the [x] entry above.)
 
