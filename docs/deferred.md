@@ -226,12 +226,21 @@ isolation (no suite watchdog):
       PushFullClosure node, alternating with store/pop pairs — the exact
       shape of a re-executed `sequence add:` loop (partial rollback /
       resume-from-context replay with current temps, or an interpreter
-      loop-back-edge bug at a GC boundary). NEXT: tripwire
-      `OrderedCollection>>addLast:`-level DUPLICATE detection — when an
-      Indexable Array append writes a non-nil object ref that ALREADY
-      OCCURS in the live prefix, log + backtrace (cap, OCIR-filtered).
-      That catches the 2nd..8th add of the same node at the moment of
-      insertion regardless of adjacency.
+      loop-back-edge bug at a GC boundary). DUP-APPEND detector result:
+      ZERO duplicate OCIR insertions (excluding legit sort swap:with:
+      transients) — the 8 references were never INSERTED as duplicates
+      either. Every write/insertion path is clean; therefore 8 DISTINCT
+      refs were later REWRITTEN to one value by a non-store mechanism
+      (no slotAtPut/storePointer/prim-105/tenure/become fires). NEXT
+      ANALYTICAL STEP (no new instrumentation needed): the [P105] logs
+      capture the failing array's complete removeIndex: shift sequence —
+      invert the shifts against the final OCIR-ERROR dump to reconstruct
+      the exact pre-conversion array content and localize which 8
+      positions held what before the loop; then diff that against what
+      the visitor must have seen (the recorded pairs) to pin the rewrite
+      window to either [tenure..first-shift] or mid-loop. Also compare a
+      PASSING run's array content at the same point (PHARO_YG_SKIP_SCAV_FROM=12)
+      — the delta IS the corruption.
       Remaining leads (in order):
       (a) ALL run detectors check LOWER neighbors ([i-1],[i-2]) — a
       DESCENDING fill evades every one of them, and

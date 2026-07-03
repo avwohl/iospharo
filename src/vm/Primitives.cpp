@@ -2186,6 +2186,48 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
 
     size_t arrayIndex = static_cast<size_t>(idx - 1);
 
+    // Duplicate-append detector (PHARO_SLOT_RUN_TRIPWIRE): an OCIR node
+    // stored into an Array slot when the SAME reference already occurs in
+    // the preceding live prefix — catches N-fold insertion of one IR node
+    // at the moment of the 2nd..Nth add, regardless of adjacency (the
+    // convertStorePop coalesced-run root anomaly).  Byte->instruction MAP
+    // arrays legitimately repeat nodes; the caller selector distinguishes.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SLOT_RUN_TRIPWIRE), 0)) {
+        if (value.isObject() && !value.isNil() && value.rawBits() > 0x10000 &&
+            header->format() == ObjectFormat::Indexable &&
+            arrayIndex < header->slotCount() && arrayIndex > 0) {
+            std::string vcls = memory_.classNameOf(value);
+            if (vcls.rfind("OCIR", 0) == 0) {
+                Oop* sl = header->slots();
+                for (size_t i = 0; i < arrayIndex; i++) {
+                    if (sl[i].rawBits() == value.rawBits()) {
+                        // swap:with: transiently duplicates during the swap —
+                        // legit (sorting sequences by orderNumber).
+                        std::string caller = memory_.selectorOf(method_);
+                        if (caller == "swap:with:") break;
+                        extern uint64_t g_scavengeCount;
+                        static int dupN = 0;
+                        if (++dupN <= 40) {
+                            fprintf(stderr,
+                                "[DUP-APPEND] arr=%p idx=%lld dupAt=%zu val=%llx cls=%s "
+                                "scav=%llu caller=%s>>%s\n",
+                                (void*)header, (long long)idx, i,
+                                (unsigned long long)value.rawBits(), vcls.c_str(),
+                                (unsigned long long)g_scavengeCount,
+                                classNameOfMethod(method_).c_str(),
+                                memory_.selectorOf(method_).c_str());
+                            if (dupN <= 6) {
+                                void dumpCxxBacktrace(const char* tag);
+                                dumpCxxBacktrace("DUP-APPEND");
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     if (__builtin_expect(GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0, 0)) {
         if (reinterpret_cast<uint8_t*>(header) ==
             memory_.oldSpaceStart() + GET_DEBUG_INT(PHARO_WATCH_OLDOFF)) {
