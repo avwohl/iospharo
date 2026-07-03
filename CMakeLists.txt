@@ -713,6 +713,21 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
                 "${CMAKE_CURRENT_BINARY_DIR}/sdl2-marker.txt"
                 "$<TARGET_FILE_DIR:test_load_image>/SDL2.dll"
             VERBATIM)
+
+        # FreeType runtime for the image's font machinery (FT2 FFI): without
+        # libfreetype-6.dll next to the exe, FreeTypeFontProvider
+        # updateFromSystem drops to 0 families and every LogicalFont falls
+        # back to the 14px bitmap StrikeFont (testHugeFontIsHuge, run-#6
+        # triage 2026-07-03).  DLL set vendored from the official Pharo VM
+        # distribution (see third_party/windows-runtime-dlls/README.md).
+        foreach(_ftdll libfreetype-6.dll libpng16.dll zlib1.dll
+                libbz2-1.dll libharfbuzz-0.dll)
+            add_custom_command(TARGET test_load_image POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/windows-runtime-dlls/${_ftdll}"
+                    "$<TARGET_FILE_DIR:test_load_image>/${_ftdll}"
+                VERBATIM)
+        endforeach()
     endif()
 
     # Force export testlib symbols so they're available via dlsym.
