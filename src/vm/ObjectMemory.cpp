@@ -2127,6 +2127,46 @@ GCResult ObjectMemory::scavenge() {
         }
     }
 
+    // DIAGNOSTIC (PHARO_SCAV_RAWSCAN): tenure range-overlap check.  If two
+    // forward-map SOURCES overlap in eden, an allocation path handed out
+    // overlapping young memory (mis-sized allocation) — two "objects" share
+    // bytes and tenure splits them into diverging copies: the identity-
+    // substitution mechanism behind the convertStorePop failure.  Dest
+    // overlap would mean the tenure bump-allocator itself is broken.
+    if (GET_DEBUG_BOOL(PHARO_SCAV_RAWSCAN) && !forward.empty()) {
+        std::vector<std::pair<uint8_t*, uint8_t*>> ranges;  // [start, end)
+        ranges.reserve(forward.size());
+        auto rangeOf = [](ObjectHeader* h) -> std::pair<uint8_t*, uint8_t*> {
+            uint8_t* s = reinterpret_cast<uint8_t*>(h) -
+                (h->hasOverflowSlots() ? 8 : 0);
+            return {s, s + h->totalSize()};
+        };
+        for (auto& kv : forward) ranges.push_back(rangeOf(kv.first));
+        std::sort(ranges.begin(), ranges.end());
+        static int ovN = 0;
+        for (size_t i = 1; i < ranges.size() && ovN < 10; i++) {
+            if (ranges[i - 1].second > ranges[i].first) {
+                ovN++;
+                fprintf(stderr,
+                    "[EDEN-OVERLAP] scav=%d src ranges [%p..%p) and [%p..%p) overlap!\n",
+                    myScavId, (void*)ranges[i - 1].first, (void*)ranges[i - 1].second,
+                    (void*)ranges[i].first, (void*)ranges[i].second);
+            }
+        }
+        ranges.clear();
+        for (auto& kv : forward) ranges.push_back(rangeOf(kv.second));
+        std::sort(ranges.begin(), ranges.end());
+        for (size_t i = 1; i < ranges.size() && ovN < 10; i++) {
+            if (ranges[i - 1].second > ranges[i].first) {
+                ovN++;
+                fprintf(stderr,
+                    "[TENURE-DEST-OVERLAP] scav=%d dest ranges [%p..%p) and [%p..%p) overlap!\n",
+                    myScavId, (void*)ranges[i - 1].first, (void*)ranges[i - 1].second,
+                    (void*)ranges[i].first, (void*)ranges[i].second);
+            }
+        }
+    }
+
     // PHARO_SCAV_DUMP_FORWARD: persist tenure maps for post-mortem
     // identity-mismatch forensics.  N >= 0: that scavenge only; -2: every
     // scavenge to fwdmap-<n>.txt.

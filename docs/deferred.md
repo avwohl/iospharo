@@ -213,14 +213,25 @@ isolation (no suite watchdog):
       RETARGETED TO A DIFFERENT OBJECT at scavenge 13 (bad forward-map
       entry, tenure memcpy from wrong source, or overlapping eden
       allocations), so post-GC readers see another tenured array whose
-      legit content merely looks smeared. DECISIVE NEXT EXPERIMENT: at
-      scavenge N, after tenureIfYoung copies each object, verify
-      copy-vs-source content equality AND that no two forward-map dests
-      overlap ([dest, dest+totalSize) disjoint) and that no two SOURCES
-      overlap in eden ([src, src+totalSize) disjoint — overlapping young
-      allocations = mis-sized allocation path still lurking). An
-      eden-allocation overlap check (each new object's range vs the
-      previous allocation) would catch the root directly.
+      legit content merely looks smeared. Tenure source/dest range-overlap checks: CLEAN (no
+      overlapping copies); growAtLast young sources verified fresh (not
+      in any forward map — legit). FINAL SYNTHESIS (2026-07-02 end):
+      the run is COALESCED, not written — 8 references to ONE young
+      OCIRPushFullClosure node sat INTERLEAVED with the store/pop pairs,
+      and each convertStorePop removeIndex: shift pulled them adjacent
+      (that is why no write tripwire ever fires: the equal values were
+      never adjacent at write time, and every detector needs >=2 equal
+      neighbors). The ROOT anomaly is therefore upstream in IR BUILD:
+      the sequence was given EIGHT references to a single
+      PushFullClosure node, alternating with store/pop pairs — the exact
+      shape of a re-executed `sequence add:` loop (partial rollback /
+      resume-from-context replay with current temps, or an interpreter
+      loop-back-edge bug at a GC boundary). NEXT: tripwire
+      `OrderedCollection>>addLast:`-level DUPLICATE detection — when an
+      Indexable Array append writes a non-nil object ref that ALREADY
+      OCCURS in the live prefix, log + backtrace (cap, OCIR-filtered).
+      That catches the 2nd..8th add of the same node at the moment of
+      insertion regardless of adjacency.
       Remaining leads (in order):
       (a) ALL run detectors check LOWER neighbors ([i-1],[i-2]) — a
       DESCENDING fill evades every one of them, and
