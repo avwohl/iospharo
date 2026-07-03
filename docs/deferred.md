@@ -589,7 +589,14 @@ CONTIGUOUS, starving P41-79 watchdog machinery).  TFUFFICallbackTest:
   iteration 3+ (was iteration 2 before the grace-duty fix; also seen as
   ObsoleteTest x4 timeout).  Something accumulates per suite run.  Tools
   ready: PHARO_STATE_DUMP_PERIOD_MS sampler + PHARO_SEM_SIGNAL_TRACE
-  (3M caps) + [SEM-WAIT]/[XFER-IN] traces.  Next: sample iteration 3.
+  (3M caps) + [SEM-WAIT]/[XFER-IN] traces.  First sampled wedge (500ms
+  dumps): NOT pure idle — repeated samples of the P70 process ACTIVE in
+  Behavior>>new / ExternalAddress new / Dictionary>>scanFor: at fd=6-9,
+  i.e. the callback machinery LIVELOCKING through an allocation-heavy
+  loop (suspect: executeCallback: erroring -> on:Exception fork: retry
+  storm, or lookupCallback missing its entry after suite re-init).
+  Next: catch the loop with PHARO_TRACE_EXTENT_SEL on a suspect selector
+  or sample with smaller period + fd/method pairs.
 
 ### TFFI v2 residual notes (historical; resolution above)
 v2 forwarding landed 2026-07-03 (commit 6280deb8): worker/native-thread
