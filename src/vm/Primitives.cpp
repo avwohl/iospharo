@@ -30393,6 +30393,15 @@ struct Task {
     std::atomic<bool> done{false};
 };
 
+struct Worker;
+
+// Registry of live workers so VM shutdown can stop/join them all: image
+// code that never sends #release leaks the native thread, and a worker
+// still running during static destruction segfaults on freed globals
+// (the post-"Test Complete" exit-139, 2026-07-03).
+static std::mutex g_workerRegistryMx;
+static std::vector<Worker*> g_workerRegistry;
+
 struct Worker {
     std::mutex mx;
     std::condition_variable cv;
@@ -30429,6 +30438,27 @@ struct Worker {
 };
 
 }  // namespace tffiworker
+
+// Stop and join every live TFFI worker thread.  Called from the harness
+// right before main returns, so no worker touches destructed statics.
+// Safe to call multiple times; after this the image must not run again.
+extern "C" void pharo_tffiWorkerShutdownAll(void) {
+    std::vector<tffiworker::Worker*> workers;
+    {
+        std::lock_guard<std::mutex> lk(tffiworker::g_workerRegistryMx);
+        workers.swap(tffiworker::g_workerRegistry);
+    }
+    for (auto* worker : workers) {
+        {
+            std::lock_guard<std::mutex> lk(worker->mx);
+            worker->stop = true;
+        }
+        worker->cv.notify_all();
+        if (worker->thread.joinable()) worker->thread.join();
+        for (tffiworker::Task* t : worker->queue) delete t;
+        delete worker;
+    }
+}
 
 // Marshal one Smalltalk argument into task-owned heap storage.  Mirrors the
 // primitiveSameThreadCallout cases, except heap-allocated (the call runs on
@@ -30531,6 +30561,10 @@ PrimitiveResult Interpreter::primitiveCreateWorker(int argCount) {
     auto* worker = new tffiworker::Worker();
     worker->interp = this;
     worker->thread = std::thread([worker] { worker->run(); });
+    {
+        std::lock_guard<std::mutex> lk(tffiworker::g_workerRegistryMx);
+        tffiworker::g_workerRegistry.push_back(worker);
+    }
 
     Oop handleOop = tffi_newExternalAddress(worker);
     if (handleOop.isNil()) {
@@ -30648,6 +30682,11 @@ PrimitiveResult Interpreter::primitiveReleaseWorker(int argCount) {
     tffiworker::Worker* worker = tffiWorkerOf(*this, memory_, receiver);
     if (!worker) return PrimitiveResult::Failure;
 
+    {
+        std::lock_guard<std::mutex> lk(tffiworker::g_workerRegistryMx);
+        auto& reg = tffiworker::g_workerRegistry;
+        reg.erase(std::remove(reg.begin(), reg.end(), worker), reg.end());
+    }
     {
         std::lock_guard<std::mutex> lk(worker->mx);
         worker->stop = true;

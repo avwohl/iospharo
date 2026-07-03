@@ -14,6 +14,9 @@
 #include "DebugSettings.hpp"
 #include "DebugVars.hpp"
 #include "Profiler.hpp"
+#include "plugins/SocketPlugin.h"   // socketPluginShutdown (orderly exit)
+// Stops/joins all TFFI worker threads before static teardown (Primitives.cpp).
+extern "C" void pharo_tffiWorkerShutdownAll(void);
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
 #include <iostream>
@@ -1456,5 +1459,11 @@ int main(int argc, char* argv[]) {
     // Dump profile BEFORE Interpreter destructor runs (atexit's too
     // late — memory is torn down by then, selectorOf crashes).
     pharo::Profiler::dump();
+    // Orderly thread shutdown BEFORE static destructors run: leaked TFFI
+    // worker threads (image never sent #release) and the detached socket
+    // I/O thread otherwise race the teardown of the very globals they use
+    // — the post-"Test Complete" exit-139 segfault (2026-07-03, run #7).
+    pharo_tffiWorkerShutdownAll();
+    socketPluginShutdown();
     return 0;
 }
