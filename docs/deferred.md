@@ -515,13 +515,23 @@ the full run, worth a look if it recurs.
   same-thread (+11 worker-variant errors), BasicTypeMarshalling 17/18
   same-thread, DerivedTypeMarshalling 16/16 same-thread, FunctionCall 2/2+1skip.
   FFICalloutMethodBuilderTest still 10/10.
-- [ ] **TFFI worker runtime (threaded FFI)** — every TFUFFI* class is
-  parameterized over {TFTestLibraryUsingSameThreadRunner,
-  TFTestLibraryUsingWorker}; the WORKER halves (callouts on a dedicated
-  worker thread: TFWorker/primitive support) error because our VM lacks the
-  threaded-FFI runtime. ~55 tests across the family. A real VM feature
-  (worker threads + cross-thread callout queue + callbacks), not a fixture
-  issue.
+- [x] **TFFI worker runtime (threaded FFI) — v1 DONE (2026-07-03,
+  commit e823b724); cross-thread CALLBACKS remain (v2).**
+  RESULT: the worker halves of every non-callback TFUFFI suite are at
+  parity with same-thread — BasicTypeSize 48/48, Structures 22/22,
+  BasicTypeMarshalling 34/36 (2 pre-existing BOTH-halves testUnrefPointer
+  failures), DerivedTypeMarshalling 32/34 (2 pre-existing both-halves
+  testMarshallingOOPIsSameObject errors), FunctionCall 5/5, MethodRegistry
+  2/2, DerivedTypeSize 2/2 — ~120 worker tests recovered. FFI battery
+  regression-clean (CalloutBuilder 10/10, Parser 45/45, ExternalStructure
+  12/12, ExternalArray 7/7, TFStruct 6/6). The return-value conversion is
+  now shared (tffiConvertReturnValue) between same-thread and worker paths.
+- [ ] **TFFI v2: cross-thread callback forwarding** — the *InCallbacks*
+  suites (36+12 errors), TFUFFICallbackTest worker half (9 errors), and
+  TFUFFIConcurrencyTest>>testConcurrentlyCompiling (1) need callbacks
+  invoked FROM the worker thread: the worker must block while the VM
+  thread runs the callback and resumes it (stock pThreadedFFI's callback
+  forwarding). Original scoping notes follow:
   SCOPED 2026-07-03 (image protocol fully mapped; sources in
   C:/tmp/tfw-sources*.txt):
   - 4 named prims: `primitiveCreateWorker` (receiver=TFWorker; create
