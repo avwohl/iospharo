@@ -740,6 +740,33 @@ private:
     // After materialize, the outer switch activates the cached method.
     static constexpr int J2JSlotPerEntry = 32;  // max J2J depth per tryJITActivation
     static constexpr int MaxJ2JPoolSize = 1024; // shared pool across recursive entries
+
+#if PHARO_JIT_ENABLED
+    // Clear the GC-visible fields of a freshly RESERVED j2j-pool slice.
+    // Reserving [base,end) under j2jPoolCursor_ makes it visible to
+    // forEachRoot's receiver walk and prepareForGC's ip round-trip BEFORE the
+    // entries are written, so stale content from an earlier (released) chain
+    // must be wiped: a stale receiver oop pins dead objects across fullGC —
+    // root cause of the JIT-only WeakSetTest>>testAddIncludesSizeReclaim
+    // weak-reclaim failure (2026-07-03; stale '123' receiver in
+    // j2jPool_[0].receiver of a reserved-but-unwritten slot).
+    // rawBits(0) is the established empty-slot convention (visitors skip it);
+    // matches the chain-loop resume-slice init that already did this.
+    void clearJ2JSlice(int base, int end) {
+        if (end > (int)MaxJ2JPoolSize) end = (int)MaxJ2JPoolSize;
+        for (int i = base; i < end; i++) {
+            j2jPool_[i].receiver = Oop::fromRawBits(0);
+#if PHARO_J2J_SAVE_V2
+            j2jPool_[i].resumeAddr = 0;
+            j2jPool_[i].closure = Oop::fromRawBits(0);
+#else
+            j2jPool_[i].ip = nullptr;
+            j2jPool_[i].jitMethod = nullptr;
+            j2jPool_[i].resumeAddr = nullptr;
+#endif
+        }
+    }
+#endif
     // Primitive error codes (matching PrimErrTable indices in the image).
     // Index is 1-based and matches Pharo's SpecialObjectsArray slot 52.
     //   1: nil

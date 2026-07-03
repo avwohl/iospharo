@@ -8477,6 +8477,99 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     memory_.fullGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
 
+    // PHARO_PIN_DIAG=<string>: locate what pins a ByteString with that exact
+    // content across fullGC.  Prints (a) which forEachRoot slot references
+    // each survivor, attributed against landmark ranges, and (b) every heap
+    // object whose pointer slots reference it.  Reusable GC-pin forensics —
+    // found the stale-j2j-slice weak-reclaim pin (2026-07-03,
+    // WeakSetTest>>testAddIncludesSizeReclaim).
+    if (GET_DEBUG_STR(PHARO_PIN_DIAG)) {
+        const char* pinTarget = GET_DEBUG_STR(PHARO_PIN_DIAG);
+        size_t pinLen = strlen(pinTarget);
+        std::vector<Oop> targets;
+        memory_.allObjectsDo([&](Oop o) {
+            if (!o.isObject()) return;
+            ObjectHeader* h = o.asObjectPtr();
+            if (h->format() < ObjectFormat::Indexable8) return;
+            size_t byteLen = h->slotCount() * 8;
+            if (pinLen > byteLen || byteLen >= pinLen + 8) return;  // slot-count match
+            uint8_t* b = h->bytes();
+            if (memcmp(b, pinTarget, pinLen) == 0 &&
+                (pinLen == byteLen || b[pinLen] == 0) &&
+                memory_.classNameOf(o) == "ByteString") {
+                targets.push_back(o);
+            }
+        });
+        fprintf(stderr, "[PIN-DIAG] %zu surviving '%s' strings after fullGC\n",
+                targets.size(), pinTarget);
+        if (!targets.empty()) {
+            fprintf(stderr, "[PIN-DIAG] landmarks: stack=[%p,%p) savedFrames=[%p,%p) fd=%zu "
+                    "j2jPool=[%p,%p) cursor=%d bvSaves=[%p,%p) depth=%d jitState=%p\n",
+                    (void*)stackBase_, (void*)stackPointer_,
+                    (void*)&savedFrames_[0], (void*)&savedFrames_[frameDepth_], frameDepth_,
+#if PHARO_JIT_ENABLED
+                    (void*)&j2jPool_[0], (void*)&j2jPool_[j2jPoolCursor_], j2jPoolCursor_,
+                    (void*)&bvClosureSaveStack_[0], (void*)&bvClosureSaveStack_[bvClosureSaveDepth_],
+                    bvClosureSaveDepth_, (void*)currentJITState_
+#else
+                    (void*)nullptr, (void*)nullptr, 0, (void*)nullptr, (void*)nullptr, 0, (void*)nullptr
+#endif
+                    );
+        }
+        for (Oop target : targets) {
+            fprintf(stderr, "[PIN-DIAG] target oop=0x%llx\n",
+                    (unsigned long long)target.rawBits());
+            forEachRoot([&](Oop& r) {
+                if (r.rawBits() == target.rawBits()) {
+                    fprintf(stderr, "[PIN-DIAG]   ROOT slot at %p holds it\n", (void*)&r);
+                }
+            });
+            std::vector<Oop> ctxHolders;
+            memory_.allObjectsDo([&](Oop holder) {
+                if (!holder.isObject()) return;
+                ObjectHeader* hh = holder.asObjectPtr();
+                if (hh->format() > ObjectFormat::WeakWithFixed) return;  // pointer formats only
+                size_t n = hh->slotCount();
+                Oop* slots = hh->slots();
+                for (size_t i = 0; i < n; i++) {
+                    if (slots[i].rawBits() == target.rawBits()) {
+                        std::string cls = memory_.classNameOf(holder);
+                        fprintf(stderr, "[PIN-DIAG]   HEAP holder=0x%llx class=%s slot=%zu fmt=%d\n",
+                                (unsigned long long)holder.rawBits(),
+                                cls.c_str(), i, (int)hh->format());
+                        if (cls == "Context") ctxHolders.push_back(holder);
+                    }
+                }
+            });
+            // One level up: who holds a pinning Context? (strong-pin chains
+            // usually end at a stale context — its retainer names the bug.)
+            for (Oop ctx : ctxHolders) {
+                forEachRoot([&](Oop& r) {
+                    if (r.rawBits() == ctx.rawBits()) {
+                        fprintf(stderr, "[PIN-DIAG]     ctx 0x%llx held by ROOT slot %p\n",
+                                (unsigned long long)ctx.rawBits(), (void*)&r);
+                    }
+                });
+                memory_.allObjectsDo([&](Oop holder) {
+                    if (!holder.isObject()) return;
+                    ObjectHeader* hh = holder.asObjectPtr();
+                    if (hh->format() > ObjectFormat::WeakWithFixed) return;
+                    size_t n = hh->slotCount();
+                    Oop* slots = hh->slots();
+                    for (size_t i = 0; i < n; i++) {
+                        if (slots[i].rawBits() == ctx.rawBits()) {
+                            fprintf(stderr, "[PIN-DIAG]     ctx 0x%llx held by 0x%llx class=%s slot=%zu\n",
+                                    (unsigned long long)ctx.rawBits(),
+                                    (unsigned long long)holder.rawBits(),
+                                    memory_.classNameOf(holder).c_str(), i);
+                        }
+                    }
+                });
+            }
+        }
+        fflush(stderr);
+    }
+
     size_t freeBytes = memory_.freeOldSpaceBytes();
 
     if (Oop::canBeSmallInteger(static_cast<int64_t>(freeBytes))) {

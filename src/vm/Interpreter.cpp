@@ -21402,14 +21402,9 @@ void Interpreter::tryJITResumeInCaller() {
         j2jPoolCursor_ += kResumeSliceSlots;
         // forEachRoot visits receiver/cachedTarget of every slot below
         // the cursor; j2jPool_ is an uninitialized member, so a fresh
-        // session's slice slots hold indeterminate memory.
-        for (int i = 0; i < kResumeSliceSlots; i++) {
-            j2jPool_[resumeSliceBase + i].receiver = Oop::fromRawBits(0);
-            j2jPool_[resumeSliceBase + i].resumeAddr = 0;
-#if PHARO_J2J_SAVE_V2
-            j2jPool_[resumeSliceBase + i].closure = Oop::fromRawBits(0);
-#endif
-        }
+        // session's slice slots hold indeterminate memory (and reused
+        // slots hold stale oops from released chains).
+        clearJ2JSlice(resumeSliceBase, resumeSliceBase + kResumeSliceSlots);
     }
     struct ResumeSliceGuard {
         int& cursor; int base; bool active;
@@ -21854,6 +21849,7 @@ void Interpreter::tryJITResumeInCaller() {
             // tryJITActivation reservation at ~21750.  Every exit path
             // below already releases via `j2jPoolCursor_ = rj2jBase`.
             j2jPoolCursor_ = rj2jBase + rj2jMaxDepth;
+            clearJ2JSlice(rj2jBase, rj2jBase + rj2jMaxDepth);  // reserved != written
             // No flip — codebase invariant (W^X audit 2026-04-26): thread is in X mode.
             // PHARO_RJ2J_VALIDATE=1 enables state validation around every
             // JIT_CALL in the chain loop.  Catches the moment state.
@@ -25388,6 +25384,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         : j2jPoolEnd;
     J2JSave* j2jStack = &j2jPool_[j2jPoolBase];
     j2jPoolCursor_ = j2jStateEnd;  // Reserve our slice; recursive entries continue after
+    clearJ2JSlice(j2jPoolBase, j2jStateEnd);  // reserved != written: wipe stale oops
     struct J2JPoolGuard {
         int& cursor; int base;
         ~J2JPoolGuard() { cursor = base; }

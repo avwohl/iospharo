@@ -56,9 +56,39 @@ isolation (no suite watchdog):
   been terminated'` → the test's on:Error handler). The returning context
   is deliberately NOT marked dead first, so the Error still finds
   handlers through its sender chain.
-- [ ] **WeakArrayTest** hangs — KNOWN nondeterministic weak-ref/GC-timing test
-  per debug_vars.h:260 ("only nondeterministic weak-ref/GC-timing tests differ"
-  under the x86 JIT, same on arm64-JIT). Not a Windows-specific regression.
+- [x] **"WeakArrayTest hangs" — RESOLVED as a misnomer (2026-07-03), and the
+  REAL weak-reclaim bug behind it FIXED.** `WeakArrayTest` does not exist in
+  Pharo 13 (the "hang" was an OCUndeclaredVariable compile error surfacing as
+  silent eval death). Running the ACTUAL 11 Weak* test classes (1007 tests):
+  all complete, and the one deterministic failure was
+  `WeakSetTest>>testAddIncludesSizeReclaim` (fails only JIT-warm, full-class
+  run; passes cold/isolated/JIT-off). ROOT CAUSE (found via the new
+  `PHARO_PIN_DIAG=<string>` GC-pin forensics): the J2J save-pool slice
+  RESERVATIONS (`j2jPoolCursor_ = base+32` in tryJITActivation and the rj2j
+  chain loop) make [base,base+32) visible to forEachRoot's receiver walk
+  BEFORE the entries are written — stale receiver oops from earlier released
+  chains (here a dead `'123' copy`) got marked live every fullGC and pinned
+  weakly-referenced objects. FIX: `clearJ2JSlice()` wipes receiver/closure/
+  resume fields at all three reservation sites (matches the convention the
+  resume-slice site already used for its uninit-memory case). Verified:
+  WeakSetTest 50/50 x3 (was 49/50 every warm run), weak battery green,
+  step/exception/process battery green (558 tests), bench identical
+  (fib 12ms, ensure 32ms).
+- [ ] **WeakAnnouncerTest testWeakObject/testWeakDoubleAnnouncer fail
+  JIT-warm** (pass cold; 31-33/34 depending on warmth; stock 33/34+1EF).
+  SEPARATE residual pin, evidence so far (2026-07-03): with a marker-string
+  subscriber, PIN_DIAG shows the strong holder is a **Context temp slot
+  (slot 7 = the test's `o` temp) still holding the object after `o := nil`
+  ran** — a stale materialized-context temp snapshot reachable through the
+  heap sender chain at a later fd=0 GC. PHARO_MAT_FULL_RESYNC=1 does NOT fix
+  it (ctxSynced skip exonerated); prepareForGC's temp-sync covers only
+  savedFrames_/current-frame, not this shape. Adding a `thisContext` touch
+  in the test method perturbs it to passing (sync side effect) — confirms
+  desync. Several diag blocks also show the survivor with NO visible
+  referrer — allObjectsDo may not walk EDEN, so young holders are invisible
+  to the referrer scan (improve PIN_DIAG to walk young space too, then
+  re-localize which materialization path snapshots temps without a later
+  sync).
 - [x] **Full suite on Windows — RUNS** (recipe below). 2047 non-abstract
   TestCase subclasses.
   - RESULT (run #1, JIT on, ~45 min outer cap): got through the first **111
