@@ -12,6 +12,15 @@ every `LogicalFont` silently falls back to the 14px bitmap StrikeFont
     zlib1.dll            zlib (zlib license) — freetype dep
     libbz2-1.dll         bzip2 (BSD-like) — freetype dep
     libharfbuzz-0.dll    HarfBuzz (MIT) — freetype dep
+    libcairo-2.dll       Cairo (LGPL/MPL dual) — Athens/Roassal graphics
+    libpixman-1-0.dll    pixman (MIT) — cairo dep
+    libfontconfig-1.dll  fontconfig (MIT-like) — cairo dep
+    libexpat-1.dll       Expat (MIT) — fontconfig dep
+
+The Cairo set (2026-07-03, same session): without libcairo-2.dll every
+Athens/Roassal test errored "Cannot locate any of #('libcairo-2.dll')" —
+~150 deviations across AthensCairo*/RS* in full-suite runs.  With it:
+AthensCairoMatrixTest 17/17, RSLinePlotTest 31/31, RSCanvasTest 34/34.
 
 Staged next to test_load_image.exe by a CMake POST_BUILD step
 (CMakeLists.txt, "FreeType runtime" block). All licenses permit binary

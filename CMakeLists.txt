@@ -721,7 +721,9 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         # triage 2026-07-03).  DLL set vendored from the official Pharo VM
         # distribution (see third_party/windows-runtime-dlls/README.md).
         foreach(_ftdll libfreetype-6.dll libpng16.dll zlib1.dll
-                libbz2-1.dll libharfbuzz-0.dll)
+                libbz2-1.dll libharfbuzz-0.dll
+                libcairo-2.dll libpixman-1-0.dll libfontconfig-1.dll
+                libexpat-1.dll)
             add_custom_command(TARGET test_load_image POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/windows-runtime-dlls/${_ftdll}"
