@@ -523,6 +523,9 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
     // Signal finalization on the very next step (not inside the primitive).
     if (memory_.pendingFinalizationSignals() > 0) {
         finalizationCheckAfterGC_ = true;
+        // Force the next JIT back edge to exit so JIT-resident execution
+        // reaches the dispatch loop's periodic signal (see primitiveFullGC).
+        forceYield_.store(true, std::memory_order_release);
     }
 
     return PrimitiveResult::Success;
@@ -8598,6 +8601,31 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
                                 (unsigned long long)ctx.rawBits(), (void*)&r);
                     }
                 });
+                // Which SavedFrame field retains it?  savedActiveContext is a
+                // GC root but is NOT covered by prepareForGC's temp-sync (only
+                // materializedContext is) — a stale duplicate materialization
+                // retained there keeps pre-nil temp snapshots alive.
+                for (size_t fi = 0; fi < frameDepth_; fi++) {
+                    SavedFrame& sf = savedFrames_[fi];
+                    if (sf.savedActiveContext.rawBits() == ctx.rawBits() ||
+                        sf.materializedContext.rawBits() == ctx.rawBits()) {
+                        fprintf(stderr,
+                            "[PIN-DIAG]     ctx 0x%llx in frame[%zu] #%s: "
+                            "savedActiveContext=%d materializedContext=%d "
+                            "(matCtx=0x%llx)\n",
+                            (unsigned long long)ctx.rawBits(), fi,
+                            memory_.selectorOf(sf.savedMethod).c_str(),
+                            sf.savedActiveContext.rawBits() == ctx.rawBits(),
+                            sf.materializedContext.rawBits() == ctx.rawBits(),
+                            (unsigned long long)sf.materializedContext.rawBits());
+                    }
+                }
+                if (activeContext_.rawBits() == ctx.rawBits())
+                    fprintf(stderr, "[PIN-DIAG]     ctx 0x%llx IS activeContext_\n",
+                            (unsigned long long)ctx.rawBits());
+                if (currentFrameMaterializedCtx_.rawBits() == ctx.rawBits())
+                    fprintf(stderr, "[PIN-DIAG]     ctx 0x%llx IS currentFrameMaterializedCtx_\n",
+                            (unsigned long long)ctx.rawBits());
                 memory_.allObjectsDo([&](Oop holder) {
                     if (!holder.isObject()) return;
                     ObjectHeader* hh = holder.asObjectPtr();
@@ -8635,6 +8663,15 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     // activateMethod's stack-overflow check (via forceInterruptCheck).
     if (memory_.pendingFinalizationSignals() > 0) {
         finalizationCheckAfterGC_ = true;
+        // JIT-resident execution may not reach an activation checkpoint at
+        // all (J2J-native loops survive the GC): force the next JIT back
+        // edge to exit — the ExitYield handlers bail to the dispatch loop
+        // when finalizationCheckAfterGC_ is armed, whose periodic
+        // signalFinalizationIfNeeded wakes the finalization process.  This
+        // mirrors Cog's forceInterruptCheck-after-fireEphemerons.  Without
+        // it, mourn-queue entries (strong GC roots) pinned their ephemeron
+        // keys across back-to-back GCs in warm code (WeakAnnouncerTest).
+        forceYield_.store(true, std::memory_order_release);
     }
 
     return PrimitiveResult::Success;

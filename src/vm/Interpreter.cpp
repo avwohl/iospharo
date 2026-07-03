@@ -22018,6 +22018,16 @@ void Interpreter::tryJITResumeInCaller() {
                     checkCountdown_ -= 1000 * yNumBC;
                     g_stepNum += 1000 * yNumBC;
                     if (checkCountdown_ <= 0) break;  // Scheduler needs to run
+                    // Deferred finalization signal armed (prim 130/131) while
+                    // execution is JIT-resident: bail to the interpreter so the
+                    // dispatch loop's periodic signalFinalizationIfNeeded fires
+                    // (signaling here, mid-chain, could transferTo the
+                    // finalization process from inside the chain loop — the
+                    // countdown/break path is the sanctioned exit).  Without
+                    // this a T1 J2J loop that survives the GC starves the
+                    // mourn-queue drain and its entries pin their ephemeron
+                    // keys (WeakAnnouncerTest JIT-warm flake, 2026-07-03).
+                    if (__builtin_expect(finalizationCheckAfterGC_, 0)) break;
 
                     // Compute callee's resume address from yield IP
                     if (!yJM) break;
@@ -23108,6 +23118,14 @@ void Interpreter::tryJITResumeInCaller() {
             checkCountdown_ -= charge;
             g_stepNum += charge;
             if (checkCountdown_ <= 0) {
+                inJITResume_ = false;
+                return;
+            }
+            // Deferred finalization signal armed while JIT-resident: hand the
+            // frame back to the dispatch loop so its periodic
+            // signalFinalizationIfNeeded fires (see the chain-loop ExitYield
+            // twin for the full rationale — mourn-queue starvation pin).
+            if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
                 inJITResume_ = false;
                 return;
             }
@@ -27655,6 +27673,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 g_stepNum += charge;
             }
             if (checkCountdown_ <= 0) goto jit_loop_exit;
+            // Deferred finalization signal armed while JIT-resident: exit to
+            // the dispatch loop so its periodic signalFinalizationIfNeeded
+            // fires (see the chain-loop ExitYield twin — mourn-queue
+            // starvation pin).
+            if (__builtin_expect(finalizationCheckAfterGC_, 0)) goto jit_loop_exit;
 
             // Reset yield counter and resume with J2J enabled. This lets
             // stencils handle sends directly via stencil-to-stencil calls

@@ -85,22 +85,32 @@ isolation (no suite watchdog):
     entries (strong GC roots) pinned their ephemeron keys across every
     subsequent GC. The JIT branch now performs the same one-shot check
     before returning. First warm run now reaches stock parity (33/34).
-  - [ ] **Residual: stale materialized-context TEMP pin.** PIN_DIAG shows
-    the surviving subscriber held by a Context's temp slot (slot 7 = the
-    test's `o` temp) AFTER `o := nil` executed; the context is retained by
-    savedFrames_ root slots + the operand stack + a sender-chain Context.
-    prepareForGC's temp-sync loop RUNS over the frame (the savedFP range
-    guard never fires — instrumented [GC-TEMPSYNC-SKIP], zero hits) yet
-    the context temp stays stale — hypothesis: `frame.savedFP + 1 + t` is
-    itself the STALE copy because the frame re-entered JIT with temps
-    live at a different address (JITState.tempBase / J2J save tempBase),
-    so the sync faithfully copies a dead interpreter-layout slot. NEXT:
-    at GC, for frames whose method is JIT-resident, compare
-    frame.savedFP+1 against the JIT-side tempBase for the same
-    activation, and sync from the LIVE location. Note PHARO_MAT_FULL_
-    RESYNC=1 does NOT cure it; a `thisContext` touch in the test method
-    does (forces fresh materialization) — confirming desync, not GC.
-    Diag probes: C:/tmp/weakann-probe*.st, PHARO_PIN_DIAG=weakpinmarker.
+  - [ ] **Residual: mourn-queue consumer identity/timing (one flake from
+    parity: warm runs 32-33/34, stock 33/34).** The earlier "stale
+    context temp" lead DISSOLVED — a post-nil-only probe (skip the
+    pre-nil GCs) shows the ONLY post-nil pin is mournQ[0]
+    (FinalizationRegistryEntry, key = the subscriber), persisting across
+    consecutive GCs. Hardening added en route (all committed, each a
+    strict improvement toward Cog's forceInterruptCheck semantics):
+    (a) activateMethod's JIT branch now consumes the deferred-signal
+    one-shot; (b) all three JIT ExitYield handlers bail to the dispatch
+    loop when the one-shot is armed; (c) prim 130/131 set forceYield_
+    when arming so the next JIT back edge exits. Result: first warm run
+    consistently 33/34 (stock parity), later runs flake 32/34.
+    DECISIVE NEGATIVE RESULTS for the residual: `Processor yield` after
+    each GC does NOT cure it, and PHARO_GC_EPH_DEBUG shows [SIG-FIN]
+    firing with **hasWaiter=0** (the image's Finalization Process — two
+    instances, pri 79 and 50 — was NOT waiting on TheFinalizationSemaphore
+    at signal time) and far fewer SIG-FINs than arm events. NEXT (fresh
+    session): identify exactly which semaphore/delay Pharo 13's
+    FinalizationProcess mournLoop blocks on (image-side source:
+    FinalizationProcess>>mournLoopWith:, WeakArray class>>
+    restartFinalizationProcess) and whether our TheFinalizationSemaphore
+    (specialObjectsArray slot) is the same object; if the FP polls on a
+    Delay instead, warm runs simply outrun the poll and the fix is to
+    signal the CORRECT registered semaphore. Diag probes:
+    C:/tmp/weakann-probe*.st, PHARO_PIN_DIAG=weakpinmarker,
+    PHARO_GC_EPH_DEBUG=1.
 - [x] **Full suite on Windows — RUNS** (recipe below). 2047 non-abstract
   TestCase subclasses.
   - RESULT (run #1, JIT on, ~45 min outer cap): got through the first **111
