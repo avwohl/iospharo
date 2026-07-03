@@ -897,7 +897,37 @@ Historical scoping notes (how the breakthrough was reached) follow:
   warning. Regression battery: ExceptionTest 47/47, ContextTest 34/34,
   StepIntoTest 7/7, SUnitTest 35/35.
   DISCOVERED EN ROUTE (pre-existing, stock passes 10/10):
-- [ ] **StepOverTest>>testStepOverNonErrorExceptionSignalWithHandlerDeeperInTheContextStack
-  fails** (ours 9/10, stock 10/10). Same debugger-stepping family; shallow
-  stack, so unrelated to the removed cap (verified identical failure before
-  the prim-197 change). Investigate next.
+- [x] **StepOverTest>>testStepOverNonErrorExceptionSignalWithHandlerDeeperInTheContextStack
+  — FIXED (2026-07-03), 10/10.** TWO stock-parity root causes, found by
+  tracing the debugged process's frozen mid-unwind state vs stock:
+  1. **Context-NLR unwind now uses the stock `aboutToReturn:through:`
+     protocol** (handleContextNLRUnwind dispatches the send; the image's
+     `Context>>aboutToReturn:through:`/`return:through:`/`resume:through:`
+     runs the unwind blocks, terminates intervening contexts and returns
+     the value). The old native pending-NLR (nlrTargetCtx_/nlrEnsureCtx_ +
+     executeFromContext ensure-hopping) kept mid-unwind state in C++ where
+     the debugger could neither see nor resume it: a stepOver frozen
+     mid-unwind (inserted-ensure `here jump`) finished the ensure block and
+     returned NORMALLY to the ensure's sender, losing the pending NLR.
+     Empirically verified first (proto-probe): image-side
+     `findNextUnwindContextUpTo:` + `resume:through:` (terminateTo: sender
+     surgery + cross-frame return) work correctly on our VM from live
+     frames — the 2026-era failed attempt at this protocol predated the
+     prim-195 cap fix + materialization hardening. Opt-out knob for
+     bisecting: `PHARO_NATIVE_NLR_UNWIND=1`.
+  2. **prim 196 (terminateTo:) now nils BOTH sender AND pc of intermediate
+     contexts** (stock parity; `Context>>isDead` tests `pc isNil`). It
+     nil'd only senders, so terminated contexts read as alive and the
+     debugger's `[context isDead ...] whileFalse:` walk stepped PAST the
+     return target, simulating the debugged process to termination
+     (suspendedContext=nil). Also removed its two 10000-deep walk caps
+     (Floyd/self-breaking guards instead) and stopped nil-ing the
+     receiver's own sender mid-walk (stock starts at receiver's sender).
+  Regression battery green: StepOver 10/10, StepInto 7/7, StepThrough
+  11/11, FastStepThrough 11/11, Exception 47/47, Context 34/34, SUnit
+  35/35, BlockClosure 48/48, Symbol 268, String 438, Array 324,
+  OrderedCollection 351, Dictionary 205, Set 174, Semaphore 18, Mutex 7.
+  Perf smoke unchanged (fib 12ms, 100k ensure 31ms).
+  NOTE: the live-frame inline NLR path still uses native ensure-hopping
+  (nlrHomeMethod_ safety net); converting it to the same protocol is a
+  possible future alignment if a debugger interaction surfaces there.

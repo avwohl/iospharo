@@ -295,6 +295,7 @@ DEBUG_BOOL(PHARO_GUI_WINDOW)                // test_load_image (Windows): back g
 DEBUG_BOOL(PHARO_WIN_EVENT_TRACE)           // Windows GUI input debug: trace real input events at the producer (Win32 wndProc push into gEventQueue) and the consumer (stub_SDL_PollEvent delivery to the image), so a click's full path is observable. Button/key events log individually; mouse moves are counted (logged every 64th).
 DEBUG_BOOL(PHARO_BITBLT_TRACE)              // log each primitiveCopyBits FAILURE (rule, src/dst depth, reason) — the image's copyBits fallback masks the real cause behind "Bad BitBlt arg (Fraction?)" so this is how you find which rule/depth combination the primitive actually lacks. First 50 + every 500th.
 DEBUG_BOOL(PHARO_NLR_TRACE)                 // trace activateBlock home-frame resolution (homeMethod/altHome/outerContext/homeFrame) and block-NLR home search failures — for BlockCannotReturn diagnosis.
+DEBUG_BOOL(PHARO_NATIVE_NLR_UNWIND)         // bisect hatch: restore the pre-2026-07-03 NATIVE context-NLR unwind (nlrTargetCtx_/nlrEnsureCtx_ pending-NLR + executeFromContext ensure-hopping) instead of the stock aboutToReturn:through: image protocol. The native mechanism keeps mid-unwind state in C++ where the debugger cannot see or resume it (StepOverTest deep-handler failure); this knob exists only to bisect regressions against the old behavior.
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT

@@ -8227,6 +8227,41 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
 
     if (ensureCtx.isNil()) return false;
 
+    // Stock-VM protocol (Cog commonReturn): when an unwind-marked (prim 198)
+    // context lies between the returning context and its home, do NOT unwind
+    // natively.  Send `startCtx aboutToReturn: value through: ensureCtx` and let
+    // the image's Context>>aboutToReturn:through: / return:through: /
+    // resume:through: run every unwind block, terminate the intervening contexts
+    // (prim 196) and return the value to home's sender.  All unwind state then
+    // lives in CONTEXTS, so a debugger that freezes the process mid-unwind
+    // (Process>>completeStep: jumping out from an inserted ensure) can simulate
+    // the rest with Context>>step.  The old native pending-NLR mechanism
+    // (nlrTargetCtx_/nlrEnsureCtx_ + executeFromContext) kept that state in C++
+    // where the image could neither see nor resume it — a stepOver frozen
+    // mid-unwind finished the ensure block and then returned NORMALLY to the
+    // ensure's sender, losing the pending NLR (StepOverTest>>testStepOverNon-
+    // ErrorExceptionSignalWithHandlerDeeperInTheContextStack landed in step3
+    // instead of step1).  Verified 2026-07-03: the image machinery (prim 195/196
+    // + terminateTo: sender surgery + cross-frame return) runs correctly on this
+    // VM from both live-frame and materialized-context states.
+    // PHARO_NATIVE_NLR_UNWIND=1 restores the old mechanism for bisecting.
+    // (The earlier 2026-era attempt at aboutToReturn:through: predates the
+    // prim-195 cap fix and the materialization hardening; its failure note
+    // above no longer applies.)
+    if (!GET_DEBUG_BOOL(PHARO_NATIVE_NLR_UNWIND)
+            && selectors_.aboutToReturn.isObject() && !selectors_.aboutToReturn.isNil()) {
+        if (frameDepth_ > 0) {
+            Oop topCtx = materializeFrameStack();
+            activeContext_ = topCtx;
+            frameDepth_ = 0;
+        }
+        push(startCtx);   // receiver: the returning context
+        push(value);      // arg 1: the value being returned
+        push(ensureCtx);  // arg 2: first unwind-marked context on the way home
+        sendSelector(selectors_.aboutToReturn, 2);
+        return true;
+    }
+
     Oop nilObj = memory_.nil();
 
     // Step 1: Kill all contexts from startCtx up to (but not including) ensureCtx.

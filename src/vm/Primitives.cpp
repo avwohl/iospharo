@@ -10609,30 +10609,46 @@ PrimitiveResult Interpreter::primitiveTerminateTo(int argCount) {
 
     Oop nilObj = memory_.nil();
     const size_t SenderIndex = 0;
+    const size_t PCIndex = 1;
 
-    // Check if target is reachable from receiver via sender chain
+    // Check if target is reachable from receiver via sender chain.
+    // No depth cap (chains can legitimately exceed any constant — see the
+    // prim 195/197 fix); a cyclic chain is guarded via Floyd tortoise-and-hare.
     bool reachable = false;
     if (aContextOrNil.rawBits() == nilObj.rawBits() || aContextOrNil.isNil()) {
         reachable = true;  // nil is always reachable (terminate entire chain)
     } else {
         Oop check = thisCtx;
-        for (int i = 0; i < 10000 && check.isObject() && check.rawBits() != nilObj.rawBits(); i++) {
+        Oop slowCheck = thisCtx;
+        bool advanceSlow = false;
+        while (check.isObject() && check.rawBits() != nilObj.rawBits()) {
             if (check.rawBits() == aContextOrNil.rawBits()) {
                 reachable = true;
                 break;
             }
             check = memory_.fetchPointer(SenderIndex, check);
+            if (advanceSlow) {
+                slowCheck = memory_.fetchPointer(SenderIndex, slowCheck);
+                if (check.isObject() && slowCheck.rawBits() == check.rawBits()) break;  // cycle
+            }
+            advanceSlow = !advanceSlow;
         }
     }
 
-    // If reachable, walk sender chain and nil intermediate context senders
+    // If reachable, kill the INTERMEDIATE contexts (receiver's sender up to but
+    // not including the target): nil BOTH sender and pc, exactly like stock
+    // Cog's primitiveTerminateTo.  Context>>isDead tests `pc isNil`, so nil-ing
+    // only the sender left "terminated" contexts looking alive — the debugger's
+    // runUntilErrorOrReturnFrom: walk loop gates on `context isDead` and spun
+    // past the return target, simulating the debugged process to termination
+    // (StepOverTest deep-handler stepOver ended with suspendedContext=nil).
     if (reachable) {
-        Oop current = thisCtx;
-        for (int i = 0; i < 10000; i++) {
-            if (current.rawBits() == aContextOrNil.rawBits()) break;
-            if (!current.isObject() || current.rawBits() == nilObj.rawBits()) break;
+        Oop current = memory_.fetchPointer(SenderIndex, thisCtx);
+        while (current.isObject() && current.rawBits() != nilObj.rawBits() &&
+               current.rawBits() != aContextOrNil.rawBits()) {
             Oop sender = memory_.fetchPointer(SenderIndex, current);
             memory_.storePointer(SenderIndex, current, nilObj);
+            memory_.storePointer(PCIndex, current, nilObj);
             current = sender;
         }
     }
