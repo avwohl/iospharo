@@ -14444,12 +14444,15 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
         if (relinquishCallback_) {
             relinquishCallback_(static_cast<int>(sleepUs));
         } else {
-            #ifdef _WIN32
-            Sleep(static_cast<DWORD>(sleepUs / 1000));
-            #else
-            usleep(static_cast<useconds_t>(sleepUs));
-            #endif
+            // Interruptible: wakeIdleSleep() (worker completion, forwarded
+            // callback, socket signal) cuts the quantum short instead of
+            // the event waiting out a raw 10 ms Sleep (2026-07-03 — 42
+            // forwarded callbacks used to cost ~10 s in idle quanta).
+            std::unique_lock<std::mutex> lk(idleWakeMx_);
+            idleWakeCv_.wait_for(lk, std::chrono::microseconds(sleepUs),
+                [&] { return idleWakePending_.load(std::memory_order_acquire); });
         }
+        idleWakePending_.store(false, std::memory_order_release);
         processInputEvents();
         processPendingSignals();
         checkTimerSemaphore();
@@ -31134,6 +31137,30 @@ int g_callbackSemaphoreIndex = 0;
 // Global interpreter pointer for callbackClosureHandler (C callback, no 'this' pointer)
 static pharo::Interpreter* g_interpreter = nullptr;
 
+// ===== TFFI v2: CROSS-THREAD CALLBACK FORWARDING =====
+// A native callout running on a TFFI WORKER thread may invoke a callback
+// thunk — callbackClosureHandler then runs ON THE WORKER, where entering a
+// nested interpreter is impossible.  Instead the worker queues the callback
+// and BLOCKS; the VM thread adopts it (adoptPendingWorkerCallbacks, driven
+// by the dispatch loop's periodic check + forceYield), pushes the vmcc onto
+// callbackContextStack_ and signals the image's callback semaphore exactly
+// like the same-thread flow; the image handles it and
+// primitiveCallbackReturn completes the wrapper, waking the worker.
+// Stock pThreadedFFI calls this "callback forwarding".
+namespace xtcb {
+struct Pending {
+    VMCallbackContext* vmcc = nullptr;
+    std::mutex mx;
+    std::condition_variable cv;
+    bool done = false;
+};
+static std::mutex g_mx;
+static std::deque<Pending*> g_queue;                                  // awaiting adoption
+static std::map<VMCallbackContext*, Pending*> g_active;               // adopted, awaiting return
+static std::atomic<bool> g_vmThreadIdSet{false};
+static std::thread::id g_vmThreadId;
+}  // namespace xtcb
+
 // The libffi closure handler - called when C code invokes a registered callback.
 // Uses sigsetjmp/siglongjmp to re-enter the Smalltalk interpreter to process the
 // callback, then returns to C with the computed result.
@@ -31164,6 +31191,41 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
     vmcc->stackp = (sqIntptr_t*)ret;      // Return value destination (libffi's ret buffer)
     vmcc->intregargsp = (sqIntptr_t*)args; // Argument pointers
     vmcc->floatregargsp = (double*)args;   // (Also args, for float-specific access)
+
+    // TFFI v2: callback fired on a WORKER thread — forward to the VM thread
+    // and block until primitiveCallbackReturn completes it.  The vmcc's
+    // args/ret pointers reference this (parked) worker's C stack, which
+    // stays valid for the whole wait.
+    if (xtcb::g_vmThreadIdSet.load(std::memory_order_acquire) &&
+        std::this_thread::get_id() != xtcb::g_vmThreadId) {
+        auto* pending = new xtcb::Pending();
+        pending->vmcc = vmcc;
+        {
+            std::lock_guard<std::mutex> lk(xtcb::g_mx);
+            xtcb::g_queue.push_back(pending);
+        }
+        g_interpreter->requestWorkerCallbackAdoption();
+        bool completed;
+        {
+            std::unique_lock<std::mutex> lk(pending->mx);
+            // Generous last-resort timeout: a dead VM thread must not hang
+            // the worker (and thus VM shutdown's join) forever.
+            completed = pending->cv.wait_for(lk, std::chrono::seconds(120),
+                                             [&] { return pending->done; });
+        }
+        if (!completed) {
+            fprintf(stderr, "[XTCB-TIMEOUT] worker-thread callback not handled "
+                    "within 120s (vmcc=%p) — returning zeroed result\n", (void*)vmcc);
+            if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
+            // Leak pending+vmcc deliberately: the VM thread may still adopt
+            // and complete them later; freeing here would be use-after-free.
+            return;
+        }
+        // Return value was written by the image via vmcc->stackp (== ret).
+        delete pending;
+        free(vmcc);
+        return;
+    }
 
     // C++ exception (CallbackComplete) is the resume signal — it
     // unwinds from primitiveCallbackReturn back here, running every
@@ -31205,6 +31267,52 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
     }
 }
 
+// TFFI v2: adopt worker-thread callbacks on the VM thread.  Pushes each
+// queued vmcc onto callbackContextStack_ (the same stack the same-thread
+// flow and primitiveReadNextCallback use) and signals the image's callback
+// semaphore.  Unlike enterInterpreterFromCallback, the active process is
+// NOT suspended: the blocked C caller is the WORKER thread, not us — the
+// image's handler process preempts naturally via the semaphore signal.
+void Interpreter::adoptPendingWorkerCallbacks() {
+    for (;;) {
+        xtcb::Pending* pending = nullptr;
+        {
+            std::lock_guard<std::mutex> lk(xtcb::g_mx);
+            if (xtcb::g_queue.empty()) break;
+            pending = xtcb::g_queue.front();
+            xtcb::g_queue.pop_front();
+        }
+        if (callbackDepth_ >= MaxCallbackDepth) {
+            fprintf(stderr, "[XTCB] callback depth limit (%d) — refusing "
+                    "worker callback (zeroed result)\n", MaxCallbackDepth);
+            {
+                std::lock_guard<std::mutex> lk(pending->mx);
+                pending->done = true;
+            }
+            pending->cv.notify_all();
+            continue;
+        }
+        callbackContextStack_[callbackDepth_] = pending->vmcc;
+        callbackHandlerStack_[callbackDepth_] = memory_.nil();
+        callbackDepth_++;
+        {
+            std::lock_guard<std::mutex> lk(xtcb::g_mx);
+            xtcb::g_active[pending->vmcc] = pending;
+        }
+        if (g_debug.callbackDebug) {
+            fprintf(stderr, "[XTCB-ADOPT] vmcc=%p depth=%d\n",
+                    (void*)pending->vmcc, callbackDepth_);
+            fflush(stderr);
+        }
+        // Wake the image's TFCallbackQueue process.  Ring + periodic drain
+        // (we are ON the VM thread inside the periodic check; the drain
+        // fires within the same check cycle).
+        if (g_callbackSemaphoreIndex > 0) {
+            signalExternalSemaphore(g_callbackSemaphoreIndex);
+        }
+    }
+}
+
 // primitiveInitilizeCallbacks (sic - typo matches image)
 // Stack: receiver, semaphoreIndex -> receiver
 PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
@@ -31215,6 +31323,10 @@ PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
 
     g_callbackSemaphoreIndex = static_cast<int>(semIdxOop.asSmallInteger());
     g_interpreter = this;  // Set global for callbackClosureHandler
+    // TFFI v2: this prim runs on the VM thread — record its id so the
+    // closure handler can detect worker-thread callbacks.
+    xtcb::g_vmThreadId = std::this_thread::get_id();
+    xtcb::g_vmThreadIdSet.store(true, std::memory_order_release);
 
     if (g_debug.callbackDebug) {
         fprintf(stderr, "[CALLBACK-INIT] g_callbackSemaphoreIndex=%d\n",
@@ -31404,6 +31516,37 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
     // second/third FFI callback doesn't inherit stale vmcc pointers.
     callbackContextStack_[callbackDepth_ - 1] = nullptr;
     callbackDepth_--;
+
+    // TFFI v2: a cross-thread (worker-forwarded) callback has no nested
+    // interpreter loop to unwind — complete the wrapper and wake the parked
+    // worker instead.  The image already wrote the return value through
+    // vmcc->stackp (the worker's ret buffer).
+    {
+        xtcb::Pending* pending = nullptr;
+        {
+            std::lock_guard<std::mutex> lk(xtcb::g_mx);
+            auto it = xtcb::g_active.find(vmcc);
+            if (it != xtcb::g_active.end()) {
+                pending = it->second;
+                xtcb::g_active.erase(it);
+            }
+        }
+        if (pending) {
+            if (g_debug.callbackDebug) {
+                fprintf(stderr, "[XTCB-RETURN] vmcc=%p — waking worker\n", (void*)vmcc);
+                fflush(stderr);
+            }
+            {
+                std::lock_guard<std::mutex> lk(pending->mx);
+                pending->done = true;
+            }
+            pending->cv.notify_all();
+            popN(argCount);
+            pop();
+            push(memory_.trueObject());
+            return PrimitiveResult::Success;
+        }
+    }
 
     // Set deferred return flag — the nested loop will handle the actual longjmp
     pendingCallbackReturn_ = vmcc;

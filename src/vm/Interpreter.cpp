@@ -3662,6 +3662,12 @@ void Interpreter::interpret() {
         // -- Finalization (periodic, for auto-GC mourners) --
         signalFinalizationIfNeeded();
 
+        // -- TFFI v2: adopt worker-thread callbacks queued for forwarding --
+        if (__builtin_expect(pendingXtcbAdoption_.load(std::memory_order_acquire), 0)) {
+            pendingXtcbAdoption_.store(false, std::memory_order_release);
+            adoptPendingWorkerCallbacks();
+        }
+
         // -- Harness-requested state dump (step-rate collapse diagnostics) --
         if (__builtin_expect(pendingStateDump_.load(std::memory_order_acquire), 0)) {
             pendingStateDump_.store(false, std::memory_order_release);
@@ -4779,6 +4785,9 @@ void Interpreter::signalExternalSemaphore(int index) {
     }
     pendingSignals_[head].store(index, std::memory_order_relaxed);
     pendingSignalHead_.store(next, std::memory_order_release);
+    // If the VM thread is in prim 230's idle sleep, cut it short — the
+    // signal's waiter should wake now, not after the 10 ms quantum.
+    wakeIdleSleep();
 }
 
 void Interpreter::processPendingSignals() {
@@ -22145,7 +22154,8 @@ void Interpreter::tryJITResumeInCaller() {
                     // this a T1 J2J loop that survives the GC starves the
                     // mourn-queue drain and its entries pin their ephemeron
                     // keys (WeakAnnouncerTest JIT-warm flake, 2026-07-03).
-                    if (__builtin_expect(finalizationCheckAfterGC_, 0)) break;
+                    if (__builtin_expect(finalizationCheckAfterGC_
+                            || pendingXtcbAdoption_.load(std::memory_order_acquire), 0)) break;
 
                     // Compute callee's resume address from yield IP
                     if (!yJM) break;
@@ -23250,7 +23260,9 @@ void Interpreter::tryJITResumeInCaller() {
             // frame back to the dispatch loop so its periodic
             // signalFinalizationIfNeeded fires (see the chain-loop ExitYield
             // twin for the full rationale — mourn-queue starvation pin).
-            if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
+            // Also fires for pending worker-callback adoption (TFFI v2).
+            if (__builtin_expect(finalizationCheckAfterGC_
+                    || pendingXtcbAdoption_.load(std::memory_order_acquire), 0)) {
                 inJITResume_ = false;
                 return;
             }
@@ -27816,7 +27828,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // the dispatch loop so its periodic signalFinalizationIfNeeded
             // fires (see the chain-loop ExitYield twin — mourn-queue
             // starvation pin).
-            if (__builtin_expect(finalizationCheckAfterGC_, 0)) goto jit_loop_exit;
+            if (__builtin_expect(finalizationCheckAfterGC_
+                || pendingXtcbAdoption_.load(std::memory_order_acquire), 0)) goto jit_loop_exit;
 
             // Reset yield counter and resume with J2J enabled. This lets
             // stencils handle sends directly via stencil-to-stencil calls

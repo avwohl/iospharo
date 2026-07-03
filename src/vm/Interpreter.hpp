@@ -1107,6 +1107,23 @@ private:
     // dispatch loop's periodic check, which prints the active process /
     // method from the VM thread (safe — no cross-thread object reads).
     std::atomic<bool> pendingStateDump_{false};
+    // TFFI v2 cross-thread callback forwarding: set by a WORKER thread whose
+    // native callout invoked a callback thunk.  Consumed at the dispatch
+    // loop's periodic check (hastened by the same forceYield/ExitYield
+    // machinery as the finalization one-shot): the VM thread adopts queued
+    // VMCallbackContexts into callbackContextStack_ and signals the image's
+    // callback semaphore, while the worker blocks on a condvar until
+    // primitiveCallbackReturn completes it (see Primitives.cpp xtcb code).
+    std::atomic<bool> pendingXtcbAdoption_{false};
+
+    // Interruptible idle: prim 230's "nothing runnable" path used a raw
+    // 10 ms Sleep(), so cross-thread events (worker completions, forwarded
+    // callbacks, socket signals) waited out the full quantum — 42 forwarded
+    // callbacks cost ~10 s (2026-07-03).  The idle sleep is now a condvar
+    // wait that wakeIdleSleep() cuts short from any thread.
+    std::mutex idleWakeMx_;
+    std::condition_variable idleWakeCv_;
+    std::atomic<bool> idleWakePending_{false};
 
     // Watchdog: terminate process stuck for too long (VM safety feature)
     std::atomic<int> stuckTicks_{0};       // Consecutive stuck ticks from watchdog thread
@@ -3407,6 +3424,25 @@ public:
 
     /// Enter interpreter from a C callback (called from callbackClosureHandler)
     void enterInterpreterFromCallback(VMCallbackContext* vmcc);
+
+    /// TFFI v2: a WORKER thread queued a callback for VM-thread adoption.
+    /// Sets the adoption flag and forces the next JIT back edge / periodic
+    /// check to run promptly (same wake pattern as the finalization one-shot).
+    void requestWorkerCallbackAdoption() {
+        pendingXtcbAdoption_.store(true, std::memory_order_release);
+        forceYield_.store(true, std::memory_order_release);
+        wakeIdleSleep();
+    }
+    /// Consumes the queue on the VM thread (defined in Primitives.cpp with
+    /// the rest of the callback machinery).
+    void adoptPendingWorkerCallbacks();
+
+    /// Cut short prim 230's idle sleep from any thread (worker completion,
+    /// forwarded callback, socket signal).  Cheap when nobody is idling.
+    void wakeIdleSleep() {
+        idleWakePending_.store(true, std::memory_order_release);
+        idleWakeCv_.notify_all();
+    }
 
 private:
     /// Re-entry point for callbacks (sigsetjmp target in interpret())

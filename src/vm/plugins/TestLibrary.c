@@ -191,3 +191,84 @@ EXPORT void fillByteArray(char* bytes, int size) {
     if (!bytes) return;
     for (i = 0; i < size; i++) bytes[i] = (char)(i + 1);
 }
+
+/* ===== TFFI callback fixtures (TFUFFICallbackTest + *InCallbacksTest) =====
+   Semantics derived clean-room from the image tests (2026-07-03):
+   - singleCallToCallback: cb(3)=4 must yield 5 -> return cb(value) + 1.
+   - callbackInALoop: with cb = a+1 the result must be 42 -> fold cb 42
+     times starting from 0.
+   - callbackFromAnotherThread: cb runs on a NATIVE thread (exercises the
+     VM's cross-thread callback forwarding); stores cb(42) into a global
+     that getValue() reads (test asserts 43 with cb = a+1). */
+
+EXPORT int returnAnswer(void) { return 42; }
+EXPORT int sumTwoNumbers(int a, int b) { return a + b; }
+EXPORT float sumAFloatAndADouble(float a, double b) { return (float)(a + b); }
+
+EXPORT int singleCallToCallback(int (*cb)(int), int value) {
+    return cb(value) + 1;
+}
+
+EXPORT int callbackInALoop(int (*cb)(int)) {
+    int v = 0;
+    int i;
+    for (i = 0; i < 42; i++) v = cb(v);
+    return v;
+}
+
+static volatile int tl_callbackThreadValue = 0;
+
+EXPORT int getValue(void) { return tl_callbackThreadValue; }
+
+#ifdef _WIN32
+static DWORD WINAPI tl_callbackThreadMain(LPVOID arg) {
+    int (*cb)(int) = (int (*)(int))arg;
+    tl_callbackThreadValue = cb(42);
+    return 0;
+}
+EXPORT void callbackFromAnotherThread(int (*cb)(int)) {
+    HANDLE h = CreateThread(NULL, 0, tl_callbackThreadMain, (LPVOID)cb, 0, NULL);
+    if (h) CloseHandle(h);
+}
+#else
+#include <pthread.h>
+static void* tl_callbackThreadMain(void* arg) {
+    int (*cb)(int) = (int (*)(int))arg;
+    tl_callbackThreadValue = cb(42);
+    return NULL;
+}
+EXPORT void callbackFromAnotherThread(int (*cb)(int)) {
+    pthread_t t;
+    if (pthread_create(&t, NULL, tl_callbackThreadMain, (void*)cb) == 0)
+        pthread_detach(t);
+}
+#endif
+
+/* void simple_callback_f_T(void (*cb)(T), T value) { cb(value); } —
+   the callback (image block) records the received value; tests assert the
+   round-trip. One symbol per marshalled type. */
+#define SIMPLE_CB(NAME, T) \
+    EXPORT void simple_callback_f_##NAME(void (*cb)(T), T value) { cb(value); }
+SIMPLE_CB(char, char)
+SIMPLE_CB(uchar, unsigned char)
+SIMPLE_CB(int8_t, int8_t)
+SIMPLE_CB(uint8_t, uint8_t)
+SIMPLE_CB(short, short)
+SIMPLE_CB(ushort, unsigned short)
+SIMPLE_CB(int16_t, int16_t)
+SIMPLE_CB(uint16_t, uint16_t)
+SIMPLE_CB(int, int)
+SIMPLE_CB(uint, unsigned int)
+SIMPLE_CB(int32_t, int32_t)
+SIMPLE_CB(uint32_t, uint32_t)
+SIMPLE_CB(long, long)
+SIMPLE_CB(ulong, unsigned long)
+SIMPLE_CB(longlong, long long)
+SIMPLE_CB(ulonglong, unsigned long long)
+SIMPLE_CB(int64_t, int64_t)
+SIMPLE_CB(uint64_t, uint64_t)
+SIMPLE_CB(float, float)
+SIMPLE_CB(double, double)
+SIMPLE_CB(size_t, size_t)
+SIMPLE_CB(pointer, void*)
+#undef SIMPLE_CB
