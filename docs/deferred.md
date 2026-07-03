@@ -586,19 +586,41 @@ derived 12/12 + Concurrency 2/2 + CallbackTest 12..13/13 (incl. the
 raw-native-thread callbackFromAnotherThread test).  ONE residual vs
 stock's 13/13:
 - [ ] testCallbackInLoop(UsingWorker) trips TestTookTooMuchTime when the
-  OTHER UsingWorker tests run first (standalone: 1.05s PASS).  Evidence
-  (timestamped xtcb traces): adoption and READNEXT are fast; the 5-9 s
-  per callback sits between READNEXT and primitiveCallbackReturn — the
-  image-side TFCallbackForkRunStrategy process (forkAt: highIOPriority-1
-  = P79) stalls before/while executing the invocation.  Meanwhile the VM
-  is idle-dominated (~110K steps/s vs normal 100M+).  `timeLimit: 100
-  seconds` is NOT honored in this in-suite state (defect at exactly
-  10.03s).  PHARO_DET_SCHED wedges the repro entirely (det-sched starves
-  cross-thread wakes — the features conflict by design).  Next: sample
-  the scheduler during the stall (image-side high-pri monitor printing
-  runnable queues + what the P79 process waits on; suspect stackProtect
-  Mutex residue from prior tests' time-limit-killed processes, or a
-  wakeHighestPriority miss).  Repro:
+  OTHER UsingWorker tests run first (standalone: 1.05s PASS).
+  EVIDENCE CHAIN (2026-07-03, now nailed to one scheduling step):
+  * New tool: PHARO_STATE_DUMP_PERIOD_MS=N — C-side wall-clock scheduler
+    sampler (image-side probes HEAL the stall by existing: a P79 Delay
+    monitor, a P30 busy spinner, even one extra Stdio print all flip it
+    to PASS — classic scheduler Heisenbug).
+  * Combined PHARO_STATE_DUMP_PERIOD_MS=400 + PHARO_CALLBACK_DEBUG=1 +
+    PHARO_DELAY_DEBUG=1 + PHARO_SEM_SIGNAL_TRACE=1 on the repro shows,
+    inside every ~1s gap (post-kill cadence; 5-9s pre-kill matching the
+    SUnit time-limit Delay window):
+      XTCB-ADOPT (signal sent via ring)
+      -> NO [SEM-SIGNAL] line = synchronousSignal found NO WAITER on the
+         callback semaphore (went to excessSignals) — the P70 queue
+         process ('Callback queue', TFCallbackQueue forkCallbackProcess)
+         was NOT in semaphore-wait at that instant
+      -> XFER idle(P10) -> P70 (same process!) -> back to idle in us,
+         WITHOUT a CALLBACK-READNEXT — it woke, did something tiny that
+         is not the read (suspect: finishing the PREVIOUS invocation's
+         `stackProtect critical:` release, or the on:Exception fork:
+         wrapper), and re-entered `semaphore wait`, CONSUMING the excess
+         signal at wait-entry??  (If wait-entry consumed the excess it
+         should proceed to the read — it does not.)
+      -> the VM idles ~1s until the next DELAY-FIRE (a 1s-cadence image
+         Delay); the ticker transition reschedules and ONLY THEN the P70
+         process does CALLBACK-READNEXT and the round-trip completes in
+         2ms.
+  * NEXT STEP (one probe): add semaphore-oop identity to the [XFER]
+    trace (or a [SEM-WAIT] trace in primitiveWait) to see WHICH
+    semaphore/mutex the queue process re-waits on after the empty wake,
+    and whether excessSignals on the callback semaphore is >0 while it
+    waits (that would be a wait-entry excess-consumption bug in our
+    primitiveWait vs Cog's).
+  Also: `timeLimit: 100 seconds` on the case is NOT honored in-suite
+  (defect at exactly 10.03s).  PHARO_DET_SCHED wedges the repro entirely
+  (det-sched starves cross-thread wakes — conflict by design).  Repro:
     pre := TFUFFICallbackTest buildSuite tests select: [:x |
       (x printString includesSubstring: 'UsingWorker') and: [
       (x printString includesSubstring: 'InLoop(') not]].

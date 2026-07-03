@@ -3669,6 +3669,21 @@ void Interpreter::interpret() {
         }
 
         // -- Harness-requested state dump (step-rate collapse diagnostics) --
+        // PHARO_STATE_DUMP_PERIOD_MS=N self-arms the dump every N ms — a
+        // wall-clock scheduler sampler for stalls that image-side probes
+        // HEAL by existing (the InLoop(UsingWorker) Heisenbug, 2026-07-03).
+        {
+            static const int dumpPeriodMs = GET_DEBUG_INT(PHARO_STATE_DUMP_PERIOD_MS);
+            if (dumpPeriodMs > 0) {
+                static auto lastDump = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - lastDump).count() >= dumpPeriodMs) {
+                    lastDump = now;
+                    pendingStateDump_.store(true, std::memory_order_release);
+                }
+            }
+        }
         if (__builtin_expect(pendingStateDump_.load(std::memory_order_acquire), 0)) {
             pendingStateDump_.store(false, std::memory_order_release);
             Oop proc = getActiveProcess();

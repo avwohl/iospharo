@@ -40,6 +40,7 @@ DEBUG_BOOL(PHARO_HEAP_CHECK)            // post-fullGC: walk all objects, flag p
 DEBUG_STR(PHARO_TRACE_EXTENT_SEL)       // trace every bytecode (sel+opcode+relDepth+TOS) within the dynamic extent of a method matching this selector
 DEBUG_BOOL(PHARO_NO_METHOD_CACHE)       // bisect: force probeCache to always miss (every send does a full lookup) — isolates stale-method-cache corruption from lower-level bugs
 DEBUG_INT(PHARO_NEWSPACE_MB, 0)         // bisect: override newSpaceSize (MB, 0 = built-in default) — shifts scavenge timing to correlate heap-phase-dependent corruption with GC boundaries
+DEBUG_INT(PHARO_STATE_DUMP_PERIOD_MS, 0) // emit a [STATE-DUMP] (active proc/pri/method) every N ms from the periodic check — C-side scheduler sampler for stalls that image-side probes heal by existing (InLoop(UsingWorker) Heisenbug)
 DEBUG_BOOL(PHARO_SCAV_RAWSCAN)          // post-scavenge: brute-force scan EVERY aligned word of old+perm for eden-range bit patterns (no format assumptions — catches holders the object-aware dangle check is blind to), attributing hits to their containing object
 DEBUG_INT(PHARO_YG_SKIP_SCAV_FROM, -1)  // bisect: run scavenges 1..N-1 normally, skip (eden->old fallback) from the Nth on — converges on the first corrupting scavenge
 DEBUG_BOOL(PHARO_GC_ROUNDTRIP_ONLY)     // bisect: at each scavenge safe point run ONLY prepareForGC()+afterGC() (ip<->offset round-trip, no object motion) — separates round-trip bugs from scavenge-proper bugs
