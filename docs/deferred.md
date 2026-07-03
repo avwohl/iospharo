@@ -200,12 +200,25 @@ isolation (no suite watchdog):
       different array entirely. The compact savedFirstFieldsSpace
       parallel-walk desync was RULED OUT (copyAndUnmark now asserts the
       saved-fields pointer drains fully — [GC-COMPACT-DESYNC] never fires
-      in the failing run). Remaining: raw slots()[i] writers,
-      shallowCopy/clone memcpy paths, updatePointersAfterCompact's
-      unbounded survivor-space garbage walk (writes past newSpaceEnd_ are
-      possible from garbage headers — harden regardless), or
+      in the failing run). Remaining leads (in order):
+      (a) ALL run detectors check LOWER neighbors ([i-1],[i-2]) — a
+      DESCENDING fill evades every one of them, and
+      OrderedCollection>>makeRoomAtFirst's copy loop IS descending
+      (`array at: newLastIndex - offset put: (array at: lastIndex -
+      offset)`): if the READ side hits a wrong/stale array returning a
+      constant, the descending writes paint exactly the observed run —
+      re-run with a descending-aware tripwire (check [i+1],[i+2] too);
+      (b) raw slots()[i] writers audit came up empty (ImageLoader/nil-fill/
+      scavenge/compact/prim-145 only; prim 145 binds solely to byte/word
+      classes in Pharo 13 — its pointer-fill branch is dead code but fills
+      fixed ivars of fmt 0-3 receivers, harden someday);
+      (c) shallowCopy/clone memcpy paths; (d) updatePointersAfterCompact's
+      unbounded survivor-space garbage walk (writes past newSpaceEnd_
+      possible from garbage headers — harden regardless); (e)
       resume-from-context partial rollback via a path the pc-refresh fix
-      doesn't cover.
+      doesn't cover. Overlap semantics verified bug-compatible with stock
+      (both smear `#(1 2 1 2 1 2 1 2 9 10)` on a dst>src pointer-array
+      self-copy).
     - REAL BUGS FIXED during the hunt (all committed, regression-clean):
       (1) allocators lacked the Spur 16-byte minimum object size — 0-slot
       objects (Object new, #(), '') packed at 8 bytes, desyncing every
