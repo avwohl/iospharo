@@ -4227,10 +4227,35 @@ void Interpreter::handleForceYield() {
 
             auto now = std::chrono::steady_clock::now();
 
-            // During grace period, undo any higher-priority preemption
+            // Slice-clock correction (2026-07-03): the aging clock kept
+            // running across the tracked process's SLEEP periods (idle
+            // interludes never enter the tracker below — idle is under
+            // agingMinPri — so agingStartTime went stale).  A process that
+            // slept ~1s and woke was aged out to a LOWER-priority process
+            // at its FIRST yield check, running zero bytecodes — the
+            // InLoop(UsingWorker) one-behind callback stall: every
+            // forwarded-callback wake of the P70 queue process was
+            // instantly undone, and service limped along at the Delay
+            // ticker's 1s cadence.  Aging must measure the CURRENT RUN
+            // SLICE: if the active process changed since the last yield
+            // check, its slice starts now.
+            static uint64_t lastYieldActiveBits = 0;
+            if (activeProcess.rawBits() != lastYieldActiveBits) {
+                lastYieldActiveBits = activeProcess.rawBits();
+                if (activeProcess.rawBits() == agingProcBits) {
+                    agingStartTime = now;
+                }
+            }
+
+            // During grace period, undo any higher-priority preemption —
+            // but NEVER for timing-priority processes (P80): undoing the
+            // Delay ticker's preemption stalls every Delay in the image for
+            // the grace window (observed as a deep crawl once the aging
+            // slice-clock fix below changed how often grace was active,
+            // 2026-07-03).
             if (agingInGrace && nextProcess.isObject() && nextProcess.rawBits() != nilObj.rawBits()) {
                 int nextPri = safeProcessPriority(nextProcess);
-                if (nextPri > activePriority && now < agingGraceUntil) {
+                if (nextPri > activePriority && nextPri < 80 && now < agingGraceUntil) {
                     // Put the higher-priority process back and keep running
                     addLastLinkToList(nextProcess, memory_.fetchPointer(
                         nextPri - 1, schedLists));
@@ -18164,6 +18189,29 @@ void Interpreter::transferTo(Oop newProcess) {
 
     // Get new process's suspended context
     Oop newContext = memory_.fetchPointer(ProcessSuspendedContextIndex, newProcess);
+
+    // PHARO_SEM_SIGNAL_TRACE: what the incoming process resumes INTO —
+    // context oop + its pc + method selector (InLoop empty-wake hunt: the
+    // woken queue process runs zero traceable primitives before
+    // re-suspending; this shows whether its resume state is even sane).
+    if (__builtin_expect(g_debug.semSignalTrace, 0)) {
+        static int rsLog = 0;
+        if (rsLog++ < 3000000) {
+            // Context layout: sender=0, pc=1, stackp=2, method=3.
+            Oop pcOop = Oop::nil(), mOop = Oop::nil();
+            if (newContext.isObject() && !newContext.isNil()
+                    && newContext.asObjectPtr()->slotCount() > 3) {
+                pcOop = memory_.fetchPointer(1, newContext);
+                mOop = memory_.fetchPointer(3, newContext);
+            }
+            fprintf(stderr, "[XFER-IN] proc=0x%llx ctx=0x%llx pc=%lld sel=#%s\n",
+                    (unsigned long long)newProcess.rawBits(),
+                    (unsigned long long)newContext.rawBits(),
+                    pcOop.isSmallInteger() ? (long long)pcOop.asSmallInteger() : -1LL,
+                    mOop.isObject() && !mOop.isNil()
+                        ? memory_.selectorOf(mOop).c_str() : "?");
+        }
+    }
 
     // Nil out the new process's suspendedContext now that we've read it.
     // This prevents GC from tracing stale context chains that keep objects alive.
