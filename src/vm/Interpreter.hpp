@@ -3742,7 +3742,23 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
             && !g_debug.resumeJ2J
             && !GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH);
 #endif
-        for (int i = 0; i < j2jPoolCursor_; i++) {
+        // Live bound: when JIT-resident, the in-JIT save cursor is
+        // authoritative — it is AHEAD of the synced C++ cursor while the
+        // chain pushes (deeper saves must be visited) and BEHIND it after
+        // J2J returns pop frames (the vacated slots hold STALE receivers
+        // written earlier in the chain; visiting them pinned dead objects
+        // for the rest of the chain's lifetime — the WeakAnnouncerTest
+        // cold-iteration survival, 2026-07-03).  Slot contents above the
+        // live cursor are dead by construction: nothing resumes them.
+        int liveJ2J = (int)j2jPoolCursor_;
+        if (currentJITState_ && currentJITState_->j2jSaveCursor) {
+            uint8_t* poolBytes = reinterpret_cast<uint8_t*>(j2jPool_.data());
+            ptrdiff_t n = (reinterpret_cast<uint8_t*>(currentJITState_->j2jSaveCursor)
+                           - poolBytes) / (ptrdiff_t)sizeof(J2JSave);
+            if (n >= 0 && n <= (ptrdiff_t)MaxJ2JPoolSize)
+                liveJ2J = (int)n;
+        }
+        for (int i = 0; i < liveJ2J; i++) {
             visitor(j2jPool_[i].receiver);
 #if PHARO_J2J_SAVE_V2
             if (walkClosure) visitor(j2jPool_[i].closure);

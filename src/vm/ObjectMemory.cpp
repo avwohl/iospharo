@@ -2530,6 +2530,7 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     uint64_t tMarkStart = timeGCPhases ? readTSC() : 0;
 
     // 3. Mark phase
+    ephemeronRescuedKeys_.clear();  // per-cycle set (fired-key weak nilling)
     size_t markedCount = markPhase(skipEphemerons);
     uint64_t tCompactStart = timeGCPhases ? readTSC() : 0;
 
@@ -3521,7 +3522,11 @@ void ObjectMemory::processWeaklings() {
         for (size_t i = startSlot; i < slots; ++i) {
             Oop ref = slotPtr[i];
             if (ref.isObject() && !isPermObject(ref.asObjectPtr())) {
-                if (!ref.asObjectPtr()->isMarked()) {
+                // Nil if dead, OR if only alive because a fired ephemeron
+                // rescued it for the mourn queue (not strongly reachable —
+                // stock Spur nils weaklings before retracing fired keys).
+                if (!ref.asObjectPtr()->isMarked()
+                        || ephemeronRescuedKeys_.count(ref.asObjectPtr())) {
                     slotPtr[i] = nilObject_;
                     anyNilled = true;
                     nilledCount++;
@@ -3594,6 +3599,18 @@ void ObjectMemory::fireAllEphemerons() {
         Oop objOop = Oop::fromObject(obj);
         mournQueue_.push_back(objOop);
         pendingFinalizationSignals_++;
+
+        // The key is about to be RESCUED (marked) so it survives for the
+        // mourn queue — but it was not strongly reachable, so weak slots
+        // referencing it must still read nil this cycle.  Record it for
+        // processWeaklings (which runs after the ephemeron fixed point).
+        if (obj->slotCount() > 0) {
+            Oop key = obj->slotAt(0);
+            if (key.isObject() && !isPermObject(key.asObjectPtr())
+                    && !key.asObjectPtr()->isMarked()) {
+                ephemeronRescuedKeys_.insert(key.asObjectPtr());
+            }
+        }
 
         scanPointerFields(obj);
         processMarkStack();

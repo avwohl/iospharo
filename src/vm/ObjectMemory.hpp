@@ -877,6 +877,13 @@ private:
     std::vector<ObjectHeader*> markStack_;     // BFS worklist
     std::vector<ObjectHeader*> weakList_;      // Deferred weak objects
     std::vector<ObjectHeader*> ephemeronList_; // Deferred ephemerons
+    // Keys of ephemerons FIRED this GC cycle: rescued (kept alive for the
+    // mourn queue) but NOT strongly reachable — weak slots referencing them
+    // must still be nil'd (stock Spur nils weaklings before retracing fired
+    // keys).  Without this, a WeakMessageSend whose receiver is also a
+    // FinalizationRegistry key kept DELIVERING for one extra GC cycle
+    // (WeakAnnouncerTest>>testWeakObject warm flake, 2026-07-03).
+    std::unordered_set<ObjectHeader*> ephemeronRescuedKeys_;
 
     std::unordered_set<uintptr_t> validObjectStarts_; // Valid object boundaries for mark validation
 
