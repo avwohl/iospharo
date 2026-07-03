@@ -492,6 +492,30 @@ ProcessTest, the Weak* family) are now runnable and green. The run went
 WEDGED post-completion (results + completion marker written, then the
 exit path idled at ~800 steps/s until killed) — eval-mode shutdown after
 the full run, worth a look if it recurs.
+RUN #6 (2026-07-03, pre-audit binary): **2043 of 2047 classes — the
+ENTIRE catalog, first time ever — 27956 tests / 27257 pass = 97.5%**
+(timeout-killed 4 classes from the end at 9000s; the per-test watchdog
+runner is the wall-clock bottleneck, not hangs). 52F/371E dominated by
+the known categories (Cairo/graphics, Zn network sandboxing, runner
+expected-failure miscounts — FL*/Cly* families pass standalone).
+NEW-territory triage (~1100 classes never run before on our VM produced
+only a handful of real singles): EDDebuggingAPITest = suite-order
+artifact (27/27 standalone); OCClassBuilderTest = stock fails identically
+(1 error, not ours); REAL our-VM items, all niche:
+- [ ] ObsoleteTest>>testFixObsoleteSharedPools (ours 2/3, stock 3/3) —
+  obsolete-class cleanup; likely the WeakArray-mourner-drop family.
+- [ ] NetNameResolverTest>>testLocalHostName (ours F, stock P) —
+  localhost name resolution on winsock; likely a small prim gap.
+- [ ] MicTextPresenterTest>>testHugeFontIsHuge (+ Microdown twin;
+  ours F, stock P) — font metrics headless; graphics/FreeType category.
+AUDIT BUILD VALIDATION (bd306e47): battery 626/626 green (weak/step/
+exception/process/collections), TFFI 75/75, fib 12ms & ensure 31ms
+unchanged, and the MethodMap tombstone fix cut zone-full failed-compiles
+from 22726 to 620 (the residue = the legit uncompilable negative-cache).
+The one [STATE-DUMP] fired during the Zn phase named a P60 idle-wait
+loop (#ifFalse: spin at fd=0) — the step-rate-collapse diagnostic works;
+the exitSuccess wedge itself wasn't reached (timeout kill first).
+
 RUN #3 (2026-07-03, after the TFFI-worker + diagnostics commits):
 **483 classes / 7874 tests / 7586 pass, 6F/40E — deepest run yet**
 (killed by the 5400s outer timeout mid-Fuel, not by any hang; the
