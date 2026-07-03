@@ -492,8 +492,32 @@ ProcessTest, the Weak* family) are now runnable and green. The run went
 WEDGED post-completion (results + completion marker written, then the
 exit path idled at ~800 steps/s until killed) — eval-mode shutdown after
 the full run, worth a look if it recurs.
-RUN #6 (2026-07-03, pre-audit binary): **2043 of 2047 classes — the
-ENTIRE catalog, first time ever — 27956 tests / 27257 pass = 97.5%**
+RUN #7 (2026-07-03, all fixes incl. audit batch + ring fix): **COMPLETED
+ALL 2047/2047 CLASSES — official summary 27967 tests: 27360 pass / 50 F /
+377 E / 155 skip / 25 timeout = 97.8%** (BATCH COMPLETE written; ~8500s).
+Zero firings of the new loud diagnostics (MAT-CAP / NLR-SAVE-OVERFLOW /
+GC-PLAN-OVERFLOW / CTX-CAPACITY / STUCK-GUARD) across the whole catalog —
+the audit fixes are quiet at scale.
+**exitSuccess "wedge" RESOLVED as a slow exit tail, not a hang**: after
+BATCH COMPLETE the VM idles minutes at ~1M steps/s while the runner's
+per-test watchdog machinery winds down (STATE-DUMPs name the actors:
+DelayMicrosecondTicker>>waitForUserSignalled:orExpired: at P80,
+Process>>endProcess at P40, P60 ifFalse: idle loops), then prints
+"Test Complete" and exits normally.  The earlier "wedge" kills at ~30 min
+were premature terminations of this tail.  REMAINING REAL ITEM:
+- [ ] **Teardown SEGFAULT after "Test Complete"** (exit 139, after all
+  results are written — functionally harmless, but real).  Static-
+  destructor order vs still-running threads: suspects are unreleased TFFI
+  worker threads (image-leaked TFWorkers are never joined), the profiler
+  sampler thread when enabled, and the detached socket I/O thread
+  touching freed globals (the earlier symbolization pointed at a
+  std::map<int,FILE*> destructor).  Fix shape: a VM-shutdown hook that
+  stops/joins all worker threads + sampler before main returns
+  (socketPluginShutdown already exists — add tffiWorkerShutdownAll and
+  call both from test_load_image before teardown).
+
+RUN #6 (2026-07-03, pre-audit binary): **2043 of 2047 classes —
+27956 tests / 27257 pass = 97.5%**
 (timeout-killed 4 classes from the end at 9000s; the per-test watchdog
 runner is the wall-clock bottleneck, not hangs). 52F/371E dominated by
 the known categories (Cairo/graphics, Zn network sandboxing, runner
@@ -503,7 +527,17 @@ only a handful of real singles): EDDebuggingAPITest = suite-order
 artifact (27/27 standalone); OCClassBuilderTest = stock fails identically
 (1 error, not ours); REAL our-VM items, all niche:
 - [ ] ObsoleteTest>>testFixObsoleteSharedPools (ours 2/3, stock 3/3) —
-  obsolete-class cleanup; likely the WeakArray-mourner-drop family.
+  the obsolete pool class survives the test's own GC but IS collectible
+  one GC later (probe-verified: one-cycle pin).  Candidate pinners: IC
+  entries and/or method-cache entries are visited as STRONG marks during
+  fullGC and only flushed AFTER (recoverAfterGC / primitive sites) — a
+  one-cycle decay for each.  A naive pre-mark flushMethodCache in fullGC
+  REGRESSED ObsoleteTest failures into errors (reverted) — the proper fix
+  is weak-root treatment: skip these caches in the MARK visit, keep them
+  in the pointer-UPDATE visit, purge dead keys mid-GC while mark bits are
+  valid.  Same treatment would eventually cover the JIT count-map /
+  failed-map keys and JITMethod compiledMethodOop headers (true
+  forever-pins for dead methods, bounded only by code-zone eviction).
 - [ ] NetNameResolverTest>>testLocalHostName (ours F, stock P) —
   localhost name resolution on winsock; likely a small prim gap.
 - [ ] MicTextPresenterTest>>testHugeFontIsHuge (+ Microdown twin;
