@@ -7019,6 +7019,33 @@ void Interpreter::returnValue(Oop value) {
                 bool isContextFormat = senderHdr->format() == ObjectFormat::IndexableWithFixed;
 
                 if (hasEnoughSlots && isContextFormat) {
+                    // Dead sender (pc nil, or the -1 HasBeenReturnedFrom sentinel)?
+                    // Cannot return INTO a dead context.  Stock parity (Cog
+                    // internalCannotReturn:): send cannotReturn: to the RETURNING
+                    // context instead of returning, and do NOT mark it dead first —
+                    // the Error raised by Context>>cannotReturn:'s non-closure
+                    // branch must still find handlers through its sender chain.
+                    // Sending to the returning (method) context reaches
+                    // `self error: 'computation has been terminated'`; the old
+                    // behavior fell into executeFromContext's dead-pc branch which
+                    // sends cannotReturn: to the DEAD context — for a closure
+                    // context under `on: BlockCannotReturn do: #resume` that
+                    // re-signals BCR forever (ProcessTest>>testResumeAfterBCR spin).
+                    {
+                        Oop senderPC = memory_.fetchPointer(1, sender);
+                        if (senderPC.isNil() ||
+                                (senderPC.isSmallInteger() && senderPC.asSmallInteger() == -1)) {
+                            if (method_.isObject() && memory_.isValidPointer(method_)
+                                    && instructionPointer_ > method_.asObjectPtr()->bytes()) {
+                                instructionPointer_--;  // don't re-execute the return bytecode
+                            }
+                            push(activeContext_);  // receiver: the returning context
+                            push(value);           // arg: the value being returned
+                            sendSelector(selectors_.cannotReturn, 1);
+                            return;
+                        }
+                    }
+
                     // Reset stack for new context
                     stackPointer_ = stackBase_;
 

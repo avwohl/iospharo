@@ -42,12 +42,20 @@ run) printString"` on a fresh Pharo 13 image). Batches: numbers+collections
 3150/3150; exceptions+contexts+streams+reflection 461/461; Semaphore 18/18,
 Mutex 7/7, Delay 5/5, ProcessSpecific 8/8. Two test classes hang when run in
 isolation (no suite watchdog):
-- [ ] **ProcessTest>>testResumeAfterBCR** spins (billions of bytecodes) — resume
-  after BlockCannotReturn. Spins with the JIT OFF too, so it is NOT the Win64
-  JIT fix; it's a pre-existing Windows interpreter/process-termination edge
-  case (the BCR sentinel fix from Build 80, executeFromContext, is
-  platform-independent C++, so this needs investigation on Windows). Low
-  priority (single niche test).
+- [x] **ProcessTest>>testResumeAfterBCR — FIXED (2026-07-03); ProcessTest
+  46/46.** ROOT CAUSE: returning INTO a dead context (pc nil — e.g. after
+  `on: BlockCannotReturn do: #resume` resumed `Context>>cannotReturn:`,
+  which nils the failing context's pc) fell into executeFromContext's
+  dead-pc branch, which sends cannotReturn: to the DEAD context. For a
+  closure context that re-signals BlockCannotReturn; the #resume handler
+  is still installed → infinite BCR ping-pong through the image exception
+  machinery (the "billions of bytecodes" spin). Stock parity fix (Cog
+  internalCannotReturn:): the fd==0 return path now checks the sender's
+  pc BEFORE the transition; if dead, it sends cannotReturn: to the
+  RETURNING context (a method context → `self error: 'computation has
+  been terminated'` → the test's on:Error handler). The returning context
+  is deliberately NOT marked dead first, so the Error still finds
+  handlers through its sender chain.
 - [ ] **WeakArrayTest** hangs — KNOWN nondeterministic weak-ref/GC-timing test
   per debug_vars.h:260 ("only nondeterministic weak-ref/GC-timing tests differ"
   under the x86 JIT, same on arm64-JIT). Not a Windows-specific regression.
