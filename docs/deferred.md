@@ -474,6 +474,23 @@ isolation (no suite watchdog):
     also want characterization (Windows-specific vs missing-feature like
     sockets/GUI).
 
+### Full-suite re-baseline (2026-07-03, after the debugger/unwind + GC-pin fixes)
+**460 classes / 7375 tests: 7281 pass, 3 F / 40 E ≈ 98.7% raw — and the
+true VM-attributable count is ONE test.** Breakdown of the 43 deviations:
+27 Athens/Cairo (known graphics-FFI gap — no cairo DLL on Windows; same
+category as every prior run), 15 Cly*Query "failures" that are EXPECTED
+FAILURES miscounted by the suite runner (ClyFilterQueryTest 7EF,
+ClyAsyncQueryTest 7EF, ClySemiAsyncQueryResultTest 1EF — all pass clean
+standalone), and 1 real singleton:
+- [ ] **DebugPointTest>>testTranscriptDebugPoint — 1 error** (44/45
+  standalone too). Niche (Transcript debug-point); uninvestigated.
+The previously-hanging classes (StepThroughTest, FastStepThroughTest,
+ProcessTest, the Weak* family) are now runnable and green. The run went
+460 classes deep vs the previous 349-class abort. NOTE: the suite VM
+WEDGED post-completion (results + completion marker written, then the
+exit path idled at ~800 steps/s until killed) — eval-mode shutdown after
+the full run, worth a look if it recurs.
+
 ### Primitive error-signal fidelity (cross-platform, pre-existing)
 (FileAttributesPluginPrimsTest: fixed 2026-07-02 — see the [x] entry above.)
 
