@@ -10896,8 +10896,9 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 sel == "convertStorePop:forinstructionSequence:") {
                 static FILE* sf = fopen("C:/tmp/seqids.txt", "w");
                 if (sf) {
-                    Oop seqArg = stackValue(argCount - 1);  // first argument
+                    Oop seqArg = stackValue(0);  // LAST argument = the sequence
                     uint64_t ocBits = 0, arrBits = 0;
+                    ObjectHeader* arrHdr = nullptr;
                     if (seqArg.isObject() && seqArg.rawBits() > 0x10000 &&
                         memory_.classNameOf(seqArg) == "OCIRSequence") {
                         ObjectHeader* sh = seqArg.asObjectPtr();
@@ -10905,7 +10906,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                             Oop sv = sh->slotAt(s);
                             if (memory_.classNameOf(sv) == "OrderedCollection") {
                                 ocBits = sv.rawBits();
-                                arrBits = sv.asObjectPtr()->slotAt(0).rawBits();
+                                Oop arr = sv.asObjectPtr()->slotAt(0);
+                                arrBits = arr.rawBits();
+                                if (arr.isObject() && arr.rawBits() > 0x10000)
+                                    arrHdr = arr.asObjectPtr();
                                 break;
                             }
                         }
@@ -10915,6 +10919,16 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                             (unsigned long long)seqArg.rawBits(),
                             (unsigned long long)ocBits,
                             (unsigned long long)arrBits);
+                    // Big-sequence snapshot: full element bits, one line —
+                    // three-way diffable (visit entry vs each conversion vs
+                    // the error dump).
+                    if (arrHdr && arrHdr->slotCount() >= 60) {
+                        fprintf(sf, "ELS");
+                        for (size_t e = 0; e < arrHdr->slotCount(); e++)
+                            fprintf(sf, " %llx",
+                                    (unsigned long long)arrHdr->slotAt(e).rawBits());
+                        fprintf(sf, "\n");
+                    }
                     fflush(sf);
                 }
             }

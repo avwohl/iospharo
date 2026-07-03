@@ -17137,25 +17137,27 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
         }
 
         // Bulk slot copy via memmove (handles overlap).  Write barrier:
-        // if dest is old and any src slot is young, single storePointer
-        // on the first young slot triggers the remembered-set add for
-        // dest, then memmove handles the rest (the remembered set is
+        // if dest is old and any slot is young, a single storePointer
+        // triggers the remembered-set add for dest (the remembered set is
         // per-object, not per-slot).  Faster than the per-slot
         // storePointer loop (was the per-call hot spot in sort 100K's
         // merge step — ~10% of bench CPU time).
+        //
+        // The probe MUST run AFTER the copy (2026-07-02 ROOT CAUSE of the
+        // OpalCompiler large-method corruption): it used to write
+        // dst[i] = src[i] BEFORE the memmove, but on an overlapping
+        // self-shift-left dst[i] IS src[i-1] — the probe clobbered a
+        // source slot the memmove then read, duplicating the first young
+        // value one slot lower and destroying the value that was there.
+        // Every OrderedCollection>>removeIndex: on a TENURED (old) array
+        // whose shifted range contained a young ref corrupted one slot —
+        // heap-phase dependent (the collection must be old: motion
+        // required), invisible to write tripwires (a legal storePointer),
+        // and self-hiding from post-copy fidelity checks.  Post-copy, the
+        // probe re-stores a slot with its own current value: data no-op,
+        // barrier side effect only.
         Oop* srcPtrs = srcHdr->slots() + srcFixed + srcIdx;
         Oop* dstPtrs = destHdr->slots() + destFixed + dstStartIdx;
-        if (memory_.isOld(destOop)) {
-            for (size_t i = 0; i < count; i++) {
-                Oop v = srcPtrs[i];
-                if (v.isObject() && memory_.isYoung(v)) {
-                    // Trigger remembered-set entry via the public API.
-                    memory_.storePointer(destFixed + dstStartIdx + i,
-                                         destOop, v);
-                    break;
-                }
-            }
-        }
         if (__builtin_expect(GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0, 0)) {
             uint8_t* watched = memory_.oldSpaceStart() + GET_DEBUG_INT(PHARO_WATCH_OLDOFF);
             if (reinterpret_cast<uint8_t*>(destHdr) == watched ||
@@ -17207,10 +17209,75 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
                     memory_.selectorOf(method_).c_str());
             }
         }
+        // Copy-fidelity verifier (PHARO_SLOT_RUN_TRIPWIRE, window only):
+        // snapshot the source range pre-copy and verify the destination
+        // matches it post-copy — catches a non-uniform shift (the
+        // convertStorePop conversion-#6 anomaly: tail shifted by 2) in the
+        // act, with GC-counter deltas to detect impossible mid-prim GCs.
+        static thread_local std::vector<uint64_t> fidBuf;
+        bool fidCheck = false;
+        uint64_t fidScavBefore = 0;
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SLOT_RUN_TRIPWIRE), 0)) {
+            extern uint64_t g_scavengeCount;
+            if (g_scavengeCount >= 12 && count <= 512 &&
+                destOop.rawBits() == sourceOop.rawBits()) {
+                fidCheck = true;
+                fidScavBefore = g_scavengeCount;
+                fidBuf.assign(reinterpret_cast<uint64_t*>(srcPtrs),
+                              reinterpret_cast<uint64_t*>(srcPtrs) + count);
+            }
+        }
         if (fwdOverlapSelfCopy) {
             for (size_t i = 0; i < count; i++) dstPtrs[i] = srcPtrs[i];
         } else {
             std::memmove(dstPtrs, srcPtrs, count * sizeof(Oop));
+        }
+        if (memory_.isOld(destOop)) {
+            for (size_t i = 0; i < count; i++) {
+                Oop v = dstPtrs[i];
+                if (v.isObject() && memory_.isYoung(v)) {
+                    // Re-store the slot's own value: triggers the
+                    // remembered-set entry, changes no data.
+                    memory_.storePointer(destFixed + dstStartIdx + i,
+                                         destOop, v);
+                    break;
+                }
+            }
+        }
+        if (__builtin_expect(fidCheck, 0)) {
+            extern uint64_t g_scavengeCount;
+            size_t bad = SIZE_MAX;
+            if (!fwdOverlapSelfCopy) {
+                for (size_t i = 0; i < count; i++) {
+                    if (reinterpret_cast<uint64_t*>(dstPtrs)[i] != fidBuf[i]) {
+                        bad = i;
+                        break;
+                    }
+                }
+            }
+            if (bad != SIZE_MAX || g_scavengeCount != fidScavBefore) {
+                static int fidN = 0;
+                if (++fidN <= 10) {
+                    fprintf(stderr,
+                        "[P105-FIDELITY] MISMATCH at +%zd of %zu dstStart=%lld srcStart=%lld "
+                        "scavBefore=%llu scavAfter=%llu caller=%s>>%s\n",
+                        (ptrdiff_t)bad, count, (long long)destStart, (long long)sourceStart,
+                        (unsigned long long)fidScavBefore,
+                        (unsigned long long)g_scavengeCount,
+                        classNameOfMethod(method_).c_str(),
+                        memory_.selectorOf(method_).c_str());
+                    if (bad != SIZE_MAX) {
+                        fprintf(stderr, "  expected(preSrc): ");
+                        for (size_t i = (bad > 2 ? bad - 2 : 0); i < count && i < bad + 4; i++)
+                            fprintf(stderr, "%llx ", (unsigned long long)fidBuf[i]);
+                        fprintf(stderr, "\n  got(dst):         ");
+                        for (size_t i = (bad > 2 ? bad - 2 : 0); i < count && i < bad + 4; i++)
+                            fprintf(stderr, "%llx ",
+                                (unsigned long long)reinterpret_cast<uint64_t*>(dstPtrs)[i]);
+                        fprintf(stderr, "\n");
+                    }
+                }
+            }
         }
         // Post-copy: does the SOURCE-provided content contain a >=3 run of
         // one non-nil object ref?  Localizes which copy IMPORTED the run.

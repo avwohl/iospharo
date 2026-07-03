@@ -150,7 +150,31 @@ isolation (no suite watchdog):
   Gotchas hit along the way: the exe needs its 5 runtime DLLs present (AV may
   quarantine the .exe — rebuild if missing); run everything from a native shell.
 
-- [ ] **VM can't compile very large methods** (convertStorePop) — surfaced by
+- [x] **VM can't compile very large methods (convertStorePop) — FIXED
+  (2026-07-02).** ROOT CAUSE: primitiveStringReplace's write-barrier
+  probe ran BEFORE the memmove and wrote dst[i]=src[i] for the first
+  young slot — on an overlapping self-shift-left (OrderedCollection>>
+  removeIndex:) dst[i] IS src[i-1], so the probe clobbered a source slot
+  the memmove then read: the first young value in the shifted range got
+  duplicated one slot lower and the value there was destroyed — one slot
+  corrupted per removal on any TENURED (old) collection whose range held
+  a young ref. Hence every hallmark: motion-dependence (the collection
+  must be tenured => scavenge timing), heap-phase/form/newspace-size
+  sensitivity, JIT-independence, invisibility to write tripwires (a
+  legal storePointer), and self-hiding from post-copy fidelity checks
+  (the probe corrupted the source before any snapshot). FIX: the barrier
+  probe runs AFTER the copy and re-stores a dest slot with its own value
+  (data no-op, remembered-set side effect only). VERIFIED: the runner
+  fileIn passes 5/5 (JIT on), plus 16/24/32MB newspace and JIT-off;
+  collections regression 2062/2062 (OrderedCollection/Array/Sorted/
+  String/Dictionary/Interval/Set/StUnifiedProcessor). Our VM now
+  compiles the ~380-line runAllTests directly — reference-VM injection
+  is no longer required for the runner. (The hunt also fixed, en route:
+  Spur min-16 allocation, fullGC scavenge-before-mark, prepareForGC
+  pc/class-guard hardening, materializeFrameStack truncation; and left
+  a reusable GC forensics toolkit in debug_vars.h.)
+  ORIGINAL ENTRY + full investigation log follows for reference:
+  surfaced by
   the above: OUR VM's OpalCompiler errors compiling the runner's ~380-line
   `runAllTests` (`OCIRSimpleOptimizerVisitor>>convertStorePop:` ->
   `OCIRSequence>>remove:` element-not-found -> `Error: 'Error!'`). Fails with the
