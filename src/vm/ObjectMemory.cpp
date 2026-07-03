@@ -4163,6 +4163,7 @@ bool ObjectHeader::slot_run_tripwire_enabled() {
 
 void ObjectHeader::slot_run_tripwire_fire(const ObjectHeader* hdr, size_t index, Oop value) {
     extern uint64_t g_scavengeCount;
+    if (value.isNil()) return;         // nil runs are legit (OC removals)
     // Dedupe consecutive fills of the same (array, value) — a legit
     // atAllPut:-style fill fires once, not once per slot.
     static uintptr_t lastArr = 0;

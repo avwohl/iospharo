@@ -200,7 +200,28 @@ isolation (no suite watchdog):
       different array entirely. The compact savedFirstFieldsSpace
       parallel-walk desync was RULED OUT (copyAndUnmark now asserts the
       saved-fields pointer drains fully — [GC-COMPACT-DESYNC] never fires
-      in the failing run). Remaining leads (in order):
+      in the failing run). 2026-07-02 LATE-SESSION NARROWING (decisive): with ALL writers
+      instrumented simultaneously (slotAtPut both-direction run tripwire
+      nil-filtered, prim-105 post-copy OCIR-run import scan across the
+      whole run, tenure-copy scan, become, fills), the 8x-run is NEVER
+      OBSERVED BEING WRITTEN — its first sighting is always "already
+      present" at the optimizer's first removeIndex: shift. Discovered en
+      route: SequenceableCollection>>from:to:put: (prim-105 doubling
+      self-copy) is a LEGIT run producer, so run-shaped content exists
+      innocently in other arrays. Conclusion: the array's content was
+      never smeared — the REFERENCES to the sequence's young array were
+      RETARGETED TO A DIFFERENT OBJECT at scavenge 13 (bad forward-map
+      entry, tenure memcpy from wrong source, or overlapping eden
+      allocations), so post-GC readers see another tenured array whose
+      legit content merely looks smeared. DECISIVE NEXT EXPERIMENT: at
+      scavenge N, after tenureIfYoung copies each object, verify
+      copy-vs-source content equality AND that no two forward-map dests
+      overlap ([dest, dest+totalSize) disjoint) and that no two SOURCES
+      overlap in eden ([src, src+totalSize) disjoint — overlapping young
+      allocations = mis-sized allocation path still lurking). An
+      eden-allocation overlap check (each new object's range vs the
+      previous allocation) would catch the root directly.
+      Remaining leads (in order):
       (a) ALL run detectors check LOWER neighbors ([i-1],[i-2]) — a
       DESCENDING fill evades every one of them, and
       OrderedCollection>>makeRoomAtFirst's copy loop IS descending

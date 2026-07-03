@@ -17131,10 +17131,56 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
                 fprintf(stderr, "\n");
             }
         }
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SLOT_RUN_TRIPWIRE), 0)) {
+            extern uint64_t g_scavengeCount;
+            static int p105N = 0;
+            if (g_scavengeCount >= 12 && memory_.isOld(destOop) && p105N < 80) {
+                p105N++;
+                fprintf(stderr,
+                    "[P105] dst=%p src=%p same=%d dstStart=%lld dstEnd=%lld srcStart=%lld "
+                    "scav=%llu caller=%s>>%s\n",
+                    (void*)destHdr, (void*)srcHdr,
+                    destOop.rawBits() == sourceOop.rawBits(),
+                    (long long)destStart, (long long)destEnd, (long long)sourceStart,
+                    (unsigned long long)g_scavengeCount,
+                    classNameOfMethod(method_).c_str(),
+                    memory_.selectorOf(method_).c_str());
+            }
+        }
         if (fwdOverlapSelfCopy) {
             for (size_t i = 0; i < count; i++) dstPtrs[i] = srcPtrs[i];
         } else {
             std::memmove(dstPtrs, srcPtrs, count * sizeof(Oop));
+        }
+        // Post-copy: does the SOURCE-provided content contain a >=3 run of
+        // one non-nil object ref?  Localizes which copy IMPORTED the run.
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SLOT_RUN_TRIPWIRE), 0)) {
+            extern uint64_t g_scavengeCount;
+            static int runInN = 0;
+            if (runInN < 20) {
+                size_t run = 1;
+                for (size_t i = 1; i < count; i++) {
+                    if (dstPtrs[i].rawBits() == dstPtrs[i - 1].rawBits() &&
+                        dstPtrs[i].isObject() && !dstPtrs[i].isNil() &&
+                        dstPtrs[i].rawBits() > 0x10000) {
+                        if (++run == 3 &&
+                            memory_.classNameOf(dstPtrs[i]).rfind("OCIR", 0) == 0) {
+                            runInN++;
+                            fprintf(stderr,
+                                "[RUN-IN-DEST] dst=%p src=%p same=%d dstStart=%lld count=%zu "
+                                "runVal=%llx at=+%zu scav=%llu caller=%s>>%s\n",
+                                (void*)destHdr, (void*)srcHdr,
+                                destOop.rawBits() == sourceOop.rawBits(),
+                                (long long)destStart, count,
+                                (unsigned long long)dstPtrs[i].rawBits(), i,
+                                (unsigned long long)g_scavengeCount,
+                                classNameOfMethod(method_).c_str(),
+                                memory_.selectorOf(method_).c_str());
+                            break;
+                        }
+                    } else run = 1;
+                }
+            }
         }
         if (__builtin_expect(GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0, 0)) {
             // Smear detector: did this copy WRITE a >=4 run of one object ref?

@@ -392,12 +392,20 @@ public:
         // signature — caught at the LOWEST level so writers that bypass
         // storePointer (raw slotAtPut sites) are covered too.
         if (__builtin_expect(slot_run_tripwire_enabled(), 0)) {
-            if (index >= 2 && (value.rawBits() & 7) == 0 &&
-                value.rawBits() > 0x10000 &&
-                format() == ObjectFormat::Indexable &&
-                slots()[index - 1].rawBits() == value.rawBits() &&
-                slots()[index - 2].rawBits() == value.rawBits()) {
-                slot_run_tripwire_fire(this, index, value);
+            if ((value.rawBits() & 7) == 0 && value.rawBits() > 0x10000 &&
+                format() == ObjectFormat::Indexable) {
+                // Ascending fills leave matches BELOW the write; descending
+                // fills (OrderedCollection>>makeRoomAtFirst's copy loop
+                // shape) leave them ABOVE.  Check both directions.
+                bool runBelow = index >= 2 &&
+                    slots()[index - 1].rawBits() == value.rawBits() &&
+                    slots()[index - 2].rawBits() == value.rawBits();
+                bool runAbove = index + 2 < slotCount() &&
+                    slots()[index + 1].rawBits() == value.rawBits() &&
+                    slots()[index + 2].rawBits() == value.rawBits();
+                if (runBelow || runAbove) {
+                    slot_run_tripwire_fire(this, index, value);
+                }
             }
         }
         slots()[index] = value;
