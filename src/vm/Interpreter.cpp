@@ -3656,6 +3656,25 @@ void Interpreter::interpret() {
         // -- Finalization (periodic, for auto-GC mourners) --
         signalFinalizationIfNeeded();
 
+        // -- Harness-requested state dump (step-rate collapse diagnostics) --
+        if (__builtin_expect(pendingStateDump_.load(std::memory_order_acquire), 0)) {
+            pendingStateDump_.store(false, std::memory_order_release);
+            Oop proc = getActiveProcess();
+            Oop pri = proc.isObject()
+                ? memory_.fetchPointer(ProcessPriorityIndex, proc) : Oop::nil();
+            fprintf(stderr,
+                "[STATE-DUMP] proc=0x%llx pri=%lld fd=%zu method=%s>>#%s "
+                "mournQ=%zu pendingFin=%zu\n",
+                (unsigned long long)proc.rawBits(),
+                pri.isSmallInteger() ? (long long)pri.asSmallInteger() : -1LL,
+                frameDepth_,
+                method_.isObject() ? classNameOfMethod(method_).c_str() : "?",
+                method_.isObject() ? memory_.selectorOf(method_).c_str() : "?",
+                memory_.mournQueueSize(),
+                (size_t)memory_.pendingFinalizationSignals());
+            fflush(stderr);
+        }
+
         // === LESS FREQUENT CHECKS (every ~64K bytecodes) ===
         if ((totalSteps & 0xFFFF) == 0) {
             checkForPreemption();

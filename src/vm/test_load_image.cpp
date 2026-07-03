@@ -1300,6 +1300,18 @@ int main(int argc, char* argv[]) {
                 // Progress report every ~10s
                 if (elapsed % 10 == 0 && elapsed > 0) {
                     std::cout << "[PROGRESS] " << elapsed << "s: ~" << steps << " steps" << std::endl;
+                    // Step-rate collapse (e.g. the post-suite exitSuccess
+                    // wedge idles at ~800 steps/s): ask the VM thread to
+                    // print its active process/method at its next periodic
+                    // check.  lastSteps updates every 1s tick, so this is a
+                    // per-second delta; healthy eval runs execute millions of
+                    // steps/s.  Gated to eval/test runs — an idle interactive
+                    // GUI image legitimately runs slow.
+                    long long deltaPerSec = steps - lastSteps;
+                    if (!imageArgs.empty() && elapsed >= 30 &&
+                        deltaPerSec > 0 && deltaPerSec < 5000) {
+                        interpreter.requestStateDump();
+                    }
                 }
 
                 // Click injection after ~5s of execution (skip when headless:

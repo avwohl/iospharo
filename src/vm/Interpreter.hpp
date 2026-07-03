@@ -1072,6 +1072,11 @@ private:
     int lastResumeKind_ = 0;
 
     std::atomic<bool> forceYield_{false};
+    // Diagnostic: set by the harness monitor thread when the step rate
+    // collapses (e.g. the post-suite exitSuccess wedge); consumed at the
+    // dispatch loop's periodic check, which prints the active process /
+    // method from the VM thread (safe — no cross-thread object reads).
+    std::atomic<bool> pendingStateDump_{false};
 
     // Watchdog: terminate process stuck for too long (VM safety feature)
     std::atomic<int> stuckTicks_{0};       // Consecutive stuck ticks from watchdog thread
@@ -1833,6 +1838,7 @@ public:
     // (the Interpreter object is a session-stable singleton).
 
     void* forceYieldAddr() { return &forceYield_; }
+    void requestStateDump() { pendingStateDump_.store(true, std::memory_order_release); }
 
 
     jit::JITRuntime& jitRuntime() { return jitRuntime_; }
