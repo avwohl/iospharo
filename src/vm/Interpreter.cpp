@@ -4569,7 +4569,7 @@ void Interpreter::synchronousSignal(Oop semaphore) {
     static int signalLogCap = 50;
     if (!semTraceInit) {
         semTraceInit = true;
-        if (g_debug.semSignalTrace) signalLogCap = 5000;
+        if (g_debug.semSignalTrace) signalLogCap = 3000000;
     }
     static int signalLog = 0;
     if (signalLog < signalLogCap) {

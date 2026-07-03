@@ -4742,6 +4742,20 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     // Check excessSignals (slot 2 of Semaphore)
     Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
 
+    // PHARO_SEM_SIGNAL_TRACE: wait-entry identity trace (which semaphore,
+    // excess state, waiting process) — pairs with [SEM-SIGNAL] to close
+    // signal/wait identity mismatches (InLoop(UsingWorker) stall hunt).
+    if (__builtin_expect(g_debug.semSignalTrace, 0)) {
+        static int waitLog = 0;
+        if (waitLog++ < 3000000) {
+            Oop ap = getActiveProcess();
+            fprintf(stderr, "[SEM-WAIT] sem=0x%llx excess=%lld proc=0x%llx pri=%d\n",
+                    (unsigned long long)semaphore.rawBits(),
+                    excessOop.isSmallInteger() ? (long long)excessOop.asSmallInteger() : -1LL,
+                    (unsigned long long)ap.rawBits(), safeProcessPriority(ap));
+        }
+    }
+
     if (excessOop.isSmallInteger()) {
         int64_t excess = excessOop.asSmallInteger();
         if (excess > 0) {

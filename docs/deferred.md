@@ -612,12 +612,26 @@ stock's 13/13:
          Delay); the ticker transition reschedules and ONLY THEN the P70
          process does CALLBACK-READNEXT and the round-trip completes in
          2ms.
-  * NEXT STEP (one probe): add semaphore-oop identity to the [XFER]
-    trace (or a [SEM-WAIT] trace in primitiveWait) to see WHICH
-    semaphore/mutex the queue process re-waits on after the empty wake,
-    and whether excessSignals on the callback semaphore is >0 while it
-    waits (that would be a wait-entry excess-consumption bug in our
-    primitiveWait vs Cog's).
+  * [SEM-WAIT] trace added to primitiveWait (2026-07-03; both sem trace
+    caps raised to 3M under PHARO_SEM_SIGNAL_TRACE=1).  Uncapped gap
+    dissection (stall4.log pattern):
+      ADOPT -> [SEM-SIGNAL] on the callback sem WITH the P70 queue proc
+      as waiter (identity confirmed) -> XFER idle->P70 -> XFER P70->idle
+      within us, and BETWEEN THOSE the process executes NO traceable
+      primitive (no READNEXT, no [SEM-WAIT] re-entry) -> 1s DELAY-FIRE
+      -> ticker -> P70 does READNEXT, and its next queue wait shows
+      excess=1 (one-behind pipeline signature).
+  * TWO live hypotheses for "woken waiter runs zero bytecodes then
+    re-suspends":
+    (a) the wake transfers to a process whose suspendedContext resume
+        path re-suspends WITHOUT re-running the wait prim (check
+        executeFromContext for a process suspended inside
+        primitiveWait's putToSleep);
+    (b) an immediate counter-preemption bounces it back to idle before
+        its first bytecode (check checkForPreemption/forceYield right
+        after the drain's transferTo).
+    Either way the signal is consumed by the empty wake and the
+    callback is serviced one Delay-cycle late.
   Also: `timeLimit: 100 seconds` on the case is NOT honored in-suite
   (defect at exactly 10.03s).  PHARO_DET_SCHED wedges the repro entirely
   (det-sched starves cross-thread wakes — conflict by design).  Repro:
