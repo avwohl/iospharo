@@ -253,17 +253,38 @@ isolation (no suite watchdog):
       matching extra decrement, i.e. resumption lands mid-removeIndex:).
       Replayed shifts are idempotent on run-free regions (why 3800 tests
       pass); only a shifted region containing adjacent equal refs makes
-      the replay visible. PRIME SUSPECT: the ip/offset round-trip or
-      resume-from-context restoring execution to a point BEFORE a
-      completed send when the scavenge safe point fires near a
-      primitive-triggering bytecode; the current-frame GC-VERIFY byte
-      compare cannot catch a systematic restore-to-same-send. NEXT: log
-      (method, bcOffset) at prepareForGC/afterGC for the current frame at
-      request #12 and single-step-trace the following ~200 bytecodes in
-      FAIL vs PASS (PHARO_TRACE_EXTENT_SEL or a new bytecode-window trace)
-      to catch the replayed range red-handed; also audit executeFromContext
-      pc->ip conversion for an off-by-one vs the pc convention (pc points
-      AT the next unexecuted bytecode, 1-based).
+      the replay visible. Replay-mechanism candidates tested and
+      EXONERATED so far: (a) ctxSynced incremental-materialization skip
+      (PHARO_MAT_FULL_RESYNC=1 still fails); (b) GC-time context pc
+      staleness (prepareForGC now refreshes pc for BOTH saved frames and
+      the current frame's materialized context — kept as hardening, no
+      cure); (c) materializeFrameStack truncation — REAL BUGS FIXED as
+      hardening: temps were capped at 32 (methods encode up to 63),
+      expression stacks >100 items were silently skipped, and contexts
+      were fix-sized at 6+temps+32 so deeper operand stacks silently
+      dropped writes via storePointer's bounds check. Contexts are now
+      sized from the frame's ACTUAL expr/operand depth and a
+      [CTX-CAPACITY] warning logs any residual shortfall (it never fires
+      in the repro, so this wasn't the repro's bug either). REMAINING
+      REPLAY SUSPECTS: executeFromContext pc->ip rebuild path (audit the
+      +1/-1 vs the 1-based pc-at-next-unexecuted-bytecode convention, and
+      WHICH frames get rebuilt vs left as heap contexts on switch-back);
+      the to:do:-inlined loop-state (limit/index as stack items) across
+      materialize/rebuild; and the possibility that the replay unit is a
+      whole BLOCK re-invocation — REFUTED: conversion activation counts
+      are IDENTICAL in the aligned FAIL/PASS trace prefixes
+      (convertStorePop 19/19, removeIndex: 19/19, remove: 20/20,
+      replaceNode: 20/20; prefixes line-identical to the divergence).
+      IDENTICAL Smalltalk operations produced DIFFERENT array content
+      (+1 element, triplet->closure-run substitution) — so the delta is
+      a VM-level effect inside one of those identical operations. Prime
+      remaining candidate: the OrderedCollection>>growAtLast prim-105
+      copy observed at scav 12/13 (young 160-slot source -> old 320-slot
+      overflow dest) — instrument it to memcmp the copied region against
+      the source post-copy AND dump both arrays' first divergent slot;
+      if the copy is faithful, the divergence predates the grow and
+      binary-search earlier ops the same way (the [P105] log gives the
+      full op sequence).
       Remaining leads (in order):
       (a) ALL run detectors check LOWER neighbors ([i-1],[i-2]) — a
       DESCENDING fill evades every one of them, and

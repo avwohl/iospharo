@@ -17535,8 +17535,19 @@ Oop Interpreter::materializeFrameStack() {
                 continue;
             }
         } else {
-            // Calculate context size (6 fixed + temps + some stack)
-            size_t contextSize = 6 + numTemps + 32;
+            // Calculate context size: 6 fixed + ALL temps + the frame's
+            // ACTUAL expression-stack depth (was a fixed +32, which silently
+            // dropped deeper expression stacks via storePointer's bounds
+            // check — truncated frame state resumed wrong after preemption).
+            size_t exprNeed = 0;
+            if (frame.savedFP != nullptr) {
+                Oop* exprStartPre = frame.savedFP + 1 + numTemps;
+                Oop* nextStartPre = (i + 1 < frameDepth_)
+                    ? savedFrames_[i + 1].savedFP : framePointer_;
+                if (nextStartPre > exprStartPre)
+                    exprNeed = static_cast<size_t>(nextStartPre - exprStartPre);
+            }
+            size_t contextSize = 6 + numTemps + (exprNeed > 32 ? exprNeed + 8 : 32);
 
             // Get Context class and its index in the class table
             Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
@@ -17614,8 +17625,10 @@ Oop Interpreter::materializeFrameStack() {
         // next frame's receiver (or the current frame's FP for the last saved frame).
         int savedCount = 0;
         if (frame.savedFP != nullptr) {
-            // Save temps
-            for (int t = 0; t < numTemps && t < 32; t++) {
+            // Save ALL temps (was capped at 32 — methods encode up to 63
+            // temps; truncation silently lost temps 33+ across preemption).
+            size_t ctxCap = context.asObjectPtr()->slotCount();
+            for (int t = 0; t < numTemps && (size_t)(6 + t) < ctxCap; t++) {
                 Oop temp = *(frame.savedFP + 1 + t);
                 memory_.storePointer(6 + t, context, temp);
                 savedCount++;
@@ -17630,9 +17643,18 @@ Oop Interpreter::materializeFrameStack() {
                 nextFrameStart = framePointer_;
             }
             Oop* exprEndPtr = nextFrameStart;  // expression ends before callee receiver
-            if (exprEndPtr > exprStart && (exprEndPtr - exprStart) < 100) {
+            if (exprEndPtr > exprStart) {
                 ptrdiff_t exprCount = exprEndPtr - exprStart;
                 for (ptrdiff_t e = 0; e < exprCount; e++) {
+                    if ((size_t)(6 + numTemps + e) >= ctxCap) {
+                        static int capN = 0;
+                        if (++capN <= 10)
+                            fprintf(stderr,
+                                "[CTX-CAPACITY] saved-frame %zu: expr item %td/%td "
+                                "doesn't fit ctx cap %zu (temps=%d) — STATE LOST\n",
+                                i, e, exprCount, ctxCap, numTemps);
+                        break;
+                    }
                     memory_.storePointer(6 + numTemps + e, context, *(exprStart + e));
                     savedCount++;
                 }
@@ -17682,7 +17704,12 @@ Oop Interpreter::materializeFrameStack() {
                 }
                 reusingContext = true;
             } else {
-                size_t contextSize = 6 + numTemps + 32;
+                // Size for ALL temps + the ACTUAL operand depth (see the
+                // saved-frame loop — fixed +32 silently dropped deep stacks).
+                Oop* obPre = framePointer_ + 1 + numTemps;
+                ptrdiff_t opPre = stackPointer_ - obPre;
+                size_t contextSize = 6 + numTemps +
+                    (opPre > 32 ? (size_t)opPre + 8 : 32);
                 Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
                 uint32_t classIndex = contextClass.isObject() ? memory_.indexOfClass(contextClass) : 0;
                 if (classIndex == 0) {
@@ -17715,10 +17742,11 @@ Oop Interpreter::materializeFrameStack() {
                 memory_.storePointer(4, context, closure_);                      // closureOrNil
                 memory_.storePointer(5, context, receiver_);                    // receiver
 
-                // Copy current temps from frame
-                // Temps are at framePointer_[1..numTemps] (receiver is at framePointer_[0])
+                // Copy ALL current temps from the frame (was capped at 32;
+                // methods encode up to 63 temps — silent truncation).
+                size_t ctxCap = context.asObjectPtr()->slotCount();
                 int savedCount = 0;
-                for (int t = 0; t < numTemps && t < 32; t++) {
+                for (int t = 0; t < numTemps && (size_t)(6 + t) < ctxCap; t++) {
                     Oop temp = *(framePointer_ + 1 + t);
                     memory_.storePointer(6 + t, context, temp);
                     savedCount++;
@@ -17728,8 +17756,17 @@ Oop Interpreter::materializeFrameStack() {
                 // The operand stack is from framePointer_ + 1 + numTemps to stackPointer_ - 1
                 Oop* operandBase = framePointer_ + 1 + numTemps;
                 ptrdiff_t operandCount = stackPointer_ - operandBase;
-                if (operandCount > 0 && operandCount < 100) {
+                if (operandCount > 0) {
                     for (ptrdiff_t o = 0; o < operandCount; o++) {
+                        if ((size_t)(6 + numTemps + o) >= ctxCap) {
+                            static int capN2 = 0;
+                            if (++capN2 <= 10)
+                                fprintf(stderr,
+                                    "[CTX-CAPACITY] current frame: operand %td/%td "
+                                    "doesn't fit ctx cap %zu (temps=%d) — STATE LOST\n",
+                                    o, operandCount, ctxCap, numTemps);
+                            break;
+                        }
                         Oop item = *(operandBase + o);
                         memory_.storePointer(6 + numTemps + o, context, item);
                         savedCount++;
@@ -20133,6 +20170,27 @@ void Interpreter::prepareForGC() {
             int64_t currentSP = currentStackp.isSmallInteger() ? currentStackp.asSmallInteger() : 0;
             if (numTemps > currentSP) {
                 memory_.storePointer(2, currentFrameMaterializedCtx_, Oop::fromSmallInteger(numTemps));
+            }
+
+            // Refresh the CURRENT frame's context pc too (same rationale as
+            // the savedFrames_ loop above): temps are now current, so a
+            // stale materialization-time pc would make any later
+            // resume-from-context REPLAY the bytecode range executed since
+            // materialization with CURRENT temps — replayed removeIndex:
+            // shifts over adjacent equal refs are exactly the convertStorePop
+            // run-growth arithmetic (2026-07-02 actdump FAIL/PASS diff).
+            // ipOffset_ was just computed at entry from instructionPointer_.
+            if (method_.isObject() && instructionPointer_) {
+                ObjectHeader* mObj = method_.asObjectPtr();
+                Oop hdrOop = mObj->slotAt(0);
+                if (hdrOop.isSmallInteger()) {
+                    int nLits = static_cast<int>(hdrOop.asSmallInteger() & 0x7FFF);
+                    if (ipOffset_ >= (ptrdiff_t)((1 + nLits) * 8) &&
+                        ipOffset_ < (ptrdiff_t)mObj->byteSize()) {
+                        memory_.storePointer(1, currentFrameMaterializedCtx_,
+                            Oop::fromSmallInteger(ipOffset_ + 1));
+                    }
+                }
             }
         }
     }
