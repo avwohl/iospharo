@@ -482,8 +482,10 @@ category as every prior run), 15 Cly*Query "failures" that are EXPECTED
 FAILURES miscounted by the suite runner (ClyFilterQueryTest 7EF,
 ClyAsyncQueryTest 7EF, ClySemiAsyncQueryResultTest 1EF — all pass clean
 standalone), and 1 real singleton:
-- [ ] **DebugPointTest>>testTranscriptDebugPoint — 1 error** (44/45
-  standalone too). Niche (Transcript debug-point); uninvestigated.
+- [x] **DebugPointTest>>testTranscriptDebugPoint — NOT OURS (2026-07-03):
+  the stock reference VM fails it too** (isolated suite run on stock:
+  1 failure). Image-level defect in headless mode; zero VM-attributable
+  deviations remain in the 7375-test suite outside the Cairo category.
 The previously-hanging classes (StepThroughTest, FastStepThroughTest,
 ProcessTest, the Weak* family) are now runnable and green. The run went
 460 classes deep vs the previous 349-class abort. NOTE: the suite VM
