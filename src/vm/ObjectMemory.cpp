@@ -1719,8 +1719,25 @@ GCResult ObjectMemory::scavenge() {
         size_t copySize = size;  // totalSize includes overflow word
 
         if (oldSpaceFree_ + copySize > oldSpaceEnd_) {
-            // Old-space OOM.  Bail — caller should fall back to fullGC.
-            return oop;  // leaves the young object in place; caller retries
+            // Old-space OOM during tenure.  The old "bail — caller retries"
+            // contract was FICTION (silent-cap audit 2026-07-03): every call
+            // site detects tenure only via oop-changed, which is identical
+            // for "wasn't young" and "OOM bail", and Phase 3 unconditionally
+            // resets eden afterwards — so a silently-bailed live object was
+            // WIPED and every reference to it dangled into reused eden
+            // (delayed use-after-free instead of an OutOfMemory).  Until a
+            // grow-old-space / low-space-signal path exists, fail LOUDLY at
+            // the exact exhaustion point: a clean abort with a diagnosis
+            // beats silent heap corruption in every scenario.
+            fprintf(stderr,
+                "[VM] FATAL: old space exhausted during scavenge tenure "
+                "(need %zu bytes, %td free of %td). Live heap has outgrown "
+                "the old-space reservation (MemoryConfig::oldSpaceMaxSize).\n",
+                copySize,
+                (ptrdiff_t)(oldSpaceEnd_ - oldSpaceFree_),
+                (ptrdiff_t)(oldSpaceEnd_ - oldSpaceStart_));
+            fflush(stderr);
+            std::abort();
         }
         uint8_t* destStart = oldSpaceFree_;
         std::memcpy(destStart, srcStart, copySize);
@@ -2521,10 +2538,25 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     // (Pre-compact scavenge moved to step 1.5 — it must precede markPhase;
     // see the comment there.)
 
-    // 4. Plan + update + copy (compact)
-    planCompactSavingForwarders();
-    updatePointersAfterCompact();
-    copyAndUnmark();
+    // 4. Plan + update + copy (compact).
+    // If planning overflowed its scratch (more mobile objects than new-space
+    // Oop slots), the plan was rolled back — SKIP compaction this cycle
+    // rather than corrupt the heap (see planCompactSavingForwarders).  Marks
+    // linger harmlessly: step 2 of the next fullGC clears all marks first.
+    bool planned = planCompactSavingForwarders();
+    if (planned) {
+        updatePointersAfterCompact();
+        copyAndUnmark();
+    } else {
+        fprintf(stderr,
+            "[GC-PLAN-OVERFLOW] compaction plan exceeded scratch capacity "
+            "(%zu Oop slots); compaction SKIPPED this cycle (mark-only GC). "
+            "Old space stays fragmented until a smaller live set allows a "
+            "full plan.\n",
+            (size_t)(reinterpret_cast<Oop*>(newSpaceEnd_)
+                     - reinterpret_cast<Oop*>(newSpaceStart_)));
+        fflush(stderr);
+    }
     if (timeGCPhases) {
         uint64_t tDone = readTSC();
         std::fprintf(stderr,
@@ -2535,8 +2567,10 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
             (unsigned long long)(tDone - tCompactStart));
     }
 
-    // 5. Rebuild free list from gap
-    rebuildFreeListAfterCompact();
+    // 5. Rebuild free list from gap (only meaningful when compaction ran)
+    if (planned) {
+        rebuildFreeListAfterCompact();
+    }
 
     // Post-compaction stale pointer check (disabled — verified clean, too expensive for production)
     if (GET_DEBUG_BOOL(PHARO_HEAP_CHECK)) {
@@ -3910,7 +3944,29 @@ bool ObjectMemory::planCompactSavingForwarders() {
         {
             // Check if we have scratch space
             if (savedFirstFieldsSpace_.top >= savedFirstFieldsSpace_.limit) {
-                return false;  // Overflow — need another pass
+                // Overflow: more mobile objects than scratch slots (one Oop
+                // per mover; scratch = the whole new space).  Cog handles
+                // this with a multi-pass compact; our port previously
+                // returned false and the CALLER IGNORED IT — updatePointers/
+                // copyAndUnmark then ran against a half-planned heap and
+                // every inbound reference to an unplanned mobile object
+                // dangled after the memmove (silent-cap audit 2026-07-03,
+                // wholesale corruption at >~2-4M movers).  Until a true
+                // multi-pass lands, ROLL BACK the partial plan (restore the
+                // saved first fields, clear grey bits) so the caller can
+                // safely skip compaction for this cycle: no motion, no
+                // corruption — the GC degrades to mark-only, loudly.
+                Oop* replay = savedFirstFieldsSpace_.start;
+                ObjectScanner undoScanner(oldSpaceStart_, oldSpaceFree_);
+                while (ObjectHeader* uo = undoScanner.next()) {
+                    if (replay >= savedFirstFieldsSpace_.top) break;
+                    if (!uo->isMarked() || uo->isPinned() || !uo->isGrey()) continue;
+                    Oop* firstField = reinterpret_cast<Oop*>(uo + 1);
+                    *firstField = *replay++;
+                    uo->setGrey(false);
+                }
+                savedFirstFieldsSpace_.top = savedFirstFieldsSpace_.start;
+                return false;  // Caller must skip compaction this cycle
             }
             // Save first field (word right after header, always exists in Spur)
             Oop* firstField = reinterpret_cast<Oop*>(obj + 1);

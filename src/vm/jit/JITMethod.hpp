@@ -595,22 +595,49 @@ public:
     }
 
     // Register a compiled method.
+    // Tombstone REUSE added (2026-07-03 silent-cap audit): remove() keeps the
+    // key for probe-chain integrity but count_ was never decremented, so a
+    // long session's evict/invalidate churn marched count_ to the 75% load
+    // limit and ALL further compiles were silently refused forever (the
+    // "13774 failed compiles / code zone thrash" signature in long suite
+    // runs).  Inserts now recycle the first tombstone on their probe path —
+    // replacing a tombstone with a live key preserves every other chain, and
+    // count_ (live + tombstoned keys) stops growing across churn.
     bool insert(uint64_t compiledMethodBits, JITMethod* jitMethod) {
         if (!entries_) return false;
         if (count_ * 4 >= capacity_ * 3) return false;  // 75% load factor
 
         size_t mask = capacity_ - 1;
         size_t idx = hash(compiledMethodBits) & mask;
+        size_t tombstone = SIZE_MAX;
 
         for (size_t probe = 0; probe < capacity_; probe++) {
             Entry& e = entries_[idx];
-            if (e.key == 0 || e.key == compiledMethodBits) {
-                if (e.key == 0) count_++;
-                e.key = compiledMethodBits;
+            if (e.key == compiledMethodBits) {
+                // Update in place (including reviving this key's own tombstone).
                 e.value = jitMethod;
                 return true;
             }
+            if (e.key == 0) {
+                if (tombstone != SIZE_MAX) {
+                    // Recycle the tombstone; count_ unchanged (its key was
+                    // already counted).
+                    entries_[tombstone].key = compiledMethodBits;
+                    entries_[tombstone].value = jitMethod;
+                    return true;
+                }
+                e.key = compiledMethodBits;
+                e.value = jitMethod;
+                count_++;
+                return true;
+            }
+            if (e.value == nullptr && tombstone == SIZE_MAX) tombstone = idx;
             idx = (idx + 1) & mask;
+        }
+        if (tombstone != SIZE_MAX) {
+            entries_[tombstone].key = compiledMethodBits;
+            entries_[tombstone].value = jitMethod;
+            return true;
         }
         return false;
     }

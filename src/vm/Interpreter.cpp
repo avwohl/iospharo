@@ -2287,7 +2287,13 @@ void Interpreter::pinLiveJITMethodsAcrossProcesses() {
     if (procClsIdx == 0) return;
 
     auto pinChain = [&](Oop ctx) {
-        for (int d = 0; d < 256 && ctx.isObject() && ctx.rawBits() > 0x10000
+        // Depth cap raised 256 -> 70000 (silent-cap audit 2026-07-03):
+        // suspended chains legitimately reach MaxFrameDepth-scale under deep
+        // recursion; contexts past the cap went UNPINNED and eviction could
+        // free JIT code the suspended process resumes into — the exact
+        // corruption class this function exists to prevent.  70000 >
+        // MaxFrameDepth(65536) is the standard chain-walk cycle guard here.
+        for (int d = 0; d < 70000 && ctx.isObject() && ctx.rawBits() > 0x10000
                  && memory_.isValidPointer(ctx); d++) {
             Oop mth = memory_.fetchPointer(3, ctx);   // Context>>method (CompiledMethod/Block)
             if (mth.isObject() && mth.rawBits() > 0x10000) {
@@ -4962,7 +4968,17 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     //    Smalltalk code time to finish), restore the original process, and
     //    siglongjmp back to the C trampoline.
     long nestedStepCount = 0;
-    static constexpr long kCallbackTimeout = 10000000; // 10M steps ~1s
+    // Raised 10M -> 1B steps (2026-07-03 silent-cap audit): the budget counts
+    // steps of ALL processes (the heartbeat round-robins inside this nested
+    // loop), so a QUICK handler could time out merely because a compute-bound
+    // sibling ate the shared 10M (~1s) budget — and the timeout path corrupts
+    // state (uninitialized C return buffer; the handler process is abandoned
+    // holding the TFCallback stackProtect mutex; callbackDepth_ leaks).  1B
+    // (~10-100s) keeps a last-resort escape for a genuinely dead handler while
+    // being unreachable by any legitimate workload.  The timeout is also loud
+    // now.  Full fix (park the handler properly + signal the image) tracked in
+    // docs/deferred.md.
+    static constexpr long kCallbackTimeout = 1000000000; // 1B steps
     bool cbDbg = g_debug.callbackDebug;
     long lastDbgStep = 0;
     while (running_) {
@@ -5029,11 +5045,14 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         // (e.g., because an error killed the handler process), abandon the
         // callback to prevent infinite spinning.
         if (nestedStepCount >= kCallbackTimeout && !pendingCallbackReturn_) {
-            if (g_debug.callbackDebug) {
-                fprintf(stderr, "[CALLBACK-TIMEOUT] nestedStepCount=%ld vmcc=%p\n",
-                        nestedStepCount, (void*)vmcc);
-                fflush(stderr);
-            }
+            // ALWAYS loud: this path abandons the handler process (it keeps
+            // any held mutexes) and returns a zeroed buffer to the C caller —
+            // silent operation hid real failures (silent-cap audit 2026-07-03).
+            fprintf(stderr, "[CALLBACK-TIMEOUT] callback handler did not return "
+                    "after %ld nested steps — abandoning callback (vmcc=%p); "
+                    "C caller receives a zeroed result\n",
+                    nestedStepCount, (void*)vmcc);
+            fflush(stderr);
             // Pop suspended process from SuspendedProcessInCallout (LIFO)
             Oop suspendedProcess = memory_.specialObject(
                 SpecialObjectIndex::SuspendedProcessInCallout);
@@ -5064,7 +5083,9 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             // RAII destructors so any asmjit ProtectJitReadWriteScope
             // active higher up runs cleanup (restoring MAP_JIT W^X to
             // executable).  See pharo::CallbackComplete declaration.
-            throw pharo::CallbackComplete{};
+            // timedOut=true: Smalltalk never wrote the return value — the
+            // handler must zero the C return buffer.
+            throw pharo::CallbackComplete{true};
         }
 
         // Check for deferred callback return AFTER the batch completes.
@@ -6748,7 +6769,17 @@ void Interpreter::returnValue(Oop value) {
             {
                 Oop check = memory_.fetchPointer(0, activeContext_);
                 bool reachable = false;
-                for (int i = 0; i < 2000 && check.isObject() && !check.isNil(); i++) {
+                // Bound raised 2000 -> 70000 (2026-07-03, silent-cap audit):
+                // this was the single bound in the NLR block NOT raised with
+                // its siblings in the 2026-06-19/20 sweep (see the ~6880
+                // comment: legitimate NLR homes sit ~14000 hops up via
+                // recursive printString).  A reachable home >2000 hops away
+                // was misclassified as a cross-stack Context>>jump target and
+                // the NLR silently became a normal return.  70000 >
+                // MaxFrameDepth(65536) covers any real chain; the abandon
+                // path below remains correct for genuinely unreachable
+                // (cross-stack) targets.
+                for (int i = 0; i < 70000 && check.isObject() && !check.isNil(); i++) {
                     if (check.rawBits() == homeCtx.rawBits()) {
                         reachable = true;
                         break;
@@ -7658,7 +7689,7 @@ void Interpreter::returnFromMethod() {
                         Oop enclosing = memory_.fetchPointer(numLits, method_);
                         // Follow the chain of enclosing blocks/methods
                         int chainDepth = 0;
-                        while (enclosing.isObject() && enclosing.rawBits() > 0x10000 && chainDepth < 20) {
+                        while (enclosing.isObject() && enclosing.rawBits() > 0x10000 && chainDepth < 256) {
                             ObjectHeader* ecHdr = enclosing.asObjectPtr();
                             if (!ecHdr->isCompiledMethod()) break;
                             // Check if this is a CompiledBlock or CompiledMethod
@@ -7708,7 +7739,7 @@ void Interpreter::returnFromMethod() {
             if (closure_.isObject() && !closure_.isNil() && closure_.rawBits() > 0x10000) {
                 Oop ctxWalk = memory_.fetchPointer(0, closure_);   // outerContext
                 int cChain = 0;
-                while (ctxWalk.isObject() && !ctxWalk.isNil() && ctxWalk.rawBits() > 0x10000 && cChain < 20) {
+                while (ctxWalk.isObject() && !ctxWalk.isNil() && ctxWalk.rawBits() > 0x10000 && cChain < 256) {
                     Oop m = memory_.fetchPointer(3, ctxWalk);
                     if (!m.isObject() || m.rawBits() <= 0x10000 || !m.asObjectPtr()->isCompiledMethod()) break;
                     Oop mHeader = memory_.fetchPointer(0, m);
@@ -7837,12 +7868,19 @@ void Interpreter::returnFromMethod() {
                     Oop sender = memory_.fetchPointer(0, homeCtx);
                     if (sender.isObject() && !sender.isNil()) {
                         // Mark all contexts from activeContext_ through homeCtx as dead
-                        // (nil their sender and PC per Cog VM semantics)
+                        // (nil their sender and PC per Cog VM semantics).
+                        // Bound raised 200 -> 70000 (2026-07-03 silent-cap audit):
+                        // this walk is part of the same NLR block whose sibling
+                        // bounds were raised in the 2026-06-19/20 sweep (legit NLR
+                        // homes sit ~14000 hops up); at 200 the contexts beyond the
+                        // cap were left ALIVE with intact senders — resumable stale
+                        // frames above a completed NLR.  The walk self-terminates on
+                        // cycles (senders are nil'd as it goes).
                         {
                             Oop ctx = activeContext_;
                             Oop nilObj = memory_.nil();
                             int safety = 0;
-                            while (ctx.isObject() && ctx.rawBits() != nilObj.rawBits() && safety++ < 200) {
+                            while (ctx.isObject() && ctx.rawBits() != nilObj.rawBits() && safety++ < 70000) {
                                 Oop nextSender = memory_.fetchPointer(0, ctx);
                                 memory_.storePointer(0, ctx, nilObj);  // sender = nil
                                 memory_.storePointer(1, ctx, nilObj);  // pc = nil → isDead
@@ -7939,7 +7977,7 @@ void Interpreter::returnFromMethod() {
                     Oop enclosing = memory_.fetchPointer(numLits, method_);
                     // Follow chain of enclosing blocks to find home CompiledMethod
                     int chainDepth = 0;
-                    while (enclosing.isObject() && enclosing.rawBits() > 0x10000 && chainDepth < 20) {
+                    while (enclosing.isObject() && enclosing.rawBits() > 0x10000 && chainDepth < 256) {
                         ObjectHeader* ecHdr = enclosing.asObjectPtr();
                         if (!ecHdr->isCompiledMethod()) break;
                         isCompiledBlock = true;
@@ -10110,7 +10148,25 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         return o.isNil() || o.rawBits() == nilObj.rawBits() || o.rawBits() < 0x10000;
     };
 
-    while (!isNilOrEnd(currentClass) && currentClass.isObject() && depth < 100) {
+    // Bound raised 100 -> 100000 with a LOUD trip (2026-07-03 silent-cap
+    // audit): class hierarchies are unbounded per language semantics (stock
+    // VMMaker has no depth cap), and a >100-deep hierarchy made lookup
+    // silently return nil — indistinguishable from "selector absent", so an
+    // EXISTING inherited method DNU'd; worse, #doesNotUnderstand: (on Object,
+    // also >100 deep) then failed lookup too and the process was silently
+    // abandoned.  100000 is a corruption-scale cycle guard (no legitimate
+    // hierarchy approaches it); hitting it now stops the VM loudly instead
+    // of mislabeling a real method as missing.
+    while (!isNilOrEnd(currentClass) && currentClass.isObject()) {
+        if (__builtin_expect(depth >= 100000, 0)) {
+            fprintf(stderr,
+                "[VM] lookupMethod: superclass chain exceeded 100000 links "
+                "(cyclic/corrupt hierarchy) for #%s starting at class 0x%llx\n",
+                memory_.oopToString(selector).c_str(),
+                (unsigned long long)classOop.rawBits());
+            stopVM("cyclic superclass chain in lookupMethod");
+            return Oop::nil();
+        }
         // Heap-range check on class oop.  Without it, a corrupt class
         // (e.g., from a stale IC entry whose class oop got promoted)
         // dereferences into unmapped memory in methodDictOf below.
@@ -10884,29 +10940,30 @@ void Interpreter::terminateAndSwitchProcess() {
 }
 
 // The heartbeat "VM seems stuck" watchdog (sets terminateStuck_ when bytecode
-// steps stop advancing) terminates whatever process is ACTIVE when the flag is
-// processed. That is too blunt: the Delay/timer scheduler legitimately BLOCKS in
-// DelayMicrosecondTicker>>waitForUserSignalled:orExpired: when no Delays are
-// pending (no bytecode steps → looks "stuck"), so the watchdog would kill it and
-// wedge the timer for the whole VM (blocker #3 / timer-scheduler-wedge). Restrict
-// the kill to test-level processes (priority 11..49): never the idle process
-// (P10) and never system/infrastructure processes (P50+, which includes the
-// Delay scheduler and SUnit runner at timingPriority 80). A genuinely stuck
-// high-priority test is handled by the runner's own per-test watchdog, which
-// targets the specific test process rather than "whatever is active".
-// Returns true if a process was terminated (and the active process switched).
+// steps stop advancing for ~15s).  KILL REMOVED (2026-07-03 silent-cap audit):
+// the flag can only be CONSUMED on the bytecode loop, which by construction
+// only runs once the "stuck" process has RESUMED making progress — so every
+// kill this path ever performed was a false positive on a process that had
+// just returned from a long primitive/FFI call/GC (g_watchdogSteps is bumped
+// only at the interpret() checkpoint and step(); never inside primitives).
+// A process genuinely hung inside C++ never reaches the consumption site at
+// all.  Worse, the kill used terminateAndSwitchProcess — a C++ hard-kill that
+// skips ensure:/ifCurtailed: unwinds and leaks held critical: mutexes (see
+// handleStackOverflow's root-cause note below).  Stuck detection stays LOUD
+// here (diagnosis), and the harness-level [STALL] monitor (test_load_image,
+// 300s of zero steps → interpreter.stop()) remains the real backstop for a
+// truly hung VM.  Returns false always (no process switched).
 bool Interpreter::maybeTerminateStuckProcess() {
     Oop ap = getActiveProcess();
     int pri = safeProcessPriority(ap);
-    if (pri >= 11 && pri < 50) {
-        terminateAndSwitchProcess();
-        return true;
-    }
     static int stuckGuardLog = 0;
-    if (stuckGuardLog++ < 10) {
-        fprintf(stderr, "[STUCK-GUARD] VM-stuck watchdog NOT terminating active "
-                "P%d #%s (protected: idle / system / Delay-scheduler)\n",
-                pri, memory_.selectorOf(method_).c_str());
+    if (stuckGuardLog++ < 20) {
+        fprintf(stderr, "[STUCK-GUARD] steps stalled ~15s, now recovered; active "
+                "P%d #%s fd=%zu (no kill — detection only)\n",
+                pri,
+                method_.isObject() && method_.rawBits() > 0x10000
+                    ? memory_.selectorOf(method_).c_str() : "?",
+                frameDepth_);
     }
     return false;
 }
@@ -11428,7 +11485,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 
             if (homeMethod_ == method) {
                 Oop homeCandidate = memory_.fetchPointerUnchecked(0, method);
-                int maxHops = 10;
+                int maxHops = 256;  // block-nesting depth; was 10 (silent-cap audit 2026-07-03)
                 while (homeCandidate.isObject() && maxHops-- > 0) {
                     ObjectHeader* candidateHdr = homeCandidate.asObjectPtr();
                     uint32_t candidateCls = candidateHdr->classIndex();
@@ -12813,7 +12870,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
             Oop enclosingCode = memory_.fetchPointerUnchecked(numLiterals, compiledBlock);
             // Follow the chain of enclosing blocks until we reach the home method
             int chainDepth = 0;
-            while (enclosingCode.isObject() && enclosingCode.rawBits() > 0x10000 && chainDepth < 20) {
+            while (enclosingCode.isObject() && enclosingCode.rawBits() > 0x10000 && chainDepth < 256) {
                 ObjectHeader* ecHdr = enclosingCode.asObjectPtr();
                 if (!ecHdr->isCompiledMethod()) break;
 
@@ -12907,7 +12964,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
             // testExampleIfTrue; stock walks contexts, never outerCode).
             Oop ctxWalk = outerContext;
             int cChain = 0;
-            while (ctxWalk.isObject() && !ctxWalk.isNil() && ctxWalk.rawBits() > 0x10000 && cChain < 20) {
+            while (ctxWalk.isObject() && !ctxWalk.isNil() && ctxWalk.rawBits() > 0x10000 && cChain < 256) {
                 Oop m = memory_.fetchPointer(3, ctxWalk);
                 tracedOcMethod = m;
                 if (!m.isObject() || m.rawBits() <= 0x10000 || !m.asObjectPtr()->isCompiledMethod()) break;
@@ -17581,14 +17638,25 @@ Oop Interpreter::materializeFrameStack() {
                 // Sync temps: C++ stack → context (C++ stack is canonical).
                 // Same fix as the frameDepth_==0 path: bytecodes modify temps
                 // on the C++ stack, not on the context object.
+                // Cap `t < 32` REMOVED (2026-07-03, silent-cap audit): methods
+                // encode up to 63 temps (6-bit field, masked above); temps
+                // 32-62 were silently never synced — the same disease as the
+                // materializeFrameStack 32-temp truncation fixed 2026-07-02,
+                // at a different site.  The ctxSlots bound is the real guard.
                 size_t ctxSlots = acHdr->slotCount();
-                for (int t = 0; t < numTemps && t < 32; t++) {
+                for (int t = 0; t < numTemps; t++) {
                     if (static_cast<size_t>(CtxFixed + t) < ctxSlots) {
                         memory_.storePointer(CtxFixed + t, activeContext_, *(frame0.savedFP + 1 + t));
                     }
                     savedCount++;
                 }
-                // Save expression stack items
+                // Save expression stack items.  The old `< 100` guard skipped
+                // the ENTIRE expression stack when it held >=100 items (deep
+                // operand stacks: cascades, brace arrays), silently dropping
+                // live operands from the materialized context — same family
+                // as the >100-items skip fixed in materializeFrameStack
+                // (2026-07-02).  Bound by the context's actual capacity
+                // instead, and warn on shortfall (never silently).
                 Oop* exprStart = frame0.savedFP + 1 + numTemps;
                 Oop* exprEnd;
                 if (1 < frameDepth_) {
@@ -17596,10 +17664,20 @@ Oop Interpreter::materializeFrameStack() {
                 } else {
                     exprEnd = framePointer_;
                 }
-                if (exprEnd > exprStart && (exprEnd - exprStart) < 100) {
-                    Oop* exprEndPtr = exprEnd;  // expression ends before callee receiver
-                    ptrdiff_t exprCount = exprEndPtr - exprStart;
-                    for (ptrdiff_t e = 0; e < exprCount && e < 100; e++) {
+                if (exprEnd > exprStart) {
+                    ptrdiff_t exprCount = exprEnd - exprStart;
+                    for (ptrdiff_t e = 0; e < exprCount; e++) {
+                        if (static_cast<size_t>(CtxFixed + numTemps + e) >= ctxSlots) {
+                            static int exprCapWarn = 0;
+                            if (exprCapWarn++ < 10) {
+                                fprintf(stderr,
+                                    "[CTX-CAPACITY] pushFrame temp-sync: expr item %td/%td "
+                                    "exceeds context capacity %zu (#%s) — items dropped\n",
+                                    e, exprCount, ctxSlots,
+                                    memory_.selectorOf(frame0.savedMethod).c_str());
+                            }
+                            break;
+                        }
                         memory_.storePointer(CtxFixed + numTemps + e, activeContext_, *(exprStart + e));
                         savedCount++;
                     }
@@ -18018,6 +18096,20 @@ void Interpreter::transferTo(Oop newProcess) {
             s.ensureCtx = nlrEnsureCtx_;
             s.homeMethod = nlrHomeMethod_;
             s.value = nlrValue_;
+        } else if (!saved) {
+            // Table full: this process's pending NLR is about to be LOST —
+            // its ^-return will degrade to a normal return on resume.  Never
+            // silent (silent-cap audit 2026-07-03).
+            static int nlrSaveOverflow = 0;
+            if (nlrSaveOverflow++ < 20) {
+                fprintf(stderr,
+                    "[NLR-SAVE-OVERFLOW] %d processes already mid-NLR; dropping "
+                    "pending NLR of process 0x%llx (home=#%s)\n",
+                    savedNlrCount_,
+                    (unsigned long long)oldProcess.rawBits(),
+                    nlrHomeMethod_.isObject() && nlrHomeMethod_.rawBits() > 0x10000
+                        ? memory_.selectorOf(nlrHomeMethod_).c_str() : "?");
+            }
         }
     }
 
@@ -19207,7 +19299,7 @@ bool Interpreter::executeFromContext(Oop context) {
             // Fallback: try slot 0 chain (for older formats)
             if (homeMethod_ == method_) {
                 Oop homeCandidate = memory_.fetchPointer(0, method_);
-                int maxHops = 10;
+                int maxHops = 256;  // block-nesting depth; was 10 (silent-cap audit 2026-07-03)
                 while (homeCandidate.isObject() && memory_.isValidPointer(homeCandidate) && maxHops-- > 0) {
                     ObjectHeader* candidateHdr = homeCandidate.asObjectPtr();
                     uint32_t candidateCls = candidateHdr->classIndex();
@@ -19225,7 +19317,7 @@ bool Interpreter::executeFromContext(Oop context) {
             // If we couldn't find home method, try the closure chain as fallback
             if (homeMethod_ == method_) {
                 Oop closure = memory_.fetchPointer(4, context);
-                int maxHops = 10;
+                int maxHops = 256;  // block-nesting depth; was 10 (silent-cap audit 2026-07-03)
 
                 while (closure.isObject() && memory_.isValidPointer(closure) && maxHops-- > 0) {
                     ObjectHeader* closureHdr = closure.asObjectPtr();
@@ -21746,7 +21838,7 @@ void Interpreter::tryJITResumeInCaller() {
             int rsDone = 0;
             bool rsFailed = false;
             for (int rsI = 0; rsI < state.j2jDepth; rsI++) {
-                if (frameDepth_ >= StackOverflowLimit) { rsFailed = true; break; }
+                if (frameDepth_ >= effectiveStackOverflowLimit()) { rsFailed = true; break; }
                 SavedFrame& rsF = savedFrames_[frameDepth_++];
                 if (!materializeJ2JSaveIntoFrame(rsF, rsSaves[rsI],
                         state.jitMethod, "resume-internal")) {
@@ -22226,7 +22318,7 @@ void Interpreter::tryJITResumeInCaller() {
 
                     // Stack overflow check
                     if (__builtin_expect(
-                            frameDepth_ + rj2jDepth >= StackOverflowLimit,
+                            frameDepth_ + rj2jDepth >= effectiveStackOverflowLimit(),
                             0)) {
                         rj2jDepth--;
                         state.exitReason = jit::ExitStackOverflow;
@@ -22449,7 +22541,14 @@ void Interpreter::tryJITResumeInCaller() {
             // Materialize remaining J2J saves if trampoline bailed with depth>0
             if (rj2jDepth > 0) {
                 for (int i = 0; i < rj2jDepth; i++) {
-                    if (frameDepth_ >= StackOverflowLimit) break;
+                    if (frameDepth_ >= effectiveStackOverflowLimit()) {
+                        static int matCapWarns0 = 0;
+                        if (matCapWarns0++ < 10)
+                            fprintf(stderr, "[MAT-CAP] s0: frameDepth %zu hit effective "
+                                    "limit %zu - remaining J2J saves dropped\n",
+                                    frameDepth_, effectiveStackOverflowLimit());
+                        break;
+                    }
                     J2JSave& save = rj2jSaves[i];
                     // rj2j materialize requires save.jitMethod (no fallback);
                     // it's the only path where state.jitMethod isn't a reliable
@@ -25919,7 +26018,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                 // Lazy frame: just increment local depth, no SavedFrame write.
                 // frameDepth_ is synced back to the member at loop exit.
-                if (__builtin_expect(localFrameDepth >= StackOverflowLimit, 0)) {
+                if (__builtin_expect(localFrameDepth >= effectiveStackOverflowLimit(), 0)) {
                     j2jDepth--;
                     state.exitReason = jit::ExitStackOverflow;
                     break;
@@ -26370,7 +26469,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             ? &j2jPool_[j2jStateBase]
             : j2jStack;
         for (int i = 0; i < state.j2jDepth; i++) {
-            if (frameDepth_ >= StackOverflowLimit) break;
+            if (frameDepth_ >= effectiveStackOverflowLimit()) {
+                        static int matCapWarns1 = 0;
+                        if (matCapWarns1++ < 10)
+                            fprintf(stderr, "[MAT-CAP] s1: frameDepth %zu hit effective "
+                                    "limit %zu - remaining J2J saves dropped\n",
+                                    frameDepth_, effectiveStackOverflowLimit());
+                        break;
+                    }
             J2JSave& save = stateSaves[i];
             SavedFrame& frame = savedFrames_[frameDepth_++];
             if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "materializeJ2J lambda")) {
@@ -26671,7 +26777,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 if (state.j2jDepth > 0) {
                     J2JSave* _stateSaves = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                     for (int i = 0; i < state.j2jDepth; i++) {
-                        if (frameDepth_ >= StackOverflowLimit) break;
+                        if (frameDepth_ >= effectiveStackOverflowLimit()) {
+                        static int matCapWarns2 = 0;
+                        if (matCapWarns2++ < 10)
+                            fprintf(stderr, "[MAT-CAP] s2: frameDepth %zu hit effective "
+                                    "limit %zu - remaining J2J saves dropped\n",
+                                    frameDepth_, effectiveStackOverflowLimit());
+                        break;
+                    }
                         J2JSave& save = _stateSaves[i];
                         SavedFrame& frame = savedFrames_[frameDepth_++];
                         if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site4")) {
@@ -28491,7 +28604,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 if (state.j2jDepth > 0) {
                                     J2JSave* _stateSaves3 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                                     for (int i = 0; i < state.j2jDepth; i++) {
-                                        if (frameDepth_ >= StackOverflowLimit) break;
+                                        if (frameDepth_ >= effectiveStackOverflowLimit()) {
+                        static int matCapWarns3 = 0;
+                        if (matCapWarns3++ < 10)
+                            fprintf(stderr, "[MAT-CAP] s3: frameDepth %zu hit effective "
+                                    "limit %zu - remaining J2J saves dropped\n",
+                                    frameDepth_, effectiveStackOverflowLimit());
+                        break;
+                    }
                                         J2JSave& save = _stateSaves3[i];
                                         SavedFrame& frame = savedFrames_[frameDepth_++];
                                         if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site6")) {
@@ -28613,7 +28733,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         ObjectHeader* sMO = savedMethod.isObject() && savedMethod.rawBits() != 0
                             ? savedMethod.asObjectPtr()
                             : nullptr;
-                        if (sMO && frameDepth_ < StackOverflowLimit) {
+                        if (sMO && frameDepth_ < effectiveStackOverflowLimit()) {
                             SavedFrame& frame = savedFrames_[frameDepth_++];
                             frame.savedIP = instructionPointer_;  // past-send
                             frame.savedBytecodeEnd = sMO->bytes() + sMO->byteSize();
@@ -28738,7 +28858,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         if (state.j2jDepth > 0) {
                             J2JSave* _stateSaves4 = splitPool ? &j2jPool_[j2jStateBase] : j2jStack;
                             for (int i = 0; i < state.j2jDepth; i++) {
-                                if (frameDepth_ >= StackOverflowLimit) break;
+                                if (frameDepth_ >= effectiveStackOverflowLimit()) {
+                        static int matCapWarns4 = 0;
+                        if (matCapWarns4++ < 10)
+                            fprintf(stderr, "[MAT-CAP] s4: frameDepth %zu hit effective "
+                                    "limit %zu - remaining J2J saves dropped\n",
+                                    frameDepth_, effectiveStackOverflowLimit());
+                        break;
+                    }
                                 J2JSave& save = _stateSaves4[i];
                                 SavedFrame& frame = savedFrames_[frameDepth_++];
                                 if (!materializeJ2JSaveIntoFrame(frame, save, state.jitMethod, "site7")) {

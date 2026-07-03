@@ -2357,7 +2357,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         //   (1) J2JSave pool entries — chain-loop return frames.
         //   (2) Native frame-pointer chain — LRs may be PCs inside JIT code.
         // Unpinned on exit via the Unpin RAII below.
-        auto pinLiveMethods = [&]() {
+        auto pinLiveMethods = [&]() -> bool {
             // (1) J2JSave pool — chain-loop return frames for ongoing J2J
             // calls.  Every live entry names a jitMethod that we must not
             // evict (otherwise the chain-loop's resume into it blows up).
@@ -2387,10 +2387,24 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             uint8_t* stackTop = nullptr;
             uint8_t* stackBot = nullptr;
             if (!pharo::platform::getStackBounds(&stackTop, &stackBot)) {
-                return;  // can't walk; pin nothing
+                // Silent-cap audit 2026-07-03: previously "pin nothing" —
+                // eviction then freed code LIVE on the C stack (SIGILL on
+                // return).  Without bounds we cannot prove safety: tell the
+                // caller to SKIP EVICTION entirely this round.
+                static int noBoundsWarn = 0;
+                if (noBoundsWarn++ < 5) {
+                    fprintf(stderr, "[JIT] getStackBounds failed — eviction "
+                            "skipped (cannot pin native-stack frames)\n");
+                }
+                return false;
             }
             uint64_t* fp = static_cast<uint64_t*>(__builtin_frame_address(0));
-            for (int depth = 0; depth < 256; depth++) {
+            // Depth cap raised 256 -> 65536 (silent-cap audit 2026-07-03):
+            // nested executeFromContext/chain-loop C recursion exceeds 256
+            // under deep Smalltalk recursion; frames past the cap went
+            // unpinned and their JIT code could be evicted while live.  The
+            // walk is already bounded by the real stack range.
+            for (int depth = 0; depth < 65536; depth++) {
                 uint8_t* fpB = reinterpret_cast<uint8_t*>(fp);
                 if (fpB + 16 > stackTop || fpB < stackBot) break;
                 // fp[0] = saved caller fp, fp[1] = saved LR (arm64 prologue)
@@ -2410,6 +2424,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             // have JIT methods live in its suspendedContext chain. Evicting those
             // corrupts the process's code on resume (the full-suite wedge root).
             interp_.pinLiveJITMethodsAcrossProcesses();
+            return true;
         };
         struct UnpinAll {
             CodeZone& z;
@@ -2417,7 +2432,9 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 for (auto* m = z.firstMethod(); m; m = m->nextInZone) m->pinned = false;
             }
         } unpinAll{zone_};
-        pinLiveMethods();
+        if (!pinLiveMethods()) {
+            return nullptr;  // eviction unsafe without native-stack pinning
+        }
 
         // Collect evicted code ranges during eviction via pre-eviction callback,
         // so we capture ALL evicted methods (both first-pass and second-pass).

@@ -110,7 +110,12 @@ namespace pharo {
 ///
 /// libffi frames on macOS arm64 carry `__compact_unwind` so the
 /// exception traverses them safely.
-struct CallbackComplete {};
+struct CallbackComplete {
+    // true when thrown by the callback TIMEOUT path: Smalltalk never wrote
+    // the return value, so the handler must ZERO the C return buffer instead
+    // of handing the caller uninitialized memory (silent-cap audit 2026-07-03).
+    bool timedOut = false;
+};
 
 /// Maximum stack depth
 constexpr size_t MaxStackDepth = 131072;  // Must be large enough for MaxFrameDepth frames
@@ -661,6 +666,16 @@ private:
     // this the #error: send re-hits the guard and we'd hard-kill again, leaking
     // any held critical: mutex -> timer-scheduler-wedge (blocker #2).
     static constexpr size_t StackOverflowSignalHeadroom = 8192;
+    // The limit every frame-pushing path must honor: pushFrame's guard plus
+    // the overflow-signal headroom.  Raw `frameDepth_ >= StackOverflowLimit`
+    // checks in the J2J materialize loops were blind to the headroom, so
+    // DURING stack-overflow signaling they silently dropped saves (frames
+    // vanished from the chain) exactly when the unwind machinery needed them
+    // (2026-07-03 silent-cap audit).  Declared later where members exist.
+    size_t effectiveStackOverflowLimit() const {
+        return StackOverflowLimit
+             + (inStackOverflowSignal_ ? StackOverflowSignalHeadroom : 0);
+    }
 
     // J2J save frame — stencil-to-stencil call state saved during J2J execution.
     // Used by the ASM trampoline and chain loop J2J path.
@@ -908,7 +923,12 @@ private:
     // the outgoing process's NLR state is saved here and restored when it resumes.
     // Without this, process switches during NLR through ensure: would lose the NLR
     // (e.g., Symbol>>intern: returns Symbol class instead of the interned symbol).
-    static constexpr int MAX_SAVED_NLR = 8;
+    // Raised 8 -> 64 (2026-07-03 silent-cap audit): with 8 slots, the ninth
+    // process to switch out mid-NLR-through-ensure: had its pending NLR
+    // SILENTLY dropped (the save was skipped), so on resume its ^-return
+    // became a normal return.  SUnit's forked watchdog battery can hold many
+    // processes mid-unwind at once.  Overflow now also warns loudly.
+    static constexpr int MAX_SAVED_NLR = 64;
     struct SavedNlrState {
         Oop process;       // The process that owns this NLR state
         Oop targetCtx;     // nlrTargetCtx_
@@ -1059,7 +1079,12 @@ private:
 
     // External semaphore signaling (for I/O events)
     // Ring buffer: stores up to 64 pending signal indices, lock-free producer/consumer
-    static constexpr int kPendingSignalCapacity = 64;
+    // Raised 64 -> 1024 (2026-07-03 silent-cap audit): the ring drops
+    // signals when full (documented; better than blocking the I/O thread),
+    // but 64 events between drains is small under socket + threaded-FFI +
+    // finalization load, and a dropped signal is a lost semaphore wakeup
+    // (stuck ZnClient read / TFFI worker wait).  8 KB well spent.
+    static constexpr int kPendingSignalCapacity = 1024;
     std::array<std::atomic<int>, 64> pendingSignals_{};
     std::atomic<int> pendingSignalHead_{0};  // producer writes here (mod capacity)
     std::atomic<int> pendingSignalTail_{0};  // consumer reads here (mod capacity)

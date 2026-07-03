@@ -9491,13 +9491,15 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
     // context (it holds their test-local temps).
     std::unordered_set<uint64_t> excludedContexts;
     {
+        // No depth cap (2026-07-03 silent-cap audit; was 1024): a deep caller
+        // chain (recursion >1024) left its outer contexts UN-excluded, so
+        // allObjects returned the executing method's own live contexts —
+        // exactly what the exclusion exists to prevent.  The insert-set
+        // doubles as a full cycle guard (any revisited context breaks).
         Oop ctx = activeContext_;
-        int guard = 0;
-        while (ctx.isObject() && !ctx.isNil() && guard++ < 1024) {
-            excludedContexts.insert(ctx.rawBits());
-            Oop sender = memory_.fetchPointer(0, ctx);
-            if (sender.rawBits() == ctx.rawBits()) break;  // self-cycle guard
-            ctx = sender;
+        while (ctx.isObject() && !ctx.isNil()) {
+            if (!excludedContexts.insert(ctx.rawBits()).second) break;  // cycle
+            ctx = memory_.fetchPointer(0, ctx);
         }
         for (size_t i = 0; i < frameDepth_; i++) {
             Oop mc = savedFrames_[i].materializedContext;
@@ -30378,6 +30380,9 @@ struct Worker {
                 ffi_call(task->cif, FFI_FN(task->funcPtr),
                          task->returnHolder.data(), task->argPtrs.data());
             } catch (...) {
+                // Never silent (silent-cap audit 2026-07-03).
+                fprintf(stderr, "[TFFI-WORKER-EXCEPTION] worker callout threw "
+                        "(funcPtr=%p) — returning zeroed result\n", task->funcPtr);
                 std::fill(task->returnHolder.begin(), task->returnHolder.end(), 0);
             }
             task->done.store(true, std::memory_order_release);
@@ -30889,7 +30894,17 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     }
 #else
     try { ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs); }
-    catch (...) { memset(returnHolder, 0, returnSize); }
+    catch (...) {
+        // Never silent (silent-cap audit 2026-07-03): a throwing native
+        // callout means the callee crashed or raised past the FFI boundary —
+        // a zeroed result hides that entirely.
+        static int ffiCatchWarn = 0;
+        if (ffiCatchWarn++ < 20) {
+            fprintf(stderr, "[FFI-CALL-EXCEPTION] native callout threw "
+                    "(funcPtr=%p) — returning zeroed result\n", funcPtr);
+        }
+        memset(returnHolder, 0, returnSize);
+    }
 #endif
 
 
@@ -31097,13 +31112,20 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
         free(vmcc);
         return;
-    } catch (const pharo::CallbackComplete&) {
+    } catch (const pharo::CallbackComplete& done) {
         if (g_debug.callbackDebug) {
-            fprintf(stderr, "[CALLBACK-HANDLER-EXCEPT-RESUME] vmcc=%p\n", (void*)vmcc);
+            fprintf(stderr, "[CALLBACK-HANDLER-EXCEPT-RESUME] vmcc=%p timedOut=%d\n",
+                    (void*)vmcc, (int)done.timedOut);
             fflush(stderr);
         }
-        // Return value was already written to ret by Smalltalk via
-        // TFCallbackInvocation >> writeReturnValue: which writes to
+        if (done.timedOut) {
+            // Timeout path: Smalltalk never wrote the return value — hand the
+            // C caller ZEROES, never uninitialized stack memory (silent-cap
+            // audit 2026-07-03).
+            if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
+        }
+        // Otherwise the return value was already written to ret by Smalltalk
+        // via TFCallbackInvocation >> writeReturnValue: which writes to
         // returnHolder (vmcc->stackp, which we set to ret above).
         free(vmcc);
     }
