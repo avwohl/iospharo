@@ -192,11 +192,17 @@ isolation (no suite watchdog):
       scavenge 13. The 8x run pre-exists the optimizer's first removeIndex:
       (SMEAR-105 detector) but was NOT written by storePointer, at:put:,
       prim 105, prim 145, become, or the tenure memcpy (all instrumented —
-      RUN-FORM/SMEAR detectors silent). Next suspects: raw slotAtPut call
-      sites that bypass storePointer, shallowCopy/clone paths, OC array
-      ivar swapped to a rebuilt/wrong array (fullGC compact forwarding
-      desync — savedFirstFieldsSpace parallel-walk?), or resume-from-context
-      partial rollback via a path the pc-refresh fix doesn't cover.
+      RUN-FORM/SMEAR detectors silent). slotAtPut is ALSO exonerated
+      (PHARO_SLOT_RUN_TRIPWIRE at the ObjectHeader level: only legit nil
+      fills fire, nothing at scav>=12) — so the smear enters via raw
+      `slots()[i]=` writes, an uninstrumented memcpy (shallowCopy/clone,
+      compact copyAndUnmark), or the OC's array IVAR is switched to a
+      different array entirely (fullGC compact forwarding desync —
+      savedFirstFieldsSpace parallel-walk between planCompact and
+      updatePointersAfterCompact is the prime remaining suspect: a +/-1
+      desync there mis-restores slot-0 first fields wholesale), or
+      resume-from-context partial rollback via a path the pc-refresh fix
+      doesn't cover.
     - REAL BUGS FIXED during the hunt (all committed, regression-clean):
       (1) allocators lacked the Spur 16-byte minimum object size — 0-slot
       objects (Object new, #(), '') packed at 8 bytes, desyncing every

@@ -4144,6 +4144,32 @@ void ObjectHeader::slot_tripwire_fire(const ObjectHeader* hdr, Oop oldSender, Oo
             (size_t)hdr->slotCount());
 }
 
+bool ObjectHeader::slot_run_tripwire_enabled() {
+    return GET_DEBUG_BOOL(PHARO_SLOT_RUN_TRIPWIRE);
+}
+
+void ObjectHeader::slot_run_tripwire_fire(const ObjectHeader* hdr, size_t index, Oop value) {
+    extern uint64_t g_scavengeCount;
+    // Dedupe consecutive fills of the same (array, value) — a legit
+    // atAllPut:-style fill fires once, not once per slot.
+    static uintptr_t lastArr = 0;
+    static uint64_t lastVal = 0;
+    if (reinterpret_cast<uintptr_t>(hdr) == lastArr &&
+        value.rawBits() == lastVal) return;
+    lastArr = reinterpret_cast<uintptr_t>(hdr);
+    lastVal = value.rawBits();
+    static int n = 0;
+    if (++n > 60) return;
+    fprintf(stderr, "[SLOT-RUN-TRIPWIRE] arr=0x%llx idx=%zu val=%llx scav=%llu\n",
+            (unsigned long long)reinterpret_cast<uintptr_t>(hdr), index,
+            (unsigned long long)value.rawBits(),
+            (unsigned long long)g_scavengeCount);
+    if (g_scavengeCount >= 12) {
+        void dumpCxxBacktrace(const char* tag);
+        dumpCxxBacktrace("SLOT-RUN");
+    }
+}
+
 void ObjectMemory::rebuildFreeListAfterCompact() {
     clearFreeLists();
 
