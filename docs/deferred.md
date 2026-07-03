@@ -287,18 +287,27 @@ isolation (no suite watchdog):
       the reads target different memory/object than the appends wrote:
       an OBJECT-IDENTITY SWITCH between append-time and shift-time for
       the OC or its array — while the error-time dump shows a CONSISTENT
-      seq->OC->array chain. Reconciliations to test next: (a) TWO OC/
-      array generations where the seq's `sequence` ivar (or the OC's
-      `array` ivar) was re-assigned by a VM-level retarget to the WRONG
-      generation (log OCIRSequence's OC identity at visitSequence: entry
-      vs convertStorePop: entry — image-side or via a VM hook on the
-      selector); (b) the append-time OC being a DIFFERENT object than
-      the shift-time OC because the SEQ was duplicated (tenure double-
-      copy of the seq? check seq identityHash continuity); (c) reads via
-      a stale CACHED ivar in a JIT-free inline path (receiver-ivar read
-      specialization?) — PHARO_NO_METHOD_CACHE already failed, but the
-      [CACHE-n] getter specializations may live elsewhere; test with
-      those knobs off.
+      seq->OC->array chain. Identity-switch test RESULT (seqids.txt
+      hook in activateMethod, logs seq/oc/arr at visitSequence: +
+      convertStorePop: entries): the failing sequence's seq->OC->array
+      chain is IDENTITY-STABLE from visitSequence: entry to the error
+      (arr matches the error dump exactly), and exactly 8 conversion
+      assocs precede the failure — the visitor recorded a 9th pair whose
+      pop the SAME array no longer contains. So the content mutated
+      BETWEEN the do: iteration and the conversions, inside ONE
+      visitSequence: activation, whose only intervening code is the
+      retToFix conversions (convertReturn: replace+remove -> shifts) and
+      the earlier storePop conversions — none of which can transmute a
+      [PushLiteral,StoreRemoteTemp,Pop] triplet into extra closure-ref
+      copies. NEXT (surgical): extend the seqids hook to DUMP THE FULL
+      ARRAY ELEMENT BITS at OCIRSimpleOptimizerVisitor>>visitSequence:
+      ENTRY (capped to the last few sequences), then diff that entry
+      snapshot against (i) the state at first convertStorePop and (ii)
+      the error dump — this pins the mutation to [entry..retToFix] vs
+      [retToFix..storePop] vs mid-conversions, at which point the
+      handful of candidate operations can be single-stepped. Note
+      convertStorePop's arg-1 in seqids is the ASSOC (mislabeled seq) —
+      the assoc addresses usefully enumerate the recorded pairs.
       Remaining leads (in order):
       (a) ALL run detectors check LOWER neighbors ([i-1],[i-2]) — a
       DESCENDING fill evades every one of them, and

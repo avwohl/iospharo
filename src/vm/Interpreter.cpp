@@ -10887,6 +10887,38 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     memory_.selectorOf(method).c_str(),
                     memory_.classNameOf(rcvr).c_str(), argCount);
         }
+        // Sequence-identity chain log: at visitSequence:/convertStorePop:
+        // entry, record seq/OC/array oop bits — an identity switch between
+        // the visit and the conversions is the corruption's remaining shape.
+        {
+            std::string sel = memory_.selectorOf(method);
+            if (sel == "visitSequence:" ||
+                sel == "convertStorePop:forinstructionSequence:") {
+                static FILE* sf = fopen("C:/tmp/seqids.txt", "w");
+                if (sf) {
+                    Oop seqArg = stackValue(argCount - 1);  // first argument
+                    uint64_t ocBits = 0, arrBits = 0;
+                    if (seqArg.isObject() && seqArg.rawBits() > 0x10000 &&
+                        memory_.classNameOf(seqArg) == "OCIRSequence") {
+                        ObjectHeader* sh = seqArg.asObjectPtr();
+                        for (size_t s = 0; s < sh->slotCount(); s++) {
+                            Oop sv = sh->slotAt(s);
+                            if (memory_.classNameOf(sv) == "OrderedCollection") {
+                                ocBits = sv.rawBits();
+                                arrBits = sv.asObjectPtr()->slotAt(0).rawBits();
+                                break;
+                            }
+                        }
+                    }
+                    fprintf(sf, "%s\t%s\tseq=%llx oc=%llx arr=%llx\n",
+                            classNameOfMethod(method).c_str(), sel.c_str(),
+                            (unsigned long long)seqArg.rawBits(),
+                            (unsigned long long)ocBits,
+                            (unsigned long long)arrBits);
+                    fflush(sf);
+                }
+            }
+        }
         // PHARO_DUMP_AT_ACT: at the Nth traced activation, snapshot the
         // nearest convertStorePop frame's sequence collection — a
         // same-logical-moment capture for failing-vs-passing diffs.
