@@ -172,7 +172,18 @@ SIZEOF_FN(sizeof_uintenum, unsigned int)
 
 EXPORT int id_int(int x) { return x; }
 EXPORT size_t id_size_t(size_t x) { return x; }
-EXPORT void* unref_pointer(void* p) { return p; }
+
+/* testUnrefPointer passes the ADDRESS of a pointer holder and asserts the
+   return equals the held pointer — a dereference, not identity (the old
+   `return p` failed with "Got @holderAddr instead of @heldPtr"). */
+EXPORT void* unref_pointer(void** p) { return p ? *p : NULL; }
+
+/* TFBasicTypeMarshallingTest>>testSum{Char,SignedInt,UnsignedInt}Enum:
+   invokeFunction: {3. 2} expecting 5; parameter/return types are the
+   int-width enum basic types. */
+EXPORT int sum_charenum(int a, int b) { return a + b; }
+EXPORT int sum_sintenum(int a, int b) { return a + b; }
+EXPORT unsigned int sum_uintenum(unsigned int a, unsigned int b) { return a + b; }
 
 /* strdup for the marshalling tests; the image frees via its own machinery
    (or leaks — it is a unit-test fixture, matching upstream behavior). */

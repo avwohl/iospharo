@@ -20061,6 +20061,8 @@ void Interpreter::initializeNamedPrimitives() {
     // FFI address primitives
     registerNamedPrimitive("", "primitiveGetAddressOfOOP", &Interpreter::primitiveGetAddressOfOOP);
     registerNamedPrimitive("SqueakFFIPrims", "primitiveGetAddressOfOOP", &Interpreter::primitiveGetAddressOfOOP);
+    registerNamedPrimitive("", "primitiveGetObjectFromAddress", &Interpreter::primitiveGetObjectFromAddress);
+    registerNamedPrimitive("SqueakFFIPrims", "primitiveGetObjectFromAddress", &Interpreter::primitiveGetObjectFromAddress);
 
     // FilePlugin - file I/O primitives
     registerNamedPrimitive("FilePlugin", "primitiveFileStdioHandles", &Interpreter::primitiveFileStdioHandles);

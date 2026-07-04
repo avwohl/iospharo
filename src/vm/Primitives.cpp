@@ -28460,6 +28460,39 @@ PrimitiveResult Interpreter::primitiveGetAddressOfOOP(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// primitiveGetObjectFromAddress (PointerUtils class>>primObjectForOop:)
+// Inverse of primitiveGetAddressOfOOP: takes the address of an object's
+// first data byte (header + 8, as produced by oopForObject:) as an
+// ExternalAddress or SmallInteger, answers the object itself.  Image-side
+// contract requires the object pinned across the round-trip
+// (TFUFFIDerivedTypeMarshallingTest>>testMarshallingOOPIsSameObject pins a
+// 2.3MB ByteArray, passes it through an FFI identity call, reconstructs).
+PrimitiveResult Interpreter::primitiveGetObjectFromAddress(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop addrOop = stackTop();
+    uint64_t addr = 0;
+    if (addrOop.isSmallInteger()) {
+        int64_t v = addrOop.asSmallInteger();
+        if (v <= 0) return PrimitiveResult::Failure;
+        addr = static_cast<uint64_t>(v);
+    } else if (addrOop.isObject() && addrOop.rawBits() > 0x10000
+               && addrOop.asObjectPtr()->isBytesObject()) {
+        addr = reinterpret_cast<uint64_t>(tffi_readAddress(addrOop));
+    } else {
+        return PrimitiveResult::Failure;
+    }
+    if (addr <= sizeof(ObjectHeader)) return PrimitiveResult::Failure;
+
+    Oop obj = Oop::fromObject(
+        reinterpret_cast<ObjectHeader*>(addr - sizeof(ObjectHeader)));
+    if (!memory_.isValidPointer(obj)) return PrimitiveResult::Failure;
+
+    popN(2);  // pop address and receiver
+    push(obj);
+    return PrimitiveResult::Success;
+}
+
 // primitiveInterpreterSourceVersion
 // Returns a string with the interpreter source version.
 // Format must contain "Date: <ISO8601>" for DiskStore >> checkVMVersion to parse.

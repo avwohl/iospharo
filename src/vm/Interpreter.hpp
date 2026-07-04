@@ -3190,6 +3190,7 @@ private:
     PrimitiveResult primitiveFFIIntegerAt(int argCount);          // Named: read integer at offset
     PrimitiveResult primitiveFFIIntegerAtPut(int argCount);       // Named: write integer at offset
     PrimitiveResult primitiveGetAddressOfOOP(int argCount);       // Named: get address of oop
+    PrimitiveResult primitiveGetObjectFromAddress(int argCount);   // Named: inverse (PointerUtils primObjectForOop:)
 
     // ByteArray data access primitives (600-629)
     // Read/write typed data within byte-format objects
