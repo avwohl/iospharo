@@ -185,6 +185,7 @@ struct WellKnownSelectors {
     Oop mustBeBoolean;
     Oop cannotReturn;
     Oop aboutToReturn;
+    Oop returnThrough;   // return:through: — image-protocol NLR unwind, sent to the C++-resolved home ctx
     Oop run;
     Oop value;
     Oop value_;        // value:
@@ -3846,6 +3847,7 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
     visitor(selectors_.mustBeBoolean);
     visitor(selectors_.cannotReturn);
     visitor(selectors_.aboutToReturn);
+    visitor(selectors_.returnThrough);
     visitor(selectors_.run);
     visitor(selectors_.value);
     visitor(selectors_.value_);

@@ -8503,6 +8503,32 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
             activeContext_ = topCtx;
             frameDepth_ = 0;
         }
+        // ARM/JIT fix (2026-07-04): send `homeCtx return: value through:
+        // ensureCtx` — the SECOND step of the stock protocol — instead of
+        // `startCtx aboutToReturn: value through: ensureCtx` (the first).
+        // Context>>aboutToReturn:through: is just `self home return: result
+        // through: firstUnwindContext`, i.e. it RE-DERIVES the home from the
+        // returning context.  When the returning block ran as an inline-J2J
+        // callee, the block never had its own frame: the materialized
+        // startCtx is the CALLER's activation (a method context, e.g.
+        // ProtoObject>>ifNotNil:), whose `home` is itself — one frame short
+        // of the true home.  The image then returned INTO the home context
+        // (which resumed, ran to its end, and answered `self` — how every
+        // ensure-crossing glyph-cache hit returned the FreeTypeCache instead
+        // of the glyph, killing StPharo startup on ARM).  We already resolved
+        // the TRUE home context in C++ (`homeCtx`, identity-matched in the
+        // dynamic chain), so hand the image exactly what `self home` should
+        // have produced.  Unwind state still lives in contexts (return:
+        // through:/resume:through: run image-side), preserving the
+        // debugger-visibility property this protocol was adopted for.
+        if (selectors_.returnThrough.isObject() && !selectors_.returnThrough.isNil()
+                && homeCtx.isObject() && !homeCtx.isNil() && homeCtx.rawBits() > 0x10000) {
+            push(homeCtx);    // receiver: the home context (^ returns from it)
+            push(value);      // arg 1: the value being returned
+            push(ensureCtx);  // arg 2: first unwind-marked context on the way home
+            sendSelector(selectors_.returnThrough, 2);
+            return true;
+        }
         push(startCtx);   // receiver: the returning context
         push(value);      // arg 1: the value being returned
         push(ensureCtx);  // arg 2: first unwind-marked context on the way home
@@ -17001,6 +17027,10 @@ void Interpreter::initializeSelectors() {
     selectors_.mustBeBoolean = memory_.specialObject(SpecialObjectIndex::SelectorMustBeBoolean);
     selectors_.cannotReturn = memory_.specialObject(SpecialObjectIndex::SelectorCannotReturn);
     selectors_.aboutToReturn = memory_.specialObject(SpecialObjectIndex::SelectorAboutToReturn);
+    // return:through: is not in the special-objects array; intern it from the
+    // symbol table.  Used by handleContextNLRUnwind to run the image-protocol
+    // unwind against the C++-resolved HOME context directly (see there).
+    selectors_.returnThrough = memory_.lookupSymbol("return:through:");
 
 
     // For arithmetic selectors, search SmallInteger's method dictionary
