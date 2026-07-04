@@ -859,6 +859,14 @@ int main(int argc, char* argv[]) {
     sigaction(SIGSEGV, &sa, nullptr);
     sigaction(SIGBUS, &sa, nullptr);
     sigaction(SIGILL, &sa, nullptr);
+    // Ignore SIGPIPE globally (OpenSmalltalk/Cog does the same): a write to a
+    // peer-closed socket must fail with EPIPE for the image to handle, not
+    // kill the VM.  The Windows SocketPlugin rewrite (6857cbe6/f30ed9f7)
+    // reordered close/write so SocketStreamTest>>
+    // testFlushLargeMessageOtherEndClosed now writes after the peer closes —
+    // fine on Windows (no SIGPIPE exists), fatal exit 141 on macOS
+    // (2026-07-04 catalog tail run).
+    signal(SIGPIPE, SIG_IGN);
 #else
     AddVectoredExceptionHandler(1, pharoWinCrashHandler);
     // One-time platform startup hook — on Windows this runs WSAStartup, which
