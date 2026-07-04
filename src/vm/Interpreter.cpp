@@ -7853,40 +7853,22 @@ void Interpreter::returnFromMethod() {
                 }
             }
 
-            // DYNAMIC home override: the static outerCode-literal walk above is
-            // wrong when the CompiledBlock is SHARED between methods (the
-            // FBDBytecodeDecompiler reuses original blocks in a regenerated
-            // method, so outerCode points at the stale original). The truth is
-            // the running closure's captured outerContext chain: follow
-            // context -> closureOrNil -> outerContext until a context whose
-            // method is a non-block CompiledMethod. Stock's NLR only ever
-            // walks contexts; it never consults outerCode.
-            if (closure_.isObject() && !closure_.isNil() && closure_.rawBits() > 0x10000) {
-                Oop ctxWalk = memory_.fetchPointer(0, closure_);   // outerContext
-                int cChain = 0;
-                while (ctxWalk.isObject() && !ctxWalk.isNil() && ctxWalk.rawBits() > 0x10000 && cChain < 256) {
-                    Oop m = memory_.fetchPointer(3, ctxWalk);
-                    if (!m.isObject() || m.rawBits() <= 0x10000 || !m.asObjectPtr()->isCompiledMethod()) break;
-                    Oop mHeader = memory_.fetchPointer(0, m);
-                    if (!mHeader.isSmallInteger()) break;
-                    int mNumLits = mHeader.asSmallInteger() & 0x7FFF;
-                    bool isBlock = false;
-                    if (mNumLits >= 1) {
-                        Oop lastLit = memory_.fetchPointer(mNumLits, m);
-                        isBlock = lastLit.isObject() && lastLit.rawBits() > 0x10000 &&
-                                  lastLit.asObjectPtr()->isCompiledMethod();
-                    }
-                    if (!isBlock) {
-                        homeMethodOop = m;   // dynamic home wins over the static literal
-                        break;
-                    }
-                    Oop clo = memory_.fetchPointer(4, ctxWalk);   // closureOrNil
-                    if (!clo.isObject() || clo.isNil() || clo.rawBits() <= 0x10000) break;
-                    ctxWalk = memory_.fetchPointer(0, clo);
-                    cChain++;
-                }
-            }
-
+            // DYNAMIC home FALLBACK (fae4edc1 rework, 2026-07-04): the static
+            // outerCode-literal walk above is wrong when the CompiledBlock is
+            // SHARED between methods (the FBDBytecodeDecompiler reuses original
+            // blocks in a regenerated method, so outerCode points at the stale
+            // original).  For that case ONLY, after the static candidate fails
+            // to resolve to any live frame or in-chain context, we retry once
+            // with the home derived from the running closure's captured
+            // outerContext chain (see the !triedDynamicHome block below).
+            // fae4edc1 let the dynamic result OVERRIDE a static home that
+            // resolves fine — but closure_ need not correspond to the frame
+            // being returned from (JIT-resident block returns reach here with
+            // a stale closure_), and a wrong override redirects the NLR into
+            // an unrelated live frame: ARM startup wrong-receiver DNU
+            // corruption, bisected to fae4edc1 (2026-07-04).
+            bool triedDynamicHome = false;
+        retryHomeSearch:
             // If we found a home method, search context chain and do context-based NLR
             if (homeMethodOop.isObject() && !homeMethodOop.isNil()) {
                 bool nlrTrace = false;
@@ -8025,6 +8007,63 @@ void Interpreter::returnFromMethod() {
                         executeFromContext(sender);
                         return;
                     }
+                }
+            }
+
+            // Neither the frame scan nor the context search resolved the
+            // static home candidate — the FBD shared-CompiledBlock case
+            // (outerCode literal points at the stale ORIGINAL method while
+            // execution runs in the regenerated one; stock never consults
+            // outerCode, it walks contexts).  Retry ONCE with the home from
+            // the running closure's captured outerContext chain: follow
+            // context -> closureOrNil -> outerContext until a context whose
+            // method is a non-block CompiledMethod.  Deliberately fallback-
+            // only — see the comment at retryHomeSearch.
+            if (!triedDynamicHome) {
+                triedDynamicHome = true;
+                Oop dynHome = Oop::nil();
+                // Only consult closure_ when it provably belongs to THIS
+                // returning activation: its compiledBlock slot must be the
+                // very CompiledBlock we are returning from (method_).  On
+                // JIT-resident block returns closure_ can be a stale register
+                // from an unrelated earlier activation; walking a stale
+                // closure finds a live-but-wrong home and the NLR unwinds
+                // into an unrelated frame (the ARM startup wrong-receiver
+                // corruption — 10 varying DNUs before SUnitRunner ever ran).
+                bool closureIsOurs = closure_.isObject() && !closure_.isNil()
+                    && closure_.rawBits() > 0x10000
+                    && memory_.fetchPointer(1, closure_).rawBits() == method_.rawBits();
+                if (closureIsOurs) {
+                    Oop ctxWalk = memory_.fetchPointer(0, closure_);   // outerContext
+                    int cChain = 0;
+                    while (ctxWalk.isObject() && !ctxWalk.isNil() && ctxWalk.rawBits() > 0x10000 && cChain < 256) {
+                        Oop m = memory_.fetchPointer(3, ctxWalk);
+                        if (!m.isObject() || m.rawBits() <= 0x10000 || !m.asObjectPtr()->isCompiledMethod()) break;
+                        Oop mHeader = memory_.fetchPointer(0, m);
+                        if (!mHeader.isSmallInteger()) break;
+                        int mNumLits = mHeader.asSmallInteger() & 0x7FFF;
+                        bool isBlock = false;
+                        if (mNumLits >= 1) {
+                            Oop lastLit = memory_.fetchPointer(mNumLits, m);
+                            isBlock = lastLit.isObject() && lastLit.rawBits() > 0x10000 &&
+                                      lastLit.asObjectPtr()->isCompiledMethod();
+                        }
+                        if (!isBlock) { dynHome = m; break; }
+                        Oop clo = memory_.fetchPointer(4, ctxWalk);   // closureOrNil
+                        if (!clo.isObject() || clo.isNil() || clo.rawBits() <= 0x10000) break;
+                        ctxWalk = memory_.fetchPointer(0, clo);
+                        cChain++;
+                    }
+                }
+                if (dynHome.isObject() && !dynHome.isNil()
+                    && dynHome.rawBits() != homeMethodOop.rawBits()) {
+                    if (GET_DEBUG_BOOL(PHARO_NLR_TRACE)) {
+                        fprintf(stderr, "[NLR-DYN-FALLBACK] static=0x%llx dyn=0x%llx fd=%zu\n",
+                                (unsigned long long)homeMethodOop.rawBits(),
+                                (unsigned long long)dynHome.rawBits(), frameDepth_);
+                    }
+                    homeMethodOop = dynHome;
+                    goto retryHomeSearch;
                 }
             }
         }
