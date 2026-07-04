@@ -6,6 +6,24 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
 
 ## ARM (macOS) — post-Windows-merge verification 2026-07-04
 
+- [ ] **ProcessTest>>testTerminateInTerminate deterministic TIMEOUT (ARM,
+  HEAD).**  Both solo and batch runs; wedge state: two P40 processes parked
+  at ConstantBlockClosure>>terminateRealActive and one at
+  ProcessorScheduler>>terminateActive with term/run list=nil — terminate
+  called from within terminate leaves the process suspended mid-terminate.
+  Suspects: ec631963's prim-196 pc-kill parity / a623b4ca cannotReturn-to-
+  returning-ctx.  NOT a net regression: the Jun-25 baseline binary in the
+  same context scores ProcessTest 37P/5T (testResumeAfterBCR,
+  testSchedulingHigherPriorityServedFirst + 3 more) vs HEAD 45P/1T — the
+  Windows-range work fixed four ARM timeouts and introduced this one.
+  Also noted for the ledger: the whole SIMULATION/stepping family
+  (BlockClosureTest simulate/tally trio, ContextTest testBlockCannotReturn,
+  StepOver/StepInto/StepThrough) times out in COLD small-batch runner
+  context BYTE-IDENTICALLY on Jun-25 and HEAD binaries — context-dependent
+  slowness/hang, not a merge regression; June's green kernel records ran
+  these classes warm inside the full 565-class order.  Judge via the full
+  catalog, not small batches.
+
 - [ ] **WeakKeyDictionaryTest>>testClearing warm-run deviation (ARM, JIT
   only).** Repro: `3 timesRepeat: [(WeakKeyDictionaryTest run: #testClearing)]`
   in one VM — runs 1-2 pass, run 3 fails "Got 1 instead of 1001" (the
