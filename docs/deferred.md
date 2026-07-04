@@ -670,19 +670,20 @@ LARGELY FIXED 2026-07-04; four independent root causes found and fixed:
    ffi_call frames on the worker's C stack — stock pThreadedFFI's
    reentrancy model).  testReentrantCalloutsDuringCallback(worker) passes
    solo (7-deep chain verified in trace).
-- [ ] REMAINING: in-suite order dependence — after the SAME-THREAD half
-  runs, the worker half errors (TestTookTooMuchTime).  Deterministic
-  repro: run the non-TFWorker cases, then any worker case, in one VM
-  (order1/order2.log 2026-07-04).  Traced far enough to see the worker
-  variant's callbacks arriving via the SAME-THREAD path after phase 1
-  (no XTCB-ADOPT — i.e. the callout ran ON the VM thread: image-side
-  TFWorker fallback or a broken worker handle), then a LIFO-retry stall
-  (returns descend to depth 2 and re-enter).  Suspect the same-thread
-  half's old-session test (releases TFSameThreadRunner uniqueInstance)
-  leaves the SINGLETON TFCallbackQueue/runner state such that fresh
-  TFWorkers fall back to same-thread callouts.  Next: probe
-  `(TFWorker named: 'fortest') isNull/handle` after phase 1, and check
-  image-side TFWorker>>invoke fallback conditions.
+- [x] RESOLVED 2026-07-04 (5th root cause; STOCK PARITY 8/8+2skip):
+  the in-suite order dependence was a missing adoption drain — the
+  nested enterInterpreterFromCallback loop processed pending signals and
+  the timer after each 1000-step batch but NEVER pendingXtcbAdoption_
+  (only the main interpret() checkpoint did).  The same-thread
+  old-session test abandons its invocation BY DESIGN, so its nested loop
+  hosts all subsequent execution — and every worker-forwarded callback
+  after that sat in the xtcb queue forever (XTCB-ADOPT count 0 for the
+  rest of the run; minimal pair old-session(same-thread) ->
+  singleCallout(worker) reproduced it deterministically, pair2.log).
+  The nested loop now drains adoption too.  VERIFIED: TFCallbacksTest
+  8/8+2skip x2-in-one-VM even after the full battery + 4 UFFI gauntlet
+  iterations in the same VM; UFFI 13/13 warm x2 (the warm UFFI in-suite
+  flake — worker halves erroring on second runs — is gone with it).
 
 ### TFFI v2 residual notes (historical; resolution above)
 NOTE 2026-07-03 (post e9a7e984): the "woken waiter runs zero bytecodes

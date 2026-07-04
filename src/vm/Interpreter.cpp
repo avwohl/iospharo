@@ -5315,6 +5315,18 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         if (!inExtension_) {
             checkTimerSemaphore();
         }
+        // Adopt worker-forwarded callbacks HERE too — the main interpret()
+        // checkpoint never runs while this nested loop hosts execution.  An
+        // abandoned same-thread invocation (TFCallbacksTest's old-session
+        // test, by design) parks everything after it inside this loop; the
+        // adoption drain missing here meant every subsequent worker
+        // callback sat in the xtcb queue forever (XTCB-ADOPT count 0 for
+        // the rest of the run) — the same-thread-then-worker order
+        // dependence, root-caused 2026-07-04 (pair2.log).
+        if (__builtin_expect(pendingXtcbAdoption_.load(std::memory_order_acquire), 0)) {
+            pendingXtcbAdoption_.store(false, std::memory_order_release);
+            adoptPendingWorkerCallbacks();
+        }
     }
     if (g_debug.callbackDebug) {
         fflush(stdout);
