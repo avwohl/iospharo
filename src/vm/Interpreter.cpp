@@ -20738,6 +20738,166 @@ void Interpreter::logCurrentMethod(FILE* out) {
 // Actually, since the template must be in the header for the compiler to see it,
 // we implement it there. See Interpreter.hpp.
 
+// Counterpart of forEachRoot's StrongOnly scope: called by markPhase
+// after the mark fixpoint (mark bits final, before compaction planning /
+// sweep).  Voids every weak-cache slot whose target died this cycle so
+// (a) the pointer-update pass never walks a dead oop and (b) no stale
+// cache entry can dangle into freed memory after sweepGC (which has no
+// recoverAfterGC tail).  See the RootScope declaration for the design.
+void Interpreter::purgeDeadCacheRoots() {
+    auto deadBits = [this](uint64_t bits) {
+        return bits != 0 && memory_.isDeadAfterMark(Oop::fromRawBits(bits));
+    };
+    size_t mcPurged = 0, jmPurged = 0, icPurged = 0,
+           cmPurged = 0, fmPurged = 0, t2Purged = 0;
+
+    // 1. Method cache: void entries with a dead selector/class/method.
+    // (afterGC flushes the whole cache post-fullGC anyway; this exists
+    // for sweepGC and for the update pass, which run before that flush.)
+    for (auto& e : methodCache_) {
+        if (deadBits(e.selector.rawBits()) || deadBits(e.classOop.rawBits())
+            || deadBits(e.method.rawBits())) {
+            e.selector = Oop::nil();
+            e.classOop = Oop::nil();
+            e.method = Oop::nil();
+            e.accessorIndex = -1;
+            e.setterIndex = -1;
+            e.returnsSelf = false;
+            mcPurged++;
+        }
+    }
+
+#if PHARO_JIT_ENABLED
+    if (jitRuntime_.isInitialized()) {
+        // JITMethod headers + IC buffers live in the code zone / heap-side
+        // IC buffers; header writes need the zone writable.
+        jit::makeWritable(jitRuntime_.codeZone().rawStart(),
+                          jitRuntime_.codeZone().totalBytes());
+        jit::JITMethod* m = jitRuntime_.codeZone().firstMethod();
+        while (m) {
+            bool headerDead = (m->compiledMethodOop != 0
+                               && deadBits(m->compiledMethodOop))
+                              || (m->selectorOop != 0
+                                  && deadBits(m->selectorOop));
+            if (headerDead) {
+                // The CompiledMethod (or its selector) died — nothing can
+                // legitimately dispatch here again.  Invalidate; zone
+                // eviction reclaims the space later.  An EXECUTING
+                // method can't reach this state: its CompiledMethod is a
+                // strong root via frame/JITState/j2j walks.
+                m->invalidate();
+                m->compiledMethodOop = 0;
+                m->selectorOop = 0;
+                m->literalsCache = 0;  // FSR M0 mirror of compiledMethodOop
+                m->bcStartCache = 0;
+                // The update pass walks IC buffers of EVERY zone method
+                // regardless of state — clear them so it can't touch the
+                // dead oops they hold.
+                if (m->numICEntries > 0 && m->icBuffer) {
+                    std::memset(m->icBuffer, 0,
+                                (size_t)m->numICEntries * jit::IC_BYTES_PER_SITE);
+                    if (uint64_t* sba = m->selBitsArray()) {
+                        std::memset(sba, 0, (size_t)m->numICEntries * sizeof(uint64_t));
+                    }
+                }
+                jmPurged++;
+            } else if (m->numICEntries > 0 && m->icBuffer) {
+                // Live method: void individual IC entries whose cached
+                // target method died (these are exactly the slots that
+                // pinned dead classes' methods for one extra cycle).
+                // Full 3-slot zero — the extras word holds the dead
+                // target's J2J address/flags, not site-static data.
+                uint8_t* icStart = reinterpret_cast<uint8_t*>(m->icBuffer);
+                for (uint32_t i = 0; i < m->numICEntries; i++) {
+                    uint64_t* slots = reinterpret_cast<uint64_t*>(
+                        icStart + i * jit::IC_BYTES_PER_SITE);
+                    for (uint32_t e = 0; e < jit::IC_ENTRIES_PER_SITE; e++) {
+                        if (deadBits(slots[e * 3 + 1])) {
+                            slots[e * 3 + 0] = 0;
+                            slots[e * 3 + 1] = 0;
+                            slots[e * 3 + 2] = 0;
+                            icPurged++;
+                        }
+                    }
+                    // Site selectors are literals of this (live) method by
+                    // construction, so they can't be dead — but never leave
+                    // a dead oop where the update pass will walk (loud, not
+                    // silent, per the silent-cap rule).
+                    if (deadBits(slots[jit::IC_SELBITS_SLOT])) {
+                        static int selPurgeLog = 0;
+                        if (selPurgeLog++ < 8) {
+                            fprintf(stderr, "[GC-PURGE-SELBITS] live JITMethod "
+                                    "oop=0x%llx site=%u had a DEAD selector — "
+                                    "voiding (unexpected; selectors are "
+                                    "method literals)\n",
+                                    (unsigned long long)m->compiledMethodOop, i);
+                        }
+                        slots[jit::IC_SELBITS_SLOT] = 0;
+                    }
+                }
+                if (uint64_t* sba = m->selBitsArray()) {
+                    for (uint32_t i = 0; i < m->numICEntries; i++) {
+                        if (deadBits(sba[i])) {
+                            static int sbaPurgeLog = 0;
+                            if (sbaPurgeLog++ < 8) {
+                                fprintf(stderr, "[GC-PURGE-SBA] live JITMethod "
+                                        "oop=0x%llx site=%u selBitsArray entry "
+                                        "DEAD — voiding (unexpected)\n",
+                                        (unsigned long long)m->compiledMethodOop, i);
+                            }
+                            sba[i] = 0;
+                        }
+                    }
+                }
+            }
+            m = m->nextInZone;
+        }
+
+        // Count map / failed-compile map / tier-2 map: keys are
+        // CompiledMethod oop bits.  A dead key left in place would be
+        // walked by the update pass and could FALSE-HIT a new method
+        // later allocated at the recycled address.
+        for (size_t i = 0; i < jit::CountMapSize; i++) {
+            auto& entry = jitRuntime_.countMapEntry(i);
+            if (deadBits(entry.key)) {
+                entry.key = 0;
+                entry.count = 0;
+                cmPurged++;
+            }
+        }
+        for (size_t i = 0; i < jit::JITRuntime::FailedMapSize; i++) {
+            uint64_t& key = jitRuntime_.initialCompileFailedKey(i);
+            if (deadBits(key)) {
+                key = 0;
+                fmPurged++;
+            }
+        }
+        for (size_t i = 0; i < jit::JITRuntime::Tier2MapSize; i++) {
+            auto& entry = jitRuntime_.tier2Entry(i);
+            if (deadBits(entry.key)) {
+                entry.key = 0;
+                entry.func = nullptr;
+                t2Purged++;
+            }
+        }
+
+        // Drop invalidated methods from the CompiledMethod->JITMethod map
+        // NOW: sweepGC has no recoverAfterGC tail, and a stale dead-oop
+        // key could false-hit a recycled address.
+        if (jmPurged > 0) {
+            jitRuntime_.rebuildMethodMap();
+        }
+    }
+#endif
+
+    if (GET_DEBUG_BOOL(PHARO_GC_PURGE_LOG)
+        && (mcPurged | jmPurged | icPurged | cmPurged | fmPurged | t2Purged)) {
+        fprintf(stderr, "[GC-PURGE] methodCache=%zu jitMethods=%zu icEntries=%zu "
+                "countKeys=%zu failedKeys=%zu tier2Keys=%zu\n",
+                mcPurged, jmPurged, icPurged, cmPurged, fmPurged, t2Purged);
+    }
+}
+
 // ===== JIT INTEGRATION =====
 
 #if PHARO_JIT_ENABLED

@@ -584,19 +584,35 @@ grace-undo exempts P80 (the Delay ticker), and grace requires a fresh
 full threshold after each window (caps grace duty cycle at ~50% — was
 CONTIGUOUS, starving P41-79 watchdog machinery).  TFUFFICallbackTest:
 13/13 STOCK PARITY (baseline re-measured 8/13); x2 in one VM both 13/13.
-- [ ] REMAINING (pre-existing; fires on pre-fix binaries too): repeated
-  callback-suite runs in ONE VM wedge into an ~1K steps/s idle crawl at
-  iteration 3+ (was iteration 2 before the grace-duty fix; also seen as
-  ObsoleteTest x4 timeout).  Something accumulates per suite run.  Tools
-  ready: PHARO_STATE_DUMP_PERIOD_MS sampler + PHARO_SEM_SIGNAL_TRACE
-  (3M caps) + [SEM-WAIT]/[XFER-IN] traces.  First sampled wedge (500ms
-  dumps): NOT pure idle — repeated samples of the P70 process ACTIVE in
-  Behavior>>new / ExternalAddress new / Dictionary>>scanFor: at fd=6-9,
-  i.e. the callback machinery LIVELOCKING through an allocation-heavy
-  loop (suspect: executeCallback: erroring -> on:Exception fork: retry
-  storm, or lookupCallback missing its entry after suite re-init).
-  Next: catch the loop with PHARO_TRACE_EXTENT_SEL on a suspect selector
-  or sample with smaller period + fd/method pairs.
+- [x] RESOLVED 2026-07-03 (dcacc401 + e9a7e984): the repeat-run wedge had
+  TWO stacked mechanisms, both fixed:
+  1. dcacc401 (exactly-once hand-out): primitiveReadNextCallback returned
+     the TOP stack entry on EVERY read while the image's TFCallbackQueue
+     treats the callback semaphore as a queue (one signal == one item; nil
+     when empty).  Excess/duplicate signals made the queue process re-read
+     the SAME still-executing invocation and fork duplicate executors —
+     the allocation-heavy P70 livelock sampled above.  Now each entry is
+     handed out exactly once (FIFO), extra reads answer nil, and timed-out
+     worker callbacks are reaped lazily via xtcb::g_dead.
+  2. e9a7e984 (requeue order): after the exactly-once fix the wedge
+     STILL fired — enterInterpreterFromCallback's post-return yank
+     re-queued the mid-cleanup executor at the BACK of its run queue,
+     landing it BEHIND the same-priority resumer forked by
+     interpriorityYield:'s `[p resume] fork. p suspend` (cleanup is far
+     longer than the 500-step cooldown).  Spent resume -> eternal suspend
+     -> stackProtect mutex held forever -> P70 queue wedged.  Proof:
+     gauntlet6.log pc=99(pre-suspend)-vs-pc=101(post-suspend) resume
+     signature.  Fix: putToSleepPreempted (front) — involuntary
+     displacement never reorders same-priority processes (Cog rule).
+     Plus primitiveExitCriticalSection Cog parity (strict >, front).
+  Verified: x4 gauntlet 5/5 clean (4x13/13 each, exit 0, ~75s total),
+  battery green twice (InCallbacks 2x36/36, Derived 12/12, Weak*,
+  Process 46/46, Semaphore 18/18, StepOver, Delay, FFICallback*).
+  Pre-existing, baseline-identical (NOT regressions): TFCallbacksTest
+  1/8+3F+4E, testSingleCalloutDuringCallback 1F, and
+  TFUFFIConcurrencyTest-UsingWorker marginal pacing (core loop 7-15s vs
+  ~10s SUnit limit; worker round-trip ~20-40ms/round is the disease —
+  separate item).
 
 ### TFFI v2 residual notes (historical; resolution above)
 v2 forwarding landed 2026-07-03 (commit 6280deb8): worker/native-thread

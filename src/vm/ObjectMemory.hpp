@@ -697,6 +697,17 @@ public:
         uint8_t* p = reinterpret_cast<uint8_t*>(o.asObjectPtr());
         return p >= edenAllocBase_ && p < edenFree_;
     }
+    /// Valid ONLY between the end of markPhase's fixpoint and the start
+    /// of compaction/sweep (mark bits final): true iff o is an old-space
+    /// object this GC cycle decided is dead.  Objects outside old space
+    /// (young survivors, perm) and immediates answer false — this cycle
+    /// doesn't reclaim them.  Used by Interpreter::purgeDeadCacheRoots().
+    bool isDeadAfterMark(Oop o) const {
+        if (!o.isObject()) return false;
+        uint8_t* p = reinterpret_cast<uint8_t*>(o.asObjectPtr());
+        if (p < oldSpaceStart_ || p >= oldSpaceFree_) return false;
+        return !o.asObjectPtr()->isMarked();
+    }
     uint8_t* permSpaceStart() const { return permSpaceStart_; }
     uint8_t* permSpaceEnd() const { return permSpaceEnd_; }
 

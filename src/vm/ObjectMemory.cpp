@@ -3828,11 +3828,19 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
         markAndTrace(oop);
     }, /* includeClassTable */ false);
 
-    // 2. Mark from interpreter roots
+    // 2. Mark from interpreter roots.
+    // True fullGC/sweep (ephemerons processed) marks StrongOnly: pure VM
+    // caches (method cache, JIT headers/ICs, count-map keys) are WEAK
+    // roots so they can't pin dead classes/methods for an extra cycle
+    // (ObsoleteTest one-cycle pin).  Dead cache entries are voided by
+    // purgeDeadCacheRoots() below, after the mark fixpoint.  The
+    // scavenge-emulating skipEphemerons path keeps every root strong —
+    // young objects referenced only by caches must tenure, not dangle.
     if (interpreter_) {
         interpreter_->forEachRoot([this](Oop& oop) {
             markAndTrace(oop);
-        });
+        }, skipEphemerons ? Interpreter::RootScope::All
+                          : Interpreter::RootScope::StrongOnly);
     }
 
     // 2b. Mark in-heap class table pages (hiddenRoots + page Arrays).
@@ -3897,6 +3905,15 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
     // 5b. Sweep the class table: nil entries for classes that were not marked.
     // This allows anonymous/transient classes to be collected.
     sweepClassTable();
+
+    // 5c. Mark bits are final — void every VM cache slot whose target
+    // died this cycle.  MANDATORY whenever roots were marked StrongOnly
+    // (step 2): compaction/sweep is about to reclaim those objects, and
+    // the pointer-update pass (or a later dispatch through a stale cache
+    // entry after sweepGC) would otherwise walk dead oops.
+    if (interpreter_ && !skipEphemerons) {
+        interpreter_->purgeDeadCacheRoots();
+    }
 
     // 6. Count marked objects
     ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);

@@ -284,10 +284,29 @@ public:
     /// Log current method and bytecode for debugging
     void logCurrentMethod(FILE* out);
 
+    /// Root-visit scope.  StrongOnly skips the VM cache slots — method
+    /// cache entries, JITMethod header oops, inline-cache entries, and
+    /// JIT count/failed/tier2 map keys — so a fullGC mark doesn't pin
+    /// dead classes/methods through pure caches (the ObsoleteTest
+    /// one-cycle pin, deferred.md).  The pointer-UPDATE pass after
+    /// compaction keeps All so SURVIVING cache entries get their moved
+    /// pointers; dead entries must be voided between mark and update by
+    /// purgeDeadCacheRoots() or the update pass walks dead oops.
+    enum class RootScope { All, StrongOnly };
+
     /// Visit every Oop root the interpreter holds.
     /// Visitor signature: void(Oop&) — visitor may update the Oop in-place.
     template<typename Visitor>
-    void forEachRoot(Visitor&& visitor);
+    void forEachRoot(Visitor&& visitor, RootScope scope = RootScope::All);
+
+    /// Called by markPhase after the mark fixpoint (mark bits final,
+    /// BEFORE compaction planning) when roots were visited StrongOnly:
+    /// void every cache slot whose target object died this cycle —
+    /// method-cache entries, IC entries, JITMethods (invalidated) whose
+    /// CompiledMethod died, and count/failed/tier2 map keys.  Also
+    /// rebuilds the JIT method map so no stale key can false-hit a
+    /// recycled heap address (sweepGC has no recoverAfterGC pass).
+    void purgeDeadCacheRoots();
 
     /// Set/get system paths
     void setImageName(const std::string& name) { imageName_ = name; }
@@ -3486,7 +3505,14 @@ private:
 // ===== TEMPLATE IMPLEMENTATIONS =====
 
 template<typename Visitor>
-void Interpreter::forEachRoot(Visitor&& visitor) {
+void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
+    // Pure VM caches (method cache, JIT headers/ICs/count-maps) are
+    // WEAK roots: skipped when the fullGC mark visits StrongOnly, so
+    // they can't pin otherwise-dead classes/methods.  Dead entries are
+    // voided by purgeDeadCacheRoots() before the update pass (All)
+    // walks the survivors.
+    const bool visitCacheRoots = (scope == RootScope::All);
+
     // Current frame Oops
     visitor(method_);
     visitor(newMethod_);
@@ -3567,11 +3593,13 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         visitor(frame.materializedContext);
     }
 
-    // Method cache
-    for (auto& entry : methodCache_) {
-        visitor(entry.selector);
-        visitor(entry.classOop);
-        visitor(entry.method);
+    // Method cache (weak cache root — see visitCacheRoots above)
+    if (visitCacheRoots) {
+        for (auto& entry : methodCache_) {
+            visitor(entry.selector);
+            visitor(entry.classOop);
+            visitor(entry.method);
+        }
     }
 
 
@@ -3582,6 +3610,10 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     // This keeps IC entries valid across GC, avoiding a full IC flush.
 #if PHARO_JIT_ENABLED
     if (jitRuntime_.isInitialized()) {
+      // JIT caches (method headers, ICs, count/failed maps) are weak
+      // cache roots — skipped under StrongOnly (fullGC mark), voided by
+      // purgeDeadCacheRoots(), survivors updated by the All pass.
+      if (visitCacheRoots) {
         // Ensure the whole code zone is writable before updating Oop fields.
         // updatePointersAfterCompact rewrites method header and IC Oops in
         // place; if the zone is left executable after a JIT call path that
@@ -3691,6 +3723,7 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
                 visitor(keyOop);
             }
         }
+      }  // visitCacheRoots (JIT weak cache roots)
 
         // Shadow-slot detector (PHARO_SHADOW_SLOTS): entry obj keys and
         // tracked values are oops — GC must update them or every moved
@@ -3708,11 +3741,14 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         }
 
         // Tier 2 map: keys are CompiledMethod Oop bits (needs GC update).
-        for (size_t i = 0; i < jit::JITRuntime::Tier2MapSize; i++) {
-            auto& entry = jitRuntime_.tier2Entry(i);
-            if (entry.key != 0) {
-                Oop& keyOop = *reinterpret_cast<Oop*>(&entry.key);
-                visitor(keyOop);
+        // Weak cache root like the count map.
+        if (visitCacheRoots) {
+            for (size_t i = 0; i < jit::JITRuntime::Tier2MapSize; i++) {
+                auto& entry = jitRuntime_.tier2Entry(i);
+                if (entry.key != 0) {
+                    Oop& keyOop = *reinterpret_cast<Oop*>(&entry.key);
+                    visitor(keyOop);
+                }
             }
         }
     }

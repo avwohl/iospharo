@@ -65,6 +65,38 @@ disease; flakes either way.
 Verification in flight: conc-final.log (CORE x4 + CONC x2) +
 gauntletFA/FB.log, then commit.
 
+## UPDATE 2026-07-03 ~23:45 — #14 COMMITTED (e9a7e984); #11 IMPLEMENTED (testing)
+
+#14 done-check passed: ObsoleteTest x4 completes cleanly (no timeout
+wedge, exit 0) on e9a7e984.
+
+#11 weak-root GC treatment IMPLEMENTED per the deferred.md plan:
+- Interpreter::RootScope{All,StrongOnly} on forEachRoot; StrongOnly
+  skips the weak-cache group: methodCache_, JITMethod header oops,
+  IC entries + selBitsArray, countMap/failedMap/tier2 keys.
+- markPhase marks StrongOnly when !skipEphemerons (true fullGC + sweepGC);
+  the scavenge-emulating skipEphemerons path and the copying scavenge
+  keep all roots strong (young cache targets tenure, per plan step 3).
+- New Interpreter::purgeDeadCacheRoots() runs at end of markPhase (mark
+  bits final, before plan/compact): voids dead method-cache entries,
+  invalidates JITMethods whose CompiledMethod/selector died (zeroing
+  their IC buffers + selBitsArray so the All-scope update pass never
+  walks dead oops), clears dead IC target entries in live methods,
+  zeroes dead count/failed/tier2 keys, and rebuildMethodMap() so no
+  stale key can false-hit a recycled address (sweepGC has no
+  recoverAfterGC tail).
+- PHARO_GC_PURGE_LOG=1 knob (debug_vars.h) prints per-GC purge counts.
+
+RESULT: ObsoleteTest 3/3 x4 (was 1-2 pass + 1F + 1-2E every iteration;
+suite is 3 selectors — the old "4 ran" was itself an artifact);
+testFixObsoleteSharedPools passes standalone (was ours-2/3 vs stock-3/3).
+Payoff: dead classes/methods are no longer pinned by VM caches at all
+(IDE class-redefinition leak).
+
+In flight: extended battery (battery4.log: Weak*/Finalization/Ephemeron
++ TFFI + Process/Delay/Semaphore/StepOver + benchFib) + gauntletG, then
+commit #11.
+
 (Previous 2026-07-02 tally superseded; that work is all committed and
 documented in docs/deferred.md + memory files.)
 
