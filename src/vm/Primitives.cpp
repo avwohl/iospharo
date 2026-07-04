@@ -758,14 +758,20 @@ PrimitiveResult Interpreter::primitiveExitCriticalSection(int argCount) {
         }
         int64_t activePriority = activePriorityOop.asSmallInteger();
 
-        // Put new owner to sleep (add to its priority queue)
-        putToSleep(newOwner);
-
-        // If new owner has higher or equal priority, switch to it
-        if (newPriority >= activePriority) {
-            // Put active process to sleep and switch
-            putToSleep(activeProcess);
-            transferTo(wakeHighestPriority());
+        // Cog parity (resume:preemptedYieldingIf: with preemptionYields
+        // false): only a STRICTLY higher-priority new owner preempts, and
+        // the preempted active process goes to the FRONT of its run queue
+        // (order-preserving).  The old `>=` yielded on EQUAL priority and
+        // back-appended the active process — the same involuntary
+        // same-priority reordering that wedged interpriorityYield:'s
+        // fork/suspend dance (see handleForceYield, 2026-07-03).
+        if (newPriority > activePriority) {
+            putToSleepPreempted(activeProcess);
+            transferTo(newOwner);
+        } else {
+            // Same or lower priority: new owner just becomes ready;
+            // the active process keeps running.
+            putToSleep(newOwner);
         }
 
         return PrimitiveResult::Success;
@@ -31402,8 +31408,11 @@ PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
             callbackDepth_--;
         }
     }
-    // Hand out each invocation EXACTLY ONCE (deepest un-handed entry first —
-    // matches push order for the nested case).  The image's TFCallbackQueue
+    // Hand out each invocation EXACTLY ONCE (oldest un-handed entry first,
+    // i.e. FIFO in push order; in the nested same-thread case the outer
+    // invocation was already handed out before the inner one was pushed, so
+    // the scan direction only matters when several worker-forwarded
+    // callbacks are adopted before the image reads).  The TFCallbackQueue
     // treats the callback semaphore as a queue (one signal == one item);
     // returning a still-executing invocation again on a duplicate/early
     // signal spawned duplicate executor processes until livelock (the

@@ -4351,9 +4351,22 @@ void Interpreter::handleForceYield() {
 
     if (nextProcess.isObject() && nextProcess.rawBits() != nilObj.rawBits() &&
         nextProcess.rawBits() != activeProcess.rawBits()) {
-        // Higher-priority displacement = preemption (active resumes
-        // FIRST among its peers, Cog ordering); rotation/aging picks
-        // keep the yield-style back-append.
+        // Higher-priority displacement = preemption: order-preserving,
+        // active goes to the FRONT of its run queue (Cog rule).  Rotation
+        // and aging picks keep the yield-style back-append: rotation's
+        // purpose is rotating same-priority peers, and aging's purpose is
+        // giving lower-priority processes CPU — front-append there let the
+        // aged CPU-hog bounce straight back after each grace window,
+        // starving its peers (measured: TFUFFIConcurrencyTest worker
+        // round-trips ~40% slower, 2026-07-03).  KNOWN THEORETICAL HAZARD:
+        // a back-appended process yanked between interpriorityYield:'s
+        // `[p resume] fork` and `p suspend` can land BEHIND its resumer
+        // and suspend forever (the mechanism that wedged the callback
+        // queue via the nested-loop requeue path, fixed order-preserving
+        // in enterInterpreterFromCallback).  Aging has never been observed
+        // to fire in that window (zero [AGING] lines in every wedge
+        // trace); if it ever does, make the aging pick order-preserving
+        // ONLY when the active process is inside that dance.
         if (viaHigherPri) {
             putToSleepPreempted(activeProcess);
         } else {
@@ -5220,7 +5233,22 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                     && !currentMyList.isNil()
                     && currentMyList.rawBits() != memory_.nil().rawBits();
                 if (!alreadyQueued) {
-                    putToSleep(currentProcess);
+                    // FRONT of its run queue (putToSleepPreempted), NOT the
+                    // back: this yank is an INVOLUNTARY displacement of a
+                    // process that is usually still mid-cleanup — the 500-step
+                    // cooldown regularly ends inside interpriorityYield:'s
+                    // `[p resume] fork. p suspend` window (the cleanup path
+                    // critical:-release -> valueUnpreemptively ensure ->
+                    // priority: is far longer than 500 steps).  The resumer is
+                    // forked at the SAME priority, so back-appending put the
+                    // yanked process BEHIND its own resumer: the resume was
+                    // spent on a ready process, the later suspend parked it
+                    // forever STILL HOLDING the TFCallbackQueue stackProtect
+                    // mutex, and every subsequent callback wedged (repeat-run
+                    // x4 wedge, root-caused 2026-07-03 via gauntlet6.log
+                    // pc=99-vs-101 trace).  Cog rule: involuntary displacement
+                    // never reorders same-priority processes.
+                    putToSleepPreempted(currentProcess);
                 }
                 if (g_debug.callbackDebug) {
                     fprintf(stderr, "[CALLBACK-RETURN-REQUEUE] active=0x%llx handler=0x%llx stillHandler=%d alreadyQueued=%d\n",
@@ -5577,8 +5605,9 @@ bool Interpreter::step() {
                            nextProcess.rawBits() != activeProcess.rawBits();
 
         if (foundProcess) {
-            // Higher-pri displacement = preemption (front); rotation/
-            // aging picks keep the yield-style back-append.
+            // Higher-pri displacement = preemption (front, Cog order-
+            // preserving); rotation picks keep the yield-style back-append.
+            // See handleForceYield for the trade-off discussion.
             if (viaHigherPri) {
                 putToSleepPreempted(activeProcess);
             } else {
