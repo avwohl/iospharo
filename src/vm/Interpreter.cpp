@@ -8057,7 +8057,22 @@ void Interpreter::returnFromMethod() {
                             isBlock = lastLit.isObject() && lastLit.rawBits() > 0x10000 &&
                                       lastLit.asObjectPtr()->isCompiledMethod();
                         }
-                        if (!isBlock) { dynHome = m; break; }
+                        if (!isBlock) {
+                            // ctxWalk IS the lexical home context.  Only
+                            // retry when it is LIVE (pc not nil, not the
+                            // HasBeenReturnedFrom -1 sentinel): a DEAD home
+                            // must fall through to cannotReturn: —
+                            // BlockCannotReturn semantics.  Retrying with
+                            // just the method bits redirected the NLR into
+                            // ANOTHER live activation of the same method
+                            // and spun forever (ContextTest>>
+                            // testBlockCannotReturn hang, 2026-07-04).
+                            Oop hPC = memory_.fetchPointer(1, ctxWalk);
+                            bool homeLive = hPC.isSmallInteger()
+                                && hPC.asSmallInteger() != -1;
+                            if (homeLive) dynHome = m;
+                            break;
+                        }
                         Oop clo = memory_.fetchPointer(4, ctxWalk);   // closureOrNil
                         if (!clo.isObject() || clo.isNil() || clo.rawBits() <= 0x10000) break;
                         ctxWalk = memory_.fetchPointer(0, clo);
@@ -8530,12 +8545,21 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
         // have produced.  Unwind state still lives in contexts (return:
         // through:/resume:through: run image-side), preserving the
         // debugger-visibility property this protocol was adopted for.
-        if (selectors_.returnThrough.isObject() && !selectors_.returnThrough.isNil()
-                && homeCtx.isObject() && !homeCtx.isNil() && homeCtx.rawBits() > 0x10000) {
+        if (homeCtx.isObject() && !homeCtx.isNil() && homeCtx.rawBits() > 0x10000) {
+            // Receiver = homeCtx with the STOCK selector: aboutToReturn:
+            // through: is 'self home return: result through: firstUnwind'
+            // and home of a METHOD context is itself, so delivery is
+            // identical to return:through: on homeCtx — but the debugger/
+            // stepping machinery pattern-matches the aboutToReturn:through:
+            // activation (Process>>completeStep: / stepToHome:), and
+            // bypassing it broke the whole simulation family (StepOverTest
+            // testStepOver / BlockClosureTest testRunSimulate / ContextTest
+            // timeouts, 2026-07-04).  Keeping the stock entry selector
+            // preserves that frame shape.
             push(homeCtx);    // receiver: the home context (^ returns from it)
             push(value);      // arg 1: the value being returned
             push(ensureCtx);  // arg 2: first unwind-marked context on the way home
-            sendSelector(selectors_.returnThrough, 2);
+            sendSelector(selectors_.aboutToReturn, 2);
             return true;
         }
         push(startCtx);   // receiver: the returning context
