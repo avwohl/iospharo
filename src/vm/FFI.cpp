@@ -21,6 +21,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <chrono>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>   // _NSGetExecutablePath (exe-dir library search)
+#endif
 #include <dlfcn.h>
 #include <ffi.h>
 #include <unistd.h>
@@ -294,6 +297,31 @@ static std::vector<std::string> getLibSearchPaths() {
     if (!sAppFrameworksPath.empty()) {
         paths.push_back(sAppFrameworksPath);
     }
+#if defined(__APPLE__) && !(TARGET_OS_IPHONE && !TARGET_OS_MACCATALYST)
+    // The executable's own directory FIRST: `Smalltalk vm directory` is where
+    // the image-side library finders expect VM-staged libraries, and the
+    // build stages fixture libs there (libTestLibrary.dylib for the TFUFFI*
+    // suites — mirrors TestLibrary.dll next to the exe on Windows).  Without
+    // this, a bare-name lookup like 'libTestLibrary.dylib' only resolved
+    // symbols the exe happens to re-export (-Wl,-u list) and every
+    // dylib-only fixture failed with SymbolNotFoundError (2026-07-04).
+    {
+        static std::string sExeDir;  // resolved once
+        if (sExeDir.empty()) {
+            char buf[4096]; uint32_t sz = sizeof(buf);
+            if (_NSGetExecutablePath(buf, &sz) == 0) {
+                if (char* rp = realpath(buf, nullptr)) {
+                    std::string p(rp);
+                    free(rp);
+                    size_t slash = p.find_last_of('/');
+                    if (slash != std::string::npos) sExeDir = p.substr(0, slash);
+                }
+            }
+            if (sExeDir.empty()) sExeDir = ".";  // sentinel: don't retry
+        }
+        if (sExeDir != ".") paths.push_back(sExeDir);
+    }
+#endif
 #if !(TARGET_OS_IPHONE && !TARGET_OS_MACCATALYST)
     // Mac Catalyst / macOS: try Homebrew as fallback (won't work if
     // code-signature team ID mismatch, but useful for ad-hoc builds)
