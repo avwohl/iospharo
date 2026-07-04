@@ -765,6 +765,15 @@ void Interpreter::recoverSistaAfterGC() {
     sistaGateCache_.clear();
     sistaBailCounter_.clear();
     for (size_t i = 0; i < kSistaRingSize; i++) sistaRing_[i] = {};
+    // interpHints_ holds RAW oop bits (method keys AND targetMethod values)
+    // with no GC visitor, purge, or rekey — after a moving GC a key can
+    // alias a different method and targetMethod dangles into reused memory.
+    // tryInlineConstReturn probe-lifts the dangling "method" and Builder::
+    // build walks garbage bytecodes: the WeakKeyDictionaryTest>>testClearing
+    // SEGV on ARM (2026-07-04; crashed identically under PHARO_NO_JIT
+    // because the Sista tier is independently gated).  Same lifecycle as
+    // the sistaCache reset above: flush, let observations refill.
+    interpHints_.clear();
 }
 
 // Dump the Sista ring buffer — called from the DNU logging site to
@@ -20794,6 +20803,9 @@ void Interpreter::afterGC(bool fullGC) {
         // a young method — the inline-getter IC poisoning behind the
         // MAX_IC=1 wrong-object residual.
         jitRuntime_.rebuildMethodMap();
+        // interpHints_ raw-bits entries go stale the same way when a
+        // scavenge moves a young method (see recoverSistaAfterGC).
+        interpHints_.clear();
     }
 #endif
     gcPrepared_ = false;
@@ -23753,8 +23765,9 @@ static uint8_t inlinePrimKind(int primIndex) {
 std::vector<sista::InlineHint>
 Interpreter::extractInlineHintsForMethod(Oop method) {
     std::vector<sista::InlineHint> hints;
-    // Stale-inline-hint validation (default ON; opt out with
-    // PHARO_SISTA_NO_VALIDATE_HINTS).  An IC slot caches (classKey ->
+    // Stale-inline-hint validation (opt-IN via PHARO_SISTA_VALIDATE_HINTS —
+    // the earlier comment claimed default-ON, but the knob is presence-
+    // based).  An IC slot caches (classKey ->
     // resolvedMethod) observed at runtime.  When a class is redefined /
     // removed or a method recompiled (heavy in the SystemEnvironment /
     // Package SUnit region), the IC isn't always re-keyed, leaving a STALE
