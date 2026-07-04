@@ -641,10 +641,19 @@ CONTIGUOUS, starving P41-79 watchdog machinery).  TFUFFICallbackTest:
   battery green twice (InCallbacks 2x36/36, Derived 12/12, Weak*,
   Process 46/46, Semaphore 18/18, StepOver, Delay, FFICallback*).
   Pre-existing, baseline-identical (NOT regressions): TFCallbacksTest
-  1/8+3F+4E, testSingleCalloutDuringCallback 1F, and
-  TFUFFIConcurrencyTest-UsingWorker marginal pacing (core loop 7-15s vs
-  ~10s SUnit limit; worker round-trip ~20-40ms/round is the disease —
-  separate item).
+  1/8+3F+4E (RESOLVED 2026-07-04 — see the TFCallbacksTest section
+  below: 5 root causes, stock parity), testSingleCalloutDuringCallback
+  1F (same), and TFUFFIConcurrencyTest-UsingWorker marginal pacing:
+- [ ] TFUFFIConcurrencyTest>>testConcurrentlyCompiling(UsingWorker)
+  straddles its ~10s in-suite SUnit limit.  2026-07-04 measurements
+  (WMI/AV-degraded machine — see wmi-polling-hazard memory): core loop
+  x4 = 7.0/7.0/8.1/8.4s after the nested-adoption fix (was 7-15s
+  baseline, 12-22s during the aging-front-append experiment).  500
+  rounds x ~15ms; each round FORCES an FFI method recompile
+  (FFIMethodRegistry resetSingleClass:) — suspect legitimate image-side
+  compile cost dominates, not VM callout latency.  Next (QUIET machine):
+  profile one round (compile vs callout vs wake), compare stock's core
+  time, and only then chase VM-side pacing.
 
 ### TFCallbacksTest (TF-plain suite; stock 8/8+2S, ours was 1/8+3F+4E)
 LARGELY FIXED 2026-07-04; four independent root causes found and fixed:
@@ -1305,6 +1314,16 @@ Historical scoping notes (how the breakthrough was reached) follow:
   config requests 4 GB; if a machine's commit limit is tight this could fail
   allocation). `madvise(MADV_DONTNEED)` -> `MEM_RESET` (RSS hint) is a faithful
   analogue.
+  DESIGN NOTE (2026-07-04 assessment; deliberately NOT implemented now):
+  prefer COMMIT-AHEAD IN THE ALLOCATION SLOW PATH (when the bump pointer
+  crosses a committedEnd_ watermark, VirtualAlloc(MEM_COMMIT) the next
+  64MB chunk in the existing OOM/GC-trigger branch) over a fault-driven
+  VEH handler: a commit-on-fault VEH would silently absorb wild-pointer
+  writes anywhere in the 4GB reservation, destroying exactly the crash
+  diagnostics that solved the 2026-07-04 teardown-segfault family.
+  Benefit only materializes on commit-limit-constrained machines; risk is
+  in the allocator's most safety-critical invariants — schedule as its
+  own milestone with a full-suite gate, not as a drive-by fix.
 
 ### RNG
 - [x] **arc4random_buf — UPGRADED 2026-07-04** (`win_posix_compat.h`) —

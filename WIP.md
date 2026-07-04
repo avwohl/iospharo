@@ -26,18 +26,43 @@ exit 0, ~5700s.  Baseline run #9: 27441 (98.1%); run #7: 377 E /
 25 timeouts.  Net: +233 passes, errors -300, timeouts -16, ~45 min
 faster.
 
-## Known-open (all pre-existing, tracked in docs/deferred.md)
+## Deferred-items sweep COMPLETE (2026-07-04, second goal)
 
-- TFCallbacksTest suite content: 1/8 + 3F + 4E (baseline-identical; the
-  TF-plain runner half).  testSingleCalloutDuringCallback 1F.
-- TFUFFIConcurrencyTest UsingWorker: marginal vs its ~10s SUnit limit
-  (core loop 7-15s; worker round-trip pacing ~20-40ms/round is the
-  underlying pre-existing disease).
-- NetNameResolverTest>>testLocalHostName (ours F, stock P) — suspect
-  primHostNameSize/Result failing -> loopback fallback while
-  isConnected.  Untouched this session.
-- HugeFont metrics (graphics/FreeType).
-- Silent-cap audit residue (ObjectMemory bounds asserts etc.).
+Every fix-shaped deferred item is now closed (commits bceefb37, af653a46,
+ef61b868).  Highlights:
+- TFCallbacksTest: 1/8+3F+4E -> **8/8+2skip STOCK PARITY**, five root
+  causes (TestLibrary fixture arg+1 semantics; release-while-parked join
+  freeze; buried-dead invocation hand-out; reentrant callouts needing
+  the parked worker to service its own queue; missing xtcb adoption
+  drain in nested callback loops — the last one also cured the warm
+  UFFI in-suite flake).  Full story in deferred.md's TFCallbacksTest
+  section.
+- Verified-stale entries closed with evidence: WeakAnnouncer warm parity
+  (fixed by 27e4ca74), NetNameResolver localhost (hostname prims),
+  MicText HugeFont 21/21 (Cairo stack), InLoop(UsingWorker) 13/13,
+  TFFI v2 (landed), SDL2/Morphic GUI parent entry (on-screen + input
+  verified with screenshots 07-01/02).
+- Silent-cap residue batch: loud-not-silent tripwires (STORE-OOB,
+  FWD-CHAIN-CAP, NS-SCAN-TERM, BV-SAVE-GUARD, rate-limited SP-CORRUPT
+  family), 3 stale callback-polling interceptions removed, fetchPointer
+  nil-answer documented as API semantic (tripwire attempt false-posed).
+- arc4random_buf -> BCryptGenRandom (links bcrypt); UUIDs verified
+  distinct across runs.
+- Closed by design: SIGSEGV recovery (dump-then-crash is the tool that
+  solved the teardown family), chown ENOSYS, ARM64-Windows trampoline.
+
+Remaining open (features/blocked, NOT fixes — see deferred.md):
+CONC UsingWorker pacing (needs quiet-machine profiling; data captured),
+IME, MIDI backend (unverifiable: no image-side MIDI classes),
+WorldRenderer native fast path, old-space commit-ahead (design note
+written; own-milestone risk), Authenticode signing (needs user cert
+decision).
+
+ENVIRONMENT CAVEAT for this session's numbers: the machine was degraded
+3-4x from ~03:30 (WmiPrvSE at 12 CPU-hours from tasklist polling loops +
+ESET scanning; benchFib 12ms -> 40-55ms) — ObsoleteTest's in-suite 0/3
+during this window is the time-limit artifact (test body passes via
+direct performTest); see memory wmi-polling-hazard.
 
 ## Environment quick-reference
 
