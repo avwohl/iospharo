@@ -97,6 +97,33 @@ In flight: extended battery (battery4.log: Weak*/Finalization/Ephemeron
 + TFFI + Process/Delay/Semaphore/StepOver + benchFib) + gauntletG, then
 commit #11.
 
+## UPDATE 2026-07-04 ~01:40 — GOAL GATE PASSED; teardown crash root-caused
+
+#11 committed (27e4ca74).  FULL SUITE (run #25 in /c/tmp/
+sunit_test_results.txt, log /c/tmp/suite-run10.log): **2047/2047 classes,
+27967 tests: 27674 pass (99.0%) / 52 F / 77 E / 155 skip / 9 timeout,
+exit 0, ~5700s** — beats baseline run #9 (27441 = 98.1%) by +233 passes;
+errors 377->77 and timeouts 25->9 vs run #7.  The wedge + weak-root
+fixes are net-positive at scale.
+
+Teardown exit-139: NOT a static-destructor race — [WIN-CRASH] backtrace
+symbolized (llvm-addr2line) to callbackClosureHandler's fell-out memset
+reading a FREED ffi_cif: TFCallbacksTest errors abandon a same-thread
+invocation; its nested interp loop runs the rest of the suite; tearDown
+UNREGISTERS the callback (primitiveUnregisterCallback freed CallbackInfo
+incl. the cif); exitSuccess makes the nested loop fall out normally and
+the handler + libffi's return-marshal deref the freed cif.  The 124
+timeouts: abandoned worker invocations park TestLibrary threads 120s;
+exit's worker-join serializes behind the cascade.
+
+FIXES (uncommitted, built 01:44): entry-captured retSize in
+callbackClosureHandler; primitiveUnregisterCallback defers destruction
+to a graveyard drained at checkpoints (callbackDepth_==0, no xtcb
+pendings, >5s age); pharo_xtcbShutdown unparks workers at exit (+
+shutdown guard against re-parking); immortal cross-thread statics (xtcb,
+worker registry, SocketPlugin); DNS in-flight drain.  Verification:
+TFCallbacksTest exit-loop x6 (want 6x exit 0) + battery + gauntlet.
+
 (Previous 2026-07-02 tally superseded; that work is all committed and
 documented in docs/deferred.md + memory files.)
 

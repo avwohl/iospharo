@@ -54,9 +54,15 @@ static int gSessionID = 1;
 static bool isDatagramSocket(PrivateSocket* ps);
 
 // Active socket tracking for I/O monitor thread
-static std::mutex gSocketMutex;
-static std::vector<PrivateSocket*> gActiveSockets;
-static std::vector<PrivateSocket*> gDeleteQueue; // deferred deletion
+// IMMORTAL (construct-on-first-use, deliberately leaked): the detached
+// I/O thread gets only a bounded grace in socketPluginShutdown; if it's
+// mid-select at process exit it can still take this mutex / touch these
+// vectors AFTER ordinary static destructors ran — the post-"Test
+// Complete" exit-139 teardown-segfault family (2026-07-03).  Leaking
+// three heap objects at exit is free.
+static std::mutex& gSocketMutex = *new std::mutex;
+static std::vector<PrivateSocket*>& gActiveSockets = *new std::vector<PrivateSocket*>();
+static std::vector<PrivateSocket*>& gDeleteQueue = *new std::vector<PrivateSocket*>(); // deferred deletion
 
 // I/O monitor thread
 static std::thread gIOThread;

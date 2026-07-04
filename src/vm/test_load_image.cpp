@@ -17,6 +17,8 @@
 #include "plugins/SocketPlugin.h"   // socketPluginShutdown (orderly exit)
 // Stops/joins all TFFI worker threads before static teardown (Primitives.cpp).
 extern "C" void pharo_tffiWorkerShutdownAll(void);
+extern "C" void pharo_dnsLookupDrain(int maxMs);
+extern "C" void pharo_xtcbShutdown(void);
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
 #include <iostream>
@@ -1463,6 +1465,15 @@ int main(int argc, char* argv[]) {
     // worker threads (image never sent #release) and the detached socket
     // I/O thread otherwise race the teardown of the very globals they use
     // — the post-"Test Complete" exit-139 segfault (2026-07-03, run #7).
+    // Detached DNS lookup threads write into Interpreter members, so drain
+    // them (bounded) too.  Parked TestLibrary callback threads can't be
+    // joined; the xtcb statics they touch are immortal instead (see
+    // Primitives.cpp xtcb namespace).
+    pharo_dnsLookupDrain(2000);
+    // Unpark workers blocked on forwarded callbacks BEFORE joining them —
+    // otherwise the join below serializes exit behind their 120s
+    // last-resort timeouts (abandoned invocations after test errors).
+    pharo_xtcbShutdown();
     pharo_tffiWorkerShutdownAll();
     socketPluginShutdown();
     return 0;

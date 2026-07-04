@@ -3714,6 +3714,10 @@ void Interpreter::interpret() {
         if ((totalSteps & 0xFFFF) == 0) {
             checkForPreemption();
 
+            // Free unregistered FFI callbacks whose in-flight window has
+            // closed (use-after-free deferral; see cbgrave in Primitives.cpp).
+            drainCallbackGraveyard();
+
             // Safe-point JIT compile drains.  The recompile queue handles
             // J2J inline-bump callees; the initial-compile queue handles
             // methods that crossed threshold during interp dispatch (when

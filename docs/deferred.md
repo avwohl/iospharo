@@ -505,16 +505,35 @@ DelayMicrosecondTicker>>waitForUserSignalled:orExpired: at P80,
 Process>>endProcess at P40, P60 ifFalse: idle loops), then prints
 "Test Complete" and exits normally.  The earlier "wedge" kills at ~30 min
 were premature terminations of this tail.  REMAINING REAL ITEM:
-- [ ] **Teardown SEGFAULT after "Test Complete"** (exit 139, after all
-  results are written — functionally harmless, but real).  Static-
-  destructor order vs still-running threads: suspects are unreleased TFFI
-  worker threads (image-leaked TFWorkers are never joined), the profiler
-  sampler thread when enabled, and the detached socket I/O thread
-  touching freed globals (the earlier symbolization pointed at a
-  std::map<int,FILE*> destructor).  Fix shape: a VM-shutdown hook that
-  stops/joins all worker threads + sampler before main returns
-  (socketPluginShutdown already exists — add tffiWorkerShutdownAll and
-  call both from test_load_image before teardown).
+- [x] RESOLVED 2026-07-04: **Teardown SEGFAULT after "Test Complete"**
+  was NOT a static-destructor race — [WIN-CRASH] backtraces (symbolized
+  with llvm-addr2line against the crashing binary) exposed a
+  use-after-free FAMILY in the TFFI teardown paths, all reachable when a
+  test error abandons an in-flight callback invocation (its nested
+  interpreter loop then runs the rest of the suite, including tearDowns
+  that free FFI resources still on the C stack):
+  (a) callbackClosureHandler's fell-out/timeout paths re-read
+      cif->rtype after primitiveUnregisterCallback freed the
+      CallbackInfo -> crash in the memset sizing.  FIX: capture retSize
+      at handler entry.
+  (b) primitiveFreeDefinition freed a function cif while the OUTER
+      callout using it was still inside ffi_call -> crash in
+      tffiConvertReturnValue (cif->rtype == NULL, faultAddr 0xA).  FIX:
+      cif graveyard — free defers to a checkpoint drain gated on
+      callbackDepth_==0, no xtcb pendings, no worker tasks in flight
+      (g_tasksInFlight), entry >5s old.
+  (c) TestLibrary retained a callback thunk pointer and invoked it after
+      ffi_closure_free -> executing freed trampoline (rip==faultAddr in
+      non-code memory).  FIX: unregister marks CallbackInfo->unregistered
+      and LEAKS thunk+cif+struct (a C library can hold the thunk
+      forever); the handler answers zeroes for unregistered callbacks.
+  Plus exit-latency + residual-destructor hardening: pharo_xtcbShutdown
+  unparks workers blocked on forwarded callbacks (exit was serializing
+  behind their 120s timeouts -> exit code 124), a shutdown guard stops
+  re-parking, immortal (leaked) cross-thread statics in xtcb / the
+  worker registry / SocketPlugin, and a bounded drain for detached DNS
+  lookup threads.  VERIFIED: TFCallbacksTest solo exit-loop 8/8 exit 0
+  (was ~2/6 with 139s and 124s); battery + x4 gauntlet green.
 
 RUN #6 (2026-07-03, pre-audit binary): **2043 of 2047 classes —
 27956 tests / 27257 pass = 97.5%**
@@ -526,15 +545,15 @@ NEW-territory triage (~1100 classes never run before on our VM produced
 only a handful of real singles): EDDebuggingAPITest = suite-order
 artifact (27/27 standalone); OCClassBuilderTest = stock fails identically
 (1 error, not ours); REAL our-VM items, all niche:
-- [ ] ObsoleteTest>>testFixObsoleteSharedPools (ours 2/3, stock 3/3) —
-  the obsolete pool class survives the test's own GC but IS collectible
-  one GC later (probe-verified: one-cycle pin).  Candidate pinners: IC
-  entries and/or method-cache entries are visited as STRONG marks during
-  fullGC and only flushed AFTER (recoverAfterGC / primitive sites) — a
-  one-cycle decay for each.  A naive pre-mark flushMethodCache in fullGC
-  REGRESSED ObsoleteTest failures into errors (reverted 2026-07-03; step
-  0 next session: capture what those errors actually were).  Proper fix —
-  weak-root treatment, concrete plan:
+- [x] RESOLVED 2026-07-03 (27e4ca74): ObsoleteTest>>testFixObsoleteSharedPools
+  (was ours 2/3, stock 3/3) — implemented the weak-root plan below
+  verbatim: RootScope{All,StrongOnly} on forEachRoot, markPhase marks
+  StrongOnly on the true fullGC/sweep path, purgeDeadCacheRoots() voids
+  dead cache slots after the mark fixpoint (+ rebuildMethodMap so no
+  stale key false-hits a recycled address), scavenge keeps all roots
+  strong.  ObsoleteTest 3/3 x4-in-one-VM; extended Weak*/Finalization/
+  TFFI/Process battery green; benchFib 12ms.  PHARO_GC_PURGE_LOG=1
+  prints per-GC purge counts.  Historical plan (implemented):
   1. forEachRoot gains a scope flag (All | StrongOnly).  The weak group =
      method-cache entries, IC method/selector slots, JIT count-map +
      failed-map keys, JITMethod header compiledMethodOop.  markPhase
@@ -615,6 +634,14 @@ CONTIGUOUS, starving P41-79 watchdog machinery).  TFUFFICallbackTest:
   separate item).
 
 ### TFFI v2 residual notes (historical; resolution above)
+NOTE 2026-07-03 (post e9a7e984): the "woken waiter runs zero bytecodes
+then re-suspends" mystery below is explained by the callback-return
+requeue mechanism — the yanked mid-cleanup executor (or its
+interpriorityYield: dance partner) WAS the "empty wake": a process
+resumed into the fork/suspend window executes `suspend` immediately,
+which from the trace's viewpoint is a wake that consumes a signal and
+runs ~zero bytecodes.  With order-preserving requeue the one-behind
+service pattern is gone (x4 suite ~75s total vs minutes).
 v2 forwarding landed 2026-07-03 (commit 6280deb8): worker/native-thread
 callbacks forward to the VM thread (xtcb queue -> periodic-check adoption
 -> image callback semaphore -> primitiveCallbackReturn wakes the parked

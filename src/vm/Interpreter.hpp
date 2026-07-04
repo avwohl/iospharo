@@ -299,6 +299,12 @@ public:
     template<typename Visitor>
     void forEachRoot(Visitor&& visitor, RootScope scope = RootScope::All);
 
+    /// Free unregistered CallbackInfos whose in-flight window has closed
+    /// (no callback frames on the C stack, no pending worker callbacks,
+    /// entry >5s old).  Called from the periodic checkpoint; see the
+    /// cbgrave namespace in Primitives.cpp for the use-after-free story.
+    void drainCallbackGraveyard();
+
     /// Called by markPhase after the mark fixpoint (mark bits final,
     /// BEFORE compaction planning) when roots were visited StrongOnly:
     /// void every cache slot whose target object died this cycle —

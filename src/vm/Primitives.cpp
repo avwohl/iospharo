@@ -29720,6 +29720,33 @@ PrimitiveResult Interpreter::primitiveResolverLocalAddress(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// In-flight detached DNS lookups (see primitiveResolverStartNameLookup).
+// The lookup thread writes through raw pointers into Interpreter members
+// and signals a semaphore — running past main() means touching destructed
+// state (teardown-segfault family).  The harness drains this counter
+// (bounded) before teardown.  atomic<int> is trivially destructible, so
+// the counter itself can't be a destruction-order hazard.
+static std::atomic<int> g_dnsLookupsInflight{0};
+
+// Bounded wait for in-flight DNS lookup threads to finish.  Called from
+// the harness right before teardown; a getaddrinfo hung past maxMs still
+// leaks the hazard (rare; DNS answers or errors in ms normally), but the
+// common exit-during-lookup window is closed.
+extern "C" void pharo_dnsLookupDrain(int maxMs) {
+    int waited = 0;
+    while (g_dnsLookupsInflight.load(std::memory_order_acquire) > 0
+           && waited < maxMs) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        waited += 10;
+    }
+    int left = g_dnsLookupsInflight.load(std::memory_order_acquire);
+    if (left > 0) {
+        fprintf(stderr, "[DNS-DRAIN] %d lookup thread(s) still in flight "
+                "after %dms — teardown proceeds (hazard window open)\n",
+                left, maxMs);
+    }
+}
+
 // primitiveResolverStartNameLookup
 // Stack: receiver, nameString -> receiver
 // NetNameResolver>>primStartLookupOfName: hostName
@@ -29752,6 +29779,7 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
 #ifdef DEBUG
     fprintf(stderr, "[DNS] Starting lookup for '%s' (semaIndex=%d)\n", hostname.c_str(), semaIndex);
 #endif
+    g_dnsLookupsInflight.fetch_add(1, std::memory_order_acq_rel);
     std::thread([hostname, resultBuf, resultSizePtr, statusPtr, validPtr, semaIndex, interp]() {
         // Use AF_UNSPEC to allow both IPv4 and IPv6.
         // On iOS IPv6-only networks, AF_INET can timeout (~40s) because
@@ -29829,6 +29857,7 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
         if (semaIndex > 0) {
             interp->signalExternalSemaphore(semaIndex);
         }
+        g_dnsLookupsInflight.fetch_sub(1, std::memory_order_acq_rel);
     }).detach();
 
     popN(1);  // pop name arg, leave receiver
@@ -30179,6 +30208,10 @@ PrimitiveResult Interpreter::primitiveDefineFunction(int argCount) {
 
 // primitiveFreeDefinition (0 args)
 // Free cif->arg_types then cif, null out handle
+// Defined next to the cbgrave graveyard below: defers free(cif) until no
+// callout/callback can still reference it (use-after-free family).
+static void tffiBuryCif(ffi_cif* cif);
+
 PrimitiveResult Interpreter::primitiveFreeDefinition(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
@@ -30186,8 +30219,13 @@ PrimitiveResult Interpreter::primitiveFreeDefinition(int argCount) {
     ffi_cif* cif = static_cast<ffi_cif*>(tffi_getHandler(receiver));
     if (!cif) return PrimitiveResult::Failure;
 
-    if (cif->arg_types) free(cif->arg_types);
-    free(cif);
+    // DEFER the free: image code (tearDown / FinalizationRegistry) can
+    // run inside the NESTED interpretation of an abandoned callback while
+    // the OUTER callout using this very cif is still on the C stack —
+    // ffi_call returns into tffiConvertReturnValue which reads cif->rtype
+    // (the second post-suite exit-139 crash, symbolized 2026-07-04).
+    // Worker tasks hold the cif too (g_tasksInFlight gates the drain).
+    tffiBuryCif(cif);
 
     tffi_setHandler(receiver, nullptr);
     return PrimitiveResult::Success;
@@ -30421,9 +30459,20 @@ struct Worker;
 // Registry of live workers so VM shutdown can stop/join them all: image
 // code that never sends #release leaks the native thread, and a worker
 // still running during static destruction segfaults on freed globals
-// (the post-"Test Complete" exit-139, 2026-07-03).
-static std::mutex g_workerRegistryMx;
-static std::vector<Worker*> g_workerRegistry;
+// (the post-"Test Complete" exit-139, 2026-07-03).  IMMORTAL
+// (construct-on-first-use, leaked) for the same reason as the xtcb
+// statics: a worker that slips past shutdown must never race these
+// objects' destructors.
+static std::mutex& g_workerRegistryMx = *new std::mutex;
+static std::vector<Worker*>& g_workerRegistry = *new std::vector<Worker*>();
+
+// Worker callout tasks currently queued or executing.  Gate for the
+// callback/definition graveyard drain: a worker's ffi_call (and its
+// return-value extraction) reads the task's cif, so buried cifs must not
+// be freed while any task is in flight.  (The extraction itself runs on
+// the VM thread, same thread as the drain, so post-decrement reads
+// cannot race it.)
+static std::atomic<int> g_tasksInFlight{0};
 
 struct Worker {
     std::mutex mx;
@@ -30456,6 +30505,7 @@ struct Worker {
             if (task->semaphoreIndex > 0 && interp) {
                 interp->signalExternalSemaphore(task->semaphoreIndex);
             }
+            g_tasksInFlight.fetch_sub(1, std::memory_order_acq_rel);
         }
     }
 };
@@ -30660,6 +30710,7 @@ PrimitiveResult Interpreter::primitiveWorkerCallout(int argCount) {
     Oop taskOop = tffi_newExternalAddress(task.get());
     if (taskOop.isNil()) return PrimitiveResult::Failure;
 
+    tffiworker::g_tasksInFlight.fetch_add(1, std::memory_order_acq_rel);
     {
         std::lock_guard<std::mutex> lk(worker->mx);
         worker->queue.push_back(task.release());
@@ -31148,6 +31199,13 @@ struct CallbackInfo {
     void* functionAddress;    // The thunk address (executable code pointer)
     ffi_type** parameterTypes;
     void* userData;           // Debug string (or nullptr)
+    // Set by primitiveUnregisterCallback.  The thunk, closure, cif and
+    // this struct are NEVER freed: C libraries may retain the thunk
+    // pointer indefinitely and invoke it later — executing a freed
+    // trampoline was the residual post-suite exit-139 (rip==faultAddr in
+    // non-code memory, 2026-07-04).  The handler checks this flag and
+    // answers zeroes without re-entering the VM.
+    std::atomic<bool> unregistered{false};
 };
 
 // Global callback semaphore index (set by primitiveInitilizeCallbacks)
@@ -31173,14 +31231,47 @@ struct Pending {
     std::mutex mx;
     std::condition_variable cv;
     bool done = false;
+    bool aborted = false;   // set by pharo_xtcbShutdown: return zeroes, leak, exit fast
 };
-static std::mutex g_mx;
-static std::deque<Pending*> g_queue;                                  // awaiting adoption
-static std::map<VMCallbackContext*, Pending*> g_active;               // adopted, awaiting return
-static std::set<VMCallbackContext*> g_dead;                           // timed out; VM thread pops lazily
+// IMMORTAL (construct-on-first-use, deliberately leaked): TestLibrary's
+// native callback threads can still be parked in callbackClosureHandler's
+// 120s cv-wait at process exit (an abandoned in-flight invocation after a
+// test error).  If these were ordinary statics, their destructors would
+// run while such a thread can still wake and take g_mx / touch g_queue —
+// the intermittent post-"Test Complete" exit-139 teardown segfault
+// (deferred.md, 2026-07-03).  Leaking four heap objects at exit is free.
+static std::mutex& g_mx = *new std::mutex;
+static std::deque<Pending*>& g_queue = *new std::deque<Pending*>();   // awaiting adoption
+static std::map<VMCallbackContext*, Pending*>& g_active =
+    *new std::map<VMCallbackContext*, Pending*>();                    // adopted, awaiting return
+static std::set<VMCallbackContext*>& g_dead =
+    *new std::set<VMCallbackContext*>();                              // timed out; VM thread pops lazily
 static std::atomic<bool> g_vmThreadIdSet{false};
 static std::thread::id g_vmThreadId;
+static std::atomic<bool> g_shuttingDown{false};
 }  // namespace xtcb
+
+// VM exit: unpark every worker thread waiting on a forwarded callback so
+// process teardown isn't serialized behind their 120s last-resort
+// timeouts (TFCallbacksTest's abandoned invocations made exit take
+// 240s+, 2026-07-04).  Workers see aborted=true, zero their ret buffer,
+// and return without freeing anything the VM might still reference.
+extern "C" void pharo_xtcbShutdown(void) {
+    xtcb::g_shuttingDown.store(true, std::memory_order_release);
+    std::lock_guard<std::mutex> lk(xtcb::g_mx);
+    for (auto* p : xtcb::g_queue) {
+        std::lock_guard<std::mutex> l2(p->mx);
+        p->done = true;
+        p->aborted = true;
+        p->cv.notify_all();
+    }
+    for (auto& kv : xtcb::g_active) {
+        std::lock_guard<std::mutex> l2(kv.second->mx);
+        kv.second->done = true;
+        kv.second->aborted = true;
+        kv.second->cv.notify_all();
+    }
+}
 
 // The libffi closure handler - called when C code invokes a registered callback.
 // Uses sigsetjmp/siglongjmp to re-enter the Smalltalk interpreter to process the
@@ -31199,15 +31290,34 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         fflush(stderr);
     }
 
+    // Capture the return size NOW, while the cif is valid by libffi
+    // contract.  `cif` is &cbInfo->cif; if the image unregisters this
+    // callback while the nested interpreter below is running (e.g. a
+    // tearDown after a test error abandoned the invocation), cbInfo is
+    // gone by the time the late paths below zero the return buffer —
+    // dereferencing cif->rtype there was the post-suite exit-139 crash
+    // (WIN-CRASH symbolized to the fell-out memset, 2026-07-04).  The
+    // unregister itself now defers destruction via the graveyard, but
+    // never re-read the cif after interpretation regardless.
+    const size_t retSize = (cif && cif->rtype) ? cif->rtype->size : 0;
+
+    // Unregistered callback invoked by a C library that retained the
+    // thunk pointer: answer zeroes without touching the VM.  The thunk
+    // and this CallbackInfo are deliberately immortal (see the struct).
+    if (cbInfo && cbInfo->unregistered.load(std::memory_order_acquire)) {
+        if (ret && retSize > 0) memset(ret, 0, retSize);
+        return;
+    }
+
     if (!g_interpreter) {
-        if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
+        if (ret && retSize > 0) memset(ret, 0, retSize);
         return;
     }
 
     // Allocate VMCallbackContext on C heap (survives GC and longjmp)
     VMCallbackContext* vmcc = (VMCallbackContext*)calloc(1, sizeof(VMCallbackContext));
     if (!vmcc) {
-        if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
+        if (ret && retSize > 0) memset(ret, 0, retSize);
         return;
     }
 
@@ -31226,6 +31336,15 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
     // stays valid for the whole wait.
     if (xtcb::g_vmThreadIdSet.load(std::memory_order_acquire) &&
         std::this_thread::get_id() != xtcb::g_vmThreadId) {
+        // VM is exiting: nobody will ever adopt this — return zeroes
+        // immediately instead of re-parking (a looping TestLibrary
+        // function could otherwise re-enter here after pharo_xtcbShutdown
+        // and stall the worker join for its full 120s timeout).
+        if (xtcb::g_shuttingDown.load(std::memory_order_acquire)) {
+            if (ret && retSize > 0) memset(ret, 0, retSize);
+            free(vmcc);
+            return;
+        }
         auto* pending = new xtcb::Pending();
         pending->vmcc = vmcc;
         {
@@ -31234,17 +31353,26 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         }
         g_interpreter->requestWorkerCallbackAdoption();
         bool completed;
+        bool aborted;
         {
             std::unique_lock<std::mutex> lk(pending->mx);
             // Generous last-resort timeout: a dead VM thread must not hang
             // the worker (and thus VM shutdown's join) forever.
             completed = pending->cv.wait_for(lk, std::chrono::seconds(120),
                                              [&] { return pending->done; });
+            aborted = pending->aborted;
+        }
+        if (completed && aborted) {
+            // VM shutdown (pharo_xtcbShutdown) unparked us: hand the C
+            // caller zeroes and leak pending+vmcc (VM references may
+            // still exist; the process is exiting anyway).
+            if (ret && retSize > 0) memset(ret, 0, retSize);
+            return;
         }
         if (!completed) {
             fprintf(stderr, "[XTCB-TIMEOUT] worker-thread callback not handled "
                     "within 120s (vmcc=%p) — returning zeroed result\n", (void*)vmcc);
-            if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
+            if (ret && retSize > 0) memset(ret, 0, retSize);
             // Deregister so the VM thread stops handing this dead invocation
             // to the image: pull it from the pending queue/active map and
             // mark it DEAD.  A stale entry left on callbackContextStack_
@@ -31286,8 +31414,11 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
                     (void*)vmcc);
             fflush(stderr);
         }
-        // Should never reach here
-        if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
+        // Reached when running_ went false (exitSuccess) while this
+        // invocation was still un-returned — the nested loop falls out.
+        // Use the entry-captured retSize: cbInfo (and thus the cif) may
+        // have been unregistered/buried during the nested interpretation.
+        if (ret && retSize > 0) memset(ret, 0, retSize);
         free(vmcc);
         return;
     } catch (const pharo::CallbackComplete& done) {
@@ -31300,7 +31431,7 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
             // Timeout path: Smalltalk never wrote the return value — hand the
             // C caller ZEROES, never uninitialized stack memory (silent-cap
             // audit 2026-07-03).
-            if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
+            if (ret && retSize > 0) memset(ret, 0, retSize);
         }
         // Otherwise the return value was already written to ret by Smalltalk
         // via TFCallbackInvocation >> writeReturnValue: which writes to
@@ -31537,6 +31668,80 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Graveyard for freed FUNCTION-DEFINITION cifs (primitiveFreeDefinition).
+// Freeing at free-time is a use-after-free when a callout using the cif
+// is IN FLIGHT: image code (tearDown/finalization) can run inside the
+// nested interpretation of an abandoned callback while the outer callout
+// still reads the cif after ffi_call returns.  So free only BURIES; the
+// periodic checkpoint drain frees entries once no callout/callback can
+// reference them.  (Callback CallbackInfos are NOT buried — they are
+// marked unregistered and leaked wholesale, because C libraries can
+// retain and invoke the executable thunk forever; see CallbackInfo.)
+// Immortal statics: the drain may never run before exit and worker
+// threads must not race destructors.
+namespace cbgrave {
+struct Buried {
+    CallbackInfo* cbInfo = nullptr;   // from primitiveUnregisterCallback
+    ffi_cif* cif = nullptr;           // from primitiveFreeDefinition
+    std::chrono::steady_clock::time_point buriedAt;
+};
+static std::mutex& g_mx = *new std::mutex;
+static std::vector<Buried>& g_list = *new std::vector<Buried>();
+}  // namespace cbgrave
+
+// See the declaration above primitiveFreeDefinition.
+static void tffiBuryCif(ffi_cif* cif) {
+    std::lock_guard<std::mutex> lk(cbgrave::g_mx);
+    cbgrave::g_list.push_back({nullptr, cif, std::chrono::steady_clock::now()});
+}
+
+// Drain the callback graveyard.  Safe-to-free condition: no same-thread
+// callback frames on the C stack (callbackDepth_ == 0), no
+// worker-forwarded invocation pending or active, AND the entry is >5s
+// old — the age guard covers the microsecond window where a worker
+// handler has decided to return but libffi's return-marshal hasn't yet
+// finished reading the cif (that read happens after our handler frame
+// exits, so no counter can see it).
+void Interpreter::drainCallbackGraveyard() {
+    {
+        std::lock_guard<std::mutex> lk(cbgrave::g_mx);
+        if (cbgrave::g_list.empty()) return;
+    }
+    if (callbackDepth_ != 0) return;
+    if (tffiworker::g_tasksInFlight.load(std::memory_order_acquire) != 0) return;
+    {
+        std::lock_guard<std::mutex> lk(xtcb::g_mx);
+        if (!xtcb::g_queue.empty() || !xtcb::g_active.empty()) return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    std::vector<cbgrave::Buried> toFree;
+    {
+        std::lock_guard<std::mutex> lk(cbgrave::g_mx);
+        auto& l = cbgrave::g_list;
+        for (auto it = l.begin(); it != l.end();) {
+            if (now - it->buriedAt > std::chrono::seconds(5)) {
+                toFree.push_back(*it);
+                it = l.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    for (auto& b : toFree) {
+        if (b.cbInfo) {
+            CallbackInfo* cbInfo = b.cbInfo;
+            if (cbInfo->closure) ffi_closure_free(cbInfo->closure);
+            if (cbInfo->parameterTypes) free(cbInfo->parameterTypes);
+            if (cbInfo->userData) free(cbInfo->userData);
+            delete cbInfo;
+        }
+        if (b.cif) {
+            if (b.cif->arg_types) free(b.cif->arg_types);
+            free(b.cif);
+        }
+    }
+}
+
 // primitiveUnregisterCallback
 // Stack: receiver, callbackHandle (ExternalAddress)
 PrimitiveResult Interpreter::primitiveUnregisterCallback(int argCount) {
@@ -31546,10 +31751,18 @@ PrimitiveResult Interpreter::primitiveUnregisterCallback(int argCount) {
     CallbackInfo* cbInfo = static_cast<CallbackInfo*>(tffi_readAddress(handleOop));
 
     if (cbInfo) {
-        if (cbInfo->closure) ffi_closure_free(cbInfo->closure);
-        if (cbInfo->parameterTypes) free(cbInfo->parameterTypes);
-        if (cbInfo->userData) free(cbInfo->userData);
-        delete cbInfo;
+        // Mark dead and LEAK everything (closure trampoline, cif, this
+        // struct).  Freeing crashed two ways (both root-caused
+        // 2026-07-04): (a) a nested abandoned callback handler /
+        // libffi's return-marshal still read the cif after tearDown
+        // unregistered mid-flight; (b) TestLibrary retained the thunk
+        // pointer and invoked it after a deferred ffi_closure_free —
+        // executing freed trampoline memory (rip==faultAddr crash).
+        // A C library can hold the thunk forever, so no deferral is ever
+        // safe for the EXECUTABLE part; the handler checks the flag and
+        // answers zeroes.  Cost: ~one closure + cif per registered
+        // callback per image lifetime.
+        cbInfo->unregistered.store(true, std::memory_order_release);
     }
 
     popN(argCount);
