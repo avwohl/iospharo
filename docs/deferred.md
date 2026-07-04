@@ -11,8 +11,22 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
   at ConstantBlockClosure>>terminateRealActive and one at
   ProcessorScheduler>>terminateActive with term/run list=nil — terminate
   called from within terminate leaves the process suspended mid-terminate.
-  Suspects: ec631963's prim-196 pc-kill parity / a623b4ca cannotReturn-to-
-  returning-ctx.  NOT a net regression: the Jun-25 baseline binary in the
+  ROOT SHARPENED (2026-07-04 evening): stepping the terminator
+  (`terminator step` loop) dies in a doesNotUnderstand: CASCADE inside
+  #send:super:numArgs: (prim 100, the simulation send) at fd=10 — the
+  simulated execution hands prim 100 a receiver so corrupt that even
+  DNU can't dispatch.  The SAME cascade appears in the ContextTest
+  runner batch and (by symptom) underlies the whole cold-context
+  stepping family — INCLUDING on the Jun-25 baseline binary (its
+  StepOver family scores 0P/5T in identical context).  So this is a
+  LONG-STANDING ARM simulation-machinery bug (prim 100 + JIT-warm
+  frames?), pre-dating the Windows merge; the merge only shifted which
+  tests trip it.  Repro: the terminator-step loop from
+  testTerminateInTerminate in a bare eval → [DNU] CASCADE
+  caller=#send:super:numArgs:.  Next step: lldb on prim 100's dispatch
+  with that repro; check receiver provenance in the simulated frame.
+  Old suspects (prim-196 pc-kill / cannotReturn-to-returning-ctx) are
+  secondary at most.  NOT a net regression: the Jun-25 baseline binary in the
   same context scores ProcessTest 37P/5T (testResumeAfterBCR,
   testSchedulingHigherPriorityServedFirst + 3 more) vs HEAD 45P/1T — the
   Windows-range work fixed four ARM timeouts and introduced this one.
