@@ -688,15 +688,6 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
             endif()
         endforeach()
 
-        # TFFI unit-test fixture library: the image's TFUFFI* tests call out
-        # into TestLibrary.dll (see src/vm/plugins/TestLibrary.c). Staged next
-        # to the exe so FFIWindowsLibraryFinder (`Smalltalk vm directory`)
-        # finds it.
-        add_library(TestLibrary SHARED src/vm/plugins/TestLibrary.c)
-        set_target_properties(TestLibrary PROPERTIES
-            PREFIX ""
-            RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:test_load_image>)
-
         # SDL2 marker: the VM implements SDL2 as built-in FFI stubs (FFI.cpp
         # intercepts any module name containing "SDL2"), but the image's
         # FFIWindowsLibraryFinder must first FIND a file named SDL2.dll — it
@@ -731,6 +722,23 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
                     "$<TARGET_FILE_DIR:test_load_image>/${_ftdll}"
                 VERBATIM)
         endforeach()
+    endif()
+
+    # TFFI unit-test fixture library: the image's TFUFFI*/TF* suites call out
+    # into a `TestLibrary` shared library (src/vm/plugins/TestLibrary.c, the
+    # canonical fixture — same semantics the image expects, e.g.
+    # singleCallToCallback = cb(value+1) pass-through).  Staged next to the
+    # exe because the platform library finder probes `Smalltalk vm directory`:
+    # TestLibrary.dll on Windows (FFIWindowsLibraryFinder), libTestLibrary.dylib
+    # on macOS (TFTestLibrary*>>macLibraryName).  The in-binary testlib/ copies
+    # only cover the callback subset (see the -Wl,-u list below); callout /
+    # struct / registerCallback fixtures exist ONLY via this library.
+    add_library(TestLibrary SHARED src/vm/plugins/TestLibrary.c)
+    set_target_properties(TestLibrary PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:test_load_image>
+        LIBRARY_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:test_load_image>)
+    if(WIN32)
+        set_target_properties(TestLibrary PROPERTIES PREFIX "")
     endif()
 
     # Force export testlib symbols so they're available via dlsym.
