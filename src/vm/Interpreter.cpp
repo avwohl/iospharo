@@ -4613,7 +4613,21 @@ void Interpreter::unblockStuckSnapshotCallers() {
             }
         }
         o = memory_.objectAfter(o);
-        if (++scanned > 10000) break;  // safety cap
+        if (++scanned > 10000) {
+            // Recovery diagnostic only reaches the first 10000 heap
+            // objects; a stuck snapshot caller beyond that stays stuck.
+            // Loud once per run (silent-cap audit residue, 2026-07-04);
+            // the function re-runs every DIAG cycle so repeated prints
+            // would spam.
+            static bool capLogged = false;
+            if (!capLogged) {
+                capLogged = true;
+                fprintf(stderr, "[UNBLOCK-SNAPSHOT] heap scan capped at "
+                        "10000 objects — stuck callers beyond the cap "
+                        "are not reachable by this recovery\n");
+            }
+            break;
+        }
     }
 }
 
@@ -5898,7 +5912,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                                 method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
             if (!inFullBlock && frameDepth_ > 10) {
                 static int blockRetLog = 0;
-                if (blockRetLog++ < 5) {
+                if (blockRetLog++ < 5 || (blockRetLog & 0xFFF) == 0) {  // first 5 + every 4096th
                     uint32_t methodClsIdx = method_.isObject() ? method_.asObjectPtr()->classIndex() : 9999;
                     fprintf(stderr, "[BLOCKRET-FAIL] #%d: inFullBlock=false method_clsIdx=%u compiledBlockClassIndex_=%u fd=%zu method=#%s\n",
                             blockRetLog, methodClsIdx, compiledBlockClassIndex_,
@@ -9287,7 +9301,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         uint64_t spB = (uint64_t)stackPointer_;
         if ((spB & 7) == 1) {
             static int n = 0;
-            if (n++ < 5) {
+            if (n++ < 5 || (n & 0xFFF) == 0) {  // first 5 + every 4096th (never silent)
                 fprintf(stderr,
                     "[SP-CORRUPT-sendSelector] entry sp=0x%llx sel=#%s "
                     "argc=%d caller=#%s fd=%zu\n",
@@ -13469,7 +13483,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         uint64_t fpB = (uint64_t)framePointer_;
         if (((spB & 7) == 1) || ((fpB & 7) == 1)) {
             static int n = 0;
-            if (n++ < 5) {
+            if (n++ < 5 || (n & 0xFFF) == 0) {  // first 5 + every 4096th (never silent)
                 fprintf(stderr,
                     "[SP-CORRUPT-pushFrame] entry sp=0x%llx fp=0x%llx "
                     "callee=#%s caller=#%s argCount=%d fd=%zu\n",
@@ -14048,7 +14062,7 @@ bool Interpreter::popFrame() {
         uint64_t fpB = (uint64_t)framePointer_;
         if ((fpB & 7) == 1) {
             static int n = 0;
-            if (n++ < 5) {
+            if (n++ < 5 || (n & 0xFFF) == 0) {  // first 5 + every 4096th (never silent)
                 void* ra0 = __builtin_return_address(0);
                 Dl_info info0{};
                 int got0 = dladdr(ra0, &info0);
@@ -19703,7 +19717,7 @@ void Interpreter::primitiveSuccess(Oop result) {
         uint64_t spB = (uint64_t)stackPointer_;
         if ((spB & 7) == 1) {
             static int n = 0;
-            if (n++ < 5) {
+            if (n++ < 5 || (n & 0xFFF) == 0) {  // first 5 + every 4096th (never silent)
                 fprintf(stderr,
                     "[SP-CORRUPT-primSuccess] entry sp=0x%llx argCount_=%d "
                     "result=0x%llx method=#%s fd=%zu\n",
@@ -20127,7 +20141,7 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         uint64_t spB = (uint64_t)stackPointer_;
         if ((spB & 7) == 1) {
             static int n = 0;
-            if (n++ < 5) {
+            if (n++ < 5 || (n & 0xFFF) == 0) {  // first 5 + every 4096th (never silent)
                 fprintf(stderr,
                     "[SP-CORRUPT-executePrimitive] entry sp=0x%llx prim=%d "
                     "argc=%d method=#%s fd=%zu\n",
@@ -20245,7 +20259,7 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
                 uint64_t spAfter = (uint64_t)stackPointer_;
                 if ((spAfter & 7) == 1 && (spBefore & 7) != 1) {
                     static int n = 0;
-                    if (n++ < 5) {
+                    if (n++ < 5 || (n & 0xFFF) == 0) {  // first 5 + every 4096th (never silent)
                         fprintf(stderr,
                             "[SP-CORRUPT-primReturn] prim=%d argc=%d "
                             "spBefore=0x%llx spAfter=0x%llx (=SmI %lld) "
@@ -25564,7 +25578,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         uint64_t fpB = (uint64_t)framePointer_;
         if (((spB & 7) == 1) || ((fpB & 7) == 1)) {
             static int n = 0;
-            if (n++ < 5) {
+            if (n++ < 5 || (n & 0xFFF) == 0) {  // first 5 + every 4096th (never silent)
                 fprintf(stderr,
                     "[SP-CORRUPT-tryJIT-entry] sp=0x%llx fp=0x%llx "
                     "callee=#%s caller=#%s argCount=%d fd=%zu\n",

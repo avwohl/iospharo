@@ -1092,6 +1092,11 @@ Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
 
     ObjectHeader* header = obj.asObjectPtr();
 
+    // Out-of-bounds fetch answers nil BY DESIGN — VM code deliberately
+    // probes optional slots past shorter shapes (e.g. classNameOf reading
+    // the name slot on a 6-slot Metaclass).  Do NOT add a tripwire here:
+    // a 2026-07-04 attempt logged 50 false positives per run from those
+    // legitimate probes.  Stores are different — see storePointer below.
     if (index >= header->slotCount()) return nilObject_;
 
     return header->slotAt(index);
@@ -1100,7 +1105,19 @@ Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
 void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
     if (!obj.isObject()) return;
     ObjectHeader* header = obj.asObjectPtr();
-    if (index >= header->slotCount()) return;
+    if (index >= header->slotCount()) {
+        // Out-of-bounds store is DROPPED — loud, never silent (see
+        // fetchPointer above; a dropped store corrupts image state).
+        static int storeOobLog = 0;
+        if (storeOobLog++ < 50) {
+            fprintf(stderr, "[STORE-OOB] storePointer idx=%zu >= slots=%zu "
+                    "obj=0x%llx cls=%u val=0x%llx — store DROPPED\n",
+                    index, (size_t)header->slotCount(),
+                    (unsigned long long)obj.rawBits(), header->classIndex(),
+                    (unsigned long long)value.rawBits());
+        }
+        return;
+    }
 
     if (isOld(obj) && value.isObject() && isYoung(value)) {
         rememberObject(obj);
@@ -4136,7 +4153,20 @@ void ObjectMemory::updatePointersAfterCompact() {
             while (scan + 8 <= end) {  // Need at least 8 bytes for header
                 ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan);
                 size_t ts = obj->totalSize();
-                if (ts == 0 || ts > 0x10000000) break;  // Invalid — stop
+                if (ts == 0 || ts > 0x10000000) {
+                    // Implausible header terminates the region walk — any
+                    // young objects BEYOND this point keep stale old-space
+                    // pointers after compaction.  Loud, never silent
+                    // (silent-cap audit residue, closed 2026-07-04).
+                    static int nsTermLog = 0;
+                    if (nsTermLog++ < 10) {
+                        fprintf(stderr, "[NS-SCAN-TERM] %s: implausible "
+                                "totalSize=%zu at %p (%zd bytes before end) — "
+                                "region walk stopped\n",
+                                label, ts, (void*)scan, (ssize_t)(end - scan));
+                    }
+                    break;
+                }
                 if (obj->classIndex() != 0) {  // Not free
                     size_t numPointers = pointerSlotsOf(obj);
                     Oop* slots = obj->slots();

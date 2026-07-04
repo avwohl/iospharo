@@ -293,6 +293,18 @@ public:
             if (!oop.isObject()) return oop;
             hdr = oop.asObjectPtr();
         }
+        if (hdr->isForwarded()) {
+            // Cap hit with the chain still forwarded: either a >10-deep
+            // legitimate chained-become: (raise the cap) or a forwarding
+            // CYCLE from heap corruption.  Loud, never silent (silent-cap
+            // audit residue, closed 2026-07-04).
+            static int fwdCapLog = 0;
+            if (fwdCapLog++ < 20) {
+                fprintf(stderr, "[FWD-CHAIN-CAP] followForwarded stopped at "
+                        "10 hops still forwarded — oop=0x%llx\n",
+                        (unsigned long long)oop.rawBits());
+            }
+        }
         return oop;
     }
 

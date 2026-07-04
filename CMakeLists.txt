@@ -577,7 +577,8 @@ elseif(WIN32)
     # symbol lookup); used by FFI.cpp/Interpreter.cpp/ObjectMemory.cpp.
     # winmm: waveOut audio backend (SoundPlugin.cpp).
     # dbghelp: backtrace_symbols via SymFromAddr (windows.cpp).
-    target_link_libraries(PharoVMCore ws2_32 dl winmm dbghelp)
+    # bcrypt: BCryptGenRandom CSPRNG for arc4random_buf (win_posix_compat.h).
+    target_link_libraries(PharoVMCore ws2_32 dl winmm dbghelp bcrypt)
     # SSL/TLS backend: real OpenSSL (sqGenericSSL.c) — now usable since the
     # winsock2 SocketPlugin works (TLS runs over our TCP sockets).  MSYS2
     # CLANG64 provides openssl via pkg-config (3.x).

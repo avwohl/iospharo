@@ -85,7 +85,13 @@ isolation (no suite watchdog):
     entries (strong GC roots) pinned their ephemeron keys across every
     subsequent GC. The JIT branch now performs the same one-shot check
     before returning. First warm run now reaches stock parity (33/34).
-  - [ ] **Residual: mourn-queue consumer identity/timing (one flake from
+  - [x] **RESOLVED 2026-07-04 (by 27e4ca74 weak-root GC treatment):
+    warm runs now 4/4 at 33/34+1EF = STOCK PARITY** (WeakAnnouncerTest
+    x4 in one VM, wa-warm.log).  The residual pin was the ephemeron key
+    held via VM cache slots (method cache / IC entries marked STRONG
+    during fullGC) — exactly what the weak-root purge removes.
+    Historical investigation notes below.
+  - [old] **Residual: mourn-queue consumer identity/timing (one flake from
     parity: warm runs 32-33/34, stock 33/34).** The earlier "stale
     context temp" lead DISSOLVED — a post-nil-only probe (skip the
     pre-nil GCs) shows the ONLY post-nil pin is mournQ[0]
@@ -569,10 +575,14 @@ artifact (27/27 standalone); OCClassBuilderTest = stock fails identically
      revisit after the fullGC path is proven.
   Payoff beyond the test: dead classes/methods stop being pinned by VM
   caches entirely (IDE class-redefinition memory leak).
-- [ ] NetNameResolverTest>>testLocalHostName (ours F, stock P) —
-  localhost name resolution on winsock; likely a small prim gap.
-- [ ] MicTextPresenterTest>>testHugeFontIsHuge (+ Microdown twin;
-  ours F, stock P) — font metrics headless; graphics/FreeType category.
+- [x] RESOLVED (verified 2026-07-04): NetNameResolverTest>>testLocalHostName
+  passes (1/1; suite 1 pass + 1 skip) — fixed by the 2026-07-03 hostname
+  prims (primHostNameSize/Result; localHostName answers the machine name
+  'wohl25', isConnected true).  Entry predated that fix.
+- [x] RESOLVED (verified 2026-07-04): MicTextPresenterTest 21/21 incl.
+  testHugeFontIsHuge (sole implementor — the "Microdown twin" no longer
+  exists as a separate test).  Fixed by the Cairo runtime stack
+  (de30e70b).
 AUDIT BUILD VALIDATION (bd306e47): battery 626/626 green (weak/step/
 exception/process/collections), TFFI 75/75, fib 12ms & ensure 31ms
 unchanged, and the MethodMap tombstone fix cut zone-full failed-compiles
@@ -652,7 +662,13 @@ run `ninja TestLibrary` in build-win).  Recovered: InCallbacks 36/36 +
 derived 12/12 + Concurrency 2/2 + CallbackTest 12..13/13 (incl. the
 raw-native-thread callbackFromAnotherThread test).  ONE residual vs
 stock's 13/13:
-- [ ] testCallbackInLoop(UsingWorker) trips TestTookTooMuchTime when the
+- [x] RESOLVED (aging-clock fixes 27186475/d91c0df8 + requeue-order
+  e9a7e984; verified 2026-07-04): TFUFFICallbackTest is 13/13 in-suite
+  across 20+ full-suite executions (every x4 gauntlet run 2026-07-03/04)
+  — the order-dependent InLoop(UsingWorker) timeout no longer occurs.
+  The one-behind service pattern is explained by the requeue mechanism
+  (see the #14 resolution note above).  Historical evidence chain:
+  [old] testCallbackInLoop(UsingWorker) trips TestTookTooMuchTime when the
   OTHER UsingWorker tests run first (standalone: 1.05s PASS).
   EVIDENCE CHAIN (2026-07-03, now nailed to one scheduling step):
   * New tool: PHARO_STATE_DUMP_PERIOD_MS=N — C-side wall-clock scheduler
@@ -713,28 +729,43 @@ The 41-agent audit (commit bd306e47 fixed the actionable set; e631d780
 fixed the ring-size regression it introduced) confirmed these additional
 findings, deferred with rationale — all medium/low, none reachable from
 green-suite workloads today:
-- [ ] ObjectMemory.cpp:1103 storePointer/fetchPointer slot bounds check
-  silently no-ops the store / returns nil — should assert loudly in debug.
-- [ ] ObjectMemory.hpp:290 followForwarded 10-hop chain cap (forwarding
-  chains are usually 1 deep; becomes real only under chained become:).
-- [ ] ObjectMemory.cpp:760 findGlobal heuristic caps (VM-internal lookups
-  of well-known globals only).
-- [ ] ObjectMemory.cpp:4049 updatePointersAfterCompact 256MB plausibility
-  scan terminator (defensive; garbage-header walk).
-- [ ] Interpreter.cpp:4531 unblockStuckSnapshotCallers scans first 10000
-  heap objects only (recovery diagnostic).
-- [ ] Chain-loop degrade paths log-capped at 5 then silent
-  (Interpreter.cpp ~24926/26216/26239 area) — raise caps or rate-limit.
-- [ ] setSenderSafe 200-deep cycle walk (materialize) — deliberate
-  HELPER_SENDS cycle-breaker; revisit if CYCLE-BREAK ever fires in logs.
-- [ ] JITRuntime bvClosureSaveStack_ 256-entry guard; JITCompiler
-  getStackBounds/eviction interplay now fail-safe (skip eviction).
-- [ ] primitiveGetNextEvent 15-slot ivar scan, primitiveInputSemaphore2
-  4-slot scan, primitiveCalloutToFFI 19-literal scan — heuristic
-  object-shape probes; replace with proper layout lookups.
-- [ ] TFFI callback-polling prims hardcoded nil/0 interceptions
-  (Primitives.cpp ~14983/15291) — superseded once TFFI v2 callback
-  forwarding lands.
+CLOSED 2026-07-04 (loud-not-silent batch; every disposition below):
+- [x] storePointer OOB: now loud ([STORE-OOB], first 50) — dropped
+  stores are visible (zero firings across battery+gauntlet).
+  fetchPointer OOB: CLOSED WITH RATIONALE, no tripwire — nil-answer is
+  a relied-upon API semantic (classNameOf-style probes read optional
+  slots past shorter shapes, e.g. slot 6 on a 6-slot Metaclass; a
+  tripwire attempt logged 50 false positives per run).  Comment added
+  at the fetch site so nobody re-adds it.
+- [x] followForwarded 10-hop cap: loud when the cap is hit with the
+  chain still forwarded ([FWD-CHAIN-CAP], first 20).
+- [x] findGlobal heuristic caps: CLOSED WITH RATIONALE, no code change —
+  the caps are skip-and-continue guards over a heuristic scan for
+  VM-internal well-known globals; a miss degrades to nil which every
+  caller handles (several probe for optional globals, so a
+  nil-result tripwire would spam).
+- [x] updatePointersAfterCompact new-space scan terminator: loud
+  ([NS-SCAN-TERM], first 10) — objects beyond the stop keep stale
+  pointers, so firing = real corruption evidence.
+- [x] unblockStuckSnapshotCallers 10000-object cap: loud once per run
+  when the cap is reached.
+- [x] Corruption-tripwire log caps (8x `< 5` sites: SP-CORRUPT family,
+  BLOCKRET-FAIL): now first-5 + every-4096th — mid-run corruption storms
+  stay visible without flooding.
+- [x] setSenderSafe 200-deep cycle walk: CLOSED WITH RATIONALE, no code
+  change — deliberate HELPER_SENDS cycle-breaker that is already loud
+  (CYCLE-BREAK log) when it fires.
+- [x] bvClosureSaveStack_ 256-entry guard: loud ([BV-SAVE-GUARD], first
+  20) — a trip means an inlined block ran with the caller's closure.
+- [x] Heuristic object-shape probes (primitiveGetNextEvent /
+  InputSemaphore2 / CalloutToFFI literal scans): CLOSED WITH RATIONALE,
+  no code change — the probed shapes are VM-injected/fixed structures we
+  control; a "proper layout lookup" adds image-version fragility for
+  zero observed defects on the green suite.
+- [x] TFFI callback-polling nil/0 interceptions: REMOVED (3 sites) — the
+  real callback machinery landed (primitiveReadNextCallback + v2
+  forwarding), so lookups that reach those scanners now fail loudly
+  instead of silently answering "empty queue".
 
 ### Primitive error-signal fidelity (cross-platform, pre-existing)
 (FileAttributesPluginPrimsTest: fixed 2026-07-02 — see the [x] entry above.)
@@ -769,7 +800,11 @@ green-suite workloads today:
   regression-clean (CalloutBuilder 10/10, Parser 45/45, ExternalStructure
   12/12, ExternalArray 7/7, TFStruct 6/6). The return-value conversion is
   now shared (tffiConvertReturnValue) between same-thread and worker paths.
-- [ ] **TFFI v2: cross-thread callback forwarding** — the *InCallbacks*
+- [x] LANDED 2026-07-03 (6280deb8; hardened by e9a7e984 + 56997740):
+  **TFFI v2 cross-thread callback forwarding** — InCallbacks 2x36/36,
+  Derived 12/12, TFUFFICallbackTest 13/13 verified repeatedly at suite
+  scale.  Design notes below are the implemented plan:
+  [old] the *InCallbacks*
   suites (36+12 errors), TFUFFICallbackTest worker half (9 errors), and
   TFUFFIConcurrencyTest>>testConcurrentlyCompiling (1) need callbacks
   invoked FROM the worker thread: the worker must block while the VM
@@ -1151,13 +1186,13 @@ Historical scoping notes (how the breakthrough was reached) follow:
   interpreted 32 benchFib → 381 samples, benchFib top at 19.9%,
   dropped-when-idle working. (Cosmetic: some entries print "?>>?" when
   class/selector resolution fails — same as POSIX.)
-- [ ] **SIGSEGV crash recovery** (`test_load_image.cpp:804` `pharoWinCrashHandler`)
-  — Windows installs a Vectored Exception Handler that DUMPS fault info (code,
-  fault addr, rip, rva, step count, active method, RtlCaptureStackBackTrace) but
-  returns `EXCEPTION_CONTINUE_SEARCH` so the process still crashes.  The POSIX
-  `sigaction` + `siglongjmp` RECOVERY path is not replicated (a VEH can't safely
-  unwind, and the Windows faults seen were heap corruption, not recoverable). So:
-  diagnostic dump yes, recovery no.
+- [x] **SIGSEGV crash recovery — CLOSED BY DESIGN (2026-07-04)**
+  (`test_load_image.cpp` `pharoWinCrashHandler`): dump-then-crash is the
+  intended end state.  A VEH cannot safely unwind arbitrary faults, every
+  Windows fault family seen so far was memory corruption where "recovery"
+  would mask the disease, and the dump has repeatedly been the root-cause
+  tool (the 2026-07-04 teardown-segfault family was solved entirely from
+  its symbolized backtraces).  Keep: diagnostic dump yes, recovery no.
 - [x] **Native backtraces — DONE (2026-07-02)** (`windows.cpp` + dbghelp):
   `backtrace`/`backtrace_symbols` via RtlCaptureStackBackTrace + DbgHelp
   SymFromAddr. System-DLL frames symbolize fully; our clang exe carries DWARF
@@ -1174,9 +1209,11 @@ Historical scoping notes (how the breakthrough was reached) follow:
   the exact target path. (lstat/readlink POSIX shims remain no-ops — the
   wide Win32 APIs are the mechanism, same as stock's plugin.) File family
   regression-clean.
-- [ ] **POSIX file ownership** — `chown`/`lchown` return ENOSYS (Windows has no
-  POSIX uid/gid model); the two calling primitives turn that into a primitive
-  Failure, which the image handles.
+- [x] **POSIX file ownership — CLOSED BY DESIGN (2026-07-04)** —
+  `chown`/`lchown` return ENOSYS (Windows has no POSIX uid/gid model); the
+  two calling primitives turn that into a primitive Failure, which the
+  image handles.  Honest-failure is the correct terminal state; mapping
+  onto Windows ACLs would fake semantics stock doesn't provide either.
 - [x] **Clipboard — DONE (2026-07-02)** (`windows.cpp`) — real Win32 clipboard:
   `vm_getClipboardText`/`vm_setClipboardText` use OpenClipboard +
   CF_UNICODETEXT with UTF-16<->UTF-8 conversion (mirrors SDL2's
@@ -1201,11 +1238,11 @@ Historical scoping notes (how the breakthrough was reached) follow:
   glyph + color/rect extraction are no-ops.  This is the C++ "native morph
   rasterization" fast-path (Apple uses CoreText/CoreGraphics); Windows would need
   FreeType + GDI/Direct2D.  Separate from, and subordinate to, the GUI milestone.
-- [ ] **ARM64-Windows J2J trampoline** (`CMakeLists.txt:277`) — `TrampolineAsm.S`
-  (the hand-written ARM64 J2J trampoline) is REMOVE_ITEM'd on Windows; it
-  preprocesses to empty on x86-64 anyway (the C++ while-loop fallback is used), so
-  this is a no-op for the current x86-64 Windows target — but a real gap if an
-  ARM64-Windows build is ever attempted (GAS-vs-MASM assembler-dialect question).
+- [x] **ARM64-Windows J2J trampoline — CLOSED, NOT APPLICABLE to the x86-64
+  target (2026-07-04)** (`CMakeLists.txt`) — `TrampolineAsm.S` is
+  REMOVE_ITEM'd on Windows and preprocesses to empty on x86-64 anyway (the
+  C++ while-loop fallback is used).  Re-open ONLY if an ARM64-Windows port
+  is attempted (GAS-vs-MASM assembler-dialect question).
 
 ### Memory
 - [ ] **Old-space heap commit** — `win_mman.h` `mmap` does
@@ -1218,9 +1255,12 @@ Historical scoping notes (how the breakthrough was reached) follow:
   analogue.
 
 ### RNG
-- [ ] **arc4random_buf** (`win_posix_compat.h`) — implemented via
-  `std::random_device` (OS CSPRNG on LLVM-MinGW). Adequate for UUIDs; revisit if
-  a hardened CSPRNG is required.
+- [x] **arc4random_buf — UPGRADED 2026-07-04** (`win_posix_compat.h`) —
+  now `BCryptGenRandom(BCRYPT_USE_SYSTEM_PREFERRED_RNG)` (the documented
+  Windows CSPRNG; links bcrypt), removing the dependence on which RNG the
+  C++ runtime wires into `std::random_device` (libstdc++-on-MinGW
+  historically made it DETERMINISTIC).  random_device remains only as a
+  never-observed failure fallback.
 
 ### Packaging
 - [ ] **Authenticode signing** — not wired yet (milestone 5). z80cpmw's Azure

@@ -2256,6 +2256,18 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
         s->interp->bvIsBvSaveAtJ2jDepth_[j2jDepthBefore] = true;
         s->interp->setCurrentClosure(blockClosureOop);
         s->closure = blockClosureOop;  // JSV_CLOSURE: block's frame closure
+    } else {
+        // Guard tripped: the inlined block will run with the CALLER's
+        // closure_ — silent state corruption if this ever fires (needs
+        // 256-deep nested BV-inlined activations).  Loud, never silent
+        // (silent-cap audit residue, closed 2026-07-04).
+        static int bvGuardLog = 0;
+        if (bvGuardLog++ < 20) {
+            fprintf(stderr, "[BV-SAVE-GUARD] closure side-stack full "
+                    "(j2jDepth=%d bvDepth=%d) — inlined block runs with "
+                    "caller closure\n",
+                    j2jDepthBefore, s->interp->bvClosureSaveDepth_);
+        }
     }
 
     // Set up callee state.  Block's outer receiver is at closure[3].

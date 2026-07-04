@@ -61,6 +61,7 @@ static inline const char* pharo_tm_zone(const struct tm* lt) {
 #include <winsock2.h>   // sockets, gethostname, struct timeval
 #include <ws2tcpip.h>   // getaddrinfo, addrinfo, sockaddr_in6, inet_ntop
 #include <windows.h>    // GetProcessTimes, GetDiskFreeSpaceExA, GetSystemInfo
+#include <bcrypt.h>     // BCryptGenRandom for arc4random_buf (link: bcrypt)
 #include <sys/types.h>  // ssize_t
 #include <sys/stat.h>
 #include <direct.h>     // _mkdir
@@ -171,9 +172,21 @@ static inline struct tm* localtime_r(const time_t* t, struct tm* result) {
     return (localtime_s(result, t) == 0) ? result : nullptr;
 }
 
-// ---- arc4random_buf via std::random_device (OS CSPRNG on Windows) -----------
+// ---- arc4random_buf via the OS CSPRNG ---------------------------------------
+// BCryptGenRandom(BCRYPT_USE_SYSTEM_PREFERRED_RNG) is Windows' documented
+// CSPRNG — the same source rand_s uses.  Replaces the earlier
+// std::random_device version: libstdc++-on-MinGW historically made
+// random_device DETERMINISTIC (mt19937 with a constant seed), and while
+// LLVM-MinGW's libc++ is believed to use rand_s, tying UUID entropy to an
+// unstated library detail was the deferred-item risk.  Falls back to
+// random_device only if BCrypt fails (never observed).
 static inline void arc4random_buf(void* buf, size_t n) {
-    static thread_local std::random_device rd;   // non-deterministic OS entropy
+    if (BCryptGenRandom(nullptr, static_cast<PUCHAR>(buf),
+                        static_cast<ULONG>(n),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) >= 0) {
+        return;
+    }
+    static thread_local std::random_device rd;   // last-resort fallback
     unsigned char* p = static_cast<unsigned char*>(buf);
     while (n > 0) {
         unsigned int r = rd();

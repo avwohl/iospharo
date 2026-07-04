@@ -15003,20 +15003,12 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
                 // Symbol/String format 16-23
                 if (format >= 16 && format <= 23 && litHdr->byteSize() > 3) {
                     std::string str((char*)litHdr->bytes(), litHdr->byteSize());
-                    // Check for known internal FFI functions that we don't support
-                    // Return appropriate values instead of failing (which raises exceptions)
-                    if (str == "primNextPendingCallback" || str == "nextPendingCallback") {
-                        // No callback support — nil means "no pending callbacks"
-                        popN(static_cast<size_t>(argCount + 1));
-                        push(memory_.nil());
-                        return PrimitiveResult::Success;
-                    }
-                    if (str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
-                        // No callback support — 0 pending callbacks
-                        popN(static_cast<size_t>(argCount + 1));
-                        push(Oop::fromSmallInteger(0));
-                        return PrimitiveResult::Success;
-                    }
+                // (Removed 2026-07-04: pre-callback-era interceptions that
+                // hardcoded nil/0 for primNextPendingCallback /
+                // primNumberOfCallbacks.  Real callback machinery landed
+                // (primitiveReadNextCallback + TFFI v2 forwarding); a lookup
+                // that reaches here now fails loudly instead of silently
+                // pretending an empty queue.  Silent-cap audit residue.)
                 }
             }
         }
@@ -15313,16 +15305,12 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         // as a string literal, but the spec array has a class object, not a string
         if (litHdr->isBytesObject() && litHdr->byteSize() < 100) {
             std::string str((char*)litHdr->bytes(), litHdr->byteSize());
-            if (str == "primNextPendingCallback" || str == "nextPendingCallback") {
-                popN(static_cast<size_t>(argCount + 1));
-                push(memory_.nil());
-                return PrimitiveResult::Success;
-            }
-            if (str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
-                popN(static_cast<size_t>(argCount + 1));
-                push(Oop::fromSmallInteger(0));
-                return PrimitiveResult::Success;
-            }
+                // (Removed 2026-07-04: pre-callback-era interceptions that
+                // hardcoded nil/0 for primNextPendingCallback /
+                // primNumberOfCallbacks.  Real callback machinery landed
+                // (primitiveReadNextCallback + TFFI v2 forwarding); a lookup
+                // that reaches here now fails loudly instead of silently
+                // pretending an empty queue.  Silent-cap audit residue.)
             // CRITICAL: isVMDisplayUsingSDL2 check - OSSDL2Driver uses this to decide event handling
             if (str == "isVMDisplayUsingSDL2") {
                 return primitiveIsVMDisplayUsingSDL2(argCount);
@@ -15390,18 +15378,12 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             if (!moduleName.empty() && !primName.empty()) {
                 std::string key = moduleName + ":" + primName;
 
-                // Handle ThreadedFFI callback primitives - return nil/0 instead of failing
-                // This prevents exception handling from consuming startup cycles
-                if (primName == "primNextPendingCallback" || primName == "nextPendingCallback") {
-                    popN(static_cast<size_t>(argCount + 1));
-                    push(memory_.nil());
-                    return PrimitiveResult::Success;
-                }
-                if (primName == "primNumberOfCallbacks" || primName == "numberOfCallbacks") {
-                    popN(static_cast<size_t>(argCount + 1));
-                    push(Oop::fromSmallInteger(0));
-                    return PrimitiveResult::Success;
-                }
+                // (Removed 2026-07-04: pre-callback-era interceptions that
+                // hardcoded nil/0 for primNextPendingCallback /
+                // primNumberOfCallbacks.  Real callback machinery landed
+                // (primitiveReadNextCallback + TFFI v2 forwarding); a lookup
+                // that reaches here now fails loudly instead of silently
+                // pretending an empty queue.  Silent-cap audit residue.)
 
                 auto it = namedPrimitives_.find(key);
                 if (it != namedPrimitives_.end()) {
