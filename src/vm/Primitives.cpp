@@ -4864,9 +4864,16 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                 return Oop::fromSmallInteger(memory_.statistics().gcCount);
             case 8:  // Full GC time (ms)
                 return Oop::fromSmallInteger(memory_.statistics().totalGCTime);
-            case 9:  // Scavenge count
-                return Oop::fromSmallInteger(0);
-            case 10: // Scavenge time (ms)
+            case 9: {  // Scavenge (incremental GC) count
+                // Must be the REAL count: VirtualMachine>>statisticsReport
+                // divides by it UNGUARDED (`incrGCTime / incrGCs`), and
+                // ZnDefaultServerDelegate's /status page embeds that report —
+                // reporting 0 made every ZnServer /status request answer
+                // 500 ZeroDivide (28 of ZnServerTest's 31 tests, 2026-07-04).
+                extern uint64_t g_scavengeCount;
+                return Oop::fromSmallInteger(static_cast<int64_t>(g_scavengeCount));
+            }
+            case 10: // Scavenge time (ms) — not tracked; 0/N is safe image-side
                 return Oop::fromSmallInteger(0);
             case 11: // Tenures count
                 return Oop::fromSmallInteger(0);
