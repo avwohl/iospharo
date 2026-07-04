@@ -1,3 +1,39 @@
+# WIP — ARM re-verification of the Windows merge: fix wave COMPLETE (2026-07-04)
+
+The Windows-session changes (dcacc401..155d9bc4) came back to ARM and broke
+startup + several suites.  All blocking regressions root-caused and fixed on
+`jit` (this session, ARM/macOS):
+
+- fb1e0d85  interp: block-NLR dynamic home is a gated FALLBACK (fae4edc1
+  override let a stale closure_ redirect NLRs on JIT block returns —
+  10 varying wrong-receiver DNUs killed StPharo startup before
+  SUnitRunner ever registered; ownership gate = closure_'s compiledBlock
+  slot must BE method_).
+- d6e88006  interp: image-protocol NLR unwind targets the C++-resolved
+  home (ec631963's aboutToReturn: re-derived home via `self home`; an
+  inline-J2J block callee has no frame, so startCtx was the CALLER and
+  delivery landed one frame short — every ensure-crossing FreeTypeCache
+  glyph hit returned the CACHE; now sends homeCtx return:value through:).
+- 3d83430c  sista: flush interpHints_ on every moving GC (raw oop bits,
+  no lifecycle — dangling targetMethod SEGV'd LinearLifter during
+  WeakKeyDictionaryTest, even under PHARO_NO_JIT).
+- fa02c604 + FFI exe-dir search + fixtures: libTestLibrary.dylib now
+  built/staged next to test_load_image on macOS AND the FFI bare-name
+  search covers the exe dir; TestLibrary.c gained sum_*enum +
+  dereferencing unref_pointer; new primitiveGetObjectFromAddress
+  (PointerUtils inverse).  TFFI batch: was 17E+1F+1T scattered -> 
+  134 P / 0 F / 0 E / 7 skip.
+- 829ddfbe  docs: the stale startup.st CWD trap (a Jun-20 leftover
+  hijacked every stock-VM prep from the repo root — looked exactly like
+  a scheduler wedge; cost half a day).
+
+ARM suite status (this session): GC weak batch 415/420 (ObsoleteTest 3/3 x4,
+WeakAnnouncer 33/34+1s x4, zero tripwires, GC purges live incl. jitMethods);
+TFFI 134/134 non-skip.  Parked with evidence in deferred.md: WKD testClearing
+warm-run deviation (JIT-only, timing).  Full 2047-class run + soogle pending.
+
+---
+
 # WIP — x86/Windows JIT fix list: COMPLETE (2026-07-04)
 
 The 2026-07-03 fix list (#14 repeat-run wedge, #11 ObsoleteTest one-cycle
