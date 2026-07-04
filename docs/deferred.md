@@ -4,6 +4,33 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
+## ARM (macOS) — post-Windows-merge verification 2026-07-04
+
+- [ ] **WeakKeyDictionaryTest>>testClearing warm-run deviation (ARM, JIT
+  only).** Repro: `3 timesRepeat: [(WeakKeyDictionaryTest run: #testClearing)]`
+  in one VM — runs 1-2 pass, run 3 fails "Got 1 instead of 1001" (the
+  size assert before/right after the explicit garbageCollect sees the
+  1000 weak entries ALREADY finalized).  Also fails in batch context when
+  WKD follows GC-heavy classes (12-class weak/GC batch).  Evidence chain:
+  stock Cog 3/3; Jun-25 ARM baseline 3/3; HEAD PHARO_NO_JIT 3/3; HEAD
+  default fails run 3; PHARO_NO_J2J / PHARO_T1_NO_INLINE_J2J do NOT cure
+  (not the J2J save-pool liveness family).  Mechanism: an INCIDENTAL
+  ephemeron-firing GC lands inside the test's keys:=nil → at:put: →
+  asserts window on warm heaps, and the deferred finalization signal
+  (f96cb69b fires the one-shot at every JIT activation) wakes the pri-50
+  mourner inside the window, draining the 1000 slots before the assert
+  reads size.  The interpreter path deliberately preserves the invariant
+  (see the activateMethod comment: "dict size is prim 264 (quick)...");
+  stock's signal empirically lands after the window (same 79/50
+  finalizer priorities).  Whether the in-window GC happens is
+  allocation-volume threshold luck — chasing the commit that shifted
+  volumes is not productive; the durable fix is stock-parity signal
+  DELIVERY timing on the JIT path (defer the wake past the currently
+  executing statement / to the interrupt checkpoint, like Cog), or
+  ephemeron-fire scheduling that cannot land between an explicit
+  garbageCollect and the next full send boundary.  Re-check after the
+  full-suite run; if WKD fails there too, promote to fix-now.
+
 ## Windows (clang / LLVM-MinGW) — port status 2026-06-27
 
 Working: headless interpreter builds and correctly evaluates Smalltalk on a
