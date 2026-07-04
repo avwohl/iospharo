@@ -138,3 +138,7 @@ build-rel/
 scripts/perfdb/ids.local.env
 build-win-jit/
 build-jit-log.txt
+
+# Windows installer outputs (packaging/windows/build-installer.ps1)
+dist/
+packaging/windows/staging/

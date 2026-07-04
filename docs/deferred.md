@@ -1334,10 +1334,26 @@ Historical scoping notes (how the breakthrough was reached) follow:
   never-observed failure fallback.
 
 ### Packaging
-- [ ] **Authenticode signing** — not wired yet (milestone 5). z80cpmw's Azure
-  Trusted Signing kit can sign `test_load_image.exe` (jsign cross-platform or
-  signtool+dlib). Open: reuse `z80cpmw-public` cert vs a dedicated
-  `iospharo-public` profile.
+- [x] **Authenticode signing + Windows installer — DONE 2026-07-04**
+  (owner decision: reuse the `z80cpmw-public` Trusted Signing profile —
+  the cert subject is the personal `CN=Aaron Wohl`, not product-named).
+  `packaging/windows/build-installer.ps1` stages build-win into a dist
+  layout (exe renamed to `iospharo.exe` — binary is name-agnostic,
+  verified), signs `iospharo.exe` + `TestLibrary.dll` with the z80cpmw
+  signing kit (signtool + Azure.CodeSigning.Dlib, SP creds, RFC-3161
+  timestamp via timestamp.acs.microsoft.com), builds
+  `packaging/windows/iospharo.nsi` with makensis (per-user install to
+  `%LOCALAPPDATA%\Programs\iospharo`, HKCU, no UAC; optional .image
+  association; explicit-enumeration uninstaller), signs the setup exe,
+  and verifies everything.  Third-party DLLs keep upstream provenance
+  (unsigned); the SDL2.dll text marker is never fed to signtool.
+  VERIFIED end-to-end: silent install -> `signtool verify /pa` passes on
+  both installed binaries -> installed VM boots a stock Pharo 13 image
+  and runs benchFib -> silent uninstall leaves no files/registry
+  residue.  First artifact: `dist/iospharo-0.1.0-setup.exe` (17.7 MB,
+  SHA256 1D96612B79DDBA519D9B95AF0DADC4DB12E394AF603FD39D69720F94943B23B6).
+  Kit gotcha recorded in the build script: sign.ps1 mis-binds a second
+  positional file into -Verify — sign one file per invocation.
 
 ### Run-environment caveat (not a bug)
 - The exe MUST run from a NATIVE Windows shell. Launching via the MSYS2 *login*
