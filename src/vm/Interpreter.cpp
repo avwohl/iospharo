@@ -3699,6 +3699,14 @@ void Interpreter::interpret() {
                 method_.isObject() ? memory_.selectorOf(method_).c_str() : "?",
                 memory_.mournQueueSize(),
                 (size_t)memory_.pendingFinalizationSignals());
+            // Caller chain (top 5 saved frames) — a repeated top method with
+            // no context is useless for livelock hunts (2026-07-03).
+            for (size_t d = frameDepth_; d > 0 && d + 5 > frameDepth_; --d) {
+                Oop fm = savedFrames_[d - 1].savedMethod;
+                fprintf(stderr, "  [SD-FRAME %zu] %s>>#%s\n", d - 1,
+                        fm.isObject() ? classNameOfMethod(fm).c_str() : "?",
+                        fm.isObject() ? memory_.selectorOf(fm).c_str() : "?");
+            }
             fflush(stderr);
         }
 
@@ -4911,6 +4919,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     if (callbackDepth_ < MaxCallbackDepth) {
         callbackContextStack_[callbackDepth_] = vmcc;
         callbackHandlerStack_[callbackDepth_] = memory_.nil();
+        callbackHandedOut_[callbackDepth_] = false;
         callbackDepth_++;
     }
 

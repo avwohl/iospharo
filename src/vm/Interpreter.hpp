@@ -3456,6 +3456,13 @@ private:
     /// Stack of active callback contexts (for nested callbacks)
     static constexpr int MaxCallbackDepth = 16;
     VMCallbackContext* callbackContextStack_[MaxCallbackDepth] = {};
+    // Parallel flags: has primitiveReadNextCallback already handed this
+    // entry to the image?  The image's TFCallbackQueue treats the callback
+    // semaphore as a QUEUE (one signal == one item): re-handing a still-
+    // executing invocation on a duplicate/early signal spawned duplicate
+    // executor processes until livelock (repeat-run wedge, 2026-07-03).
+    // Each entry is returned exactly once; extra reads answer nil.
+    bool callbackHandedOut_[MaxCallbackDepth] = {};
     // Parallel stack: the handler process we transferred to in step 5 of
     // enterInterpreterFromCallback. Used at callback-return time to decide
     // whether to re-queue the current active process: if it's still this

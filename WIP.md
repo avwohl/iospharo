@@ -1,106 +1,96 @@
-# WIP — Windows JIT parity (branch `jit`)
+# WIP — session snapshot before reboot (2026-07-03 late PM)
 
-Last updated: 2026-07-02. Build is green.
+(Previous 2026-07-02 tally superseded; that work is all committed and
+documented in docs/deferred.md + memory files.)
 
-## 2026-07-02 session tally (all committed, each verified)
-- GUI input user-confirmed working with real hardware ("it works ok").
-- AST-Core "Illegal dependency" + System>Startup no-op: classified as stock
-  image behavior (docs/image_issues.md), not VM bugs.
-- SDL2.dll marker auto-staged next to exe (no image-dir prep; stock refvm
-  unpoisoned); primitive 142 primVmPath returns the DIRECTORY (was exe path —
-  split on '/' only); GetModuleFileNameA for exe path.
-- Real Win32 clipboard (round-trip verified) + live window resize
-  (drag/maximize re-layouts the World; sizemove-debounced).
-- UDP echo+broadcast (missing primitiveSocketListenWithOrWithoutBacklog =
-  UDP setPort:; SO_BROADCAST option; SIO_UDP_CONNRESET off at creation).
-- Socket dataAvailable stock-parity (MSG_PEEK; false at EOF); WSAEMSGSIZE
-  peek = pending datagram (Windows quirk, bisect-found).
-- BitBlt negative-depth (little-endian) support + rule 40 fixAlpha:
-  PNGReadWriterTest 16/42 -> 39/42, MicFileResourceReferenceTest 0/16 -> 16/16
-  (the old "BitBlt Fraction bug"). PHARO_BITBLT_TRACE knob added.
-- Primitive 218 implemented: debugger simulation of named prims
-  (CodeSimulationTest 8/8 — was the full-suite's only error AND its abort
-  point at class 156).
-Remaining trackers: SocketStreamTest 2 flush-after-close errors (diagnosed,
-parity fix attempt regressed Zdc/UDP, reverted — deferred.md); PNG 16-bit
-trio; Spec presenter headless hangs; sound/MIDI/IME stubs.
+Goal (`/goal finish the fix list`): 2 items remain — #14 repeat-run wedge
+(in flight, UNCOMMITTED changes below) and #11 ObsoleteTest one-cycle pin
+(designed, not started; plan in docs/deferred.md).
 
-## DONE & verified (milestones 1–4)
-- **File subsystem 100%** — long-path `\\?\`; `DiskFileSystemTest` 59/59.
-- **FFI working** — `getSystemAttribute 1003` = CPU arch; `FFICalloutMethodBuilderTest` 10/10.
-- **Platform-path UTF-16LE** — `DiskFileAttributesTest` +2.
-- **TCP sockets** — winsock2 `SocketPlugin` port + `WSAStartup` wiring; ~80+ tests recovered; `TCPSocketTest` 9/9.
-- **Crypto/TLS — HTTPS works** — `ZnClient get: 'https://example.com'` → 200.
-- **GUI RENDER + on-screen window WORK** — the Pharo Morphic desktop renders into a real Win32 window. Evidence: `docs/images/windows-gui-*.png`.
-- **GUI INPUT WORKS (2026-07-01)** — real mouse + keyboard drive the image:
-  menubar menus open (Pharo/Browse dropdowns), World menu on right-click,
-  Playground opens and accepts typed text, code evaluation runs, a DNU opens
-  the full debugger (stack/inspector/Create-method), Profiler tool opens from
-  a context menu. Evidence: `docs/images/windows-gui-menu-click.png`,
-  `docs/images/windows-gui-debugger.png`. Verified via posted WM_* messages to
-  the live HWND + PrintWindow screenshots (SetForegroundWindow is blocked from
-  a background automation shell — that's a test-harness limitation, not a VM one).
-  User-confirmed with real hardware input 2026-07-02.
-- **Clipboard (2026-07-02)** — real Win32 clipboard (CF_UNICODETEXT,
-  UTF-16<->UTF-8) in `windows.cpp`; round-trip verified both directions.
-- **Window resize (2026-07-02)** — dragging/maximizing the window re-layouts
-  the Pharo World to the new client size: WM_SIZE (window thread) → pending
-  size → VM thread swaps the surface buffer in stub_SDL_PollEvent
-  (old buffer kept in a graveyard — Pharo caches the LockTexture pointer) →
-  ffi_notifyDisplayResize pushes SIZE_CHANGED+EXPOSED → image recreates its
-  texture and re-layouts. Verified: 1024×768 → 1344×921, menubar/taskbar span
-  the new width, World menu opens in the newly exposed region.
+## UNCOMMITTED changes in the tree (compile-UNTESTED as a set)
 
-## GUI — how to reproduce a windowed interactive session
-`PHARO_GUI_WINDOW=1 build-win/test_load_image.exe C:/temp/pharo-win-test/Pharo.image`
-(NO eval args → interactive mode → the image auto-picks `OSWorldRenderer`).
-Add `PHARO_WIN_EVENT_TRACE=1` to trace the input pipeline (wndProc push →
-stub_SDL_PollEvent delivery). No image-dir prep needed (2026-07-02): CMake
-stages an `SDL2.dll` marker next to the exe and `FFIWindowsLibraryFinder`
-finds it via `Smalltalk vm directory` (primitive 142 fixed to return the
-directory, not the exe path — was splitting on '/' only).
+The last build+test cycle (x4 callback suite) was interrupted before it
+ran. Files modified beyond HEAD (`de284345`):
 
-### The two bugs that made "clicks do nothing" (both fixed 2026-07-01)
-1. **Stale eval-mode `startup.st`** (the big one): every eval run writes a
-   `startup.st` next to the image whose preamble SUSPENDS all Morphic processes.
-   Interactive runs auto-load it (StartupPreferencesLoader) → desktop renders but
-   the UI event loop is dead → all input silently ignored. Fix: non-eval runs now
-   detect the `[STARTUP-ST-FIRED]` marker and delete the stale file
-   (test_load_image.cpp).
-2. **Stuck mouse button in stub_SDL_PollEvent**: `arg3` on UP events is the
-   buttons-STILL-pressed state (0 after releasing the only button), but the code
-   derived *which button changed* from `arg3` directly → every UP reported
-   SDL_BUTTON_LEFT → a right-click's release never reached the image → Morphic's
-   hand kept the right button pressed forever, turning later clicks into drags.
-   Fix: track prev state (`sMouseButtons`) and use the delta for both DOWN and UP.
+1. `src/vm/Interpreter.hpp`
+   - `callbackHandedOut_[MaxCallbackDepth]` parallel flag array added next
+     to `callbackContextStack_` (exactly-once hand-out; comment explains).
 
-Also fixed while wiring real input (Win32DisplaySurface.hpp):
-- keyboard encoding was wrong (subtype in arg4 with 1/2/3 numbering) — now matches
-  the proven `vm_postKeyEvent` layout: arg1=SDL keysym, arg2=0 down/1 up/2 stroke,
-  arg3=mods, arg4=SDL(USB-HID) scancode, with a VK→SDL mapping table.
-- events now carry real timestamps (steady_clock ms, same base as injectMouseClick).
-- WM_MOUSEWHEEL → pharo MouseWheel events (screen→client converted).
-- button state on every mouse push comes from wParam's MK_* mask (remaining-state
-  convention, matches Pharo's event format).
+2. `src/vm/Interpreter.cpp`
+   - `enterInterpreterFromCallback` push site sets
+     `callbackHandedOut_[callbackDepth_] = false;`
+   - [STATE-DUMP] now prints top-5 `[SD-FRAME]` caller chain (this part
+     WAS built+tested earlier; it produced the livelock evidence).
 
-### GUI testing recipe (Windows, no foreground needed)
-- Post messages straight to the HWND: `PostMessage(h, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x,y))`
-  etc. — exercises the real wndProc path. Client area is exactly 1024×768.
-- Screenshot an occluded window: `PrintWindow(h, dc, PW_RENDERFULLCONTENT=2)`.
-- For synthetic WM_KEYUP include the transition bits (`lParam=0xC0000001`),
-  otherwise TranslateMessage generates a spurious extra WM_CHAR (doubled text).
-- Scripts from this session: `/c/tmp/click5.ps1` (param click+shot), `/c/tmp/final6.ps1`.
+3. `src/vm/Primitives.cpp`
+   - `xtcb::g_dead` set added (timed-out worker callbacks; worker
+     deregisters from queue+active and inserts into g_dead — an earlier
+     purgeCallbackContext-from-worker-thread idea was REJECTED as a
+     cross-thread mutation; this lazy design replaced it).
+   - `adoptPendingWorkerCallbacks` push site sets handedOut=false.
+   - `primitiveReadNextCallback` REWRITTEN: (a) lazily pops g_dead
+     entries ([XTCB-DEAD-POP]); (b) hands each stack entry out EXACTLY
+     ONCE (currently shallowest-un-handed-first — CHECK nesting order,
+     may need deepest-first), extra reads answer nil. The
+     [CALLBACK-REREAD] detector this replaces CONFIRMED the image reads
+     the same invocation repeatedly during the wedge.
+   - `primitiveCallbackReturn` pop site clears handedOut flag.
+   - XTCB-TIMEOUT path: deregisters pending from queue/active, inserts
+     vmcc into g_dead (no cross-thread stack mutation).
 
-## Everything-not-100% catalog
-`docs/deferred.md` is the comprehensive list (file/FFI/sockets/crypto all green;
-GUI items A=window DONE, B=auto-activate DONE, C=event injection DONE; plus
-sound/MIDI/clipboard/profiler/backtrace/symlink/nLink/UDP stubs, the socket
-read-path EOF needing POSIX verification, FileAttributesPluginPrimsTest
-error-fidelity). Memory: `windows-port-milestones.md`.
+## Where the #14 investigation stands (evidence committed in deferred.md)
 
-## Build / run
-- Build (MSYS2 CLANG64): `scripts/build-windows.sh test_load_image`.
-- Run from a NATIVE shell (not the MSYS login shell — it strips USERPROFILE).
-- Image: `C:/temp/pharo-win-test/Pharo.image`; reference VM:
-  `C:/temp/pharo-win-test/refvm/pharo-vm/PharoConsole.exe`.
-- SDL2.dll currently staged at `C:/temp/pharo-win-test/SDL2.dll` (a copied DLL).
+- Repro: TFUFFICallbackTest x4 in ONE VM. Pre-aging-fix it wedged at
+  iteration 2; after 27186475 + d91c0df8 at iteration 3+ (flaky).
+- wedge5.log (REREAD detector build): CB1..4 all 13/13 + X4-COMPLETE +
+  exit 0 WITH 10 [CALLBACK-REREAD] warnings — run-to-run variance is
+  large; wedge6A wedged again (~600s, killed).
+- [SD-FRAME] livelock stack (wedge4.log): P70 spinning in
+  TFCallbackQueue>>nextPendingCallback -> FFIExternalReference class>>
+  fromHandle: -> Behavior>>new under executeCallback:/on:do:/on:fork: —
+  image reads a NON-NIL invocation over and over (each read allocates)
+  without completing it.
+- Root-cause theory the uncommitted code implements: our
+  primitiveReadNextCallback returned the TOP stack entry on EVERY read,
+  while the image contract is queue-like (one signal == one item; nil
+  when empty). Duplicate/early callback-semaphore signals (excessSignals
+  accumulated across suite churn) make TFCallbackQueue loop: wait ->
+  read (same still-executing invocation, non-nil) -> fork ANOTHER
+  executor -> livelock.
+
+## NEXT STEPS (in order)
+
+1. Build: `/c/temp/src/iospharo-jit/scripts/build-windows.sh` (absolute
+   path, MSYS2 CLANG64). Expect clean compile.
+2. Repro gauntlet 2-3x (timeout 800; kill test_load_image.exe between):
+   eval `1 to: 4 do: [:i | ... TFUFFICallbackTest buildSuite run ...]`
+   on /c/tmp/probe-img/Pharo.image. Want: all 13/13 + X4-COMPLETE +
+   exit 0. If wedge recurs: PHARO_STATE_DUMP_PERIOD_MS=800 sampler,
+   grep [XTCB-DEAD-POP]/[SD-FRAME].
+3. Regression battery: TFUFFICallbackTest 13/13, InCallbacks 36/36,
+   Derived 12/12, TFWorkerTest, WeakSetTest 50/50, WeakAnnouncerTest
+   33+1EF, StepOverTest, ProcessTest, DelayTest, SemaphoreTest,
+   [30 benchFib] ~12ms. ALSO nested-callback depth>1:
+   TFCallbacksTest>>testSingleCalloutDuringCallback — verify the
+   exactly-once loop order works for nesting.
+4. Commit ("tffi: exactly-once callback hand-out + dead-invocation
+   reaping — repeat-run livelock") + push.
+5. #14 done-check: ObsoleteTest x4 in one VM (the other wedge shape).
+6. #11: weak-root GC treatment — full plan in docs/deferred.md
+   ("weak-root treatment, concrete plan"). Step 0: capture what the
+   reverted naive pre-mark-flush experiment's ERRORS actually were.
+7. Full 2047-class suite before declaring goal done (cd
+   /c/temp/pharo-win-test; timeout 12000 eval "(Smalltalk at:
+   #SUnitRunner) runAllTests"; baseline run #9 = 27441/27967 = 98.1%,
+   exit 0).
+
+## Environment notes
+
+- Probe image: /c/tmp/probe-img/Pharo.image (isolated copy).
+- Suite env: /c/temp/pharo-win-test (Pharo-sunit.image; refvm/ = stock
+  PharoConsole.exe baseline).
+- TestLibrary.dll: `ninja TestLibrary` in build-win (build script skips
+  it). FreeType+Cairo DLLs staged by CMake POST_BUILD from
+  third_party/windows-runtime-dlls/.
+- Kill stray test_load_image.exe before rebuild (link EPERM).
+- git: branch jit @ de284345 pushed; only the 3 files above dirty.

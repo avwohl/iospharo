@@ -31171,6 +31171,7 @@ struct Pending {
 static std::mutex g_mx;
 static std::deque<Pending*> g_queue;                                  // awaiting adoption
 static std::map<VMCallbackContext*, Pending*> g_active;               // adopted, awaiting return
+static std::set<VMCallbackContext*> g_dead;                           // timed out; VM thread pops lazily
 static std::atomic<bool> g_vmThreadIdSet{false};
 static std::thread::id g_vmThreadId;
 }  // namespace xtcb
@@ -31238,8 +31239,22 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
             fprintf(stderr, "[XTCB-TIMEOUT] worker-thread callback not handled "
                     "within 120s (vmcc=%p) — returning zeroed result\n", (void*)vmcc);
             if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
-            // Leak pending+vmcc deliberately: the VM thread may still adopt
-            // and complete them later; freeing here would be use-after-free.
+            // Deregister so the VM thread stops handing this dead invocation
+            // to the image: pull it from the pending queue/active map and
+            // mark it DEAD.  A stale entry left on callbackContextStack_
+            // made primitiveReadNextCallback return the SAME dead invocation
+            // forever — the repeat-run P70 livelock (wait->read->fork spin,
+            // 2026-07-03).  The stack itself is only touched by the VM
+            // thread: primitiveReadNextCallback pops dead entries lazily.
+            {
+                std::lock_guard<std::mutex> lk(xtcb::g_mx);
+                auto& q = xtcb::g_queue;
+                q.erase(std::remove(q.begin(), q.end(), pending), q.end());
+                xtcb::g_active.erase(vmcc);
+                xtcb::g_dead.insert(vmcc);
+            }
+            // Leak pending+vmcc (tiny): the VM thread may hold raw pointers
+            // in flight; freeing here risks use-after-free.
             return;
         }
         // Return value was written by the image via vmcc->stackp (== ret).
@@ -31315,6 +31330,7 @@ void Interpreter::adoptPendingWorkerCallbacks() {
         }
         callbackContextStack_[callbackDepth_] = pending->vmcc;
         callbackHandlerStack_[callbackDepth_] = memory_.nil();
+        callbackHandedOut_[callbackDepth_] = false;
         callbackDepth_++;
         {
             std::lock_guard<std::mutex> lk(xtcb::g_mx);
@@ -31369,14 +31385,40 @@ PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
         fprintf(stderr, "[CALLBACK-READNEXT] t=%lld callbackDepth=%d\n", xtcbNowMs(), callbackDepth_);
         fflush(stderr);
     }
-    if (callbackDepth_ > 0) {
-        VMCallbackContext* vmcc = callbackContextStack_[callbackDepth_ - 1];
-        Oop result = tffi_newExternalAddress(vmcc);
-        if (result.isNil()) return PrimitiveResult::Failure;
-        primitiveSuccess(result);
-    } else {
-        primitiveSuccess(memory_.nil());
+    // Lazily pop entries whose worker timed out and abandoned them (marked
+    // dead by the xtcb timeout path).  Without this a stale top entry was
+    // handed to the image FOREVER — the repeat-run P70 livelock.
+    {
+        std::lock_guard<std::mutex> lk(xtcb::g_mx);
+        while (callbackDepth_ > 0
+               && xtcb::g_dead.count(callbackContextStack_[callbackDepth_ - 1])) {
+            fprintf(stderr, "[XTCB-DEAD-POP] discarding timed-out callback "
+                    "vmcc=%p depth=%d\n",
+                    (void*)callbackContextStack_[callbackDepth_ - 1],
+                    callbackDepth_);
+            xtcb::g_dead.erase(callbackContextStack_[callbackDepth_ - 1]);
+            callbackContextStack_[callbackDepth_ - 1] = nullptr;
+            callbackHandedOut_[callbackDepth_ - 1] = false;
+            callbackDepth_--;
+        }
     }
+    // Hand out each invocation EXACTLY ONCE (deepest un-handed entry first —
+    // matches push order for the nested case).  The image's TFCallbackQueue
+    // treats the callback semaphore as a queue (one signal == one item);
+    // returning a still-executing invocation again on a duplicate/early
+    // signal spawned duplicate executor processes until livelock (the
+    // repeat-run wedge).  Extra reads answer nil, exactly like an empty
+    // queue in stock.
+    for (int i = 0; i < callbackDepth_; ++i) {
+        if (callbackContextStack_[i] && !callbackHandedOut_[i]) {
+            callbackHandedOut_[i] = true;
+            Oop result = tffi_newExternalAddress(callbackContextStack_[i]);
+            if (result.isNil()) return PrimitiveResult::Failure;
+            primitiveSuccess(result);
+            return PrimitiveResult::Success;
+        }
+    }
+    primitiveSuccess(memory_.nil());
     return PrimitiveResult::Success;
 }
 
@@ -31536,6 +31578,7 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
     // Pop the callback context from our stack and zero the slot so a
     // second/third FFI callback doesn't inherit stale vmcc pointers.
     callbackContextStack_[callbackDepth_ - 1] = nullptr;
+    callbackHandedOut_[callbackDepth_ - 1] = false;
     callbackDepth_--;
 
     // TFFI v2: a cross-thread (worker-forwarded) callback has no nested
