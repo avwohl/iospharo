@@ -331,6 +331,21 @@ Fairness comes from the shared external class list — neither runner's
 source has test-class symbols as literals, so
 `ClassQueryTest>>testAllCallsOn` counts the same senders on both VMs.
 
+**startup.st CWD trap (cost half a day, 2026-07-04):** Pharo's
+StartupPreferencesLoader executes `startup.st` from the CURRENT
+DIRECTORY. A stale eval-mode `startup.st` (staged by `test_load_image
+... eval` and left behind by a crashed run — git-ignored, so invisible
+in `git status`) HIJACKS every stock-VM command launched from that
+directory: the prep's `eval --save "... fileIn"` silently never runs
+(output shows `[STARTUP-ST-FIRED]` + a stale `EVAL-RESULT=`), the image
+saves WITHOUT SUnitRunner, and every subsequent suite run boots to GUI
+idle with no tests — which looks exactly like a scheduler wedge.
+Before ANY stock-VM prep: `rm -f ./startup.st` in the shell's CWD (or
+run from a clean directory), and verify the prep with
+`eval "Smalltalk globals includesKey: #SUnitRunner"` → must be true.
+Also remember our VM's eval mode touches /tmp/sunit_run_completed.txt
+(auto-restart guard) — delete it before bare suite launches.
+
     cd /tmp && mkdir -p harness && cd harness && \
       curl -sL https://get.pharo.org/64/130+vm | bash
 
