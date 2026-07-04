@@ -27,10 +27,38 @@ startup + several suites.  All blocking regressions root-caused and fixed on
   hijacked every stock-VM prep from the repo root — looked exactly like
   a scheduler wedge; cost half a day).
 
-ARM suite status (this session): GC weak batch 415/420 (ObsoleteTest 3/3 x4,
-WeakAnnouncer 33/34+1s x4, zero tripwires, GC purges live incl. jitMethods);
-TFFI 134/134 non-skip.  Parked with evidence in deferred.md: WKD testClearing
-warm-run deviation (JIT-only, timing).  Full 2047-class run + soogle pending.
+ARM verification COMPLETE (2026-07-04 evening).  Additional fixes en route:
+- 94d462e5  NLR protocol shape (aboutToReturn: on homeCtx — stepping
+  machinery pattern-match preserved) + dead-home liveness gate
+  (BlockCannotReturn semantics).
+- SIGPIPE ignored globally (SocketStreamTest write-after-peer-close
+  killed the VM with exit 141; Windows has no SIGPIPE).
+- vmParameterAt: 9 reports the real scavenge count (statisticsReport
+  divides by it unguarded; ZnServer /status 500'd ZeroDivide — 28/31
+  ZnServerTest errors + the Zn/Zdc timeout cluster, ~75 tests recovered).
+- runner submodule: categorized vmRegisterAsDelayRecovery (SemaphoreTest
+  lint), plus primitiveGetObjectFromAddress + TestLibrary enum-sum/
+  unref_pointer fixtures.
+
+FINAL ARM NUMBERS:
+- Full catalog (2031 classes / 28023 tests, 3-part run): 27280 P = 97.35%
+  BEFORE the Zn/SIGPIPE fixes; the re-measured Zn/Zdc cluster alone
+  recovers ~75 (ZnServer 29/31, ZnClient 49/50, ZnEasy 10/10,
+  ZnStaticFile 6/6, Zdc 4x15/15, SocketStream 22/24) -> ~97.6%+.
+  Remaining non-passes are (a) context/env behaviors reproducing
+  BYTE-IDENTICALLY on the Jun-25 pre-Windows baseline binary (Rub*/
+  Renraku/Ring2/stepping cold-context timeouts), (b) environment gaps
+  (no HTTPS => Zn remote-URL tests; Spec/GUI env; LibTTY; Roassal/
+  Cairo partials; FL WideString runner artifact x5), (c) two parked
+  deterministic items with full evidence in deferred.md (WKD
+  testClearing warm JIT timing; ProcessTest testTerminateInTerminate —
+  note baseline scores 37P/5T vs our 45P/1T there).
+- soogle: STON 310/310 parity; Fuel failure-set BYTE-IDENTICAL to Cog
+  (719/10/19 both); PolyMath 776 vs 777 (1 slow-test timeout); NeoJSON
+  parity except one network-dependent test.  Bench suite healthy
+  (fib(28)=7ms), GC purges verified live on ARM incl. the jitMethods
+  W^X-flip path, ZERO tripwire firings all session.
+
 
 ---
 
