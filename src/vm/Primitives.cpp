@@ -30464,6 +30464,30 @@ struct Worker {
     std::thread thread;
     pharo::Interpreter* interp = nullptr;
 
+    // Execute one dequeued task.  Shared by the main loop and by the
+    // parked-in-callback service loop in callbackClosureHandler: a
+    // reentrant callout enqueued while this worker's thread is blocked
+    // inside a forwarded callback must run ON THIS THREAD (nested within
+    // the parked ffi_call's C stack) — that is stock pThreadedFFI's
+    // reentrancy model (TFCallbacksTest>>testReentrantCalloutsDuring
+    // Callback chains 7 deep this way).
+    void runOneTask(Task* task) {
+        try {
+            ffi_call(task->cif, FFI_FN(task->funcPtr),
+                     task->returnHolder.data(), task->argPtrs.data());
+        } catch (...) {
+            // Never silent (silent-cap audit 2026-07-03).
+            fprintf(stderr, "[TFFI-WORKER-EXCEPTION] worker callout threw "
+                    "(funcPtr=%p) — returning zeroed result\n", task->funcPtr);
+            std::fill(task->returnHolder.begin(), task->returnHolder.end(), 0);
+        }
+        task->done.store(true, std::memory_order_release);
+        if (task->semaphoreIndex > 0 && interp) {
+            interp->signalExternalSemaphore(task->semaphoreIndex);
+        }
+        g_tasksInFlight.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
     void run() {
         for (;;) {
             Task* task = nullptr;
@@ -30474,23 +30498,20 @@ struct Worker {
                 task = queue.front();
                 queue.pop_front();
             }
-            try {
-                ffi_call(task->cif, FFI_FN(task->funcPtr),
-                         task->returnHolder.data(), task->argPtrs.data());
-            } catch (...) {
-                // Never silent (silent-cap audit 2026-07-03).
-                fprintf(stderr, "[TFFI-WORKER-EXCEPTION] worker callout threw "
-                        "(funcPtr=%p) — returning zeroed result\n", task->funcPtr);
-                std::fill(task->returnHolder.begin(), task->returnHolder.end(), 0);
-            }
-            task->done.store(true, std::memory_order_release);
-            if (task->semaphoreIndex > 0 && interp) {
-                interp->signalExternalSemaphore(task->semaphoreIndex);
-            }
-            g_tasksInFlight.fetch_sub(1, std::memory_order_acq_rel);
+            runOneTask(task);
         }
     }
 };
+
+// The Worker (if any) whose native thread is the calling thread — lets a
+// forwarded-callback wait service its own queue (reentrancy above).
+static Worker* workerForCurrentThread() {
+    std::lock_guard<std::mutex> lk(g_workerRegistryMx);
+    for (Worker* w : g_workerRegistry) {
+        if (w->thread.get_id() == std::this_thread::get_id()) return w;
+    }
+    return nullptr;
+}
 
 }  // namespace tffiworker
 
@@ -30731,6 +30752,9 @@ PrimitiveResult Interpreter::primitiveWorkerExtractReturnValue(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Defined in the xtcb section below (forwarded-callback machinery).
+namespace xtcb { void abortCallbacksForWorkerThread(std::thread::id tid); }
+
 // primitiveReleaseWorker (0 args): stop + join + free the native worker.
 PrimitiveResult Interpreter::primitiveReleaseWorker(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
@@ -30742,6 +30766,14 @@ PrimitiveResult Interpreter::primitiveReleaseWorker(int argCount) {
         std::lock_guard<std::mutex> lk(tffiworker::g_workerRegistryMx);
         auto& reg = tffiworker::g_workerRegistry;
         reg.erase(std::remove(reg.begin(), reg.end(), worker), reg.end());
+    }
+    // Unpark any forwarded callback this worker's thread is blocked in
+    // BEFORE joining — the image may never return an in-flight invocation
+    // whose session is being released (TFCallbacksTest old-session test),
+    // and joining a thread parked in the 120s callback wait froze the VM
+    // for the full window (2026-07-04).
+    if (worker->thread.joinable()) {
+        xtcb::abortCallbacksForWorkerThread(worker->thread.get_id());
     }
     {
         std::lock_guard<std::mutex> lk(worker->mx);
@@ -31213,8 +31245,25 @@ struct Pending {
     std::mutex mx;
     std::condition_variable cv;
     bool done = false;
-    bool aborted = false;   // set by pharo_xtcbShutdown: return zeroes, leak, exit fast
+    bool aborted = false;   // abort wake: return zeroes + deregister (VM
+                            // shutdown, or the owning worker was released)
+    std::thread::id workerThreadId;  // the parked thread; lets
+                            // primitiveReleaseWorker abort exactly its own
+                            // worker's in-flight callbacks before joining
+    tffiworker::Worker* worker = nullptr;  // owning worker when the parked
+                            // thread IS a TFFI worker: the wait services
+                            // its task queue (reentrant callouts) and
+                            // completers also notify worker->cv
 };
+
+// Wake a parked forwarded-callback handler: pending->cv for plain native
+// threads, plus the owning worker's cv (the service-wait sleeps there so
+// it can also see new tasks).  Call with pending->done/aborted already set
+// under pending->mx.
+static void wakePending(Pending* p) {
+    p->cv.notify_all();
+    if (p->worker) p->worker->cv.notify_all();
+}
 // IMMORTAL (construct-on-first-use, deliberately leaked): TestLibrary's
 // native callback threads can still be parked in callbackClosureHandler's
 // 120s cv-wait at process exit (an abandoned in-flight invocation after a
@@ -31231,6 +31280,30 @@ static std::set<VMCallbackContext*>& g_dead =
 static std::atomic<bool> g_vmThreadIdSet{false};
 static std::thread::id g_vmThreadId;
 static std::atomic<bool> g_shuttingDown{false};
+
+// Abort every in-flight forwarded callback parked on the given worker
+// thread: wake it with aborted=true so it returns zeroes and deregisters
+// itself (timeout-path semantics).  Called by primitiveReleaseWorker
+// BEFORE joining — without this, releasing a worker whose callback the
+// image will never return (TFCallbacksTest>>
+// testCallbackFromOldSessionFailsReturn does exactly that) froze the
+// whole VM inside the join for the parked handler's full 120s timeout.
+// Lock order: g_mx -> pending->mx; the parked side never holds its
+// pending->mx while taking g_mx, so no inversion.
+void abortCallbacksForWorkerThread(std::thread::id tid) {
+    std::lock_guard<std::mutex> lk(g_mx);
+    auto abortOne = [&](Pending* p) {
+        if (p->workerThreadId != tid) return;
+        {
+            std::lock_guard<std::mutex> l2(p->mx);
+            p->done = true;
+            p->aborted = true;
+        }
+        wakePending(p);
+    };
+    for (auto* p : g_queue) abortOne(p);
+    for (auto& kv : g_active) abortOne(kv.second);
+}
 }  // namespace xtcb
 
 // VM exit: unpark every worker thread waiting on a forwarded callback so
@@ -31242,16 +31315,20 @@ extern "C" void pharo_xtcbShutdown(void) {
     xtcb::g_shuttingDown.store(true, std::memory_order_release);
     std::lock_guard<std::mutex> lk(xtcb::g_mx);
     for (auto* p : xtcb::g_queue) {
-        std::lock_guard<std::mutex> l2(p->mx);
-        p->done = true;
-        p->aborted = true;
-        p->cv.notify_all();
+        {
+            std::lock_guard<std::mutex> l2(p->mx);
+            p->done = true;
+            p->aborted = true;
+        }
+        xtcb::wakePending(p);
     }
     for (auto& kv : xtcb::g_active) {
-        std::lock_guard<std::mutex> l2(kv.second->mx);
-        kv.second->done = true;
-        kv.second->aborted = true;
-        kv.second->cv.notify_all();
+        {
+            std::lock_guard<std::mutex> l2(kv.second->mx);
+            kv.second->done = true;
+            kv.second->aborted = true;
+        }
+        xtcb::wakePending(kv.second);
     }
 }
 
@@ -31329,31 +31406,77 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         }
         auto* pending = new xtcb::Pending();
         pending->vmcc = vmcc;
+        pending->workerThreadId = std::this_thread::get_id();
+        // If this thread IS a TFFI worker, the wait below must keep
+        // servicing its task queue: a reentrant callout made from inside
+        // the (image-side) callback executor lands on THIS worker's queue,
+        // and nothing else can run it — a plain park deadlocked
+        // TFCallbacksTest's reentrant tests until the 10s SUnit limit
+        // (root-caused 2026-07-04).  Stock pThreadedFFI nests the same
+        // way: the reentrant ffi_call runs inside this parked frame.
+        tffiworker::Worker* self = tffiworker::workerForCurrentThread();
+        pending->worker = self;
         {
             std::lock_guard<std::mutex> lk(xtcb::g_mx);
             xtcb::g_queue.push_back(pending);
         }
         g_interpreter->requestWorkerCallbackAdoption();
-        bool completed;
-        bool aborted;
-        {
+        bool completed = false;
+        bool aborted = false;
+        // Generous last-resort deadline: a dead VM thread must not hang
+        // the worker (and thus VM shutdown's join) forever.
+        const auto deadline = std::chrono::steady_clock::now()
+                              + std::chrono::seconds(120);
+        if (!self) {
+            // Plain native thread (e.g. TestLibrary's own CreateThread):
+            // nothing to service — simple wait.
             std::unique_lock<std::mutex> lk(pending->mx);
-            // Generous last-resort timeout: a dead VM thread must not hang
-            // the worker (and thus VM shutdown's join) forever.
-            completed = pending->cv.wait_for(lk, std::chrono::seconds(120),
-                                             [&] { return pending->done; });
+            completed = pending->cv.wait_until(lk, deadline,
+                                               [&] { return pending->done; });
             aborted = pending->aborted;
+        } else {
+            for (;;) {
+                {
+                    std::lock_guard<std::mutex> lk(pending->mx);
+                    if (pending->done) {
+                        completed = true;
+                        aborted = pending->aborted;
+                        break;
+                    }
+                }
+                if (std::chrono::steady_clock::now() >= deadline) break;
+                tffiworker::Task* task = nullptr;
+                {
+                    std::unique_lock<std::mutex> lk(self->mx);
+                    if (!self->queue.empty()) {
+                        task = self->queue.front();
+                        self->queue.pop_front();
+                    } else {
+                        // Woken by: a new task, wakePending (completion or
+                        // abort), or worker stop.  The 50ms cap is only a
+                        // lost-wakeup safety net.  Deliberately ignore
+                        // self->stop here: a release aborts this pending
+                        // explicitly, and Worker::run (below us on this C
+                        // stack) handles stop after we unwind.
+                        self->cv.wait_for(lk, std::chrono::milliseconds(50));
+                    }
+                }
+                if (task) self->runOneTask(task);
+            }
         }
-        if (completed && aborted) {
-            // VM shutdown (pharo_xtcbShutdown) unparked us: hand the C
-            // caller zeroes and leak pending+vmcc (VM references may
-            // still exist; the process is exiting anyway).
-            if (ret && retSize > 0) memset(ret, 0, retSize);
-            return;
-        }
-        if (!completed) {
-            fprintf(stderr, "[XTCB-TIMEOUT] worker-thread callback not handled "
-                    "within 120s (vmcc=%p) — returning zeroed result\n", (void*)vmcc);
+        if (!completed || aborted) {
+            if (!completed) {
+                fprintf(stderr, "[XTCB-TIMEOUT] worker-thread callback not handled "
+                        "within 120s (vmcc=%p) — returning zeroed result\n", (void*)vmcc);
+            } else if (g_debug.callbackDebug) {
+                // Aborted: VM shutdown or the owning worker was released
+                // while we were parked.  Same cleanup as the timeout path
+                // (deregister + g_dead) keeps the VM consistent when
+                // execution CONTINUES after a worker release.
+                fprintf(stderr, "[XTCB-ABORTED] t=%lld vmcc=%p — returning "
+                        "zeroed result\n", xtcbNowMs(), (void*)vmcc);
+                fflush(stderr);
+            }
             if (ret && retSize > 0) memset(ret, 0, retSize);
             // Deregister so the VM thread stops handing this dead invocation
             // to the image: pull it from the pending queue/active map and
@@ -31443,8 +31566,9 @@ void Interpreter::adoptPendingWorkerCallbacks() {
             {
                 std::lock_guard<std::mutex> lk(pending->mx);
                 pending->done = true;
+                pending->aborted = true;  // never handed to the image
             }
-            pending->cv.notify_all();
+            xtcb::wakePending(pending);
             continue;
         }
         callbackContextStack_[callbackDepth_] = pending->vmcc;
@@ -31533,6 +31657,25 @@ PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
     // queue in stock.
     for (int i = 0; i < callbackDepth_; ++i) {
         if (callbackContextStack_[i] && !callbackHandedOut_[i]) {
+            // A DEAD entry BURIED below live ones (aborted worker callback
+            // — released worker or 120s timeout — with a newer invocation
+            // pushed on top) must never be handed out: its args point into
+            // the exited worker thread's stack.  The top-of-stack dead-pop
+            // above can't reach it; mark it handed so the scan skips it
+            // forever, and leave the slot for the top-pop cleanup when the
+            // entries above return.  (Found 2026-07-04: handing a buried
+            // dead invocation to TFCallbackQueue after a worker release
+            // cascaded errors through every subsequent callback suite.)
+            {
+                std::lock_guard<std::mutex> lk(xtcb::g_mx);
+                if (xtcb::g_dead.count(callbackContextStack_[i])) {
+                    fprintf(stderr, "[XTCB-DEAD-SKIP] buried dead callback "
+                            "vmcc=%p at depth %d/%d — not handing out\n",
+                            (void*)callbackContextStack_[i], i, callbackDepth_);
+                    callbackHandedOut_[i] = true;
+                    continue;
+                }
+            }
             callbackHandedOut_[i] = true;
             Oop result = tffi_newExternalAddress(callbackContextStack_[i]);
             if (result.isNil()) return PrimitiveResult::Failure;
@@ -31773,6 +31916,30 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Lazily pop DEAD top entries (aborted/timed-out worker callbacks)
+    // before reading the top: the image can legitimately return a LIVE
+    // invocation while a dead one sits above it (the dead entry's live
+    // sibling below finished first) — blindly popping the top would
+    // complete the WRONG vmcc.  Mirrors primitiveReadNextCallback's pop.
+    {
+        std::lock_guard<std::mutex> lk(xtcb::g_mx);
+        while (callbackDepth_ > 0
+               && callbackContextStack_[callbackDepth_ - 1]
+               && xtcb::g_dead.count(callbackContextStack_[callbackDepth_ - 1])) {
+            fprintf(stderr, "[XTCB-DEAD-POP] discarding dead callback at "
+                    "return time vmcc=%p depth=%d\n",
+                    (void*)callbackContextStack_[callbackDepth_ - 1],
+                    callbackDepth_);
+            xtcb::g_dead.erase(callbackContextStack_[callbackDepth_ - 1]);
+            callbackContextStack_[callbackDepth_ - 1] = nullptr;
+            callbackHandedOut_[callbackDepth_ - 1] = false;
+            callbackDepth_--;
+        }
+    }
+    if (callbackDepth_ <= 0) {
+        return PrimitiveResult::Failure;
+    }
+
     // Get VMCallbackContext from our stack
     VMCallbackContext* vmcc = callbackContextStack_[callbackDepth_ - 1];
     if (!vmcc) {
@@ -31808,7 +31975,7 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
                 std::lock_guard<std::mutex> lk(pending->mx);
                 pending->done = true;
             }
-            pending->cv.notify_all();
+            xtcb::wakePending(pending);
             popN(argCount);
             pop();
             push(memory_.trueObject());

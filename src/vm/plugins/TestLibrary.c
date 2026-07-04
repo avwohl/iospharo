@@ -192,9 +192,21 @@ EXPORT void fillByteArray(char* bytes, int size) {
     for (i = 0; i < size; i++) bytes[i] = (char)(i + 1);
 }
 
-/* ===== TFFI callback fixtures (TFUFFICallbackTest + *InCallbacksTest) =====
-   Semantics derived clean-room from the image tests (2026-07-03):
-   - singleCallToCallback: cb(3)=4 must yield 5 -> return cb(value) + 1.
+/* ===== TFFI callback fixtures (TFUFFICallbackTest + *InCallbacksTest +
+   TFCallbacksTest) =====
+   Semantics derived clean-room from the image tests (2026-07-03, corrected
+   2026-07-04):
+   - singleCallToCallback: return cb(value + 1) — increment the ARGUMENT and
+     pass the callback's result through untouched.  This satisfies ALL
+     image expectations simultaneously:
+       * TFUFFICallbackTest (cb = [:a | a+1], value 3): cb(4) = 5.
+       * TFCallbacksTest>>testSingleCalloutDuringCallback (cb answers a
+         constant 42 via shortCallout, value 3): cb(4) = 42.
+       * TFCallbacksTest reentrant tests (cb re-invokes with times+1 until
+         7): the chain converges to exactly 7 only if the result is passed
+         through unmodified.
+     The earlier clean-room guess `cb(value) + 1` produced 5 for the first
+     test by coincidence and broke the other two (3F same-thread).
    - callbackInALoop: with cb = a+1 the result must be 42 -> fold cb 42
      times starting from 0.
    - callbackFromAnotherThread: cb runs on a NATIVE thread (exercises the
@@ -206,7 +218,7 @@ EXPORT int sumTwoNumbers(int a, int b) { return a + b; }
 EXPORT float sumAFloatAndADouble(float a, double b) { return (float)(a + b); }
 
 EXPORT int singleCallToCallback(int (*cb)(int), int value) {
-    return cb(value) + 1;
+    return cb(value + 1);
 }
 
 EXPORT int callbackInALoop(int (*cb)(int)) {

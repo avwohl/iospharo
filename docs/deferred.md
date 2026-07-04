@@ -74,8 +74,11 @@ isolation (no suite watchdog):
   WeakSetTest 50/50 x3 (was 49/50 every warm run), weak battery green,
   step/exception/process battery green (558 tests), bench identical
   (fib 12ms, ensure 32ms).
-- [ ] **WeakAnnouncerTest testWeakObject/testWeakDoubleAnnouncer fail
-  JIT-warm** (pass cold; typically 32-33/34 now, was 31-32; stock 33/34).
+- [x] **RESOLVED 2026-07-04: WeakAnnouncerTest at stock parity warm AND
+  cold** (4/4 warm x4-in-one-VM runs at 33/34+1EF; see the residual
+  sub-item below for the final mechanism — 27e4ca74's weak-cache purge).
+  Historical: testWeakObject/testWeakDoubleAnnouncer failed JIT-warm
+  (32-33/34, was 31-32; stock 33/34).
   TWO pin mechanisms found with PIN_DIAG (2026-07-03); ONE FIXED:
   - [x] **Mourn-queue starvation FIXED**: activateMethod's deferred
     FinalizationSemaphore check (finalizationCheckAfterGC_) sat AFTER the
@@ -643,6 +646,44 @@ CONTIGUOUS, starving P41-79 watchdog machinery).  TFUFFICallbackTest:
   ~10s SUnit limit; worker round-trip ~20-40ms/round is the disease —
   separate item).
 
+### TFCallbacksTest (TF-plain suite; stock 8/8+2S, ours was 1/8+3F+4E)
+LARGELY FIXED 2026-07-04; four independent root causes found and fixed:
+1. TestLibrary fixture semantics: singleCallToCallback must be
+   `return cb(value + 1)` (arg+1, result passed through) — our clean-room
+   `cb(value) + 1` satisfied the UFFI a+1 test by coincidence and broke
+   every TF-plain single/reentrant test (3F).  All same-thread variants
+   pass now.
+2. primitiveReleaseWorker joined a worker whose thread was parked in the
+   forwarded-callback wait -> whole VM froze for the 120s timeout
+   (old-session test releases mid-callback by design).  Fix:
+   xtcb::abortCallbacksForWorkerThread before the join (per-thread
+   pendings, timeout-path cleanup).  Old-session(worker) passes solo.
+3. The aborted invocation stayed BURIED on callbackContextStack_ and the
+   FIFO hand-out gave it to the image next suite (args point into the
+   exited worker's stack -> error cascade across suites).  Fix: hand-out
+   scan skips g_dead entries ([XTCB-DEAD-SKIP]); primitiveCallbackReturn
+   also lazily pops dead TOP entries before reading (returning a live
+   invocation under a dead top would complete the wrong vmcc).
+4. Reentrant callouts during a forwarded callback deadlocked: the target
+   worker's only thread was parked in OUR cv-wait.  Fix: the parked wait
+   now SERVICES the worker's own task queue (Worker::runOneTask; nested
+   ffi_call frames on the worker's C stack — stock pThreadedFFI's
+   reentrancy model).  testReentrantCalloutsDuringCallback(worker) passes
+   solo (7-deep chain verified in trace).
+- [ ] REMAINING: in-suite order dependence — after the SAME-THREAD half
+  runs, the worker half errors (TestTookTooMuchTime).  Deterministic
+  repro: run the non-TFWorker cases, then any worker case, in one VM
+  (order1/order2.log 2026-07-04).  Traced far enough to see the worker
+  variant's callbacks arriving via the SAME-THREAD path after phase 1
+  (no XTCB-ADOPT — i.e. the callout ran ON the VM thread: image-side
+  TFWorker fallback or a broken worker handle), then a LIFO-retry stall
+  (returns descend to depth 2 and re-enter).  Suspect the same-thread
+  half's old-session test (releases TFSameThreadRunner uniqueInstance)
+  leaves the SINGLETON TFCallbackQueue/runner state such that fresh
+  TFWorkers fall back to same-thread callouts.  Next: probe
+  `(TFWorker named: 'fortest') isNull/handle` after phase 1, and check
+  image-side TFWorker>>invoke fallback conditions.
+
 ### TFFI v2 residual notes (historical; resolution above)
 NOTE 2026-07-03 (post e9a7e984): the "woken waiter runs zero bytecodes
 then re-suspends" mystery below is explained by the callback-return
@@ -1054,8 +1095,18 @@ REMAINING for a real interactive GUI (render + on-screen window now DONE):
      on right-click.
 
 Historical scoping notes (how the breakthrough was reached) follow:
-- [ ] **SDL2 / Morphic display** — headless only.  ARCHITECTURE MAPPED
-  (2026-06-28), so this is no longer a black box:
+- [x] **SDL2 / Morphic display — WORKING ON-SCREEN with input
+  (status corrected 2026-07-04; the header below was stale).**  All three
+  "WHAT'S MISSING" parts landed and were verified interactively with
+  screenshots: part 2 = Win32DisplaySurface HWND + GDI StretchDIBits
+  (PHARO_GUI_WINDOW; docs/images/windows-gui-onscreen-window.png), part 3
+  = wndProc -> gEventQueue -> stub_SDL_PollEvent event injection
+  (verified: menu clicks, Playground typing, debugger-on-DNU —
+  docs/images/windows-gui-menu-click.png / windows-gui-debugger.png),
+  part 1 = interactive run mode (--interactive, non-eval).  REMAINING
+  GUI polish tracked separately: IME/text-composition (below) and
+  making the on-screen mode the packaged default (milestone 5).
+  Historical architecture notes:
   - The render path is CROSS-PLATFORM and already present.  The image's
     `OSSDL2Driver` calls SDL2 via FFI; FFI.cpp implements SDL2 as built-in STUB
     functions (`stub_SDL_CreateWindow`/`CreateRenderer`/`RenderPresent`/`PollEvent`,
