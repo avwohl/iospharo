@@ -1,3 +1,39 @@
+# WIP — parked-bug fix wave COMPLETE (2026-07-05)
+
+Both deferred deterministic bugs from the 07-04 verification are FIXED, plus
+a scheduler starvation bug found while closing the CONC pacing item:
+
+- e40cd65b  jit: prim-100 simulation cascade — pk-24 arity aliasing into
+  the W3 IntArithReturn inline (3 conspiring defects: arity-blind
+  inlinePrimKind classification of the prim-111 MIRROR form
+  Context>>objectClass:, a single-bit tbnz(52) dispatch stolen by
+  pk 16-31, and an OR-combined SmI tag check that accepted (heap,SmI)
+  pairs — lookupClass = contextOop+arg-1, dead young pointer, DNU
+  cascade).  Stepping family recovered: 156 P / 0 F (was ~50 fails:
+  StepOver/Into/Through, simulate/tally trio, testBlockCannotReturn,
+  testTerminateInTerminate).  Hunt ledger: scripts/cascade-hunt/README.md
+  rounds 1-11 (the decisive probe was the IC-site dump now living in the
+  DNU cascade forensics).
+- 8cfee28c  interp/jit: WKD testClearing warm deviation — the JIT
+  activation-exit one-shot woke the P50 mourner mid-statement when the
+  GC prim ran INSIDE that activation; now fires only when armed at
+  activation ENTRY (interp parity).  testClearing 6/6 warm;
+  WeakAnnouncer 3x clean; weak batch 1003 P / 0 F.
+- 3940b62c  sched: idle-band relinquish is a preemption point — the
+  heartbeat force-yield hands the CPU DOWN to P10 idle but the route
+  back UP only ran at 1024-step periodics (~10-20 bytecodes per 10ms
+  sleep quantum = ~1s starvation for ready waiters).  TFFI worker
+  callouts 13035ms -> 95ms per 500; TFUFFIConcurrencyTest(UsingWorker)
+  10s-FAIL -> 995ms PASS.  Gated to pri<=10 (ungated resurrects the
+  P80<->P60 voluntary-yield bounce and TIMEOUTs whole batches).
+- 709d8a43  debug-vars: 215 legacy DebugSettings bools -> debug_vars.h;
+  envPresent ratchet 250 -> 31.
+- Full-catalog re-run IN FLIGHT (background) to quantify total recovery
+  (expect >97.6%: stepping family + WKD + any order-dependent timeouts
+  the scheduler fix cures).
+
+---
+
 # WIP — ARM re-verification of the Windows merge: fix wave COMPLETE (2026-07-04)
 
 The Windows-session changes (dcacc401..155d9bc4) came back to ARM and broke
