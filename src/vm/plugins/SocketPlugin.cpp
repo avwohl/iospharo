@@ -1422,6 +1422,13 @@ extern "C" sqInt sp_primitiveSocketAccept3Semaphores(void) {
     // CONNECTED when another incoming connection is pending.
     serverPs->sockState = SOCK_WAITING_FOR_CONNECTION;
     SOCKDBG("accept: reset listen fd=%d -> WAITING\n", serverPs->fd);
+    // Wake the IO thread NOW so a further pending connection in the backlog
+    // is promoted immediately.  Without this the listener sat unwatched
+    // until the next 100ms select() tick, hard-capping accept throughput
+    // near 10/s — connection-burst workloads (ZnServerTest
+    // testTooManyConcurrentConnections) stacked those quanta past the 10s
+    // SUnit limit (2026-07-05 Zn hunt).
+    wakeIOThread();
 
     PrivateSocket* ps = new PrivateSocket();
     ps->fd = clientFd;

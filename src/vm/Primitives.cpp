@@ -29740,6 +29740,15 @@ PrimitiveResult Interpreter::primitiveInitializeNetwork(int argCount) {
 // 0=Uninitialized, 1=Ready, 2=Busy, 3=Error
 PrimitiveResult Interpreter::primitiveResolverStatus(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
+    if (GET_DEBUG_BOOL(PHARO_DNS_TRACE)) {
+        static int n = 0;
+        if (n++ < 3000)
+            fprintf(stderr, "[DNS-STATUS] t=%lldms s=%d proc=0x%llx\n",
+                (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count(),
+                resolverStatus_.load(),
+                (unsigned long long)getActiveProcess().rawBits());
+    }
     popN(1);  // pop receiver
     push(Oop::fromSmallInteger(resolverStatus_.load()));
     return PrimitiveResult::Success;
@@ -29842,6 +29851,15 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
     std::string hostname((char*)nameHdr->bytes(), nameHdr->byteSize());
 
     // Set status to Busy
+    if (GET_DEBUG_BOOL(PHARO_DNS_TRACE)) {
+        static int n2 = 0;
+        if (n2++ < 500)
+            fprintf(stderr, "[DNS-START] t=%lldms '%s' proc=0x%llx\n",
+                (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count(),
+                hostname.c_str(),
+                (unsigned long long)getActiveProcess().rawBits());
+    }
     resolverStatus_.store(2);  // ResolverBusy
     resolverResultValid_ = false;
 
@@ -29859,7 +29877,11 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
     fprintf(stderr, "[DNS] Starting lookup for '%s' (semaIndex=%d)\n", hostname.c_str(), semaIndex);
 #endif
     g_dnsLookupsInflight.fetch_add(1, std::memory_order_acq_rel);
-    std::thread([hostname, resultBuf, resultSizePtr, statusPtr, validPtr, semaIndex, interp]() {
+    const long long dnsT0 = GET_DEBUG_BOOL(PHARO_DNS_TRACE)
+        ? std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now().time_since_epoch()).count()
+        : 0;
+    std::thread([hostname, resultBuf, resultSizePtr, statusPtr, validPtr, semaIndex, interp, dnsT0]() {
         // Use AF_UNSPEC to allow both IPv4 and IPv6.
         // On iOS IPv6-only networks, AF_INET can timeout (~40s) because
         // there's no IPv4 DNS server. AF_UNSPEC lets the OS return whatever
@@ -29935,6 +29957,12 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
 #endif
         if (semaIndex > 0) {
             interp->signalExternalSemaphore(semaIndex);
+        }
+        if (GET_DEBUG_BOOL(PHARO_DNS_TRACE)) {
+            long long dnsT1 = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            fprintf(stderr, "[DNS-TRACE] '%s' took %lldms status=%d\n",
+                    hostname.c_str(), dnsT1 - dnsT0, statusPtr->load());
         }
         g_dnsLookupsInflight.fetch_sub(1, std::memory_order_acq_rel);
     }).detach();
