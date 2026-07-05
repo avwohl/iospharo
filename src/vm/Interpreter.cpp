@@ -20739,6 +20739,7 @@ void Interpreter::prepareForGC() {
         }
 
         // Sync each temp: C++ stack → context
+        if (GET_DEBUG_BOOL(PHARO_NO_GC_TEMPSYNC)) continue;
         for (int t = 0; t < numTemps && (ContextFixedFields + t) < static_cast<int>(ctxSlots); t++) {
             Oop* stackSlot = frame.savedFP + 1 + t;
             if (stackSlot >= stackBase_ && stackSlot < stackPointer_) {
@@ -20861,6 +20862,41 @@ void Interpreter::prepareForGC() {
 }
 
 void Interpreter::afterGC(bool fullGC) {
+    // Cascade hunt (2026-07-05): immediately after a scavenge eden holds NO
+    // live objects, so ANY eden-window pointer still visible from a VM root
+    // is a reference the scavenge failed to retarget — the exact birth
+    // moment of the stepping-family corpse.  Dump with provenance.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_EDEN_DANGLE_SCAN), 0) && !fullGC) {
+        uint8_t* survStart = *memory_.survivorStartCellAddr();
+        auto isEden = [&](Oop o) {
+            if (!o.isObject() || o.rawBits() <= 0x10000) return false;
+            uint8_t* p = reinterpret_cast<uint8_t*>(o.rawBits());
+            return memory_.isYoungObject(p) && p < survStart;
+        };
+        static int dangleLog = 0;
+        auto report = [&](const char* where, long idx, Oop v) {
+            if (dangleLog < 12) {
+                dangleLog++;
+                fprintf(stderr,
+                    "[EDEN-DANGLE] %s[%ld]=0x%llx fd=%zu in=#%s\n",
+                    where, idx, (unsigned long long)v.rawBits(), frameDepth_,
+                    memory_.selectorOf(method_).c_str());
+            }
+        };
+        for (Oop* pp = stackBase_; pp < stackPointer_; pp++)
+            if (isEden(*pp)) report("stack", pp - stackBase_, *pp);
+        for (size_t i = 0; i < frameDepth_; i++) {
+            auto& f = savedFrames_[i];
+            if (isEden(f.savedReceiver)) report("frame.rcvr", (long)i, f.savedReceiver);
+            if (isEden(f.savedClosure)) report("frame.clos", (long)i, f.savedClosure);
+            if (isEden(f.materializedContext)) report("frame.mctx", (long)i, f.materializedContext);
+        }
+#if PHARO_JIT_ENABLED
+        for (int i = 0; i < j2jPoolCursor_; i++) {
+            if (isEden(j2jPool_[i].receiver)) report("j2j.rcvr", i, j2jPool_[i].receiver);
+        }
+#endif
+    }
     // Convert current frame's offsets back to pointers (method may have moved).
     if (method_.isObject()) {
         uint8_t* methodBytes = method_.asObjectPtr()->bytes();

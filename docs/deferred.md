@@ -60,7 +60,28 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
     the writer is JIT-STENCIL-side (raw s->sp writes bypass push()).
     DET_SCHED does NOT stabilize the corpse address (ASLR + residual
     async), so cross-process watchpoints are out — must be in-process.
-  - NEXT: lldb + PHARO_DET_SCHED on the repro; suspects remaining:
+  - BREAKTHROUGH (2026-07-05 03:20): the mechanism is the KNOWN
+    2026-06-10 IP-ROUND-TRIP family (see the comment in
+    ObjectMemory::scavenge): a scavenge MOVES young CompiledMethods and
+    raw bytecode POINTERS keep executing the stale eden copy until eden
+    refills with new objects — then execution reads recycled bytes
+    ("wrong-receiver-DNU family, ~10%/layout").  The 06-10 fix wrapped
+    the ACTIVE interpreter ip (prepareForGC offset round-trip).  THE
+    RESIDUE: processes SUSPENDED MID-JIT (the repro's terminatee parks
+    inside [[suspend] ensure:], a YOUNG CompiledBlock) keep their parked
+    JIT resume-IPs as raw eden pointers; the stepping machinery later
+    resumes them onto recycled eden.  Fits every falsification: interp
+    -only clean (suspended interp state = heap contexts with SmInt pcs),
+    both binaries affected, corpse = recycled-eden flavored, no barrier/
+    root involvement (write barriers were red herrings — scavenge full-
+    scans old space anyway; remembered set is populated but unused).
+    Two barrier hardenings landed anyway (pk-15 at:put:, IC_HIT setter).
+    FIX DIRECTION: prepareForGC must round-trip bytecode-derived ips of
+    ALL parked JIT chains (suspended processes' JITStates), not just the
+    active frame — or scavenge must pin/tenure methods referenced by
+    parked chains.  Find where suspended-process JIT state stores its
+    resume ip (JITState.ip / j2j save layout / process-switch park path).
+  - NEXT (superseded): lldb + PHARO_DET_SCHED on the repro; suspects remaining:
     the T1 dispatch-A tryPrimClass EMITTED-ASM twin (AsmjitT1 ~9526,
     "no bounds check needed" — same missing forwarder handling), the
     JIT dispatch classIndex fetch handing a stale value through IC

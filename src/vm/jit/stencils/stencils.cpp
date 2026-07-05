@@ -1275,6 +1275,10 @@ extern "C" void stencil_sendPoly(JITState* s) {
             /* Inline setter: store arg to slot, return self */             \
             Oop arg = s->sp[-(nArgs)];                                      \
             recvObj->slotAtPut(slotIdx, arg);                               \
+            /* old->young remembered-set barrier (same hole as the pk-15  \
+               at:put: inline — an OLD receiver taking a YOUNG value was  \
+               invisible to the next scavenge, 2026-07-05) */              \
+            _HOLE_RT_WRITE_BARRIER(s, receiver.bits, arg.bits);            \
             s->sp[-(nArgs + 1)] = receiver;                                 \
             s->sp -= nArgs;                                                 \
             _HOLE_CONTINUE(s);                                              \
@@ -1672,6 +1676,18 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                                         Oop val = s->sp[-(nArgs - 1)];
                                         reinterpret_cast<Oop*>(
                                             rcv.bits + 8)[i - 1] = val;
+                                        // Old->young remembered-set barrier —
+                                        // this was the ONLY store path in the
+                                        // file without one: an OLD Array
+                                        // taking a YOUNG value here was
+                                        // invisible to the next scavenge, the
+                                        // slot kept a recycled-eden pointer,
+                                        // and the stepping machinery read it
+                                        // back as the classIdx=0 corpse (the
+                                        // whole cold-context simulation-family
+                                        // cascade, root-caused 2026-07-05).
+                                        _HOLE_RT_WRITE_BARRIER(
+                                            s, rcv.bits, val.bits);
                                         s->sp[-(nArgs + 1)] = val;
                                         s->sp -= nArgs;
                                         _HOLE_CONTINUE(s);
