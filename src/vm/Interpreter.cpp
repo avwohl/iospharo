@@ -842,7 +842,8 @@ static void sistaRingDump(const char* tag, Interpreter* interp) {
 // ===== CONSTRUCTION =====
 
 Interpreter::Interpreter(ObjectMemory& memory)
-    : memory_(memory)
+    : vmThreadId_(std::this_thread::get_id())
+    , memory_(memory)
     , frameDepth_(0)
     , stackPointer_(stack_.data())
     , stackBase_(stack_.data())
@@ -2560,6 +2561,10 @@ void Interpreter::traceExtentBytecode(uint8_t bc) {
 }
 
 void Interpreter::interpret() {
+    // The thread running interpret() IS the VM thread — the external-
+    // signal ring's single consumer (see signalExternalSemaphore's
+    // VM-thread overflow path).
+    vmThreadId_ = std::this_thread::get_id();
 #if __APPLE__
     volatile int64_t lastRunLoopPumpMs = 0;  // volatile for longjmp safety
     auto runLoopBase = std::chrono::steady_clock::now();
@@ -4913,34 +4918,37 @@ std::atomic<uint64_t> g_extSigDrops{0};
 
 void Interpreter::signalExternalSemaphore(int index) {
     // MULTI-producer ring (socket I/O thread, per-lookup DNS threads, TFFI
-    // workers) with a single consumer (processPendingSignals, VM thread).
+    // workers) with a single consumer (processPendingSignals on the VM
+    // thread).  Full protocol history + the original single-producer bug:
+    // see commit 7478887d.  Hardened after the 2026-07-05 adversarial
+    // review: MONOTONIC 64-bit head/tail (ABA-proof CAS; mod capacity only
+    // when indexing), a VM-thread overflow path (the VM thread IS the
+    // consumer — it must never sleep waiting for itself; socket prims,
+    // adoptPendingWorkerCallbacks and processInputEvents produce from the
+    // VM thread), and per-entry tail publication consumer-side (a SIGSEGV-
+    // recovery longjmp mid-drain previously left tail pointing at a
+    // zeroed slot = permanently deaf ring).
     //
-    // HISTORY (2026-07-05, ZnServerTest 22-28/31 flakiness root cause):
-    // the previous "lock-free" fast path did load(head); store(slot);
-    // store(head+1) — safe only for a SINGLE producer.  Two concurrent
-    // producers could read the same head, write the same slot (one
-    // overwrite = one SILENTLY LOST SIGNAL) at ANY ring occupancy, and a
-    // full ring dropped silently too.  A lost signal is a lost semaphore
-    // wakeup: the image-side waiter (resolver wait, socket read wait)
-    // then sleeps its full 30s timeout — surfacing as TestTookTooMuchTime
-    // at SUnit's 10s limit while the Delay machinery looks perfectly
-    // healthy (it was; the stalled DelayWaitTimeout sat correctly in the
-    // scheduler heap with 20s remaining).  Zn suites are the perfect
-    // trigger: the socket I/O thread re-signals readable sockets every
-    // 100ms while DNS completion threads signal concurrently.
-    //
-    // Protocol: producers CAS-reserve a slot, then PUBLISH the value into
-    // it (slot value 0 = reserved-but-unpublished; index 0 is an invalid
-    // semaphore index anyway).  The consumer stops at an unpublished slot
-    // (retries next drain) and clears consumed slots back to 0 for reuse.
+    // Slot protocol: producers CAS-reserve, then PUBLISH the value (slot
+    // value 0 = reserved-but-unpublished; index 0 is invalid anyway).
+    // The consumer stops at an unpublished slot and clears consumed
+    // slots back to 0 for reuse.
     if (index <= 0) return;
     for (int attempt = 0;; attempt++) {
-        int head = pendingSignalHead_.load(std::memory_order_acquire);
-        int next = (head + 1) % kPendingSignalCapacity;
-        if (next == pendingSignalTail_.load(std::memory_order_acquire)) {
-            // Ring full.  NEVER drop silently — producers are background
-            // threads; a bounded wait while the VM thread drains is
-            // harmless, a dropped signal is a 10-30s image stall.
+        uint64_t head = pendingSignalHead_.load(std::memory_order_acquire);
+        uint64_t tail = pendingSignalTail_.load(std::memory_order_acquire);
+        if (head - tail >= (uint64_t)kPendingSignalCapacity) {
+            // Ring full.
+            if (std::this_thread::get_id() == vmThreadId_) {
+                // We ARE the consumer: waiting would be waiting for
+                // ourselves.  Stash in the same-thread overflow list,
+                // drained at the head of the next processPendingSignals.
+                vmThreadOverflowSignals_.push_back(index);
+                return;
+            }
+            // Background producer: bounded wait while the VM thread
+            // drains — NEVER drop silently (a dropped semaphore signal
+            // is a 10-30s image-side stall).
             if (attempt >= 2000) {  // ~2s of retries — genuinely wedged
                 g_extSigDrops.fetch_add(1, std::memory_order_relaxed);
                 fprintf(stderr, "[EXTSIG-DROP] ring full after retries — "
@@ -4953,9 +4961,10 @@ void Interpreter::signalExternalSemaphore(int index) {
             continue;
         }
         if (pendingSignalHead_.compare_exchange_weak(
-                head, next,
+                head, head + 1,
                 std::memory_order_acq_rel, std::memory_order_acquire)) {
-            pendingSignals_[head].store(index, std::memory_order_release);
+            pendingSignals_[head % kPendingSignalCapacity].store(
+                index, std::memory_order_release);
             break;
         }
         // CAS lost to a concurrent producer — retry with the fresh head.
@@ -4966,35 +4975,58 @@ void Interpreter::signalExternalSemaphore(int index) {
 }
 
 void Interpreter::processPendingSignals() {
-    int tail = pendingSignalTail_.load(std::memory_order_relaxed);
-    int head = pendingSignalHead_.load(std::memory_order_acquire);
+    // Single consumer, VM thread only.  Drain the same-thread overflow
+    // first (signals stashed when the VM thread itself found the ring
+    // full — see signalExternalSemaphore).
+    if (!vmThreadOverflowSignals_.empty()) {
+        std::vector<int> overflow;
+        overflow.swap(vmThreadOverflowSignals_);
+        for (int idx : overflow) signalSemaphoreDirectly(idx);
+    }
+
+    uint64_t tail = pendingSignalTail_.load(std::memory_order_relaxed);
+    uint64_t head = pendingSignalHead_.load(std::memory_order_acquire);
     if (tail == head) return;  // empty
 
     // Get the external semaphore table once for the whole batch
     Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
     if (semTable.isNil() || !semTable.isObject()) {
-        // Drain the queue even if we can't signal — but clear the slots:
-        // non-zero leftovers would read as published on ring wraparound.
+        // Can't deliver — discard what is PUBLISHED, but stop at a
+        // reserved-but-unpublished slot exactly like the main loop:
+        // marching past one would let the owner's later publish land
+        // behind tail (spurious stale signal + a lost real one a lap
+        // later — adversarial review 2026-07-05).
         while (tail != head) {
-            pendingSignals_[tail].store(0, std::memory_order_relaxed);
-            tail = (tail + 1) % kPendingSignalCapacity;
+            int idx = pendingSignals_[tail % kPendingSignalCapacity]
+                          .load(std::memory_order_acquire);
+            if (idx == 0) break;
+            pendingSignals_[tail % kPendingSignalCapacity]
+                .store(0, std::memory_order_relaxed);
+            tail++;
         }
-        pendingSignalTail_.store(head, std::memory_order_release);
+        pendingSignalTail_.store(tail, std::memory_order_release);
         return;
     }
     size_t tableSize = memory_.slotCountOf(semTable);
 
     while (tail != head) {
-        int index = pendingSignals_[tail].load(std::memory_order_acquire);
+        int index = pendingSignals_[tail % kPendingSignalCapacity]
+                        .load(std::memory_order_acquire);
         if (index == 0) {
             // Slot reserved by a producer but not yet published — stop
             // here; the next drain picks it up (publish is µs away).
             break;
         }
-        pendingSignals_[tail].store(0, std::memory_order_relaxed);
-        tail = (tail + 1) % kPendingSignalCapacity;
+        pendingSignals_[tail % kPendingSignalCapacity]
+            .store(0, std::memory_order_relaxed);
+        tail++;
+        // Publish tail BEFORE the signal delivery: synchronousSignal can
+        // fault into the SIGSEGV-recovery longjmp, and an unpublished
+        // local tail would strand the ring behind an already-zeroed slot
+        // forever (permanently deaf external semaphores — adversarial
+        // review 2026-07-05).
+        pendingSignalTail_.store(tail, std::memory_order_release);
 
-        if (index <= 0) continue;
         size_t tableIndex = static_cast<size_t>(index - 1);
         if (tableIndex >= tableSize) continue;
 
@@ -5017,7 +5049,6 @@ void Interpreter::processPendingSignals() {
         }
         synchronousSignal(semaphore);
     }
-    pendingSignalTail_.store(tail, std::memory_order_release);
 }
 
 void Interpreter::signalSemaphoreDirectly(int externalIndex) {

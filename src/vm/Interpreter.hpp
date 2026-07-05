@@ -610,7 +610,11 @@ public:
     void signalExternalSemaphore(int index);
 
     /// Check if there are pending external semaphores to signal
-    bool hasPendingSignals() const { return pendingSignalHead_.load(std::memory_order_acquire) != pendingSignalTail_.load(std::memory_order_acquire); }
+    bool hasPendingSignals() const {
+        return pendingSignalHead_.load(std::memory_order_acquire)
+                   != pendingSignalTail_.load(std::memory_order_acquire)
+               || !vmThreadOverflowSignals_.empty();
+    }
 
     /// Process any pending external semaphore signals (called during interpret loop)
     void processPendingSignals();
@@ -1143,8 +1147,19 @@ private:
     // ~1.1B steps into the socket suite, faultAddr 0xA0000000A).
     static constexpr int kPendingSignalCapacity = 1024;
     std::array<std::atomic<int>, kPendingSignalCapacity> pendingSignals_{};
-    std::atomic<int> pendingSignalHead_{0};  // producer writes here (mod capacity)
-    std::atomic<int> pendingSignalTail_{0};  // consumer reads here (mod capacity)
+    // MONOTONIC 64-bit head/tail (mod capacity ONLY when indexing) — the
+    // value-comparing head CAS is ABA-proof this way (adversarial review
+    // 2026-07-05: mod-N ints allowed a stale full-check to pair with a
+    // CAS one whole lap later, stranding up to 1023 published signals).
+    std::atomic<uint64_t> pendingSignalHead_{0};  // producers CAS-reserve
+    std::atomic<uint64_t> pendingSignalTail_{0};  // consumer (VM thread) advances
+    // VM-thread producer overflow: the VM thread IS the consumer, so it
+    // must never sit in the full-ring retry loop waiting for itself
+    // (adoptPendingWorkerCallbacks, socket close/connect prims, and
+    // processInputEvents all signal from the VM thread).  Same-thread as
+    // the consumer => no lock needed.
+    std::vector<int> vmThreadOverflowSignals_;
+    std::thread::id vmThreadId_{};
 
     // Force yield flag - set by heartbeat to preempt long-running processes
     // Cascade-#3 forensics: how the current activation was last
