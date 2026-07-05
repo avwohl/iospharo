@@ -110,3 +110,53 @@ picking up the previous iteration's leftover object.  RING-T1 probe
 added (what prim 111 returned for temp1).  Next: confirm via RING-T1,
 then audit the executePrimitive-from-JIT result-placement/resume for
 1-arg prim sends (prim 111 argCount=1) in chain-loop-called JIT code.
+
+Round 11 (2026-07-05, FIXED — commit e40cd65b): RING-T1 was VACUOUS
+(the ring records the prim RECEIVER; in the 1-arg MIRROR form
+`Context>>objectClass: anObject` the receiver is the CONTEXT, and 44
+is the ARGUMENT — the ring could never match 0x161).  The decisive
+probe was an IC-SITE DUMP added to the cascade forensics: walk the
+caller's JITMethod icBuffer (icSiteAt / selBitsArray) and print every
+entry's key/method/extras.  Output:
+
+    IC-DUMP caller=#send:to:with:super: sites=20
+    IC site=6 #objectClass: e=0 key=36 m=#objectClass: x=0x18000000000000
+
+extras = pk-24 (kPrimKindClass << 48) on a 1-ARG send site.  Three
+conspiring defects:
+
+1. CLASSIFIER (Interpreter.cpp upgradeICToJ2J + patchJITICAfterSend):
+   `primIdx == 75 || primIdx == 111 -> pk` had NO ARITY CHECK.
+   Prim 111's pk-24 inline is the 0-arg #class semantics; the 1-arg
+   mirror form got the same classification.
+2. DISPATCH (AsmjitT1 phase-1a): W3 IntArithReturn used a single-bit
+   `tbnz bit52` at nArgs==1 sites — unsound, pk 16-31 all set bit 52
+   (same B6-F1 unsoundness fixed earlier for W6/bit-51).  pk-24 =
+   0b11000 was stolen as "W3 kind 0" = tagged ADD.
+3. EMIT (W3/W2 bodies): the both-SmI check OR-combined the tags —
+   (rcvr|arg)&7==1 ACCEPTS a (heap, SmI) pair.  So the stolen dispatch
+   executed `contextOop + 0x161 - 1` = contextOop + 352: a young
+   pointer just past the per-iteration simulated Context.  That
+   explains every prior finding: fresh-cohort stride (it IS the
+   per-iteration context + offset), no heap/root holders (it's a
+   fabricated address, never a real reference), corpse 0x578 below the
+   args array (allocation order), dead by read time (next scavenge).
+
+FIXES (all three layers): inlinePrimKind(prim, methodNumArgs) returns
+0 on arity mismatch at all 4 classify sites; W3 dispatch decodes the
+full 5-bit extras field and range-checks 16..18; W3+W2 emits use
+strict per-operand SmI tag checks.
+
+VERIFIED (probe-hygiene rule satisfied): repro.st exit=0, 0 cascades,
+steps=99999; repro2.st 4/4 done; stepping family (StepOverTest,
+StepIntoTest, StepThroughTest, ContextTest, BlockClosureTest,
+ProcessTest) 156 P / 0 F / 0 E (was ~50 cascade failures);
+JIT-warm bitXor/arith/class identities hold.
+
+Historical footnote: the round-1-4 "falsifications" of the getter /
+setter / class-inline knobs were correct — the guilty inline was W3
+IntArithReturn (PHARO_T1_NO_INLINE_INT_ARITH_RETURN), which was never
+in the bisect set.  The scavenge<=8 quarantine "cure" worked by
+keeping the per-iteration context alive (fewer scavenges -> the
+fabricated pointer still pointed at live-ish memory longer), not by
+fixing anything.

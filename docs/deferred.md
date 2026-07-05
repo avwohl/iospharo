@@ -6,11 +6,34 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
 
 ## ARM (macOS) — post-Windows-merge verification 2026-07-04
 
-- [ ] **ProcessTest>>testTerminateInTerminate deterministic TIMEOUT (ARM,
-  HEAD).**  Both solo and batch runs; wedge state: two P40 processes parked
-  at ConstantBlockClosure>>terminateRealActive and one at
-  ProcessorScheduler>>terminateActive with term/run list=nil — terminate
-  called from within terminate leaves the process suspended mid-terminate.
+- [x] **ProcessTest>>testTerminateInTerminate / prim-100 simulation cascade —
+  FIXED 2026-07-05, commit e40cd65b.**  ROOT CAUSE (three conspiring
+  defects, found via an IC-site dump at the DNU-cascade point — full
+  hunt ledger in scripts/cascade-hunt/README.md rounds 1-11):
+  (1) inlinePrimKind classified prim 111 as pk-24 (#class inline) with
+  no arity check, so `Context>>objectClass:` — the 1-ARG mirror form of
+  prim 111 — got 0-arg #class extras at its send site inside
+  send:to:with:super:;  (2) the W3 IntArithReturn dispatch was a
+  single-bit tbnz on extras bit 52 at 1-arg sites — unsound since
+  primKinds 16-31 all set bit 52 (same B6-F1 unsoundness fixed earlier
+  for W6/bit-51) — so pk-24 was stolen as "W3 kind 0" (tagged add);
+  (3) the W3/W2 both-SmI check OR-combined the operand tags,
+  accepting (heap, SmI) pairs, so the stolen dispatch computed
+  lookupClass = contextOop + 44*8 - 1 — a fabricated young pointer that
+  dangled after the next scavenge and cascaded in doesNotUnderstand:.
+  FIXES: arity-aware inlinePrimKind(prim, methodNumArgs) at all 4
+  classify sites; W3 dispatch decodes the full 5-bit field (16..18);
+  strict per-operand SmI tag checks in W3+W2 emits.  VERIFIED: both
+  repros pass (steps=99999, 0 cascades); stepping family (StepOver/
+  StepInto/StepThrough/ContextTest/BlockClosureTest/ProcessTest)
+  156 P / 0 F / 0 E — recovers the ~50-test cascade family including
+  testTerminateInTerminate, testRunSimulated, testTallyInstructions,
+  testTallyMethods, testBlockCannotReturn; 12-class arith/kernel canary
+  1353 P / 0 F.  Kept from the hunt (real bugs fixed en route):
+  scanStackReplace→forEachRoot delegation, JITState.prevState GC chain,
+  pk-15 at:put: + IC_HIT setter write barriers, pk-24 forwarder guard.
+  Historical investigation log follows (superseded but kept for the
+  falsification methodology):
   ROOT SHARPENED (2026-07-04 evening): stepping the terminator
   (`terminator step` loop) dies in a doesNotUnderstand: CASCADE inside
   #send:super:numArgs: (prim 100, the simulation send) at fd=10 — the
