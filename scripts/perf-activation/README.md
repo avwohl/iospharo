@@ -42,5 +42,18 @@ per-instruction data:
     xctrace record --template 'CPU Counters' --launch -- \
       ./build/test_load_image /tmp/harness/Pharo.image.bak eval "$(cat scripts/perf-activation/bench_activation.st)"
 
-Status 2026-07-05: harness written; real measurement deferred until the
-machine is quiet (full-catalog SUnit run in flight).
+Status 2026-07-05: harness written; QUIET-MACHINE BASELINE recorded
+(arm64, M-series, 4 runs):
+
+    send5M    724 / 746 / 792 / 855 ms   -> per-send ~140-165 ns
+    block5M   522 / 463 / 489 / 488 ms   -> per-block ~93-100 ns
+    baseline  24-26 ms (empty +-loop)
+
+Note per-send here (~140-165ns) is HIGHER than the memory's earlier
+~70-100ns isolated numbers — this callee has 2 temp-writing statements
+(to defeat trivial-inline classification) vs the earlier `^x+1` shape,
+so it carries a slightly bigger body on top of the activation cost.
+Blocks are FASTER than method sends on this bench (the BV-inline path
+is more optimized than plain J2J method send, matching the memory's
+2026-06-25 finding).  Ablation deltas should be read against THESE
+numbers with the SAME bench.
