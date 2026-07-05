@@ -176,7 +176,7 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
     if (event == 103) {
         // J2J descent trace.  extra1 = (nArgs<<56) | (arg1.bits & ...),
         // extra2 = arg2.bits.  Only fires for nArgs>=2.
-        if (g_debug.primSizeStencilDbg) {
+        if (GET_DEBUG_BOOL(PHARO_PRIMSIZE_STENCIL_DBG)) {
             static int log103 = 0;
             uint64_t nA = (extra1 >> 56) & 0xFF;
             // Only log 3- or 4-arg descents (likely translate:from:to:table:).
@@ -192,7 +192,7 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
     }
     if (event == 102) {
         // primSize stencil debug.  extra1 = retVal.bits, extra2 = (fmt<<48) | (slots<<32) | rcvBits&0xFFFFFFFF (low 32 of rcvBits).
-        if (g_debug.primSizeStencilDbg) {
+        if (GET_DEBUG_BOOL(PHARO_PRIMSIZE_STENCIL_DBG)) {
             static int psLog = 0;
             // Print: first 30, then every 100th up to 200, then every 1000th.
             psLog++;
@@ -218,7 +218,7 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
         return;
     }
     if (event == 99 || event == 100) {
-        if (g_debug.primAtOob) {
+        if (GET_DEBUG_BOOL(PHARO_PRIMAT_OOB)) {
             static int oobCount = 0;
             if (++oobCount <= 30) {
                 if (event == 99) {
@@ -245,7 +245,7 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
         }
         return;
     }
-    static bool trace = g_debug.b5Trace;
+    static bool trace = GET_DEBUG_BOOL(PHARO_B5_TRACE);
     if (!trace) return;
     // Always record to ring; filter only controls live stderr print.
     g_b5Count++;
@@ -425,7 +425,7 @@ extern "C" void jit_rt_return(JITState* state) {
 // Logs the retVal being written + the popped save's key fields.
 // Rate-limited and gated by PHARO_B5_TRACE.
 extern "C" void pharo_jit_b5_tramp_ret(JITState* state, Interpreter::J2JSave* save) {
-    if (!g_debug.b5Trace) return;
+    if (!GET_DEBUG_BOOL(PHARO_B5_TRACE)) return;
     static size_t count = 0;
     count++;
     if (count > 3000) return;
@@ -629,7 +629,7 @@ extern "C" void jit_rt_recompile_queue(void* calleeJM) {
     // PHARO_NO_J2J_INLINE_BUMP=1: kill switch — if set, the helper is
     // a no-op so any latent regression caused by the inline-bump path
     // can be bisected away without re-extracting stencils.
-    if (g_debug.noJ2JInlineBump) return;
+    if (GET_DEBUG_BOOL(PHARO_NO_J2J_INLINE_BUMP)) return;
     JITMethod* jm = reinterpret_cast<JITMethod*>(calleeJM);
     uint64_t methBits = jm->compiledMethodOop;
     if (methBits == 0) return;
@@ -663,7 +663,7 @@ void JITRuntime::noteLateSpecBit(JITMethod* callerJM, uint64_t newExtra) {
     // Default-on after bench-suite validation 2026-05-03 (parity with
     // and without across 5+ runs of sort/sieve/fib/dict/sum/factorial).
     // PHARO_NO_LATE_SPEC_RECOMPILE=1 to opt out.
-    if (g_debug.noLateSpecRecompile) return;
+    if (GET_DEBUG_BOOL(PHARO_NO_LATE_SPEC_RECOMPILE)) return;
 
     // Weight by classification value.  High-value bits (block-value,
     // multi-slot, returnsLiteral) unlock dedicated specialized stencils
@@ -727,7 +727,7 @@ extern "C" void jit_t2_send(JITState* state) {
     // (MIR holds stale oops across GC — see commit b18e71e). Once the T2
     // GC issue is resolved, flip A1 on to replace the correctness-safe
     // always-bail with the chain-loop callee invocation.
-    static bool a1Enabled = g_debug.t2A1;
+    static bool a1Enabled = GET_DEBUG_BOOL(PHARO_T2_A1);
 
     Interpreter* interp = state->interp;
     ObjectMemory* mem = state->memory;
@@ -1027,7 +1027,7 @@ extern "C" void jit_rt_fill_ic(JITState* s, uint64_t* icData,
     fsrLazyRefresh(*s);  // FSR M4
     // PHARO_NO_MEGAHIT_IC_FILL=1: kill switch.  Set if the mega-cache
     // hit IC fill regresses a workload.
-    if (g_debug.noMegahitICFill) return;
+    if (GET_DEBUG_BOOL(PHARO_NO_MEGAHIT_IC_FILL)) return;
     if (!icData || methodBits == 0) return;
     if (!s || !s->interp) return;
     // PMS TRIPWIRE (design §6.1): this helper writes IC slot 0 with NO
@@ -1195,7 +1195,7 @@ extern "C" int jit_rt_ic_miss(
 // memory via state->memory.
 extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
                                   uint64_t i, uint64_t* out) {
-    if (__builtin_expect(pharo::g_debug.jitFailReasons, 0)) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS), 0)) {
         static int phn = 0;
         if (++phn <= 24)
             fprintf(stderr, "[PRIMAT-PTR-ENTRY] rcv=0x%llx i=%llu\n",
@@ -1215,7 +1215,7 @@ extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
     if (!(fmt == 9 || (fmt >= 3 && fmt <= 5))) {
         int fr16 = (int)s->interp->jitPrimAtFull(*s, rcvBits, (i << 3) | 1,
                                                  out, false, 0);
-        if (__builtin_expect(pharo::g_debug.jitFailReasons, 0)
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS), 0)
                 && fmt >= 12 && fmt <= 15) {
             static int w16a = 0;
             if (++w16a <= 50)
@@ -1337,7 +1337,7 @@ extern "C" int jit_rt_primatput_ptr(JITState* s, uint64_t rcvBits,
             uint64_t fullOut = 0;
             int fr = (int)s->interp->jitPrimAtFull(*s, rcvBits,
                 (i << 3) | 1, &fullOut, true, valBits);
-            if (__builtin_expect(pharo::g_debug.jitFailReasons, 0)
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS), 0)
                     && fmtPut >= 12 && fmtPut <= 15) {
                 static int w16p = 0;
                 if (++w16p <= 50)
@@ -1589,7 +1589,7 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
     // PHARO_INLINE_PRIM_DEBUG=1: log every inline at: failure with the
     // index and the receiver's slot count.  Needed because primitive 60
     // is called inline from JIT code, bypassing Interpreter::primitiveAt.
-    const bool inlineDbg = g_debug.inlinePrimDebug;
+    const bool inlineDbg = GET_DEBUG_BOOL(PHARO_INLINE_PRIM_DEBUG);
     static int inlineLog = 0;
 
     // Receiver must be an object pointer (tag == 0, not immediate)
@@ -1738,7 +1738,7 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
             size = slotCount - fixedFields;
         } else {
             static int sizeFailLog = 0;
-            if (g_debug.primSizeDebug && ++sizeFailLog <= 20) {
+            if (GET_DEBUG_BOOL(PHARO_PRIMSIZE_DEBUG) && ++sizeFailLog <= 20) {
                 fprintf(stderr,
                     "[INLINE-SIZE-FAIL #%d] rcvBits=0x%llx fmt=%llu slots=%llu\n",
                     sizeFailLog, (unsigned long long)rcvBits,
@@ -1747,7 +1747,7 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
             return 0;
         }
         static int sizeLog = 0;
-        if (g_debug.primSizeDebug && ++sizeLog <= 30) {
+        if (GET_DEBUG_BOOL(PHARO_PRIMSIZE_DEBUG) && ++sizeLog <= 30) {
             fprintf(stderr,
                 "[INLINE-SIZE #%d] rcvBits=0x%llx fmt=%llu slots=%llu -> size=%llu sp[-1] was 0x%llx now=0x%llx\n",
                 sizeLog, (unsigned long long)rcvBits,
@@ -1915,7 +1915,7 @@ extern "C" uint64_t jit_rt_new_prim(JITState* s, uint64_t info) {
     Oop newObj = mem.oopFromPointer(obj);
 
     // PHARO_MNU_ALLOC_DBG=1: trace JIT-fast-path allocations of MNU.
-    if (g_debug.mnuAllocDbg && classIndex == 4307) {
+    if (GET_DEBUG_BOOL(PHARO_MNU_ALLOC_DBG) && classIndex == 4307) {
         static int n = 0;
         n++;
         if (n <= 200 || (n % 1000 == 0)) {
@@ -2126,9 +2126,9 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     // "up to 1 IC entry by default").  Larger blocks have IC churn
     // and frequent chain-loop bails that make BV inline net-negative.
     // PHARO_T1_BV_MAX_IC=N tunes the threshold.
-    if (!g_debug.t1InlineBlockValueNonLeaf
+    if (!GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF)
         && blockJM->numICEntries != 0) { g_bvBail_lookup++; return nullptr; }
-    if (g_debug.t1InlineBlockValueNonLeaf
+    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF)
         && g_debug.t1BvMaxIC >= 0
         && blockJM->numICEntries > (uint16_t)g_debug.t1BvMaxIC) {
         g_bvBail_lookup++; return nullptr;
@@ -2137,7 +2137,7 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     // save-push/restore overhead (~50ns × depth × calls).  For
     // collect 10x100K = 1M iterations × 2 nested BVs = 2M extra ops.
     // PHARO_T1_BV_MAX_DEPTH=N caps depth.  -1 = no cap.
-    if (g_debug.t1InlineBlockValueNonLeaf
+    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF)
         && g_debug.t1BvMaxDepth >= 0
         && s->j2jDepth > g_debug.t1BvMaxDepth) {
         g_bvBail_savefull++; return nullptr;
@@ -2183,7 +2183,7 @@ extern "C" void* jit_rt_inline_block_value_prep(JITState* s, int nArgs,
     // hang.  Counted by g_blockValue_nonleaf_fires; only applied when
     // we'd be in the non-leaf gate path (blockJM->numICEntries != 0).
     static uint64_t g_blockValue_nonleaf_fires = 0;
-    if (g_debug.t1InlineBlockValueNonLeaf
+    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF)
         && blockJM->numICEntries != 0) {
         if (g_debug.t1InlineBlockValueMax >= 0
             && g_blockValue_nonleaf_fires
@@ -2495,9 +2495,9 @@ extern "C" uint64_t jit_rt_sista_call_send(JITState* state,
                                              uint64_t selBits,
                                              uint64_t nArgs) {
     if (!state || !state->interp) return 0;
-    if (g_debug.sistaHelperForceBail) return 0;
+    if (GET_DEBUG_BOOL(PHARO_SISTA_HELPER_FORCE_BAIL)) return 0;
     // W7: even/odd shortcut.  Pre-check before the full send.
-    if (nArgs == 0 && !g_debug.sistaNoShortcutEvenOdd) {
+    if (nArgs == 0 && !GET_DEBUG_BOOL(PHARO_SISTA_NO_SHORTCUT_EVEN_ODD)) {
         // Receiver was just pushed at sp[-1] by the helper's caller.
         Oop* sp = state->sp;
         Oop rcvr = sp[-1];
@@ -2597,7 +2597,7 @@ extern "C" uint64_t jit_rt_sista_special_call_send(JITState* state,
                                                     uint64_t ssIdx,
                                                     uint64_t nArgs) {
     if (!state || !state->interp || !state->memory) return 0;
-    if (g_debug.sistaHelperForceBail) return 0;
+    if (GET_DEBUG_BOOL(PHARO_SISTA_HELPER_FORCE_BAIL)) return 0;
     Oop ssArrayOop = state->memory->specialObject(
         SpecialObjectIndex::SpecialSelectorsArray);
     if (!ssArrayOop.isObject() || ssArrayOop.rawBits() < 0x10000) return 0;
@@ -2636,7 +2636,7 @@ extern "C" uint64_t jit_rt_sista_complete_array_do_accum(
     uint64_t accBits,
     uint64_t arithCode) {
     if (!state || !state->interp) return 0;
-    if (g_debug.sistaDoAccumForceBail) return 0;
+    if (GET_DEBUG_BOOL(PHARO_SISTA_DOACCUM_FORCE_BAIL)) return 0;
     return state->interp->jitSistaCompleteArrayDoAccum(
         state, rcvBits, vecBits, slotByteOff, startIdx, accBits,
         arithCode);
@@ -2652,7 +2652,7 @@ extern "C" uint64_t jit_rt_sista_complete_array_inject_into(
     uint64_t accBits,
     uint64_t arithCode) {
     if (!state || !state->interp) return 0;
-    if (g_debug.sistaInjectResumeForceBail) return 0;
+    if (GET_DEBUG_BOOL(PHARO_SISTA_INJECT_RESUME_FORCE_BAIL)) return 0;
     return state->interp->jitSistaCompleteArrayInjectInto(
         state, rcvBits, startIdx, accBits, arithCode);
 }
@@ -2667,7 +2667,7 @@ extern "C" uint64_t jit_rt_sista_complete_array_collect(
     uint64_t constBits,
     uint64_t arithCode) {
     if (!state || !state->interp) return 0;
-    if (g_debug.sistaCollectResumeForceBail) return 0;
+    if (GET_DEBUG_BOOL(PHARO_SISTA_COLLECT_RESUME_FORCE_BAIL)) return 0;
     return state->interp->jitSistaCompleteArrayCollect(
         state, rcvBits, resultBits, startIdx, constBits, arithCode);
 }
@@ -2675,7 +2675,7 @@ extern "C" uint64_t jit_rt_sista_complete_array_collect(
 extern "C" uint64_t jit_rt_sista_alloc_array(JITState* state,
                                                uint64_t size) {
     if (!state || !state->interp) return 0;
-    if (g_debug.sistaAllocArrayTrace) {
+    if (GET_DEBUG_BOOL(PHARO_SISTA_ALLOC_ARRAY_TRACE)) {
         static size_t calls = 0;
         if (++calls < 8 || (calls & 0xFFFF) == 0) {
             std::fprintf(stderr,
@@ -2726,7 +2726,7 @@ extern "C" uint64_t jit_rt_sista_block_create(JITState* state,
     if (!state || !state->interp) return 0;
     static size_t calls = 0;
     calls++;
-    if (g_debug.sistaBlockHelperTrace && (calls < 8 || (calls & 0xFFF) == 0)) {
+    if (GET_DEBUG_BOOL(PHARO_SISTA_BLOCK_HELPER_TRACE) && (calls < 8 || (calls & 0xFFF) == 0)) {
         std::fprintf(stderr,
             "[SISTA-BLOCK-HELPER] calls=%zu lit=%llu n=%llu fl=0x%llx\n",
             calls, (unsigned long long)litIndex,
@@ -2823,7 +2823,7 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
         // validation showed neutral-to-positive impact (fib -1ms,
         // sum -3ms, blocks -2ms; no regressions).  Opt out via
         // PHARO_NO_J2J_CALLEE_BUMP=1.
-        if (!g_debug.noJ2JCalleeBump) {
+        if (!GET_DEBUG_BOOL(PHARO_NO_J2J_CALLEE_BUMP)) {
             // Note: this code path is rarely reached.  stencil_sendJ2J's
             // INLINE j2j_direct_call (stencils.cpp line 1569+) is the hot
             // path and does save/BLR/restore directly.  jit_rt_j2j_call
@@ -2966,9 +2966,9 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     // return`, which is ~5-10 cycles per send.  At 1M sends/bench that's
     // ~10ms on the hot path.  PHARO_B5_TRACE / PHARO_PRIMAT_OOB flip to
     // the real impl.
-    bool needTrace = g_debug.b5Trace
-                   || g_debug.primAtOob
-                   || g_debug.primSizeStencilDbg;
+    bool needTrace = GET_DEBUG_BOOL(PHARO_B5_TRACE)
+                   || GET_DEBUG_BOOL(PHARO_PRIMAT_OOB)
+                   || GET_DEBUG_BOOL(PHARO_PRIMSIZE_STENCIL_DBG);
     helpers.j2jTrace = reinterpret_cast<void*>(needTrace
         ? &jit_rt_j2j_trace
         : &jit_rt_j2j_trace_noop);
@@ -3066,7 +3066,7 @@ static size_t g_initialCompileQueueDropped = 0;
 bool JITRuntime::queueInitialCompile(Oop compiledMethod) {
     uint64_t methBits = compiledMethod.rawBits();
     if (methBits == 0) return true;
-    if (__builtin_expect(pharo::g_debug.jitFailReasons, 0) && interp_) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS), 0) && interp_) {
         static int qn = 0;
         if (qn < 8 && interp_->memory().selectorOf(compiledMethod) == "scanFor:") {
             qn++;
@@ -3163,7 +3163,7 @@ size_t JITRuntime::drainInitialCompileQueue() {
             g_initialCompileQueueDrained++;
             continue;
         }
-        if (__builtin_expect(pharo::g_debug.jitFailReasons, 0) && interp_) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS), 0) && interp_) {
             static int dn = 0;
             if (dn < 8 && interp_->memory().selectorOf(method) == "scanFor:") {
                 dn++;
@@ -3203,7 +3203,7 @@ size_t JITRuntime::drainInitialCompileQueue() {
             const bool noT2 = !g_debug.t2Strict;
             static int t2Limit  = g_debug.t2Limit;
             static int t2Warmup = g_debug.t2Warmup;
-            static bool t2ReplaceNote = g_debug.t2Replace;
+            static bool t2ReplaceNote = GET_DEBUG_BOOL(PHARO_T2_REPLACE);
             uint64_t key = method.rawBits();
             if (!noT2 && !tier2Lookup(key)
                 && (int)tier2Compiler_->methodsCompiled() < t2Limit) {
@@ -3298,7 +3298,7 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
     }
     if (!anyData) return false;
 
-    const bool traceRecompile = g_debug.jitTraceRecompile;
+    const bool traceRecompile = GET_DEBUG_BOOL(PHARO_JIT_TRACE_RECOMPILE);
     const char* dumpICSel = g_debug.dumpRecompileIC;
     std::string sel;
     if (traceRecompile || dumpICSel) {
@@ -3375,7 +3375,7 @@ bool JITRuntime::linkSendSite(JITMethod* jm, uint32_t siteIdx) {
     if (GET_DEBUG_BOOL(PHARO_T1_PATCHED_SENDS_NOLINK)) return false;
     // The debug probe knobs change Lprobe's semantics; never link while
     // they're active so they keep meaning what they mean (design §2.3).
-    if (g_debug.t1ProbeAlwaysMiss
+    if (GET_DEBUG_BOOL(PHARO_T1_PROBE_ALWAYS_MISS)
         || GET_DEBUG_BOOL(PHARO_T1_HIT_FORCE_DISPATCH)) return false;
 
     // ===== Link predicate (design §5) =====
@@ -3675,7 +3675,7 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
     constexpr uint64_t kJ2JEntryBit  = 1ULL << 60;
     constexpr uint64_t kJ2JAddrMask  = 0x0000FFFFFFFFFFFFULL;
 
-    const bool trace = g_debug.traceRewriteIC;
+    const bool trace = GET_DEBUG_BOOL(PHARO_TRACE_REWRITE_IC);
     size_t methodsWalked = 0, slotsRewritten = 0, slotsWithJ2J = 0;
 
     // FSR M4: a method recompiled to tier-2 must be UNLINKED from J2J
@@ -3766,7 +3766,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // scanFor: orphan diagnosis (PHARO_JIT_FAIL_REASONS): trace this
     // method's path through the gates.
     bool sfTrace = false;
-    if (__builtin_expect(pharo::g_debug.jitFailReasons, 0) && interp_) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS), 0) && interp_) {
         static uint64_t sfSeen = 0;
         std::string sel = interp_->memory().selectorOf(compiledMethod);
         if (sel == "scanFor:") {
@@ -3856,7 +3856,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
 
         // jit-may23 T6: dump per-reason compile failure counts.
         // Opt-in via PHARO_JIT_FAIL_REASONS=1.
-        if (g_debug.jitFailReasons) {
+        if (GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS)) {
             extern size_t g_failedBadHeader, g_failedUnsuppPrim,
                           g_failedSkipSel, g_failedBlock, g_failedBcOther;
             fprintf(stderr,
@@ -3920,7 +3920,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // that creates a new countMap entry (count==0) so the per-method
     // bytecode walk costs amortise to O(1) per method, not per call.
     auto methodHasBackwardJump = [&]() -> bool {
-        if (g_debug.noHotLoopThreshold) return false;
+        if (GET_DEBUG_BOOL(PHARO_NO_HOT_LOOP_THRESHOLD)) return false;
         if (!compiledMethod.isObject()
                 || compiledMethod.rawBits() <= 0x10000) {
             return false;
@@ -4087,7 +4087,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                                 return;
                             }
                         }
-                        if (g_debug.resumeJ2J) {
+                        if (GET_DEBUG_BOOL(PHARO_RESUME_J2J)) {
                             for (const char** p = chainOnlyExcluded; *p; p++) {
                                 if (sel == *p) {
                                     fprintf(stderr, "[JIT] AUTO-EXCLUDED chain-only #%s\n",
@@ -4140,7 +4140,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 //     in 43s vs 42s — within timing noise).
                 // PHARO_NO_QUEUE_COMPILE=1 to opt out (falls back to direct
                 // inline compile, the legacy mid-bytecode behavior).
-                if (!g_debug.noQueueCompile) {
+                if (!GET_DEBUG_BOOL(PHARO_NO_QUEUE_COMPILE)) {
                     if (!queueInitialCompile(compiledMethod)) {
                         // Queue full -> dropped.  Re-arm the one-shot
                         // ==threshold trigger so the next activation
@@ -4226,7 +4226,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     // Set PHARO_T2_REPLACE=1 to reactivate T2
                     // compilation for these methods (and let T2
                     // actually run).
-                    static bool t2ReplaceNote = g_debug.t2Replace;
+                    static bool t2ReplaceNote = GET_DEBUG_BOOL(PHARO_T2_REPLACE);
                     bool skipCoexist = !t2ReplaceNote && jm &&
                                        jm->isExecutable();
                     if (!noT2 && tier2Compiler_ && !tier2Lookup(key) &&
@@ -4367,7 +4367,7 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
         jm->tier == 1 && jm->numICEntries > 0 && !isSplice &&
         !(jm->stats->flags & kRecompileFailed)) {
         if (compiler_) {
-            if (g_debug.jitTraceRecompile) {
+            if (GET_DEBUG_BOOL(PHARO_JIT_TRACE_RECOMPILE)) {
                 std::string sel = interp_->memory().selectorOf(compiledMethod);
                 fprintf(stderr,
                         "[RECOMPILE] %s (icEntries=%u execCount=%u)\n",
@@ -4443,7 +4443,7 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // "T2 replaces T1" behavior for bisection.
     // PHARO_T2 is strict "=1" (execute gate).
     const bool noT2Exec = !g_debug.t2Strict;
-    static bool t2Replace = g_debug.t2Replace;
+    static bool t2Replace = GET_DEBUG_BOOL(PHARO_T2_REPLACE);
     void* t2code = noT2Exec ? nullptr : tier2Lookup(compiledMethod.rawBits());
     bool t1Executable = jm && jm->isExecutable();
     bool useT2 = (t2code && t2code != (void*)1) &&
@@ -4470,7 +4470,7 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
 
 bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& state) {
     if (!initialized_) return false;
-    static bool noResume = g_debug.noResume;
+    static bool noResume = GET_DEBUG_BOOL(PHARO_NO_RESUME);
     if (noResume) return false;
 
     // T2 resume DISABLED: MIR's register allocator spills values to the C
@@ -4485,7 +4485,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // Resume-refusal telemetry (PHARO_JIT_FAIL_REASONS=1): dict-bench
     // J2J-r success is only ~22%; classify the 78%.
     static uint64_t rrNoJM = 0, rrEntryState = 0, rrCodeOff = 0, rrOk = 0;
-    const bool rrLog = pharo::g_debug.jitFailReasons;
+    const bool rrLog = GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS);
     auto rrDump = [&]() {
         if (rrLog && (((rrNoJM + rrEntryState + rrCodeOff + rrOk) & 0xFFF) == 0))
             fprintf(stderr, "[RESUME-REFUSE] ok=%llu noJM=%llu entryState=%llu codeOff=%llu\n",
@@ -4613,7 +4613,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // under PHARO_JIT_VALIDATE_ENTRY=1 for diagnosis when that bug
     // shape recurs, but skip on the hot path.  Removing it took
     // block(500K) on Pi 5 from 1980ms → expected 100-200ms.
-    if (g_debug.jitValidateEntry) {
+    if (GET_DEBUG_BOOL(PHARO_JIT_VALIDATE_ENTRY)) {
         JITMethod* entryMethod = codeZone_.findMethodByPC(reinterpret_cast<uint64_t>(entry));
         if (entryMethod != jm) {
             fprintf(stderr, "[JIT] BUG: tryResume entry %p in wrong method (expected jm=%p, got %p) bc=%u code=%u\n",
@@ -4626,7 +4626,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // a *>>scanFor:.  Used to find which resume corrupts state.
     {
         static int bc5count = 0;
-        if (g_debug.bc5Dump && interp_ && bc5count < 80) {
+        if (GET_DEBUG_BOOL(PHARO_BC5_DUMP) && interp_ && bc5count < 80) {
             std::string sel = interp_->memory().selectorOf(compiledMethod);
             if (sel == "scanFor:") {
                 bc5count++;
@@ -4718,7 +4718,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     JIT_CALL(reinterpret_cast<void*>(entry), &state);
 #endif
 
-    if (__builtin_expect(g_debug.traceResumeSp, 0)) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_RESUME_SP), 0)) {
         ptrdiff_t delta = state.sp - spBefore;
         std::string sel = interp_ ? interp_->memory().selectorOf(compiledMethod) : "?";
         static size_t cnt = 0;

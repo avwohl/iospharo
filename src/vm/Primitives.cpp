@@ -505,7 +505,7 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
     // CPU in fullGC during block(500K) — surprising since the bench
     // shouldn't allocate, so something in the image is calling this
     // prim repeatedly.
-    if (g_debug.gcLog) {
+    if (GET_DEBUG_BOOL(PHARO_GC_LOG)) {
         static int count = 0;
         if (++count <= 100 || (count & 0x3FF) == 0) {
             fprintf(stderr, "[GC-LOG] primitiveIncrementalGC #%d\n", count);
@@ -1966,7 +1966,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     // EOF case (interpreter only).
     static int primAtLog = 0;
     auto logPrimAt = [&](const char* tag, int64_t slotCount) {
-        if (!g_debug.primAtDebug) return;
+        if (!GET_DEBUG_BOOL(PHARO_PRIMAT_DEBUG)) return;
         // Filter: skip ReadStream>>next noise — that's normal EOF behavior.
         std::string mSel = memory_.selectorOf(method_);
         if (mSel == "next" || mSel == "atEnd") return;
@@ -2144,7 +2144,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
 
         // arrayIndex is (idx - 1), so byteIndex is 0-based
         if (arrayIndex >= totalBytes) {
-            if (g_debug.jitFailReasons) {
+            if (GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS)) {
                 static int cmf = 0;
                 if (++cmf <= 10)
                     fprintf(stderr, "[P60-CM-OOB] idx=%lld totalBytes=%zu "
@@ -2341,7 +2341,7 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         // down method-cache or IC routing bugs where prim 61 (SmallInt
         // at:put:) gets called with a Character value (which should
         // route to prim 64 / primitiveStringAtPut instead).
-        if (__builtin_expect(g_debug.improperStoreTrace, 0)) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_IMPROPER_STORE_TRACE), 0)) {
             if (!value.isSmallInteger() ||
                 value.asSmallInteger() < 0 || value.asSmallInteger() > 255 ||
                 static_cast<size_t>(idx - 1) >= header->byteSize()) {
@@ -3864,7 +3864,7 @@ PrimitiveResult Interpreter::primitiveWSNextPut(int argCount) {
 // Primitive 207: Full closure value (for closures with many arguments)
 // This handles FullBlockClosures which may have more complex activation
 PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
-    if (g_debug.tracePrim207) {
+    if (GET_DEBUG_BOOL(PHARO_TRACE_PRIM207)) {
         static uint64_t n = 0;
         n++;
         if (n <= 5 || (n & 0xFFFFF) == 0)
@@ -4769,7 +4769,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     // PHARO_SEM_SIGNAL_TRACE: wait-entry identity trace (which semaphore,
     // excess state, waiting process) — pairs with [SEM-SIGNAL] to close
     // signal/wait identity mismatches (InLoop(UsingWorker) stall hunt).
-    if (__builtin_expect(g_debug.semSignalTrace, 0)) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SEM_SIGNAL_TRACE), 0)) {
         static int waitLog = 0;
         if (waitLog++ < 3000000) {
             Oop ap = getActiveProcess();
@@ -4831,14 +4831,14 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // On iOS, std::exit() from a background thread causes SIGABRT.
     // Instead, stop the interpreter loop and let the app handle cleanup.
 
-    if (g_debug.traceExit) {
+    if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
         fprintf(stderr, "[EXIT-TRACE] primitiveQuit called argCount=%d\n", argCount);
     }
     // Flush pending IMAGE output buffer before shutting down
     ::flushImageOutputBuffer();
 
     running_ = false;
-    if (g_debug.traceExit) {
+    if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
         fprintf(stderr, "[EXIT-TRACE] running_ = false\n");
     }
     return PrimitiveResult::Success;
@@ -9460,7 +9460,7 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
     // expects to still exist (e.g. ByteSymbolTest creates a symbol, discards
     // the reference, then expects allInstances to find it).
 
-    const bool reflProfile = g_debug.reflectProfile;
+    const bool reflProfile = GET_DEBUG_BOOL(PHARO_REFLECT_PROFILE);
     auto reflStart = reflProfile
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
@@ -9515,7 +9515,7 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
 
 // Primitive 178: Return all objects in the system
 PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
-    const bool reflProfile = g_debug.reflectProfile;
+    const bool reflProfile = GET_DEBUG_BOOL(PHARO_REFLECT_PROFILE);
     auto reflStart = reflProfile
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
@@ -9609,7 +9609,7 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
 // Primitive 132: Does object point to another object?
 // Per official VM: only checks pointer fields, handles compiled methods specially
 PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
-    const bool reflProfile = g_debug.reflectProfile;
+    const bool reflProfile = GET_DEBUG_BOOL(PHARO_REFLECT_PROFILE);
     auto reflStart = reflProfile
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
@@ -11402,7 +11402,7 @@ PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
     // `context exception` (tempAt: 1 on a signaling Context) returns
     // `Exception class` instead of the Exception instance.  When the
     // returned value is itself a class metaobject, that's the smoking gun.
-    if (g_debug.ctxTempAtDbg) {
+    if (GET_DEBUG_BOOL(PHARO_CTX_TEMPAT_DBG)) {
         static int log = 0;
         // Quick is-class check: classOf(value)'s class name ends with " class"
         // (i.e., the returned value's class is a Metaclass).
@@ -15643,7 +15643,7 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
 
     Oop targetObject = stackTop();
 
-    const bool reflProfile = g_debug.reflectProfile;
+    const bool reflProfile = GET_DEBUG_BOOL(PHARO_REFLECT_PROFILE);
     auto reflStart = reflProfile
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
@@ -31139,7 +31139,7 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     void* returnHolder = alloca(returnSize);
     memset(returnHolder, 0, returnSize);
 
-    if (g_debug.callbackDebug) {
+    if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
         fprintf(stderr, "[FFI-CALL] funcPtr=%p cif->nargs=%u rtype=%u\n",
                 funcPtr, (unsigned)cif->nargs,
                 cif->rtype ? (unsigned)cif->rtype->type : 0xFFFFu);
@@ -31460,7 +31460,7 @@ static long long xtcbNowMs() {
 
 static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* userdata) {
     CallbackInfo* cbInfo = static_cast<CallbackInfo*>(userdata);
-    if (g_debug.callbackDebug) {
+    if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
         fprintf(stderr, "[CALLBACK-HANDLER] t=%lld enter ret=%p args=%p\n", xtcbNowMs(), ret, (void*)args);
         fflush(stderr);
     }
@@ -31584,7 +31584,7 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
             if (!completed) {
                 fprintf(stderr, "[XTCB-TIMEOUT] worker-thread callback not handled "
                         "within 120s (vmcc=%p) — returning zeroed result\n", (void*)vmcc);
-            } else if (g_debug.callbackDebug) {
+            } else if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
                 // Aborted: VM shutdown or the owning worker was released
                 // while we were parked.  Same cleanup as the timeout path
                 // (deregister + g_dead) keeps the VM consistent when
@@ -31630,7 +31630,7 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         // thrown from primitiveCallbackReturn.
         g_interpreter->enterInterpreterFromCallback(vmcc);
 
-        if (g_debug.callbackDebug) {
+        if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
             fprintf(stderr, "[CALLBACK-HANDLER-FELL-OUT] vmcc=%p (enterInterpreterFromCallback returned normally)\n",
                     (void*)vmcc);
             fflush(stderr);
@@ -31643,7 +31643,7 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         free(vmcc);
         return;
     } catch (const pharo::CallbackComplete& done) {
-        if (g_debug.callbackDebug) {
+        if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
             fprintf(stderr, "[CALLBACK-HANDLER-EXCEPT-RESUME] vmcc=%p timedOut=%d\n",
                     (void*)vmcc, (int)done.timedOut);
             fflush(stderr);
@@ -31695,7 +31695,7 @@ void Interpreter::adoptPendingWorkerCallbacks() {
             std::lock_guard<std::mutex> lk(xtcb::g_mx);
             xtcb::g_active[pending->vmcc] = pending;
         }
-        if (g_debug.callbackDebug) {
+        if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
             fprintf(stderr, "[XTCB-ADOPT] t=%lld vmcc=%p depth=%d\n",
                     xtcbNowMs(), (void*)pending->vmcc, callbackDepth_);
             fflush(stderr);
@@ -31724,7 +31724,7 @@ PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
     xtcb::g_vmThreadId = std::this_thread::get_id();
     xtcb::g_vmThreadIdSet.store(true, std::memory_order_release);
 
-    if (g_debug.callbackDebug) {
+    if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
         fprintf(stderr, "[CALLBACK-INIT] g_callbackSemaphoreIndex=%d\n",
                 g_callbackSemaphoreIndex);
         fflush(stderr);
@@ -31740,7 +31740,7 @@ PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
 PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    if (g_debug.callbackDebug) {
+    if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
         fprintf(stderr, "[CALLBACK-READNEXT] t=%lld callbackDepth=%d\n", xtcbNowMs(), callbackDepth_);
         fflush(stderr);
     }
@@ -32024,7 +32024,7 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
     // we can unwind. Instead, we set a deferred return flag. The nested interpret
     // loop in enterInterpreterFromCallback detects this flag after the Smalltalk
     // code finishes its cleanup, then does the process restore and siglongjmp.
-    if (g_debug.callbackDebug) {
+    if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
         fprintf(stderr, "[CALLBACK-PRIM-RETURN] callbackDepth=%d\n", callbackDepth_);
         fflush(stderr);
     }
@@ -32083,7 +32083,7 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
             }
         }
         if (pending) {
-            if (g_debug.callbackDebug) {
+            if (GET_DEBUG_BOOL(PHARO_CALLBACK_DEBUG)) {
                 fprintf(stderr, "[XTCB-RETURN] t=%lld vmcc=%p — waking worker\n", xtcbNowMs(), (void*)vmcc);
                 fflush(stderr);
             }

@@ -6,6 +6,7 @@
 #include "../../ObjectMemory.hpp"
 
 #include <cstdio>
+#include "../../DebugVars.hpp"
 
 namespace pharo {
 namespace sista {
@@ -58,7 +59,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
             Builder::buildFromOffset(method, memory, m, startBcOffset, &failedBc, hints);
         if (r != LiftResult::kOk) {
             bcOffsetCache_[key][startBcOffset] = nullptr;  // negative cache
-            if (g_debug.sistaPerBCTrace) {
+            if (GET_DEBUG_BOOL(PHARO_SISTA_PER_BC_TRACE)) {
                 static int liftFailLog = 0;
                 if (liftFailLog++ < 50) {
                     // Dump the failing byte to identify what shape
@@ -122,7 +123,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
             }
         }
         // PHARO_SISTA_PER_BC_TRACE=1: log the outcome.
-        if (g_debug.sistaPerBCTrace) {
+        if (GET_DEBUG_BOOL(PHARO_SISTA_PER_BC_TRACE)) {
             static int logCount = 0;
             if (logCount++ < 200) {
                 fprintf(stderr,
@@ -241,7 +242,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // sum 1M perf cost.  Re-enable the gate by default; opt out via
     // PHARO_SISTA_ALLOW_ARRAYDO_HELPER=1 for diagnosis or workloads
     // that don't trigger the bench-suite-context corruption.
-    if (hasArrayDoSplice && hasSendCallHelper && !g_debug.sistaAllowArrayDoHelper) {
+    if (hasArrayDoSplice && hasSendCallHelper && !GET_DEBUG_BOOL(PHARO_SISTA_ALLOW_ARRAYDO_HELPER)) {
         g_sistaBail_arrayDoHelper++;
         cache_[key] = nullptr;
         return nullptr;
@@ -262,8 +263,8 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // worth its overhead even if other sends in the same method are
     // unspeculated.  Opt-out: PHARO_SISTA_STRICT_SEND_NO_SPLICE=1.
     if (hasSend && !hasSplice && !hasInlinedSend
-        && !(m.hasMultiBlockSplice && g_debug.sistaDispatchMultiBlock)
-        && !g_debug.sistaCompileBailOnly) {
+        && !(m.hasMultiBlockSplice && GET_DEBUG_BOOL(PHARO_SISTA_DISPATCH_MULTIBLOCK))
+        && !GET_DEBUG_BOOL(PHARO_SISTA_COMPILE_BAIL_ONLY)) {
         g_sistaBail_sendNoSplice++;
         cache_[key] = nullptr;
         return nullptr;
@@ -279,7 +280,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // forced dispatch can call the fn even when the prim would have
     // succeeded, breaking primitives like 113 (quit) → infinite loop
     // because the fallback `^ self primitiveFailed` never quits.
-    if (g_debug.sistaCompileBailOnly) {
+    if (GET_DEBUG_BOOL(PHARO_SISTA_COMPILE_BAIL_ONLY)) {
         Oop hdrOop = memory.fetchPointer(0, method);
         if (hdrOop.isSmallInteger()) {
             int64_t hb = hdrOop.asSmallInteger();

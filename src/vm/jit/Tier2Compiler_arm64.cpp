@@ -37,6 +37,7 @@
 
 #include <asmjit/a64.h>
 #include <asmjit/core/jitruntime.h>
+#include "../DebugVars.hpp"
 
 namespace pharo {
 namespace jit {
@@ -407,7 +408,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && b2 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::SetterRecvVar;
         recvVarIndex = b1 - SistaV1::PopStoreRecvBase;
-    } else if (g_debug.t2ZeroargIC
+    } else if (GET_DEBUG_BOOL(PHARO_T2_ZEROARG_IC)
                             && bodyLen >= 3 && SistaV1::isSend0(b1)
                             && b2 == SistaV1::ReturnTop
                             && decodePush(b0, pushes[0])) {
@@ -524,7 +525,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // Pattern not recognised — fall through to T1.  PHARO_T2_VERBOSE=1
         // surfaces the leading bytes so we can see which shapes are hot
         // and decide what to add next.
-        if (g_debug.t2Verbose) {
+        if (GET_DEBUG_BOOL(PHARO_T2_VERBOSE)) {
             fprintf(stderr, "[T2 bail] len=%zu bytes=%02x %02x %02x %02x\n",
                     bodyLen, b0, b1, b2,
                     bodyLen >= 4 ? bytes[bcStart+3] : 0);
@@ -1300,7 +1301,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
         // 6-way probe (PHARO_T2_FORCE_MISS=1 skips the probe to isolate
         // whether the IC hit path contributes to the 1-arg bug).
-        if (!g_debug.t2ForceMiss) {
+        if (!GET_DEBUG_BOOL(PHARO_T2_FORCE_MISS)) {
             for (int i = 0; i < IC_ENTRIES; i++) {
                 a64::Gp key = cc.new_gp64("key");
                 cc.ldr(key, a64::ptr(icData, IC_KEY_OFF(i)));
@@ -1581,7 +1582,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             // drops from 97.5% to 49.9% when enabled.  Keep as
             // opt-in (PHARO_T2_MBC_SENDS=1 bail, default=off) until
             // we untangle the T1/T2 IC interaction.
-            if (!g_debug.t2MbcSends && !g_debug.t2MbcIC) {
+            if (!GET_DEBUG_BOOL(PHARO_T2_MBC_SENDS) && !GET_DEBUG_BOOL(PHARO_T2_MBC_IC)) {
                 g_mbcBailed++;
                 return nullptr;
             }
@@ -1712,7 +1713,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
 
             // One of PHARO_T2_MBC_SENDS / PHARO_T2_MBC_IC is set here
             // (guaranteed by the pass-1 check above).
-            if (g_debug.t2MbcSends) {
+            if (GET_DEBUG_BOOL(PHARO_T2_MBC_SENDS)) {
                 // SIMPLE BAIL mode: icDataPtr=0, exit ExitSend.
                 a64::Gp zero64 = cc.new_gp64("zero64");
                 cc.mov(zero64, 0);

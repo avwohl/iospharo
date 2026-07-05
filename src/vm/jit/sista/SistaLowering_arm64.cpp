@@ -134,7 +134,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // Confirms whether the residual jit-default crash is in the asmjit
     // emit path itself (corrupted code zone, runtime allocator issue,
     // W^X leak) versus higher-level Sista state.
-    if (pharo::g_debug.sistaNoLower) {
+    if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER)) {
         if (failedAtValue) *failedAtValue = 0;
         return nullptr;
     }
@@ -190,7 +190,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // code to stderr.  Useful when diagnosing emit-time failures
     // (e.g., cc.invoke not generating a `bl` instruction).
     static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
-        if (pharo::g_debug.sistaAsmjitLog)
+        if (GET_DEBUG_BOOL(PHARO_SISTA_ASMJIT_LOG))
             return new asmjit::FileLogger(stderr);
         return nullptr;
     }();
@@ -214,7 +214,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // CodeHolder/Compiler/Runtime::add infrastructure (or its
     // MAP_JIT W^X interaction with our CodeZone), not in any
     // specific IR-op emission.
-    if (pharo::g_debug.sistaNoLowerBody) {
+    if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_BODY)) {
         Compiler ccx(&code);
         FuncNode* fnx = ccx.add_func(FuncSignature::build<void, void*>());
         Gp statex = ccx.new_gp64("state");
@@ -235,7 +235,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // PHARO_SISTA_NO_LOWER_ADD=1 — bisect: build the asmjit code
     // graph but DO NOT call runtime_->add().  If this is clean, the
     // bug is specifically in JitRuntime's allocator + W^X dance.
-    const bool noAdd = pharo::g_debug.sistaNoLowerAdd;
+    const bool noAdd = GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_ADD);
     (void)noAdd;
 
     // (PHARO_SISTA_FRESH_RUNTIME bisect tried — recreates asmjit
@@ -943,7 +943,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // doesn't change order).  No tag check, no overflow
                 // — same Phase 2 caveat as kPrimAddInt: caller
                 // must supply SmallInt operands.  Same env-var gate.
-                if (pharo::g_debug.sistaNoLowerArith) {
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_ARITH)) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
@@ -1106,7 +1106,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             case Op::kPrimMulInt: {
                 // PHARO_SISTA_NO_LOWER_ARITH=1 — bisect: refuse to
                 // lower inline arithmetic ops.
-                if (pharo::g_debug.sistaNoLowerArith) {
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_ARITH)) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
@@ -1774,7 +1774,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             case Op::kSendUnspeculated: {
                 // PHARO_SISTA_NO_LOWER_SENDS=1 — bisect: refuse to
                 // lower send-bail blocks, fall through to interpreter.
-                if (pharo::g_debug.sistaNoLowerSends) {
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
@@ -2261,11 +2261,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 //   bits 16-23 = flags  (bit7=recvOnStack, bit6=ignoreOuter)
                 //   bits 24-31 = stackSize at bail
                 //   bits 32+   = bcOffset of the PushFullBlock bytecode.
-                if (pharo::g_debug.sistaNoLowerSends) {
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
-                bool useHelper = !pharo::g_debug.sistaBlockBail;
+                bool useHelper = !GET_DEBUG_BOOL(PHARO_SISTA_BLOCK_BAIL);
                 uint32_t litIndex = (uint32_t)(v.literal & 0xFFFFu);
                 uint32_t flags = (uint32_t)((v.literal >> 16) & 0xFFu);
                 uint64_t bcOffset = v.literal >> 32;
@@ -2976,7 +2976,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // jit_rt_sista_complete_array_inject_into helper instead
                 // of bailing to the inject:into: send and re-running from
                 // scratch.  Same wasted-work avoidance as do-accum.
-                const bool injectResume = !pharo::g_debug.noSistaInjectResume;
+                const bool injectResume = !GET_DEBUG_BOOL(PHARO_NO_SISTA_INJECT_RESUME);
                 bool isCanonicalInject = false;
                 uint32_t injectArithCode = 0;
                 // With INLINE_ARITH on (default), the block IR shape is:
@@ -4316,7 +4316,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // Bench-suite parity within ±1 ms vs opt-out (`49c4d91d`
                 // synthetic mixed-type soak: 1M Float-at-999999 481→3 ms,
                 // all-SmI 4→4 ms, all-Float 100K 56→8 ms).
-                const bool doaccumResume = !pharo::g_debug.noSistaDoAccumResume;
+                const bool doaccumResume = !GET_DEBUG_BOOL(PHARO_NO_SISTA_DOACCUM_RESUME);
 
                 uint32_t deoptBC = 0;
                 for (const auto& fp : method.framepoints) {
@@ -4990,7 +4990,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 //   v4 = kReturn(v3)
                 // Non-commutative form `[:e | const OP e]` has v0/v1 swapped
                 // and is handled by the generic block-IR path.
-                const bool selectResume = !pharo::g_debug.noSistaCollectResume;
+                const bool selectResume = !GET_DEBUG_BOOL(PHARO_NO_SISTA_COLLECT_RESUME);
                 bool isCanonicalSelect = false;
                 uint32_t selectArithCode = 0;
                 uint64_t selectConstBits = 0;
@@ -5780,7 +5780,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 //   v4 = kReturn(v3)
                 // Non-commutative form `[:e | const OP e]` has v0/v1 swapped
                 // and is handled by the generic block-IR path.
-                const bool collectResume = !pharo::g_debug.noSistaCollectResume;
+                const bool collectResume = !GET_DEBUG_BOOL(PHARO_NO_SISTA_COLLECT_RESUME);
                 bool isCanonicalCollect = false;
                 uint32_t collectArithCode = 0;
                 uint64_t collectConstBits = 0;
@@ -6595,7 +6595,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // PHARO_SISTA_TRACE_ADD=1 — log every successful asmjit add()
     // address, so we can correlate addresses across compiles and
     // check for adjacency / aliasing with our T1 CodeZone.
-    if (pharo::g_debug.sistaTraceAdd) {
+    if (GET_DEBUG_BOOL(PHARO_SISTA_TRACE_ADD)) {
         static size_t addCount = 0;
         addCount++;
         if (addCount <= 50) {

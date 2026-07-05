@@ -200,15 +200,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     using namespace asmjit;
     using namespace asmjit::x86;
 
-    if (pharo::g_debug.sistaNoLower) {
+    if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER)) {
         if (failedAtValue) *failedAtValue = 0;
         return nullptr;
     }
-    const bool noArith     = pharo::g_debug.sistaNoLowerArith;
-    const bool noArithMath = pharo::g_debug.sistaNoLowerArithMath;
-    const bool noArithCmp  = pharo::g_debug.sistaNoLowerArithCmp;
-    const bool noBranch    = pharo::g_debug.sistaNoLowerBranch;
-    const bool noFuse      = pharo::g_debug.sistaNoLowerFuse;
+    const bool noArith     = GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_ARITH);
+    const bool noArithMath = GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_ARITH_MATH);
+    const bool noArithCmp  = GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_ARITH_CMP);
+    const bool noBranch    = GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_BRANCH);
+    const bool noFuse      = GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_FUSE);
 
     CodeHolder code;
     code.init(runtime_->environment(), runtime_->cpu_features());
@@ -219,7 +219,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // PHARO_SISTA_DUMP_NODES also attaches a logger so the RA-pass trace
     // (CFG/liveness, gated by the diagnostic options below) is printed.
     static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
-        if (pharo::g_debug.sistaAsmjitLog || GET_DEBUG_BOOL(PHARO_SISTA_DUMP_NODES))
+        if (GET_DEBUG_BOOL(PHARO_SISTA_ASMJIT_LOG) || GET_DEBUG_BOOL(PHARO_SISTA_DUMP_NODES))
             return new asmjit::FileLogger(stderr);
         return nullptr;
     }();
@@ -870,8 +870,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // literal: bits0-15 litIndex, bits16-23 flags, bits32+ bcOffset.
             // operands = consumed IR-stack snapshot (pushed to interp stack).
             case Op::kBlockCreate: {
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
-                bool useHelper = !pharo::g_debug.sistaBlockBail;
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
+                bool useHelper = !GET_DEBUG_BOOL(PHARO_SISTA_BLOCK_BAIL);
                 uint32_t litIndex = (uint32_t)(v.literal & 0xFFFFu);
                 uint32_t flags    = (uint32_t)((v.literal >> 16) & 0xFFu);
                 uint64_t bcOffset = v.literal >> 32;
@@ -929,7 +929,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // returns the receiver.  Port of arm64 kCountedLoopDo.
             case Op::kCountedLoopDo: {
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
                 bool doHasCapture = ((v.literal >> 48) & 1) != 0;
                 size_t expectedOps = doHasCapture ? 2u : 1u;
                 if (v.operands.size() != expectedOps) return bail(v.id);
@@ -1121,7 +1121,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // Element load is the RA-safe address-in-reg single load.
             case Op::kCountedLoopInjectInto: {
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
                 if (v.operands.size() != 2) return bail(v.id);   // core: no capture
                 auto itRcv = regFor.find(v.operands[0]);
                 auto itInit = regFor.find(v.operands[1]);
@@ -1290,7 +1290,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // (vec[slot] uncommitted until success, so re-running do: is safe).
             case Op::kCountedLoopArrayDoAccum: {
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
                 if (v.operands.size() != 2) return bail(v.id);
                 auto itRcv = regFor.find(v.operands[0]);
                 auto itVec = regFor.find(v.operands[1]);
@@ -1300,7 +1300,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 uint32_t slot      = (uint32_t)(v.literal & 0xFF);
                 uint32_t arithCode = (uint32_t)((v.literal >> 8) & 0xFF);
                 int slotByteOff = 8 + (int)slot * 8;
-                const bool doaccumResume = !pharo::g_debug.noSistaDoAccumResume;
+                const bool doaccumResume = !GET_DEBUG_BOOL(PHARO_NO_SISTA_DOACCUM_RESUME);
                 uint32_t deoptBC = 0;
                 for (const auto& fp : method.framepoints)
                     if (fp.valueId == v.id) { deoptBC = fp.bcOffset; break; }
@@ -1428,7 +1428,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // until success, so re-running do: from scratch is correct.
             case Op::kCountedLoopIntervalDoAccum: {
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
                 if (v.operands.size() != 3) return bail(v.id);
                 auto itStart = regFor.find(v.operands[0]);
                 auto itStop  = regFor.find(v.operands[1]);
@@ -1511,7 +1511,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // iteration is inherited-correct); this just omits the accumulator.
             case Op::kCountedLoopIntervalDo: {
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
                 if (v.operands.size() != 2) return bail(v.id);
                 auto itStart = regFor.find(v.operands[0]);
                 auto itStop  = regFor.find(v.operands[1]);
@@ -1640,7 +1640,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // inject:into: from scratch is correct.
             case Op::kCountedLoopIntervalInjectInto: {
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
                 if (v.operands.size() != 3) return bail(v.id);   // core: no capture
                 auto itStart = regFor.find(v.operands[0]);
                 auto itStop  = regFor.find(v.operands[1]);
@@ -1794,7 +1794,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // and result stay valid after the alloc.
             case Op::kCountedLoopArrayCollect: {
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
                 if (v.operands.size() != 1) return bail(v.id);   // core: no capture
                 auto itRcv = regFor.find(v.operands[0]);
                 if (itRcv == regFor.end()) return bail(v.id);
@@ -1992,7 +1992,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             // to deoptBC with temps unchanged (we store only after all checks).
             case Op::kCountedLoopWhileTrueAccum: {
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
                 uint32_t accumTempIdx = (uint32_t)(v.literal & 0xFF);
                 uint32_t arithCode    = (uint32_t)((v.literal >> 8) & 0xF);
                 int8_t   constValue   = (int8_t)((v.literal >> 12) & 0xFF);
@@ -2122,7 +2122,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // type tests).  Disable all counted loops via
                 // PHARO_SISTA_NO_LOWER_COUNTED_LOOP if needed.
                 if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_COUNTED_LOOP)) return bail(v.id);
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
                 if (v.operands.size() != 1) return bail(v.id);   // core: no capture
                 auto itRcv = regFor.find(v.operands[0]);
                 if (itRcv == regFor.end()) return bail(v.id);
@@ -2601,7 +2601,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             case Op::kSendInlineSelf:
             case Op::kSendCallHelper:
             case Op::kSendCallHelperSpecial: {
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
                 if (v.operands.empty()) return bail(v.id);
 
                 bool isSpecial = (v.op == Op::kSendCallHelperSpecial);
@@ -2717,7 +2717,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             }
 
             case Op::kSendUnspeculated: {
-                if (pharo::g_debug.sistaNoLowerSends) return bail(v.id);
+                if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER_SENDS)) return bail(v.id);
                 // Bail to the interpreter at the send bytecode.  Operands
                 // are [rcvr, arg0, ..., arg_{nArgs-1}] for sends, or the
                 // whole IR stack for generic mid-method bails.
@@ -2828,7 +2828,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     }
     g_lowerStats.ok.fetch_add(1, std::memory_order_relaxed);
     g_lowerStats.tick();
-    if (pharo::g_debug.sistaX86TraceOk) {
+    if (GET_DEBUG_BOOL(PHARO_SISTA_X86_TRACE_OK)) {
         // Dump op kinds present in the compiled method.
         bool hasCmp=false, hasBranch=false, hasArith=false;
         bool hasSend=false, hasAlloc=false;

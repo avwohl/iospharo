@@ -640,7 +640,7 @@ extern "C" size_t g_xmethod_trace_count;
 size_t g_xmethod_trace_count = 0;
 
 static const int xmethod_atexit_install = []() {
-    if (pharo::g_debug.t1InlineJ2JXmethodLog) {
+    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J_XMETHOD_LOG)) {
         std::atexit([]() {
             extern void jit_rt_xmethod_dump_trace_extern();
             jit_rt_xmethod_dump_trace_extern();
@@ -794,7 +794,7 @@ extern "C" uint64_t jit_rt_xmethod_log(uint64_t state, uint64_t calleeJM,
         }
         // Optional per-fire dump (PHARO_T1_INLINE_J2J_XMETHOD_LIVE=1).
         // Default off — the trace buffer is the primary capture.
-        if (pharo::g_debug.t1InlineJ2JXmethodLive) {
+        if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J_XMETHOD_LIVE)) {
             fprintf(stderr,
                 "[XLOG #%zu] calleeCM=0x%llx callerCM=0x%llx "
                 "method=0x%llx jm=0x%llx rcv=0x%llx sp=0x%llx tb=0x%llx "
@@ -877,7 +877,7 @@ static BailGateStats g_bailGateStats;
 extern "C" void jit_rt_bail_gate_log(JITMethod* callerJM, uint64_t kind) {
     if (kind == 0) {
         g_bailGateStats.bailCount[callerJM]++;
-        if (g_debug.t1BailGateTrace
+        if (GET_DEBUG_BOOL(PHARO_T1_BAIL_GATE_TRACE)
                 && g_bailGateStats.traced.insert(callerJM).second) {
             uint64_t selBits = callerJM->selectorOop;
             fprintf(stderr,
@@ -1358,12 +1358,12 @@ static inline void forEachRealOpcode(const uint8_t* bc, size_t bcLen, F&& fn) {
 size_t g_condJumpRealCompiles = 0;
 
 bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
-    const bool noSendsBisect = g_debug.t1NoSendsBisect;
+    const bool noSendsBisect = GET_DEBUG_BOOL(PHARO_ASMJIT_T1_NO_SENDS_BISECT);
     const int maxSendNArgs = g_debug.t1MaxSendNArgs;
     // PHARO_T1_INLINE_J2J_TRACE_UNSUPPORTED: log unsupported byte for first
     // N calls.  Helps identify why benchFib falls through to STUB compile.
     auto traceFail = [&](size_t at, uint8_t op, const char* why) {
-        if (pharo::g_debug.t1InlineJ2JTraceUnsupp) {
+        if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J_TRACE_UNSUPP)) {
             static size_t n = 0;
             if (n++ < 30) {
                 fprintf(stderr, "[T1-UNSUPPORTED #%zu] at=%zu op=0x%02x why=%s bcLen=%zu\n",
@@ -1630,7 +1630,7 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
                 return false;
             }
             if (nextOp == SistaV1::ExtSuperSend) {
-                if (!pharo::g_debug.t1AcceptExtSuperSend) {
+                if (!GET_DEBUG_BOOL(PHARO_T1_ACCEPT_EXTSUPERSEND)) {
                     traceFail(i, op, "ext-super-send-bundle-disabled");
                     return false;
                 }
@@ -1647,7 +1647,7 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             // Naked here means no preceding ExtA/B — the bundle case
             // is handled above when ExtA/B is at i.
             if (op == SistaV1::ExtSuperSend) {
-                if (!pharo::g_debug.t1AcceptExtSuperSend) {
+                if (!GET_DEBUG_BOOL(PHARO_T1_ACCEPT_EXTSUPERSEND)) {
                     traceFail(i, op, "ext-super-send-disabled");
                     return false;
                 }
@@ -3183,7 +3183,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.jne(miss);
             a.cmp(rdx, asmjit::Imm(0));      // reject empty IC slot
             a.je(miss);
-            if (g_debug.t1ProbeAlwaysMiss) {
+            if (GET_DEBUG_BOOL(PHARO_T1_PROBE_ALWAYS_MISS)) {
                 a.jmp(miss);                  // diagnostic: never take HIT
             }
 
@@ -3766,7 +3766,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.mov(rax, ptr(rdi, OFF_METHOD));
             a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
             a.mov(ptr(rdi, OFF_IP), rax);
-            if (g_debug.t1HitAsMiss) {
+            if (GET_DEBUG_BOOL(PHARO_T1_HIT_AS_MISS)) {
                 a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
                 emitSyncSpToState_x86(a); a.ret();
             } else {
@@ -4383,7 +4383,7 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex,
                 a.b(prologRet);  // V2 J2J-return via the shared prelude shim
             }
             a.bind(fail);
-            if (pharo::g_debug.jitFailReasons) {
+            if (GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS)) {
                 a.sub(sp, sp, asmjit::Imm(16));
                 a.str(x0,  ptr(sp, 0));
                 a.str(x30, ptr(sp, 8));
@@ -4765,7 +4765,7 @@ static void emitJ2JReturnPrelude_arm64(asmjit::a64::Assembler& a,
     using namespace asmjit::a64;
     (void)staticJ2JArgCount;
     const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
-                && !(g_debug.t1InlineBlockValue && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  /* SCOPING FIX #2 (UPDATE 31): BV-on disables cross-method inline-J2J (the value:value:-block-clean-inline corruptor); BV still works, just no inline-J2J */;
+                && !(GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE) && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  /* SCOPING FIX #2 (UPDATE 31): BV-on disables cross-method inline-J2J (the value:value:-block-clean-inline corruptor); BV still works, just no inline-J2J */;
         if (!inlineJ2J) return;
         if (GET_DEBUG_BOOL(PHARO_T1_NO_J2J_RETPRELUDE)) return;  // bisect knob
         asmjit::Label normalReturn = a.new_label();
@@ -4867,7 +4867,7 @@ static void emitJ2JReturnPrelude_arm64(asmjit::a64::Assembler& a,
         // values; without this restore the caller's continuation reads
         // the block's literals, producing the cascading DNU on
         // `nil findNextHandlerContext` we observed.
-        if (g_debug.t1InlineJ2JXmethod || g_debug.t1InlineBlockValue) {
+        if (g_debug.t1InlineJ2JXmethod || GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE)) {
             // 2026-05-24: skip the restore if save.jitMethod is null.
             // xmethod-off (default) inline-J2J self-rec push at line
             // ~4060 does NOT write save.jitMethod (state stays the
@@ -5260,7 +5260,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // so we fall through to normal-return — tiny overhead, zero
     // semantic change.
     const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
-                && !(g_debug.t1InlineBlockValue && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  /* SCOPING FIX #2 (UPDATE 31): BV-on disables cross-method inline-J2J (the value:value:-block-clean-inline corruptor); BV still works, just no inline-J2J */;
+                && !(GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE) && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  /* SCOPING FIX #2 (UPDATE 31): BV-on disables cross-method inline-J2J (the value:value:-block-clean-inline corruptor); BV still works, just no inline-J2J */;
     auto emitJ2JReturnPreludeIfEnabled = [&]() {
         emitJ2JReturnPrelude_arm64(a, staticJ2JArgCount);
     };
@@ -6052,7 +6052,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         const bool patchedShape =
             !GET_DEBUG_BOOL(PHARO_T1_NO_PATCHED_SENDS)
             && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
-            && !(g_debug.t1InlineBlockValue && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  // SCOPING FIX #2 (UPDATE 31)
+            && !(GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE) && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  // SCOPING FIX #2 (UPDATE 31)
             && probeThis;
         auto emitMaterializeX5 = [&]() {
             asmjit::a64::Gp jmReg = asmjit::a64::x19;
@@ -6335,7 +6335,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // older comment here claimed an opt-out knob that does not
             // exist — design §14 #4).
             asmjit::Label probeDone = a.new_label();
-            if (g_debug.t1ICPolyWalk
+            if (GET_DEBUG_BOOL(PHARO_T1_IC_POLY_WALK)
                     || !GET_DEBUG_BOOL(PHARO_T1_NO_IC_POLY_WALK)) {
                 asmjit::Label slot1Hit = a.new_label();
                 a.b_eq(probeDone);              // slot 0 hit (common)
@@ -6361,7 +6361,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // (Original Step 8.1 included an unrelated nArgs==0 sub elision
             // that broke gate-OFF; that one rolled back below.  This cbz
             // removal stays.)
-            if (g_debug.t1ProbeAlwaysMiss) {
+            if (GET_DEBUG_BOOL(PHARO_T1_PROBE_ALWAYS_MISS)) {
                 a.b(miss);                     // diagnostic: never take HIT
             }
             // PHARO_T1_HIT_FORCE_DISPATCH=1: on IC HIT, skip ALL inline-spec
@@ -6377,7 +6377,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.ldr(x7, ptr(x5, 16));
             // Debug: count every IC HIT (PHARO_T1_INLINE_J2J=1 telemetry)
             {
-                if (pharo::g_debug.t1InlineJ2J_Env) {
+                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J)) {
                     a.mov(x4, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_ic_hits));
                     a.ldr(x6, ptr(x4));
                     a.add(x6, x6, asmjit::Imm(1));
@@ -6387,7 +6387,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.cbz(x7, dispatchCached);
             // Debug: count IC HITs where extra is set but bit 60 isn't
             {
-                if (pharo::g_debug.t1InlineJ2J_Env) {
+                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J)) {
                     asmjit::Label haveBit60 = a.new_label();
                     a.tbnz(x7, asmjit::Imm(60), haveBit60);
                     a.mov(x4, asmjit::Imm((uint64_t)&g_inlineJ2J_dbg_extra_no_bit60));
@@ -6406,7 +6406,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Mirrors stencils.cpp:1733-1877's `j2j_direct_call:` block.
             // See deferred.md A6 for full design.
             const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
-                && !(g_debug.t1InlineBlockValue && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  /* SCOPING FIX #2 (UPDATE 31): BV-on disables cross-method inline-J2J (the value:value:-block-clean-inline corruptor); BV still works, just no inline-J2J */
+                && !(GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE) && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  /* SCOPING FIX #2 (UPDATE 31): BV-on disables cross-method inline-J2J (the value:value:-block-clean-inline corruptor); BV still works, just no inline-J2J */
                 && !GET_DEBUG_BOOL(PHARO_T1_NO_J2J_BRANCH);  // TEST: NO_J2J_BRANCH now gates the WHOLE block
             if (inlineJ2J) {
                 asmjit::Label tryInlineJ2J = a.new_label();
@@ -6414,7 +6414,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // Bit 59 (BLOCK_VALUE_BIT) takes precedence over bit 60.
                 // Block-value IC entries may have bit 59 alone (when the
                 // value: method is not safe to J2J-call) — check 59 first.
-                if (g_debug.t1InlineBlockValue) {
+                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE)) {
                     a.tbnz(x7, asmjit::Imm(59), tryInlineJ2J);
                 }
                 // jit-may20b Step 8.4: bit 55 (SISTA_BIT) takes precedence
@@ -6422,7 +6422,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // more powerful than J2J's straight-call.  Bit-55 stays
                 // unset until the Sista bail-protocol bug (Step 4) lands,
                 // so this branch is dead in current builds.
-                if (g_debug.t1InlineSistaCall) {
+                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_SISTA_CALL)) {
                     a.tbnz(x7, asmjit::Imm(55), trySistaCall);
                 }
                 // jit-may20b Step 10: primKind 18 (basicNew:) takes
@@ -6677,7 +6677,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // inline-J2J emit site = ~100+ bytes for typical fib-like
                 // methods.  When env var on, the per-bail counter writes
                 // are emitted for diagnostic visibility.
-                const bool inlineJ2JCounters = pharo::g_debug.t1InlineJ2J_Env;
+                const bool inlineJ2JCounters = GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J);
                 asmjit::Label j2jBailZero = a.new_label();
                 asmjit::Label j2jBailFull = a.new_label();
                 asmjit::Label j2jBailSelf = a.new_label();
@@ -6700,7 +6700,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // compiled code.  We delegate validation + J2J save +
                 // state setup + capture copy to a C helper, then `br x0`
                 // to enter the block's JIT entry.
-                if (g_debug.t1InlineBlockValue) {
+                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE)) {
                     asmjit::Label tryBlockValue = a.new_label();
                     asmjit::Label blockValueDone = a.new_label();
                     a.tbnz(x7, asmjit::Imm(59), tryBlockValue);
@@ -6920,7 +6920,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     asmjit::Label xgateFast = a.new_label();
                     const bool xgateFoldable = !inlineJ2JCounters
                         && g_debug.t1InlineJ2JXmethodMax < 0
-                        && !pharo::g_debug.t1InlineJ2JXmethodLog
+                        && !GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J_XMETHOD_LOG)
                         && !GET_DEBUG_BOOL(PHARO_T1_NO_XGATE_FOLD);
                     if (xgateFoldable)
                         a.tbnz(x7, asmjit::Imm(57), xgateFast);
@@ -7075,7 +7075,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // state.method is calleeCM at that point, state.ip
                     // lands at calleeCM + caller_bcOff = wrong heap
                     // address.  X+BV crash root cause.
-                    if (pharo::g_debug.t1InlineJ2JXmethodLog) {
+                    if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J_XMETHOD_LOG)) {
                         using namespace asmjit::a64;
                         if (!inlineJ2JCounters) {
                             // xlog helper signature uses x12 = callerCM.
@@ -7570,7 +7570,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // already ensured caller == callee for this push), so the
                 // "callee has cold IC" risk is bounded by what the caller
                 // has actually observed.
-                if (g_debug.t1PureJ2JGate || g_debug.t1WarmJ2JGate) {
+                if (GET_DEBUG_BOOL(PHARO_T1_PURE_J2J_GATE) || GET_DEBUG_BOOL(PHARO_T1_WARM_J2J_GATE)) {
                     using namespace asmjit::a64;
                     // Gate variant: PureJ2J checks entry0.extras bit 60
                     // (= "site has J2J target"); WarmJ2J checks entry0.key
@@ -7582,7 +7582,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     // PureJ2J takes precedence when both flags are on
                     // (deliberate: bisection knob preserves the older
                     // stricter behavior).
-                    const bool usePureGate = g_debug.t1PureJ2JGate;
+                    const bool usePureGate = GET_DEBUG_BOOL(PHARO_T1_PURE_J2J_GATE);
                     a.ldr(x12, ptr(callerJMReg2,
                         (int)offsetof(JITMethod, icBuffer)));
                     a.ldrh(w14, ptr(callerJMReg2,
@@ -7874,8 +7874,8 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 // and xmethod-log are opt-in; neither touches x2).
                 // Reuse x2 instead of reloading sp.
                 a.str(x1, ptr(x0, OFF_RECEIVER));        // recv from x1
-                const bool spLiveInX2 = !g_debug.t1InlineBlockValue
-                    && !pharo::g_debug.t1InlineJ2JXmethodLog;
+                const bool spLiveInX2 = !GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE)
+                    && !GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J_XMETHOD_LOG);
                 asmjit::a64::Gp spReg = x12;
                 if (spLiveInX2) {
                     spReg = x2;   // skip the ldr; x2 still has caller sp
@@ -8163,7 +8163,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // === Inline getter: val = recv->slots[slotIdx] ===
             // x2 still holds SP from probe entry (mirrors x86 rcx-keep).
             a.bind(tryGetter);
-            if (pharo::g_debug.t1InlineJ2J_Env) {
+            if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J)) {
                 a.mov(x6, asmjit::Imm((uint64_t)&g_t1InlineGetter_hits));
                 a.ldr(x3, ptr(x6));
                 a.add(x3, x3, asmjit::Imm(1));
@@ -8232,7 +8232,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // === Inline setter: recv->slots[slotIdx] = arg ===
             // x2 still holds SP from probe entry.
             a.bind(trySetter);
-            if (pharo::g_debug.t1InlineJ2J_Env) {
+            if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J)) {
                 a.mov(x6, asmjit::Imm((uint64_t)&g_t1InlineSetter_hits));
                 a.ldr(x3, ptr(x6));
                 a.add(x3, x3, asmjit::Imm(1));
@@ -8308,7 +8308,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // in rememberedSet_.  Helper takes (state, rcv, val) in
             // (x0, x1, x2).  See jit_rt_setter_write_barrier in
             // JITRuntime.cpp and memory/jit_remembered_set_dead.md.
-            if (pharo::g_debug.t1SetterBarrier) {
+            if (GET_DEBUG_BOOL(PHARO_T1_SETTER_BARRIER)) {
                 a.sub(asmjit::a64::sp, asmjit::a64::sp, asmjit::Imm(16));
                 a.str(x0,  ptr(asmjit::a64::sp, 0));
                 a.str(x30, ptr(asmjit::a64::sp, 8));
@@ -8375,7 +8375,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
             // === returnsSelf ===
             a.bind(tryReturnsSelf);
-            if (pharo::g_debug.t1InlineJ2J_Env) {
+            if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J)) {
                 a.mov(x6, asmjit::Imm((uint64_t)&g_t1ReturnsSelf_hits));
                 a.ldr(x3, ptr(x6));
                 a.add(x3, x3, asmjit::Imm(1));
@@ -9065,7 +9065,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 
             // Counter helper for inline-prim diagnostics (PHARO_T1_INLINE_PRIM_COUNTERS=1).
             auto emitIncPrimCounter = [&](uint64_t addr) {
-                if (!pharo::g_debug.t1InlinePrimCounters) return;
+                if (!GET_DEBUG_BOOL(PHARO_T1_INLINE_PRIM_COUNTERS)) return;
                 a.mov(x14, asmjit::Imm(addr));
                 a.ldr(x15, ptr(x14));
                 a.add(x15, x15, asmjit::Imm(1));
@@ -9733,7 +9733,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             // Block-value returns also land here with x19 = the BLOCK's
             // JM (≠ this method even when xmethod is off) — include
             // t1InlineBlockValue in the gate.
-            if (g_debug.t1InlineJ2JXmethod || g_debug.t1InlineBlockValue) {
+            if (g_debug.t1InlineJ2JXmethod || GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE)) {
                 // Cross-method return: re-establish the CALLER's (= this
                 // method's) context.  Self-identify PC-relatively: the
                 // JITMethod header immediately precedes codeStart() in
@@ -9966,7 +9966,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // PHARO_ASMJIT_T1_LOG=1 — dump asmjit asm to stderr per compile.
     // Heavy; only enable when actively debugging emit.
     static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
-        if (pharo::g_debug.asmjitT1Log)
+        if (GET_DEBUG_BOOL(PHARO_ASMJIT_T1_LOG))
             return new asmjit::FileLogger(stderr);
         return nullptr;
     }();
@@ -10029,7 +10029,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         if (hasCJ) real = false;  // fall through to stub-compile
     }
     // PHARO_T1_INLINE_J2J_DUMP_BC=1: dump bytecode for failed compiles
-    if (!real && pharo::g_debug.t1InlineJ2JDumpBC) {
+    if (!real && GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J_DUMP_BC)) {
         static size_t dumpN = 0;
         if (dumpN < 30 && bcRealLen < 80) {
             dumpN++;
@@ -10046,12 +10046,12 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // PHARO_ASMJIT_T1_STUB_ONLY=1: kill switch — force every method to
     // the bail-on-entry stub regardless of bytecode support.  Used to
     // bisect Phase 2 emit bugs against the known-good Phase 1 behavior.
-    if (pharo::g_debug.asmjitT1StubOnly) real = false;
+    if (GET_DEBUG_BOOL(PHARO_ASMJIT_T1_STUB_ONLY)) real = false;
     // PHARO_ASMJIT_T1_HARDCODE_STUB=1: emit the stub by hardcoding the
     // bytes (mov dword [rdi+76], 2; ret).  Bypasses asmjit emit/copy
     // entirely so we can isolate whether the bug is in the asmjit
     // codegen path or in the integration plumbing.
-    if (pharo::g_debug.asmjitT1HardcodeStub && !real) {
+    if (GET_DEBUG_BOOL(PHARO_ASMJIT_T1_HARDCODE_STUB) && !real) {
         static const uint8_t kStubBytes[8] = {
             0xC7, 0x47, 0x4C, 0x02, 0x00, 0x00, 0x00, 0xC3
         };
@@ -10112,7 +10112,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
             prevExtPrefix = false;
             // Diagnostic: track every emit's bcOffsetFromMethObj for the
             // sortStructs corruption hunt.
-            if (__builtin_expect(pharo::g_debug.t1TraceEmit, 0)) {
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_TRACE_EMIT), 0)) {
                 fprintf(stderr,
                     "[T1-EMIT] i=%zu globalIdx=%d op=0x%02x "
                     "bcOffsetFromMethObj=%d siteIdx=%d\n",
@@ -11230,7 +11230,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // bails to interp — effectively disabling JIT-side resume while
     // still advertising numBytecodes.  Bisect helper.
     if (bcToCodeOut) {
-        if (real && !pharo::g_debug.asmjitT1BctocodeZero) {
+        if (real && !GET_DEBUG_BOOL(PHARO_ASMJIT_T1_BCTOCODE_ZERO)) {
             for (size_t i = 0; i < bcLen; i++) {
                 // The first `emitSkip` bytecodes are the CallPrimitive header
                 // (0xF8 lo hi) — the emit loop starts at bcReal (offset
@@ -11374,7 +11374,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 clsMatch = (interp.classNameOfMethod(compiledMethod) == noJitCls);
             }
             if (selMatch && clsMatch) {
-                if (pharo::g_debug.jitFailReasons)
+                if (GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS))
                     fprintf(stderr, "[NOJIT-SEL] bailed #%s (%s)\n",
                         memory.selectorOf(compiledMethod).c_str(),
                         interp.classNameOfMethod(compiledMethod).c_str());
@@ -11388,7 +11388,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     struct IbcLogGuard {
         const int before; pharo::Oop cm; pharo::ObjectMemory& mem;
         ~IbcLogGuard() {
-            if (pharo::g_debug.jitFailReasons && g_ibcEmits != before)
+            if (GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS) && g_ibcEmits != before)
                 fprintf(stderr, "[IBC-RANGE] %d..%d sel=#%s\n",
                     before + 1, g_ibcEmits, mem.selectorOf(cm).c_str());
         }
@@ -11448,7 +11448,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         } else if (primIdx < 0) {
             // Unsupported prim: bail compile, let C++ handle it.
             g_failed++; g_failedUnsuppPrim++;
-            if (pharo::g_debug.jitFailReasons) {
+            if (GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS)) {
                 static int upLog = 0;
                 if (++upLog <= 200) {
                     int rawPrim = (bcLenRaw >= 3
@@ -11664,7 +11664,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             static int blockCount = 0;
             blockCount++;
             bool reject = false;
-            if (g_debug.t1NoBlocks) reject = true;
+            if (GET_DEBUG_BOOL(PHARO_T1_NO_BLOCKS)) reject = true;
             if (g_debug.t1BlocksFirstN >= 0
                     && blockCount > g_debug.t1BlocksFirstN) reject = true;
             if (g_debug.t1BlocksOnlyN >= 0
@@ -11675,7 +11675,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                     && blockCount <= g_debug.t1BlocksSkipTo) {
                 reject = true;
             }
-            if (g_debug.t1BlocksTrace) {
+            if (GET_DEBUG_BOOL(PHARO_T1_BLOCKS_TRACE)) {
                 // Resolve the block's HOME method selector: a
                 // CompiledBlock's last literal is its outer code
                 // (CompiledMethod, or another CompiledBlock — follow
@@ -11725,10 +11725,10 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // them as bytecodes would pollute the pre-scan.
     //
     // Set PHARO_ASMJIT_T1_NO_TRIM=1 to disable for bisection.
-    const bool noTrim = pharo::g_debug.asmjitT1NoTrim;
+    const bool noTrim = GET_DEBUG_BOOL(PHARO_ASMJIT_T1_NO_TRIM);
     size_t bcLen = noTrim ? bcLenRaw : computeLiveLength(bc, bcLenRaw);
     // Diagnostic for the sortStructs:into: corruption hunt.
-    if (__builtin_expect(g_debug.sortstrWatch, 0)) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SORTSTR_WATCH), 0)) {
         std::string sel = memory.selectorOf(compiledMethod);
         if (sel == "startup:" || sel == "registeredClass") {
             static size_t cCount = 0;
@@ -11835,7 +11835,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // Every push site writes save.sendArgCount correctly, so the
     // dynamic load-from-save path is always sound — force it whenever
     // a cross-method route could pop this method's prelude.
-    if (g_debug.t1InlineJ2JXmethod || g_debug.t1InlineBlockValue) {
+    if (g_debug.t1InlineJ2JXmethod || GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE)) {
         staticJ2JArgCount = -1;
     }
     // FINDNODE_WATCH: emit the inline-getter write recorder ONLY for asTuple,
@@ -12059,9 +12059,9 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     //   PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1
     //                                   — advertise resume even for
     //                                     send-containing methods (BROKEN)
-    const bool noBcToCode = pharo::g_debug.asmjitT1NoBctocode;
-    const bool noNumBc = pharo::g_debug.asmjitT1NoNumbc;
-    const bool forceResumeForSends = pharo::g_debug.asmjitT1ForceResumeForSends;
+    const bool noBcToCode = GET_DEBUG_BOOL(PHARO_ASMJIT_T1_NO_BCTOCODE);
+    const bool noNumBc = GET_DEBUG_BOOL(PHARO_ASMJIT_T1_NO_NUMBC);
+    const bool forceResumeForSends = GET_DEBUG_BOOL(PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS);
     // Precompute hasCondJump (conditional jumps emit ExitMustBool mid-body).
     // Used by BOTH the advertiseResume gate (just below) and canBailMidMethod.
     bool t1HasCondJump = false;
@@ -12104,7 +12104,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // kept readable for script compat (a no-op when set).
     bool resumeSendsNoCondjump =
         !GET_DEBUG_BOOL(PHARO_T1_NO_RESUME_SENDS)
-        || pharo::g_debug.asmjitT1ResumeSendsNoCondjump;
+        || GET_DEBUG_BOOL(PHARO_T1_RESUME_SENDS_NO_CONDJUMP);
     // Send-resume compile-order bisect (2026-06-11, the only-idle wedge
     // hunt): treat methods whose compile sequence falls in
     // [RESUME_MIN_COMPILE, RESUME_MAX_COMPILE) as force-resume.
@@ -12129,7 +12129,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     }
     // Bisect-culprit identification: with a narrow MIN/MAX range +
     // PHARO_JIT_FAIL_REASONS, name the methods the range force-resumes.
-    if (resumeBisect && pharo::g_debug.jitFailReasons) {
+    if (resumeBisect && GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS)) {
         fprintf(stderr, "[RESUME-BISECT] seq=%llu sel=#%s\n",
             (unsigned long long)g_t1CompileSeq2,
             memory.selectorOf(compiledMethod).c_str());
@@ -12409,7 +12409,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         }
         if (t1HasCondJump) {
             g_condJumpRealCompiles++;
-            if (pharo::g_debug.asmjitT1TraceCond) {
+            if (GET_DEBUG_BOOL(PHARO_ASMJIT_T1_TRACE_COND)) {
                 fprintf(stderr,
                         "[T1-COND-COMPILE] #%zu sel=#%s bcLen=%zu oop=0x%llx bc=",
                         g_condJumpRealCompiles,
@@ -12432,7 +12432,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         // whether the bytecode→code mapping is plausible (e.g., whether
         // bcToCode[2] for #isEmpty's PushZero is distinct from bcToCode[4]
         // for ReturnTop).
-        if (g_debug.sortstrWatch && isReal && bcLen > 0) {
+        if (GET_DEBUG_BOOL(PHARO_SORTSTR_WATCH) && isReal && bcLen > 0) {
             std::string sel = memory.selectorOf(compiledMethod);
             if (sel == "isEmpty" || sel == "size") {
                 fprintf(stderr,
@@ -12665,7 +12665,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     if (isReal) g_compiledReal++;
     else        g_compiledStub++;
 
-    const bool trace = g_debug.useAsmjitT1Trace;
+    const bool trace = GET_DEBUG_BOOL(PHARO_USE_ASMJIT_T1_TRACE);
     bool emitTrace = trace && (g_compiled <= 10 || (g_compiled % 100 == 0)
                                 || (isReal && g_compiledReal <= 30));
     if (emitTrace) {
@@ -12705,7 +12705,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // PHARO_T1_TRACE_COMPILE=1 (env var → DebugSettings).  Used to
     // bisect WHICH method's JIT-compilation breaks SessionManager
     // startup-handler dispatch.
-    if (jm && pharo::g_debug.t1TraceCompile) {
+    if (jm && GET_DEBUG_BOOL(PHARO_T1_TRACE_COMPILE)) {
         static uint64_t compileSeq = 0;
         compileSeq++;
         std::string sel = memory.selectorOf(compiledMethod);

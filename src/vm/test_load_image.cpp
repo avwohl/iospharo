@@ -1183,7 +1183,7 @@ int main(int argc, char* argv[]) {
         // All session handlers run normally — no patching or deferral.
         // If a handler fails, Pharo's SessionManager catches the error and continues.
 
-        bool benchMode = pharo::g_debug.bench;
+        bool benchMode = GET_DEBUG_BOOL(PHARO_BENCH);
 
         // Create Display Form in all modes except bench/eval. MorphicRenderLoop
         // runs at P40 (userSchedulingPriority). Without a Display, it spins doing
@@ -1288,7 +1288,7 @@ int main(int argc, char* argv[]) {
         // lower-priority processes get CPU time even when high-priority
         // processes (like FFI struct compilation at pri-79) run for minutes.
         // Skip in bench mode — heartbeat causes process switches that preempt benchFib.
-        if (!heartbeatStarted && !benchMode && !pharo::g_debug.noHeartbeat) {
+        if (!heartbeatStarted && !benchMode && !GET_DEBUG_BOOL(PHARO_NO_HEARTBEAT)) {
             interpreter.startHeartbeat();
             heartbeatStarted = true;
         }
@@ -1374,13 +1374,13 @@ int main(int argc, char* argv[]) {
 
         // Run the fast interpreter loop (blocks until VM stops)
         interpreter.interpret();
-        if (pharo::g_debug.traceExit) {
+        if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
             fprintf(stderr, "[EXIT-TRACE] interpret() returned\n");
         }
 
         monitorDone.store(true, std::memory_order_relaxed);
         if (monitor.joinable()) monitor.join();
-        if (pharo::g_debug.traceExit) {
+        if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
             fprintf(stderr, "[EXIT-TRACE] monitor joined\n");
         }
 
@@ -1389,7 +1389,7 @@ int main(int argc, char* argv[]) {
         std::cout << "\n=== Execution Summary ===" << std::endl;
         std::cout << "Active bytecode steps: " << activeSteps << std::endl;
         interpreter.dumpJITStats();
-        if (pharo::g_debug.traceExit) {
+        if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
             fprintf(stderr, "[EXIT-TRACE] dumpJITStats done\n");
         }
 
@@ -1462,7 +1462,7 @@ int main(int argc, char* argv[]) {
         std::remove(startupStPath.c_str());
     }
 
-    if (pharo::g_debug.traceExit) {
+    if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
         fprintf(stderr, "[EXIT-TRACE] main returning 0\n");
     }
     std::cout << "\n=== Test Complete ===" << std::endl;

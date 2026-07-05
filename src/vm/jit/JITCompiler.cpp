@@ -1336,7 +1336,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded,
                 // operand2Ptr stays as IC base — the stencil reads
                 // class from icData[0] and packed bits from icData[2].
                 specialized++; specMultiSlot++;
-            } else if (!g_debug.noBlock1Spec && !calleeIsSplice &&
+            } else if (!GET_DEBUG_BOOL(PHARO_NO_BLOCK1_SPEC) && !calleeIsSplice &&
                        (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
                        ((bc.operand >> 16) & 0xFF) == 1) {
                 // value: send to a FullBlockClosure receiver — specialize
@@ -1347,7 +1347,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded,
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue1Arg);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
                 specialized++; specBlockValue1++;
-            } else if (!g_debug.noBlock1Spec && !calleeIsSplice &&
+            } else if (!GET_DEBUG_BOOL(PHARO_NO_BLOCK1_SPEC) && !calleeIsSplice &&
                        (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
                        ((bc.operand >> 16) & 0xFF) == 0) {
                 // value send (0-arg) — same shape as 1-arg specialization
@@ -1357,7 +1357,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded,
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue0Arg);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
                 specialized++; specBlockValue1++;
-            } else if (!g_debug.noBlock1Spec && !calleeIsSplice &&
+            } else if (!GET_DEBUG_BOOL(PHARO_NO_BLOCK1_SPEC) && !calleeIsSplice &&
                        (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
                        ((bc.operand >> 16) & 0xFF) == 2) {
                 // value:value: send (2-arg) to a FullBlockClosure receiver.
@@ -1394,7 +1394,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded,
             // every call).  Catches the canonical sort 100K
             // bottleneck — see docs/jit-multiweek-work.md.
             // PHARO_NO_BLOCK_VALUE_SPEC=1 to opt out.
-            if (!g_debug.noBlockValueSpec) {
+            if (!GET_DEBUG_BOOL(PHARO_NO_BLOCK_VALUE_SPEC)) {
                 int argCount = (bc.operand >> 16) & 0xFF;
                 if (argCount <= 2 && methObj
                         && ((bc.opcode >= 0x80 && bc.opcode <= 0xAF)
@@ -1469,7 +1469,7 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
     if (!old || old->numICEntries == 0)
         return nullptr;
 
-    const bool trace = g_debug.traceRecompileFlow;
+    const bool trace = GET_DEBUG_BOOL(PHARO_TRACE_RECOMPILE_FLOW);
     std::string sel;
     int oldTier = old->tier;
     uint8_t* oldCode = old->codeStart();
@@ -1521,7 +1521,7 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
 JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // PHARO_T1_INLINE_J2J=1 debug: log fib-related compilations
     {
-        if (g_debug.t1InlineJ2J_Env && compiledMethod.isObject()
+        if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J) && compiledMethod.isObject()
             && compiledMethod.rawBits() > 0x10000) {
             std::string sel = interp_.memory().selectorOf(compiledMethod);
             if (sel.find("fib") != std::string::npos
@@ -1591,7 +1591,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                                           interp_, compiledMethod);
         // PHARO_T1_INLINE_J2J=1 debug: log fib compile result
         {
-            if (g_debug.t1InlineJ2J_Env) {
+            if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J)) {
                 std::string sel = interp_.memory().selectorOf(compiledMethod);
                 if (sel.find("fib") != std::string::npos
                     || sel.find("Fib") != std::string::npos) {
@@ -1634,7 +1634,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             }
             // PHARO_T1_INLINE_J2J=1 debug: dump fib IC layout + bytecode post-compile
             {
-                if (g_debug.t1InlineJ2J_Env) {
+                if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J)) {
                     std::string sel = interp_.memory().selectorOf(compiledMethod);
                     if (sel.find("fib") != std::string::npos
                         || sel.find("Fib") != std::string::npos) {
@@ -1766,7 +1766,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // Bisection: PHARO_JIT_NO_BLOCKS=1 skips JIT compilation for CompiledBlocks.
     // Used to check whether the JIT bug is in block compilation specifically.
     if (isFullBlock) {
-        static bool noBlocks = g_debug.noBlocks;
+        static bool noBlocks = GET_DEBUG_BOOL(PHARO_JIT_NO_BLOCKS);
         if (noBlocks) {
             compilationsFailed_++;
             return nullptr;
@@ -1800,7 +1800,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     // Bytecode dump for bisection (JIT_DUMP_BC env var)
     {
-        static bool dumpBC = g_debug.jitDumpBC;
+        static bool dumpBC = GET_DEBUG_BOOL(JIT_DUMP_BC);
         static const char* dumpBCPre = g_debug.jitDumpBCPre;
         std::string sel;
         bool doDump = dumpBC;
@@ -2721,7 +2721,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                     sba[sendIdx] = selectorBits;
                 }
 
-                if (g_debug.icHitDbg) {
+                if (GET_DEBUG_BOOL(PHARO_IC_HIT_DBG)) {
                     fprintf(stderr, "[IC-COMPILE-SEL] %s opcode=0x%02X litIdx=%d numLits=%d icBase=%p selBits=0x%llx\n",
                             selectorBits == 0 ? "ZERO" : "OK",
                             bc.opcode, bc.branchTarget, numLiterals, (void*)icBase,
@@ -2960,7 +2960,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     // PHARO_T1_INLINE_J2J=1 debug: dump benchFib's IC layout after compile
     {
-        if (g_debug.t1InlineJ2J_Env) {
+        if (GET_DEBUG_BOOL(PHARO_T1_INLINE_J2J)) {
             std::string sel = interp_.memory().selectorOf(compiledMethod);
             if (sel.find("fib") != std::string::npos
                 || sel.find("Fib") != std::string::npos) {
@@ -2990,7 +2990,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // Always populated — this is a correctness prerequisite, not a diagnostic.
     // See deferred.md A1.
     {
-        static const bool resumeStateDebug = g_debug.resumeStateDebug;
+        static const bool resumeStateDebug = GET_DEBUG_BOOL(PHARO_RESUME_STATE_DEBUG);
         if (resumeStateDebug) {
             static uint64_t methodsWithUnsafe = 0;
             static uint64_t totalUnsafeBc = 0;

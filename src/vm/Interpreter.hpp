@@ -1474,7 +1474,7 @@ public:
         // PHARO_T1_ALLOW_NESTED_JIT_BAIL=1 opts out (legacy buggy
         // behavior, for bisection).
         if (__builtin_expect(materializedFrameCount_ > 0
-                && !g_debug.t1AllowNestedJitBail, 0)) {
+                && !GET_DEBUG_BOOL(PHARO_T1_ALLOW_NESTED_JIT_BAIL), 0)) {
             // 2026-06-12: the scan was 4 frames deep, which refused JIT
             // for the ENTIRE call subtree under any materialize-bailed
             // frame — the dict loop keeps one around constantly, so
@@ -1674,7 +1674,7 @@ public:
     /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.
     inline void pushFrameForJIT(jit::JITState* state) {
         // Entry-path census for the scanFor: bypass.
-        if (__builtin_expect(g_debug.jitFailReasons, 0)) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_JIT_FAIL_REASONS), 0)) {
             static uint64_t pfj = 0;
             Oop m = newMethod_;
             (void)m;
@@ -1684,7 +1684,7 @@ public:
                     (unsigned long long)pfj);
         }
         // 2026-05-07 A1 hunt: log pushFrameForJIT for pollEvent:
-        const bool a1TraceFJ = g_debug.a1Trace;
+        const bool a1TraceFJ = GET_DEBUG_BOOL(PHARO_A1_TRACE);
         if (__builtin_expect(a1TraceFJ, 0)) {
             Oop targetMethodCheck = Oop::fromRawBits(state->cachedTarget.rawBits());
             if (targetMethodCheck.isObject()
@@ -3825,7 +3825,7 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
         const bool walkClosure =
             GET_DEBUG_BOOL(PHARO_T1_RESUME_INTERNAL_J2J)
             && g_debug.useAsmjitT1
-            && !g_debug.resumeJ2J
+            && !GET_DEBUG_BOOL(PHARO_RESUME_J2J)
             && !GET_DEBUG_BOOL(PHARO_T1_FSR_NODEPTH);
 #endif
         // NB: visits the FULL reservation [0, j2jPoolCursor_).  A 2026-07-03

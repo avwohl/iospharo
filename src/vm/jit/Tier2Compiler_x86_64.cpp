@@ -62,6 +62,7 @@
 
 #include <asmjit/x86.h>
 #include <asmjit/core/jitruntime.h>
+#include "../DebugVars.hpp"
 
 namespace pharo {
 namespace jit {
@@ -224,9 +225,9 @@ void Tier2Compiler::flushAllICs() {
 
 void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     (void)oldVersion;
-    if (pharo::g_debug.t2X86Trace) fprintf(stderr, "[T2-x86] compile entry: method=%p\n",
+    if (GET_DEBUG_BOOL(PHARO_T2_X86_TRACE)) fprintf(stderr, "[T2-x86] compile entry: method=%p\n",
                        (void*)compiledMethod.rawBits());
-    const bool trace = pharo::g_debug.t2X86Trace;  // gates the [T2-x86] bail/match traces below
+    const bool trace = GET_DEBUG_BOOL(PHARO_T2_X86_TRACE);  // gates the [T2-x86] bail/match traces below
     if (!runtime_) {
         if (!initialize()) {
             compilationsFailed_++;
@@ -463,7 +464,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // which left it gated after measured perf regression on tier
         // interaction (see Tier2Compiler_arm64.cpp:412+).  Set
         // PHARO_T2_ZEROARG_IC=1 to opt in.
-        if (pharo::g_debug.t2ZeroargIC && bodyLen >= 3 && SistaV1::isSend0(b1)
+        if (GET_DEBUG_BOOL(PHARO_T2_ZEROARG_IC) && bodyLen >= 3 && SistaV1::isSend0(b1)
                         && b2 == SistaV1::ReturnTop
                         && decodePush(b0, pushes[0])) {
             kind = ReturnKind::ZeroArgSendInlineIC;
@@ -488,7 +489,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // PHARO_T2_X86_LOG=1 — dump asmjit IR + final machine code per
     // compile.  Heavy; only enable when actively debugging T2 emit.
     static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
-        if (pharo::g_debug.t2X86Log)
+        if (GET_DEBUG_BOOL(PHARO_T2_X86_LOG))
             return new asmjit::FileLogger(stderr);
         return nullptr;
     }();
@@ -983,7 +984,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
         // 6-way IC probe.  PHARO_T2_FORCE_MISS=1 skips it (forces miss
         // path) — matches arm64 diagnostic flag.
-        if (!pharo::g_debug.t2ForceMiss) {
+        if (!GET_DEBUG_BOOL(PHARO_T2_FORCE_MISS)) {
             for (int i = 0; i < IC_ENTRIES; i++) {
                 Gp key = cc.new_gp64("key");
                 cc.mov(key, ptr(icData, IC_KEY_OFF(i)));
@@ -1160,7 +1161,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             // PHARO_T2_MBC_IC=1 → inline IC probe with hit/miss exit.
             // Default off — both regress IC hit rate when T1's warmup
             // is intercepted by T2 at this site.
-            if (!pharo::g_debug.t2MbcSends && !pharo::g_debug.t2MbcIC) {
+            if (!GET_DEBUG_BOOL(PHARO_T2_MBC_SENDS) && !GET_DEBUG_BOOL(PHARO_T2_MBC_IC)) {
                 g_mbcBailed++;
                 return nullptr;
             }
@@ -1201,7 +1202,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
     CodeHolder code;
     code.init(runtime_->environment(), runtime_->cpu_features());
     static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
-        if (pharo::g_debug.t2X86Log)
+        if (GET_DEBUG_BOOL(PHARO_T2_X86_LOG))
             return new asmjit::FileLogger(stderr);
         return nullptr;
     }();
@@ -1262,7 +1263,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             cc.mov(wArgs, Imm(nArgs));
             cc.mov(ptr(state, OFF_SENDARGCOUNT), wArgs);
 
-            if (pharo::g_debug.t2MbcSends) {
+            if (GET_DEBUG_BOOL(PHARO_T2_MBC_SENDS)) {
                 Gp zero64 = cc.new_gp64("zero64");
                 cc.xor_(zero64, zero64);
                 cc.mov(ptr(state, OFF_ICDATAPTR), zero64);

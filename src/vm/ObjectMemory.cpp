@@ -231,7 +231,7 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     // MessageNotUnderstood (classIndex == 4307 in the Pharo 13 image).
     // Used to find which call site leaks an empty MNU through to the
     // Set>>fullCheck JIT bug.
-    if (g_debug.mnuAllocDbg && classIndex == 4307) {
+    if (GET_DEBUG_BOOL(PHARO_MNU_ALLOC_DBG) && classIndex == 4307) {
         static int n = 0;
         n++;
         if (n <= 30) {
@@ -470,7 +470,7 @@ Oop ObjectMemory::shallowCopy(Oop original) {
             }
         }
     }
-    if (g_debug.mnuAllocDbg && src->classIndex() == 4307) {
+    if (GET_DEBUG_BOOL(PHARO_MNU_ALLOC_DBG) && src->classIndex() == 4307) {
         static int n = 0;
         n++;
         if (n <= 30) {
@@ -1130,7 +1130,7 @@ void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
     // its home context and is running into scheduler / sibling-process
     // contexts, which causes the cascade where 6 processes all end up with
     // sender=nil and then terminate.  See docs/jit-uncovered-bugs.md bug 14.
-    if (g_debug.senderTripwire && index == 0 && value.isNil() && header->slotCount() >= 6) {
+    if (GET_DEBUG_BOOL(PHARO_SENDER_TRIPWIRE) && index == 0 && value.isNil() && header->slotCount() >= 6) {
         Oop oldSender = header->slots()[0];
         Oop maybeMethod = header->slots()[3];
         if (!oldSender.isNil() && oldSender.rawBits() != 0 &&
@@ -1819,7 +1819,7 @@ GCResult ObjectMemory::scavenge() {
         // Opt-in via PHARO_SISTA_REKEY_AFTER_GC=1.
         // The Sista rekey machinery is JIT-only; compiled out when JIT is off.
 #if PHARO_JIT_ENABLED
-        if (g_debug.sistaRekeyAfterGC) {
+        if (GET_DEBUG_BOOL(PHARO_SISTA_REKEY_AFTER_GC)) {
             interpreter_->rekeySistaCacheViaForwarders(
                 [&forward](uint64_t oldBits) -> uint64_t {
                     Oop o = Oop::fromRawBits(oldBits);
@@ -1857,7 +1857,7 @@ GCResult ObjectMemory::scavenge() {
     // old→young refs.  Low overhead — just bookkeeping during the existing
     // full scan.  Used to validate write-barrier coverage before a
     // future session flips scavenge to skip un-remembered objects.
-    const bool bitAudit = g_debug.scavBitAudit;
+    const bool bitAudit = GET_DEBUG_BOOL(PHARO_SCAV_BIT_AUDIT);
     size_t auditBitSetHit = 0;     // bit set + ≥1 young ref (true positive)
     size_t auditBitSetMiss = 0;    // bit set + no young ref (false positive, harmless)
     size_t auditBitUnsetHit = 0;   // bit unset + ≥1 young ref (audit-gap MISS!)
@@ -2474,7 +2474,7 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     // showed 51% of bench CPU in fullGC + page-fault overhead from the
     // mark-bit clear's __memset_zva64.  Need to identify what's
     // triggering GC during the bench loop.
-    if (g_debug.gcLog) {
+    if (GET_DEBUG_BOOL(PHARO_GC_LOG)) {
         static int count = 0;
         ++count;
         if (count <= 50 || (count & 0x1F) == 0) {
@@ -2487,7 +2487,7 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     }
 
     // jit-may23b R71: phase timing.
-    const bool timeGCPhases = g_debug.timeGCPhases;
+    const bool timeGCPhases = GET_DEBUG_BOOL(PHARO_TIME_GC_PHASES);
     auto readTSC = []() -> uint64_t {
 #if defined(__aarch64__)
         uint64_t t;
@@ -4225,7 +4225,7 @@ void ObjectMemory::updatePointersAfterCompact() {
         // path falls back to reset() in recoverSistaAfterGC below.
         // The Sista rekey machinery is JIT-only; compiled out when JIT is off.
 #if PHARO_JIT_ENABLED
-        if (g_debug.sistaRekeyAfterGC) {
+        if (GET_DEBUG_BOOL(PHARO_SISTA_REKEY_AFTER_GC)) {
             interpreter_->rekeySistaCacheViaForwarders(
                 [&resolveForward](uint64_t oldBits) -> uint64_t {
                     Oop o = Oop::fromRawBits(oldBits);
@@ -4320,7 +4320,7 @@ void ObjectMemory::copyAndUnmark() {
 // slotAtPut(0, nil) on a context-shaped object, including fast-path writes
 // that bypass ObjectMemory::storePointer.  Enabled by PHARO_SLOT_TRIPWIRE=1.
 bool ObjectHeader::slot_tripwire_enabled() {
-    return pharo::g_debug.slotTripwire;
+    return GET_DEBUG_BOOL(PHARO_SLOT_TRIPWIRE);
 }
 
 void ObjectHeader::slot_tripwire_fire(const ObjectHeader* hdr, Oop oldSender, Oop method) {

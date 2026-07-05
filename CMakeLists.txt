@@ -387,7 +387,7 @@ endforeach()
 # PHARO_T1_NO_INLINE_J2J — go in src/vm/debug_vars.h, ALWAYS.
 # (Converting legacy lines to debug_vars.h and LOWERING this number is
 # encouraged.)
-set(_ENVPRESENT_FROZEN_COUNT 250)
+set(_ENVPRESENT_FROZEN_COUNT 31)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/vm/DebugSettings.cpp" _dbgsettings_content)
 string(REGEX MATCHALL "envPresent\\(\"" _envpresent_hits "${_dbgsettings_content}")
 list(LENGTH _envpresent_hits _envpresent_count)

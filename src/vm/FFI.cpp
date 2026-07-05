@@ -654,7 +654,7 @@ void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
     // PHARO_SDL_TRACE=1 — count calls so we can tell whether a hang
     // path runs through here heavily in headless eval.
     static uint64_t callCount = 0;
-    const bool trace = pharo::g_debug.sdlTrace;
+    const bool trace = GET_DEBUG_BOOL(PHARO_SDL_TRACE);
     if (trace) {
         callCount++;
         if ((callCount & 0xFFF) == 0) {

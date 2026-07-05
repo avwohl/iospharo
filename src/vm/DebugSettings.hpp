@@ -26,22 +26,11 @@ struct DebugSettings {
     // --- General debug/trace booleans ---
     bool delayDebug = false;          // PHARO_DELAY_DEBUG
     bool gcEphDebug = false;          // PHARO_GC_EPH_DEBUG
-    bool reflectProfile = false;      // PHARO_REFLECT_PROFILE
     bool timerDebug = false;          // PHARO_TIMER_DEBUG
-    bool callbackDebug = false;       // PHARO_CALLBACK_DEBUG
-    bool bench = false;               // PHARO_BENCH (presence)
 
     // --- JIT on/off switches ---
     bool noJit = false;               // PHARO_NO_JIT or PHARO_NOJIT
     bool noJitStrict = false;         // PHARO_NO_JIT set to non-"0" value (true disable)
-    bool noOSR = false;               // PHARO_NO_OSR
-    bool noJ2J = false;               // PHARO_NO_J2J
-    bool noICFill = false;            // PHARO_NO_IC_FILL
-    bool noChain = false;             // PHARO_NO_CHAIN
-    bool noEagerCompile = false;      // PHARO_NO_EAGER_COMPILE
-    bool noBlocks = false;            // PHARO_JIT_NO_BLOCKS
-    bool noResume = false;            // PHARO_NO_RESUME
-    bool resumeJ2J = false;           // PHARO_RESUME_J2J (external resume trampoline)
 
     // --- asmjit-T1 path (default JIT since phase4b.37) ---
     // The asmjit-T1 emitter replaces the legacy stencil JIT.  See
@@ -51,13 +40,10 @@ struct DebugSettings {
     // bisection / regression checks).  PHARO_USE_ASMJIT_T1=1 is still
     // accepted as an explicit opt-in (no-op when default is on).
     bool useAsmjitT1 = true;          // PHARO_USE_ASMJIT_T1 / opt-out PHARO_NO_ASMJIT_T1
-    bool useAsmjitT1Trace = false;    // PHARO_USE_ASMJIT_T1_TRACE
 
     // --- asmjit-T1 simplification / bisect knobs ---
     // Splits of the original PHARO_T1_FORCE_SIMPLE which set all three.
-    bool t1ForceSimple = false;       // PHARO_T1_FORCE_SIMPLE (enables all three below)
     bool t1ForceBailMid = false;      // PHARO_T1_FORCE_BAIL_MID — force canBailMidMethod=true
-    bool t1TraceCompile = false;      // PHARO_T1_TRACE_COMPILE — log every successful asmjit-T1 compile
     // t1CanSkipJ2JSave REMOVED — knob moved to debug_vars.h (PHARO_T1_NO_CAN_SKIP_J2J_SAVE).
     bool t1NoBlockResume = false;     // PHARO_T1_NO_BLOCK_RESUME — skip chain-loop block-resume tryExecute
     bool t1NoPostPrimResume = false;  // PHARO_T1_NO_POST_PRIM_RESUME — skip post-prim tryResume
@@ -85,7 +71,6 @@ struct DebugSettings {
     // GET_DEBUG_BOOL — unvalidated + buggy (tryMultiSlot's wild #extent receiver).
     // jit-may23d W7: shortcut for #even/#odd in Sista's call_send
     // helper.  PHARO_SISTA_NO_SHORTCUT_EVEN_ODD=1 disables.
-    bool sistaNoShortcutEvenOdd = false;
     // Inline-J2J emit (self-recursive case): tail-call callee's JIT entry
     // directly instead of round-tripping through the chain loop.  12× win
     // on benchFib.  Default-on 2026-05-17, default-OFF 2026-05-20 after
@@ -101,7 +86,6 @@ struct DebugSettings {
     // benchFib(17) calls return 5133/5067 instead of 5167 (jit-may20
     // Step 2 investigation, 2026-05-21).  Now superseded by t1WarmJ2JGate
     // (warmth check) — kept as a strict fallback under PHARO_T1_PURE_J2J_GATE=1.
-    bool t1PureJ2JGate = false;
     // Warm-J2J gate (jit-may20 Step 2, 2026-05-21): cheaper, more
     // permissive runtime gate.  Iterates caller's IC sites and bails
     // only if any site's entry0 *key* is zero (= site cold).  Catches
@@ -122,7 +106,6 @@ struct DebugSettings {
     // + 38bf9887 splice-driven pass-3 fix).  Flipped to OFF: closes
     // ~6x of the Cog gap on fib (95ms → 14ms).
     // Opt-in: PHARO_T1_WARM_J2J_GATE=1 to re-enable.
-    bool t1WarmJ2JGate = false;
     // jit-may20b Step 6.1: per-caller histogram of inline-J2J gate pass/bail.
     // When set, the gate bail and gate pass sites emit a `bl` into
     // jit_rt_bail_gate_log(callerJM, kind).  The helper maintains
@@ -135,7 +118,6 @@ struct DebugSettings {
     // the first gate bail.  Implies t1BailGateHisto.  Prints all
     // numICEntries × IC_ENTRIES_PER_SITE entries of the bailing caller
     // method.  PHARO_T1_BAIL_GATE_TRACE=1.
-    bool t1BailGateTrace = false;
     // Inline SmI bitwise prims (bitAnd:/bitOr:/bitXor:) at the IC HIT site
     // for nArgs==1 sends.  Saves the chain-loop round-trip for SmI bitwise
     // sends via named-send (bitXor: is not a special-selector bytecode so
@@ -155,7 +137,6 @@ struct DebugSettings {
     // outweigh the rare polymorphic-hit savings.  Default-OFF until
     // a workload that actually benefits is found.
     // PHARO_T1_IC_POLY_WALK=1 opt-in.
-    bool t1ICPolyWalk = false;
     // jit-may20b Step 10: inline-prim 18 (basicNew:) at the IC HIT site
     // for nArgs == 1 sends.  Routes to a runtime helper that calls
     // primitiveNewWithArg directly from the JIT, skipping the
@@ -170,7 +151,6 @@ struct DebugSettings {
     // SISTA_BIT is never set in practice.  Infrastructure in place for
     // future Step 4 follow-up.  Default-off (until Step 4 lands).
     // PHARO_T1_INLINE_SISTA_CALL=1 opt-in.
-    bool t1InlineSistaCall = false;
     // Cross-method inline-J2J emit (callee != caller).  Default OFF —
     // currently corrupts state at MAX>5000 fires; opt-in for lldb work.
     // PHARO_T1_INLINE_J2J_XMETHOD=1 enables.
@@ -186,13 +166,11 @@ struct DebugSettings {
     // PHARO_T1_XMETHOD_LOG=1 enables.  Useful when chain-break corruption
     // surfaces as a P process termination — the last 64 fires are
     // captured in g_xmethod_trace.
-    bool t1XmethodLog = false;
     // Opt-in: allow block-value inline for non-leaf blocks (those with
     // inner sends).  PHARO_T1_INLINE_BLOCK_VALUE_NONLEAF=1 enables.
     // See JITRuntime.cpp jit_rt_inline_block_value_prep — leaf-only
     // gate was added 2026-05-19 (iter N+16) to suppress chain-break
     // corruption.  Re-attempt after the later fixes.
-    bool t1InlineBlockValueNonLeaf = false;
     // F3-NL3 bisection cap: max non-leaf inline-block-value fires.
     // PHARO_T1_INLINE_BLOCK_VALUE_MAX=N.  Default -1 = uncapped.
     int  t1InlineBlockValueMax = -1;
@@ -203,15 +181,12 @@ struct DebugSettings {
     // -1 = no cap.  Bisects nested-BV overhead.
     int  t1BvMaxDepth = -1;
     // Per-primitive call counter dumped at exit.  PHARO_PRIM_PROFILE=1.
-    bool primProfile = false;
     // Compile every block on first invocation (instead of waiting for
     // hot-count threshold).  PHARO_T1_EAGER_BLOCK_COMPILE=1 — diagnostic.
-    bool t1EagerBlockCompile = false;
     // Sync interp->receiver_ and method_ on chain-loop J2J Return path.
     // Without this, a stale callee-receiver lingers in interp->receiver_
     // after chain-loop bail/resume and can corrupt later interp dispatch.
     // PHARO_T1_J2J_RECEIVER_SYNC=1 enables.  See deferred.md A6 iter N+7.
-    bool t1J2JReceiverSync = false;
     // Store post-send IP (state.method + bcOffsetFromMethObj + 1) in
     // inline-J2J save.ip instead of raw state.ip.  Mirrors chain-loop's
     // J2JCall handler which advances state.ip past the send before
@@ -227,12 +202,10 @@ struct DebugSettings {
     // set, canJITActivate() returns false to prevent nested bails.
     // Default-on safety net.  PHARO_T1_ALLOW_NESTED_JIT_BAIL=1 opts out.
     bool t1NlrTailOnly = false;       // PHARO_T1_NLR_TAIL_ONLY (loosen hasNLR detection)
-    bool t1AllowNestedJitBail = false;
     // SIGPROF sampling profiler (PHARO_PROFILE=1).  Samples
     // interpreter's activeMethod() every PHARO_PROFILE_INTERVAL_US
     // microseconds of CPU time (default 1000 = 1ms); dumps top-N
     // by sample count at process exit (PHARO_PROFILE_TOP=N, default 30).
-    bool profile = false;
     int  profileIntervalUs = 1000;
     int  profileTopN = 30;
     // Interp-side IC table for Sista hint extraction on interp-only
@@ -249,7 +222,6 @@ struct DebugSettings {
     // collision when both chain loop and JIT push during a single tryJIT-
     // Activation call.  PHARO_T1_J2J_SPLIT_POOL=1.  See deferred.md A6
     // iter N+2/N+3.
-    bool t1J2JSplitPool = false;
     // Inline FullBlockClosure>>value/value:/value:value:... at the IC HIT
     // path when BLOCK_VALUE_BIT (bit 59 of extras) is set.  Looks up the
     // compiledBlock's JM via jit_rt_inline_block_value_lookup, then
@@ -257,34 +229,26 @@ struct DebugSettings {
     // chain-loop round-trip per block invocation.  Opt-in (same risk
     // profile as cross-method inline-J2J — uses the same save/return
     // protocol).  PHARO_T1_INLINE_BLOCK_VALUE=1.
-    bool t1InlineBlockValue = false;
     // Diagnostic: force probe to always-miss so the probe COMPUTATION runs
     // but exits via ExitSend regardless of icData[0] match.  Isolates
     // whether bugs are in the probe arithmetic or in the HIT path.
-    bool t1ProbeAlwaysMiss = false;   // PHARO_T1_PROBE_ALWAYS_MISS
     // Probe HIT path exits via EXIT_SEND instead of EXIT_SEND_CACHED.
     // Diagnostic: isolates whether the bug is in cached-method dispatch
     // or in the probe arithmetic.  Equivalent to always-miss EXCEPT
     // the state setup runs the full HIT branch.
-    bool t1HitAsMiss = false;         // PHARO_T1_HIT_AS_MISS
     // Diagnostic: verify cached method's selector matches the IC site's
     // selector AND receiver class matches the IC key on each HIT.  Logs
     // mismatches.  Off by default.
-    bool t1ICHitVerify = false;       // PHARO_T1_IC_HIT_VERIFY
-    bool t1TraceHit = false;          // PHARO_T1_TRACE_HIT — log IC-hit events
     // PHARO_SORTSTR_WATCH=1: install a slot watcher on sortStructs:into:'s
     // temp 3 (fp+4) right after PopStoreTemp 3 writes it.  Any subsequent
     // change to that slot logs (via checkSortstrWatch()) — pinpoints the
     // dispatched method that corrupts the caller frame.
-    bool sortstrWatch = false;
     // PHARO_DRIFT_CHECK=1: after every joint method_/instructionPointer_
     // update, verify IP is within method_'s bytecode area.  Off by default.
-    bool driftCheck = false;
     // PHARO_T1_RESUME_TOS_LOG=1: log state.sp[-1] (what the JIT resume
     // entry will read as TOS) right before JIT_CALL into the precomputed
     // resume.  Pinpoints whether the cached-dispatch's retVal write
     // survives to the resume point.  Off by default.
-    bool t1ResumeTosLog = false;
     // Conditional-jump emit — DEFAULT-OFF.  Two reasons:
     //
     // 1. Correctness flake: in-place real-emit of cond-jump methods
@@ -312,16 +276,13 @@ struct DebugSettings {
     int  t1JumpsSkipN  = -1;          // PHARO_ASMJIT_T1_JUMPS_SKIP_N
     int  t1JumpsSkipFrom = -1;        // PHARO_ASMJIT_T1_JUMPS_SKIP_FROM
     int  t1JumpsSkipTo   = -1;        // PHARO_ASMJIT_T1_JUMPS_SKIP_TO
-    bool t1NoSendsBisect = false;     // PHARO_ASMJIT_T1_NO_SENDS_BISECT
     int  t1MaxSendNArgs  = 99;        // PHARO_ASMJIT_T1_MAX_SEND_NARGS
 
     // Block-compile bisect.
-    bool t1NoBlocks = false;          // PHARO_T1_NO_BLOCKS
     int  t1BlocksFirstN = -1;         // PHARO_T1_BLOCKS_FIRST_N
     int  t1BlocksOnlyN = -1;          // PHARO_T1_BLOCKS_ONLY_N
     int  t1BlocksSkipFrom = -1;       // PHARO_T1_BLOCKS_SKIP_FROM
     int  t1BlocksSkipTo = -1;         // PHARO_T1_BLOCKS_SKIP_TO
-    bool t1BlocksTrace = false;       // PHARO_T1_BLOCKS_TRACE
     // Method-dump for objdump inspection.
     const char* t1DumpSel = nullptr;  // PHARO_T1_DUMP_SEL (selector to dump)
     const char* t1SkipSelectors = nullptr; // PHARO_T1_SKIP_SELECTORS — CSV of selectors to reject from real-emit
@@ -330,34 +291,16 @@ struct DebugSettings {
     // by surfacing receiver class + slot count at each JIT entry.
     const char* traceExecSels = nullptr; // PHARO_TRACE_EXEC_SELS — CSV of selectors to trace
     // Skip JIT re-entry after a method return (returns to interp dispatch).
-    bool noJITResumeAfterReturn = false; // PHARO_NO_JIT_RESUME_AFTER_RETURN
     // Skip auto-start of the heartbeat thread.
-    bool noHeartbeat = false;         // PHARO_NO_HEARTBEAT
 
     // --- JIT debug/trace ---
-    bool jitDumpBC = false;           // JIT_DUMP_BC
     bool jitSpillWarn = false;        // PHARO_JIT_SPILL_WARN (presence)
-    bool icHitDbg = false;            // PHARO_IC_HIT_DBG
-    bool icPatchDebug = false;        // PHARO_IC_PATCH_DEBUG
-    bool resumeStateDebug = false;    // PHARO_RESUME_STATE_DEBUG
-    bool jitRetvalDbg = false;        // PHARO_JIT_RETVAL_DBG
-    bool jitMegaScan = false;         // PHARO_JIT_MEGA_SCAN
     bool jitArithOflowTrace = false;  // JIT_ARITH_OFLOW_TRACE (presence)
-    bool b5Trace = false;             // PHARO_B5_TRACE
     bool jitSimStack = false;         // PHARO_JIT_SIMSTACK (force on, strict =1)
     bool jitNoSimStack = false;       // PHARO_JIT_NO_SIMSTACK (force off, strict =1)
 
     // --- Tier 2 / asmjit ---
-    bool t2Enabled = false;           // PHARO_T2 (any value)
-    bool t2A1 = false;                // PHARO_T2_A1
-    bool t2Replace = false;           // PHARO_T2_REPLACE
-    bool t2ForceMiss = false;         // PHARO_T2_FORCE_MISS
-    bool t2Verbose = false;           // PHARO_T2_VERBOSE
-    bool t2MbcJumps = false;          // PHARO_T2_MBC_JUMPS (presence)
     bool t2MbcJumpsEnabled = true;    // PHARO_T2_MBC_JUMPS=0 disables, else enables
-    bool t2MbcSends = false;          // PHARO_T2_MBC_SENDS
-    bool t2MbcIC = false;             // PHARO_T2_MBC_IC
-    bool t2ZeroargIC = false;         // PHARO_T2_ZEROARG_IC
 
     // --- Integer-valued tunables.  -1 / sentinel means "unset". ---
     int jitMinSends = -1;             // PHARO_JIT_MIN_SENDS
@@ -372,14 +315,12 @@ struct DebugSettings {
     int recompileAt = 500;            // PHARO_RECOMPILE_AT — recompile threshold
 
     // --- IC specialization opt-outs (default-on; set to disable) ---
-    bool noBlock1Spec = false;        // PHARO_NO_BLOCK1_SPEC
     // MONOJ2J default-on attempt #2 (2026-04-27).  First attempt
     // (2026-04-26) crashed on long fib with "JIT method numIC=0" —
     // root cause was the IC-offset bug in applyICSpecialization
     // (fixed 17c8241).  Post-fix re-test: clean 60s bench, fib(30),
     // fib(32), no SIGSEGV.  Default ON; PHARO_NO_MONOJ2J_SPEC=1 to
     // bisect.  ~10% across-the-board win.
-    bool noMonoJ2JSpec = false;       // PHARO_NO_MONOJ2J_SPEC
     bool monoJ2JSpec = true;          // default-on (post 17c8241)
 
     // --- String-valued.  nullptr if env var unset or empty. ---
@@ -398,17 +339,10 @@ struct DebugSettings {
     const char* b5Focus = nullptr;                 // PHARO_B5_FOCUS
     const char* jitTraceOop = nullptr;             // PHARO_JIT_TRACE_OOP
     const char* jitTop = nullptr;                  // PHARO_JIT_TOP
-    bool sistaCompile = false;                     // PHARO_SISTA_COMPILE
     // Sista tier-up dispatch: on by default (Phase 2.3 MVP ships).
     // Set PHARO_NO_SISTA=1 to opt out; PHARO_SISTA_DISPATCH=1 remains
     // a no-op that also enables it (backward-compatible).
     bool sistaDispatch = true;                     // PHARO_SISTA_DISPATCH / opt-out PHARO_NO_SISTA
-    bool sistaVerbose = false;                     // PHARO_SISTA_VERBOSE
-    bool sistaAllowSends = false;                  // PHARO_SISTA_ALLOW_SENDS
-    bool sistaSend0Only = false;                   // PHARO_SISTA_SEND0_ONLY
-    bool sistaUnsafeArith = false;                 // PHARO_SISTA_UNSAFE_ARITH
-    bool sistaAllowBail = false;                   // PHARO_SISTA_ALLOW_BAIL (deprecated — now default)
-    bool sistaNoBail = false;                      // PHARO_SISTA_NO_BAIL (restore conservative gate)
 
     // Generational GC (eden + scavenge).  Default ON (2026-04-24)
     // after class-table identity-hash collision fix.  Bench wins
@@ -418,151 +352,28 @@ struct DebugSettings {
     // Skip the per-safe-point scavenge trigger.  Pre-compact scavenge
     // still runs inside fullGC.  Useful for isolating scavenge
     // cadence from correctness.
-    bool ygNoScavenge = false;                     // PHARO_YG_NO_SCAVENGE
 
     // ---------------------------------------------------------------
     // Trace / debug bools migrated from scattered std::getenv() calls.
     // All envPresent semantics unless noted otherwise.
     // ---------------------------------------------------------------
-    bool a1Trace = false;                          // PHARO_A1_TRACE
-    bool asmjitT1BctocodeZero = false;             // PHARO_ASMJIT_T1_BCTOCODE_ZERO
-    bool asmjitT1ForceResumeForSends = false;      // PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS
-    bool asmjitT1ResumeSendsNoCondjump = false;    // PHARO_T1_RESUME_SENDS_NO_CONDJUMP: advertise resume for send-methods w/o cond-jumps
-    bool asmjitT1HardcodeStub = false;             // PHARO_ASMJIT_T1_HARDCODE_STUB
-    bool asmjitT1Log = false;                      // PHARO_ASMJIT_T1_LOG
-    bool asmjitT1NoBctocode = false;               // PHARO_ASMJIT_T1_NO_BCTOCODE
-    bool asmjitT1NoNumbc = false;                  // PHARO_ASMJIT_T1_NO_NUMBC
-    bool asmjitT1NoTrim = false;                   // PHARO_ASMJIT_T1_NO_TRIM
-    bool asmjitT1StubOnly = false;                 // PHARO_ASMJIT_T1_STUB_ONLY
-    bool asmjitT1TraceCond = false;                // PHARO_ASMJIT_T1_TRACE_COND
-    bool basicAtTrace = false;                     // PHARO_BASICAT_TRACE
-    bool bc5Dump = false;                          // PHARO_BC5_DUMP
-    bool ctxTempAtDbg = false;                     // PHARO_CTX_TEMPAT_DBG
-    bool detectErrors = false;                     // PHARO_DETECT_ERRORS
     int  detectErrorsLimit = 30;                   // PHARO_DETECT_ERRORS_LIMIT
-    bool dumpInterpOffsets = false;                // PHARO_DUMP_INTERP_OFFSETS
     const char* dumpRecompileIC = nullptr;         // PHARO_DUMP_RECOMPILE_IC (substring filter)
-    bool gcLog = false;                            // PHARO_GC_LOG
-    bool icHistogram = false;                      // PHARO_IC_HISTOGRAM
-    bool improperStoreTrace = false;               // PHARO_IMPROPER_STORE_TRACE
-    bool inlineActivateNoBailMid = false;          // PHARO_INLINE_ACTIVATE_NO_BAIL_MID
-    bool inlineActivateStubs = false;              // PHARO_INLINE_ACTIVATE_STUBS
-    bool inlinePrimDebug = false;                  // PHARO_INLINE_PRIM_DEBUG
-    bool t1GetterClassifyLog = false;              // PHARO_T1_GETTER_CLASSIFY_LOG (diag)
-    bool jitFailReasons = false;                   // PHARO_JIT_FAIL_REASONS
     bool jitKeepICs = false;                       // PHARO_JIT_KEEP_ICS (strict =1)
     bool jitStaleLog = false;                      // PHARO_JIT_STALE_LOG (strict =1)
     bool socketDebug = false;                      // SOCK_DEBUG (strict =1): trace the socket accept/listen/data path
-    bool jitTraceRecompile = false;                // PHARO_JIT_TRACE_RECOMPILE
-    bool jitValidateEntry = false;                 // PHARO_JIT_VALIDATE_ENTRY
-    bool mnuAllocDbg = false;                      // PHARO_MNU_ALLOC_DBG
-    bool noBlockBit = false;                       // PHARO_NO_BLOCK_BIT
-    bool noBlockValueSpec = false;                 // PHARO_NO_BLOCK_VALUE_SPEC
-    bool noCullICFill = false;                     // PHARO_NO_CULL_IC_FILL
-    bool noCullMega = false;                       // PHARO_NO_CULL_MEGA
-    bool noEagerBlockValue = false;                // PHARO_NO_EAGER_BLOCK_VALUE
-    bool noFwdCollapse = false;                    // PHARO_NO_FWD_COLLAPSE
-    bool noGetterBit = false;                      // PHARO_NO_GETTER_BIT
     const char* noGetterBitBisect = nullptr;       // PHARO_NO_GETTER_BIT_BISECT
-    bool noHotLoopThreshold = false;               // PHARO_NO_HOT_LOOP_THRESHOLD
-    bool noJ2JCalleeBump = false;                  // PHARO_NO_J2J_CALLEE_BUMP
-    bool noJ2JInlineBump = false;                  // PHARO_NO_J2J_INLINE_BUMP
-    bool noLateSpecRecompile = false;              // PHARO_NO_LATE_SPEC_RECOMPILE
-    bool noMegahitICFill = false;                  // PHARO_NO_MEGAHIT_IC_FILL
-    bool noMultislotGetter = false;                // PHARO_NO_MULTISLOT_GETTER
-    bool noOSRRecompile = false;                   // PHARO_NO_OSR_RECOMPILE
-    bool noQueueCompile = false;                   // PHARO_NO_QUEUE_COMPILE
-    bool noRetLit = false;                         // PHARO_NO_RETLIT
     bool noSistaCollect = false;                   // PHARO_NO_SISTA_COLLECT
-    bool noSistaCollectResume = false;             // PHARO_NO_SISTA_COLLECT_RESUME
     bool noSistaDoSplice = false;                  // PHARO_NO_SISTA_DO_SPLICE
     bool sistaDoSpliceNoHint = false;              // PHARO_SISTA_DO_SPLICE_NO_HINT (strict =1)
-    bool noSistaDoAccumResume = false;             // PHARO_NO_SISTA_DOACCUM_RESUME
     bool noSistaHelperSends = false;               // PHARO_NO_SISTA_HELPER_SENDS (presence)
     bool noSistaHelperSendsStrict = false;         // PHARO_NO_SISTA_HELPER_SENDS (strict =1)
-    bool noSistaInjectResume = false;              // PHARO_NO_SISTA_INJECT_RESUME
-    bool noSistaInlineArithIVar = false;           // PHARO_NO_SISTA_INLINE_ARITHIVAR
-    bool noSistaInlineIdentityEq = false;          // PHARO_NO_SISTA_INLINE_IDENTITY_EQ
-    bool noSistaInlineYourself = false;            // PHARO_NO_SISTA_INLINE_YOURSELF
-    bool noSistaIvDoAccum = false;                 // PHARO_NO_SISTA_IV_DO_ACCUM
-    bool noSistaPerBC = false;                     // PHARO_NO_SISTA_PER_BC
-    bool noSistaPrimAtPut = false;                 // PHARO_NO_SISTA_PRIM_AT_PUT
-    bool noSistaWhileTrue = false;                 // PHARO_NO_SISTA_WHILETRUE
-    bool p63Trace = false;                         // PHARO_P63_TRACE
-    bool primAtDebug = false;                      // PHARO_PRIMAT_DEBUG
-    bool primAtOob = false;                        // PHARO_PRIMAT_OOB
-    bool primSizeDebug = false;                    // PHARO_PRIMSIZE_DEBUG
-    bool primSizeStencilDbg = false;               // PHARO_PRIMSIZE_STENCIL_DBG
-    bool procDump = false;                         // PHARO_PROC_DUMP
-    bool rj2jValidate = false;                     // PHARO_RJ2J_VALIDATE
-    bool sdlTrace = false;                         // PHARO_SDL_TRACE
-    bool semSignalTrace = false;                   // PHARO_SEM_SIGNAL_TRACE
-    bool senderTripwire = false;                   // PHARO_SENDER_TRIPWIRE
-    bool sistaAfterT1 = false;                     // PHARO_SISTA_AFTER_T1
-    bool sistaAllocArrayTrace = false;             // PHARO_SISTA_ALLOC_ARRAY_TRACE
-    bool sistaAllowArrayDoHelper = false;          // PHARO_SISTA_ALLOW_ARRAYDO_HELPER
-    bool sistaAsmjitLog = false;                   // PHARO_SISTA_ASMJIT_LOG
-    bool sistaAtPeephole = false;                  // PHARO_SISTA_AT_PEEPHOLE
-    bool sistaBailLog = false;                     // PHARO_SISTA_BAIL_LOG (W10)
-    bool sistaBlockBail = false;                   // PHARO_SISTA_BLOCK_BAIL
-    bool sistaBlockHelperTrace = false;            // PHARO_SISTA_BLOCK_HELPER_TRACE
-    bool sistaCollectResumeForceBail = false;      // PHARO_SISTA_COLLECT_RESUME_FORCE_BAIL
-    bool sistaCompileBailOnly = false;             // PHARO_SISTA_COMPILE_BAIL_ONLY
-    bool sistaDoDetect = false;                    // PHARO_SISTA_DO_DETECT
-    bool sistaDoAccumForceBail = false;            // PHARO_SISTA_DOACCUM_FORCE_BAIL
     const char* sistaExcludeSels = nullptr;        // PHARO_SISTA_EXCLUDE_SELS
-    bool sistaHelperForceBail = false;             // PHARO_SISTA_HELPER_FORCE_BAIL
     int  sistaHelperMaxDepth = 64;                 // PHARO_SISTA_HELPER_MAX_DEPTH
-    bool sistaInjectResumeForceBail = false;       // PHARO_SISTA_INJECT_RESUME_FORCE_BAIL
-    bool sistaInlineDbg = false;                   // PHARO_SISTA_INLINE_DBG
-    bool sistaInlineDump = false;                  // PHARO_SISTA_INLINE_DUMP
     bool sistaInlinePoly = true;                   // default-on 2026-05-26; PHARO_NO_SISTA_INLINE_POLY=1 reverts
-    bool sistaInlineSelf = false;                  // PHARO_SISTA_INLINE_SELF
-    bool sistaInlineStats = false;                 // PHARO_SISTA_INLINE_STATS
-    bool sistaInvariantCheck = false;              // PHARO_SISTA_INVARIANT_CHECK
-    bool sistaNoFullblock = false;                 // PHARO_SISTA_NO_FULLBLOCK
-    bool sistaNoInlineArith = false;               // PHARO_SISTA_NO_INLINE_ARITH
-    bool sistaNoInlineConst = false;               // PHARO_SISTA_NO_INLINE_CONST
-    bool sistaNoInlineSetters = false;             // PHARO_SISTA_NO_INLINE_SETTERS
-    bool sistaNoLower = false;                     // PHARO_SISTA_NO_LOWER
-    bool sistaNoLowerAdd = false;                  // PHARO_SISTA_NO_LOWER_ADD
-    bool sistaNoLowerArith = false;                // PHARO_SISTA_NO_LOWER_ARITH
-    bool sistaNoLowerArithCmp = false;             // PHARO_SISTA_NO_LOWER_ARITH_CMP
-    bool sistaNoLowerArithMath = false;            // PHARO_SISTA_NO_LOWER_ARITH_MATH
-    bool sistaNoLowerBody = false;                 // PHARO_SISTA_NO_LOWER_BODY
-    bool sistaNoLowerBranch = false;               // PHARO_SISTA_NO_LOWER_BRANCH
-    bool sistaNoLowerFuse = false;                 // PHARO_SISTA_NO_LOWER_FUSE
-    bool sistaNoLowerSends = false;                // PHARO_SISTA_NO_LOWER_SENDS
     // NB: per-op x86 Sista disable knobs (AT/SIZE/ATPUT/FLOAT/COUNTED_LOOP)
     // live in debug_vars.h (the single-source X-macro system), not here.
-    bool sistaNoRemoteTemp = false;                // PHARO_SISTA_NO_REMOTE_TEMP
-    bool sistaNoRemoteTempRead = false;            // PHARO_SISTA_NO_REMOTE_TEMP_READ
-    bool sistaNoRemoteTempWrite = false;           // PHARO_SISTA_NO_REMOTE_TEMP_WRITE
-    bool sistaNoStores = false;                    // PHARO_SISTA_NO_STORES
-    bool sistaPerBCBailTrace = false;              // PHARO_SISTA_PER_BC_BAIL_TRACE
-    bool sistaPerBCDispatchTrace = false;          // PHARO_SISTA_PER_BC_DISPATCH_TRACE
-    bool sistaPerBCNoDispatch = false;             // PHARO_SISTA_PER_BC_NO_DISPATCH
-    bool sistaPerBCTrace = false;                  // PHARO_SISTA_PER_BC_TRACE
-    bool sistaBjTrace = false;                     // PHARO_SISTA_BJ_TRACE
-    bool sistaRekeyAfterGC = false;                // PHARO_SISTA_REKEY_AFTER_GC
-    bool sistaSizePeephole = false;                // PHARO_SISTA_SIZE_PEEPHOLE
-    bool sistaStackWatch = false;                  // PHARO_SISTA_STACK_WATCH
     int  sistaT1Warmup = 100;                      // PHARO_SISTA_T1_WARMUP
-    bool sistaTempWatch = false;                   // PHARO_SISTA_TEMP_WATCH
-    bool sistaTraceAdd = false;                    // PHARO_SISTA_TRACE_ADD
-    bool sistaX86TraceOk = false;                  // PHARO_SISTA_X86_TRACE_OK
-    bool slotTripwire = false;                     // PHARO_SLOT_TRIPWIRE
-    bool spCorruptTrap = false;                    // PHARO_SP_CORRUPT_TRAP
-    bool t1AcceptExtSuperSend = false;             // PHARO_T1_ACCEPT_EXTSUPERSEND
-    bool t1InlineJ2J_Env = false;                  // PHARO_T1_INLINE_J2J (raw env presence)
-    bool t1InlineJ2JDumpBC = false;                // PHARO_T1_INLINE_J2J_DUMP_BC
-    bool t1InlineJ2JTraceUnsupp = false;           // PHARO_T1_INLINE_J2J_TRACE_UNSUPP
-    bool t1InlineJ2JXmethodLive = false;           // PHARO_T1_INLINE_J2J_XMETHOD_LIVE
-    bool t1InlineJ2JXmethodLog = false;            // PHARO_T1_INLINE_J2J_XMETHOD_LOG
-    bool t1InlinePrimCounters = false;             // PHARO_T1_INLINE_PRIM_COUNTERS
-    bool t1NoJ2JTramp = false;                     // PHARO_T1_NO_J2J_TRAMP
-    bool t1SistaDispatchAllow = false;             // PHARO_T1_SISTA_DISPATCH_ALLOW
-    bool t1TraceEmit = false;                      // PHARO_T1_TRACE_EMIT
     // Self-recursive splice: inline a method's own body at its
     // recursive call sites at Sista compile time.
     //
@@ -578,8 +389,6 @@ struct DebugSettings {
     // call lowering — when kSendInlineSelf gets a direct-call emit
     // path, splicing the body becomes a profitable transformation.
     // Until then, the inline-J2J path is faster.
-    bool t1SelfRecSplice = false;                  // PHARO_T1_SELF_REC_SPLICE
-    bool t1SelfRecSpliceHintless = false;          // PHARO_T1_SELF_REC_SPLICE_HINTLESS
     // Number of nested self-recursive splice levels allowed.
     // 1 = single-level (inline one recursive call); 2 = nested
     // (inline a call that itself contains an inlined call).
@@ -589,35 +398,7 @@ struct DebugSettings {
     // Bypass the sendNoSplice negative-cache gate for methods that
     // emitted a multi-block splice.  Paired with t1SelfRecSplice;
     // both default-off (see t1SelfRecSplice comment).
-    bool sistaDispatchMultiBlock = false;          // PHARO_SISTA_DISPATCH_MULTIBLOCK
-    bool t2X86Log = false;                         // PHARO_T2_X86_LOG
-    bool t2X86Trace = false;                       // PHARO_T2_X86_TRACE
     bool t2Strict = false;                         // PHARO_T2 strict =1 form (JITRuntime)
-    bool termBT = false;                           // PHARO_TERM_BT
-    bool timeGCPhases = false;                     // PHARO_TIME_GC_PHASES
-    bool traceActivateBlock = false;               // PHARO_TRACE_ACTIVATE_BLOCK
-    bool traceBC7A = false;                        // PHARO_TRACE_BC_7A
-    bool traceCullBail = false;                    // PHARO_TRACE_CULL_BAIL
-    bool traceCullEntry = false;                   // PHARO_TRACE_CULL_ENTRY
-    bool traceCullReturn = false;                  // PHARO_TRACE_CULL_RETURN
-    bool traceExceptionSel = false;                // PHARO_TRACE_EXCEPTION_SEL
-    bool traceExecPrim = false;                    // PHARO_TRACE_EXEC_PRIM
-    bool traceExit = false;                        // PHARO_TRACE_EXIT
-    bool traceOpValue1 = false;                    // PHARO_TRACE_OP_VALUE1
-    bool tracePerBCSp = false;                     // PHARO_TRACE_PER_BC_SP
-    bool tracePrim207 = false;                     // PHARO_TRACE_PRIM207
-    bool traceRecompileFlow = false;               // PHARO_TRACE_RECOMPILE_FLOW
-    bool traceResumeSp = false;                    // PHARO_TRACE_RESUME_SP
-    bool traceRewriteIC = false;                   // PHARO_TRACE_REWRITE_IC
-    bool traceShouldNotImpl = false;               // PHARO_TRACE_SHOULDNOTIMPL
-    bool traceSistaDispatch = false;               // PHARO_TRACE_SISTA_DISPATCH
-    bool traceSistaPerBC = false;                  // PHARO_TRACE_SISTA_PERBC
-    bool traceSpCorrupt = false;                   // PHARO_TRACE_SP_CORRUPT
-    bool traceStackOrigin = false;                 // PHARO_TRACE_STACK_ORIGIN
-    bool traceTotalSteps = false;                  // PHARO_TRACE_TOTAL_STEPS
-    bool traceValueAct = false;                    // PHARO_TRACE_VALUE_ACT
-    bool trapBadDnu = false;                       // PHARO_TRAP_BAD_DNU
-    bool xferTrace = false;                        // PHARO_XFER_TRACE
     // String-valued env vars for OS introspection primitives.
     const char* envHome = nullptr;                 // HOME
     const char* envUser = nullptr;                 // USER
@@ -649,7 +430,6 @@ struct DebugSettings {
     // that had the bit UNSET (audit-gap misses), (c) objects with the
     // bit set but no actual young refs (false positives, harmless).
     // Reported in JIT stats summary.  Low overhead, default off.
-    bool scavBitAudit = false;
 
     // PHARO_T1_SETTER_BARRIER=1 — opt in to emitting an old→young
     // write-barrier call from the JIT T1 inline setter (AsmjitT1.cpp
@@ -659,7 +439,6 @@ struct DebugSettings {
     // pointers.  When on, the setter emits a BLR to
     // jit_rt_setter_write_barrier after the inline store.  Audit-gap
     // closer — see memory/jit_remembered_set_dead.md.
-    bool t1SetterBarrier = false;
 
     // PHARO_GC_HEADROOM_MB — override ObjectMemory's default 512 MB
     // threshold for the next-fullGC point.  Higher values reduce GC
