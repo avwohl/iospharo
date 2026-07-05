@@ -28,9 +28,20 @@ a scheduler starvation bug found while closing the CONC pacing item:
   P80<->P60 voluntary-yield bounce and TIMEOUTs whole batches).
 - 709d8a43  debug-vars: 215 legacy DebugSettings bools -> debug_vars.h;
   envPresent ratchet 250 -> 31.
-- Full-catalog re-run IN FLIGHT (background) to quantify total recovery
-  (expect >97.6%: stepping family + WKD + any order-dependent timeouts
-  the scheduler fix cures).
+- Full-catalog re-run 2026-07-05: stopped externally at ~80% coverage
+  (22,494 verdicts of ~28k; binary included all three fixes).  Result
+  on the covered portion: 22,283 PASS = 99.06%, 149 non-pass
+  (19 F / 55 E / 75 T) — ALL in the known environmental buckets
+  (Rub*/Renraku/Ring2/Release cold-context timeouts at the runner's
+  5-per-class cap, Roassal/Cairo, LibTTY, FL WideString, Cly async,
+  OSEnvironment/NonInteractiveTranscript).  Every previously-failing
+  stepping/simulation/context family PASSES in catalog context; the
+  two weak/finalization flakes observed mid-run (WeakOrderedCollection
+  AllGarbageCollected, FinalizationRegistry testFinalizationWithOnFork)
+  pass 3/3 in isolation.  Detail file: /tmp/sunit_test_detail.txt
+  (lines 1-22494 cover class-list order up to RubTextFieldAreaTest);
+  tail (~5.5k tests: Spec2/S*/T*/U*/W*/Z*) not run — re-run with
+  /tmp/sunit_batch.txt if the exact full-catalog number is wanted.
 
 ---
 
