@@ -119,7 +119,7 @@ Remaining open (features/blocked, NOT fixes — see deferred.md):
 CONC UsingWorker pacing (needs quiet-machine profiling; data captured),
 IME, MIDI backend (unverifiable: no image-side MIDI classes),
 WorldRenderer native fast path, old-space commit-ahead (design note
-written; own-milestone risk), Authenticode signing (needs user cert
+written; own-milestone risk), Authenticode signing (DONE 2026-07-05: user set up Azure Trusted Signing; latest Windows build ships signed) (previously: needs user cert
 decision).
 
 ENVIRONMENT CAVEAT for this session's numbers: the machine was degraded
