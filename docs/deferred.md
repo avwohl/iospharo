@@ -48,6 +48,18 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
   - Getter/setter inlines (PHARO_T1_NO_INLINE_GETTER/_SETTER): cascade
     persists.  Combined with the earlier PHARO_NO_J2J /
     PHARO_T1_NO_INLINE_J2J results, every cheap emit-knob is falsified.
+  - Provenance forensics (2026-07-05 late, all landed in-tree): the
+    corpse is the lookupClass ARGUMENT (operand slots @46/@50, live
+    frames = the classic step->send:super:numArgs: chain).  Region
+    classification: YOUNG new-space, nil-scrubbed (post-scavenge eden
+    recycling) in some runs, INVALID-PTR (outside heap) in others —
+    one mechanism, read at different eden lifecycle points.  prim-111
+    ring (32-deep): the corpse was NOT produced by prim 111 => the
+    super-branch (method-literal association) or a >32-window fetch.
+    PHARO_CORPSE_PUSH_TRAP (interp push() tripwire) never fires =>
+    the writer is JIT-STENCIL-side (raw s->sp writes bypass push()).
+    DET_SCHED does NOT stabilize the corpse address (ASLR + residual
+    async), so cross-process watchpoints are out — must be in-process.
   - NEXT: lldb + PHARO_DET_SCHED on the repro; suspects remaining:
     the T1 dispatch-A tryPrimClass EMITTED-ASM twin (AsmjitT1 ~9526,
     "no bounds check needed" — same missing forwarder handling), the

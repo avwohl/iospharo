@@ -3083,6 +3083,14 @@ PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// Cascade-hunt ring (2026-07-05): last 32 prim-111 results, so the DNU
+// cascade dump can attribute a corpse "class" back to the receiver it was
+// fetched for.  Cheap (4 words per call), removable once the simulation
+// corruption is fixed.
+// (linkage: mirrored declaration in Interpreter.cpp — keep layouts in sync)
+pharo::Prim111Entry pharo::g_prim111Ring[32];
+uint64_t pharo::g_prim111Seq = 0;
+
 PrimitiveResult Interpreter::primitiveClass(int argCount) {
     // Primitive 111 returns the class of the top-of-stack value.
     // For Object>>class (argCount=0): stackValue(0) = receiver
@@ -3094,6 +3102,13 @@ PrimitiveResult Interpreter::primitiveClass(int argCount) {
     target = memory_.followForwarded(target);
 
     Oop classOop = memory_.classOf(target);
+    {
+        auto& e = g_prim111Ring[g_prim111Seq & 31];
+        e.rcvr = target.rawBits();
+        e.cls = classOop.rawBits();
+        e.methodSel = method_.rawBits();
+        e.seq = g_prim111Seq++;
+    }
     popN(argCount + 1);
     push(classOop);
     return PrimitiveResult::Success;

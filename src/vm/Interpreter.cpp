@@ -14760,6 +14760,110 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                             memory_.classNameOf(memory_.classOf(
                                 memory_.followForwarded(rcvr))).c_str());
                     }
+                    // Provenance: walk the SIMULATED context chain — which
+                    // frame/slot holds the corpse?
+                    {
+                        Oop ctx = activeContext_;
+                        for (int d = 0; d < 12 && ctx.isObject() && !ctx.isNil()
+                                 && ctx.rawBits() > 0x10000
+                                 && memory_.isValidPointer(ctx); d++) {
+                            Oop m = memory_.fetchPointer(3, ctx);
+                            Oop rc = memory_.fetchPointer(5, ctx);
+                            Oop sp = memory_.fetchPointer(2, ctx);
+                            int stackp = sp.isSmallInteger()
+                                ? (int)sp.asSmallInteger() : -1;
+                            std::string rcls = (rc.isObject()
+                                    && rc.rawBits() > 0x10000
+                                    && memory_.isValidPointer(rc))
+                                ? memory_.classNameOf(memory_.classOf(rc))
+                                : (rc.isSmallInteger() ? "SmInt" : "imm/bad");
+                            fprintf(stderr,
+                                "[DNU]   ctx[%d]=0x%llx m=#%s rcvrCls=%s "
+                                "stackp=%d",
+                                d, (unsigned long long)ctx.rawBits(),
+                                memory_.selectorOf(m).c_str(), rcls.c_str(),
+                                stackp);
+                            // print top 4 stack slots with corpse markers
+                            for (int t = stackp; t > stackp - 4 && t >= 1; t--) {
+                                Oop v = memory_.fetchPointer(5 + t, ctx);
+                                bool corpse = v.isObject()
+                                    && v.rawBits() > 0x10000
+                                    && (!memory_.isValidPointer(v)
+                                        || (memory_.isValidPointer(v)
+                                            && v.asObjectPtr()->classIndex() == 0));
+                                fprintf(stderr, " s%d=0x%llx%s", t,
+                                        (unsigned long long)v.rawBits(),
+                                        corpse ? "!CORPSE" : "");
+                            }
+                            fprintf(stderr, "\n");
+                            ctx = memory_.fetchPointer(0, ctx);
+                        }
+                    }
+                    // Live frames + operand-stack corpse scan (fd>0 frames sit
+                    // ABOVE activeContext_; that's where the stepping runs).
+                    for (size_t i = 0; i < frameDepth_ && i < 16; i++) {
+                        auto& f = savedFrames_[i];
+                        Oop rc = f.savedReceiver;
+                        std::string rcls = (rc.isObject() && rc.rawBits() > 0x10000
+                                && memory_.isValidPointer(rc))
+                            ? memory_.classNameOf(memory_.classOf(rc))
+                            : (rc.isSmallInteger() ? "SmInt" : "imm/bad");
+                        fprintf(stderr, "[DNU]   frame[%zu] m=#%s rcvr=0x%llx (%s)\n",
+                                i, memory_.selectorOf(f.savedMethod).c_str(),
+                                (unsigned long long)rc.rawBits(), rcls.c_str());
+                    }
+                    // Region + GC-counter classification of the corpse.
+                    {
+                        extern uint64_t g_scavengeCount;
+                        const char* region =
+                            memory_.isYoungObject(
+                                reinterpret_cast<void*>(rcvr.rawBits()))
+                            ? "YOUNG(new-space)"
+                            : (reinterpret_cast<uint8_t*>(rcvr.rawBits())
+                                       >= memory_.oldSpaceStart()
+                                   && reinterpret_cast<uint8_t*>(rcvr.rawBits())
+                                       < memory_.oldSpaceEnd())
+                                ? "OLD" : "OUTSIDE-HEAP";
+                        fprintf(stderr,
+                            "[DNU]   CASCADE region=%s scavenges=%llu fullGCs=%zu\n",
+                            region, (unsigned long long)g_scavengeCount,
+                            memory_.gcCount());
+                    }
+                    // prim-111 ring: did prim 111 produce the corpse?
+                    {
+                        for (int ri = 0; ri < 32; ri++) {
+                            auto& e = g_prim111Ring[ri];
+                            if (e.cls == rcvr.rawBits() && e.cls) {
+                                Oop r0 = Oop::fromRawBits(e.rcvr);
+                                std::string rc = (r0.isObject()
+                                        && r0.rawBits() > 0x10000
+                                        && memory_.isValidPointer(r0)
+                                        && r0.asObjectPtr()->classIndex() > 8)
+                                    ? memory_.classNameOf(memory_.classOf(r0))
+                                    : "dead/imm";
+                                fprintf(stderr,
+                                    "[DNU]   PRIM111-HIT seq=%llu rcvr=0x%llx "
+                                    "(%s) in=#%s (age=%llu calls ago)\n",
+                                    (unsigned long long)e.seq,
+                                    (unsigned long long)e.rcvr, rc.c_str(),
+                                    memory_.selectorOf(
+                                        Oop::fromRawBits(e.methodSel)).c_str(),
+                                    (unsigned long long)(g_prim111Seq - e.seq));
+                            }
+                        }
+                    }
+                    for (Oop* pp = stackBase_; pp < stackPointer_; pp++) {
+                        Oop v = *pp;
+                        if (v.isObject() && v.rawBits() > 0x10000) {
+                            bool corpse = !memory_.isValidPointer(v)
+                                || v.asObjectPtr()->classIndex() == 0;
+                            if (corpse)
+                                fprintf(stderr,
+                                    "[DNU]   STACK-CORPSE @%td = 0x%llx%s\n",
+                                    pp - stackBase_, (unsigned long long)v.rawBits(),
+                                    memory_.isValidPointer(v) ? " (scrubbed)" : " (invalid)");
+                        }
+                    }
                 }
             }
             Oop nextProcess = wakeHighestPriority();

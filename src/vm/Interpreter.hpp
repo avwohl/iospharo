@@ -98,6 +98,13 @@ extern "C" void jit_rt_j2j_call(pharo::jit::JITState* state);
 #endif
 
 namespace pharo {
+// Cascade-hunt ring (2026-07-05, temporary diagnostic): last 32 prim-111
+// (class-of) results so the DNU cascade dump can attribute a corpse class
+// to the receiver it was fetched for.
+struct Prim111Entry { uint64_t rcvr, cls, methodSel, seq; };
+extern Prim111Entry g_prim111Ring[32];
+extern uint64_t g_prim111Seq;
+
 
 /// Thrown from primitiveCallbackReturn (and equivalent paths) when a
 /// Smalltalk-side FFI callback handler has finished and we need control
@@ -376,6 +383,21 @@ public:
 
     /// Push a value onto the stack
     inline void push(Oop value) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_CORPSE_PUSH_TRAP), 0)) {
+            if (value.isObject() && value.rawBits() > 0x10000
+                    && memory_.isYoungObject(
+                        reinterpret_cast<void*>(value.rawBits()))
+                    && value.asObjectPtr()->classIndex() == 0) {
+                static int corpsePushLog = 0;
+                if (corpsePushLog++ < 5) {
+                    fprintf(stderr,
+                        "[CORPSE-PUSH] val=0x%llx in=#%s fd=%zu jitState=%d\n",
+                        (unsigned long long)value.rawBits(),
+                        memory_.selectorOf(method_).c_str(), frameDepth_,
+                        currentJITState_ ? 1 : 0);
+                }
+            }
+        }
         // Detect a corrupted stackPointer_ pointing outside both the C++
         // stack array AND any known Smalltalk heap region.  Tracking A3:
         // under JIT, after many activations and GCs, stackPointer_
