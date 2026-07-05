@@ -14861,6 +14861,17 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     {
                         for (int ri = 0; ri < 32; ri++) {
                             auto& e = g_prim111Ring[ri];
+                            if (e.rcvr == rcvr.rawBits() && e.rcvr) {
+                                fprintf(stderr,
+                                    "[DNU]   PRIM111-RCVR-MATCH seq=%llu: corpse WAS a "
+                                    "prim-111 RECEIVER (its class=0x%llx) in=#%s "
+                                    "(age=%llu) — WRONG-SLOT confirmed\n",
+                                    (unsigned long long)e.seq,
+                                    (unsigned long long)e.cls,
+                                    memory_.selectorOf(
+                                        Oop::fromRawBits(e.methodSel)).c_str(),
+                                    (unsigned long long)(g_prim111Seq - e.seq));
+                            }
                             if (e.cls == rcvr.rawBits() && e.cls) {
                                 Oop r0 = Oop::fromRawBits(e.rcvr);
                                 std::string rc = (r0.isObject()

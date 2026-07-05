@@ -83,3 +83,16 @@ compare to check e.rcvr == corpse — if the corpse IS a recent prim-111
 RECEIVER, wrong-slot is proven), then inspect the JIT resume path for
 the send shape `objectClass:` (1-arg prim send) inside a JIT'd method
 called from the chain loop.
+
+Round 9 (05:30): PRIM111-RCVR-MATCH negative (32-deep ring) — corpse
+was neither a recent prim-111 RESULT nor RECEIVER.  Queued probes:
+(1) deepen g_prim111Ring to 256 and re-check both matches;
+(2) at cascade, dump the LEVEL-1 simulated send's superFlag + the
+    simulated method's last literal chain (is the corpse the
+    methodClass association VALUE read via literalAt:? — the super
+    branch bypasses prim 111 entirely);
+(3) disassemble the JIT'd Context>>send:super:numArgs: around its
+    objectClass:-send site (use methodMap lookup at cascade to get the
+    JITMethod code address) and audit the operand-slot usage of the
+    prim-call resume — the wrong-slot hypothesis remains the
+    front-runner given the fresh-cohort stride + no-holder findings.
