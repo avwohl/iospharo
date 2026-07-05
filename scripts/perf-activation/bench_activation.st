@@ -7,9 +7,12 @@
  IntArithReturn (52), getter/setter/returnsSelf (63/62/61) — the send
  MUST take the real J2J activation path.
  NOTE: methods are compiled onto Association (in-memory only; eval mode
- never saves).  Class creation (subclass:/<<#X install) and
- Object compile: both fail silently in eval mode — leaf-class compile:
- is the pattern that works (same as the WKD timing instrumentation).
+ never saves).  Class creation and Object compile: worked when retried
+ on a quieter machine — the earlier silent-failure was load-dependent
+ (concurrent VMs), so leaf-class compile: is just the more robust
+ pattern, not a hard requirement.  Beware Smalltalk comments cannot
+ contain a double-quote: an embedded one ends the comment and the rest
+ parses as code, failing the whole DoIt silently.
  Run per the README (cat this file into the eval argument)."
 Association compile: 'perfActCallee: x
 	| t |
