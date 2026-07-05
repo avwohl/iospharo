@@ -32,3 +32,22 @@ State of the backward chase (round 5):
   set (unused; scavenge full-scans old+perm), eden poison (corpse is a
   stale ADDRESS, not recycled content), OSR, Sista, parked-JITState
   chain (real bug, fixed, insufficient).
+
+Round 6 (05:05): the auto-migrating chase's first [ORIGIN] was FALSE —
+the writer is `popStoreTemp 4` in send:to:with:super: (x4 register =
+state.tempBase; watched slot == tempBase+0x20 == temp 4 == the
+lookupClass LOCAL — image-side identity now CONFIRMED).  The popped
+source cell sits ABOVE the destination, which the downward-only
+lower-cell scan misses: extend the migration to also consider the cell
+at x25 (the pop source) and/or scan the whole live stack.  KEY
+INFERENCE: lookupClass is dead THE MOMENT IT IS COMPUTED — prim 111
+cannot return a dead object, so either the receiver temp (temp 1) was
+already dead at frame entry (chase one frame up), or the value is
+re-injected from a STALE CACHED MATERIALIZED CONTEXT: see
+materializeFrameStack's ctxSynced short-circuit ("cached context means
+this frame has NOT executed since suspension... skipping re-sync") —
+if a cached ctx's temps hold a since-died pointer and fd=0 stepping
+resumes THROUGH that context, the dead value re-enters execution.
+NEXT PROBES: (a) chase with pop-source handling; (b) cheap C++ knob:
+PHARO_MAT_FULL_RESYNC=1 already EXISTS (disables the ctxSynced
+short-circuit) — run the repro with it FIRST, it is one env var.
