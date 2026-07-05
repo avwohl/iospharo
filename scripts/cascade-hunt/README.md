@@ -51,3 +51,15 @@ resumes THROUGH that context, the dead value re-enters execution.
 NEXT PROBES: (a) chase with pop-source handling; (b) cheap C++ knob:
 PHARO_MAT_FULL_RESYNC=1 already EXISTS (disables the ctxSynced
 short-circuit) — run the repro with it FIRST, it is one env var.
+
+Round 7 (05:10): PHARO_MAT_FULL_RESYNC=1 does NOT cure — ctxSynced
+re-injection falsified.  Next hop (queued): HEAP-SIDE chase — at
+cascade #1, scan old space [oldSpaceStart_, oldSpaceFree_) and live
+eden for cells holding the corpse value (the simulated contexts'
+stack slots live in the HEAP; Context>>stackValue: feeds rcvr/args
+into the stepping machinery), then arm watchpoints on those heap
+cells.  Old-space addresses persist across the parent/child repro's
+restarts (no fullGC in the window), so the writer of the NEXT dead
+deposit into a heap ctx slot gets caught with a backtrace.  The
+python needs: read oldSpaceStart_/oldSpaceFree_ via the anchor args
+(extend pharo_cascade_bp to pass them in x3/x4) — one-line C++ change.
