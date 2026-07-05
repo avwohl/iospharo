@@ -63,3 +63,23 @@ restarts (no fullGC in the window), so the writer of the NEXT dead
 deposit into a heap ctx slot gets caught with a backtrace.  The
 python needs: read oldSpaceStart_/oldSpaceFree_ via the anchor args
 (extend pharo_cascade_bp to pass them in x3/x4) — one-line C++ change.
+
+Round 8 (05:25): PROBE HYGIENE LESSON — PHARO_T1_NO_CHAIN_RESUME_PLAIN
+looked like a cure (exit 0, zero cascades) but was VACUOUS: under that
+knob the VM ends the run early (~950-line log, no EVAL-RESULT, no
+steps=, suite runner never starts).  The knob restores the
+known-broken double-pop path; boot dies benignly.  EVERY knob probe
+must check `steps=99999` (scenario truly completed), as the quarantine
+probes did.  STANDING REAL FINDINGS: (a) quarantine at scavenge <=8 =>
+genuine full pass; (b) per-run corpse addresses form a regular
+~0x1A0F8 allocation stride = fresh per-iteration objects; (c) at
+cascade time NO heap (old-space) cell and NO VM root holds the corpse
+=> the value is not a retained pointer — favor the WRONG-STACK-SLOT
+hypothesis: the JIT'd simulated send:super:numArgs: picks up a
+per-iteration OBJECT (receiver/context) where the class (prim-111
+result) belongs, and that object has died by read time.  Next: verify
+by logging prim-111's ARG vs the corpse (extend the prim-111 ring
+compare to check e.rcvr == corpse — if the corpse IS a recent prim-111
+RECEIVER, wrong-slot is proven), then inspect the JIT resume path for
+the send shape `objectClass:` (1-arg prim send) inside a JIT'd method
+called from the chain loop.
