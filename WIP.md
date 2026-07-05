@@ -28,20 +28,28 @@ a scheduler starvation bug found while closing the CONC pacing item:
   P80<->P60 voluntary-yield bounce and TIMEOUTs whole batches).
 - 709d8a43  debug-vars: 215 legacy DebugSettings bools -> debug_vars.h;
   envPresent ratchet 250 -> 31.
-- Full-catalog re-run 2026-07-05: stopped externally at ~80% coverage
-  (22,494 verdicts of ~28k; binary included all three fixes).  Result
-  on the covered portion: 22,283 PASS = 99.06%, 149 non-pass
-  (19 F / 55 E / 75 T) — ALL in the known environmental buckets
-  (Rub*/Renraku/Ring2/Release cold-context timeouts at the runner's
-  5-per-class cap, Roassal/Cairo, LibTTY, FL WideString, Cly async,
-  OSEnvironment/NonInteractiveTranscript).  Every previously-failing
-  stepping/simulation/context family PASSES in catalog context; the
-  two weak/finalization flakes observed mid-run (WeakOrderedCollection
-  AllGarbageCollected, FinalizationRegistry testFinalizationWithOnFork)
-  pass 3/3 in isolation.  Detail file: /tmp/sunit_test_detail.txt
-  (lines 1-22494 cover class-list order up to RubTextFieldAreaTest);
-  tail (~5.5k tests: Spec2/S*/T*/U*/W*/Z*) not run — re-run with
-  /tmp/sunit_batch.txt if the exact full-catalog number is wanted.
+- **Full-catalog 2026-07-05 COMPLETE (two-part run, all fixes in the
+  binary): 27,716 verdicts, 27,283 PASS = 98.44%**, 295 non-pass
+  (40 F / 125 E / 130 T) + 138 skips — vs July-4's ~743 non-passes,
+  a ~60% reduction.  Every remaining family is environmental/known:
+  Spec2 + StDebugger (GUI env, no fake-GUI in catalog prep), Zn/Zdc
+  (network + the flaky local-server family below), Rub*/Renraku/
+  Ring2/Release cold-context timeouts (runner caps at 5/class),
+  LibTTY, FL WideString, Cly async, Roassal/Cairo, OSEnvironment/
+  NonInteractiveTranscript, VariableBreakpointTest (8).  All
+  previously-failing stepping/simulation families PASS in catalog
+  context.  Detail preserved: /tmp/catalog_20260705_partial_detail.txt
+  + /tmp/catalog_20260705_tail_detail.txt.
+- **ZnServerTest/ZnClientTest local-server flakiness is PRE-EXISTING,
+  not from today's changes (bisected 2026-07-05).**  Isolated
+  ZnServerTest varies 22-28/31 (3-9 errors/run, incl. pure-local tests
+  like testGetUnicodeUtf8/testTooManyConcurrentConnections) on: HEAD,
+  HEAD with the finalization-delivery change reverted, HEAD with the
+  prim-230 preemption disabled, AND HEAD with the stale Jun-2 stencils
+  — identical variance in all four builds.  Not port exhaustion
+  (5 TIME_WAITs).  July-4's "ZnServer 29/31" was a single sample of an
+  inherently flaky family.  Candidate for a dedicated hunt (socket
+  stream timing on our VM).
 
 ---
 
