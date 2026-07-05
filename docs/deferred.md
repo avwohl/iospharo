@@ -165,8 +165,26 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
   these classes warm inside the full 565-class order.  Judge via the full
   catalog, not small batches.
 
-- [ ] **WeakKeyDictionaryTest>>testClearing warm-run deviation (ARM, JIT
-  only).** Repro: `3 timesRepeat: [(WeakKeyDictionaryTest run: #testClearing)]`
+- [x] **WeakKeyDictionaryTest>>testClearing warm-run deviation — FIXED
+  2026-07-05, commit 8cfee28c.**  ROOT CAUSE: the f96cb69b one-shot at the
+  JIT-activation early-return fired at activation EXIT — but
+  tryJITActivation runs the whole method including the GC prim prologue,
+  so when prim 130 executed INSIDE that activation the P50 wake landed
+  mid-statement in the caller (after `Smalltalk garbageCollect` returned,
+  before the pre-drain `dict size` read).  Interp never does this (a
+  successful GC prim doesn't activate; its one-shot fires at the end of
+  the NEXT activation).  FIX: snapshot the flag before tryJITActivation
+  and fire at exit only when armed at ENTRY; arming inside the activation
+  waits for the next activation, whose entry drain native-processes the
+  WKA mourners first — the exit signal then only dispatches keeper
+  mourners to P50 (gating it off entirely regressed WeakAnnouncerTest
+  testNoDeadWeakSubscriptions — mourn starvation — so armed-at-entry is
+  the reconciliation).  Plus: interpret()'s periodic
+  signalFinalizationIfNeeded gated on !finalizeDeferred (parity with the
+  step() twin).  VERIFIED: testClearing 6/6 warm; WeakAnnouncerTest 3x
+  suite clean; weak/finalization batch 1003 P / 0 F; canary 1353 P / 0 F.
+  Original entry follows:
+  Repro: `3 timesRepeat: [(WeakKeyDictionaryTest run: #testClearing)]`
   in one VM — runs 1-2 pass, run 3 fails "Got 1 instead of 1001" (the
   size assert before/right after the explicit garbageCollect sees the
   1000 weak entries ALREADY finalized).  Also fails in batch context when
