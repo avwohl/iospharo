@@ -3787,16 +3787,24 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
     // JIT code is on the C stack. Without this, GC compaction would move
     // state.receiver/method/cachedTarget out from under the JIT, leaving
     // stale pointers that crash on next dereference.
-    if (currentJITState_) {
+    // Walk the WHOLE JITState chain (2026-07-05): parked OUTER states
+    // (nested tryJITActivation behind interpreter re-entries) hold live
+    // method/receiver oops too — leaving them unvisited let a scavenge
+    // move their CompiledMethod while state.method stayed stale and
+    // ip/literals dangled into recycled eden (the cold-context
+    // simulation-family corpse cascade).
+    for (jit::JITState* jitSt = currentJITState_; jitSt;
+         jitSt = jitSt->prevState) {
         // FSR M4: re-derive the (possibly stale) method/literals mirrors
         // from state.jitMethod before visiting — otherwise the visitor
         // pins/updates a DEAD method oop while the live one moves.
         // Idempotent; jitMethod is published at every helper-call/exit.
-        jit::fsrLazyRefresh(*currentJITState_);
-        visitor(currentJITState_->receiver);
-        visitor(currentJITState_->method);
-        visitor(currentJITState_->returnValue);
-        visitor(currentJITState_->cachedTarget);
+        jit::fsrLazyRefresh(*jitSt);
+        visitor(jitSt->receiver);
+        visitor(jitSt->method);
+        visitor(jitSt->returnValue);
+        visitor(jitSt->cachedTarget);
+        visitor(jitSt->closure);
         // trueOop/falseOop are visited via specialObjects_ already.
 
         // J2J pool: pending save structs hold caller-side Oops (receiver)
@@ -3846,17 +3854,18 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
         // holds caller-side receivers across recursive calls.  Live
         // save-stack lives in stack-local memory of tryJITActivation
         // — reachable via currentJITState_'s sistaSaveCursor.
-        if (currentJITState_
-                && currentJITState_->sistaSaveCursor
-                && currentJITState_->sistaSaveLimit) {
+        // Per-STATE pool: each chain entry owns a stack-local pool in its
+        // tryJITActivation frame (part of the 2026-07-05 chain fix —
+        // parked outer states' pools were unvisited too).
+        if (jitSt->sistaSaveCursor && jitSt->sistaSaveLimit) {
             // The pool extends from base to sistaSaveCursor (one past
             // last live entry).  We don't have the base pointer
             // directly, but sistaSaveLimit - 256*56 gives it.
             jit::SistaSave* poolEnd = reinterpret_cast<jit::SistaSave*>(
-                currentJITState_->sistaSaveLimit);
+                jitSt->sistaSaveLimit);
             jit::SistaSave* poolBase = poolEnd - jit::MaxSistaSavePoolSize;
             jit::SistaSave* poolTop = reinterpret_cast<jit::SistaSave*>(
-                currentJITState_->sistaSaveCursor);
+                jitSt->sistaSaveCursor);
             for (jit::SistaSave* s = poolBase; s < poolTop; s++) {
                 visitor(s->receiver);
             }

@@ -81,6 +81,24 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
     active frame — or scavenge must pin/tenure methods referenced by
     parked chains.  Find where suspended-process JIT state stores its
     resume ip (JITState.ip / j2j save layout / process-switch park path).
+  - ROUND 3 (2026-07-05 04:00): quarantine bisect — PHARO_SCAV_QUARANTINE_AT
+    N<=8 makes the FULL repro PASS (steps=99999, zero cascades); N>=9 does
+    not.  Confirms eden-reuse-after-scavenge-~8 is load-bearing.  Falsified
+    in addition: PHARO_NO_OSR, PHARO_NO_SISTA (each still cascades) — with
+    PHARO_NO_JIT passing, the vehicle is BASE-T1 machinery.  Landed a real
+    structural GC bug fix en route: parked OUTER JITStates (nested
+    tryJITActivation) were INVISIBLE to the GC — new JITState.prevState
+    chain + forEachRoot/prepareForGC/afterGC now walk the whole chain
+    (method/receiver/closure roots, per-state ip/literals round-trip,
+    per-state Sista pools).  Necessary but NOT sufficient — cascade
+    persists.
+  - KEY RUNBOOK UPGRADE: the cascade is NON-FATAL (recovers via
+    transferTo) and RECURS within one process — so lldb can break at the
+    first [DNU] CASCADE fprintf, read the corpse slot addresses from the
+    dump (stack@46/@50-style), set hardware watchpoints on those slots,
+    CONTINUE, and catch the writer at the next occurrence IN THE SAME
+    RUN.  No cross-run address stability needed (that was the blocker:
+    ASLR-off lldb still varies heap layout).
   - NEXT (superseded): lldb + PHARO_DET_SCHED on the repro; suspects remaining:
     the T1 dispatch-A tryPrimClass EMITTED-ASM twin (AsmjitT1 ~9526,
     "no bounds check needed" — same missing forwarder handling), the

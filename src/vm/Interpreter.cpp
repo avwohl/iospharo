@@ -14777,12 +14777,20 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                                     && memory_.isValidPointer(rc))
                                 ? memory_.classNameOf(memory_.classOf(rc))
                                 : (rc.isSmallInteger() ? "SmInt" : "imm/bad");
+                            Oop pcO = memory_.fetchPointer(1, ctx);
+                            long pcv = pcO.isSmallInteger()
+                                ? (long)pcO.asSmallInteger() : -1;
+                            size_t mSz = (m.isObject()
+                                    && m.rawBits() > 0x10000
+                                    && memory_.isValidPointer(m))
+                                ? m.asObjectPtr()->byteSize() : 0;
                             fprintf(stderr,
                                 "[DNU]   ctx[%d]=0x%llx m=#%s rcvrCls=%s "
-                                "stackp=%d",
+                                "stackp=%d pc=%ld/%zu%s",
                                 d, (unsigned long long)ctx.rawBits(),
                                 memory_.selectorOf(m).c_str(), rcls.c_str(),
-                                stackp);
+                                stackp, pcv, mSz,
+                                (pcv > (long)mSz) ? " !PC-OOR" : "");
                             // print top 4 stack slots with corpse markers
                             for (int t = stackp; t > stackp - 4 && t >= 1; t--) {
                                 Oop v = memory_.fetchPointer(5 + t, ctx);
@@ -20641,6 +20649,21 @@ void Interpreter::prepareForGC() {
     } else {
         jitStateIpOffset_ = 0;
     }
+    // Chain round-trip (2026-07-05): every PARKED outer state's ip is a raw
+    // pointer into its (about-to-move) method's bytes — stash per-state
+    // offsets so afterGC can reconstitute them.  literals are recomputed
+    // from the updated method directly in afterGC.
+    for (jit::JITState* st = currentJITState_ ? currentJITState_->prevState
+                                              : nullptr;
+         st; st = st->prevState) {
+        jit::fsrLazyRefresh(*st);
+        if (st->method.isObject() && st->method.rawBits() > 0x10000
+                && st->ip) {
+            st->gcIpOffset = st->ip - st->method.asObjectPtr()->bytes();
+        } else {
+            st->gcIpOffset = 0;
+        }
+    }
 
     // J2J pool saves hold raw `ip` pointers into their pushing method's
     // bytecodes (the postSendIp resume point).  forEachRoot updates
@@ -20953,6 +20976,18 @@ void Interpreter::afterGC(bool fullGC) {
         ObjectHeader* methObj = currentJITState_->method.asObjectPtr();
         currentJITState_->ip = methObj->bytes() + jitStateIpOffset_;
         currentJITState_->literals = methObj->slots() + 1;
+    }
+    // Chain restore (2026-07-05): reconstitute every parked outer state's
+    // ip/literals against its (GC-updated) method — see prepareForGC's
+    // matching walk and JITState.prevState for the corpse-cascade story.
+    for (jit::JITState* st = currentJITState_ ? currentJITState_->prevState
+                                              : nullptr;
+         st; st = st->prevState) {
+        if (st->method.isObject() && st->method.rawBits() > 0x10000) {
+            ObjectHeader* mo = st->method.asObjectPtr();
+            st->ip = mo->bytes() + st->gcIpOffset;
+            st->literals = mo->slots() + 1;
+        }
     }
 
     // Shadow-slot detector: rehash (keys were GC-updated in place).
@@ -22328,6 +22363,8 @@ void Interpreter::tryJITResumeInCaller() {
 
         // Register this state as GC-reachable (see tryJITActivation for why).
         jit::JITState* prevJITState = currentJITState_;
+        state.prevState = prevJITState;   // GC chain: parked outers stay visible
+        state.gcIpOffset = 0;
         currentJITState_ = &state;
         struct JITStateGuard {
             Interpreter* self;
@@ -26103,6 +26140,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // if GC runs while JIT code is on the C stack; prepareForGC/afterGC
     // re-derive state.ip and state.literals against the moved method.
     jit::JITState* prevJITState = currentJITState_;
+    state.prevState = prevJITState;   // GC chain: parked outers stay visible
+    state.gcIpOffset = 0;
     currentJITState_ = &state;
     struct JITStateGuard {
         Interpreter* self;

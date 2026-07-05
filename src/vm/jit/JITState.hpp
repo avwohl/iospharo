@@ -209,9 +209,26 @@ struct JITState {
         if (!j2jSaveCursor || !j2jEntryCursor) return 0;
         return (int)((j2jSaveCursor - j2jEntryCursor) / JSV_SIZE);
     }
+
+    // GC chain (2026-07-05): parked OUTER JITStates (nested
+    // tryJITActivation invocations behind interpreter re-entries) were
+    // INVISIBLE to the GC — only currentJITState_ was visited and
+    // ip/literals-round-tripped.  A scavenge that moved a parked frame's
+    // CompiledMethod left that state's method oop stale and its
+    // ip/literals pointing into recycled eden; when the outer JIT frame
+    // resumed it pushed recycled-eden slot contents — the cold-context
+    // simulation-family corpse cascade (classIdx=0 lookupClass DNU).
+    // prevState links each state to the next-outer one so forEachRoot /
+    // prepareForGC / afterGC can walk the WHOLE chain; gcIpOffset is the
+    // per-state ip round-trip slot.  Appended at the END so no baked
+    // stencil offset shifts.
+    JITState* prevState;      // offset 328: next-outer parked state (or null)
+    ptrdiff_t gcIpOffset;     // offset 336: prepareForGC ip round-trip
 };
 static_assert(offsetof(JITState, j2jEntryCursor) == 312, "j2jEntryCursor offset");
 static_assert(offsetof(JITState, closure) == 320, "JITState.closure offset (JS_CLOSURE in asm)");
+static_assert(offsetof(JITState, prevState) == 328, "JITState.prevState offset");
+static_assert(offsetof(JITState, gcIpOffset) == 336, "JITState.gcIpOffset offset");
 
 // Verify expected offsets (stencils depend on these)
 static_assert(offsetof(JITState, sp)        == 0,  "sp offset");
