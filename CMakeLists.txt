@@ -312,8 +312,39 @@ if(_PHARO_JIT_ON)
     endif()
 endif()
 
+# JIT stencil regeneration as a REAL build dependency (2026-07-05).
+# extract_stencils.py had been failing SILENTLY since 2026-06-02 (an
+# fprintf in a stencil body doesn't compile in the extraction TU), so
+# the checked-in generated_stencils_*.hpp were a month stale while
+# stencils.cpp kept gaining fixes that never deployed.  This custom
+# command makes any stencils.cpp edit re-run the extraction and makes
+# an extraction failure FAIL THE BUILD loudly.  Only wired on macOS
+# hosts (the extractor compiles Mach-O and needs the Apple toolchain);
+# other hosts build from the checked-in headers.
+if(APPLE)
+    add_custom_command(
+        OUTPUT
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/vm/jit/generated_stencils_arm64.hpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/vm/jit/generated_stencils_x86_64.hpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/vm/jit/generated_stencils.hpp
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/extract_stencils.py
+        DEPENDS
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/vm/jit/stencils/stencils.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/extract_stencils.py
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Regenerating JIT stencils from stencils.cpp"
+        VERBATIM)
+    add_custom_target(gen_stencils DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/vm/jit/generated_stencils_arm64.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/vm/jit/generated_stencils_x86_64.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/vm/jit/generated_stencils.hpp)
+endif()
+
 add_library(PharoVMCore STATIC ${VM_SOURCES})
 target_link_libraries(PharoVMCore asmjit::asmjit)
+if(APPLE)
+    add_dependencies(PharoVMCore gen_stencils)
+endif()
 
 # JIT: use the unified _PHARO_JIT_ON decision computed above (command-line
 # override, ON for native + Mac Catalyst, OFF for real iOS devices).
