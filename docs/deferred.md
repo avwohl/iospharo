@@ -848,16 +848,25 @@ CONTIGUOUS, starving P41-79 watchdog machinery).  TFUFFICallbackTest:
   1/8+3F+4E (RESOLVED 2026-07-04 — see the TFCallbacksTest section
   below: 5 root causes, stock parity), testSingleCalloutDuringCallback
   1F (same), and TFUFFIConcurrencyTest-UsingWorker marginal pacing:
-- [ ] TFUFFIConcurrencyTest>>testConcurrentlyCompiling(UsingWorker)
-  straddles its ~10s in-suite SUnit limit.  2026-07-04 measurements
-  (WMI/AV-degraded machine — see wmi-polling-hazard memory): core loop
-  x4 = 7.0/7.0/8.1/8.4s after the nested-adoption fix (was 7-15s
-  baseline, 12-22s during the aging-front-append experiment).  500
-  rounds x ~15ms; each round FORCES an FFI method recompile
-  (FFIMethodRegistry resetSingleClass:) — suspect legitimate image-side
-  compile cost dominates, not VM callout latency.  Next (QUIET machine):
-  profile one round (compile vs callout vs wake), compare stock's core
-  time, and only then chase VM-side pacing.
+- [x] TFUFFIConcurrencyTest>>testConcurrentlyCompiling(UsingWorker) —
+  FIXED 2026-07-05 (ARM), commit 3940b62c.  The quiet-machine profiling
+  found it was NOT image-side compile cost: warm worker callouts ran
+  26-50ms EACH (500x = 13s) while [TFLAT] tracing showed the VM
+  transport (enqueue -> worker signal -> pending drain) completing in
+  20-40us and the waiter woken immediately.  XFER traces caught the
+  wake being UNDONE: the 2ms heartbeat force-yield hands the CPU DOWN
+  to the P10 idle loop (wakeLowerPriorityProcess), and the only route
+  back UP was checkForPreemption at the every-1024-step periodic — but
+  a process sleeping in prim 230 executes ~10-20 bytecodes per 10ms
+  quantum, so the ready caller starved ~1s until the Delay scheduler's
+  next tick.  FIX: prim 230 runs checkForPreemption at entry + after
+  the sleep, gated to the idle band (pri <= 10) — ungated it
+  resurrects the P80<->P60 voluntary-yield bounce (whole batch
+  TIMEOUTs).  Result: 500 callouts 13035ms -> 95ms; the UsingWorker
+  test 10s-FAIL -> 995ms PASS (same-thread speed).  Validation:
+  20-class scheduler batch 1445 P / 0 F; TFCallbacksTest 8/8+2S.
+  The Windows 7-8.4s core-loop numbers likely had the same starvation
+  component — re-measure there before blaming compile cost.
 
 ### TFCallbacksTest (TF-plain suite; stock 8/8+2S, ours was 1/8+3F+4E)
 LARGELY FIXED 2026-07-04; four independent root causes found and fixed:
