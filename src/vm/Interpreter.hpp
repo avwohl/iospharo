@@ -1011,6 +1011,10 @@ private:
     bool resolverResultValid_ = false;
     int resolverSemaIndex_ = 0;            // Semaphore to signal when lookup completes
     std::atomic<int> resolverStatus_{0};   // 0=Uninit, 1=Ready, 2=Busy, 3=Error
+    // vmParameterAt: 49 (maxExternalSemaphores) — pure bookkeeping for us:
+    // the MPSC pendingSignals ring is index-agnostic (stock sizes a C-side
+    // request table here); the image grows its own ExternalObjectsArray.
+    int64_t vmMaxExternalSemaphores_ = 65536;
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
 
     // Sampling profiler state (primitiveProfileSemaphore/Start/Sample/Primitive).

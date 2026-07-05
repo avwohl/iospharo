@@ -920,13 +920,25 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
 // Stack: receiver, socketHandle
 // Returns: SmallInteger (error code)
 extern "C" sqInt sp_primitiveSocketError(void) {
+    // NEVER fail this primitive: it is called from error-REPORTING paths
+    // (Socket>>socketError), and a primitive failure there surfaces as
+    // "SocketError: Cannot access socket error code" REPLACING the real
+    // error — observed killing Zn server workers when the handle was
+    // already session-stale/destroyed (Zn hunt, 2026-07-05).  Probe the
+    // handle WITHOUT the failFor-raising accessors and answer 0 for any
+    // invalid/stale handle.
     sqInt socketOop = vm->stackValue(0);
-    PrivateSocket* ps = privateSocketFrom(socketOop);
-    if (!ps) {
+    if (!vm->isBytes(socketOop)
+            || vm->byteSizeOf(socketOop) != (sqInt)sizeof(SQSocket)) {
         vm->popthenPush(2, vm->integerObjectOf(0));
         return 0;
     }
-
+    SQSocket* sq = (SQSocket*)vm->firstIndexableField(socketOop);
+    if (sq->sessionID != gSessionID || !sq->privateSocketPtr) {
+        vm->popthenPush(2, vm->integerObjectOf(0));
+        return 0;
+    }
+    PrivateSocket* ps = (PrivateSocket*)sq->privateSocketPtr;
     vm->popthenPush(2, vm->integerObjectOf(ps->sockError));
     return 0;
 }
@@ -1409,10 +1421,16 @@ extern "C" sqInt sp_primitiveSocketAccept3Semaphores(void) {
     SOCKET clientFd = accept(serverPs->fd, (struct sockaddr*)&clientAddr, &addrLen);
     SOCKDBG("accept: serverFd=%d -> clientFd=%d SOCK_LAST_ERROR=%d\n", (int)serverPs->fd, (int)clientFd, SOCK_LAST_ERROR);
     if (clientFd == INVALID_SOCKET) {
-        if (SOCK_LAST_ERROR == SOCK_EAGAIN || SOCK_LAST_ERROR == SOCK_EWOULDBLOCK) {
-            // No pending connection — create an unconnected socket handle
-            // The image will retry
-        }
+        // Failed accept (EAGAIN from a raced/aborted pending connection,
+        // ECONNABORTED, ...): the listener was promoted to CONNECTED by
+        // the IO thread, and a bare primitiveFail here left it STUCK
+        // there — unwatched by the select loop (which only watches
+        // WAITING listeners), so no future connection ever promoted it
+        // again: a permanently deaf server (latent wedge found in the
+        // 2026-07-05 Zn hunt).  Reset to WAITING and wake the IO thread
+        // so it re-evaluates the backlog.
+        serverPs->sockState = SOCK_WAITING_FOR_CONNECTION;
+        wakeIOThread();
         return vm->primitiveFail();
     }
 

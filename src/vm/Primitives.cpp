@@ -4933,6 +4933,11 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                         size = AUTO_EXT_OBJ_SIZE;
                     }
                 }
+                // Report at least the last value the image set via
+                // parameterAt: 49 put: (see the setter arm) — our signal
+                // ring is index-agnostic, so this is bookkeeping only.
+                if ((int64_t)size < vmMaxExternalSemaphores_)
+                    return Oop::fromSmallInteger(vmMaxExternalSemaphores_);
                 return Oop::fromSmallInteger(size);
             }
             case 65: // VM features (immutability support, etc.)
@@ -4993,39 +4998,30 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
         Oop oldValue = getParameter(static_cast<int>(index));
 
         if (index == 49 && newValueOop.isSmallInteger()) {
-            // Resize external semaphore table
+            // vmParameterAt: 49 put: = maxExternalSemaphores.  STOCK
+            // SEMANTICS: sizes the VM-INTERNAL semaphore signal-request
+            // queue — NOT the image's ExternalObjectsArray, which the
+            // image manages itself (ExternalSemaphoreTable grows its own
+            // array and re-registers it).  Our signal path (the MPSC
+            // pendingSignals ring) is index-agnostic, so this is pure
+            // bookkeeping.
+            //
+            // The previous implementation cloned/replaced the image's
+            // array AND FAILED for sizes > 65535 — when the image's
+            // table-doubling crossed 64k (SUnit-kill-leaked socket
+            // registrations accumulate across a suite), VirtualMachine>>
+            // maxExternalSemaphores: raised 'Not enough space for
+            // external objects' in whichever Zn SERVER process was
+            // registering a socket semaphore; SUnit's
+            // ProcessMonitorTestService then SUSPENDED that background
+            // process — dead server, client stalled to the 10s
+            // TimeLimit, real error shadowed by TestTookTooMuchTime
+            // (Zn socket-timing hunt, 2026-07-05).
             int64_t newSize = newValueOop.asSmallInteger();
-            if (newSize < 0 || newSize > 65535) {
+            if (newSize < 0 || newSize > (1LL << 30)) {
                 return PrimitiveResult::Failure;
             }
-            Oop oldTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
-            size_t oldSize = 0;
-            if (!oldTable.isNil() && oldTable.isObject()) {
-                oldSize = memory_.slotCountOf(oldTable);
-            }
-            if ((size_t)newSize > oldSize) {
-                // Allocate new larger array
-                Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
-                uint32_t classIndex = memory_.indexOfClass(arrayClass);
-                Oop newTable = memory_.allocateSlots(classIndex, (size_t)newSize, ObjectFormat::Indexable);
-                if (newTable.isNil()) {
-                    return PrimitiveResult::Failure;
-                }
-                // Initialize with nil
-                for (size_t i = 0; i < (size_t)newSize; i++) {
-                    memory_.storePointer(i, newTable, memory_.nil());
-                }
-                // Copy old entries
-                if (!oldTable.isNil() && oldTable.isObject()) {
-                    for (size_t i = 0; i < oldSize; i++) {
-                        Oop entry = memory_.fetchPointer(i, oldTable);
-                        memory_.storePointer(i, newTable, entry);
-                    }
-                }
-                // Replace in special objects array
-                memory_.setSpecialObject(SpecialObjectIndex::ExternalObjectsArray, newTable);
-            } else {
-            }
+            vmMaxExternalSemaphores_ = newSize;
         }
 
         primitiveSuccess(oldValue);
