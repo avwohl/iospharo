@@ -102,7 +102,7 @@ namespace pharo {
 // (class-of) results so the DNU cascade dump can attribute a corpse class
 // to the receiver it was fetched for.
 struct Prim111Entry { uint64_t rcvr, cls, methodSel, seq; };
-extern Prim111Entry g_prim111Ring[32];
+extern Prim111Entry g_prim111Ring[256];
 extern uint64_t g_prim111Seq;
 
 

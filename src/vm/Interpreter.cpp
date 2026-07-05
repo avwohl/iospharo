@@ -14857,9 +14857,43 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                             region, (unsigned long long)g_scavengeCount,
                             memory_.gcCount());
                     }
+                    // Current-frame temps (send:to:with:super: layout:
+                    // t0=selector t1=receiver t2=args t3=superFlag).
+                    for (int t = 0; t <= 5; t++) {
+                        Oop tv = framePointer_[1 + t];
+                        std::string tc = tv.isSmallInteger() ? "SmInt"
+                            : !tv.isObject() ? "imm"
+                            : tv.rawBits() <= 0x10000 ? "low"
+                            : !memory_.isValidPointer(tv) ? "INVALID"
+                            : tv.asObjectPtr()->classIndex() == 0 ? "CORPSE"
+                            : memory_.classNameOf(memory_.classOf(tv));
+                        fprintf(stderr, "[DNU]   temp[%d]=0x%llx (%s)%s\n",
+                            t, (unsigned long long)tv.rawBits(), tc.c_str(),
+                            tv.rawBits() == rcvr.rawBits() ? " ==CORPSE-VALUE" : "");
+                    }
+                    // What did prim 111 recently return for the SIMULATED
+                    // receiver (temp1)?  If the ring shows rcvr=temp1 ->
+                    // a CORRECT class while temp4 holds the corpse, the
+                    // result was swapped EN ROUTE (post-prim JIT resume
+                    // reading the wrong cell).
+                    {
+                        Oop t1 = framePointer_[2];
+                        for (int ri = 0; ri < 256; ri++) {
+                            auto& e = g_prim111Ring[ri];
+                            if (e.rcvr == t1.rawBits() && e.rcvr) {
+                                fprintf(stderr,
+                                    "[DNU]   RING-T1 seq=%llu rcvr(temp1)=0x%llx -> cls=0x%llx (%s) age=%llu\n",
+                                    (unsigned long long)e.seq,
+                                    (unsigned long long)e.rcvr,
+                                    (unsigned long long)e.cls,
+                                    memory_.classNameOf(Oop::fromRawBits(e.cls)).c_str(),
+                                    (unsigned long long)(g_prim111Seq - e.seq));
+                            }
+                        }
+                    }
                     // prim-111 ring: did prim 111 produce the corpse?
                     {
-                        for (int ri = 0; ri < 32; ri++) {
+                        for (int ri = 0; ri < 256; ri++) {
                             auto& e = g_prim111Ring[ri];
                             if (e.rcvr == rcvr.rawBits() && e.rcvr) {
                                 fprintf(stderr,

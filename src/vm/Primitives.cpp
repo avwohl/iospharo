@@ -3088,7 +3088,7 @@ PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
 // fetched for.  Cheap (4 words per call), removable once the simulation
 // corruption is fixed.
 // (linkage: mirrored declaration in Interpreter.cpp — keep layouts in sync)
-pharo::Prim111Entry pharo::g_prim111Ring[32];
+pharo::Prim111Entry pharo::g_prim111Ring[256];
 uint64_t pharo::g_prim111Seq = 0;
 
 PrimitiveResult Interpreter::primitiveClass(int argCount) {
@@ -3103,7 +3103,7 @@ PrimitiveResult Interpreter::primitiveClass(int argCount) {
 
     Oop classOop = memory_.classOf(target);
     {
-        auto& e = g_prim111Ring[g_prim111Seq & 31];
+        auto& e = g_prim111Ring[g_prim111Seq & 255];
         e.rcvr = target.rawBits();
         e.cls = classOop.rawBits();
         e.methodSel = method_.rawBits();

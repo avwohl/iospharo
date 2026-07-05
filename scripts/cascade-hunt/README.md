@@ -96,3 +96,17 @@ was neither a recent prim-111 RESULT nor RECEIVER.  Queued probes:
     JITMethod code address) and audit the operand-slot usage of the
     prim-call resume — the wrong-slot hypothesis remains the
     front-runner given the fresh-cohort stride + no-holder findings.
+
+Round 10 (05:40): TEMP DUMP at cascade: t0=Symbol(selector),
+t1=SmallInteger 44 (the SIMULATED receiver!), t2=args Array (SAME
+allocation cohort as the corpse — corpse sits 0x578 BELOW it, i.e.
+allocated just before: the per-iteration InstructionStream/context),
+t3=false (superFlag — NOT the super branch), t4=corpse(lookupClass).
+=> prim 111 ran on SmInt 44 and must return the PERM SmallInteger
+class; temp4 instead holds last-iteration's dead per-iteration object.
+CONVERGED HYPOTHESIS: the JIT'd send:to:with:super:'s POST-PRIMITIVE
+RESUME reads the prim result from the WRONG STACK CELL (one off),
+picking up the previous iteration's leftover object.  RING-T1 probe
+added (what prim 111 returned for temp1).  Next: confirm via RING-T1,
+then audit the executePrimitive-from-JIT result-placement/resume for
+1-arg prim sends (prim 111 argCount=1) in chain-loop-called JIT code.
