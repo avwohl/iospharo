@@ -14716,6 +14716,52 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 fprintf(stderr, "[DNU]   caller=#%s fd=%zu\n",
                         memory_.selectorOf(prev.savedMethod).c_str(), frameDepth_);
             }
+            // Cascade forensics (simulation-family hunt, 2026-07-05): the
+            // receiver whose class can't even dispatch doesNotUnderstand:,
+            // and the ORIGINAL message selector from the Message argument.
+            {
+                static int cascadeDump = 0;
+                if (cascadeDump++ < 5 && argCount >= 1) {
+                    Oop rcvr = stackValue(argCount);
+                    Oop msg = stackValue(0);
+                    uint32_t cIdx = 0;
+                    const char* rKind = rcvr.isSmallInteger() ? "SmInt"
+                        : !rcvr.isObject() ? "imm"
+                        : !memory_.isValidPointer(rcvr) ? "INVALID-PTR" : "obj";
+                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000
+                            && memory_.isValidPointer(rcvr))
+                        cIdx = rcvr.asObjectPtr()->classIndex();
+                    std::string origSel = "?";
+                    if (msg.isObject() && msg.rawBits() > 0x10000
+                            && memory_.isValidPointer(msg)
+                            && msg.asObjectPtr()->slotCount() >= 1)
+                        origSel = memory_.oopToString(memory_.fetchPointer(0, msg));
+                    fprintf(stderr,
+                        "[DNU]   CASCADE rcvr=0x%llx kind=%s classIdx=%u "
+                        "origSel=#%s method_=#%s\n",
+                        (unsigned long long)rcvr.rawBits(), rKind, cIdx,
+                        origSel.c_str(), memory_.selectorOf(method_).c_str());
+                    // classIdx==0 = forwarder corpse: word1 is the forwarding
+                    // target; resolve its class to name what got becomed.
+                    if (cIdx == 0 && rcvr.isObject() && rcvr.rawBits() > 0x10000
+                            && memory_.isValidPointer(rcvr)) {
+                        uint64_t w0 = reinterpret_cast<uint64_t*>(rcvr.rawBits())[0];
+                        uint64_t w1 = reinterpret_cast<uint64_t*>(rcvr.rawBits())[1];
+                        Oop tgt = Oop::fromRawBits(w1);
+                        std::string tcls = "?";
+                        if (tgt.isObject() && tgt.rawBits() > 0x10000
+                                && memory_.isValidPointer(tgt))
+                            tcls = memory_.classNameOf(memory_.classOf(tgt));
+                        fprintf(stderr,
+                            "[DNU]   CASCADE corpse hdr=0x%llx w1=0x%llx "
+                            "targetClass=%s followed=%s\n",
+                            (unsigned long long)w0, (unsigned long long)w1,
+                            tcls.c_str(),
+                            memory_.classNameOf(memory_.classOf(
+                                memory_.followForwarded(rcvr))).c_str());
+                    }
+                }
+            }
             Oop nextProcess = wakeHighestPriority();
             if (nextProcess.isNil() || !nextProcess.isObject()) {
                 stopVM("Recursive doesNotUnderstand: and no other runnable process");

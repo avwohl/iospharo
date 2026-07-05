@@ -25,8 +25,34 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
   testTerminateInTerminate in a bare eval → [DNU] CASCADE
   caller=#send:super:numArgs:.  Next step: lldb on prim 100's dispatch
   with that repro; check receiver provenance in the simulated frame.
+  INVESTIGATION LOG (2026-07-05, hypotheses tested & falsified):
+  - Interp-only (PHARO_NO_JIT): repro fully PASSES (reaches the target
+    selector) — strictly a JIT-path leak.
+  - Cascade forensics: the object handed #lookupSelector: (the "class"
+    from Context>>send:to:with:super:'s objectClass:) is a CORPSE —
+    run A: valid-pointer with header nil-scrubbed (reclaimed memory),
+    run B: INVALID-PTR entirely.  classIdx=0 both times.
+  - scanStackReplace (become's VM-side fixup) HAD drifted from
+    forEachRoot coverage (missed j2jPool receivers/closures,
+    bvClosureSaveStack_, sista save pool) — FIXED by delegating to
+    forEachRoot (commit this session).  Cascade persists -> not (only)
+    that.
+  - sweepClassTable forensics (PHARO_GC_EPH_DEBUG): NO classes swept in
+    the repro — not a dead-classTable-entry.
+  - pk-24 stencil #class fast path: forwarder guard added (idx<=8 bails
+    to generic send).  Guard never fires in the repro — the corpse does
+    NOT come from the stencil pk-24 path.
+  - NEXT: lldb + PHARO_DET_SCHED on the repro; suspects remaining:
+    the T1 dispatch-A tryPrimClass EMITTED-ASM twin (AsmjitT1 ~9526,
+    "no bounds check needed" — same missing forwarder handling), the
+    JIT dispatch classIndex fetch handing a stale value through IC
+    machinery, or a JIT-native-frame receiver slot that become cannot
+    see (JITState/native stack, unreachable from forEachRoot).
+    Breakpoint recipe: the [DNU] CASCADE fprintf in Interpreter.cpp
+    (search "CASCADE rcvr="), then inspect the simulated context chain
+    for who computed the class value.
   Old suspects (prim-196 pc-kill / cannotReturn-to-returning-ctx) are
-  secondary at most.  NOT a net regression: the Jun-25 baseline binary in the
+  ruled out.  NOT a net regression: the Jun-25 baseline binary in the
   same context scores ProcessTest 37P/5T (testResumeAfterBCR,
   testSchedulingHigherPriorityServedFirst + 3 more) vs HEAD 45P/1T — the
   Windows-range work fixed four ARM timeouts and introduced this one.

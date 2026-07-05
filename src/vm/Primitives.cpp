@@ -9702,30 +9702,24 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
 void Interpreter::scanStackReplace(Oop oldOop, Oop newOop) {
     uint64_t oldBits = oldOop.rawBits();
 
-    // Scan ALL interpreter Oop fields (must match forEachRoot coverage)
-    if (receiver_.rawBits() == oldBits) receiver_ = newOop;
-    if (method_.rawBits() == oldBits) method_ = newOop;
-    if (newMethod_.rawBits() == oldBits) newMethod_ = newOop;
-    if (homeMethod_.rawBits() == oldBits) homeMethod_ = newOop;
-    if (closure_.rawBits() == oldBits) closure_ = newOop;
-    if (activeContext_.rawBits() == oldBits) activeContext_ = newOop;
-    if (currentFrameMaterializedCtx_.rawBits() == oldBits) currentFrameMaterializedCtx_ = newOop;
-
-    // Scan the live operand stack (stackPointer_ is one past the last live value)
-    for (Oop* p = stackBase_; p < stackPointer_; p++) {
-        if (p->rawBits() == oldBits) *p = newOop;
-    }
-
-    // Scan saved frames (including materializedContext)
-    for (size_t i = 0; i < frameDepth_; i++) {
-        auto& f = savedFrames_[i];
-        if (f.savedReceiver.rawBits() == oldBits) f.savedReceiver = newOop;
-        if (f.savedMethod.rawBits() == oldBits) f.savedMethod = newOop;
-        if (f.savedHomeMethod.rawBits() == oldBits) f.savedHomeMethod = newOop;
-        if (f.savedClosure.rawBits() == oldBits) f.savedClosure = newOop;
-        if (f.savedActiveContext.rawBits() == oldBits) f.savedActiveContext = newOop;
-        if (f.materializedContext.rawBits() == oldBits) f.materializedContext = newOop;
-    }
+    // Delegate to forEachRoot so become's VM-side fixup covers EXACTLY the
+    // slot set the GC treats as roots.  The previous hand-maintained copy
+    // ("must match forEachRoot coverage") had DRIFTED: it walked registers,
+    // the operand stack and savedFrames_, but NOT the J2J save pool
+    // receiver/closure slots, bvClosureSaveStack_, or the Sista inline-self
+    // save pool.  A become: issued while a J2J chain is parked (the
+    // debugger/stepping machinery splices contexts with become during
+    // Context>>step) left the chain's saved receiver pointing at the
+    // FORWARDER corpse; on resume the send read classIndex 0 off the
+    // forwarder header and doesNotUnderstand: itself could not dispatch —
+    // the [DNU] CASCADE in #send:super:numArgs: that made the whole
+    // cold-context stepping/simulation family (StepOver/StepInto/
+    // StepThrough, BlockClosureTest sim trio, ContextTest
+    // testBlockCannotReturn, ProcessTest testTerminateInTerminate) time
+    // out on ARM, on both the Jun-25 baseline and HEAD (2026-07-05).
+    forEachRoot([&](Oop& slot) {
+        if (slot.rawBits() == oldBits) slot = newOop;
+    });
 }
 
 // Primitive 72: Swap identities of two objects (two-way become)

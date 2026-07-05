@@ -3763,6 +3763,13 @@ void ObjectMemory::sweepClassTable() {
         auto p = reinterpret_cast<uint8_t*>(obj);
         if (p < oldSpaceStart_ || p >= oldSpaceFree_) continue;
         if (!obj->isMarked()) {
+            if (g_debug.gcEphDebug) {  // reuse PHARO_GC_EPH_DEBUG for sweep forensics
+                static int sweepLog = 0;
+                if (sweepLog++ < 40)
+                    fprintf(stderr, "[CLASS-SWEEP] idx=%zu cls=%s oop=0x%llx\n",
+                            i, classNameOf(entry).c_str(),
+                            (unsigned long long)entry.rawBits());
+            }
             classTable_[i] = nilObject_;
         }
     }

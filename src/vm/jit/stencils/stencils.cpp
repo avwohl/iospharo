@@ -1609,11 +1609,26 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                     if ((rcv.bits & 7) == 0 && rcv.bits >= 0x10000) {
                         uint64_t hdr =
                             *reinterpret_cast<uint64_t*>(rcv.bits);
-                        Oop* tbl = reinterpret_cast<Oop*>(
-                            pharo::g_classTableBase);
-                        s->sp[-1] = tbl[hdr & 0x3FFFFF];
-                        _HOLE_CONTINUE(s);
-                        return;
+                        uint32_t idx = (uint32_t)(hdr & 0x3FFFFF);
+                        // Forwarded/pun receivers (classIndex <= 8:
+                        // free chunks + ForwardedClassIndex==8) MUST fall
+                        // through to the generic send — the interp prim
+                        // 111 follows forwarders.  Reading tbl[pun] handed
+                        // image code a junk "class" and the stepping
+                        // machinery cascaded in doesNotUnderstand:
+                        // (become-spliced contexts, 2026-07-05).
+                        if (idx > 8) {
+                            Oop* tbl = reinterpret_cast<Oop*>(
+                                pharo::g_classTableBase);
+                            s->sp[-1] = tbl[idx];
+                            _HOLE_CONTINUE(s);
+                            return;
+                        }
+                        static int fwdClassLog = 0;
+                        if (fwdClassLog++ < 8)
+                            fprintf(stderr, "[JIT-CLASS-FWD] pk24 receiver "
+                                    "classIdx=%u rcv=0x%llx -> generic send\n",
+                                    idx, (unsigned long long)rcv.bits);
                     }
                 }
                 // fall through to the generic send
