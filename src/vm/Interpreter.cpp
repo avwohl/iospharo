@@ -424,6 +424,19 @@ extern "C" void jit_rt_atrec_entry(uint64_t statep) {
 
 // jit-may20b Step 6: per-caller bail-gate histogram dump (defined in
 // AsmjitT1.cpp).  Called from dumpJITStats when PHARO_T1_BAIL_GATE_HISTO=1.
+// lldb anchor for the simulation-cascade hunt (2026-07-05): a no-inline,
+// no-op function called at the [DNU] CASCADE site so batch lldb can set a
+// SYMBOL breakpoint (file:line breakpoints failed to resolve in this build).
+extern "C" __attribute__((noinline)) void pharo_cascade_bp(
+        uint64_t corpseBits, uint64_t stackBase, uint64_t stackPtr) {
+    // Args land in x0/x1/x2 so batch-lldb reads them from registers —
+    // optimized frames hide C++ locals.  Unique body: an empty asm got
+    // identical-code-folded and the symbol breakpoint fired everywhere.
+    static volatile uint64_t pharoCascadeBpSink;
+    pharoCascadeBpSink = pharoCascadeBpSink + corpseBits + stackBase + stackPtr;
+    asm volatile("" ::: "memory");
+}
+
 namespace pharo { namespace jit {
 class JITRuntime;
 void dumpBailGateHisto(ObjectMemory& mem);
@@ -14710,6 +14723,9 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         if (selectors_.doesNotUnderstand.rawBits() == selector.rawBits()) {
             dnuDepth_--;
             fprintf(stderr, "[DNU] CASCADE: receiver can't handle doesNotUnderstand:\n");
+            pharo_cascade_bp(argCount >= 1 ? stackValue(argCount).rawBits() : 0,
+                             (uint64_t)stackBase_,
+                             (uint64_t)stackPointer_);  // lldb anchor
             // Log what selector triggered the original DNU
             if (frameDepth_ > 0) {
                 SavedFrame& prev = savedFrames_[frameDepth_ - 1];

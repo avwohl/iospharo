@@ -99,6 +99,27 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
     CONTINUE, and catch the writer at the next occurrence IN THE SAME
     RUN.  No cross-run address stability needed (that was the blocker:
     ASLR-off lldb still varies heap layout).
+  - ROUND 4 (2026-07-05 ~04:40): PHARO_EDEN_POISON (new knob, retired
+    eden filled with 0x5CAFED sentinel at reset): the corpse stays a
+    VALID EDEN ADDRESS, never the sentinel — the stale POINTER is held
+    outside eden across the scavenge (not fabricated from recycled
+    storage), and its target is now interior to a fresh allocation
+    (hdr reads as nil-fill => classIdx 0).  Perm space IS covered by the
+    scavenge old->young full scan (scanRegionForYoung old + perm) — perm
+    holder ruled out.  Same-run watchpoint attempt: the batch-lldb
+    pipeline WORKS end to end (pharo_cascade_bp anchor fn passes
+    corpse/stackBase/sp in x0-x2; python arms hw watchpoints on the
+    corpse slots) BUT the first cascade kills the eval process and the
+    idle loop never rewrites those high stack slots — arm-at-cascade is
+    too late.  Refined recipe for the next session: modify the repro to
+    RESTART the scenario after the first cascade (loop the whole
+    fork/step scenario, swallowing errors) so the armed watchpoints
+    catch iteration 2's writes; expect hot-slot noise — use
+    `watchpoint modify -c` with an eden-range value condition, or
+    accept ~dozens of stops and scan bt's for non-interp writers.
+    Scripts: scratchpad cascade_watch.py + watch-driver.lldb (recreate
+    from this entry if the scratchpad is gone; the anchor fn
+    pharo_cascade_bp is committed in Interpreter.cpp).
   - NEXT (superseded): lldb + PHARO_DET_SCHED on the repro; suspects remaining:
     the T1 dispatch-A tryPrimClass EMITTED-ASM twin (AsmjitT1 ~9526,
     "no bounds check needed" — same missing forwarder handling), the

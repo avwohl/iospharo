@@ -2271,6 +2271,13 @@ GCResult ObjectMemory::scavenge() {
         edenFree_ = edenAllocBase_;
 #endif
     } else {
+        // Cascade hunt (2026-07-05): poison the retired eden window so a
+        // read-through-recycled-storage fabricates a RECOGNIZABLE value.
+        if (GET_DEBUG_BOOL(PHARO_EDEN_POISON)) {
+            uint64_t* w = reinterpret_cast<uint64_t*>(edenAllocBase_);
+            uint64_t* wEnd = reinterpret_cast<uint64_t*>(edenFree_);
+            while (w < wEnd) *w++ = 0x5CAFED0000000000ULL;
+        }
         edenFree_ = edenAllocBase_;
     }
 
