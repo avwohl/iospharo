@@ -40,16 +40,41 @@ a scheduler starvation bug found while closing the CONC pacing item:
   previously-failing stepping/simulation families PASS in catalog
   context.  Detail preserved: /tmp/catalog_20260705_partial_detail.txt
   + /tmp/catalog_20260705_tail_detail.txt.
-- **ZnServerTest/ZnClientTest local-server flakiness is PRE-EXISTING,
-  not from today's changes (bisected 2026-07-05).**  Isolated
-  ZnServerTest varies 22-28/31 (3-9 errors/run, incl. pure-local tests
-  like testGetUnicodeUtf8/testTooManyConcurrentConnections) on: HEAD,
-  HEAD with the finalization-delivery change reverted, HEAD with the
-  prim-230 preemption disabled, AND HEAD with the stale Jun-2 stencils
-  — identical variance in all four builds.  Not port exhaustion
-  (5 TIME_WAITs).  July-4's "ZnServer 29/31" was a single sample of an
-  inherently flaky family.  Candidate for a dedicated hunt (socket
-  stream timing on our VM).
+- **Zn socket-timing hunt COMPLETE 2026-07-05 (commits 7478887d +
+  ce4419af): ZnServerTest 22-28/31-every-run -> 31/31 x 10 consecutive.**
+  THREE root causes, none of them "timing" in the suspected sense:
+  1. `signalExternalSemaphore`'s ring was MULTI-PRODUCER-UNSAFE
+     (load/store/store head — single-producer only, but socket I/O
+     thread + per-lookup DNS threads + TFFI workers all produce):
+     concurrent producers overwrote each other's slot = silently lost
+     semaphore wakeups at any occupancy; full ring also dropped
+     silently.  Fixed: MPSC CAS-reserved slots, value-as-publish-flag,
+     loud bounded-retry.  The Delay machinery was PROVEN INNOCENT
+     (stalled DelayWaitTimeout sat correctly in the heap, ticker armed
+     1s idles throughout).
+  2. `vmParameterAt: 49 put:` (maxExternalSemaphores) FAILED above
+     65535 and wrongly cloned the image-owned ExternalObjectsArray —
+     the image's table-doubling past 64k raised 'Not enough space for
+     external objects' inside a background Zn SERVER process, which
+     SUnit's ProcessMonitorTestService then SUSPENDED (dead server ->
+     client stall -> TestTookTooMuchTime shadowing the real error).
+     Now pure bookkeeping (stock semantics; our ring is index-agnostic).
+  3. sp_primitiveSocketError failed on stale handles from error-
+     REPORTING paths ('Cannot access socket error code' replacing the
+     real error).  Now never fails.  Plus: accept() now wakes the IO
+     thread after resetting the listener (throughput was capped ~10/s
+     by the 100ms select tick) and the accept-FAIL path resets the
+     promoted listener (was left stuck CONNECTED = permanently deaf
+     server, latent).
+  Hunt method that cracked it: Error>>sunitAnnounce:toResult: override
+  captured the ORIGINAL in-suite exceptions (all TestTookTooMuchTime),
+  signalerContext stack walks located the stalls, PHARO_DNS_TRACE +
+  PHARO_DELAY_DEBUG exonerated resolver+ticker, the unfiltered
+  process-table dump at kill exposed ProcessMonitorTestService
+  suspensions, and overriding handleUnhandledException: named the
+  hidden errors.  Verification: Zn/Zdc family all green (ZnClient
+  49/50 = network GeoIP only; SocketStreamTest 24/24 vs July-4's
+  22/24); 22-class scheduler batch 1482 P / 0 F / 0 E.
 
 ---
 
