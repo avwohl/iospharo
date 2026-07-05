@@ -304,6 +304,7 @@ DEBUG_BOOL(PHARO_NATIVE_NLR_UNWIND)         // bisect hatch: restore the pre-202
 DEBUG_STR(PHARO_PIN_DIAG)                   // forensics (prim 130): set to a short ASCII string (e.g. PHARO_PIN_DIAG=123). After each fullGC, finds every surviving ByteString with exactly that content and prints (a) which forEachRoot slot references it, attributed against stack/savedFrames/j2jPool/bvSaves/jitState landmark ranges, and (b) every heap object whose pointer slots reference it. Found the stale-j2j-slice weak-reclaim pin (2026-07-03).
 DEBUG_BOOL(PHARO_GC_PURGE_LOG)              // log per-fullGC weak-cache purge counts ([GC-PURGE] methodCache/jitMethods/icEntries/countKeys/failedKeys/tier2Keys) — the purgeDeadCacheRoots counterpart of the StrongOnly root scope (dead-class unpinning, 2026-07-03).
 DEBUG_BOOL(PHARO_TFFI_LAT_TRACE)            // TFFI worker-callout latency trace ([TFLAT] enq/sig/drain lines with a µs steady clock + semaphore index) — measures where the ~26-50ms/callout UsingWorker round-trip goes (enqueue -> worker signal -> pending-signal drain). First ~60 events.
+DEBUG_BOOL(PHARO_PRIM111_RING)              // cascade-hunt forensic: record every prim-111 (class) call in g_prim111Ring (256-deep: receiver/result/method/seq) for the [DNU] RING-T1 / PRIM111-RCVR-MATCH cascade forensics. Root cause found 2026-07-05 (e40cd65b); off by default — 4 stores per call in a hot primitive.
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT

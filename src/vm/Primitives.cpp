@@ -3102,7 +3102,10 @@ PrimitiveResult Interpreter::primitiveClass(int argCount) {
     target = memory_.followForwarded(target);
 
     Oop classOop = memory_.classOf(target);
-    {
+    // Cascade-hunt forensic ring (2026-07-05, root cause found — commit
+    // e40cd65b).  Knob-gated now: 4 stores per prim-111 call is pure
+    // diagnostic overhead in a hot primitive.
+    if (GET_DEBUG_BOOL(PHARO_PRIM111_RING)) {
         auto& e = g_prim111Ring[g_prim111Seq & 255];
         e.rcvr = target.rawBits();
         e.cls = classOop.rawBits();
