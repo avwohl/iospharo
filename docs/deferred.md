@@ -42,6 +42,12 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
   - pk-24 stencil #class fast path: forwarder guard added (idx<=8 bails
     to generic send).  Guard never fires in the repro — the corpse does
     NOT come from the stencil pk-24 path.
+  - Class inlines (PHARO_T1_NO_INLINE_CLASS + _IMM_CLASS): cascade
+    persists — the asm tryPrimClass twin is ALSO exonerated (its
+    IC-guard invariant claim stands).
+  - Getter/setter inlines (PHARO_T1_NO_INLINE_GETTER/_SETTER): cascade
+    persists.  Combined with the earlier PHARO_NO_J2J /
+    PHARO_T1_NO_INLINE_J2J results, every cheap emit-knob is falsified.
   - NEXT: lldb + PHARO_DET_SCHED on the repro; suspects remaining:
     the T1 dispatch-A tryPrimClass EMITTED-ASM twin (AsmjitT1 ~9526,
     "no bounds check needed" — same missing forwarder handling), the
