@@ -14891,6 +14891,63 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                             }
                         }
                     }
+                    // IC-site dump for the caller (send:to:with:super:):
+                    // the objectClass: site's extras word names the guilty
+                    // inline bit if a stale/wrong classification hijacked
+                    // the send (bit 61 returnsSelf dispatch has no arity
+                    // gate; bits 52/53/54 dispatch before the heap split).
+                    if (method_.isObject() && method_.rawBits() > 0x10000) {
+                        if (auto* jm = jitRuntime_.methodMap().lookup(
+                                method_.rawBits())) {
+                            fprintf(stderr,
+                                "[DNU]   IC-DUMP caller=#%s sites=%u\n",
+                                memory_.selectorOf(method_).c_str(),
+                                (unsigned)jm->numICEntries);
+                            const uint64_t* selArr = jm->selBitsArray();
+                            for (uint32_t si = 0; si < jm->numICEntries; si++) {
+                                uint64_t* w = reinterpret_cast<uint64_t*>(
+                                    jm->icSiteAt(si));
+                                uint64_t selBits = selArr ? selArr[si]
+                                    : w[jit::IC_SELBITS_SLOT];
+                                bool any = false;
+                                for (int e2 = 0; e2 < 6; e2++)
+                                    if (w[e2 * 3] || w[e2 * 3 + 2]) any = true;
+                                if (!any) continue;
+                                std::string siteSel = "?";
+                                Oop so = Oop::fromRawBits(selBits);
+                                if (so.isObject() && selBits > 0x10000)
+                                    siteSel = memory_.oopToString(so);
+                                for (int e2 = 0; e2 < 6; e2++) {
+                                    uint64_t k = w[e2 * 3];
+                                    uint64_t m = w[e2 * 3 + 1];
+                                    uint64_t x = w[e2 * 3 + 2];
+                                    if (!k && !x) continue;
+                                    std::string mSel = "?";
+                                    Oop mo = Oop::fromRawBits(m);
+                                    if (mo.isObject() && m > 0x10000)
+                                        mSel = memory_.selectorOf(mo);
+                                    char bits[128] = "";
+                                    for (int b = 63; b >= 51; b--)
+                                        if (x & (1ULL << b)) {
+                                            char one[8];
+                                            snprintf(one, sizeof one, "b%d ", b);
+                                            strncat(bits, one,
+                                                sizeof bits - strlen(bits) - 1);
+                                        }
+                                    fprintf(stderr,
+                                        "[DNU]   IC site=%u #%s e=%d key=%llu "
+                                        "m=#%s x=0x%llx %s\n",
+                                        si, siteSel.c_str(), e2,
+                                        (unsigned long long)k, mSel.c_str(),
+                                        (unsigned long long)x, bits);
+                                }
+                            }
+                        } else {
+                            fprintf(stderr,
+                                "[DNU]   IC-DUMP caller=#%s NOT JIT'd\n",
+                                memory_.selectorOf(method_).c_str());
+                        }
+                    }
                     // prim-111 ring: did prim 111 produce the corpse?
                     {
                         for (int ri = 0; ri < 256; ri++) {
@@ -24045,35 +24102,55 @@ void Interpreter::tryJITResumeInCaller() {
 }
 
 // Map primitive index to inline primKind for lightweight J2J dispatch.
-// Returns 0 if the primitive can't be inlined.
-static uint8_t inlinePrimKind(int primIndex) {
+// Returns 0 if the primitive can't be inlined — INCLUDING when the
+// method's arity doesn't match the inline snippet's canonical arity.
+// The arity gate is load-bearing (2026-07-05): several primitives have
+// alternate-arity forms (prim 111 `class` is 0-arg, but the MIRROR form
+// `Context>>objectClass: anObject` is 1-ARG with the same index), and
+// the extras field encoding disambiguates pk values 16-23 from the W3
+// IntArithReturn classification BY SITE ARITY — a pk written at the
+// wrong arity aliases into a different inline entirely (pk-24 at a
+// 1-arg site read as "W3 add" built the prim-100 simulation-cascade
+// corpse: contextOop + arg - 1).
+static uint8_t inlinePrimKind(int primIndex, int methodNumArgs) {
+    uint8_t pk = 0;
+    int arity = -1;
     switch (primIndex) {
-    case 1:  return 1;   // add
-    case 2:  return 2;   // sub
-    case 3:  return 3;   // lessThan
-    case 4:  return 4;   // greaterThan
-    case 5:  return 5;   // lessEqual
-    case 6:  return 6;   // greaterEqual
-    case 7:  return 7;   // equal
-    case 8:  return 8;   // notEqual
-    case 9:  return 9;   // mul
-    case 110: return 10; // identical
-    case 14: return 11;  // bitAnd
-    case 15: return 12;  // bitOr
-    case 17: return 13;  // bitShift
-    case 60: return 14;  // at:
-    case 61: return 15;  // at:put:
-    case 62: return 16;  // size
-    case 70: return 17;  // new (basicNew)
-    case 71: return 18;  // new: (basicNew:)
-    case 16: return 19;  // bitXor (added 2026-05-18 for asmjit-T1 inline)
-    case 75: return 20;  // identityHash (header bits 8-29 → SmI)
-    case 111: return 24; // class (classTable[classIndex]) — JIT inline tryPrimClass
-    case 541: return 21; // SmallFloat>>+
-    case 542: return 22; // SmallFloat>>-
-    case 549: return 23; // SmallFloat>>*
+    case 1:  pk = 1;  arity = 1; break;  // add
+    case 2:  pk = 2;  arity = 1; break;  // sub
+    case 3:  pk = 3;  arity = 1; break;  // lessThan
+    case 4:  pk = 4;  arity = 1; break;  // greaterThan
+    case 5:  pk = 5;  arity = 1; break;  // lessEqual
+    case 6:  pk = 6;  arity = 1; break;  // greaterEqual
+    case 7:  pk = 7;  arity = 1; break;  // equal
+    case 8:  pk = 8;  arity = 1; break;  // notEqual
+    case 9:  pk = 9;  arity = 1; break;  // mul
+    case 110: pk = 10; arity = 1; break; // identical
+    case 14: pk = 11; arity = 1; break;  // bitAnd
+    case 15: pk = 12; arity = 1; break;  // bitOr
+    case 17: pk = 13; arity = 1; break;  // bitShift
+    case 60: pk = 14; arity = 1; break;  // at:
+    case 61: pk = 15; arity = 2; break;  // at:put:
+    case 62: pk = 16; arity = 0; break;  // size
+    case 70: pk = 17; arity = 0; break;  // new (basicNew)
+    case 71: pk = 18; arity = 1; break;  // new: (basicNew:)
+    case 16: pk = 19; arity = 1; break;  // bitXor (2026-05-18)
+    case 75: pk = 20; arity = 0; break;  // identityHash (header bits → SmI)
+    case 111: pk = 24; arity = 0; break; // class — JIT inline tryPrimClass
+    case 541: pk = 21; arity = 1; break; // SmallFloat>>+
+    case 542: pk = 22; arity = 1; break; // SmallFloat>>-
+    case 549: pk = 23; arity = 1; break; // SmallFloat>>*
     default: return 0;
     }
+    return methodNumArgs == arity ? pk : 0;
+}
+
+// numArgs from a CompiledMethod's header word (bits 27:24).
+static int methodNumArgsOf(Oop method) {
+    if (!method.isObject() || method.rawBits() <= 0x10000) return -1;
+    Oop hdr = method.asObjectPtr()->slotAt(0);
+    if (!hdr.isSmallInteger()) return -1;
+    return (int)((hdr.asSmallInteger() >> 24) & 0x0F);
 }
 
 std::vector<sista::InlineHint>
@@ -24842,7 +24919,8 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         // regardless of JIT compilation status. This allows the stencil to
         // handle SmallInteger arithmetic inline without any function call.
         if (extra == 0) {
-            uint8_t pk = inlinePrimKind(primIdx);
+            uint8_t pk = inlinePrimKind(primIdx,
+                                        methodNumArgsOf(resolvedMethod));
             if (pk) extra |= (uint64_t)pk << 48;
         }
 
@@ -25389,7 +25467,13 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             // through to dispatchCached — safe.  Closes the measured ~28x heap
             // `class` send gap (g_primClass_hits was 0 across every run).
             else if (primIdx == 75 || primIdx == 111)
-                quickPrimExtra = (uint64_t)inlinePrimKind(primIdx) << 48;
+                // Arity-gated: the 1-ARG mirror form (Context>>
+                // objectClass:) shares prim 111 but must NOT get the
+                // 0-arg pk-24 classification (simulation-cascade root
+                // cause, 2026-07-05).  inlinePrimKind returns 0 on
+                // arity mismatch -> generic send, interp prim runs.
+                quickPrimExtra = (uint64_t)inlinePrimKind(
+                    primIdx, methodNumArgsOf(cachedMethod)) << 48;
             if (quickPrimExtra == 0) {
                 // Quick constant prims (257-263) are safe for J2J:
                 // bytecodes produce the same result as the primitive.
@@ -25437,7 +25521,8 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                     if (jit::xmethodGateOk(target)) newExtra |= jit::kXGateOkBit;
                     int primIdx = primitiveIndexOf(cachedMethod);
                     if (target->hasPrimPrologue) {
-                        uint8_t pk = inlinePrimKind(primIdx);
+                        uint8_t pk = inlinePrimKind(primIdx,
+                                        methodNumArgsOf(cachedMethod));
                         if (pk) newExtra |= (uint64_t)pk << 48;
                     }
                     // BLOCK_VALUE_BIT for prim 207/209 — see fill-path below
@@ -25558,7 +25643,8 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 if (jit::xmethodGateOk(target)) newExtra |= jit::kXGateOkBit;
                 int primIdx = primitiveIndexOf(cachedMethod);
                 if (target->hasPrimPrologue) {
-                    uint8_t pk = inlinePrimKind(primIdx);
+                    uint8_t pk = inlinePrimKind(primIdx,
+                                    methodNumArgsOf(cachedMethod));
                     if (pk) newExtra |= (uint64_t)pk << 48;
                 }
                 // SELF_REC_BIT (bit 56): asmjit-T1 inline-J2J uses this

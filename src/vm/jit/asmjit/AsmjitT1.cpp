@@ -6507,8 +6507,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                         a.tbnz(x7, asmjit::Imm(53), tryIntCmpReturn);
                     }
                     // W3: bit 52 = IntArithReturn `^ self op arg` (+/-/*).
+                    // B6-F1 companion (2026-07-05): a single-bit tbnz on
+                    // bit 52 is UNSOUND — primKind values 16-31 also have
+                    // bit 52 set, and pk-24 (#class via the prim-111
+                    // mirror `Context>>objectClass:`, a 1-ARG method)
+                    // reached here and executed tagged pointer+SmI ADD:
+                    // the prim-100 simulation-cascade corpse was
+                    // (contextOop + arg - 1).  W3 extras are exactly
+                    // fields 16+kind for kind 0-2, so decode the full
+                    // 5-bit field and range-check 16..18.
                     if (nArgs == 1 && !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_INT_ARITH_RETURN)) {
-                        a.tbnz(x7, asmjit::Imm(52), tryIntArithReturn);
+                        a.lsr(x6, x7, asmjit::Imm(48));
+                        a.and_(x6, x6, asmjit::Imm(0x1F));
+                        a.sub(x6, x6, asmjit::Imm(16));
+                        a.cmp(x6, asmjit::Imm(2));
+                        a.b_ls(tryIntArithReturn);
                     }
                     // W6: even/odd predicate (nArgs == 0).  B6 review F1:
                     // a single-bit tbnz on bit 51 is an UNSOUND
@@ -8523,13 +8536,14 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.add(x15, x15, asmjit::Imm(1));
                 a.str(x15, ptr(x14));
                 // Receiver in x1 (already loaded), arg in sp[-1].
-                // Verify both are SmI (low 3 bits = 001).
+                // Verify both are SmI (low 3 bits = 001) with strict
+                // PER-OPERAND checks — the OR-combined form accepted
+                // (heap, SmI) pairs (see W3 below, same bug).
                 a.ldur(x3, ptr(x2, -8));     // x3 = arg0
-                // Tag check both: receiver might be heap (IC HIT class
-                // says receiver is the target's expected class, but if
-                // target's receiver-class is SmallInteger then x1 is SmI).
-                a.orr(x4, x1, x3);
-                a.and_(x4, x4, asmjit::Imm(0x7));
+                a.and_(x4, x1, asmjit::Imm(0x7));
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                a.and_(x4, x3, asmjit::Imm(0x7));
                 a.cmp(x4, asmjit::Imm(1));
                 a.b_ne(dispatchCached);
                 // Extract cmpKind from bits 48-50.
@@ -8607,8 +8621,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                 a.add(x15, x15, asmjit::Imm(1));
                 a.str(x15, ptr(x14));
                 a.ldur(x3, ptr(x2, -8));     // x3 = arg0
-                a.orr(x4, x1, x3);
-                a.and_(x4, x4, asmjit::Imm(0x7));
+                // Strict per-operand SmI checks.  The old OR-combined
+                // check (`(x1|x3) & 7 == 1`) accepted (heap, SmI) pairs —
+                // tag 000 | 001 = 001 — so a stolen classification ran
+                // tagged arithmetic on a heap POINTER (the simulation-
+                // cascade corpse maker, 2026-07-05).
+                a.and_(x4, x1, asmjit::Imm(0x7));
+                a.cmp(x4, asmjit::Imm(1));
+                a.b_ne(dispatchCached);
+                a.and_(x4, x3, asmjit::Imm(0x7));
                 a.cmp(x4, asmjit::Imm(1));
                 a.b_ne(dispatchCached);
                 a.lsr(x6, x7, asmjit::Imm(48));
