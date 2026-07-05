@@ -424,6 +424,11 @@ extern "C" void jit_rt_atrec_entry(uint64_t statep) {
 
 // jit-may20b Step 6: per-caller bail-gate histogram dump (defined in
 // AsmjitT1.cpp).  Called from dumpJITStats when PHARO_T1_BAIL_GATE_HISTO=1.
+// Which checkpoint invoked drainMournQueueNatively (diagnostic tag for the
+// [DRAIN-n] log line).
+const char* g_drainSite = "?";
+uint64_t g_drainActivatee = 0;  // activatee method oop bits at activation-drain sites
+
 // lldb anchor for the simulation-cascade hunt (2026-07-05): a no-inline,
 // no-op function called at the [DNU] CASCADE site so batch lldb can set a
 // SYMBOL breakpoint (file:line breakpoints failed to resolve in this build).
@@ -3684,7 +3689,20 @@ void Interpreter::interpret() {
         }
 
         // -- Finalization (periodic, for auto-GC mourners) --
-        signalFinalizationIfNeeded();
+        // Gated on !finalizeDeferred like the step() twin (2026-07-05):
+        // with PHARO_FINALIZE_DEFERRED (default ON) the drain belongs to
+        // the sanctioned boundaries only — backwardBranchInterruptCheck
+        // and activateMethod/JIT-activation entry.  Firing the P50
+        // semaphore HERE delivered the wake at an arbitrary yield exit:
+        // the ExitYield handlers bail JIT-resident execution to this
+        // loop when the prim-130 one-shot is armed, and the P50 mourner
+        // then drained WeakKeyDictionary entries BETWEEN testClearing's
+        // `Smalltalk garbageCollect` and its pre-drain `dict size` read
+        // (warm-run-3 deviation; stock delivers at the next activation's
+        // stack-overflow check, after the quick-prim size read).
+        if (!g_debug.finalizeDeferred) {
+            signalFinalizationIfNeeded();
+        }
 
         // -- TFFI v2: adopt worker-thread callbacks queued for forwarding --
         if (__builtin_expect(pendingXtcbAdoption_.load(std::memory_order_acquire), 0)) {
@@ -11693,6 +11711,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // the timing Cog's test suite relies on.
     if (__builtin_expect(g_debug.finalizeDeferred &&
                          memory_.pendingFinalizationSignals() > 0, 0)) {
+        g_drainSite = "interp-act";
+        g_drainActivatee = method.rawBits();
         drainMournQueueNatively();
     }
 
@@ -12976,22 +12996,38 @@ past_sista_block:
             goto sfActFallthrough;
         }
     }
+    {
+    // Deferred FinalizationSemaphore one-shot (armed by prim 130/131):
+    // snapshot the flag BEFORE the activation runs.  tryJITActivation
+    // executes the whole method, prim prologue included — so when the GC
+    // primitive runs INSIDE this activation, this exit is MID-STATEMENT
+    // in the caller (right after `Smalltalk garbageCollect` returns,
+    // BEFORE testClearing's pre-drain `dict size` read), and waking the
+    // P50 mourner here drained WeakKeyDictionary tallies inside the
+    // test's invariant window (warm-run-3 deviation, 2026-07-05).
+    //
+    // Interpreter parity: a successful GC prim never runs activateMethod
+    // at all, so the interp one-shot fires at the end of the NEXT
+    // activation — after the caller's straight-line quick-prim reads.
+    // Mirror that exactly: fire at this exit ONLY when the flag was
+    // already armed at ENTRY (this activation IS the "next" one);
+    // arming that happened inside this activation waits for the next.
+    //
+    // The activateMethod ENTRY drain above has already native-processed
+    // WKA mourners by the time an armed-at-entry activation completes;
+    // the P50 signal here dispatches the re-pushed keeper mourners
+    // (WeakSubscription / ObjectFinalizer / ...) image-side — gating it
+    // off under finalizeDeferred regressed WeakAnnouncerTest
+    // (testNoDeadWeakSubscriptions) because nothing else wakes P50 on
+    // JIT-resident runs (mourn-queue starvation, the 2026-07-03 fix).
+    bool finArmedAtEntry = finalizationCheckAfterGC_;
     if (canJITActivate(method) && tryJITActivation(method, argCount)) {
-        // Deferred FinalizationSemaphore signal — same one-shot as the
-        // interpreter path below, which this early return used to SKIP:
-        // once execution went JIT-resident, the flag armed by
-        // primitiveFullGC never fired, the finalization process never
-        // woke, and mourn-queue entries (strong GC roots) pinned their
-        // ephemeron keys forever — WeakAnnouncerTest testWeakObject/
-        // testWeakDoubleAnnouncer failed on every JIT-warm run while
-        // passing cold (2026-07-03).  Firing after tryJITActivation is
-        // safe: the JIT activation completed, so we are at a send
-        // boundary with consistent frame state.
-        if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
+        if (__builtin_expect(finArmedAtEntry && finalizationCheckAfterGC_, 0)) {
             finalizationCheckAfterGC_ = false;
             signalFinalizationIfNeeded();
         }
         return;  // JIT handled it
+    }
     }
     sfActFallthrough:;
     // Otherwise fall through to interpreter execution via the dispatch loop
@@ -21441,6 +21477,7 @@ void Interpreter::backwardBranchInterruptCheck() {
     backwardBranchCountdown_ = kBackwardBranchCheckReload;
 
     if (memory_.pendingFinalizationSignals() > 0) {
+        g_drainSite = "backjump";
         drainMournQueueNatively();
     }
 }
@@ -21641,12 +21678,19 @@ void Interpreter::drainMournQueueNatively() {
         memory_.clearPendingFinalizationSignals();
     }
 
-    if (drainLog++ < 5) {
-        fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu wkaarr-drop=%zu kept=%zu dec=%zu pending=%zu->%zu\n",
+    if (drainLog++ < 5 || (g_debug.gcEphDebug && wkaProcessed > 0)) {
+        std::string curSel = "?";
+        if (method_.isObject() && method_.rawBits() > 0x10000)
+            curSel = memory_.selectorOf(method_);
+        fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu wkaarr-drop=%zu kept=%zu dec=%zu pending=%zu->%zu in=#%s step=%llu site=%s act=#%s\n",
                 drainLog, initialQueueSize, processed, wkaProcessed,
                 weakArraysDropped, nonWkaKept, decremented,
                 initialPending,
-                (size_t)memory_.pendingFinalizationSignals());
+                (size_t)memory_.pendingFinalizationSignals(),
+                curSel.c_str(), (unsigned long long)g_stepNum, g_drainSite,
+                g_drainActivatee > 0x10000
+                    ? memory_.selectorOf(Oop::fromRawBits(g_drainActivatee)).c_str()
+                    : "?");
     }
 }
 
