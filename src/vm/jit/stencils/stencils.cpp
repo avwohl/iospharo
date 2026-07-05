@@ -1628,6 +1628,15 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                         // image code a junk "class" and the stepping
                         // machinery cascaded in doesNotUnderstand:
                         // (become-spliced contexts, 2026-07-05).
+                        // NOTE: no fprintf / static locals in stencil
+                        // bodies — the extraction TU has no stdio and
+                        // copy-patch code must not carry data-segment
+                        // references.  A [JIT-CLASS-FWD]-style log here
+                        // SILENTLY BROKE extract_stencils.py from
+                        // 2026-06-02 to 2026-07-05: every stencils.cpp
+                        // change in that window (this guard, the pk-15 /
+                        // IC_HIT write barriers, the arity gates) was
+                        // absent from the deployed generated stencils.
                         if (idx > 8) {
                             Oop* tbl = reinterpret_cast<Oop*>(
                                 pharo::g_classTableBase);
@@ -1635,11 +1644,6 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                             _HOLE_CONTINUE(s);
                             return;
                         }
-                        static int fwdClassLog = 0;
-                        if (fwdClassLog++ < 8)
-                            fprintf(stderr, "[JIT-CLASS-FWD] pk24 receiver "
-                                    "classIdx=%u rcv=0x%llx -> generic send\n",
-                                    idx, (unsigned long long)rcv.bits);
                     }
                 }
                 // fall through to the generic send
