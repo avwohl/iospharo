@@ -1,0 +1,4 @@
+command script import /private/tmp/claude-501/-Users-wohl-src-iospharo-jit/090ece61-d2d6-4bb3-a366-c86ae7786379/scratchpad/cascade_watch.py
+breakpoint set -n pharo_cascade_bp
+breakpoint command add -F cascade_watch.on_cascade 1
+process launch -X false
