@@ -1263,7 +1263,14 @@ extern "C" void stencil_sendPoly(JITState* s) {
     if (extra != 0 && tag == 0) {                                           \
         uint16_t slotIdx = (uint16_t)(extra & 0xFFFF);                      \
         ObjectHeader* recvObj = reinterpret_cast<ObjectHeader*>(receiver.bits); \
-        if (extra & (1ULL << 63)) {                                         \
+        /* Arity gates (2026-07-05, parity with the AsmjitT1 dispatch):    \
+           a getter is a 0-arg accessor, a setter a 1-arg mutator; a       \
+           stale/racy extras word must not hijack a wrong-arity send       \
+           (the AI-Algorithms-Graph `curEdge first` family).  The setter   \
+           case is the dangerous one here: at a 0-arg site               \
+           sp[-(nArgs)] with nArgs==0 reads ABOVE the operand top and     \
+           writes that garbage into the receiver slot. */                 \
+        if ((extra & (1ULL << 63)) && nArgs == 0) {                        \
             /* Inline getter: replace receiver+args with field value */      \
             Oop val = recvObj->slotAt(slotIdx);                             \
             s->sp[-(nArgs + 1)] = val;                                      \
@@ -1271,7 +1278,7 @@ extern "C" void stencil_sendPoly(JITState* s) {
             _HOLE_CONTINUE(s);                                              \
             return;                                                         \
         }                                                                   \
-        if (extra & (1ULL << 62)) {                                         \
+        if ((extra & (1ULL << 62)) && nArgs == 1) {                        \
             /* Inline setter: store arg to slot, return self */             \
             Oop arg = s->sp[-(nArgs)];                                      \
             recvObj->slotAtPut(slotIdx, arg);                               \
@@ -1290,7 +1297,7 @@ extern "C" void stencil_sendPoly(JITState* s) {
             _HOLE_CONTINUE(s);                                              \
             return;                                                         \
         }                                                                   \
-        if (extra & (1ULL << 57)) {       \
+        if ((extra & (1ULL << 57)) && nArgs == 0) {       \
             /* Multi-slot getter: ^ self[A] op1 self[B] op2 const.          \
                Untag both Oops, do scalar math with overflow check,         \
                re-tag.  Bails on non-SmI slots or overflow. */              \
