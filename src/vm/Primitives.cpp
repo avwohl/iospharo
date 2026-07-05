@@ -14418,6 +14418,41 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     processPendingSignals();
     checkTimerSemaphore();
 
+    // IDLE-BAND relinquish with a STRICTLY-HIGHER ready process? transfer
+    // up NOW (2026-07-05).  The heartbeat force-yield hands the CPU DOWN
+    // (wakeLowerPriorityProcess) to relieve P10 starvation, but the only
+    // route back UP was checkForPreemption at the every-1024-step
+    // periodic — and a process sleeping HERE executes ~10-20 bytecodes
+    // per 10 ms quantum, so a ready P40 starved ~1 s behind the
+    // relinquishing P10 idle loop (the TFFI UsingWorker ~1 s/callout
+    // stalls; the rescue was the Delay scheduler's next tick).  The
+    // idle process must never hold the CPU while anyone is ready.
+    //
+    // GATED to the idle band (priority <= 10 = lowIOPriority): an
+    // UNGATED up-check resurrects the P80<->P60 voluntary-yield bounce
+    // (a P80 poller yields down to P60; P60's relinquish bounces
+    // straight back up to the still-ready P80; the P40 test process
+    // never runs — the 20-class batch TIMEOUTed across the board).
+    // Only the idle band relinquishes in a tight loop, and in Cog only
+    // the idle process relinquishes at all — treating idle-band
+    // relinquish as a full preemption point is the faithful semantic.
+    // If the check transferred, return WITHOUT the yield scan below:
+    // running the scan in the NEW process's context would immediately
+    // yield it back down (the arg is already popped, so the early
+    // return is stack-safe).
+    {
+        Oop apBefore = getActiveProcess();
+        Oop apPriOop = memory_.fetchPointer(ProcessPriorityIndex, apBefore);
+        int apPri = apPriOop.isSmallInteger()
+            ? static_cast<int>(apPriOop.asSmallInteger()) : 10;
+        if (apPri <= 10) {
+            checkForPreemption();
+            if (getActiveProcess().rawBits() != apBefore.rawBits()) {
+                return PrimitiveResult::Success;
+            }
+        }
+    }
+
     // Yield to ready processes FIRST (before sleeping).  If other
     // processes are runnable at same-or-lower priority, the caller
     // shouldn't burn 10 ms of wall clock first — that starves them.
@@ -14492,6 +14527,16 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
         processInputEvents();
         processPendingSignals();
         checkTimerSemaphore();
+        // Same idle-band-gated up-transfer as at entry: a higher-priority
+        // process made ready during the sleep (or queued by a force-yield
+        // handoff) must not wait for the next 1024-step periodic.
+        {
+            Oop apNow = getActiveProcess();
+            Oop apPriOop = memory_.fetchPointer(ProcessPriorityIndex, apNow);
+            int apPri = apPriOop.isSmallInteger()
+                ? static_cast<int>(apPriOop.asSmallInteger()) : 10;
+            if (apPri <= 10) checkForPreemption();
+        }
     }
 
     return PrimitiveResult::Success;
@@ -30505,6 +30550,13 @@ static std::vector<Worker*>& g_workerRegistry = *new std::vector<Worker*>();
 // cannot race it.)
 static std::atomic<int> g_tasksInFlight{0};
 
+// [TFLAT] absolute steady-clock microseconds (latency trace) — same
+// timeline as the drain trace in processPendingSignals.
+static inline long long tflatNowUs() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 struct Worker {
     std::mutex mx;
     std::condition_variable cv;
@@ -30533,6 +30585,12 @@ struct Worker {
         task->done.store(true, std::memory_order_release);
         if (task->semaphoreIndex > 0 && interp) {
             interp->signalExternalSemaphore(task->semaphoreIndex);
+            if (GET_DEBUG_BOOL(PHARO_TFFI_LAT_TRACE)) {
+                static int n = 0;
+                if (n++ < 60)
+                    fprintf(stderr, "[TFLAT] sig  sema=%d t=%lldus\n",
+                            task->semaphoreIndex, (long long)tflatNowUs());
+            }
         }
         g_tasksInFlight.fetch_sub(1, std::memory_order_acq_rel);
     }
@@ -30763,6 +30821,12 @@ PrimitiveResult Interpreter::primitiveWorkerCallout(int argCount) {
     if (taskOop.isNil()) return PrimitiveResult::Failure;
 
     tffiworker::g_tasksInFlight.fetch_add(1, std::memory_order_acq_rel);
+    if (GET_DEBUG_BOOL(PHARO_TFFI_LAT_TRACE)) {
+        static int n = 0;
+        if (n++ < 60)
+            fprintf(stderr, "[TFLAT] enq  sema=%d t=%lldus\n",
+                    task->semaphoreIndex, (long long)tffiworker::tflatNowUs());
+    }
     {
         std::lock_guard<std::mutex> lk(worker->mx);
         worker->queue.push_back(task.release());

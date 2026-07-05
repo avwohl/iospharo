@@ -4948,6 +4948,16 @@ void Interpreter::processPendingSignals() {
             continue;
         }
 
+        if (GET_DEBUG_BOOL(PHARO_TFFI_LAT_TRACE)) {
+            static int n = 0;
+            if (n++ < 60)
+                fprintf(stderr, "[TFLAT] drain sema=%d t(rel)=%lldus\n",
+                        index,
+                        (long long)std::chrono::duration_cast<
+                            std::chrono::microseconds>(
+                            std::chrono::steady_clock::now()
+                                .time_since_epoch()).count());
+        }
         synchronousSignal(semaphore);
     }
     pendingSignalTail_.store(tail, std::memory_order_release);
