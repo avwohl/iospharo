@@ -772,6 +772,18 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         set_target_properties(TestLibrary PROPERTIES PREFIX "")
     endif()
 
+    # libtty: pty-spawn helper the image's LibTTY package FFI-loads (stock
+    # Pharo ships it in Plugins/).  One function, POSIX-only — the image
+    # skips LibTTYTest on Windows (LibTTY>>win32LibraryName is
+    # shouldNotImplement).  Staged next to the exe like TestLibrary so the
+    # FFI bare-name search finds libtty.dylib / libtty.so.
+    if(NOT WIN32)
+        add_library(tty SHARED src/vm/plugins/libtty.c)
+        set_target_properties(tty PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:test_load_image>
+            LIBRARY_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:test_load_image>)
+    endif()
+
     # Force export testlib symbols so they're available via dlsym.
     # The `-Wl,-u,SYM` syntax is Mach-O (Apple ld); Linux ld uses
     # `--undefined=SYM` (also accepts -u SYM).  Apple-only for now —
