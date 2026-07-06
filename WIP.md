@@ -1,3 +1,25 @@
+# WIP — catalog after the Zn socket hunt: 98.78% (2026-07-05 night)
+
+**Full catalog #2 (all 2026-07-05 fixes): 27,859 verdicts — 27,519 PASS
+= 98.78%, 199 non-pass (35 F / 72 E / 92 T) + 141 skips.**
+Progression: July-4 ~743 non-pass (97.35%) -> morning fix wave 295
+(98.44%) -> socket/ring fixes **199 (98.78%)** — 33% further cut, 73%
+total from July 4.  Zn family: 460 P / 1 F (the network GeoIP test);
+Zdc 80/80; SocketStream 22/22; TKT 107/1.  Remaining non-pass families
+are exactly the known environmental set: Release/Cly/Renraku/Ring2/Rub
+cold-context timeouts (runner caps at 5/class), LibTTY, Roassal/Cairo,
+Spec2/StDebugger GUI env, FL WideString, OSEnvironment/
+NonInteractiveTranscript, ZnHTTPS (no TLS).
+Method note: the tail (Sp*..Z*) ran as FOUR fresh-VM batches to contain
+the StDebuggerActionModelTest Delay-ticker-death wedge (see deferred.md
+— pre-existing, bisected against the pre-afternoon binary, poisons
+everything downstream when the death-loop recovery doesn't stick; batch
+A absorbed it with only 3 timeouts).  Detail files:
+/tmp/catalog2_part1_detail.txt + /tmp/batch_{A,B,C,D}_detail.txt
+(runs 19-22).
+
+---
+
 # WIP — parked-bug fix wave COMPLETE (2026-07-05)
 
 Both deferred deterministic bugs from the 07-04 verification are FIXED, plus
