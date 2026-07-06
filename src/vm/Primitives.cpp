@@ -133,12 +133,39 @@ struct ManualSurface {
     SurfaceDispatch* dispatch;     // pointer to dispatch table (nullptr for manual surfaces)
 };
 
-static constexpr int kMaxSurfaces = 64;
-static ManualSurface g_surfaces[kMaxSurfaces] = {};
+// Growable surface registry.  A fixed 64-slot table exhausted mid-suite:
+// Athens/Roassal surfaces only unregister at GC finalization, so thousands
+// of rendering tests hold 64+ live registrations and every further
+// registration failed ("Unable to register surface with SurfacePlugin" —
+// the RS* suite-context error family, 2026-07-06).  Stock SurfacePlugin
+// grows its table; ours too now.  std::deque: element addresses stay
+// stable across growth (transient ManualSurface* users stay valid).
+static constexpr int kInitialSurfaces = 64;
+static constexpr int kSurfaceHardCap = 65536;  // runaway-leak backstop
+static std::deque<ManualSurface> g_surfaces(kInitialSurfaces);
+static int surfaceTableSize() { return static_cast<int>(g_surfaces.size()); }
+
+// Find a free slot (index >= 1), growing the table if needed.
+// Returns -1 only at the hard cap (loud).
+static int allocSurfaceSlot() {
+    for (int i = 1; i < surfaceTableSize(); i++) {
+        if (!g_surfaces[i].active) return i;
+    }
+    if (surfaceTableSize() >= kSurfaceHardCap) {
+        static int fullLog = 0;
+        if (fullLog++ < 10)
+            fprintf(stderr, "[SURFACE] registry at hard cap (%d) — leak?\n",
+                    kSurfaceHardCap);
+        return -1;
+    }
+    int newSlot = surfaceTableSize();
+    g_surfaces.resize(g_surfaces.size() * 2);
+    return newSlot;
+}
 
 // Look up a surface by handle. Returns nullptr if invalid.
 static ManualSurface* lookupSurface(int handle) {
-    if (handle < 1 || handle >= kMaxSurfaces) return nullptr;
+    if (handle < 1 || handle >= surfaceTableSize()) return nullptr;
     if (!g_surfaces[handle].active) return nullptr;
     return &g_surfaces[handle];
 }
@@ -20892,14 +20919,8 @@ PrimitiveResult Interpreter::primitiveCreateManualSurface(int argCount) {
     bool msb = !msbOop.isNil() && msbOop != memory_.falseObject();
 
     // Find a free slot
-    int surfaceID = -1;
-    for (int i = 1; i < kMaxSurfaces; i++) {
-        if (!g_surfaces[i].active) {
-            surfaceID = i;
-            break;
-        }
-    }
-    if (surfaceID < 0) return PrimitiveResult::Failure;  // table full
+    int surfaceID = allocSurfaceSlot();
+    if (surfaceID < 0) return PrimitiveResult::Failure;  // hard cap
 
     g_surfaces[surfaceID] = { true, w, h, p, d, msb, nullptr, 0, nullptr };
 
@@ -21012,14 +21033,8 @@ PrimitiveResult Interpreter::primitiveRegisterSurface(int argCount) {
     }
 
     // Find a free slot
-    int surfaceID = -1;
-    for (int i = 1; i < kMaxSurfaces; i++) {
-        if (!g_surfaces[i].active) {
-            surfaceID = i;
-            break;
-        }
-    }
-    if (surfaceID < 0) return PrimitiveResult::Failure;  // table full
+    int surfaceID = allocSurfaceSlot();
+    if (surfaceID < 0) return PrimitiveResult::Failure;  // hard cap
 
     // Initialize the surface entry
     g_surfaces[surfaceID] = {};
@@ -21084,29 +21099,26 @@ int ioRegisterSurface(void* surfaceHandle, void* fn, int* surfaceID) {
     if (!dispatch) return 0;
     if (dispatch->majorVersion != 1 || dispatch->minorVersion != 0) return 0;
 
-    for (int i = 1; i < kMaxSurfaces; i++) {
-        if (!g_surfaces[i].active) {
-            g_surfaces[i] = {};
-            g_surfaces[i].active = true;
-            g_surfaces[i].dispatchHandle = reinterpret_cast<intptr_t>(surfaceHandle);
-            g_surfaces[i].dispatch = dispatch;
-            if (dispatch->getSurfaceFormat) {
-                int w = 0, h = 0, d = 0, msb = 0;
-                dispatch->getSurfaceFormat(reinterpret_cast<intptr_t>(surfaceHandle), &w, &h, &d, &msb);
-                g_surfaces[i].width = w;
-                g_surfaces[i].height = h;
-                g_surfaces[i].depth = d;
-                g_surfaces[i].isMSB = (msb != 0);
-            }
-            *surfaceID = i;
-            return 1;  // success
-        }
+    int i = allocSurfaceSlot();
+    if (i < 0) return 0;  // hard cap
+    g_surfaces[i] = {};
+    g_surfaces[i].active = true;
+    g_surfaces[i].dispatchHandle = reinterpret_cast<intptr_t>(surfaceHandle);
+    g_surfaces[i].dispatch = dispatch;
+    if (dispatch->getSurfaceFormat) {
+        int w = 0, h = 0, d = 0, msb = 0;
+        dispatch->getSurfaceFormat(reinterpret_cast<intptr_t>(surfaceHandle), &w, &h, &d, &msb);
+        g_surfaces[i].width = w;
+        g_surfaces[i].height = h;
+        g_surfaces[i].depth = d;
+        g_surfaces[i].isMSB = (msb != 0);
     }
-    return 0;  // table full
+    *surfaceID = i;
+    return 1;  // success
 }
 
 int ioUnregisterSurface(int surfaceID) {
-    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    if (surfaceID < 1 || surfaceID >= surfaceTableSize()) return 0;
     if (!g_surfaces[surfaceID].active) return 0;
     g_surfaces[surfaceID].active = false;
     g_surfaces[surfaceID].bits = nullptr;
@@ -21116,7 +21128,7 @@ int ioUnregisterSurface(int surfaceID) {
 }
 
 int ioFindSurface(int surfaceID, void** surface, void** fn) {
-    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    if (surfaceID < 1 || surfaceID >= surfaceTableSize()) return 0;
     if (!g_surfaces[surfaceID].active) return 0;
     if (surface) *surface = reinterpret_cast<void*>(g_surfaces[surfaceID].dispatchHandle);
     if (fn) *fn = g_surfaces[surfaceID].dispatch;
@@ -21124,7 +21136,7 @@ int ioFindSurface(int surfaceID, void** surface, void** fn) {
 }
 
 int ioGetSurfaceFormat(int surfaceID, int* width, int* height, int* depth, int* isMSB) {
-    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    if (surfaceID < 1 || surfaceID >= surfaceTableSize()) return 0;
     ManualSurface* s = &g_surfaces[surfaceID];
     if (!s->active) return 0;
 
@@ -21140,7 +21152,7 @@ int ioGetSurfaceFormat(int surfaceID, int* width, int* height, int* depth, int* 
 }
 
 intptr_t ioLockSurface(int surfaceID, int* pitch, int x, int y, int w, int h) {
-    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    if (surfaceID < 1 || surfaceID >= surfaceTableSize()) return 0;
     ManualSurface* s = &g_surfaces[surfaceID];
     if (!s->active) return 0;
 
@@ -21153,7 +21165,7 @@ intptr_t ioLockSurface(int surfaceID, int* pitch, int x, int y, int w, int h) {
 }
 
 int ioUnlockSurface(int surfaceID, int x, int y, int w, int h) {
-    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    if (surfaceID < 1 || surfaceID >= surfaceTableSize()) return 0;
     ManualSurface* s = &g_surfaces[surfaceID];
     if (!s->active) return 0;
 
@@ -21164,7 +21176,7 @@ int ioUnlockSurface(int surfaceID, int x, int y, int w, int h) {
 }
 
 int ioShowSurface(int surfaceID, int x, int y, int w, int h) {
-    if (surfaceID < 1 || surfaceID >= kMaxSurfaces) return 0;
+    if (surfaceID < 1 || surfaceID >= surfaceTableSize()) return 0;
     ManualSurface* s = &g_surfaces[surfaceID];
     if (!s->active) return 0;
 
