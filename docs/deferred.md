@@ -4,6 +4,47 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
+## Cross-platform catalog state 2026-07-06 (post fix-wave; see docs/changes.md)
+
+Catalog #5 (macOS/ARM, all fixes): **27,709 P / 27 F / 50 E / 7 T / 174 S
+= 99.70%** in ONE VM, no wedge carpets (July-4: ~743 non-pass; catalog #2:
+199 via four-batch workaround).  Box (Linux/x86) run #3: 27,698 P /
+128 non-pass = 99.54% (~99.65% ex the FL/Cly runner bogeys fixed in
+b67db07).  Every remaining non-pass is classified:
+
+- [ ] **Reflective-slowness TIMEOUTs (~7)** — NoUnusedVariablesLeft,
+  ReleaseTest testNoShadowedVariables, DTTestCoverage/Profiling,
+  FinalizationRegistry onFork, TraitPropagatingSlotChanges x2, StDebugger
+  recompile: image-wide scan/recompile tests genuinely >80s on our VM
+  (stock ~8s — the 15-30x reflective gap).  Killed cleanly now (runner
+  kill race fixed).  Owner: the queued activation-wall perf project
+  (scripts/perf-activation/).
+- [ ] **Roassal RS* (~20 F/E)** — RSViolinPlot/RSLines/RSSVG/RSLabel etc.
+  Rendering-result diffs under fake-GUI; needs a stock-with-same-prep
+  baseline pass to split real bugs from env.  (x86 additionally healed
+  by the cairo fixes — was the whole family, now the same ~20 as Mac.)
+- [x] **Sp* tree/table adapters + FTTableMorph (~18)** — FIXED by the
+  fake-GUI paced World-cycle loop (runner submodule c42cc6d): forked
+  tests defer UI work and wait for a cycle that never came.  150 P /
+  3 F / 1 E on the affected families post-fix; catalog #6 validating.
+- [ ] **StDebugger residue (3 F)** — testDynamicVariableEvaluation,
+  testIsInSelectedContextPackage, testUpdateLayoutForContexts...: remain
+  under the cycle loop; needs stock-with-prep comparison.
+- [ ] **RBBrowserEnvironmentTest flake (up to 4 E)** — intermittent,
+  ours-only; big environment-scan tests; loop-repro in progress.
+- [ ] **ReleaseTest hygiene (8 F)** — prep pollution (fake-GUI classes
+  trip package/selector/UI-dependency checks: also SystemDependenciesTest,
+  testUnknownProcesses sees harness processes) + testPharoVersionFileExists
+  (fails on stock too, no version file in harness).  Harness-env, not VM.
+- [ ] **Singles**: ZnClientTest testQueryGoogle (network), SUnitTest
+  watchdog self-test (our hardened watchDogLoop changes its shape),
+  TKTNewProcessTaskRunner (scheduling assumption), MorphicWindowManager
+  taskbar (env), TraitSubclassingTraitedClass (TBD).
+- [ ] **jitpkg external packages** — re-verify ring/systime/ston/
+  reflectivity families at HEAD (May-era bugs; aigraph now 10/10 with
+  inline-getter default-on).  Needs the Pharo-gfx package image rebuilt
+  (soogle loads) — next box session (scripts/pkg-jit-test/run-manifest.sh).
+
 ## ARM (macOS) — post-Windows-merge verification 2026-07-04
 
 - [x] **Delay-ticker DEATH in Spec2/StDebugger catalog context — ROOT
