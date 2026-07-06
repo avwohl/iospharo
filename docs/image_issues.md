@@ -149,3 +149,26 @@ stages the marker next to test_load_image.exe and `FFIWindowsLibraryFinder`
 locates it via `Smalltalk vm directory` (primitive 142 fixed to return the
 directory, not the exe path). The image dir stays pristine, so the stock
 reference VM runs there unmodified.
+
+## TestExecutionEnvironment watchdog can kill the Delay scheduler (found 2026-07-06)
+
+`TestExecutionEnvironment>>watchDogLoop` passes `maxTimeForTest
+asMilliSeconds` straight into `Semaphore>>waitTimeoutMilliseconds:`.  The
+watchdog's two-signal/two-wait protocol can desync (the inner timed wait
+races the completion signal; the leftover excess signal makes the next
+outer wait fire spuriously), and a spurious wake on a deactivated or
+between-tests environment reads `maxTimeForTest` as nil.
+`waitTimeoutMilliseconds: nil` constructs a DelayWaitTimeout whose nil
+duration reaches `DelayMicrosecondTicker>>tickAfterMilliseconds:` and
+raises MNU on `nil * 1000` INSIDE the timer event loop; the loop's
+handler passes the error, and under SUnit the ProcessMonitorTestService
+suspends the ticker process — after which every Delay/timeout in the
+image stalls (observed: whole catalog-suite sections timing out after
+StDebuggerActionModelTest).
+
+We patch the runner prep (pharo-headless-test submodule,
+run_sunit_tests.st): hardened watchDogLoop re-parks on the semaphore
+when the limit is nil.  Upstream wishlist: (a) that guard; (b) a nil
+check in waitTimeoutMilliseconds:; (c) make the Delay scheduler's
+backend loop survive per-delay errors instead of dying with the first
+poisoned delay.

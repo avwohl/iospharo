@@ -6,28 +6,43 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
 
 ## ARM (macOS) — post-Windows-merge verification 2026-07-04
 
-- [ ] **Delay-ticker DEATH in Spec2/StDebugger catalog context (ARM,
-  pre-existing — bisected NOT from the 2026-07-05 socket/ring work).**
-  Repro: fresh runner over the alphabetical tail from Sp* (Spec2 +
-  StPlayground/StDebugger blocks); mid-St* the DelaySemaphoreScheduler's
-  timer-event-loop process DIES (one-shot [WEDGE] dump: timing semaphore
-  excess=1 with EMPTY wait list, NO P80 ticker in the process table),
-  the VM's [DELAY-DEATH] detection then fires every ~5s and the
-  [DELAY-RESTART] image-side recovery loops with 'Expected timing
-  priority event loop terminated already' — every timeout-dependent
-  test after (TKT futures/pools, Zdc/Zn sockets) TIMEOUTs.  Reproduced
-  IDENTICALLY on f7ed6703 (all socket/ring fixes) and 9318ed9e
-  (pre-afternoon) — 235-297 DELAY-DEATHs each, same St-block onset;
-  run-1's tail escaped by predecessor-mix luck.  Suspect: an StDebugger/
-  StPlayground test terminating/suspending the ticker process via
-  debugger-session teardown (they manipulate processes), or an unhandled
-  error inside the ticker loop.  NEXT: instrument process termination of
-  priority-80 victims (log terminator context) in the Sp/St repro; also
-  check why restartTimerEventLoop's replacement loop dies again
-  immediately (the 'terminated already' guard).  The boot-time single
-  [DELAY-DEATH] + 10x nil-suspend DNUs during harness right-click
-  injection are a separate, constant, benign-looking pattern present in
-  every run.
+- [x] **Delay-ticker DEATH in Spec2/StDebugger catalog context — ROOT
+  CAUSE FOUND + FIXED 2026-07-06 (runner submodule 0316143).**  Seven-
+  probe hunt (probe images baked via prim-97 snapshot; VM-side P80
+  suspend trap; prim-242 disarm trace):
+  1. The [DELAY-DEATH]s are the DelayMicrosecondTicker dying on
+     MessageNotUnderstood: `nil * 1000` inside tickAfterMilliseconds: —
+     a Delay with a NIL duration reached scheduling.  The
+     DelayBasicScheduler loop PASSES errors, so the UnhandledError hit
+     SUnit's ProcessMonitorTestService, which SUSPENDED the P80 ticker
+     (the same suspend-background-failures mechanism from the Zn hunt).
+  2. The nil delay comes from SUnit's own watchdog:
+     TestExecutionEnvironment>>watchDogLoop passes
+     `maxTimeForTest asMilliSeconds` into waitTimeoutMilliseconds:.
+     The watchdog two-signal/two-wait protocol DESYNCS (probe: the
+     trapped watchdog's env `self == false` vs the live env; completed
+     already true at the wake), and a spurious wake on a deactivated/
+     between-tests environment reads maxTimeForTest = nil.  Every
+     image-side writer was exonerated by probes (assignment always got
+     a valid Duration; the setter never saw nil): the nil is the
+     post-lifecycle state of a STALE env read by a desynced watchdog.
+  3. Interp-only does NOT wedge (timing-dependent; our scheduler timing
+     surfaces the image-protocol race).  Bisected pre-existing (fires
+     identically on the pre-afternoon Jul-5 binary).
+  FIX: hardened watchDogLoop in the runner prep
+  (scripts/pharo-headless-test/run_sunit_tests.st): a nil limit
+  re-parks on the semaphore instead of building the poison delay.
+  Baked into the harness image (guard-only fileIn + snapshot; NOTE the
+  full runner re-fileIn on our VM aborts nondeterministically mid-file
+  and a post-snapshot image resumes its snapshot continuation on first
+  eval — verify preps BEHAVIORALLY, and beware `sourceCode`-based
+  checks: without the .changes file, decompiled source loses temp
+  names).  VERIFIED: batch A (Sp*..StDebugger*, the wedge zone)
+  823 P / 0 timeouts / 0 DELAY-DEATHs, twice (both guard variants);
+  was 5-101 deaths + timeout carpet on every previous run.
+  UPSTREAM-WORTHY: the watchdog nil-guard + a nil-argument guard in
+  waitTimeoutMilliseconds: + making the Delay scheduler loop survive
+  per-delay errors (see docs/image_issues.md).
 - [x] **ProcessTest>>testTerminateInTerminate / prim-100 simulation cascade —
   FIXED 2026-07-05, commit e40cd65b.**  ROOT CAUSE (three conspiring
   defects, found via an IC-site dump at the DNU-cascade point — full
