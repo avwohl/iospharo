@@ -1,8 +1,15 @@
 # WIP — /goal "fix all non-Windows bugs" session 2026-07-06 (day) — WRAPPED ~16:30
 
-**FINAL: catalog #6 (macOS/ARM, all fixes): 27,726 P / 24 F / 32 E / 3 T /
-174 S = 99.79%** — July-4 was ~743 non-pass (97.35%), catalog #2 199, today
-#4 113 → #5 84 → #6 59.  Single VM, no batch splitting, no carpets.
+**FINAL: catalog #7 (macOS/ARM, everything incl. the surface-registry
+fix): 27,760 P / 21 F / 8 E / 4 T / 174 S = 33 non-pass = 99.88%.**
+July-4 was ~743 non-pass (97.35%); catalog #2: 199; today 113 → 84 →
+59 → 33.  Single VM, no batch splitting, no carpets.  The RS*/Roassal
+family (24) vanished with the surface-registry fix, confirming it at
+suite scale.  The 33: ReleaseTest 9 + SUnitTest/SystemDeps/ProperPkgs
+(harness-hygiene ~12), StDebugger family 8 (GUI residue — next target),
+RB 4 (suite-context flake), ZnClient GeoIP 1 (network), TKT 1 (upstream-
+flaky), OCClassBuilder 1 (stock fails too), slow-scan T x2, singles x4.
+Detail archived: docs/results/catalog-2026-07-06/ (ARM #7 + x86 run3).
 x86 box run #3: 99.54% on the pre-World-cycle harness + every family fix
 verified individually on-box (TF 48/48, LibTTY 5/5, DiskFileAttributes
 24/24, Athens 17/17, FFIParser 45/45).  Box TERMINATED (teardown
