@@ -24,6 +24,23 @@ FIXED so far this session (committed + pushed):
 - TLS/HTTPS VERIFIED WORKING on macOS (sqMacSSL; ZnClient https 200) —
   catalog #2's "ZnHTTPS (no TLS)" label was stale.
 
+WEDGE **RESOLVED** (~12:20): runner race, NOT a VM bug — the watchdog set
+testDone/printed the verdict BEFORE killing the test; the P80 runner main
+woke on testDone and its watchdog-cleanup path suspended the P60 watchdog
+between the flush and the suspend/terminate — the runaway test was never
+killed and starved its whole priority band (front-of-queue after
+preemptions).  FIX: kill first, announce after (runner submodule b1a783e,
+parent c3376e7c).  Verified on the wedge class-list: 50 P / 5 F / 1 T
+(only testNoShadowedVariablesInMethods genuinely >80s, killed cleanly).
+The 5 F are harness-hygiene (fake-GUI prep classes trip ReleaseTest
+package/selector checks; testPharoVersionFileExists fails on stock too).
+Memory: sunit-runner-kill-race.md.  CATALOG #4 RUNNING locally (fixed
+runner + fake GUI, fresh prep); box full-suite #2 RUNNING (fixed runner,
+fresh image; cairo now resolves via basename fallback aade2dde —
+AthensCairoMatrix 17/17 on x86, was 0/17).
+
+Historical hunt notes follow.
+
 WEDGE HUNT STATE (~12:00): catalog #3 KILLED at 22,463 verdicts (unrecoverable
 carpet; artifacts in scratchpad catalog3_*_partial.*).  Repro IN HAND:
 class-list [ReleaseTest, NonInteractiveTranscriptTest, OSEnvironmentTest] +
