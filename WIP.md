@@ -1,3 +1,47 @@
+# WIP — /goal "fix all non-Windows bugs" session 2026-07-06 (day)
+
+Machine rebooted (stock-VM eval hang CLEARED; /tmp wiped — harness rebuilt
+from fresh Pharo 13 download).  Two full-suite runs in flight:
+- LOCAL ARM catalog #3: fresh image + fake-GUI + hardened runner baked,
+  2052 classes, PHARO_MAX_STEPS=4e12 + CODE_ZONE_MB=192
+  (results/detail in /tmp, log /tmp/catalog3_run.log).
+- AWS x86 spot box i-01a4ea1f7bea4bc74 (3.17.153.16, m6a.4xlarge,
+  ~/x86-fullsuite.sh, results in ~/results/): full suite at HEAD.
+  Manual lease beats needed (./scripts/aws/lease.sh beat <iid>) —
+  AWS_LEASE_IID isn't in this Claude's env so the hook no-ops.
+
+FIXED so far this session (committed + pushed):
+- 259ad3fc interp: missing <condition_variable> include broke Linux
+  (libstdc++) builds — found by the box build.
+- ef9cfa59 prims: GCC rejects pharo::-qualified definitions inside
+  namespace pharo (g_prim111Ring).
+- 4e6bb7d0 plugins: ship libtty (tty_spawn clean-room) — LibTTYTest
+  0/5 -> 5/5 (stock ships Plugins/libtty.dylib; we never had it).
+- 2527c2c (runner submodule, parent 8c1ae366): honor expectedFailures-
+  METHOD declarations (not just the pragma) — kills 30 bogus non-passes
+  (FL* x15, ClyAsync/ClyFilter x14, ClySemiAsync x1).  NOT in the baked
+  image of the in-flight catalog #3 — subtract those families manually.
+- TLS/HTTPS VERIFIED WORKING on macOS (sqMacSSL; ZnClient https 200) —
+  catalog #2's "ZnHTTPS (no TLS)" label was stale.
+
+OPEN — live-caught wedge window (catalog #3, ~09:35-09:44): 
+NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft (image-wide
+scan; stock 8.5s, OURS >120s = the reflective perf gap) timed out at 80s,
+then 7 subsequent trivial tests (NonInteractiveTranscript x4,
+OSEnvironment x3) EACH timed out at 80s while the VM spun 100% CPU in
+JIT/scavenge work; recovered on its own at ~09:44:45.  FALSIFIED so far:
+slow terminate of the deep scan stack (instant at 5s and 80s depth in
+bare forks).  Suspects: SUnit env machinery (runCase wrapping/
+ProcessMonitor), timer-subsystem death window not caught by
+[DELAY-DEATH] (only 1 firing all run, early + recovered).  NEXT: after
+catalog frees /tmp, rerun wedge zone (NoUnusedVariablesLeft +
+NonInteractiveTranscript + OSEnvironment) via /tmp/sunit_class_names.txt
+with PHARO_DELAY_DEBUG=1 and watch the window live.
+
+Prev shutdown state follows.
+
+---
+
 # WIP — SHUTDOWN STATE 2026-07-06 ~02:00 (all work committed + pushed, HEAD a53318c5)
 
 Session arc COMPLETE — three debugging hunts finished, all validated:
