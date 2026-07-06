@@ -24,6 +24,35 @@ FIXED so far this session (committed + pushed):
 - TLS/HTTPS VERIFIED WORKING on macOS (sqMacSSL; ZnClient https 200) —
   catalog #2's "ZnHTTPS (no TLS)" label was stale.
 
+WEDGE HUNT STATE (~12:00): catalog #3 KILLED at 22,463 verdicts (unrecoverable
+carpet; artifacts in scratchpad catalog3_*_partial.*).  Repro IN HAND:
+class-list [ReleaseTest, NonInteractiveTranscriptTest, OSEnvironmentTest] +
+PHARO_CODE_ZONE_MB=32 on the prepped harness image wedges identically
+(first ReleaseTest scan test times out at 80s, its process NEVER dies,
+everything at P40 starves behind it).  EVIDENCE CHAIN:
+- lldb chain-walk of wedged victim: test frames (testNoShadowedVariables ←
+  performTest ← ensure: x3 ← runCase ← on:do: x8) sitting ON TOP of
+  terminateRealActive ← jump — i.e. Pharo-13 termination machinery
+  (doTerminationFromAnotherProcess → parallel stack → Context>>unwindTo: →
+  runUntilReturnFrom: → jump) RESUMED THE WHOLE TEST instead of just the
+  unwind blocks.
+- unwindTo: resumes-to-outerMost only when some ensure frame's
+  unwindComplete (tempAt: 2) is non-nil.  Bare-eval probes (also with
+  8MB zone): materialized ensure frames all have complete=nil and correct
+  tempAt:1 (cleanup block) — static state is CLEAN; corruption/decision
+  happens during the runner-context kill (suspect: env-watchdog
+  TestTookTooMuchTime signalException at ~60s starts a legit unwind, our
+  80s watchdog kills MID-UNWIND → resume-to-outerMost path → but then the
+  'unwind completion' re-runs the test = the divergence to find).
+- PROBE IMAGE BAKED: /tmp/harness/Pharo-probe.image has traced
+  Context>>unwindTo: + Process>>doTerminationFromAnotherProcess ([UWT]/
+  [DTAP] stderr lines; bake script scratchpad/trace_unwind.st).  Wedge
+  repro on it running -> /tmp/wedge_probe.log; read the [UWT] decision
+  (outerMost? which ctx? complete flags?) to pin the VM bug.
+ALSO both platforms affected: the x86 box hit the same carpet natively.
+
+Earlier session state follows.
+
 OPEN — live-caught wedge window (catalog #3, ~09:35-09:44): 
 NoUnusedVariablesLeftTest>>testNoUnusedTemporaryVariablesLeft (image-wide
 scan; stock 8.5s, OURS >120s = the reflective perf gap) timed out at 80s,
