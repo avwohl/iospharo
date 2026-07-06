@@ -6,6 +6,28 @@ platform stubs, and known gaps. Updated as the Windows port progresses.
 
 ## ARM (macOS) — post-Windows-merge verification 2026-07-04
 
+- [ ] **Delay-ticker DEATH in Spec2/StDebugger catalog context (ARM,
+  pre-existing — bisected NOT from the 2026-07-05 socket/ring work).**
+  Repro: fresh runner over the alphabetical tail from Sp* (Spec2 +
+  StPlayground/StDebugger blocks); mid-St* the DelaySemaphoreScheduler's
+  timer-event-loop process DIES (one-shot [WEDGE] dump: timing semaphore
+  excess=1 with EMPTY wait list, NO P80 ticker in the process table),
+  the VM's [DELAY-DEATH] detection then fires every ~5s and the
+  [DELAY-RESTART] image-side recovery loops with 'Expected timing
+  priority event loop terminated already' — every timeout-dependent
+  test after (TKT futures/pools, Zdc/Zn sockets) TIMEOUTs.  Reproduced
+  IDENTICALLY on f7ed6703 (all socket/ring fixes) and 9318ed9e
+  (pre-afternoon) — 235-297 DELAY-DEATHs each, same St-block onset;
+  run-1's tail escaped by predecessor-mix luck.  Suspect: an StDebugger/
+  StPlayground test terminating/suspending the ticker process via
+  debugger-session teardown (they manipulate processes), or an unhandled
+  error inside the ticker loop.  NEXT: instrument process termination of
+  priority-80 victims (log terminator context) in the Sp/St repro; also
+  check why restartTimerEventLoop's replacement loop dies again
+  immediately (the 'terminated already' guard).  The boot-time single
+  [DELAY-DEATH] + 10x nil-suspend DNUs during harness right-click
+  injection are a separate, constant, benign-looking pattern present in
+  every run.
 - [x] **ProcessTest>>testTerminateInTerminate / prim-100 simulation cascade —
   FIXED 2026-07-05, commit e40cd65b.**  ROOT CAUSE (three conspiring
   defects, found via an IC-site dump at the DNU-cascade point — full
