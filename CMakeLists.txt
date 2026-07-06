@@ -784,6 +784,15 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
             LIBRARY_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:test_load_image>)
     endif()
 
+    # Building just `--target test_load_image` must also stage the fixture
+    # libraries the suites FFI-load (the x86 box builds exactly that target;
+    # without these deps libtty.so was never produced there and LibTTYTest +
+    # the TF*/TFUFFI* families all errored with SymbolNotFoundError).
+    add_dependencies(test_load_image TestLibrary)
+    if(NOT WIN32)
+        add_dependencies(test_load_image tty)
+    endif()
+
     # Force export testlib symbols so they're available via dlsym.
     # The `-Wl,-u,SYM` syntax is Mach-O (Apple ld); Linux ld uses
     # `--undefined=SYM` (also accepts -u SYM).  Apple-only for now —

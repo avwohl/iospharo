@@ -297,7 +297,7 @@ static std::vector<std::string> getLibSearchPaths() {
     if (!sAppFrameworksPath.empty()) {
         paths.push_back(sAppFrameworksPath);
     }
-#if defined(__APPLE__) && !(TARGET_OS_IPHONE && !TARGET_OS_MACCATALYST)
+#if (defined(__APPLE__) && !(TARGET_OS_IPHONE && !TARGET_OS_MACCATALYST)) || defined(__linux__)
     // The executable's own directory FIRST: `Smalltalk vm directory` is where
     // the image-side library finders expect VM-staged libraries, and the
     // build stages fixture libs there (libTestLibrary.dylib for the TFUFFI*
@@ -305,18 +305,28 @@ static std::vector<std::string> getLibSearchPaths() {
     // this, a bare-name lookup like 'libTestLibrary.dylib' only resolved
     // symbols the exe happens to re-export (-Wl,-u list) and every
     // dylib-only fixture failed with SymbolNotFoundError (2026-07-04).
+    // Linux too (2026-07-06): the x86 box failed all ~170 TF*/TFUFFI*
+    // fixture tests + LibTTYTest because libTestLibrary.so/libtty.so next
+    // to the exe were unreachable from a bare-name lookup.
     {
         static std::string sExeDir;  // resolved once
         if (sExeDir.empty()) {
+            std::string p;
+#if defined(__APPLE__)
             char buf[4096]; uint32_t sz = sizeof(buf);
             if (_NSGetExecutablePath(buf, &sz) == 0) {
                 if (char* rp = realpath(buf, nullptr)) {
-                    std::string p(rp);
+                    p = rp;
                     free(rp);
-                    size_t slash = p.find_last_of('/');
-                    if (slash != std::string::npos) sExeDir = p.substr(0, slash);
                 }
             }
+#else
+            char buf[4096];
+            ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+            if (n > 0) { buf[n] = '\0'; p = buf; }
+#endif
+            size_t slash = p.find_last_of('/');
+            if (slash != std::string::npos) sExeDir = p.substr(0, slash);
             if (sExeDir.empty()) sExeDir = ".";  // sentinel: don't retry
         }
         if (sExeDir != ".") paths.push_back(sExeDir);
@@ -351,10 +361,17 @@ static void* tryLoadFromSearchPaths(const std::string& moduleName, const std::st
         candidates.push_back("lib" + moduleName);
     }
     if (moduleName.find(".dylib") == std::string::npos && moduleName.find(".so") == std::string::npos) {
+#ifdef __APPLE__
         candidates.push_back(moduleName + ".dylib");
         if (moduleName.compare(0, 3, "lib") != 0) {
             candidates.push_back("lib" + moduleName + ".dylib");
         }
+#else
+        candidates.push_back(moduleName + ".so");
+        if (moduleName.compare(0, 3, "lib") != 0) {
+            candidates.push_back("lib" + moduleName + ".so");
+        }
+#endif
     }
 
     auto searchPaths = getLibSearchPaths();
