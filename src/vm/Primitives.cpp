@@ -27238,6 +27238,17 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
                     // Try dlopen with the name as given (handles absolute paths)
                     moduleHandle = dlopen(moduleName.c_str(), RTLD_NOW | RTLD_GLOBAL);
 
+                    // Absolute path that doesn't exist: retry with the bare
+                    // basename so the system linker search (ldconfig cache /
+                    // default paths) can find an installed copy.  The image's
+                    // FFIUnixLibraryFinder guesses <imageDir>/libcairo.so.2
+                    // when no probe path matched, which shadowed a perfectly
+                    // good /lib/x86_64-linux-gnu/libcairo.so.2 (x86 box).
+                    if (!moduleHandle && moduleName.find('/') != std::string::npos) {
+                        std::string baseName = moduleName.substr(moduleName.rfind('/') + 1);
+                        moduleHandle = dlopen(baseName.c_str(), RTLD_NOW | RTLD_GLOBAL);
+                    }
+
                     // Try common name variations
                     if (!moduleHandle) {
                         std::vector<std::string> names;
