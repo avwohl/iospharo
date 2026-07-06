@@ -24,6 +24,15 @@
  * LibTTYTest skips on Windows.
  */
 
+/* glibc guards ptsname()/grantpt()/unlockpt() behind feature macros.  Without
+ * the declaration, C implicit-int rules TRUNCATE ptsname()'s returned pointer
+ * to 32 bits on x86-64 — the child's open(slave) failed with EFAULT and the
+ * parent's read() on a never-opened pty master blocked the whole VM (x86 box,
+ * LibTTYTest hang, 2026-07-06).  macOS declares them unconditionally. */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
