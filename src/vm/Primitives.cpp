@@ -3088,8 +3088,8 @@ PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
 // fetched for.  Cheap (4 words per call), removable once the simulation
 // corruption is fixed.
 // (linkage: mirrored declaration in Interpreter.cpp — keep layouts in sync)
-pharo::Prim111Entry pharo::g_prim111Ring[256];
-uint64_t pharo::g_prim111Seq = 0;
+Prim111Entry g_prim111Ring[256];
+uint64_t g_prim111Seq = 0;
 
 PrimitiveResult Interpreter::primitiveClass(int argCount) {
     // Primitive 111 returns the class of the top-of-stack value.
