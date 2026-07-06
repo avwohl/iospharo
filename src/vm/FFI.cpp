@@ -452,6 +452,16 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
         sFunctionCache[funcName] = func;
         return func;
     }
+#if TARGET_OS_IPHONE && !TARGET_OS_MACCATALYST
+    // Real-iOS-only: cairo can never be present and the image's world boot
+    // touches cairo-adjacent paths, so a return-0 stub keeps startup alive.
+    // NEVER enable this on desktop: unlike the FT_/git_ stubs above (whose
+    // return values are error codes the image checks), cairo calls mutate
+    // caller-owned structs / return pointers — a 0-stub silently fabricates
+    // wrong DATA (AthensCairoMatrix reads back all-zero matrices, 26 Athens/
+    // Cairo tests FAIL instead of ERRORing with SymbolNotFoundError; found
+    // on the cairo-less x86 box 2026-07-06).  On desktop a missing cairo
+    // must fail the symbol lookup so the image raises and tests error/skip.
     if (funcName.compare(0, 6, "cairo_") == 0) {
         static int cairoStubCount = 0;
         if (++cairoStubCount <= 5) {
@@ -464,6 +474,7 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
         sFunctionCache[funcName] = func;
         return func;
     }
+#endif
 
     return nullptr;
 }

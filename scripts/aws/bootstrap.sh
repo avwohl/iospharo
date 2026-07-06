@@ -22,6 +22,7 @@ apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build pkg-config ccache \
     clang lld gdb lldb \
     libffi-dev libsdl2-dev zlib1g-dev libssl-dev \
+    libcairo2 libfreetype6 \
     git curl wget unzip jq xz-utils ca-certificates \
     python3 python3-pip python3-venv \
     htop tmux less
