@@ -4568,6 +4568,41 @@ PrimitiveResult Interpreter::primitiveFullClosureValueWithArgs(int argCount) {
 // ===== PROCESS PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveSuspend(int argCount) {
+    // Ticker-death hunt (2026-07-05): any suspension of a PRIORITY-80
+    // process (the Delay ticker band) is loud — the StDebugger-context
+    // wedge kills the ticker silently between a timer fire and its
+    // re-arm.  Gated by the existing delayDebug knob.
+    if (g_debug.delayDebug && argCount >= 0) {
+        Oop victim0 = stackValue(argCount);
+        if (victim0.isObject() && memory_.isValidPointer(victim0)) {
+            int vpri = safeProcessPriority(victim0);
+            if (vpri >= 79) {
+                Oop ap0 = getActiveProcess();
+                fprintf(stderr, "[P80-SUSPEND] victim=0x%llx pri=%d self=%d "
+                        "in %s>>%s fd=%zu\n",
+                        (unsigned long long)victim0.rawBits(), vpri,
+                        (int)(victim0.rawBits() == ap0.rawBits()),
+                        (receiver_.isObject() && memory_.isValidPointer(receiver_))
+                            ? memory_.classNameOf(receiver_).c_str() : "?",
+                        (method_.isObject() && memory_.isValidPointer(method_))
+                            ? memory_.selectorOf(method_).c_str() : "?",
+                        frameDepth_);
+                for (size_t fi = 1; fi <= 26 && fi <= frameDepth_; fi++) {
+                    SavedFrame& sf = savedFrames_[frameDepth_ - fi];
+                    std::string cn = "?";
+                    if (sf.savedReceiver.isObject() && !sf.savedReceiver.isNil()
+                            && memory_.isValidPointer(sf.savedReceiver))
+                        cn = memory_.classNameOf(sf.savedReceiver);
+                    fprintf(stderr, "[P80-SUSPEND]   [-%zu] %s>>%s\n", fi,
+                            cn.c_str(),
+                            (sf.savedMethod.isObject()
+                             && memory_.isValidPointer(sf.savedMethod))
+                                ? memory_.selectorOf(sf.savedMethod).c_str()
+                                : "?");
+                }
+            }
+        }
+    }
     // Primitive 88: Process>>suspend
     // Suspend the receiver process. If it's the active process, switch to next.
     // Returns the list the process was on (or nil if it was running).
@@ -16923,6 +16958,27 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
                     (long long)curUsec, (int)sema.isNil(), pri,
                     (int)timerWasArmed_, (long long)nextWakeupUsec_,
                     (long long)prevRemaining);
+            // Disarm-caller trace (StDebugger ticker-death hunt,
+            // 2026-07-05): name the image-side code path that stopped
+            // the timer — current method + saved-frame sender walk.
+            fprintf(stderr, "[DELAY-DISARM]   in %s>>%s fd=%zu\n",
+                    (receiver_.isObject() && memory_.isValidPointer(receiver_))
+                        ? memory_.classNameOf(receiver_).c_str() : "?",
+                    (method_.isObject() && memory_.isValidPointer(method_))
+                        ? memory_.selectorOf(method_).c_str() : "?",
+                    frameDepth_);
+            for (size_t fi = 1; fi <= 10 && fi <= frameDepth_; fi++) {
+                SavedFrame& sf = savedFrames_[frameDepth_ - fi];
+                std::string cname = "?";
+                if (sf.savedReceiver.isObject() && !sf.savedReceiver.isNil()
+                        && memory_.isValidPointer(sf.savedReceiver))
+                    cname = memory_.classNameOf(sf.savedReceiver);
+                std::string ssel = "?";
+                if (sf.savedMethod.isObject() && memory_.isValidPointer(sf.savedMethod))
+                    ssel = memory_.selectorOf(sf.savedMethod);
+                fprintf(stderr, "[DELAY-DISARM]   [-%zu] %s>>%s\n",
+                        fi, cname.c_str(), ssel.c_str());
+            }
         } else {
             int64_t newDelta = usecs - curUsec;
             fprintf(stderr, "[DELAY-ARM] cur=%lld pri=%d sema=0x%llx newDeadline=%lld deltaUs=%lld (wasArmed=%d prevDeadline=%lld prevRemain=%lld)\n",
