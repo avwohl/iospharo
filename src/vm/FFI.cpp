@@ -479,8 +479,21 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     return nullptr;
 }
 
+// Names explicitly registered via registerFunction — distinguishable from
+// lazily-cached dlsym results and missing-library fallback stubs, so that
+// lookupRegisteredFunction can answer "wrapper or nothing".
+static std::unordered_set<std::string> sRegisteredFunctionNames;
+
 void registerFunction(const std::string& funcName, void* funcPtr) {
     sFunctionCache[funcName] = funcPtr;
+    sRegisteredFunctionNames.insert(funcName);
+}
+
+void* lookupRegisteredFunction(const std::string& funcName) {
+    if (sRegisteredFunctionNames.count(funcName) == 0)
+        return nullptr;
+    auto it = sFunctionCache.find(funcName);
+    return it == sFunctionCache.end() ? nullptr : it->second;
 }
 
 // SDL2 stub functions -- make OSWindow think SDL2 is available.

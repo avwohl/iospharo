@@ -27307,13 +27307,22 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     // intercept even when the image loads via a real module handle (libobjc.dylib).
     // Without this, dlsym on the real handle returns the unwrapped function and
     // crashes on image relaunch (duplicate class registration).
+    // ONLY explicitly-registered wrappers here — the full lookupFunction chain
+    // ends in missing-library fallback stubs (FT_ etc.), which must never
+    // preempt a REAL dlopen handle (x86-Linux box: libfreetype installed and
+    // dlopen-able, yet every FT_* resolved to the error stub).
     if (!symbolAddr) {
-        symbolAddr = ffi::lookupFunction(moduleName.empty() ? "" : moduleName, symbolName);
+        symbolAddr = ffi::lookupRegisteredFunction(symbolName);
     }
 
     if (!symbolAddr && moduleHandle && moduleHandle != RTLD_DEFAULT) {
         // Real module handle — use it for accurate lookup
         symbolAddr = dlsym(moduleHandle, symbolName.c_str());
+    }
+
+    if (!symbolAddr) {
+        // Full search chain: loaded modules, path probing, fallback stubs last
+        symbolAddr = ffi::lookupFunction(moduleName.empty() ? "" : moduleName, symbolName);
     }
 
     if (!symbolAddr) {

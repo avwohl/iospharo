@@ -71,6 +71,15 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
 // Register a stub function (for iOS SDL2 replacement)
 void registerFunction(const std::string& funcName, void* funcPtr);
 
+// Look up ONLY explicitly-registered functions (registerFunction wrappers/
+// stubs like safe_objc_registerClassPair) — never lazily-cached dlsym hits
+// or the missing-library fallback stubs.  Symbol resolution with a REAL
+// dlopen handle must consult this first (wrappers intercept), then the
+// handle, and only then the full lookupFunction fallback chain; otherwise
+// the FT_/cairo_ fallback stubs preempt a perfectly loadable library
+// (x86-Linux box: real libfreetype present, FT_* still stubbed).
+void* lookupRegisteredFunction(const std::string& funcName);
+
 // Register all SDL2 stub functions for iOS
 void registerSDL2Stubs();
 
