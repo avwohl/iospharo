@@ -33,10 +33,10 @@
 #include <TargetConditionals.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <objc/runtime.h>
-#include <unordered_set>
 #endif
 
 #include <atomic>
+#include <unordered_set>
 
 // Flag set when Emergency Debugger window is created — checked by interpreter to dump stack
 std::atomic<bool> g_emergencyDebuggerTriggered{false};
