@@ -17,6 +17,9 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#ifndef _WIN32
+#include <poll.h>
+#endif
 
 // =====================================================================
 // Private socket structure (pointed to by SQSocket.privateSocketPtr)
@@ -183,13 +186,6 @@ static void registerSocket(PrivateSocket* ps) {
 
 static void ioMonitorLoop() {
     while (gIORunning.load()) {
-        fd_set readfds, writefds;
-        FD_ZERO(&readfds);
-        FD_ZERO(&writefds);
-
-        SOCKET maxfd = gWakeReadFd();
-        FD_SET(gWakeReadFd(), &readfds);
-
         // Snapshot active sockets and drain deletion queue under lock
         std::vector<PrivateSocket*> snapshot;
         {
@@ -200,39 +196,97 @@ static void ioMonitorLoop() {
             snapshot = gActiveSockets;
         }
 
-        for (auto* ps : snapshot) {
+        // Per-socket interest, mirrored into readiness flags after the wait.
+        // Watch rules (identical for both wait backends):
+        //  - listening socket: readable = pending incoming connection, but ONLY
+        //    while still WAITING.  Once promoted to CONNECTED (below) it stays
+        //    readable until the image accepts, so continuing to watch it would
+        //    spin — stop watching until accept resets it to WAITING.
+        //  - connecting client: connect completes when WRITABLE.
+        //  - connected: always watch readable (even after EOF, Pharo's SSL layer
+        //    may have buffered data that needs draining); watch writable only
+        //    until EOF is seen.
+        //  - this-end-closed: watch readable to detect the peer's FIN and finish
+        //    the disconnection.  Without this, the image's
+        //    waitForDisconnectionFor: (which loops while status is ThisEndClosed,
+        //    waiting on readSemaphore) blocks for its full multi-second timeout
+        //    whenever both ends are in-image — both sides closing at once,
+        //    neither seeing the other's FIN.
+        std::vector<bool> wantRead(snapshot.size(), false);
+        std::vector<bool> wantWrite(snapshot.size(), false);
+        for (size_t i = 0; i < snapshot.size(); i++) {
+            PrivateSocket* ps = snapshot[i];
             if (ps->fd == INVALID_SOCKET) continue;
             if (ps->listening) {
-                // Listening server socket: watch for readable = a pending incoming
-                // connection, but ONLY while it's still WAITING.  Once we promote it
-                // to CONNECTED (below) it stays readable until the image accepts, so
-                // continuing to select() it would spin — stop watching until accept
-                // resets it to WAITING.
-                if (ps->sockState != SOCK_CONNECTED) {
-                    FD_SET(ps->fd, &readfds);
-                    if (ps->fd > maxfd) maxfd = ps->fd;
-                }
+                if (ps->sockState != SOCK_CONNECTED) wantRead[i] = true;
             } else if (ps->sockState == SOCK_WAITING_FOR_CONNECTION) {
-                // Connecting client socket: connect completes when WRITABLE.
-                FD_SET(ps->fd, &writefds);
-                if (ps->fd > maxfd) maxfd = ps->fd;
+                wantWrite[i] = true;
             } else if (ps->sockState == SOCK_CONNECTED) {
-                // Always monitor for readable data — even after EOF, Pharo's
-                // SSL layer may have buffered data that needs draining
+                wantRead[i] = true;
+                if (!ps->eofDetected) wantWrite[i] = true;
+            } else if (ps->sockState == SOCK_THIS_END_CLOSED) {
+                wantRead[i] = true;
+            }
+        }
+
+        std::vector<bool> isReadable(snapshot.size(), false);
+        std::vector<bool> isWritable(snapshot.size(), false);
+
+#ifndef _WIN32
+        // POSIX: poll(), NOT select().  fd_set is a fixed FD_SETSIZE(=1024)-bit
+        // array; FD_SET with a larger fd is out of bounds — glibc's fortify
+        // aborted the x86 full-suite run ("bit out of range 0 - FD_SETSIZE")
+        // once the process's fd numbers crossed 1024, and macOS corrupts stack
+        // memory silently in the same case.  poll() has no fd-value limit.
+        std::vector<struct pollfd> pfds;
+        std::vector<size_t> pfdIndex;   // pfds[k] (k>=1) -> snapshot index
+        pfds.push_back({gWakeReadFd(), POLLIN, 0});
+        for (size_t i = 0; i < snapshot.size(); i++) {
+            if (!wantRead[i] && !wantWrite[i]) continue;
+            short ev = 0;
+            if (wantRead[i]) ev |= POLLIN;
+            if (wantWrite[i]) ev |= POLLOUT;
+            pfds.push_back({snapshot[i]->fd, ev, 0});
+            pfdIndex.push_back(i);
+        }
+
+        int ready = poll(pfds.data(), (nfds_t)pfds.size(), 100 /*ms*/);
+        if (ready <= 0) continue;
+
+        // Drain wake channel
+        if (pfds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+            drainWake();
+        }
+
+        for (size_t k = 1; k < pfds.size(); k++) {
+            size_t i = pfdIndex[k - 1];
+            // select() reports EOF/error sockets as readable (and errored
+            // sockets as writable); mirror that so the state machine below
+            // behaves identically on both backends.
+            if (pfds[k].revents & (POLLIN | POLLHUP | POLLERR))
+                isReadable[i] = wantRead[i];
+            if (pfds[k].revents & (POLLOUT | POLLERR))
+                isWritable[i] = wantWrite[i];
+        }
+#else
+        // Windows: keep select() — winsock fd_set is an array of SOCKET values
+        // bounded by COUNT (FD_SETSIZE=64 sockets by default), not by fd VALUE,
+        // so the POSIX out-of-range hazard doesn't apply.
+        fd_set readfds, writefds;
+        FD_ZERO(&readfds);
+        FD_ZERO(&writefds);
+
+        SOCKET maxfd = gWakeReadFd();
+        FD_SET(gWakeReadFd(), &readfds);
+
+        for (size_t i = 0; i < snapshot.size(); i++) {
+            PrivateSocket* ps = snapshot[i];
+            if (wantRead[i]) {
                 FD_SET(ps->fd, &readfds);
                 if (ps->fd > maxfd) maxfd = ps->fd;
-                // Only monitor writability if EOF hasn't been seen
-                if (!ps->eofDetected) {
-                    FD_SET(ps->fd, &writefds);
-                }
-            } else if (ps->sockState == SOCK_THIS_END_CLOSED) {
-                // We've closed our end; watch for readable so we can detect the
-                // peer's FIN and finish the disconnection.  Without this, the
-                // image's waitForDisconnectionFor: (which loops while status is
-                // ThisEndClosed, waiting on readSemaphore) blocks for its full
-                // multi-second timeout whenever both ends are in-image — both
-                // sides closing at once, neither seeing the other's FIN.
-                FD_SET(ps->fd, &readfds);
+            }
+            if (wantWrite[i]) {
+                FD_SET(ps->fd, &writefds);
                 if (ps->fd > maxfd) maxfd = ps->fd;
             }
         }
@@ -249,8 +303,17 @@ static void ioMonitorLoop() {
             drainWake();
         }
 
+        for (size_t i = 0; i < snapshot.size(); i++) {
+            PrivateSocket* ps = snapshot[i];
+            if (ps->fd == INVALID_SOCKET) continue;
+            if (wantRead[i] && FD_ISSET(ps->fd, &readfds)) isReadable[i] = true;
+            if (wantWrite[i] && FD_ISSET(ps->fd, &writefds)) isWritable[i] = true;
+        }
+#endif
+
         // Process socket events
-        for (auto* ps : snapshot) {
+        for (size_t i = 0; i < snapshot.size(); i++) {
+            PrivateSocket* ps = snapshot[i];
             if (ps->fd == INVALID_SOCKET) continue;
 
             if (ps->listening) {
@@ -258,14 +321,14 @@ static void ioMonitorLoop() {
                 // CONNECTED.  The image's waitForConnectionFor: loops while the
                 // status is WaitingForConnection and returns (→ accept) on
                 // Connected; the accept primitive resets it to WaitingForConnection.
-                if (FD_ISSET(ps->fd, &readfds)) {
+                if (isReadable[i]) {
                     ps->sockState = SOCK_CONNECTED;
                     if (ps->connSema > 0 && vm) {
                         SOCKDBG("io: listen fd=%d pending -> CONNECTED, signal connSema=%d\n", ps->fd, ps->connSema);
                         vm->signalSemaphoreWithIndex(ps->connSema);
                     }
                 }
-            } else if (ps->sockState == SOCK_WAITING_FOR_CONNECTION && FD_ISSET(ps->fd, &writefds)) {
+            } else if (ps->sockState == SOCK_WAITING_FOR_CONNECTION && isWritable[i]) {
                 // Connect completed — check for errors
                 int err = 0;
                 socklen_t len = sizeof(err);
@@ -290,7 +353,7 @@ static void ioMonitorLoop() {
             }
 
             if (ps->sockState == SOCK_CONNECTED && !ps->listening) {
-                if (FD_ISSET(ps->fd, &readfds)) {
+                if (isReadable[i]) {
                     if (!ps->eofDetected) {
                         // First time seeing readability — peek to detect EOF
                         char peek;
@@ -323,7 +386,7 @@ static void ioMonitorLoop() {
                         vm->signalSemaphoreWithIndex(ps->readSema);
                     }
                 }
-                if (!ps->eofDetected && FD_ISSET(ps->fd, &writefds) && !ps->writeSignaled) {
+                if (!ps->eofDetected && isWritable[i] && !ps->writeSignaled) {
                     if (ps->writeSema > 0 && vm) {
                         vm->signalSemaphoreWithIndex(ps->writeSema);
                     }
@@ -331,7 +394,7 @@ static void ioMonitorLoop() {
                 }
             }
 
-            if (ps->sockState == SOCK_THIS_END_CLOSED && FD_ISSET(ps->fd, &readfds)) {
+            if (ps->sockState == SOCK_THIS_END_CLOSED && isReadable[i]) {
                 // We closed our end and the socket is now readable (peer FIN /
                 // EOF after our shutdown): the disconnection is complete.  Move to
                 // UNCONNECTED and wake the closer — waitForDisconnectionFor: loops
@@ -814,14 +877,21 @@ extern "C" sqInt sp_primitiveSocketReceiveDataAvailable(void) {
         return 0;
     }
 
-    // A listening socket selects "readable" when a connection is pending —
-    // keep select() semantics there (recv is invalid on listeners).
+    // A listening socket polls "readable" when a connection is pending —
+    // keep readiness semantics there (recv is invalid on listeners).
     if (ps->listening) {
+#ifndef _WIN32
+        // poll(), not select(): FD_SET with fd >= FD_SETSIZE is out of bounds
+        // (see ioMonitorLoop) and long suite runs push fds past 1024.
+        struct pollfd pfd = {ps->fd, POLLIN, 0};
+        int ready = poll(&pfd, 1, 0);
+#else
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(ps->fd, &readfds);
         struct timeval tv = {0, 0};
         int ready = select((int)(ps->fd + 1), &readfds, nullptr, nullptr, &tv);
+#endif
         vm->popthenPush(2, (ready > 0) ? vm->trueObject() : vm->falseObject());
         return 0;
     }
