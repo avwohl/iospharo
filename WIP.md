@@ -1,3 +1,52 @@
+# WIP — SHUTDOWN STATE 2026-07-06 ~02:00 (all work committed + pushed, HEAD a53318c5)
+
+Session arc COMPLETE — three debugging hunts finished, all validated:
+
+1. **prim-100 simulation cascade** (e40cd65b) — pk-24 arity aliasing into
+   the W3 IntArithReturn inline; stepping family 156 P / 0 F.
+2. **WKD testClearing** (8cfee28c) + **TFFI idle-band starvation**
+   (3940b62c) + **Zn socket hunt** (7478887d + ce4419af): MPSC-unsafe
+   external-semaphore ring (lost wakeups), param-49 >65535 failure
+   killing server processes via ProcessMonitorTestService suspension,
+   socketError-on-stale; ring adversarially hardened (f7ed6703:
+   ABA-proof counters, longjmp-safe tail, VM-thread overflow).
+   ZnServerTest 22-28/31-every-run -> 31/31 x 10 consecutive.
+3. **StDebugger delay-ticker wedge** (runner submodule 0316143, parent
+   7eb962bd + a53318c5) — SUnit watchDogLoop desync passes nil into
+   waitTimeoutMilliseconds:, nil-duration Delay kills the ticker
+   (nil*1000 MNU), ProcessMonitorTestService suspends it, whole catalog
+   sections stall.  Fixed via hardened watchDogLoop in the runner prep;
+   validated: wedge zone 823 P / 0 timeouts / 0 ticker deaths (was
+   5-101 deaths every run).  Full chain in deferred.md +
+   docs/image_issues.md + memory stdebugger-ticker-death-wedge.md.
+
+Also this session: stencil extraction had been SILENTLY BROKEN since
+Jun-2 (fprintf in a stencil body) — fixed, regenerated, CMake-wired as a
+hard build dependency (5accaddc + 4d97b675); IC_HIT arity gates; 215
+debug knobs migrated to debug_vars.h (ratchet 250 -> 31).
+
+**HARNESS STATE (for next session):**
+- /tmp/harness/Pharo.image = Jul-4 prepped runner image + the hardened
+  watchDogLoop guard baked in (Jul-6 01:47).  Pre-guard backup:
+  /tmp/harness/Pharo-jul4-preguard.image.  Pristine eval image:
+  /tmp/harness/Pharo.image.bak.
+- The STOCK Cog VM (/tmp/harness/pharo) currently HANGS on any eval on
+  this machine (worked Jul 4; environmental, undiagnosed) — preps were
+  done with OUR VM instead (guard-only fileIn + prim-97 snapshot; the
+  FULL runner re-fileIn on our VM aborts nondeterministically — bake
+  single chunks; verify preps BEHAVIORALLY, never via sourceCode
+  without the .changes file).
+- Catalog detail files in /tmp: catalog2_part1_detail.txt +
+  batch_{A,B,C,D}_detail.txt (98.78% composite, runs 19-22).
+
+**QUEUED NEXT:** activation-wall perf project (harness + quiet-machine
+baseline in scripts/perf-activation/, ablation order in its README);
+remaining deferred items are Windows-side.  Optional: rerun the full
+catalog with the hardened runner (expect the 3 batch-A wedge timeouts
+back + steadier StDebugger family, marginal % change).
+
+---
+
 # WIP — catalog after the Zn socket hunt: 98.78% (2026-07-05 night)
 
 **Full catalog #2 (all 2026-07-05 fixes): 27,859 verdicts — 27,519 PASS
