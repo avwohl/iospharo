@@ -30,6 +30,15 @@ FFI-parser tests — looked exactly like a VM regression.  The A/B chain
 Hard rule now baked into scripts/aws/x86-fullsuite.sh (committed
 d122d497): the harness dir is nuked and re-fetched WHOLE each run.
 
+PARTING FINDING (repro for next session): looping the FULL
+RBBrowserEnvironmentTest suite in ONE warm VM (scratchpad
+rb_class_loop.st) HANGS after several iterations — the VM's own
+600s stuck-process guard fired ([VM-TIMEOUT] P40 stuck, log
+rb_class_loop.log:60130).  The RB suite-context flake is a warm-heap
+HANG in the environment-scan machinery, self-contained repro, no full
+catalog needed.  Next: rerun with PHARO_PROC_DUMP=1 and read the DIAG
+stacks at the stall.
+
 REMAINING (all classified, see deferred.md 2026-07-06 section):
 suite-context singles (RB 4, StDebugger 3-4, St* singles), reflective-
 slowness timeouts (3, activation-wall perf project), ReleaseTest/
