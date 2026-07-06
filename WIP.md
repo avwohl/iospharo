@@ -1,5 +1,28 @@
 # WIP — /goal "fix all non-Windows bugs" session 2026-07-06 (day)
 
+STATE ~14:00: **CATALOG #4 (ARM/macOS) COMPLETE: 27,704 P / 39 F / 66 E /
+8 T / 144 S = 99.60%** (99.70% after subtracting the 29 FL/Cly
+expectedFailures bogeys whose runner fix landed post-prep).  NO wedge
+carpets, single VM, no batch splitting — vs catalog #2's 98.78%/199 and
+the four-batch workaround.  Box (x86) run #2: 27,525 P / 41 F / 240 E /
+13 T = 98.95%; its extra ~170 TF*/TFUFFI errors + LibTTY + DiskFileAttr +
+Athens/RS were ALL x86-environment bugs, all fixed since:
+- exe-dir bare-name library search now works on Linux (/proc/self/exe) +
+  .so candidates + fixture libs are test_load_image deps (cfe00911) —
+  TFBasicTypeSize 48/48 on box (was 0/48).
+- libtty _GNU_SOURCE: glibc's undeclared ptsname() truncated the pointer
+  (EFAULT in child; parent read() on never-opened master blocked the VM)
+  — LibTTY 5/5 on box (cb53b45f).
+- DiskFileAttributesTest 24/24 on box (platform-name fix 7df34d01).
+- Athens 17/17 + Cairo/FreeType on box (cairo stub gate + resolution
+  order + basename fallback).
+FINAL VERIFICATION RUNS IN FLIGHT: local catalog #5 (final runner
+b67db07) + box suite #3 (fresh image, all fixes).  Remaining known
+non-env singles: FTTableMorph alternate-row-colors (SubscriptOutOfBounds,
+World-cycle family), RBBrowserEnvironment flake, Sp* tree/table adapters
+(~21, headless World-cycle project), reflective-slowness TIMEOUTs x8
+(activation-wall perf project), ReleaseTest hygiene (prep pollution).
+
 Machine rebooted (stock-VM eval hang CLEARED; /tmp wiped — harness rebuilt
 from fresh Pharo 13 download).  Two full-suite runs in flight:
 - LOCAL ARM catalog #3: fresh image + fake-GUI + hardened runner baked,
