@@ -10371,8 +10371,14 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             // files (.sources, startup.st).  Reporting "Mac OS" here put Pharo in
             // Unix path mode on Windows and broke sibling-file resolution.
             primitiveSuccess(makeBytes("Win32"));
-#else
+#elif defined(__APPLE__)
             primitiveSuccess(makeBytes("Mac OS"));
+#else
+            // Linux (and other POSIX): stock Cog reports "unix" —
+            // UnixPlatform matches it, and per-platform test expectations
+            // key on it (DiskFileAttributesTest to/fromPlatformPath picked
+            // the Mac OS NFD byte expectation on the x86 box, 2026-07-06).
+            primitiveSuccess(makeBytes("unix"));
 #endif
             return PrimitiveResult::Success;
         case 1002:
