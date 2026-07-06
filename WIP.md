@@ -1,4 +1,34 @@
-# WIP — /goal "fix all non-Windows bugs" session 2026-07-06 (day)
+# WIP — /goal "fix all non-Windows bugs" session 2026-07-06 (day) — WRAPPED ~16:30
+
+**FINAL: catalog #6 (macOS/ARM, all fixes): 27,726 P / 24 F / 32 E / 3 T /
+174 S = 99.79%** — July-4 was ~743 non-pass (97.35%), catalog #2 199, today
+#4 113 → #5 84 → #6 59.  Single VM, no batch splitting, no carpets.
+x86 box run #3: 99.54% on the pre-World-cycle harness + every family fix
+verified individually on-box (TF 48/48, LibTTY 5/5, DiskFileAttributes
+24/24, Athens 17/17, FFIParser 45/45).  Box TERMINATED (teardown
+--instance-only, lease released).
+
+POST-#6 FIX (Mac-verified, needs next catalog for numbers): **growable
+SurfacePlugin registry** (23ae8a07) — the fixed 64-slot table exhausted
+mid-suite ('Unable to register surface with SurfacePlugin') and was THE
+mechanism behind the RS*/Roassal suite-context error family (~24 of the
+59; pass isolated, fail after ~2000 classes).  Expected next catalog:
+~35 non-pass ≈ 99.87%.
+
+BOX RUN #4 ANOMALY (root-caused, not a VM bug): re-downloading
+image+changes next to a STALE .sources produced a source-misaligned image
+(argumentNames #(), garbage sourceCode) failing ~700 AST/decompiler/
+FFI-parser tests — looked exactly like a VM regression.  The A/B chain
+(old-binary-same-image still broken; fresh-everything clean) pinned it.
+Hard rule now baked into scripts/aws/x86-fullsuite.sh (committed
+d122d497): the harness dir is nuked and re-fetched WHOLE each run.
+
+REMAINING (all classified, see deferred.md 2026-07-06 section):
+suite-context singles (RB 4, StDebugger 3-4, St* singles), reflective-
+slowness timeouts (3, activation-wall perf project), ReleaseTest/
+SystemDependencies/SUnitTest harness-hygiene, ZnClient GeoIP (network),
+TKT (upstream-flaky test, deterministic under our scheduling — analysis
+in session notes), jitpkg external-package re-verify (next box session).
 
 STATE ~14:00: **CATALOG #4 (ARM/macOS) COMPLETE: 27,704 P / 39 F / 66 E /
 8 T / 144 S = 99.60%** (99.70% after subtracting the 29 FL/Cly
