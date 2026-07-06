@@ -1,5 +1,48 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-07-06
+
+## fix wave: runner kill race (the timeout carpets), POSIX poll(), cairo/FFI resolution, libtty, Linux platform name
+
+Seven cross-platform fixes from the "fix all non-Windows bugs" goal session,
+all verified on macOS/ARM and Linux/x86 (AWS spot box):
+
+- **SUnit runner kill race — THE timeout-carpet root cause** (runner
+  submodule b1a783e): the watchdog announced testDone and printed the
+  verdict BEFORE suspend+terminate of the timed-out test; the P80 runner
+  main woke on testDone and its watchdog-cleanup suspended the watchdog
+  mid-kill.  The runaway test was never killed, monopolized its priority
+  band (front-of-queue by the Cog preemption rule), and every subsequent
+  test starved and timed out in turn — one slow ReleaseTest scan poisoned
+  entire catalog sections on BOTH platforms for hours.  Kill-first fix;
+  the wedge class-list went from a never-ending carpet to 50 P / 5 F /
+  1 T.  Memory: sunit-runner-kill-race.md (probe-trace method inside).
+- **Runner honors expectedFailures-method declarations** (2527c2c): the
+  raw runCase path only checked the <expectedFailure> pragma, so FL* (15)
+  and Cly*QueryTest (15) surfaced as bogus FAIL/ERROR in every catalog.
+- **SocketPlugin select() -> poll() on POSIX** (850ea188): FD_SET with
+  fd >= 1024 is out of bounds — glibc fortify TERMINATED the x86
+  full-suite run mid-catalog; macOS corrupts memory silently.  Windows
+  keeps select() (COUNT-bounded, no equivalent hazard).
+- **cairo return-0 stub is real-iOS-only** (e3ebeeb0): on a cairo-less
+  desktop every cairo_* symbol silently resolved to a return-0 stub —
+  Athens matrices read back all-zero and 26 tests FAILED with fabricated
+  data instead of ERRORing.  Desktop now fails symbol lookup loudly.
+- **Real dlopen handle beats fallback stubs; absolute-path modules retry
+  as basename** (c340c997 + aade2dde): the FT_/cairo stub fallback
+  preempted real installed libraries, and FFIUnixLibraryFinder's guessed
+  <imageDir>/libcairo.so.2 path failed dlopen with no system-search
+  fallback.  x86 box: AthensCairoMatrix 0/17 -> 17/17 with real cairo.
+- **libtty shipped** (4e6bb7d0): clean-room tty_spawn (pty slave spawn
+  helper the stock VM distributes); LibTTYTest 0/5 -> 5/5.
+- **getSystemAttribute 1001 reports 'unix' on Linux** (7df34d01): was
+  hardcoded 'Mac OS' on all POSIX — OSPlatform activated MacOSXPlatform
+  on Linux and DiskFileAttributesTest compared against Mac NFD byte
+  expectations.
+- Portability: <condition_variable> include (259ad3fc), GCC-rejected
+  pharo::-qualified definitions (ef9cfa59), Apple-gated <unordered_set>
+  (dac0de4e) — all broke the Linux/libstdc++ build only.
+
 2026-06-28
 
 ## win: morphic GUI render path works — Pharo desktop renders (verified visually)
