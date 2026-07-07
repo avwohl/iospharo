@@ -1,5 +1,32 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-07-07 (late — catalog-validation wave)
+
+## GC-root + memory-safety fixes surfaced validating the candidate-queue wave
+
+- **primitiveProfileSemaphore clears profileProcess/profileMethod**
+  (19dd56b0): Cog does `profileProcess := profileMethod := nil` on every
+  call; ours only set the semaphore.  Both are GC ROOTS — once the
+  wall-clock deadline fix (above) made the sampler actually fire, the
+  last-sampled process stayed pinned forever after stopProfiling,
+  retaining its whole death-time stack.  Weak-reference probe verifies
+  the sample + a WeakArray slot on it both nil after 2 GCs.
+- **Low-space signal implemented** (22fcb0e7): primitiveSignalAtBytesLeft
+  (prim 125) stored lowSpaceThreshold_ and NOTHING read it — Pharo's
+  LowSpaceWatcher could never fire on our VM.  Now checked at the
+  periodic checkpoint (one-shot disarm, culprit -> ProcessSignaling-
+  LowSpace, TheLowSpaceSemaphore signaled), Cog semantics.  The
+  runaway-allocation circuit breaker; verified firing under a synthetic
+  hog.  Mitigation for the ARM "context storm" (see docs/deferred.md).
+- **Heap diagnostics**: dumpHeapCensus (top-N class-name histogram by
+  bytes) on the old-space-exhaustion FATAL path + per-fullGC >1 GB under
+  PHARO_HEAP_CENSUS=1, coupled with a process-queue dump; PHARO_PRIM_
+  FAIL_STORM per-index primitive-failure counter (gated zero-overhead);
+  PHARO_MAX_OLD_SPACE_MB knob (was documented in MemoryConfig, never
+  wired).  These turned "the heap exploded" into "leaked Oups
+  dummy-debugger P50 recursing on Context, MNU+PrimitiveFailed in
+  lock-step".
+
 2026-07-07
 
 ## candidate-queue hunt: five VM fixes from the pkg200 follow-up (file handles, profiler, ephemerons, NLR protocol, socket storm)
