@@ -34,6 +34,24 @@ SlotIntegration is a SCHEDULING Heisenbug, and DET_SCHED cracks it open:
    in-progress computation's temps/intermediate, so on resume the
    computation continues from a subtly wrong state.
 
+RULED OUT via VM-level checks under the DET_SCHED-deterministic failure
+(all CLEAN, bug still #(2 2 2)): context-capacity operand loss
+([CTX-CAPACITY]/STATE-LOST = 0, stackp-clamp = 0 => materialization does
+NOT drop operands); PC round-trip (save `(ip-bytes)+1`, restore
+`bytes+(pc-1)` — symmetric, no off-by-one); + earlier: memory corruption
+(dangle/alloc/shadow clean), simple-frame save/restore (inspected
+correct).  So across the preemption the operands, PC, and memory are all
+PRESERVED — yet the build still diverges to size 2.  That leaves ONE
+suspect: the resumed build runs in MATERIALIZED-CONTEXT EXECUTION MODE
+(frameDepth_=0, executeFromContext, senders restored lazily) — a
+different, far-less-exercised interpreter path than inline frames — and
+a specific bytecode in the copyWith:/allSlots/slots: sequence behaves
+differently there than inline.  Same path as the ARM context storm and
+the NLR/materialization work.  NEXT: run the copyWith:/allSlots build
+ONCE inline (no preemption) and ONCE forced through materialized-context
+execution (preempt-then-resume at the same point), and diff the bytecode
+outcomes to find the bytecode that diverges in context mode.
+
 CODE-PATH LOCALIZATION (2026-07-07, by inspection against the repro):
 the defect is in the preemption save/restore of a DEEP frame stack.  On
 preemption mid-build, materializeFrameStack (Interpreter.cpp:18301) saves
