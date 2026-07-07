@@ -188,19 +188,36 @@ superseded per-family notes from catalog #5 below, updated:
     two rebuilds calls and diff interpreter/memory state across a
     healing scavenge inside the poisoned window (candidates: remembered
     set, purge/rekey passes, forwarding remnants readable pre-GC).
-  - RULED OUT (2026-07-07, deterministic tests both VMs identical to
-    stock): basic weak-clearing (WeakArray/WeakOrderedCollection/keep-1
-    all correct); basic becomeForward reference-update completeness
-    (slot / Dictionary-value / IdentitySet-member / OrderedCollection
-    all updated WITHOUT a GC).  So it is NOT a generic forwarder-scan
-    gap nor a weak-nil gap — it is specific to the class-REBUILD path
-    (class-become + instance-migration + trait, under accumulated heap
-    state).  ALSO: the mini-repro is ITSELF heap-state-dependent
-    (variant order changes pass/fail within one eval — a Heisenbug like
-    the storm), so quick Smalltalk probes MISLEAD; needs DET_SCHED +
-    lldb on the two-rebuild window.  Likely shares a root cause with the
-    context storm and the WeakOrderedCollection suite-flake (all three
-    are GC/become/heap-state-timing Heisenbugs in the same VM area).
+  - DETERMINISTIC REPRO + TIGHT MECHANISM (2026-07-07, major refinement):
+    the trigger is a LIVE INSTANCE of the class between the two adds.
+    5x-loop or a single `inst := c new` before the `#z` add => the `#z`
+    rebuild is SILENTLY SKIPPED (traced via PHARO_TRACE_BECOME: the
+    passing no-instance case does the `#z` class+metaclass becomes; the
+    failing instance-present case does ZERO becomes for `#z`).  The skip
+    is `ShNoChangesInClass` inside ShiftClassInstaller>>make: the
+    ShSlotChangeDetector compares oldClass allSlots vs builder allSlots
+    (ShAbstractClassChangeDetector>>compareVariables:with: — `a size = b
+    size` then per-slot hasSameDefinitionAs:) and wrongly returns "equal"
+    => #() changes => no rebuild.  Pre-Z state is BYTE-IDENTICAL to stock
+    (allSlots=2, allInstances=2, inst class==c, not obsolete); the
+    divergence is entirely inside the instance-present `#z` execution.
+  - RULED OUT (deterministic, both VMs stock-identical): weak-clearing,
+    becomeForward completeness (slot/Dict/IdentitySet/OrderedColl, no GC
+    needed), identityHash + slot-key stability + Set membership,
+    DynamicVariable, JIT (PHARO_NO_JIT), method cache
+    (PHARO_NO_METHOD_CACHE), and SCAVENGE-avoidance (huge
+    PHARO_NEWSPACE_MB=512 does NOT fix it).  Healed ONLY by: a full/
+    scavenge GC before the `#z` add (collects the instances), or ANY
+    image-side recompile of the comparer (triggers a GC).  So: live
+    instances of the class corrupt some state that the slot-comparer
+    reads, and any GC clears it — but NOT the method cache/JIT/young-size.
+  - REMAINING: WHY do live instances make compareVariables see equal
+    sizes (builder allSlots loses z, or oldClass gains z) — every
+    image-side observation HEALS it (GC), so this needs lldb
+    (perturbation-free) breaking in becomeForward / the signal primitive
+    during the deterministic instance-present `#z` rebuild, OR VM-side
+    logging of ShNoChangesInClass signals.  Likely shares the GC/become/
+    heap-state root area with the context storm.
 - [x] **Candidate-queue hunt COMPLETE 2026-07-07** (14-agent workflow
   wf_214bdc82, one agent per package, local fresh-image parity+shrink;
   five VM fixes committed e5570688/38c457f7/ac87599f/f9e49453/4c4e13e6,
