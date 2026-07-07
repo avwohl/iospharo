@@ -172,3 +172,42 @@ when the limit is nil.  Upstream wishlist: (a) that guard; (b) a nil
 check in waitTimeoutMilliseconds:; (c) make the Delay scheduler's
 backend loop survive per-delay errors instead of dying with the first
 poisoned delay.
+
+## Upstream wishlist — verified image bugs we do NOT patch (2026-07-07)
+
+Accepted residuals from the 2026-07-06 catalog (#8, 99.92%).  Each was
+re-verified on the PRISTINE Pharo 13 image (get.pharo.org/64/130, build
+737 sha b6a64c69) under stock Cog — they fail identically there, so they
+are upstream image defects, not our-VM or harness artifacts.  We leave
+the tests failing rather than patch semantics the IDE depends on.
+
+### `OCClassBuilderTest>>testCreateNormalClassWithTraitComposition`
+
+Errors with `OCCodeError: Undeclared variable` while building a normal
+class with a trait composition through the OpalCompiler class-builder
+API.  Stock Cog, pristine image: `1 ran ... 1 error`.  Ours: identical.
+
+### `SystemDependenciesTest>>testExternalUIDependencies`
+
+Fails with
+
+    TestFailure: Given Collections do not match!
+        additions : #('Reflectivity')
+        missing: #()
+
+The computed external-dependency set of the UI layer now includes
+`Reflectivity`, which the test's expected allowlist predates.  Pure
+dependency-drift in the image; the fix is a one-line allowlist update
+upstream.
+
+### `MorphicNativeWindow` lacks `hasProperty:` (taskbar MNU)
+
+`MorphicNativeWindow` subclasses `Object` directly, so it inherits none
+of Morph's property protocol, yet `TaskbarMorph>>updateTasks` (and
+`TShowInTaskbar classTrait>>findOrigin{Class,Method}Of:`) send
+`hasProperty:` to every registered window.  In a native-window session a
+`MorphicNativeWindow` in that list MNUs the taskbar refresh.  Verified
+pristine: `MorphicNativeWindow canUnderstand: #hasProperty:` -> false.
+Surfaced by `MorphicWindowManagerTest>>testDeleteAWindowAndTaskBarActualized`
+during the `--interactive` default investigation (see docs/changes.md
+2026-07-06: bare launches no longer default to interactive).
