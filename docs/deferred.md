@@ -211,19 +211,27 @@ superseded per-family notes from catalog #5 below, updated:
     image-side recompile of the comparer (triggers a GC).  So: live
     instances of the class corrupt some state that the slot-comparer
     reads, and any GC clears it — but NOT the method cache/JIT/young-size.
-  - COMPARER EXONERATED (2026-07-07, perturbation-free zero-alloc probe):
-    the earlier "comparer sees no change" hypothesis is WRONG.  Using a
-    ZERO-ALLOCATION instrumented compareVariables:with: (writes a size /
-    b size as immediate SmallIntegers into a PRE-allocated Array via
-    at:put: — no allocation, so it does NOT trigger the heal-GC that
-    string-logging did), the comparer correctly sees oldSlots=2 vs
-    newSlots=3 and returns "change" in the FAILING cases too.  So the
-    change IS detected and the rebuild IS triggered — yet the result
-    stays 2 slots.  The failure is DOWNSTREAM of the comparer: the `#z`
-    class-rebuild's become/install does not make `c`/globals point to the
-    new 3-slot class.  (Technique note: perturbation-free image probing
-    requires ZERO allocation — any string/collection build triggers a
-    scavenge that heals these GC-state Heisenbugs.)
+  - DEFINITIVE (2026-07-07, VM-level PHARO_TRACE_BECOME — the ONLY faithful
+    observer, since it logs via fprintf without allocating image memory
+    so it cannot trigger the heal-GC): the truly-uninstrumented loop is
+    DETERMINISTIC #(2 2 2) and the trace shows the `#z` class-become
+    (2->3 slots) NEVER RUNS — only three `1->2` becomes (the `#y` adds).
+    So the `#z` rebuild IS SKIPPED (ShNoChangesInClass): in the pure
+    case the comparer really does see no change (builder allSlots reads
+    size 2, missing z).  CORRECTION: an earlier "comparer exonerated"
+    note was itself PERTURBED — even a ZERO-ALLOC recompile of
+    compareVariables:with: heals iter1 (recompiling mutates the detector
+    class's methodDict, which is enough of a GC nudge to flip the
+    outcome).  LESSON: for these GC-state Heisenbugs, ANY image-side
+    change — even a zero-allocation method recompile — perturbs the
+    result; only VM-level (fprintf/lldb) observation is faithful.  So the
+    root is: the image's `builder allSlots` / `localSlots copyWith: z`
+    computation drops z when uninstrumented under accumulated heap state,
+    healed by any GC.  Next step MUST be VM-level: a targeted, allocation-
+    free hook logging the size of the OrderedCollection that allSlots/
+    copyWith builds, or lldb breaking in the allocateSlots/copy path
+    during the deterministic failing `#z` add — image-side probes cannot
+    see the failing state.
   - Requires ACCUMULATED heap state (a warmup or loop that leaves a prior
     OBSOLETE same-named class version in the heap): iter1 of a loop
     passes, iter2+ fail; a single fresh sequence with the zero-alloc
