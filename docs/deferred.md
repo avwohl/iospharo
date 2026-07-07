@@ -61,8 +61,9 @@ superseded per-family notes from catalog #5 below, updated:
   wall project); porpoise = upstream test-design GC race (both-VM
   empirical signature); p3 = Linux-only flavor (resolver latency —
   verify on next box); myprecious x2 multi-roundtrip = perf-composite
-  (Fuel serialize; passes on x86 box).  restoreforpharo: agent verdict
-  pending at wrap time — see WIP.
+  (Fuel serialize; passes on x86 box).  restoreforpharo: FIXED
+  (a99eee86, two-way become C++ stack swap) — SSWReStoreAggregateQuery
+  15/15, was the 11-TIMEOUT family.
 
 ## ARM (macOS) — post-Windows-merge verification 2026-07-04
 

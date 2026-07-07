@@ -46,6 +46,15 @@ five root-caused VM fixes, all verified against the hunt images:
   counted 0, now 1.  MethodProxies 39/39; exception/context/process
   batteries green.  Cost: ensure-crossing NLR 1.2 -> 6.9 us (stock 0.4);
   rare pattern, owned by the activation-wall project.
+- **Two-way become C++ stack swap** (a99eee86): different-sized two-way
+  become heap-swapped both directions but one-way-replaced C++ frame
+  refs — ReStore's proxy identity swap left the husk proxy pointing at
+  ITSELF (infinite instVarAt: recursion, heap exhaustion at ~540 s =
+  the 11-test SSWReStoreAggregateQueryTest TIMEOUT family).  Package-
+  free repro: 3-slot become: 1-slot, temps read back sizes #(1 1)
+  instead of stock #(1 3).  New one-pass scanStackSwap (forEachRoot
+  delegation) also replaces prim 72's drifted hand-rolled fixup.
+  ReStore 15/15; stepping/Fuel/become batteries green.
 - **Socket readSema signal storm** (4c4e13e6): the io-monitor signaled
   readable EVERY ~5 us poll iteration while data sat unread — hundreds of
   excess signals per message that the reader spin-drained for 10-30 ms,
@@ -54,7 +63,8 @@ five root-caused VM fixes, all verified against the hunt images:
   re-armed per recv().  Wake repro 22-93 ms -> 4-12 ms;
   testArgPassByCopy passes.
 
-Classified, no VM change: famixreplication/lexicon/deeptraverser/
+restoreforpharo: FIXED by the become stack-swap (above).  Classified,
+no VM change: famixreplication/lexicon/deeptraverser/
 polymath/hera = perf-gap (block-invocation / reflective-scan / mixed-
 compare kernels quantified, activation-wall project), porpoise = test-
 design GC race (identical empirical signature on both VMs), p3 =
