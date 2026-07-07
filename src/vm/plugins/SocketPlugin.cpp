@@ -33,6 +33,14 @@ struct PrivateSocket {
     int sockState;       // one of SOCK_* constants
     int sockError;       // SOCK_LAST_ERROR after socket error
     bool writeSignaled;  // true after write-ready signaled; reset on SOCK_EAGAIN
+    bool readSignaled;   // true after read-ready signaled; reset by each recv().
+                         // EDGE suppression: without it the io loop signals
+                         // readSema every poll iteration (~5us) while data sits
+                         // unread -> hundreds of excess signals per message ->
+                         // the reader spin-drains them (wait/instant-stale-wake/
+                         // recv-0 cycles) for 10-30 ms, starving the same-band
+                         // sender (myprecious RPC family; write side already
+                         // had writeSignaled for the same reason).
     bool eofDetected;    // true after I/O thread sees MSG_PEEK return 0 (FIN)
     bool listening;      // true once listen() called: WAITING_FOR_CONNECTION here
                          // means a pending *incoming* connection (readable), not a
@@ -359,7 +367,16 @@ static void ioMonitorLoop() {
             }
 
             if (ps->sockState == SOCK_CONNECTED && !ps->listening) {
-                if (isReadable[i]) {
+                // Edge-suppressed: ONE readSema signal per readability edge,
+                // re-armed by each recv() primitive (mirrors writeSignaled).
+                // Level-triggered signaling here spammed one signal per ~5us
+                // poll iteration while data sat unread — hundreds of stale
+                // excess signals per message that the reader then had to
+                // spin-drain (wait / instant stale wake / recv-0) for
+                // 10-30 ms, starving same-priority processes (the myprecious
+                // RPC wake-latency family; stock aio is one-shot per arm).
+                if (isReadable[i] && !ps->readSignaled) {
+                    ps->readSignaled = true;
                     if (!ps->eofDetected) {
                         // First time seeing readability — peek to detect EOF
                         char peek;
@@ -386,9 +403,15 @@ static void ioMonitorLoop() {
                             }
                         }
                     }
-                    // Always signal readSema — after EOF, Pharo's SSL layer
-                    // still has buffered data that needs draining via recv()
+                    // Signal readSema even at EOF — Pharo's SSL layer still
+                    // has buffered data that needs draining via recv().
+                    // (One signal per edge; recv() re-arms, so an EOF socket
+                    // signals at the reader's own pace, not per poll spin.)
                     if (ps->readSema > 0 && vm) {
+                        SOCKDBG("io: fd=%d readable, signal readSema=%d t=%lldus\n",
+                                ps->fd, ps->readSema,
+                                (long long)std::chrono::duration_cast<std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count());
                         vm->signalSemaphoreWithIndex(ps->readSema);
                     }
                 }
@@ -556,6 +579,7 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     ps->sockState = (socketType == UDP_SOCKET_TYPE) ? SOCK_CONNECTED : SOCK_UNCONNECTED;
     ps->sockError = 0;
     ps->writeSignaled = false;
+    ps->readSignaled = false;
     ps->eofDetected = false;
     ps->listening = false;
     ps->isDgram = (socketType == UDP_SOCKET_TYPE);
@@ -848,7 +872,9 @@ extern "C" sqInt sp_primitiveSocketSendDataBufCount(void) {
         }
     }
 
-    SOCKDBG("send: fd=%d count=%ld -> sent=%zd\n", ps->fd, (long)count, sent);
+    SOCKDBG("send: fd=%d count=%ld -> sent=%zd t=%lldus\n", ps->fd, (long)count, sent,
+            (long long)std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
     vm->popthenPush(5, vm->integerObjectOf((sqInt)sent));
     return 0;
 }
@@ -958,6 +984,10 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
     sqInt offset = startIndex - 1;
     if (offset < 0 || offset + count > bufSize) return vm->primitiveFail();
 
+    // Re-arm the one-shot readable notification (see readSignaled): the
+    // reader is consuming now, so the NEXT readability edge must signal.
+    ps->readSignaled = false;
+
     ssize_t received = recv(ps->fd, buf + offset, (size_t)count, 0);
     if (received < 0) {
         int e = SOCK_LAST_ERROR;
@@ -986,8 +1016,10 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
         ps->sockState = SOCK_OTHER_END_CLOSED;
     }
 
-    SOCKDBG("recv: fd=%d count=%ld -> received=%zd SOCK_LAST_ERROR=%d state=%d\n",
-            ps->fd, (long)count, received, (received < 0 ? SOCK_LAST_ERROR : 0), ps->sockState);
+    SOCKDBG("recv: fd=%d count=%ld -> received=%zd SOCK_LAST_ERROR=%d state=%d t=%lldus\n",
+            ps->fd, (long)count, received, (received < 0 ? SOCK_LAST_ERROR : 0), ps->sockState,
+            (long long)std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
     vm->popthenPush(5, vm->integerObjectOf((sqInt)received));
     return 0;
 }
@@ -1532,6 +1564,7 @@ extern "C" sqInt sp_primitiveSocketAccept3Semaphores(void) {
     ps->sockState = SOCK_CONNECTED;
     ps->sockError = 0;
     ps->writeSignaled = false;
+    ps->readSignaled = false;
 
     sqInt socketOop = vm->instantiateClassindexableSize(vm->classByteArray(), sizeof(SQSocket));
     if (vm->failed()) {
@@ -1646,6 +1679,9 @@ extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
     struct sockaddr_in from;
     socklen_t fromLen = sizeof(from);
     memset(&from, 0, sizeof(from));
+
+    // Re-arm the one-shot readable notification (see readSignaled).
+    ps->readSignaled = false;
 
     ssize_t received = recvfrom(ps->fd, buf + offset, (size_t)count, 0,
                                 (struct sockaddr*)&from, &fromLen);
