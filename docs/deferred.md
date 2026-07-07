@@ -4,42 +4,43 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
-## Cross-platform catalog state 2026-07-06 (post fix-wave; see docs/changes.md)
+## Cross-platform catalog state — FINAL 2026-07-06/07 (see WIP.md, docs/changes.md)
 
-Catalog #5 (macOS/ARM, all fixes): **27,709 P / 27 F / 50 E / 7 T / 174 S
-= 99.70%** in ONE VM, no wedge carpets (July-4: ~743 non-pass; catalog #2:
-199 via four-batch workaround).  Box (Linux/x86) run #3: 27,698 P /
-128 non-pass = 99.54% (~99.65% ex the FL/Cly runner bogeys fixed in
-b67db07).  Every remaining non-pass is classified:
+Catalog #8 (macOS/ARM, everything): **27,763 P / 15 F / 3 E / 4 T / 182 S
+= 22 non-pass = 99.92%.**  Day arc: 199 → 113 → 84 → 59 → 33 → 22.
+Box (Linux/x86) run #3: 99.54% with every platform family individually
+re-verified fixed on-box.  Details: docs/results/catalog-2026-07-06/.
+All 22 residuals classified by the 12-agent adversarial workflow;
+superseded per-family notes from catalog #5 below, updated:
 
-- [ ] **Reflective-slowness TIMEOUTs (~7)** — NoUnusedVariablesLeft,
-  ReleaseTest testNoShadowedVariables, DTTestCoverage/Profiling,
-  FinalizationRegistry onFork, TraitPropagatingSlotChanges x2, StDebugger
-  recompile: image-wide scan/recompile tests genuinely >80s on our VM
-  (stock ~8s — the 15-30x reflective gap).  Killed cleanly now (runner
-  kill race fixed).  Owner: the queued activation-wall perf project
-  (scripts/perf-activation/).
-- [ ] **Roassal RS* (~20 F/E)** — RSViolinPlot/RSLines/RSSVG/RSLabel etc.
-  Rendering-result diffs under fake-GUI; needs a stock-with-same-prep
-  baseline pass to split real bugs from env.  (x86 additionally healed
-  by the cairo fixes — was the whole family, now the same ~20 as Mac.)
+- [ ] **Reflective-slowness TIMEOUTs** — image-wide scan/recompile tests
+  genuinely >80s on our VM (stock ~8s — the 15-30x reflective gap):
+  StSpotter x2, NoUnusedVariablesLeft-style scans x3.  Owner: the queued
+  activation-wall perf project (scripts/perf-activation/).  Also owns
+  lexicon/famixreplication/deeptraverser TIMEOUTs from the pkg sweep if
+  the 2026-07-07 hunt confirms perf-gap.
+- [x] **Roassal RS* family** — FIXED 2026-07-06: 64-slot manual-surface
+  registry exhaustion (growable deque, Primitives.cpp); the "rendering
+  diffs" were downstream of failed surface allocation.
 - [x] **Sp* tree/table adapters + FTTableMorph (~18)** — FIXED by the
-  fake-GUI paced World-cycle loop (runner submodule c42cc6d): forked
-  tests defer UI work and wait for a cycle that never came.  150 P /
-  3 F / 1 E on the affected families post-fix; catalog #6 validating.
-- [ ] **StDebugger residue (3 F)** — testDynamicVariableEvaluation,
-  testIsInSelectedContextPackage, testUpdateLayoutForContexts...: remain
-  under the cycle loop; needs stock-with-prep comparison.
-- [ ] **RBBrowserEnvironmentTest flake (up to 4 E)** — intermittent,
-  ours-only; big environment-scan tests; loop-repro in progress.
-- [ ] **ReleaseTest hygiene (8 F)** — prep pollution (fake-GUI classes
-  trip package/selector/UI-dependency checks: also SystemDependenciesTest,
-  testUnknownProcesses sees harness processes) + testPharoVersionFileExists
-  (fails on stock too, no version file in harness).  Harness-env, not VM.
-- [ ] **Singles**: ZnClientTest testQueryGoogle (network), SUnitTest
-  watchdog self-test (our hardened watchDogLoop changes its shape),
-  TKTNewProcessTaskRunner (scheduling assumption), MorphicWindowManager
-  taskbar (env), TraitSubclassingTraitedClass (TBD).
+  fake-GUI paced World-cycle loop (runner submodule c42cc6d).
+- [x] **StDebugger residue** — classified env both-fail (stock with the
+  same prep fails identically; IDE-context layout/dynamic-variable
+  family).  Accepted residual.
+- [x] **RBBrowserEnvironmentTest flake** — root-caused 2026-07-06: the
+  runner's nil-protocol stuffed selector polluted environment scans
+  (isolation controls on a pristine image had masked it); runner fixed.
+- [x] **ReleaseTest hygiene** — split: harness-env parts fixed (orphan
+  packages via BaselineOfSUnitHarness, protocol reclassifications,
+  pharo.version write); rest is stock-identical run-order pollution
+  (literal-pin, PackageOrganizer, in-suite testObsoleteClasses) +
+  upstream image bugs now in docs/image_issues.md wishlist
+  (SystemDependenciesTest UI-deps Reflectivity drift).
+- [x] **Singles** — classified: ZnClientTest (network), TKT (upstream-
+  flaky), SUnitTest watchdog self-test (our hardened watchDogLoop, by
+  design), MorphicWindowManager taskbar (upstream MorphicNativeWindow
+  hasProperty: — image_issues.md wishlist), GC catalog-context flakes
+  (FinalizationRegistry, roving Trait timeouts — repro notes in WIP).
 - [x] **jitpkg external packages — 200-package sweep COMPLETE 2026-07-07**
   (box #2, run-manifest.sh; summary + per-test fails archived in
   docs/results/catalog-2026-07-06/pkg200*): 157 packages at clean
