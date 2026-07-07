@@ -1592,10 +1592,10 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_BECOME), 0)) {
         auto sz = [&](Oop o){ return o.isObject() ? o.asObjectPtr()->slotCount() : 0; };
         extern uint64_t g_stepNum;
-        fprintf(stderr, "[BECOME-FWD] step=%llu %s(%zu slots) -> %s(%zu slots)  heapRefs=%zu ctHits=%zu\n",
+        fprintf(stderr, "[BECOME-FWD] step=%llu %s(%zu slots)@%llx -> %s(%zu slots)@%llx  heapRefs=%zu ctHits=%zu\n",
                 (unsigned long long)g_stepNum,
-                classNameOf(obj1).c_str(), sz(obj1),
-                classNameOf(obj2).c_str(), sz(obj2),
+                classNameOf(obj1).c_str(), sz(obj1), (unsigned long long)obj1.rawBits(),
+                classNameOf(obj2).c_str(), sz(obj2), (unsigned long long)obj2.rawBits(),
                 becomeReplacedCount, classTableHits);
     }
 

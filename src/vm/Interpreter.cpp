@@ -11761,7 +11761,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                                 Oop fmt = memory_.fetchPointer(2, cls);
                                 if (fmt.isSmallInteger()) instSize = fmt.asSmallInteger() & 0xFFFF;
                             }
-                            char b[80]; snprintf(b, sizeof b, " | t1.slotCount=%zu t1.classInstSize=%ld", sc, instSize);
+                            char b[112]; snprintf(b, sizeof b, " | t1@%llx slotCount=%zu classInstSize=%ld",
+                                (unsigned long long)obj.rawBits(), sc, instSize);
                             extra = b;
                         }
                     }
