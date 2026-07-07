@@ -2304,6 +2304,7 @@ private:
 
     /// Execute a primitive
     PrimitiveResult executePrimitive(int primitiveIndex, int argCount);
+    PrimitiveResult executePrimitiveInner(int primitiveIndex, int argCount);
 
     // PHARO_T1_PRIM_OVERPOP: shared over-pop detector for the three in-place
     // chain primitive-send sites. spBefore = stackPointer_ captured BEFORE

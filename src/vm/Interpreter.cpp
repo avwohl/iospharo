@@ -20916,6 +20916,28 @@ void Interpreter::initializeNamedPrimitives() {
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
+    PrimitiveResult r = executePrimitiveInner(primitiveIndex, argCount);
+    // PHARO_PRIM_FAIL_STORM: per-index failure counter.  A primitive that
+    // fails hundreds of thousands of times in lock-step with an exception
+    // storm (catalog #9: equal MNU/PrimitiveFailed/Message counts) is the
+    // loop's engine — this names it without a debugger attach.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_PRIM_FAIL_STORM), 0)
+        && r == PrimitiveResult::Failure
+        && primitiveIndex >= 0 && primitiveIndex < 1024) {
+        static uint64_t failCounts[1024] = {0};
+        uint64_t n = ++failCounts[primitiveIndex];
+        if (n == 10000 || (n % 100000) == 0) {
+            fprintf(stderr, "[PRIM-FAIL-STORM] prim %d failed %llu times "
+                    "(current method #%s, receiver class %s)\n",
+                    primitiveIndex, (unsigned long long)n,
+                    memory_.selectorOf(method_).c_str(),
+                    memory_.classNameOf(stackValue(argCount)).c_str());
+        }
+    }
+    return r;
+}
+
+PrimitiveResult Interpreter::executePrimitiveInner(int primitiveIndex, int argCount) {
     if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT) && (primitiveIndex == 113 || primitiveIndex == 114)) {
         fprintf(stderr, "[EXIT-TRACE] executePrimitive(%d, %d) entering\n",
                 primitiveIndex, argCount);
