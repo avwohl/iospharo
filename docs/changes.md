@@ -1,5 +1,49 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-07-06 (second wave)
+
+## proxy protocols + suite-scale fixes: cannotInterpret:, become-of-a-class, surface registry, World-cycle loop
+
+Catalog trajectory across the day's two waves: 199 non-passes (98.78%,
+catalog #2) → 33 (99.88%, catalog #7) on macOS/ARM; Linux/x86 from
+crashing mid-suite to 99.54%.  Second-wave fixes:
+
+- **nil-methodDict proxy protocol (`#cannotInterpret:`)** (60d4ee1c): a
+  class whose methodDictionary is exactly nil must divert the send to
+  `cannotInterpret:` looked up from its SUPERCLASS (Spur spec).  Our
+  lookup silently skipped to the superclass, so GHost/Mocketry
+  real-object stubs never intercepted — stubbed objects answered their
+  real methods.  Found via the jitpkg 200-package sweep (gitlab+bitbucket
+  API mock suites: 90 JIT-only errors → Bitbucket 30/30 post-fix).
+- **become must redirect classTable entries** (07a27e63): instance
+  dispatch resolves header classIndexes through a C++-side classTable the
+  become heap scan can't see.  GHost becomeForward:s an anonymous helper
+  CLASS into its mutation object; without the table redirect the victim
+  kept dispatching into the empty helper.  Both this and cannotInterpret:
+  were required for real-object stubbing.
+- **growable SurfacePlugin registry** (23ae8a07): the fixed 64-slot table
+  exhausted mid-suite (Athens surfaces unregister only at GC
+  finalization) — the whole RS*/Roassal suite-context error family (~24
+  tests) was 'Unable to register surface'.
+- **fake-GUI paced World-cycle loop** (runner c42cc6d): forked tests
+  defer UI work to the World and wait for a cycle that never came; a
+  25ms Delay-paced error-guarded doOneCycle loop (started after the
+  runner's Morphic sweep) greened FTTableMorph + the Sp* adapter
+  families (~18 tests).
+- **runner: classify the sched-logger's stuffed selector** (3d394b5):
+  a methodDict-only method install left a nil protocol that blew up
+  RBBrowserEnvironmentTest's universal scans (4 tests, every catalog) —
+  masqueraded as a suite-context flake because isolation controls used
+  the pristine image.
+- **runner kill race** (b1a783e, first wave, restated for the record):
+  watchdog announced testDone before killing the timed-out test; the
+  runner main's cleanup suspended the watchdog mid-kill — the runaway
+  test starved its priority band and every subsequent test timed out
+  (the catalog timeout carpets on both platforms).
+- Box-harness hard rule (d122d497): image+changes+sources must come from
+  ONE download — a stale .sources next to a re-fetched image mimicked a
+  ~700-test VM regression (source pointers resolve to garbage).
+
 2026-07-06
 
 ## fix wave: runner kill race (the timeout carpets), POSIX poll(), cairo/FFI resolution, libtty, Linux platform name
