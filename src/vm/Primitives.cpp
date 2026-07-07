@@ -32325,6 +32325,16 @@ PrimitiveResult Interpreter::primitiveProfileSemaphore(int argCount) {
     Oop sem = stackValue(0);
     // Accept a Semaphore object or nil (= disable).
     profileSemaphore_ = sem;
+    // Cog parity (CoInterpreterPrimitives>>primitiveProfileSemaphore):
+    // `profileProcess := profileMethod := nil` on EVERY call.  These are
+    // GC roots; without the clear, the last sampled process stays pinned
+    // FOREVER after profiling stops (AndreasSystemProfiler/MessageTally
+    // stopProfiling sends `profileSemaphore: nil`).  Before the deadline
+    // fix the sampler never fired in-suite so the leak was invisible;
+    // catalog #9 then died of old-space exhaustion with a pinned process
+    // retinue the collector could never release.
+    profileSample_ = Oop::nil();
+    profilePrimitive_ = Oop::nil();
     pop();  // pop arg, leave receiver as return value
     return PrimitiveResult::Success;
 }
