@@ -232,6 +232,23 @@ superseded per-family notes from catalog #5 below, updated:
     copyWith builds, or lldb breaking in the allocateSlots/copy path
     during the deterministic failing `#z` add — image-side probes cannot
     see the failing state.
+  - EXHAUSTIVE VM-INTEGRITY RULING-OUT (2026-07-07, all perturbation-free
+    VM-level, all CLEAN=0 hits while the bug persists #(2 2 2)):
+    PHARO_SCAV_DANGLE_CHECK (scavenge missed-root / dropped young ref) =
+    0; PHARO_ALLOC_SIZE_CHECK (allocateSlots slotCount != requested) = 0;
+    PHARO_SHADOW_SLOTS (receiver-ivar store via untracked path / GC-mover)
+    = 0.  CONCLUSION: there is NO detectable VM memory corruption — not a
+    lost reference, not a mis-sized allocation, not a lost ivar store.
+    The builder's slot collection genuinely computes to size 2 via
+    correct VM memory operations.  So the failure is a HEAP-STATE-
+    DEPENDENT CONTROL-FLOW divergence in the image's addSlot:/copyWith:/
+    allSlots path (a conditional or comparison/hash/identity PRIMITIVE
+    returning inconsistently under accumulated heap state — cf. the
+    `self size` in copyWith's `copyEmpty: self size + 1`, or the
+    anySatisfy: name-check), NOT a memory bug.  This is the hardest
+    class: needs lldb single-stepping the failing `#z` build to find the
+    primitive whose result diverges — every higher-level observation
+    heals it, and every VM memory-integrity checker is clean.
   - Requires ACCUMULATED heap state (a warmup or loop that leaves a prior
     OBSOLETE same-named class version in the heap): iter1 of a loop
     passes, iter2+ fail; a single fresh sequence with the zero-alloc

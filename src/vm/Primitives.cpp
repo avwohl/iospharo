@@ -3044,6 +3044,14 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
             default: objFormat = ObjectFormat::Indexable; break;
         }
         newObj = memory_.allocateSlots(classIndex, totalSlots, objFormat);
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_ALLOC_SIZE_CHECK), 0)
+            && !newObj.isNil() && objFormat == ObjectFormat::Indexable
+            && totalSlots >= 1 && totalSlots <= 6) {
+            size_t got = newObj.asObjectPtr()->slotCount();
+            if (got != totalSlots)
+                fprintf(stderr, "[ALLOC-SIZE-MISMATCH] requested=%zu got=%zu clsIdx=%u\n",
+                        totalSlots, got, classIndex);
+        }
     }
 
     // Allocation-failure path: allocateBytes / allocateSlots return nil when
