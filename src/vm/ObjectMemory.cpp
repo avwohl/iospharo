@@ -1584,8 +1584,17 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
     // helper class into a mutation object; without the redirect the victim
     // keeps dispatching into the empty helper and stubs silently never
     // intercept (gitlab/bitbucket API suites, 90 tests, jitpkg 2026-07-06).
+    size_t classTableHits = 0;
     for (size_t i = 0; i < classTable_.size(); ++i) {
-        if (classTable_[i] == obj1) classTable_[i] = obj2;
+        if (classTable_[i] == obj1) { classTable_[i] = obj2; classTableHits++; }
+    }
+
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_BECOME), 0)) {
+        auto sz = [&](Oop o){ return o.isObject() ? o.asObjectPtr()->slotCount() : 0; };
+        fprintf(stderr, "[BECOME-FWD] %s(%zu slots) -> %s(%zu slots)  heapRefs=%zu ctHits=%zu\n",
+                classNameOf(obj1).c_str(), sz(obj1),
+                classNameOf(obj2).c_str(), sz(obj2),
+                becomeReplacedCount, classTableHits);
     }
 
     return true;
