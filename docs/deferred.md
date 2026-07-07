@@ -47,11 +47,22 @@ superseded per-family notes from catalog #5 below, updated:
   cog-parity, 29 load-failures (Metacello/network, not VM), aigraph
   176/176 (May bug conclusively dead), gitlab+bitbucket mock suites
   90-error family FIXED by the proxy-protocol VM work (cannotInterpret: +
-  become classTable).  NEW candidate queue (~57 tests, re-confirmed on
-  the fixed binary — next hunt campaign): illimani-memory-profiler 15,
-  restoreforpharo 11 (timeouts), soil 9, famixreplication 4, sauco 3,
-  hera 3, p3 3 (postgres), redistick 2, polymath 2, singles x5
-  (deeptraverser, methodproxies, myprecious, lexicon, porpoise).
+  become classTable).
+- [x] **Candidate-queue hunt COMPLETE 2026-07-07** (14-agent workflow
+  wf_214bdc82, one agent per package, local fresh-image parity+shrink;
+  five VM fixes committed e5570688/38c457f7/ac87599f/f9e49453/4c4e13e6,
+  details in docs/changes.md 2026-07-07): soil 9/9 (SQFile handle shape),
+  sauco 6/6 (profiler deadline), illimani 15/15 (ephemeron tenure +
+  param 34), methodproxies 39/39 (NLR aboutToReturn: protocol),
+  redistick stock-parity (POLLHUP), myprecious testArgPassByCopy
+  (readSema storm).  Remaining, classified no-VM-change: famix/lexicon/
+  deeptraverser/polymath/hera perf-gap (kernels quantified: block
+  invocation 32x, reflective scan 15x, min:/max: send 74x — activation-
+  wall project); porpoise = upstream test-design GC race (both-VM
+  empirical signature); p3 = Linux-only flavor (resolver latency —
+  verify on next box); myprecious x2 multi-roundtrip = perf-composite
+  (Fuel serialize; passes on x86 box).  restoreforpharo: agent verdict
+  pending at wrap time — see WIP.
 
 ## ARM (macOS) — post-Windows-merge verification 2026-07-04
 

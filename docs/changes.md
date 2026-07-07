@@ -1,5 +1,67 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-07-07
+
+## candidate-queue hunt: five VM fixes from the pkg200 follow-up (file handles, profiler, ephemerons, NLR protocol, socket storm)
+
+A 14-agent workflow (one per jitpkg candidate package, fresh local image
+builds, both-VM parity + shrink) turned the ~57-test candidate queue into
+five root-caused VM fixes, all verified against the hunt images:
+
+- **SQFile ByteArray file handles** (e5570688): FilePlugin handle shape
+  is ABI — stock hands the image a 24-byte SQFile struct ByteArray and
+  ecosystem code introspects it (`handle pointerAt: 9` -> FILE* ->
+  fileno/fcntl/fsync via uFFI; Soil's file locking).  Our SmallInteger
+  index handle DNU'd that.  makeFileHandle/fileFromHandle emit + validate
+  the stock shape (sessionID tag, fileId in padding, FILE* cross-check)
+  across all 12 handle primitives.  Soil 9/9 (was 0/9); file batteries
+  435 tests green.
+- **Wall-clock profiler deadline** (e5570688): primitiveProfileStart's
+  arg is a highResClock tick DELTA arming a ONE-SHOT deadline (Cog), not
+  a bytecode-checkpoint count — ASP-scale args starved the sampler
+  ~100,000x (every AndreasSystemProfiler report tallied zero).  Deadline
+  checked at the periodic checkpoint AND in primitiveRelinquishProcessor
+  (an idle image reaches the bytecode checkpoint only ~every 500 ms).
+  sauco 6/6 (was 3 FAIL); ASP now samples idle waits (8/100 ms vs stock
+  12).
+- **POLLHUP in connect-writable mapping + mixed int/float compare fast
+  path** (38c457f7): macOS reports refused non-blocking connects as
+  POLLHUP ONLY — dropping it left sockets in WaitingForConnection until
+  the image's 20 s timeout (redistick: 26.5 s errors -> 53 ms, stock
+  parity).  And arithmeticSend now fast-paths SmallInteger/Float compares
+  (guarded: exact-class BoxedFloat64/SmallFloat, ints within 2^53) —
+  int<float was 48x vs Cog via the Float>>adaptToInteger: fraction path;
+  1M-iteration kernel 909 -> 69 ms; 13-case NaN/inf/2^60 edge vector
+  bit-identical to stock.
+- **Ephemeron basicNewTenured + vmParameter 34** (ac87599f): prim 596
+  rejected instSpec 5 (Spur allows fixed-size pointer formats 0/1/5) and
+  param 34 (cumulative allocation bytes — Illimani's lifetime clock)
+  returned 0.  illimani-memory-profiler 15/15 (was 0/15).
+- **Live-frame NLR through ensure: sends aboutToReturn:through:**
+  (f9e49453): the native ensure-hop produced correct values but bypassed
+  the image-visible unwind protocol (MethodProxies wraps that method;
+  stepping pattern-matches its activation).  nlrDelegateToImageProtocol
+  pre-scans the frame window and delegates to the materialized-context
+  protocol path.  Probe `[^7] ensure: [2]`: stock counts 1 send, ours
+  counted 0, now 1.  MethodProxies 39/39; exception/context/process
+  batteries green.  Cost: ensure-crossing NLR 1.2 -> 6.9 us (stock 0.4);
+  rare pattern, owned by the activation-wall project.
+- **Socket readSema signal storm** (4c4e13e6): the io-monitor signaled
+  readable EVERY ~5 us poll iteration while data sat unread — hundreds of
+  excess signals per message that the reader spin-drained for 10-30 ms,
+  starving same-band processes (MyPrecious sync RPC timed out every first
+  attempt).  Edge-suppressed via readSignaled (mirrors writeSignaled),
+  re-armed per recv().  Wake repro 22-93 ms -> 4-12 ms;
+  testArgPassByCopy passes.
+
+Classified, no VM change: famixreplication/lexicon/deeptraverser/
+polymath/hera = perf-gap (block-invocation / reflective-scan / mixed-
+compare kernels quantified, activation-wall project), porpoise = test-
+design GC race (identical empirical signature on both VMs), p3 =
+not-reproducible-on-macOS (Linux resolver-latency flavor, box check
+queued).  Upstream wishlist (a798cfac): OCClassBuilder trait-composition,
+SystemDependencies Reflectivity drift, MorphicNativeWindow hasProperty:.
+
 2026-07-06 (second wave)
 
 ## proxy protocols + suite-scale fixes: cannotInterpret:, become-of-a-class, surface registry, World-cycle loop

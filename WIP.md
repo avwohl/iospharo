@@ -1,6 +1,18 @@
 # WIP — /goal "fix all non-Windows bugs" — CONTINUED 2026-07-06 night → 07-07
 
-## 2026-07-07 — jitpkg candidate-queue hunt (IN PROGRESS)
+## 2026-07-07 — hunt RESULTS: five VM fixes landed (see docs/changes.md 2026-07-07)
+
+Fix commits (all verified on the hunt images + regression batteries;
+built/tested in build-hunt/ to keep the fleet's build/ binary stable):
+e5570688 (SQFile handles + profiler deadline), 38c457f7 (POLLHUP +
+int/float compare fast path), ac87599f (ephemeron tenure + param 34),
+f9e49453 (NLR aboutToReturn: protocol), 4c4e13e6 (readSema storm).
+PENDING at wrap: restoreforpharo agent (last of 14) still measuring;
+main build/ NOT yet rebuilt (fleet safety) — rebuild + full catalog
+validation next; push after catalog.  Hunt workdirs /tmp/pkghunt-*
+retained (loaded package images for re-verification).
+
+## 2026-07-07 — jitpkg candidate-queue hunt (launch notes)
 
 - Workflow `pkg-candidate-hunt` (run wf_214bdc82-158): 14 agents, one per
   candidate package from the pkg200 sweep, each builds a FRESH package
