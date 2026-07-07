@@ -4,6 +4,30 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
+## Catalog non-pass triage — deterministic-bug search (2026-07-07)
+
+Exhaustive search for remaining DETERMINISTIC our-VM correctness bugs in
+the 25 catalog non-passes came up EMPTY — every one is (a) an upstream
+image bug (OCClassBuilder trait-composition, SystemDependencies
+Reflectivity, rename — image_issues.md wishlist), (b) env/harness (the
+StDebugger family: testDynamicVariableEvaluation, testIsInSelected-
+ContextPackage, testUpdateLayoutForContexts — stock-with-same-prep fails
+identically; ZnClient network), (c) perf, not correctness (reflective-
+slowness timeouts — activation-wall project), (d) run-order pollution
+that is stock-IDENTICAL (ReleaseTest testObsoleteClasses / testPackage-
+Organizer / testUnknownProcesses / testNoLiteralIsPinnedInMemory), or
+(e) a GC/become/heap-state HEISENBUG (SlotIntegration trait-add,
+WeakOrderedCollection all-GC'd, EventAfterProceed).  Deterministic
+counter-probes CONFIRMED our VM matches stock on: weak-clearing
+(WeakArray/WeakOrderedCollection/keep-1), becomeForward completeness
+(slot/Dictionary/IdentitySet/OrderedCollection, no GC needed), and
+DynamicVariable (value:during:/nested/fork).  So the Heisenbug cluster
+is NOT a generic weak-nil, forwarder-scan, or process-local gap — it is
+specific to the class-REBUILD and debugger-RESURRECTION paths under
+accumulated heap state, and needs the dedicated DET_SCHED+lldb approach
+(recipes above), not quick Smalltalk probes (which MISLEAD — the
+mini-repros are themselves heap-state-flaky).
+
 ## ARM catalog "context storm" — timing Heisenbug (open, 2026-07-07)
 
 Full-catalog-only, ARM/macOS-only, RARE: after the 2026-07-07 six-VM-fix
