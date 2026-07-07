@@ -26,7 +26,22 @@ Bisect side-find: SlotIntegrationTest testAddAndAddInstVarNamedWithTrait2
 fails standalone at PRE-fix ffca1841 too (trait ivar-add lost; '2 ran'
 doubling) — pre-existing, masked by catalog order; queued in deferred.
 
-VALIDATION IN FLIGHT (2026-07-07 ~08:00, second round):
+CATALOG 9c POST-MORTEM: the explosion REPRODUCED with the profiler pin
+cleared — same GC-sample signature (64 MB at fullGC #352 -> ~3.69 GB at
+#384, reclaimed=0, 12 s GCs), specimen again living inside scavenge().
+The exploding class varies per run (9b: RSCircleVennDiagramTest
+testBasicVennDiagramOpen; 9c: RSExamplesTest testClassSideExamples —
+both PASS standalone and PASSED in catalog #8) — an RS window-open/
+examples-region suite-context accumulation.  The pin fix stands on its
+own (Cog parity + WeakOrderedCollection differential) but was not the
+whole story.  NEW INSTRUMENT (1363d92d): dumpHeapCensus — top-25
+class-name histogram by bytes, on the FATAL path and per-fullGC >1 GB
+under PHARO_HEAP_CENSUS=1.  Suspect list for the census to arbitrate:
+Athens/SDL surface pixel ByteArrays rooted by the (growable) manual-
+surface registry vs World-accumulated windows re-rendered by the
+FakeGUI 25 ms cycle loop vs materialized-context/other VM-root pinning.
+
+VALIDATION IN FLIGHT (2026-07-07 ~09:30, third round, census armed):
 - Local ARM catalog #9 running with all six fixes (launch_catalog.sh,
   log /tmp/catalog9_run.log, results /tmp/sunit_test_results.txt).
   Compare to catalog #8: 27,763 P / 22 non-pass = 99.92%.
