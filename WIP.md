@@ -7,10 +7,23 @@ built/tested in build-hunt/ to keep the fleet's build/ binary stable):
 e5570688 (SQFile handles + profiler deadline), 38c457f7 (POLLHUP +
 int/float compare fast path), ac87599f (ephemeron tenure + param 34),
 f9e49453 (NLR aboutToReturn: protocol), 4c4e13e6 (readSema storm).
-PENDING at wrap: restoreforpharo agent (last of 14) still measuring;
-main build/ NOT yet rebuilt (fleet safety) — rebuild + full catalog
-validation next; push after catalog.  Hunt workdirs /tmp/pkghunt-*
-retained (loaded package images for re-verification).
+SIXTH fix landed after the fleet finished: a99eee86 two-way become
+C++ stack swap (restoreforpharo 15/15, package-free repro in memory).
+All six pushed through a99eee86 + docs 069db8eb.
+
+VALIDATION IN FLIGHT (2026-07-07 ~05:40):
+- Local ARM catalog #9 running with all six fixes (launch_catalog.sh,
+  log /tmp/catalog9_run.log, results /tmp/sunit_test_results.txt).
+  Compare to catalog #8: 27,763 P / 22 non-pass = 99.92%.
+- x86 box i-0ee8772f007d035af (3.150.133.214, us-east-2) running the
+  full suite at 39cd1d91 (five fixes, become fix NOT included — pull +
+  spot-verify become families after it finishes).  Beat the lease with
+  ./scripts/aws/lease.sh beat i-0ee8772f007d035af while working; box
+  reaps without beats.  Teardown when done.
+- After catalog: p3 Linux-resolver check on the box; then the
+  activation-wall perf campaign (scripts/perf-activation/ README has
+  the 4 ordered load-chain ablations; needs QUIET machine).
+Hunt workdirs /tmp/pkghunt-* retained (loaded package images).
 
 ## 2026-07-07 — jitpkg candidate-queue hunt (launch notes)
 
