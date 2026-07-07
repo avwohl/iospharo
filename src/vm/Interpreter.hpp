@@ -2195,6 +2195,7 @@ private:
     void returnFromMethod();
     void returnFromBlock();
     bool handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx);
+    bool nlrDelegateToImageProtocol(Oop value, size_t homeFrame);
 
     // Extended bytecodes (2-3 bytes)
     void extendedPush();

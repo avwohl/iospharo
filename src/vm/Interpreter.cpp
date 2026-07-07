@@ -7894,6 +7894,9 @@ void Interpreter::returnFromMethod() {
             // Do NOT substitute nlrValue_: it may be stale from an outer
             // paused NLR while this inner block return happens during
             // ensure: cleanup.
+            // Unwind-marked frame in the window? Stock protocol requires the
+            // image-visible aboutToReturn:through: send — delegate.
+            if (nlrDelegateToImageProtocol(value, homeFrame)) return;
             Oop nlrVal = value;
             while (frameDepth_ > homeFrame) {
                 if (frameDepth_ > 1) {
@@ -8033,6 +8036,7 @@ void Interpreter::returnFromMethod() {
                         size_t homeFrame = si;
                         if (__builtin_expect(nlrTrace, 0))
                             fprintf(stderr, "[NLR-HOME] inline path homeFrame=%zu\n", si);
+                        if (nlrDelegateToImageProtocol(value, homeFrame)) return;
                         while (frameDepth_ > homeFrame) {
                             // Check ensure: in unwind path
                             if (frameDepth_ > 1) {
@@ -8222,6 +8226,7 @@ void Interpreter::returnFromMethod() {
             // Non-local return: unwind frames from current down to homeFrame
             // We want to return FROM the home method, so we pop down to homeFrame,
             // then returnValue pops one more and pushes the value to the caller
+            if (nlrDelegateToImageProtocol(value, homeFrame)) return;
             while (frameDepth_ > homeFrame) {
                 // Check if the frame we're about to restore has primitive 198 (ensure:/ifCurtailed:).
                 // If so, we must fire its termination block before continuing the NLR.
@@ -8411,6 +8416,7 @@ void Interpreter::returnFromBlock() {
         // Unwind frames from current down to homeFrame, checking for ensure: at each level.
         // After the loop, fd == homeFrame and current == home method.
         // returnValue then pops the home method's frame and pushes value on the caller's stack.
+        if (nlrDelegateToImageProtocol(value, homeFrame)) return;
         while (frameDepth_ > homeFrame) {
             // Check if the frame we're about to restore has primitive 198 (ensure:/ifCurtailed:).
             // If so, we must fire its termination block before continuing the NLR.
@@ -8585,6 +8591,72 @@ void Interpreter::returnFromBlock() {
 // ensure: cleanup but didn't continue the NLR. The NLR value was returned
 // normally through the ensure: → critical: chain, and intern:'s `pop; returnSelf`
 // discarded it, returning Symbol class instead of the interned symbol.
+// Live-frame NLR delegation to the stock image unwind protocol.
+//
+// When an unwind-marked (prim-198 ensure:/ifCurtailed:) frame lies between
+// the returning live frame and its home frame, stock Cog does NOT unwind
+// natively — commonReturn sends Context>>#aboutToReturn:through: and the
+// image machinery runs every unwind block, terminates the intervening
+// contexts and returns to home's sender.  That send is image-visible ABI:
+// MethodProxies wraps #aboutToReturn:through: and expects it to fire on an
+// NLR through ensure: (testCanWrapAboutToReturnThroughWithNonLocalReturn);
+// stepping/debugger machinery pattern-matches the same activation.  The
+// old native ensure-hop (pause NLR in nlrHomeMethod_/nlrValue_ +
+// homeFrameDepth, run cleanup, resume) produced correct VALUES but
+// silently bypassed the protocol — probe `[ ^ 7 ] ensure: [ 2 ]` counted
+// 1 aboutToReturn: send on stock and 0 here.
+//
+// Called from the four live-frame NLR unwind sites BEFORE they pop
+// anything: scan [homeFrame, top] for a prim-198 frame; on a hit,
+// materialize the whole frame window and delegate to
+// handleContextNLRUnwind (which sends the protocol).  Returns true when
+// delegation happened (caller must return immediately); false to continue
+// the native pop loop (no unwind frames in between — plain fast path,
+// stock returns directly in that case too).
+bool Interpreter::nlrDelegateToImageProtocol(Oop value, size_t homeFrame) {
+    if (GET_DEBUG_BOOL(PHARO_NATIVE_NLR_UNWIND)) return false;  // bisect escape
+    if (!selectors_.aboutToReturn.isObject() || selectors_.aboutToReturn.isNil())
+        return false;
+    if (homeFrame >= frameDepth_) return false;
+    bool haveEnsure = false;
+    for (size_t i = homeFrame; i < frameDepth_; i++) {
+        Oop m = savedFrames_[i].savedMethod;
+        if (m.isObject() && m.rawBits() > 0x10000 && primitiveIndexOf(m) == 198) {
+            haveEnsure = true;
+            break;
+        }
+    }
+    if (!haveEnsure) return false;
+
+    // Sender hops from the live frame's context to the home frame's context:
+    // savedFrames_[frameDepth_-1] is 1 hop, savedFrames_[homeFrame] is
+    // (frameDepth_ - homeFrame) hops.  Compute BEFORE materializing (which
+    // zeroes frameDepth_).
+    size_t hops = frameDepth_ - homeFrame;
+    Oop topCtx = materializeFrameStack();
+    activeContext_ = topCtx;
+    frameDepth_ = 0;
+    Oop homeCtx = topCtx;
+    for (size_t i = 0; i < hops; i++) {
+        if (!homeCtx.isObject() || homeCtx.isNil()) break;
+        homeCtx = memory_.fetchPointer(0, homeCtx);  // sender
+    }
+    if (homeCtx.isObject() && !homeCtx.isNil()
+        && handleContextNLRUnwind(value, topCtx, homeCtx)) {
+        return true;
+    }
+    // Cannot happen by construction: the pre-scan found a prim-198 frame in
+    // [homeFrame, top], materialization mirrors those frames 1:1 into the
+    // context chain, and handleContextNLRUnwind runs the same search over
+    // it.  Reaching here means the frame window and the materialized chain
+    // disagree — a broken invariant we must not paper over (the frames are
+    // already gone, so "return false and let the caller pop natively" would
+    // corrupt the stack silently).
+    stopVM("nlrDelegateToImageProtocol: ensure frame found in live frames "
+           "but not in the materialized context chain");
+    return true;
+}
+
 bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
     Oop ctx = startCtx;
     int depth = 0;
