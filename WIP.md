@@ -41,6 +41,26 @@ Athens/SDL surface pixel ByteArrays rooted by the (growable) manual-
 surface registry vs World-accumulated windows re-rendered by the
 FakeGUI 25 ms cycle loop vs materialized-context/other VM-root pinning.
 
+STORM DOSSIER UPDATE (2026-07-07 ~13:00):
+- CENSUS VERDICT: the explosion is CONTEXTS (2.4M -> 9M objects, ~12 per
+  iteration) + lock-step MNU/PrimitiveFailed/Message triples (~135k per
+  census interval) — a P80 process in an Oups dummy-debugger exception
+  recursion, endlessly freeze/freezeUpTo:-copying its ever-deepening
+  MATERIALIZED stack (evades the 4096 live-frame overflow guard).
+- ffca1841 BASELINE CONTROL: full catalog COMPLETED, no storm, peak
+  364 MB — and a fresh best-ever 27,766 P / 13 F / 2 E / 4 T = 19
+  non-pass (99.93%).  The storm is a REGRESSION from the six VM-fix
+  commits (e5570688..a99eee86 window).
+- x86 (box, all NINE fixes + census): NO STORM — cruised past the RS
+  region, zero census firings.  ARM/macOS-timing-specific race.
+- PRIME SUSPECT: f9e49453 (NLR aboutToReturn protocol — the storm IS
+  materialized-context churn in exception unwinds).  Local catalog on
+  HEAD-with-NLR-reverted (branch storm-bisect-noNLR, 091d8b9e) IN
+  FLIGHT to confirm; box completing the x86 9-fix validation.
+- Ninth fix landed: low-space signal implemented (prim 125 was
+  write-only; Cog semantics; [LOW-SPACE] verified firing).  Census now
+  also dumps process queues.
+
 VALIDATION IN FLIGHT (2026-07-07 ~09:30, third round, census armed):
 - Local ARM catalog #9 running with all six fixes (launch_catalog.sh,
   log /tmp/catalog9_run.log, results /tmp/sunit_test_results.txt).
