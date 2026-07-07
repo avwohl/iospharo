@@ -41,6 +41,24 @@ Athens/SDL surface pixel ByteArrays rooted by the (growable) manual-
 surface registry vs World-accumulated windows re-rendered by the
 FakeGUI 25 ms cycle loop vs materialized-context/other VM-root pinning.
 
+STORM BISECT (2026-07-07 ~14:30):
+- become (a99eee86) EXONERATED by cheap sender analysis (no run needed):
+  the debugger stepping (FastStepThroughController>>revertBlocks) uses
+  elementsForwardIdentityTo: = ONE-WAY become (prim 249, untouched);
+  only BecomeTest/ObjectTest/Fuel send the TWO-WAY become: I changed.
+  Frame-scoped targeted fix pre-staged anyway (branch storm-fix-
+  framescope, 404674cd) in case a later test needs it.
+- NEW PRIME SUSPECT: e5570688 profiler-DEADLINE hunk (not SQFile).  It
+  is the only fix that changes SCHEDULING TIMING — synchronousSignal at
+  every periodic checkpoint + primitiveRelinquishProcessor when a
+  deadline is armed.  If an earlier profiler test (StProfiler/
+  MessageTally) armed profileStart: and errored before profileSemaphore:
+  nil, the deadline keeps firing synchronousSignal on a possibly-stale
+  semaphore in the RS region = the process-resurrection vector.  The
+  OLD bytecode-count profiler was dormant in-suite (never fired), which
+  is why the storm is new.  Awaiting the all-diagnostics run's failing-
+  primitive name to confirm before the targeted bisect.
+
 STORM BISECT (2026-07-07 ~14:00):
 - NLR revert (f9e49453) EXONERATED: storm still fires, identical
   signature (P80 PrimitiveFailed>>freeze recursion at RSExamplesTest).
