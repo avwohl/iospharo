@@ -1,5 +1,63 @@
 # WIP — /goal "fix all non-Windows bugs" — CONTINUED 2026-07-06 night → 07-07
 
+## ============ 2026-07-07 SESSION SUMMARY (read this first) ============
+
+NINE VM fixes this session, all committed+pushed, all package-verified on
+freshly-loaded package images + regression batteries (details: docs/
+changes.md 2026-07-07):
+  1. e5570688  SQFile ByteArray file handles (soil 9/9) + wall-clock
+     profiler deadline (sauco 6/6)
+  2. 38c457f7  POLLHUP in connect-writable map (redistick parity) +
+     mixed int/float compare fast path (hera kernel 48x->3.6x)
+  3. ac87599f  ephemeron basicNewTenured + vmParameter 34 alloc clock
+     (illimani 15/15)
+  4. f9e49453  live-frame NLR sends aboutToReturn:through: (methodproxies
+     39/39)
+  5. 4c4e13e6  edge-suppress socket readSema storm (myprecious
+     testArgPassByCopy)
+  6. a99eee86  two-way become swaps C++ stack refs (ReStore 15/15)
+  7. 19dd56b0  primitiveProfileSemaphore clears pinned-process GC roots
+     (Cog parity)
+  8. 22fcb0e7  low-space signal implemented — prim 125 was write-only
+     (Cog parity; the runaway-allocation circuit breaker)
+  9. diagnostics: dumpHeapCensus + PHARO_HEAP_CENSUS, PHARO_PRIM_FAIL_
+     STORM (gated), PHARO_MAX_OLD_SPACE_MB knob
+Plus a798cfac (3 upstream pristine-image bugs -> image_issues.md wishlist).
+
+CANDIDATE-QUEUE HUNT COMPLETE (14-agent workflow): every package
+classified; 7 families FIXED (fixes 1-6 above), rest = perf-gap
+(activation-wall project) / upstream test-design / Linux-only flavor.
+
+VALIDATION:
+- x86 (all 9 fixes): NO storm, clean through ~99% of classes (P~26,315,
+  F=10, E=14 from parsed totals); ended in the pre-existing ThreadedFFI-
+  callback exit-latency region (TFBasicType..., not a storm).  Box torn
+  down.
+- ARM: catalog #8 baseline was 22 non-pass / 99.92%.  The 2026-07-07
+  wave introduced ONE regression — the ARM-only "context storm"
+  Heisenbug (full dossier: docs/deferred.md "ARM catalog context
+  storm").  Open; mitigated by the low-space signal (fix 8); repro needs
+  PHARO_DET_SCHED.  NLR + become EXONERATED; profiler-deadline/ephemeron/
+  compare/readSema still open.  Bisect binaries staged on branches
+  storm-test-noprofdeadline, storm-test-nobecome, storm-fix-framescope.
+
+OPEN FOLLOW-UPS (next session):
+- ARM context storm root-cause bisect via PHARO_DET_SCHED (recipe in
+  deferred.md); verify low-space net catches it.
+- SlotIntegrationTest trait ivar-add (pre-existing, 18-probe dossier in
+  deferred.md).
+- TF-callback exit-latency tail hang (pre-existing, both platforms).
+- Activation-wall perf project (owns the perf-gap package families).
+
+GOTCHA logged: never run two local test_load_image catalogs at once —
+they share /tmp/sunit_test_results.txt + the image and clobber each
+other (looks like early death at ~120-240 lines).  One run at a time;
+kill strays with pkill -9 -f "test_load_image /tmp/harness".
+
+## ====================================================================
+
+
+
 ## 2026-07-07 — hunt RESULTS: five VM fixes landed (see docs/changes.md 2026-07-07)
 
 Fix commits (all verified on the hunt images + regression batteries;
