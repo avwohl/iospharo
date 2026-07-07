@@ -11716,6 +11716,60 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // z-add.  Answers: does the builder's slot collection reach the
     // comparison already short (size 2), or does the comparison wrongly
     // equate a 3 with a 2?  Also traces addSlot:/slots:/copyWith: arg sizes.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRAP_IVAR0), 0)) {
+        // Catch the SubscriptOutOfBounds raise: dump the full frame chain
+        // when any message is sent to a SubscriptOutOfBounds instance.
+        Oop rcv = stackValue(argCount);
+        if (rcv.isObject() && rcv.rawBits() > 0x10000
+                && memory_.classNameOf(rcv).find("SubscriptOutOfBounds") != std::string::npos) {
+            static int soob = 0;
+            if (soob == 0) {
+                soob = 1;
+                fprintf(stderr, "[SOOB-RAISE] step=%llu frames (leaf->root):\n",
+                        (unsigned long long)g_stepNum);
+                for (int f = static_cast<int>(frameDepth_); f >= 0 && f > (int)frameDepth_ - 40; --f) {
+                    Oop sm = savedFrames_[f].savedMethod;
+                    std::string ssel = (sm.isObject() && sm.rawBits() > 0x10000)
+                        ? memory_.selectorOf(sm) : std::string("?");
+                    // sanitize non-printable bytes
+                    for (char& c : ssel) if ((unsigned char)c < 32 || (unsigned char)c > 126) c = '.';
+                    Oop sr = savedFrames_[f].savedReceiver;
+                    std::string rc = (sr.isObject() && sr.rawBits() > 0x10000)
+                        ? memory_.classNameOf(sr) : (sr.isSmallInteger() ? "SmI" : "imm");
+                    // dump the frame's args/temps (savedFP+1..): look for a 0 index
+                    std::string temps;
+                    if (savedFrames_[f].savedFP) {
+                        for (int t = 1; t <= 4; t++) {
+                            Oop tv = *(savedFrames_[f].savedFP + t);
+                            char buf[32];
+                            if (tv.isSmallInteger()) snprintf(buf, sizeof buf, " t%d=%lld", t, (long long)tv.asSmallInteger());
+                            else if (tv.isObject() && tv.rawBits() > 0x10000) { std::string cn = memory_.classNameOf(tv); snprintf(buf, sizeof buf, " t%d=%.12s", t, cn.c_str()); }
+                            else snprintf(buf, sizeof buf, " t%d=imm", t);
+                            temps += buf;
+                        }
+                    }
+                    // If t1 is the object being reflectively read, dump its
+                    // slotCount vs its class instSize (the mismatch signature).
+                    std::string extra;
+                    if (savedFrames_[f].savedFP) {
+                        Oop obj = *(savedFrames_[f].savedFP + 1);
+                        if (obj.isObject() && obj.rawBits() > 0x10000) {
+                            size_t sc = obj.asObjectPtr()->slotCount();
+                            Oop cls = memory_.classOf(obj);
+                            long instSize = -1;
+                            if (cls.isObject()) {
+                                Oop fmt = memory_.fetchPointer(2, cls);
+                                if (fmt.isSmallInteger()) instSize = fmt.asSmallInteger() & 0xFFFF;
+                            }
+                            char b[80]; snprintf(b, sizeof b, " | t1.slotCount=%zu t1.classInstSize=%ld", sc, instSize);
+                            extra = b;
+                        }
+                    }
+                    fprintf(stderr, "  [%d] #%s recv=%s%s%s\n", f, ssel.c_str(), rc.c_str(), temps.c_str(), extra.c_str());
+                }
+            }
+        }
+    }
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_SLOTCMP), 0)) {
         std::string sel = memory_.selectorOf(method);
         bool interesting = sel.find("compareVariables") != std::string::npos
@@ -11742,6 +11796,23 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 }
                 return -2;  // some other class
             };
+            // For read:/write:to: the receiver is the slot; dump its name(0)
+            // and index(3) ivars to catch the index-0 slot directly.
+            if (sel == "read:" || sel == "write:to:") {
+                Oop slot = stackValue(argCount);
+                if (slot.isObject() && slot.rawBits() > 0x10000
+                        && slot.asObjectPtr()->slotCount() >= 4) {
+                    Oop nm = memory_.fetchPointer(0, slot);
+                    Oop ix = memory_.fetchPointer(3, slot);
+                    long long ixv = ix.isSmallInteger() ? (long long)ix.asSmallInteger() : -999;
+                    fprintf(stderr, "[SLOT-IVARS] #%s slotName=#%s index=%lld slotClass=%s step=%llu\n",
+                            sel.c_str(),
+                            (nm.isObject() && nm.rawBits() > 0x10000)
+                                ? memory_.selectorOf(nm).c_str() : "?",
+                            ixv, memory_.classNameOf(slot).c_str(),
+                            (unsigned long long)g_stepNum);
+                }
+            }
             fprintf(stderr, "[SLOTCMP] #%s step=%llu args:", sel.c_str(),
                     (unsigned long long)g_stepNum);
             for (int a = argCount; a >= 0; a--) {
