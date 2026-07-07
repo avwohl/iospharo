@@ -2668,6 +2668,20 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     fullGCCount_++;
     fullGCTime_ += result.milliseconds;
 
+    // PHARO_GC_LOG completion line: used-after tracks LIVE heap across the
+    // run (the entry line shows pressure; this shows what survived) — the
+    // leak-vs-borderline discriminator for old-space exhaustion deaths.
+    if (GET_DEBUG_BOOL(PHARO_GC_LOG)) {
+        static int count = 0;
+        ++count;
+        if (count <= 50 || (count & 0x1F) == 0) {
+            fprintf(stderr, "[GC-LOG] fullGC #%d done: live=%zu MB reclaimed=%zu MB %lldms\n",
+                    count, usedAfter / (1024 * 1024),
+                    result.bytesReclaimed / (1024 * 1024),
+                    (long long)result.milliseconds);
+        }
+    }
+
     // PHARO_DELAY_DEBUG: log any GC over 10ms. Long GCs stall the main
     // interpreter loop, which is what blocks checkTimerSemaphore and
     // causes delay-fire latency spikes seen in timing tests.
