@@ -1,5 +1,26 @@
 # WIP — /goal "fix all non-Windows bugs" — CONTINUED 2026-07-06 night → 07-07
 
+## 2026-07-07 — jitpkg candidate-queue hunt (IN PROGRESS)
+
+- Workflow `pkg-candidate-hunt` (run wf_214bdc82-158): 14 agents, one per
+  candidate package from the pkg200 sweep, each builds a FRESH package
+  image locally (pristine 130 base in scratchpad/pkgbase, stock-VM
+  Metacello load with retry — stock Cog segfaults ~1-in-2 during git/FFI
+  fetch on this Mac, retries succeed), parity-runs the jit-only failing
+  tests on both VMs, shrinks divergences to minimal repros.  jit-only
+  sets computed from docs/results/catalog-2026-07-06/pkg200-fails/
+  (comm -13 cog jit).  NOTE: p3's real jit-only set is
+  P3ConnectionPoolTest testOne/testError/testWarmUp TIMEOUTs (socket
+  error-path shaped), NOT the P3ClientTest conversion errors (parity —
+  both VMs lack a postgres server).
+- docs/image_issues.md upstream wishlist written + committed (a798cfac):
+  OCClassBuilderTest trait-composition OCCodeError, SystemDependencies
+  UI-deps Reflectivity drift, MorphicNativeWindow lacks hasProperty: —
+  all three re-verified failing on stock Cog with the PRISTINE image.
+- DiskFileSystemTest testLongFilename "one-off": NOT in any archived
+  detail (catalog 7, 8, x86 run3 all 59/59 PASS) — never reproduced;
+  dropped as non-actionable.
+
 **CATALOG #8 (macOS/ARM, everything): 27,763 P / 15 F / 3 E / 4 T / 182 S
 = 22 non-pass = 99.92%.**  Full-day arc: 199 → 113 → 84 → 59 → 33 → 22.
 Archived: docs/results/catalog-2026-07-06/arm_catalog8_detail.txt.
