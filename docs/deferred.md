@@ -81,7 +81,17 @@ binary (gate the executePrimitive wrapper off so timing isn't perturbed).
 Watch for [LOW-SPACE] (net caught it) vs [HEAP-CENSUS]...->FATAL (net
 missed).  Then bisect the OPEN suspects deterministically.
 
-## Cross-platform catalog state — FINAL 2026-07-06/07 (see WIP.md, docs/changes.md)
+## Cross-platform catalog state — FINAL 2026-07-07 (see WIP.md, docs/changes.md)
+
+Catalog #10 (macOS/ARM, all 9 fixes, lean binary + low-space net):
+**27,760 P / 16 F / 2 E / 7 T = 25 non-pass = 99.91%** — COMPLETE, no
+storm.  Every non-pass is a known accepted-residual (see the per-family
+list below + the storm dossier above); zero new regressions from the
+2026-07-07 fix wave.  The candidate-queue PACKAGE fixes (soil/sauco/
+illimani/methodproxies/redistick/myprecious/restore) are validated on
+their own loaded images, not in this base-catalog number.
+
+## Cross-platform catalog state — earlier (2026-07-06/07)
 
 Catalog #8 (macOS/ARM, everything): **27,763 P / 15 F / 3 E / 4 T / 182 S
 = 22 non-pass = 99.92%.**  Day arc: 199 → 113 → 84 → 59 → 33 → 22.

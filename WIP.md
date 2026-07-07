@@ -28,7 +28,17 @@ CANDIDATE-QUEUE HUNT COMPLETE (14-agent workflow): every package
 classified; 7 families FIXED (fixes 1-6 above), rest = perf-gap
 (activation-wall project) / upstream test-design / Linux-only flavor.
 
-VALIDATION:
+VALIDATION (FINAL):
+- ARM full catalog COMPLETED (lean binary + low-space net, 2 GB ceiling):
+  **27,760 P / 16 F / 2 E / 7 T = 25 non-pass = 99.91%** — ran to
+  completion (ZnUtilsTest, last class), NO STORM this run.  All 25
+  non-passes are KNOWN accepted-residual families (reflective-slowness
+  timeouts, StDebugger/StSpotter, ReleaseTest run-order pollution, the
+  3 upstream image bugs, ZnClient network, TKT flaky, SlotIntegration
+  trait doubling [pre-existing dossier], GC flakes) — ZERO new
+  regressions from the 9 fixes.  vs catalog #8: 22 non-pass; delta = 3
+  timing-variable flakes.  The storm being absent confirms it is RARE;
+  the lean binary completes the full catalog.
 - x86 (all 9 fixes): NO storm, clean through ~99% of classes (P~26,315,
   F=10, E=14 from parsed totals); ended in the pre-existing ThreadedFFI-
   callback exit-latency region (TFBasicType..., not a storm).  Box torn
