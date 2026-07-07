@@ -34,6 +34,25 @@ SlotIntegration is a SCHEDULING Heisenbug, and DET_SCHED cracks it open:
    in-progress computation's temps/intermediate, so on resume the
    computation continues from a subtly wrong state.
 
+CODE-PATH LOCALIZATION (2026-07-07, by inspection against the repro):
+the defect is in the preemption save/restore of a DEEP frame stack.  On
+preemption mid-build, materializeFrameStack (Interpreter.cpp:18301) saves
+ALL live frames to a context chain (save path inspected — numTemps
+`>>18 & 0x3F` matches the canonical decoders, temp + expr-stack saves
+look correct for simple frames).  The build is then resumed via
+executeFromContext (20103) which restores only the TOP context as a live
+frame (fd=0); the SENDER frames (the copyWith/allSlots frames holding the
+in-progress slot collection) stay materialized and are restored LAZILY
+on return, in returnValue's fd==0 branch (6977+).  That return-into-
+materialized-sender path has subtle stackp semantics (e.g. line ~7166:
+`executeFromContext(homeSender); framePointer_[1 + hsOrigSp] = value` —
+placing the return value relative to the restored operand stack), and is
+the prime suspect for dropping the in-progress operand.  The bug is in
+ONE of {materialize expr-stack extent for a mid-send frame, the
+executeFromContext stackp restore, the returnValue fd==0 sender-restore
+value placement} — NOT in a simple-frame path (those are exercised
+constantly and work).
+
 DETERMINISTIC REPRO (next session — no more flaky probing):
   gui.image (pkgbase + fake-GUI), /tmp/fail.st = warmup + instance-present
   double addInstVarNamed; PHARO_DET_SCHED=1 => '2' (fail), q>=2 => '3'.
