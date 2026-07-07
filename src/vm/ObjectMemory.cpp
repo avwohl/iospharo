@@ -1497,6 +1497,15 @@ bool ObjectMemory::become(Oop obj1, Oop obj2) {
         }
     });
 
+    // CLASSES: instance dispatch resolves header classIndex through
+    // classTable_ — a C++ vector the heap scan above cannot see.  Swap any
+    // table entries so instances whose headers carry those class indices
+    // dispatch through the exchanged objects (Spur parity).
+    for (size_t i = 0; i < classTable_.size(); ++i) {
+        if (classTable_[i] == obj1) classTable_[i] = obj2;
+        else if (classTable_[i] == obj2) classTable_[i] = obj1;
+    }
+
     return true;
 }
 
@@ -1563,6 +1572,20 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
                 (unsigned long long)obj1.rawBits(),
                 (unsigned long long)obj2.rawBits(), becomeReplacedCount);
         }
+    }
+
+    // CLASSES: instance dispatch resolves header classIndex through
+    // classTable_ — a C++ vector the heap scan above cannot see.  If obj1
+    // occupies class-table slots, redirect them so instances whose headers
+    // carry that classIndex dispatch through obj2.  Spur parity: a class's
+    // identityHash IS its table index and the become prims copy the hash,
+    // so indexOfClass(obj2) stays coherent.  GHost/Mocketry real-object
+    // stubs depend on this exact dance — they becomeForward: an anonymous
+    // helper class into a mutation object; without the redirect the victim
+    // keeps dispatching into the empty helper and stubs silently never
+    // intercept (gitlab/bitbucket API suites, 90 tests, jitpkg 2026-07-06).
+    for (size_t i = 0; i < classTable_.size(); ++i) {
+        if (classTable_[i] == obj1) classTable_[i] = obj2;
     }
 
     return true;
