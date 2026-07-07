@@ -4,6 +4,46 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
+## BREAKTHROUGH: the Heisenbug cluster is a PREEMPTION/MATERIALIZATION bug (2026-07-07)
+
+SlotIntegration is a SCHEDULING Heisenbug, and DET_SCHED cracks it open:
+- PHARO_DET_SCHED=1 => DETERMINISTIC FAIL (result '2'), and — the whole
+  point of the tool — it reproduces WITH instrumentation attached
+  (PHARO_TRACE_BECOME confirms: only the `#y` class-become runs, the `#z`
+  become is skipped, deterministically observable).
+- PHARO_DET_SCHED_QUANTUM bisect: q=1 FAILS, q>=2 PASS.  So a periodic
+  checkpoint firing at the q=1 rate lands at a specific bytecode window in
+  the class build and corrupts it; a coarser quantum misses that window.
+- What healed it earlier was NOT allocation but TIMING: PHARO_PRIM_SEQ (a
+  per-primitive ring-buffer write) shifted checkpoint timing and healed
+  it, while per-become / per-scavenge traces did not.  That is the
+  signature of a scheduling Heisenbug, not a memory one.
+- ALL VM memory-integrity checkers are CLEAN during the deterministic
+  failure (dangle / alloc-size / shadow-slots = 0).  So the corruption is
+  LOGICAL, not memory: a live temp (the in-progress slot collection in
+  `copyWith:`/`allSlots`) comes back with the wrong VALUE after the
+  build is preempted and its frames are materialized to a context and
+  restored.
+
+=> ROOT CLASS: process-switch / materializeFrameStack temp handling when
+   a preemption hits mid-operation — the SAME area as the ARM context
+   storm (preemption during the debugger recursion) and the NLR/
+   materialization work.  The Heisenbug cluster (SlotIntegration, storm,
+   WeakOC/finalization flakes) very likely shares THIS root: our VM's
+   frame materialization on preemption does not perfectly preserve an
+   in-progress computation's temps/intermediate, so on resume the
+   computation continues from a subtly wrong state.
+
+DETERMINISTIC REPRO (next session — no more flaky probing):
+  gui.image (pkgbase + fake-GUI), /tmp/fail.st = warmup + instance-present
+  double addInstVarNamed; PHARO_DET_SCHED=1 => '2' (fail), q>=2 => '3'.
+  Under DET_SCHED you can attach ANY instrumentation without healing.
+  NEXT: trace materializeFrameStack during the DET_SCHED q=1 failing
+  build (it will be called mid-`copyWith:`/slot-build); diff the
+  materialized context's temps against the live-frame values to find the
+  temp that materialization mis-captures; fix the materialization of
+  that operand/temp.  If found, it likely also fixes the storm.
+
 ## Catalog non-pass triage — deterministic-bug search (2026-07-07)
 
 Exhaustive search for remaining DETERMINISTIC our-VM correctness bugs in
