@@ -182,6 +182,24 @@ binary (gate the executePrimitive wrapper off so timing isn't perturbed).
 Watch for [LOW-SPACE] (net caught it) vs [HEAP-CENSUS]...->FATAL (net
 missed).  Then bisect the OPEN suspects deterministically.
 
+**2026-07-07 update (SlotIntegration-fix session):** minimal-repro attempts
+of the storm's freeze-recursion mechanism WITHOUT the full catalog all run
+CLEAN — resuming the leaked `OupsDummyDebugger dummySession` P50 process
+directly terminates (`[Set new]` returns), a single `Exception>>freeze`
+(=`freezeUpTo: thisContext`) works, and re-signalling the session exception
+is handled.  Confirms the storm is specifically the full-catalog
+FakeGUI-world-cycle resuming the leaked session MID-ERROR-STATE deep in the
+RS region — not a self-contained mechanism.  ALSO: the SlotIntegration fix
+(62417f43, becomeForward-leaves-forwarder) touches the ONE-WAY become the
+debugger uses to splice contexts, and may already reduce the storm (the
+storm's context-freeze reflectively copies contexts — the same
+object:instVarAt: path SlotIntegration failed on).  Validated NO regression
+on the storm-adjacent path: OupsDebuggerSystemTest + ContextTest + ProcessTest
++ ExceptionTest + BecomeTest + ProcessSpecificTest + WeakRegistryTest =
+148/148 identical with/without the fix.  **NEXT SESSION MUST re-run the full
+ARM catalog WITH the become fix (default-on) to check if the storm is gone
+or reduced BEFORE further storm-root work.**
+
 ## Cross-platform catalog state — FINAL 2026-07-07 (see WIP.md, docs/changes.md)
 
 Catalog #10 (macOS/ARM, all 9 fixes, lean binary + low-space net):
