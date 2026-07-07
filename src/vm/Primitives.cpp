@@ -12942,23 +12942,81 @@ PrimitiveResult Interpreter::primitivePointerAddress(int argCount) {
 }
 
 // ===== FILE I/O PRIMITIVES =====
+//
+// Handle shape is ABI: stock Cog's FilePlugin hands the image a ByteArray
+// holding the platform SQFile struct — sessionID (int32 @0), FILE* (@8),
+// writable (@16), lastOp (@17), lastChar (@18), isStdioStream (@19); 24
+// bytes on 64-bit.  Image code legitimately introspects it: Soil's
+// BinaryFileStream extension does `handle pointerAt: 9` to pull out the
+// FILE* and hands it to fileno()/fcntl()/fsync() via uFFI for file
+// locking, and the same pattern exists elsewhere in the ecosystem.  A
+// SmallInteger index handle therefore breaks such packages with DNU
+// (SmallInteger>>#pointerAt:) — that was the whole SoilBackupTest /
+// SoilBehaviorRegistryTest jit-only family.  We emit the same shape, keep
+// openFiles_ as the validity oracle (our fileId rides in the padding
+// bytes @4, which stock leaves zero), and cross-check the embedded FILE*
+// against the table on every use so stale or forged handles fail the
+// primitive instead of reaching libc.
+
+Oop Interpreter::makeFileHandle(int fileId, FILE* file, bool writable) {
+    if (fileSessionID_ == 0) {
+        fileSessionID_ = static_cast<int32_t>(
+            (std::chrono::system_clock::now().time_since_epoch().count()
+             ^ reinterpret_cast<uintptr_t>(this)) | 1);
+    }
+    Oop baClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
+    if (baClass.isNil()) return Oop::nil();
+    Oop handle = memory_.allocateBytes(memory_.indexOfClass(baClass), 24);
+    if (handle.isNil()) return Oop::nil();
+    uint8_t* b = handle.asObjectPtr()->bytes();
+    std::memset(b, 0, 24);
+    std::memcpy(b, &fileSessionID_, 4);
+    std::memcpy(b + 4, &fileId, 4);
+    uintptr_t fp = reinterpret_cast<uintptr_t>(file);
+    std::memcpy(b + 8, &fp, 8);
+    b[16] = writable ? 1 : 0;
+    b[19] = (file == stdin || file == stdout || file == stderr) ? 1 : 0;
+    return handle;
+}
+
+FILE* Interpreter::fileFromHandle(Oop handleOop, int* outFileId) {
+    if (handleOop.isSmallInteger()) {
+        // Legacy SmallInteger-index handle (pre-SQFile shape); still honored
+        // so a snapshot taken before this change keeps its stdio streams.
+        int fileId = static_cast<int>(handleOop.asSmallInteger());
+        auto it = openFiles_.find(fileId);
+        if (it == openFiles_.end()) return nullptr;
+        if (outFileId) *outFileId = fileId;
+        return it->second;
+    }
+    if (!handleOop.isObject() || handleOop.isNil()) return nullptr;
+    ObjectHeader* hdr = handleOop.asObjectPtr();
+    if (hdr->isPointersObject()) return nullptr;
+    if (memory_.byteSizeOf(handleOop) < 24) return nullptr;
+    const uint8_t* b = hdr->bytes();
+    int32_t sess;
+    std::memcpy(&sess, b, 4);
+    if (sess != fileSessionID_) return nullptr;   // handle from a previous session
+    int32_t fileId;
+    std::memcpy(&fileId, b + 4, 4);
+    auto it = openFiles_.find(fileId);
+    if (it == openFiles_.end()) return nullptr;
+    uintptr_t fp;
+    std::memcpy(&fp, b + 8, 8);
+    if (reinterpret_cast<FILE*>(fp) != it->second) return nullptr;  // stale id reuse
+    if (outFileId) *outFileId = fileId;
+    return it->second;
+}
 
 // Primitive 90: Test if at end of file
 // fileHandle primitiveFileAtEnd -> boolean
 PrimitiveResult Interpreter::primitiveFileAtEnd(int argCount) {
     Oop fileIdOop = stackTop();
 
-    if (!fileIdOop.isSmallInteger()) {
+    FILE* file = fileFromHandle(fileIdOop);
+    if (!file) {
         return PrimitiveResult::Failure;
     }
-
-    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
-    auto it = openFiles_.find(fileId);
-    if (it == openFiles_.end()) {
-        return PrimitiveResult::Failure;
-    }
-
-    FILE* file = it->second;
 
     // stdout/stderr are output-only — atEnd is meaningless, never block on them
     if (file == stdout || file == stderr) {
@@ -12989,18 +13047,14 @@ PrimitiveResult Interpreter::primitiveFileAtEnd(int argCount) {
 PrimitiveResult Interpreter::primitiveFileClose(int argCount) {
     Oop fileIdOop = stackTop();
 
-    if (!fileIdOop.isSmallInteger()) {
+    int fileId = -1;
+    FILE* file = fileFromHandle(fileIdOop, &fileId);
+    if (!file) {
         return PrimitiveResult::Failure;
     }
 
-    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
-    auto it = openFiles_.find(fileId);
-    if (it == openFiles_.end()) {
-        return PrimitiveResult::Failure;
-    }
-
-    fclose(it->second);
-    openFiles_.erase(it);
+    fclose(file);
+    openFiles_.erase(fileId);
 
     // Return receiver (leave stack as-is, receiver is below arg)
     return PrimitiveResult::Success;
@@ -13011,17 +13065,12 @@ PrimitiveResult Interpreter::primitiveFileClose(int argCount) {
 PrimitiveResult Interpreter::primitiveFileGetPosition(int argCount) {
     Oop fileIdOop = stackTop();
 
-    if (!fileIdOop.isSmallInteger()) {
+    FILE* file = fileFromHandle(fileIdOop);
+    if (!file) {
         return PrimitiveResult::Failure;
     }
 
-    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
-    auto it = openFiles_.find(fileId);
-    if (it == openFiles_.end()) {
-        return PrimitiveResult::Failure;
-    }
-
-    long pos = ftell(it->second);
+    long pos = ftell(file);
     if (pos < 0) {
         return PrimitiveResult::Failure;
     }
@@ -13247,8 +13296,15 @@ PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
     int fileId = nextFileId_++;
     openFiles_[fileId] = file;
 
+    Oop handle = makeFileHandle(fileId, file, writable);
+    if (handle.isNil()) {
+        fclose(file);
+        openFiles_.erase(fileId);
+        return PrimitiveResult::Failure;
+    }
+
     popN(argCount + 1);
-    push(Oop::fromSmallInteger(fileId));
+    push(handle);
     return PrimitiveResult::Success;
 }
 
@@ -13264,11 +13320,10 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
     Oop bufferOop = stackValue(2);
     Oop fileIdOop = stackValue(3);
 
-    if (!fileIdOop.isSmallInteger() || !startOop.isSmallInteger() || !countOop.isSmallInteger()) {
+    if (!startOop.isSmallInteger() || !countOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
 
-    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
     int64_t start = startOop.asSmallInteger();  // 1-based in Smalltalk
     int64_t count = countOop.asSmallInteger();
 
@@ -13276,13 +13331,12 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    auto it = openFiles_.find(fileId);
-    if (it == openFiles_.end()) {
+    FILE* file = fileFromHandle(fileIdOop);
+    if (!file) {
         return PrimitiveResult::Failure;
     }
 
     // Can't read from output-only streams
-    FILE* file = it->second;
     if (file == stdout || file == stderr) {
         popN(argCount + 1);
         push(Oop::fromSmallInteger(0));
@@ -13339,19 +13393,18 @@ PrimitiveResult Interpreter::primitiveFileSetPosition(int argCount) {
     Oop posOop = stackValue(0);
     Oop fileIdOop = stackValue(1);
 
-    if (!fileIdOop.isSmallInteger() || !posOop.isSmallInteger()) {
+    if (!posOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
 
-    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
     int64_t pos = posOop.asSmallInteger();
 
-    auto it = openFiles_.find(fileId);
-    if (it == openFiles_.end()) {
+    FILE* file = fileFromHandle(fileIdOop);
+    if (!file) {
         return PrimitiveResult::Failure;
     }
 
-    if (fseek(it->second, static_cast<long>(pos), SEEK_SET) != 0) {
+    if (fseek(file, static_cast<long>(pos), SEEK_SET) != 0) {
         return PrimitiveResult::Failure;
     }
 
@@ -13382,17 +13435,10 @@ PrimitiveResult Interpreter::primitiveFileDelete(int argCount) {
 PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
     Oop fileIdOop = stackTop();
 
-    if (!fileIdOop.isSmallInteger()) {
+    FILE* file = fileFromHandle(fileIdOop);
+    if (!file) {
         return PrimitiveResult::Failure;
     }
-
-    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
-    auto it = openFiles_.find(fileId);
-    if (it == openFiles_.end()) {
-        return PrimitiveResult::Failure;
-    }
-
-    FILE* file = it->second;
 
     // Save current position
     long currentPos = ftell(file);
@@ -13431,11 +13477,10 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
     Oop bufferOop = stackValue(2);
     Oop fileIdOop = stackValue(3);
 
-    if (!fileIdOop.isSmallInteger() || !startOop.isSmallInteger() || !countOop.isSmallInteger()) {
+    if (!startOop.isSmallInteger() || !countOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
 
-    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
     int64_t start = startOop.asSmallInteger();  // 1-based in Smalltalk
     int64_t count = countOop.asSmallInteger();
 
@@ -13443,8 +13488,9 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    auto it = openFiles_.find(fileId);
-    if (it == openFiles_.end()) {
+    int fileId = -1;
+    FILE* file = fileFromHandle(fileIdOop, &fileId);
+    if (!file) {
         return PrimitiveResult::Failure;
     }
 
@@ -13523,8 +13569,8 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
         }
     }
 
-    size_t bytesWritten = fwrite(tempBuffer.data(), 1, byteCount, it->second);
-    fflush(it->second);
+    size_t bytesWritten = fwrite(tempBuffer.data(), 1, byteCount, file);
+    fflush(file);
 
     popN(argCount + 1);
     push(Oop::fromSmallInteger(static_cast<int64_t>(bytesWritten / elemSize)));
@@ -13862,9 +13908,15 @@ PrimitiveResult Interpreter::primitiveFileStdioHandles(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    memory_.storePointer(0, resultArray, Oop::fromSmallInteger(stdinId_));
-    memory_.storePointer(1, resultArray, Oop::fromSmallInteger(stdoutId_));
-    memory_.storePointer(2, resultArray, Oop::fromSmallInteger(stderrId_));
+    Oop inH  = makeFileHandle(stdinId_,  stdin,  false);
+    Oop outH = makeFileHandle(stdoutId_, stdout, true);
+    Oop errH = makeFileHandle(stderrId_, stderr, true);
+    if (inH.isNil() || outH.isNil() || errH.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+    memory_.storePointer(0, resultArray, inH);
+    memory_.storePointer(1, resultArray, outH);
+    memory_.storePointer(2, resultArray, errH);
 
     pop();  // pop receiver
     push(resultArray);
@@ -13879,11 +13931,12 @@ PrimitiveResult Interpreter::primitiveFileStdioHandles(int argCount) {
 PrimitiveResult Interpreter::primitiveFileDescriptorType(int argCount) {
     Oop fileIdOop = stackTop();
 
-    if (!fileIdOop.isSmallInteger()) {
+    FILE* file = fileFromHandle(fileIdOop);
+    if (!file) {
         return PrimitiveResult::Failure;
     }
 
-    int fd = static_cast<int>(fileIdOop.asSmallInteger());
+    int fd = fileno(file);
 
     struct stat statBuf;
     if (fstat(fd, &statBuf) != 0) {
@@ -13918,17 +13971,12 @@ PrimitiveResult Interpreter::primitiveFileDescriptorType(int argCount) {
 PrimitiveResult Interpreter::primitiveFileFlush(int argCount) {
     Oop fileIdOop = stackTop();
 
-    if (!fileIdOop.isSmallInteger()) {
+    FILE* file = fileFromHandle(fileIdOop);
+    if (!file) {
         return PrimitiveResult::Failure;
     }
 
-    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
-    auto it = openFiles_.find(fileId);
-    if (it == openFiles_.end()) {
-        return PrimitiveResult::Failure;
-    }
-
-    fflush(it->second);
+    fflush(file);
 
     // Return the file handle (leave stack unchanged)
     return PrimitiveResult::Success;
@@ -13944,23 +13992,21 @@ PrimitiveResult Interpreter::primitiveFileTruncate(int argCount) {
     Oop sizeOop = stackValue(0);
     Oop fileIdOop = stackValue(1);
 
-    if (!fileIdOop.isSmallInteger() || !sizeOop.isSmallInteger()) {
+    if (!sizeOop.isSmallInteger()) {
         return PrimitiveResult::Failure;
     }
 
-    int fileId = static_cast<int>(fileIdOop.asSmallInteger());
     int64_t newSize = sizeOop.asSmallInteger();
 
     if (newSize < 0) {
         return PrimitiveResult::Failure;
     }
 
-    auto it = openFiles_.find(fileId);
-    if (it == openFiles_.end()) {
+    FILE* file = fileFromHandle(fileIdOop);
+    if (!file) {
         return PrimitiveResult::Failure;
     }
 
-    FILE* file = it->second;
     int fd = fileno(file);
 
     // Flush before truncating
@@ -14488,6 +14534,23 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     processInputEvents();
     processPendingSignals();
     checkTimerSemaphore();
+
+    // Profiler sample tick: the bytecode-paced periodic checkpoint runs
+    // ~once per 500 ms while the image idles in this primitive's loop
+    // (10-20 bytecodes per 10 ms quantum), so an armed profile deadline
+    // must ALSO be checked here or idle waits collect almost no samples
+    // (AndreasSystemProfiler profiling `100 milliSeconds wait` needs
+    // wall-clock-paced samples; Cog gets them from its interval-timer
+    // interrupt check).  synchronousSignal can transfer to the (higher
+    // priority) profiler process — the arg is already popped, so an
+    // early return is stack-safe, same as the idle-band check below.
+    if (profileDeadlineNs_ > 0) {
+        Oop apBeforeSample = getActiveProcess();
+        checkProfileSampleTick();
+        if (getActiveProcess().rawBits() != apBeforeSample.rawBits()) {
+            return PrimitiveResult::Success;
+        }
+    }
 
     // IDLE-BAND relinquish with a STRICTLY-HIGHER ready process? transfer
     // up NOW (2026-07-05).  The heartbeat force-yield hands the CPU DOWN
@@ -32238,19 +32301,18 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
 // MessageTally sampling protocol:
 //   primitiveProfileSemaphore: — install (or clear with nil) the semaphore
 //       that will be signaled each time a sample fires.
-//   primitiveProfileStart:    — arg: N interrupt-checks between samples
-//       (≤0 disables).  Resets counters.
+//   primitiveProfileStart:    — arg: high-res-clock tick delta; arms a
+//       ONE-SHOT sample deadline (≤0 disarms).  The profiler re-arms
+//       after consuming each sample.
 //   primitiveProfileSample    — return the active process snapshot from
 //       the last sample, or nil if none.
 //   primitiveProfilePrimitive — return the primitive method at the last
 //       sample, or nil.
 //
-// Sampling happens in the periodic check (every ~1024 bytecodes).  When
-// profileInterval_ > 0 and profileCounter_ drops to 0, we snapshot
-// getActiveProcess() + method_ (if its primitive index is > 0) and signal
-// profileSemaphore_.  Counter resets to profileInterval_.  This matches
-// the Cog `primitiveProfileStart` semantic (count is in "interrupt checks"
-// which is our periodic-check granularity — close enough for stat profile).
+// The deadline is checked in the periodic check (every ~1024 bytecodes;
+// <=10 ms apart even when idle thanks to the relinquish sleep cap).  When
+// it passes we snapshot getActiveProcess() + method_ and signal
+// profileSemaphore_.  Matches Cog: nextProfileTick := ioHighResClock + arg.
 
 PrimitiveResult Interpreter::primitiveProfileSemaphore(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
@@ -32265,15 +32327,14 @@ PrimitiveResult Interpreter::primitiveProfileStart(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
     Oop countOop = stackValue(0);
     if (!countOop.isSmallInteger()) return PrimitiveResult::Failure;
-    int64_t count = countOop.asSmallInteger();
-    if (count <= 0) {
-        // Disable profiler.
-        profileInterval_ = 0;
-        profileCounter_  = 0;
-    } else {
-        profileInterval_ = count;
-        profileCounter_  = count;
-    }
+    int64_t delta = countOop.asSmallInteger();
+    // Cog: the argument is a high-res-clock TICK DELTA arming a one-shot
+    // deadline (nextProfileTick := ioHighResClock + delta); <= 0 disarms.
+    // AndreasSystemProfiler passes ticksPerMSec // 10 (~0.1 ms) and re-arms
+    // after each sample.  Interpreting it as a bytecode-checkpoint COUNT
+    // (the old behavior) starved the sampler ~100,000x: no sample ever
+    // fired at ASP scale and every ASP report tallied zero.
+    profileDeadlineNs_ = (delta <= 0) ? 0 : highResClockNs() + delta;
     pop();  // pop arg, leave receiver
     return PrimitiveResult::Success;
 }

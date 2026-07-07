@@ -3492,24 +3492,19 @@ void Interpreter::interpret() {
             }
         }
 
-        // Sampling profiler tick (installed by primitiveProfileStart).
-        // Counter is "interrupt checks" in Cog terminology — each periodic
-        // check here counts as one.  When it hits 0, snapshot active
-        // process + current method (if primitive) and signal sem.
-        if (__builtin_expect(profileInterval_ > 0, 0)) {
-            if (--profileCounter_ <= 0) {
-                profileCounter_ = profileInterval_;
-                profileSample_ = getActiveProcess();
-                // Current method is the primitive if any (method_ holds it
-                // during its fallback; for non-prim methods it holds the
-                // bytecode method).  Approximate what "last primitive"
-                // means — stock Cog distinguishes, we sample whichever
-                // method is currently executing.
-                profilePrimitive_ = method_;
-                if (profileSemaphore_.isObject() && !profileSemaphore_.isNil()) {
-                    synchronousSignal(profileSemaphore_);
-                }
-            }
+        // Sampling profiler tick (armed by primitiveProfileStart).  Cog
+        // semantics: the deadline is highResClock + delta, ONE-SHOT — the
+        // profiler re-arms after consuming each sample.  Clock is read only
+        // while armed.  NOTE: this checkpoint is BYTECODE-paced (every
+        // ~1024 steps), and an idle image executes ~10-20 bytecodes per
+        // 10 ms relinquish quantum — i.e. one checkpoint per ~500 ms — so
+        // primitiveRelinquishProcessor runs the same check on every call
+        // to keep wall-clock sampling alive during waits (Cog samples idle
+        // via its interval-timer interrupt check; an ASP profile of
+        // `100 milliSeconds wait` collects ~12 samples there, and got 1
+        // here before the relinquish-path check existed).
+        if (__builtin_expect(profileDeadlineNs_ > 0, 0)) {
+            checkProfileSampleTick();
         }
 
 #if PROFILE_BYTECODE_PAIRS

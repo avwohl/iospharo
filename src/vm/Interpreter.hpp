@@ -1024,14 +1024,45 @@ private:
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
 
     // Sampling profiler state (primitiveProfileSemaphore/Start/Sample/Primitive).
-    // When profileInterval_ > 0, every method activation decrements the counter;
-    // at 0 we snapshot the active process + current primitive index, reset to
-    // interval, and signal profileSemaphore_ if set.
+    // Cog semantics: profileStart:'s argument is a HIGH-RES-CLOCK TICK DELTA
+    // (same clock as primitiveHighResClock — ns for us; the image measures
+    // ticksPerMSec itself, so the unit only has to be self-consistent).  It
+    // arms a ONE-SHOT deadline; the profiler (AndreasSystemProfiler) re-arms
+    // after consuming each sample.  The periodic check compares the clock
+    // against the deadline, snapshots the active process + current method,
+    // and signals profileSemaphore_.
     Oop profileSemaphore_ = Oop::nil();   // Semaphore to signal on each sample
     Oop profileSample_    = Oop::nil();   // Last active process at sample time
     Oop profilePrimitive_ = Oop::nil();   // Last primitive method at sample time
-    int64_t profileInterval_ = 0;         // Counter reload; 0 disables profiling
-    int64_t profileCounter_  = 0;         // Current countdown
+    int64_t profileDeadlineNs_ = 0;       // highResClock deadline; 0 = disarmed
+
+    // The profiler deadline MUST use the same clock as primitiveHighResClock
+    // (Time class>>primHighResClock) — the image divides the two to get
+    // ticksPerMSec, so a unit mismatch silently starves the sampler.
+    static int64_t highResClockNs() {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+    }
+
+    // Fire the one-shot profiler sample if the armed deadline has passed.
+    // Called from the periodic bytecode checkpoint AND from
+    // primitiveRelinquishProcessor (the only path that runs while idle).
+    // May context-switch via synchronousSignal — callers must be at a point
+    // where a transfer is safe (both call sites already are).
+    void checkProfileSampleTick() {
+        if (profileDeadlineNs_ <= 0 || highResClockNs() < profileDeadlineNs_)
+            return;
+        profileDeadlineNs_ = 0;
+        profileSample_ = getActiveProcess();
+        // Current method is the primitive if any (method_ holds it during
+        // its fallback; for non-prim methods it holds the bytecode method).
+        // Approximate what "last primitive" means — stock Cog
+        // distinguishes, we sample whichever method is currently executing.
+        profilePrimitive_ = method_;
+        if (profileSemaphore_.isObject() && !profileSemaphore_.isNil()) {
+            synchronousSignal(profileSemaphore_);
+        }
+    }
 
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
@@ -1337,9 +1368,17 @@ private:
     // Clipboard (simple in-memory storage for headless mode)
     std::string clipboardText_;
 
-    // File handles (maps Smalltalk file IDs to FILE pointers)
+    // File handles (maps Smalltalk file IDs to FILE pointers).  The image
+    // sees a Cog-shaped 24-byte SQFile ByteArray (sessionID @0, our fileId
+    // in the padding @4, FILE* @8, flag bytes @16+) — image code introspects
+    // the handle (`pointerAt: 9` -> FILE* for fileno/fcntl/fsync via FFI),
+    // so the shape is ABI.  This table stays the validity oracle; see
+    // makeFileHandle/fileFromHandle in Primitives.cpp.
     std::map<int, FILE*> openFiles_;
     int nextFileId_ = 3;  // 0,1,2 reserved for stdin/stdout/stderr
+    int32_t fileSessionID_ = 0;  // per-boot tag baked into handles (lazy-init)
+    Oop makeFileHandle(int fileId, FILE* file, bool writable);
+    FILE* fileFromHandle(Oop handleOop, int* outFileId = nullptr);
 
     // ===== CLASS INDEX CACHE =====
     // These are looked up dynamically from the class table at init time.
