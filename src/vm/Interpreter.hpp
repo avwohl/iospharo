@@ -1388,6 +1388,7 @@ private:
     uint32_t fullBlockClosureClassIndex_ = 0;
     uint32_t orderedCollectionClassIndex_ = 0;
     uint32_t writeStreamClassIndex_ = 0;
+    uint32_t boxedFloatClassIndex_ = 0;   // BoxedFloat64 (compare fast path)
     uint32_t lookupClassIndexByName(const char* name);
     void initializeClassIndexCache();
 public:

@@ -9119,6 +9119,64 @@ void Interpreter::arithmeticSend(int which) {
                     break;  // @ (11) — fall through to method lookup
             }
         }
+
+        // Mixed SmallInteger/Float COMPARE fast path (< > <= >= = ~=).
+        // Cog's bytecodePrim compares handle int<->float operand pairs
+        // inline (loadFloatOrIntFrom).  Without this, Integer>>#< with a
+        // Float argument fails its primitive and coerces through
+        // Float>>#adaptToInteger:andCompare: (exact-fraction path) on
+        // EVERY compare — measured 48x vs Cog, and Morphic layout code is
+        // saturated with exactly these compares (hera family; Rectangle/
+        // Margin/Morph bounds math).  Compares only: no allocation, the
+        // result is just true/false.  SmallIntegers beyond +/-2^53 fall
+        // through to the send path — their double conversion is lossy
+        // while the image's fraction path is exact, and the fast path
+        // must never change an answer.
+        if (which >= 2 && which <= 7
+            && !(rcvr.isSmallInteger() && arg.isSmallInteger())) {
+            double da, db;
+            auto asExactDouble = [this](Oop o, double& d) -> bool {
+                if (o.isSmallInteger()) {
+                    int64_t v = o.asSmallInteger();
+                    if (v > (int64_t{1} << 53) || v < -(int64_t{1} << 53))
+                        return false;
+                    d = static_cast<double>(v);
+                    return true;
+                }
+                if (o.isSmallFloat()) {
+                    d = o.asSmallFloat();
+                    return true;
+                }
+                if (o.isObject() && o.rawBits() > 0x10000
+                    && boxedFloatClassIndex_ != 0
+                    && o.asObjectPtr()->classIndex() == boxedFloatClassIndex_
+                    && o.asObjectPtr()->byteSize() >= 8) {
+                    double v;
+                    std::memcpy(&v, o.asObjectPtr()->bytes(), 8);
+                    d = v;
+                    return true;
+                }
+                return false;
+            };
+            if (asExactDouble(rcvr, da) && asExactDouble(arg, db)) {
+                // IEEE semantics match the image here: NaN compares are
+                // false for < > <= >= =, true for ~= — exactly what
+                // Float>>adaptToInteger:andCompare: answers; the int side
+                // is exact under the 2^53 gate.
+                bool res;
+                switch (which) {
+                    case 2:  res = da <  db; break;
+                    case 3:  res = da >  db; break;
+                    case 4:  res = da <= db; break;
+                    case 5:  res = da >= db; break;
+                    case 6:  res = da == db; break;
+                    default: res = da != db; break;  // 7: ~=
+                }
+                popN(2);
+                push(res ? memory_.trueObject() : memory_.falseObject());
+                return;
+            }
+        }
     }
 
     // Try to get cached well-known selector
@@ -17566,6 +17624,12 @@ void Interpreter::initializeClassIndexCache() {
     fullBlockClosureClassIndex_ = lookupClassIndexByName("FullBlockClosure");
     orderedCollectionClassIndex_ = lookupClassIndexByName("OrderedCollection");
     writeStreamClassIndex_ = lookupClassIndexByName("WriteStream");
+    // BoxedFloat64, via the special-objects array (name-independent).  Used
+    // by the arithmeticSend mixed int/float compare fast path — that path
+    // has no dispatch guarantee on the operand class, so it must match the
+    // exact class index rather than trust an 8-byte-object shape.
+    boxedFloatClassIndex_ =
+        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassFloat));
 }
 
 void Interpreter::initializeSelectors() {

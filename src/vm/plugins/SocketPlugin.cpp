@@ -262,10 +262,16 @@ static void ioMonitorLoop() {
             size_t i = pfdIndex[k - 1];
             // select() reports EOF/error sockets as readable (and errored
             // sockets as writable); mirror that so the state machine below
-            // behaves identically on both backends.
+            // behaves identically on both backends.  POLLHUP must be in the
+            // writable mapping too: on macOS a refused non-blocking connect
+            // reports revents == POLLHUP ONLY (no POLLOUT, no POLLERR;
+            // SO_ERROR = ECONNREFUSED), and dropping it left connecting
+            // sockets stuck in WaitingForConnection until the image's full
+            // ~20 s ConnectionTimedOut instead of an instant
+            // ConnectionClosed (RediStick jit-only sweep family).
             if (pfds[k].revents & (POLLIN | POLLHUP | POLLERR))
                 isReadable[i] = wantRead[i];
-            if (pfds[k].revents & (POLLOUT | POLLERR))
+            if (pfds[k].revents & (POLLOUT | POLLHUP | POLLERR))
                 isWritable[i] = wantWrite[i];
         }
 #else
