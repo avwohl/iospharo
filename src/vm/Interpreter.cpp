@@ -18299,6 +18299,21 @@ void Interpreter::putToSleep(Oop process) {
 // Materialize the inline frame stack into context objects
 // Returns the topmost context (current execution point)
 Oop Interpreter::materializeFrameStack() {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_MATFS), 0)) {
+        static int mtN = 0;
+        if (++mtN <= 2000000) {
+            fprintf(stderr, "[MATFS #%d] in #%s fd=%zu sp=%ld :", mtN,
+                    (method_.isObject() && method_.rawBits() > 0x10000)
+                        ? memory_.selectorOf(method_).c_str() : "?",
+                    frameDepth_, (long)(stackPointer_ - stackBase_));
+            for (size_t i = frameDepth_; i > 0 && frameDepth_ - i < 10; i--) {
+                Oop sm = savedFrames_[i - 1].savedMethod;
+                fprintf(stderr, " %s", (sm.isObject() && sm.rawBits() > 0x10000)
+                    ? memory_.selectorOf(sm).c_str() : "?");
+            }
+            fprintf(stderr, "\n");
+        }
+    }
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SP_DEPTH_TRAP), 0)
             && method_.isObject() && method_.rawBits() > 0x10000) {
         std::string ms = memory_.selectorOf(method_);
@@ -20939,7 +20954,20 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     return r;
 }
 
+static uint16_t g_primSeqRing[65536];
+static uint64_t g_primSeqPos = 0;
+extern "C" void pharo_dumpPrimSeq() {
+    FILE* f = fopen("/tmp/primseq.txt", "w");
+    if (!f) return;
+    uint64_t n = g_primSeqPos < 65536 ? g_primSeqPos : 65536;
+    uint64_t start = g_primSeqPos < 65536 ? 0 : (g_primSeqPos & 65535);
+    for (uint64_t i = 0; i < n; i++)
+        fprintf(f, "%u\n", g_primSeqRing[(start + i) & 65535]);
+    fclose(f);
+}
 PrimitiveResult Interpreter::executePrimitiveInner(int primitiveIndex, int argCount) {
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_PRIM_SEQ), 0))
+        g_primSeqRing[(g_primSeqPos++) & 65535] = (uint16_t)primitiveIndex;
     if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT) && (primitiveIndex == 113 || primitiveIndex == 114)) {
         fprintf(stderr, "[EXIT-TRACE] executePrimitive(%d, %d) entering\n",
                 primitiveIndex, argCount);
