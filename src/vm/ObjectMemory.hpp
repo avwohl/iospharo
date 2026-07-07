@@ -545,6 +545,10 @@ public:
     GCResult incrementalGC();
 
     /// Run a full compacting GC (only safe at known safe points, NOT from allocation)
+    /// Class-name histogram of the heap, largest byte-footprint first
+    /// (old-space-exhaustion FATAL path + PHARO_HEAP_CENSUS per-fullGC).
+    void dumpHeapCensus(int topN);
+
     /// skipEphemerons: if true, skip ephemeron firing and weak processing.
     /// Used by auto-compact GC to emulate scavenge behavior (don't mourn old-space objects).
     GCResult fullGC(bool skipEphemerons = false);

@@ -1776,6 +1776,7 @@ GCResult ObjectMemory::scavenge() {
                 copySize,
                 (ptrdiff_t)(oldSpaceEnd_ - oldSpaceFree_),
                 (ptrdiff_t)(oldSpaceEnd_ - oldSpaceStart_));
+            dumpHeapCensus(25);   // say WHAT filled the heap before dying
             fflush(stderr);
             std::abort();
         }
@@ -2667,6 +2668,13 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     totalGCTime_ += result.milliseconds;
     fullGCCount_++;
     fullGCTime_ += result.milliseconds;
+
+    // PHARO_HEAP_CENSUS: histogram the survivors when the live heap is
+    // suspiciously large — the explosion diagnosis without waiting for
+    // the fatal.
+    if (GET_DEBUG_BOOL(PHARO_HEAP_CENSUS) && usedAfter > (1ULL << 30)) {
+        dumpHeapCensus(25);
+    }
 
     // PHARO_GC_LOG completion line: used-after tracks LIVE heap across the
     // run (the entry line shows pressure; this shows what survived) — the
@@ -4438,6 +4446,40 @@ void ObjectMemory::rebuildFreeListAfterCompact() {
     // We don't need to create a free list entry for the trailing gap —
     // the bump pointer allocator already handles this via oldSpaceFree_.
     // Free lists will be populated when we switch to free-list-based allocation.
+}
+
+
+// Class-name histogram of the whole heap, largest byte-footprint first.
+// Called on the old-space-exhaustion FATAL path and per-fullGC under
+// PHARO_HEAP_CENSUS=1 — turns "live heap exploded" into "3.4 GB of X".
+void ObjectMemory::dumpHeapCensus(int topN) {
+    struct Bucket { size_t count = 0; size_t bytes = 0; };
+    std::unordered_map<uint32_t, Bucket> byClass;
+    size_t totalBytes = 0, totalObjs = 0;
+    allObjectsDo([&](Oop obj) {
+        if (!obj.isObject()) return;
+        ObjectHeader* h = obj.asObjectPtr();
+        size_t sz = h->slotCount() * 8 + sizeof(ObjectHeader);
+        Bucket& b = byClass[h->classIndex()];
+        b.count++;
+        b.bytes += sz;
+        totalBytes += sz;
+        totalObjs++;
+    });
+    std::vector<std::pair<uint32_t, Bucket>> v(byClass.begin(), byClass.end());
+    std::sort(v.begin(), v.end(),
+              [](auto& a, auto& b) { return a.second.bytes > b.second.bytes; });
+    fprintf(stderr, "[HEAP-CENSUS] %zu objects, %zu MB total; top %d classes by bytes:\n",
+            totalObjs, totalBytes / (1024 * 1024), topN);
+    for (int i = 0; i < topN && i < (int)v.size(); i++) {
+        uint32_t idx = v[i].first;
+        std::string name = (idx < classTable_.size() && classTable_[idx].isObject())
+            ? nameOfClass(classTable_[idx])
+            : std::string("?");
+        fprintf(stderr, "[HEAP-CENSUS]  %8zu objs %8zu KB  %s (idx %u)\n",
+                v[i].second.count, v[i].second.bytes / 1024, name.c_str(), idx);
+    }
+    fflush(stderr);
 }
 
 } // namespace pharo
