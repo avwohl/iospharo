@@ -3053,7 +3053,8 @@ private:
 
     // Become primitives
     PrimitiveResult primitiveBecome(int argCount);           // 72
-    void scanStackReplace(Oop oldOop, Oop newOop);          // Helper for become
+    void scanStackReplace(Oop oldOop, Oop newOop);          // Helper for becomeForward (one-way)
+    void scanStackSwap(Oop a, Oop b);                       // Helper for two-way become (one pass)
 
     // Bit operation primitives
     PrimitiveResult primitiveHighBit(int argCount);          // 575

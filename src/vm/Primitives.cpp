@@ -499,18 +499,13 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
             }
         });
 
-        // Also scan C++ stack for each pair
+        // Also scan the C++ stack for each pair — TWO-WAY, single pass
+        // (scanStackSwap), matching the heap scan above.  The previous
+        // one-way scanStackReplace left live frame temps stale on the
+        // to-side, which broke ReStore's proxy identity swap into an
+        // infinite self-referencing recursion (see scanStackSwap).
         for (auto& [from, to] : heapScanPairs) {
-            // Two-way swap on stack: use temp Oop to avoid double-swap
-            scanStackReplace(from, to);
-            // Note: scanStackReplace does one-way replacement.
-            // For two-way, we need to be more careful. The heap scan above
-            // handles two-way correctly. For the stack, since we just did
-            // from→to, now any 'to' on the stack that was original (not swapped)
-            // needs to become 'from'. But scanStackReplace already replaced all
-            // 'from' with 'to', so a second pass of to→from would undo the swap.
-            // For correctness with the current scanStackReplace, we accept that
-            // stack references only get one-way replacement (adequate for most uses).
+            scanStackSwap(from, to);
         }
     }
 
@@ -9809,6 +9804,24 @@ void Interpreter::scanStackReplace(Oop oldOop, Oop newOop) {
     });
 }
 
+// Helper: TWO-WAY swap of Oop references across the C++ execution stack —
+// one pass, so nothing double-swaps.  Two-way become of DIFFERENT-sized
+// pairs must use this: the heap scan swaps both directions, and a one-way
+// scanStackReplace left live frame temps/receivers stale on one side
+// (ReStore's SSWDBProxy>>_swapReferences: `proxiedObject become: self`
+// then reads the OLD temp — the husk proxy's proxiedObject ended up
+// pointing at ITSELF, infinite instVarAt: recursion until heap
+// exhaustion; sweep family SSWReStoreAggregateQueryTest x11).  Same
+// forEachRoot delegation as scanStackReplace so coverage can't drift.
+void Interpreter::scanStackSwap(Oop a, Oop b) {
+    uint64_t aBits = a.rawBits();
+    uint64_t bBits = b.rawBits();
+    forEachRoot([&](Oop& slot) {
+        if (slot.rawBits() == aBits) slot = b;
+        else if (slot.rawBits() == bBits) slot = a;
+    });
+}
+
 // Primitive 72: Swap identities of two objects (two-way become)
 PrimitiveResult Interpreter::primitiveBecome(int argCount) {
     Oop arg = stackValue(0);
@@ -9857,36 +9870,13 @@ PrimitiveResult Interpreter::primitiveBecome(int argCount) {
         }
     });
 
-    // Also scan C++ execution stack (two-way: swap both directions)
-    // Need a temp to avoid double-swapping
-    uint64_t rcvrBits = rcvr.rawBits();
-    uint64_t argBits = arg.rawBits();
-    // First pass: rcvr -> sentinel, arg -> rcvr
-    // Second pass: sentinel -> arg
-    // Simpler: scan once and swap
-    if (receiver_.rawBits() == rcvrBits) receiver_ = arg;
-    else if (receiver_.rawBits() == argBits) receiver_ = rcvr;
-    if (method_.rawBits() == rcvrBits) method_ = arg;
-    else if (method_.rawBits() == argBits) method_ = rcvr;
-
-    for (Oop* p = stackBase_; p < stackPointer_; p++) {
-        if (p->rawBits() == rcvrBits) *p = arg;
-        else if (p->rawBits() == argBits) *p = rcvr;
-    }
-
-    for (size_t i = 0; i < frameDepth_; i++) {
-        auto& f = savedFrames_[i];
-        if (f.savedReceiver.rawBits() == rcvrBits) f.savedReceiver = arg;
-        else if (f.savedReceiver.rawBits() == argBits) f.savedReceiver = rcvr;
-        if (f.savedMethod.rawBits() == rcvrBits) f.savedMethod = arg;
-        else if (f.savedMethod.rawBits() == argBits) f.savedMethod = rcvr;
-        if (f.savedHomeMethod.rawBits() == rcvrBits) f.savedHomeMethod = arg;
-        else if (f.savedHomeMethod.rawBits() == argBits) f.savedHomeMethod = rcvr;
-        if (f.savedClosure.rawBits() == rcvrBits) f.savedClosure = arg;
-        else if (f.savedClosure.rawBits() == argBits) f.savedClosure = rcvr;
-        if (f.savedActiveContext.rawBits() == rcvrBits) f.savedActiveContext = arg;
-        else if (f.savedActiveContext.rawBits() == argBits) f.savedActiveContext = rcvr;
-    }
+    // Also scan the C++ execution stack — two-way, one pass, via the
+    // forEachRoot-delegating helper.  The previous hand-rolled block here
+    // walked only registers/operand stack/savedFrames_ and had DRIFTED
+    // from forEachRoot coverage (missing J2J save pools,
+    // bvClosureSaveStack_, Sista inline-self pool — the same drift class
+    // scanStackReplace's history documents).
+    scanStackSwap(rcvr, arg);
 
     // Flush method cache — become swaps references, so cached entries
     // for either object are now stale (the cache key classOop may now
