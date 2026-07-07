@@ -211,13 +211,33 @@ superseded per-family notes from catalog #5 below, updated:
     image-side recompile of the comparer (triggers a GC).  So: live
     instances of the class corrupt some state that the slot-comparer
     reads, and any GC clears it — but NOT the method cache/JIT/young-size.
-  - REMAINING: WHY do live instances make compareVariables see equal
-    sizes (builder allSlots loses z, or oldClass gains z) — every
-    image-side observation HEALS it (GC), so this needs lldb
-    (perturbation-free) breaking in becomeForward / the signal primitive
-    during the deterministic instance-present `#z` rebuild, OR VM-side
-    logging of ShNoChangesInClass signals.  Likely shares the GC/become/
-    heap-state root area with the context storm.
+  - COMPARER EXONERATED (2026-07-07, perturbation-free zero-alloc probe):
+    the earlier "comparer sees no change" hypothesis is WRONG.  Using a
+    ZERO-ALLOCATION instrumented compareVariables:with: (writes a size /
+    b size as immediate SmallIntegers into a PRE-allocated Array via
+    at:put: — no allocation, so it does NOT trigger the heal-GC that
+    string-logging did), the comparer correctly sees oldSlots=2 vs
+    newSlots=3 and returns "change" in the FAILING cases too.  So the
+    change IS detected and the rebuild IS triggered — yet the result
+    stays 2 slots.  The failure is DOWNSTREAM of the comparer: the `#z`
+    class-rebuild's become/install does not make `c`/globals point to the
+    new 3-slot class.  (Technique note: perturbation-free image probing
+    requires ZERO allocation — any string/collection build triggers a
+    scavenge that heals these GC-state Heisenbugs.)
+  - Requires ACCUMULATED heap state (a warmup or loop that leaves a prior
+    OBSOLETE same-named class version in the heap): iter1 of a loop
+    passes, iter2+ fail; a single fresh sequence with the zero-alloc
+    probe passes.  Heals on any GC (which sweeps the obsolete versions).
+  - CONCRETE LEAD: PHARO_TRACE_BECOME shows the SlotTestsClassA class
+    become during rebuild has ctHits=0 — the class being becomeForward'd
+    is NOT found in classTable_ (a class's identityHash == its classTable
+    index in Spur, so a class SHOULD be there).  Suspect: with multiple
+    obsolete same-named class versions accumulated, the rebuild become +
+    classTable redirect targets/updates the wrong version, or the new
+    class isn't classTable-registered, so `c` keeps resolving to the old
+    2-slot version.  Next: trace whether the Z-add's class become (2->3)
+    runs at all in the failing case and why ctHits=0; check for stale
+    obsolete-class entries in classTable_ / sweepClassTable timing.
 - [x] **Candidate-queue hunt COMPLETE 2026-07-07** (14-agent workflow
   wf_214bdc82, one agent per package, local fresh-image parity+shrink;
   five VM fixes committed e5570688/38c457f7/ac87599f/f9e49453/4c4e13e6,
