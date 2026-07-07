@@ -41,6 +41,25 @@ Athens/SDL surface pixel ByteArrays rooted by the (growable) manual-
 surface registry vs World-accumulated windows re-rendered by the
 FakeGUI 25 ms cycle loop vs materialized-context/other VM-root pinning.
 
+STORM BISECT (2026-07-07 ~14:00):
+- NLR revert (f9e49453) EXONERATED: storm still fires, identical
+  signature (P80 PrimitiveFailed>>freeze recursion at RSExamplesTest).
+- Storm process = a LEAKED Oups dummy-debugger P80 (OupsDummyDebugger
+  class>>dummySession's `[Set new]` context process) that gets resumed
+  in the RS-window-open region (FakeGUI World cycle) and recurses in
+  exception-freeze.  OupsDebuggerSystemTest passes 5/5 STANDALONE, no
+  leak — pure suite-context interaction.
+- TOP SUSPECT: a99eee86 (two-way become C++ stack swap) — the debugger
+  splices contexts via become during stepping/simulation; my change
+  swapped stack refs both-ways where it was one-way.  become-reverted
+  binary BUILT + staged in build-hunt/ (branch storm-test-nobecome,
+  2a8bfa9f), ready to launch the moment the all-diagnostics run
+  (build/, HEAD, census+procdump+PRIM_FAIL_STORM) explodes and names
+  the failing primitive.  Runs are timing-sensitive → serialized, not
+  parallel.
+- x86 box (all 9 fixes): NO storm, deep into Calypso Sy* region — Linux
+  validation of the whole wave essentially done.
+
 STORM DOSSIER UPDATE (2026-07-07 ~13:00):
 - CENSUS VERDICT: the explosion is CONTEXTS (2.4M -> 9M objects, ~12 per
   iteration) + lock-step MNU/PrimitiveFailed/Message triples (~135k per
