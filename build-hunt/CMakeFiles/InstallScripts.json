@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/wohl/src/iospharo-jit/build-hunt/cmake_install.cmake",
+		"/Users/wohl/src/iospharo-jit/build-hunt/third_party/asmjit/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

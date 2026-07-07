@@ -3531,6 +3531,50 @@ void Interpreter::interpret() {
             checkProfileSampleTick();
         }
 
+        // PHARO_MAT_AT_CHECKPOINT: force materialized-context execution WITHOUT
+        // any process switch, to isolate whether the SlotIntegration defect is
+        // in the materialize->context-execute path itself (vs scheduling).
+        // materializeFrameStack() sets frameDepth_=0 and preserves
+        // method_/ip/receiver, so the interpreter continues in context mode.
+        if (__builtin_expect(GET_DEBUG_INT(PHARO_MAT_AT_CHECKPOINT) > 0, 0)
+                && frameDepth_ > 0) {
+            static uint64_t matN = 0;
+            if (__builtin_expect(GET_DEBUG_INT(PHARO_MAT_ONCE) > 0, 0)) {
+                static uint64_t onceN = 0;
+                if ((int)(++onceN) == GET_DEBUG_INT(PHARO_MAT_ONCE)) {
+                    if (GET_DEBUG_BOOL(PHARO_MAT_ONCE_DUMP)) {
+                        fprintf(stderr, "[MAT-ONCE] checkpoint#%llu step=%llu frameDepth=%zu stack (leaf->root):\n",
+                                (unsigned long long)onceN, (unsigned long long)g_stepNum, frameDepth_);
+                        fprintf(stderr, "   [current] #%s\n", memory_.selectorOf(method_).c_str());
+                        for (int fd = static_cast<int>(frameDepth_); fd >= 0; --fd) {
+                            fprintf(stderr, "   [%d] #%s\n", fd, memory_.selectorOf(savedFrames_[fd].savedMethod).c_str());
+                        }
+                    }
+                    Oop c = materializeFrameStack();
+                    activeContext_ = c;
+                    frameDepth_ = 0;
+                }
+            }
+            bool selOk = true;
+            {
+                int64_t lo = GET_DEBUG_INT(PHARO_MAT_STEP_LO);
+                int64_t hi = GET_DEBUG_INT(PHARO_MAT_STEP_HI);
+                if (lo > 0 && (int64_t)g_stepNum < lo) selOk = false;
+                if (hi > 0 && (int64_t)g_stepNum > hi) selOk = false;
+            }
+            const char* matSel = GET_DEBUG_STR(PHARO_MAT_SEL);
+            if (matSel && matSel[0] && method_.isObject() && method_.rawBits() > 0x10000) {
+                selOk = (memory_.selectorOf(method_).find(matSel) != std::string::npos);
+            } else if (matSel && matSel[0]) {
+                selOk = false;
+            }
+            if (selOk && (++matN % (uint64_t)GET_DEBUG_INT(PHARO_MAT_AT_CHECKPOINT)) == 0) {
+                Oop c = materializeFrameStack();
+                activeContext_ = c;
+                frameDepth_ = 0;
+            }
+        }
+
 #if PROFILE_BYTECODE_PAIRS
         // Dump pair counts to file after 100M bytecodes (one-shot)
         if (__builtin_expect(totalSteps == 100 * 1024 * 1024, 0)) {
@@ -7395,6 +7439,34 @@ void Interpreter::returnValue(Oop value) {
                     Oop senderStackp = memory_.fetchPointer(2, sender);
                     int origSp = senderStackp.isSmallInteger()
                         ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
+
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_SLOTBUILD), 0)) {
+                        Oop sm = memory_.fetchPointer(3, sender);
+                        std::string ssel = (sm.isObject() && sm.rawBits() > 0x10000)
+                            ? memory_.selectorOf(sm) : "?";
+                        if (ssel.find("copyWith") != std::string::npos
+                                || ssel.find("Slot") != std::string::npos
+                                || ssel.find("slot") != std::string::npos
+                                || ssel.find("replaceFrom") != std::string::npos
+                                || ssel.find("copyReplace") != std::string::npos
+                                || ssel.find("add") != std::string::npos
+                                || ssel.find(",") != std::string::npos) {
+                            std::string rc = value.isSmallInteger() ? "SmI"
+                                : (value.isObject() && value.rawBits() >= 0x10000)
+                                    ? memory_.classNameOf(value) : "imm";
+                            fprintf(stderr, "[SLOTBUILD-RET] senderM=#%s origSp=%d retval=%s step=%llu savedStack=[",
+                                ssel.c_str(), origSp, rc.c_str(), (unsigned long long)g_stepNum);
+                            for (int q = 0; q < origSp && q < 12; q++) {
+                                Oop it = memory_.fetchPointer(6 + q, sender);
+                                const char* qc = it.isNil() ? "nil"
+                                    : it.isSmallInteger() ? "SmI"
+                                    : (it.isObject() && it.rawBits() >= 0x10000)
+                                        ? memory_.classNameOf(it).c_str() : "imm";
+                                fprintf(stderr, "%s%s", q ? " " : "", qc);
+                            }
+                            fprintf(stderr, "]\n");
+                        }
+                    }
 
                     if (executeFromContext(sender)) {
                         // Place return value at framePointer_[1 + origSp],

@@ -1,0 +1,1 @@
+/usr/bin/c++ -O2 -g -DNDEBUG -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/test_asmjit_t1_stub.dir/src/vm/jit/asmjit/test_asmjit_t1_stub.cpp.o -o test_asmjit_t1_stub  third_party/asmjit/libasmjit.a -lc

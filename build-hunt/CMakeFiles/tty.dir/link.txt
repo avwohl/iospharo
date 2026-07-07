@@ -1,0 +1,1 @@
+/usr/bin/cc -O2 -g -DNDEBUG -arch arm64 -dynamiclib -Wl,-headerpad_max_install_names -o libtty.dylib -install_name @rpath/libtty.dylib CMakeFiles/tty.dir/src/vm/plugins/libtty.c.o

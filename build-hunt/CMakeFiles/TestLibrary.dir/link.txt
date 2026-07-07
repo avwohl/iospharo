@@ -1,0 +1,1 @@
+/usr/bin/cc -O2 -g -DNDEBUG -arch arm64 -dynamiclib -Wl,-headerpad_max_install_names -o libTestLibrary.dylib -install_name @rpath/libTestLibrary.dylib CMakeFiles/TestLibrary.dir/src/vm/plugins/TestLibrary.c.o

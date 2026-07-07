@@ -340,6 +340,59 @@ superseded per-family notes from catalog #5 below, updated:
     2-slot version.  Next: trace whether the Z-add's class become (2->3)
     runs at all in the failing case and why ctHits=0; check for stale
     obsolete-class entries in classTable_ / sweepClassTable timing.
+  - **DECISIVE CORRECTION (2026-07-07, session cont.): this is a VM
+    FRAME-MATERIALIZATION bug, NOT an image primitive divergence and NOT a
+    heap/classTable/GC-accumulation bug.**  The prior "image control-flow
+    divergence, VM-integrity clean, needs lldb on a primitive" conclusion
+    was reading the symptom, not the cause.  New decisive facts:
+    * Reproduces DETERMINISTICALLY under `PHARO_MAT_AT_CHECKPOINT=3` —
+      forcing materializeFrameStack() every 3rd interpreter checkpoint
+      with NO scheduling, NO process switch, NO second process.  N=1
+      (materialize every checkpoint) PASSES; N=3 FAILS.  So the pure
+      materialize->executeFromContext round-trip is the defect; scheduling
+      only supplied the timing.  DET_SCHED=1 also repros ('1|2|2'); it is
+      razor-sharp on quantum (Q=2 and Q=4 both PASS).
+    * NEEDS >=2 materializations spanning the op: `PHARO_MAT_ONCE=N`
+      (exactly one forced materialization, swept N=1..5000) NEVER fails.
+      Single switch-to-context-mode runs clean to completion.  So the bug
+      is in RE-materializing a frame that was itself restored from a
+      context (materialize -> context -> inline -> re-materialize).
+    * NEEDS a LIVE INSTANCE only for TIMING: `c new` before the add adds
+      bytecodes that shift the deterministic schedule so a preemption
+      lands inside the `#z` rebuild's deep call stack (fd up to 35-41 in
+      MATFS trace).  Remove `c new` (fail3.st) => PASSES even under
+      DET_SCHED.  The instance does NOT causally affect slot computation.
+    * The class is left GENUINELY {x,y} (fail4.st: hasSlotNamed:#z=false,
+      localSlots=#(#x #y), instSize=2, global==c) — so `#z`'s rebuild
+      produced a slot list missing z, the ShSlotChangeDetector saw
+      {x,y}=={x,y} and skipped.  z was dropped from the builder's slot
+      collection while it sat on a deep frame's expression stack across a
+      preempt/re-materialize cycle.
+    * RULED OUT this session: capacity guard (zero CTX-CAPACITY/STATE-LOST
+      hits in the fail run); the ctxSynced incremental-materialization skip
+      (`PHARO_MAT_FULL_RESYNC=1` does NOT fix — so the drop is NOT the
+      18708 skip); leaf/current-frame save (re-saves operands fully, no cap
+      warning).  Remaining suspects: the frame[0]-reuse re-materialization
+      path (Interpreter.cpp ~18563, updates activeContext_ in place, NOT
+      covered by FULL_RESYNC) and the saved-frame exprEnd/nextFrameStart
+      bookkeeping for a mid-stack frame whose savedFP came from a lazily-
+      restored sender context.
+    * REPRO SCRIPTS (scratchpad/fixrig/gui.image): /tmp/fail2.st (per-step
+      counts '1|2|3' pass / '1|2|2' fail), /tmp/fail3.st (no instance,
+      always passes), /tmp/fail4.st (post-hoc class-state dump — safe
+      because DET_SCHED schedule up to the failing add is unchanged by
+      trailing diagnostics).  DIAGNOSTIC KNOBS added (debug_vars.h):
+      PHARO_MAT_AT_CHECKPOINT (force-mat every N cp), PHARO_MAT_ONCE
+      (single-shot at cp N) + PHARO_MAT_ONCE_DUMP, PHARO_MAT_STEP_LO/HI
+      (gate forcing to a g_stepNum window — used to bisect), PHARO_MAT_SEL
+      (leaf-selector gate), PHARO_TRACE_SLOTBUILD (return-into-context
+      origSp/retval/savedStack for slot-build methods).
+    * NEXT: bisect the frame[0]-reuse path — add PHARO_NO_FRAME0_REUSE to
+      force fresh-context creation at 18563 and test whether it fixes the
+      deterministic MAT_AT_CHECKPOINT=3 repro; if so the reuse path's expr
+      re-save (18616-18641) is the off-by-one.  Same shared root as the
+      ARM context-storm and TF-callback tail hang (all materialize/restore
+      fidelity under deep-stack repeated preemption).
 - [x] **Candidate-queue hunt COMPLETE 2026-07-07** (14-agent workflow
   wf_214bdc82, one agent per package, local fresh-image parity+shrink;
   five VM fixes committed e5570688/38c457f7/ac87599f/f9e49453/4c4e13e6,
