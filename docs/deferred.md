@@ -215,7 +215,10 @@ suites leak ~124 P50 procs) but the leak ALONE does not accumulate/explode
 without the Roassal-window-open resume-into-error interaction from the full
 catalog.  Reproduction genuinely requires building the 200-pkg catalog image
 (Roassal3+Spec2+~198 more via stock-Cog Metacello; our VM can't HTTPS) + a
-long run.  This session started a Roassal3 load toward that.
+long run.  This session started a Roassal3 load toward that — but stock Cog
+SEGFAULTS loading Roassal3's Cairo FFI (primLoadSymbol:module: / primDefineFunctionWith:returnType:) in this headless macOS env, so the
+full-Roassal catalog image CANNOT be built here.  Catalog runs must be done
+on a properly-provisioned box (the docs/results catalog#7-10 environment).
 
 ## Cross-platform catalog state — FINAL 2026-07-07 (see WIP.md, docs/changes.md)
 
