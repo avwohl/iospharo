@@ -3492,6 +3492,30 @@ void Interpreter::interpret() {
             }
         }
 
+        // Low-space signal (armed by primitiveSignalAtBytesLeft, prim 125).
+        // Cog: when free space drops below the threshold, disarm (one-shot,
+        // the image re-arms), record the culprit in ProcessSignalingLowSpace
+        // and signal TheLowSpaceSemaphore so the image's LowSpaceWatcher can
+        // interrupt the allocation hog.  This was WRITE-ONLY before
+        // 2026-07-07: prim 125 stored the threshold and nothing checked it,
+        // so runaway allocation storms (catalog #9's 200k-iteration
+        // debugger-recursion pinning 4M contexts) had no image-side circuit
+        // breaker and ran to old-space exhaustion.
+        if (__builtin_expect(lowSpaceThreshold_ > 0, 0)) {
+            if (memory_.freeOldSpaceBytes() < lowSpaceThreshold_) {
+                lowSpaceThreshold_ = 0;
+                Oop lowSem = memory_.specialObject(SpecialObjectIndex::TheLowSpaceSemaphore);
+                if (lowSem.isObject() && !lowSem.isNil()) {
+                    memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace,
+                                             getActiveProcess());
+                    fprintf(stderr, "[LOW-SPACE] threshold crossed (free=%zu MB) — "
+                            "signaling LowSpaceSemaphore, culprit recorded\n",
+                            memory_.freeOldSpaceBytes() / (1024 * 1024));
+                    synchronousSignal(lowSem);
+                }
+            }
+        }
+
         // Sampling profiler tick (armed by primitiveProfileStart).  Cog
         // semantics: the deadline is highResClock + delta, ONE-SHOT — the
         // profiler re-arms after consuming each sample.  Clock is read only
