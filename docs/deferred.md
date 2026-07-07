@@ -393,6 +393,37 @@ superseded per-family notes from catalog #5 below, updated:
       re-save (18616-18641) is the off-by-one.  Same shared root as the
       ARM context-storm and TF-callback tail hang (all materialize/restore
       fidelity under deep-stack repeated preemption).
+  - **FURTHER REFINEMENT (2026-07-07 cont.): the drop is a POINTER/COUNT
+    fidelity bug, NOT element-loss from a built collection.**
+    * frame[0] is `#make` (the rebuild's root block), exprCount=0 — the
+      new slots array is NOT on frame0; it lives on a MID-STACK frame at
+      fd 27-47 (the addSlot:/copyWith:/slots: region).
+    * KEY: the {x,y,z} Array is a HEAP object; frame save/restore moves
+      POINTERS to it, never its contents — so z cannot be lost *from* an
+      already-built array by materialization.  The corruption is either
+      (a) a STALE pointer to the pre-copyWith {x,y} array restored into a
+      temp/expr slot, or (b) an UNDERCOUNTED stackp at save (exprEnd too
+      low) so the new-array pointer is dropped and restore brings back a
+      short stack — the builder then computes allSlots=2, ShNoChangesInClass
+      fires, rebuild skipped.
+    * PHARO_NO_FRAME0_REUSE=1 is NOT a usable bisector: disabling the
+      reuse path aborts the eval (load-bearing for Context>>jump, per its
+      own comment) — it does not complete to a result.
+    * FULL_RESYNC exoneration of save is INCOMPLETE: FULL_RESYNC re-saves
+      but reuses the SAME exprEnd=savedFrames_[i+1].savedFP count, so an
+      exprEnd/savedFP miscount is NOT ruled out by it — still the prime
+      suspect.  SAVE-FRM trace of slot-named frames shows exprCount=0 for
+      the read-side accessors (visibleSlots/localSlots/lastSlotsOn:) — the
+      array rides on copyWith:/addSlot:/slots:/builder frames not yet
+      caught (they complete in too few checkpoints to be materialized as
+      SAVED frames often).
+    * NEXT (tractable): bake a PROBE IMAGE with SlotTestsClassA {x,y}+trait
+      pre-built + saved, then a fresh launch does only `c new.
+      c addInstVarNamed: #z` — a few-thousand-step repro; sweep
+      MAT_AT_CHECKPOINT=N to re-find a deterministic failing N, then lldb
+      single-step the one materialize/restore that undercounts stackp or
+      restores the stale array pointer.  Per CLAUDE.md: lldb is wired up,
+      do NOT punt.
 - [x] **Candidate-queue hunt COMPLETE 2026-07-07** (14-agent workflow
   wf_214bdc82, one agent per package, local fresh-image parity+shrink;
   five VM fixes committed e5570688/38c457f7/ac87599f/f9e49453/4c4e13e6,

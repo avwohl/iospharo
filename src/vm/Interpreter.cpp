@@ -18594,7 +18594,8 @@ Oop Interpreter::materializeFrameStack() {
         }
     }
 
-    if (frameDepth_ > 0 && savedFrames_[0].savedActiveContext.rawBits() == activeContext_.rawBits() &&
+    if (frameDepth_ > 0 && !GET_DEBUG_BOOL(PHARO_NO_FRAME0_REUSE) &&
+        savedFrames_[0].savedActiveContext.rawBits() == activeContext_.rawBits() &&
         activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
         // frame[0] IS activeContext_'s inline continuation. Update the heap context
         // with frame[0]'s saved state instead of creating a new context.
@@ -18654,6 +18655,7 @@ Oop Interpreter::materializeFrameStack() {
                 } else {
                     exprEnd = framePointer_;
                 }
+                ptrdiff_t dbgExprCount = (exprEnd > exprStart) ? (exprEnd - exprStart) : 0;
                 if (exprEnd > exprStart) {
                     ptrdiff_t exprCount = exprEnd - exprStart;
                     for (ptrdiff_t e = 0; e < exprCount; e++) {
@@ -18670,6 +18672,22 @@ Oop Interpreter::materializeFrameStack() {
                         }
                         memory_.storePointer(CtxFixed + numTemps + e, activeContext_, *(exprStart + e));
                         savedCount++;
+                    }
+                }
+                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_SLOTBUILD), 0)
+                        && frame0.savedMethod.isObject() && frame0.savedMethod.rawBits() > 0x10000) {
+                    std::string f0 = memory_.selectorOf(frame0.savedMethod);
+                    if (f0.find("Slot") != std::string::npos || f0.find("slot") != std::string::npos
+                            || f0.find("copyWith") != std::string::npos || f0.find("addInstVar") != std::string::npos
+                            || f0.find("compareVar") != std::string::npos || f0.find("make") != std::string::npos) {
+                        Oop topItem = (exprEnd > exprStart) ? *(exprEnd - 1) : Oop::nil();
+                        const char* tc = topItem.isNil() ? "nil"
+                            : topItem.isSmallInteger() ? "SmI"
+                            : (topItem.isObject() && topItem.rawBits() >= 0x10000)
+                                ? memory_.classNameOf(topItem).c_str() : "imm";
+                        fprintf(stderr, "[REUSE-F0] #%s numTemps=%d exprCount=%td top=%s fd=%zu step=%llu\n",
+                            f0.c_str(), numTemps, dbgExprCount, tc, frameDepth_,
+                            (unsigned long long)g_stepNum);
                     }
                 }
             }
@@ -18866,6 +18884,21 @@ Oop Interpreter::materializeFrameStack() {
                     }
                     memory_.storePointer(6 + numTemps + e, context, *(exprStart + e));
                     savedCount++;
+                }
+            }
+            if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_SLOTBUILD), 0)
+                    && frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000) {
+                std::string fs = memory_.selectorOf(frame.savedMethod);
+                if (fs.find("Slot") != std::string::npos || fs.find("slot") != std::string::npos
+                        || fs.find("copyWith") != std::string::npos || fs.find("addInstVar") != std::string::npos
+                        || fs.find("compareVar") != std::string::npos || fs == ",") {
+                    ptrdiff_t ec = (exprEndPtr > exprStart) ? (exprEndPtr - exprStart) : (exprEndPtr - exprStart);
+                    Oop topI = (exprEndPtr > exprStart) ? *(exprEndPtr - 1) : Oop::nil();
+                    const char* tc = topI.isNil() ? "nil" : topI.isSmallInteger() ? "SmI"
+                        : (topI.isObject() && topI.rawBits() >= 0x10000) ? memory_.classNameOf(topI).c_str() : "imm";
+                    ptrdiff_t gap = nextFrameStart - frame.savedFP;
+                    fprintf(stderr, "[SAVE-FRM %zu] #%s numTemps=%d exprCount=%td top=%s fpGap=%td fd=%zu step=%llu\n",
+                        i, fs.c_str(), numTemps, ec, tc, gap, frameDepth_, (unsigned long long)g_stepNum);
                 }
             }
         } else {
