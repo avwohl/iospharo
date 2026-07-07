@@ -200,6 +200,23 @@ on the storm-adjacent path: OupsDebuggerSystemTest + ContextTest + ProcessTest
 ARM catalog WITH the become fix (default-on) to check if the storm is gone
 or reduced BEFORE further storm-root work.**
 
+**2026-07-07 (cont.) — largest feasible in-context repro, BOTH ways, NO
+STORM:** ran the full 565-class harness + the debugger leak sources
+(OupsDebuggerSystemTest, DebugSession*, ContextDebugging, DebuggerModel/Test,
+EDEmergencyDebugger, AssignmentAndLiteralDebugger) as ONE single-image
+sequential run (575 classes, 12,770 tests) on the FakeGUI harness image (world-
+cycle resume vector present), PHARO_HEAP_CENSUS=1 PHARO_MAX_OLD_SPACE_MB=6144.
+BOTH the become-fix (default) AND NO_BECOME_FORWARDER builds completed CLEAN:
+~12,73x pass, **peak heap 56 MB FLAT, zero storm signatures** (storm grows to
+3.7 GB).  So the storm does NOT reproduce in the 565-class harness either way
+— it needs the FULL ~1300-class 200-package catalog (real storm hit "class
+1300", past the harness's 575).  The LEAK reproduces in isolation (debugger
+suites leak ~124 P50 procs) but the leak ALONE does not accumulate/explode
+without the Roassal-window-open resume-into-error interaction from the full
+catalog.  Reproduction genuinely requires building the 200-pkg catalog image
+(Roassal3+Spec2+~198 more via stock-Cog Metacello; our VM can't HTTPS) + a
+long run.  This session started a Roassal3 load toward that.
+
 ## Cross-platform catalog state — FINAL 2026-07-07 (see WIP.md, docs/changes.md)
 
 Catalog #10 (macOS/ARM, all 9 fixes, lean binary + low-space net):
