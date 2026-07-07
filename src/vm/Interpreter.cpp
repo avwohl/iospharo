@@ -26537,6 +26537,23 @@ bool Interpreter::materializeJ2JSaveIntoFrame(
                                  &memory_, siteTag);
     }
 
+    // SlotIntegration probe: does the JIT frame's tempCount disagree with the
+    // method-header numTemps that materializeFrameStack will use to split
+    // temps/operands?  A mismatch shifts operands across preempt/resume.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRAP_IVAR0), 0)
+            && saveMethod.isObject() && saveMethod.rawBits() > 0x10000) {
+        Oop mh = memory_.fetchPointer(0, saveMethod);
+        if (mh.isSmallInteger()) {
+            int hdrTemps = (int)((mh.asSmallInteger() >> 18) & 0x3F);
+            if (hdrTemps != (int)saveJM->tempCount) {
+                static int mm = 0;
+                if (++mm <= 40)
+                    fprintf(stderr, "[TEMPMISMATCH] #%s hdrTemps=%d jitTempCount=%d site=%s\n",
+                            memory_.selectorOf(saveMethod).c_str(),
+                            hdrTemps, (int)saveJM->tempCount, siteTag);
+            }
+        }
+    }
     frame.savedIP = saveIp;
     // Use CompiledMethod's actual byteSize.  saveJM->numBytecodes is 0
     // for AsmjitT1 methods with send sites (advertiseResume gate at
