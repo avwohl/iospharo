@@ -50,10 +50,33 @@ superseded per-family notes from catalog #5 below, updated:
   become classTable).
 - [ ] **SlotIntegrationTest>>testAddAndAddInstVarNamedWithTrait2** —
   pre-existing (fails standalone at ffca1841, before the 2026-07-07 fix
-  wave): adding an ivar to a trait-using class loses the new slot
-  (Got #(#x #y) instead of #(#x #y #z)); also '2 ran' doubling from a
-  single (cls selector: sel) run on our VM (stock: 1 ran).  Masked in
-  catalog #8 by suite order.  Class-rebuild/trait machinery.
+  wave); 18-probe dossier from 2026-07-07 (scripts in the session
+  scratchpad /tmp/slotprobe*.st, gui.image = pkgbase + fake-GUI bake):
+  - MINIMAL REPRO (variant C): make class with trait TOne + slot x;
+    `c new one. c addInstVarNamed: #y. c new one. c addInstVarNamed: #z`
+    -> #z SILENTLY dropped (ivars stay #(x y), env copy identical, no
+    error, no announcement-subscriber change).  BOTH trait-method sends
+    are required (A: send-before-first-add only, B: between only,
+    D: `new` without the send — all pass).  Stock: passes all variants.
+  - The add's inputs are correct (localSlots + copyWith: produce x y z);
+    the no-op is the installer taking its no-changes path (inner
+    ShNoChangesInClass handler in ShiftClassInstaller>>make — outer
+    handlers can't see it).
+  - HEAL MATRIX: retrying the same add works; `Smalltalk garbageCollect`
+    heals; `garbageCollectMost` (scavenge) heals; recompiling
+    compareWithOldClass (any image recompile?) heals.  NOT prevented by
+    PHARO_NO_JIT=1 nor PHARO_NO_METHOD_CACHE=1 — poison is VM state
+    outside both, cleared by ANY GC pass.
+  - Ruled out: traitUsers weak-set staleness (1 clean user, == c),
+    metaclass-class identity (TraitedMetaclass checks hold), builder
+    enhancer selection (TraitBuilderEnhancer engaged when instrumented),
+    subscriptions (51->51).
+  - '2 ran' doubling = body TestFailure + tearDown error double-count,
+    secondary.
+  - NEXT: VM-side — trace which become prims (72/128/249) each of the
+    two rebuilds calls and diff interpreter/memory state across a
+    healing scavenge inside the poisoned window (candidates: remembered
+    set, purge/rekey passes, forwarding remnants readable pre-GC).
 - [x] **Candidate-queue hunt COMPLETE 2026-07-07** (14-agent workflow
   wf_214bdc82, one agent per package, local fresh-image parity+shrink;
   five VM fixes committed e5570688/38c457f7/ac87599f/f9e49453/4c4e13e6,
