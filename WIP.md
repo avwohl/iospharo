@@ -1,3 +1,43 @@
+# WIP — /goal "fix all non-Windows bugs" — CONTINUED 2026-07-06 night → 07-07
+
+**CATALOG #8 (macOS/ARM, everything): 27,763 P / 15 F / 3 E / 4 T / 182 S
+= 22 non-pass = 99.92%.**  Full-day arc: 199 → 113 → 84 → 59 → 33 → 22.
+Archived: docs/results/catalog-2026-07-06/arm_catalog8_detail.txt.
+
+NIGHT-WAVE FIXES (all workflow-verified, committed through 43a8b43d):
+- VM: nil-methodDict #cannotInterpret: proxy protocol (60d4ee1c) + become
+  classTable redirect (07a27e63) — GHost/Mocketry real-object stubs went
+  from silently-no-op to fully working (Bitbucket suite 0/30 → 30/30;
+  gitlab+bitbucket = 90 jitpkg errors resolved).  Minimal repro preserved
+  in memory proxy-protocol-vm-contracts.md, including the mustBeBoolean
+  near-miss (VM must NOT rewind; the image does).
+- VM: GC class-pinning — forEachMemoryRoot deep-traced classTable pages
+  during mark (ReleaseTest testObsoleteClasses); vmParameter 79
+  (imageVersion); bare launches non-interactive (PHARO_INTERACTIVE
+  opt-in) killing the MorphicWindowManager/clipboard pollution family.
+- Runner/prep hygiene batch (submodule 90d60d7): orphan packages
+  (protocol reclassifications + BaselineOfSUnitHarness), sched-logger via
+  addSelectorSilently + perform: + writeStreamDo: (appendStreamDo: was a
+  latent DNU — no implementors in Pharo 13!), pharo.version write,
+  SUnitTest fresh-env, MorphicUIManager reinstall.
+- 12-agent residual analysis (workflow wi6e5e0me): every one of the 33
+  catalog-#7 non-passes root-caused with adversarial verification; the
+  22 remaining in #8 are all in the accepted-residual classes:
+  upstream-image bugs (OCClassBuilder, SystemDependencies UIdeps),
+  stock-identical run-order pollution (ReleaseTest literal-pin/
+  PackageOrganizer/testObsoleteClasses-in-suite), env both-fail
+  (StDebugger layout/context family), perf casualties (StSpotter x2,
+  slow scans x3), GC catalog-context flakes (FinalizationRegistry,
+  roving Trait/TraitFileOut timeout), upstream-flaky TKT, network
+  ZnClient, and singles (EDEmergency, RBRefactoringChange,
+  StTranscript testClear — new roving singles, same flake families).
+- jitpkg 200-package sweep on box #2 (i-01e7bfe27763e6ff8): aigraph
+  176/176 parity (May bug conclusively dead), bitbucket/gitlab fixed;
+  sweep at ~165/200, flagged rows to re-run on the current binary when
+  it completes (illimani 15, famixreplication 4, p3 3, singles).
+
+Previous wrap follows.
+
 # WIP — /goal "fix all non-Windows bugs" session 2026-07-06 (day) — WRAPPED ~16:30
 
 **FINAL: catalog #7 (macOS/ARM, everything incl. the surface-registry
