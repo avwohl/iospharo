@@ -164,6 +164,19 @@ superseded per-family notes from catalog #5 below, updated:
     two rebuilds calls and diff interpreter/memory state across a
     healing scavenge inside the poisoned window (candidates: remembered
     set, purge/rekey passes, forwarding remnants readable pre-GC).
+  - RULED OUT (2026-07-07, deterministic tests both VMs identical to
+    stock): basic weak-clearing (WeakArray/WeakOrderedCollection/keep-1
+    all correct); basic becomeForward reference-update completeness
+    (slot / Dictionary-value / IdentitySet-member / OrderedCollection
+    all updated WITHOUT a GC).  So it is NOT a generic forwarder-scan
+    gap nor a weak-nil gap — it is specific to the class-REBUILD path
+    (class-become + instance-migration + trait, under accumulated heap
+    state).  ALSO: the mini-repro is ITSELF heap-state-dependent
+    (variant order changes pass/fail within one eval — a Heisenbug like
+    the storm), so quick Smalltalk probes MISLEAD; needs DET_SCHED +
+    lldb on the two-rebuild window.  Likely shares a root cause with the
+    context storm and the WeakOrderedCollection suite-flake (all three
+    are GC/become/heap-state-timing Heisenbugs in the same VM area).
 - [x] **Candidate-queue hunt COMPLETE 2026-07-07** (14-agent workflow
   wf_214bdc82, one agent per package, local fresh-image parity+shrink;
   five VM fixes committed e5570688/38c457f7/ac87599f/f9e49453/4c4e13e6,
