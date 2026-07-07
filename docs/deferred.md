@@ -417,13 +417,25 @@ superseded per-family notes from catalog #5 below, updated:
       array rides on copyWith:/addSlot:/slots:/builder frames not yet
       caught (they complete in too few checkpoints to be materialized as
       SAVED frames often).
-    * NEXT (tractable): bake a PROBE IMAGE with SlotTestsClassA {x,y}+trait
-      pre-built + saved, then a fresh launch does only `c new.
-      c addInstVarNamed: #z` — a few-thousand-step repro; sweep
-      MAT_AT_CHECKPOINT=N to re-find a deterministic failing N, then lldb
-      single-step the one materialize/restore that undercounts stackp or
-      restores the stale array pointer.  Per CLAUDE.md: lldb is wired up,
-      do NOT punt.
+    * PROBE-IMAGE SHORTCUT IS DEAD (2026-07-07): `Smalltalk saveAs:` inside
+      an eval FREEZES the pending-eval result — a reloaded probe.image
+      returns the frozen `'#(#x #y)'` for EVERY eval (even `(3+4)`), because
+      the SnapshotOperation context resumes on load and replays.  Also, a
+      class saved mid-build is left permanently unmodifiable (z-add always
+      no-ops, GC does NOT heal — a DIFFERENT, save-induced structural state,
+      not the timing bug).  So the timing bug cannot be shrunk to a small
+      saved-image repro; it needs the full 200K-step fresh build.
+    * NEXT (lldb on the FULL DET_SCHED repro, per CLAUDE.md — do NOT punt):
+      the deterministic MAT_AT_CHECKPOINT=3 / DET_SCHED=1 repro on gui.image
+      + /tmp/fail2.st is the oracle.  Save paths are faithful (FULL_RESYNC
+      re-saves, zero CTX-CAPACITY); the remaining suspect is RESTORE-side:
+      executeFromContext's leaf restore + the return-into-context re-inlining
+      chain (returnValue ~line 7470) for the deep (fd 27-47) trait-rebuild
+      stack.  Break there conditional on g_stepNum in the failing window
+      (bisected: materializations must span the whole 2nd add, needs >=2
+      far apart) and sender method in {addSlot:, copyWith:, slots:, the
+      builder} and inspect whether the restored stackp/operands drop the
+      new-slots-array pointer or restore a stale {x,y} array pointer.
 - [x] **Candidate-queue hunt COMPLETE 2026-07-07** (14-agent workflow
   wf_214bdc82, one agent per package, local fresh-image parity+shrink;
   five VM fixes committed e5570688/38c457f7/ac87599f/f9e49453/4c4e13e6,
