@@ -1599,7 +1599,7 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
     // 2 -> SubscriptOutOfBounds -> rebuild aborts).  Turning obj1 into a
     // forwarder to obj2 makes any missed ref resolve via followForwarded and
     // makes allInstances (which skips isForwarded) stop re-finding the husk.
-    if (GET_DEBUG_BOOL(PHARO_BECOME_FORWARDER)
+    if (!GET_DEBUG_BOOL(PHARO_NO_BECOME_FORWARDER)
             && obj1.isObject() && obj1.rawBits() != obj2.rawBits()
             && obj1.asObjectPtr()->slotCount() >= 1
             && !obj1.asObjectPtr()->isForwarded()) {

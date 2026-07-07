@@ -236,7 +236,28 @@ superseded per-family notes from catalog #5 below, updated:
   176/176 (May bug conclusively dead), gitlab+bitbucket mock suites
   90-error family FIXED by the proxy-protocol VM work (cannotInterpret: +
   become classTable).
-- [ ] **SlotIntegrationTest>>testAddAndAddInstVarNamedWithTrait2** —
+- [x] **SlotIntegrationTest>>testAddAndAddInstVarNamedWithTrait2 — FIXED
+  2026-07-07 (b04a0015 gated -> default-on).**  Root cause (fully traced;
+  the entire dossier below was the multi-session hunt, most of its earlier
+  theories WRONG): the first add's instance-grow `becomeForward(old@X 1-slot
+  -> new@Y 2-slot)` is scan-and-replace (allObjectsDo heap + scanStackReplace
+  /forEachRoot roots) and MISSES a reference to old@X that GC's mark keeps
+  alive (a JIT operand under materialization) — so old@X stays a STALE VALID
+  instance.  The second add's `allInstances` re-finds old@X and migrates it
+  at ivar 2 -> slotCount 1 < class instSize 2 -> prim 73 fails ->
+  `SubscriptOutOfBounds: 0 in object:instVarAt:` -> the rebuild aborts before
+  its class-install become -> the new slot is silently dropped.  Needs BOTH
+  JIT and materialization (NO_JIT / NO_J2J-independent: base JIT execution +
+  preempt).  FIX: `becomeForward` now leaves obj1 as a forwarder to obj2
+  (setClassIndex 8, slot0=obj2) after the scan — any scan-missed ref resolves
+  via followForwarded and `allInstances` (skips isForwarded) stops re-finding
+  the husk.  Validated: SlotIntegrationTest 17/17; slot/become batch (220
+  tests) 1 fixed / 0 regressed; broad batch[1-150] (7876 tests) byte-identical
+  results.  Opt-out: PHARO_NO_BECOME_FORWARDER.  Deterministic oracle for
+  regressions: PHARO_MAT_AT_CHECKPOINT=3 on /tmp/fail2.st (scratchpad/fixrig).
+  NOTE: the ARM context-storm and TF-callback tail hang were hypothesized to
+  share this root — re-test them against this fix.
+- [ ] ~~SlotIntegrationTest (old dossier, kept for method/evidence)~~ —
   pre-existing (fails standalone at ffca1841, before the 2026-07-07 fix
   wave); 18-probe dossier from 2026-07-07 (scripts in the session
   scratchpad /tmp/slotprobe*.st, gui.image = pkgbase + fake-GUI bake):
