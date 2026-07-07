@@ -11711,6 +11711,47 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             }
         }
     }
+    // PHARO_TRACE_SLOTCMP: SlotIntegration decisive split — dump collection
+    // sizes flowing through the change detector + slot builders during the
+    // z-add.  Answers: does the builder's slot collection reach the
+    // comparison already short (size 2), or does the comparison wrongly
+    // equate a 3 with a 2?  Also traces addSlot:/slots:/copyWith: arg sizes.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_SLOTCMP), 0)) {
+        std::string sel = memory_.selectorOf(method);
+        bool interesting = sel.find("compareVariables") != std::string::npos
+            || sel.find("hasChanges") != std::string::npos
+            || sel.find("compareWithOldClass") != std::string::npos
+            || sel == "createClass" || sel == "installSlotsAndVariables"
+            || sel == "migrateClassTo:" || sel == "migrateInstancesTo:installer:"
+            || sel == "hasToMigrateInstances" || sel == "reshapeClass"
+            || sel.find("propagateChanges") != std::string::npos
+            || sel == "build" || sel == "make:" || sel == "installClassDefinition"
+            || sel == "addSlot:" || sel == "slots:" || sel == "addInstVarNamed:";
+        if (interesting) {
+            auto collSize = [&](Oop o) -> long {
+                if (!o.isObject() || o.rawBits() <= 0x10000) return -1;
+                std::string cn = memory_.classNameOf(o);
+                ObjectHeader* h = o.asObjectPtr();
+                if (cn == "Array") return (long)h->slotCount();
+                if (cn == "OrderedCollection") {
+                    Oop fi = h->slotAt(1), li = h->slotAt(2);
+                    if (fi.isSmallInteger() && li.isSmallInteger())
+                        return (long)(li.asSmallInteger() - fi.asSmallInteger() + 1);
+                }
+                return -2;  // some other class
+            };
+            fprintf(stderr, "[SLOTCMP] #%s step=%llu args:", sel.c_str(),
+                    (unsigned long long)g_stepNum);
+            for (int a = argCount; a >= 0; a--) {
+                Oop v = stackValue(a);
+                std::string vc = (v.isObject() && v.rawBits() > 0x10000)
+                    ? memory_.classNameOf(v) : (v.isSmallInteger() ? "SmI" : "imm");
+                fprintf(stderr, " [%d]%s(sz=%ld)", a, vc.c_str(), collSize(v));
+            }
+            fprintf(stderr, "\n");
+        }
+    }
+
     // PHARO_OCIR_ERROR_DUMP: identity-mismatch forensics for the Opal
     // convertStorePop failure — when #error activates on an OCIRSequence,
     // dump the convertStorePop frame's assoc and the sequence contents.

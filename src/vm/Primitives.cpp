@@ -2622,6 +2622,26 @@ PrimitiveResult Interpreter::primitiveInstVarAt(int argCount) {
 
     int64_t idx = index.asSmallInteger();
     if (idx < 1) {
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRAP_IVAR0), 0)) {
+            extern uint64_t g_stepNum;
+            static int n = 0;
+            if (++n <= 20) {
+                fprintf(stderr, "[IVAR0] instVarAt: idx=%lld rcvr=%s step=%llu chain:",
+                        (long long)idx,
+                        (rcvr.isObject() && rcvr.rawBits() > 0x10000)
+                            ? memory_.classNameOf(rcvr).c_str() : "imm",
+                        (unsigned long long)g_stepNum);
+                fprintf(stderr, " [cur]#%s",
+                        (method_.isObject() && method_.rawBits() > 0x10000)
+                            ? memory_.selectorOf(method_).c_str() : "?");
+                for (int f = static_cast<int>(frameDepth_); f >= 0 && f > (int)frameDepth_ - 14; --f) {
+                    Oop sm = savedFrames_[f].savedMethod;
+                    fprintf(stderr, " %s", (sm.isObject() && sm.rawBits() > 0x10000)
+                        ? memory_.selectorOf(sm).c_str() : "?");
+                }
+                fprintf(stderr, "\n");
+            }
+        }
         return PrimitiveResult::Failure;
     }
 
