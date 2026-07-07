@@ -850,6 +850,8 @@ static LONG WINAPI pharoWinCrashHandler(EXCEPTION_POINTERS* ep) {
 }
 #endif  // _WIN32
 
+extern "C" void pharo_dumpPrimSeq();
+
 int main(int argc, char* argv[]) {
 #ifndef _WIN32
     struct sigaction sa;
@@ -1481,6 +1483,7 @@ int main(int argc, char* argv[]) {
     if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
         fprintf(stderr, "[EXIT-TRACE] main returning 0\n");
     }
+    pharo_dumpPrimSeq();
     std::cout << "\n=== Test Complete ===" << std::endl;
     // Dump profile BEFORE Interpreter destructor runs (atexit's too
     // late — memory is torn down by then, selectorOf crashes).
