@@ -10496,6 +10496,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     Oop currentClass = classOop;
     int depth = 0;
+    cannotInterpretClass_ = Oop::nil();  // fresh per lookup
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     auto isNilOrEnd = [nilObj](Oop o) -> bool {
@@ -10527,6 +10528,20 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
         // (deferred.md A1 / project_a1_init_signal_dead_ends_2026_05_05.md)
         if (!memory_.isValidPointer(currentClass)) return Oop::nil();
         Oop methodDict = methodDictOf(currentClass);
+
+        // Spur proxy protocol: an EXACTLY-nil methodDictionary means "send
+        // #cannotInterpret: to the receiver, looked up from this class's
+        // superclass" — record the class and stop the walk (the send-miss
+        // path consumes cannotInterpretClass_).  GHost/Mocketry real-object
+        // stubs (`realObj stub sel willReturn:`) install a Behavior-shaped
+        // mutation with a nil dict as the victim's class; skipping to the
+        // superclass here made every stub silently fall through to the real
+        // method (jitpkg sweep: gitlab/bitbucket API suites, 2026-07-06).
+        // Invalid/corrupt dict pointers keep the defensive skip below.
+        if (methodDict.isNil() || methodDict.rawBits() == nilObj.rawBits()) {
+            cannotInterpretClass_ = currentClass;
+            return Oop::nil();
+        }
 
         if (!isNilOrEnd(methodDict) && methodDict.isObject()
             && memory_.isValidPointer(methodDict)) {
@@ -14603,6 +14618,22 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     const int MAX_DNU_DEPTH = 10;
 
+    // Nil-methodDict proxy protocol: the immediately-preceding lookupMethod
+    // hit a class whose methodDictionary is nil — this is #cannotInterpret:
+    // territory (Spur), not doesNotUnderstand:.  Consume the marker and
+    // divert; every lookup-miss caller funnels through here, so this one
+    // branch covers all send paths.
+    if (__builtin_expect(!cannotInterpretClass_.isNil(), 0)) {
+        Oop nilDictClass = cannotInterpretClass_;
+        cannotInterpretClass_ = Oop::nil();
+        // Never divert a cannotInterpret: send itself (broken proxy chain
+        // would recurse forever) — fall through to DNU handling instead.
+        if (selector.rawBits() != selectors_.cannotInterpret.rawBits()) {
+            sendCannotInterpret(selector, argCount, nilDictClass);
+            return;
+        }
+    }
+
     // x86 leak hunt: dump the FIRST DNUs (the trigger of the exception storm).
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_T1_CT_SPLOG), 0)) {
         static int firstDnu = 0;
@@ -15694,6 +15725,81 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     sendSelector(selectors_.doesNotUnderstand, 1);
 
     dnuDepth_--;
+}
+
+// Spur nil-methodDict proxy protocol: reify the message and send
+// #cannotInterpret: to the receiver, with method lookup starting at the
+// SUPERCLASS of the class whose dict was nil (so a proxy chain's real
+// handler runs instead of looping on the proxy itself).  Mirrors the
+// sendDoesNotUnderstand builder's stack/GC discipline exactly.
+void Interpreter::sendCannotInterpret(Oop selector, int argCount, Oop nilDictClass) {
+    // Stack: ... receiver arg1 .. argN
+    push(selector);  // GC root during allocations
+
+    Oop messageClass = memory_.specialObject(SpecialObjectIndex::ClassMessage);
+    uint32_t messageClassIdx = memory_.indexOfClass(messageClass);
+    if (messageClassIdx == 0)
+        messageClassIdx = memory_.registerClass(messageClass);
+    Oop message = memory_.allocateSlots(messageClassIdx, 3, ObjectFormat::FixedSize);
+    if (message.rawBits() == memory_.nil().rawBits()) {
+        pop();
+        for (int i = 0; i < argCount + 1; i++) pop();
+        stopVM("cannotInterpret: failed to allocate Message");
+        return;
+    }
+    push(message);
+
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    uint32_t arrayClassIdx = memory_.indexOfClass(arrayClass);
+    if (arrayClassIdx == 0)
+        arrayClassIdx = memory_.registerClass(arrayClass);
+    Oop args = memory_.allocateSlots(arrayClassIdx, argCount, ObjectFormat::Indexable);
+    if (args.rawBits() == memory_.nil().rawBits() && argCount > 0) {
+        pop(); pop();
+        for (int i = 0; i < argCount + 1; i++) pop();
+        stopVM("cannotInterpret: failed to allocate args Array");
+        return;
+    }
+
+    message = pop();
+    selector = pop();
+
+    memory_.storePointer(0, message, selector);
+    for (int i = argCount - 1; i >= 0; --i) {
+        memory_.storePointer(i, args, pop());
+    }
+    memory_.storePointer(1, message, args);
+
+    Oop originalReceiver = pop();
+    memory_.storePointer(2, message, nilDictClass);  // lookupClass
+
+    // Resolve cannotInterpret: starting ABOVE the nil-dict class.
+    Oop startClass = superclassOf(nilDictClass);
+    Oop handler = Oop::nil();
+    if (startClass.isObject() && memory_.isValidPointer(startClass)) {
+        handler = lookupMethod(selectors_.cannotInterpret, startClass);
+        cannotInterpretClass_ = Oop::nil();  // discard any nested marker
+    }
+
+    push(originalReceiver);
+    push(message);
+
+    if (handler.isObject() && !handler.isNil()
+        && memory_.isValidPointer(handler)
+        && handler.asObjectPtr()->isCompiledMethod()) {
+        activateMethod(handler, 1);
+        return;
+    }
+
+    // No cannotInterpret: above the proxy — degrade to doesNotUnderstand:
+    // of the ORIGINAL message shape (receiver + message already staged for
+    // a 1-arg send; DNU expects receiver args..., so unwrap).
+    pop();  // message
+    // re-push original args from the reified message so DNU sees them
+    for (int i = 0; i < argCount; i++) {
+        push(memory_.fetchPointer(static_cast<size_t>(i), args));
+    }
+    sendDoesNotUnderstand(selector, argCount);
 }
 
 void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount) {
@@ -17471,6 +17577,7 @@ void Interpreter::initializeSelectors() {
 
     // Get selectors from special objects array
     selectors_.doesNotUnderstand = memory_.specialObject(SpecialObjectIndex::SelectorDoesNotUnderstand);
+    selectors_.cannotInterpret = memory_.specialObject(SpecialObjectIndex::SelectorCannotInterpret);
     selectors_.mustBeBoolean = memory_.specialObject(SpecialObjectIndex::SelectorMustBeBoolean);
     selectors_.cannotReturn = memory_.specialObject(SpecialObjectIndex::SelectorCannotReturn);
     selectors_.aboutToReturn = memory_.specialObject(SpecialObjectIndex::SelectorAboutToReturn);

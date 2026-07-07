@@ -190,6 +190,7 @@ struct MethodCacheEntry {
 /// Well-known selectors (cached for performance)
 struct WellKnownSelectors {
     Oop doesNotUnderstand;
+    Oop cannotInterpret;   // cannotInterpret: — nil-methodDict proxy protocol
     Oop mustBeBoolean;
     Oop cannotReturn;
     Oop aboutToReturn;
@@ -1265,6 +1266,16 @@ private:
     uint64_t bytecodeCount_ = 0;
     int sendCount_ = 0;
     int dnuDepth_ = 0;
+
+    // Nil-methodDict proxy protocol (Spur `cannotInterpret:`): lookupMethod
+    // records the class whose methodDictionary slot was exactly nil; the
+    // send-miss path then reifies the message and sends #cannotInterpret:
+    // to the receiver, LOOKED UP FROM THAT CLASS'S SUPERCLASS (GHost/
+    // Mocketry real-object stubs and Pharo proxies depend on this).
+    // Transient: set by lookupMethod, consumed by sendDoesNotUnderstand's
+    // head; never survives an allocation, so no GC rooting needed.
+    Oop cannotInterpretClass_ = Oop::nil();
+    void sendCannotInterpret(Oop selector, int argCount, Oop nilDictClass);
     int wakeLowerCount_ = 0;
     long long lastHeartbeatSteps_ = -1;
 
