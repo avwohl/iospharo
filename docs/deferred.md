@@ -35,22 +35,35 @@ overhead suppresses the race" — exactly the PHARO_DET_SCHED scenario
 (CLAUDE.md).  Root-cause bisect must use PHARO_DET_SCHED=1 for a stable
 repro; a plain instrumented rerun hides it.
 
-**Suspects** (baseline clean => regression from the 6-fix window
-e5570688..a99eee86):
+**Leading conclusion (2026-07-07): a PRE-EXISTING race exposed by the
+fixes' TIMING, not a correctness bug in any one fix.** Three of the six
+window commits are exonerated by direct analysis, and the survivors only
+change *timing*, not the debugger machinery:
 - EXONERATED f9e49453 (NLR aboutToReturn): full reverted catalog still
   stormed, identical signature.
-- EXONERATED a99eee86 (two-way become stack swap): sender analysis — the
-  debugger steps with elementsForwardIdentityTo: = ONE-WAY become (prim
-  249, untouched); only BecomeTest/ObjectTest/Fuel use the two-way
-  become: I changed.  (Frame-scoped scanStackSwap targeted fix staged on
-  branch storm-fix-framescope in case a later test implicates it.)
-- OPEN, ranked: e5570688 profiler-DEADLINE hunk (the only scheduling-
-  timing-changing fix — synchronousSignal at the periodic checkpoint +
-  primitiveRelinquishProcessor when a deadline is armed; bisect binary
-  staged branch storm-test-noprofdeadline); then ac87599f (ephemeron
-  basicNewTenured — GC-format change, ARM-GC-timing-plausible);
-  38c457f7 (int/float compare); 4c4e13e6 (readSema, socket-only, least
-  likely).
+- EXONERATED a99eee86 (two-way become stack swap): the debugger steps
+  with elementsForwardIdentityTo: = ONE-WAY become (prim 249, untouched);
+  only BecomeTest/ObjectTest/Fuel use the two-way become: I changed.
+  (Frame-scoped scanStackSwap targeted fix staged branch
+  storm-fix-framescope regardless.)
+- EXONERATED ac87599f (ephemeron basicNewTenured): the base catalog
+  image has ZERO senders of newTenured/basicNewTenured on ephemerons
+  (only the illimani PACKAGE uses it) — the fix is INERT in the catalog.
+- SURVIVORS all only shift timing: 38c457f7's int/float compare fast
+  path makes comparisons FASTER (skips the send); e5570688's SQFile
+  handles ALLOCATE a 24-byte ByteArray per file-open (GC cadence);
+  e5570688's profiler deadline only fires during an ACTIVE profiling
+  test (re-armed per sample) so it can't reach the RS region.  None
+  touch the debugger/scheduler.
+The storm mechanism — a leaked Oups dummy-debugger P50 process getting
+RESUMED (FakeGUI World-cycle) and recursing in exception-freeze — exists
+independently of every fix.  So the fixes almost certainly EXPOSED a
+pre-existing latent race (leaked-debugger resurrection) by nudging
+timing, rather than introducing it.  The real root cause is a separate,
+pre-existing bug: why does a discarded dummy-debugger process become
+runnable again, and why does its unhandled error re-loop instead of
+terminating?  (cf. the Zn/StDebugger background-failure-suspension
+family — same "background process won't die" shape.)
 
 **Mitigation IN PLACE** (22fcb0e7, Cog-parity, legitimate): the
 low-space signal (prim 125) was WRITE-ONLY — threshold stored, never
