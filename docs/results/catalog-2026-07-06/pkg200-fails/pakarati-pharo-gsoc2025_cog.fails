@@ -1,0 +1,3 @@
+ERR  DrTestsUITest>>testMultipleSelectingPackagesWillUpdateTheClassesList
+ERR  DrTestsUITest>>testSelectingPackageWillUpdateTheClassesList
+FAIL DTTestCoverageTest>>testDTTestCoverageResultHas2Nodes

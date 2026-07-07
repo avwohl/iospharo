@@ -1,0 +1,3 @@
+ERR  OpenWeatherHistoryFlatBulkTest>>testCSVOneRecord
+ERR  OpenWeatherHistoryFlatBulkTest>>testCSVOneRecordAsDictionary
+ERR  OpenWeatherHistoryFlatBulkTest>>testCSVOneRecordAsHistoryFlatBulk

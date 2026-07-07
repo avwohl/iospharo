@@ -1,0 +1,7 @@
+ERR  FamixMetricsTest>>testLCOM2
+ERR  FamixMetricsTest>>testLCOM3
+FAIL FamixMetricsTest>>testMartinCohesionFamixPackage
+FAIL FamixPackageNavigationChefTest>>testStaticProviderPackages
+FAIL FmxMBGeneratorTest>>testGeneratorsAreUpToDate
+FAIL MooseEntityTest>>testPrintOnWithError
+FAIL MooseObjectTest>>testPrintOnWithError

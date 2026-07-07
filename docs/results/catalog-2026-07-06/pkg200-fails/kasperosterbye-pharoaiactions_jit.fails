@@ -1,0 +1,5 @@
+ERR  AIASourceCodeBuilderAITest_02>>testInitialize02
+ERR  AIASourceCodeBuilderAITest_02>>testInitialize03
+FAIL AIAHistoryAITest>>testIncludeInHistories
+FAIL AIAPackageCommentTest>>testAiaComment
+FAIL AIASourceCodeBuilderAITest_02>>testMethodNameAndCommentForIn01

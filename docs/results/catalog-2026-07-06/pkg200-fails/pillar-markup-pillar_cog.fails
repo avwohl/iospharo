@@ -1,0 +1,9 @@
+ERR  PRIntegrationTest>>testBasicLatexHtml
+ERR  PRIntegrationTest>>testBasicLatexPdf
+ERR  PRIntegrationTest>>testBookEpub
+ERR  PRIntegrationTest>>testBookHtml
+ERR  PRIntegrationTest>>testBookPdf
+ERR  PRIntegrationTest>>testPresentationHtml
+ERR  PRIntegrationTest>>testPresentationPdf
+ERR  PRIntegrationTest>>testWelcomeHtml
+ERR  PRIntegrationTest>>testWelcomePdf

@@ -1,0 +1,3 @@
+FAIL HeraRunnerTestCase>>testRestartFilteredScope
+FAIL HeraRunnerToolTestCase>>testRunAllSelfAcceptanceTests
+TIMEOUT HeraSpecDocumentationTestCase>>testRunAllSelfAcceptanceTests[IMAGE] TIMEOUT HeraSpecDocumentationTestCase>>testRunAllSelfAcceptanceTests

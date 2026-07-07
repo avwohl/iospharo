@@ -1,0 +1,5 @@
+ERR  FASTCopyVisitorCodeGeneratorTest>>testShouldCopyMultiValuedDerivedProperty
+ERR  FASTCopyVisitorCodeGeneratorTest>>testShouldCopyNotMultiValuedProperty
+ERR  FASTCopyVisitorCodeGeneratorTest>>testShouldCopyPropertyToOtherEntity
+ERR  FASTCopyVisitorCodeGeneratorTest>>testShouldNotCopyMultivaluedDerivedProperty
+ERR  FASTCopyVisitorCodeGeneratorTest>>testShouldNotCopyPropertyParent

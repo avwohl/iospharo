@@ -1,0 +1,9 @@
+ERR  SoilBackupTest>>testBackupCurrentVersion
+ERR  SoilBackupTest>>testBackupOldBehavior
+ERR  SoilBackupTest>>testBackupOldVersion
+ERR  SoilBackupTest>>testBackupTheBackup
+ERR  SoilBackupTest>>testBackupWithIndex
+ERR  SoilBackupTest>>testBackupWithIndexRemoval
+ERR  SoilBackupTest>>testSimpleBackup
+ERR  SoilBehaviorRegistryTest>>testRegisterNewClass
+ERR  SoilBehaviorRegistryTest>>testSOBehaviorDescription

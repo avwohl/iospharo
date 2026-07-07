@@ -1,0 +1,5 @@
+ERR  SaAdaptiveLabelsTest>>testBigEnoughToShowLabels
+ERR  SaAdaptiveLabelsTest>>testTooSmallToShowLabels
+FAIL SaBuilderTest>>testAndreasSystemProfilerAsReport
+FAIL SaSmokeTest>>testNewWithASPFor
+FAIL SaSmokeTest>>testNewWithASPOn

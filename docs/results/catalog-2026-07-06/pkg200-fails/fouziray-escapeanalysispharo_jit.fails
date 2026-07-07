@@ -1,0 +1,15 @@
+ERR  EscapeTest>>testHGSteamPaint
+ERR  ObjectInliningTest>>testHoneyGinger
+ERR  ObjectInliningTest>>testInliningObjectPoint
+ERR  ObjectInliningTest>>testInliningObjectPoint2
+ERR  ObjectInliningTest>>testMultipleAssignments
+ERR  ObjectInliningTest>>testReturnedAssigment
+FAIL EscapeTest>>testComplexWeighterGraph
+FAIL EscapeTest>>testInterScopeIdenticalVarNameConfusion
+FAIL EscapeTest>>testObjectEmbeddedInNonEscapingObject
+FAIL EscapeTest>>testRecursiveFunction
+FAIL EscapeTest>>testReturnedTempVarEscaped
+FAIL EscapeTest>>testScopeDefinitionDistinction
+FAIL EscapeTest>>testSummaryInformationReuseTypeNiltoTypedCorresponding
+FAIL EscapeTest>>testTempVarsNotEscaped
+FAIL EscapeTest>>testrepeatedFunctionCallWithEscapingVars

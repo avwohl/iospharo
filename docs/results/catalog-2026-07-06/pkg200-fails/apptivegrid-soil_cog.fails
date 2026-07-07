@@ -1,0 +1,9 @@
+ERR  SoilMigrationTest>>testSerializingObjectWithChangedShapeAfterReading
+ERR  SoilTest>>testRootSendingClass
+FAIL SoilCleanCodeTest>>testCodeCoverage
+FAIL SoilCleanCodeTest>>testNoUncategorizedMethods
+FAIL SoilCleanCodeTest>>testNoUnsentMessages
+FAIL SoilCleanCodeTest>>testNoUnusedClasses
+FAIL SoilIndexedDictionaryTest>>testAddRandom
+FAIL SoilIndexedDictionaryTest>>testConcurrentIsEmpty
+FAIL SoilIndexedDictionaryTest>>testRemoveKeyWithTwoTransactions

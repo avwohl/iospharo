@@ -1,0 +1,8 @@
+ERR  SmaCCEndToEndTest>>testCompileIntoNewPackage
+ERR  SmaCCEndToEndTest>>testExistingVariables
+ERR  SmaCCEndToEndTest>>testGLRHierarchy
+ERR  SmaCCEndToEndTest>>testHierarchy
+ERR  SmaCCEndToEndTest>>testMoveFromGLRHierarchy
+ERR  SmaCCEndToEndTest>>testMoveToGLRHierarchy
+ERR  SmaCCEndToEndTest>>testPriority
+ERR  SmaCCEndToEndTest>>testRemoveVariablesFromNodes

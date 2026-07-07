@@ -1,0 +1,8 @@
+ERR  FamixEFMethodCallTest>>testAncestors
+ERR  FamixEFMethodCallTest>>testDescendants
+ERR  FamixEFMethodCallTest>>testFollowing
+ERR  FamixEFMethodCallTest>>testFollowingSiblings
+ERR  FamixEFMethodCallTest>>testPreceding
+ERR  FamixEFMethodCallTest>>testPrecedingSiblings
+ERR  FamixEFMooseNameBuilderTest>>testMooseNameOn
+ERR  FamixEFMooseNameBuilderTest>>testMooseNameOnUnknownMethod

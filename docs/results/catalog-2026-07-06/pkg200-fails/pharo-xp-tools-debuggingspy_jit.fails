@@ -1,0 +1,8 @@
+ERR  DSSpyInstrumenterTest>>testInstrumentDebuggerStack
+ERR  DSSpyInstrumenterTest>>testInstrumentSpCodeDoItAndGoForInspector
+ERR  DSSpyInstrumenterTest>>testInstrumentStepToMethodEntry
+ERR  DSSpyInstrumenterTest>>testInstrumentStepToNextCallInClass
+ERR  DSSpyInstrumenterTest>>testInstrumentStepToNextCallInObject
+ERR  DSSpyInstrumenterTest>>testInstrumentStepToNextInstanceCreation
+ERR  DSSpyInstrumenterTest>>testInstrumentStepToReturnCommand
+FAIL DSSpyInstrumenterTest>>testInstrumentHaltHits

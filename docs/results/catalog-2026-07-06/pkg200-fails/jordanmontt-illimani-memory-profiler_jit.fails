@@ -1,0 +1,15 @@
+ERR  AllocationGraphTest>>testAllocatedSamplesStayTheSameAfterPruning
+ERR  AllocationGraphTest>>testIncomingEdges
+ERR  AllocationGraphTest>>testLeaves
+ERR  AllocationGraphTest>>testNodesEdgesAfterPruning
+ERR  AllocationGraphTest>>testPruneFromRoot
+ERR  AllocationGraphTest>>testPruneFromRootGraphIsClean
+ERR  AllocationSiteFilteringTest>>testFilterContextIgnoringClass
+ERR  FiLiPTest>>testProfileOn
+ERR  FiLiPTest>>testProfileOnFinalizesCorrectly
+ERR  FiLiPTest>>testProfileOnSimple
+ERR  FiLiPTest>>testProfileOnSimpleMoreAllocations
+ERR  FiLiPTest>>testSamplingRate
+ERR  FiLiPTest>>testSamplingRate1in1000
+ERR  FiLiPTest>>testSamplingRateOtherPercentage
+FAIL FiLiPExporterTest>>testExportData

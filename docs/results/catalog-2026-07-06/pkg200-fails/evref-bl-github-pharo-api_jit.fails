@@ -1,0 +1,4 @@
+ERR  GithubUsersTest>>testGet
+ERR  GithubUsersTest>>testGetUnknowUsers
+ERR  GithubUsersTest>>testGetUserId
+ERR  GithubUsersTest>>testGetUsername

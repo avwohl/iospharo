@@ -1,0 +1,7 @@
+ERR  XMLExternalEntityTest>>testParsingExternalEntities
+ERR  XMLExternalEntityTest>>testParsingExternalEntitiesLimit
+FAIL XMLConformanceExpatTest>>testnotwfsa140xml
+FAIL XMLConformanceExpatTest>>testnotwfsa141xml
+FAIL XMLConformanceSunTest>>testinvalidutf16bxml
+FAIL XMLConformanceSunTest>>testinvalidutf16lxml
+FAIL XMLExternalEntityTest>>testParsingDocBookArticle

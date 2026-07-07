@@ -1,0 +1,4 @@
+FAIL GSCoordinatesTest>>testDestinationBearingDistance
+FAIL GSCoordinatesTest>>testDestinationBearingDistance2
+FAIL GSCoordinatesTest>>testHaversineDistanceTo
+FAIL GSParserTest>>testDMSRoundTrip

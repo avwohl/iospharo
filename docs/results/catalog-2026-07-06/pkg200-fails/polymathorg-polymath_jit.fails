@@ -1,0 +1,3 @@
+ERR  PMKDTreeTest>>testBenchmark
+TIMEOUT PMArbitraryPrecisionFloatTest>>testPrintAndEvaluate[IMAGE] TIMEOUT PMArbitraryPrecisionFloatTest>>testPrintAndEvaluate
+TIMEOUT PMPermutationTest>>testGenerator[IMAGE] TIMEOUT PMPermutationTest>>testGenerator

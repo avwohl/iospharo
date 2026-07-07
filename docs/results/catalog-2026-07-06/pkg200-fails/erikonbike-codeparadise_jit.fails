@@ -1,0 +1,13 @@
+ERR  CpClientEnvironmentTest>>testInstallClass
+ERR  CpClientEnvironmentTest>>testInstallMethod
+ERR  CpClientEnvironmentTest>>testInstallMethodWithClassVarAccess
+ERR  CpClientEnvironmentTest>>testInstallMethodWithInstVarAccess
+ERR  CpCommunicatorTest>>testClientSendBeforeConnection
+ERR  CpCommunicatorTest>>testConnectionStrategies
+ERR  CpCommunicatorTest>>testReconnectStrategy
+ERR  CpCommunicatorTest>>testSendReceive
+ERR  CpCommunicatorTest>>testSendWithReconnects
+ERR  CpCommunicatorTest>>testServerSendBeforeConnection
+ERR  CpEncodeDecodeObjectTest>>testCompiledMethod
+ERR  CpEncodeDecodeObjectTest>>testCompiledMethodWithAdditionalMethodState
+FAIL CpReadStreamExtensionTest>>testLookAheadAt

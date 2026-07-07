@@ -1,0 +1,12 @@
+ERR  MCPPharoToolsExtendedTest>>testRunCriticsOnValidClass
+ERR  MCPPharoToolsExtendedTest>>testRunCriticsPackageOverridesClassName
+ERR  MCPPharoToolsRunningTest>>testCollectCritiquesForClassReturnsCollection
+ERR  MCPPharoToolsRunningTest>>testCollectCritiquesIncludesBothSides
+ERR  MCPPharoToolsRunningTest>>testRunCriticsOnClassValid
+ERR  ReEmptyExceptionHandlerRuleTest>>testFiresOnEmptyHandlerNoTemps
+ERR  ReEmptyExceptionHandlerRuleTest>>testFiresOnEmptyHandlerWithTemps
+ERR  ReEmptyExceptionHandlerRuleTest>>testGroupDefined
+ERR  ReEmptyExceptionHandlerRuleTest>>testNameDefined
+ERR  ReEmptyExceptionHandlerRuleTest>>testRationaleDefined
+ERR  ReEmptyExceptionHandlerRuleTest>>testSilentOnNoExceptionHandler
+ERR  ReEmptyExceptionHandlerRuleTest>>testSilentOnNonEmptyHandler

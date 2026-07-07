@@ -40,10 +40,17 @@ b67db07).  Every remaining non-pass is classified:
   watchdog self-test (our hardened watchDogLoop changes its shape),
   TKTNewProcessTaskRunner (scheduling assumption), MorphicWindowManager
   taskbar (env), TraitSubclassingTraitedClass (TBD).
-- [ ] **jitpkg external packages** — re-verify ring/systime/ston/
-  reflectivity families at HEAD (May-era bugs; aigraph now 10/10 with
-  inline-getter default-on).  Needs the Pharo-gfx package image rebuilt
-  (soogle loads) — next box session (scripts/pkg-jit-test/run-manifest.sh).
+- [x] **jitpkg external packages — 200-package sweep COMPLETE 2026-07-07**
+  (box #2, run-manifest.sh; summary + per-test fails archived in
+  docs/results/catalog-2026-07-06/pkg200*): 157 packages at clean
+  cog-parity, 29 load-failures (Metacello/network, not VM), aigraph
+  176/176 (May bug conclusively dead), gitlab+bitbucket mock suites
+  90-error family FIXED by the proxy-protocol VM work (cannotInterpret: +
+  become classTable).  NEW candidate queue (~57 tests, re-confirmed on
+  the fixed binary — next hunt campaign): illimani-memory-profiler 15,
+  restoreforpharo 11 (timeouts), soil 9, famixreplication 4, sauco 3,
+  hera 3, p3 3 (postgres), redistick 2, polymath 2, singles x5
+  (deeptraverser, methodproxies, myprecious, lexicon, porpoise).
 
 ## ARM (macOS) — post-Windows-merge verification 2026-07-04
 

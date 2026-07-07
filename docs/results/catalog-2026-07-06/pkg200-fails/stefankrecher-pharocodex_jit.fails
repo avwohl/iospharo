@@ -1,0 +1,5 @@
+ERR  OpenAICodexMessageSerializerTest>>testRoundTripDictionaryMessage
+ERR  OpenAICodexStdioTransportTest>>testReadsMessagesFromSubprocessLineProtocol
+ERR  OpenAICodexStdioTransportTest>>testWriteSerializesToOneJsonLine
+ERR  OpenAICodexWebSocketTransportTest>>testReadsIncomingMessageFromConnection
+ERR  OpenAICodexWebSocketTransportTest>>testSendsSerializedJsonToConnection
