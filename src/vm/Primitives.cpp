@@ -4957,6 +4957,13 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                 return Oop::fromSmallInteger(0);
             case 11: // Tenures count
                 return Oop::fromSmallInteger(0);
+            case 34: // Cumulative bytes allocated (Cog statAllocatedBytes).
+                     // Monotonic allocation clock — Illimani/FiLiP timestamps
+                     // every sampled allocation and mourning with it
+                     // ("lifetime in allocated bytes"); returning 0 made all
+                     // finalizationTime > allocationTime asserts fail.
+                return Oop::fromSmallInteger(
+                    static_cast<int64_t>(memory_.statistics().bytesAllocated));
             case 40: // Bytes per word
                 return Oop::fromSmallInteger(8);  // 64-bit
             case 41: // Image format version
@@ -25485,14 +25492,23 @@ PrimitiveResult Interpreter::primitiveNewOldSpace(int argCount) {
     int64_t instSpec = formatObj.asSmallInteger();
     size_t instSize = instSpec & 0xFFFF;
 
-    // Validate this is a fixed-size class (format < 2)
+    // Spur (SpurMemoryManager>>isFixedSizePointerFormat:) allows the
+    // fixed-size pointer formats 0/1 AND ephemerons (5) here — Illimani's
+    // FiLiP sampler tenures a FiLiPEphemeron per sampled allocation
+    // (Behavior>>basicNewTenured), and rejecting instSpec 5 killed its
+    // whole 14-test family on the first registered allocation.
     int instFormat = (instSpec >> 16) & 0x1F;
-    if (instFormat >= 2) {
-        return PrimitiveResult::Failure;
+    ObjectFormat objFormat;
+    switch (instFormat) {
+        case 0: objFormat = ObjectFormat::ZeroSized; break;
+        case 1: objFormat = ObjectFormat::FixedSize; break;
+        case 5: objFormat = ObjectFormat::WeakWithFixed; break;  // ephemeron
+        default:
+            return PrimitiveResult::Failure;
     }
 
     uint32_t classIndex = memory_.indexOfClass(rcvr);
-    Oop newObj = memory_.allocateSlots(classIndex, instSize);
+    Oop newObj = memory_.allocateSlots(classIndex, instSize, objFormat);
 
     if (newObj.isNil()) {
         return PrimitiveResult::Failure;
