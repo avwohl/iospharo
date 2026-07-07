@@ -2674,6 +2674,9 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     // the fatal.
     if (GET_DEBUG_BOOL(PHARO_HEAP_CENSUS) && usedAfter > (1ULL << 30)) {
         dumpHeapCensus(25);
+        // The census says WHAT filled the heap; the process dump says WHO —
+        // the storm process's current frames name the loop.
+        if (interpreter_) interpreter_->dumpProcessQueues();
     }
 
     // PHARO_GC_LOG completion line: used-after tracks LIVE heap across the
