@@ -48,6 +48,12 @@ superseded per-family notes from catalog #5 below, updated:
   176/176 (May bug conclusively dead), gitlab+bitbucket mock suites
   90-error family FIXED by the proxy-protocol VM work (cannotInterpret: +
   become classTable).
+- [ ] **SlotIntegrationTest>>testAddAndAddInstVarNamedWithTrait2** —
+  pre-existing (fails standalone at ffca1841, before the 2026-07-07 fix
+  wave): adding an ivar to a trait-using class loses the new slot
+  (Got #(#x #y) instead of #(#x #y #z)); also '2 ran' doubling from a
+  single (cls selector: sel) run on our VM (stock: 1 ran).  Masked in
+  catalog #8 by suite order.  Class-rebuild/trait machinery.
 - [x] **Candidate-queue hunt COMPLETE 2026-07-07** (14-agent workflow
   wf_214bdc82, one agent per package, local fresh-image parity+shrink;
   five VM fixes committed e5570688/38c457f7/ac87599f/f9e49453/4c4e13e6,

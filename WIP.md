@@ -11,13 +11,31 @@ SIXTH fix landed after the fleet finished: a99eee86 two-way become
 C++ stack swap (restoreforpharo 15/15, package-free repro in memory).
 All six pushed through a99eee86 + docs 069db8eb.
 
-VALIDATION IN FLIGHT (2026-07-07 ~05:40):
+CATALOG #9a/#9b POST-MORTEM (2026-07-07 morning): both died/wedged at
+~26k result lines (9a: old-space exhausted in RB*; 9b at 8 GB: wedged in
+RSCircleVennDiagramTest with live heap 64 MB -> 3.7 GB, reclaimed=0 —
+GC death spiral, lldb showed the VM living inside scavenge()).  ROOT
+CAUSE (fixed 19dd56b0): primitiveProfileSemaphore must clear
+profileSample_/profilePrimitive_ on every call (Cog parity).  They are
+GC roots; the deadline fix made the sampler actually fire, so the last
+sampled process stayed pinned forever after MessageTally/ASP
+stopProfiling — pinning its death-time stack retinue and everything
+reachable from it.  Differential vs #8 that cracked it:
+WeakOrderedCollectionTest all-garbage-collected FAIL (passes standalone).
+Bisect side-find: SlotIntegrationTest testAddAndAddInstVarNamedWithTrait2
+fails standalone at PRE-fix ffca1841 too (trait ivar-add lost; '2 ran'
+doubling) — pre-existing, masked by catalog order; queued in deferred.
+
+VALIDATION IN FLIGHT (2026-07-07 ~08:00, second round):
 - Local ARM catalog #9 running with all six fixes (launch_catalog.sh,
   log /tmp/catalog9_run.log, results /tmp/sunit_test_results.txt).
   Compare to catalog #8: 27,763 P / 22 non-pass = 99.92%.
 - x86 box i-0ee8772f007d035af (3.150.133.214, us-east-2) running the
-  full suite at 39cd1d91 (five fixes, become fix NOT included — pull +
-  spot-verify become families after it finishes).  Beat the lease with
+  full suite at 19dd56b0 (all seven fixes; earlier five-fix run was
+  corrupted by my own p3-staging mistake — eval --save on the BAKED
+  harness image fired SUnitRunner on the stock VM and reset
+  /tmp/sunit_test_results.txt: NEVER run any VM against a runner-baked
+  image while a suite is in flight).  Beat the lease with
   ./scripts/aws/lease.sh beat i-0ee8772f007d035af while working; box
   reaps without beats.  Teardown when done.
 - After catalog: p3 Linux-resolver check on the box; then the
