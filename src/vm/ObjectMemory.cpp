@@ -3801,6 +3801,26 @@ void ObjectMemory::sweepClassTable() {
                             (unsigned long long)entry.rawBits());
             }
             classTable_[i] = nilObject_;
+            // Also nil the in-heap page slot (same addressing as
+            // syncClassTableToHeap): a swept class must not leave a dangling
+            // pointer in the page Array for the compactor or image writer.
+            {
+                constexpr size_t PageSize = 1024;
+                size_t pageNum = i / PageSize;
+                size_t slotNum = i % PageSize;
+                if (pageNum < classTablePages_.size()) {
+                    Oop pageOop = classTablePages_[pageNum];
+                    if (pageOop.isObject() && pageOop.rawBits() != 0
+                        && pageOop != nilObject_) {
+                        ObjectHeader* page = pageOop.asObjectPtr();
+                        auto pb = reinterpret_cast<uint8_t*>(page);
+                        if (pb >= oldSpaceStart_ && pb < oldSpaceFree_
+                            && slotNum < page->slotCount()) {
+                            page->slotAtPut(slotNum, nilObject_);
+                        }
+                    }
+                }
+            }
         }
     }
 }

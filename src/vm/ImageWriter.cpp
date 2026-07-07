@@ -194,7 +194,7 @@ SaveResult ImageWriter::save(const std::string& path, ObjectMemory& memory,
     header.cogCodeSize = originalHeader.cogCodeSize;
     header.edenBytes = originalHeader.edenBytes;
     header.maxExtSemTabSize = originalHeader.maxExtSemTabSize;
-    header.unused1 = 0;
+    header.imageVersion = originalHeader.imageVersion;  // preserve across snapshots (vmParameterAt: 79)
     header.firstSegmentBytes = heapBytes;  // Single segment
     header.freeOldSpaceInImage = 0;
 

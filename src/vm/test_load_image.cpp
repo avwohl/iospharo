@@ -1161,7 +1161,20 @@ int main(int argc, char* argv[]) {
         // exitSuccess is the entire session.  2026-05-08.
         interpreter.setImageArguments({});
     } else if (imageArgs.empty()) {
-        interpreter.setImageArguments({"--interactive"});
+        // Bare launches (the SUnit harness) must NOT claim an interactive
+        // session: `Smalltalk isInteractiveGraphic` true made
+        // MorphicWindowManagerTest open native windows headlessly (MNU on
+        // MorphicNativeWindow) and its startupTaskbar hijacked Clipboard
+        // Default to OSWindowClipboard, poisoning the later StDebugger
+        // copy-to-clipboard tests (catalog singles, 2026-07-06).  GUI runs
+        // opt back in with PHARO_INTERACTIVE=1 (or an explicit
+        // --interactive arg); the runner prep reinstalls MorphicUIManager
+        // at startUp: to keep cog-baseline parity for the fake-GUI suites.
+        if (GET_DEBUG_BOOL(PHARO_INTERACTIVE)) {
+            interpreter.setImageArguments({"--interactive"});
+        } else {
+            interpreter.setImageArguments({});
+        }
     } else {
         std::vector<std::string> forwarded;
         forwarded.reserve(imageArgs.size());

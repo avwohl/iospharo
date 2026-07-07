@@ -1067,20 +1067,22 @@ void ObjectMemory::forEachMemoryRoot(Visitor&& visitor, bool includeClassTable) 
     if (freeListsObj_.isObject()) visitor(freeListsObj_);
     if (hiddenRootsObj_.isObject()) visitor(hiddenRootsObj_);
 
-    // In-heap class table page objects (kept updated through GC so
-    // syncClassTableToHeap can find them at their current addresses)
-    for (auto& pageOop : classTablePages_) {
-        if (pageOop.isObject() && pageOop.rawBits() != 0) {
-            visitor(pageOop);
-        }
-    }
-
-    // Class table entries — only during compaction (pointer updates),
-    // NOT during mark phase. In Spur, class table entries are NOT strong
-    // roots — anonymous/transient classes can be collected when unreachable.
-    // During mark phase, classes survive only if referenced from live objects
-    // (via classIndex in headers of live objects, or from other live references).
+    // Class table entries AND in-heap page objects — only during pointer
+    // updates (compaction/scavenge), NOT during mark.  In Spur, class table
+    // entries are NOT strong roots — anonymous/transient classes are
+    // collected when unreachable; classes survive the mark only via live
+    // references.  The PAGE objects must not be visited during mark either:
+    // markPhase's visitor is markAndTrace, which would DEEP-TRACE the pages
+    // and thereby strongly mark every class they contain, silently pinning
+    // dead/obsolete classes forever (ReleaseTest testObsoleteClasses,
+    // catalog residue 2026-07-06).  Page LIVENESS during mark is guaranteed
+    // separately by markClassTablePages() (shallow mark, page 0 deep).
     if (includeClassTable) {
+        for (auto& pageOop : classTablePages_) {
+            if (pageOop.isObject() && pageOop.rawBits() != 0) {
+                visitor(pageOop);
+            }
+        }
         for (size_t i = 1; i < classTable_.size(); ++i) {
             if (classTable_[i].isObject()) {
                 visitor(classTable_[i]);

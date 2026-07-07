@@ -4967,6 +4967,10 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                 return Oop::fromSmallInteger(22003584);
             case 46: // Cog code size
                 return Oop::fromSmallInteger(0);  // No JIT
+            case 79: // Image version stored in the image header (word 92):
+                     // SystemVersion asks for it via `vm imageVersionInImageHeader`
+                     // and ReleaseTest asserts it matches (e.g. 130 for Pharo 13).
+                return Oop::fromSmallInteger(originalImageHeader_.imageVersion & 0xFFFF);
             case 48: { // VM flags (bit 0=fullscreen, bit 1=headless)
                 int flags = 0;
                 for (const auto& p : vmParameters_) {

@@ -89,7 +89,7 @@ struct SpurImageHeader {
     uint16_t cogCodeSize;         // JIT code size (KB, if present)
     uint32_t edenBytes;           // Eden size
     uint16_t maxExtSemTabSize;    // Max external semaphore table size
-    uint16_t unused1;
+    uint16_t imageVersion;        // 'the version of the image' (vmParameterAt: 79)
     uint64_t firstSegmentBytes;   // Size of first segment
     uint64_t freeOldSpaceInImage; // Free space in old space
 };
