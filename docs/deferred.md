@@ -417,6 +417,41 @@ superseded per-family notes from catalog #5 below, updated:
       array rides on copyWith:/addSlot:/slots:/builder frames not yet
       caught (they complete in too few checkpoints to be materialized as
       SAVED frames often).
+    * **ROOT CAUSE FOUND (2026-07-07 cont.) — JIT-FRAME MATERIALIZATION
+      corrupts a slot index to 0; the "ShNoChangesInClass skip" narrative
+      (all of the above) is WRONG.**  Decisive evidence chain:
+      - PHARO_TRACE_SLOTCMP (dump collection sizes at the change detector):
+        the z-add's ShSlotChangeDetector>>compareVariables:with: correctly
+        sees OrderedCollection(sz=2) vs OrderedCollection(sz=3) — the change
+        IS detected — and the builder's slots: correctly receives
+        Array(sz=3).  So slot-building + change-detection are CORRECT; the
+        rebuild PROCEEDS.
+      - PHARO_TRACE_BECOME (+ step#): the y-add does its class become
+        (SlotTestsClassA 1->2 slots, step 189333038); the z-add's 2->3
+        become NEVER fires (zero becomes after the z-compare).  So the
+        z-rebuild aborts between compare and install.
+      - The abort is 'Error: SubscriptOutOfBounds: 0 in
+        InstanceVariableSlot(IndexedSlot)>>object:instVarAt:' during instance
+        migration — a slot index reads 0, the read primitive fails, the
+        error unwinds past the class-install become, z is never installed,
+        class stays {x,y}.  Present ONLY in failing runs (0 in clean /
+        MAT_AT_CHECKPOINT=1).
+      - **The bug requires BOTH JIT and materialization:**
+        MAT_AT_CHECKPOINT=3 + JIT => FAIL; MAT_AT_CHECKPOINT=3 + NO_JIT =>
+        PASS; DET_SCHED + NO_JIT => PASS.  So materializing a JIT-compiled
+        instance-migration frame corrupts a slot-index operand to 0.
+        Explains the second-add specificity: the migration methods are
+        JIT-compiled (warmed by the first add) by the second add.
+      - The index-0 read is JIT-inlined: neither primitiveInstVarAt (73) nor
+        primitiveSlotAt (173) index<1 trap fires with JIT on.  Interpreted
+        migration calls (which DO fire the activateMethod hook) show correct
+        indices (object:instVarAt: SmI=2 for y); the failing index-0 call is
+        the JIT-compiled read:/object:instVarAt: whose `self index` reads 0.
+      - NEXT: the JIT-frame materialize/restore fidelity (J2JSave /
+        materializedRetSlot path in materializeFrameStack).  Find where a
+        JIT frame's operand (the slot ref or its index) is dropped/zeroed
+        across preempt->materialize->resume.  Fix must restore JIT-frame
+        operand state faithfully (NOT "don't JIT migration").
     * PROBE-IMAGE SHORTCUT IS DEAD (2026-07-07): `Smalltalk saveAs:` inside
       an eval FREEZES the pending-eval result — a reloaded probe.image
       returns the frozen `'#(#x #y)'` for EVERY eval (even `(3+4)`), because

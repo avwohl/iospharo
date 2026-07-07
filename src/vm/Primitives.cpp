@@ -9296,6 +9296,26 @@ PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
 
     int64_t index = indexOop.asSmallInteger();
     if (index < 1) {  // 1-based indexing from Smalltalk
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRAP_IVAR0), 0)) {
+            extern uint64_t g_stepNum;
+            static int n = 0;
+            if (++n <= 20) {
+                fprintf(stderr, "[SLOTAT0] slotAt: idx=%lld rcvr=%s step=%llu chain:",
+                        (long long)index,
+                        (rcvr.isObject() && rcvr.rawBits() > 0x10000)
+                            ? memory_.classNameOf(rcvr).c_str() : "imm",
+                        (unsigned long long)g_stepNum);
+                fprintf(stderr, " [cur]#%s",
+                        (method_.isObject() && method_.rawBits() > 0x10000)
+                            ? memory_.selectorOf(method_).c_str() : "?");
+                for (int f = static_cast<int>(frameDepth_); f >= 0 && f > (int)frameDepth_ - 16; --f) {
+                    Oop sm = savedFrames_[f].savedMethod;
+                    fprintf(stderr, " %s", (sm.isObject() && sm.rawBits() > 0x10000)
+                        ? memory_.selectorOf(sm).c_str() : "?");
+                }
+                fprintf(stderr, "\n");
+            }
+        }
         return PrimitiveResult::Failure;
     }
 

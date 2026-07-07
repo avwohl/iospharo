@@ -11726,6 +11726,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             || sel == "hasToMigrateInstances" || sel == "reshapeClass"
             || sel.find("propagateChanges") != std::string::npos
             || sel == "build" || sel == "make:" || sel == "installClassDefinition"
+            || sel == "object:instVarAt:" || sel == "read:" || sel == "write:to:"
+            || sel == "copyObject:to:" || sel == "migrateInstancesTo:"
             || sel == "addSlot:" || sel == "slots:" || sel == "addInstVarNamed:";
         if (interesting) {
             auto collSize = [&](Oop o) -> long {
@@ -11744,9 +11746,13 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     (unsigned long long)g_stepNum);
             for (int a = argCount; a >= 0; a--) {
                 Oop v = stackValue(a);
-                std::string vc = (v.isObject() && v.rawBits() > 0x10000)
-                    ? memory_.classNameOf(v) : (v.isSmallInteger() ? "SmI" : "imm");
-                fprintf(stderr, " [%d]%s(sz=%ld)", a, vc.c_str(), collSize(v));
+                if (v.isSmallInteger()) {
+                    fprintf(stderr, " [%d]SmI=%lld", a, (long long)v.asSmallInteger());
+                } else {
+                    std::string vc = (v.isObject() && v.rawBits() > 0x10000)
+                        ? memory_.classNameOf(v) : "imm";
+                    fprintf(stderr, " [%d]%s(sz=%ld)", a, vc.c_str(), collSize(v));
+                }
             }
             fprintf(stderr, "\n");
         }
