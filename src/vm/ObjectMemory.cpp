@@ -1589,6 +1589,25 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
         if (classTable_[i] == obj1) { classTable_[i] = obj2; classTableHits++; }
     }
 
+    // SAFETY NET (PHARO_BECOME_FORWARDER): the scan-and-replace above finds
+    // refs to obj1 in the heap + classTable, and scanStackReplace/forEachRoot
+    // covers VM roots.  But a ref that GC's mark-phase keeps alive yet the
+    // become-scan misses (e.g. a JIT operand under materialization) leaves
+    // obj1 as a STALE VALID object — a reshaped-away instance the next
+    // allInstances re-finds at its old (smaller) size (SlotIntegration
+    // trait ivar-add: z-rebuild reads a 1-slot husk whose class is instSize
+    // 2 -> SubscriptOutOfBounds -> rebuild aborts).  Turning obj1 into a
+    // forwarder to obj2 makes any missed ref resolve via followForwarded and
+    // makes allInstances (which skips isForwarded) stop re-finding the husk.
+    if (GET_DEBUG_BOOL(PHARO_BECOME_FORWARDER)
+            && obj1.isObject() && obj1.rawBits() != obj2.rawBits()
+            && obj1.asObjectPtr()->slotCount() >= 1
+            && !obj1.asObjectPtr()->isForwarded()) {
+        ObjectHeader* h1 = obj1.asObjectPtr();
+        h1->slotAtPut(0, obj2);
+        h1->setClassIndex(ObjectHeader::ForwardedClassIndex);
+    }
+
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_BECOME), 0)) {
         auto sz = [&](Oop o){ return o.isObject() ? o.asObjectPtr()->slotCount() : 0; };
         extern uint64_t g_stepNum;
