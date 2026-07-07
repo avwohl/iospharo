@@ -20916,13 +20916,15 @@ void Interpreter::initializeNamedPrimitives() {
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
+    // Default hot path: zero-overhead tail call to the real dispatcher.
+    // The PHARO_PRIM_FAIL_STORM counter (a diagnostic — see the storm
+    // dossier in docs/deferred.md) must NOT add per-primitive cost when
+    // off, so it lives behind this single cached-bool gate, not inline in
+    // the always-run path (CLAUDE.md per-call-overhead rule).
+    if (__builtin_expect(!GET_DEBUG_BOOL(PHARO_PRIM_FAIL_STORM), 1))
+        return executePrimitiveInner(primitiveIndex, argCount);
     PrimitiveResult r = executePrimitiveInner(primitiveIndex, argCount);
-    // PHARO_PRIM_FAIL_STORM: per-index failure counter.  A primitive that
-    // fails hundreds of thousands of times in lock-step with an exception
-    // storm (catalog #9: equal MNU/PrimitiveFailed/Message counts) is the
-    // loop's engine — this names it without a debugger attach.
-    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_PRIM_FAIL_STORM), 0)
-        && r == PrimitiveResult::Failure
+    if (r == PrimitiveResult::Failure
         && primitiveIndex >= 0 && primitiveIndex < 1024) {
         static uint64_t failCounts[1024] = {0};
         uint64_t n = ++failCounts[primitiveIndex];

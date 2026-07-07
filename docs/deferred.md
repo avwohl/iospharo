@@ -4,6 +4,70 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
+## ARM catalog "context storm" — timing Heisenbug (open, 2026-07-07)
+
+Full-catalog-only, ARM/macOS-only, RARE: after the 2026-07-07 six-VM-fix
+wave, some ARM catalog runs (9b, 9c) explode the heap 64 MB -> 3.7 GB in
+the RS (Roassal) window-open region (~class 1300) and abort with
+"old space exhausted during scavenge tenure".  x86 (all 9 fixes) is
+CLEAN through the same region; the pre-fix baseline (ffca1841) completed
+clean at 364 MB peak.
+
+**Census verdict** (dumpHeapCensus, PHARO_HEAP_CENSUS=1): the 3.7 GB is
+CONTEXTS (2.4M -> 9M+, ~12 new per iteration) plus lock-step
+MessageNotUnderstood + PrimitiveFailed + Message triples (~135k per
+census interval).  Process dump (coupled to census): a P50
+(userInterruptPriority) process executing OupsDummyDebugger
+class>>dummySession's `[Set new]` context, recursing in
+PrimitiveFailed>>freeze / freezeUpTo: (exception-signaler-stack copy).
+So a LEAKED dummy-debugger process gets resumed in the RS-window-open
+region (FakeGUI World-cycle is the suspected resume vector) and recurses
+in exception-freeze, each pass materializing ~12 contexts — evades the
+4096 live-frame overflow guard because materialization keeps resetting
+live frame depth.  OupsDebuggerSystemTest passes 5/5 STANDALONE with no
+leak: pure suite-context interaction.
+
+**It is a scheduling Heisenbug.**  Adding the always-on
+executePrimitive->executePrimitiveInner wrapper (PHARO_PRIM_FAIL_STORM
+commit) shifted per-primitive timing enough that HEAD ran CLEAN through
+the whole RS region to ~class 1900 at flat 346 MB.  Classic "observation
+overhead suppresses the race" — exactly the PHARO_DET_SCHED scenario
+(CLAUDE.md).  Root-cause bisect must use PHARO_DET_SCHED=1 for a stable
+repro; a plain instrumented rerun hides it.
+
+**Suspects** (baseline clean => regression from the 6-fix window
+e5570688..a99eee86):
+- EXONERATED f9e49453 (NLR aboutToReturn): full reverted catalog still
+  stormed, identical signature.
+- EXONERATED a99eee86 (two-way become stack swap): sender analysis — the
+  debugger steps with elementsForwardIdentityTo: = ONE-WAY become (prim
+  249, untouched); only BecomeTest/ObjectTest/Fuel use the two-way
+  become: I changed.  (Frame-scoped scanStackSwap targeted fix staged on
+  branch storm-fix-framescope in case a later test implicates it.)
+- OPEN, ranked: e5570688 profiler-DEADLINE hunk (the only scheduling-
+  timing-changing fix — synchronousSignal at the periodic checkpoint +
+  primitiveRelinquishProcessor when a deadline is armed; bisect binary
+  staged branch storm-test-noprofdeadline); then ac87599f (ephemeron
+  basicNewTenured — GC-format change, ARM-GC-timing-plausible);
+  38c457f7 (int/float compare); 4c4e13e6 (readSema, socket-only, least
+  likely).
+
+**Mitigation IN PLACE** (22fcb0e7, Cog-parity, legitimate): the
+low-space signal (prim 125) was WRITE-ONLY — threshold stored, never
+checked, so Pharo's LowSpaceWatcher (P80, > the P50 storm process, so it
+CAN preempt) could never fire on a runaway allocation.  Now checked at
+the periodic checkpoint (one-shot disarm, culprit -> ProcessSignaling-
+LowSpace, TheLowSpaceSemaphore signaled).  Verified firing under a
+synthetic hog ([LOW-SPACE] trace).  NOT yet verified catching THIS storm
+(the instrumented runs don't reproduce it) — the key remaining
+validation for the next session, via PHARO_DET_SCHED.
+
+**Repro recipe (next session):** full catalog, ARM, PHARO_DET_SCHED=1
+PHARO_MAX_OLD_SPACE_MB=6144 PHARO_GC_LOG=1 PHARO_HEAP_CENSUS=1, LEAN
+binary (gate the executePrimitive wrapper off so timing isn't perturbed).
+Watch for [LOW-SPACE] (net caught it) vs [HEAP-CENSUS]...->FATAL (net
+missed).  Then bisect the OPEN suspects deterministically.
+
 ## Cross-platform catalog state — FINAL 2026-07-06/07 (see WIP.md, docs/changes.md)
 
 Catalog #8 (macOS/ARM, everything): **27,763 P / 15 F / 3 E / 4 T / 182 S
