@@ -361,12 +361,31 @@ re-verified fixed on-box.  Details: docs/results/catalog-2026-07-06/.
 All 22 residuals classified by the 12-agent adversarial workflow;
 superseded per-family notes from catalog #5 below, updated:
 
-- [ ] **Reflective-slowness TIMEOUTs** — image-wide scan/recompile tests
+- [~] **Reflective-slowness TIMEOUTs** — image-wide scan/recompile tests
   genuinely >80s on our VM (stock ~8s — the 15-30x reflective gap):
   StSpotter x2, NoUnusedVariablesLeft-style scans x3.  Owner: the queued
   activation-wall perf project (scripts/perf-activation/).  Also owns
   lexicon/famixreplication/deeptraverser TIMEOUTs from the pkg sweep if
   the 2026-07-07 hunt confirms perf-gap.
+  **PARTIAL 2026-07-08 (aad03bc0 VM + submodule e5fdf9d):** the two
+  hottest inner scans of `allSendersOf:`/`allReferencesTo:` are now VM
+  primitives — `CompiledCode>>refersToLiteral:` -> `primitiveRefersToLiteral`
+  (literal-array walk, recurses into nested method/array literals) and
+  `scanFor:` -> `primitiveScanForByte` (SistaV1 bytecode-length walk).  Both
+  keep the EXACT Smalltalk fallback (fire only via the pragma; any type
+  uncertainty fails back).  Inert in the VM until the runner-prep installs
+  the pragmas (submodule run_sunit_tests.st).  Measured ~1.5-2x on
+  senders/implementors scans (allSendersOf: ~2.7s -> ~1.4s; special
+  selectors ~2x), and the win SCALES WITH METHOD COUNT (bigger in the
+  200k-method catalog than the 138k-method harness).  Validated: 0
+  mismatches over 1,319,322 refersToLiteral: comparisons + identical
+  allSendersOf: results across 21 selectors; broad batch[1-150] 7876 tests
+  Fail 0/Error 0 byte-identical to baseline.  RESIDUAL FLOOR is still the
+  activation wall (per-send ~70ns arm64 vs Cog ~2ns) — the block-per-method
+  outer `thoroughWhichMethodsReferTo:` loop stays interpreted, so the >80s
+  timeouts (which scale with method count) are reduced, not eliminated.
+  Closing them fully needs the activation-wall project (inlined method
+  activation / body-inlining), not more primitives.
 - [x] **Roassal RS* family** — FIXED 2026-07-06: 64-slot manual-surface
   registry exhaustion (growable deque, Primitives.cpp); the "rendering
   diffs" were downstream of failed surface allocation.
