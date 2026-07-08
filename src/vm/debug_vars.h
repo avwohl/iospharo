@@ -96,6 +96,7 @@ DEBUG_BOOL(PHARO_T1_STORE_RING)             // store-provenance ring: every JIT 
 DEBUG_INT(PHARO_MAT_ONCE, 0)                // materialize EXACTLY ONCE, at the N-th checkpoint invocation (frameDepth_>0); 0=off — binary-search the single corrupting checkpoint
 DEBUG_BOOL(PHARO_MAT_ONCE_DUMP)             // when PHARO_MAT_ONCE fires, dump the materialized frame stack (selectors) to stderr
 DEBUG_STR(PHARO_MAT_SEL)                    // gate PHARO_MAT_AT_CHECKPOINT forcing to methods whose selector CONTAINS this substring — isolate which method's materialization corrupts (SlotIntegration)
+DEBUG_BOOL(PHARO_NO_CLASSOF_FWD)             // A/B: disable classOf-follows-forwarders (revert pre-296bba26) — demonstrates forwarded-object dispatch MNUs without the fix
 DEBUG_BOOL(PHARO_NO_BECOME_FORWARDER)        // opt-out: disable the default-on becomeForward-leaves-forwarder safety net (SlotIntegration fix). Set to bisect a suspected regression.
 DEBUG_BOOL(PHARO_TRAP_IVAR0)                 // dump receiver+frame-chain when instVarAt: gets index<1 (SlotIntegration migration abort)
 DEBUG_BOOL(PHARO_TRACE_SLOTCMP)             // dump slot-collection sizes at change-detector + addSlot:/slots:/copyWith: during SlotIntegration z-add

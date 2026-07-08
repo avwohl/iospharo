@@ -536,6 +536,11 @@ Oop ObjectMemory::classOf(Oop obj) const {
         // the fix is doing work. (Counter only touched in this rare branch.)
         extern uint64_t g_classOfForwarderFollows;
         ++g_classOfForwarderFollows;
+        // A/B knob (PHARO_NO_CLASSOF_FWD): revert to pre-296bba26 behavior —
+        // return the Forwarded class (idx 8) so the send mis-dispatches / MNUs.
+        // Used to DEMONSTRATE that these same sites break without the fix.
+        if (__builtin_expect(GET_DEBUG_BOOL(PHARO_NO_CLASSOF_FWD), 0))
+            return classAtIndex(clsIdx);
         Oop target = followForwarded(obj);
         if (!target.isObject()) return classOf(target);       // followed to an immediate
         if (!isValidPointer(target)) return nilObject_;
