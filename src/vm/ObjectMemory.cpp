@@ -515,7 +515,26 @@ Oop ObjectMemory::classOf(Oop obj) const {
     }
 
     ObjectHeader* header = obj.asObjectPtr();
-    return classAtIndex(header->classIndex());
+    uint32_t clsIdx = header->classIndex();
+    // Spur forwarder transparency: becomeForward (2026-07-07) leaves obj1 as a
+    // forwarder to obj2 so that a reference the become scan-and-replace MISSED
+    // (an untracked JIT operand under materialization — the SlotIntegration
+    // root) still resolves.  If such a forwarder reaches dispatch as the
+    // receiver, its class MUST be the TARGET's class, not the Forwarded class
+    // (index 8) — otherwise method lookup lands in the wrong class and the send
+    // spuriously does-not-understand.  That MNU-on-a-forwarded-object during
+    // Context>>copyTo: is the documented ARM context-storm TRIGGER (the census's
+    // MNU+PrimitiveFailed triples): the debugger's handler freezes on it and
+    // re-copies the stack, re-hitting the same forwarder forever.  Following the
+    // forwarder here (one predicted-not-taken compare on the already-loaded
+    // classIndex) makes forwarders transparent to dispatch, per Spur semantics.
+    if (__builtin_expect(clsIdx == ObjectHeader::ForwardedClassIndex, 0)) {
+        Oop target = followForwarded(obj);
+        if (!target.isObject()) return classOf(target);       // followed to an immediate
+        if (!isValidPointer(target)) return nilObject_;
+        return classAtIndex(target.asObjectPtr()->classIndex());
+    }
+    return classAtIndex(clsIdx);
 }
 
 uint32_t ObjectMemory::registerClass(Oop classOop) {
