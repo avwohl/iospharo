@@ -228,6 +228,34 @@ blocked upstream of the storm by this boot incompatibility; resolving it (find
 the culprit package, fix the custom-VM startup of package background processes)
 is the true next step and may be entangled with the storm's own root.
 
+**CATALOG-BOOT RE-INVESTIGATION 2026-07-08 (user-directed rebuild) — the
+custom-VM boot DNU is almost certainly an IMAGE/PACKAGE issue, not a VM bug;
+rebuild BLOCKED by a stock-Cog regression:**
+- Local repro RULED OUT a generic-poisoned-delay VM bug: our VM handles
+  `Semaphore new waitTimeoutMilliseconds: nil` in a forked process IDENTICALLY
+  to stock Cog — both `SCHEDULER-ALIVE` (error caught, subsequent Delays fire).
+  So the `#waitTimeoutMilliseconds:` on nil family is not a VM Delay-scheduler
+  defect (see [[reflective-scan-primitives]], scratchpad poison_delay_repro.st).
+- The suspicious startup-process packages ALL boot fine INDIVIDUALLY on the
+  custom VM (pkg200 sweep: iris/IrisMCPServer 117 pass, interopserver/SisServer
+  40, tsf-scheduler 12, teapot 79). So the merged-boot DNU is EMERGENT, no
+  single package. Combined with "stock Cog prep ALSO failed on the merged image"
+  (above) → image/package-level, not our VM.
+- Rebuild BLOCKED: the current `get.pharo.org/64/vm130` stock-Cog VM (v10.3.9,
+  Nov 2025) SEGFAULTS in its threaded FFI worker
+  (`primitivePerformWorkerCall:` / `primLoadSymbol:module:`) on EVERY Metacello
+  `github://` load (libgit2/Iceberg path). Reproduced on fresh 24.04 both with
+  system openssl3 AND with a fully-consistent bundled focal OpenSSL 1.1 set
+  (libssl/ libcrypto/libssh2 all 1.1) — so it is the FFI worker, not the
+  openssl mismatch. git identity + libssl1.1 get PAST the earlier libgit2
+  `__strdup` crash but the worker call still dies. The original build (weeks
+  ago) predated this VM regression. Full box-env gotchas: [[aws-catalog-build-env]].
+- NET: reproducing the merged-boot DNU needs either an older stock-Cog VM
+  without the FFI-worker regression, or a libgit2-free load path (OS git clone
+  the full dep closure + tonel:// local load). Both are uncertain multi-attempt
+  paths for a target that every signal says is NOT a VM bug. Deferred as
+  low-value; the base harness has 0 genuine unfixed VM bugs.
+
 ---
 (historical) Full-catalog-only, ARM/macOS-only, RARE: after the 2026-07-07 six-VM-fix
 wave, some ARM catalog runs (9b, 9c) explode the heap 64 MB -> 3.7 GB in
