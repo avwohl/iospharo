@@ -84,9 +84,15 @@ note SSH_CIDR "$MYIP"
 SSM_ARCH="${ARCH:-amd64}"
 case "$SSM_ARCH" in amd64|arm64) ;; *) echo "bad ARCH=$SSM_ARCH (want amd64|arm64)" >&2; exit 1;; esac
 UBUNTU_RELEASE="${UBUNTU_RELEASE:-22.04}"
-AMI_ID=$(aws ssm get-parameter \
-    --name "/aws/service/canonical/ubuntu/server/${UBUNTU_RELEASE}/stable/current/${SSM_ARCH}/hvm/ebs-gp3/ami-id" \
-    --query 'Parameter.Value' --output text)
+# Volume type differs by release: 24.04 publishes ebs-gp3, 22.04 only ebs-gp2.
+# Try gp3 then fall back to gp2 so either release resolves.
+AMI_ID=""
+for VOLT in ebs-gp3 ebs-gp2; do
+    AMI_ID=$(aws ssm get-parameter \
+        --name "/aws/service/canonical/ubuntu/server/${UBUNTU_RELEASE}/stable/current/${SSM_ARCH}/hvm/${VOLT}/ami-id" \
+        --query 'Parameter.Value' --output text 2>/dev/null) && [ -n "$AMI_ID" ] && [ "$AMI_ID" != None ] && break
+done
+[ -n "$AMI_ID" ] && [ "$AMI_ID" != None ] || { echo "no AMI for Ubuntu $UBUNTU_RELEASE/$SSM_ARCH" >&2; exit 1; }
 note UBUNTU_RELEASE "$UBUNTU_RELEASE"
 note AMI_ARCH "$SSM_ARCH"
 note AMI_ID "$AMI_ID"
