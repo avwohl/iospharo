@@ -177,6 +177,23 @@ storm is NOT recurring — but PROVING prevention needs triggering the rare
 Heisenbug, which no session (incl. those that observed it in #9b/#9c) has done
 on demand. The only remaining escalation is building the full 200-package
 catalog and running it repeatedly to try to catch the 2/10 trigger.
+**FULL 200-PKG CATALOG ESCALATION EXECUTED (2026-07-08) — hit a NEW blocker:**
+Built the ACTUAL 200-package catalog on AWS x86 (197/200 packages OK, 3
+validate+rollback reverts, 5251 test classes, 280 MB clean image — validated
+per-package on stock Cog). But the image DOES NOT BOOT on the custom VM: the
+snapshot-resume + SessionManager startup hits a DNU loop on loaded packages'
+background-process handlers (#waitTimeoutMilliseconds: on nil, #name on nil,
+CollectionIsEmpty) — times out before any eval completes. PHARO_NO_RESUME does
+NOT fix it (error just changes). The Roassal-only catalog booted fine, so a
+SPECIFIC package in the full 200 installs a startup process the custom VM can't
+resume. SUnitRunner prep via stock Cog also failed on the image. So the full
+catalog can't run on the custom VM (the storm's required env) without first
+resolving this custom-VM-boot incompatibility — itself a SEPARATE bug, and
+notably the SAME 'background process won't die' family (#waitTimeoutMilliseconds:
+on nil) as the storm. NET for Bug 2: the storm A/B on the actual catalog is
+blocked upstream of the storm by this boot incompatibility; resolving it (find
+the culprit package, fix the custom-VM startup of package background processes)
+is the true next step and may be entangled with the storm's own root.
 
 ---
 (historical) Full-catalog-only, ARM/macOS-only, RARE: after the 2026-07-07 six-VM-fix
