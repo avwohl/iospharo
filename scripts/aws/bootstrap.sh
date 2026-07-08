@@ -27,6 +27,14 @@ apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv \
     htop tmux less
 
+# --- OpenSSL 1.1 + libssh2 compat for the bundled pharo libgit2 --------------
+# The stock Cog VM (get.pharo.org) bundles libgit2.so.1.4.4, which links the
+# OpenSSL 1.1 world (libssl.so.1.1 / libcrypto.so.1.1 / libssh2.so.1.9.0).
+# Without these, UFFI loading libgit2 for Metacello github:// loads SEGFAULTS.
+# Available on 22.04 (jammy); ABSENT on 24.04 (noble) — see provision.sh note.
+apt-get install -y --no-install-recommends libssl1.1 libssh2-1 2>/dev/null || \
+  echo "WARN: libssl1.1/libssh2-1 unavailable (24.04?) — catalog github loads will fail"
+
 # --- AWS CLI v2 (for S3 sync + self-terminate via instance profile) ----------
 if ! command -v aws >/dev/null 2>&1; then
     arch=$(uname -m)   # x86_64 on Intel/AMD, aarch64 on Graviton — both published

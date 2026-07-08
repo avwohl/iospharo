@@ -71,14 +71,23 @@ aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
 note SG_ID "$SG_ID"
 note SSH_CIDR "$MYIP"
 
-# --- 5. Latest Ubuntu 24.04 AMI via SSM public parameter --------------------
+# --- 5. Ubuntu AMI via SSM public parameter ---------------------------------
 # Arch from $ARCH (config): amd64 (x86_64, default) | arm64 (Graviton).  The
 # Canonical SSM parameter path differs only by that one component.
+# Release from $UBUNTU_RELEASE (config/env), default 22.04.  IMPORTANT: the
+# catalog build (stock Cog Metacello github:// loads) needs the bundled pharo
+# libgit2.so.1.4.4, which links the OpenSSL 1.1 world (libssl.so.1.1,
+# libcrypto.so.1.1, libssh2.so.1.9.0).  24.04 (noble) DROPPED libssl1.1, so
+# UFFI loading libgit2 segfaults there (mixing openssl1.1 + system openssl3).
+# 22.04 (jammy) still provides `apt install libssl1.1 libssh2-1`, so github
+# package loads work.  Only bump to 24.04 for a pure-VM/no-Metacello box.
 SSM_ARCH="${ARCH:-amd64}"
 case "$SSM_ARCH" in amd64|arm64) ;; *) echo "bad ARCH=$SSM_ARCH (want amd64|arm64)" >&2; exit 1;; esac
+UBUNTU_RELEASE="${UBUNTU_RELEASE:-22.04}"
 AMI_ID=$(aws ssm get-parameter \
-    --name "/aws/service/canonical/ubuntu/server/24.04/stable/current/${SSM_ARCH}/hvm/ebs-gp3/ami-id" \
+    --name "/aws/service/canonical/ubuntu/server/${UBUNTU_RELEASE}/stable/current/${SSM_ARCH}/hvm/ebs-gp3/ami-id" \
     --query 'Parameter.Value' --output text)
+note UBUNTU_RELEASE "$UBUNTU_RELEASE"
 note AMI_ARCH "$SSM_ARCH"
 note AMI_ID "$AMI_ID"
 
