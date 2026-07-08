@@ -164,6 +164,19 @@ storm is the only decisive confirmation. Roassal catalog image IS now buildable
 custom VM opens it fine). Local evidence: the full 2047-TestCase-subclass run
 (base image, incl. all StDebugger* tests = the storm's leak machinery) held FLAT
 at 56 MB through class 1237 with 0 storm signatures.
+**FULL ROASSAL CATALOG RUN (2026-07-08):** built the Roassal-loaded catalog
+image and ran ALL 2047 test classes (23,597 tests) WITHOUT the fix
+(NO_BECOME_FORWARDER + NO_CLASSOF_FWD): exit 0, peak heap 75 MB FLAT, 0 storm
+signatures. So the storm does NOT reproduce even in a full Roassal catalog
+WITHOUT the fix — it requires the specific full 200-package catalog + the rare
+(2/10) timing. Consistent with catalog #10 (latest full 200-pkg ARM run, with
+the low-space mitigation) completing CLEAN. FINAL STATUS: Bug 2 is root-caused,
+the runaway is mitigated (low-space, #10 clean), the forwarded-object trigger is
+addressed (become + classOf forwarder fixes, validated 0-regression), and the
+storm is NOT recurring — but PROVING prevention needs triggering the rare
+Heisenbug, which no session (incl. those that observed it in #9b/#9c) has done
+on demand. The only remaining escalation is building the full 200-package
+catalog and running it repeatedly to try to catch the 2/10 trigger.
 
 ---
 (historical) Full-catalog-only, ARM/macOS-only, RARE: after the 2026-07-07 six-VM-fix
