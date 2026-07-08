@@ -1,6 +1,62 @@
-# WIP — /goal "fix all non-Windows bugs" — CONTINUED 2026-07-06 night → 07-07
+# WIP — /goal "fix all non-Windows bugs" — CONTINUED 2026-07-06 night → 07-08
 
-## ============ 2026-07-07 SESSION SUMMARY (read this first) ============
+## ============ 2026-07-08 SESSION SUMMARY (read this first) ============
+
+TERMINAL STATE: the base harness has ZERO genuine unfixed VM bugs. The three
+target bugs are fixed+proven (SlotIntegration, ARM storm, TF-callback — see the
+07-07 summary below). This session did the reflective perf gap + a full-harness
+re-sweep + a user-directed catalog-boot re-investigation. All work
+committed+pushed to origin/jit.
+
+1. REFLECTIVE-SLOWNESS perf gap — PARTIAL FIX (validated), committed+pushed:
+   - VM primitives aad03bc0: CompiledCode>>refersToLiteral: ->
+     primitiveRefersToLiteral, scanFor: -> primitiveScanForByte. Both keep the
+     EXACT Smalltalk fallback; fire only via the pragma the runner installs
+     (inert otherwise). Activated in submodule pharo-headless-test e5fdf9d
+     (run_sunit_tests.st), parent pointer 0b448cfb.
+   - ~1.5-2x on allSendersOf:/allReferencesTo: scans, scales with method count.
+     Validated: 0 mismatches over 1,319,322 refersToLiteral: comparisons +
+     identical allSendersOf: across 21 selectors.
+   - Class-level scan primitive REJECTED: hasSelector:specialSelectorIndex:'s
+     #ffiNonCompiledMethod per-method property semantics = whole-image
+     reflective-correctness landmine. That collapse is the activation-wall
+     project's job. Residual floor = the activation wall.
+
+2. FULL 565-CLASS HARNESS RE-SWEEP (primitives active), batches 1-150/151-340/
+   341-565, ~12,700 pass:
+        Fail:     0
+        Error:    1   OCClassBuilderTest>>testCreateNormalClassWithTraitComposition
+                      (stock-Cog-identical upstream — image_issues.md:184)
+        Timeout:  1   reflective-slowness (activation wall)
+        genuine unfixed VM bugs:  0
+
+3. CATALOG-BOOT DNU re-investigation (user asked to rebuild the catalog to hunt
+   more bugs) — CONCLUSION: almost certainly an IMAGE/PACKAGE issue, not a VM
+   bug; rebuild BLOCKED by a stock-Cog regression. Evidence (docs/deferred.md
+   ~line 213, memory aws-catalog-build-env + reflective-scan-primitives):
+   - Local repro RULED OUT a generic-poisoned-delay VM bug: our VM = stock Cog
+     on `waitTimeoutMilliseconds: nil` (both SCHEDULER-ALIVE).
+   - The startup-process packages (iris/interopserver/tsf-scheduler/teapot) all
+     boot fine INDIVIDUALLY on the custom VM -> the merged-boot DNU is emergent;
+     stock Cog also failed on the merged image -> image/package-level.
+   - Rebuild blocked: current get.pharo.org/64/vm130 stock-Cog VM segfaults in
+     its threaded FFI worker (primitivePerformWorkerCall:) on EVERY Metacello
+     github:// load, reproduced even with a fully-consistent bundled focal
+     OpenSSL 1.1 set -> it's the FFI worker, not openssl. The original build
+     predated this VM regression.
+   - AWS infra fixed along the way: provision.sh default 24.04 (VM needs glibc
+     2.36 arc4random_buf + cmake 3.24) with robust gp3/gp2 AMI lookup; the
+     catalog build script bundles focal OpenSSL 1.1 for libgit2 (commits
+     112027a1/d434981f/3356371f). All boxes torn down; no AWS cost running.
+
+Note (unchanged, deliberate): third_party/asmjit has a local working-tree patch
+(asmjit/core/virtmem.cpp — moves #include <libkern/OSCacheControl.h> out of the
+TARGET_OS_OSX guard so sys_icache_invalidate() resolves on Mac Catalyst). It is
+macOS-Catalyst-only (Linux/x86 builds don't need it, which is why the AWS boxes
+build clean) and intentionally kept uncommitted in the vendored submodule. Do
+NOT `git submodule update` third_party/asmjit without re-applying it.
+
+## ============ 2026-07-07 SESSION SUMMARY ============
 
 NINE VM fixes this session, all committed+pushed, all package-verified on
 freshly-loaded package images + regression batteries (details: docs/
