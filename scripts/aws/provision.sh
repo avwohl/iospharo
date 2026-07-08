@@ -74,16 +74,19 @@ note SSH_CIDR "$MYIP"
 # --- 5. Ubuntu AMI via SSM public parameter ---------------------------------
 # Arch from $ARCH (config): amd64 (x86_64, default) | arm64 (Graviton).  The
 # Canonical SSM parameter path differs only by that one component.
-# Release from $UBUNTU_RELEASE (config/env), default 22.04.  IMPORTANT: the
-# catalog build (stock Cog Metacello github:// loads) needs the bundled pharo
-# libgit2.so.1.4.4, which links the OpenSSL 1.1 world (libssl.so.1.1,
-# libcrypto.so.1.1, libssh2.so.1.9.0).  24.04 (noble) DROPPED libssl1.1, so
-# UFFI loading libgit2 segfaults there (mixing openssl1.1 + system openssl3).
-# 22.04 (jammy) still provides `apt install libssl1.1 libssh2-1`, so github
-# package loads work.  Only bump to 24.04 for a pure-VM/no-Metacello box.
+# Release from $UBUNTU_RELEASE (config/env), default 24.04.  Keep 24.04: the VM
+# uses arc4random_buf (glibc 2.36+; 24.04=2.39, 22.04 jammy=2.35 -> won't
+# compile), asmjit needs cmake 3.24+ (jammy ships 3.22), and clang is newer.
+# CAVEAT for the catalog build (stock Cog Metacello github:// loads): the
+# bundled pharo libgit2.so.1.4.4 links the OpenSSL 1.1 world (libssl.so.1.1,
+# libcrypto.so.1.1, libssh2.so.1.9.0), which NO current Ubuntu ships natively
+# (jammy dropped libssl1.1 too; only focal/20.04 had it).  The catalog build
+# script handles this by BUNDLING the focal OpenSSL 1.1 + libssh2 .so files
+# into a compat dir on LD_LIBRARY_PATH — OS-independent, so it does not gate the
+# release choice.  (git identity must also be set or libgit2 __strdup NULLs.)
 SSM_ARCH="${ARCH:-amd64}"
 case "$SSM_ARCH" in amd64|arm64) ;; *) echo "bad ARCH=$SSM_ARCH (want amd64|arm64)" >&2; exit 1;; esac
-UBUNTU_RELEASE="${UBUNTU_RELEASE:-22.04}"
+UBUNTU_RELEASE="${UBUNTU_RELEASE:-24.04}"
 # Volume type differs by release: 24.04 publishes ebs-gp3, 22.04 only ebs-gp2.
 # Try gp3 then fall back to gp2 so either release resolves.
 AMI_ID=""
