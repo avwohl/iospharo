@@ -529,6 +529,13 @@ Oop ObjectMemory::classOf(Oop obj) const {
     // forwarder here (one predicted-not-taken compare on the already-loaded
     // classIndex) makes forwarders transparent to dispatch, per Spur semantics.
     if (__builtin_expect(clsIdx == ObjectHeader::ForwardedClassIndex, 0)) {
+        // Evidence counter: each increment is a send/dispatch to a forwarded
+        // object that, WITHOUT this fix, would have looked up methods in the
+        // Forwarded class (idx 8) and spuriously MNU'd — a potential ARM-storm
+        // trigger the fix silently prevents. Non-zero during a real run proves
+        // the fix is doing work. (Counter only touched in this rare branch.)
+        extern uint64_t g_classOfForwarderFollows;
+        ++g_classOfForwarderFollows;
         Oop target = followForwarded(obj);
         if (!target.isObject()) return classOf(target);       // followed to an immediate
         if (!isValidPointer(target)) return nilObject_;
@@ -536,6 +543,8 @@ Oop ObjectMemory::classOf(Oop obj) const {
     }
     return classAtIndex(clsIdx);
 }
+
+uint64_t g_classOfForwarderFollows = 0;
 
 uint32_t ObjectMemory::registerClass(Oop classOop) {
     // In Spur, if the class already has an identity hash, that IS its class

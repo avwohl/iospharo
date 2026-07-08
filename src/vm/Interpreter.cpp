@@ -1891,6 +1891,12 @@ void Interpreter::dumpJITStats() {
     size_t actTotal = jitActivations_;
     size_t resumeTotal = jitJ2JChains_ + jitJ2JFallbacks_;
     fprintf(stderr, "\n=== JIT Stats ===\n");
+    {
+        extern uint64_t g_classOfForwarderFollows;
+        fprintf(stderr, "  classOf-forwarder-follows: %llu (each = a dispatch to a "
+                "forwarded object the fix resolved instead of MNU-ing)\n",
+                (unsigned long long)g_classOfForwarderFollows);
+    }
     fprintf(stderr, "  compiled: %zu methods\n",
             jitRuntime_.methodMap().count());
     fprintf(stderr, "  IC: %zu hits / %zu total (%.1f%%), patches=%zu stale=%zu\n",
