@@ -17914,6 +17914,11 @@ uint32_t Interpreter::lookupClassIndexByName(const char* name) {
 void Interpreter::initializeClassIndexCache() {
     compiledMethodClassIndex_ = lookupClassIndexByName("CompiledMethod");
     compiledBlockClassIndex_ = lookupClassIndexByName("CompiledBlock");
+    // ByteSymbol: used by primitiveRefersToLiteral to restrict its fast identity
+    // scan to Symbol arguments, where literalEqual: reduces to == (symbols are
+    // interned).  For any non-Symbol arg the primitive falls back to the correct
+    // Smalltalk refersToLiteral: (value-equality via literalEqual:).
+    byteSymbolClassIndex_ = lookupClassIndexByName("ByteSymbol");
     fullBlockClosureClassIndex_ = lookupClassIndexByName("FullBlockClosure");
     orderedCollectionClassIndex_ = lookupClassIndexByName("OrderedCollection");
     writeStreamClassIndex_ = lookupClassIndexByName("WriteStream");
@@ -20939,6 +20944,15 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("SecurityPlugin", "primitiveInputSemaphore", &Interpreter::primitiveInputSemaphore2);
     registerNamedPrimitive("", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
     registerNamedPrimitive("", "primitiveInputSemaphore", &Interpreter::primitiveInputSemaphore2);
+
+    // Reflective-scan accelerator: CompiledCode>>refersToLiteral: for Symbol args
+    // (senders/implementors hot path — see primitiveRefersToLiteral).  The image
+    // method is patched at startup to carry <primitive: 'primitiveRefersToLiteral'
+    // module: 'VMPlugin'>; register under empty + VMPlugin modules.
+    registerNamedPrimitive("", "primitiveRefersToLiteral", &Interpreter::primitiveRefersToLiteral);
+    registerNamedPrimitive("VMPlugin", "primitiveRefersToLiteral", &Interpreter::primitiveRefersToLiteral);
+    registerNamedPrimitive("", "primitiveScanForByte", &Interpreter::primitiveScanForByte);
+    registerNamedPrimitive("VMPlugin", "primitiveScanForByte", &Interpreter::primitiveScanForByte);
 
     // Display primitives
     registerNamedPrimitive("iOSPlugin", "primitiveShowDisplayRect", &Interpreter::primitiveShowDisplayRect);

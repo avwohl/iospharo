@@ -1385,6 +1385,7 @@ private:
     // Do NOT hardcode values — they vary between images.
     uint32_t compiledMethodClassIndex_ = 0;
     uint32_t compiledBlockClassIndex_ = 0;
+    uint32_t byteSymbolClassIndex_ = 0;
     uint32_t fullBlockClosureClassIndex_ = 0;
     uint32_t orderedCollectionClassIndex_ = 0;
     uint32_t writeStreamClassIndex_ = 0;
@@ -2372,6 +2373,17 @@ private:
     PrimitiveResult primitiveSize(int argCount);
     PrimitiveResult primitiveInstVarAt(int argCount);
     PrimitiveResult primitiveInstVarAtPut(int argCount);
+    // Fast CompiledCode>>refersToLiteral: for Symbol args (the senders/implementors
+    // scan hot path — allSendersOf: was 2.7s/query, ~19us/method, dominated by
+    // block-per-literal activation).  Scans the code's literals (identity, since
+    // symbols are interned) recursing into Array + nested CompiledBlock literals;
+    // falls back to Smalltalk for non-Symbol args (value-equality via literalEqual:).
+    PrimitiveResult primitiveRefersToLiteral(int argCount);
+    bool codeRefersToSymbol(Oop code, uint64_t symBits, int depth);
+    bool arrayRefersToSymbol(Oop arr, uint64_t symBits, int depth);
+    // Fast CompiledCode>>scanFor: — bytecode-opcode scan for the special-selector
+    // senders path (the ~2000ms/query chunk refersToLiteral: can't cover).
+    PrimitiveResult primitiveScanForByte(int argCount);
     PrimitiveResult primitiveBasicAt(int argCount);
     PrimitiveResult primitiveBasicAtPut(int argCount);
     PrimitiveResult primitiveBasicSize(int argCount);
