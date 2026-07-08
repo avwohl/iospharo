@@ -135,22 +135,35 @@ The storm is a TWO-PART mechanism, now addressed at both points:
    pre-fix, was a stale valid object. **FIXED THIS SESSION (296bba26):**
    becomeForward now leaves obj1 a forwarder (62417f43) AND ObjectMemory::classOf
    now FOLLOWS forwarders (296bba26) so a forwarded receiver dispatches to the
-   TARGET's class instead of the Forwarded class (idx 8) -> no spurious MNU ->
-   the freeze recursion never STARTS. classOf-follows-forwarders is Spur-standard
-   transparency; validated 0-regression across ~8200 tests + SlotIntegration
-   oracle + perf-neutral (1 predicted-not-taken compare, IC-miss path only).
-   NOTE ExpC (the synthetic repro) still storms because it re-signals MANUALLY,
-   bypassing the forwarded-object trigger — confirming the classOf fix targets
-   the real-catalog TRIGGER, not the synthetic recursion.
+   TARGET's class instead of the Forwarded class (idx 8). classOf-follows-forwarders
+   is Spur-standard transparency; validated 0-regression across ~8200 tests +
+   SlotIntegration oracle + perf-neutral (1 predicted-not-taken compare, IC-miss
+   path only). **HONEST STRENGTH OF THE STORM CLAIM (2026-07-08):** the fix is
+   ACTIVE in the real Roassal catalog — the classOf-forwarder-follows counter
+   reports 6-13 forwarders resolved per storm-subset run (built the Roassal image
+   on x86, ran on macOS-ARM). BUT the storm-PREVENTION link is PLAUSIBLE, not
+   PROVEN: (a) the full storm was NOT reproduced (it is rare — 2/10 real-catalog
+   runs; a 188-class RS/Debug/Morph subset stayed bounded at 75 MB with AND
+   without the fix); (b) disabling the classOf fix (PHARO_NO_CLASSOF_FWD) did
+   NOT observably change the subset's outcomes — a forwarded receiver
+   mis-dispatched to idx 8 mostly hits Object-inherited methods (silently wrong)
+   rather than always MNU-ing, so the "each follow would MNU" framing was
+   corrected (an earlier note citing "276 MNU markers" was WRONG — those were
+   #suspend-on-nil DNU *diagnostic traces*, a pre-existing SUnitRunner artifact).
+   So classOf-follows-forwarders is a CORRECT, active fix matching the documented
+   trigger mechanism, but proving it PREVENTS the storm needs an actual storm
+   reproduction, which remains gated on triggering the rare Heisenbug.
 **Remaining truly-image-side residue:** the pathological handler (re-signals
 without unwinding) is fundamentally an IMAGE bug (a debugger/test that should
-unwind). The VM now (a) eliminates the forwarded-object trigger and (b)
-mitigates the runaway via low-space. A full-200-package ARM catalog re-run
-WITH both fixes is the final confirmation (can't build the Roassal catalog
-image locally: macOS Cairo FFI segfaults stock Cog; no Pharo13 ARM64 stock VM).
-Local evidence: the full 2047-TestCase-subclass run (base image, incl. all
-StDebugger* tests = the storm's leak machinery) held FLAT at 56 MB through
-class 1237 with 0 storm signatures.
+unwind). The VM (a) makes forwarders transparent to dispatch (correctness; may
+reduce the forwarded-object trigger) and (b) mitigates the runaway via low-space.
+A full-200-package ARM catalog re-run WITH both fixes that actually TRIGGERS the
+storm is the only decisive confirmation. Roassal catalog image IS now buildable
+(build on x86 Linux where apt cairo works — scripts/pkg-jit-test/build-roassal-catalog-image.sh
+— then run with the custom ARM VM; stock Cog HANGS on the Roassal image but the
+custom VM opens it fine). Local evidence: the full 2047-TestCase-subclass run
+(base image, incl. all StDebugger* tests = the storm's leak machinery) held FLAT
+at 56 MB through class 1237 with 0 storm signatures.
 
 ---
 (historical) Full-catalog-only, ARM/macOS-only, RARE: after the 2026-07-07 six-VM-fix
