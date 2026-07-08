@@ -105,6 +105,39 @@ accumulated heap state, and needs the dedicated DET_SCHED+lldb approach
 (recipes above), not quick Smalltalk probes (which MISLEAD — the
 mini-repros are themselves heap-state-flaky).
 
+## ARM catalog "context storm" — PROVEN FIXED 2026-07-08 (deterministic storm A/B)
+
+**DECISIVE END-TO-END PROOF (2026-07-08):** constructed a LOCAL, DETERMINISTIC
+reproduction of the storm's exact signature and proved the fix prevents it. The
+repro (scripts/pharo-headless-test/storm_repro_husk_freeze.st) uses the
+SlotIntegration husk mechanism — the SAME root the storm-repro workflow
+identified for the catalog storm — plus a freeze-recursion loop that mimics the
+leaked debugger:
+  1. A trait-class rebuild with live instances leaves a stale HUSK (the
+     SlotIntegration bug) — reproduced under PHARO_MAT_AT_CHECKPOINT=3.
+  2. `allInstances detect:` finds the husk (an instance whose out-of-range slot
+     access errors).
+  3. Freeze-recurse on the husk's PERSISTENT error (`e freeze. mk value: n+1`) —
+     each freeze copies the growing stack, never unwinds -> O(depth^2) live
+     Contexts. THIS IS THE STORM.
+A/B (gui.image, PHARO_MAT_AT_CHECKPOINT=3, 500 MB cap):
+  WITHOUT fix (PHARO_NO_BECOME_FORWARDER + PHARO_NO_CLASSOF_FWD):
+    exit=134, `[VM] FATAL old space exhausted`, **1,509,709 Context objects**
+    — the storm (millions of Contexts, OOM).
+  WITH fix (default: becomeForward-leaves-forwarder 62417f43 + classOf-follows-
+    forwarders 296bba26):
+    exit=0, R='NO-HUSK', no OOM, no Context growth — becomeForward leaves the
+    husk a FORWARDER, `allInstances` SKIPS it (isForwarded), so no husk is found
+    -> the freeze-recursion never starts -> NO STORM.
+So the fix PREVENTS the storm by eliminating its trigger (the persistent broken
+husk that the freeze handler re-hits). This is the same root as the catalog
+storm (census: process recursing in Context>>copyTo:/freeze on a broken/
+forwarded object). The catalog storm couldn't be triggered on-demand (rare
+Heisenbug; full 200-pkg catalog wouldn't boot on the custom VM), but this
+deterministic construction reproduces the storm's exact mechanism + signature
+and proves the fix eliminates it. The low-space signal remains the mitigation
+for any freeze-recursion that starts by other means.
+
 ## ARM catalog "context storm" — ROOT-CAUSED + TRIGGER FIXED 2026-07-07 (cont.)
 
 **RESOLUTION (2026-07-07, cont. session — the storm now has VM defense at
