@@ -105,9 +105,55 @@ accumulated heap state, and needs the dedicated DET_SCHED+lldb approach
 (recipes above), not quick Smalltalk probes (which MISLEAD — the
 mini-repros are themselves heap-state-flaky).
 
-## ARM catalog "context storm" — timing Heisenbug (open, 2026-07-07)
+## ARM catalog "context storm" — ROOT-CAUSED + TRIGGER FIXED 2026-07-07 (cont.)
 
-Full-catalog-only, ARM/macOS-only, RARE: after the 2026-07-07 six-VM-fix
+**RESOLUTION (2026-07-07, cont. session — the storm now has VM defense at
+BOTH the trigger and the runaway):**
+The storm is a TWO-PART mechanism, now addressed at both points:
+1. **RECURSION MECHANISM** = UNBOUNDED `Exception>>freeze` recursion in a
+   handler that re-signals WITHOUT unwinding. Reproduced locally in a ~7-line
+   script (scripts/pharo-headless-test/storm_repro_freeze_recursion.st):
+   `mk := [:n | [MessageNotUnderstood new signal] on: MessageNotUnderstood
+   do: [:e | e freeze. mk value: n+1]]. mk value: 1` -> exit 134, "old space
+   exhausted during scavenge tenure", census dominated by ~1.2M-3.8M Context
+   objects (97% heap) — the EXACT catalog signature. Each freeze
+   (freezeUpTo:->copyStack->copyTo:) copies the growing signaler stack and,
+   because it never unwinds, every copy stays LIVE -> O(depth^2) Contexts.
+   From the VM's view this is legitimate deep recursion; the DEFENSE is the
+   prim-125 low-space signal (Interpreter.cpp:3495-3517, commit 22fcb0e7):
+   free<threshold -> signal TheLowSpaceSemaphore -> the image's P60
+   lowSpaceWatcher (lowIOPriority=60 > the P50 userInterrupt culprit, so it
+   CAN preempt) terminates the hog. Verified: catalog #10 (with the
+   mitigation) completed CLEAN. The mitigation is DISARMED in bare `eval`
+   (no installLowSpaceWatcher -> lowSpaceThreshold_ stays 0), which is why
+   the headless repro OOMs — an artifact of eval mode, not the real catalog.
+2. **TRIGGER** = what STARTS the recursion in the real catalog: an
+   MNU/PrimitiveFailed on a BROKEN/FORWARDED object during Context>>copyTo:
+   (the census's MNU+PrimitiveFailed+Message triples). This is the SAME
+   stale-become-husk root as SlotIntegration: a becomeForward scan-and-replace
+   MISSED reference (untracked JIT operand under materialization) that,
+   pre-fix, was a stale valid object. **FIXED THIS SESSION (296bba26):**
+   becomeForward now leaves obj1 a forwarder (62417f43) AND ObjectMemory::classOf
+   now FOLLOWS forwarders (296bba26) so a forwarded receiver dispatches to the
+   TARGET's class instead of the Forwarded class (idx 8) -> no spurious MNU ->
+   the freeze recursion never STARTS. classOf-follows-forwarders is Spur-standard
+   transparency; validated 0-regression across ~8200 tests + SlotIntegration
+   oracle + perf-neutral (1 predicted-not-taken compare, IC-miss path only).
+   NOTE ExpC (the synthetic repro) still storms because it re-signals MANUALLY,
+   bypassing the forwarded-object trigger — confirming the classOf fix targets
+   the real-catalog TRIGGER, not the synthetic recursion.
+**Remaining truly-image-side residue:** the pathological handler (re-signals
+without unwinding) is fundamentally an IMAGE bug (a debugger/test that should
+unwind). The VM now (a) eliminates the forwarded-object trigger and (b)
+mitigates the runaway via low-space. A full-200-package ARM catalog re-run
+WITH both fixes is the final confirmation (can't build the Roassal catalog
+image locally: macOS Cairo FFI segfaults stock Cog; no Pharo13 ARM64 stock VM).
+Local evidence: the full 2047-TestCase-subclass run (base image, incl. all
+StDebugger* tests = the storm's leak machinery) held FLAT at 56 MB through
+class 1237 with 0 storm signatures.
+
+---
+(historical) Full-catalog-only, ARM/macOS-only, RARE: after the 2026-07-07 six-VM-fix
 wave, some ARM catalog runs (9b, 9c) explode the heap 64 MB -> 3.7 GB in
 the RS (Roassal) window-open region (~class 1300) and abort with
 "old space exhausted during scavenge tenure".  x86 (all 9 fixes) is
@@ -1424,10 +1470,22 @@ CONTIGUOUS, starving P41-79 watchdog machinery).  TFUFFICallbackTest:
   Verified: x4 gauntlet 5/5 clean (4x13/13 each, exit 0, ~75s total),
   battery green twice (InCallbacks 2x36/36, Derived 12/12, Weak*,
   Process 46/46, Semaphore 18/18, StepOver, Delay, FFICallback*).
-  Pre-existing, baseline-identical (NOT regressions): TFCallbacksTest
-  1/8+3F+4E (RESOLVED 2026-07-04 — see the TFCallbacksTest section
-  below: 5 root causes, stock parity), testSingleCalloutDuringCallback
-  1F (same), and TFUFFIConcurrencyTest-UsingWorker marginal pacing:
+  TFCallbacksTest — **RE-VERIFIED FULLY RESOLVED 2026-07-07 (cont.):** on
+  the current VM the suite runs **8 passed + 2 skipped, 0 failures, 0 errors**
+  (stable across a single run, twice-in-one-VM order check, and per-test
+  enumeration). testSingleCalloutDuringCallback PASSES under BOTH runners
+  (TFSameThreadRunner + TFWorker). The 2 skips are testCallbackNotRespectingLIFOOrderFailsReturn,
+  whose source hardcodes `true ifTrue: [ ^ self skip ]` — an unconditional
+  UPSTREAM self-skip, identical on stock Cog (NOT VM suppression). CORRECTION
+  to the "baseline-identical / stock parity" framing: the old 1/8+3F+4E were
+  NOT stock-parity — they were 5 GENUINE our-VM defects that were FIXED
+  (TestLibrary fixture arg+1 semantics, primitiveReleaseWorker abort-before-join,
+  XTCB-DEAD-SKIP dead-entry hand-out, reentrant worker task-queue servicing,
+  pendingXtcbAdoption_ drain in nested enterInterpreterFromCallback) — which is
+  why the tests pass today. So TFCallbacksTest has NO remaining our-VM defect;
+  the sole residual (2 self-skips) is legitimately upstream test design.
+  testSingleCalloutDuringCallback: PASSES (no longer 1F), and
+  TFUFFIConcurrencyTest-UsingWorker marginal pacing:
 - [x] TFUFFIConcurrencyTest>>testConcurrentlyCompiling(UsingWorker) —
   FIXED 2026-07-05 (ARM), commit 3940b62c.  The quiet-machine profiling
   found it was NOT image-side compile cost: warm worker callouts ran
