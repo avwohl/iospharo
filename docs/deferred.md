@@ -386,6 +386,22 @@ superseded per-family notes from catalog #5 below, updated:
   timeouts (which scale with method count) are reduced, not eliminated.
   Closing them fully needs the activation-wall project (inlined method
   activation / body-inlining), not more primitives.
+  **Why not a class-level scan primitive** (considered + rejected
+  2026-07-08): the next lever is collapsing the outer `self methods select:
+  [:m | m hasSelector: lit specialSelectorIndex: idx]` into one C++ call per
+  CLASS (removing the block-per-method activation).  Rejected because
+  `CompiledMethod>>hasSelector:specialSelectorIndex:` first consults the
+  `#ffiNonCompiledMethod` property and, when present, answers from a
+  SUBSTITUTE method (not the wrapper in `methodDict values`).  Replicating
+  that per-method property semantics in C++ is a whole-image
+  reflective-correctness landmine (silent divergence on FFI-callout methods)
+  for shaving one already-classified residual timeout — the wrong trade.
+  Collapsing per-method activation is the activation-wall project's literal
+  job; do it there with the inlining infra, not a bespoke reflective primitive.
+  **Full 565-class harness re-swept 2026-07-08 with the primitives ACTIVE
+  (Pass ~12,700): 0 Fail, 1 Error (OCClassBuilderTest trait-composition —
+  stock-Cog-identical upstream, image_issues.md:184), 1 Timeout (this item).
+  Zero genuine unfixed VM bugs remain in the base harness.**
 - [x] **Roassal RS* family** — FIXED 2026-07-06: 64-slot manual-surface
   registry exhaustion (growable deque, Primitives.cpp); the "rendering
   diffs" were downstream of failed surface allocation.
