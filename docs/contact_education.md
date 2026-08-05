@@ -7,7 +7,7 @@ audience for iospharo when it ships on the App Store.
 ## Best Ways to Reach Everyone at Once
 
   Pharo-users mailing list (educators + practitioners)
-    https://lists.pharo.org/list/pharo-users.lists.pharo.org
+    https://lists.pharo.org/postorius/lists/pharo-users.lists.pharo.org/
 
   Pharo Discord (~1200 members)
     https://discord.gg/QewZMZa
@@ -169,7 +169,7 @@ audience for iospharo when it ships on the App Store.
 
   ESUG SummerTalk — 2,500 EUR per student (up to 5 projects/year)
     board@esug.org with subject "[SummerTalk]"
-    https://esug.org/summerTalk.html
+    https://web.archive.org/web/20260114041937/https://esug.org/summerTalk.html
 
   Google Summer of Code — Pharo Consortium is a mentoring org
     https://gsoc.pharo.org

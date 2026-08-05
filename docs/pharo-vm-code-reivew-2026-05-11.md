@@ -54,7 +54,7 @@ PRESENT   ffi/src/callbacks/callbackPrimitives.c:160-161    unchecked malloc + s
 PRESENT   ffi/src/callbacks/callbacks.c:14-32               stack CallbackInvocation in global queue
 N/A       (various)                                         "missing `;` after checkFailed()" — false positive; macro body terminates
 PRESENT   Jenkinsfile:84,249                                wget|bash, plain HTTP
-PRESENT   scripts/runTests.sh:31                            wget -O - https://get.pharo.org/64/80 | bash
+PRESENT   scripts/runTests.sh:31                            wget -O - https://web.archive.org/web/20201127005100/http://get.pharo.org/64/80 | bash
 PRESENT   Jenkinsfile:97-403                                scp -o StrictHostKeyChecking=no
 PRESENT   cmake/importLibFFI.cmake:17-18 et al              mutable git tags
 PRESENT   docker/{ubuntu-arm64,debian10-armv7}/Dockerfile   unpinned base images
@@ -955,7 +955,7 @@ Why:    fillEPollDescriptor returns -1 on epoll_create1/epoll_ctl
 ================================================================
 
 CRITICAL  Jenkinsfile:84,249  — wget … | bash, plain HTTP
-CRITICAL  scripts/runTests.sh:31  — wget -O - https://get.pharo.org/64/80 | bash,
+CRITICAL  scripts/runTests.sh:31  — wget -O - https://web.archive.org/web/20201127005100/http://get.pharo.org/64/80 | bash,
                                      run from .github/workflows on PR
 CRITICAL  scripts/installCygwin.ps1:7-9  — installer + mirror over plain HTTP
 HIGH      cmake/import{LibFFI,LibGit2,SDL2}.cmake  — mutable git tags,
