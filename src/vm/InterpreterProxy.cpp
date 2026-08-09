@@ -434,8 +434,11 @@ static sqInt proxy_isIntegerValue(sqInt intValue) {
 static sqInt proxy_isPointers(sqInt oop) {
     Oop obj = sqIntToOop(oop);
     if (!obj.isObject()) return 0;
-    auto format = obj.asObjectPtr()->format();
-    return (format <= ObjectFormat::Weak) ? 1 : 0; // Formats 0-4 are pointer objects
+    // Formats 0-5 are pointer objects.  `<= Weak` (0-4) dropped
+    // WeakWithFixed(5) — ephemerons — so isPointers() answered false for
+    // them.  Spur's SpurMemoryManager>>#isPointers: is `format <= 5`
+    // (src/ios/cointerp-cpp.c:54137).
+    return obj.asObjectPtr()->isPointersObject() ? 1 : 0;
 }
 
 static sqInt proxy_isWeak(sqInt oop) {

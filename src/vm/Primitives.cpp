@@ -3437,8 +3437,10 @@ PrimitiveResult Interpreter::primitiveNext(int argCount) {
         }
         uint8_t byte = memory_.fetchByte(static_cast<size_t>(position), array);
         result = Oop::fromCharacter(byte);
-    } else if (format <= ObjectFormat::Weak) {
-        // Pointer array - return element
+    } else if (arrayHeader->isPointersObject()) {
+        // Pointer array - return element.  isPointersObject() is formats 0-5;
+        // the old `format <= Weak` stopped at 4 and so failed the primitive
+        // for WeakWithFixed(5) ephemerons, which are pointer-indexable.
         size_t slotCount = arrayHeader->slotCount();
         if (static_cast<size_t>(position) >= slotCount) {
             return PrimitiveResult::Failure;
@@ -3511,8 +3513,9 @@ PrimitiveResult Interpreter::primitiveNextPut(int argCount) {
         }
 
         memory_.storeByte(static_cast<size_t>(position), array, byte);
-    } else if (format <= ObjectFormat::Weak) {
-        // Pointer array - store element
+    } else if (arrayHeader->isPointersObject()) {
+        // Pointer array - store element.  See the matching note in prim 65:
+        // `format <= Weak` excluded WeakWithFixed(5) ephemerons.
         size_t slotCount = arrayHeader->slotCount();
         if (static_cast<size_t>(position) >= slotCount) {
             return PrimitiveResult::Failure;
@@ -10044,11 +10047,20 @@ PrimitiveResult Interpreter::primitiveBecome(int argCount) {
         ObjectHeader* header = obj.asObjectPtr();
         ObjectFormat format = header->format();
 
-        // Skip non-pointer objects (byte/word arrays)
+        // Skip non-pointer objects (byte/word arrays).  Scanning any of these
+        // compares raw payload words against an oop, which can rewrite a data
+        // word that merely happens to match.  Keep this set identical to the
+        // sibling scans (~471 here, ObjectMemory.cpp ~1507 and ~1566) and to
+        // prim 132: formats 6..23 all answer "no pointers".
         if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) return;
         if (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable32Odd) return; // 9, 10, 11
         // Also skip 16-bit arrays (format 12-15)
         if (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) return;
+        // ...and the Reserved formats (6-8).  These are not merely
+        // theoretical: proxy_instantiateClass (InterpreterProxy.cpp ~600)
+        // raw-casts an image-supplied instSpec of 0-9 straight to
+        // ObjectFormat, so a plugin can hand us a format-6/7/8 object.
+        if (format >= ObjectFormat::Reserved6 && format <= ObjectFormat::Reserved8) return;
 
         // For CompiledMethods, only scan the literal frame (pointer slots), not bytecodes
         size_t numPointers = header->slotCount();
@@ -12577,10 +12589,12 @@ PrimitiveResult Interpreter::primitiveIsPointers(int argCount) {
     }
 
     ObjectHeader* header = obj.asObjectPtr();
-    ObjectFormat fmt = header->format();
 
-    // Pointer formats are 0-4 (FixedSize, Indexable, etc.)
-    bool isPointers = (fmt <= ObjectFormat::Weak);
+    // Pointer formats are 0-5, per Spur's SpurMemoryManager>>#isPointers:
+    // (src/ios/cointerp-cpp.c:54137, `format <= 5`).  The old `fmt <= Weak`
+    // stopped at 4, so this Smalltalk-visible predicate answered false for
+    // WeakWithFixed(5) ephemerons.
+    bool isPointers = header->isPointersObject();
 
     pop();
     push(isPointers ? memory_.trueObject() : memory_.falseObject());
