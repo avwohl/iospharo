@@ -1103,19 +1103,11 @@ static sqInt proxy_topRemappableOop() {
 
 static void proxy_addHighPriorityTickee(void (*ticker)(void), unsigned periodms) {}
 static void proxy_addSynchronousTickee(void (*ticker)(void), unsigned periodms, unsigned roundms) {}
-// NB: `volatile` on a return type is a no-op (clang -Wignored-qualifiers),
-// but the vendored sqVirtualMachine.h declares utcMicroseconds with that
-// qualifier (line 199), so we mirror it here and silence the warning via
-// `#pragma`.  Removing volatile would force a cast at the assignment in
-// initializeProxy(), trading one ignored-qualifier warning for another.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wignored-qualifiers"
-static volatile unsigned long long proxy_utcMicroseconds() {
+static unsigned long long proxy_utcMicroseconds() {
     struct timeval tv;
     gettimeofday(&tv, nullptr);
     return static_cast<unsigned long long>(tv.tv_sec) * 1000000ULL + tv.tv_usec;
 }
-#pragma GCC diagnostic pop
 static void proxy_tenuringIncrementalGC() {}
 static sqInt proxy_isYoung(sqInt anOop) { return 0; }
 static sqInt proxy_isKindOfClass(sqInt oop, sqInt aClass) {
@@ -1333,10 +1325,7 @@ void initializeInterpreterProxy(Interpreter* interp) {
     theProxy.topRemappableOop = proxy_topRemappableOop;
     theProxy.addHighPriorityTickee = proxy_addHighPriorityTickee;
     theProxy.addSynchronousTickee = proxy_addSynchronousTickee;
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wignored-qualifiers"
-    theProxy.utcMicroseconds = (volatile unsigned long long (*)(void))proxy_utcMicroseconds;
-#pragma GCC diagnostic pop
+    theProxy.utcMicroseconds = proxy_utcMicroseconds;
     theProxy.tenuringIncrementalGC = proxy_tenuringIncrementalGC;
     theProxy.isYoung = proxy_isYoung;
     theProxy.isKindOfClass = proxy_isKindOfClass;

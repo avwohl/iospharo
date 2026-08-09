@@ -842,8 +842,7 @@ static void sistaRingDump(const char* tag, Interpreter* interp) {
 // ===== CONSTRUCTION =====
 
 Interpreter::Interpreter(ObjectMemory& memory)
-    : vmThreadId_(std::this_thread::get_id())
-    , memory_(memory)
+    : memory_(memory)
     , frameDepth_(0)
     , stackPointer_(stack_.data())
     , stackBase_(stack_.data())
@@ -868,6 +867,9 @@ Interpreter::Interpreter(ObjectMemory& memory)
     , running_(false)
     , primitiveFailed_(false)
     , worldRenderer_(memory)
+    // Declared last (Interpreter.hpp:1195), so it is initialized last no matter
+    // where it appears here — keep the list in declaration order.
+    , vmThreadId_(std::this_thread::get_id())
 {
     // Clear method cache
     for (auto& entry : methodCache_) {
@@ -6962,8 +6964,6 @@ void Interpreter::pushLiteralVariable(int index) {
         if (++n <= 20) {
             std::string aCls = (assoc.isObject() && memory_.isValidPointer(assoc))
                 ? memory_.classNameOf(assoc) : "BAD";
-            int nslots = (assoc.isObject() && memory_.isValidPointer(assoc))
-                ? (int)assoc.asObjectPtr()->slotCount() : -1;
             std::string vCls = (value.isObject() && value.rawBits() >= 0x10000
                 && memory_.isValidPointer(value)) ? memory_.classNameOf(value)
                 : (value.isSmallInteger() ? "SmI" : "BAD/imm");
@@ -7464,10 +7464,16 @@ void Interpreter::returnValue(Oop value) {
                                 ssel.c_str(), origSp, rc.c_str(), (unsigned long long)g_stepNum);
                             for (int q = 0; q < origSp && q < 12; q++) {
                                 Oop it = memory_.fetchPointer(6 + q, sender);
+                                // classNameOf returns std::string BY VALUE, so
+                                // .c_str() on the temporary dangles as soon as the
+                                // full expression ends — the fprintf below then read
+                                // freed memory.  Bind the string to a named local.
+                                const bool itNamed = it.isObject() && it.rawBits() >= 0x10000;
+                                const std::string itName =
+                                    itNamed ? memory_.classNameOf(it) : std::string();
                                 const char* qc = it.isNil() ? "nil"
                                     : it.isSmallInteger() ? "SmI"
-                                    : (it.isObject() && it.rawBits() >= 0x10000)
-                                        ? memory_.classNameOf(it).c_str() : "imm";
+                                    : itNamed ? itName.c_str() : "imm";
                                 fprintf(stderr, "%s%s", q ? " " : "", qc);
                             }
                             fprintf(stderr, "]\n");
@@ -7897,7 +7903,11 @@ void Interpreter::returnFromMethod() {
 
     // Cascade-#3 residual: trace ^-returns from CompiledBlocks while the
     // FPUSH tape is armed — the swallowed-NLR hunt.
+    // kFpushCap was declared but never tested, so the "capped" tape at
+    // Interpreter.cpp:165 was in fact unbounded: once a widthOf: send arms
+    // g_fpushArm, every block ^-return traced forever.  Enforce it.
     if (__builtin_expect(g_fpushArm, 0)
+            && g_fpushN < kFpushCap
             && method_.isObject() && method_.rawBits() > 0x10000
             && method_.asObjectPtr()->classIndex()
                == compiledBlockClassIndex_) {
@@ -9208,19 +9218,9 @@ void Interpreter::arithmeticSend(int which) {
                                 && memory_.classNameOf(receiver_) == "SystemEnvironment") {
                             static size_t mn = 0;
                             if (mn < 4000) { mn++;
-                                // receiver_ = the dict; find its array ivar's real size
-                                long realSz = -1;
-                                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                                    ObjectHeader* dh = receiver_.asObjectPtr();
-                                    for (size_t sv = 0; sv < dh->slotCount() && sv < 4; sv++) {
-                                        Oop iv = dh->slotAt(sv);
-                                        if (iv.isObject() && iv.rawBits() > 0x10000
-                                                && !iv.asObjectPtr()->isBytesObject()) {
-                                            realSz = (long)iv.asObjectPtr()->slotCount();
-                                            break;
-                                        }
-                                    }
-                                }
+                                // (The array-ivar "real size" scan that used to live
+                                // here fed a trace line that no longer exists; the
+                                // surviving [MOD-SE-MISMATCH] below never used it.)
                                 Oop t0 = temporary(0);
                                 std::string ks = memory_.oopToString(t0);
                                 // a = anObject identityHash (scaled). Compare with
@@ -18811,10 +18811,14 @@ Oop Interpreter::materializeFrameStack() {
                             || f0.find("copyWith") != std::string::npos || f0.find("addInstVar") != std::string::npos
                             || f0.find("compareVar") != std::string::npos || f0.find("make") != std::string::npos) {
                         Oop topItem = (exprEnd > exprStart) ? *(exprEnd - 1) : Oop::nil();
+                        // classNameOf returns by value — hold it, don't dangle.
+                        const bool topNamed =
+                            topItem.isObject() && topItem.rawBits() >= 0x10000;
+                        const std::string topName =
+                            topNamed ? memory_.classNameOf(topItem) : std::string();
                         const char* tc = topItem.isNil() ? "nil"
                             : topItem.isSmallInteger() ? "SmI"
-                            : (topItem.isObject() && topItem.rawBits() >= 0x10000)
-                                ? memory_.classNameOf(topItem).c_str() : "imm";
+                            : topNamed ? topName.c_str() : "imm";
                         fprintf(stderr, "[REUSE-F0] #%s numTemps=%d exprCount=%td top=%s fd=%zu step=%llu\n",
                             f0.c_str(), numTemps, dbgExprCount, tc, frameDepth_,
                             (unsigned long long)g_stepNum);
@@ -19024,8 +19028,12 @@ Oop Interpreter::materializeFrameStack() {
                         || fs.find("compareVar") != std::string::npos || fs == ",") {
                     ptrdiff_t ec = (exprEndPtr > exprStart) ? (exprEndPtr - exprStart) : (exprEndPtr - exprStart);
                     Oop topI = (exprEndPtr > exprStart) ? *(exprEndPtr - 1) : Oop::nil();
+                    // classNameOf returns by value — hold it, don't dangle.
+                    const bool topINamed = topI.isObject() && topI.rawBits() >= 0x10000;
+                    const std::string topIName =
+                        topINamed ? memory_.classNameOf(topI) : std::string();
                     const char* tc = topI.isNil() ? "nil" : topI.isSmallInteger() ? "SmI"
-                        : (topI.isObject() && topI.rawBits() >= 0x10000) ? memory_.classNameOf(topI).c_str() : "imm";
+                        : topINamed ? topIName.c_str() : "imm";
                     ptrdiff_t gap = nextFrameStart - frame.savedFP;
                     fprintf(stderr, "[SAVE-FRM %zu] #%s numTemps=%d exprCount=%td top=%s fpGap=%td fd=%zu step=%llu\n",
                         i, fs.c_str(), numTemps, ec, tc, gap, frameDepth_, (unsigned long long)g_stepNum);

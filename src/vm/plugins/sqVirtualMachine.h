@@ -196,7 +196,10 @@ typedef struct VirtualMachine {
     /* VM_PROXY_MINOR > 10 */
     void  (*addHighPriorityTickee)(void (*ticker)(void), unsigned periodms);
     void  (*addSynchronousTickee)(void (*ticker)(void), unsigned periodms, unsigned roundms);
-    volatile unsigned long long (*utcMicroseconds)(void);
+    /* No `volatile` on the return type: it has no effect on a by-value
+       return (and every TU including this header warned under
+       -Wignored-qualifiers).  Dropping it does not change the ABI. */
+    unsigned long long (*utcMicroseconds)(void);
     void (*tenuringIncrementalGC)(void);
     sqInt (*isYoung)(sqInt anOop);
     sqInt (*isKindOfClass)(sqInt oop, sqInt aClass);

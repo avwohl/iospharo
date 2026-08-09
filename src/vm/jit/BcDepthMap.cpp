@@ -83,7 +83,9 @@ bool loadSpecialArgCounts(ObjectMemory* memory) {
 // unmappable report in buildEntryForMethodOop).
 uint32_t g_lastFailPc = 0;
 uint8_t g_lastFailOp = 0;
-const char* g_lastFailWhy = "?";
+// (No g_lastFailWhy: unlike the pc/op above it was never assigned at any
+//  return-false site nor read by the unmappable report, so it only ever
+//  reported "?".  Add it back together with the assignments if wanted.)
 
 // Worklist propagation of operand depth.  out[k] = depth BEFORE the
 // bytecode at offset k.  Returns false (unmappable) on: opcodes with

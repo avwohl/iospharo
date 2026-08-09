@@ -132,7 +132,11 @@ static bool g_emitX86XmethodAllArgs = false;
 // mismatch artifact).  Lets the real menu-path send-bearing corruptor be
 // isolated by caller selector.  Empty/unset => the raw PHARO_T1_X86_XMETHOD_SENDS
 // behavior (all callers).  Set per-compile in compileViaAsmjit.
+#if defined(__x86_64__) || defined(_M_X64)
+// Only read from the x86 emit paths; defining it unconditionally left an
+// unused static on every arm64 build.
 static bool g_emitX86SendsOk = false;
+#endif
 // FSR M1 per-compile gates (set in compileViaAsmjit).
 static bool g_fsrX19 = false;
 static bool g_fsrCursor = false;  // FSR M2 v1: x23 cursor residency (write-through)
@@ -5259,8 +5263,10 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
     // When off, the ldr+cbz is still emitted but j2jDepth is always 0
     // so we fall through to normal-return — tiny overhead, zero
     // semantic change.
-    const bool inlineJ2J = !GET_DEBUG_BOOL(PHARO_T1_NO_INLINE_J2J)
-                && !(GET_DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_VALUE) && !GET_DEBUG_BOOL(PHARO_T1_BV_KEEP_INLINE_J2J))  /* SCOPING FIX #2 (UPDATE 31): BV-on disables cross-method inline-J2J (the value:value:-block-clean-inline corruptor); BV still works, just no inline-J2J */;
+    // (The gate this used to compute is now applied inside
+    //  emitJ2JReturnPrelude_arm64 / at the j2jDepth check, so the local was
+    //  left dangling by that refactor.  See the comment above for the
+    //  default-ON semantics it described.)
     auto emitJ2JReturnPreludeIfEnabled = [&]() {
         emitJ2JReturnPrelude_arm64(a, staticJ2JArgCount);
     };

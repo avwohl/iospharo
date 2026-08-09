@@ -29011,16 +29011,16 @@ static bool isBuiltInLibrary(const std::string& path) {
 // GetFileAttributesA returns INVALID_FILE_ATTRIBUTES (0xFFFFFFFF) on failure —
 // that has bit 0x2 set and would falsely report hidden, so fall back to
 // FILE_ATTRIBUTE_NORMAL (0x80, not hidden).
-static int64_t winFileAttributes(const std::string& path) {
+// Both call sites are themselves inside #ifdef _WIN32, so the non-Windows
+// fallback body was never reachable — it only left an unused static function
+// on every other platform.  Guard the whole definition instead.
 #ifdef _WIN32
+static int64_t winFileAttributes(const std::string& path) {
     DWORD a = GetFileAttributesA(winLongPath(path).c_str());
     if (a == INVALID_FILE_ATTRIBUTES) a = FILE_ATTRIBUTE_NORMAL;
     return static_cast<int64_t>(a);
-#else
-    (void)path;
-    return 0;
-#endif
 }
+#endif
 
 static void fillSyntheticStat(struct stat* st) {
     memset(st, 0, sizeof(*st));
