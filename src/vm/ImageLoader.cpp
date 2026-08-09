@@ -306,7 +306,13 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
         size_t size = hdr->totalSize();
         // Spur minimum object size is 16 bytes (header + at least 1 slot for forwarding)
         if (size < 16) size = 16;
-        uint8_t* next = objPtr + size;
+        // objPtr is a HEADER address, but totalSize() measures from the
+        // allocation start — and for a >=255-slot object that start is the
+        // overflow word, 8 bytes BEFORE the header.  Without this correction
+        // `next` overshot the true end by 8 for any overflow object in the
+        // first five, which would then desync the rest of the walk.  Masked
+        // today only because nil/false/true/freeListsObj are all small.
+        uint8_t* next = objPtr + size - (hdr->hasOverflowSlots() ? 8 : 0);
         // Check if the next position is an overflow word (the word after it has numSlots=255)
         if (next + 16 <= heapStart + loadedSize_) {
             uint64_t followingWord = *reinterpret_cast<uint64_t*>(next + 8);

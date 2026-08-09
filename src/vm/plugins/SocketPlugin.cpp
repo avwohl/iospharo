@@ -1542,7 +1542,18 @@ extern "C" sqInt sp_primitiveSocketAccept3Semaphores(void) {
         return vm->primitiveFail();
     }
 
-    setNonBlocking(clientFd);
+    if (!setNonBlocking(clientFd)) {
+        // The connect and listen paths both close-and-fail on this (~550,
+        // ~728); accept silently discarded it, so a client fd left in
+        // blocking mode would wedge the VM thread in recv.  Hand the
+        // listener back to WAITING and wake the IO thread first, exactly as
+        // the accept-failure path above does — otherwise it stays CONNECTED
+        // and stops accepting.
+        sockClose(clientFd);
+        serverPs->sockState = SOCK_WAITING_FOR_CONNECTION;
+        wakeIOThread();
+        return vm->primitiveFail();
+    }
 
     // The listening socket returns to waiting; the IO thread re-promotes it to
     // CONNECTED when another incoming connection is pending.

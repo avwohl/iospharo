@@ -567,15 +567,23 @@ static sqInt proxy_classString() { return oopToSqInt(gMem->specialObject(Special
 // Instance creation
 // =====================================================================
 static sqInt proxy_clone(sqInt oop) {
-    // Shallow copy
+    // Delegate to the real shallow copy.  The hand-rolled version here was
+    // wrong three ways:
+    //   - it sized the body as totalSize - sizeof(ObjectHeader), but
+    //     totalSize also counts the 8-byte overflow word (which precedes the
+    //     header), so for a >=255-slot source it over-allocated by 8 and the
+    //     memcpy over-READ 8 bytes past the end of the object;
+    //   - allocateBytes forces a byte-format object, so cloning a pointer
+    //     object produced a byte object with the source's classIndex;
+    //   - copying from the header down duplicated the source's identity hash
+    //     and its marked/remembered/immutable/pinned bits.
+    // ObjectMemory::shallowCopy handles the overflow layout, preserves the
+    // format, assigns a fresh identity hash and clears the GC/protection
+    // bits, matching Cog's clone.
     Oop obj = sqIntToOop(oop);
     if (!obj.isObject()) return oop;
-    ObjectHeader* src = obj.asObjectPtr();
-    size_t totalSize = src->totalSize();
-    Oop copy = gMem->allocateBytes(src->classIndex(), totalSize - sizeof(ObjectHeader));
+    Oop copy = gMem->shallowCopy(obj);
     if (copy.isNil()) { gFailed = true; return oop; }
-    ObjectHeader* dst = copy.asObjectPtr();
-    memcpy(dst->bytes(), src->bytes(), totalSize - sizeof(ObjectHeader));
     return oopToSqInt(copy);
 }
 
