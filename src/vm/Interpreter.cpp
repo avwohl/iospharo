@@ -273,15 +273,16 @@ bool Interpreter::initialize() {
                 size_t stackTopSlot = 6 + static_cast<size_t>(stackp) - 1;
                 if (stackTopSlot < ctxHdr->slotCount()) {
                     Oop trueObj = memory_.specialObject(SpecialObjectIndex::TrueObject);
+#ifdef DEBUG
+                    // Describe the value we are about to overwrite. Used only by
+                    // the trace below, so it is computed only in DEBUG builds.
                     Oop falseObj = memory_.specialObject(SpecialObjectIndex::FalseObject);
                     Oop oldVal = memory_.fetchPointer(stackTopSlot, context);
-                    // Only consumed by the DEBUG trace below
-                    [[maybe_unused]] const char* oldDesc = "unknown";
+                    const char* oldDesc = "unknown";
                     if (oldVal.rawBits() == trueObj.rawBits()) oldDesc = "true";
                     else if (oldVal.rawBits() == falseObj.rawBits()) oldDesc = "false";
                     else if (oldVal.isNil()) oldDesc = "nil";
                     else if (oldVal.isSmallInteger()) oldDesc = "SmallInteger";
-#ifdef DEBUG
                     fprintf(stderr, "[RESUME] stackp=%lld stackTopSlot=%zu oldVal=%s(0x%llx)\n",
                             stackp, stackTopSlot, oldDesc, (unsigned long long)oldVal.rawBits());
 #endif

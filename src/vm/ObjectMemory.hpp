@@ -788,7 +788,9 @@ private:
 
     /// Plan: compute forwarding addresses, save first fields.
     /// Returns false if scratch space overflowed (need another pass).
-    bool planCompactSavingForwarders();
+    /// objectsMoved receives the number of live objects the plan relocates
+    /// (pinned and already-in-place objects are not counted).
+    bool planCompactSavingForwarders(size_t& objectsMoved);
 
     /// Update all pointer fields in all live objects + all roots.
     void updatePointersAfterCompact();

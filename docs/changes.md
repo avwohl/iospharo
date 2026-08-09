@@ -30,14 +30,29 @@ preprocessor-lexical, so the first pop re-enabled Objective-C's `nil` macro for
 the remaining ~28 lines that are meant to run with it undefined. Harmless only
 by luck today; now a single push/pop pair.
 
-## Silence warnings from VMMaker-generated plugin sources
+## Clear every clang 21 warning in hand-written code
 
-`B2DPlugin.c`, `JPEGReaderPlugin.c` and `DSAPrims.c` are generated from
-OpenSmalltalk-VM Smalltalk sources, so edits there would be lost on the next
-regeneration. They now build with `-w`, matching how the bundled libjpeg and
-testlib sources were already handled. This removes 315 of the 407 warnings
-Apple clang 21 reports; the remaining 92 were in hand-written code and were
-fixed rather than suppressed.
+Apple clang 21 reported 407 warnings across the VM. All 85 in hand-written code
+are now fixed — not suppressed. Three were the defects described above; the rest
+were dead locals removed after confirming their initialisers had no side
+effects, mis-ordered constructor initialiser lists, wrong printf specifiers, and
+a meaningless `volatile` on `utcMicroseconds`' return type in
+`sqVirtualMachine.h` (with the matching change in `InterpreterProxy.cpp` — in
+C++ the cv-qualifier survives in the function-pointer type, so both halves must
+move together).
+
+Values that existed only for `#ifdef DEBUG` traces moved inside those blocks, so
+release builds no longer compute them at all.
+
+The remaining 322 warnings are all in the VMMaker-generated plugin sources
+`B2DPlugin.c`, `JPEGReaderPlugin.c` and `DSAPrims.c`. They are deliberately left
+visible: suppressing them destroys information, and hand-deleting the dead
+generated code would be undone by the next regeneration. See
+`docs/vmmaker-issues.md` — 320 of the 322 are Slang emission artifacts (314 of
+them from the inliner, which emits out-of-line copies of methods it already
+inlined at all 1,010 call sites), and the other two are a genuine
+signed/unsigned defect in DSA's big-integer division that should be reported
+upstream.
 
 ## Fix image relaunch hang (displays but can't interact)
 

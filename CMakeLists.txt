@@ -103,20 +103,6 @@ target_compile_options(PharoVMCore PRIVATE
     -Wall -Wextra -Wno-unused-parameter
 )
 
-# Suppress warnings in VMMaker-generated plugin sources. These are machine
-# generated from OpenSmalltalk-VM Smalltalk sources; editing them here would be
-# lost on the next regeneration, so silence them instead of patching.
-set(VMMAKER_GENERATED_SOURCES
-    src/vm/plugins/B2DPlugin.c
-    src/vm/plugins/JPEGReaderPlugin.c
-)
-if(PHARO_WITH_CRYPTO)
-    list(APPEND VMMAKER_GENERATED_SOURCES src/vm/plugins/DSAPrims.c)
-endif()
-set_source_files_properties(${VMMAKER_GENERATED_SOURCES} PROPERTIES
-    COMPILE_FLAGS "-w"
-)
-
 # Suppress warnings in third-party libjpeg code
 file(GLOB JPEG_ONLY_SOURCES src/vm/plugins/jpeg/j*.c src/vm/plugins/jpeg/Error.c)
 if(JPEG_ONLY_SOURCES)

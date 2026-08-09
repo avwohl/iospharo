@@ -1368,7 +1368,7 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     // Symbol class corruption check and stale pointer check disabled (verified clean)
 
     // 4. Plan + update + copy (compact)
-    planCompactSavingForwarders();
+    planCompactSavingForwarders(result.objectsMoved);
     updatePointersAfterCompact();
     copyAndUnmark();
 
@@ -2480,7 +2480,7 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
 
 // ===== COMPACT PHASE =====
 
-bool ObjectMemory::planCompactSavingForwarders() {
+bool ObjectMemory::planCompactSavingForwarders(size_t& objectsMoved) {
     // Use eden as scratch space for saved first fields.
     // Eden is unused during full GC.
     savedFirstFieldsSpace_.start = reinterpret_cast<Oop*>(edenStart_);
@@ -2490,10 +2490,9 @@ bool ObjectMemory::planCompactSavingForwarders() {
 
     uint8_t* toFinger = oldSpaceStart_;  // Destination for next live object
 
-    // Number of live objects that will actually move. Kept because GCResult has an
-    // objectsMoved field that fullGC never fills in (it is reported as 0 to callers);
-    // this is the value it should carry once the plumbing exists.
-    [[maybe_unused]] size_t moveCount = 0;
+    // Number of live objects that will actually move. Reported to the caller so
+    // fullGC can fill in GCResult::objectsMoved.
+    objectsMoved = 0;
 
     ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
     while (ObjectHeader* obj = scanner.next()) {
@@ -2527,7 +2526,7 @@ bool ObjectMemory::planCompactSavingForwarders() {
             toFinger += objSize;
             continue;
         }
-        moveCount++;
+        objectsMoved++;
 
         // Mobile object that needs to move: save first field, store forwarding address.
         // Every Spur object has at least 16 bytes (8-byte header + 8 bytes padding/data),

@@ -18827,10 +18827,13 @@ PrimitiveResult Interpreter::primitivePixelValueAtPut(int argCount) {
 PrimitiveResult Interpreter::primitiveWarpBits(int argCount) {
     if (argCount != 2) return PrimitiveResult::Failure;
 
-    // arg 2: sourceMap is the colour map for depth conversion; the image passes nil
-    // when source and dest depths match, and this path only accepts 32->32 (see the
-    // depth check below), so there is never a map to apply. Kept for stack clarity.
-    [[maybe_unused]] Oop sourceMapOop = stackTop();
+    // arg 2: sourceMap is the colour map to apply while warping. This implementation
+    // samples and stores pixels directly and never applies a map, so a supplied map
+    // cannot be honoured. Fail the primitive instead of silently producing unmapped
+    // output; WarpBlt>>warpBitsSmoothing:sourceMap: then performs the mapped warp in
+    // Smalltalk (see docs/image_issues.md "Bug 5" for that fallback path).
+    Oop sourceMapOop = stackTop();
+    if (!sourceMapOop.isNil()) return PrimitiveResult::Failure;
     Oop nOop = stackValue(1);            // arg 1: smoothing level n
     Oop warpBlt = stackValue(2);         // receiver (WarpBlt)
 
@@ -26602,11 +26605,16 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
         hints.ai_socktype = SOCK_STREAM;
         struct addrinfo* result = nullptr;
 
+#ifdef DEBUG
+        // The lookup duration is consumed only by the DEBUG traces below, so sample
+        // the clock only in the builds that compile them.
         auto t0 = std::chrono::steady_clock::now();
+#endif
         int err = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
-        auto t1 = std::chrono::steady_clock::now();
-        // Only reported by the DEBUG trace below
-        [[maybe_unused]] long ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+#ifdef DEBUG
+        long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - t0).count();
+#endif
 
         if (err == 0 && result) {
             // MUST prefer IPv4: Pharo 13's SocketAddress>>fromOldByteAddress:
@@ -26616,19 +26624,23 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
             // (last 4 bytes of well-known prefix 64:ff9b::/96).
             struct addrinfo* chosen = nullptr;
             struct addrinfo* firstV6 = nullptr;
-            // Only reported by the DEBUG trace below; selection uses chosen/firstV6
-            [[maybe_unused]] int v4Count = 0, v6Count = 0;
             for (struct addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
                 if (rp->ai_family == AF_INET) {
-                    v4Count++;
                     if (!chosen) chosen = rp;
                 } else if (rp->ai_family == AF_INET6) {
-                    v6Count++;
                     if (!firstV6) firstV6 = rp;
                 }
             }
 
 #ifdef DEBUG
+            // Per-family totals are wanted only by this trace; the selection loop
+            // above needs only the first address of each family. `result` is still
+            // live here (freeaddrinfo happens after the selection below).
+            int v4Count = 0, v6Count = 0;
+            for (struct addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
+                if (rp->ai_family == AF_INET) v4Count++;
+                else if (rp->ai_family == AF_INET6) v6Count++;
+            }
             fprintf(stderr, "[DNS] '%s' resolved in %ldms: %d IPv4, %d IPv6 results\n",
                     hostname.c_str(), ms, v4Count, v6Count);
 #endif
