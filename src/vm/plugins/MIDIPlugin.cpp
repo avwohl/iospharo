@@ -40,6 +40,24 @@ struct OpenPort {
 
 static OpenPort gPorts[kMaxPorts];
 
+// Reset a slot's trivially-copyable fields.  NEVER memset an OpenPort: it
+// embeds a std::mutex, which is not trivially copyable.  On Darwin libc++ a
+// std::mutex holds a pthread_mutex_t whose signature word is set by the
+// constexpr constructor; zeroing it makes every later pthread_mutex_lock
+// fail its signature check, so the CoreMIDI callback thread would throw out
+// of std::lock_guard and terminate.
+static void resetPortFields(OpenPort* p) {
+    p->active = false;
+    p->isInput = false;
+    p->endpointIndex = 0;
+    p->port = MIDIPortRef{};
+    p->endpoint = MIDIEndpointRef{};
+    std::memset(p->ringBuf, 0, sizeof(p->ringBuf));
+    p->ringHead = 0;
+    p->ringTail = 0;
+    // p->ringMutex: left alone; default-constructed once at static-init.
+}
+
 // =====================================================================
 // Helpers
 // =====================================================================
@@ -113,7 +131,12 @@ bool midiInit(void) {
     OSStatus status = MIDIClientCreate(CFSTR("PharoVM"), nullptr, nullptr, &gClient);
     if (status != noErr) return false;
 
-    memset(gPorts, 0, sizeof(gPorts));
+    // Per-field reset: `memset(gPorts, 0, sizeof(gPorts))` clobbered all 32
+    // embedded std::mutex objects (UB).  The 2026-05-27 fix (95378117)
+    // corrected the per-port reset in midiOpenPort but missed this one.
+    for (int i = 0; i < kMaxPorts; i++) {
+        resetPortFields(&gPorts[i]);
+    }
     gInitialized = true;
     return true;
 }
@@ -180,17 +203,7 @@ int midiOpenPort(int portIndex) {
 
     int nDest = numDestinations();
     OpenPort* p = &gPorts[slot];
-    // Explicit field reset — memset would clobber std::mutex internals
-    // (UB on non-trivially-copyable types).
-    p->active = false;
-    p->isInput = false;
-    p->endpointIndex = 0;
-    p->port = MIDIPortRef{};
-    p->endpoint = MIDIEndpointRef{};
-    std::memset(p->ringBuf, 0, sizeof(p->ringBuf));
-    p->ringHead = 0;
-    p->ringTail = 0;
-    // p->ringMutex: leave as-is; default-constructed at file scope.
+    resetPortFields(p);
 
     if (portIndex < nDest) {
         // Output port (destination)

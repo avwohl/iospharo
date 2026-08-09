@@ -2371,6 +2371,11 @@ GCResult ObjectMemory::scavenge() {
     size_t edenUsedAfter = 0;
     (void)edenUsedBefore;
     result.bytesReclaimed = edenUsedBefore - edenUsedAfter;
+    // Objects relocated this cycle = the survivors tenured out of eden.
+    // `forward` holds exactly one entry per copied object.  This field was
+    // declared and printed by five diagnostics but never assigned, so every
+    // GC report claimed "moved 0 objects".
+    result.objectsMoved = forward.size();
 
     // Rebuild ips from the offsets stashed at scavenge entry (skips
     // the full-GC-only methodCache/IC flush tail).
@@ -2427,15 +2432,23 @@ void ObjectMemory::sweepGC() {
     ObjectScanner sweepScanner(oldSpaceStart_, oldSpaceFree_);
     while (ObjectHeader* obj = sweepScanner.next()) {
         uint8_t* objAddr = reinterpret_cast<uint8_t*>(obj);
+        // totalSize() ALREADY includes the 8-byte overflow word (see
+        // ObjectHeader::totalSize and the note in objectAfter) — it is the
+        // size of the whole allocation, measured from objStart.  Only the
+        // START needs backing up; adding 8 to the size double-counted the
+        // overflow word and pushed lastLiveEnd 8 bytes past the true end of
+        // every large (>254-slot) live object.  When such an object was the
+        // last live one, the trailing-dead-run branch below set
+        // oldSpaceFree_ = lastLiveEnd, leaving an 8-byte remnant of the dead
+        // object above it; the next ObjectScanner walk then tried to parse a
+        // header out of those stale bytes.
         size_t objSize = obj->totalSize();
-        bool hasOverflow = obj->hasOverflowSlots();
-        uint8_t* objStart = hasOverflow ? (objAddr - 8) : objAddr;
-        size_t fullSize = hasOverflow ? (objSize + 8) : objSize;
+        uint8_t* objStart = obj->hasOverflowSlots() ? (objAddr - 8) : objAddr;
 
         if (obj->isMarked()) {
             // Live object — clear mark
             obj->setMarked(false);
-            lastLiveEnd = objStart + fullSize;
+            lastLiveEnd = objStart + objSize;
 
             // End any dead run
             if (deadRunStart) {
@@ -2658,7 +2671,7 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     bool planned = planCompactSavingForwarders();
     if (planned) {
         updatePointersAfterCompact();
-        copyAndUnmark();
+        result.objectsMoved = copyAndUnmark();
     } else {
         fprintf(stderr,
             "[GC-PLAN-OVERFLOW] compaction plan exceeded scratch capacity "
@@ -4376,9 +4389,10 @@ void ObjectMemory::updatePointersAfterCompact() {
     // syncClassTableToHeap writes them back to hiddenRoots before save.
 }
 
-void ObjectMemory::copyAndUnmark() {
+size_t ObjectMemory::copyAndUnmark() {
     Oop* savedFieldPtr = savedFirstFieldsSpace_.start;
     uint8_t* toFinger = oldSpaceStart_;
+    size_t movedCount = 0;
 
     ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
     while (ObjectHeader* obj = scanner.next()) {
@@ -4418,6 +4432,7 @@ void ObjectMemory::copyAndUnmark() {
         // memmove handles overlapping regions correctly.
         if (toFinger != objStart) {
             std::memmove(toFinger, objStart, objSize);
+            movedCount++;
         }
 
         // Clear mark and grey on the (possibly moved) copy
@@ -4444,6 +4459,7 @@ void ObjectMemory::copyAndUnmark() {
 
     // Update oldSpaceFree_ to after the last live object
     oldSpaceFree_ = toFinger;
+    return movedCount;
 }
 
 // Low-level tripwire for bug-14 diagnosis.  Declared in ObjectHeader.hpp,

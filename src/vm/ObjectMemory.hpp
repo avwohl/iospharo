@@ -1051,7 +1051,10 @@ private:
     void updatePointersAfterCompact();
 
     /// Slide objects to forwarding addresses, restore first fields, clear marks.
-    void copyAndUnmark();
+    /// Slide marked objects down over the dead gaps.
+    /// Returns the number of objects actually relocated (pinned objects and
+    /// objects that were already at the destination are not counted).
+    size_t copyAndUnmark();
 
     /// Rebuild the free list from the gap at the end of old space.
     void rebuildFreeListAfterCompact();
