@@ -9890,22 +9890,26 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
     ObjectHeader* header = rcvr.asObjectPtr();
     ObjectFormat format = header->format();
 
-    // Only check pointer slots for pointer objects
-    // Non-pointer formats: byte arrays, word arrays
-    if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
-        // Byte array - no pointers
-        popN(2);
-        push(memory_.falseObject());
-        return PrimitiveResult::Success;
-    }
-
-    // Word arrays — Indexable64 (9), Indexable32 (10), Indexable32Odd (11).
-    // The earlier `>= Indexable32 && <= Indexable64` form was always false
-    // because Indexable64=9 < Indexable32=10; word arrays leaked through to
-    // the pointer-slot scan below.  Now matches the enum order in
-    // ObjectHeader.hpp:71-75.
-    if (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable32Odd) {
-        // Word arrays (32-bit and 64-bit) - no pointers
+    // Only check pointer slots for pointer objects.  This must exclude EVERY
+    // non-pointer format, or the scan below compares raw element bits against
+    // the target's oop bits and reports a bogus `true`.  Keep this guard set
+    // identical to the become heap-scans (this file, ~471 and ~10041) — the
+    // 2026-05-27 fix (f68392c2) corrected the always-false word-array range
+    // but never added the 16-bit and Reserved ranges those scans already had.
+    //
+    //   Indexable8    (16-23)  byte arrays, Strings
+    //   Indexable64   ( 9-11)  64-bit and 32-bit word arrays
+    //   Indexable16   (12-15)  16-bit short arrays  <-- was missing
+    //   Reserved6     ( 6- 8)  unallocated formats  <-- was missing
+    //
+    // CompiledMethod (24+) is handled below: only the header + literal frame
+    // is scanned, never the bytecodes.
+    const bool nonPointerFormat =
+        (format >= ObjectFormat::Indexable8  && format <= ObjectFormat::Indexable8_7)  ||
+        (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable32Odd) ||
+        (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) ||
+        (format >= ObjectFormat::Reserved6   && format <= ObjectFormat::Reserved8);
+    if (nonPointerFormat) {
         popN(2);
         push(memory_.falseObject());
         return PrimitiveResult::Success;
