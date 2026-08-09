@@ -9925,8 +9925,14 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
         if (methodHeader.isSmallInteger()) {
             int64_t headerBits = methodHeader.asSmallInteger();
             size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14
-            // Slots to check: header (1) + literals (numLiterals)
-            slotsToCheck = 1 + numLiterals;
+            // Slots to check: header (1) + literals (numLiterals), clamped to
+            // the object's real slot count.  The four sibling heap-scans all
+            // clamp (e.g. this file ~482, ObjectMemory.cpp ~1513); prim 132
+            // did not, so a method whose header claims more literals than it
+            // has slots ran the loop off the end.  fetchPointer bounds-checks
+            // and returns nil there, which made `aMethod pointsTo: nil`
+            // answer true even when no literal is nil.
+            slotsToCheck = std::min(header->slotCount(), 1 + numLiterals);
         } else {
             // Invalid method header - check no slots
             slotsToCheck = 0;

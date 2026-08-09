@@ -3251,6 +3251,13 @@ Oop ObjectMemory::nextInstanceAfter(Oop afterObject, uint32_t targetClassIndex) 
     // Get the address of the starting object
     ObjectHeader* startPtr = afterObject.asObjectPtr();
     uint8_t* startAddr = reinterpret_cast<uint8_t*>(startPtr);
+    // totalSize() counts the 8-byte overflow word, which sits BEFORE the
+    // header — so the size must be measured from the allocation start, not
+    // from the header.  Without this back-up, searchFrom landed 8 bytes past
+    // the true end of any >=255-slot receiver, i.e. on the first slot of the
+    // next object; the walk below then read that data word as a header and
+    // stayed desynced for the rest of the region.  Same idiom as objectAfter.
+    if (startPtr->hasOverflowSlots()) startAddr -= sizeof(uint64_t);
     size_t startSize = startPtr->totalSize();
     uint8_t* searchFrom = startAddr + startSize;  // Start searching AFTER this object
 
