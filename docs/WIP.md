@@ -1,3 +1,67 @@
+# WIP (2026-08-09) — audit follow-through: the 2026-05-27 warning-hygiene fixes were incomplete
+
+Triggered by a report relayed from another machine claiming to have "fixed"
+prim 132, the MIDIPlugin memset and the PlatformBridge pragmas. All three were
+in fact fixed here on 2026-05-27 (`f68392c2`, `95378117`, `34e14b4a`) and are
+documented below under "Two real bug fixes surfaced by the warning hygiene".
+The relayed report described existing history as new work. What it did surface,
+indirectly, is that **two of those fixes were incomplete**, and the same bug
+classes had untouched siblings elsewhere.
+
+Five commits, all on `jit`:
+
+    2e41fda8  prim 132 pointsTo: — complete the non-pointer format guard
+    33173419  sweepGC overflow double-count, MIDI array memset, real objectsMoved
+    6396b289  nextInstanceAfter overflow overshoot; clamp prim 132 literal scan
+    bdfbb5f3  pointer-format predicate drops ephemerons; become Reserved guard
+    92d0c13b  proxy_clone on shallowCopy; ImageLoader walk; accept setNonBlocking
+
+Two lessons worth keeping:
+
+- **`-Wnontrivial-memcall` has an array-form blind spot.** It fires on
+  `memset(p, 0, sizeof(OpenPort))` but NOT on `memset(gPorts, 0, sizeof(gPorts))`.
+  That is exactly why `95378117` fixed midiOpenPort and left the wider
+  midiInit instance alive. Any warning-driven sweep inherits this hole.
+- **`totalSize()` includes the overflow word, which PRECEDES the header.**
+  Only the START pointer needs backing up; adding 8 to the size double-counts.
+  Four sites had it wrong (sweepGC, nextInstanceAfter, proxy_clone,
+  ImageLoader); `objectAfter` and `copyAndUnmark` are the correct idiom to
+  copy. `nextInstanceAfter` was the reachable one — prim 78 `Object>>nextInstance`.
+
+Severity discipline applied: prim 132 and prim 78 are installed in
+`generated_primitives.inc` and were live; the MIDI prims (330/332/334) are
+`nullptr` and `sweepGC()` has no callers, so those two fixes are landmine
+removal, not crash fixes.
+
+STILL OPEN (verified, deliberately not fixed — each wants its own investigation):
+
+- `removeProcessFromList` return value discarded at `Interpreter.cpp` ~18241
+  and `Primitives.cpp` ~4875; the caller then unconditionally nils
+  `ProcessNextLinkIndex`, which would truncate the run queue if the search
+  failed. Plausibly related to full-suite blocker #4; wants a repro before
+  anyone touches the scheduler.
+- `makeWritable`/`makeExecutable` results ignored at 8 JIT sites. Harmless on
+  Apple (always true) but `platform/linux.cpp` and `platform/windows.cpp` can
+  genuinely fail -> silent write to RO / execute NX.
+- `makeFreeChunk` OOB memset (`ObjectMemory.cpp` ~3372/~3391): slotCount
+  ignores the 8 bytes the overflow branch prepends. Latent — reachable only
+  via the callerless `sweepGC` and `allocateFromFreeList`.
+- `primitiveConstantFill` uses `format <= IndexableWithFixed`, dropping
+  Weak/WeakWithFixed. Fails safe (primitive falls back), low priority.
+
+Validation harness used throughout: `build/test_load_image
+.sweep-state/Pharo-fix.image eval "<expr>"`, run from a scratch directory (the
+startup.st CWD trap). The discriminating repro for prim 132 is worth reusing:
+
+    dba := DoubleByteArray new: 4.   "one 64-bit slot"
+    dba at: 1 put: 337.              "= SmallInteger 42's oop bits 0x151"
+    dba pointsTo: 42.                "buggy: true.  fixed: false"
+
+Note `ClassTest>>testComment` fails 1/46 independently of any of this
+(pre-existing, A/B confirmed), and CompiledMethodTest is 75/10/1 pre-existing.
+
+---
+
 # WIP RESUME (2026-06-18e) — cold-image-boot corruption REFRAMED: JIT operand-stack cascade, NOT a heap wild-write
 
 Goal: finish WIP, make the JIT add-on work for arm + x86. Blocker for image
