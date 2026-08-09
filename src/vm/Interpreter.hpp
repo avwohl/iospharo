@@ -377,7 +377,10 @@ public:
     bool primitiveSucceeded() const { return !primitiveFailed_; }
 
     // External plugin primitive support (for B2DPlugin, etc.)
-    using ExternalPrimFunc = int (*)(void);
+    // Return type must be sqInt (`long`, see plugins/sqMemoryAccess.h): that is what
+    // every VMMaker-generated plugin entry point returns. Declaring it as `int` here
+    // made every registration site cast between incompatible function types.
+    using ExternalPrimFunc = long (*)(void);
     void registerNamedPrimitive(const std::string& module, const std::string& name, ExternalPrimFunc func);
     PrimitiveResult callExternalPrimitive(ExternalPrimFunc fn);
 

@@ -40,6 +40,19 @@ struct OpenPort {
 
 static OpenPort gPorts[kMaxPorts];
 
+// Reset a port's state. OpenPort holds a std::mutex, so it must not be
+// memset — clobbering the mutex bytes is undefined behaviour.
+static void resetPort(OpenPort* p) {
+    p->active = false;
+    p->isInput = false;
+    p->endpointIndex = 0;
+    p->port = 0;
+    p->endpoint = 0;
+    memset(p->ringBuf, 0, sizeof(p->ringBuf));
+    p->ringHead = 0;
+    p->ringTail = 0;
+}
+
 // =====================================================================
 // Helpers
 // =====================================================================
@@ -113,7 +126,9 @@ bool midiInit(void) {
     OSStatus status = MIDIClientCreate(CFSTR("PharoVM"), nullptr, nullptr, &gClient);
     if (status != noErr) return false;
 
-    memset(gPorts, 0, sizeof(gPorts));
+    for (int i = 0; i < kMaxPorts; i++) {
+        resetPort(&gPorts[i]);
+    }
     gInitialized = true;
     return true;
 }
@@ -180,7 +195,7 @@ int midiOpenPort(int portIndex) {
 
     int nDest = numDestinations();
     OpenPort* p = &gPorts[slot];
-    memset(p, 0, sizeof(OpenPort));
+    resetPort(p);
 
     if (portIndex < nDest) {
         // Output port (destination)

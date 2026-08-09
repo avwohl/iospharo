@@ -32,7 +32,10 @@
 // the problematic methods to no-ops — Pharo's AppKit menus are meaningless
 // on Catalyst since UIKit handles menus via UIMenu.
 // Saved original IMP for setMainMenu: — called through for UIKit (main thread) calls.
+// Only the Catalyst build swizzles, so the variable exists only there.
+#if TARGET_OS_MACCATALYST
 static IMP origSetMainMenu = nullptr;
+#endif
 
 static void swizzleCatalystAppKit() {
 #if TARGET_OS_MACCATALYST
@@ -275,7 +278,10 @@ bool vm_initialize(size_t heapSize) {
 // gap where the render loop tries sub-pixel text rendering before startup.st
 // can disable it.  See docs/subpixel-rendering.md.
 static void disableSubPixelRendering() {
-    // ObjC headers #define nil — undefine it so we can call gMemory->nil()
+    // ObjC headers #define nil — undefine it so we can call gMemory->nil().
+    // push_macro/pop_macro are lexical, not control-flow scoped: one push here,
+    // one pop at the closing brace. Popping before an early return would restore
+    // the macro for the rest of the function text, not just that return path.
     #pragma push_macro("nil")
     #undef nil
     using namespace pharo;
@@ -302,7 +308,6 @@ static void disableSubPixelRendering() {
     }
     if (singleton.isNil() || !singleton.isObject()) {
         fprintf(stderr, "[VM] FreeTypeSettings singleton not yet created — startup.st will handle it\n");
-        #pragma pop_macro("nil")
         return;
     }
 
@@ -324,7 +329,6 @@ static void disableSubPixelRendering() {
                     size_t instVarIdx = si - 1;
                     gMemory->storePointer(instVarIdx, singleton, gMemory->falseObject());
                     fprintf(stderr, "[VM] Set FreeTypeSettings>>bitBltSubPixelAvailable to false (slot %zu)\n", instVarIdx);
-                    #pragma pop_macro("nil")
                     return;
                 }
             }

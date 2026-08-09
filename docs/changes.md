@@ -2,6 +2,43 @@
 
 Build 122 — 2026-04-01
 
+## Fix `anObject pointsTo:` reporting false matches on word arrays
+
+`primitiveObjectPointsTo` (primitive 132) guarded the word-array case with
+`format >= Indexable32 && format <= Indexable64`, i.e. `>= 10 && <= 9`, which
+is never true. WordArray, DoubleWordArray, Bitmap and Form bits therefore fell
+through to the pointer-slot loop, which reinterprets raw 32- and 64-bit pixel
+data as oops and compares it against the target. `anObject pointsTo:` could
+answer true purely because a bitmap happened to contain the target oop's bit
+pattern. Bounds corrected to formats 9..11.
+
+Note: the 16-bit formats (Indexable16..Indexable16_3) still fall through to the
+same pointer scan and have the identical defect. Left alone pending a decision.
+
+## Fix undefined behaviour zeroing a live mutex in MIDIPlugin
+
+`midiInit` and the port-close path used `memset` over `OpenPort`, which embeds a
+`std::mutex` that the CoreMIDI input callback thread touches. Zeroing a live
+pthread mutex is undefined behaviour. Replaced with a `resetPort()` helper that
+clears only the POD fields.
+
+## Fix mismatched `nil` macro push/pop in PlatformBridge
+
+`#pragma push_macro("nil")` / `pop_macro("nil")` were written as though they
+were scoped to control flow, with one pop before each early return. They are
+preprocessor-lexical, so the first pop re-enabled Objective-C's `nil` macro for
+the remaining ~28 lines that are meant to run with it undefined. Harmless only
+by luck today; now a single push/pop pair.
+
+## Silence warnings from VMMaker-generated plugin sources
+
+`B2DPlugin.c`, `JPEGReaderPlugin.c` and `DSAPrims.c` are generated from
+OpenSmalltalk-VM Smalltalk sources, so edits there would be lost on the next
+regeneration. They now build with `-w`, matching how the bundled libjpeg and
+testlib sources were already handled. This removes 315 of the 407 warnings
+Apple clang 21 reports; the remaining 92 were in hand-written code and were
+fixed rather than suppressed.
+
 ## Fix image relaunch hang (displays but can't interact)
 
 Root cause: Three categories of global state were not reset between image

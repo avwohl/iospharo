@@ -196,7 +196,11 @@ typedef struct VirtualMachine {
     /* VM_PROXY_MINOR > 10 */
     void  (*addHighPriorityTickee)(void (*ticker)(void), unsigned periodms);
     void  (*addSynchronousTickee)(void (*ticker)(void), unsigned periodms, unsigned roundms);
-    volatile unsigned long long (*utcMicroseconds)(void);
+    /* Local divergence from upstream OpenSmalltalk-VM: upstream writes
+       "volatile unsigned long long" here. A cv-qualifier on a function return
+       type is discarded by the compiler, so dropping it changes nothing but
+       silences -Wignored-qualifiers. Restore if syncing this header upstream. */
+    unsigned long long (*utcMicroseconds)(void);
     void (*tenuringIncrementalGC)(void);
     sqInt (*isYoung)(sqInt anOop);
     sqInt (*isKindOfClass)(sqInt oop, sqInt aClass);

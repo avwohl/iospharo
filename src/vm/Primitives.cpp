@@ -118,7 +118,6 @@ struct ManualSurface {
 
 static constexpr int kMaxSurfaces = 64;
 static ManualSurface g_surfaces[kMaxSurfaces] = {};
-static int g_nextSurfaceID = 1;  // 0 is reserved/invalid
 
 // Look up a surface by handle. Returns nullptr if invalid.
 static ManualSurface* lookupSurface(int handle) {
@@ -1787,7 +1786,6 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
 
     // Sanity check header before accessing object data
     ObjectFormat fmt = header->format();
-    size_t slots = header->slotCount();
     // Note: objEnd check removed - was using incorrect memory layout assumptions
     // The receiver pointer has already been validated to be in a valid heap space above
     if (fmt == ObjectFormat::Indexable64) {
@@ -2523,9 +2521,7 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
         size_t bytecodeSize = static_cast<size_t>(indexableSize);
 
         // Total slots = 1 (header slot) + numLiterals
-        // Total bytes = slots*8 + bytecodeSize
         size_t numSlots = 1 + numLiterals;
-        size_t totalBytes = numSlots * 8 + bytecodeSize;
 
         // CompiledMethod uses format 24 (Indexable bytes with 0 odd)
         // But we store as CompiledMethod format which includes both slots and bytes
@@ -2996,8 +2992,6 @@ PrimitiveResult Interpreter::primitiveBlockValue(int argCount) {
     // Follow forwarding pointers (created by become:)
     block = memory_.followForwarded(block);
     stackValuePut(argCount, block);
-
-    ObjectHeader* blockHdr = block.asObjectPtr();
 
     // Verify arg count matches block's numArgs
     Oop numArgsObj = memory_.fetchPointer(2, block);
@@ -5397,18 +5391,6 @@ static int compareMagnitudes(const std::vector<uint8_t>& a, const std::vector<ui
     return 0;
 }
 
-// Word-level compare
-static int compareMagnitudesW(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b) {
-    size_t aLen = a.size(), bLen = b.size();
-    while (aLen > 1 && a[aLen-1] == 0) aLen--;
-    while (bLen > 1 && b[bLen-1] == 0) bLen--;
-    if (aLen != bLen) return aLen < bLen ? -1 : 1;
-    for (size_t i = aLen; i > 0; i--) {
-        if (a[i-1] != b[i-1]) return a[i-1] < b[i-1] ? -1 : 1;
-    }
-    return 0;
-}
-
 // Helper: Add two magnitudes (word-level internally)
 static std::vector<uint8_t> addMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
     auto wa = bytesToWords(a), wb = bytesToWords(b);
@@ -5471,31 +5453,6 @@ static std::vector<uint32_t> subWords(const std::vector<uint32_t>& a, const std:
     }
     trimWords(result);
     return result;
-}
-
-// Schoolbook multiplication using 32-bit words with 64-bit products
-static std::vector<uint8_t> schoolbookMultiply(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
-    auto wa = bytesToWords(a), wb = bytesToWords(b);
-    std::vector<uint32_t> result(wa.size() + wb.size() + 1, 0);
-
-    for (size_t i = 0; i < wa.size(); i++) {
-        uint64_t carry = 0;
-        for (size_t j = 0; j < wb.size(); j++) {
-            size_t pos = i + j;
-            uint64_t prod = static_cast<uint64_t>(wa[i]) * wb[j] + result[pos] + carry;
-            result[pos] = static_cast<uint32_t>(prod);
-            carry = prod >> 32;
-        }
-        size_t pos = i + wb.size();
-        while (carry && pos < result.size()) {
-            uint64_t sum = static_cast<uint64_t>(result[pos]) + carry;
-            result[pos] = static_cast<uint32_t>(sum);
-            carry = sum >> 32;
-            pos++;
-        }
-    }
-
-    return wordsToBytes(result);
 }
 
 // Schoolbook multiply on words (returns words, for Karatsuba)
@@ -8037,8 +7994,8 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable64) {
-        // Word arrays (32-bit and 64-bit) - no pointers
+    if (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable32Odd) {
+        // Word arrays (64-bit is format 9, 32-bit is 10-11) - no pointers
         popN(2);
         push(memory_.falseObject());
         return PrimitiveResult::Success;
@@ -12690,7 +12647,6 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
 
     // Try to find function name from method literals
     // In Pharo FFI, the ffiCall: pragma contains the spec
-    ObjectHeader* methodHdr = method.asObjectPtr();
 
     // BUG FIX: Read actual numLiterals from method header, NOT slotCount()!
     // Method header is in slot 0 as SmallInteger. Bits 0-14 = numLiterals.
@@ -12947,8 +12903,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
     // In Spur, the format is usually:
     // - Literal at index 0 or 1 contains an Array: #(moduleName primitiveName flags)
     // Or an ExternalLibraryFunction object
-
-    ObjectHeader* methodHdr = method.asObjectPtr();
 
     // BUG FIX: Must read actual numLiterals from method header, NOT slotCount()!
     // slotCount() returns total slots including bytecode area, which would cause
@@ -13342,7 +13296,6 @@ PrimitiveResult Interpreter::primitiveArraySwap(int argCount) {
 
     Oop array2 = stackTop();
     Oop array1 = stackValue(1);
-    Oop receiver = stackValue(2);
 
     // Validate arguments are non-immediate
     if (array1.isImmediate() || array2.isImmediate()) {
@@ -13686,7 +13639,6 @@ PrimitiveResult Interpreter::primitiveImmediateAsInteger(int argCount) {
 PrimitiveResult Interpreter::primitiveStringEncode(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    Oop encodingOop = stackTop();
     Oop stringOop = stackValue(1);
 
     if (stringOop.isImmediate()) {
@@ -15248,9 +15200,6 @@ PrimitiveResult Interpreter::primitiveFormPrint(int argCount) {
 // Changes display depth and/or fullscreen mode
 PrimitiveResult Interpreter::primitiveSetDisplayMode(int argCount) {
     if (argCount != 2) return PrimitiveResult::Failure;
-
-    Oop fullscreenOop = stackTop();
-    Oop depthOop = stackValue(1);
 
     // Display mode changes are platform-specific
     // On iOS, the display is managed by the system
@@ -18189,7 +18138,8 @@ PrimitiveResult Interpreter::primitiveCreateManualSurface(int argCount) {
     }
     if (surfaceID < 0) return PrimitiveResult::Failure;  // table full
 
-    g_surfaces[surfaceID] = { true, w, h, p, d, msb, nullptr };
+    // Manual surface: no dispatch table, so dispatchHandle/dispatch stay empty
+    g_surfaces[surfaceID] = { true, w, h, p, d, msb, nullptr, 0, nullptr };
 
     // Pop args and receiver, push result
     popN(argCount + 1);
@@ -18877,7 +18827,10 @@ PrimitiveResult Interpreter::primitivePixelValueAtPut(int argCount) {
 PrimitiveResult Interpreter::primitiveWarpBits(int argCount) {
     if (argCount != 2) return PrimitiveResult::Failure;
 
-    Oop sourceMapOop = stackTop();       // arg 2: sourceMap
+    // arg 2: sourceMap is the colour map for depth conversion; the image passes nil
+    // when source and dest depths match, and this path only accepts 32->32 (see the
+    // depth check below), so there is never a map to apply. Kept for stack clarity.
+    [[maybe_unused]] Oop sourceMapOop = stackTop();
     Oop nOop = stackValue(1);            // arg 1: smoothing level n
     Oop warpBlt = stackValue(2);         // receiver (WarpBlt)
 
@@ -24646,7 +24599,6 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
 
     // Get module name
     Oop moduleOop = stackTop();
-    Oop receiver = stackValue(1);
 
     if (!moduleOop.isObject()) {
         return PrimitiveResult::Failure;
@@ -25623,7 +25575,6 @@ PrimitiveResult Interpreter::primitiveFFIIntegerAt(int argCount) {
 
     // Get the data pointer - depends on object class
     uint8_t* ptr = nullptr;
-    size_t availBytes = 0;
     if (objectOop.isObject()) {
         ObjectHeader* objHdr = objectOop.asObjectPtr();
         if (objHdr->isBytesObject()) {
@@ -25639,15 +25590,14 @@ PrimitiveResult Interpreter::primitiveFFIIntegerAt(int argCount) {
                     memcpy(&basePtr, objHdr->bytes(), sizeof(void*));
                 }
                 if (!basePtr) return PrimitiveResult::Failure;
+                // External memory: no size is known, so we trust the caller
                 ptr = reinterpret_cast<uint8_t*>(basePtr) + offset;
-                availBytes = SIZE_MAX; // External memory, we trust the caller
             } else {
                 // ByteArray or other bytes object: read from own bytes
                 size_t objSize = objHdr->byteSize();
                 if (offset + nBytes > static_cast<int64_t>(objSize))
                     return PrimitiveResult::Failure;
                 ptr = objHdr->bytes() + offset;
-                availBytes = objSize - offset;
             }
         }
     }
@@ -26655,7 +26605,8 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
         auto t0 = std::chrono::steady_clock::now();
         int err = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
         auto t1 = std::chrono::steady_clock::now();
-        long ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        // Only reported by the DEBUG trace below
+        [[maybe_unused]] long ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
         if (err == 0 && result) {
             // MUST prefer IPv4: Pharo 13's SocketAddress>>fromOldByteAddress:
@@ -26665,7 +26616,8 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
             // (last 4 bytes of well-known prefix 64:ff9b::/96).
             struct addrinfo* chosen = nullptr;
             struct addrinfo* firstV6 = nullptr;
-            int v4Count = 0, v6Count = 0;
+            // Only reported by the DEBUG trace below; selection uses chosen/firstV6
+            [[maybe_unused]] int v4Count = 0, v6Count = 0;
             for (struct addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
                 if (rp->ai_family == AF_INET) {
                     v4Count++;

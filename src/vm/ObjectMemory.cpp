@@ -1263,15 +1263,13 @@ void ObjectMemory::sweepGC() {
     }
 
     // 2. Mark phase (same as fullGC)
-    size_t markedCount = markPhase();
+    markPhase();
 
     // 3. Sweep: convert dead objects to free chunks, coalesce adjacent ones,
     //    and shrink oldSpaceFree_ if tail is dead.
     clearFreeLists();
 
     uint8_t* lastLiveEnd = oldSpaceStart_;
-    size_t deadCount = 0;
-    size_t deadBytes = 0;
 
     // We need to coalesce adjacent dead objects into single free chunks.
     // Track start of current dead run.
@@ -1303,9 +1301,6 @@ void ObjectMemory::sweepGC() {
             }
         } else {
             // Dead object
-            deadCount++;
-            deadBytes += fullSize;
-
             // Start or extend dead run
             if (!deadRunStart) {
                 deadRunStart = objStart;
@@ -1368,7 +1363,7 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     }
 
     // 3. Mark phase
-    size_t markedCount = markPhase(skipEphemerons);
+    markPhase(skipEphemerons);
 
     // Symbol class corruption check and stale pointer check disabled (verified clean)
 
@@ -1447,7 +1442,6 @@ void ObjectMemory::allObjectsDo(std::function<void(Oop)> callback) {
             // CRITICAL: Only check for overflow when the CURRENT word has 0xFF in its
             // top byte. Otherwise, wordPtr+1 is a slot value, not a header!
             uint64_t* headerPtr = wordPtr;
-            bool hasOverflow = false;
             uint8_t topByte = static_cast<uint8_t>((word >> 56) & 0xFF);
             if (topByte == 255 && scan + 8 < end) {
                 uint64_t nextWord = *(wordPtr + 1);
@@ -1460,8 +1454,9 @@ void ObjectMemory::allObjectsDo(std::function<void(Oop)> callback) {
                     size_t neededSize = 8 + 8 + overflowCount * 8;  // overflow word + header + slots
 
                     if (overflowCount >= 255 && neededSize <= remaining) {
+                        // headerPtr moves past the overflow count word; the size
+                        // returned by totalSize() below already includes that word.
                         headerPtr = wordPtr + 1;
-                        hasOverflow = true;
                     } else {
                         // Invalid overflow - skip past both words
                         scan += 16;
@@ -2437,10 +2432,8 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
     // Skip during auto-compact GC to emulate scavenge behavior — a real
     // generational GC scavenge wouldn't fire old-space ephemerons.
     if (!skipEphemerons) {
-        size_t fired = 0;
         if (!ephemeronList_.empty()) {
             while (markInactiveEphemerons()) {}
-            fired = ephemeronList_.size();
             fireAllEphemerons();
         }
 
@@ -2497,16 +2490,14 @@ bool ObjectMemory::planCompactSavingForwarders() {
 
     uint8_t* toFinger = oldSpaceStart_;  // Destination for next live object
 
-    size_t deadCount = 0;
-    size_t deadBytes = 0;
-    size_t moveCount = 0;
-    size_t stayCount = 0;
+    // Number of live objects that will actually move. Kept because GCResult has an
+    // objectsMoved field that fullGC never fills in (it is reported as 0 to callers);
+    // this is the value it should carry once the plumbing exists.
+    [[maybe_unused]] size_t moveCount = 0;
 
     ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
     while (ObjectHeader* obj = scanner.next()) {
         if (!obj->isMarked()) {
-            deadCount++;
-            deadBytes += obj->totalSize();
             continue;  // Dead — skip
         }
 
@@ -2526,7 +2517,6 @@ bool ObjectMemory::planCompactSavingForwarders() {
             }
             obj->setGrey(false);  // Ensure no stale grey — critical for savedFieldPtr sync
             toFinger += objSize;
-            stayCount++;
             continue;
         }
 
@@ -2535,7 +2525,6 @@ bool ObjectMemory::planCompactSavingForwarders() {
             // Already in place — no forwarding needed. Clear grey bit.
             obj->setGrey(false);
             toFinger += objSize;
-            stayCount++;
             continue;
         }
         moveCount++;
@@ -2677,7 +2666,6 @@ void ObjectMemory::updatePointersAfterCompact() {
     {
         int newSpaceUpdated = 0;
         auto scanNewSpaceRegion = [&](uint8_t* start, uint8_t* end, const char* label) {
-            int objCount = 0;
             int updatedCount = 0;
             uint8_t* scan = start;
             while (scan + 8 <= end) {  // Need at least 8 bytes for header
@@ -2685,7 +2673,6 @@ void ObjectMemory::updatePointersAfterCompact() {
                 size_t ts = obj->totalSize();
                 if (ts == 0 || ts > 0x10000000) break;  // Invalid — stop
                 if (obj->classIndex() != 0) {  // Not free
-                    objCount++;
                     size_t numPointers = pointerSlotsOf(obj);
                     Oop* slots = obj->slots();
                     for (size_t i = 0; i < numPointers; ++i) {

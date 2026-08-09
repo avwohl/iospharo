@@ -91,9 +91,9 @@ Interpreter::Interpreter(ObjectMemory& memory)
     , framePointer_(nullptr)
     , instructionPointer_(nullptr)
     , bytecodeEnd_(nullptr)
+    , closure_(Oop::nil())
     , activeContext_(Oop::nil())
     , currentFrameMaterializedCtx_(Oop::nil())
-    , closure_(Oop::nil())
     , nlrTargetCtx_(Oop::nil())
     , nlrEnsureCtx_(Oop::nil())
     , nlrHomeMethod_(Oop::nil())
@@ -223,8 +223,6 @@ bool Interpreter::initialize() {
     int snapshotEndDepth = -1;
 
     while (currentCtx.isObject() && currentCtx.rawBits() != nilObj.rawBits() && depth < 20) {
-        ObjectHeader* ctxHdr = currentCtx.asObjectPtr();
-
         // Get receiver and method from context
         Oop receiver = memory_.fetchPointer(5, currentCtx);
         Oop method = memory_.fetchPointer(3, currentCtx);
@@ -277,7 +275,8 @@ bool Interpreter::initialize() {
                     Oop trueObj = memory_.specialObject(SpecialObjectIndex::TrueObject);
                     Oop falseObj = memory_.specialObject(SpecialObjectIndex::FalseObject);
                     Oop oldVal = memory_.fetchPointer(stackTopSlot, context);
-                    const char* oldDesc = "unknown";
+                    // Only consumed by the DEBUG trace below
+                    [[maybe_unused]] const char* oldDesc = "unknown";
                     if (oldVal.rawBits() == trueObj.rawBits()) oldDesc = "true";
                     else if (oldVal.rawBits() == falseObj.rawBits()) oldDesc = "false";
                     else if (oldVal.isNil()) oldDesc = "nil";
@@ -5043,13 +5042,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
               // << " numLiterals=" << numLiterals << " bytecodeStart=" << bytecodeStart
               // << " totalBytes=" << totalBytes
               // << " homeMethod=" << (homeMethod_ == method_ ? "same" : "different");
-    if (homeMethod_ != method_ && homeMethod_.isObject()) {
-        Oop homeHeader = memory_.fetchPointer(0, homeMethod_);
-        if (homeHeader.isSmallInteger()) {
-            int64_t hBits = homeHeader.asSmallInteger();
-            // std::cerr << " (homeLiterals=" << (hBits & 0x7FFF) << ")";
-        }
-    }
+              // << " (homeLiterals=" << (homeHeaderBits & 0x7FFF) << ")";
     // std::cerr; // DEBUG
 
     // Show first few bytecodes for debugging
@@ -5450,7 +5443,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                 (unsigned long long)receiver_.rawBits());
         // GC info
         fprintf(crashLog, "  gcCount=%zu lastGCStep=%llu\n",
-                0/*gcCount*/, (unsigned long long)0/*lastGCStep*/);
+                memory_.statistics().gcCount, (unsigned long long)0/*lastGCStep*/);
         // Check if method address is in valid heap range
         fprintf(crashLog, "  methodAddr in heap: old=%d perm=%d\n",
                 memory_.isOldObject(mObj), memory_.isPermObject(mObj));
@@ -6456,6 +6449,10 @@ Oop Interpreter::wakeLowerPriorityProcess(int currentPriority) {
 
     // Current priority is 1-based, array index is 0-based
     int maxPriorityIndex = currentPriority - 2;  // One below current priority
+    // Clamp to the actual number of priority lists (as wakeHighestPriority does)
+    if (maxPriorityIndex >= static_cast<int>(numPriorities)) {
+        maxPriorityIndex = static_cast<int>(numPriorities) - 1;
+    }
 
     // Every 5th call, specifically try lowIOPriority (10) first to prevent starvation
     // lowIOPriority is where the event loop runs
@@ -6545,13 +6542,6 @@ Oop Interpreter::materializeFrameStack() {
             // Save current IP as 1-based byte offset into method bytes
             int64_t pc = (instructionPointer_ - methodBytes) + 1;
             memory_.storePointer(1, activeContext_, Oop::fromSmallInteger(pc));
-
-            // Get numTemps from method header to distinguish temps from expression stack
-            Oop methodHeader = memory_.fetchPointer(0, method_);
-            int numTemps = 0;
-            if (methodHeader.isSmallInteger()) {
-                numTemps = (methodHeader.asSmallInteger() >> 18) & 0x3F;
-            }
 
             // Total items on C++ stack above receiver
             int numItems = static_cast<int>(stackPointer_ - framePointer_) - 1;
@@ -6648,13 +6638,6 @@ Oop Interpreter::materializeFrameStack() {
                     exprEnd = framePointer_;
                 }
                 if (exprEnd > exprStart && (exprEnd - exprStart) < 100) {
-                    int nextArgCount;
-                    if (1 < frameDepth_) {
-                        Oop nextMH = memory_.fetchPointer(0, savedFrames_[1].savedMethod);
-                        nextArgCount = nextMH.isSmallInteger() ? ((nextMH.asSmallInteger() >> 24) & 0xF) : 0;
-                    } else {
-                        nextArgCount = argCount_;
-                    }
                     Oop* exprEndPtr = exprEnd;  // expression ends before callee receiver
                     ptrdiff_t exprCount = exprEndPtr - exprStart;
                     for (ptrdiff_t e = 0; e < exprCount && e < 100; e++) {
@@ -6691,9 +6674,7 @@ Oop Interpreter::materializeFrameStack() {
             continue;
         }
         int64_t headerValue = methodHeader.asSmallInteger();
-        int numLiterals = headerValue & 0x7FFF;
         int numTemps = (headerValue >> 18) & 0x3F;  // Fixed: was using wrong bit offset
-        int numArgs = (headerValue >> 24) & 0xF;
 
         // GC SAFETY: Compute IP offset BEFORE any allocation that could trigger GC.
         // frame.savedIP is a raw uint8_t* into the method's byte array. GC compaction
@@ -6753,7 +6734,6 @@ Oop Interpreter::materializeFrameStack() {
 
         // Calculate PC using the pre-computed IP offset (GC safe).
         // ipOffset was computed before any allocation that could trigger GC.
-        uint8_t* methodBytes = methodHdr->bytes();
         int pc = ipOffset + 1;  // 1-based PC from 0-based offset
 
         // Initialize context
@@ -6780,15 +6760,10 @@ Oop Interpreter::materializeFrameStack() {
             // Save expression stack items above the temps.
             Oop* exprStart = frame.savedFP + 1 + numTemps;
             Oop* nextFrameStart;
-            int nextArgCount;
             if (i + 1 < frameDepth_) {
                 nextFrameStart = savedFrames_[i + 1].savedFP;
-                Oop nextMethodHdr = memory_.fetchPointer(0, savedFrames_[i + 1].savedMethod);
-                nextArgCount = nextMethodHdr.isSmallInteger()
-                    ? static_cast<int>((nextMethodHdr.asSmallInteger() >> 24) & 0xF) : 0;
             } else {
                 nextFrameStart = framePointer_;
-                nextArgCount = argCount_;
             }
             Oop* exprEndPtr = nextFrameStart;  // expression ends before callee receiver
             if (exprEndPtr > exprStart && (exprEndPtr - exprStart) < 100) {
@@ -6834,11 +6809,9 @@ Oop Interpreter::materializeFrameStack() {
             // Reuse previously materialized context for the current frame if available.
             // This ensures context identity across multiple materialize calls.
             Oop context = currentFrameMaterializedCtx_;
-            bool reusingContext = false;
             if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
                 // Reuse existing context — just update sender and state
                 memory_.storePointer(0, context, sender);  // update sender
-                reusingContext = true;
             } else {
                 size_t contextSize = 6 + numTemps + 32;
                 Oop contextClass = memory_.specialObject(SpecialObjectIndex::ClassMethodContext);
@@ -7246,20 +7219,6 @@ void Interpreter::installOSiOSDriver() {
         }
     }
 
-    // Check if we're using OSiOSDriver (vs. some other driver class)
-    bool usingOSiOSDriver = false;
-    {
-        Oop nameOop = memory_.fetchPointer(6, osDriverClass);
-        if (nameOop.isObject()) {
-            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-            if (nameHdr->isBytesObject() && nameHdr->byteSize() == 11) {
-                if (memcmp(nameHdr->bytes(), "OSiOSDriver", 11) == 0) {
-                    usingOSiOSDriver = true;
-                }
-            }
-        }
-    }
-
     if (setupMethod.isNil() || !setupMethod.isObject()) {
         // setupEventLoop not found - enable VM-based event processing
         enableDirectInputSignaling_ = true;
@@ -7562,7 +7521,6 @@ bool Interpreter::bootstrapStartup() {
         // Debug logging
         if constexpr (ENABLE_DEBUG_LOGGING) {
         }
-        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
 
         // Use Smalltalk instance if available, otherwise try to get instance from class
         Oop receiver = smalltalk;
@@ -7677,11 +7635,9 @@ bool Interpreter::bootstrapStartup() {
                         "startUp:", "install", "eventLoopProcess", nullptr
                     };
                     Oop startUpMethod = Oop::nil();
-                    const char* foundMethodName = nullptr;
                     for (int i = 0; methodNames[i] != nullptr; i++) {
                         startUpMethod = lookupMethodInClass(sensorClass, methodNames[i]);
                         if (!startUpMethod.isNil() && startUpMethod.isObject()) {
-                            foundMethodName = methodNames[i];
                             break;
                         }
                     }
@@ -8205,19 +8161,6 @@ bool Interpreter::executeFromContext(Oop context) {
 
               // << " method=0x" << method_.rawBits()
               // << " receiver=0x" << receiver_.rawBits() << std::dec;
-
-    // If method is a CompiledBlock, we need to check if the context has a closure
-    // In modern Pharo, BlockContext/FullBlockClosure contexts may need special handling
-    if (method_.isObject() && memory_.isValidPointer(method_)) {
-        ObjectHeader* methodHdr = method_.asObjectPtr();
-        if (methodHdr->classIndex() == compiledBlockClassIndex_) {
-            Oop closure = memory_.fetchPointer(4, context);  // closureOrNil
-            if (closure.isObject() && memory_.isValidPointer(closure)) {
-                ObjectHeader* closureHdr = closure.asObjectPtr();
-                          // << " slots=" << closureHdr->slotCount();
-            }
-        }
-    }
 
     if (method_.isNil() || !method_.isObject() || !memory_.isValidPointer(method_)) {
         return false;
@@ -8940,7 +8883,7 @@ void Interpreter::afterGC() {
                 static int gcMismatchCount = 0;
                 if (++gcMismatchCount <= 10) {
                     fprintf(stderr, "[GC-VERIFY-FAIL #%d] BC mismatch! saved=0x%02X actual=0x%02X "
-                            "oldMethod=0x%llx newMethod=0x%llx ipOff=%lld fd=%zu gcCount=%d\n",
+                            "oldMethod=0x%llx newMethod=0x%llx ipOff=%lld fd=%zu gcCount=%zu\n",
                             gcMismatchCount, gcVerifyBytecodeAtIP_, actualBC,
                             (unsigned long long)gcVerifyMethodOop_,
                             (unsigned long long)method_.rawBits(),

@@ -239,7 +239,6 @@ void ImageLoader::forEachObject(Func callback) {
     // main header and the overflow word was at the previous position.
     uint8_t* scan = loadedData_;
     uint8_t* end = loadedData_ + loadedSize_;
-    size_t objectNum = 0;
 
     while (scan < end) {
         uint64_t* wordPtr = reinterpret_cast<uint64_t*>(scan);
@@ -310,7 +309,6 @@ void ImageLoader::forEachObject(Func callback) {
             continue;
         }
 
-        objectNum++;
         callback(headerPtr, objectBytes);
         scan += objectBytes;
     }

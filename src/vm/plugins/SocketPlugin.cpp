@@ -77,21 +77,14 @@ static void wakeIOThread() {
 }
 
 // =====================================================================
-// Helper: register/unregister socket for I/O monitoring
+// Helper: register socket for I/O monitoring
 // =====================================================================
+// Unregistering is done inline in primitiveSocketDestroy, which must also
+// push the socket onto gDeleteQueue under the same lock.
 
 static void registerSocket(PrivateSocket* ps) {
     std::lock_guard<std::mutex> lock(gSocketMutex);
     gActiveSockets.push_back(ps);
-    wakeIOThread();
-}
-
-static void unregisterSocket(PrivateSocket* ps) {
-    std::lock_guard<std::mutex> lock(gSocketMutex);
-    auto it = std::find(gActiveSockets.begin(), gActiveSockets.end(), ps);
-    if (it != gActiveSockets.end()) {
-        gActiveSockets.erase(it);
-    }
     wakeIOThread();
 }
 

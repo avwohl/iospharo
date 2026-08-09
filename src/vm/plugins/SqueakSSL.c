@@ -18,7 +18,10 @@
    from
 	SqueakSSLPlugin VMMaker.oscog-eem.2480 uuid: bb3ffda7-8241-4dea-b886-d656e474b6c1
  */
-static char __buildInfo[] = "SqueakSSLPlugin VMMaker.oscog-eem.2480 uuid: bb3ffda7-8241-4dea-b886-d656e474b6c1 " __DATE__ ;
+/* Local divergence from upstream VMMaker output: __attribute__((used)) keeps
+   the build stamp in the binary (findable with `strings`) and stops -Wall
+   flagging it as unused. */
+static char __buildInfo[] __attribute__((used)) = "SqueakSSLPlugin VMMaker.oscog-eem.2480 uuid: bb3ffda7-8241-4dea-b886-d656e474b6c1 " __DATE__ ;
 
 
 

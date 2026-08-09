@@ -1613,9 +1613,6 @@ static void stub_git_libgit2_version(int* major, int* minor, int* rev) {
     if (rev) *rev = 0;
 }
 
-// Generic no-op for git_ functions we don't explicitly stub — returns -1 (GIT_ERROR)
-static int stub_git_generic_error() { return -1; }
-
 void registerLibgit2Stubs() {
     // Only register stubs if real libgit2 isn't statically linked
     if (dlsym(RTLD_DEFAULT, "git_libgit2_init")) return;
