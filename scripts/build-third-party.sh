@@ -608,6 +608,58 @@ create_fat_lib() {
     fi
 }
 
+# Fail loudly if a packaged xcframework is not well-formed.
+# `xcodebuild -create-xcframework` can leave a directory behind without ever
+# writing Info.plist.  That is exactly the state SDL2.xcframework sat in from
+# 2026-06-02 to 2026-08-10: an orphaned slice directory, no manifest, unusable
+# by Xcode -- and because Frameworks/ is gitignored, nothing ever surfaced it.
+# Producing wreckage and still exiting 0 is the failure mode worth closing.
+#
+# Validation is driven by the manifest rather than hardcoded slice names, so it
+# keeps working if the platform set changes: every slice the plist declares
+# must exist on disk with its library, and the count must match what we asked
+# xcodebuild to package.
+validate_xcframework() {
+    local fw="$1" expected="$2"
+    local name
+    name="$(basename "$fw")"
+
+    if [ ! -d "$fw" ]; then
+        err "$name: xcframework was not created"
+        exit 1
+    fi
+    if [ ! -f "$fw/Info.plist" ]; then
+        err "$name: no Info.plist — xcodebuild did not finish writing it."
+        err "  An xcframework without a manifest cannot be consumed by Xcode."
+        exit 1
+    fi
+
+    local count
+    count="$(plutil -extract AvailableLibraries raw -o - "$fw/Info.plist" 2>/dev/null)" || count=""
+    case "$count" in
+        ''|*[!0-9]*)
+            err "$name: Info.plist unreadable, or has no AvailableLibraries array"
+            exit 1
+            ;;
+    esac
+    if [ "$count" -ne "$expected" ]; then
+        err "$name: manifest declares $count slice(s), expected $expected"
+        exit 1
+    fi
+
+    local i=0 ident libpath
+    while [ "$i" -lt "$count" ]; do
+        ident="$(plutil -extract "AvailableLibraries.$i.LibraryIdentifier" raw -o - "$fw/Info.plist" 2>/dev/null)" || ident=""
+        libpath="$(plutil -extract "AvailableLibraries.$i.LibraryPath" raw -o - "$fw/Info.plist" 2>/dev/null)" || libpath=""
+        if [ -z "$ident" ] || [ -z "$libpath" ] || [ ! -f "$fw/$ident/$libpath" ]; then
+            err "$name: declared slice '${ident:-?}' is missing ${libpath:-<library>} on disk"
+            exit 1
+        fi
+        i=$((i + 1))
+    done
+    log "validated $name ($count slices)"
+}
+
 create_xcframework() {
     local libname="$1"     # e.g., libcairo.a
     local xcf_name="$2"    # e.g., cairo
@@ -648,6 +700,13 @@ create_xcframework() {
 
     if [ ${#args[@]} -gt 0 ]; then
         xcodebuild -create-xcframework "${args[@]}" -output "$output"
+        # One slice per -library we passed; anything less means xcodebuild
+        # dropped or failed to write a slice.
+        local expected=0 a
+        for a in "${args[@]}"; do
+            [ "$a" = "-library" ] && expected=$((expected + 1))
+        done
+        validate_xcframework "$output" "$expected"
         log "Created $output"
     else
         warn "No libraries found for $xcf_name"

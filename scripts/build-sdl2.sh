@@ -251,6 +251,59 @@ for slice in ios-device-arm64 ios-sim-universal catalyst-universal macos-univers
     fi
 done
 
+# Fail loudly if the packaged xcframework is not well-formed.
+# `xcodebuild -create-xcframework` can leave a directory behind without ever
+# writing Info.plist.  That is exactly the state this xcframework sat in from
+# 2026-06-02 to 2026-08-10: an orphaned macos-arm64_x86_64 directory, no
+# manifest, unusable by Xcode -- and because Frameworks/ is gitignored, nothing
+# ever surfaced it.  Producing wreckage and still exiting 0 is the failure mode
+# worth closing.
+#
+# Validation is driven by the manifest rather than hardcoded slice names, so it
+# keeps working if the platform set changes: every slice the plist declares
+# must exist on disk with its library, and the count must match what we asked
+# xcodebuild to package.
+validate_xcframework() {
+    local fw="$1" expected="$2"
+    local name
+    name="$(basename "$fw")"
+
+    if [ ! -d "$fw" ]; then
+        echo "[sdl2] ERROR: $name was not created" >&2
+        exit 1
+    fi
+    if [ ! -f "$fw/Info.plist" ]; then
+        echo "[sdl2] ERROR: $name has no Info.plist — xcodebuild did not finish writing it." >&2
+        echo "  An xcframework without a manifest cannot be consumed by Xcode." >&2
+        exit 1
+    fi
+
+    local count
+    count="$(plutil -extract AvailableLibraries raw -o - "$fw/Info.plist" 2>/dev/null)" || count=""
+    case "$count" in
+        ''|*[!0-9]*)
+            echo "[sdl2] ERROR: $name Info.plist unreadable, or has no AvailableLibraries array" >&2
+            exit 1
+            ;;
+    esac
+    if [ "$count" -ne "$expected" ]; then
+        echo "[sdl2] ERROR: $name declares $count slice(s), expected $expected" >&2
+        exit 1
+    fi
+
+    local i=0 ident libpath
+    while [ "$i" -lt "$count" ]; do
+        ident="$(plutil -extract "AvailableLibraries.$i.LibraryIdentifier" raw -o - "$fw/Info.plist" 2>/dev/null)" || ident=""
+        libpath="$(plutil -extract "AvailableLibraries.$i.LibraryPath" raw -o - "$fw/Info.plist" 2>/dev/null)" || libpath=""
+        if [ -z "$ident" ] || [ -z "$libpath" ] || [ ! -f "$fw/$ident/$libpath" ]; then
+            echo "[sdl2] ERROR: $name declared slice '${ident:-?}' is missing ${libpath:-<library>} on disk" >&2
+            exit 1
+        fi
+        i=$((i + 1))
+    done
+    log "validated $name ($count slices)"
+}
+
 log "Creating xcframework..."
 mkdir -p "$(dirname "$OUTPUT")"
 rm -rf "$OUTPUT"
@@ -265,6 +318,9 @@ xcodebuild -create-xcframework \
     -library "${BUILD_ROOT}/sdl2-install/macos-universal/lib/libSDL2.a" \
     -headers "${BUILD_ROOT}/sdl2-install/macos-universal/Headers" \
     -output "$OUTPUT"
+
+# Four -library arguments above => four slices expected.
+validate_xcframework "$OUTPUT" 4
 
 log "=== Done! ==="
 log "Output: $OUTPUT"
