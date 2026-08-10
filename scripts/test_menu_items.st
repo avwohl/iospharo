@@ -71,11 +71,16 @@ discoverAllItems
   "Use PragmaMenuBuilder to walk all menu items recursively."
   | items builder root |
   items := OrderedCollection new.
+  "Report failure rather than swallowing it: an error here returns an empty
+   collection, so the test reports 'no menu items' — indistinguishable from a
+   world menu that genuinely has none, and it hides the actual error."
   [
     builder := PragmaMenuBuilder pragmaKeyword: 'worldMenu' model: World.
     root := builder menuSpec.
     root ifNotNil: [self extractFrom: root items into: items path: ''].
-  ] on: Error do: [:e | ].
+  ] on: Error do: [:e |
+    Transcript show: '[MENU-TEST] WARNING menu extraction failed: ',
+      e messageText asString, ' (item list will be incomplete)'; cr].
   ^ items! !
 
 !MenuItemTester class methodsFor: 'discovery'!

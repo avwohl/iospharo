@@ -41,12 +41,20 @@ runForPattern: patternString
   Stdio stderr nextPutAll: 'PkgTestRunner: found '; print: testClasses size;
     nextPutAll: ' test classes'; cr.
 
-  "Patch test timeouts for interpreter VM (10x)"
+  "Patch test timeouts for interpreter VM (10x).  Report failure rather than
+   swallowing it: if this patch does not take, every test runs on the stock
+   short limit and the run reports spurious timeout failures that look like VM
+   bugs.  A silent handler here costs hours of chasing the wrong thing."
   [TestCase compile: 'defaultTimeLimit ^ 100 seconds' classified: 'running'.
    TestCase allSubclasses do: [:cls |
      (cls includesSelector: #defaultTimeLimit) ifTrue: [
        cls removeSelector: #defaultTimeLimit]]]
-  on: Error do: [:e | ].
+  on: Error do: [:e |
+    Stdio stderr
+      nextPutAll: 'PkgTestRunner: WARNING timeout patch failed (';
+      nextPutAll: e messageText asString;
+      nextPutAll: ') — tests run on the stock limit; timeouts below may be spurious';
+      cr].
 
   testClasses asSortedCollection: [:a :b | a name < b name].
   testClasses := testClasses asSortedCollection: [:a :b | a name < b name].

@@ -37,7 +37,6 @@ pharo-ui
 
 # Xcode derived data
 DerivedData/
-*.xcworkspace
 Frameworks/
 
 # Xcode
@@ -45,6 +44,13 @@ Frameworks/
 xcuserdata/
 *.xcscmblueprint
 *.xccheckout
+
+# Standalone workspaces only — anchored deliberately.  A bare `*.xcworkspace`
+# also matches iospharo.xcodeproj/project.xcworkspace, whose xcshareddata/
+# holds SPM's Package.resolved.  With that ignored, the ZIPFoundation
+# dependency floated on `upToNextMajorVersion from 0.9.0` with no lockfile in
+# git, so any clone could resolve a different version than this one builds.
+/*.xcworkspace
 
 # Swift Package Manager
 .swiftpm/

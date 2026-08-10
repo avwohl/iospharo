@@ -124,6 +124,17 @@ jobs:
             || { echo "::error::SDL2_SHA256 missing"; fail=1; }
           exit $fail
 
+      # The SPM dependency is declared as a floating range
+      # (upToNextMajorVersion), so Package.resolved is the only thing pinning
+      # the actual version.  It was untracked for the life of the project
+      # because a bare `*.xcworkspace` ignore swallowed it.
+      - name: SPM lockfile is committed
+        run: |
+          f=iospharo.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          git ls-files --error-unmatch "$f" >/dev/null 2>&1 \
+            || { echo "::error::$f is not tracked — SPM dependencies are unpinned"; exit 1; }
+          echo "SPM lockfile tracked"
+
       # Every script that packages an xcframework must check what it produced.
       - name: Artifact-producing scripts validate their output
         run: |
