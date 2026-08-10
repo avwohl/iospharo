@@ -55,6 +55,34 @@ if ! git submodule update --init third_party/asmjit 2>&1 \
 fi
 [ -f third_party/asmjit/asmjit/core/virtmem.cpp ] \
     || { echo "FATAL: asmjit did not populate"; exit 1; }
+
+# "Populated" is NOT the same as "at the pinned commit", and the difference bit
+# us badly.  Our asmjit pin lives on the fork branch named in .gitmodules
+# (iospharo-catalyst); that commit is NOT reachable from the fork's default
+# branch.  A default submodule clone therefore fetches master only, fails to
+# check out the pin, and leaves the tree sitting on master — where virtmem.cpp
+# still exists, so the check above passes.  The box then builds against
+# unpatched asmjit while the gitlink shows as modified, and the autosave used to
+# commit that drift as a real pin change (27d378d2, which reverted the Catalyst
+# fix for two months).  Demand the exact pinned SHA, fetching the branch if the
+# initial update could not reach it.
+want=$(git rev-parse "HEAD:third_party/asmjit")
+have=$(git -C third_party/asmjit rev-parse HEAD 2>/dev/null || echo none)
+if [ "$want" != "$have" ]; then
+    echo "asmjit at ${have}, pin wants ${want} — fetching pinned commit"
+    br=$(git config -f .gitmodules --get submodule.third_party/asmjit.branch 2>/dev/null || true)
+    if [ -n "$br" ]; then
+        git -C third_party/asmjit fetch --tags origin "$br" || true
+    fi
+    git -C third_party/asmjit fetch --tags origin "$want" 2>/dev/null \
+        || git -C third_party/asmjit fetch --tags origin || true
+    git -C third_party/asmjit checkout -q --detach "$want" \
+        || { echo "FATAL: asmjit pin ${want} unreachable after fetch"; exit 1; }
+fi
+have=$(git -C third_party/asmjit rev-parse HEAD)
+[ "$want" = "$have" ] \
+    || { echo "FATAL: asmjit at ${have}, expected pinned ${want}"; exit 1; }
+echo "asmjit at pinned commit ${want}"
 git submodule update --init scripts/pharo-headless-test 2>/dev/null \
     || echo "WARN: pharo-headless-test submodule unavailable (SUnit harness only) — build proceeds"
 

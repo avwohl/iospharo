@@ -31,9 +31,37 @@ if [ -d "$REPO/.git" ]; then
     # Commit WIP on the work branch and push.  Uses the deploy key in
     # ~/.ssh/iospharo-x64-deploy (configured via ~/.ssh/config Host github.com).
     git -c safe.directory="$REPO" add -A
-    # Drop submodule-pointer drift — `submodule update` can leave the asmjit /
-    # pharo-headless-test gitlinks slightly off, which is noise, not real work.
-    git -c safe.directory="$REPO" reset -q -- third_party/asmjit scripts/pharo-headless-test 2>/dev/null || true
+
+    # Never let an autosave move a submodule pointer.  The box's submodules
+    # drift (a plain `submodule update` checks out the upstream default rather
+    # than the fork branch named in .gitmodules), and `add -A` stages that drift
+    # as if it were a deliberate pin change.  That is exactly how 27d378d2
+    # reverted the asmjit Catalyst pin to unpatched upstream, breaking fresh
+    # clones for two months before 86151021 restored it.  Pin bumps are a
+    # deliberate act made on a dev machine — an autosave must never make one.
+    #
+    # Paths come from .gitmodules rather than a hardcoded list so a submodule
+    # added later is protected automatically.  Falls back to the known pair if
+    # .gitmodules is somehow unreadable, so this can only over-protect.
+    SUBMODS=()
+    while IFS= read -r p; do
+        [ -n "$p" ] && SUBMODS+=("$p")
+    done < <(git -c safe.directory="$REPO" config -f .gitmodules \
+                 --get-regexp '^submodule\..*\.path$' 2>/dev/null | cut -d' ' -f2-)
+    [ ${#SUBMODS[@]} -eq 0 ] && SUBMODS=(third_party/asmjit scripts/pharo-headless-test)
+
+    # Record what we drop.  The 27d378d2 regression stayed invisible for two
+    # months partly because nothing ever said a pin had been touched.
+    dropped=$(git -c safe.directory="$REPO" diff --cached --name-only \
+                  -- "${SUBMODS[@]}" 2>/dev/null)
+    if [ -n "$dropped" ]; then
+        {
+            echo "preserve @ ${ts}: refused to autosave submodule-pointer drift:"
+            git -c safe.directory="$REPO" diff --cached --submodule=short \
+                -- "${SUBMODS[@]}" 2>/dev/null
+        } | tee -a /home/ubuntu/notes/submodule-drift.log >&2
+    fi
+    git -c safe.directory="$REPO" reset -q -- "${SUBMODS[@]}" 2>/dev/null || true
     if ! git -c safe.directory="$REPO" diff --cached --quiet; then
         git -c safe.directory="$REPO" \
             -c user.name="iospharo-x64-builder" \
