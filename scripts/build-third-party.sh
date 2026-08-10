@@ -698,9 +698,50 @@ package_xcframeworks() {
 # =====================================================================
 # Main
 # =====================================================================
+# =====================================================================
+# Preflight: an Xcode with iOS SDKs must be selected
+# =====================================================================
+# The iOS/Catalyst SDKs ship inside Xcode.app.  When xcode-select points at
+# /Library/Developer/CommandLineTools -- the default after a CLT-only install,
+# and where some macOS updates leave it -- every `xcrun --sdk iphoneos` below
+# fails, and the build dies much later inside a CMake try-compile with
+# "library 'System' not found": seven cryptic xcrun errors and a wall of CMake
+# output, none of which names the real cause.  Detect it up front, and prefer
+# an installed Xcode for this invocation only (no sudo, no change to the
+# machine-wide setting).
+require_ios_sdk() {
+    if xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
+        return 0
+    fi
+    # Read the current selection BEFORE exporting DEVELOPER_DIR below:
+    # `xcode-select -p` honours DEVELOPER_DIR, so querying it afterwards would
+    # just echo back the value we had only just set.
+    local selected
+    selected="$(xcode-select -p 2>/dev/null || echo '(unset)')"
+    local candidate
+    for candidate in "${DEVELOPER_DIR:-}" /Applications/Xcode*.app/Contents/Developer; do
+        [ -n "$candidate" ] && [ -d "$candidate" ] || continue
+        if DEVELOPER_DIR="$candidate" xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
+            export DEVELOPER_DIR="$candidate"
+            warn "xcode-select points at ${selected} — no iOS SDK there"
+            warn "using DEVELOPER_DIR=$DEVELOPER_DIR for this build"
+            return 0
+        fi
+    done
+    err "No iOS SDK available — cannot build for iOS/Catalyst."
+    err "  xcode-select -p: ${selected}"
+    err "  The iOS SDKs ship inside Xcode.app, not the Command Line Tools."
+    err "  Fix with either:"
+    err "    sudo xcode-select -s /Applications/Xcode.app/Contents/Developer   # machine-wide"
+    err "    DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer $0       # this run only"
+    exit 1
+}
+
 main() {
     log "Building third-party libraries for iOS"
     log "Crypto: $([ "$WITH_CRYPTO" = "1" ] && echo "enabled" || echo "disabled")"
+
+    require_ios_sdk
 
     mkdir -p "$BUILD_ROOT"
 

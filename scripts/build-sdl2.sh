@@ -175,10 +175,49 @@ make_universal() {
 }
 
 # =====================================================================
+# Preflight: an Xcode with iOS SDKs must be selected
+# =====================================================================
+# The iOS/Catalyst SDKs ship inside Xcode.app.  When xcode-select points at
+# /Library/Developer/CommandLineTools -- the default after a CLT-only install,
+# and where some macOS updates leave it -- every `xcrun --sdk iphoneos` below
+# fails, and the build dies much later inside a compiler try-run with
+# "library 'System' not found", which says nothing about the real cause.
+# Detect it up front, and prefer an installed Xcode for this invocation only
+# (no sudo, no change to the machine-wide setting).
+require_ios_sdk() {
+    if xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
+        return 0
+    fi
+    # Read the current selection BEFORE exporting DEVELOPER_DIR below:
+    # `xcode-select -p` honours DEVELOPER_DIR, so querying it afterwards would
+    # just echo back the value we had only just set.
+    local selected
+    selected="$(xcode-select -p 2>/dev/null || echo '(unset)')"
+    local candidate
+    for candidate in "${DEVELOPER_DIR:-}" /Applications/Xcode*.app/Contents/Developer; do
+        [ -n "$candidate" ] && [ -d "$candidate" ] || continue
+        if DEVELOPER_DIR="$candidate" xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
+            export DEVELOPER_DIR="$candidate"
+            log "xcode-select points at ${selected} — no iOS SDK there"
+            log "using DEVELOPER_DIR=$DEVELOPER_DIR for this build"
+            return 0
+        fi
+    done
+    echo "[sdl2] ERROR: no iOS SDK available — cannot build for iOS/Catalyst." >&2
+    echo "  xcode-select -p: ${selected}" >&2
+    echo "  The iOS SDKs ship inside Xcode.app, not the Command Line Tools." >&2
+    echo "  Fix with either:" >&2
+    echo "    sudo xcode-select -s /Applications/Xcode.app/Contents/Developer   # machine-wide" >&2
+    echo "    DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer $0       # this run only" >&2
+    exit 1
+}
+
+# =====================================================================
 # Main
 # =====================================================================
 
 log "=== Building SDL2 ${SDL2_VERSION} xcframework ==="
+require_ios_sdk
 download
 
 log "Building iOS Device..."
