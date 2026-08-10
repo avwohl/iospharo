@@ -54,11 +54,18 @@ are published.
 
 ## Prerequisites
 
-Install these before building:
+You need **full Xcode**, not just the Command Line Tools. The iOS, Simulator
+and Mac Catalyst SDKs ship only inside `Xcode.app`; a Command-Line-Tools-only
+install has no iOS SDK, and the build then fails deep inside a CMake
+try-compile with `library 'System' not found`, which does not name the real
+cause.
 
 ```bash
-# Xcode command-line tools (includes clang, make, etc.)
-xcode-select --install
+# Install Xcode 15+ from the App Store, then point the toolchain at it:
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+# Verify — this must print a path, not an error:
+xcrun --sdk iphoneos --show-sdk-path
 
 # CMake (build system)
 brew install cmake
@@ -67,9 +74,28 @@ brew install cmake
 brew install meson ninja pkg-config autoconf automake libtool
 ```
 
+If you cannot change the machine-wide selection, set `DEVELOPER_DIR` for the
+build instead — the build scripts also detect this case and correct it
+themselves:
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+```
+
 You also need:
-- **Xcode 15+** (for the iOS/Mac Catalyst app)
 - **A Pharo 13 or 14 image** — download from https://pharo.org/download
+
+### Clone with submodules
+
+`third_party/asmjit` (the Tier 2 JIT backend) is a git submodule and is
+**required** — a plain `git clone` leaves it empty and CMake will stop.
+
+```bash
+git clone --recurse-submodules https://github.com/avwohl/iospharo.git
+
+# already cloned without it?
+git submodule update --init --recursive
+```
 
 ## Building
 

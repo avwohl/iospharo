@@ -1,0 +1,136 @@
+name: CI
+
+# Why this exists: every infrastructure bug found on 2026-08-10 had been broken
+# for weeks or months, because the only thing that ever verified this project
+# was a human running a script by hand on one machine.  The asmjit submodule
+# pin was reverted for two months; SDL2.xcframework was unusable for two
+# months.  Both would have been caught on the first push by a job that clones
+# the repo fresh and builds it.
+#
+# Deliberately Linux-only: it is fast and free, and it exercises the parts that
+# actually broke (submodule wiring, CMake, repo hygiene).  The Apple-specific
+# packaging scripts cannot run here; they self-validate instead (see
+# validate_xcframework in scripts/build-*.sh).
+
+on:
+  push:
+    branches: [main, jit]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  fresh-clone-build:
+    name: Fresh clone builds
+    runs-on: ubuntu-latest
+    steps:
+      # submodules: recursive is the point of this job -- it proves the pins
+      # resolve for someone who is not us.  A dangling pin fails HERE.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify submodules actually populated
+        run: |
+          test -f third_party/asmjit/CMakeLists.txt \
+            || { echo "::error::third_party/asmjit did not populate — pin unreachable?"; exit 1; }
+          echo "asmjit at $(git -C third_party/asmjit rev-parse HEAD)"
+
+      - name: Submodule pins match .gitmodules branches and are reachable
+        run: |
+          fail=0
+          git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | while read -r _ path; do
+            pin=$(git rev-parse "HEAD:$path")
+            if ! git -C "$path" cat-file -e "$pin^{commit}" 2>/dev/null; then
+              echo "::error::$path pin $pin is not present after checkout"
+              fail=1
+            else
+              echo "$path pinned at $pin (present)"
+            fi
+          done
+          exit $fail
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libffi-dev libsdl2-dev libssl-dev
+
+      # LTO off: CI wants a fast signal, not an optimised binary.
+      - name: Build
+        run: PHARO_DISABLE_LTO=1 ./scripts/build-linux.sh
+
+      - name: Built artifact exists
+        run: |
+          find build -maxdepth 2 -name 'test_load_image' -o -maxdepth 2 -name '*.a' \
+            | head -5 | grep -q . || { echo "::error::build produced nothing"; exit 1; }
+
+  hygiene:
+    name: Repo hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # build-hunt/ (21 MB of object files) was committed because .gitignore
+      # listed build directories by exact name and that one was not on the
+      # list.  Catch the next one mechanically.
+      - name: No build output tracked
+        run: |
+          bad=$(git ls-files | grep -nE '(^|/)(build[^/]*|[^/]*-build)/' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::build directories are tracked:"; echo "$bad" | head -20; exit 1
+          fi
+          # .o/.obj are never legitimate here.
+          objs=$(git ls-files | grep -E '\.(o|obj)$' || true)
+          if [ -n "$objs" ]; then
+            echo "::error::object files are tracked:"; echo "$objs" | head -20; exit 1
+          fi
+          # Libraries ARE legitimate in two vendored locations and nowhere else:
+          #   third_party/windows-runtime-dlls/  redistributable Windows runtime
+          #   iospharo/Frameworks/               SDL2 dylibs shipped in the app
+          libs=$(git ls-files | grep -E '\.(a|dylib|so|dll)$' \
+                 | grep -vE '^(third_party/windows-runtime-dlls|iospharo/Frameworks)/' || true)
+          if [ -n "$libs" ]; then
+            echo "::error::compiled libraries tracked outside the vendored dirs:"
+            echo "$libs" | head -20; exit 1
+          fi
+          echo "no build output tracked"
+
+      - name: Shell scripts parse
+        run: |
+          fail=0
+          for f in $(git ls-files '*.sh'); do
+            bash -n "$f" || { echo "::error file=$f::bash -n failed"; fail=1; }
+          done
+          exit $fail
+
+      - name: Shellcheck (advisory)
+        continue-on-error: true
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck -S error $(git ls-files '*.sh') || true
+
+      # Every third-party tarball must stay pinned by hash, not just version.
+      - name: Tarball checksums are present
+        run: |
+          fail=0
+          for v in LIBPNG FREETYPE PIXMAN HARFBUZZ CAIRO OPENSSL LIBSSH2 LIBGIT2; do
+            grep -q "^${v}_SHA256=\"[a-f0-9]\{64\}\"" scripts/build-third-party.sh \
+              || { echo "::error::${v}_SHA256 missing or malformed"; fail=1; }
+          done
+          grep -q '^LIBFFI_SHA256="[a-f0-9]\{64\}"' scripts/build-libffi.sh \
+            || { echo "::error::LIBFFI_SHA256 missing"; fail=1; }
+          grep -q '^SDL2_SHA256="[a-f0-9]\{64\}"' scripts/build-sdl2.sh \
+            || { echo "::error::SDL2_SHA256 missing"; fail=1; }
+          exit $fail
+
+      # Every script that packages an xcframework must check what it produced.
+      - name: Artifact-producing scripts validate their output
+        run: |
+          fail=0
+          for f in scripts/build-libffi.sh scripts/build-sdl2.sh \
+                   scripts/build-third-party.sh scripts/build-xcframework.sh; do
+            grep -q 'validate_xcframework' "$f" \
+              || { echo "::error file=$f::packages an xcframework without validating it"; fail=1; }
+          done
+          exit $fail

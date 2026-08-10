@@ -3,25 +3,18 @@ Local.xcconfig
 
 *.pyc
 
-# Build outputs
+# Build outputs.
+# Match the SHAPE of a build directory, not a list of names.  This was ~25
+# hardcoded entries; build-hunt/ was not among them, so 21 MB of object files,
+# .o.d dependency files and a.out binaries were committed by accident
+# (11750afa).  A denylist of names needs an edit every time someone invents a
+# directory; a pattern does not.
 *.o
 *.a
-build/
-build-app/
-build-debug/
-build-macos/
-build-sim/
-build-vm/
-build-cpp/
-build-test/
-build-nojit/
-build_nojit/
-build-x86/
-build-opt/
-build-xcframework/
-build-win/
+build*/
+*-build/
 build-win-log*.txt
-third-party-build/
+build-jit-log.txt
 
 # Generated source (large)
 cointerp.c
@@ -101,8 +94,6 @@ test-cpp-generation/
 *.dSYM/
 src/vm/build/
 src/vm/test_load_image
-build-maccatalyst/
-build-catalyst/
 Pharo.image
 test_vm
 PharoDebug.log
@@ -126,18 +117,10 @@ test.txt
 /startup.st
 docs/results/jitpkg/*_run.log
 docs/results/jitpkg/*_clean_*.log
-build-dbg/
 .sweep-state/
-build-opt/
-build-fsr0/
-build-x86-sp/
-build-x86-0/
 
-# perf-db machine-local ids + rel build dir
-build-rel/
+# perf-db machine-local ids
 scripts/perfdb/ids.local.env
-build-win-jit/
-build-jit-log.txt
 
 # Windows installer outputs (packaging/windows/build-installer.ps1)
 dist/

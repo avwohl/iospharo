@@ -200,6 +200,57 @@ xcodebuild -create-xcframework \
     -library "$BUILD_BASE/simulator-universal/libPharoVMCore.a" \
     -output "$XCFRAMEWORK_TMP"
 
+# Validate BEFORE the swap below, so a malformed build can never replace a
+# working xcframework.  `xcodebuild -create-xcframework` can leave a directory
+# behind without ever writing Info.plist -- SDL2.xcframework sat in exactly
+# that state from 2026-06-02 to 2026-08-10, unusable by Xcode, and because
+# Frameworks/ is gitignored nothing surfaced it.  Driven by the manifest rather
+# than hardcoded slice names: every slice the plist declares must exist on disk
+# with its library, and the count must match what we passed to xcodebuild.
+validate_xcframework() {
+    local fw="$1" expected="$2"
+    local name
+    name="$(basename "$fw")"
+
+    if [ ! -d "$fw" ]; then
+        echo "error: $name was not created" >&2
+        exit 1
+    fi
+    if [ ! -f "$fw/Info.plist" ]; then
+        echo "error: $name has no Info.plist — xcodebuild did not finish writing it." >&2
+        echo "  An xcframework without a manifest cannot be consumed by Xcode." >&2
+        exit 1
+    fi
+
+    local count
+    count="$(plutil -extract AvailableLibraries raw -o - "$fw/Info.plist" 2>/dev/null)" || count=""
+    case "$count" in
+        ''|*[!0-9]*)
+            echo "error: $name Info.plist unreadable, or has no AvailableLibraries array" >&2
+            exit 1
+            ;;
+    esac
+    if [ "$count" -ne "$expected" ]; then
+        echo "error: $name declares $count slice(s), expected $expected" >&2
+        exit 1
+    fi
+
+    local i=0 ident libpath
+    while [ "$i" -lt "$count" ]; do
+        ident="$(plutil -extract "AvailableLibraries.$i.LibraryIdentifier" raw -o - "$fw/Info.plist" 2>/dev/null)" || ident=""
+        libpath="$(plutil -extract "AvailableLibraries.$i.LibraryPath" raw -o - "$fw/Info.plist" 2>/dev/null)" || libpath=""
+        if [ -z "$ident" ] || [ -z "$libpath" ] || [ ! -f "$fw/$ident/$libpath" ]; then
+            echo "error: $name declared slice '${ident:-?}' is missing ${libpath:-<library>} on disk" >&2
+            exit 1
+        fi
+        i=$((i + 1))
+    done
+    echo "validated $name ($count slices)"
+}
+
+# Three -library arguments above => three slices expected.
+validate_xcframework "$XCFRAMEWORK_TMP" 3
+
 # Atomic swap: only replace the old xcframework after the new one is fully built.
 # This prevents Xcode from seeing a missing xcframework if the build fails midway.
 rm -rf "$XCFRAMEWORK_OUTPUT"

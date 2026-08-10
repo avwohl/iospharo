@@ -179,6 +179,20 @@ list(APPEND VM_SOURCES ${PLUGIN_C_SOURCES})
 # Tier 2 JIT backend: asmjit (replaced MIR 2026-04-17).
 # See docs/jit-toolkit-evaluation.md for rationale.
 # Configure asmjit as a static library, embedded from the submodule.
+
+# A plain `git clone` (without --recurse-submodules) leaves third_party/asmjit
+# empty.  Without this guard the failure surfaces as CMake's generic
+# "does not contain a CMakeLists.txt file" from the add_subdirectory() below,
+# which does not tell a newcomer what to do.  Say it plainly instead.
+if(NOT EXISTS "${CMAKE_SOURCE_DIR}/third_party/asmjit/CMakeLists.txt")
+    message(FATAL_ERROR
+        "third_party/asmjit is empty — the git submodule is not initialised.\n"
+        "Run:\n"
+        "    git submodule update --init --recursive\n"
+        "(or clone with --recurse-submodules next time).\n"
+        "asmjit is the Tier 2 JIT backend and is required to build the VM.")
+endif()
+
 set(ASMJIT_STATIC ON CACHE BOOL "Build asmjit as static library")
 set(ASMJIT_TEST OFF CACHE BOOL "Skip asmjit's own test suite")
 
