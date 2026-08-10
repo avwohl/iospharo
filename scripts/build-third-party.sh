@@ -41,6 +41,31 @@ OPENSSL_VERSION="3.4.0"
 LIBSSH2_VERSION="1.11.1"
 LIBGIT2_VERSION="1.8.4"
 
+# SHA-256 of each source tarball.  A version pin fixes WHICH release we ask
+# for, not WHAT BYTES arrive: release assets can be replaced, mirrors can serve
+# altered files, and a truncated download is silently valid to `tar`.  Recorded
+# 2026-08-10.  openssl, libssh2 and cairo were additionally corroborated
+# against upstream-published checksums / a second independent host; the rest
+# are the bytes served by the canonical URL on that date.
+#
+# To bump a version: change the version above, re-download, verify the new
+# tarball independently (upstream .sha256 or GPG sig where published), then
+# update the hash here.  Never "fix" a mismatch by pasting in the actual hash.
+LIBPNG_SHA256="6a5ca0652392a2d7c9db2ae5b40210843c0bbc081cbd410825ab00cc59f14a6c"
+FREETYPE_SHA256="0550350666d427c74daeb85d5ac7bb353acba5f76956395995311a9c6f063289"
+PIXMAN_SHA256="a0624db90180c7ddb79fc7a9151093dc37c646d8c38d3f232f767cf64b85a226"
+HARFBUZZ_SHA256="6ce3520f2d089a33cef0fc48321334b8e0b72141f6a763719aaaecd2779ecb82"
+CAIRO_SHA256="a62b9bb42425e844cc3d6ddde043ff39dbabedd1542eba57a2eb79f85889d45a"
+OPENSSL_SHA256="e15dda82fe2fe8139dc2ac21a36d4ca01d5313c75f99f46c4e8a27709b7294bf"
+LIBSSH2_SHA256="9954cb54c4f548198a7cbebad248bdc87dd64bd26185708a294b2b50771e3769"
+# NOTE: libgit2 has no uploaded release asset, so this is GitHub's
+# auto-generated archive.  Those are re-created on demand and are NOT
+# guaranteed byte-stable — GitHub has changed archive compression before and
+# invalidated such hashes en masse.  If this one mismatches after a toolchain
+# or date change while every other library still verifies, suspect that rather
+# than a compromise, and re-verify against the v1.8.4 tag contents.
+LIBGIT2_SHA256="49d0fc50ab931816f6bfc1ac68f8d74b760450eebdb5374e803ee36550f26774"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -129,35 +154,70 @@ CROSSEOF
 # =====================================================================
 # Download sources
 # =====================================================================
+sha256_of() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        sha256sum "$1" | cut -d' ' -f1
+    fi
+}
+
+# Refuse to build anything whose bytes we did not pin.  The rejected file is
+# kept as <name>.rejected for inspection rather than deleted, and moving it
+# aside means the next run re-downloads instead of failing on the same cache.
+verify_sha256() {
+    local file="$1" expected="$2" actual
+    actual="$(sha256_of "$file")"
+    if [ "$actual" != "$expected" ]; then
+        mv -f "$file" "${file}.rejected" 2>/dev/null || true
+        err "CHECKSUM MISMATCH for $(basename "$file")"
+        err "  expected: $expected"
+        err "  actual  : $actual"
+        err "  kept at : ${file}.rejected"
+        err "  Refusing to build.  If this is a legitimate upstream re-release,"
+        err "  verify it independently and update the pinned hash."
+        exit 1
+    fi
+    log "checksum OK: $(basename "$file")"
+}
+
 download_sources() {
     mkdir -p "$SOURCES_DIR"
     cd "$SOURCES_DIR"
 
+    # Entries are "filename:url:sha256".  The sha is parsed off the end, so the
+    # colons inside the URL are unambiguous.
     local downloads=(
-        "libpng-${LIBPNG_VERSION}.tar.xz:https://download.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz"
-        "freetype-${FREETYPE_VERSION}.tar.xz:https://download.savannah.gnu.org/releases/freetype/freetype-${FREETYPE_VERSION}.tar.xz"
-        "pixman-${PIXMAN_VERSION}.tar.gz:https://cairographics.org/releases/pixman-${PIXMAN_VERSION}.tar.gz"
-        "harfbuzz-${HARFBUZZ_VERSION}.tar.xz:https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VERSION}/harfbuzz-${HARFBUZZ_VERSION}.tar.xz"
-        "cairo-${CAIRO_VERSION}.tar.xz:https://cairographics.org/releases/cairo-${CAIRO_VERSION}.tar.xz"
+        "libpng-${LIBPNG_VERSION}.tar.xz:https://download.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz:${LIBPNG_SHA256}"
+        "freetype-${FREETYPE_VERSION}.tar.xz:https://download.savannah.gnu.org/releases/freetype/freetype-${FREETYPE_VERSION}.tar.xz:${FREETYPE_SHA256}"
+        "pixman-${PIXMAN_VERSION}.tar.gz:https://cairographics.org/releases/pixman-${PIXMAN_VERSION}.tar.gz:${PIXMAN_SHA256}"
+        "harfbuzz-${HARFBUZZ_VERSION}.tar.xz:https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VERSION}/harfbuzz-${HARFBUZZ_VERSION}.tar.xz:${HARFBUZZ_SHA256}"
+        "cairo-${CAIRO_VERSION}.tar.xz:https://cairographics.org/releases/cairo-${CAIRO_VERSION}.tar.xz:${CAIRO_SHA256}"
     )
 
     # libgit2 is always built (works without crypto for local repos)
-    downloads+=("libgit2-${LIBGIT2_VERSION}.tar.gz:https://github.com/libgit2/libgit2/archive/refs/tags/v${LIBGIT2_VERSION}.tar.gz")
+    downloads+=("libgit2-${LIBGIT2_VERSION}.tar.gz:https://github.com/libgit2/libgit2/archive/refs/tags/v${LIBGIT2_VERSION}.tar.gz:${LIBGIT2_SHA256}")
 
     if [ "$WITH_CRYPTO" = "1" ]; then
         downloads+=(
-            "openssl-${OPENSSL_VERSION}.tar.gz:https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz"
-            "libssh2-${LIBSSH2_VERSION}.tar.xz:https://www.libssh2.org/download/libssh2-${LIBSSH2_VERSION}.tar.xz"
+            "openssl-${OPENSSL_VERSION}.tar.gz:https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz:${OPENSSL_SHA256}"
+            "libssh2-${LIBSSH2_VERSION}.tar.xz:https://www.libssh2.org/download/libssh2-${LIBSSH2_VERSION}.tar.xz:${LIBSSH2_SHA256}"
         )
     fi
 
     for entry in "${downloads[@]}"; do
         local filename="${entry%%:*}"
-        local url="${entry#*:}"
+        local rest="${entry#*:}"
+        local sha="${rest##*:}"
+        local url="${rest%:*}"
         if [ ! -f "$filename" ]; then
             log "Downloading $filename..."
-            curl -L -o "$filename" "$url"
+            curl -fL -o "$filename" "$url"
         fi
+        # Verify on every run, not just after a fresh download — this also
+        # catches a cached tarball that was truncated or tampered with between
+        # builds.
+        verify_sha256 "$filename" "$sha"
     done
 }
 

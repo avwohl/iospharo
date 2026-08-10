@@ -26,6 +26,10 @@ SOURCES_DIR="${BUILD_ROOT}/sources"
 LIBFFI_VERSION="3.5.2"
 LIBFFI_URL="https://github.com/libffi/libffi/releases/download/v${LIBFFI_VERSION}/libffi-${LIBFFI_VERSION}.tar.gz"
 LIBFFI_SRC="${SOURCES_DIR}/libffi-${LIBFFI_VERSION}"
+# Pinning the version pins WHICH release we ask for, not WHAT BYTES arrive — a
+# release asset can be replaced, and a truncated download is silently valid to
+# `tar`.  Recorded 2026-08-10 from the upstream release asset.
+LIBFFI_SHA256="f3a3082a23b37c293a4fcd1053147b371f2ff91fa7ea1b2a52e335676bac82dc"
 
 OUTPUT="${PROJECT_DIR}/Frameworks/libffi.xcframework"
 
@@ -37,11 +41,44 @@ log() { echo -e "${GREEN}[libffi]${NC} $*"; }
 # Download (if missing)
 # =====================================================================
 
+sha256_of() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        sha256sum "$1" | cut -d' ' -f1
+    fi
+}
+
+# Refuse to build anything whose bytes we did not pin.  The rejected file is
+# kept as <name>.rejected for inspection rather than deleted, and moving it
+# aside means the next run re-downloads instead of failing on the same cache.
+verify_sha256() {
+    local file="$1" expected="$2" actual
+    actual="$(sha256_of "$file")"
+    if [ "$actual" != "$expected" ]; then
+        mv -f "$file" "${file}.rejected" 2>/dev/null || true
+        echo "[libffi] CHECKSUM MISMATCH for $(basename "$file")" >&2
+        echo "  expected: $expected" >&2
+        echo "  actual  : $actual" >&2
+        echo "  kept at : ${file}.rejected" >&2
+        echo "  Refusing to build.  If this is a legitimate upstream re-release," >&2
+        echo "  verify it independently and update LIBFFI_SHA256." >&2
+        exit 1
+    fi
+    log "checksum OK: $(basename "$file")"
+}
+
 download() {
     mkdir -p "$SOURCES_DIR"
     if [ ! -d "$LIBFFI_SRC" ]; then
+        local tarball="${SOURCES_DIR}/libffi-${LIBFFI_VERSION}.tar.gz"
         log "Downloading libffi ${LIBFFI_VERSION}..."
-        curl -sL "$LIBFFI_URL" | tar xz -C "$SOURCES_DIR"
+        # Download to a file first: a `curl | tar` pipe cannot be verified,
+        # because tar has already extracted the bytes by the time we could
+        # hash them.
+        curl -fsSL -o "$tarball" "$LIBFFI_URL"
+        verify_sha256 "$tarball" "$LIBFFI_SHA256"
+        tar xzf "$tarball" -C "$SOURCES_DIR"
     else
         log "Source already exists at $LIBFFI_SRC"
     fi

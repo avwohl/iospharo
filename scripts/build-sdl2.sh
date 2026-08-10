@@ -26,6 +26,10 @@ SOURCES_DIR="${BUILD_ROOT}/sources"
 SDL2_VERSION="2.26.5"
 SDL2_URL="https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-${SDL2_VERSION}.tar.gz"
 SDL2_SRC="${SOURCES_DIR}/SDL2-${SDL2_VERSION}"
+# Pinning the version pins WHICH release we ask for, not WHAT BYTES arrive — a
+# release asset can be replaced, and a truncated download is silently valid to
+# `tar`.  Recorded 2026-08-10 from the upstream release asset.
+SDL2_SHA256="ad8fea3da1be64c83c45b1d363a6b4ba8fd60f5bde3b23ec73855709ec5eabf7"
 
 OUTPUT="${PROJECT_DIR}/Frameworks/SDL2.xcframework"
 
@@ -37,11 +41,44 @@ log() { echo -e "${GREEN}[sdl2]${NC} $*"; }
 # Download
 # =====================================================================
 
+sha256_of() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        sha256sum "$1" | cut -d' ' -f1
+    fi
+}
+
+# Refuse to build anything whose bytes we did not pin.  The rejected file is
+# kept as <name>.rejected for inspection rather than deleted, and moving it
+# aside means the next run re-downloads instead of failing on the same cache.
+verify_sha256() {
+    local file="$1" expected="$2" actual
+    actual="$(sha256_of "$file")"
+    if [ "$actual" != "$expected" ]; then
+        mv -f "$file" "${file}.rejected" 2>/dev/null || true
+        echo "[sdl2] CHECKSUM MISMATCH for $(basename "$file")" >&2
+        echo "  expected: $expected" >&2
+        echo "  actual  : $actual" >&2
+        echo "  kept at : ${file}.rejected" >&2
+        echo "  Refusing to build.  If this is a legitimate upstream re-release," >&2
+        echo "  verify it independently and update SDL2_SHA256." >&2
+        exit 1
+    fi
+    log "checksum OK: $(basename "$file")"
+}
+
 download() {
     mkdir -p "$SOURCES_DIR"
     if [ ! -d "$SDL2_SRC" ]; then
+        local tarball="${SOURCES_DIR}/SDL2-${SDL2_VERSION}.tar.gz"
         log "Downloading SDL2 ${SDL2_VERSION}..."
-        curl -sL "$SDL2_URL" | tar xz -C "$SOURCES_DIR"
+        # Download to a file first: a `curl | tar` pipe cannot be verified,
+        # because tar has already extracted the bytes by the time we could
+        # hash them.
+        curl -fsSL -o "$tarball" "$SDL2_URL"
+        verify_sha256 "$tarball" "$SDL2_SHA256"
+        tar xzf "$tarball" -C "$SOURCES_DIR"
     else
         log "Source already exists at $SDL2_SRC"
     fi
