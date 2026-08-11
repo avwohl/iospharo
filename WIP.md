@@ -9,7 +9,7 @@ arm64 native plus x86_64 through the `build-x86` tree under Rosetta.
     x86 multi-entry dispatch divergence     FIXED   c5332248 (BOTH arches)
     CWD-relative file resolution            FIXED   d1cd608e
     weak-reference tests                    FIXED   88ce3fee (50 clean runs)
-    arm package sweep                       LOST — box auto-terminated at 158/200
+    arm package sweep                       DONE — docs/arm-pkg200-2026-08-11.md
     build-hunt history rewrite              DECLINED by user (leave it)
     xcode-select                            NOT DONE (needs a password)
 
@@ -48,7 +48,27 @@ Both arms now run from `$OUT/wd-$LABEL`, and the VM prints a loud error if its
 startup.st is still on disk at exit (the script self-deletes, so a survivor
 means the loader never ran it).  Sweep relaunched on the fixed code.
 
-**F. The arm sweep was LOST at 158/200 — SPOT RECLAMATION.**
+**G. ARM SWEEP COMPLETE (third attempt) — `docs/arm-pkg200-2026-08-11.md`.**
+128 packages ran on both arms.  Two real findings, one spurious, rest
+timeout-only — same shape as x86.
+  1. `pharo-rdbms-pharo-sqlite3`: cog pass=122/err=0 -> jit pass=11/err=111,
+     ALL "Error: Module not found." — an FFI library-resolution gap (same family
+     as the Athens/cairo and LibTTY fixes), NOT a JIT miscompile.  New.
+  2. `rko281-porpoise`: `PropertyManagerTest>>testPropertyManagerValueWeakness`
+     still JIT-only.  `88ce3fee` fixed WeakOrderedCollectionTest but NOT this —
+     so there IS a second weak-reference retention path, and unlike the
+     unreproducible "residual" this one is a stable target for the provenance
+     probes.
+  3. **soccertheory CLOSED.**  x86 had 12 JIT-only XMLFileException errors,
+     attributed by reasoning to our chdir.  Confirmed: on arm after `d1cd608e`
+     the same 12 are SHARED (cog err=13 vs jit err=12+1 timeout) — both VMs now
+     resolve `soccerML.dtd` identically.  0 JIT-only.
+  4. `mumez-redistick` counters byte-identical on both arms — the flag column
+     over-reports, as on x86.
+Results: `docs/results/arm-pkg200-2026-08-11-summary.tsv` +
+`s3://iospharo-build-670060058357/arm-pkg200/` (688 files).  Box torn down.
+
+**F. Attempt 2 was LOST at 158/200 — SPOT RECLAMATION.**
 `StateReason.Code = Server.SpotInstanceTermination`, "no Spot capacity
 available that matches your request".  A spot box taken back by AWS; nothing in
 this repo caused it, and `config-arm.env` already documented the same thing
