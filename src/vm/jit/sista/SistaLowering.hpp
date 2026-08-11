@@ -58,11 +58,24 @@ public:
     // within the method's bytecodes.  Lowering uses it to compute
     // deopt-resume IPs from `state.method` dynamically rather than
     // baking the absolute address — survives GC compaction.
+    //
+    // `outExtraEntryBcOffsets`, if non-null, is filled with the
+    // region-LOCAL bcOffsets (besides 0) at which the emitted code
+    // may legally be entered — i.e. the entries of
+    // `method.dispatchableBlocks` for which this backend actually
+    // emitted a multi-entry dispatch prologue arm.  The runtime must
+    // register the compiled fn ONLY at these offsets: entering at a
+    // bcOffset the prologue can't route silently resumes at the
+    // region start with the wrong operand stack.  Reporting it here
+    // (rather than assuming every dispatchableBlocks entry works)
+    // keeps the two per-arch backends from drifting — x86_64 had no
+    // prologue at all while the runtime registered all of them.
     using CompiledFn = void (*)(void* state);
     CompiledFn lower(const Method& method,
                       uint32_t* failedAtValue = nullptr,
                       const uint8_t* bytecodeBase = nullptr,
-                      uint32_t startBcOffset = 0);
+                      uint32_t startBcOffset = 0,
+                      std::vector<uint32_t>* outExtraEntryBcOffsets = nullptr);
 
 private:
     asmjit::JitRuntime* runtime_ = nullptr;

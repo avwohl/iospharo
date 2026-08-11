@@ -8461,9 +8461,13 @@ static void narrowTempTypes(Method& m) {
 LiftResult Builder::buildFromBytes(const uint8_t* bc, size_t len,
                                      uint32_t numArgs, uint32_t numTemps,
                                      Method& out,
-                                     uint32_t* failedAtBytecode) {
+                                     uint32_t* failedAtBytecode,
+                                     bool perBcEntry) {
     LinearLifter l(bc, len, numArgs, numTemps, out);
+    bool savedPerBc = g_inPerBcBuild;
+    g_inPerBcBuild = perBcEntry;
     LiftResult res = l.run(failedAtBytecode);
+    g_inPerBcBuild = savedPerBc;
     if (res == LiftResult::kOk) narrowTempTypes(out);
     return res;
 }

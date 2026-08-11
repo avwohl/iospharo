@@ -110,16 +110,23 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         // bcOffset = correct ip for deopt resume.
         const uint8_t* lifedBase = bytecodes + startBcOffset;
         uint32_t failedVal = UINT32_MAX;
+        // The lowerer reports which region-local bcOffsets it actually
+        // built dispatch arms for.  Registering `m.dispatchableBlocks`
+        // instead would assume a multi-entry prologue the backend may
+        // not have emitted — x86_64 had none at all, so every interior
+        // key dispatched into the region START (wrong bytecode, wrong
+        // operand stack).  Ask, don't assume.
+        std::vector<uint32_t> extraEntries;
         Lowering::CompiledFn fn = lowering_.lower(m, &failedVal, lifedBase,
-                                                    startBcOffset);
+                                                    startBcOffset,
+                                                    &extraEntries);
         bcOffsetCache_[key][startBcOffset] = fn;
         // Multi-key cache: register the same fn at every dispatchable
         // bcOff in the lifted region.  Triggers at interior loop tops
         // (middle, inner) reuse this single compile.
         if (fn) {
-            for (const auto& entry : m.dispatchableBlocks) {
-                uint32_t methodBcOff = startBcOffset + entry.first;
-                bcOffsetCache_[key][methodBcOff] = fn;
+            for (uint32_t localBcOff : extraEntries) {
+                bcOffsetCache_[key][startBcOffset + localBcOff] = fn;
             }
         }
         // PHARO_SISTA_PER_BC_TRACE=1: log the outcome.
@@ -128,8 +135,9 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
             if (logCount++ < 200) {
                 fprintf(stderr,
                     "[SISTA-PER-BC-COMPILE] method=0x%llx bcOff=%u "
-                    "result=%s%s\n",
+                    "dispatchable=%zu entries=%zu result=%s%s\n",
                     (unsigned long long)key, startBcOffset,
+                    m.dispatchableBlocks.size(), extraEntries.size(),
                     fn ? "OK" : "fail",
                     fn ? "" : (failedVal != UINT32_MAX
                                 ? " (lower-failed)"

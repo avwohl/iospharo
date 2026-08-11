@@ -50,12 +50,18 @@ public:
     // Direct-byte variant for unit tests that don't want to allocate
     // a real CompiledMethod.  `bytecodes` is a span of Sista V1 ops,
     // `numArgs` / `numTemps` describe the method frame.
+    //
+    // `perBcEntry` mirrors what buildFromOffset does for a real
+    // per-bytecode lift: it makes the lifter populate
+    // `dispatchableBlocks` + loader pseudo-blocks so tests can cover
+    // multi-entry dispatch without constructing a CompiledMethod.
     static LiftResult buildFromBytes(const uint8_t* bytecodes,
                                       size_t length,
                                       uint32_t numArgs,
                                       uint32_t numTemps,
                                       Method& out,
-                                      uint32_t* failedAtBytecode = nullptr);
+                                      uint32_t* failedAtBytecode = nullptr,
+                                      bool perBcEntry = false);
 
     // Per-bytecode entry lift (item #8 in jit-multiweek-work.md).
     // Lifts the method tail starting at `startBcOffset` (a backward-

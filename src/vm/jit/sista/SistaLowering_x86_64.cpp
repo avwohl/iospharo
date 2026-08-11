@@ -196,9 +196,11 @@ Lowering::~Lowering() {
 Lowering::CompiledFn Lowering::lower(const Method& method,
                                        uint32_t* failedAtValue,
                                        const uint8_t* bytecodeBase,
-                                       uint32_t startBcOffset) {
+                                       uint32_t startBcOffset,
+                                       std::vector<uint32_t>* outExtraEntryBcOffsets) {
     using namespace asmjit;
     using namespace asmjit::x86;
+    if (outExtraEntryBcOffsets) outExtraEntryBcOffsets->clear();
 
     if (GET_DEBUG_BOOL(PHARO_SISTA_NO_LOWER)) {
         if (failedAtValue) *failedAtValue = 0;
@@ -325,6 +327,38 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         }
     };
 
+    // Multi-entry-point dispatch prologue — port of the arm64 chain
+    // (SistaLowering_arm64.cpp), which has had this since 4188b9f9.
+    // x86_64 never had it, yet SistaRuntime registered the compiled fn
+    // at EVERY dispatchable bcOffset regardless of arch: a trigger at an
+    // interior loop top then jumped to this fn, which — with no chain to
+    // route it — began executing at the region start with the operand
+    // stack of a different bytecode.  Silent miscompile.
+    //
+    // Read sstate.ip, subtract the (recomputed) region base to get the
+    // region-local bcOffset, and compare against each dispatchable
+    // entry, branching to its loader pseudo-block on a match.  The
+    // loaders materialise the target block's phi inputs from the runtime
+    // sp (kLoadStackSlot) and branch to it.  No match falls through to
+    // block 0, the natural entry.
+    std::vector<uint32_t> dispatchLoaderIds;
+    if (!method.dispatchableBlocks.empty() && bytecodeBase) {
+        Gp bcOffReg = cc.new_gp64("dispBcOff");
+        cc.mov(bcOffReg, ptr(state, OFF_IP));
+        cc.sub(bcOffReg, bytecodesHoisted);
+        for (const auto& entry : method.dispatchableBlocks) {
+            uint32_t targetBcOff = entry.first;
+            uint32_t loaderBlockId = entry.second;
+            if (loaderBlockId >= blockLabels.size()) continue;
+            cc.cmp(bcOffReg, Imm((int)targetBcOff));
+            cc.je(blockLabels[loaderBlockId]);
+            dispatchLoaderIds.push_back(loaderBlockId);
+            if (outExtraEntryBcOffsets)
+                outExtraEntryBcOffsets->push_back(targetBcOff);
+        }
+        // No match — fall through to block 0 (entry).
+    }
+
     // Emit a deopt sequence: spill v.operands[stackBase..] onto the
     // runtime stack, set state.ip to bcOffset, set exitReason = EXIT_SEND,
     // ret.  Used by overflow / tag-check deopt branches.
@@ -375,6 +409,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         std::vector<uint32_t> work;
         work.push_back(0);
         blockReachable[0] = 1;
+        // The dispatch chain above is an extra set of entry edges that
+        // the IR successor graph does not model — seed its loaders, or
+        // the prune drops them and the chain branches to unbound labels.
+        for (uint32_t loaderId : dispatchLoaderIds) {
+            if (loaderId < blockReachable.size() && !blockReachable[loaderId]) {
+                blockReachable[loaderId] = 1;
+                work.push_back(loaderId);
+            }
+        }
         while (!work.empty()) {
             uint32_t bid = work.back(); work.pop_back();
             for (uint32_t s : method.blocks[bid].successors) {
@@ -2792,7 +2835,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         fflush(stderr);
     }
 
-    cc.finalize();
+    // finalize() runs the RA + emit passes; it fails on e.g. a branch to
+    // a label that was never bound.  Ignoring the status let a broken
+    // encode fall through into runtime_->add() and hand back a function
+    // pointer to code that was never fully emitted.
+    if (Error ferr = cc.finalize(); ferr != kErrorOk) {
+        if (failedAtValue) *failedAtValue = 0;
+        g_lowerStats.bail.fetch_add(1, std::memory_order_relaxed);
+        g_lowerStats.tick();
+        return nullptr;
+    }
 
     CompiledFn out = nullptr;
     Error err = runtime_->add(&out, &code);

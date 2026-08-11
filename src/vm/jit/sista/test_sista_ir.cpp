@@ -1500,6 +1500,120 @@ int main() {
                   << " stack[1]=0x" << stack[1] << std::dec << "\n";
     }
 
+    // Round-trip 10: multi-entry dispatch.  A per-bytecode lift whose
+    // region contains an interior backward-jump target must be
+    // enterable BOTH at the region start (block 0) and at that
+    // interior target — the runtime caches one compiled fn under both
+    // bcOffsets and picks the entry by state.ip.
+    //
+    // Regression gate for two per-arch divergences:
+    //   - x86_64 had no dispatch prologue at all, so an interior-key
+    //     dispatch silently resumed at the region START.
+    //   - bb158a7f's unreachable-block prune dropped the loader
+    //     pseudo-blocks (nothing branches to them in the IR), leaving
+    //     the arm64 chain jumping at never-bound labels.
+    //
+    // Layout (region-local offsets):
+    //   0    PushLitConst 0        push literals[0]
+    //   1,2  ExtJump +1            → 4  (forward entry into the "loop")
+    //   3    ReturnTop             orphan filler
+    //   4    ReturnTop             ← interior target: returns stack top
+    //   5,6  ExtendB 0xFF          extB = -1
+    //   7,8  ExtJump 0xFB          offset = 251-256 = -5 → target 4
+    // The backward jump makes 4 a dispatchable entry; it is never
+    // executed (block 5 is orphan), so both entries terminate.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushLitConstBase + 0),  // 0
+            SistaV1::ExtJump, 0x01,                    // 1,2 → 4
+            SistaV1::ReturnTop,                        // 3 (orphan)
+            SistaV1::ReturnTop,                        // 4 ← dispatch target
+            SistaV1::ExtendB, 0xFF,                    // 5,6
+            SistaV1::ExtJump, 0xFB,                    // 7,8 → back to 4
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted,
+                                                 &failed, /*perBcEntry=*/true);
+        check(r == LiftResult::kOk, "multi-entry region lifts");
+        check(lifted.dispatchableBlocks.size() == 1,
+              "one dispatchable entry (bcOffset 4)");
+        check(lifted.dispatchableBlocks[0].first == 4,
+              "dispatchable entry is at region-local bcOffset 4");
+
+        const uint8_t* fakeBase = reinterpret_cast<const uint8_t*>(0x1000);
+        std::vector<uint32_t> extraEntries;
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed, fakeBase,
+                                                   /*startBcOffset=*/0,
+                                                   &extraEntries);
+        check(fn != nullptr, "lower multi-entry region succeeds");
+        // The lowerer must REPORT the entries it emitted arms for — the
+        // runtime keys its cache off this, not off dispatchableBlocks.
+        check(extraEntries.size() == 1,
+              "lowerer reports one extra entry point");
+        check(extraEntries[0] == 4, "reported entry is bcOffset 4");
+
+        struct DispState {
+            void*    sp;              // 0
+            uint64_t receiver;        // 8
+            void*    literals;        // 16
+            void*    tempBase;        // 24
+            uint8_t  padA[16];
+            uint8_t* ip;              // 48
+            uint8_t  padB[8];
+            void*    method;          // 64
+            uint8_t  padC[4];
+            int      exitReason;      // 76
+            uint64_t returnValue;     // 80
+            uint8_t  padD[256];
+        };
+        static_assert(offsetof(DispState, ip) == 48, "ip offset");
+        static_assert(offsetof(DispState, method) == 64, "method offset");
+        static_assert(offsetof(DispState, exitReason) == 76, "exit offset");
+        static_assert(offsetof(DispState, returnValue) == 80, "retval offset");
+
+        // numLits = 0 → bytecodes_start = fakeMethod + 16.
+        uint64_t fakeMethod[3] = {0, 1 /* SmI(0) */, 0};
+        const uint8_t* bcStart =
+            reinterpret_cast<const uint8_t*>(&fakeMethod[2]);
+        uint64_t literals[1] = { 0xC0FFEEULL };
+
+        // (a) Entry at the region start: runs block 0, so the value
+        //     returned is the LITERAL it pushed.
+        {
+            uint64_t stack[4] = { 0, 0xDEADBEEFULL, 0, 0 };
+            DispState st{};
+            st.sp        = &stack[2];      // sp[-1] == 0xDEADBEEF
+            st.literals  = literals;
+            st.method    = fakeMethod;
+            st.ip        = const_cast<uint8_t*>(bcStart) + 0;
+            fn(&st);
+            check(st.exitReason == 1, "entry@0 returns");
+            check(st.returnValue == 0xC0FFEEULL,
+                  "entry@0 runs block 0 → literals[0]");
+        }
+
+        // (b) Entry at the interior target: the dispatch chain routes to
+        //     the loader, which materialises the phi from the runtime
+        //     stack — so the value returned is the STACK slot, proving
+        //     block 0 was skipped.  Before the fix this returned
+        //     literals[0] on x86_64 (silently the wrong entry).
+        {
+            uint64_t stack[4] = { 0, 0xDEADBEEFULL, 0, 0 };
+            DispState st{};
+            st.sp        = &stack[2];      // sp[-1] == 0xDEADBEEF
+            st.literals  = literals;
+            st.method    = fakeMethod;
+            st.ip        = const_cast<uint8_t*>(bcStart) + 4;
+            fn(&st);
+            check(st.exitReason == 1, "entry@4 returns");
+            check(st.returnValue == 0xDEADBEEFULL,
+                  "entry@4 dispatches to the loader → runtime stack slot");
+        }
+        std::cout << "--- round-trip multi-entry dispatch: "
+                     "entry@0 → literal, entry@4 → stack slot\n";
+    }
+
     std::cout << "PASS\n";
     return 0;
 }

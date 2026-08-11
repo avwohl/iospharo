@@ -126,9 +126,11 @@ Lowering::~Lowering() {
 Lowering::CompiledFn Lowering::lower(const Method& method,
                                        uint32_t* failedAtValue,
                                        const uint8_t* bytecodeBase,
-                                       uint32_t startBcOffset) {
+                                       uint32_t startBcOffset,
+                                       std::vector<uint32_t>* outExtraEntryBcOffsets) {
     using namespace asmjit;
     using namespace asmjit::a64;
+    if (outExtraEntryBcOffsets) outExtraEntryBcOffsets->clear();
 
     // PHARO_SISTA_NO_LOWER=1 — short-circuit lowering for bisect.
     // Confirms whether the residual jit-default crash is in the asmjit
@@ -368,6 +370,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // from the runtime sp, then branch to the dispatchable target.
     // The existing fillPhis path MOVs the loader's outgoingStack
     // into the target's phi regs at the loader's terminator branch.
+    //
+    // The loaders are reached ONLY from this chain.  The reachability
+    // prune further down BFSes from block 0 over IR edges, and nothing
+    // in the IR branches to a loader — so collect their ids here and
+    // seed the BFS with them.  Without that, bb158a7f's prune drops
+    // every loader and the chain branches at labels that are never
+    // bound, which fails the whole compile (arm64 has had no working
+    // multi-entry dispatch since 2026-06-04).
+    std::vector<uint32_t> dispatchLoaderIds;
     if (!method.dispatchableBlocks.empty() && bytecodeBase) {
         // Read sstate.ip into a register and compute bcOff.
         Gp ipReg = cc.new_gp64("dispIp");
@@ -389,6 +400,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.cmp(bcOffReg, targetReg);
             }
             cc.b_eq(blockLabels[loaderBlockId]);
+            dispatchLoaderIds.push_back(loaderBlockId);
+            if (outExtraEntryBcOffsets)
+                outExtraEntryBcOffsets->push_back(targetBcOff);
         }
         // No match — fall through to block 0 (entry).
     }
@@ -404,6 +418,14 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         std::vector<uint32_t> work;
         work.push_back(0);
         blockReachable[0] = 1;
+        // Multi-entry dispatch targets are extra roots — they are
+        // entered by the prologue chain above, not by any IR edge.
+        for (uint32_t loaderId : dispatchLoaderIds) {
+            if (loaderId < blockReachable.size() && !blockReachable[loaderId]) {
+                blockReachable[loaderId] = 1;
+                work.push_back(loaderId);
+            }
+        }
         while (!work.empty()) {
             uint32_t bid = work.back(); work.pop_back();
             for (uint32_t s : method.blocks[bid].successors) {
@@ -6582,7 +6604,14 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
     // All blocks emitted.  Finalize and register with the runtime.
     cc.end_func();
-    cc.finalize();
+    // finalize() runs the RA + emit passes; it fails on e.g. a branch to
+    // a label that was never bound.  Ignoring the status let a broken
+    // encode fall through into runtime_->add() and hand back a function
+    // pointer to code that was never fully emitted.
+    if (Error ferr = cc.finalize(); ferr != kErrorOk) {
+        if (failedAtValue) *failedAtValue = 0;
+        return nullptr;
+    }
     if (noAdd) {
         // Bisect: built the graph but skip runtime_->add to confirm
         // the JitRuntime allocator is the corruption source.  Return
@@ -6621,8 +6650,10 @@ Lowering::Lowering() {}
 Lowering::~Lowering() {}
 
 Lowering::CompiledFn Lowering::lower(const Method&, uint32_t* failedAtValue,
-                                       const uint8_t*, uint32_t) {
+                                       const uint8_t*, uint32_t,
+                                       std::vector<uint32_t>* outExtraEntryBcOffsets) {
     if (failedAtValue) *failedAtValue = 0;
+    if (outExtraEntryBcOffsets) outExtraEntryBcOffsets->clear();
     return nullptr;
 }
 
