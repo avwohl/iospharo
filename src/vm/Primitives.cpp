@@ -27707,17 +27707,9 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     } else {
         // Try to load the library — search multiple paths like the reference VM.
         // Build candidate names from the module string
-        std::vector<std::string> candidates;
-        candidates.push_back(moduleName);
-        if (moduleName.compare(0, 3, "lib") != 0) {
-            candidates.push_back("lib" + moduleName);
-        }
-        if (moduleName.find(".dylib") == std::string::npos && moduleName.find(".so") == std::string::npos) {
-            candidates.push_back(moduleName + ".dylib");
-            if (moduleName.compare(0, 3, "lib") != 0) {
-                candidates.push_back("lib" + moduleName + ".dylib");
-            }
-        }
+        // Shared with FFI.cpp's tryLoadFromSearchPaths — these two had
+        // drifted, and this one appended ONLY ".dylib" on every platform.
+        std::vector<std::string> candidates = ffi::moduleCandidates(moduleName);
 
         // Try direct dlopen first (handles absolute paths and LD_LIBRARY_PATH)
         for (const auto& name : candidates) {

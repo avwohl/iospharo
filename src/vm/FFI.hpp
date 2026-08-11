@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 #include <unordered_map>
 #include <functional>
 #include "Oop.hpp"
@@ -104,6 +105,17 @@ FFIResult callFromSpec(
     Oop receiver,
     int argCount
 );
+
+// Candidate file names to try for an FFI module name, most specific first.
+//
+// Lives here because BOTH `primitiveLoadModule` (Primitives.cpp) and
+// `tryLoadFromSearchPaths` (FFI.cpp) need it and they had drifted: the latter
+// had an `#ifdef __APPLE__` .dylib/.so split while the former appended ONLY
+// ".dylib", on every platform.  On Linux that meant a module named "sqlite3"
+// was looked for as sqlite3 / libsqlite3 / sqlite3.dylib / libsqlite3.dylib and
+// never as libsqlite3.so.0 — 111 "Error: Module not found." in the arm package
+// sweep's pharo-rdbms-pharo-sqlite3, where stock Cog passes 122/122.
+std::vector<std::string> moduleCandidates(const std::string& moduleName);
 
 } // namespace ffi
 } // namespace pharo

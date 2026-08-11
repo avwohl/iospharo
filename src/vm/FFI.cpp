@@ -341,6 +341,33 @@ static std::vector<std::string> getLibSearchPaths() {
     return paths;
 }
 
+std::vector<std::string> moduleCandidates(const std::string& moduleName) {
+    std::vector<std::string> candidates;
+    candidates.push_back(moduleName);
+    const bool bare = moduleName.compare(0, 3, "lib") != 0;
+    if (bare) candidates.push_back("lib" + moduleName);
+    if (moduleName.find(".dylib") == std::string::npos
+            && moduleName.find(".so") == std::string::npos) {
+#ifdef __APPLE__
+        candidates.push_back(moduleName + ".dylib");
+        if (bare) candidates.push_back("lib" + moduleName + ".dylib");
+#else
+        candidates.push_back(moduleName + ".so");
+        if (bare) candidates.push_back("lib" + moduleName + ".so");
+        // Distributions ship the runtime as a VERSIONED soname and put the
+        // bare `.so` symlink in the -dev package, which build boxes do not
+        // install: Ubuntu has libsqlite3.so.0 but no libsqlite3.so.  Without
+        // these, a bare module name is unloadable on a stock machine even
+        // though the library is right there.
+        for (const char* v : {".so.0", ".so.1", ".so.2", ".so.3"}) {
+            candidates.push_back(moduleName + v);
+            if (bare) candidates.push_back("lib" + moduleName + v);
+        }
+#endif
+    }
+    return candidates;
+}
+
 // Cache of dlopen handles so we don't re-open the same library repeatedly
 static std::unordered_map<std::string, void*> sModuleHandleCache;
 
@@ -355,24 +382,7 @@ static void* tryLoadFromSearchPaths(const std::string& moduleName, const std::st
         return nullptr;  // Previously failed to load
     }
 
-    std::vector<std::string> candidates;
-    candidates.push_back(moduleName);
-    if (moduleName.compare(0, 3, "lib") != 0) {
-        candidates.push_back("lib" + moduleName);
-    }
-    if (moduleName.find(".dylib") == std::string::npos && moduleName.find(".so") == std::string::npos) {
-#ifdef __APPLE__
-        candidates.push_back(moduleName + ".dylib");
-        if (moduleName.compare(0, 3, "lib") != 0) {
-            candidates.push_back("lib" + moduleName + ".dylib");
-        }
-#else
-        candidates.push_back(moduleName + ".so");
-        if (moduleName.compare(0, 3, "lib") != 0) {
-            candidates.push_back("lib" + moduleName + ".so");
-        }
-#endif
-    }
+    std::vector<std::string> candidates = moduleCandidates(moduleName);
 
     auto searchPaths = getLibSearchPaths();
     for (const auto& dir : searchPaths) {
