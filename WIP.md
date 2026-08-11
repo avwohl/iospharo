@@ -57,9 +57,13 @@ is the tell).  Fixed by expressing the threshold in CORES (`IDLE_CORES`,
 default 0.64) scaled by the instance's real vCPU count.  Also fixed:
 `lease.sh` ignored `CONFIG_FILE`, so the arm box's lease row was tagged
 `iospharo-x64`.
-BEFORE RE-RUNNING: preserve results to S3 incrementally — `preserve.sh` syncs
-notes/logs, NOT results — and note the box is a 64-vCPU on-demand c7g.16xlarge
-(~$2.3/h), not the ~$0.60/h 4xlarge quoted in the earlier section.
+RE-RUNNING: pass `PRESERVE_S3=s3://iospharo-build-670060058357/arm-pkg200`
+(added to `run-pkg-jit-test.sh`) so each package's logs + .fails go off-box the
+moment they exist — `preserve.sh` syncs notes/logs, NOT results.  Note the box
+is a 64-vCPU on-demand c7g.16xlarge (~$2.3/h), not the ~$0.60/h 4xlarge quoted
+in the earlier section; `INSTANCE_TYPE=c7g.4xlarge` is the cheap option.  The
+per-package working directory is now removed after each package, so 200 loaded
+images no longer accumulate on disk.
 
 Box gotchas hit while doing this, both now fixed in-tree (`07091eeb`) or worth
 remembering: a stale `origin/jit-arm-linux` autosave branch made clone-and-build

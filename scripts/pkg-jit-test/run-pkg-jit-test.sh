@@ -15,6 +15,10 @@
 # Env:
 #   PHARO=/tmp/h3/pharo                         stock Cog launcher
 #   CUSTOM_VM=.../build-rel/test_load_image     custom JIT VM (use the -O2 build)
+#   PRESERVE_S3=s3://bucket/prefix              upload each package's logs and
+#                                               .fails as soon as they exist, so
+#                                               a box that dies mid-sweep still
+#                                               leaves everything it finished
 #   OUT=/tmp/pkgtest                            output dir
 set -u
 
@@ -86,3 +90,24 @@ comm -13 "$OUT/${LABEL}_cog.fails" "$OUT/${LABEL}_jit.fails"
 echo "--- Cog-only failures (baseline issues the JIT does NOT hit) ---"
 comm -23 "$OUT/${LABEL}_cog.fails" "$OUT/${LABEL}_jit.fails"
 echo "(shared baseline failures are parity, not regressions)"
+
+# Ship this package's results off-box AS SOON AS THEY EXIST.
+#
+# A sweep is hours of work sitting on an instance store.  On 2026-08-11 a
+# CloudWatch idle alarm terminated the box at 158/200 and every result went
+# with it — `preserve.sh` syncs notes and logs, not these.  Uploading per
+# package means a box that dies mid-sweep still leaves everything it finished.
+# Best-effort: a failed upload must never fail the package.
+if [ -n "${PRESERVE_S3:-}" ]; then
+    for f in "$OUT/${LABEL}_cog.log" "$OUT/${LABEL}_jit.log" \
+             "$OUT/${LABEL}_cog.fails" "$OUT/${LABEL}_jit.fails"; do
+        [ -f "$f" ] || continue
+        aws s3 cp --only-show-errors "$f" \
+            "${PRESERVE_S3%/}/$(basename "$f")" 2>/dev/null \
+            || echo "  (preserve: upload failed for $(basename "$f"))"
+    done
+fi
+
+# Clean the per-package working directory; the loaded image and its
+# pharo-local cache are large and 200 of them fill the disk.
+rm -rf "$WD"
