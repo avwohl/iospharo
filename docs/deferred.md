@@ -28,14 +28,23 @@ RULED OUT so far:
   - Not reachable in suite batch 1-400 (10923 P / 1 E / 1 T), so whatever
     pollutes Display runs later than that.
 
-NEXT: a full suite with `PHARO_CTX_TRACE_ALL_SLOTS=1` was queued to settle
-whether the trace bound causes it in suite context (isolation says no). If that
-still fails, bisect the day's commits — the candidates are `c1d6eef7`,
-`4a46413f`/`919904cd` (Linux-only, so unlikely given the macOS repro), and
-`da9159e9`/`d209543d`. Note the failure is display state and the two Cly
-classes open real browser tools, so an earlier GUI test leaving `Display` a
-SmallInteger is at least as likely as a VM cause; `ReleaseTest`-style run-order
-pollution is a known property of this harness.
+  - **The GC trace bound is not it in suite context either** — MEASURED, not
+    reasoned: a full macOS-arm64 suite with `PHARO_CTX_TRACE_ALL_SLOTS=1`
+    reproduces it exactly (`ClyBrowserToolValidityTest ERROR 25`,
+    `ClyNotebookPageRecyclerTest ERROR 3`, 26773 P / 21 F / 55 E overall).
+    `da9159e9`/`d209543d` are therefore ruled out.
+
+NEXT: the remaining in-window commit that is ACTIVE ON macOS is `c1d6eef7`
+(`ffi::moduleCandidates`, shared by `primitiveLoadModule` and
+`tryLoadFromSearchPaths`) — it changed which library file names get tried, so a
+module that used to fail to load may now load and take a GUI test down a
+different path. `4a46413f`/`919904cd` are `#if defined(__linux__)` and cannot
+explain a macOS repro. Bisect by building `361bf92b` (or reverting just
+`c1d6eef7`) and running the full suite. Note the failure is display state
+(`SmallInteger >> #pixelAt:`) and both classes open real browser tools, so an
+earlier GUI test leaving `Display` in a bad state is still at least as likely
+as a VM cause; `ReleaseTest`-style run-order pollution is a known property of
+this harness.
 
 ## OPEN: `rko281-restoreforpharo` is ~50x slower than Cog on live SQLite (2026-08-11)
 
