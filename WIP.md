@@ -24,6 +24,14 @@ was reaped mid-run, see 5).
 
 STILL IN FLIGHT at the time of writing: the full 200-package A/B sweep and the
 full kernel SUnit suite on the box, plus a full suite on macOS-arm64 locally.
+At 180/200 swept, neither `pharo-rdbms-pharo-sqlite3` nor `rko281-porpoise`
+appears in the JIT-only list any more; the rows that do are the same
+timeout-only families the pre-fix sweep had (famixreplication, polymath,
+lexicon, deeptraverser, p3) plus restoreforpharo's new budget overrun.
+Local suite at 1739/2052 classes: 24931 P, 6 F, 43 E, 8 T — every FAIL is
+`ReleaseTest` (the run-order-pollution family) and every ERROR is a GUI class
+(`Cly*`/`Sp*`/`FTTableMorph`) plus the known upstream `OCClassBuilderTest`,
+because this run's prep did not inject `setup_fake_gui.st`.
 
 OPEN, CREATED BY THE FIX: `rko281-restoreforpharo` now genuinely RUNS its 2354
 tests instead of erroring out of all 4712 in seconds, and no longer fits the
