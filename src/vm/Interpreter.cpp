@@ -18995,6 +18995,30 @@ Oop Interpreter::materializeFrameStack() {
                 savedCount++;
             }
 
+            // PHARO_TRACE_FRAME_TEMPS=<selector substring>: dump the C++
+            // frame slots this loop just copied, so a Context temp that
+            // disagrees with the source can be attributed to either the
+            // copy (context stale) or the frame itself (the JIT's store
+            // never landed where the materializer reads).
+            if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
+                    && frame.savedMethod.isObject()) {
+                std::string fsel = memory_.selectorOf(frame.savedMethod);
+                if (fsel.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS))
+                        != std::string::npos) {
+                    fprintf(stderr, "[FRAME-TEMPS] #%s fp=%p numTemps=%d:",
+                            fsel.c_str(), (void*)frame.savedFP, numTemps);
+                    for (int t = 0; t < numTemps; t++) {
+                        Oop tv = *(frame.savedFP + 1 + t);
+                        fprintf(stderr, " t%d=%s", t,
+                                tv.isNil() ? "nil"
+                                  : tv.isSmallInteger() ? "SmI"
+                                  : (tv.isObject() && tv.rawBits() > 0x10000)
+                                      ? memory_.classNameOf(tv).c_str() : "imm");
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
+
             // Save expression stack items above the temps.
             Oop* exprStart = frame.savedFP + 1 + numTemps;
             Oop* nextFrameStart;
