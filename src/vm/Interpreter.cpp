@@ -19089,8 +19089,9 @@ Oop Interpreter::materializeFrameStack() {
             }
         }
 
-        // Set stackp to actual number of items saved
-        memory_.storePointer(2, context, Oop::fromSmallInteger(savedCount)); // stackp
+        // Set stackp to actual number of items saved, clearing anything a
+        // deeper earlier sync of this same (reused) context left above it.
+        storeContextStackp(context, savedCount);
         frame.ctxSynced = true;  // snapshot now exact for this suspension
 
         // This context becomes the sender for the next frame
@@ -19195,8 +19196,9 @@ Oop Interpreter::materializeFrameStack() {
                     }
                 }
 
-                // Set stackp to actual number of items saved
-                memory_.storePointer(2, context, Oop::fromSmallInteger(savedCount)); // stackp
+                // Set stackp to actual number of items saved, clearing anything
+                // a deeper earlier sync of this reused context left above it.
+                storeContextStackp(context, savedCount);
 
                 // REVERSE-EXEC TAPE: record asTuple save (fp1 = operand-0 captured).
                 if (__builtin_expect(g_atRecOn, 0) && g_atOop != 0
@@ -21460,6 +21462,43 @@ Oop Interpreter::activeContext() const {
 }
 
 // ===== GC SUPPORT =====
+
+void Interpreter::describeOperandSlot(Oop* slot, char* buf, size_t bufSize) {
+    // Which activation owns this operand-stack slot?  Frames are pushed in
+    // increasing-address order, so the owner is the deepest frame whose
+    // savedFP is at or below the slot.  Reporting the offset from that FP is
+    // what distinguishes a live temp (fp+1..fp+nTemps) from residue an
+    // earlier, deeper activation left behind at the same address.
+    size_t owner = SIZE_MAX;
+    for (size_t i = 0; i < frameDepth_; ++i) {
+        if (savedFrames_[i].savedFP && savedFrames_[i].savedFP <= slot) owner = i;
+    }
+    const ptrdiff_t idx  = slot - stackBase_;
+    const ptrdiff_t live = stackPointer_ - stackBase_;
+    if (owner == SIZE_MAX) {
+        snprintf(buf, bufSize, "slot %td/%td (below every frame)", idx, live);
+        return;
+    }
+    const SavedFrame& f = savedFrames_[owner];
+    std::string sel = f.savedMethod.isObject() ? memory_.selectorOf(f.savedMethod)
+                                               : std::string("?");
+    snprintf(buf, bufSize, "slot %td/%td frame#%zu/%zu #%s fp+%td args=%d",
+             idx, live, owner, frameDepth_, sel.c_str(),
+             slot - f.savedFP, f.savedArgCount);
+}
+
+void Interpreter::storeContextStackp(Oop context, int stackp) {
+    memory_.storePointer(2, context, Oop::fromSmallInteger(stackp));
+    if (stackp < 0) return;
+    ObjectHeader* ctx = context.asObjectPtr();
+    const size_t cap = ctx->slotCount();
+    const Oop nilOop = memory_.nil();
+    for (size_t s = 6 + (size_t)stackp; s < cap; ++s) {
+        // Read first: the tail is already nil for a freshly allocated context,
+        // so a reused one is the only case that pays for the stores.
+        if (!ctx->slotAt(s).isNil()) memory_.storePointer(s, context, nilOop);
+    }
+}
 
 void Interpreter::prepareForGC() {
     // Convert current frame's raw IP pointers to offsets from method bytes start.

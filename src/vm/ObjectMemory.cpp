@@ -3603,6 +3603,55 @@ void ObjectMemory::processMarkStack() {
     }
 }
 
+void ObjectMemory::printMarkParentChain(uint64_t oop) {
+    uint64_t cur = oop;
+    std::unordered_set<uint64_t> seenHops;
+    for (int hop = 0; hop < 24; hop++) {
+        auto it = markParent_.find(cur);
+        if (it == markParent_.end()) {
+            auto rt = markRootTag_.find(cur);
+            fprintf(stderr, " <- ROOT(%s)",
+                    (rt != markRootTag_.end() && rt->second) ? rt->second : "?");
+            break;
+        }
+        uint32_t viaSlot = it->second.slot;
+        cur = it->second.parent;
+        Oop parentO = Oop::fromRawBits(cur);
+        fprintf(stderr, " <- %s(0x%llx)[%u]", classNameOf(parentO).c_str(),
+                (unsigned long long)cur, viaSlot);
+        // A Context is the interesting case: say whether the holding slot is
+        // LIVE (below stackp) or dead residue above it, and name the activation.
+        fprintf(stderr, "%s", describeContextSlot(parentO, viaSlot).c_str());
+        if (!seenHops.insert(cur).second) { fprintf(stderr, " <- (cycle)"); break; }
+    }
+    fprintf(stderr, "\n");
+}
+
+void ObjectMemory::reportWatchedChains() {
+    if (heapWatchHits_.empty()) return;
+    std::unordered_set<uint64_t> seen;
+    for (uint64_t oop : heapWatchHits_) {
+        if (!seen.insert(oop).second) continue;
+        fprintf(stderr, "[HEAP-CHAIN] 0x%llx", (unsigned long long)oop);
+        printMarkParentChain(oop);
+    }
+    heapWatchHits_.clear();
+}
+
+std::string ObjectMemory::describeContextSlot(Oop parent, uint32_t slot) const {
+    if (!parent.isObject() || classNameOf(parent) != "Context") return std::string();
+    ObjectHeader* pc = parent.asObjectPtr();
+    Oop stackpO = pc->slotCount() > 2 ? pc->slotAt(2) : Oop::nil();
+    long long stackp = stackpO.isSmallInteger() ? stackpO.asSmallInteger() : -1;
+    long long liveEnd = 6 + stackp;   // slots 0-5 are the fixed fields
+    char buf[192];
+    snprintf(buf, sizeof buf, "{stackp=%lld liveSlots=6..%lld slot%s method=%s}",
+             stackp, liveEnd - 1,
+             (stackp >= 0 && (long long)slot >= liveEnd) ? "=DEAD-RESIDUE" : "=live",
+             pc->slotCount() > 3 ? selectorOf(pc->slotAt(3)).c_str() : "?");
+    return std::string(buf);
+}
+
 void ObjectMemory::scanPointerFields(ObjectHeader* obj) {
     // Mark the class of this object via classIndex.
     // In Spur, the class is NOT a pointer slot — it's encoded as an index in
@@ -3649,9 +3698,17 @@ void ObjectMemory::scanPointerFields(ObjectHeader* obj) {
         Oop parentOop = Oop::fromObject(obj);
         for (size_t i = 0; i < numPointers; ++i) {
             Oop child = slots[i];
-            if (child.isObject() && child.rawBits() > 0x10000)
+            if (child.isObject() && child.rawBits() > 0x10000) {
                 markParent_.emplace(child.rawBits(),
                                     MarkParent{parentOop.rawBits(), (uint32_t)i});
+                // Collect watched-class instances for the post-fixpoint chain
+                // report.  Logging here (as the plain watch does) would print
+                // the immediate parent only, and the parent map is not
+                // complete until the mark reaches its fixpoint.
+                if (watchIdx != 0
+                        && child.asObjectPtr()->classIndex() == (uint32_t)watchIdx)
+                    heapWatchHits_.push_back(child.rawBits());
+            }
             markAndTrace(child);
         }
 #if PHARO_HOT_PATH_DIAG
@@ -3666,12 +3723,14 @@ void ObjectMemory::scanPointerFields(ObjectHeader* obj) {
                     && child.asObjectPtr()->classIndex() == (uint32_t)watchIdx
                     && heapWatchLogged_ < GET_DEBUG_INT(PHARO_WATCH_HEAP_MAXLOG)) {
                 heapWatchLogged_++;
+                Oop parentOop = Oop::fromObject(obj);
                 fprintf(stderr,
-                    "[HEAP-WATCH] 0x%llx <- parent 0x%llx cls=%s slot=%zu/%zu\n",
+                    "[HEAP-WATCH] 0x%llx <- parent 0x%llx cls=%s slot=%zu/%zu %s\n",
                     (unsigned long long)child.rawBits(),
-                    (unsigned long long)Oop::fromObject(obj).rawBits(),
-                    classNameOf(Oop::fromObject(obj)).c_str(),
-                    i, numPointers);
+                    (unsigned long long)parentOop.rawBits(),
+                    classNameOf(parentOop).c_str(),
+                    i, numPointers,
+                    describeContextSlot(parentOop, (uint32_t)i).c_str());
             }
 #if PHARO_HOT_PATH_DIAG
             currentScanSlot_ = i;
@@ -3697,13 +3756,35 @@ size_t ObjectMemory::pointerSlotsOf(ObjectHeader* obj) const {
     if (fmt <= ObjectFormat::WeakWithFixed) {
         size_t totalSlots = obj->slotCount();
 
-        // Context objects: scan ALL slots, not just up to stackp.
-        // The stackp optimization is unsafe because prepareForGC syncs temps
-        // to the Context without always updating stackp. A stale stackp causes
-        // the GC to skip valid pointer slots during both marking and compaction
-        // reference updating, leading to classIdx=0 crashes (stale pointers to
-        // memory freed by compaction). Scanning nil slots beyond stackp is cheap.
-
+        // A Context's live extent is its stackp, exactly as in Spur, whose
+        // numPointerSlotsOf: returns CtxtTempFrameStart + stackp for a
+        // MethodContext.  Scanning the WHOLE slot array instead — which this
+        // did until 2026-08-11 — makes dead expression-stack residue a GC
+        // root: a returned activation's context still held a
+        // PropertyManagerTestObject at slot 8 with stackp=2, so the object
+        // outlived a collection it should not have and
+        // PropertyManagerTest>>testPropertyManagerValueWeakness failed here
+        // and passed on Cog.  Residue above stackp is unreachable by the
+        // language's own rules, so not tracing it is not a heuristic.
+        //
+        // The full scan was introduced because prepareForGC could sync temps
+        // into a Context without raising stackp to cover them, and a stackp
+        // too LOW makes both the mark and the post-compaction pointer update
+        // skip live slots (stale pointers -> classIdx=0 crashes).  Both temp
+        // syncs now raise stackp themselves (Interpreter::prepareForGC), and
+        // Interpreter::storeContextStackp nils the tail whenever it lowers
+        // stackp, so nothing meaningful is left above it either way.
+        // PHARO_CTX_TRACE_ALL_SLOTS=1 restores the old scan for bisecting.
+        if (totalSlots > 2 && contextClassIndex_ != 0
+                && obj->classIndex() == contextClassIndex_
+                && !GET_DEBUG_BOOL(PHARO_CTX_TRACE_ALL_SLOTS)) {
+            Oop sp = obj->slotAt(2);
+            if (sp.isSmallInteger()) {
+                int64_t stackp = sp.asSmallInteger();
+                if (stackp >= 0 && (size_t)(6 + stackp) <= totalSlots)
+                    return (size_t)(6 + stackp);
+            }
+        }
         return totalSlots;
     }
 
@@ -3765,39 +3846,7 @@ void ObjectMemory::processWeaklings() {
                     fprintf(stderr, "[WEAK-ALIVE] %s in %s slot %zu:",
                             classNameOf(ref).c_str(),
                             classNameOf(Oop::fromObject(obj)).c_str(), i);
-                    uint64_t cur = ref.rawBits();
-                    std::unordered_set<uint64_t> seenHops;
-                    for (int hop = 0; hop < 24; hop++) {
-                        auto it = markParent_.find(cur);
-                        if (it == markParent_.end()) { fprintf(stderr, " <- ROOT"); break; }
-                        uint32_t viaSlot = it->second.slot;
-                        cur = it->second.parent;
-                        Oop parentO = Oop::fromRawBits(cur);
-                        fprintf(stderr, " <- %s(0x%llx)[%u]",
-                                classNameOf(parentO).c_str(),
-                                (unsigned long long)cur, viaSlot);
-                        // A Context is the interesting case: say whether the
-                        // holding slot is LIVE (below stackp) or dead residue
-                        // above it, and name the activation.
-                        if (parentO.isObject()
-                                && classNameOf(parentO) == "Context") {
-                            ObjectHeader* pc = parentO.asObjectPtr();
-                            Oop stackpO = pc->slotCount() > 2 ? pc->slotAt(2) : Oop::nil();
-                            long long stackp = stackpO.isSmallInteger()
-                                ? stackpO.asSmallInteger() : -1;
-                            long long liveEnd = 6 + stackp;
-                            fprintf(stderr, "{stackp=%lld liveSlots=6..%lld slot%s method=%s}",
-                                    stackp, liveEnd - 1,
-                                    (stackp >= 0 && (long long)viaSlot >= liveEnd)
-                                        ? "=DEAD-RESIDUE" : "=live",
-                                    pc->slotCount() > 3
-                                        ? selectorOf(pc->slotAt(3)).c_str() : "?");
-                        }
-                        if (!seenHops.insert(cur).second) {
-                            fprintf(stderr, " <- (cycle)"); break;
-                        }
-                    }
-                    fprintf(stderr, "\n");
+                    printMarkParentChain(ref.rawBits());
                 }
             }
         }
@@ -4089,7 +4138,11 @@ void ObjectMemory::syncClassTableToHeap() {
 size_t ObjectMemory::markPhase(bool skipEphemerons) {
     heapWatchLogged_ = 0;
     recordMarkParents_ = GET_DEBUG_BOOL(PHARO_WEAK_SURVIVOR_PATHS);
-    if (recordMarkParents_) markParent_.clear();
+    if (recordMarkParents_) { markParent_.clear(); markRootTag_.clear(); }
+    // pointerSlotsOf bounds a Context's trace at its stackp and needs the
+    // cached class index; cacheGCClassIndices runs at image load, but a
+    // become: on Context class would leave it stale/zero.
+    if (contextClassIndex_ == 0) cacheGCClassIndices();
     weakPathFilter_ = GET_DEBUG_STR(PHARO_WATCH_HEAP_CLASS);
     logWeakSurvivorClasses_ = GET_DEBUG_BOOL(PHARO_WEAK_SURVIVOR_CLASSES);
     // Reserve space for mark stack to avoid frequent reallocations
@@ -4138,6 +4191,9 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
     // young objects referenced only by caches must tenure, not dangle.
     if (interpreter_) {
         interpreter_->forEachRoot([this](Oop& oop) {
+            if (__builtin_expect(recordMarkParents_, 0)
+                    && oop.isObject() && oop.rawBits() > 0x10000)
+                markRootTag_.emplace(oop.rawBits(), interpreter_->rootTag_);
             markAndTrace(oop);
         }, skipEphemerons ? Interpreter::RootScope::All
                           : Interpreter::RootScope::StrongOnly);
@@ -4201,6 +4257,10 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
         }
         processMarkStack();
     }
+
+    // 5a. Mark fixpoint reached and markParent_ is complete — report the full
+    // retention chain for every watched-class instance that survived.
+    reportWatchedChains();
 
     // 5b. Sweep the class table: nil entries for classes that were not marked.
     // This allows anonymous/transient classes to be collected.

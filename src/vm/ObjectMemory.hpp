@@ -1036,6 +1036,14 @@ private:
     /// [HEAP-WATCH] line budget for the current GC (PHARO_WATCH_HEAP_CLASSIDX).
     int heapWatchLogged_ = 0;
 
+    /// Annotate a Context parent for the heap probes: name the activation and
+    /// say whether the holding slot is inside the live region (6..6+stackp-1)
+    /// or residue above stackp.  A Context is the one parent class where
+    /// "reachable" does not imply "live" — pointerSlotsOf deliberately traces
+    /// a Context's whole slot array — so the distinction is the entire answer
+    /// to "why wasn't this collected?".  Diagnostic paths only.
+    std::string describeContextSlot(Oop parent, uint32_t slot) const;
+
     /// PHARO_WEAK_SURVIVOR_PATHS: record each object's first-reaching parent
     /// during mark, so processWeaklings can print why a weak referent lived.
     bool recordMarkParents_ = false;
@@ -1043,6 +1051,27 @@ private:
     const char* weakPathFilter_ = nullptr;  // PHARO_WATCH_HEAP_CLASS narrows [WEAK-ALIVE] to one referent class
     struct MarkParent { uint64_t parent; uint32_t slot; };
     std::unordered_map<uint64_t, MarkParent> markParent_;
+
+    /// Which forEachRoot category first visited each root object this mark.
+    /// A chain that ends in "<- ROOT" otherwise stops exactly one hop short of
+    /// the answer; with this it ends in "<- ROOT(saved-frames)".
+    std::unordered_map<uint64_t, const char*> markRootTag_;
+
+    /// Watched-class instances seen during this mark (PHARO_WATCH_HEAP_CLASS).
+    /// Their full parent chains are printed after the fixpoint, when
+    /// markParent_ is complete — the immediate parent alone stops one hop
+    /// short of the root that is actually doing the retaining.
+    std::vector<uint64_t> heapWatchHits_;
+
+    /// Print "<- Parent(0x..)[slot]" back to a root for one object, using the
+    /// parents recorded during this mark.  Shared by [WEAK-ALIVE] and
+    /// [HEAP-CHAIN]; annotates Context hops with describeContextSlot.
+    void printMarkParentChain(uint64_t oop);
+
+    /// After the mark fixpoint: print a full chain for every watched-class
+    /// instance that survived.  Requires PHARO_WEAK_SURVIVOR_PATHS for the
+    /// parent map and PHARO_WATCH_HEAP_CLASS to pick the class.
+    void reportWatchedChains();
 
     // ===== COMPACT PHASE =====
 

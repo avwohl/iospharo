@@ -314,6 +314,34 @@ public:
     /// there set it as they go.
     const char* rootTag_ = nullptr;
 
+    /// Optional extra context appended to a [ROOT-WATCH] line, set by the
+    /// section that is walking when it can say something more specific than
+    /// its category name.  "via operand-stack" only narrows the search to a
+    /// few thousand slots; the operand-stack section fills this in with the
+    /// owning frame and the slot's offset inside it, which is the datum that
+    /// actually names the culprit.  Null for every other section.
+    const char* rootDetail_ = nullptr;
+
+    /// PHARO_WATCH_ROOT_CLASS helper: describe which activation owns an
+    /// operand-stack slot — "slot 4711/5000 frame#312 #testFoo fp+3" — by
+    /// finding the deepest saved frame whose savedFP is at or below it.
+    /// Diagnostic only: called once per watched-class hit, never on the
+    /// normal root walk.
+    void describeOperandSlot(Oop* slot, char* buf, size_t bufSize);
+
+    /// Store a Context's stackp and nil every slot above the new top.
+    ///
+    /// Spur never has to do this: `numPointerSlotsOf:` traces a MethodContext
+    /// only up to `CtxtTempFrameStart + stackp`, so whatever sits above the
+    /// stack pointer is invisible to its collector.  Ours traces the whole
+    /// slot array on purpose (see ObjectMemory::pointerSlotsOf — a stale
+    /// stackp would otherwise make compaction skip live pointers), which turns
+    /// that same residue into a GC root.  Contexts are reused across
+    /// materializations of one frame, so a re-sync at a shallower depth leaves
+    /// the deeper run's operands behind and they keep dead objects alive for a
+    /// collection.  Clearing them here restores the invariant our scan assumes.
+    void storeContextStackp(Oop context, int stackp);
+
     /// Free unregistered CallbackInfos whose in-flight window has closed
     /// (no callback frames on the C stack, no pending worker callbacks,
     /// entry >5s old).  Called from the periodic checkpoint; see the
@@ -3640,9 +3668,10 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
         if (__builtin_expect(watchCls != nullptr, 0)
                 && o.isObject() && o.rawBits() > 0x10000
                 && memory_.classNameOf(o) == watchCls) {
-            fprintf(stderr, "[ROOT-WATCH] %s oop=0x%llx via %s\n",
+            fprintf(stderr, "[ROOT-WATCH] %s oop=0x%llx via %s%s%s\n",
                     watchCls, (unsigned long long)o.rawBits(),
-                    rootTag_ ? rootTag_ : "?");
+                    rootTag_ ? rootTag_ : "?",
+                    rootDetail_ ? " " : "", rootDetail_ ? rootDetail_ : "");
         }
         rawVisitor(o);
     };
@@ -3654,22 +3683,28 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     // walks the survivors.
     const bool visitCacheRoots = (scope == RootScope::All);
 
-    // Current frame Oops
-    visitor(method_);
-    visitor(newMethod_);
-    visitor(homeMethod_);
-    visitor(receiver_);
-    visitor(closure_);
-    visitor(activeContext_);
-    visitor(currentFrameMaterializedCtx_);
+    // Current frame Oops.  Each gets its OWN tag: "vm-registers" covers a
+    // dozen unrelated fields, and when one of them is the reason a dead
+    // activation is still reachable, the category name is not the answer —
+    // the field name is.
+#define PHARO_VISIT_REG(field) do { rootTag_ = #field; visitor(field); } while (0)
+    PHARO_VISIT_REG(method_);
+    PHARO_VISIT_REG(newMethod_);
+    PHARO_VISIT_REG(homeMethod_);
+    PHARO_VISIT_REG(receiver_);
+    PHARO_VISIT_REG(closure_);
+    PHARO_VISIT_REG(activeContext_);
+    PHARO_VISIT_REG(currentFrameMaterializedCtx_);
 
     // Pending NLR state (must survive GC during ensure: cleanup)
-    visitor(nlrTargetCtx_);
-    visitor(nlrEnsureCtx_);
-    visitor(nlrHomeMethod_);
-    visitor(nlrValue_);
-    visitor(lastCannotReturnCtx_);
-    visitor(lastCannotReturnProcess_);
+    PHARO_VISIT_REG(nlrTargetCtx_);
+    PHARO_VISIT_REG(nlrEnsureCtx_);
+    PHARO_VISIT_REG(nlrHomeMethod_);
+    PHARO_VISIT_REG(nlrValue_);
+    PHARO_VISIT_REG(lastCannotReturnCtx_);
+    PHARO_VISIT_REG(lastCannotReturnProcess_);
+#undef PHARO_VISIT_REG
+    rootTag_ = "vm-registers";
 
     rootTag_ = "nlr-saved-states";
     // Per-process saved NLR states (all entries, including process Oops)
@@ -3722,9 +3757,21 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     // Operand stack (only the live portion)
     // stackPointer_ points one past the last live value (post-increment push),
     // so use < not <= to avoid scanning the dead slot at stackPointer_.
+    char slotDetail[192];
     for (Oop* p = stackBase_; p < stackPointer_; ++p) {
+        // Name the owning activation for a watched-class hit: "via
+        // operand-stack" alone leaves thousands of candidate slots.
+        if (__builtin_expect(watchCls != nullptr, 0)
+                && p->isObject() && p->rawBits() > 0x10000
+                && memory_.classNameOf(*p) == watchCls) {
+            describeOperandSlot(p, slotDetail, sizeof slotDetail);
+            rootDetail_ = slotDetail;
+        } else {
+            rootDetail_ = nullptr;
+        }
         visitor(*p);
     }
+    rootDetail_ = nullptr;
 
     rootTag_ = "saved-frames";
     // Saved frames
