@@ -22,16 +22,51 @@ Full write-up: `docs/aws-closeout-2026-08-11.md`.
 Box: c7g.4xlarge on-demand, us-east-2 (2nd box `i-0b676d684313167b7`; the first
 was reaped mid-run, see 5).
 
-STILL IN FLIGHT at the time of writing: the full 200-package A/B sweep and the
-full kernel SUnit suite on the box, plus a full suite on macOS-arm64 locally.
-At 180/200 swept, neither `pharo-rdbms-pharo-sqlite3` nor `rko281-porpoise`
-appears in the JIT-only list any more; the rows that do are the same
-timeout-only families the pre-fix sweep had (famixreplication, polymath,
-lexicon, deeptraverser, p3) plus restoreforpharo's new budget overrun.
-Local suite at 1739/2052 classes: 24931 P, 6 F, 43 E, 8 T — every FAIL is
-`ReleaseTest` (the run-order-pollution family) and every ERROR is a GUI class
-(`Cly*`/`Sp*`/`FTTableMorph`) plus the known upstream `OCClassBuilderTest`,
-because this run's prep did not inject `setup_fake_gui.st`.
+**Re-sweep: ZERO JIT-only failures across 200 packages** (was two real findings
+pre-fix).  `docs/results/arm-closeout-2026-08-11-summary.tsv`.  Eleven rows
+carry a non-zero flag; reading the counters, every one is a test that passes on
+Cog and TIMES OUT on ours, a row with byte-identical counters
+(`mumez-redistick`), or a row where neither arm produced a result.
+
+**Local full suite (macOS-arm64): 2055 classes, 27701 P / 22 F / 12 T / 50 E.**
+Every FAIL is in a documented residual family — `ReleaseTest` run-order
+pollution (6) and the `St*`/`Sp*` GUI, TKT and ZnClient families (16) — the same
+shape as the pre-fix arm run's 19.  The 50 errors are this run's prep, which
+did not inject `setup_fake_gui.st`.
+
+**Cost of the GC change: none measurable.** Bounded vs `PHARO_CTX_TRACE_ALL_SLOTS=1`,
+3 runs each, seconds:
+
+    gc-under-deep-stack   5.35 5.67 5.79   vs   5.93 5.92 6.49
+    materialize-churn     3.66 3.85 3.92   vs   3.94 4.00 4.30
+    alloc-collect (ctrl)  3.15 3.25 3.32   vs   3.37 3.41 3.59
+
+The control moves by as much as the two GC benchmarks, so: no regression, a
+small win at best.  Expected — the bounded trace scans strictly fewer slots.
+
+### 6. A false alarm worth the paragraph
+
+Three packages in the re-sweep SIGSEGV'd, two of which (`moosetechnology-fast`,
+`-fast-java`) had scored identical-to-Cog the day before.  That is the exact
+shape of a GC regression from the trace bound, and it is what the old
+whole-array scan existed to prevent.  It was not one: `sudo dmesg` shows a
+single `test_load_image invoked oom-killer` event where a stock-Cog process had
+reached **30 GB total-vm on a 32 GB box**, and whichever VMs were mid-GC at that
+instant faulted in `processWeaklings`.  Re-run standalone all three are clean
+and unchanged, under default / `PHARO_CTX_TRACE_ALL_SLOTS=1` / `PHARO_NO_JIT=1`
+alike.  The runner now records each arm's exit status (`137` = SIGKILL, `124` =
+budget, `139` = SIGSEGV) so nothing has to be reconstructed from a log again.
+
+### 7. New finding, from a bucket nobody had opened
+
+The arm document left "the 15 cog-ran/jit-did-not packages are unexamined".
+`scripts/pkg-jit-test/classify-missing-jit.py` (new) examines them, and one is a
+genuine defect: **`pharo-contributions-mutalk` SIGSEGVs in `~Interpreter()`**
+(`__libc_free`, fault addr `0xfffffffffffaa871`), identically in BOTH sweeps, so
+pre-existing and not OOM collateral.  Reproduces standalone and is already
+bisected one step: `PHARO_CTX_TRACE_ALL_SLOTS=1` crashes identically (so not the
+GC change) and `PHARO_NO_JIT=1` does not crash (so the JIT is required).  In
+`docs/deferred.md` with the repro.
 
 OPEN, CREATED BY THE FIX: `rko281-restoreforpharo` now genuinely RUNS its 2354
 tests instead of erroring out of all 4712 in seconds, and no longer fits the
