@@ -81,12 +81,29 @@ rm -rf "$WD"; mkdir -p "$WD"
 COG_TIMEOUT="${COG_TIMEOUT:-600}"
 JIT_TIMEOUT="${JIT_TIMEOUT:-900}"
 
+# Record each arm's exit status.  A run that produced no RESULT is otherwise a
+# bare `-` in the summary, and the three reasons are not the same thing:
+#   124  the timeout budget ran out       -> a speed result
+#   137  SIGKILL, i.e. the kernel OOM-killer  -> says nothing about this package
+#   139  SIGSEGV                          -> a VM defect worth chasing
+# The 2026-08-11 close-out sweep recorded three SIGSEGVs that looked like a GC
+# regression and were collateral from ONE stock-Cog process ballooning to 30 GB
+# on a 32 GB box: `test_load_image invoked oom-killer`, and whichever VMs were
+# mid-GC at that instant faulted.  All three ran clean standalone.  Without the
+# exit status there is nothing in the results that distinguishes that from a
+# real crash.
 echo "== $LABEL: stock Cog (budget ${COG_TIMEOUT}s) =="
 (cd "$WD" && timeout "$COG_TIMEOUT" "$PHARO" "$IMAGE" eval "$EVAL") > "$OUT/${LABEL}_cog.log" 2>&1
+cog_exit=$?
+echo "$cog_exit" > "$OUT/${LABEL}_cog.exit"
 grep -aE "^CLASSES|^RESULT" "$OUT/${LABEL}_cog.log"
+[ "$cog_exit" -ne 0 ] && echo "  (cog exit=$cog_exit$([ "$cog_exit" = 137 ] && echo ' — SIGKILL, most likely the OOM killer')$([ "$cog_exit" = 124 ] && echo ' — timeout')$([ "$cog_exit" = 139 ] && echo ' — SIGSEGV'))"
 
 echo "== $LABEL: custom JIT VM (budget ${JIT_TIMEOUT}s) =="
 (cd "$WD" && PHARO_MAX_STEPS=2000000000000 timeout "$JIT_TIMEOUT" "$CUSTOM_VM" "$IMAGE" eval "$EVAL") > "$OUT/${LABEL}_jit.log" 2>&1
+jit_exit=$?
+echo "$jit_exit" > "$OUT/${LABEL}_jit.exit"
+[ "$jit_exit" -ne 0 ] && echo "  (jit exit=$jit_exit$([ "$jit_exit" = 137 ] && echo ' — SIGKILL, most likely the OOM killer')$([ "$jit_exit" = 124 ] && echo ' — timeout')$([ "$jit_exit" = 139 ] && echo ' — SIGSEGV'))"
 # the custom VM interleaves [JIT]/[DIAG] telemetry; filter to the runner's lines
 grep -aE "^CLASSES|^RESULT" "$OUT/${LABEL}_jit.log" | grep -avE "\[JIT\]"
 
