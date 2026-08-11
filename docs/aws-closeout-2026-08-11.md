@@ -181,7 +181,84 @@ library.
 `c1d6eef7` stays — its candidate list is still right for bare module names, and
 distributions do ship versioned sonames. It just was not this bug.
 
-## 3. Where the x86 run stands
+## 3. The re-sweep: zero JIT-only failures
+
+The full 200-package A/B was re-run on the fixed VM (aarch64, 8 workers,
+`docs/results/arm-closeout-2026-08-11-summary.tsv`):
+
+    packages: 200 | loaded: 174 | load-failed: 26 | flagged jit-only: 11
+
+Both closed packages are gone from the flagged list. Reading the counters
+rather than the flag column, as the arm sweep's own document insists, **none of
+the eleven is a JIT-only failure**:
+
+    package                            cog                     jit
+    mumez-redistick                    fail=6 err=4            fail=6 err=4      identical
+    driolar-soccertheory-pharo         pass=78 err=13          pass=78 err=12 t=1
+    svenvc-p3                          pass=22 err=70 t=3      pass=21 err=70 t=4
+    omarabedelkader-pharo-lexicon      pass=51                 pass=50 t=1
+    pharo-contributions-deeptraverser  pass=53                 pass=52 t=1
+    polymathorg-polymath               pass=776 err=1          pass=774 err=1 t=2
+    moosetechnology-famixreplication   pass=43                 pass=39 t=4
+    thalesgroup-pharoows               pass=16                 pass=7 t=9
+    j-brant-smacc                      pass=557 err=8          -
+    fouziray-escapeanalysispharo       -                       -
+    rko281-restoreforpharo             -                       -
+
+Every difference is a test that PASSES on Cog and TIMES OUT on ours, one row
+with byte-identical counters, or a row where neither arm produced a result.
+The pre-fix sweep had two real findings; this one has none.
+
+### The bucket nobody had looked at
+
+The arm document left a third item: "the 15 cog-ran/jit-did-not packages are
+unexamined; some are probably the 900 s JIT timeout, but that has not been
+checked". `scripts/pkg-jit-test/classify-missing-jit.py` (new) checks, by
+reading each package's jit log and its recorded exit status:
+
+    crash=1  eval-lost=3  oom-killed=3  timeout=5  unknown=4
+
+and the classification is what kept a false alarm from becoming a bad commit.
+Three of those rows first read as `crash` — `moosetechnology-fast`,
+`moosetechnology-fast-java` and `fedeloch-ume`, all SIGSEGV, and the first two
+had scored identical-to-Cog the day before. That is exactly the shape of a GC
+regression from the trace-bound change, and exactly what the old whole-array
+scan existed to prevent.
+
+It was not. `sudo dmesg` on the box shows a single event —
+`test_load_image invoked oom-killer`, killing a stock-Cog `pharo` that had
+reached **30 GB total-vm on a 32 GB box** — and whichever VMs were mid-GC at
+that instant faulted in `processWeaklings`. Re-run standalone, all three are
+clean and unchanged:
+
+    moosetechnology-fast        pass=12  err=9            = cog, = pre-fix
+    moosetechnology-fast-java   pass=616 fail=1 err=7     = cog, = pre-fix
+    (identical under default, PHARO_CTX_TRACE_ALL_SLOTS=1, and PHARO_NO_JIT=1)
+
+Nothing in the recorded results distinguished that from a real crash, so the
+runner now writes `<label>_{cog,jit}.exit` and the classifier reads it: 137 =
+SIGKILL (says nothing about the package), 124 = budget, 139 = a SIGSEGV worth
+chasing.
+
+The one surviving `crash` is a genuine, pre-existing defect the bucket had been
+hiding — see below.
+
+### New finding: `pharo-contributions-mutalk` crashes in `~Interpreter()`
+
+Present in BOTH sweeps, same fault address, same point in the log:
+
+    [SIGSEGV] Signal 11 caught! Fault addr=0xfffffffffffaa871
+    libc.so.6(__libc_free+0x3c)
+    std::unique_ptr<pharo::Interpreter>::~unique_ptr()
+    main
+
+Deterministic, so not OOM collateral. It happens after `CLASSES 89` with no
+`RESULT`, i.e. the VM leaves the suite early and then frees a corrupt pointer
+on the way out. Not caused by anything in this session — the pre-fix sweep hit
+it identically — but it costs the whole package's results, and it is the first
+time it has been looked at. Tracked in `docs/deferred.md`.
+
+## 4. Where the x86 run stands
 
 Every finding the 2026-08-10 x86_64 run raised is now closed, without needing a
 second x86 box:
@@ -202,7 +279,7 @@ exactly why the bug only surfaced on aarch64.
 A fresh x86 box would re-measure, not discover. Worth doing when the next batch
 of VM changes lands, not to close these.
 
-## 4. What this says about the harness
+## 5. What this says about the harness
 
 Two lessons, both cheap to act on next time:
 
@@ -216,7 +293,7 @@ Two lessons, both cheap to act on next time:
     When an arm diverges on anything environmental, diff what the two
     *processes* see before blaming the VM.
 
-## 5. Box notes
+## 6. Box notes
 
 The first close-out box (`i-0e84d6df890cce46c`) was terminated 45 minutes in,
 mid-package-run: `Client.UserInitiatedShutdown`, i.e. the keep-alive reaper.

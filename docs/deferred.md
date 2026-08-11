@@ -4,6 +4,30 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
+## OPEN: `pharo-contributions-mutalk` crashes freeing the Interpreter (2026-08-11)
+
+Deterministic and PRE-EXISTING — both the 2026-08-11 arm sweep and the
+post-fix re-sweep hit it at the same fault address and the same point in the
+log, so it is not fallout from either fix and not OOM collateral (which is what
+the three other apparent crashes in that sweep turned out to be):
+
+    [SIGSEGV] Signal 11 caught! Fault addr=0xfffffffffffaa871
+    libc.so.6(__libc_free+0x3c)
+    std::unique_ptr<pharo::Interpreter>::~unique_ptr()
+    main
+
+It happens after `CLASSES 89` with no `RESULT`: the VM leaves MuTalk's suite
+early and then frees a corrupt pointer on the way out.  Cog runs the same
+package `pass=336 err=1`.  Costs the whole package's results.  This is the
+first time the "cog ran, our VM produced nothing" bucket has been examined —
+`scripts/pkg-jit-test/classify-missing-jit.py` is what surfaced it.
+
+Repro (aarch64 Linux box): load `Metacello new baseline: 'MuTalk'; ...` per
+`packages-200.tsv`, then run `run_pkg_tests.st` with
+`PKG_PREFIXES='MuTalk-Tests,MuTalk-CI-Tests,MuTalk-Utilities-Tests,MuTalk-Examples-Tests'`.
+Start by finding what makes the VM exit the suite early; the free is downstream
+of that.
+
 ## FIXED da9159e9: the "second weak-reference retention path" (2026-08-11)
 
 Not a weak-reference bug, and not a JIT bug.
