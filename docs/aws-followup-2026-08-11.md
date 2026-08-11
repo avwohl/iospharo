@@ -302,10 +302,17 @@ the stale `savedFP`.
       before   0 P / 2 F  in 10/10 runs     (stock Cog: 2 P / 0 F, 3/3)
       after    2 P / 0 F  in 14 of 16 runs
 
-Regression coverage: 200-class SUnit batch 8365 P / 0 F / 0 E / 1 T (identical
-to baseline), and 29 context-identity-sensitive classes (Context, BlockClosure,
-Continuation, Become, Object, Process*, StDebugger*, simulation, reflectivity,
-weak) 1288 P / 0 F / 0 E / 0 T.
+Regression coverage — ~14,000 tests, zero new failures:
+
+    classes 1-200         8365 P / 0 F / 0 E / 1 T   (T = known FinalizationRegistry flake)
+    classes 201-565       4309 P / 0 F / 1 E         (E = OCClassBuilderTest
+                                                      testCreateNormalClassWithTraitComposition,
+                                                      the upstream image bug that
+                                                      fails on stock Cog too)
+    29 context-identity   1288 P / 0 F / 0 E / 0 T   (Context, BlockClosure,
+      -sensitive classes                              Continuation, Become, Object,
+                                                      Process*, StDebugger*, simulation,
+                                                      reflectivity, weak)
 
 **It costs ~9% on one benchmark.** Isolated, four runs each, `1M blocks`
 (`1 to: 1000000 do: [:i | [x := x + 1] value]`): 220/228/229/235 ms before,
