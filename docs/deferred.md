@@ -4,6 +4,37 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
+## OPEN: weak references not cleared under the JIT (2026-08-11)
+
+`WeakOrderedCollectionTest`'s two garbage-collected tests fail
+DETERMINISTICALLY under our VM (10/10 runs) and pass deterministically on
+stock Cog (3/3), in-suite under `scripts/pharo-headless-test`.  Earlier
+sessions recorded these as "flaky"; they are not.  `PHARO_NO_JIT=1` makes
+them pass, so the JIT keeps the weak collection's referents alive across
+three `Smalltalk garbageCollect` calls.
+
+Ruled out: Sista (`PHARO_NO_SISTA`, `PHARO_NO_SISTA_PER_BC`), the inline
+eden allocation (`PHARO_T1_NO_INLINE_NEW_ASM`, `PHARO_T1_NO_EDEN_NEW`),
+generational clones, the J2J save-pool GC roots (skipping the walk
+entirely still fails), and nil-ing context slots above `stackp` on the
+frame0-reuse path.  `PHARO_NO_FRAME0_REUSE=1` is unusable as a bisect —
+it hangs.
+
+Reproduces ONLY under our runner: a direct 40x loop (JIT-warmed), a fork
+at `userBackgroundPriority`, and SUnit's own `TestCase>>run` all pass.
+Adding two diagnostic statements to the test body makes it pass — the
+dead-slot-residue signature.  Live hypothesis: JIT frame slots already
+popped but still inside `forEachRoot`'s `stackBase_..stackPointer_` scan.
+Next step: instrument the fullGC path with `stackPointer_` minus the
+innermost `currentJITState_->sp`, and check what the T1 prologue reserves
+for `sp` on entry.
+
+Very likely the same defect as porpoise's
+`PropertyManagerTest>>testPropertyManagerValueWeakness`, the one finding
+the x86 package sweep saw correlate across suites.
+
+Full evidence + repro recipe: `docs/aws-followup-2026-08-11.md` section 3.
+
 ## BREAKTHROUGH: the Heisenbug cluster is a PREEMPTION/MATERIALIZATION bug (2026-07-07)
 
 SlotIntegration is a SCHEDULING Heisenbug, and DET_SCHED cracks it open:

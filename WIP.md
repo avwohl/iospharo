@@ -1,6 +1,66 @@
-# WIP — latest session 2026-08-10 → 08-11 (build/infra hardening + x86 & arm test runs)
+# WIP — latest session 2026-08-11 (closing out the x86 & arm AWS run findings)
 
-## ============ 2026-08-11 SESSION SUMMARY (read this first) ============
+## ======= 2026-08-11 FOLLOW-UP SESSION (read this first) =======
+
+Full write-up: `docs/aws-followup-2026-08-11.md`.  Worked the open list in
+section D of the previous session (below).  Everything measured locally —
+arm64 native plus x86_64 through the `build-x86` tree under Rosetta.
+
+    x86 multi-entry dispatch divergence     FIXED   c5332248 (BOTH arches)
+    CWD-relative file resolution            FIXED   d1cd608e
+    weak-reference test re-triage           RE-CLASSIFIED — deterministic, not flaky
+    arm package sweep                       NOT RUN (needs an AWS box)
+    build-hunt history rewrite              NOT DONE (needs a force-push)
+    xcode-select                            NOT DONE (needs a password)
+
+**A. `c5332248` — multi-entry dispatch was broken on both arches.**
+x86_64 had no dispatch prologue at all, yet SistaRuntime registered the
+compiled fn at every dispatchable bcOffset regardless of arch — so an
+interior-loop-top trigger jumped into a fn compiled for a different
+bcOffset and resumed at the region start with the wrong operand stack
+(new unit test, prologue removed: exit 139 / 1 / 139 over three runs —
+wrong value or SIGSEGV).  arm64's prologue has been DEAD since
+`bb158a7f` (2026-06-04): its unreachable-block prune is seeded only from
+block 0, and the loader pseudo-blocks are reached only by the dispatch
+chain, so they were pruned and the chain branched at unbound labels.
+Restoring it is **~5x on tinyBenchmarks bytecodes/sec** (265-295M ->
+1.34-1.51 G, five runs each; sends/sec unchanged).  The two apparent
+full-suite deltas (1M blocks +24%, dict 50K -15%) do NOT survive
+isolation — suite-order coupling, not the change.  Root-cause fix for the
+drift: `lower()` now REPORTS the entry bcOffsets it emitted arms for and
+the runtime keys the cache off that, instead of assuming.  `cc.finalize()`
+status was discarded in both backends; now checked.
+
+**B. `d1cd608e` — the VM no longer chdir()s to the image directory.**
+Same launch dir, `FileSystem workingDirectory` + `'probe.txt' exists`:
+Cog `/private/tmp/cwdtest true`, ours WAS `/private/tmp/harness false`,
+ours NOW matches Cog.  The chdir was never needed for its stated purpose
+(StartupPreferencesLoader reads `FileSystem workingDirectory` —
+`lookInImageFolder` is misnamed).  Also fixed: a RELATIVE image path
+could not be opened at all.  The startup.st CWD trap is closed at the
+same time — the generated script self-deletes as its first statement
+(survives a `timeout` kill), the stale sweep runs in both modes, and eval
+refuses to clobber a foreign startup.st.  Opt-out
+`PHARO_CHDIR_IMAGE_DIR=1`.  512 P / 0 F across the 26-class
+file/path/resolver family, from two different CWDs.
+
+**C. The weak-reference tests are NOT flaky — they are a deterministic,
+JIT-only divergence.**  Previous sessions recorded "confirmed flaky" from
+3F/1P over four x86 runs.  On arm64: ours 2 FAIL in 10/10 runs, stock Cog
+2 PASS in 3/3.  `PHARO_NO_JIT=1` -> 2 PASS, so the JIT is required.
+RULED OUT: Sista (both knobs), inline eden alloc, gen-clone, the J2J
+save-pool GC roots (skipped entirely — still fails), nil-ing context
+slots above stackp.  Reproduces ONLY under our runner: a direct 40x
+loop, a fork at userBackgroundPriority, and SUnit's own `TestCase>>run`
+all pass.  Adding two diagnostic statements to the test body makes it
+PASS — dead-slot residue signature.  Live hypothesis: JIT frame slots
+already popped but still inside `forEachRoot`'s
+`stackBase_..stackPointer_` scan.  Next step + repro recipe in the doc.
+
+
+## ==== 2026-08-10 -> 08-11 SESSION (infra hardening + the AWS runs) ====
+
+Section D below is the list the follow-up session above worked from.
 
 THEME: every bug this session was a **silent success** — something was broken
 and reported OK. A reverted submodule pin, an unhashed tarball, a manifest-less
