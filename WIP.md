@@ -48,7 +48,22 @@ Both arms now run from `$OUT/wd-$LABEL`, and the VM prints a loud error if its
 startup.st is still on disk at exit (the script self-deletes, so a survivor
 means the loader never ran it).  Sweep relaunched on the fixed code.
 
-**F. The arm sweep was LOST at 158/200 — `4ca528ad`.**  `idle-alarm.sh` arms a
+**F. The arm sweep was LOST at 158/200 — SPOT RECLAMATION.**
+`StateReason.Code = Server.SpotInstanceTermination`, "no Spot capacity
+available that matches your request".  A spot box taken back by AWS; nothing in
+this repo caused it, and `config-arm.env` already documented the same thing
+happening to an earlier c7g.16xlarge.  Mitigation: `FORCE_ONDEMAND=1
+INSTANCE_TYPE=c7g.4xlarge` (also the ~$0.60/h shape) plus `1b9b7a56`, which
+uploads results per package so a reclaimed box leaves what it finished.
+
+CORRECTION: commit `4ca528ad` claims a CloudWatch idle alarm did this.  It did
+not — no such alarm existed for that box (the newest in the account is from
+2026-06-25, and provision.sh only arms one under ARM_CPU_ALARM=1).
+`delete-alarms` succeeds silently on a non-existent alarm and I read that as
+confirmation.  The IDLE_CORES scaling in that commit is still reasonable
+hardening, and its lease.sh CONFIG_FILE fix is a real bug, but the stated cause
+is wrong.  Old text follows for the record:
+`idle-alarm.sh` arms a
 CloudWatch alarm that TERMINATES the box on <4% average CPU for an hour.
 CPUUtilization is a percentage of ALL vCPUs, and the arm default is a 64-vCPU
 c7g.16xlarge, so a network-bound 24-worker sweep (~2-8 busy cores) averaged

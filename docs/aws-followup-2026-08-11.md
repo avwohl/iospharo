@@ -390,6 +390,49 @@ the x86 doc flagged as "the one finding that correlates across suites" —
 porpoise's `PropertyManagerTest>>testPropertyManagerValueWeakness` is very likely
 the same defect.
 
+## 3b. CORRECTION — what actually killed the first arm sweep
+
+I published a wrong root cause in `4ca528ad` and in an earlier revision of this
+document. Recording the correction here because the wrong version is in the git
+history.
+
+**Claimed:** the CloudWatch idle-terminate alarm fired because its flat 4% CPU
+threshold is instance-size-relative and the box was a 64-vCPU c7g.16xlarge.
+
+**Actual:**
+
+    aws ec2 describe-instances --instance-ids i-0740e9a99ddd0c253
+      InstanceLifecycle    spot
+      StateReason.Code     Server.SpotInstanceTermination
+      Status.Message       Your Spot instance was terminated because there is
+                           no Spot capacity available that matches your request.
+
+The box was a SPOT instance reclaimed by AWS for lack of capacity. Nothing to do
+with idle detection, CPU thresholds, the alarm, the lease, or anything in this
+repo. `config-arm.env` even documents the same thing happening before, and
+recommends `FORCE_ONDEMAND=1` for exactly this reason.
+
+How I got it wrong, since the method matters more than the conclusion:
+
+- `delete-alarms` succeeds silently on an alarm that does not exist, and I read
+  that success as proof one existed. The newest `iospharo-idle-terminate-*`
+  alarm in the account is from 2026-06-25.
+- `provision.sh` only arms that alarm under `ARM_CPU_ALARM=1`, which I had not
+  set — I never checked before blaming it.
+- I saw "Service initiated" and reasoned toward a mechanism instead of reading
+  `StateReason`, which names the cause outright.
+
+What survives from that commit: the `IDLE_CORES` scaling is still correct
+hardening for anyone who does set `ARM_CPU_ALARM=1` on a large box (a flat
+percentage genuinely is size-relative), and the `lease.sh` `CONFIG_FILE` fix is
+a real bug — the arm lease row really was tagged `iospharo-x64`. Neither caused
+this. The commit message overstates both.
+
+The fix that actually addresses this failure is `1b9b7a56`: results are now
+uploaded per package, so a reclaimed spot box leaves behind everything it
+finished. Plus `FORCE_ONDEMAND=1 INSTANCE_TYPE=c7g.4xlarge`, which is both
+reclaim-proof and the ~$0.60/h shape originally quoted.
+
 ## 4. Still open
 
 - **arm package sweep** (~1 h, ~$0.60 on a fresh box). Needs an AWS box; not
