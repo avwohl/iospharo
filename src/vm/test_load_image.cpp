@@ -919,20 +919,35 @@ int main(int argc, char* argv[]) {
 
     std::cout << "\nLoading image: " << imagePath << std::endl;
 
-    // Change working directory to image's directory so Pharo's
-    // StartupPreferencesLoader finds startup.st alongside the image
-    {
+    // Do NOT change the process working directory.  We used to chdir to
+    // the image's directory so Pharo's StartupPreferencesLoader would
+    // find the startup.st we write next to the image — but the loader
+    // looks in `FileSystem workingDirectory` (StartupPreferencesHandler
+    // >>lookInImageFolder is misnamed), i.e. the PROCESS CWD, so the
+    // startup script belongs in the CWD and the chdir was never needed
+    // for it.  The chdir cost two image-visible divergences from stock
+    // Cog, which leaves the CWD alone:
+    //   - every CWD-relative lookup the image makes ('x' asFileReference,
+    //     XML DTD SystemID resolution, ...) resolved against the image
+    //     directory instead of the launch directory;
+    //   - a RELATIVE image path stopped working entirely, because the
+    //     image was opened after the chdir moved out from under it
+    //     (`test_load_image harness/Pharo.image` → "Cannot open image
+    //     file").
+    // PHARO_CHDIR_IMAGE_DIR=1 restores the old behaviour for bisecting.
+    if (GET_DEBUG_BOOL(PHARO_CHDIR_IMAGE_DIR)) {
         char* pathCopy = strdup(imagePath);
         const char* dir = dirname(pathCopy);
         if (chdir(dir) != 0) {
             std::cerr << "Warning: could not chdir to " << dir << std::endl;
-        } else {
-            char cwd[1024];
-            if (getcwd(cwd, sizeof(cwd))) {
-                std::cout << "Working directory: " << cwd << std::endl;
-            }
         }
         free(pathCopy);
+    }
+    {
+        char cwd[1024];
+        if (getcwd(cwd, sizeof(cwd))) {
+            std::cout << "Working directory: " << cwd << std::endl;
+        }
     }
 
     // In eval mode, write a startup.st that evaluates the expression and exits.
@@ -946,22 +961,34 @@ int main(int argc, char* argv[]) {
     // hang at high priority and block the eval).  Coupled to our runner
     // script's marker convention; harmless on images without it.
     std::string startupStPath;
-    if (!evalMode) {
-        // A previous eval-mode run (or a crash during one) may have left its
-        // startup.st next to the image. Its preamble SUSPENDS every Morphic
-        // process, so an interactive GUI run that auto-loads it renders a
-        // desktop whose UI event loop is dead — clicks silently do nothing.
-        // Detect it by the eval-only marker and remove it. (Found 2026-07-01:
-        // this was why the on-screen Windows GUI ignored all real clicks.)
-        if (std::ifstream f{"startup.st"}) {
-            std::string contents((std::istreambuf_iterator<char>(f)),
-                                 std::istreambuf_iterator<char>());
-            if (contents.find("[STARTUP-ST-FIRED]") != std::string::npos) {
-                f.close();
-                std::remove("startup.st");
-                std::cout << "Removed stale eval-mode startup.st (would suspend the GUI's Morphic processes)" << std::endl;
-            }
+    // A previous eval-mode run (or a crash during one) may have left its
+    // startup.st in this directory.  Its preamble SUSPENDS every Morphic
+    // process, so an interactive GUI run that auto-loads it renders a
+    // desktop whose UI event loop is dead — clicks silently do nothing.
+    // (Found 2026-07-01: this was why the on-screen Windows GUI ignored
+    // all real clicks.  It also hijacks stock-VM preps — see the
+    // "startup.st CWD trap" in CLAUDE.md.)  Ours carries an eval-only
+    // marker, so we can tell it from a script the user wrote: remove
+    // ours in BOTH modes, and never overwrite one that isn't ours.
+    bool foreignStartupSt = false;
+    if (std::ifstream f{"startup.st"}) {
+        std::string contents((std::istreambuf_iterator<char>(f)),
+                             std::istreambuf_iterator<char>());
+        f.close();
+        if (contents.find("[STARTUP-ST-FIRED]") != std::string::npos) {
+            std::remove("startup.st");
+            std::cout << "Removed stale eval-mode startup.st (would suspend the GUI's Morphic processes)" << std::endl;
+        } else {
+            foreignStartupSt = true;
         }
+    }
+    if (evalMode && foreignStartupSt) {
+        std::cerr << "ERROR: refusing to overwrite an existing startup.st in "
+                  << "the working directory — eval mode needs to write its own "
+                  << "there (Pharo's StartupPreferencesLoader reads startup.st "
+                  << "from the CWD).  Move it aside, or run from another "
+                  << "directory." << std::endl;
+        return 1;
     }
     if (evalMode) {
         // Touch /tmp/sunit_run_completed.txt so that if the image was
@@ -986,7 +1013,11 @@ int main(int argc, char* argv[]) {
             escaped += c;
             if (c == '\'') escaped += '\'';
         }
-        // Write startup.st next to the image (CWD is already image dir).
+        // Write startup.st into the working directory — that is where
+        // StartupPreferencesHandler>>lookInImageFolder looks for it
+        // (`FileSystem workingDirectory`, despite the name).  Removed
+        // again on the way out; a leftover is detected by its marker
+        // and deleted on the next run.
         // Stop the WorldMorph render loop before eval so its doOneCycle
         // doesn't compete with the eval and doesn't hit Morphic-related
         // DNUs (e.g. SpStyleEnvironmentColorProxy>>isTransparent).
@@ -996,6 +1027,15 @@ int main(int argc, char* argv[]) {
             std::ofstream f(startupStPath);
             f << "| result sema done |\n"
               << "Stdio stderr nextPutAll: '[STARTUP-ST-FIRED]'; lf; flush.\n"
+              // Delete ourselves the moment we start running.  The C++
+              // side removes this file on the way out too, but that path
+              // is skipped by a crash or an external kill — and a leftover
+              // startup.st in the CWD silently hijacks every subsequent
+              // Pharo launch from this directory, including stock-VM
+              // preps (the "startup.st CWD trap" in CLAUDE.md).  By now
+              // the loader has read and compiled us, so unlinking is safe.
+              << "[ 'startup.st' asFileReference ensureDelete ]\n"
+              << "  on: Error do: [:e | ].\n"
               << "[| active |\n"
               << "  active := Processor activeProcess.\n"
               << "  Process allInstances do: [:p | | ctx walk depth morphic |\n"
