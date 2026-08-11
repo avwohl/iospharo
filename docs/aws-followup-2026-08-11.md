@@ -135,7 +135,17 @@ keeping the referents alive.
     PHARO_T1_NO_EDEN_NEW=1            2 FAIL
     PHARO_NO_GEN_CLONE=1              2 FAIL
     skip the J2J save-pool GC roots   2 FAIL      (temporary unsound diagnostic)
-    nil context slots above stackp    2 FAIL      (on the frame0-reuse path)
+    nil context slots above stackp    2 FAIL      (all THREE reuse paths)
+
+`materializeFrameStack` reuses contexts in three places — the saved-frame loop's
+`frame.materializedContext`, `currentFrameMaterializedCtx_`, and the
+`frame[0] == activeContext_` re-sync — and NONE of them nils the slots above the
+new `stackp`, so a frame re-materialized at a shallower depth leaves the deeper
+snapshot's operands in a heap object the process still reaches. That is a real
+stale-root bug and matches every symptom, but nil-ing all three tails does not
+fix these tests (5 runs: 0 P / 2 F each), so it is not the retention path here.
+Not committed — a real correctness improvement, but unproven and it costs a
+tail sweep per materialization, so it needs its own evidence first.
 
 The J2J save pool was the obvious suspect — `forEachRoot` deliberately visits the
 FULL reservation `[0, j2jPoolCursor_)` and the comment there already names a
@@ -162,15 +172,34 @@ our runner (`[WPROBE-A] size=1 classes=#(#UndefinedObject)`), matching Cog. Addi
 statements that overwrite frame slots is exactly what makes a dead-slot retention
 bug disappear.
 
-Reading that together with "JIT required" and "runner-only", the live hypothesis
-is **frame-slot residue in a JIT activation**: slots that the running frame has
-already popped, still inside the region `forEachRoot` scans
-(`stackBase_ .. stackPointer_`), holding the collection's referents. The next
-concrete step is to instrument the fullGC path with the gap between
-`stackPointer_` and the innermost `currentJITState_->sp`, and to check what the
-JIT prologue reserves for `sp` on entry — if it reserves the method's maximum
-stack depth rather than tracking the live top, every never-written or
-already-popped slot in the frame is a GC root.
+Reading that together with "JIT required" and "runner-only", the shape is
+**dead-slot residue** somewhere the collector still reaches.
+
+### The pin is TRANSITIVE, not a root — new tool: `PHARO_WATCH_ROOT_CLASS`
+
+Knob-bisecting was the wrong instrument, so this session added a real one.
+`PHARO_WATCH_ROOT_CLASS=<ClassName>` makes `forEachRoot` report which ROOT
+CATEGORY is visiting each instance of that class:
+
+    [ROOT-WATCH] Process oop=0x3009d1a30 via nlr-saved-states
+
+Categories tagged: `vm-registers`, `nlr-saved-states`, `world-renderer`,
+`operand-stack`, `saved-frames`, `method-cache`, `jit-code-zone`,
+`jit-count-map`, `jit-state`, `j2j-save-pool`, `bv-closure-stack`,
+`sista-save-pool`. Costs one predictable branch per root visit when unset.
+
+Result for this bug, over a whole suite run: **zero visits** for `Duration` and
+**zero** for `OrderedCollection`, with the probe verified working (14 `Process`
+visits via `nlr-saved-states` in the same run). Neither the dropped
+`OrderedCollection` nor the `Duration` inside it is ever a direct GC root — the
+pin is transitive, through some rooted object that reaches them.
+
+That rules out the whole "a root category over-scans" family, including the
+frame-slot-residue hypothesis above, and points at a *heap object* that holds
+the reference: a materialized Context, a JIT-side structure, or an image-side
+cache. Next step is provenance during the MARK phase (record, for each object,
+the parent that first reached it) so the surviving referent can be walked back
+to its root — `PHARO_WATCH_ROOT_CLASS` is the root-level half of that tool.
 
 ### Reproducing
 

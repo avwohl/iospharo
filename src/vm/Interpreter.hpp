@@ -309,6 +309,11 @@ public:
     template<typename Visitor>
     void forEachRoot(Visitor&& visitor, RootScope scope = RootScope::All);
 
+    /// Which root category forEachRoot is currently walking.  Only read by
+    /// the PHARO_WATCH_ROOT_CLASS probe inside forEachRoot; the sections
+    /// there set it as they go.
+    const char* rootTag_ = nullptr;
+
     /// Free unregistered CallbackInfos whose in-flight window has closed
     /// (no callback frames on the C stack, no pending worker callbacks,
     /// entry >5s old).  Called from the periodic checkpoint; see the
@@ -3621,7 +3626,27 @@ private:
 // ===== TEMPLATE IMPLEMENTATIONS =====
 
 template<typename Visitor>
-void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
+void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
+    // PHARO_WATCH_ROOT_CLASS=<ClassName>: name which ROOT CATEGORY is
+    // holding instances of that class alive.  "Why didn't this get
+    // collected?" is otherwise unanswerable — you end up bisecting knobs.
+    // Each section below sets rootTag_; the wrapper reports every visit
+    // to an instance of the watched class, with its category and oop, so
+    // one run tells you whether the culprit is the operand stack, a saved
+    // frame, a JIT inline cache, the J2J save pool, ... Costs one
+    // predictable branch per root visit when unset.
+    const char* watchCls = GET_DEBUG_STR(PHARO_WATCH_ROOT_CLASS);
+    auto visitor = [&](Oop& o) {
+        if (__builtin_expect(watchCls != nullptr, 0)
+                && o.isObject() && o.rawBits() > 0x10000
+                && memory_.classNameOf(o) == watchCls) {
+            fprintf(stderr, "[ROOT-WATCH] %s oop=0x%llx via %s\n",
+                    watchCls, (unsigned long long)o.rawBits(),
+                    rootTag_ ? rootTag_ : "?");
+        }
+        rawVisitor(o);
+    };
+    rootTag_ = "vm-registers";
     // Pure VM caches (method cache, JIT headers/ICs/count-maps) are
     // WEAK roots: skipped when the fullGC mark visits StrongOnly, so
     // they can't pin otherwise-dead classes/methods.  Dead entries are
@@ -3646,6 +3671,7 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
     visitor(lastCannotReturnCtx_);
     visitor(lastCannotReturnProcess_);
 
+    rootTag_ = "nlr-saved-states";
     // Per-process saved NLR states (all entries, including process Oops)
     for (int i = 0; i < savedNlrCount_; ++i) {
         visitor(savedNlrStates_[i].process);
@@ -3688,9 +3714,11 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
         visitor(callbackHandlerStack_[i]);
     }
 
+    rootTag_ = "world-renderer";
     // World renderer roots (menu bar items, dropdown items)
     worldRenderer_.forEachOopRoot(visitor);
 
+    rootTag_ = "operand-stack";
     // Operand stack (only the live portion)
     // stackPointer_ points one past the last live value (post-increment push),
     // so use < not <= to avoid scanning the dead slot at stackPointer_.
@@ -3698,6 +3726,7 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
         visitor(*p);
     }
 
+    rootTag_ = "saved-frames";
     // Saved frames
     for (size_t i = 0; i < frameDepth_; ++i) {
         SavedFrame& frame = savedFrames_[i];
@@ -3709,6 +3738,7 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
         visitor(frame.materializedContext);
     }
 
+    rootTag_ = "method-cache";
     // Method cache (weak cache root — see visitCacheRoots above)
     if (visitCacheRoots) {
         for (auto& entry : methodCache_) {
@@ -3719,6 +3749,7 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
     }
 
 
+    rootTag_ = "jit-code-zone";
     // JIT code zone: compiledMethodOop + selectorOop in each JITMethod header,
     // AND method Oops + selector Oops in inline cache entries.
     // These must be GC roots so (a) referenced objects aren't collected
@@ -3815,6 +3846,7 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
             m = m->nextInZone;
         }
 
+        rootTag_ = "jit-count-map";
         // Count map: keys are CompiledMethod Oop bits (needs GC update).
         // Preserving counts across GC lets methods accumulate toward the
         // compile threshold instead of resetting to zero every GC.
@@ -3869,6 +3901,7 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
         }
     }
 
+    rootTag_ = "jit-state";
     // Live JITState: its Oop fields aren't reachable any other way while
     // JIT code is on the C stack. Without this, GC compaction would move
     // state.receiver/method/cachedTarget out from under the JIT, leaving
@@ -3922,6 +3955,7 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
         // receivers were collected.  The stale-slot pin this conservatism
         // causes is a one-chain-lifetime cosmetic (see deferred.md,
         // WeakAnnouncer cold-iteration note).
+        rootTag_ = "j2j-save-pool";
         for (int i = 0; i < j2jPoolCursor_; i++) {
             visitor(j2jPool_[i].receiver);
 #if PHARO_J2J_SAVE_V2
@@ -3932,6 +3966,7 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
         // Session H: BV-inline closure side-stack must be walked so
         // saved closure Oops survive a GC that fires inside the
         // BV-inlined block's body (e.g., on an allocating send).
+        rootTag_ = "bv-closure-stack";
         for (int i = 0; i < bvClosureSaveDepth_; i++) {
             visitor(bvClosureSaveStack_[i]);
         }
@@ -3943,6 +3978,7 @@ void Interpreter::forEachRoot(Visitor&& visitor, RootScope scope) {
         // Per-STATE pool: each chain entry owns a stack-local pool in its
         // tryJITActivation frame (part of the 2026-07-05 chain fix —
         // parked outer states' pools were unvisited too).
+        rootTag_ = "sista-save-pool";
         if (jitSt->sistaSaveCursor && jitSt->sistaSaveLimit) {
             // The pool extends from base to sistaSaveCursor (one past
             // last live entry).  We don't have the base pointer

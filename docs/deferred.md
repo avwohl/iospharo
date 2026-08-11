@@ -23,11 +23,26 @@ it hangs.
 Reproduces ONLY under our runner: a direct 40x loop (JIT-warmed), a fork
 at `userBackgroundPriority`, and SUnit's own `TestCase>>run` all pass.
 Adding two diagnostic statements to the test body makes it pass — the
-dead-slot-residue signature.  Live hypothesis: JIT frame slots already
-popped but still inside `forEachRoot`'s `stackBase_..stackPointer_` scan.
-Next step: instrument the fullGC path with `stackPointer_` minus the
-innermost `currentJITState_->sp`, and check what the T1 prologue reserves
-for `sp` on entry.
+dead-slot-residue signature.
+
+THE PIN IS TRANSITIVE, NOT A ROOT.  New tool `PHARO_WATCH_ROOT_CLASS=<Class>`
+makes forEachRoot report which root category visits each instance of that
+class (categories: vm-registers, nlr-saved-states, world-renderer,
+operand-stack, saved-frames, method-cache, jit-code-zone, jit-count-map,
+jit-state, j2j-save-pool, bv-closure-stack, sista-save-pool).  Over a whole
+suite run: ZERO visits for Duration and ZERO for OrderedCollection, with the
+probe verified working (14 Process visits via nlr-saved-states in the same
+run).  So no root-category over-scan is responsible; some rooted heap object
+REACHES them.  Next step: parent provenance during the mark phase, to walk a
+surviving referent back to its root.
+
+Also ruled out and NOT committed: nil-ing the slots above stackp in all
+THREE of materializeFrameStack's context-reuse paths (frame.materializedContext,
+currentFrameMaterializedCtx_, and the frame[0]==activeContext_ re-sync).  None
+of them nils the tail today, so a frame re-materialized at a shallower depth
+does leave a deeper snapshot's operands in a process-reachable heap object —
+a real stale-root bug worth fixing on its own evidence — but fixing all three
+does not fix these tests (5 runs, 0 P / 2 F each).
 
 Very likely the same defect as porpoise's
 `PropertyManagerTest>>testPropertyManagerValueWeakness`, the one finding
