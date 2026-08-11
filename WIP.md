@@ -57,7 +57,7 @@ and unchanged, under default / `PHARO_CTX_TRACE_ALL_SLOTS=1` / `PHARO_NO_JIT=1`
 alike.  The runner now records each arm's exit status (`137` = SIGKILL, `124` =
 budget, `139` = SIGSEGV) so nothing has to be reconstructed from a log again.
 
-### 7. New finding, from a bucket nobody had opened
+### 7. Three new findings, from a bucket nobody had opened
 
 The arm document left "the 15 cog-ran/jit-did-not packages are unexamined".
 `scripts/pkg-jit-test/classify-missing-jit.py` (new) examines them, and one is a
@@ -65,8 +65,34 @@ genuine defect: **`pharo-contributions-mutalk` SIGSEGVs in `~Interpreter()`**
 (`__libc_free`, fault addr `0xfffffffffffaa871`), identically in BOTH sweeps, so
 pre-existing and not OOM collateral.  Reproduces standalone and is already
 bisected one step: `PHARO_CTX_TRACE_ALL_SLOTS=1` crashes identically (so not the
-GC change) and `PHARO_NO_JIT=1` does not crash (so the JIT is required).  In
-`docs/deferred.md` with the repro.
+GC change) and `PHARO_NO_JIT=1` does not crash (so the JIT is required).
+
+`fedeloch-ume` SIGSEGVs too, at the same address under default,
+`PHARO_CTX_TRACE_ALL_SLOTS=1` AND `PHARO_NO_JIT=1`, before the runner prints
+`PREFIXES` — so neither the JIT nor the GC, and it should be the cheapest of
+the three to localize.  It reaches the VM at all only because the package now
+loads.
+
+`rko281-restoreforpharo` is a PERF finding: cog runs 2354 tests in 145 s, ours
+did not finish in 7200 s.  Before the FFI fix all 4712 of its tests errored
+instantly, so this cost was invisible.  Three JIT-only failures in one family
+appeared in the part that did run.
+
+All four are in `docs/deferred.md` with repros.
+
+### 8. One regression that is NOT ours, proven rather than argued
+
+`ClyBrowserToolValidityTest` (25) and `ClyNotebookPageRecyclerTest` (8) passed
+in the morning's arm full run and ERROR in both evening full runs, one
+signature: `MessageNotUnderstood: SmallInteger >> #pixelAt:`.  That is display
+state, but "it looks like display state" is not evidence, so it was measured: a
+full macOS-arm64 suite with `PHARO_CTX_TRACE_ALL_SLOTS=1` — the GC change
+reverted — reproduces it exactly (26773 P / 21 F / 55 E, same 28 Cly errors).
+`da9159e9`/`d209543d` are ruled out.  The LD_LIBRARY_PATH work is
+`#if defined(__linux__)` and cannot explain a macOS repro either.  The
+remaining in-window commit active on macOS is `c1d6eef7`'s shared
+`ffi::moduleCandidates`.  Open in `docs/deferred.md` with the bisect written
+down so the next session starts from the answer, not the question.
 
 OPEN, CREATED BY THE FIX: `rko281-restoreforpharo` now genuinely RUNS its 2354
 tests instead of erroring out of all 4712 in seconds, and no longer fits the
