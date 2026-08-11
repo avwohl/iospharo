@@ -14268,6 +14268,24 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.ctxSynced = false;  // frame ran since that ctx was synced
     currentFrameMaterializedCtx_ = memory_.nil();  // New frame has no cached context
 
+    // PHARO_TRACE_FRAME_TEMPS: at PUSH time, record where this activation's
+    // temps actually live according to the JIT (state.tempBase) next to where
+    // the materializer will look for them (savedFP + 1).  A mismatch is the
+    // stale-frame bug; see docs/aws-followup-2026-08-11.md.
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
+            && frame.savedMethod.isObject()) {
+        std::string psel = memory_.selectorOf(frame.savedMethod);
+        if (psel.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)) != std::string::npos) {
+            Oop* jitTB = currentJITState_ ? currentJITState_->tempBase : nullptr;
+            fprintf(stderr,
+                "[FRAME-PUSH] #%s savedFP+1=%p jitTempBase=%p %s t0=%s\n",
+                psel.c_str(), (void*)(frame.savedFP + 1), (void*)jitTB,
+                (jitTB && jitTB != frame.savedFP + 1) ? "MISMATCH" : "match",
+                (*(frame.savedFP + 1)).isNil() ? "nil"
+                  : memory_.classNameOf(*(frame.savedFP + 1)).c_str());
+        }
+    }
+
     // When pushing a frame on top of a heap context (fd 0→1), sync the return
     // address to the heap context's PC slot. Rare: only on first frame push.
     if (__builtin_expect(frameDepth_ == 1 && activeContext_.isObject() && activeContext_.rawBits() > 0x10000 &&
