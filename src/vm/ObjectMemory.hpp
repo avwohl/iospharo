@@ -1036,6 +1036,13 @@ private:
     /// [HEAP-WATCH] line budget for the current GC (PHARO_WATCH_HEAP_CLASSIDX).
     int heapWatchLogged_ = 0;
 
+    /// PHARO_WEAK_SURVIVOR_PATHS: record each object's first-reaching parent
+    /// during mark, so processWeaklings can print why a weak referent lived.
+    bool recordMarkParents_ = false;
+    const char* weakPathFilter_ = nullptr;  // PHARO_WATCH_HEAP_CLASS narrows [WEAK-ALIVE] to one referent class
+    struct MarkParent { uint64_t parent; uint32_t slot; };
+    std::unordered_map<uint64_t, MarkParent> markParent_;
+
     // ===== COMPACT PHASE =====
 
     /// Saved first fields space (uses eden as scratch during full GC).

@@ -3640,6 +3640,25 @@ void ObjectMemory::scanPointerFields(ObjectHeader* obj) {
         fprintf(stderr, "[HEAP-WATCH] class %s not found in classTable\n", nm);
         return 0;
     }();
+    // PHARO_WEAK_SURVIVOR_PATHS: remember, for every object, the FIRST parent
+    // that reached it during this mark.  processWeaklings then walks that chain
+    // back for each weak referent that survived, which is the direct answer to
+    // "why wasn't this collected?".  One map entry per marked object, so only
+    // for a deliberate diagnostic run.
+    if (__builtin_expect(recordMarkParents_, 0)) {
+        Oop parentOop = Oop::fromObject(obj);
+        for (size_t i = 0; i < numPointers; ++i) {
+            Oop child = slots[i];
+            if (child.isObject() && child.rawBits() > 0x10000)
+                markParent_.emplace(child.rawBits(),
+                                    MarkParent{parentOop.rawBits(), (uint32_t)i});
+            markAndTrace(child);
+        }
+#if PHARO_HOT_PATH_DIAG
+        currentScanParent_ = nullptr;
+#endif
+        return;
+    }
     if (__builtin_expect(watchIdx != 0, 0)) {
         for (size_t i = 0; i < numPointers; ++i) {
             Oop child = slots[i];
@@ -3726,6 +3745,49 @@ void ObjectMemory::processWeaklings() {
                     slotPtr[i] = nilObject_;
                     anyNilled = true;
                     nilledCount++;
+                } else if (__builtin_expect(recordMarkParents_, 0)
+                           && (weakPathFilter_ == nullptr
+                               || classNameOf(ref) == weakPathFilter_)
+                           && heapWatchLogged_++ < GET_DEBUG_INT(PHARO_WATCH_HEAP_MAXLOG)) {
+                    // Survivor: walk the recorded parent chain back to a root
+                    // and print it.  This names the object that is keeping the
+                    // weak referent alive.
+                    fprintf(stderr, "[WEAK-ALIVE] %s in %s slot %zu:",
+                            classNameOf(ref).c_str(),
+                            classNameOf(Oop::fromObject(obj)).c_str(), i);
+                    uint64_t cur = ref.rawBits();
+                    std::unordered_set<uint64_t> seenHops;
+                    for (int hop = 0; hop < 24; hop++) {
+                        auto it = markParent_.find(cur);
+                        if (it == markParent_.end()) { fprintf(stderr, " <- ROOT"); break; }
+                        uint32_t viaSlot = it->second.slot;
+                        cur = it->second.parent;
+                        Oop parentO = Oop::fromRawBits(cur);
+                        fprintf(stderr, " <- %s(0x%llx)[%u]",
+                                classNameOf(parentO).c_str(),
+                                (unsigned long long)cur, viaSlot);
+                        // A Context is the interesting case: say whether the
+                        // holding slot is LIVE (below stackp) or dead residue
+                        // above it, and name the activation.
+                        if (parentO.isObject()
+                                && classNameOf(parentO) == "Context") {
+                            ObjectHeader* pc = parentO.asObjectPtr();
+                            Oop stackpO = pc->slotCount() > 2 ? pc->slotAt(2) : Oop::nil();
+                            long long stackp = stackpO.isSmallInteger()
+                                ? stackpO.asSmallInteger() : -1;
+                            long long liveEnd = 6 + stackp;
+                            fprintf(stderr, "{stackp=%lld liveSlots=6..%lld slot%s method=%s}",
+                                    stackp, liveEnd - 1,
+                                    (stackp >= 0 && (long long)viaSlot >= liveEnd)
+                                        ? "=DEAD-RESIDUE" : "=live",
+                                    pc->slotCount() > 3
+                                        ? selectorOf(pc->slotAt(3)).c_str() : "?");
+                        }
+                        if (!seenHops.insert(cur).second) {
+                            fprintf(stderr, " <- (cycle)"); break;
+                        }
+                    }
+                    fprintf(stderr, "\n");
                 }
             }
         }
@@ -4016,6 +4078,9 @@ void ObjectMemory::syncClassTableToHeap() {
 
 size_t ObjectMemory::markPhase(bool skipEphemerons) {
     heapWatchLogged_ = 0;
+    recordMarkParents_ = GET_DEBUG_BOOL(PHARO_WEAK_SURVIVOR_PATHS);
+    if (recordMarkParents_) markParent_.clear();
+    weakPathFilter_ = GET_DEBUG_STR(PHARO_WATCH_HEAP_CLASS);
     // Reserve space for mark stack to avoid frequent reallocations
     markStack_.clear();
     markStack_.reserve(100000);

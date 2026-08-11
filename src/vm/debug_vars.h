@@ -189,6 +189,7 @@ DEBUG_INT(PHARO_BV_MAX_CAP, 1)           // FIX 2026-06-20: bail BV inline if nu
 DEBUG_BOOL(PHARO_T1_NO_BC_FLOAT)         // bisect G* SmallFloat bug: disable bytecode-level inline SmallFloat +/- fast-path (0x60/0x61)
 DEBUG_BOOL(PHARO_HEADLESS)               // force headless: skip Metal test surface + GUI click injection so SUnit batches aren't poisoned by render-loop contention (no image args needed)
 DEBUG_INT(PHARO_WATCH_HEAP_CLASSIDX, 0)  // Spur classIndex (== the class's identityHash) to trace during the GC MARK: reports the PARENT object+slot that reaches each instance, i.e. what is keeping it alive transitively. Companion to PHARO_WATCH_ROOT_CLASS, which only covers direct roots
+DEBUG_BOOL(PHARO_WEAK_SURVIVOR_PATHS)    // record each object's first-reaching parent during the GC mark, then print the parent chain for every weak referent that SURVIVED — the direct answer to "why wasn't this collected?". One map entry per marked object; diagnostic runs only
 DEBUG_STR(PHARO_WATCH_HEAP_CLASS)        // same as PHARO_WATCH_HEAP_CLASSIDX but by class NAME (resolved to an index once, by scanning classTable_)
 DEBUG_INT(PHARO_WATCH_HEAP_MAXLOG, 400) // cap on [HEAP-WATCH] lines per GC
 DEBUG_STR(PHARO_WATCH_ROOT_CLASS)        // name a class; forEachRoot reports which ROOT CATEGORY (operand-stack / saved-frames / jit-code-zone / j2j-save-pool / jit-state / ...) is visiting each instance. Answers "why wasn't this collected?" without knob-bisecting
