@@ -104,7 +104,33 @@ no longer pointer-updated after a compaction, so leaving stale oops there would
 be worse than leaving dead ones.
 
 Result: porpoise 14 P / 0 F, byte-identical to stock Cog, on arm64 and on the
-x86_64 build under Rosetta.
+x86_64 build under Rosetta, and on the aarch64 Linux box:
+
+    package                     cog                       jit          jit-only
+    rko281-porpoise             pass=14  fail=0 err=0     pass=14  0/0     0
+    pharo-rdbms-pharo-sqlite3   pass=122 fail=0 err=0     pass=122 0/0     0
+                                                    (was pass=11 err=111)
+
+### Regression coverage for a GC change
+
+    1042 tests   context / closure / exception / process / weak / finalization
+                 families at HEAD:  995 P / 0 F / 0 unexplained E
+                 (the 46 ProcessTest and 1 WeakAnnouncerTest errors are probe
+                 artifacts — those need the SUnit harness's own setup, and pass
+                 46/46 and SKIP under it)
+    5x5 rounds   FinalizationRegistryTest / WeakSetTest / WeakOrderedCollectionTest
+                 in isolation: clean every round.  The single
+                 `FinalizationRegistryTest>>testFinalizationWithMultipleFinalizersPerObject`
+                 TIMEOUT in the full local run does not reproduce — it is inside
+                 the harness's known timeout noise (the pre-fix arm run had 14
+                 timeouts of its own, in other classes).
+    full suite   macOS-arm64 and Linux-aarch64, plus the 200-package A/B sweep.
+
+The only FAILs in the local full suite are `ReleaseTest`
+(`testNoLiteralIsPinnedInMemory`, `testNoOrphanPackage`) — the documented
+run-order-pollution family, which the pre-fix arm run also hit.  The 32 `Cly*` /
+`FTTableMorphTest` errors are an artifact of this run's prep, which did not
+inject `setup_fake_gui.st`; `x86-fullsuite.sh` does.
 
 ## 2. The sqlite3 failure was a missing environment variable
 
