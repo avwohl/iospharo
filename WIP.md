@@ -6,11 +6,30 @@ Goal: finish handling today's x86 and arm AWS test runs.  Both of the previous
 session's open findings (section H below) are now ROOT-CAUSED AND FIXED, and
 both root causes were different from what H predicted.
 
-    2nd weak-ref path (porpoise)     FIXED  da9159e9  14 P / 0 F, = stock Cog
-    sqlite3 FFI Module-not-found     FIXED  4a46413f  libversion 3.45.1 on arm
+    2nd weak-ref path (porpoise)     FIXED  da9159e9 + d209543d
+    sqlite3 FFI Module-not-found     FIXED  4a46413f + 919904cd
                                      (c1d6eef7 was NOT it — measured, see 2)
 
-Box: c7g.4xlarge on-demand, us-east-2, `i-0e84d6df890cce46c`.
+Verified END-TO-END on a fresh aarch64 Linux box, both packages now byte-equal
+to the stock-Cog arm:
+
+    package                     cog                       jit          jit-only
+    rko281-porpoise             pass=14  fail=0 err=0     pass=14  0/0     0
+    pharo-rdbms-pharo-sqlite3   pass=122 fail=0 err=0     pass=122 0/0     0
+                                                    (was pass=11 err=111)
+
+Full write-up: `docs/aws-closeout-2026-08-11.md`.
+Box: c7g.4xlarge on-demand, us-east-2 (2nd box `i-0b676d684313167b7`; the first
+was reaped mid-run, see 5).
+
+STILL IN FLIGHT at the time of writing: the full 200-package A/B sweep and the
+full kernel SUnit suite on the box, plus a full suite on macOS-arm64 locally.
+
+OPEN, CREATED BY THE FIX: `rko281-restoreforpharo` now genuinely RUNS its 2354
+tests instead of erroring out of all 4712 in seconds, and no longer fits the
+harness's 900 s per-package budget (cog finishes in ~2 min; ours had not
+finished at 15).  Needs a single long-timeout re-run to get a real A/B number —
+it is a speed gap on freshly-reachable FFI code, not a correctness result.
 
 ### 1. `da9159e9` — a Context's dead stack residue was a GC root
 
@@ -77,6 +96,35 @@ nothing here — the fix was correct code for a bug that was not the bug.
     sitting in a weak slot, and this one did not.
   - Context hops in both are annotated live vs DEAD-RESIDUE with the
     activation's selector.  That annotation made the cause self-evident.
+
+### 4. Follow-on commits the trace bound forced
+
+`d209543d` — with the trace stopping at stackp, a stackp that is too LOW is a
+correctness hazard, not just a wasted scan (the value is invisible to the mark
+and unpatched by compaction).  That is the exact hazard the whole-array scan
+existed to paper over, so it is closed at the writers: `raiseContextStackpTo`
+covers the single-slot writers (`setTemporary` write-through,
+`setOuterTemporary`), and the third context-reuse path in materializeFrameStack
+now goes through `storeContextStackp` like the other two.
+`919904cd` — `getLibSearchPaths` searches the platform lib dirs directly, since
+glibc snapshots LD_LIBRARY_PATH at process start and our own dlopen would not
+see the setenv.
+`31aa67b3`, `89942e89` — keep both additions off the hot paths: the
+operand-stack root walk stays a bare visit when the probe is off, and
+storeContextStackp clears only the range a store VACATES rather than walking to
+the context's capacity at every process switch.
+
+### 5. Box gotcha — a control session must beat the lease itself
+
+The first box was terminated 45 min in, MID-RUN
+(`Client.UserInitiatedShutdown` = the keep-alive reaper), losing a package
+re-verify and a full suite.  `provision.sh` REGISTERS the lease, and only an
+actively-working Claude heartbeats it — on the box via the DMI instance id, or
+from here via `AWS_LEASE_IID` in the environment the hook sees.  A
+`provision.sh` run does not put that in the parent Claude's environment, so
+driving a box FROM this Mac needs an explicit periodic `lease.sh beat <iid>`.
+The provision output says so; it is easy to skim past.  Nothing else went
+wrong with that box.
 
 ## ======= 2026-08-11 FOLLOW-UP SESSION =======
 
