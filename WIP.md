@@ -1,6 +1,114 @@
-# WIP — /goal "fix all non-Windows bugs" — CONTINUED 2026-07-06 night → 07-08
+# WIP — latest session 2026-08-10 → 08-11 (build/infra hardening + x86 & arm test runs)
 
-## ============ 2026-07-08 SESSION SUMMARY (read this first) ============
+## ============ 2026-08-11 SESSION SUMMARY (read this first) ============
+
+THEME: every bug this session was a **silent success** — something was broken
+and reported OK. A reverted submodule pin, an unhashed tarball, a manifest-less
+xcframework, an SDK misconfiguration, a suite that wrote no results, a box that
+killed itself mid-run. Each fix converts silence into a loud failure. All work
+committed+pushed to origin/jit; no AWS resources left running.
+
+TERMINAL STATE: one real VM defect found and fixed (x86 Sista deopt was
+GC-unsafe). Both architectures otherwise pass at ~99.7-99.9%. CI now exists.
+
+### A. The VM bug (the substantive find)
+
+1. **x86_64 Sista deopt ip was GC-unsafe — FIXED `ce2dcdd2`.** The lowerer is
+   split whole-file per arch with no `#if`, so the two drifted: x86 baked
+   `bytecodeBase + bcOffset` as an immediate at all 16 deopt sites and never
+   read `state.method`; arm64 has recomputed it at fn entry since `7f2c55ce`.
+   That commit gave x86 only `(void)startBcOffset; // not yet supported`.
+   Both production callers pass a non-null bytecodeBase (`SistaRuntime.cpp:113`,
+   `:316`), so after GC compaction moved a method a deopt resumed the
+   interpreter at a stale address. Ported the arm64 hoist; all 16 sites now go
+   through ONE `emitSetIp()` helper so the backends cannot drift the same way.
+   Validated on a native x86 box: `test_sista_ir` FAIL→PASS, other binaries
+   unchanged, 192-class SUnit subset at or below the pre-fix non-pass count.
+   NOT fixed by it: the WeakOrderedCollectionTest failures — that class is
+   flaky (3 FAIL / 1 PASS in four isolated runs WITH the fix).
+
+### B. Test runs (docs/x86-test-run-2026-08-10.md, docs/arm-vs-x86-2026-08-11.md)
+
+2. **x86_64 full run.** SUnit 26327/26412 = 99.68% over 1889 of ~2052 classes,
+   cut deliberately at 3h04m when the Spec/GUI tail collapsed to ~13
+   classes/hour. 200-package A/B sweep: the runner's "12 JIT-only failures"
+   headline does NOT survive inspection — 2 real, 5 timeout-only, 5 spurious
+   (identical counters, two ran zero tests). The larger "real" one is not a JIT
+   bug either: soccertheory's 12 errors are all `XMLFileException: soccerML.dtd
+   does not exist`, i.e. our VM chdir()s to the image dir so CWD-relative lookups
+   resolve differently than under Cog. Real compatibility bug, wrong layer.
+
+3. **aarch64 full run + comparison.** arm ran the suite to COMPLETION (2052
+   classes, 27965 tests, 99.88%) in 2h02m. Per-test differential over the 26571
+   tests both runs executed: 4 worse on arm, 63 better. The 63 are almost all
+   `x86=TIMEOUT → arm=PASS` in the same GUI families that stalled x86 — Graviton3
+   speed against a fixed timeout, not correctness. The 4 are GUI/timing, inside
+   the measured flake floor. Conclusion: **equivalent in correctness at the SUnit
+   and C++ level.**
+   GAP: the arm package sweep was LOST (see 8) — package behaviour is compared
+   for x86 only.
+
+4. **Harness noise floor established.** This harness flips a few tests per run in
+   either direction. Never conclude anything about an individual test from one
+   run — including the "12 genuine failures" list in the x86 doc, which almost
+   certainly contains flaky entries.
+
+### C. Build/infra defects fixed (all were silent successes)
+
+5. **asmjit pin reverted for ~2 months — `86151021`.** `27d378d2` (an x64 spot
+   autosave) clobbered the pin from the fork branch back to upstream master,
+   losing the Catalyst fix. Invisible because the working tree was patched by
+   CMake at configure time, so local builds worked. `0c45aadd` stops the autosave
+   staging submodule pointers (list now derived from .gitmodules, drift logged)
+   and makes `clone-and-build.sh` demand the exact pinned SHA — "populated" is
+   not "at the pin".
+
+6. **Nothing verified downloads or artifacts.** `c5a116e2` adds SHA-256 to all
+   ten third-party tarballs (libffi/SDL2 piped `curl | tar`, which cannot be
+   verified at all — now download→verify→extract). `2fc5aab0` + follow-up make
+   all four xcframework-producing scripts validate what they emitted;
+   `SDL2.xcframework` had sat for two months as an orphaned directory with NO
+   Info.plist — unusable by Xcode — because `Frameworks/` is gitignored and the
+   script exited 0. `0f52f38a` adds an xcode-select preflight: the README told
+   people to install Command Line Tools, the exact config with no iOS SDK.
+
+7. **`c9b45476` — repo review + CI.** There was NO CI. Added a fresh-clone job
+   (checks out with submodules, asserts pins reachable, builds on Linux) and a
+   hygiene job (no tracked build output, scripts parse, checksums present, every
+   artifact script validates). Also: `.gitignore` listed build dirs by exact name
+   — 25 of them — and `build-hunt/` wasn't among them, so 21 MB of object files
+   got committed; now pattern-based and untracked. `37e6093e`: SPM dependencies
+   were never pinned (a bare `*.xcworkspace` ignore swallowed `Package.resolved`),
+   plus two .st handlers that swallowed errors worth seeing.
+
+8. **AWS scripts, three silent-success bugs.**
+   - `d1b0c1aa` — fullsuite hardcoded an x86-only stock-VM URL; on aarch64 the
+     prep installed no SUnit runner and the run reported `run exit=0` with an
+     EMPTY results file. Did this three times before being noticed.
+   - `f034b896` — `idle-shutdown.sh` didn't count `pharo` as an active process,
+     so a box TERMINATED ITSELF 74 min into a network-bound package sweep
+     (CloudTrail: the instance's own role, its own IP). All sweep results lost;
+     `preserve.sh` syncs notes/logs, not results.
+   - Gotcha (memory only): `pgrep -f`/`pkill -f` self-match over ssh — a sweep
+     that never started read as "RUNNING", and a pkill killed its own session.
+
+### D. Open items
+
+- **arm package sweep** — ~1 h, ~$0.60 on a fresh box; would now survive given 8.
+- **CWD-relative file resolution** — make lookups behave as under Cog (see 2).
+- **Re-triage SUnit failures with repeat runs**, now that the flake floor is
+  known; start with the weak-ref tests, which are confirmed flaky not broken.
+- **Secondary x86 divergence, observed but unverified**: the multi-entry dispatch
+  prologue exists only on arm64, yet `SistaRuntime.cpp:118-124` registers the
+  compiled fn at every dispatchable bcOffset regardless of arch.
+- **`build-hunt`'s 21 MB is still in git history** (.git is 289 MB); removing it
+  needs a rewrite + force-push that invalidates every clone. Not done
+  unilaterally.
+- `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` still not
+  run on this Mac (needs a password); build scripts self-correct via
+  DEVELOPER_DIR, but anything else needing an iOS SDK will still fail.
+
+## ============ 2026-07-08 SESSION SUMMARY ============
 
 TERMINAL STATE: the base harness has ZERO genuine unfixed VM bugs. The three
 target bugs are fixed+proven (SlotIntegration, ARM storm, TF-callback — see the
