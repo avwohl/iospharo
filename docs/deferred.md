@@ -4,6 +4,39 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
+## OPEN: 33 Calypso tests went PASS -> ERROR during 2026-08-11 (unexplained)
+
+`ClyBrowserToolValidityTest` (25) and `ClyNotebookPageRecyclerTest` (8) were
+**25 P / 8 P** in the morning's arm full run
+(`docs/results/arm-2026-08-11/`) and are **all ERROR** in both full runs made
+that evening — the macOS-arm64 one and the Linux-aarch64 one, which uses the
+same `x86-fullsuite.sh` prep as the morning run did. One signature:
+
+    MessageNotUnderstood: SmallInteger >> #pixelAt:
+
+which is a Form/Display message with a SmallInteger receiver, i.e. display
+state, not GC state.
+
+RULED OUT so far:
+  - **The GC trace bound is not it in isolation**: both classes run 33 P / 0 E
+    standalone under default AND under `PHARO_CTX_TRACE_ALL_SLOTS=1`.
+  - **The FFI/LD_LIBRARY_PATH change is not it**: that code is `#if
+    defined(__linux__)`, and the errors appear on macOS where it does not exist.
+  - **Not the fake-GUI prep**: the morning run injected `setup_fake_gui.st` and
+    passed; the macOS run did not inject it and fails; the Linux run injects it
+    and fails.
+  - Not reachable in suite batch 1-400 (10923 P / 1 E / 1 T), so whatever
+    pollutes Display runs later than that.
+
+NEXT: a full suite with `PHARO_CTX_TRACE_ALL_SLOTS=1` was queued to settle
+whether the trace bound causes it in suite context (isolation says no). If that
+still fails, bisect the day's commits — the candidates are `c1d6eef7`,
+`4a46413f`/`919904cd` (Linux-only, so unlikely given the macOS repro), and
+`da9159e9`/`d209543d`. Note the failure is display state and the two Cly
+classes open real browser tools, so an earlier GUI test leaving `Display` a
+SmallInteger is at least as likely as a VM cause; `ReleaseTest`-style run-order
+pollution is a known property of this harness.
+
 ## OPEN: `pharo-contributions-mutalk` crashes freeing the Interpreter (2026-08-11)
 
 Deterministic and PRE-EXISTING — both the 2026-08-11 arm sweep and the
