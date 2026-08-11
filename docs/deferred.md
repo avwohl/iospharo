@@ -37,6 +37,31 @@ classes open real browser tools, so an earlier GUI test leaving `Display` a
 SmallInteger is at least as likely as a VM cause; `ReleaseTest`-style run-order
 pollution is a known property of this harness.
 
+## OPEN: `rko281-restoreforpharo` is ~50x slower than Cog on live SQLite (2026-08-11)
+
+Created by the FFI fix, in the sense that the package only reaches this code
+now.  Before `4a46413f` all 4712 of its tests errored instantly with "Module
+not found" and it "finished" in seconds.  With SQLite3 resolving, the suite
+really runs against a live database:
+
+    cog   RESULT pass=2354 fail=1 err=1 timeout=0 classes=102   wall  145 s
+    ours  did not finish                                        wall 7200 s (budget)
+
+So >49x, and the 900 s the sweep allows is nowhere near enough — the sweep
+records it as a bare `-`.  `COG_TIMEOUT`/`JIT_TIMEOUT` now exist for exactly
+this (see `run-pkg-jit-test.sh`).
+
+The truncated run did surface three JIT-only failures worth checking once the
+speed problem is understood, all in the same family:
+
+    SSWReStoreDependentCacheDictionaryTest>>testCollectionRefreshComponentChangeWithExclusion
+    SSWReStoreDependentCacheDictionaryTest>>testRefreshComponentChangeWithExclusion
+    SSWReStoreDependentDictionaryTest>>testCollectionRefreshComponentChangeWithExclusion
+
+Likely the same activation-wall / FFI-callout cost as the other perf gaps
+(libffi per-callout overhead against a C library called in a tight loop) rather
+than anything JIT-specific — but it has not been profiled.
+
 ## OPEN: `fedeloch-ume` SIGSEGVs early, in every configuration (2026-08-11)
 
 Deterministic, and independent of everything we could turn off:
