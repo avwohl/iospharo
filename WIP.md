@@ -1,6 +1,84 @@
 # WIP — latest session 2026-08-11 (closing out the x86 & arm AWS run findings)
 
-## ======= 2026-08-11 FOLLOW-UP SESSION (read this first) =======
+## ===== 2026-08-11 CLOSE-OUT SESSION (read this first) =====
+
+Goal: finish handling today's x86 and arm AWS test runs.  Both of the previous
+session's open findings (section H below) are now ROOT-CAUSED AND FIXED, and
+both root causes were different from what H predicted.
+
+    2nd weak-ref path (porpoise)     FIXED  da9159e9  14 P / 0 F, = stock Cog
+    sqlite3 FFI Module-not-found     FIXED  4a46413f  libversion 3.45.1 on arm
+                                     (c1d6eef7 was NOT it — measured, see 2)
+
+Box: c7g.4xlarge on-demand, us-east-2, `i-0e84d6df890cce46c`.
+
+### 1. `da9159e9` — a Context's dead stack residue was a GC root
+
+H guessed "Got 1 instead of 2 means something is MISSING from allInstances".
+Wrong: the failing assertion is the SECOND one, and the test's own `count` temp
+reads 1 there — an instance from an EARLIER test was still alive when this test
+took its baseline, and the GC under test finally reclaimed it.  Full chain,
+from the probes:
+
+    PropertyManagerTestObject
+      <- Context(...)[8]{stackp=2 liveSlots=6..7 slot=DEAD-RESIDUE
+                         method=testPropertyManagerKeyWeakness}
+      <- ROOT(activeContext_)
+
+`ObjectMemory::pointerSlotsOf` traced a Context's WHOLE slot array; Spur's
+`numPointerSlotsOf:` stops at `CtxtTempFrameStart + stackp`.  So expression-
+stack residue left by a RETURNED activation is a root here and invisible on
+Cog.  Now bounded at stackp (`PHARO_CTX_TRACE_ALL_SLOTS=1` reverts), with the
+two conditions that motivated the full scan handled: `prepareForGC`'s temp
+syncs already RAISE stackp to cover what they write, and the new
+`storeContextStackp` nils the tail whenever materializeFrameStack LOWERS
+stackp on a reused context.
+
+Local regression so far: 822 P / 0 F / 0 E over the weak/GC/context/process
+class family; full-suite runs in flight on both macOS-arm64 and Linux-arm64.
+
+### 2. `4a46413f` — the image saw no arch library directory
+
+`c1d6eef7` (previous session) fixed `primitiveLoadModule`'s candidate list
+"by construction" and could not be verified on Linux.  Verified now on a fresh
+aarch64 box: **unchanged, still err=111.**  The candidate list was never
+reached, because the package computes the path ITSELF and gives up before
+calling the VM:
+
+    SQLite3Library>>unix64LibraryName
+        (#('/usr/lib/x86_64-linux-gnu' '/lib/x86_64-linux-gnu' '/usr/lib64' '/usr/lib'),
+         ((OSEnvironment current at: 'LD_LIBRARY_PATH' ifAbsent: ['']) substrings: ':'))
+            do: [ :path | ... libraryPath exists ifTrue: [ ^ libraryPath fullName ]].
+        self error: 'Module not found.'
+
+The hardcoded half is x86_64-only (so is `FFIUnix64LibraryFinder>>knownPaths`),
+so on aarch64 it is LD_LIBRARY_PATH or nothing — and a Pharo distribution's
+`pharo` is a shell WRAPPER that sets it from `ldd`'s idea of the VM's libc
+directory.  Cog's image saw
+`/home/ubuntu/h3/lib:/lib/aarch64-linux-gnu:/lib:/usr/lib/aarch64-linux-gnu:/usr/lib:`;
+ours, a bare ELF binary, saw nothing.  `ffi::ensurePlatformLibraryPath()` now
+reproduces that variable at startup via `dladdr` on a libc symbol (Linux only;
+`PHARO_NO_PLATFORM_LIB_PATH=1` opts out).  After it, ours resolves
+`/lib/aarch64-linux-gnu/libsqlite3.so.0` and `sqlite3_libversion` returns
+`'3.45.1'` — a real callout through the native library.
+
+LESSON: "fixed by construction, not verified on the platform" was worth exactly
+nothing here — the fix was correct code for a bug that was not the bug.
+
+### 3. Probe improvements kept (they are what found #1)
+
+  - `[ROOT-WATCH]` names the OWNING FRAME of an operand-stack hit
+    ("slot 29/32 frame#9/10 #testPropertyManagerValueWeakness fp+3"), and the
+    singleton VM registers report the FIELD name — `ROOT(activeContext_)`, not
+    a shared "vm-registers".
+  - `[HEAP-CHAIN]` prints the full retention chain for every watched-class
+    instance after the mark fixpoint.  `PHARO_WATCH_HEAP_CLASS` alone stopped
+    at the immediate parent; `PHARO_WEAK_SURVIVOR_PATHS` only covered referents
+    sitting in a weak slot, and this one did not.
+  - Context hops in both are annotated live vs DEAD-RESIDUE with the
+    activation's selector.  That annotation made the cause self-evident.
+
+## ======= 2026-08-11 FOLLOW-UP SESSION =======
 
 Full write-up: `docs/aws-followup-2026-08-11.md`.  Worked the open list in
 section D of the previous session (below).  Everything measured locally —
