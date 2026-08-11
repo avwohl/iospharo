@@ -20386,6 +20386,23 @@ Oop Interpreter::findSelector(const char* name) {
 
 
 bool Interpreter::executeFromContext(Oop context) {
+    // PHARO_TRACE_FRAME_TEMPS: this is the classic path that re-establishes a
+    // running activation at a DIFFERENT stack address.  Log it for the watched
+    // selector so a moved frame can be correlated with a materializedContext
+    // still pointing at the abandoned region.
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
+            && context.isObject() && context.rawBits() > 0x10000) {
+        Oop cm = memory_.fetchPointer(3, context);
+        if (cm.isObject()) {
+            std::string csel = memory_.selectorOf(cm);
+            if (csel.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)) != std::string::npos) {
+                fprintf(stderr,
+                    "[EXEC-FROM-CTX] #%s ctx=0x%llx fpBefore=%p fd=%zu\n",
+                    csel.c_str(), (unsigned long long)context.rawBits(),
+                    (void*)framePointer_, frameDepth_);
+            }
+        }
+    }
     // Set up SIGSEGV recovery point - if we crash accessing unrelocated pointers,
     // we'll longjmp back here and return false instead of terminating the VM
     if (sigsetjmp(g_sigsegvRecovery, 1) != 0) {
@@ -20405,6 +20422,15 @@ bool Interpreter::executeFromContext(Oop context) {
     stackPointer_ = stackBase_;
     frameDepth_ = 0;
     inStackOverflowSignal_ = false;  // fresh process never inherits overflow-signal headroom
+    // The frame we are about to build IS this context's activation, so the
+    // current frame OWNS it: later materializations must re-sync THIS object,
+    // not allocate a fresh one.  Disowning it here left the context frozen at
+    // the values it had when it was materialized, while the restored frame ran
+    // on at a different stack address — anything still holding the context (a
+    // closure's outerContext, the sender chain) then saw pre-restore temps, and
+    // the GC marked them.  That is the WeakOrderedCollectionTest failure: the
+    // test's `anArray := nil` went to the new frame and the context kept the
+    // OrderedCollection.  Set below, once the frame is built.
     currentFrameMaterializedCtx_ = memory_.nil();
 
     // Reset bytecode extension registers - they are per-bytecode-sequence state
@@ -20486,6 +20512,9 @@ bool Interpreter::executeFromContext(Oop context) {
     }
 
     activeContext_ = context;  // Track for sender chain on return
+    // Claim ownership: this frame's materialized form IS `context` (see the
+    // note at the top of this function).
+    currentFrameMaterializedCtx_ = context;
 
     // Set homeMethod_ for literal access
     // For CompiledMethods, homeMethod_ = method_
