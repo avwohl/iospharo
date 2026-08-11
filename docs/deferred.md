@@ -22,11 +22,22 @@ package `pass=336 err=1`.  Costs the whole package's results.  This is the
 first time the "cog ran, our VM produced nothing" bucket has been examined —
 `scripts/pkg-jit-test/classify-missing-jit.py` is what surfaced it.
 
+REPRODUCES STANDALONE, and the first bisect is already done:
+
+    default                  exit=139   SIGSEGV @ 0xfffffffffffaa871
+    PHARO_CTX_TRACE_ALL_SLOTS=1  exit=139   same crash  -> NOT the GC trace bound
+    PHARO_NO_JIT=1           exit=0     no crash        -> the JIT is required
+
+So it is a deterministic JIT-dependent defect, not a GC one, and not fallout
+from anything in the 2026-08-11 close-out.
+
 Repro (aarch64 Linux box): load `Metacello new baseline: 'MuTalk'; ...` per
 `packages-200.tsv`, then run `run_pkg_tests.st` with
-`PKG_PREFIXES='MuTalk-Tests,MuTalk-CI-Tests,MuTalk-Utilities-Tests,MuTalk-Examples-Tests'`.
-Start by finding what makes the VM exit the suite early; the free is downstream
-of that.
+`PKG_PREFIXES='MuTalk-Tests,MuTalk-CI-Tests,MuTalk-Utilities-Tests,MuTalk-Examples-Tests'`
+— `scripts/pkg-jit-test/../../scratchpad box-fast-repro.sh` shape works, it runs
+all three configurations in one go.  Next: find what makes the VM leave the
+suite early under the JIT (the corrupt free is downstream of that), then
+knob-bisect the JIT emit options the way `docs/results-jitpkg.md` describes.
 
 ## FIXED da9159e9: the "second weak-reference retention path" (2026-08-11)
 
