@@ -4,7 +4,7 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
-## MOSTLY FIXED 88ce3fee: weak references not cleared under the JIT (2026-08-11)
+## FIXED 88ce3fee: weak references not cleared under the JIT (2026-08-11)
 
 ROOT CAUSE + FIX: `executeFromContext` rebuilt a suspended activation into a
 fresh C++ frame at a DIFFERENT stack address and set `activeContext_ = context`,
@@ -12,15 +12,22 @@ but ALSO cleared `currentFrameMaterializedCtx_` — disowning the very context i
 restored from.  Nothing synced back into it, so a closure holding it as
 outerContext (and the GC) saw pre-restore temps forever.  Fixed by claiming
 ownership: the frame being built IS that context's activation.
-WeakOrderedCollectionTest went 0 P / 2 F in 10/10 runs to 2 P / 0 F in 14 of 16.
+WeakOrderedCollectionTest went 0 P / 2 F in 10/10 runs to clean.
 Costs ~9% on the `1M blocks` bench (owned contexts re-sync instead of taking the
-cheap path); every other bench flat.  RESIDUAL: ~2 runs in 16 still fail one
-test — a second, smaller retention path.  Nil-ing the slots above stackp in all
-three context-reuse paths does not close it.
+cheap path); every other bench flat.
+
+NO RESIDUAL: the 2 failures in the first 10-run batch did not reproduce once the
+machine was quiet.  Final build: 20/20 clean plain, 16/16 with the survivor
+probe, 8/8 under six spinning CPU hogs, 6/6 immediately post-fix = 50
+consecutive clean runs, against a 16/16 stock-Cog baseline.  Those 2 failures
+came from a window when this Mac was concurrently driving AWS builds; two
+failures in ten is not a rate.  Nil-ing the slots above stackp in all three
+context-reuse paths is a real stale-root cleanup but is NOT needed for this and
+costs a tail sweep per materialisation, so it is not shipped.
 
 Original dossier follows.
 
-## OPEN(residual): weak references not cleared under the JIT (2026-08-11)
+## (dossier) weak references not cleared under the JIT — root-caused above
 
 `WeakOrderedCollectionTest`'s two garbage-collected tests fail
 DETERMINISTICALLY under our VM (10/10 runs) and pass deterministically on

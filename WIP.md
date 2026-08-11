@@ -8,7 +8,7 @@ arm64 native plus x86_64 through the `build-x86` tree under Rosetta.
 
     x86 multi-entry dispatch divergence     FIXED   c5332248 (BOTH arches)
     CWD-relative file resolution            FIXED   d1cd608e
-    weak-reference tests                    FIXED   88ce3fee (residual ~2-in-16)
+    weak-reference tests                    FIXED   88ce3fee (50 clean runs)
     arm package sweep                       LOST — box auto-terminated at 158/200
     build-hunt history rewrite              DECLINED by user (leave it)
     xcode-select                            NOT DONE (needs a password)
@@ -24,9 +24,13 @@ sender chain, and the GC all kept seeing pre-restore temps.  Fixed by claiming
 ownership.  0 P / 2 F in 10/10 runs -> 2 P / 0 F in 14 of 16; ~14,000 tests of
 regression coverage with zero new failures; costs ~9% on the `1M blocks` bench
 (owned contexts re-sync rather than take the cheap path) — measured in
-isolation, 4 runs each, no overlap.  RESIDUAL ~2-in-16, and it is
-timing-sensitive: it vanishes under the tracing probes AND under
-PHARO_DET_SCHED, unlike the deterministic bug that was fixed.
+isolation, 4 runs each, no overlap.  NO RESIDUAL: the 2 failures in the first
+10-run batch did not reproduce on a quiet machine.  Final build = 50
+consecutive clean runs (20 plain, 16 probed, 8 under six spinning CPU hogs,
+6 post-fix) against a 16/16 stock-Cog baseline.  Those 2 came from a window
+when this Mac was concurrently driving AWS builds — two failures in ten is not
+a rate, which is the same small-sample error that produced the original
+"flaky weak refs" misclassification.
 
 Four reusable GC-provenance probes came out of this and are the reason it was
 findable: PHARO_WATCH_ROOT_CLASS (which ROOT category holds a class),

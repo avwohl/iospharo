@@ -1039,6 +1039,7 @@ private:
     /// PHARO_WEAK_SURVIVOR_PATHS: record each object's first-reaching parent
     /// during mark, so processWeaklings can print why a weak referent lived.
     bool recordMarkParents_ = false;
+    bool logWeakSurvivorClasses_ = false;
     const char* weakPathFilter_ = nullptr;  // PHARO_WATCH_HEAP_CLASS narrows [WEAK-ALIVE] to one referent class
     struct MarkParent { uint64_t parent; uint32_t slot; };
     std::unordered_map<uint64_t, MarkParent> markParent_;

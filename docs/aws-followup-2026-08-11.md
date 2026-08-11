@@ -333,10 +333,29 @@ has NOT executed since it was suspended" — but the CURRENT-frame path
 Giving the current frame the same synced/dirty bit should recover most of the
 9% without giving up the invariant. Not attempted here.
 
-Two things remain open here:
+### The residual did not survive measurement
 
-- **~2 runs in 16 still fail one of the two tests**, so a second, smaller
-  retention path exists.
+The two failures seen in the first 10-run batch after the fix did NOT reproduce
+once the machine was quiet. On the final build:
+
+    stock Cog, 16 runs                     16/16 clean
+    ours, 20 runs, no probe                20/20 clean
+    ours, 16 runs, PHARO_WEAK_SURVIVOR_CLASSES  16/16 clean
+    ours, 8 runs under 6 spinning CPU hogs  8/8  clean
+    ours, 6 runs (immediately post-fix)     6/6  clean
+
+That is 50 consecutive clean runs, including deliberately under load, against a
+16-run Cog baseline that is also clean. The 2 failures came from a window in
+which this Mac was concurrently driving AWS builds and ssh sessions — the same
+GC-timing sensitivity that makes the tests flip in the first place. So the
+honest reading is that there is no evidence of a second retention path; what was
+recorded earlier as "a ~2-in-16 residual" is not reproducible and should not be
+carried forward as a known defect.
+
+Worth stating plainly because the opposite mistake was made before: a small
+sample was read as a rate. Two failures in ten is not a measurement.
+
+One thing remains open here:
 - Nil-ing the slots above `stackp` in all three of `materializeFrameStack`'s
   context-reuse paths does NOT close that residual (tested on top of the fix:
   still 8/10) and costs a tail sweep per materialisation, so it is not shipped.

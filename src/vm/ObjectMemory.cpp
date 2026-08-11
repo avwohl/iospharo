@@ -3745,6 +3745,16 @@ void ObjectMemory::processWeaklings() {
                     slotPtr[i] = nilObject_;
                     anyNilled = true;
                     nilledCount++;
+                } else if (__builtin_expect(logWeakSurvivorClasses_, 0)
+                           && !recordMarkParents_
+                           && heapWatchLogged_++ < GET_DEBUG_INT(PHARO_WATCH_HEAP_MAXLOG)) {
+                    // Cheap sibling of PHARO_WEAK_SURVIVOR_PATHS: names the
+                    // surviving referent WITHOUT the per-object parent map, so
+                    // it can be left on while chasing a timing-sensitive
+                    // survivor that the full tracer suppresses.
+                    fprintf(stderr, "[WEAK-ALIVE-CLS] %s in %s slot %zu\n",
+                            classNameOf(ref).c_str(),
+                            classNameOf(Oop::fromObject(obj)).c_str(), i);
                 } else if (__builtin_expect(recordMarkParents_, 0)
                            && (weakPathFilter_ == nullptr
                                || classNameOf(ref) == weakPathFilter_)
@@ -4081,6 +4091,7 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
     recordMarkParents_ = GET_DEBUG_BOOL(PHARO_WEAK_SURVIVOR_PATHS);
     if (recordMarkParents_) markParent_.clear();
     weakPathFilter_ = GET_DEBUG_STR(PHARO_WATCH_HEAP_CLASS);
+    logWeakSurvivorClasses_ = GET_DEBUG_BOOL(PHARO_WEAK_SURVIVOR_CLASSES);
     // Reserve space for mark stack to avoid frequent reallocations
     markStack_.clear();
     markStack_.reserve(100000);
