@@ -4,6 +4,29 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
+## OPEN: a SECOND weak-reference retention path (2026-08-11)
+
+`88ce3fee` fixed `WeakOrderedCollectionTest` (50 consecutive clean runs vs a
+16/16 Cog baseline), but the ARM 200-package sweep shows
+`PropertyManagerTest>>testPropertyManagerValueWeakness` in `rko281-porpoise`
+is STILL JIT-only: cog pass=14 fail=0, jit pass=13 fail=1.  So a second
+retention path exists.
+
+This is the right target rather than the `WeakOrderedCollectionTest` "residual"
+I previously recorded — that one does not reproduce (see below) whereas this is
+stable and differential against Cog.  The four provenance probes apply directly:
+PHARO_WATCH_ROOT_CLASS, PHARO_WATCH_HEAP_CLASS, PHARO_WEAK_SURVIVOR_PATHS,
+PHARO_WEAK_SURVIVOR_CLASSES.  Needs the porpoise package loaded; see
+`docs/arm-pkg200-2026-08-11.md` for the harness invocation.
+
+## OPEN: sqlite3 FFI "Module not found" (2026-08-11)
+
+`pharo-rdbms-pharo-sqlite3`: cog pass=122 err=0 -> ours pass=11 err=111, every
+error the single signature `Error: Module not found.`  Stock Cog opens the
+sqlite3 shared library and we do not.  Library-resolution gap in the same family
+as the already-fixed Athens/cairo (`aade2dde`) and LibTTY (`cb53b45f`) cases —
+not a JIT bug.
+
 ## FIXED 88ce3fee: weak references not cleared under the JIT (2026-08-11)
 
 ROOT CAUSE + FIX: `executeFromContext` rebuilt a suspended activation into a
