@@ -320,8 +320,18 @@ Regression coverage — ~14,000 tests, zero new failures:
 made the earlier full-suite deltas look meaningful. Every other bench is flat.
 An owned context means materialisations re-sync an existing object rather than
 taking the cheap path, which is the correct model (Cog's married context IS the
-frame and a temp store writes through) but is not free. Worth optimising later;
-not worth trading the correctness back for.
+frame and a temp store writes through) but is not free.
+
+The mechanism is specific enough to act on: `1 to: 1000000 do: [:i | [x := x + 1]
+value]` creates the inner closure on EVERY iteration, and each block creation
+materialises the enclosing frame. Before the fix that frame owned no context
+after a restore, so most of those materialisations took the cheap path; now each
+one re-syncs the owned context's slots. The saved-frame loop already has exactly
+the right guard for this — `frame.ctxSynced`, "a cached context means this frame
+has NOT executed since it was suspended" — but the CURRENT-frame path
+(`currentFrameMaterializedCtx_`) has no equivalent flag, so it always copies.
+Giving the current frame the same synced/dirty bit should recover most of the
+9% without giving up the invariant. Not attempted here.
 
 Two things remain open here:
 
