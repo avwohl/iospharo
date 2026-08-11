@@ -4,28 +4,40 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
-## OPEN: a SECOND weak-reference retention path (2026-08-11)
+## FIXED da9159e9: the "second weak-reference retention path" (2026-08-11)
 
-`88ce3fee` fixed `WeakOrderedCollectionTest` (50 consecutive clean runs vs a
-16/16 Cog baseline), but the ARM 200-package sweep shows
-`PropertyManagerTest>>testPropertyManagerValueWeakness` in `rko281-porpoise`
-is STILL JIT-only: cog pass=14 fail=0, jit pass=13 fail=1.  So a second
-retention path exists.
+Not a weak-reference bug, and not a JIT bug.
+`PropertyManagerTest>>testPropertyManagerValueWeakness` (`rko281-porpoise`) was
+cog 14 P / 0 F vs ours 13 P / 1 F.  The failing assertion is the SECOND, and
+the test's own `count` temp reads 1 there: an instance from an EARLIER test in
+the suite was still alive when this test took its baseline.  Chain:
 
-This is the right target rather than the `WeakOrderedCollectionTest` "residual"
-I previously recorded — that one does not reproduce (see below) whereas this is
-stable and differential against Cog.  The four provenance probes apply directly:
-PHARO_WATCH_ROOT_CLASS, PHARO_WATCH_HEAP_CLASS, PHARO_WEAK_SURVIVOR_PATHS,
-PHARO_WEAK_SURVIVOR_CLASSES.  Needs the porpoise package loaded; see
-`docs/arm-pkg200-2026-08-11.md` for the harness invocation.
+    PropertyManagerTestObject
+      <- Context(...)[8]{stackp=2 liveSlots=6..7 slot=DEAD-RESIDUE
+                         method=testPropertyManagerKeyWeakness}
+      <- ROOT(activeContext_)
 
-## OPEN: sqlite3 FFI "Module not found" (2026-08-11)
+`ObjectMemory::pointerSlotsOf` traced a Context's WHOLE slot array; Spur's
+`numPointerSlotsOf:` returns `CtxtTempFrameStart + stackp`.  Expression-stack
+residue from a RETURNED activation was therefore a GC root here and invisible
+on Cog.  Now bounded at stackp; `PHARO_CTX_TRACE_ALL_SLOTS=1` reverts it, and
+`Interpreter::storeContextStackp` nils a reused context's tail whenever
+materializeFrameStack lowers stackp.  14 P / 0 F on arm64 and on the x86_64
+build under Rosetta.
+
+## FIXED 4a46413f: sqlite3 FFI "Module not found" (2026-08-11)
 
 `pharo-rdbms-pharo-sqlite3`: cog pass=122 err=0 -> ours pass=11 err=111, every
-error the single signature `Error: Module not found.`  Stock Cog opens the
-sqlite3 shared library and we do not.  Library-resolution gap in the same family
-as the already-fixed Athens/cairo (`aade2dde`) and LibTTY (`cb53b45f`) cases —
-not a JIT bug.
+error `Error: Module not found.`  NOT a library-resolution gap in the VM —
+`c1d6eef7` fixed `primitiveLoadModule`'s candidate list and re-running the
+package on an aarch64 box changed nothing, because the image gives up before
+calling the VM: `SQLite3Library>>unix64LibraryName` searches a hardcoded
+x86_64-only path list plus `LD_LIBRARY_PATH`, and a Pharo distribution's
+`pharo` is a shell WRAPPER that sets that variable from `ldd`'s idea of the
+VM's libc directory.  We are a bare ELF binary, so the image saw no arch
+directory at all.  `ffi::ensurePlatformLibraryPath()` now reproduces the
+wrapper's variable at startup (`dladdr` on a libc symbol); Linux only,
+`PHARO_NO_PLATFORM_LIB_PATH=1` opts out.  `sqlite3_libversion` -> `'3.45.1'`.
 
 ## FIXED 88ce3fee: weak references not cleared under the JIT (2026-08-11)
 
@@ -112,6 +124,13 @@ of them nils the tail today, so a frame re-materialized at a shallower depth
 does leave a deeper snapshot's operands in a process-reachable heap object —
 a real stale-root bug worth fixing on its own evidence — but fixing all three
 does not fix these tests (5 runs, 0 P / 2 F each).
+
+  (2026-08-11 postscript: that reading was right about the stale residue and
+  wrong about the remedy.  Nil-ing at the sync sites does not reach residue
+  written afterwards; what fixes it is not tracing above stackp at all, the
+  way Spur does — `da9159e9`.  The `[HEAP-CHAIN]` probe added there is the
+  "parent provenance during the mark phase" this section asked for, and it
+  now names the terminating ROOT category too.)
 
 Very likely the same defect as porpoise's
 `PropertyManagerTest>>testPropertyManagerValueWeakness`, the one finding
