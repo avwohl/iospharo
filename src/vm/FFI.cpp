@@ -18,6 +18,7 @@
 #include "DebugSettings.hpp"
 #include "DebugVars.hpp"
 #include <algorithm>
+#include <cstdio>     // fopen — dladdr'd to locate the platform's libc directory
 #include <cstdlib>
 #include <cstring>
 #include <chrono>
@@ -226,9 +227,78 @@ static void registerObjCRuntimeWrappers() {
 }
 #endif
 
+#if defined(__linux__)
+// Give the IMAGE the library search path stock Cog gives it.
+//
+// A Pharo distribution's `pharo` is a shell WRAPPER, not the VM: it runs `ldd`
+// on the real binary to find the directory holding its libc, then execs it with
+//
+//     LD_LIBRARY_PATH="$PLUGINS:$PLATFORMLIBDIR:/lib:/usr$PLATFORMLIBDIR:/usr/lib:$LD_LIBRARY_PATH"
+//
+// which on aarch64 Ubuntu contributes /lib/aarch64-linux-gnu and
+// /usr/lib/aarch64-linux-gnu.  Image-side library finders READ that variable:
+// `FFIUnix64LibraryFinder>>knownPaths` is hardcoded x86_64-only
+// ('/lib/x86_64-linux-gnu', '/lib64', '/usr/lib64', '/usr/lib',
+// '/usr/lib/x86_64-linux-gnu', '/usr/local/lib') and so is
+// `SQLite3Library>>unix64LibraryName`, which checks `libraryPath exists` and
+// signals 'Module not found.' before the VM is ever consulted.
+//
+// We are a bare ELF binary with no wrapper, so on aarch64 the image saw no
+// arch directory at all: the 2026-08-11 arm sweep scored pharo-rdbms-pharo-
+// sqlite3 at pass=122/err=0 on Cog and pass=11/err=111 on ours, every error
+// 'Error: Module not found.'  That is not an FFI-loader gap — c1d6eef7 fixed
+// the candidate list and changed nothing here — it is a missing environment.
+// Reproducing the wrapper's variable is the fix, and it also feeds the image's
+// own finders, which no VM-side search path can do.
+//
+// PHARO_NO_PLATFORM_LIB_PATH=1 leaves the environment as inherited.
+static void ensurePlatformLibraryPath() {
+    if (GET_DEBUG_BOOL(PHARO_NO_PLATFORM_LIB_PATH)) return;
+
+    // dladdr on a libc symbol is the in-process equivalent of the wrapper's
+    // `ldd | fgrep /libc.` — it answers the path the loader actually resolved.
+    std::string platformLibDir;
+    Dl_info info;
+    if (dladdr(reinterpret_cast<void*>(&fopen), &info) && info.dli_fname) {
+        std::string p = info.dli_fname;
+        size_t slash = p.find_last_of('/');
+        if (slash != std::string::npos && slash > 0) platformLibDir = p.substr(0, slash);
+    }
+
+    std::vector<std::string> dirs;
+    if (!platformLibDir.empty() && platformLibDir != "/lib" && platformLibDir != "/usr/lib") {
+        dirs.push_back(platformLibDir);
+        dirs.push_back("/lib");
+        dirs.push_back("/usr" + platformLibDir);
+    }
+    dirs.push_back("/usr/lib");
+
+    // Existing value wins for anything it already names (Cog appends it last).
+    const char* cur = GET_DEBUG_STR(LD_LIBRARY_PATH);
+    std::string value;
+    for (const auto& d : dirs) {
+        if (cur) {
+            // Skip a directory the inherited value already lists, so repeated
+            // in-process image loads can't grow the variable without bound.
+            std::string needle = std::string(":") + cur + ":";
+            if (needle.find(":" + d + ":") != std::string::npos) continue;
+        }
+        value += d;
+        value += ":";
+    }
+    if (cur && *cur) value += cur;
+    else if (!value.empty()) value.pop_back();   // drop the trailing ':'
+    if (!value.empty()) setenv("LD_LIBRARY_PATH", value.c_str(), 1);
+}
+#endif  // __linux__
+
 bool initializeFFI() {
     if (sInitialized) return true;
     sInitialized = true;
+
+#if defined(__linux__)
+    ensurePlatformLibraryPath();
+#endif
 
     // Register SDL2 stub functions — these MUST win over any real SDL2
     // because we use fake window handles that real SDL2 can't handle.
