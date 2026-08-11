@@ -181,7 +181,28 @@ library.
 `c1d6eef7` stays — its candidate list is still right for bare module names, and
 distributions do ship versioned sonames. It just was not this bug.
 
-## 3. What this says about the harness
+## 3. Where the x86 run stands
+
+Every finding the 2026-08-10 x86_64 run raised is now closed, without needing a
+second x86 box:
+
+    x86 Sista deopt GC-unsafe        ce2dcdd2   (native x86 box, earlier)
+    soccertheory XMLFileException    d1cd608e   confirmed shared, not JIT-only
+    weak references (both signals)   88ce3fee + da9159e9
+    multi-entry dispatch divergence  c5332248   (both arches)
+
+The two fixes here are arch-independent C++ in the collector and in FFI startup,
+and the x86 side of each was exercised locally: the `build-x86` tree under
+Rosetta is the standing x86 gate (see memory `per-arch-backend-drift`), and
+porpoise runs 14 P / 0 F there. `sqlite3` was never an x86 finding — the x86
+sweep had that package in the load-failed bucket, and on x86_64 Linux the
+image's hardcoded finder paths already name the right arch directory, which is
+exactly why the bug only surfaced on aarch64.
+
+A fresh x86 box would re-measure, not discover. Worth doing when the next batch
+of VM changes lands, not to close these.
+
+## 4. What this says about the harness
 
 Two lessons, both cheap to act on next time:
 
@@ -195,7 +216,7 @@ Two lessons, both cheap to act on next time:
     When an arm diverges on anything environmental, diff what the two
     *processes* see before blaming the VM.
 
-## 4. Box notes
+## 5. Box notes
 
 The first close-out box (`i-0e84d6df890cce46c`) was terminated 45 minutes in,
 mid-package-run: `Client.UserInitiatedShutdown`, i.e. the keep-alive reaper.
