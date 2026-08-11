@@ -4,18 +4,23 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
-## OPEN: 33 Calypso tests went PASS -> ERROR during 2026-08-11 (unexplained)
+## OPEN: ~100 GUI tests went PASS -> ERROR during 2026-08-11 (Form/BitBlt state)
 
-`ClyBrowserToolValidityTest` (25) and `ClyNotebookPageRecyclerTest` (8) were
-**25 P / 8 P** in the morning's arm full run
-(`docs/results/arm-2026-08-11/`) and are **all ERROR** in both full runs made
-that evening — the macOS-arm64 one and the Linux-aarch64 one, which uses the
-same `x86-fullsuite.sh` prep as the morning run did. One signature:
+The Linux-aarch64 full run went from **1 ERROR** in the morning
+(`docs/results/arm-2026-08-11/`) to **102** in the evening, same box, same
+`x86-fullsuite.sh` prep, and the macOS-arm64 run shows the same family. It is
+one coherent family — Form/BitBlt objects holding the wrong kind of bits:
 
-    MessageNotUnderstood: SmallInteger >> #pixelAt:
+    25  ClyBrowserToolValidityTest        13  Array       >> #pixelAt:
+    18  SpTreeTableAdapterMultiColumnMultiSelectionTest
+    11  SpTreePresenterExpandTest         10  BitBlt      >> #adaptToNumber:andSend:
+    10  SpTreeTableAdapterMultiColumnTest
+     8  ClyNotebookPageRecyclerTest        8  SmallInteger >> #pixelAt:
+     6  SpTreePresenterTest, SpEasyTree*   1  Point       >> #quo:
+     5  MorphTreeMorphTest
 
-which is a Form/Display message with a SmallInteger receiver, i.e. display
-state, not GC state.
+i.e. a `Form`'s `bits` is an Array or a SmallInteger where a `Bitmap` is
+expected. Display-object construction, not GC state.
 
 RULED OUT so far:
   - **The GC trace bound is not it in isolation**: both classes run 33 P / 0 E
@@ -33,6 +38,10 @@ RULED OUT so far:
     reproduces it exactly (`ClyBrowserToolValidityTest ERROR 25`,
     `ClyNotebookPageRecyclerTest ERROR 3`, 26773 P / 21 F / 55 E overall).
     `da9159e9`/`d209543d` are therefore ruled out.
+  - Not a FAIL-level regression: the same runs are 27647 P / 24 F on Linux and
+    27701 P / 22 F on macOS, with every FAIL in the documented residual
+    families (ReleaseTest, StDebugger/StSpotter, TKT, ZnClient) — the same
+    shape as the morning run's 19.  Only the ERROR column moved.
 
 NEXT: the remaining in-window commit that is ACTIVE ON macOS is `c1d6eef7`
 (`ffi::moduleCandidates`, shared by `primitiveLoadModule` and
