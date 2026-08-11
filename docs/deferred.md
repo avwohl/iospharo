@@ -25,6 +25,29 @@ at `userBackgroundPriority`, and SUnit's own `TestCase>>run` all pass.
 Adding two diagnostic statements to the test body makes it pass — the
 dead-slot-residue signature.
 
+ROOT CAUSE FOUND (2026-08-11): **the JIT frame is stale, not the context.**
+`PHARO_WEAK_SURVIVOR_PATHS` names the holder as the test method's OWN context
+at indexed slot 6 = temp 0 = `anArray`, the variable the test nils; the context
+is reachable because `3 timesRepeat: [...]` is a real send whose closure holds
+it as outerContext.  `PHARO_TRACE_FRAME_TEMPS` then shows the C++ frame slots
+`materializeFrameStack` reads still hold `t0=OrderedCollection t1=Time` at the
+moment it reads them — so the JIT's `anArray := nil` stores never landed in
+`savedFP + 1 + t`.  `PHARO_MAT_FULL_RESYNC=1` is inert (same stale slots) and
+`PHARO_NO_JIT=1` passes (interpreter writes where the materializer reads).
+
+THIS IS BIGGER THAN WEAK REFS: any materialization of a JIT frame (preemption,
+block creation, thisContext) can capture pre-store temp values, and a resumed
+frame continues from them.  Very likely the same root as the SlotIntegration
+materialization Heisenbug above ("a live temp comes back with the wrong VALUE
+after the build is preempted and its frames are materialized to a context and
+restored").
+
+NEXT: instrument the frame push to record the tempBase in effect and compare it
+against `savedFP + 1`.  Note two conventions coexist —
+`Interpreter.cpp:17189` uses `state->tempBase = callerSP - nArgs` (Sista
+self-rec inline; pushes no SavedFrame, so not itself the culprit).
+
+Earlier narrowing, kept because it rules things out:
 THE PIN IS TRANSITIVE, NOT A ROOT.  New tool `PHARO_WATCH_ROOT_CLASS=<Class>`
 makes forEachRoot report which root category visits each instance of that
 class (categories: vm-registers, nlr-saved-states, world-renderer,

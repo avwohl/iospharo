@@ -228,9 +228,63 @@ Note both probes perturb timing enough to flip the result occasionally (one run
 with a small log budget went 1 P / 1 F) — the same Heisenbug sensitivity as
 adding statements to the test body. Read them for provenance, not for pass/fail.
 
-Next step: narrow the Context parents — print the parent Context's method
-selector and slot index alongside, so the holding activation is named rather
-than counted.
+### Third tool: `PHARO_WEAK_SURVIVOR_PATHS` — and the answer
+
+Records, for every object, the first parent that reached it during the mark,
+then in `processWeaklings` walks that chain back for each weak referent that
+SURVIVED, annotating Context parents with slot, stackp and selector:
+
+    [WEAK-ALIVE] OrderedCollection in WeakArray slot 0:
+      <- Context(0x303eaaf58)[6]{stackp=4 liveSlots=6..9 slot=live
+           method=testWeakOrderedCollectionAllGarbageCollected}
+      <- FullBlockClosure(0x303eb17e8)[0]
+      <- Context(0x303eaaf58)[12]{... slot=DEAD-RESIDUE ...} <- (cycle)
+
+The holder is the test method's OWN context, at indexed slot 6 = temp 0 =
+`anArray` — the variable the test assigns nil before its three
+`garbageCollect`s. The context is legitimately reachable, because
+`3 timesRepeat: [Smalltalk garbageCollect]` is a real send whose
+`FullBlockClosure` holds it as `outerContext`. (Slot 12, above stackp, is
+separately the dead-tail residue described earlier — real, but not the cause.)
+
+`PHARO_MAT_FULL_RESYNC=1` changes neither the trace nor the result, so the
+context is not a skipped re-sync.
+
+### Fourth tool: `PHARO_TRACE_FRAME_TEMPS` — the frame is stale, not the context
+
+Dumps the C++ frame slots `materializeFrameStack` reads, as it reads them:
+
+    [FRAME-TEMPS] #testWeakOrderedCollectionAllGarbageCollected fp=0x6ff80ab50
+                  numTemps=4: t0=OrderedCollection t1=Time
+                              t2=WeakOrderedCollection t3=nil
+
+`t0` and `t1` are exactly the two variables the test nils. **The JIT's stores
+never landed in `savedFP + 1 + t`**, which is where the materializer reads
+temps. That explains the whole shape:
+
+- `PHARO_NO_JIT=1` passes — the interpreter writes where the materializer reads.
+- `PHARO_MAT_FULL_RESYNC=1` is inert — it re-copies the same stale slots.
+- The direct 40x loop passes — nothing materializes, so the disagreement never
+  becomes visible.
+- Adding statements to the test body "fixes" it — it changes the frame layout.
+
+**This is much bigger than weak references.** Any materialization of a JIT
+frame — preemption, block creation, `thisContext` — can capture pre-store temp
+values, and a resumed frame then continues from them. That is very likely the
+same root as the SlotIntegration materialization Heisenbug in `deferred.md`,
+whose signature is "a live temp comes back with the wrong VALUE after the build
+is preempted and its frames are materialized to a context and restored".
+
+### Next step
+
+Find where the JIT writes temps for an activation that is a CALLER — this one
+is in `savedFrames_`, suspended inside a `timesRepeat:` send — and why that
+location differs from `savedFP + 1 + t`. There is at least one JIT path that
+uses a different convention (`Interpreter.cpp:17189`,
+`state->tempBase = callerSP - nArgs` on the Sista self-recursion inline; that
+particular one pushes no SavedFrame, so it is not the culprit, but it shows the
+two conventions coexist). Instrument the frame push to record the tempBase in
+effect and compare it with `savedFP + 1`.
 
 ### Reproducing
 
