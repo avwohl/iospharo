@@ -3619,6 +3619,47 @@ void ObjectMemory::scanPointerFields(ObjectHeader* obj) {
 #if PHARO_HOT_PATH_DIAG
     currentScanParent_ = obj;
 #endif
+    // PHARO_WATCH_HEAP_CLASSIDX: report the PARENT that reaches each instance
+    // of the watched class.  PHARO_WATCH_ROOT_CLASS answers "is it a direct
+    // root?"; when the answer is no, this answers "then who holds it?".
+    // Split into two loops so the non-watching path keeps the bare
+    // markAndTrace call — this is the hottest loop in the collector.
+    // Resolve the watched class NAME to its classIndex once per process by
+    // scanning classTable_ — comparing names per slot would swamp the mark.
+    static const int watchIdx = [this]() -> int {
+        if (int idx = GET_DEBUG_INT(PHARO_WATCH_HEAP_CLASSIDX)) return idx;
+        const char* nm = GET_DEBUG_STR(PHARO_WATCH_HEAP_CLASS);
+        if (!nm) return 0;
+        for (size_t i = 1; i < classTable_.size(); i++) {
+            if (!classTable_[i].isObject()) continue;
+            if (nameOfClass(classTable_[i]) == nm) {
+                fprintf(stderr, "[HEAP-WATCH] %s => classIndex %zu\n", nm, i);
+                return (int)i;
+            }
+        }
+        fprintf(stderr, "[HEAP-WATCH] class %s not found in classTable\n", nm);
+        return 0;
+    }();
+    if (__builtin_expect(watchIdx != 0, 0)) {
+        for (size_t i = 0; i < numPointers; ++i) {
+            Oop child = slots[i];
+            if (child.isObject() && child.rawBits() > 0x10000
+                    && child.asObjectPtr()->classIndex() == (uint32_t)watchIdx
+                    && heapWatchLogged_ < GET_DEBUG_INT(PHARO_WATCH_HEAP_MAXLOG)) {
+                heapWatchLogged_++;
+                fprintf(stderr,
+                    "[HEAP-WATCH] 0x%llx <- parent 0x%llx cls=%s slot=%zu/%zu\n",
+                    (unsigned long long)child.rawBits(),
+                    (unsigned long long)Oop::fromObject(obj).rawBits(),
+                    classNameOf(Oop::fromObject(obj)).c_str(),
+                    i, numPointers);
+            }
+#if PHARO_HOT_PATH_DIAG
+            currentScanSlot_ = i;
+#endif
+            markAndTrace(child);
+        }
+    } else
     for (size_t i = 0; i < numPointers; ++i) {
 #if PHARO_HOT_PATH_DIAG
         currentScanSlot_ = i;
@@ -3974,6 +4015,7 @@ void ObjectMemory::syncClassTableToHeap() {
 }
 
 size_t ObjectMemory::markPhase(bool skipEphemerons) {
+    heapWatchLogged_ = 0;
     // Reserve space for mark stack to avoid frequent reallocations
     markStack_.clear();
     markStack_.reserve(100000);

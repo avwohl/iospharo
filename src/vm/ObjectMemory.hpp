@@ -1033,6 +1033,9 @@ private:
     /// Returns the count of marked objects.
     size_t markPhase(bool skipEphemerons = false);
 
+    /// [HEAP-WATCH] line budget for the current GC (PHARO_WATCH_HEAP_CLASSIDX).
+    int heapWatchLogged_ = 0;
+
     // ===== COMPACT PHASE =====
 
     /// Saved first fields space (uses eden as scratch during full GC).

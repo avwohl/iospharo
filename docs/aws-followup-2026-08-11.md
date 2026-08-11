@@ -196,10 +196,41 @@ pin is transitive, through some rooted object that reaches them.
 
 That rules out the whole "a root category over-scans" family, including the
 frame-slot-residue hypothesis above, and points at a *heap object* that holds
-the reference: a materialized Context, a JIT-side structure, or an image-side
-cache. Next step is provenance during the MARK phase (record, for each object,
-the parent that first reached it) so the surviving referent can be walked back
-to its root — `PHARO_WATCH_ROOT_CLASS` is the root-level half of that tool.
+the reference.
+
+### Second tool: `PHARO_WATCH_HEAP_CLASS` — the parent during MARK
+
+The heap-level half. `PHARO_WATCH_HEAP_CLASS=<ClassName>` (or
+`PHARO_WATCH_HEAP_CLASSIDX=<n>`) makes the mark phase report the PARENT object
+and slot that reaches each instance of the watched class:
+
+    [HEAP-WATCH] Duration => classIndex 5169
+    [HEAP-WATCH] 0x3000bb7c0 <- parent 0x3012b4ba8 cls=DateAndTime slot=1/4
+
+The class name is resolved to a classIndex once by scanning `classTable_`, and
+the watching path is a separate loop so the non-watching mark keeps the bare
+`markAndTrace` call. `PHARO_WATCH_HEAP_MAXLOG` (default 400) caps lines per GC.
+
+What it says so far:
+
+- **Duration is a red herring.** Every traced reference is the single shared
+  `0x3000bb7c0` reached from `DateAndTime` slot 1 — the timezone offset carried
+  by the 1000 `Date today` objects the test creates, not the test's own
+  `Duration new`.
+- **OrderedCollection**, over one suite run, 29002 traced references: the bulk
+  are ordinary image structure (`ObservableValueHolder` 8960, `MCWorkingCopy`
+  6160, `MCRepositoryGroup` 5504, ...), but **42-50 have a `Context` parent**.
+  That is the population to sift next: a Context still holding the test's
+  dropped `anArray` is consistent with every observation, and it is a heap
+  object, so `PHARO_WATCH_ROOT_CLASS` correctly saw nothing.
+
+Note both probes perturb timing enough to flip the result occasionally (one run
+with a small log budget went 1 P / 1 F) — the same Heisenbug sensitivity as
+adding statements to the test body. Read them for provenance, not for pass/fail.
+
+Next step: narrow the Context parents — print the parent Context's method
+selector and slot index alongside, so the holding activation is named rather
+than counted.
 
 ### Reproducing
 
