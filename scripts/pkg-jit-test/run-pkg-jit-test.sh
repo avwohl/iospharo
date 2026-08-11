@@ -20,6 +20,7 @@
 #                                               a box that dies mid-sweep still
 #                                               leaves everything it finished
 #   OUT=/tmp/pkgtest                            output dir
+#   COG_TIMEOUT=600 JIT_TIMEOUT=900             per-arm wall-clock budgets
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -71,12 +72,21 @@ EVAL="${prelude_expr}$(cat "$RUNNER")"
 WD="$OUT/wd-$LABEL"
 rm -rf "$WD"; mkdir -p "$WD"
 
-echo "== $LABEL: stock Cog =="
-(cd "$WD" && timeout 600 "$PHARO" "$IMAGE" eval "$EVAL") > "$OUT/${LABEL}_cog.log" 2>&1
+# Per-arm wall-clock budgets.  Overridable because a package that USED to fit
+# can stop fitting for a good reason: after the LD_LIBRARY_PATH fix (4a46413f)
+# rko281-restoreforpharo went from erroring out of all 4712 tests in seconds
+# ("Module not found") to really running 2354 of them against a live SQLite
+# database, and stopped fitting in 900 s.  A bare `-` in the summary would read
+# as "our VM produced nothing", which is the opposite of what happened.
+COG_TIMEOUT="${COG_TIMEOUT:-600}"
+JIT_TIMEOUT="${JIT_TIMEOUT:-900}"
+
+echo "== $LABEL: stock Cog (budget ${COG_TIMEOUT}s) =="
+(cd "$WD" && timeout "$COG_TIMEOUT" "$PHARO" "$IMAGE" eval "$EVAL") > "$OUT/${LABEL}_cog.log" 2>&1
 grep -aE "^CLASSES|^RESULT" "$OUT/${LABEL}_cog.log"
 
-echo "== $LABEL: custom JIT VM =="
-(cd "$WD" && PHARO_MAX_STEPS=2000000000000 timeout 900 "$CUSTOM_VM" "$IMAGE" eval "$EVAL") > "$OUT/${LABEL}_jit.log" 2>&1
+echo "== $LABEL: custom JIT VM (budget ${JIT_TIMEOUT}s) =="
+(cd "$WD" && PHARO_MAX_STEPS=2000000000000 timeout "$JIT_TIMEOUT" "$CUSTOM_VM" "$IMAGE" eval "$EVAL") > "$OUT/${LABEL}_jit.log" 2>&1
 # the custom VM interleaves [JIT]/[DIAG] telemetry; filter to the runner's lines
 grep -aE "^CLASSES|^RESULT" "$OUT/${LABEL}_jit.log" | grep -avE "\[JIT\]"
 
