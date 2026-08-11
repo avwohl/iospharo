@@ -29,6 +29,15 @@ IMAGE="${1:?image path}"
 LABEL="${2:?label}"
 PREFIXES="${3:?comma-separated package-name prefixes}"
 
+# Both arms now run from a per-package working directory (see below), so every
+# path handed to them must be absolute or it would resolve against that
+# directory instead of the caller's.
+abspath() { case "$1" in /*) printf '%s' "$1";; *) printf '%s' "$PWD/$1";; esac; }
+IMAGE="$(abspath "$IMAGE")"
+OUT="$(abspath "$OUT")"
+PHARO="$(abspath "$PHARO")"
+CUSTOM_VM="$(abspath "$CUSTOM_VM")"
+
 # Pass the prefixes to the runner via the env (per-process, so parallel workers
 # don't race) AND the legacy /tmp file.  Either way they stay OUT of the runner's
 # literal pool (the fairness contract), so both VMs select the same classes.
@@ -41,15 +50,29 @@ printf '%s\n' "${PREFIXES//,/$'\n'}" > /tmp/pkg_prefixes.txt
 # can run without a display.
 PRELUDE="${PRELUDE:-}"
 prelude_expr=""
+[ -n "$PRELUDE" ] && PRELUDE="$(abspath "$PRELUDE")"
 [ -n "$PRELUDE" ] && prelude_expr="'$PRELUDE' asFileReference fileIn. "
 EVAL="${prelude_expr}$(cat "$RUNNER")"
 
+# Per-package working directory, used by BOTH arms.
+#
+# Pharo's StartupPreferencesLoader reads `startup.st` from the CURRENT
+# DIRECTORY, and our VM's eval mode writes one there.  Running N workers from a
+# shared directory therefore has them delete and overwrite each other's script:
+# in the 2026-08-11 arm sweep, 152 of 223 custom-VM runs evaluated nothing at
+# all and the summary recorded `jit_RESULT = -`.  A directory per package fixes
+# that, and giving the SAME directory to both arms keeps the A/B fair — CWD is
+# image-visible (CWD-relative file lookups), so the two VMs must not see
+# different ones.
+WD="$OUT/wd-$LABEL"
+rm -rf "$WD"; mkdir -p "$WD"
+
 echo "== $LABEL: stock Cog =="
-timeout 600 "$PHARO" "$IMAGE" eval "$EVAL" > "$OUT/${LABEL}_cog.log" 2>&1
+(cd "$WD" && timeout 600 "$PHARO" "$IMAGE" eval "$EVAL") > "$OUT/${LABEL}_cog.log" 2>&1
 grep -aE "^CLASSES|^RESULT" "$OUT/${LABEL}_cog.log"
 
 echo "== $LABEL: custom JIT VM =="
-PHARO_MAX_STEPS=2000000000000 timeout 900 "$CUSTOM_VM" "$IMAGE" eval "$EVAL" > "$OUT/${LABEL}_jit.log" 2>&1
+(cd "$WD" && PHARO_MAX_STEPS=2000000000000 timeout 900 "$CUSTOM_VM" "$IMAGE" eval "$EVAL") > "$OUT/${LABEL}_jit.log" 2>&1
 # the custom VM interleaves [JIT]/[DIAG] telemetry; filter to the runner's lines
 grep -aE "^CLASSES|^RESULT" "$OUT/${LABEL}_jit.log" | grep -avE "\[JIT\]"
 

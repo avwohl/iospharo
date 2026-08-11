@@ -1515,8 +1515,25 @@ int main(int argc, char* argv[]) {
         gDisplaySurface = nullptr;
     }
 
-    // Clean up eval startup.st if we wrote one
+    // Clean up eval startup.st if we wrote one.
+    //
+    // The script deletes itself as its first statement, so by now it is
+    // normally gone already.  If it is STILL on disk, StartupPreferencesLoader
+    // never ran it and the eval silently did nothing — the exact shape that
+    // made 152 of 223 custom-VM runs in the 2026-08-11 arm package sweep
+    // report no result at all (N workers sharing one working directory, each
+    // clobbering the others' startup.st).  Say so instead of exiting 0 in
+    // silence.
     if (!startupStPath.empty()) {
+        if (std::ifstream leftover{startupStPath}) {
+            leftover.close();
+            std::cerr << "ERROR: eval never ran — " << startupStPath
+                      << " was still on disk at exit, so Pharo's "
+                         "StartupPreferencesLoader did not execute it. "
+                         "Another process running from this same working "
+                         "directory most likely overwrote or removed it; give "
+                         "each concurrent run its own directory." << std::endl;
+        }
         std::remove(startupStPath.c_str());
     }
 
