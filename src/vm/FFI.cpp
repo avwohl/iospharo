@@ -252,6 +252,11 @@ static void registerObjCRuntimeWrappers() {
 // own finders, which no VM-side search path can do.
 //
 // PHARO_NO_PLATFORM_LIB_PATH=1 leaves the environment as inherited.
+// Platform library directories, filled in by ensurePlatformLibraryPath() at
+// startup and reused by getLibSearchPaths() so the environment we hand the
+// image and the paths we search ourselves come from one computation.
+static std::vector<std::string> sPlatformLibDirs;
+
 static void ensurePlatformLibraryPath() {
     if (GET_DEBUG_BOOL(PHARO_NO_PLATFORM_LIB_PATH)) return;
 
@@ -272,6 +277,7 @@ static void ensurePlatformLibraryPath() {
         dirs.push_back("/usr" + platformLibDir);
     }
     dirs.push_back("/usr/lib");
+    sPlatformLibDirs = dirs;   // getLibSearchPaths searches these directly
 
     // Existing value wins for anything it already names (Cog appends it last).
     const char* cur = GET_DEBUG_STR(LD_LIBRARY_PATH);
@@ -401,6 +407,13 @@ static std::vector<std::string> getLibSearchPaths() {
         }
         if (sExeDir != ".") paths.push_back(sExeDir);
     }
+#endif
+#if defined(__linux__)
+    // The platform library dirs ensurePlatformLibraryPath() published.  They
+    // are needed as SEARCH PATHS and not only as an environment variable:
+    // glibc snapshots LD_LIBRARY_PATH at process start, so the setenv() we do
+    // afterwards steers the IMAGE's finders but not our own bare-name dlopen.
+    for (const auto& d : sPlatformLibDirs) paths.push_back(d);
 #endif
 #if !(TARGET_OS_IPHONE && !TARGET_OS_MACCATALYST)
     // Mac Catalyst / macOS: try Homebrew as fallback (won't work if
