@@ -15,10 +15,31 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 IID="${1:?usage: idle-alarm.sh <instance-id> [region]}"
 REGION="${2:-${AWS_DEFAULT_REGION:-us-east-2}}"
-THRESH="${IDLE_CPU:-4}"
 PERIODS="${IDLE_PERIODS:-4}"
 PERIOD="${IDLE_PERIOD:-900}"
 MINS=$(( PERIODS * PERIOD / 60 ))
+
+# CPUUtilization is a percentage of ALL vCPUs, so a fixed percentage means
+# different amounts of real work on different box sizes — and this alarm
+# TERMINATES.  On 2026-08-11 it killed a c7g.16xlarge (64 vCPU) an hour into a
+# 24-worker package sweep: the workers are network-bound, so ~2-8 busy cores is
+# 3-12% on 16 vCPU but only 0.8-3% on 64 vCPU, and the 1h average fell under the
+# flat 4%.  Neither safety net caught it — the on-box idle-shutdown is
+# process-aware and knew the sweep was running, and the keep-alive lease was
+# live, but an `arn:aws:automate:...:ec2:terminate` alarm action bypasses both.
+# So express the threshold in CORES, not percent: default "fewer than 0.64 cores
+# busy", which is what 4% meant on the 16-vCPU box this default was written for.
+IDLE_CORES="${IDLE_CORES:-0.64}"
+VCPUS="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$IID"     --query 'Reservations[].Instances[].CpuOptions.[CoreCount,ThreadsPerCore]'     --output text 2>/dev/null | awk 'NF==2{print $1*$2; exit}')"
+if [ -n "${IDLE_CPU:-}" ]; then
+    THRESH="$IDLE_CPU"                      # explicit override wins
+elif [ -n "${VCPUS:-}" ] && [ "${VCPUS:-0}" -gt 0 ] 2>/dev/null; then
+    THRESH="$(awk -v c="$IDLE_CORES" -v n="$VCPUS" 'BEGIN{printf "%.2f", 100*c/n}')"
+    echo "idle-alarm: $VCPUS vCPU -> threshold ${THRESH}% (= ${IDLE_CORES} cores busy)"
+else
+    echo "idle-alarm: WARNING could not read vCPU count for $IID; using flat 4%" >&2
+    THRESH=4
+fi
 
 aws cloudwatch put-metric-alarm --region "$REGION" \
     --alarm-name "iospharo-idle-terminate-$IID" \

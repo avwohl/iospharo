@@ -17,7 +17,12 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1090
-[ -f "$HERE/config.env" ] && source "$HERE/config.env" 2>/dev/null || true
+# Honour CONFIG_FILE the way provision.sh does.  Hardcoding config.env tagged
+# the arm box's lease row with the x86 project (`iospharo-x64`), which makes
+# `lease.sh list` lie about which box is which.
+_cfg="${CONFIG_FILE:-$HERE/config.env}"
+case "$_cfg" in /*) ;; *) _cfg="$(cd "$(dirname "$_cfg")" 2>/dev/null && pwd)/$(basename "$_cfg")" ;; esac
+[ -f "$_cfg" ] && source "$_cfg" 2>/dev/null || true
 
 KEY="${AWS_LEASE_KEY:-$HOME/.ssh/aws-lease}"
 HOST="${AWS_LEASE_HOST:-wohl@awohl.com}"
