@@ -342,6 +342,13 @@ public:
     /// collection.  Clearing them here restores the invariant our scan assumes.
     void storeContextStackp(Oop context, int stackp);
 
+    /// Raise a Context's stackp so it covers `slots` temps/operands, if it
+    /// does not already.  Companion to storeContextStackp for the paths that
+    /// write a single slot (temp write-through) rather than re-syncing the
+    /// whole activation: the GC traces only up to stackp, so an uncovered
+    /// write is invisible to the mark and unpatched by compaction.
+    void raiseContextStackpTo(Oop context, int slots);
+
     /// Free unregistered CallbackInfos whose in-flight window has closed
     /// (no callback frames on the C stack, no pending worker callbacks,
     /// entry >5s old).  Called from the periodic checkpoint; see the

@@ -14905,6 +14905,7 @@ void Interpreter::setOuterTemporary(int index, Oop value) {
     // Store a temp into the outer context (for remote temp store in blocks).
     if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
         memory_.storePointer(6 + index, activeContext_, value);
+        raiseContextStackpTo(activeContext_, index + 1);
     } else {
         // Fallback to local temps
         setTemporary(index, value);
@@ -14922,6 +14923,7 @@ void Interpreter::setTemporary(int index, Oop value) {
         ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
         if (static_cast<size_t>(6 + index) < ctxHdr->slotCount()) {
             memory_.storePointer(6 + index, activeContext_, value);
+            raiseContextStackpTo(activeContext_, index + 1);
         }
     }
 }
@@ -18664,7 +18666,10 @@ Oop Interpreter::materializeFrameStack() {
                                          Oop::fromSmallInteger(pc - 1));
                 }
             }
-            memory_.storePointer(2, activeContext_, Oop::fromSmallInteger(numItems));
+            // Reused context: clear anything a deeper earlier sync left above
+            // the new top, so no stale pointer survives where the GC no longer
+            // traces (and therefore no longer updates after a compaction).
+            storeContextStackp(activeContext_, numItems);
 
             // Sync ALL items (temps + expression stack): C++ → context.
             // The C++ stack is the canonical source: bytecodes modify temps
@@ -21485,6 +21490,18 @@ void Interpreter::describeOperandSlot(Oop* slot, char* buf, size_t bufSize) {
     snprintf(buf, bufSize, "slot %td/%td frame#%zu/%zu #%s fp+%td args=%d",
              idx, live, owner, frameDepth_, sel.c_str(),
              slot - f.savedFP, f.savedArgCount);
+}
+
+void Interpreter::raiseContextStackpTo(Oop context, int slots) {
+    // The GC traces a Context only up to 6 + stackp, so any slot we write into
+    // one MUST be covered or the value it holds is unreachable to the mark and
+    // unpatched by the post-compaction update.  Writing a temp into a context
+    // whose stackp sits below it is exactly the "stackp too LOW" hazard the old
+    // whole-array scan existed to paper over.  Raise, never lower — lowering is
+    // storeContextStackp's job (it nils the tail).
+    Oop sp = memory_.fetchPointer(2, context);
+    if (!sp.isSmallInteger() || sp.asSmallInteger() < slots)
+        memory_.storePointer(2, context, Oop::fromSmallInteger(slots));
 }
 
 void Interpreter::storeContextStackp(Oop context, int stackp) {
