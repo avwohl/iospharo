@@ -8,10 +8,47 @@ arm64 native plus x86_64 through the `build-x86` tree under Rosetta.
 
     x86 multi-entry dispatch divergence     FIXED   c5332248 (BOTH arches)
     CWD-relative file resolution            FIXED   d1cd608e
-    weak-reference test re-triage           RE-CLASSIFIED — deterministic, not flaky
-    arm package sweep                       NOT RUN (needs an AWS box)
-    build-hunt history rewrite              NOT DONE (needs a force-push)
+    weak-reference tests                    FIXED   88ce3fee (residual ~2-in-16)
+    arm package sweep                       RUNNING on i-0740e9a99ddd0c253
+    build-hunt history rewrite              DECLINED by user (leave it)
     xcode-select                            NOT DONE (needs a password)
+
+**D. `88ce3fee` — executeFromContext disowned the context it restored.**
+The weak-reference failures were never a weak-reference bug.
+`executeFromContext` rebuilds a suspended activation into a fresh C++ frame at
+a DIFFERENT stack address (measured: savedFP+1 0x44780ab60 -> 0x44780a960 for
+the same activation) and sets `activeContext_ = context`, but ALSO cleared
+`currentFrameMaterializedCtx_` — so the frame no longer knew it owned that
+context and nothing synced back.  A closure holding it as outerContext, the
+sender chain, and the GC all kept seeing pre-restore temps.  Fixed by claiming
+ownership.  0 P / 2 F in 10/10 runs -> 2 P / 0 F in 14 of 16; ~14,000 tests of
+regression coverage with zero new failures; costs ~9% on the `1M blocks` bench
+(owned contexts re-sync rather than take the cheap path) — measured in
+isolation, 4 runs each, no overlap.  RESIDUAL ~2-in-16, and it is
+timing-sensitive: it vanishes under the tracing probes AND under
+PHARO_DET_SCHED, unlike the deterministic bug that was fixed.
+
+Four reusable GC-provenance probes came out of this and are the reason it was
+findable: PHARO_WATCH_ROOT_CLASS (which ROOT category holds a class),
+PHARO_WATCH_HEAP_CLASS (the MARK-phase parent), PHARO_WEAK_SURVIVOR_PATHS (the
+full parent chain for every weak referent that survived) and
+PHARO_TRACE_FRAME_TEMPS (frame slots at materialize + push, telling a stale
+context from a stale frame).
+
+**E. `41863894` — the sweep caught a regression from D's sibling fix.**
+With the VM no longer chdir'ing, eval mode writes `startup.st` into the CWD
+(where Pharo actually reads it).  `run-sweep-parallel.sh` runs 24 workers from
+ONE directory, so they clobbered each other's script: 152 of 223 custom-VM runs
+in the first arm sweep evaluated nothing and the summary said `jit_RESULT = -`.
+Both arms now run from `$OUT/wd-$LABEL`, and the VM prints a loud error if its
+startup.st is still on disk at exit (the script self-deletes, so a survivor
+means the loader never ran it).  Sweep relaunched on the fixed code.
+
+Box gotchas hit while doing this, both now fixed in-tree (`07091eeb`) or worth
+remembering: a stale `origin/jit-arm-linux` autosave branch made clone-and-build
+silently build 2026-06-10 code and report success; and a `git checkout -B` that
+aborts on a submodule leaves a PARTIAL working tree (files silently deleted —
+`git restore .` fixes it, and the build fails loudly only later).
 
 **A. `c5332248` — multi-entry dispatch was broken on both arches.**
 x86_64 had no dispatch prologue at all, yet SistaRuntime registered the
