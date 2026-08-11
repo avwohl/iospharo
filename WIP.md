@@ -9,6 +9,8 @@ arm64 native plus x86_64 through the `build-x86` tree under Rosetta.
     x86 multi-entry dispatch divergence     FIXED   c5332248 (BOTH arches)
     CWD-relative file resolution            FIXED   d1cd608e
     weak-reference tests                    FIXED   88ce3fee (50 clean runs)
+    2nd weak-ref path (porpoise)            OPEN — repro'd locally, see H
+    sqlite3 FFI Module-not-found            FIXED   c1d6eef7 (Linux unverified)
     arm package sweep                       DONE — docs/arm-pkg200-2026-08-11.md
     build-hunt history rewrite              DECLINED by user (leave it)
     xcode-select                            NOT DONE (needs a password)
@@ -47,6 +49,45 @@ in the first arm sweep evaluated nothing and the summary said `jit_RESULT = -`.
 Both arms now run from `$OUT/wd-$LABEL`, and the VM prints a loud error if its
 startup.st is still on disk at exit (the script self-deletes, so a survivor
 means the loader never ran it).  Sweep relaunched on the fixed code.
+
+**H. IN PROGRESS — the sweep's two findings (stopped here 2026-08-11).**
+
+1. sqlite3 FFI — **FIXED `c1d6eef7`**.  `primitiveLoadModule` built candidate
+   file names with an unconditional ".dylib" and NO ".so" branch, so on Linux
+   module `sqlite3` was tried as sqlite3 / libsqlite3 / sqlite3.dylib /
+   libsqlite3.dylib and never libsqlite3.so.0.  FFI.cpp's
+   `tryLoadFromSearchPaths` had the correct #ifdef split — the two had drifted
+   (same shape as the per-arch Sista backends).  Now ONE
+   `ffi::moduleCandidates()` shared by both, which also tries versioned sonames
+   (.so.0/.1/.2/.3) because distros ship libsqlite3.so.0 and put the bare .so
+   symlink in the -dev package.  macOS verified unchanged (21 FFI/TFFI/Athens/
+   LibTTY classes, 181 P / 0 F / 0 E).  **NOT verified on Linux** — needs
+   pharo-rdbms-pharo-sqlite3 re-run on a box.
+
+2. Second weak-reference path — **REPRODUCED LOCALLY, NOT ROOT-CAUSED.**
+   Package loaded at /tmp/porp/Pharo.image (Metacello baseline Porpoise,
+   github://rko281/Porpoise:master, load default+tests).  Repro:
+
+       cd /tmp/porp && PKG_PREFIXES=Porpoise <VM> Pharo.image eval \
+         "$(cat scripts/pkg-jit-test/run_pkg_tests.st)"
+       cog:  RESULT pass=14 fail=0
+       ours: FAIL PropertyManagerTest>>testPropertyManagerValueWeakness
+             [Got 1 instead of 2.]   RESULT pass=13 fail=1
+
+   Passes 3/3 in ISOLATION on both VMs — it needs the package's 3-class suite
+   context, exactly like WeakOrderedCollectionTest did.
+   Direction is OPPOSITE to the bug fixed in `88ce3fee`: "Got 1 instead of 2"
+   means something is MISSING from `PropertyManagerTestObject allInstances`,
+   not surviving too long.  The failing assertion is almost certainly the FIRST
+   one (`count + 1` right after `PropertyManagerTestObject new`, with no GC in
+   between, so the instance is still in eden).
+   RULED OUT: `allInstances` missing eden objects — measured on both VMs,
+   `OrderedCollection new` then `allInstances size` gives delta=1 on ours AND on
+   cog.  So it is not a blanket young-space blind spot.
+   NEXT: instrument which of the three assertions fires (recompile the test with
+   a marker per assert), then compare `allInstances` behaviour under the suite's
+   GC pattern.  The four provenance probes are available if it turns out to be
+   retention after all.
 
 **G. ARM SWEEP COMPLETE (third attempt) — `docs/arm-pkg200-2026-08-11.md`.**
 128 packages ran on both arms.  Two real findings, one spurious, rest
