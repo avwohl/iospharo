@@ -37,6 +37,24 @@ classes open real browser tools, so an earlier GUI test leaving `Display` a
 SmallInteger is at least as likely as a VM cause; `ReleaseTest`-style run-order
 pollution is a known property of this harness.
 
+## OPEN: `fedeloch-ume` SIGSEGVs early, in every configuration (2026-08-11)
+
+Deterministic, and independent of everything we could turn off:
+
+    default                      exit=139  SIGSEGV @ 0x10008c0318f
+    PHARO_CTX_TRACE_ALL_SLOTS=1  exit=139  same address
+    PHARO_NO_JIT=1               exit=139  same address
+
+So neither the JIT nor the GC trace bound.  It faults ~line 129 of the run log,
+i.e. before the runner prints `PREFIXES`/`CLASSES` — during image load or VM
+startup, which makes it a fast repro.  It is NEW to the flagged list only
+because the package used to fail to LOAD (`load=FAIL` in the pre-fix sweep) and
+now loads, so this is the first run that reached the VM at all.
+
+Repro: load `Metacello new baseline: 'Ume'; ...` per `packages-200.tsv`, then
+start our VM on the image; it dies before running anything.  A non-JIT
+early-startup SIGSEGV should be quick to localize under lldb.
+
 ## OPEN: `pharo-contributions-mutalk` crashes freeing the Interpreter (2026-08-11)
 
 Deterministic and PRE-EXISTING — both the 2026-08-11 arm sweep and the
