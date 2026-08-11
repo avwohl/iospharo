@@ -275,7 +275,57 @@ same root as the SlotIntegration materialization Heisenbug in `deferred.md`,
 whose signature is "a live temp comes back with the wrong VALUE after the build
 is preempted and its frames are materialized to a context and restored".
 
-### Next step
+### FIXED — `88ce3fee`: `executeFromContext` disowned the context it restored
+
+The frame-push trace resolved it. Same activation, two stack addresses:
+
+    11 pushes  savedFP+1 = 0x44780ab60   t0 = OrderedCollection
+    [FRAME-TEMPS]    frame materialised into a Context, t0 = OrderedCollection
+    [EXEC-FROM-CTX]  activation restored from that Context — NEW stack address
+     4 pushes  savedFP+1 = 0x44780a960   t0 = nil   <- `anArray := nil` ran here
+
+`executeFromContext` rebuilds a suspended activation into a fresh C++ frame and
+sets `activeContext_ = context`, but it also cleared
+`currentFrameMaterializedCtx_`. The running frame no longer knew it owned that
+context, so nothing synced back into it, while the activation carried on at a
+different address. Anything still holding the context — the `timesRepeat:`
+closure's `outerContext`, the sender chain — kept seeing pre-restore values, and
+the GC marked them. It also meant `thisContext` would not answer the same object
+the closure already held.
+
+The fix is the invariant: the frame being built IS that context's activation, so
+it owns it, and later materialisations re-sync that object instead of leaving it
+frozen. That is also why `PHARO_MAT_FULL_RESYNC=1` was inert — it re-copied from
+the stale `savedFP`.
+
+    WeakOrderedCollectionTest in-suite
+      before   0 P / 2 F  in 10/10 runs     (stock Cog: 2 P / 0 F, 3/3)
+      after    2 P / 0 F  in 14 of 16 runs
+
+Regression coverage: 200-class SUnit batch 8365 P / 0 F / 0 E / 1 T (identical
+to baseline), and 29 context-identity-sensitive classes (Context, BlockClosure,
+Continuation, Become, Object, Process*, StDebugger*, simulation, reflectivity,
+weak) 1288 P / 0 F / 0 E / 0 T.
+
+**It costs ~9% on one benchmark.** Isolated, four runs each, `1M blocks`
+(`1 to: 1000000 do: [:i | [x := x + 1] value]`): 220/228/229/235 ms before,
+241/251/245/252 ms after — no overlap, so it is real and not the noise that
+made the earlier full-suite deltas look meaningful. Every other bench is flat.
+An owned context means materialisations re-sync an existing object rather than
+taking the cheap path, which is the correct model (Cog's married context IS the
+frame and a temp store writes through) but is not free. Worth optimising later;
+not worth trading the correctness back for.
+
+Two things remain open here:
+
+- **~2 runs in 16 still fail one of the two tests**, so a second, smaller
+  retention path exists.
+- Nil-ing the slots above `stackp` in all three of `materializeFrameStack`'s
+  context-reuse paths does NOT close that residual (tested on top of the fix:
+  still 8/10) and costs a tail sweep per materialisation, so it is not shipped.
+  The stale tail is real, but it is not this.
+
+### Earlier next-step note (superseded by the fix above)
 
 Find where the JIT writes temps for an activation that is a CALLER — this one
 is in `savedFrames_`, suspended inside a `timesRepeat:` send — and why that
