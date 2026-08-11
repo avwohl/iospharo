@@ -34,11 +34,25 @@ git fetch origin
 git checkout "$BASE_BRANCH"
 git pull --ff-only origin "$BASE_BRANCH"
 # Create or fast-forward the work branch from base.
+#
+# A pre-existing remote work branch used to win unconditionally.  That is how a
+# 2026-08-11 arm box built `jit-arm-linux` as it stood on 2026-06-10 — a stale
+# spot-interruption autosave — reported "clone-and-build.sh complete", and ran
+# a whole sweep against two-month-old code.  Reuse the remote branch ONLY when
+# it already contains base; otherwise say so and reset it to base.
 if git ls-remote --exit-code --heads origin "$WORK_BRANCH" >/dev/null 2>&1; then
-    git checkout -B "$WORK_BRANCH" "origin/$WORK_BRANCH"
+    if git merge-base --is-ancestor "origin/$BASE_BRANCH" "origin/$WORK_BRANCH"; then
+        git checkout -B "$WORK_BRANCH" "origin/$WORK_BRANCH"
+    else
+        echo "WARNING: origin/$WORK_BRANCH does not contain origin/$BASE_BRANCH" >&2
+        echo "  ($(git log --oneline -1 "origin/$WORK_BRANCH"))" >&2
+        echo "  Resetting it to $BASE_BRANCH so this box builds current code." >&2
+        git checkout -B "$WORK_BRANCH" "origin/$BASE_BRANCH"
+    fi
 else
     git checkout -B "$WORK_BRANCH" "$BASE_BRANCH"
 fi
+echo "== work branch $WORK_BRANCH at $(git log --oneline -1) =="
 
 # Submodules.  third_party/asmjit is REQUIRED (cmake add_subdirectory needs a
 # populated tree).  scripts/pharo-headless-test is only the SUnit harness (.st
