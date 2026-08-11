@@ -28,11 +28,20 @@ carry a non-zero flag; reading the counters, every one is a test that passes on
 Cog and TIMES OUT on ours, a row with byte-identical counters
 (`mumez-redistick`), or a row where neither arm produced a result.
 
-**Local full suite (macOS-arm64): 2055 classes, 27701 P / 22 F / 12 T / 50 E.**
-Every FAIL is in a documented residual family — `ReleaseTest` run-order
-pollution (6) and the `St*`/`Sp*` GUI, TKT and ZnClient families (16) — the same
-shape as the pre-fix arm run's 19.  The 50 errors are this run's prep, which
-did not inject `setup_fake_gui.st`.
+**Full suites, both platforms, 2055 classes each:**
+
+    macOS-arm64      27701 P / 22 F / 12 T / 50 E
+    Linux-aarch64    27647 P / 24 F / 13 T / 102 E
+    (pre-fix arm)    27752 P / 19 F / 14 T /  1 E
+
+Every FAIL on both is in a documented residual family — `ReleaseTest`
+run-order pollution, `StDebugger`/`StSpotter`, TKT, ZnClient — the same shape
+as the pre-fix run's 19.  The ERROR column is the one thing that moved, and it
+is the GUI/Form family in section 8, which is measured NOT to be this
+session's work.
+
+AWS: both boxes terminated, security group / IAM / deploy key removed, lease
+released.  Nothing left running.
 
 **Cost of the GC change: none measurable.** Bounded vs `PHARO_CTX_TRACE_ALL_SLOTS=1`,
 3 runs each, seconds:
