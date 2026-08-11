@@ -139,6 +139,7 @@ constexpr int OFF_RECEIVER     = 8;
 constexpr int OFF_LITERALS     = 16;
 constexpr int OFF_TEMPBASE     = 24;
 constexpr int OFF_IP           = 48;
+constexpr int OFF_METHOD       = 64;
 constexpr int OFF_EXIT         = 76;
 constexpr int OFF_RETVAL       = 80;
 constexpr int OFF_ICDATAPTR    = 96;
@@ -196,7 +197,6 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                                        uint32_t* failedAtValue,
                                        const uint8_t* bytecodeBase,
                                        uint32_t startBcOffset) {
-    (void)startBcOffset;  // jit-may22b Step 1: not yet supported on x86_64
     using namespace asmjit;
     using namespace asmjit::x86;
 
@@ -242,6 +242,45 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     cc.mov(tempBaseHoisted, ptr(state, OFF_TEMPBASE));
     Gp litBaseHoisted = cc.new_gp64("litBaseH");
     cc.mov(litBaseHoisted, ptr(state, OFF_LITERALS));
+
+    // jit-may22b Step 1 literal-patch fix — ported from the arm64 lowerer
+    // (SistaLowering_arm64.cpp:261-291), which has had this since 7f2c55ce.
+    // x86_64 previously baked `bytecodeBase + bcOffset` as an immediate at
+    // every deopt site and never read state.method, so the ip a deopt stored
+    // pointed at wherever the method happened to live AT COMPILE TIME.  After a
+    // GC compaction or a literal patch moved that method, the interpreter
+    // resumed at a stale address.
+    //
+    // Instead recompute bytecodes_start from state.method at fn entry:
+    //   methodObj + 0:  ObjectHeader
+    //   methodObj + 8:  slot 0 = SmI method header (numLits in bits 3..17)
+    //   methodObj + 16 + numLits*8: bytecodes
+    // For lifted regions, fold startBcOffset in here so each deopt site is just
+    // `lea ipReg, [bytecodesHoisted + bcOffset]`.  That makes bytecodesHoisted
+    // equivalent to the old baked pointer, but recomputed per call — so it
+    // survives GC.
+    Gp bytecodesHoisted = cc.new_gp64("bcStart");
+    if (bytecodeBase) {
+        Gp methObjReg  = cc.new_gp64("bcMeth");
+        Gp numLitsReg  = cc.new_gp64("bcNumLits");
+        cc.mov(methObjReg, ptr(state, OFF_METHOD));
+        cc.mov(numLitsReg, ptr(methObjReg, 8));           // slot 0 = SmI header
+        cc.shr(numLitsReg, Imm(3));                       // untag SmI
+        cc.and_(numLitsReg, Imm(0x7FFF));                 // numLits field
+        // bytecodesHoisted = methObj + numLits*8 + (16 + startBcOffset)
+        cc.lea(bytecodesHoisted,
+               ptr(methObjReg, numLitsReg, 3, 16 + (int)startBcOffset));
+    }
+
+    // Single place that materialises a deopt/send ip.  Every site goes through
+    // this so the two backends cannot drift apart again the way they did here.
+    auto emitSetIp = [&](const Gp& ipReg, uint64_t bcOff) {
+        if (bytecodeBase) {
+            cc.lea(ipReg, ptr(bytecodesHoisted, (int)bcOff));
+        } else {
+            cc.mov(ipReg, Imm(bcOff));
+        }
+    };
 
     // SSA value id -> the virtual register holding its value.
     std::unordered_map<uint32_t, Gp> regFor;
@@ -310,12 +349,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         }
         cc.mov(ptr(state, OFF_SP), sp);
         Gp ipReg = cc.new_gp64("dpip");
-        if (bytecodeBase) {
-            uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase) + bcOffset;
-            cc.mov(ipReg, Imm((uint64_t)addr));
-        } else {
-            cc.mov(ipReg, Imm(bcOffset));
-        }
+        emitSetIp(ipReg, bcOffset);
         cc.mov(ptr(state, OFF_IP), ipReg);
         Gp zero64 = cc.new_gp64("dpzero");
         cc.xor_(zero64, zero64);
@@ -594,13 +628,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.add(sp, Imm((dBSize + 2) * 8));
                     cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("ip_az");
-                    if (bytecodeBase) {
-                        uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
-                                       + static_cast<uint32_t>(v.literal);
-                        cc.mov(ipReg, Imm((uint64_t)addr));
-                    } else {
-                        cc.mov(ipReg, Imm(v.literal));
-                    }
+                    emitSetIp(ipReg, static_cast<uint32_t>(v.literal));
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("argc_az");
                     cc.mov(argc, Imm(1));
@@ -643,11 +671,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.add(sp, Imm(8));
                     cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("ip_sz");
-                    if (bytecodeBase) {
-                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase)
-                                    + static_cast<uint32_t>(v.literal);
-                        cc.mov(ipReg, Imm((uint64_t)a));
-                    } else { cc.mov(ipReg, Imm(v.literal)); }
+                    emitSetIp(ipReg, static_cast<uint32_t>(v.literal));
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("argc_sz");
                     cc.mov(argc, Imm(0)); cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -726,11 +750,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.add(sp, Imm((dBSize + 3) * 8));
                     cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("ip_ap");
-                    if (bytecodeBase) {
-                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase)
-                                    + static_cast<uint32_t>(v.literal);
-                        cc.mov(ipReg, Imm((uint64_t)a));
-                    } else { cc.mov(ipReg, Imm(v.literal)); }
+                    emitSetIp(ipReg, static_cast<uint32_t>(v.literal));
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("argc_ap");
                     cc.mov(argc, Imm(2)); cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -904,11 +924,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
                 // bail-to-interpreter path (PHARO_SISTA_BLOCK_BAIL=1).
                 Gp ipReg = cc.new_gp64("bc_ip");
-                if (bytecodeBase) {
-                    uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase)
-                                + static_cast<uint32_t>(bcOffset);
-                    cc.mov(ipReg, Imm((uint64_t)a));
-                } else { cc.mov(ipReg, Imm(bcOffset)); }
+                emitSetIp(ipReg, static_cast<uint32_t>(bcOffset));
                 cc.mov(ptr(state, OFF_IP), ipReg);
                 Gp argc = cc.new_gp32("bc_argc"); cc.mov(argc, Imm(0));
                 cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -978,10 +994,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     else cc.add(sp, Imm(8));
                     cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("loop_dz_ip");
-                    if (bytecodeBase) {
-                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
-                        cc.mov(ipReg, Imm((uint64_t)a));
-                    } else cc.mov(ipReg, Imm((uint64_t)bc));
+                    emitSetIp(ipReg, bc);
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("loop_dz_argc"); cc.mov(argc, Imm(0));
                     cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -1156,10 +1169,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(ptr(sp, 0), rcvReg); cc.mov(ptr(sp, 8), initReg0);
                     cc.add(sp, Imm(16)); cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("inj_dz_ip");
-                    if (bytecodeBase) {
-                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
-                        cc.mov(ipReg, Imm((uint64_t)a));
-                    } else cc.mov(ipReg, Imm((uint64_t)deoptBC));
+                    emitSetIp(ipReg, deoptBC);
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("inj_dz_argc"); cc.mov(argc, Imm(1));
                     cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -1317,10 +1327,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(ptr(sp, 0), savedRcv); cc.mov(ptr(sp, 8), savedVec);
                     cc.add(sp, Imm(16)); cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("acc_dz_ip");
-                    if (bytecodeBase) {
-                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
-                        cc.mov(ipReg, Imm((uint64_t)a));
-                    } else cc.mov(ipReg, Imm((uint64_t)deoptBC));
+                    emitSetIp(ipReg, deoptBC);
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("acc_dz_argc"); cc.mov(argc, Imm(0));
                     cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -1449,10 +1456,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(ptr(sp, 0), startReg); cc.mov(ptr(sp, 8), stopReg);
                     cc.add(sp, Imm(16)); cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("ivacc_dz_ip");
-                    if (bytecodeBase) {
-                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
-                        cc.mov(ipReg, Imm((uint64_t)a));
-                    } else cc.mov(ipReg, Imm((uint64_t)deoptBC));
+                    emitSetIp(ipReg, deoptBC);
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("ivacc_dz_argc"); cc.mov(argc, Imm(0));
                     cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -1542,10 +1546,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(ptr(sp, 0), startReg); cc.mov(ptr(sp, 8), stopReg);
                     cc.add(sp, Imm(16)); cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("ivd_dz_ip");
-                    if (bytecodeBase) {
-                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
-                        cc.mov(ipReg, Imm((uint64_t)a));
-                    } else cc.mov(ipReg, Imm((uint64_t)deoptBC));
+                    emitSetIp(ipReg, deoptBC);
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("ivd_dz_argc"); cc.mov(argc, Imm(0));
                     cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -1677,10 +1678,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(ptr(sp, 0), startReg); cc.mov(ptr(sp, 8), stopReg);
                     cc.add(sp, Imm(16)); cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("ivi_dz_ip");
-                    if (bytecodeBase) {
-                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
-                        cc.mov(ipReg, Imm((uint64_t)a));
-                    } else cc.mov(ipReg, Imm((uint64_t)deoptBC));
+                    emitSetIp(ipReg, deoptBC);
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("ivi_dz_argc"); cc.mov(argc, Imm(0));
                     cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -1812,10 +1810,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(ptr(sp, 0), rcvReg);
                     cc.add(sp, Imm(8)); cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("col_dz_ip");
-                    if (bytecodeBase) {
-                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
-                        cc.mov(ipReg, Imm((uint64_t)a));
-                    } else cc.mov(ipReg, Imm((uint64_t)deoptBC));
+                    emitSetIp(ipReg, deoptBC);
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("col_dz_argc"); cc.mov(argc, Imm(0));
                     cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -2004,10 +1999,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 bool     isNoAccum    = (bool)((v.literal >> 61) & 1);
                 auto wtDeopt = [&]() {
                     Gp ipReg = cc.new_gp64("wt_dz_ip");
-                    if (bytecodeBase) {
-                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
-                        cc.mov(ipReg, Imm((uint64_t)a));
-                    } else cc.mov(ipReg, Imm((uint64_t)deoptBC));
+                    emitSetIp(ipReg, deoptBC);
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("wt_dz_argc"); cc.mov(argc, Imm(0));
                     cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -2140,10 +2132,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(ptr(sp, 0), rcvReg);
                     cc.add(sp, Imm(8)); cc.mov(ptr(state, OFF_SP), sp);
                     Gp ipReg = cc.new_gp64("sel_dz_ip");
-                    if (bytecodeBase) {
-                        uintptr_t a = reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
-                        cc.mov(ipReg, Imm((uint64_t)a));
-                    } else cc.mov(ipReg, Imm((uint64_t)deoptBC));
+                    emitSetIp(ipReg, deoptBC);
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argc = cc.new_gp32("sel_dz_argc"); cc.mov(argc, Imm(0));
                     cc.mov(ptr(state, OFF_SENDARGCOUNT), argc);
@@ -2691,14 +2680,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(ptr(state, OFF_SP), sp2);
 
                     Gp ipReg = cc.new_gp64("send_ip_dz");
-                    if (bytecodeBase) {
-                        uintptr_t addr =
-                            reinterpret_cast<uintptr_t>(bytecodeBase)
-                            + bcOffset;
-                        cc.mov(ipReg, Imm((uint64_t)addr));
-                    } else {
-                        cc.mov(ipReg, Imm(bcOffset));
-                    }
+                    emitSetIp(ipReg, bcOffset);
                     cc.mov(ptr(state, OFF_IP), ipReg);
                     Gp argCountReg = cc.new_gp32("send_argc_dz");
                     cc.mov(argCountReg, Imm(nArgs));
@@ -2737,13 +2719,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.mov(ptr(state, OFF_SP), sp);
 
                 Gp ipReg = cc.new_gp64("uip");
-                if (bytecodeBase) {
-                    uintptr_t addr =
-                        reinterpret_cast<uintptr_t>(bytecodeBase) + bcOffset;
-                    cc.mov(ipReg, Imm((uint64_t)addr));
-                } else {
-                    cc.mov(ipReg, Imm(bcOffset));
-                }
+                emitSetIp(ipReg, bcOffset);
                 cc.mov(ptr(state, OFF_IP), ipReg);
                 Gp argCountReg = cc.new_gp32("uargc");
                 cc.mov(argCountReg, Imm(nArgs));
