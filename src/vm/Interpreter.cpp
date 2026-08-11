@@ -21505,14 +21505,24 @@ void Interpreter::raiseContextStackpTo(Oop context, int slots) {
 }
 
 void Interpreter::storeContextStackp(Oop context, int stackp) {
-    memory_.storePointer(2, context, Oop::fromSmallInteger(stackp));
-    if (stackp < 0) return;
+    if (stackp < 0) {
+        memory_.storePointer(2, context, Oop::fromSmallInteger(stackp));
+        return;
+    }
     ObjectHeader* ctx = context.asObjectPtr();
     const size_t cap = ctx->slotCount();
+    // Clear only the range this store VACATES, not the whole tail.  A fresh
+    // context is allocated nil, and every VM path that lowers stackp comes
+    // through here, so above the previous stackp is already clear — walking to
+    // capacity instead would cost ~32 slots per frame per materialize, on a
+    // path that runs at every process switch.
+    Oop prev = memory_.fetchPointer(2, context);
+    size_t clearEnd = prev.isSmallInteger() && prev.asSmallInteger() >= 0
+        ? std::min(cap, (size_t)(6 + prev.asSmallInteger()))
+        : cap;   // unknown provenance (image-written stackp): be thorough
+    memory_.storePointer(2, context, Oop::fromSmallInteger(stackp));
     const Oop nilOop = memory_.nil();
-    for (size_t s = 6 + (size_t)stackp; s < cap; ++s) {
-        // Read first: the tail is already nil for a freshly allocated context,
-        // so a reused one is the only case that pays for the stores.
+    for (size_t s = 6 + (size_t)stackp; s < clearEnd; ++s) {
         if (!ctx->slotAt(s).isNil()) memory_.storePointer(s, context, nilOop);
     }
 }
