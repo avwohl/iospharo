@@ -9,7 +9,7 @@ arm64 native plus x86_64 through the `build-x86` tree under Rosetta.
     x86 multi-entry dispatch divergence     FIXED   c5332248 (BOTH arches)
     CWD-relative file resolution            FIXED   d1cd608e
     weak-reference tests                    FIXED   88ce3fee (residual ~2-in-16)
-    arm package sweep                       RUNNING on i-0740e9a99ddd0c253
+    arm package sweep                       LOST — box auto-terminated at 158/200
     build-hunt history rewrite              DECLINED by user (leave it)
     xcode-select                            NOT DONE (needs a password)
 
@@ -43,6 +43,23 @@ in the first arm sweep evaluated nothing and the summary said `jit_RESULT = -`.
 Both arms now run from `$OUT/wd-$LABEL`, and the VM prints a loud error if its
 startup.st is still on disk at exit (the script self-deletes, so a survivor
 means the loader never ran it).  Sweep relaunched on the fixed code.
+
+**F. The arm sweep was LOST at 158/200 — `4ca528ad`.**  `idle-alarm.sh` arms a
+CloudWatch alarm that TERMINATES the box on <4% average CPU for an hour.
+CPUUtilization is a percentage of ALL vCPUs, and the arm default is a 64-vCPU
+c7g.16xlarge, so a network-bound 24-worker sweep (~2-8 busy cores) averaged
+under 4% and the box was killed an hour in.  Results were on the instance
+store: gone.  NEITHER safety net can stop this — the on-box idle-shutdown is
+process-aware and knew the sweep was running (`f034b896`), and the keep-alive
+lease was live, but a lease only influences the local `reap.sh` while an EC2
+alarm action terminates directly ("Service initiated" in StateTransitionReason
+is the tell).  Fixed by expressing the threshold in CORES (`IDLE_CORES`,
+default 0.64) scaled by the instance's real vCPU count.  Also fixed:
+`lease.sh` ignored `CONFIG_FILE`, so the arm box's lease row was tagged
+`iospharo-x64`.
+BEFORE RE-RUNNING: preserve results to S3 incrementally — `preserve.sh` syncs
+notes/logs, NOT results — and note the box is a 64-vCPU on-demand c7g.16xlarge
+(~$2.3/h), not the ~$0.60/h 4xlarge quoted in the earlier section.
 
 Box gotchas hit while doing this, both now fixed in-tree (`07091eeb`) or worth
 remembering: a stale `origin/jit-arm-linux` autosave branch made clone-and-build
