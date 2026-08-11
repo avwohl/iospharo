@@ -1,0 +1,853 @@
+Pharo Clean VM - Image Loader Test
+===================================
+
+=== Oop Tagging Tests ===
+SmallInteger 42:  0x151 isSmallInteger=1 value=42
+SmallInteger -100: 0xfffffffffffffce1 value=-100
+Character 'A':    0x20b isCharacter=1 codepoint=65
+nil:              0x0 isNil=1
+
+SmallFloat tests:
+  1 -> 0x7f00000000000005 -> 1 OK
+  168 -> 0x8650000000000005 -> 168 OK
+  80 -> 0x8540000000000005 -> 80 OK
+  -42.5 -> 0x845400000000000d -> -42.5 OK
+  0 -> 0x5 -> 0 OK
+  1024 -> 0x8900000000000005 -> 1024 OK
+  0.5 -> 0x7e00000000000005 -> 0.5 OK
+
+Decoding known SmallFloat values from Pharo:
+  0x8540000000000005 -> 80
+  0x8650000000000005 -> 168
+  0x8000000000000005 -> 2
+
+Tag verification (should use low 3 bits only):
+  SmallInteger tag: 1 (expected 1)
+  Character tag:    3 (expected 3)
+
+Loading image: /home/ubuntu/pkg200/w3/rko281-porpoise.image
+Working directory: /home/ubuntu/pkg200/w3
+Memory initialized successfully
+Image loaded successfully!
+=== Image Header ===
+Format:            68021 (Spur 64-bit)
+Header size:       128 bytes
+Image size:        63359224 bytes (60 MB)
+Old base address:  0x10000000000
+Special objects:   0x1000109fac0
+Last hash:         127123013864703470
+Screen size:       0 x 0
+Flags:             0x2
+First segment:     63359224 bytes
+Free old space:    7301928 bytes
+Eden bytes:        22003584
+
+=== Special Objects ===
+Special objects array: 0x754bc049fac0
+  Raw header: 0x3c00000002000033
+  Slot count (bits 0-7): 51
+  Hash (bits 8-29): 131072
+  Format (bits 30-34): 0
+  Class index (bits 35-56): 0
+  Flags (bits 57-63): 30
+  Computed slot count: 60
+
+First 20 special objects:
+  [0]: 0x754bbf400000 (object, class: 3075)
+  [1]: 0x754bbf400010 (object, class: 3077)
+  [2]: 0x754bbf400020 (object, class: 3079)
+  [3]: 0x754bbf46d410 (object, class: 3139)
+  [4]: 0x754bbfd34a48 (object, class: 7593)
+  [5]: 0x754bbf8121b0 (object, class: 3080)
+  [6]: 0x754bbf4162d0 (object, class: 3086)
+  [7]: 0x754bbf4164b0 (object, class: 3092)
+  [8]: 0x754bbf420ce8 (object, class: 3135)
+  [9]: 0x754bbf4167d0 (object, class: 3102)
+  [10]: 0x754bbf416870 (object, class: 3104)
+  [11]: 0x754bbf400000 (object, class: 3075)
+  [12]: 0x754bbf416cd0 (object, class: 3118)
+  [13]: 0x754bbf416690 (object, class: 3098)
+  [14]: 0x754bbf400000 (object, class: 3075)
+  [15]: 0x754bbf416af0 (object, class: 3112)
+  [16]: 0x754bbf400000 (object, class: 3075)
+  [17]: 0x754bc2902180 (object, class: 48)
+  [18]: 0x754bbf416b90 (object, class: 3114)
+  [19]: 0x754bbf812148 (object, class: 3082)
+
+=== Memory Layout ===
+Old space:  0x754bbf400000 - 0x754cbf400000
+Allocated:  0 MB
+Free:       4035 MB
+
+First 128 bytes of old space (raw):
+  [0]: 0x311b8800800c03
+  [8]: 0x0
+  [16]: 0x131a4e00800c05
+  [24]: 0x0
+  [32]: 0x24305400800c07
+  [40]: 0x0
+  [48]: 0x4000000009000013
+  [56]: 0x754bc2975da8
+  [64]: 0x0
+  [72]: 0x0
+  [80]: 0x0
+  [88]: 0x0
+  [96]: 0x0
+  [104]: 0x0
+  [112]: 0x0
+  [120]: 0x0
+
+First object header analysis:
+  Raw: 0x311b8800800c03
+  Slot count: 3
+  Format: 0
+  Class index: 402289
+
+=== Object Statistics ===
+Total objects:    746042
+Pointer objects:  440781
+Byte objects:     128641
+Compiled methods: 176141
+Total size:       60 MB
+
+=== Checking iOS Classes ===
+  OSWorldRenderer: found
+  OSiOSDriver: NOT FOUND
+  OSiOSBackendWindow: NOT FOUND
+  NullWorldRenderer: found
+  OSWindowDriver: found
+  OSWindow: found
+  WorldMorph: found
+  WorldState: found
+  Display: NOT FOUND
+
+=== Headless Mode (no display) ===
+
+=== Interpreter Initialization ===
+Event callback registered
+[RESUME] ctx[0]: SnapshotOperation>>doSnapshot
+[RESUME] ctx[1]: SnapshotOperation>>doSnapshot
+[RESUME] ctx[2]: FullBlockClosure>>on:do:
+[RESUME] ctx[3]: FullBlockClosure>>onErrorDo:
+[RESUME] ctx[4]: SnapshotOperation>>executeStoringError:
+[RESUME] ctx[5]: SnapshotOperation>>performSnapshot
+[RESUME] ctx[6]: SessionManager>>launchSnapshot:andQuit:
+[RESUME] ctx[7]: SessionManager>>signal
+[RESUME] ctx[8]: FullBlockClosure>>terminateRealActive
+[RESUME] inSnapshotCode=1 chainDepth=9
+[RESUME] Initial context: method=#doSnapshot pc=55
+[RESUME] Patching: stackp=1 stackTopSlot=6 oldVal=true(0x754bbf400020) -> true
+[RESUME] Found SnapshotOperation 0x754bc292aa18 at ctx depth 0, isImageStarting=false
+[RESUME] Found SnapshotOperation 0x754bc292aa18 at ctx depth 1, isImageStarting=true
+[RESUME] Found SnapshotOperation 0x754bc292aa18 at ctx depth 4, isImageStarting=true
+[RESUME] Found SnapshotOperation 0x754bc292aa18 at ctx depth 5, isImageStarting=true
+[RESUME] Patched isImageStarting on 1 SnapshotOperation(s)
+[UNBLOCK-SNAPSHOT] heap scan capped at 10000 objects — stuck callers beyond the cap are not reachable by this recovery
+[STARTUP] Boosting startup process 0x754bc2905d40 from P79 to P80
+[JIT] Initialized: 64 MB code zone at 0x754bb0000000
+[STARTUP] Headless mode: deferring timer semaphore signal
+Interpreter initialized successfully!
+Active method: 0x754bbf6e9a50
+Display after ensureDisplayForm: NOT FOUND
+Heartbeat will start after startup completes...
+
+=== Forced GC Test ===
+Before GC: used=60MB free=4035MB
+After GC: used=60MB free=4035MB
+Freed: 0KB
+GC reclaimed: 16 bytes, moved: 730954 objects, took: 262ms
+
+=== Execution Test ===
+Running up to 2000000000000 bytecode steps...
+Image args: eval "Generic loaded-package SUnit runner — runs identically on our custom VM and on
+ stock Cog, so the two outputs can be diffed for JIT-correctness parity.
+
+ Selects every non-abstract TestCase subclass whose package name starts with any
+ prefix listed in /tmp/pkg_prefixes.txt (one prefix per line, e.g. 'Neo-JSON',
+ 'Math-Tests', 'STON').  Runs each test selector with a per-test wall-clock
+ timeout, and prints one machine-readable RESULT line plus FAIL/ERR detail lines.
+
+ Fairness: the prefixes live in an EXTERNAL file, never as literals in this
+ script, so neither VM's literal pool biases reflective senders — same contract
+ as the kernel-suite runners."
+
+| log prefixes classes p f e to perTimeout envp |
+log := Stdio stdout.
+perTimeout := 50 seconds.
+"Prefixes come from the PKG_PREFIXES env var (comma-separated) when set, else the
+ /tmp/pkg_prefixes.txt file.  The env path lets parallel workers each pass their
+ own prefixes without racing on the shared file.  Either way the prefixes live
+ OUTSIDE this script (the fairness contract), so neither VM's literal pool is
+ biased."
+envp := [ Smalltalk os environment at: 'PKG_PREFIXES' ifAbsent: [ '' ] ]
+          on: Error do: [:e | '' ].
+prefixes := (envp notNil and: [ envp notEmpty ])
+  ifTrue: [ ((envp substrings: ',') collect: [:s | s trimBoth]) reject: [:s | s isEmpty] ]
+  ifFalse: [ ('/tmp/pkg_prefixes.txt' asFileReference exists)
+      ifTrue: [ ('/tmp/pkg_prefixes.txt' asFileReference contents lines
+                  collect: [:s | s trimBoth]) reject: [:s | s isEmpty] ]
+      ifFalse: [ #() ] ].
+log nextPutAll: 'PREFIXES '; nextPutAll: prefixes printString; lf; flush.
+
+classes := (TestCase allSubclasses select: [:c |
+  c isAbstract not and: [
+    prefixes anySatisfy: [:pre | c package name beginsWith: pre]]])
+  asSortedCollection: [:a :b | a name < b name].
+log nextPutAll: 'CLASSES '; nextPutAll: classes size printString; lf; flush.
+
+p := 0. f := 0. e := 0. to := 0.
+classes do: [:cls |
+  cls allTestSelectors do: [:sel |
+    | res |
+    res := [[ ([(cls selector: sel) runCase. #pass]
+                  valueWithin: perTimeout onTimeout: [#timeout])]
+              on: TestFailure do: [:ex |
+                f := f + 1.
+                log nextPutAll: 'FAIL ', cls name, '>>', sel,
+                  ' [', ((ex messageText ifNil: ['']) copyFrom: 1 to: ((ex messageText ifNil: ['']) size min: 200)), ']'; lf.
+                #fail]]
+            on: Error do: [:ex |
+              e := e + 1.
+              log nextPutAll: 'ERR  ', cls name, '>>', sel,
+                ' (', ex class name, ': ', ((ex messageText ifNil: ['']) copyFrom: 1 to: ((ex messageText ifNil: ['']) size min: 160)), ')'; lf.
+              #error].
+    res = #pass ifTrue: [p := p + 1].
+    res = #timeout ifTrue: [to := to + 1.
+      log nextPutAll: 'TIMEOUT ', cls name, '>>', sel; lf].
+    log flush]].
+
+log nextPutAll: 'RESULT pass=', p printString, ' fail=', f printString,
+  ' err=', e printString, ' timeout=', to printString,
+  ' classes=', classes size printString; lf; flush.
+[CACHE-1] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf4173c8 method=0x754bbf7d9870
+[CACHE-2] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf4173c8 method=0x754bbf7da108
+[RV 0] #resolve -> SessionAccessModeResolver class'' (recv SessionAccessModeResolver class)
+[RV 1] #startUp: -> SessionAccessModeResolver class'' (recv SessionAccessModeResolver class)
+[SEM-SIGNAL-2] sem=0x754bc28da350 active-pri=80 waiter=0x754bc2056290 waiter-pri=80
+[CACHE-3] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf4168d8 method=0x754bbf7853e0
+[CACHE-4] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf416b58 method=0x754bbf7853e0
+[JIT] AUTO-EXCLUDED exception infra #findContextSuchThat:
+[JIT] AUTO-EXCLUDED exception infra #findContextSuchThat:
+[XFER-1] old=0x754bc28ddd90 pri=80 -> new=0x754bc2056290 pri=80
+[XFER-2] old=0x754bc2056290 pri=80 -> new=0x754bc28da370 pri=80
+[SEM-SIGNAL-3] sem=0x754bbd4143c0 active-pri=80 waiter=0x754bc28ddd90 waiter-pri=80
+[XFER-3] old=0x754bc28da370 pri=80 -> new=0x754bc28ddd90 pri=80
+[XFER-4] old=0x754bc28ddd90 pri=80 -> new=0x754bc28da3c8 pri=80
+[SEM-SIGNAL-4] sem=0x754bbd41b040 active-pri=80 waiter=0x754bc28ddd90 waiter-pri=80
+[XFER-5] old=0x754bc28da3c8 pri=80 -> new=0x754bc28ddd90 pri=80
+[RV 2] #subclasses -> Array'' (recv FFIExternalReference class)
+[SLOW-EXIT-SEND #1] method=#contents ic=0x5fc9c67feef0
+[IC-PATCH] #max: J2J=1 key=0x80000001 extra=0x1000754bb0004900
+[SLOW-EXIT-SEND #2] method=#contents ic=0x5fc9c67fef90
+[IC-PATCH] #copyFrom:to: J2J=1 key=0x34 extra=0x1200754bb0026200
+[SLOW-EXIT-SEND #3] method=#new: ic=0x5fc9c681f650
+[SLOW-EXIT-SEND #4] method=#new: ic=0x5fc9c681f790
+[SLOW-EXIT-SEND #5] method=#= ic=0x5fc9c681af50
+[IC-PATCH] #isString J2J=1 key=0x34 extra=0x1402754bb00951c0
+[SLOW-EXIT-SEND #6] method=#= ic=0x5fc9c681aff0
+[IC-PATCH] #size J2J=1 key=0x34 extra=0x1210754bb0002540
+[SLOW-EXIT-SEND #7] method=#= ic=0x5fc9c681b090
+[IC-PATCH] #size J2J=1 key=0x34 extra=0x1210754bb0002540
+[SLOW-EXIT-SEND #8] method=#= ic=0x5fc9c681b130
+[IC-PATCH] #compare:with: J2J=1 key=0x34 extra=0x1000754bb0095440
+[SLOW-EXIT-SEND #9] method=#install ic=0x5fc9c6817310
+[IC-PATCH] #platformName J2J=1 key=0xc3f extra=0x1200754bb00995c0
+[SLOW-EXIT-SEND #10] method=#os ic=0x5fc9c681b610
+[IC-PATCH] #current J2J=1 key=0x104e extra=0x1200754bb009a2c0
+[IC-PATCH] #name J2J=1 key=0x1309 extra=0x1200754bb009a8c0
+[IC-PATCH] #vm J2J=1 key=0xc3f extra=0x1000754bb0031380
+[IC-PATCH] #getSystemAttribute: J2J=1 key=0x1323 extra=0x1000754bb0032f40
+[IC-PATCH] #utf8Decoded J2J=1 key=0x32 extra=0x1200754bb0090680
+[IC-PATCH] #default J2J=1 key=0x1408 extra=0x1000754bb00913c0
+[IC-PATCH] #decodeWith: J2J=1 key=0x32 extra=0x1200754bb0091cc0
+[IC-PATCH] #decodeBytes: J2J=1 key=0x1409 extra=0x1200754bb0092640
+[IC-PATCH] #on: J2J=1 key=0x11cc extra=0x1200754bb0003a40
+[IC-PATCH] #size J2J=1 key=0x32 extra=0x1210754bb0002540
+[IC-PATCH] #reset J2J=1 key=0x11cd extra=0x1200754bb0093d40
+[IC-PATCH] #new:streamContents: J2J=1 key=0xc4c extra=0x1000754bb0014f40
+[IC-PATCH] #new: J2J=1 key=0xc0e extra=0x1100754bb007e940
+[IC-PATCH] #on: J2J=1 key=0xc78 extra=0x1200754bb0003a40
+[IC-PATCH] #on: J2J=1 key=0xc79 extra=0x1000754bb00042c0
+[IC-PATCH] #size J2J=1 key=0x34 extra=0x1210754bb0002540
+[IC-PATCH] #max: J2J=1 key=0x80000001 extra=0x1000754bb0004900
+[IC-PATCH] #next J2J=1 key=0x11cd extra=0x1000754bb008a300
+[IC-PATCH] #nextPut: J2J=1 key=0xc79 extra=0x1000754bb000aa00
+[IC-PATCH] #atEnd J2J=1 key=0x11cd extra=0x1200754bb008a140
+[IC-PATCH] #at: J2J=1 key=0x33 extra=0x100e754bb0005a40
+[IC-PATCH] #reset J2J=1 key=0xc79 extra=0x1200754bb0004380
+[IC-PATCH] #nextCodePointFromStream: J2J=1 key=0x1409 extra=0x1000754bb0080ec0
+[CACHE-5] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbf416478 method=0x754bbf77cea8
+[CACHE-6] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbf41a1f0 method=0x754bbf77cea8
+[CACHE-7] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbfee8e30 method=0x754bbf7853e0
+[CACHE-8] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbfee8f70 method=0x754bbf7853e0
+[CACHE-9] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153adc0 method=0x754bbf7853e0
+[CACHE-10] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153c790 method=0x754bbf7853e0
+[CACHE-11] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153c910 method=0x754bbf7853e0
+[CACHE-12] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153cfd0 method=0x754bbf7853e0
+[CACHE-13] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153c6d0 method=0x754bbf7853e0
+[CACHE-14] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153ba30 method=0x754bbf7853e0
+[CACHE-15] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153cc10 method=0x754bbf7853e0
+[CACHE-16] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153aa80 method=0x754bbf7853e0
+[CACHE-17] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf645800 method=0x754bbf7853e0
+[CACHE-18] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbfee8e30 method=0x754bbf7853e0
+[CACHE-19] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153cb50 method=0x754bbf7853e0
+[CACHE-20] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc1538128 method=0x754bbf7853e0
+[CACHE-21] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153c3d0 method=0x754bbf7853e0
+[CACHE-22] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc15404f8 method=0x754bbf7853e0
+[CACHE-23] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153af60 method=0x754bbf7853e0
+[CACHE-24] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbfd451a0 method=0x754bbf7853e0
+[CACHE-25] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc1538948 method=0x754bbf7853e0
+[CACHE-26] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc153c610 method=0x754bbf7853e0
+[CACHE-27] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bc1539308 method=0x754bbf7853e0
+[RV 3] #flushLocalCache -> InteractiveResolver'' (recv InteractiveResolver)
+[RV 4] #initialize -> InteractiveResolver'' (recv InteractiveResolver)
+[INIT-RESOLVER] #1 Resolver class var set non-nil at step 1896341 (value=0x754bbd4f1058) — defer will lift after buffer
+[RV 5] #addResolver: -> InteractiveResolver'' (recv InteractiveResolver)
+[RV 6] #platformName -> ByteString'unix' (recv UnixResolver class)
+[RV 7] #platformName -> T'' (recv PlatformResolver class)
+[RV 8] #forCurrentPlatform -> UnixResolver'' (recv PlatformResolver class)
+[RV 9] #addResolver: -> SystemResolver'' (recv SystemResolver)
+[RV 10] #addResolver: -> InteractiveResolver'' (recv InteractiveResolver)
+[RV 11] #startUp: -> FileLocator class'' (recv FileLocator class)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x79($y) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x79($y) str='yyy'(3)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x30($0) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x30($0) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=4 arrIdx=3 byte=0x36($6) str='2026-04-06 12:00:00 '(25)
+[P63] idx=4 arrIdx=3 byte=0x36($6) str='2026-04-06 12:00:00 '(25)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x6d($m) str='y-mm-dd'(7)
+[P63] idx=4 arrIdx=3 byte=0x6d($m) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=2 arrIdx=1 byte=0x34($4) str='04'(2)
+[P63] idx=2 arrIdx=1 byte=0x34($4) str='04'(2)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=8 arrIdx=7 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=6 arrIdx=5 byte=0x64($d) str='y-mm-dd'(7)
+[P63] idx=7 arrIdx=6 byte=0x64($d) str='y-mm-dd'(7)
+[RV 12] #ifFalse: -> NIL'' (recv DiskStore class)
+[RV 13] #checkVMVersion -> DiskStore class'' (recv DiskStore class)
+[RV 14] #reset -> DiskStore class'' (recv DiskStore class)
+[RV 15] #subclasses -> Array'' (recv DiskStore class)
+[RV 16] #delimiter -> obj'' (recv WindowsStore class)
+[RV 17] #isActiveClass -> F'' (recv WindowsStore class)
+[RV 18] #delimiter -> obj'' (recv UnixStore class)
+[RV 19] #isActiveClass -> T'' (recv UnixStore class)
+[RV 20] #isActiveClass -> T'' (recv UnixStore class)
+[RV 21] #activeClass -> UnixStore class'' (recv DiskStore class)
+[RV 22] #initialize -> UnixStore'' (recv UnixStore)
+[RV 23] #createDefault -> UnixStore'' (recv UnixStore class)
+[RV 24] #initializeWithStore: -> FileSystem'' (recv FileSystem)
+[RV 25] #store: -> FileSystem'' (recv FileSystem class)
+[RV 26] #currentFileSystem -> FileSystem'' (recv DiskStore class)
+[RV 27] #current -> UnixStore'' (recv DiskStore class)
+[RV 28] #delimiter -> obj'' (recv UnixStore class)
+[RV 29] #delimiter -> obj'' (recv UnixStore)
+[RV 30] #delimiter -> obj'' (recv DiskStore class)
+[RV 31] #isAbsolutePath:delimiter: -> T'' (recv Path class)
+[RV 32] #delimiter -> obj'' (recv AbsolutePath class)
+[RV 33] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 34] #delimiter -> obj'' (recv AbsolutePath class)
+[RV 35] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 36] #delimiter -> obj'' (recv AbsolutePath class)
+[RV 37] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 38] #delimiter -> obj'' (recv AbsolutePath class)
+[RV 39] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 40] #delimiter -> obj'' (recv AbsolutePath class)
+[RV 41] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 42] #and: -> F'' (recv AbsolutePath class)
+[RV 43] #and: -> T'' (recv AbsolutePath class)
+[RV 44] #and: -> T'' (recv AbsolutePath class)
+[RV 45] #and: -> T'' (recv AbsolutePath class)
+[RV 46] #and: -> T'' (recv AbsolutePath class)
+[RV 47] #removeRedundantSegments: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 48] #new: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 49] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 50] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 51] #? -> ByteString'pkg200' (recv AbsolutePath class)
+[RV 52] #? -> ByteString'w3' (recv AbsolutePath class)
+[RV 53] #withAll: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 54] #from:delimiter: -> AbsolutePath'' (recv Path class)
+[RV 55] #defaultWorkingDirectory -> AbsolutePath'' (recv DiskStore class)
+[RV 56] #startUp: -> DiskStore class'' (recv DiskStore class)
+[XFER-6] old=0x754bc28ddd90 pri=80 -> new=0x754bc28da448 pri=80
+[SEM-SIGNAL-8] sem=0x754bbd4ffa00 active-pri=80 waiter=0x754bc28ddd90 waiter-pri=80
+[XFER-7] old=0x754bc28da448 pri=80 -> new=0x754bc28ddd90 pri=80
+[RV 57] #currentFileSystem -> FileSystem'' (recv DiskStore class)
+[RV 58] #disk -> FileSystem'' (recv FileSystem class)
+[RV 59] #delimiter -> obj'' (recv UnixStore)
+[RV 60] #isAbsolutePath:delimiter: -> T'' (recv Path class)
+[RV 61] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 62] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 63] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 64] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 65] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 66] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 67] #and: -> F'' (recv AbsolutePath class)
+[RV 68] #and: -> T'' (recv AbsolutePath class)
+[RV 69] #and: -> T'' (recv AbsolutePath class)
+[RV 70] #and: -> T'' (recv AbsolutePath class)
+[RV 71] #and: -> T'' (recv AbsolutePath class)
+[RV 72] #and: -> T'' (recv AbsolutePath class)
+[RV 73] #new: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 74] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 75] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 76] #? -> ByteString'pkg200' (recv AbsolutePath class)
+[RV 77] #? -> ByteString'w3' (recv AbsolutePath class)
+[RV 78] #? -> ByteString'rko281-porpoise.image' (recv AbsolutePath class)
+[RV 79] #withAll: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 80] #from:delimiter: -> AbsolutePath'' (recv Path class)
+[RV 81] #pathFromString: -> AbsolutePath'' (recv UnixStore)
+[RV 82] #pathFromString: -> AbsolutePath'' (recv FileSystem)
+[RV 83] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 84] #setFileSystem:path: -> FileReference'' (recv FileReference)
+[RV 85] #fileSystem:path: -> FileReference'' (recv FileReference class)
+[RV 86] #referenceTo: -> FileReference'' (recv FileSystem)
+[RV 87] #isRoot -> F'' (recv AbsolutePath)
+[RV 88] #isEmpty -> F'' (recv AbsolutePath)
+[RV 89] #new: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 90] #parent -> AbsolutePath'' (recv AbsolutePath)
+[RV 91] #asPathWith: -> AbsolutePath'' (recv AbsolutePath)
+[RV 92] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 93] #setFileSystem:path: -> FileReference'' (recv FileReference)
+[RV 94] #fileSystem:path: -> FileReference'' (recv FileReference class)
+[RV 95] #referenceTo: -> FileReference'' (recv FileSystem)
+[RV 96] #copyWithPath: -> FileReference'' (recv FileReference)
+[RV 97] #withPath: -> FileReference'' (recv FileReference)
+[RV 98] #parent -> FileReference'' (recv FileReference)
+[RV 99] #delimiter -> obj'' (recv UnixStore)
+[RV 100] #isAbsolutePath:delimiter: -> F'' (recv Path class)
+[RV 101] #isAbsoluteWindowsPath: -> F'' (recv Path class)
+[RV 102] #addAll: -> OrderedCollection'' (recv RelativePath class)
+[RV 103] #and: -> T'' (recv RelativePath class)
+[RV 104] #removeRedundantSegments: -> OrderedCollection'' (recv RelativePath class)
+[RV 105] #new: -> RelativePath'' (recv RelativePath class)
+[RV 106] #? -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv RelativePath class)
+[RV 107] #withAll: -> RelativePath'' (recv RelativePath class)
+[RV 108] #from:delimiter: -> RelativePath'' (recv Path class)
+[RV 109] #pathFromString: -> RelativePath'' (recv UnixStore)
+[RV 110] #pathFromString: -> RelativePath'' (recv FileSystem)
+[RV 111] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 112] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 113] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 114] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 115] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 116] #and: -> T'' (recv AbsolutePath class)
+[RV 117] #and: -> T'' (recv AbsolutePath class)
+[RV 118] #and: -> T'' (recv AbsolutePath class)
+[RV 119] #and: -> T'' (recv AbsolutePath class)
+[RV 120] #and: -> T'' (recv AbsolutePath class)
+[RV 121] #removeRedundantSegments: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 122] #new: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 123] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 124] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 125] #? -> ByteString'pkg200' (recv AbsolutePath class)
+[RV 126] #? -> ByteString'w3' (recv AbsolutePath class)
+[RV 127] #? -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath class)
+[RV 128] #withAll: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 129] #resolvePath: -> AbsolutePath'' (recv AbsolutePath)
+[RV 130] #asPathWith: -> AbsolutePath'' (recv AbsolutePath)
+[RV 131] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 132] #setFileSystem:path: -> FileReference'' (recv FileReference)
+[RV 133] #fileSystem:path: -> FileReference'' (recv FileReference class)
+[RV 134] #referenceTo: -> FileReference'' (recv FileSystem)
+[RV 135] #copyWithPath: -> FileReference'' (recv FileReference)
+[RV 136] #withPath: -> FileReference'' (recv FileReference)
+[RV 137] #/ -> FileReference'' (recv FileReference)
+[RV 138] #defaultWorkingDirectory -> AbsolutePath'' (recv UnixStore)
+[RV 139] #workingDirectoryPath -> AbsolutePath'' (recv FileSystem)
+[RV 140] #resolvePath: -> AbsolutePath'' (recv AbsolutePath)
+[RV 141] #asResolvedBy: -> AbsolutePath'' (recv AbsolutePath)
+[RV 142] #resolve: -> AbsolutePath'' (recv AbsolutePath)
+[RV 143] #resolvePath: -> AbsolutePath'' (recv FileSystem)
+[RV 144] #asResolvedBy: -> AbsolutePath'' (recv AbsolutePath)
+[RV 145] #resolve: -> AbsolutePath'' (recv FileSystem)
+[RV 146] #delimiter -> obj'' (recv UnixStore)
+[RV 147] #delimiter -> obj'' (recv UnixStore)
+[RV 148] #nextPutAll: -> ByteString'home' (recv AbsolutePath)
+[RV 149] #? -> obj'' (recv AbsolutePath)
+[RV 150] #nextPutAll: -> ByteString'ubuntu' (recv AbsolutePath)
+[RV 151] #? -> obj'' (recv AbsolutePath)
+[RV 152] #nextPutAll: -> ByteString'pkg200' (recv AbsolutePath)
+[RV 153] #? -> obj'' (recv AbsolutePath)
+[RV 154] #nextPutAll: -> ByteString'w3' (recv AbsolutePath)
+[RV 155] #? -> obj'' (recv AbsolutePath)
+[RV 156] #nextPutAll: -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath)
+[RV 157] #printOn:delimiter: -> AbsolutePath'' (recv AbsolutePath)
+[RV 158] #printPath:on: -> AbsolutePath'' (recv UnixStore)
+[RV 159] #printPath:on: -> AbsolutePath'' (recv UnixStore)
+[RV 160] #stringFromPath: -> ByteString'/home/ubuntu/pkg200/w3/Pharo13.1-64bit-4f7563d.sources' (recv UnixStore)
+[RV 161] #stringFromPath: -> ByteString'/home/ubuntu/pkg200/w3/Pharo13.1-64bit-4f7563d.sources' (recv FileSystem)
+[RV 162] #fullName -> ByteString'/home/ubuntu/pkg200/w3/Pharo13.1-64bit-4f7563d.sources' (recv FileReference)
+[RV 163] #workingDirectory -> RelativePath'' (recv Path class)
+[RV 164] #initializeWithOrigin:path: -> FileLocator'' (recv FileLocator)
+[RV 165] #origin:path: -> FileLocator'' (recv FileLocator class)
+[RV 166] #origin: -> FileLocator'' (recv FileLocator class)
+[RV 167] #userData -> FileLocator'' (recv FileLocator class)
+[RV 168] #workingDirectory -> RelativePath'' (recv Path class)
+[RV 169] #initializeWithOrigin:path: -> FileLocator'' (recv FileLocator)
+[RV 170] #origin:path: -> FileLocator'' (recv FileLocator class)
+[RV 171] #origin: -> FileLocator'' (recv FileLocator class)
+[RV 172] #imageDirectory -> FileLocator'' (recv FileLocator class)
+[RV 173] #disk -> FileSystem'' (recv FileSystem class)
+[RV 174] #pathFromObject: -> RelativePath'' (recv FileSystem)
+[RV 175] #new -> FileReference'' (recv FileReference class)
+[RV 176] #fileSystem:path: -> FileReference'' (recv FileReference class)
+[RV 177] #workingDirectory -> FileReference'' (recv FileLocator class)
+[RV 178] #disk -> FileSystem'' (recv FileSystem class)
+[RV 179] #isAbsolutePath:delimiter: -> T'' (recv Path class)
+[RV 180] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 181] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 182] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 183] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 184] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 185] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 186] #and: -> F'' (recv AbsolutePath class)
+[RV 187] #and: -> T'' (recv AbsolutePath class)
+[RV 188] #and: -> T'' (recv AbsolutePath class)
+[RV 189] #and: -> T'' (recv AbsolutePath class)
+[RV 190] #and: -> T'' (recv AbsolutePath class)
+[RV 191] #and: -> T'' (recv AbsolutePath class)
+[RV 192] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 193] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 194] #? -> ByteString'pkg200' (recv AbsolutePath class)
+[RV 195] #? -> ByteString'w3' (recv AbsolutePath class)
+[RV 196] #? -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath class)
+[RV 197] #new -> FileReference'' (recv FileReference class)
+[RV 198] #fullPath -> AbsolutePath'' (recv FileReference)
+[RV 199] #isEmpty -> F'' (recv AbsolutePath)
+[RV 200] #basename -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath)
+[RV 201] #basename -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv FileReference)
+[RV 202] #disk -> FileSystem'' (recv FileSystem class)
+[RV 203] #isAbsolutePath:delimiter: -> T'' (recv Path class)
+[RV 204] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 205] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 206] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 207] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 208] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 209] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 210] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 211] #and: -> F'' (recv AbsolutePath class)
+[RV 212] #and: -> T'' (recv AbsolutePath class)
+[RV 213] #and: -> T'' (recv AbsolutePath class)
+[RV 214] #and: -> T'' (recv AbsolutePath class)
+[RV 215] #and: -> T'' (recv AbsolutePath class)
+[RV 216] #and: -> T'' (recv AbsolutePath class)
+[RV 217] #and: -> F'' (recv AbsolutePath class)
+[RV 218] #removeRedundantSegments: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 219] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 220] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 221] #? -> ByteString'src' (recv AbsolutePath class)
+[RV 222] #? -> ByteString'iospharo' (recv AbsolutePath class)
+[RV 223] #? -> ByteString'build' (recv AbsolutePath class)
+[RV 224] #new -> FileReference'' (recv FileReference class)
+[RV 225] #isAbsolutePath:delimiter: -> F'' (recv Path class)
+[RV 226] #isAbsoluteWindowsPath: -> F'' (recv Path class)
+[RV 227] #addAll: -> OrderedCollection'' (recv RelativePath class)
+[RV 228] #and: -> T'' (recv RelativePath class)
+[RV 229] #removeRedundantSegments: -> OrderedCollection'' (recv RelativePath class)
+[RV 230] #? -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv RelativePath class)
+[RV 231] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 232] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 233] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 234] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 235] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 236] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 237] #and: -> T'' (recv AbsolutePath class)
+[RV 238] #and: -> T'' (recv AbsolutePath class)
+[RV 239] #and: -> T'' (recv AbsolutePath class)
+[RV 240] #and: -> T'' (recv AbsolutePath class)
+[RV 241] #and: -> T'' (recv AbsolutePath class)
+[RV 242] #and: -> T'' (recv AbsolutePath class)
+[RV 243] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 244] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 245] #? -> ByteString'src' (recv AbsolutePath class)
+[RV 246] #? -> ByteString'iospharo' (recv AbsolutePath class)
+[RV 247] #? -> ByteString'build' (recv AbsolutePath class)
+[RV 248] #? -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath class)
+[RV 249] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 250] #new -> FileReference'' (recv FileReference class)
+[RV 251] #fileSystem:path: -> FileReference'' (recv FileReference class)
+[RV 252] #defaultWorkingDirectory -> AbsolutePath'' (recv UnixStore)
+[RV 253] #workingDirectoryPath -> AbsolutePath'' (recv FileSystem)
+[RV 254] #resolvePath: -> AbsolutePath'' (recv AbsolutePath)
+[RV 255] #resolve: -> AbsolutePath'' (recv AbsolutePath)
+[RV 256] #resolvePath: -> AbsolutePath'' (recv FileSystem)
+[RV 257] #resolve: -> AbsolutePath'' (recv FileSystem)
+[RV 258] #handleClass -> FileHandle class'' (recv UnixStore)
+[RV 259] #new -> FileReference'' (recv FileReference class)
+[RV 260] #open:writable: -> FileHandle'' (recv FileSystem)
+[RV 261] #defaultWorkingDirectory -> AbsolutePath'' (recv UnixStore)
+[RV 262] #workingDirectoryPath -> AbsolutePath'' (recv FileSystem)
+[RV 263] #resolvePath: -> AbsolutePath'' (recv AbsolutePath)
+[RV 264] #resolve: -> AbsolutePath'' (recv AbsolutePath)
+[RV 265] #resolvePath: -> AbsolutePath'' (recv FileSystem)
+[RV 266] #resolve: -> AbsolutePath'' (recv FileSystem)
+[RV 267] #nextPutAll: -> ByteString'home' (recv AbsolutePath)
+[RV 268] #? -> obj'' (recv AbsolutePath)
+[RV 269] #nextPutAll: -> ByteString'ubuntu' (recv AbsolutePath)
+[RV 270] #? -> obj'' (recv AbsolutePath)
+[RV 271] #nextPutAll: -> ByteString'src' (recv AbsolutePath)
+[RV 272] #? -> obj'' (recv AbsolutePath)
+[RV 273] #nextPutAll: -> ByteString'iospharo' (recv AbsolutePath)
+[RV 274] #? -> obj'' (recv AbsolutePath)
+[RV 275] #nextPutAll: -> ByteString'build' (recv AbsolutePath)
+[RV 276] #? -> obj'' (recv AbsolutePath)
+[RV 277] #nextPutAll: -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath)
+[RV 278] #printOn:delimiter: -> AbsolutePath'' (recv AbsolutePath)
+[RV 279] #printPath:on: -> AbsolutePath'' (recv UnixStore)
+[RV 280] #printPath:on: -> AbsolutePath'' (recv UnixStore)
+[RV 281] #stringFromPath: -> ByteString'/home/ubuntu/src/iospharo/build/Pharo13.1-64bit-4f7563d.sources' (recv UnixStore)
+[RV 282] #stringFromPath: -> ByteString'/home/ubuntu/src/iospharo/build/Pharo13.1-64bit-4f7563d.sources' (recv FileSystem)
+[RV 283] #fullName -> ByteString'/home/ubuntu/src/iospharo/build/Pharo13.1-64bit-4f7563d.sources' (recv FileReference)
+[CACHE-28] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf41edd0 method=0x754bbf6cd910
+[CACHE-29] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbf41eb18 method=0x754bbf77cea8
+[CACHE-30] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbf41b3b0 method=0x754bbf77cea8
+[CACHE-31] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf632c18 method=0x754bbf7853e0
+[RV 284] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 285] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 286] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 287] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 288] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 289] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 290] #methodsDo: -> MethodDictionary'' (recv SystemResolver class)
+[RV 291] #pragmasDo: -> SystemResolver class'' (recv SystemResolver class)
+[CACHE-32] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbf632c18 method=0x754bbf77cea8
+[CACHE-33] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf632038 method=0x754bbf7853e0
+[RV 292] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 293] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 294] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 295] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 296] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 297] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 298] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 299] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 300] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 301] #methodsDo: -> MethodDictionary'' (recv FileSystemResolver class)
+[RV 302] #pragmasDo: -> FileSystemResolver class'' (recv FileSystemResolver class)
+[RV 303] #supportedOrigins -> Array'' (recv SystemResolver)
+[RV 304] #canResolve: -> F'' (recv SystemResolver)
+[CACHE-34] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf633438 method=0x754bbf7853e0
+[RV 305] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 306] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 307] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 308] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 309] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 310] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 311] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 312] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 313] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 314] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 315] #methodsDo: -> MethodDictionary'' (recv UnixResolver class)
+[RV 316] #pragmasDo: -> UnixResolver class'' (recv UnixResolver class)
+[CACHE-35] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbf633438 method=0x754bbf77cea8
+[CACHE-36] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf632a38 method=0x754bbf7853e0
+[RV 317] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 318] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 319] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 320] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 321] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 322] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 323] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 324] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 325] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 326] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 327] #methodsDo: -> MethodDictionary'' (recv PlatformResolver class)
+[RV 328] #pragmasDo: -> PlatformResolver class'' (recv PlatformResolver class)
+[CACHE-37] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbf632a38 method=0x754bbf77cea8
+[RV 329] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 330] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 331] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 332] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 333] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 334] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 335] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 336] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 337] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 338] #methodsDo: -> MethodDictionary'' (recv FileSystemResolver class)
+[RV 339] #pragmasDo: -> FileSystemResolver class'' (recv FileSystemResolver class)
+[RV 340] #supportedOrigins -> Array'' (recv UnixResolver)
+[RV 341] #canResolve: -> T'' (recv UnixResolver)
+[RV 342] #at:ifAbsent: -> NIL'' (recv UnixResolver)
+[RV 343] #at:ifAbsent: -> ByteString'/home/ubuntu' (recv UnixResolver)
+[RV 344] #currentFileSystem -> FileSystem'' (recv DiskStore class)
+[RV 345] #isAbsolutePath:delimiter: -> T'' (recv Path class)
+[RV 346] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 347] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 348] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 349] #and: -> F'' (recv AbsolutePath class)
+[RV 350] #and: -> T'' (recv AbsolutePath class)
+[RV 351] #and: -> T'' (recv AbsolutePath class)
+[RV 352] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 353] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 354] #new -> FileReference'' (recv FileReference class)
+[RV 355] #resolveString: -> FileReference'' (recv UnixResolver)
+[RV 356] #directoryFromEnvVariableNamed: -> FileReference'' (recv UnixResolver)
+[RV 357] #home -> FileReference'' (recv UnixResolver)
+[RV 358] #delimiter -> obj'' (recv UnixStore)
+[RV 359] #isAbsolutePath:delimiter: -> F'' (recv Path class)
+[RV 360] #addAll: -> OrderedCollection'' (recv RelativePath class)
+[RV 361] #and: -> T'' (recv RelativePath class)
+[RV 362] #? -> ByteString'.local' (recv RelativePath class)
+[RV 363] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 364] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 365] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 366] #and: -> T'' (recv AbsolutePath class)
+[RV 367] #and: -> T'' (recv AbsolutePath class)
+[RV 368] #and: -> T'' (recv AbsolutePath class)
+[RV 369] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 370] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 371] #? -> ByteString'.local' (recv AbsolutePath class)
+[RV 372] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 373] #new -> FileReference'' (recv FileReference class)
+[RV 374] #delimiter -> obj'' (recv UnixStore)
+[RV 375] #isAbsolutePath:delimiter: -> F'' (recv Path class)
+[RV 376] #isAbsoluteWindowsPath: -> F'' (recv Path class)
+[RV 377] #addAll: -> OrderedCollection'' (recv RelativePath class)
+[RV 378] #and: -> T'' (recv RelativePath class)
+[RV 379] #? -> ByteString'share' (recv RelativePath class)
+[RV 380] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 381] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 382] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 383] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 384] #and: -> T'' (recv AbsolutePath class)
+[RV 385] #and: -> T'' (recv AbsolutePath class)
+[RV 386] #and: -> T'' (recv AbsolutePath class)
+[RV 387] #and: -> T'' (recv AbsolutePath class)
+[RV 388] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 389] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 390] #? -> ByteString'.local' (recv AbsolutePath class)
+[RV 391] #? -> ByteString'share' (recv AbsolutePath class)
+[RV 392] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 393] #new -> FileReference'' (recv FileReference class)
+[RV 394] #share -> FileReference'' (recv UnixResolver)
+[RV 395] #userData -> FileReference'' (recv UnixResolver)
+[RV 396] #unknownOrigin: -> FileReference'' (recv SystemResolver)
+[RV 397] #unknownOrigin: -> FileReference'' (recv InteractiveResolver)
+[RV 398] #unknownOrigin: -> FileReference'' (recv InteractiveResolver)
+[RV 399] #resolve: -> FileReference'' (recv InteractiveResolver)
+[JIT] AUTO-EXCLUDED exception infra #signal (class Exception class)
+[JIT] AUTO-EXCLUDED exception infra #receiver (class Exception class)
+[JIT] AUTO-EXCLUDED exception infra #signalerContext
+[JIT] AUTO-EXCLUDED exception infra #handleSignal:
+[JIT] AUTO-EXCLUDED exception infra #aboutToReturn:through:
+[CACHE-38] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf423cc0 method=0x754bbf722418
+[STARTUP] Firing deferred timer semaphore signal (step 25001652)
+[CACHE-39] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x754bbf4a2170 method=0x754bbf7853e0
+[CACHE-40] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbfec42e8 method=0x754bbf77cea8
+[CACHE-41] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbfdd29e0 method=0x754bbf77cea8
+[CACHE-42] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbf417938 method=0x754bbf77cea8
+[CACHE-43] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbf416f28 method=0x754bbf77cea8
+[CACHE-44] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bc05cd170 method=0x754bbf77cea8
+[CACHE-45] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbfeeb940 method=0x754bbf77cea8
+[CACHE-46] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbfeeb7f0 method=0x754bbf77cea8
+[CACHE-47] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbfeea6c8 method=0x754bbf77cea8
+[CACHE-48] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbfdd2a88 method=0x754bbf77cea8
+[CACHE-49] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbfec1970 method=0x754bbf77cea8
+[CACHE-50] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x754bbfd8e418 method=0x754bbf77cea8
+[XFER-8] old=0x754bc28ddd90 pri=80 -> new=0x754bc2056290 pri=80
+[XFER-9] old=0x754bc2056290 pri=80 -> new=0x754bc3122080 pri=70
+[XFER-10] old=0x754bc3122080 pri=70 -> new=0x754bc3121fb0 pri=60
+[DRAIN-1] initial=51 processed=51 wka=0 wkaarr-drop=1 kept=50 dec=0 pending=51->51 in=#lowSpaceWatcher step=153173472 site=interp-act act=#lowSpaceThreshold
+[XFER-11] old=0x754bc308f5c0 pri=60 -> new=0x754bc308f628 pri=50
+[XFER-12] old=0x754bc308f628 pri=50 -> new=0x754bbd3ff8f0 pri=51
+[XFER-13] old=0x754bbd3ff8f0 pri=51 -> new=0x754bc308f628 pri=50
+[XFER-14] old=0x754bc308f628 pri=50 -> new=0x754bc20562e8 pri=40
+[XFER-15] old=0x754bc20562e8 pri=40 -> new=0x754bc28ec7e0 pri=40
+[XFER-16] old=0x754bc28ec7e0 pri=40 -> new=0x754bc28ec838 pri=40
+[XFER-17] old=0x754bc28ec838 pri=40 -> new=0x754bc20562e8 pri=40
+[XFER-18] old=0x754bc20562e8 pri=40 -> new=0x754bc2056290 pri=80
+[XFER-19] old=0x754bc2056290 pri=80 -> new=0x754bc20562e8 pri=40
+[XFER-20] old=0x754bc20562e8 pri=40 -> new=0x754bbd7a4af0 pri=40
+[XFER-21] old=0x754bbd7a4af0 pri=40 -> new=0x754bc2056290 pri=80
+[XFER-22] old=0x754bc2056290 pri=80 -> new=0x754bbd7a4af0 pri=40
+[STARTUP-ST-FIRED][IMAGE] [STARTUP-ST-FIRED]
+
+PREFIXES #('Porpoise-Tests')[IMAGE] PREFIXES #('Porpoise-Tests')
+
+CLASSES 3[IMAGE] CLASSES 3
+
+[XFER-23] old=0x754bc31a57d8 pri=40 -> new=0x754bbd7cd4d0 pri=79
+[XFER-24] old=0x754bbd7cd4d0 pri=79 -> new=0x754bc2056290 pri=80
+[XFER-25] old=0x754bc2056290 pri=80 -> new=0x754bbd7cd4d0 pri=79
+[XFER-26] old=0x754bbd7cd4d0 pri=79 -> new=0x754bc31a57d8 pri=40
+[XFER-27] old=0x754bc31a57d8 pri=40 -> new=0x754bbd7cd4d0 pri=79
+[XFER-28] old=0x754bbd7cd4d0 pri=79 -> new=0x754bc31a57d8 pri=40
+[XFER-29] old=0x754bc31a57d8 pri=40 -> new=0x754bbd7d45d8 pri=79
+[XFER-30] old=0x754bbd7d45d8 pri=79 -> new=0x754bc2056290 pri=80
+[XFER-31] old=0x754bc2056290 pri=80 -> new=0x754bbd7d45d8 pri=79
+[XFER-32] old=0x754bbd7d45d8 pri=79 -> new=0x754bc31a57d8 pri=40
+[XFER-33] old=0x754bc31a57d8 pri=40 -> new=0x754bbd7d45d8 pri=79
+[XFER-34] old=0x754bbd7d45d8 pri=79 -> new=0x754bc31a57d8 pri=40
+[XFER-35] old=0x754bc31a57d8 pri=40 -> new=0x754bbd7e0390 pri=79
+[XFER-36] old=0x754bbd7e0390 pri=79 -> new=0x754bc2056290 pri=80
+[XFER-37] old=0x754bc2056290 pri=80 -> new=0x754bbd7e0390 pri=79
+[XFER-38] old=0x754bbd7e0390 pri=79 -> new=0x754bc31a57d8 pri=40
+[XFER-39] old=0x754bc31a57d8 pri=40 -> new=0x754bbd7e0390 pri=79
+[XFER-40] old=0x754bbd7e0390 pri=79 -> new=0x754bc31a57d8 pri=40
+[XFER-41] old=0x754bc31a57d8 pri=40 -> new=0x754bbd7e7498 pri=79
+[XFER-42] old=0x754bbd7e7498 pri=79 -> new=0x754bc2056290 pri=80
+[XFER-43] old=0x754bc2056290 pri=80 -> new=0x754bbd7e7498 pri=79
+[XFER-44] old=0x754bbd7e7498 pri=79 -> new=0x754bc31a57d8 pri=40
+[XFER-45] old=0x754bc31a57d8 pri=40 -> new=0x754bbd7e7498 pri=79
+[XFER-46] old=0x754bbd7e7498 pri=79 -> new=0x754bc31a57d8 pri=40
+[XFER-47] old=0x754bc31a57d8 pri=40 -> new=0x754bbd7ee5a0 pri=79
+[XFER-48] old=0x754bbd7ee5a0 pri=79 -> new=0x754bc2056290 pri=80
+[XFER-49] old=0x754bc2056290 pri=80 -> new=0x754bbd7ee5a0 pri=79
+[DRAIN-2] initial=5 processed=5 wka=3 wkaarr-drop=0 kept=2 dec=3 pending=5->5 in=#testPropertyManagerKeyWeakness step=260067415 site=interp-act act=#new
+[DRAIN-3] initial=1 processed=1 wka=1 wkaarr-drop=0 kept=0 dec=1 pending=1->0 in=#testPropertyManagerValueWeakness step=260126132 site=interp-act act=#new
+[DRAIN-4] initial=1 processed=1 wka=1 wkaarr-drop=0 kept=0 dec=1 pending=1->0 in=#testPropertyManagerValueWeakness step=260131953 site=interp-act act=#assert:equals:
+[JIT] AUTO-EXCLUDED exception infra #signal: (class Exception class)
+FAIL PropertyManagerTest>>testPropertyManagerValueWeakness [Got 1 instead of 2.][IMAGE] FAIL PropertyManagerTest>>testPropertyManagerValueWeakness [Got 1 instead of 2.]
+
+RESULT pass=13 fail=1 err=0 timeout=0 classes=3[IMAGE] RESULT pass=13 fail=1 err=0 timeout=0 classes=3
+
+StdioStream: #stdout[IMAGE] StdioStream: #stdout
+
+EVAL-RESULT=StdioStream: #stdout[IMAGE] EVAL-RESULT=StdioStream: #stdout
+
+
+=== Execution Summary ===
+Active bytecode steps: 260280608
+
+=== JIT Stats ===
+  classOf-forwarder-follows: 0 (each = a dispatch to a forwarded object the fix resolved instead of MNU-ing)
+  compiled: 4567 methods
+  IC: 1375797 hits / 1861077 total (73.9%), patches=25614 stale=0
+  IC miss breakdown: noSelBits=149992 cold=9313 poly=101107 noICData=72463
+  activations: 1109308 hits / 1109308 total (100.0%)
+  resume (J2J-r): 130489 chains / 331737 total (39.3%)
+  J2J stencil: calls=795600 returns=391193 patches=25589
+  materialize: count=25 totalDepth=25
+  chain: actChain=20 actFall=7844 | primChain=276759 primFall=16610
+  stencil-fall: cached=187747 send=169941 j2j=0 other=46719
+  [M0-ATTRIB] continuity=60.9% (actChain=667972 actFall=428861)
+  [M0-ATTRIB] site1 stencil-fall cached=187747 send=169941 j2j=0 other=46719 | site2 block-resume chains=276759 falls=16610 (94.3%) | site3 activate chains=20 falls=7844
+  [M0-ATTRIB] site2 top prim-falls: p207=10897 p83=5218 p209=263 p84=183 p86=20 p87=16 p85=13
+  yields=0 OSR=2348
+  T2-IC: 0 hits / 0 total (0.0%)
+  T2 (asmjit): compiled=0 bailed=0
+  PMS: linked-now=0 links=0 relinks=0 unlinks=0 refused gate=0 reach=0 nomap=23438
+  canSkipJ2JSave: 1012/4851 real-compiled methods qualify (20.9%); ic-hits=0 fires=0
+=================
+
+=== Display Check ===
+Pixel count: 0
+First 100 pixels: 0 modified from gradient
+Stopping heartbeat thread...
+
+=== Test Complete ===

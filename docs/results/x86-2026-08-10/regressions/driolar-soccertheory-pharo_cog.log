@@ -1,0 +1,4 @@
+PREFIXES #('SoccerTheory-Model-Tests' 'SoccerTheory-SoccerML-Tests' 'SoccerTheory-Statistics-Tests')
+CLASSES 16
+RESULT pass=91 fail=0 err=0 timeout=0 classes=16
+StdioStream: #stdout

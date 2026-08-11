@@ -1,0 +1,1014 @@
+Pharo Clean VM - Image Loader Test
+===================================
+
+=== Oop Tagging Tests ===
+SmallInteger 42:  0x151 isSmallInteger=1 value=42
+SmallInteger -100: 0xfffffffffffffce1 value=-100
+Character 'A':    0x20b isCharacter=1 codepoint=65
+nil:              0x0 isNil=1
+
+SmallFloat tests:
+  1 -> 0x7f00000000000005 -> 1 OK
+  168 -> 0x8650000000000005 -> 168 OK
+  80 -> 0x8540000000000005 -> 80 OK
+  -42.5 -> 0x845400000000000d -> -42.5 OK
+  0 -> 0x5 -> 0 OK
+  1024 -> 0x8900000000000005 -> 1024 OK
+  0.5 -> 0x7e00000000000005 -> 0.5 OK
+
+Decoding known SmallFloat values from Pharo:
+  0x8540000000000005 -> 80
+  0x8650000000000005 -> 168
+  0x8000000000000005 -> 2
+
+Tag verification (should use low 3 bits only):
+  SmallInteger tag: 1 (expected 1)
+  Character tag:    3 (expected 3)
+
+Loading image: /home/ubuntu/pkg200/w0/driolar-soccertheory-pharo.image
+Working directory: /home/ubuntu/pkg200/w0
+Memory initialized successfully
+Image loaded successfully!
+=== Image Header ===
+Format:            68021 (Spur 64-bit)
+Header size:       128 bytes
+Image size:        102589144 bytes (97 MB)
+Old base address:  0x10000000000
+Special objects:   0x1000109f6f0
+Last hash:         15951396749078694690
+Screen size:       0 x 0
+Flags:             0x2
+First segment:     71335936 bytes
+Free old space:    26084912 bytes
+Eden bytes:        22003584
+
+=== Special Objects ===
+Special objects array: 0x761b2f09f6f0
+  Raw header: 0x3c00000002000033
+  Slot count (bits 0-7): 51
+  Hash (bits 8-29): 131072
+  Format (bits 30-34): 0
+  Class index (bits 35-56): 0
+  Flags (bits 57-63): 30
+  Computed slot count: 60
+
+First 20 special objects:
+  [0]: 0x761b2e000000 (object, class: 3075)
+  [1]: 0x761b2e000010 (object, class: 3077)
+  [2]: 0x761b2e000020 (object, class: 3079)
+  [3]: 0x761b2e06d200 (object, class: 3139)
+  [4]: 0x761b2e934870 (object, class: 7593)
+  [5]: 0x761b2e4121c8 (object, class: 3080)
+  [6]: 0x761b2e0162d0 (object, class: 3086)
+  [7]: 0x761b2e0164b0 (object, class: 3092)
+  [8]: 0x761b2e020ce8 (object, class: 3135)
+  [9]: 0x761b2e0167d0 (object, class: 3102)
+  [10]: 0x761b2e016870 (object, class: 3104)
+  [11]: 0x761b2e000000 (object, class: 3075)
+  [12]: 0x761b2e016cd0 (object, class: 3118)
+  [13]: 0x761b2e016690 (object, class: 3098)
+  [14]: 0x761b2e000000 (object, class: 3075)
+  [15]: 0x761b2e016af0 (object, class: 3112)
+  [16]: 0x761b2e000000 (object, class: 3075)
+  [17]: 0x761b313258e0 (object, class: 48)
+  [18]: 0x761b2e016b90 (object, class: 3114)
+  [19]: 0x761b2e412160 (object, class: 3082)
+
+=== Memory Layout ===
+Old space:  0x761b2e000000 - 0x761c2e000000
+Allocated:  0 MB
+Free:       3998 MB
+
+First 128 bytes of old space (raw):
+  [0]: 0x311b8800800c03
+  [8]: 0x0
+  [16]: 0x131a4e00800c05
+  [24]: 0x0
+  [32]: 0x24305400800c07
+  [40]: 0x0
+  [48]: 0x4000000009000013
+  [56]: 0x761b3189f498
+  [64]: 0x0
+  [72]: 0x761b32407fe0
+  [80]: 0x0
+  [88]: 0x761b316dbe78
+  [96]: 0x0
+  [104]: 0x0
+  [112]: 0x0
+  [120]: 0x0
+
+First object header analysis:
+  Raw: 0x311b8800800c03
+  Slot count: 3
+  Format: 0
+  Class index: 402289
+
+=== Object Statistics ===
+Total objects:    1073755
+Pointer objects:  631838
+Byte objects:     219801
+Compiled methods: 221563
+Total size:       97 MB
+
+=== Checking iOS Classes ===
+  OSWorldRenderer: found
+  OSiOSDriver: NOT FOUND
+  OSiOSBackendWindow: NOT FOUND
+  NullWorldRenderer: found
+  OSWindowDriver: found
+  OSWindow: found
+  WorldMorph: found
+  WorldState: found
+  Display: NOT FOUND
+
+=== Headless Mode (no display) ===
+
+=== Interpreter Initialization ===
+Event callback registered
+[RESUME] ctx[0]: SnapshotOperation>>doSnapshot
+[RESUME] ctx[1]: SnapshotOperation>>doSnapshot
+[RESUME] ctx[2]: FullBlockClosure>>on:do:
+[RESUME] ctx[3]: FullBlockClosure>>onErrorDo:
+[RESUME] ctx[4]: SnapshotOperation>>executeStoringError:
+[RESUME] ctx[5]: SnapshotOperation>>performSnapshot
+[RESUME] ctx[6]: SessionManager>>launchSnapshot:andQuit:
+[RESUME] ctx[7]: SessionManager>>signal
+[RESUME] ctx[8]: FullBlockClosure>>terminateRealActive
+[RESUME] inSnapshotCode=1 chainDepth=9
+[RESUME] Initial context: method=#doSnapshot pc=55
+[RESUME] Patching: stackp=1 stackTopSlot=6 oldVal=true(0x761b2e000020) -> true
+[RESUME] Found SnapshotOperation 0x761b3289bad8 at ctx depth 0, isImageStarting=false
+[RESUME] Found SnapshotOperation 0x761b3289bad8 at ctx depth 1, isImageStarting=true
+[RESUME] Found SnapshotOperation 0x761b3289bad8 at ctx depth 4, isImageStarting=true
+[RESUME] Found SnapshotOperation 0x761b3289bad8 at ctx depth 5, isImageStarting=true
+[RESUME] Patched isImageStarting on 1 SnapshotOperation(s)
+[UNBLOCK-SNAPSHOT] heap scan capped at 10000 objects — stuck callers beyond the cap are not reachable by this recovery
+[STARTUP] Boosting startup process 0x761b3285a990 from P79 to P80
+[JIT] Initialized: 64 MB code zone at 0x761b20000000
+[STARTUP] Headless mode: deferring timer semaphore signal
+Interpreter initialized successfully!
+Active method: 0x761b2e2e99f0
+Display after ensureDisplayForm: NOT FOUND
+Heartbeat will start after startup completes...
+
+=== Forced GC Test ===
+Before GC: used=97MB free=3998MB
+After GC: used=83MB free=4012MB
+Freed: 15165KB
+GC reclaimed: 15529744 bytes, moved: 939593 objects, took: 312ms
+
+=== Execution Test ===
+Running up to 2000000000000 bytecode steps...
+Image args: eval "Generic loaded-package SUnit runner — runs identically on our custom VM and on
+ stock Cog, so the two outputs can be diffed for JIT-correctness parity.
+
+ Selects every non-abstract TestCase subclass whose package name starts with any
+ prefix listed in /tmp/pkg_prefixes.txt (one prefix per line, e.g. 'Neo-JSON',
+ 'Math-Tests', 'STON').  Runs each test selector with a per-test wall-clock
+ timeout, and prints one machine-readable RESULT line plus FAIL/ERR detail lines.
+
+ Fairness: the prefixes live in an EXTERNAL file, never as literals in this
+ script, so neither VM's literal pool biases reflective senders — same contract
+ as the kernel-suite runners."
+
+| log prefixes classes p f e to perTimeout envp |
+log := Stdio stdout.
+perTimeout := 50 seconds.
+"Prefixes come from the PKG_PREFIXES env var (comma-separated) when set, else the
+ /tmp/pkg_prefixes.txt file.  The env path lets parallel workers each pass their
+ own prefixes without racing on the shared file.  Either way the prefixes live
+ OUTSIDE this script (the fairness contract), so neither VM's literal pool is
+ biased."
+envp := [ Smalltalk os environment at: 'PKG_PREFIXES' ifAbsent: [ '' ] ]
+          on: Error do: [:e | '' ].
+prefixes := (envp notNil and: [ envp notEmpty ])
+  ifTrue: [ ((envp substrings: ',') collect: [:s | s trimBoth]) reject: [:s | s isEmpty] ]
+  ifFalse: [ ('/tmp/pkg_prefixes.txt' asFileReference exists)
+      ifTrue: [ ('/tmp/pkg_prefixes.txt' asFileReference contents lines
+                  collect: [:s | s trimBoth]) reject: [:s | s isEmpty] ]
+      ifFalse: [ #() ] ].
+log nextPutAll: 'PREFIXES '; nextPutAll: prefixes printString; lf; flush.
+
+classes := (TestCase allSubclasses select: [:c |
+  c isAbstract not and: [
+    prefixes anySatisfy: [:pre | c package name beginsWith: pre]]])
+  asSortedCollection: [:a :b | a name < b name].
+log nextPutAll: 'CLASSES '; nextPutAll: classes size printString; lf; flush.
+
+p := 0. f := 0. e := 0. to := 0.
+classes do: [:cls |
+  cls allTestSelectors do: [:sel |
+    | res |
+    res := [[ ([(cls selector: sel) runCase. #pass]
+                  valueWithin: perTimeout onTimeout: [#timeout])]
+              on: TestFailure do: [:ex |
+                f := f + 1.
+                log nextPutAll: 'FAIL ', cls name, '>>', sel,
+                  ' [', ((ex messageText ifNil: ['']) copyFrom: 1 to: ((ex messageText ifNil: ['']) size min: 200)), ']'; lf.
+                #fail]]
+            on: Error do: [:ex |
+              e := e + 1.
+              log nextPutAll: 'ERR  ', cls name, '>>', sel,
+                ' (', ex class name, ': ', ((ex messageText ifNil: ['']) copyFrom: 1 to: ((ex messageText ifNil: ['']) size min: 160)), ')'; lf.
+              #error].
+    res = #pass ifTrue: [p := p + 1].
+    res = #timeout ifTrue: [to := to + 1.
+      log nextPutAll: 'TIMEOUT ', cls name, '>>', sel; lf].
+    log flush]].
+
+log nextPutAll: 'RESULT pass=', p printString, ' fail=', f printString,
+  ' err=', e printString, ' timeout=', to printString,
+  ' classes=', classes size printString; lf; flush.
+[CACHE-1] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e0173c8 method=0x761b2e3d9888
+[CACHE-2] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e0173c8 method=0x761b2e3da120
+[RV 0] #resolve -> SessionAccessModeResolver class'' (recv SessionAccessModeResolver class)
+[RV 1] #startUp: -> SessionAccessModeResolver class'' (recv SessionAccessModeResolver class)
+[SEM-SIGNAL-2] sem=0x761b3281be10 active-pri=80 waiter=0x761b30c490f0 waiter-pri=80
+[CACHE-3] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e0168d8 method=0x761b2e3853f8
+[CACHE-4] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e016b58 method=0x761b2e3853f8
+[JIT] AUTO-EXCLUDED exception infra #findContextSuchThat:
+[JIT] AUTO-EXCLUDED exception infra #findContextSuchThat:
+[XFER-1] old=0x761b328329c0 pri=80 -> new=0x761b30c490f0 pri=80
+[XFER-2] old=0x761b30c490f0 pri=80 -> new=0x761b312f5a08 pri=80
+[SEM-SIGNAL-3] sem=0x761b2c014440 active-pri=80 waiter=0x761b328329c0 waiter-pri=80
+[XFER-3] old=0x761b312f5a08 pri=80 -> new=0x761b328329c0 pri=80
+[XFER-4] old=0x761b328329c0 pri=80 -> new=0x761b312f5a60 pri=80
+[SEM-SIGNAL-4] sem=0x761b2c01b0c0 active-pri=80 waiter=0x761b328329c0 waiter-pri=80
+[XFER-5] old=0x761b312f5a60 pri=80 -> new=0x761b328329c0 pri=80
+[RV 2] #subclasses -> Array'' (recv FFIExternalReference class)
+[SLOW-EXIT-SEND #1] method=#utf8 ic=0x5a80b0907f90
+[IC-PATCH] #default J2J=1 key=0x1408 extra=0x1000761b200913c0
+[IC-PATCH] #decodeWith: J2J=1 key=0x32 extra=0x1200761b20091cc0
+[SLOW-EXIT-SEND #2] method=#decodeWith: ic=0x5a80b0908280
+[SLOW-EXIT-SEND #3] method=#decodeWith: ic=0x5a80b0908320
+[IC-PATCH] #decodeBytes: J2J=1 key=0x1409 extra=0x1200761b20092640
+[SLOW-EXIT-SEND #4] method=#readStream ic=0x5a80b0908610
+[IC-PATCH] #on: J2J=1 key=0x11cc extra=0x1200761b20003a40
+[SLOW-EXIT-SEND #5] method=#on: ic=0x5a80b090baa0
+[IC-PATCH] #size J2J=1 key=0x32 extra=0x1210761b20002540
+[SLOW-EXIT-SEND #6] method=#on: ic=0x5a80b090bb40
+[IC-PATCH] #reset J2J=1 key=0x11cd extra=0x1200761b20093d40
+[SLOW-EXIT-SEND #7] method=#streamContents: ic=0x5a80b08e9700
+[IC-PATCH] #new:streamContents: J2J=1 key=0xc4c extra=0x1000761b20014f40
+[SLOW-EXIT-SEND #8] method=#new: ic=0x5a80b090ea80
+[SLOW-EXIT-SEND #9] method=#new: ic=0x5a80b090eb20
+[IC-PATCH] #new: J2J=1 key=0xc0e extra=0x1100761b2007e940
+[IC-PATCH] #on: J2J=1 key=0xc78 extra=0x1200761b20003a40
+[SLOW-EXIT-SEND #10] method=#on: ic=0x5a80b08f1d60
+[IC-PATCH] #on: J2J=1 key=0xc79 extra=0x1000761b200042c0
+[IC-PATCH] #size J2J=1 key=0x34 extra=0x1210761b20002540
+[IC-PATCH] #reset J2J=1 key=0xc79 extra=0x1200761b20004380
+[IC-PATCH] #next J2J=1 key=0x11cd extra=0x1000761b2008a300
+[IC-PATCH] #nextPut: J2J=1 key=0xc79 extra=0x1000761b2000aa00
+[IC-PATCH] #atEnd J2J=1 key=0x11cd extra=0x1200761b2008a140
+[IC-PATCH] #max: J2J=1 key=0x80000001 extra=0x1000761b20004900
+[IC-PATCH] #copyFrom:to: J2J=1 key=0x34 extra=0x1200761b20026200
+[IC-PATCH] #isString J2J=1 key=0x34 extra=0x1402761b200951c0
+[IC-PATCH] #size J2J=1 key=0x34 extra=0x1210761b20002540
+[IC-PATCH] #isByteString J2J=1 key=0x34 extra=0x1402761b20095300
+[IC-PATCH] #isByteString J2J=1 key=0x34 extra=0x1402761b20095300
+[IC-PATCH] #at: J2J=1 key=0x33 extra=0x100e761b20005a40
+[IC-PATCH] #platformName J2J=1 key=0xc3f extra=0x1200761b200995c0
+[IC-PATCH] #current J2J=1 key=0x104e extra=0x1200761b2009a2c0
+[IC-PATCH] #name J2J=1 key=0x1309 extra=0x1200761b2009a8c0
+[IC-PATCH] #vm J2J=1 key=0xc3f extra=0x1000761b20031380
+[IC-PATCH] #getSystemAttribute: J2J=1 key=0x1323 extra=0x1000761b20032f40
+[IC-PATCH] #utf8Decoded J2J=1 key=0x32 extra=0x1200761b20090680
+[IC-PATCH] #nextCodePointFromStream: J2J=1 key=0x1409 extra=0x1000761b20080ec0
+[IC-PATCH] #size J2J=1 key=0x34 extra=0x1210761b20002540
+[CACHE-5] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2e016478 method=0x761b2e37cec0
+[CACHE-6] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2e01a1f0 method=0x761b2e37cec0
+[CACHE-7] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b30135ac8 method=0x761b2e3853f8
+[CACHE-8] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b3013ccb8 method=0x761b2e3853f8
+[CACHE-9] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b301381f0 method=0x761b2e3853f8
+[CACHE-10] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b30138e90 method=0x761b2e3853f8
+[CACHE-11] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b313d7298 method=0x761b2e3853f8
+[CACHE-12] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b30138b90 method=0x761b2e3853f8
+[CACHE-13] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e015fb0 method=0x761b2e3853f8
+[CACHE-14] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2eae8d48 method=0x761b2e3853f8
+[CACHE-15] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b313bf7e0 method=0x761b2e3853f8
+[CACHE-16] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b301348e8 method=0x761b2e3853f8
+[CACHE-17] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b30139310 method=0x761b2e3853f8
+[CACHE-18] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e245698 method=0x761b2e3853f8
+[CACHE-19] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b30138dd0 method=0x761b2e3853f8
+[CACHE-20] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b30138f50 method=0x761b2e3853f8
+[CACHE-21] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2eae8c08 method=0x761b2e3853f8
+[CACHE-22] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b301390d0 method=0x761b2e3853f8
+[CACHE-23] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b30137720 method=0x761b2e3853f8
+[CACHE-24] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b301393d0 method=0x761b2e3853f8
+[CACHE-25] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b30135108 method=0x761b2e3853f8
+[CACHE-26] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b30137580 method=0x761b2e3853f8
+[CACHE-27] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b301374b0 method=0x761b2e3853f8
+[CACHE-28] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b314614f8 method=0x761b2e3853f8
+[CACHE-29] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e944fc8 method=0x761b2e3853f8
+[CACHE-30] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b313daa78 method=0x761b2e3853f8
+[CACHE-31] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b30139790 method=0x761b2e3853f8
+[CACHE-32] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b30137240 method=0x761b2e3853f8
+[RV 3] #flushLocalCache -> InteractiveResolver'' (recv InteractiveResolver)
+[RV 4] #initialize -> InteractiveResolver'' (recv InteractiveResolver)
+[INIT-RESOLVER] #1 Resolver class var set non-nil at step 2272722 (value=0x761b2c106240) — defer will lift after buffer
+[RV 5] #addResolver: -> InteractiveResolver'' (recv InteractiveResolver)
+[RV 6] #platformName -> ByteString'unix' (recv UnixResolver class)
+[RV 7] #platformName -> T'' (recv PlatformResolver class)
+[RV 8] #forCurrentPlatform -> UnixResolver'' (recv PlatformResolver class)
+[RV 9] #addResolver: -> SystemResolver'' (recv SystemResolver)
+[RV 10] #addResolver: -> InteractiveResolver'' (recv InteractiveResolver)
+[RV 11] #startUp: -> FileLocator class'' (recv FileLocator class)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x79($y) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x79($y) str='yyy'(3)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=1 arrIdx=0 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x30($0) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x30($0) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x32($2) str='2026-04-06 12:00:00 '(25)
+[P63] idx=4 arrIdx=3 byte=0x36($6) str='2026-04-06 12:00:00 '(25)
+[P63] idx=4 arrIdx=3 byte=0x36($6) str='2026-04-06 12:00:00 '(25)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=2 arrIdx=1 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=3 arrIdx=2 byte=0x6d($m) str='y-mm-dd'(7)
+[P63] idx=4 arrIdx=3 byte=0x6d($m) str='y-mm-dd'(7)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=1 arrIdx=0 byte=0x30($0) str='04'(2)
+[P63] idx=2 arrIdx=1 byte=0x34($4) str='04'(2)
+[P63] idx=2 arrIdx=1 byte=0x34($4) str='04'(2)
+[P63] idx=5 arrIdx=4 byte=0x2d($-) str='y-mm-dd'(7)
+[P63] idx=8 arrIdx=7 byte=0x2d($-) str='2026-04-06 12:00:00 '(25)
+[P63] idx=6 arrIdx=5 byte=0x64($d) str='y-mm-dd'(7)
+[P63] idx=7 arrIdx=6 byte=0x64($d) str='y-mm-dd'(7)
+[RV 12] #ifFalse: -> NIL'' (recv DiskStore class)
+[RV 13] #checkVMVersion -> DiskStore class'' (recv DiskStore class)
+[RV 14] #reset -> DiskStore class'' (recv DiskStore class)
+[RV 15] #subclasses -> Array'' (recv DiskStore class)
+[RV 16] #delimiter -> obj'' (recv WindowsStore class)
+[RV 17] #isActiveClass -> F'' (recv WindowsStore class)
+[RV 18] #delimiter -> obj'' (recv UnixStore class)
+[RV 19] #isActiveClass -> T'' (recv UnixStore class)
+[RV 20] #isActiveClass -> T'' (recv UnixStore class)
+[RV 21] #activeClass -> UnixStore class'' (recv DiskStore class)
+[RV 22] #initialize -> UnixStore'' (recv UnixStore)
+[RV 23] #createDefault -> UnixStore'' (recv UnixStore class)
+[RV 24] #initializeWithStore: -> FileSystem'' (recv FileSystem)
+[RV 25] #store: -> FileSystem'' (recv FileSystem class)
+[RV 26] #currentFileSystem -> FileSystem'' (recv DiskStore class)
+[RV 27] #current -> UnixStore'' (recv DiskStore class)
+[RV 28] #delimiter -> obj'' (recv UnixStore class)
+[RV 29] #delimiter -> obj'' (recv UnixStore)
+[RV 30] #delimiter -> obj'' (recv DiskStore class)
+[RV 31] #isAbsolutePath:delimiter: -> T'' (recv Path class)
+[RV 32] #delimiter -> obj'' (recv AbsolutePath class)
+[RV 33] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 34] #delimiter -> obj'' (recv AbsolutePath class)
+[RV 35] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 36] #delimiter -> obj'' (recv AbsolutePath class)
+[RV 37] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 38] #delimiter -> obj'' (recv AbsolutePath class)
+[RV 39] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 40] #delimiter -> obj'' (recv AbsolutePath class)
+[RV 41] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 42] #and: -> F'' (recv AbsolutePath class)
+[RV 43] #and: -> T'' (recv AbsolutePath class)
+[RV 44] #and: -> T'' (recv AbsolutePath class)
+[RV 45] #and: -> T'' (recv AbsolutePath class)
+[RV 46] #and: -> T'' (recv AbsolutePath class)
+[RV 47] #removeRedundantSegments: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 48] #new: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 49] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 50] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 51] #? -> ByteString'pkg200' (recv AbsolutePath class)
+[RV 52] #? -> ByteString'w0' (recv AbsolutePath class)
+[RV 53] #withAll: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 54] #from:delimiter: -> AbsolutePath'' (recv Path class)
+[RV 55] #defaultWorkingDirectory -> AbsolutePath'' (recv DiskStore class)
+[RV 56] #startUp: -> DiskStore class'' (recv DiskStore class)
+[XFER-6] old=0x761b328329c0 pri=80 -> new=0x761b312f5af0 pri=80
+[SEM-SIGNAL-8] sem=0x761b2c114be8 active-pri=80 waiter=0x761b328329c0 waiter-pri=80
+[XFER-7] old=0x761b312f5af0 pri=80 -> new=0x761b328329c0 pri=80
+[RV 57] #currentFileSystem -> FileSystem'' (recv DiskStore class)
+[RV 58] #disk -> FileSystem'' (recv FileSystem class)
+[RV 59] #delimiter -> obj'' (recv UnixStore)
+[RV 60] #isAbsolutePath:delimiter: -> T'' (recv Path class)
+[RV 61] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 62] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 63] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 64] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 65] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 66] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 67] #and: -> F'' (recv AbsolutePath class)
+[RV 68] #and: -> T'' (recv AbsolutePath class)
+[RV 69] #and: -> T'' (recv AbsolutePath class)
+[RV 70] #and: -> T'' (recv AbsolutePath class)
+[RV 71] #and: -> T'' (recv AbsolutePath class)
+[RV 72] #and: -> T'' (recv AbsolutePath class)
+[RV 73] #new: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 74] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 75] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 76] #? -> ByteString'pkg200' (recv AbsolutePath class)
+[RV 77] #? -> ByteString'w0' (recv AbsolutePath class)
+[RV 78] #? -> ByteString'driolar-soccertheory-pharo.image' (recv AbsolutePath class)
+[RV 79] #withAll: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 80] #from:delimiter: -> AbsolutePath'' (recv Path class)
+[RV 81] #pathFromString: -> AbsolutePath'' (recv UnixStore)
+[RV 82] #pathFromString: -> AbsolutePath'' (recv FileSystem)
+[RV 83] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 84] #setFileSystem:path: -> FileReference'' (recv FileReference)
+[RV 85] #fileSystem:path: -> FileReference'' (recv FileReference class)
+[RV 86] #referenceTo: -> FileReference'' (recv FileSystem)
+[RV 87] #isRoot -> F'' (recv AbsolutePath)
+[RV 88] #isEmpty -> F'' (recv AbsolutePath)
+[RV 89] #new: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 90] #parent -> AbsolutePath'' (recv AbsolutePath)
+[RV 91] #asPathWith: -> AbsolutePath'' (recv AbsolutePath)
+[RV 92] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 93] #setFileSystem:path: -> FileReference'' (recv FileReference)
+[RV 94] #fileSystem:path: -> FileReference'' (recv FileReference class)
+[RV 95] #referenceTo: -> FileReference'' (recv FileSystem)
+[RV 96] #copyWithPath: -> FileReference'' (recv FileReference)
+[RV 97] #withPath: -> FileReference'' (recv FileReference)
+[RV 98] #parent -> FileReference'' (recv FileReference)
+[RV 99] #delimiter -> obj'' (recv UnixStore)
+[RV 100] #isAbsolutePath:delimiter: -> F'' (recv Path class)
+[RV 101] #isAbsoluteWindowsPath: -> F'' (recv Path class)
+[RV 102] #addAll: -> OrderedCollection'' (recv RelativePath class)
+[RV 103] #and: -> T'' (recv RelativePath class)
+[RV 104] #removeRedundantSegments: -> OrderedCollection'' (recv RelativePath class)
+[RV 105] #new: -> RelativePath'' (recv RelativePath class)
+[RV 106] #? -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv RelativePath class)
+[RV 107] #withAll: -> RelativePath'' (recv RelativePath class)
+[RV 108] #from:delimiter: -> RelativePath'' (recv Path class)
+[RV 109] #pathFromString: -> RelativePath'' (recv UnixStore)
+[RV 110] #pathFromString: -> RelativePath'' (recv FileSystem)
+[RV 111] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 112] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 113] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 114] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 115] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 116] #and: -> T'' (recv AbsolutePath class)
+[RV 117] #and: -> T'' (recv AbsolutePath class)
+[RV 118] #and: -> T'' (recv AbsolutePath class)
+[RV 119] #and: -> T'' (recv AbsolutePath class)
+[RV 120] #and: -> T'' (recv AbsolutePath class)
+[RV 121] #new: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 122] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 123] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 124] #? -> ByteString'pkg200' (recv AbsolutePath class)
+[RV 125] #? -> ByteString'w0' (recv AbsolutePath class)
+[RV 126] #? -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath class)
+[RV 127] #withAll: -> AbsolutePath'' (recv AbsolutePath class)
+[RV 128] #resolvePath: -> AbsolutePath'' (recv AbsolutePath)
+[RV 129] #asPathWith: -> AbsolutePath'' (recv AbsolutePath)
+[RV 130] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 131] #setFileSystem:path: -> FileReference'' (recv FileReference)
+[RV 132] #fileSystem:path: -> FileReference'' (recv FileReference class)
+[RV 133] #referenceTo: -> FileReference'' (recv FileSystem)
+[RV 134] #copyWithPath: -> FileReference'' (recv FileReference)
+[RV 135] #withPath: -> FileReference'' (recv FileReference)
+[RV 136] #/ -> FileReference'' (recv FileReference)
+[RV 137] #defaultWorkingDirectory -> AbsolutePath'' (recv UnixStore)
+[RV 138] #workingDirectoryPath -> AbsolutePath'' (recv FileSystem)
+[RV 139] #resolvePath: -> AbsolutePath'' (recv AbsolutePath)
+[RV 140] #asResolvedBy: -> AbsolutePath'' (recv AbsolutePath)
+[RV 141] #resolve: -> AbsolutePath'' (recv AbsolutePath)
+[RV 142] #resolvePath: -> AbsolutePath'' (recv FileSystem)
+[RV 143] #asResolvedBy: -> AbsolutePath'' (recv AbsolutePath)
+[RV 144] #resolve: -> AbsolutePath'' (recv FileSystem)
+[RV 145] #delimiter -> obj'' (recv UnixStore)
+[RV 146] #delimiter -> obj'' (recv UnixStore)
+[RV 147] #nextPutAll: -> ByteString'home' (recv AbsolutePath)
+[RV 148] #? -> obj'' (recv AbsolutePath)
+[RV 149] #nextPutAll: -> ByteString'ubuntu' (recv AbsolutePath)
+[RV 150] #? -> obj'' (recv AbsolutePath)
+[RV 151] #nextPutAll: -> ByteString'pkg200' (recv AbsolutePath)
+[RV 152] #? -> obj'' (recv AbsolutePath)
+[RV 153] #nextPutAll: -> ByteString'w0' (recv AbsolutePath)
+[RV 154] #? -> obj'' (recv AbsolutePath)
+[RV 155] #nextPutAll: -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath)
+[RV 156] #printOn:delimiter: -> AbsolutePath'' (recv AbsolutePath)
+[RV 157] #printPath:on: -> AbsolutePath'' (recv UnixStore)
+[RV 158] #printPath:on: -> AbsolutePath'' (recv UnixStore)
+[RV 159] #stringFromPath: -> ByteString'/home/ubuntu/pkg200/w0/Pharo13.1-64bit-4f7563d.sources' (recv UnixStore)
+[RV 160] #stringFromPath: -> ByteString'/home/ubuntu/pkg200/w0/Pharo13.1-64bit-4f7563d.sources' (recv FileSystem)
+[RV 161] #fullName -> ByteString'/home/ubuntu/pkg200/w0/Pharo13.1-64bit-4f7563d.sources' (recv FileReference)
+[RV 162] #workingDirectory -> RelativePath'' (recv Path class)
+[RV 163] #initializeWithOrigin:path: -> FileLocator'' (recv FileLocator)
+[RV 164] #origin:path: -> FileLocator'' (recv FileLocator class)
+[RV 165] #origin: -> FileLocator'' (recv FileLocator class)
+[RV 166] #userData -> FileLocator'' (recv FileLocator class)
+[RV 167] #workingDirectory -> RelativePath'' (recv Path class)
+[RV 168] #initializeWithOrigin:path: -> FileLocator'' (recv FileLocator)
+[RV 169] #origin:path: -> FileLocator'' (recv FileLocator class)
+[RV 170] #origin: -> FileLocator'' (recv FileLocator class)
+[RV 171] #imageDirectory -> FileLocator'' (recv FileLocator class)
+[RV 172] #disk -> FileSystem'' (recv FileSystem class)
+[RV 173] #pathFromObject: -> RelativePath'' (recv FileSystem)
+[RV 174] #new -> FileReference'' (recv FileReference class)
+[RV 175] #fileSystem:path: -> FileReference'' (recv FileReference class)
+[RV 176] #workingDirectory -> FileReference'' (recv FileLocator class)
+[RV 177] #disk -> FileSystem'' (recv FileSystem class)
+[RV 178] #isAbsolutePath:delimiter: -> T'' (recv Path class)
+[RV 179] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 180] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 181] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 182] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 183] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 184] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 185] #and: -> F'' (recv AbsolutePath class)
+[RV 186] #and: -> T'' (recv AbsolutePath class)
+[RV 187] #and: -> T'' (recv AbsolutePath class)
+[RV 188] #and: -> T'' (recv AbsolutePath class)
+[RV 189] #and: -> T'' (recv AbsolutePath class)
+[RV 190] #and: -> T'' (recv AbsolutePath class)
+[RV 191] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 192] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 193] #? -> ByteString'pkg200' (recv AbsolutePath class)
+[RV 194] #? -> ByteString'w0' (recv AbsolutePath class)
+[RV 195] #? -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath class)
+[RV 196] #new -> FileReference'' (recv FileReference class)
+[RV 197] #fullPath -> AbsolutePath'' (recv FileReference)
+[RV 198] #isEmpty -> F'' (recv AbsolutePath)
+[RV 199] #basename -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath)
+[RV 200] #basename -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv FileReference)
+[RV 201] #disk -> FileSystem'' (recv FileSystem class)
+[RV 202] #isAbsolutePath:delimiter: -> T'' (recv Path class)
+[RV 203] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 204] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 205] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 206] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 207] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 208] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 209] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 210] #and: -> F'' (recv AbsolutePath class)
+[RV 211] #and: -> T'' (recv AbsolutePath class)
+[RV 212] #and: -> T'' (recv AbsolutePath class)
+[RV 213] #and: -> T'' (recv AbsolutePath class)
+[RV 214] #and: -> T'' (recv AbsolutePath class)
+[RV 215] #and: -> T'' (recv AbsolutePath class)
+[RV 216] #and: -> F'' (recv AbsolutePath class)
+[RV 217] #removeRedundantSegments: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 218] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 219] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 220] #? -> ByteString'src' (recv AbsolutePath class)
+[RV 221] #? -> ByteString'iospharo' (recv AbsolutePath class)
+[RV 222] #? -> ByteString'build' (recv AbsolutePath class)
+[RV 223] #new -> FileReference'' (recv FileReference class)
+[RV 224] #isAbsolutePath:delimiter: -> F'' (recv Path class)
+[RV 225] #isAbsoluteWindowsPath: -> F'' (recv Path class)
+[RV 226] #addAll: -> OrderedCollection'' (recv RelativePath class)
+[RV 227] #and: -> T'' (recv RelativePath class)
+[RV 228] #removeRedundantSegments: -> OrderedCollection'' (recv RelativePath class)
+[RV 229] #? -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv RelativePath class)
+[RV 230] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 231] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 232] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 233] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 234] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 235] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 236] #and: -> T'' (recv AbsolutePath class)
+[RV 237] #and: -> T'' (recv AbsolutePath class)
+[RV 238] #and: -> T'' (recv AbsolutePath class)
+[RV 239] #and: -> T'' (recv AbsolutePath class)
+[RV 240] #and: -> T'' (recv AbsolutePath class)
+[RV 241] #and: -> T'' (recv AbsolutePath class)
+[RV 242] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 243] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 244] #? -> ByteString'src' (recv AbsolutePath class)
+[RV 245] #? -> ByteString'iospharo' (recv AbsolutePath class)
+[RV 246] #? -> ByteString'build' (recv AbsolutePath class)
+[RV 247] #? -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath class)
+[RV 248] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 249] #new -> FileReference'' (recv FileReference class)
+[RV 250] #fileSystem:path: -> FileReference'' (recv FileReference class)
+[RV 251] #defaultWorkingDirectory -> AbsolutePath'' (recv UnixStore)
+[RV 252] #workingDirectoryPath -> AbsolutePath'' (recv FileSystem)
+[RV 253] #resolvePath: -> AbsolutePath'' (recv AbsolutePath)
+[RV 254] #resolve: -> AbsolutePath'' (recv AbsolutePath)
+[RV 255] #resolvePath: -> AbsolutePath'' (recv FileSystem)
+[RV 256] #resolve: -> AbsolutePath'' (recv FileSystem)
+[RV 257] #handleClass -> FileHandle class'' (recv UnixStore)
+[RV 258] #new -> FileReference'' (recv FileReference class)
+[RV 259] #open:writable: -> FileHandle'' (recv FileSystem)
+[RV 260] #defaultWorkingDirectory -> AbsolutePath'' (recv UnixStore)
+[RV 261] #workingDirectoryPath -> AbsolutePath'' (recv FileSystem)
+[RV 262] #resolvePath: -> AbsolutePath'' (recv AbsolutePath)
+[RV 263] #resolve: -> AbsolutePath'' (recv AbsolutePath)
+[RV 264] #resolvePath: -> AbsolutePath'' (recv FileSystem)
+[RV 265] #resolve: -> AbsolutePath'' (recv FileSystem)
+[RV 266] #nextPutAll: -> ByteString'home' (recv AbsolutePath)
+[RV 267] #? -> obj'' (recv AbsolutePath)
+[RV 268] #nextPutAll: -> ByteString'ubuntu' (recv AbsolutePath)
+[RV 269] #? -> obj'' (recv AbsolutePath)
+[RV 270] #nextPutAll: -> ByteString'src' (recv AbsolutePath)
+[RV 271] #? -> obj'' (recv AbsolutePath)
+[RV 272] #nextPutAll: -> ByteString'iospharo' (recv AbsolutePath)
+[RV 273] #? -> obj'' (recv AbsolutePath)
+[RV 274] #nextPutAll: -> ByteString'build' (recv AbsolutePath)
+[RV 275] #? -> obj'' (recv AbsolutePath)
+[RV 276] #nextPutAll: -> ByteString'Pharo13.1-64bit-4f7563d.sources' (recv AbsolutePath)
+[RV 277] #printOn:delimiter: -> AbsolutePath'' (recv AbsolutePath)
+[RV 278] #printPath:on: -> AbsolutePath'' (recv UnixStore)
+[RV 279] #printPath:on: -> AbsolutePath'' (recv UnixStore)
+[RV 280] #stringFromPath: -> ByteString'/home/ubuntu/src/iospharo/build/Pharo13.1-64bit-4f7563d.sources' (recv UnixStore)
+[RV 281] #stringFromPath: -> ByteString'/home/ubuntu/src/iospharo/build/Pharo13.1-64bit-4f7563d.sources' (recv FileSystem)
+[RV 282] #fullName -> ByteString'/home/ubuntu/src/iospharo/build/Pharo13.1-64bit-4f7563d.sources' (recv FileReference)
+[CACHE-33] #keys -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e01edd0 method=0x761b2e2cd8b0
+[CACHE-34] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2e01eb18 method=0x761b2e37cec0
+[CACHE-35] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2e01b3b0 method=0x761b2e37cec0
+[CACHE-36] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e232ab0 method=0x761b2e3853f8
+[RV 283] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 284] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 285] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 286] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 287] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 288] #pragmasDo: -> CompiledMethod'' (recv SystemResolver class)
+[RV 289] #methodsDo: -> MethodDictionary'' (recv SystemResolver class)
+[RV 290] #pragmasDo: -> SystemResolver class'' (recv SystemResolver class)
+[CACHE-37] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2e232ab0 method=0x761b2e37cec0
+[CACHE-38] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e231ed0 method=0x761b2e3853f8
+[RV 291] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 292] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 293] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 294] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 295] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 296] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 297] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 298] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 299] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 300] #methodsDo: -> MethodDictionary'' (recv FileSystemResolver class)
+[RV 301] #pragmasDo: -> FileSystemResolver class'' (recv FileSystemResolver class)
+[RV 302] #supportedOrigins -> Array'' (recv SystemResolver)
+[RV 303] #canResolve: -> F'' (recv SystemResolver)
+[CACHE-39] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e2332d0 method=0x761b2e3853f8
+[RV 304] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 305] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 306] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 307] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 308] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 309] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 310] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 311] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 312] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 313] #pragmasDo: -> CompiledMethod'' (recv UnixResolver class)
+[RV 314] #methodsDo: -> MethodDictionary'' (recv UnixResolver class)
+[RV 315] #pragmasDo: -> UnixResolver class'' (recv UnixResolver class)
+[CACHE-40] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2e2332d0 method=0x761b2e37cec0
+[CACHE-41] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e2328d0 method=0x761b2e3853f8
+[RV 316] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 317] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 318] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 319] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 320] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 321] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 322] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 323] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 324] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 325] #pragmasDo: -> CompiledMethod'' (recv PlatformResolver class)
+[RV 326] #methodsDo: -> MethodDictionary'' (recv PlatformResolver class)
+[RV 327] #pragmasDo: -> PlatformResolver class'' (recv PlatformResolver class)
+[CACHE-42] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2e2328d0 method=0x761b2e37cec0
+[RV 328] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 329] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 330] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 331] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 332] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 333] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 334] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 335] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 336] #pragmasDo: -> CompiledMethod'' (recv FileSystemResolver class)
+[RV 337] #methodsDo: -> MethodDictionary'' (recv FileSystemResolver class)
+[RV 338] #pragmasDo: -> FileSystemResolver class'' (recv FileSystemResolver class)
+[RV 339] #supportedOrigins -> Array'' (recv UnixResolver)
+[RV 340] #canResolve: -> T'' (recv UnixResolver)
+[RV 341] #at:ifAbsent: -> NIL'' (recv UnixResolver)
+[RV 342] #at:ifAbsent: -> ByteString'/home/ubuntu' (recv UnixResolver)
+[RV 343] #currentFileSystem -> FileSystem'' (recv DiskStore class)
+[RV 344] #isAbsolutePath:delimiter: -> T'' (recv Path class)
+[RV 345] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 346] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 347] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 348] #and: -> F'' (recv AbsolutePath class)
+[RV 349] #and: -> T'' (recv AbsolutePath class)
+[RV 350] #and: -> T'' (recv AbsolutePath class)
+[RV 351] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 352] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 353] #new -> FileReference'' (recv FileReference class)
+[RV 354] #resolveString: -> FileReference'' (recv UnixResolver)
+[RV 355] #directoryFromEnvVariableNamed:or: -> FileReference'' (recv UnixResolver)
+[RV 356] #directoryFromEnvVariableNamed: -> FileReference'' (recv UnixResolver)
+[RV 357] #home -> FileReference'' (recv UnixResolver)
+[RV 358] #delimiter -> obj'' (recv UnixStore)
+[RV 359] #isAbsolutePath:delimiter: -> F'' (recv Path class)
+[RV 360] #addAll: -> OrderedCollection'' (recv RelativePath class)
+[RV 361] #and: -> T'' (recv RelativePath class)
+[RV 362] #? -> ByteString'.local' (recv RelativePath class)
+[RV 363] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 364] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 365] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 366] #and: -> T'' (recv AbsolutePath class)
+[RV 367] #and: -> T'' (recv AbsolutePath class)
+[RV 368] #and: -> T'' (recv AbsolutePath class)
+[RV 369] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 370] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 371] #? -> ByteString'.local' (recv AbsolutePath class)
+[RV 372] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 373] #new -> FileReference'' (recv FileReference class)
+[RV 374] #delimiter -> obj'' (recv UnixStore)
+[RV 375] #isAbsolutePath:delimiter: -> F'' (recv Path class)
+[RV 376] #isAbsoluteWindowsPath: -> F'' (recv Path class)
+[RV 377] #addAll: -> OrderedCollection'' (recv RelativePath class)
+[RV 378] #and: -> T'' (recv RelativePath class)
+[RV 379] #? -> ByteString'share' (recv RelativePath class)
+[RV 380] #withAll: -> RelativePath'' (recv RelativePath class)
+[RV 381] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 382] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 383] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 384] #addAll: -> OrderedCollection'' (recv AbsolutePath class)
+[RV 385] #and: -> T'' (recv AbsolutePath class)
+[RV 386] #and: -> T'' (recv AbsolutePath class)
+[RV 387] #and: -> T'' (recv AbsolutePath class)
+[RV 388] #and: -> T'' (recv AbsolutePath class)
+[RV 389] #? -> ByteString'home' (recv AbsolutePath class)
+[RV 390] #? -> ByteString'ubuntu' (recv AbsolutePath class)
+[RV 391] #? -> ByteString'.local' (recv AbsolutePath class)
+[RV 392] #? -> ByteString'share' (recv AbsolutePath class)
+[RV 393] #pathFromObject: -> AbsolutePath'' (recv FileSystem)
+[RV 394] #new -> FileReference'' (recv FileReference class)
+[RV 395] #share -> FileReference'' (recv UnixResolver)
+[RV 396] #userData -> FileReference'' (recv UnixResolver)
+[RV 397] #unknownOrigin: -> FileReference'' (recv SystemResolver)
+[RV 398] #unknownOrigin: -> FileReference'' (recv InteractiveResolver)
+[RV 399] #unknownOrigin: -> FileReference'' (recv InteractiveResolver)
+[JIT] AUTO-EXCLUDED exception infra #signal (class Exception class)
+[JIT] AUTO-EXCLUDED exception infra #receiver (class Exception class)
+[JIT] AUTO-EXCLUDED exception infra #signalerContext
+[JIT] AUTO-EXCLUDED exception infra #handleSignal:
+[JIT] AUTO-EXCLUDED exception infra #aboutToReturn:through:
+[CACHE-43] #keysDo: -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e023cc0 method=0x761b2e3223b8
+[STARTUP] Firing deferred timer semaphore signal (step 25000647)
+[CACHE-44] #methodDict -> getter=-1 setter=-1 retSelf=0 prim=0 cls=0x761b2e0a1f60 method=0x761b2e3853f8
+[CACHE-45] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2eac4118 method=0x761b2e37cec0
+[CACHE-46] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2e9d27d8 method=0x761b2e37cec0
+[CACHE-47] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2e017938 method=0x761b2e37cec0
+[CACHE-48] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2e016f28 method=0x761b2e37cec0
+[CACHE-49] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2f1ccdf8 method=0x761b2e37cec0
+[CACHE-50] #superclass -> getter=0 setter=-1 retSelf=0 prim=264 cls=0x761b2eaeb718 method=0x761b2e37cec0
+[XFER-8] old=0x761b328329c0 pri=80 -> new=0x761b30c490f0 pri=80
+[XFER-9] old=0x761b30c490f0 pri=80 -> new=0x761b333bbbc0 pri=70
+[XFER-10] old=0x761b333bbbc0 pri=70 -> new=0x761b333bbaf0 pri=60
+[DRAIN-1] initial=81 processed=81 wka=0 wkaarr-drop=1 kept=80 dec=0 pending=81->81 in=#lowSpaceWatcher step=157076160 site=interp-act act=#lowSpaceThreshold
+[XFER-11] old=0x761b33329620 pri=60 -> new=0x761b33329688 pri=50
+[XFER-12] old=0x761b33329688 pri=50 -> new=0x761b2bfff8f0 pri=51
+[XFER-13] old=0x761b2bfff8f0 pri=51 -> new=0x761b33329688 pri=50
+[XFER-14] old=0x761b33329688 pri=50 -> new=0x761b30c49148 pri=40
+[XFER-15] old=0x761b30c49148 pri=40 -> new=0x761b30c490f0 pri=80
+[XFER-16] old=0x761b30c490f0 pri=80 -> new=0x761b30c49148 pri=40
+[XFER-17] old=0x761b30c49148 pri=40 -> new=0x761b312f9000 pri=40
+[XFER-18] old=0x761b312f9000 pri=40 -> new=0x761b32313c78 pri=40
+[XFER-19] old=0x761b32313c78 pri=40 -> new=0x761b2c3c64a8 pri=40
+[XFER-20] old=0x761b2c3c64a8 pri=40 -> new=0x761b30c490f0 pri=80
+[XFER-21] old=0x761b30c490f0 pri=80 -> new=0x761b2c3c64a8 pri=40
+[STARTUP-ST-FIRED][IMAGE] [STARTUP-ST-FIRED]
+
+PREFIXES #('SoccerTheory-Model-Tests' 'SoccerTheory-SoccerML-Tests' 'SoccerTheory-Statistics-Tests')[IMAGE] PREFIXES #('SoccerTheory-Model-Tests' 'SoccerTheory-SoccerML-Tests' 'SoccerTheory-Statistics-Tests')
+
+CLASSES 16[IMAGE] CLASSES 16
+
+[XFER-22] old=0x761b33446f28 pri=40 -> new=0x761b2c9a4410 pri=79
+[XFER-23] old=0x761b2c9a4410 pri=79 -> new=0x761b30c490f0 pri=80
+[XFER-24] old=0x761b30c490f0 pri=80 -> new=0x761b2c9a4410 pri=79
+[XFER-25] old=0x761b2c9a4410 pri=79 -> new=0x761b33446f28 pri=40
+[XFER-26] old=0x761b33446f28 pri=40 -> new=0x761b2c9a4410 pri=79
+[XFER-27] old=0x761b2c9a4410 pri=79 -> new=0x761b33446f28 pri=40
+[XFER-28] old=0x761b33446f28 pri=40 -> new=0x761b2c9dd090 pri=79
+[XFER-29] old=0x761b2c9dd090 pri=79 -> new=0x761b30c490f0 pri=80
+[XFER-30] old=0x761b30c490f0 pri=80 -> new=0x761b2c9dd090 pri=79
+[XFER-31] old=0x761b2c9dd090 pri=79 -> new=0x761b33446f28 pri=40
+[XFER-32] old=0x761b33446f28 pri=40 -> new=0x761b2c9dd090 pri=79
+[XFER-33] old=0x761b2c9dd090 pri=79 -> new=0x761b33446f28 pri=40
+[XFER-34] old=0x761b33446f28 pri=40 -> new=0x761b2c9fdb88 pri=79
+[XFER-35] old=0x761b2c9fdb88 pri=79 -> new=0x761b30c490f0 pri=80
+[XFER-36] old=0x761b30c490f0 pri=80 -> new=0x761b2c9fdb88 pri=79
+[XFER-37] old=0x761b2c9fdb88 pri=79 -> new=0x761b33446f28 pri=40
+[XFER-38] old=0x761b33446f28 pri=40 -> new=0x761b2c9fdb88 pri=79
+[XFER-39] old=0x761b2c9fdb88 pri=79 -> new=0x761b33446f28 pri=40
+[XFER-40] old=0x761b33446f28 pri=40 -> new=0x761b2ca46580 pri=79
+[XFER-41] old=0x761b2ca46580 pri=79 -> new=0x761b30c490f0 pri=80
+[XFER-42] old=0x761b30c490f0 pri=80 -> new=0x761b2ca46580 pri=79
+[XFER-43] old=0x761b2ca46580 pri=79 -> new=0x761b33446f28 pri=40
+[XFER-44] old=0x761b33446f28 pri=40 -> new=0x761b2ca46580 pri=79
+[XFER-45] old=0x761b2ca46580 pri=79 -> new=0x761b33446f28 pri=40
+[XFER-46] old=0x761b33446f28 pri=40 -> new=0x761b2cba9f00 pri=79
+[XFER-47] old=0x761b2cba9f00 pri=79 -> new=0x761b30c490f0 pri=80
+[XFER-48] old=0x761b30c490f0 pri=80 -> new=0x761b2cba9f00 pri=79
+[XFER-49] old=0x761b2cba9f00 pri=79 -> new=0x761b33446f28 pri=40
+ERR  STEptsFifaExampleTest>>testValidDocument (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STEptsFifaExampleTest>>testValidDocument (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+[PROGRESS] 10s: ~4323596042 steps
+[DIAG] P40 XMLElement>>ifTrue: ip=65 fd=30
+[DIAG]   [-1] XMLElement>>addedElement:
+[DIAG]   [-2] XMLElement>>addedNode:
+[DIAG]   [-3] XMLNodeList>>afterAddingLast:
+[DIAG]   [-4] XMLNodeList>>addLast:
+[DIAG]   [-5] XMLElement>>addNode:
+[DIAG]   [-6] XMLDOMParser>>topNodeAdd:
+[DIAG]   [-7] XMLDOMParser>>pushElement:
+[DIAG]   [-8] XMLDOMParser>>startElement:prefix:uri:localName:attributes:
+[DIAG]   [-9] SAXParserDriver>>handleStartTag:attributes:
+[DIAG]   [-10] XMLWellFormedParserTokenizer>>nextTag
+[DIAG]   [-11] XMLWellFormedParserTokenizer>>nextContentMarkupToken
+[DIAG]   [-12] XMLWellFormedParserTokenizer>>nextContentToken
+[DIAG]   [-13] XMLContentState>>nextTokenFrom:
+[DIAG]   [-14] XMLWellFormedParserTokenizer>>nextToken
+[DIAG]   [-15] XMLParser>>whileFalse:
+[DIAG]   [-16] FullBlockClosure>>on:do:
+[DIAG]   [-17] XMLParser>>parseDocument
+[DIAG]   [-18] XMLDOMParser>>parseDocument
+[DIAG]   [-19] XMLDOMParser class>>parse:
+[DIAG]   [-20] STEptsMetadata>>initializeWith:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=4s ago nextUsec=0xe151d21c78372 nextMs=0
+[DIAG-TIMER] wakeup delta=859475 usec (0.859 sec)
+[DIAG-QUEUE] P10 proc=0x761b333295c8 susp=FullBlockClosure>>terminateRealActive
+[PROGRESS] 20s: ~7966870642 steps
+[DIAG] P40 XMLElement>>ifNil: ip=51 fd=39
+[DIAG]   [-1] XMLElement>>elementsDo:
+[DIAG]   [-2] XMLElement>>allElementsDo:
+[DIAG]   [-3] XMLElement>>allElementsDo:
+[DIAG]   [-4] XMLNodeList>>elementsDo:
+[DIAG]   [-5] XMLElement>>elementsDo:
+[DIAG]   [-6] XMLElement>>allElementsDo:
+[DIAG]   [-7] XMLElement>>allElementsDo:
+[DIAG]   [-8] XMLNodeList>>elementsDo:
+[DIAG]   [-9] XMLElement>>elementsDo:
+[DIAG]   [-10] XMLElement>>allElementsDo:
+[DIAG]   [-11] XMLElement>>allElementsDo:
+[DIAG]   [-12] XMLNodeList>>elementsDo:
+[DIAG]   [-13] XMLElement>>elementsDo:
+[DIAG]   [-14] XMLElement>>allElementsDo:
+[DIAG]   [-15] XMLElement>>allElementsDo:
+[DIAG]   [-16] XMLNodeList>>elementsDo:
+[DIAG]   [-17] XMLElement>>elementsDo:
+[DIAG]   [-18] XMLElement>>allElementsDo:
+[DIAG]   [-19] XMLElement>>allElementsDo:
+[DIAG]   [-20] XMLNodeList>>elementsDo:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe151d22589f81 nextMs=0
+[DIAG-TIMER] wakeup delta=345463 usec (0.345 sec)
+[DIAG-QUEUE] P10 proc=0x761b333295c8 susp=FullBlockClosure>>terminateRealActive
+[PROGRESS] 30s: ~11309190063 steps
+[DIAG] P40 Dictionary>>to:do: ip=68 fd=26
+[DIAG]   [-1] Dictionary>>findElementOrNil:
+[DIAG]   [-2] Dictionary>>at:ifAbsent:
+[DIAG]   [-3] XMLCachingAttributeList>>attributeValueAt:ifAbsent:
+[DIAG]   [-4] XMLCachingAttributeList>>attributeValueAt:
+[DIAG]   [-5] XMLElement>>attributeAt:
+[DIAG]   [-6] STEptsMetadata>>attributeAt:
+[DIAG]   [-7] XMLElement>>ifTrue:
+[DIAG]   [-8] XMLElement>>allElementsDo:
+[DIAG]   [-9] XMLElement>>allElementsDo:
+[DIAG]   [-10] XMLNodeList>>elementsDo:
+[DIAG]   [-11] XMLElement>>elementsDo:
+[DIAG]   [-12] XMLElement>>descendantElementsDo:
+[DIAG]   [-13] XMLElement>>descendantElementsSelect:
+[DIAG]   [-14] STEptsMetadata>>playerChannelNodesForChannelId:
+[DIAG]   [-15] STEptsMetadata>>playerChannelNodesForY
+[DIAG]   [-16] STEptsMetadata>>playerIdsForYChannels
+[DIAG]   [-17] STEptsConverter>>?
+[DIAG]   [-18] XMLNodeList>>elementsDo:
+[DIAG]   [-19] XMLElement>>elementsDo:
+[DIAG]   [-20] STEptsConverter>>playerPositionAssociationIn:values:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe151d22f13697 nextMs=0
+[DIAG-TIMER] wakeup delta=337091 usec (0.337 sec)
+[DIAG-QUEUE] P10 proc=0x761b333295c8 susp=FullBlockClosure>>terminateRealActive
+[PROGRESS] 40s: ~14642960989 steps
+[DIAG] P40 XMLNodeList>>afterAddingToCopyLast: ip=63 fd=10
+[DIAG]   [-1] XMLNodeList>>select:
+[DIAG]   [-2] XMLNodeList>>elements
+[DIAG]   [-3] XMLElement>>elements
+[DIAG]   [-4] STEptsConverter>>yourself
+[DIAG]   [-5] Array>>value:value:
+[DIAG]   [-6] Array>>do:
+[DIAG]   [-7] Array>>inject:into:
+[DIAG]   [-8] STEptsConverter>>playerPositions
+[DIAG]   [-9] STEptsConverter>>ifTrue:ifFalse:
+[DIAG]   [-10] OrderedCollection>>do:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe151d2389d360 nextMs=0
+[DIAG-TIMER] wakeup delta=338406 usec (0.338 sec)
+[DIAG-QUEUE] P10 proc=0x761b333295c8 susp=FullBlockClosure>>terminateRealActive
+[PROGRESS] 50s: ~18010554396 steps
+[DIAG] P40 ByteString>>and: ip=64 fd=25
+[DIAG]   [-1] ByteString>>=
+[DIAG]   [-2] Dictionary>>scanFor:
+[DIAG]   [-3] Dictionary>>findElementOrNil:
+[DIAG]   [-4] Dictionary>>at:ifAbsent:
+[DIAG]   [-5] XMLCachingAttributeList>>attributeValueAt:ifAbsent:
+[DIAG]   [-6] XMLCachingAttributeList>>attributeValueAt:
+[DIAG]   [-7] XMLElement>>attributeAt:
+[DIAG]   [-8] STEptsMetadata>>attributeAt:
+[DIAG]   [-9] XMLElement>>ifTrue:
+[DIAG]   [-10] XMLElement>>allElementsDo:
+[DIAG]   [-11] XMLElement>>allElementsDo:
+[DIAG]   [-12] XMLNodeList>>elementsDo:
+[DIAG]   [-13] XMLElement>>elementsDo:
+[DIAG]   [-14] XMLElement>>descendantElementsDo:
+[DIAG]   [-15] XMLElement>>descendantElementsSelect:
+[DIAG]   [-16] STEptsMetadata>>playerChannelNodesForChannelId:
+[DIAG]   [-17] STEptsMetadata>>playerChannelNodesForX
+[DIAG]   [-18] STEptsMetadata>>playerIdsForXChannels
+[DIAG]   [-19] STEptsConverter>>?
+[DIAG]   [-20] XMLNodeList>>elementsDo:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe151d2422b5f6 nextMs=0
+[DIAG-TIMER] wakeup delta=356914 usec (0.357 sec)
+[DIAG-QUEUE] P10 proc=0x761b333295c8 susp=FullBlockClosure>>terminateRealActive
+[PROGRESS] 60s: ~21369532106 steps
+[DIAG] P40 XMLElement>>ifNil: ip=51 fd=36
+[DIAG]   [-1] XMLElement>>elementsDo:
+[DIAG]   [-2] XMLElement>>allElementsDo:
+[DIAG]   [-3] XMLElement>>allElementsDo:
+[DIAG]   [-4] XMLNodeList>>elementsDo:
+[DIAG]   [-5] XMLElement>>elementsDo:
+[DIAG]   [-6] XMLElement>>allElementsDo:
+[DIAG]   [-7] XMLElement>>allElementsDo:
+[DIAG]   [-8] XMLNodeList>>elementsDo:
+[DIAG]   [-9] XMLElement>>elementsDo:
+[DIAG]   [-10] XMLElement>>allElementsDo:
+[DIAG]   [-11] XMLElement>>allElementsDo:
+[DIAG]   [-12] XMLNodeList>>elementsDo:
+[DIAG]   [-13] XMLElement>>elementsDo:
+[DIAG]   [-14] XMLElement>>allElementsDo:
+[DIAG]   [-15] XMLElement>>allElementsDo:
+[DIAG]   [-16] XMLNodeList>>elementsDo:
+[DIAG]   [-17] XMLElement>>elementsDo:
+[DIAG]   [-18] XMLElement>>allElementsDo:
+[DIAG]   [-19] XMLElement>>allElementsDo:
+[DIAG]   [-20] XMLNodeList>>elementsDo:
+[DIAG-TIMER] usecArmed=1 msArmed=0 timerWasArmed=1 timerSem=set lastSignal=0s ago nextUsec=0xe151d24babcb7 nextMs=0
+[DIAG-TIMER] wakeup delta=318709 usec (0.319 sec)
+[DIAG-QUEUE] P10 proc=0x761b333295c8 susp=FullBlockClosure>>terminateRealActive
+TIMEOUT STEptsMetricaSportsTest>>testTwoSequences[IMAGE] TIMEOUT STEptsMetricaSportsTest>>testTwoSequences
+
+[JIT] AUTO-EXCLUDED exception infra #pass (class Exception class)
+ERR  STSkillCornerTest>>testBallPosition (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STSkillCornerTest>>testBallPosition (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+ERR  STSkillCornerTest>>testBallPosssession (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STSkillCornerTest>>testBallPosssession (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+ERR  STSkillCornerTest>>testValid (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STSkillCornerTest>>testValid (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+ERR  STSoccerMLReaderTest>>testBadFormed (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STSoccerMLReaderTest>>testBadFormed (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+ERR  STSoccerMLReaderTest>>testFrameCreation (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STSoccerMLReaderTest>>testFrameCreation (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+ERR  STSoccerMLReaderTest>>testFrameNodes (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STSoccerMLReaderTest>>testFrameNodes (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+ERR  STSoccerMLReaderTest>>testInvalid (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STSoccerMLReaderTest>>testInvalid (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+ERR  STSoccerMLReaderTest>>testKeepColor (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STSoccerMLReaderTest>>testKeepColor (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+ERR  STSoccerMLReaderTest>>testTeamNames (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STSoccerMLReaderTest>>testTeamNames (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+ERR  STSoccerMLReaderTest>>testWellFormed (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STSoccerMLReaderTest>>testWellFormed (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+ERR  STSoccerMLWriterTest>>testValidDocument (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))[IMAGE] ERR  STSoccerMLWriterTest>>testValidDocument (XMLFileException: File does does not exist: soccerML.dtd (near line 2, column 40))
+
+RESULT pass=78 fail=0 err=12 timeout=1 classes=16[IMAGE] RESULT pass=78 fail=0 err=12 timeout=1 classes=16
+
+StdioStream: #stdout[IMAGE] StdioStream: #stdout
+
+EVAL-RESULT=StdioStream: #stdout[IMAGE] EVAL-RESULT=StdioStream: #stdout
+
+
+=== Execution Summary ===
+Active bytecode steps: 22558694964
+
+=== JIT Stats ===
+  classOf-forwarder-follows: 0 (each = a dispatch to a forwarded object the fix resolved instead of MNU-ing)
+  compiled: 5953 methods
+  IC: 142702058 hits / 156264074 total (91.3%), patches=118687 stale=0
+  IC miss breakdown: noSelBits=3793698 cold=11740 poly=220531 noICData=243048
+  activations: 72500154 hits / 72500154 total (100.0%)
+  resume (J2J-r): 12705035 chains / 32430060 total (39.2%)
+  J2J stencil: calls=81937431 returns=51098630 patches=103389
+  materialize: count=25 totalDepth=25
+  chain: actChain=24 actFall=24442 | primChain=13954639 primFall=5210292
+  stencil-fall: cached=21025261 send=7579480 j2j=0 other=2234060
+  [M0-ATTRIB] continuity=64.3% (actChain=65053293 actFall=36073535)
+  [M0-ATTRIB] site1 stencil-fall cached=21025261 send=7579480 j2j=0 other=2234060 | site2 block-resume chains=13954639 falls=5210292 (72.8%) | site3 activate chains=24 falls=24442
+  [M0-ATTRIB] site2 top prim-falls: p207=5203816 p83=5573 p209=346 p86=197 p84=187 p85=88 p87=85
+  yields=0 OSR=88975
+  T2-IC: 0 hits / 0 total (0.0%)
+  T2 (asmjit): compiled=0 bailed=0
+  PMS: linked-now=0 links=0 relinks=0 unlinks=0 refused gate=0 reach=0 nomap=112447
+  canSkipJ2JSave: 1316/6698 real-compiled methods qualify (19.6%); ic-hits=0 fires=0
+=================
+
+=== Display Check ===
+Pixel count: 0
+First 100 pixels: 0 modified from gradient
+Stopping heartbeat thread...
+
+=== Test Complete ===

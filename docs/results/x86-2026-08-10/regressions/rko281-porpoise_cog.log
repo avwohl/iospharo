@@ -1,0 +1,4 @@
+PREFIXES #('Porpoise-Tests')
+CLASSES 3
+RESULT pass=14 fail=0 err=0 timeout=0 classes=3
+StdioStream: #stdout
