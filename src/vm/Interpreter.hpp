@@ -3764,21 +3764,29 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     // Operand stack (only the live portion)
     // stackPointer_ points one past the last live value (post-increment push),
     // so use < not <= to avoid scanning the dead slot at stackPointer_.
-    char slotDetail[192];
-    for (Oop* p = stackBase_; p < stackPointer_; ++p) {
-        // Name the owning activation for a watched-class hit: "via
-        // operand-stack" alone leaves thousands of candidate slots.
-        if (__builtin_expect(watchCls != nullptr, 0)
-                && p->isObject() && p->rawBits() > 0x10000
-                && memory_.classNameOf(*p) == watchCls) {
-            describeOperandSlot(p, slotDetail, sizeof slotDetail);
-            rootDetail_ = slotDetail;
-        } else {
-            rootDetail_ = nullptr;
+    // Two loops on purpose: this is the largest root category (thousands of
+    // slots, every GC), so the un-watched path stays exactly the bare visit it
+    // was — not even a per-slot store to clear rootDetail_.
+    if (__builtin_expect(watchCls == nullptr, 1)) {
+        for (Oop* p = stackBase_; p < stackPointer_; ++p) {
+            visitor(*p);
         }
-        visitor(*p);
+    } else {
+        char slotDetail[192];
+        for (Oop* p = stackBase_; p < stackPointer_; ++p) {
+            // Name the owning activation for a watched-class hit: "via
+            // operand-stack" alone leaves thousands of candidate slots.
+            if (p->isObject() && p->rawBits() > 0x10000
+                    && memory_.classNameOf(*p) == watchCls) {
+                describeOperandSlot(p, slotDetail, sizeof slotDetail);
+                rootDetail_ = slotDetail;
+            } else {
+                rootDetail_ = nullptr;
+            }
+            visitor(*p);
+        }
+        rootDetail_ = nullptr;
     }
-    rootDetail_ = nullptr;
 
     rootTag_ = "saved-frames";
     // Saved frames
