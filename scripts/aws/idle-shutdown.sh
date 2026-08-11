@@ -19,7 +19,21 @@ active=0
 [ "$(who | wc -l)" -gt 0 ] && active=1
 # meaningful processes (NB: -f matches full cmdline; do NOT combine with -x,
 # which would require the whole cmdline to equal the alternation and never match)
-if pgrep -f 'cmake|cc1plus|make|ninja|clang|cc1plus|gcc|node|claude|test_load_image|git ' >/dev/null 2>&1; then
+#
+# `pharo` and the suite drivers MUST be here.  They were missing, and it cost a
+# completed run: the 200-package A/B sweep spends most of its time in Metacello
+# loads driven by the STOCK `pharo` VM, which is network-bound, so no listed
+# process was running and 1-min load sat around 0.2 — well under the 0.5 floor
+# below.  The box counted itself idle for 30 min and terminated ITSELF 74 min
+# into the sweep (i-05fa7bff75e0eb0ad, 2026-08-11 07:18 UTC, confirmed in
+# CloudTrail: caller was the instance's own role from its own IP).  All sweep
+# results were lost, because preserve.sh syncs notes and build logs, not
+# results.
+#
+# This is the same blind spot the README calls out for the CPU-based CloudWatch
+# alarm ("false-kills low-CPU-but-active SUnit boxes") — it just also existed
+# here, in the process-based check that was supposed to be the safe alternative.
+if pgrep -f 'cmake|cc1plus|make|ninja|clang|gcc|node|claude|test_load_image|git |pharo|run-manifest|run-sweep|fullsuite|sunit' >/dev/null 2>&1; then
     active=1
 fi
 # load average
