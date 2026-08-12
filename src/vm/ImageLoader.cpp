@@ -197,8 +197,40 @@ bool ImageLoader::loadHeapData(std::ifstream& file, ObjectMemory& memory,
 
 // ===== POINTER RELOCATION =====
 
+// Locate hiddenRootsObj — the ONE format-9 object whose slots really are Oops.
+//
+// Spur lays the heap out as nil(1), false(2), true(3), freeListsObj(4),
+// hiddenRootsObj(5), so it is identifiable by position before anything has
+// been relocated.  Everything else with format 9 is a 64-bit WORD ARRAY whose
+// contents are DATA (see relocatePointers).  Same walk as setupClassTable's.
+uint64_t* ImageLoader::findHiddenRootsHeader() const {
+    uint8_t* heapStart = loadedData_;
+    if (!heapStart || loadedSize_ < 16) return nullptr;
+    auto objectAfter = [&](uint8_t* objPtr) -> uint8_t* {
+        ObjectHeader* hdr = reinterpret_cast<ObjectHeader*>(objPtr);
+        size_t sz = hdr->totalSize();
+        if (sz < 16) sz = 16;
+        uint8_t* next = objPtr + sz - (hdr->hasOverflowSlots() ? 8 : 0);
+        if (next + 16 <= heapStart + loadedSize_) {
+            uint64_t followingWord = *reinterpret_cast<uint64_t*>(next + 8);
+            if (extractNumSlots(followingWord) == 255) next += 8;
+        }
+        return next;
+    };
+    uint8_t* obj = heapStart;
+    for (int i = 0; i < 4; i++) {
+        obj = objectAfter(obj);
+        if (obj >= heapStart + loadedSize_) return nullptr;
+    }
+    return reinterpret_cast<uint64_t*>(obj);
+}
+
 bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
-    forEachObject([this](uint64_t* headerPtr, size_t size) {
+    // See findHiddenRootsHeader: format 9 is pointer-bearing for exactly ONE
+    // object in the image, and treating every format-9 object as pointers
+    // CORRUPTS 64-bit word-array data (docs/vm-compat-bugs.md #16).
+    uint64_t* hiddenRootsHeader = findHiddenRootsHeader();
+    forEachObject([this, hiddenRootsHeader](uint64_t* headerPtr, size_t size) {
         // The header itself doesn't contain pointers (it has class index, not oop)
 
         // Get object format from header
@@ -242,10 +274,19 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
             slotCount = maxSlots;
         }
 
-        // Only pointer objects have pointer fields to relocate
-        // Formats 0-5 are pointer objects, 24-31 are compiled methods (mixed)
-        // Format 9 (Indexable64) - hiddenRoots uses this and contains pointers!
-        bool hasPointers = (format <= 5) || (format == 9);
+        // Only pointer objects have pointer fields to relocate.
+        // Formats 0-5 are pointer objects, 24-31 are compiled methods (mixed).
+        //
+        // Format 9 (Indexable64) is a 64-bit WORD ARRAY.  It is pointer-bearing
+        // for exactly ONE object — hiddenRootsObj, which holds the class-table
+        // pages.  Relocating EVERY format-9 object as pointers, which this did
+        // until 2026-08-12, silently rewrites ordinary numeric data: a
+        // Cog-written `DoubleWordArray` holding 16r10000000000 came back as
+        // 16r300000000, our heap base, while stock Cog read it back unchanged
+        // (docs/vm-compat-bugs.md #16).  Any element landing in
+        // [oldBase, oldBase + imageBytes) was mangled.
+        bool hasPointers = (format <= 5)
+                        || (format == 9 && headerPtr == hiddenRootsHeader);
         bool isCompiledMethod = (format >= 24 && format <= 31);
 
         if (hasPointers) {

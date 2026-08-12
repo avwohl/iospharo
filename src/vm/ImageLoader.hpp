@@ -169,6 +169,10 @@ private:
     /// Relocate a single pointer value
     uint64_t relocatePointer(uint64_t oldOop) const;
 
+    /// Header address of hiddenRootsObj (the 5th object), or nullptr.
+    /// The ONLY format-9 object whose slots are Oops rather than data.
+    uint64_t* findHiddenRootsHeader() const;
+
     /// Convert a raw pointer to an Oop with correct space encoding
     Oop rawToOop(uint64_t raw, ObjectMemory& memory) const;
 

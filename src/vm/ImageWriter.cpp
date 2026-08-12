@@ -93,8 +93,19 @@ bool ImageWriter::writeHeapData(std::ofstream& file, ObjectMemory& memory) {
 
         uint8_t fmtVal = static_cast<uint8_t>(fmt);
 
-        if (fmtVal <= 5 || fmtVal == 9) {
-            // Pointer objects (formats 0-5) and Indexable64 (format 9, hiddenRoots)
+        // Format 9 (Indexable64) is a 64-bit WORD ARRAY.  Exactly ONE object in
+        // the heap has format 9 AND real Oop slots: hiddenRootsObj, which holds
+        // the class-table pages.  Marking every format-9 object's slots as
+        // pointers tag-converts ordinary numeric DATA on the way out — and the
+        // loader's matching bug converted it back, so our own images
+        // round-tripped and the pair stayed invisible.  A Cog-written
+        // DoubleWordArray does not survive that (docs/vm-compat-bugs.md #16),
+        // so both sides now special-case the one object instead of the format.
+        const bool isHiddenRoots =
+            memory.hiddenRootsObj().isObject()
+            && memory.hiddenRootsObj().asObjectPtr() == obj;
+        if (fmtVal <= 5 || (fmtVal == 9 && isHiddenRoots)) {
+            // Pointer objects (formats 0-5), plus hiddenRootsObj.
             // All slots contain Oops
             for (size_t i = 0; i < slotCount; i++) {
                 isPointerSlot[firstSlotWord + i] = true;
