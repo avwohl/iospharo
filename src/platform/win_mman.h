@@ -58,6 +58,29 @@ extern "C" __declspec(dllimport) int __stdcall
 #define MADV_DONTNEED  4
 #define MADV_NORMAL    0
 
+// WARNING — this shim does NOT honour the contract its caller assumes.
+//
+// ObjectMemory::initialize (src/vm/ObjectMemory.cpp, see the comment at the
+// old-space mmap) reserves the WHOLE old-space ceiling — 4 GB by default —
+// on the explicit premise that "mmap(MAP_ANONYMOUS) reserves address space
+// without committing pages; the kernel only allocates physical memory when
+// the VM writes to a page.  So a 4 GB reservation on an iPhone 8 with 1 GB of
+// physical RAM costs ~0 bytes."  That is true on Linux and macOS.
+//
+// Here it is FALSE: MEM_COMMIT charges the full length against Windows'
+// commit limit (RAM + pagefile) immediately, so startup fails outright on a
+// machine without ~4 GB of commit headroom (docs/vm-compat-bugs.md #10).
+//
+// Reserve-only is not a drop-in fix: Windows does not auto-commit on touch,
+// so the VM would fault on the first write past the committed region.  The
+// two viable designs are (a) commit-ahead in the allocation slow path — grow
+// a `committedEnd_` watermark in page-sized chunks as the bump pointer
+// advances — or (b) a vectored exception handler that commits on fault.
+// Neither is written.
+//
+// WORKS TODAY as a mitigation: `PHARO_MAX_OLD_SPACE_MB=512` (or whatever the
+// box can commit) lowers the reservation, and therefore the commit, at the
+// call site in test_load_image.cpp.
 static inline void* mmap(void* /*addr*/, size_t len, int prot, int /*flags*/,
                          int /*fd*/, long /*offset*/) {
     unsigned long protect =

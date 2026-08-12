@@ -540,10 +540,37 @@ paragraph. See `docs/history/windows-port-2026-06-27.md`.
 
 ### 10. Windows old-space commits the whole ~4 GB reservation up front — MEDIUM
 
-`src/platform/win_mman.h:68` uses `MEM_RESERVE|MEM_COMMIT` on the full mapping,
+`src/platform/win_mman.h` uses `MEM_RESERVE|MEM_COMMIT` on the full mapping,
 so startup fails outright on a machine with under ~4 GB of commit headroom. The
 2026-07-04 design note (commit-ahead in the allocation slow path) is sound and
 unimplemented — no `committedEnd_` symbol exists.
+
+SPECIFIED 2026-08-12 by reading the chain, so this stops being a note:
+
+  * The caller is `ObjectMemory::initialize` (`src/vm/ObjectMemory.cpp`,
+    the old-space `mmap`), and it reserves the whole ceiling ON THE EXPLICIT
+    PREMISE, stated in its own comment, that "mmap(MAP_ANONYMOUS) reserves
+    address space without committing pages ... a 4 GB reservation on an
+    iPhone 8 with 1 GB of physical RAM costs ~0 bytes".  True on Linux/macOS.
+  * The Windows shim silently violates that premise.  So the defect is a
+    CONTRACT MISMATCH between a documented call site and a platform shim, not
+    a tuning problem — which is why it is invisible in review.  A warning
+    block now sits at the shim so the next reader cannot miss it.
+  * Reserve-only is NOT a drop-in fix: Windows does not auto-commit on touch,
+    so the VM would fault on the first write past the committed region.  The
+    two viable designs are (a) commit-ahead in the allocation slow path — grow
+    a `committedEnd_` watermark in page-sized chunks as the bump pointer
+    advances — or (b) a vectored exception handler that commits on fault.
+  * **A mitigation already exists and needs no new code**:
+    `PHARO_MAX_OLD_SPACE_MB=512` (or whatever the box can commit) lowers the
+    reservation, and therefore the Windows commit, at the call site in
+    `test_load_image.cpp`.  Worth trying first on any Windows box that cannot
+    start.
+
+Deliberately NOT implemented here: this is Windows-only and cannot be
+exercised on this machine, and the repo's own lesson from `4a46413f` is that
+"fixed by construction, not verified on the platform" was worth exactly
+nothing.
 
 ### 11. Upstream Pharo Delay/watchdog nil-timeout trio, patched only in our harness — MEDIUM
 
