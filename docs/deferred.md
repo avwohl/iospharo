@@ -33,11 +33,19 @@ RULED OUT so far:
   - Not reachable in suite batch 1-400 (10923 P / 1 E / 1 T), so whatever
     pollutes Display runs later than that.
 
-  - **The GC trace bound is not it in suite context either** — MEASURED, not
-    reasoned: a full macOS-arm64 suite with `PHARO_CTX_TRACE_ALL_SLOTS=1`
-    reproduces it exactly (`ClyBrowserToolValidityTest ERROR 25`,
-    `ClyNotebookPageRecyclerTest ERROR 3`, 26773 P / 21 F / 55 E overall).
-    `da9159e9`/`d209543d` are therefore ruled out.
+  - The GC **trace bound** specifically is not it: a full macOS-arm64 suite
+    with `PHARO_CTX_TRACE_ALL_SLOTS=1` reproduces it exactly
+    (`ClyBrowserToolValidityTest ERROR 25`, `ClyNotebookPageRecyclerTest
+    ERROR 3`, 26773 P / 21 F / 55 E overall).
+
+    **CAUTION — that knob does NOT clear `da9159e9`/`d209543d` as a whole.**
+    It reverts `pointerSlotsOf` only.  `storeContextStackp` (which NILS a
+    reused context's tail) and `raiseContextStackpTo` (which RAISES stackp on
+    a single-slot write) stay active under it, and both are plausible causes
+    of this exact signature: `executeFromContext` pushes `stackp` items as
+    temps, so a stackp raised past the real content shifts the operand stack —
+    which is how a variable comes to hold a `BitBlt` where a number belongs.
+    Only a build of `361bf92b` is a real control.
   - Not a FAIL-level regression: the same runs are 27647 P / 24 F on Linux and
     27701 P / 22 F on macOS, with every FAIL in the documented residual
     families (ReleaseTest, StDebugger/StSpotter, TKT, ZnClient) — the same
