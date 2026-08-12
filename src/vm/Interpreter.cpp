@@ -14901,6 +14901,10 @@ Oop Interpreter::outerTemporary(int index) const {
     return temporary(index);
 }
 
+// NOTE: no callers — outerTemporary/setOuterTemporary are currently dead code
+// (remote temps go through the closure's indirection vector instead).  Kept
+// consistent with setTemporary so a revival does not reintroduce the
+// uncovered-slot hazard, but nothing here executes today.
 void Interpreter::setOuterTemporary(int index, Oop value) {
     // Store a temp into the outer context (for remote temp store in blocks).
     if (activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
@@ -21499,6 +21503,16 @@ void Interpreter::raiseContextStackpTo(Oop context, int slots) {
     // whose stackp sits below it is exactly the "stackp too LOW" hazard the old
     // whole-array scan existed to paper over.  Raise, never lower — lowering is
     // storeContextStackp's job (it nils the tail).
+    //
+    // This is NOT a GC-only edit, which is why it has an opt-out:
+    // executeFromContext restores exactly `stackp` slots as the resumed
+    // activation's temps, so raising stackp past the real content shifts that
+    // activation's operand stack.  The only caller that survives is
+    // setTemporary's write-through, and it writes into activeContext_ — which
+    // this VM is known to leave pointing at a RETURNED activation
+    // (docs/aws-closeout-2026-08-11.md section 1).  PHARO_NO_CTX_STACKP_RAISE=1
+    // takes it out of the picture.
+    if (GET_DEBUG_BOOL(PHARO_NO_CTX_STACKP_RAISE)) return;
     Oop sp = memory_.fetchPointer(2, context);
     if (!sp.isSmallInteger() || sp.asSmallInteger() < slots)
         memory_.storePointer(2, context, Oop::fromSmallInteger(slots));
