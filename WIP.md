@@ -1,4 +1,80 @@
-# WIP — latest session 2026-08-12 (fixing defects out of the split bug list)
+# WIP — latest session 2026-08-12b (two HIGH defects root-caused and fixed)
+
+## ===== 2026-08-12b SESSION (read this first) =====
+
+Two of the twelve open defects in `docs/vm-compat-bugs.md` are FIXED, and
+both root causes were somewhere nobody had looked.
+
+### `#1` WarpBlt expression-stack displacement — FIXED `bf3f6c58`
+
+The top open VM bug, 93 of the 102 ERRORs in the last full ARM suite, filed
+as a materialize/restore defect since 2026-07-07.  **It is the per-bytecode
+Sista backward-jump tier.**
+
+    PHARO_DET_SCHED=1 build/test_load_image <image> eval \
+      "$(cat scripts/repro/warpblt_temp_displacement.st)"
+
+    before   ~796 calls / 12 errors, every run
+    after    1440 calls /  0 errors — byte-identical to stock Cog,
+             JIT on AND PHARO_NO_JIT=1
+
+A region lifted from a backward-jump target is registered at every interior
+loop top it built a dispatch arm for.  Entering at an interior arm needs the
+target block's phi inputs, so a loader pseudo-block reads them off the
+interpreter's operand stack with `kLoadStackSlot` — and never lowered
+`state.sp`.  So each phi operand was live twice: in the region's registers,
+which the next bail writes back at `state.sp`, and in the copy still below
+it.  One phantom operand per phi, exactly the +1 / +2 measured.  Temps stay
+correct, which is why the localizer said "expression stack" and stopped.
+
+Fixed in BOTH backends — the whole-file per-arch split had the identical
+omission for the fourth time (memory `per-arch-backend-drift`).
+
+**`PHARO_NO_JIT=1` does not disable this tier.**  That single fact is why
+five sessions concluded "interpreter-side, not the JIT".  The isolating knob
+is `PHARO_NO_SISTA_PER_BC=1`.
+
+### `#5b` `saveAs:` freezes the eval result — FIXED `e00f0acb`
+
+Not snapshot/resume, and not "the startup sequence is never invoked".  Every
+step of the resumed image's startup runs correctly — `isImageStarting=true`,
+the startup list byte-identical to a fresh boot, the deferred action queued
+AND executed.  `BasicCommandLineHandler>>activate` then **forks** the actual
+dispatch at P40, and the continuation the image resumed into (the previous
+command's script, boosted to P80) reaches its own `Smalltalk exitSuccess`
+first.  Proof it is only CPU: an 8 s Delay in the old continuation makes the
+UNFIXED VM answer correctly.  primitiveQuit now defers a quit raised while
+this run's `startup.st` is still on disk (our script deletes itself first,
+so such a quit cannot be ours), one-shot.
+
+### The instrument, kept: `PHARO_DEPTH_ORACLE=<exact selector>`
+
+Records the operand depth the FIRST time each bytecode offset runs and
+reports any later visit that disagrees — no static analysis needed, because
+loop and straight-line code has a fixed depth per pc.  It fires at the first
+displaced bytecode instead of the impossible-receiver DNU downstream, and
+dumps the live frame, the owning context, a 48-entry event ring
+(restore/save/return/push/pop/materialize/transfer/Sista) and a 160-entry
+(offset, depth, bytecode, ctx, fp) ring.  Those rings turned "displaced
+somewhere" into `SISTA-IN entry=340 depth=25 -> SISTA-OUT bail=640 depth=28`
+in one run.  `[SISTA-LIFT-BAIL]`/`[SISTA-LIFT-POP]` under
+`PHARO_SISTA_BJ_TRACE` show a region's bail offsets at lift time.
+
+### Ruled out along the way, each measured, each 12 errors
+
+`PHARO_NO_CTX_STACKP_RAISE=1`, `PHARO_CTX_TRACE_ALL_SLOTS=1`, the
+return-value placement gap, the ctxSynced skip, preemption frequency.
+`PHARO_NO_FRAME0_REUSE=1` is broken on its own (no output) — not a usable
+bisect axis.
+
+### Open
+
+Ten defects remain: `#2` (partially), `#3`, `#4`, `#6`-`#12`, `#14`.
+A full 2055-class macOS-arm64 suite is the outstanding validation for `#1`;
+the pre-fix baselines to compare against are in the 2026-08-11 section below
+(27701 P / 22 F / 12 T / 50 E, of which ~25 Cly errors were this defect).
+
+## ===== 2026-08-12 (earlier session) =====
 
 ## ===== 2026-08-12 SESSION (read this first) =====
 

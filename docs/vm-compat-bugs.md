@@ -15,181 +15,81 @@ Nothing here is a "deferred feature" or an intentional stub. Those live in
 
 ## OPEN DEFECTS (as of 2026-08-12)
 
+**Update 2026-08-12 (later session): `#1` and `#5b` are FIXED.**  `#1` was the
+top open VM bug and was NOT where six sessions had it filed — see its entry.
+Ten remain: `#2` (partially), `#3`, `#4`, `#6`-`#12`, `#14`.
+
 Provenance: these were extracted from `docs/deferred.md`, which had grown to
 2739 lines of which 86% was changelog and lab notebook. Five of them had been
 invisible because they sat *inside* entries whose parent was checked `- [x]`.
 
-### 1. WarpBlt expression-stack displacement — HIGH, the top open VM bug
+### 1. ~~WarpBlt expression-stack displacement~~ — FIXED 2026-08-12 (`bf3f6c58`)
 
-A frame's operand stack is displaced while its temps stay intact, so an
-expression evaluates against the wrong value. Impossible receivers result:
-`BitBlt >> #+`, `BitBlt >> #//`, `SmallInteger >> #pixelAt:` at stable pcs
-599/606/610 inside `WarpBlt>>warpBitsSmoothing:sourceMap:`.
+Root cause: the **per-bytecode Sista backward-jump tier**, not the
+materialize/restore path six sessions had it filed under.
 
     repro   PHARO_DET_SCHED=1 build/test_load_image <image> eval \
               "$(cat scripts/repro/warpblt_temp_displacement.st)"
-            -> ~796 calls / 12 errors, every run.  Stock Cog: 1440 / 0.
-    localize scripts/repro/warpblt_localize.st prints every temp with its class
-            at the failure — they are all CORRECT, which is what points at the
-            expression stack rather than the temps.
-    arch    macOS-arm64 and Linux-aarch64.  Interpreter-side: PHARO_NO_JIT=1
-            reproduces identically.
-    verified 2026-08-12 at HEAD, and by an independent audit agent the same day.
-    impact  93 of the 102 ERRORs in the latest full ARM suite.  Amplified by
-            UITheme>>formSetsForScale: being at:ifAbsentPut: — a failure caches
-            nothing and retries forever, so the suite-level count is bimodal
-            (1 or ~100) for a FIXED defect.  Do not read that count as a trend.
 
-#### Root-cause progress 2026-08-12: restores trust a stackp no save ever wrote
+            before   ~796 calls / 12 errors, every run
+            after    1440 calls /  0 errors — byte-identical to stock Cog,
+                     JIT on AND PHARO_NO_JIT=1
 
-Measured with paired instrumentation on the two materialize sites and on
-`executeFromContext` (`PHARO_TRACE_FRAME_TEMPS=warpBitsSmoothing`, one probe run):
+MECHANISM.  A region lifted from a backward-jump target is registered at
+every interior loop top it built a dispatch arm for.  Entering at an
+interior arm needs the target block's phi inputs, so the builder appends a
+loader pseudo-block whose `kLoadStackSlot` ops read them off the
+interpreter's operand stack.  It read them and never lowered `state.sp`.
 
-    [MAT-SAVE-CUR]        432 times   always expr=1     (current-frame save)
-    [MAT-SAVE]              4 times   always expr=0     (saved-frame loop)
-    [MAT-RESTORE]   1,528,392 times   expr = 2,4,8,9,10,11 ...
+Each phi operand was therefore live TWICE: once in the region's registers,
+which the next bail writes back starting at `state.sp`, and once in the
+copy still sitting below it.  The resumed frame gained one phantom operand
+per phi and an expression evaluated against its neighbour.  Depth of the
+leak = the entry block's phi count — 1 for an arm one loop in, 2 for two,
+which is the +1 / +2 measured at the bail.  Temps stay correct throughout,
+which is why the 2026-08-11 localizer (all temps CORRECT, failing sends at
+stable pcs) pointed at "the expression stack" and no further.
 
-Two facts, both new:
+Fixed in BOTH backends (`SistaLowering_arm64.cpp`, `SistaLowering_x86_64.cpp`
+— the whole-file per-arch split had the identical omission, the shape in
+memory `per-arch-backend-drift`): after a loader's `kLoadStackSlot` ops and
+before its terminator, `state.sp -= phiCount * 8`.
 
-  1. **Restores outnumber saves ~3500:1.** Every process resume rebuilds this
-     frame from its context; the frame is almost never written back.
-  2. **No save ever records an expression depth above 1, yet restores push
-     depths up to 11+.**  `executeFromContext` pushes exactly `stackp` slots
-     (`Interpreter.cpp`, `int numSaved = (stackp > 0 && stackp < 1000) ? stackp : 0`),
-     so it is trusting a stackp that the save path never produced — pushing
-     slots that were never stored and reading whatever those context slots
-     happen to hold as operands.  That is the displacement, mechanically: temps
-     (written and re-synced separately) stay correct while the expression stack
-     is fabricated.
+**`PHARO_NO_JIT=1` does not disable this tier** — that is why every earlier
+session concluded the bug was interpreter-side.  The knob that isolates it
+is `PHARO_NO_SISTA_PER_BC=1`.
 
-Verified against ALL THREE save paths, not one (the first pass instrumented
-only the saved-frame loop and this frame is `fd=0`, so it was measuring the
-wrong site — a mistake worth not repeating):
+#### The instrument that found it — `PHARO_DEPTH_ORACLE=<exact selector>`
 
-    [MAT-SAVE-F0]   431 times   372x expr=1, 59x expr=0   (frame[0]==activeContext_)
-    [MAT-SAVE-CUR]  431 times   always expr=1             (current frame)
-    [MAT-SAVE]        4 times   always expr=0             (saved-frame loop)
+A self-calibrating operand-stack-depth oracle: record the depth the FIRST
+time each bytecode offset executes, report every later visit that
+disagrees.  Loop and straight-line code has a fixed depth per pc, so it
+needs no static analysis, and it fires at the FIRST displaced bytecode
+rather than at the impossible-receiver DNU downstream.  On divergence it
+dumps the live frame, the owning context, a 48-entry ring of
+restore/save/return/push/pop/materialize/transfer/Sista-dispatch events and
+a 160-entry ring of (offset, depth, bytecode, ctx, fp).
 
-Context identity between save and restore (`ctx=0x...` on both traces):
+Those two rings are the whole method: they turned "the expression stack is
+displaced somewhere" into
 
-    saved contexts              432
-    restored contexts           555
-    restored but NEVER saved    123   <- and all 123 take an expr>1 restore
+    SISTA-IN  entry=340 depth=25
+    SISTA-OUT bail=640  depth=28   (expected 26)
 
-The July trilemma is eliminated, each by measurement:
+in a single run.  Companion lift-time traces `[SISTA-LIFT-BAIL]` /
+`[SISTA-LIFT-POP]` (under `PHARO_SISTA_BJ_TRACE`) show a region's bail
+offsets and modelled pops, which is what ruled the lifter itself IN as
+correct and moved the search to the dispatch prologue.
 
-    (a) materialize expr-stack extent   all three save paths write expr<=1
-    (b) executeFromContext stackp restore  it faithfully pushes what stackp says
-    (c) returnValue fd==0 value placement  all five `stackp++` context-push sites
-                                        (returnValue, returnFromMethod x2,
-                                        returnFromBlock, handleContextNLRUnwind)
-                                        instrumented — ZERO fire for this method
+Ruled out on the way, each by measurement: the `raiseContextStackpTo`
+write-through (`PHARO_NO_CTX_STACKP_RAISE=1` — 12 errors), the Context GC
+trace bound (`PHARO_CTX_TRACE_ALL_SLOTS=1` — 12 errors), the return-value
+placement gap, the ctxSynced skip, preemption frequency.
 
-And so is the image: `primitiveSetStackPointer` (`Context>>stackp:`) is
-instrumented and fires ZERO times for these contexts, so the image is not
-raising stackp either.
-
-#### STRONGEST LEAD (2026-08-12): the frame is restored ~3500x for every save
-
-Per-context restore/save counts, one probe run:
-
-    ctx=0x30399c9d0   restores=24098   saves=0
-    ctx=0x30399cd58   restores=24093   saves=0
-    ...
-    555 contexts restored | 123 NEVER saved | 555 restored>1 with <=1 save
-
-Every context is rebuilt into a live frame many times against at most one
-write-back, and the busiest have no write-back at all. Whatever the frame does
-between two restores is therefore not preserved, which is exactly the shape of
-a stale expression stack — while the TEMPS stay correct because
-`prepareForGC`'s temp sync rewrites those separately (and raises stackp to
-cover them). That asymmetry is the strongest lead in this bug.
-
-**Do not read it as "resume replays a stale context" — I did, and the next
-measurement did not support it.** `transferTo` DOES call
-`materializeFrameStack()` on every process switch, and disabling the
-`ctxSynced` incremental skip (`PHARO_MAT_FULL_RESYNC=1`) moves the save count
-only 4 -> 6 while leaving the errors at 12. So the rarity of saves is not a
-skipped write-back on suspend. 1.5M restores cannot be 1.5M process switches
-either: `executeFromContext` is evidently the ordinary path for
-materialized-context execution (frameDepth_=0), not just for resume.
-
-So the open question is now precise: **in materialized-context execution mode,
-where does the frame's advancing expression stack get written back — and does
-it?** If execution runs on the C++ frame while the context is only refreshed on
-the rare materialize, every restore in between rebuilds from stale operands.
-
-Caller classification (done): the call sites are `returnValue` (5),
-`returnFromMethod`/`returnFromBlock` (4), `enterInterpreterFromCallback` (4),
-`bootstrapStartup` (9, once), plus singletons. At 1.5M calls against 431 saves,
-the dominant callers can only be the RETURN paths — i.e. in
-materialized-context mode **every method return rebuilds the caller's frame
-from the caller's context**.
-
-That is a coherent mechanism for exactly this corruption: if a frame pushes
-operands onto its expression stack and then sends, the return rebuilds it from
-a context materialized BEFORE those pushes, and the operands are lost or
-shifted — while temps survive because they are re-synced separately. It also
-explains restores >> saves directly (every return restores; only occasional
-materializes save).
-
-NEXT:
-  1. Confirm dynamically which caller dominates (a counter per call site under
-     the existing knob; static counts are not call counts).
-  2. In `returnValue`'s `fd==0` branch, check whether the sender context is
-     refreshed from the live sender frame before `executeFromContext` rebuilds
-     it. If it is not, that is the defect, and the fix is to re-materialize the
-     sender (or to place the return value into the LIVE frame instead of
-     rebuilding from a stale context).
-  RULED OUT 2026-08-12 (measured, then reverted): the return-value PLACEMENT
-  gap.  `returnValue`'s fd==0 branch writes at `framePointer_[1 + origSp]`
-  where origSp is the sender CONTEXT's stackp read before the restore, then
-  raises stackPointer_ past it — so when 1+origSp exceeds the restored frame's
-  top it leaves a stale slot INSIDE the live operand stack.  That really
-  happens: `PHARO_SP_DEPTH_TRAP=1` shows 24,927 of 935,862 returns with
-  delta=+1 for this method.  Clamping the placement to the top (never leave a
-  gap) changed the error count not at all — 12 before and after, three runs —
-  so the gap is real but benign, and the patch was reverted rather than left in
-  as an unvalidated change to return-value placement.  Note `PHARO_SP_DEPTH_TRAP`
-  is the right tool here and already ships.
-
-  3. A deterministic 4-minute repro (`scripts/repro/warpblt_temp_displacement.st`
-     under `PHARO_DET_SCHED=1`, 12 errors) and a full-suite A/B are both already
-     in place to validate a fix.
-
-Also ruled out on the way, each with a measurement:
-
-    single process, no yields      240 calls / 0 errors on BOTH VMs
-                                   -> concurrency is REQUIRED
-    PHARO_DET_SCHED_QUANTUM 1/2/4/8  12 errors at every quantum
-                                   -> NOT preemption-frequency driven (the
-                                      probe's explicit Processor yield dominates)
-    PHARO_MAT_FULL_RESYNC=1        12 errors -> the ctxSynced incremental skip
-                                      is NOT the cause
-    PHARO_NO_JIT=1                 reproduces -> interpreter-side
-
-The image cannot see any of this: reading `ex signalerContext` and `ctx at:`
-after the fact shows the MATERIALIZED context, which reports all 34 expression
-slots as SmallInteger while the live frame's failing send actually received a
-BitBlt.  `PHARO_TRACE_DNU_STACK=<selector>` (new) dumps the live frame at a DNU
-and is what exposed the disagreement.
-
-**This is the same defect as the 2026-07-07 "PREEMPTION/MATERIALIZATION"
-entry** (now `docs/history/heisenbug-dossiers-2026-07.md`), which was left open
-with a next step nobody ran — and cost a full day of re-derivation on
-2026-08-11. That entry narrowed it to ONE of:
-
-    a) materializeFrameStack expr-stack extent for a mid-send frame
-    b) executeFromContext stackp restore
-    c) returnValue fd==0 sender-restore value placement
-
-and the 2026-08-11 localization **eliminates the temp-capture branch**: temps
-are intact, so this is (a) or (b). Sites: `Interpreter.cpp` materializeFrameStack
-/ executeFromContext / returnValue `fd==0`.
-
-Do NOT "fix" it by raising the `n > 4` cap in `primitiveWarpBits`
-(`Primitives.cpp:21892`). That stops the image entering the fallback that
-exposes the bug and makes ~99 errors vanish while proving nothing.
+REMAINING: the suite-level payoff (93 of 102 ERRORs in the last full ARM
+suite were this defect) still needs a full-suite A/B to confirm.  Do NOT
+read the raw error count as a trend — `UITheme>>formSetsForScale:` is
+`at:ifAbsentPut:`, so the count is bimodal (1 or ~100) for a fixed defect.
 
 ### 2. 13 packages our VM cannot run at all, where Cog can — HIGH
 
@@ -376,6 +276,10 @@ our VM on the image.
 
 ### 5. Startup dies on a nil Delay semaphore; the "frozen eval" is a SYMPTOM — CONFIRMED — HIGH
 
+**`#5b` below is FIXED (`e00f0acb`) and its cause was NOT a nil Delay
+semaphore** — it was the resumed image's leftover `exitSuccess`.  Read that
+entry before trusting the Delay framing in this one.
+
 **FIXED for OSSubprocess images (`9d9f8154`) — but NOT the whole group.**
 Measured after the fix: `mumez-pharo-acp` goes from producing nothing to
 `pass=161 fail=0 err=9` (Cog: `pass=168 err=2`), while **the plain `saveAs:`
@@ -451,88 +355,53 @@ Fixing this should close #5 AND the seven packages in #2a AND likely #11.
 
 #### Superseded framing, kept for the evidence trail
 
-### 5b. `Smalltalk saveAs:` freezes the eval result — CONFIRMED, 2-minute repro — MEDIUM-HIGH
+### 5b. ~~`Smalltalk saveAs:` freezes the eval result~~ — FIXED 2026-08-12 (`e00f0acb`)
 
-Reproduced 2026-08-12 with a stock-Cog control, macOS-arm64:
+    step 1  eval "Smalltalk saveAs: 'clone'. 'FIRST'"
+    step 2  run clone.image with eval "'SECOND-', 3 factorial printString"
 
-    step 1   eval "Smalltalk saveAs: 'clone'. 'FIRST'"
-    step 2   run clone.image with eval "'SECOND-', 3 factorial printString"
+    Cog      'SECOND-6'
+    ours     'FIRST'                  <- the new command never ran at all
+    now      'FIRST' then 'SECOND-6'
 
-    Cog:   'SECOND-6'    <- the new command line runs
-    ours:  'FIRST'       <- the frozen result comes back; the new eval never runs
+The snapshot/resume framing was wrong, and so was "the startup sequence is
+simply never invoked".  Measured on the resumed clone, every step runs and
+runs correctly:
 
-So an image saved from inside an eval is permanently stuck answering that
-eval's result. A class saved mid-build is likewise unmodifiable.
+    SnapshotOperation isImageStarting  true   (the resume patch works)
+    hasError                           false
+    WorkingSession>>runStartup: true   entered — extent byte-identical
+                                       (11237 traced bytecodes) to a fresh boot
+    BasicCommandLineHandler class>>startUp: true   adds its deferred action
+    executeDeferredStartupActions:     n=2, runs it
+    BasicCommandLineHandler>>activate  entered, no error
 
-**CONFIRMED as the cause of #2a — eight defects, one root cause.** Tested
-2026-08-12 on `mumez-pharo-acp`, one of the seven: its image is saved by stock
-Cog's `eval --save`, and under our VM it takes the identical resume path and the
-new eval produces NO output at all:
+and then nothing, because `activate` **forks**:
 
-    [RESUME] inSnapshotCode=1 chainDepth=9
-    [RESUME] Patching: stackp=1 stackTopSlot=6 oldVal=true(0x300000020) -> true
-    Image args: eval 'MARKER-', 7 factorial printString
-    (no MARKER, no EVAL-RESULT — the eval never ran)
+    [ ... self handleArgument: self firstArgument ... ]
+        forkAt: Processor userSchedulingPriority named: 'CommandLine handler process'
 
-That is exactly the "RUNNER-NEVER-STARTED" signature. Cog runs the same image
-to `RESULT pass=170`. So fixing this one defect should close #5 plus the seven
-in #2a: evref-bl-mcp, mumez-pharo-acp, pillar, fedeloch-ume, and (pending the
-same check) famix, viennatalk, gitprojecthealth.
+so the dispatch that reaches `PharoCommandLineHandler>>activate` ->
+`runPreferences` -> `StartupPreferencesLoader` -> our `startup.st` is a
+fresh P40 process.  The continuation the image resumed INTO is the
+PREVIOUS command's script, boosted to P80 by the headless startup boost,
+and it ends with `Smalltalk exitSuccess` — the VM quits before the P40
+process ever gets the CPU.  Proof that CPU is the only thing missing: put
+an 8 s `Delay` in the old continuation and the UNFIXED VM answers
+'SECOND-6'.
 
-REFINEMENT 2026-08-12 (narrows the fix site, and corrects where I had placed
-it): the resume TRACES of a working image and a frozen one are IDENTICAL —
+FIX: our generated `startup.st` deletes itself as its first statement, so a
+quit raised while THIS run's script is still on disk cannot be ours.
+`primitiveQuit` honours "that command is over" by terminating the process
+that asked and lets the scheduler reach the queued handler.  One-shot, so
+an image that never consumes the script still exits and the "eval never
+ran" guard still reports.
 
-    both: inSnapshotCode=1, chainDepth=9, same 9-frame chain
-          (SnapshotOperation>>doSnapshot ... SessionManager>>launchSnapshot:andQuit:)
-    both: Patching stackp=1 stackTopSlot=6 oldVal=true -> true
-    both: Found SnapshotOperation ... isImageStarting=true
-
-yet a clean A/B on the same trivial eval gives
-
-    porp (works)   EVAL-RESULT=1
-    acp  (frozen)  EVAL-RESULT=0
-
-So the defect is NOT in the snapshot-resume detection or in either patch — both
-run and agree. It is downstream, in what the image does once resumed. The
-earlier note above locating it at the no-op stack patch is therefore too
-specific; the no-op is real but is not the discriminator. Look at the startup
-sequence after resume: whether `StartupPreferencesLoader` runs, and whether the
-command-line handler is re-dispatched.
-
-RULED OUT (2026-08-12): the two images do not differ in startup registration.
-Inspected under stock Cog, `SessionManager default startupList` is the same set
-of `ClassSessionHandler`s in both, `StartupPreferencesLoader` is present in
-both, and both resolve the same preferences folder. So the frozen image is not
-missing a startup handler — do not look there.
-
-IMPORTANT NEGATIVE: not every Cog-saved image freezes — `/tmp/porp/Pharo.image`
-is also `eval --save`-produced and our VM runs its suite fine (14/14). So the
-trigger is narrower than "was saved from an eval"; find what distinguishes the
-seven. A promising axis: how the load expression terminated (Metacello `load:`
-leaves different continuations than a simple expression), and whether the image
-was saved with an active `SessionManager` snapshot in progress.
-
-WHERE IT IS, with the trace:
-
-    [RESUME] ctx[0]: SnapshotOperation>>doSnapshot
-    ...      ctx[6]: SessionManager>>launchSnapshot:andQuit:
-    [RESUME] inSnapshotCode=1 chainDepth=9
-    [RESUME] Initial context: method=#doSnapshot pc=55
-    [RESUME] Patching: stackp=1 stackTopSlot=6 oldVal=true(0x300000020) -> true
-
-Detection works (`inSnapshotCode=1`) and the resume patch at
-`Interpreter.cpp:~1067` is reached — but **the patch is a no-op**: it writes
-`true` over a slot that already holds `true`. So the resumed image cannot
-distinguish itself from the image that saved it, and the old eval's
-continuation just runs to completion instead of the session startup
-re-dispatching the new command line.
-
-NEXT: establish what Pharo's snapshot primitive must answer in each case (stock
-Spur answers false in the saving image and true in the resumed one) and confirm
-which slot carries it — `stackTopSlot=6` with `stackp=1` is the value the
-resumed `doSnapshot` will read. If the saving image also recorded `true`, the
-distinction is being lost at SAVE time rather than at resume, and the fix
-belongs in the snapshot primitive rather than here.
+NOT verified: whether this also closes the four `#2a` packages that "exit 0
+in seconds having done nothing" (`evref-bl-mcp`, `moosetechnology-famix`,
+`tomooda-viennatalk`, `moosetechnology-gitprojecthealth`).  They carry
+exactly this signature and are stock-Cog `eval --save` images, but they
+need a package load to test.
 
 ### 6. Activation wall — reflective scans TIMEOUT at 80 s — MEDIUM
 
