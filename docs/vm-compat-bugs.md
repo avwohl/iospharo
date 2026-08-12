@@ -119,14 +119,31 @@ where does the frame's advancing expression stack get written back — and does
 it?** If execution runs on the C++ frame while the context is only refreshed on
 the rare materialize, every restore in between rebuilds from stale operands.
 
+Caller classification (done): the call sites are `returnValue` (5),
+`returnFromMethod`/`returnFromBlock` (4), `enterInterpreterFromCallback` (4),
+`bootstrapStartup` (9, once), plus singletons. At 1.5M calls against 431 saves,
+the dominant callers can only be the RETURN paths — i.e. in
+materialized-context mode **every method return rebuilds the caller's frame
+from the caller's context**.
+
+That is a coherent mechanism for exactly this corruption: if a frame pushes
+operands onto its expression stack and then sends, the return rebuilds it from
+a context materialized BEFORE those pushes, and the operands are lost or
+shifted — while temps survive because they are re-synced separately. It also
+explains restores >> saves directly (every return restores; only occasional
+materializes save).
+
 NEXT:
-  1. Find every caller of `executeFromContext` and classify them (resume vs
-     return-into-sender vs interpret-loop). 1.5M calls for 431 saves says most
-     are not resumes; identify which caller dominates.
-  2. For the dominant caller, determine whether the context it restores from is
-     refreshed first. If not, that is the defect.
-  3. Only then attempt a fix; a deterministic 4-minute repro and a full-suite
-     A/B are both already in place to validate it.
+  1. Confirm dynamically which caller dominates (a counter per call site under
+     the existing knob; static counts are not call counts).
+  2. In `returnValue`'s `fd==0` branch, check whether the sender context is
+     refreshed from the live sender frame before `executeFromContext` rebuilds
+     it. If it is not, that is the defect, and the fix is to re-materialize the
+     sender (or to place the return value into the LIVE frame instead of
+     rebuilding from a stale context).
+  3. A deterministic 4-minute repro (`scripts/repro/warpblt_temp_displacement.st`
+     under `PHARO_DET_SCHED=1`, 12 errors) and a full-suite A/B are both already
+     in place to validate a fix.
 
 Also ruled out on the way, each with a measurement:
 
