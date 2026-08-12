@@ -80,7 +80,14 @@ attempts at it disagreed with each other.
     ours, HEAD,     DET_SCHED       ~795 calls  12 errors
 
 Identical on both builds, so this session's commits neither caused nor cured
-it.  Pre-existing, and not JIT-dependent (`PHARO_NO_JIT=1` also reproduces).
+it.  Not JIT-dependent either (`PHARO_NO_JIT=1` also reproduces).
+
+CORRECTION to the control: `361bf92b` does NOT exclude the PREVIOUS session's
+`88ce3fee` (executeFromContext claiming ownership of the context it restores) —
+`git merge-base --is-ancestor 88ce3fee 361bf92b` succeeds, so that fix is inside
+the "before" build too.  The valid control is a temporary revert of
+`Interpreter.cpp:20534` (`currentFrameMaterializedCtx_ = context`), which was
+run: the conclusion holds, but the original citation was wrong.
 
 ### It is the EXPRESSION stack, not the temps
 
@@ -109,8 +116,8 @@ area `executeFromContext` and `materializeFrameStack` cover.
        against the depth at restore.
     2. PHARO_TRACE_FRAME_TEMPS=warpBitsSmoothing already dumps the frame slots
        at materialize and push; run it under DET_SCHED.
-    3. `PHARO_NO_CTX_STACKP_RAISE=1` on the same probe — expected to change
-       nothing (the defect predates that code), but it is one command.
+    3. ~~`PHARO_NO_CTX_STACKP_RAISE=1` on the same probe~~ DONE — byte-identical
+       output, as expected.  Struck so nobody runs it twice.
 
 ## OPEN: `rko281-restoreforpharo` is ~50x slower than Cog on live SQLite (2026-08-11)
 
