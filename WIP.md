@@ -88,9 +88,47 @@ case) PASSes in both trees.  The per-bc tier is still fully active after the
 fix — 78,848 dispatches on the repro — so this corrected its bails rather
 than disabling it.
 
+### `#4` fedeloch-ume — ROOT-CAUSED: the image is MULTI-SEGMENT
+
+    firstSegmentBytes = 75,825,152   of   imageBytes = 149,692,728
+
+`37eeb743` said multi-segment and `38e3c050` retracted it.  **The retraction
+was wrong**, and it is worth knowing why: it argued the file is exactly
+`headerSize + imageBytes` with nothing past the declared data.  Segments live
+INSIDE imageBytes — each but the last terminated by a bridge — so that test
+cannot see them.  `firstSegmentBytes` is the field that answers it.
+
+Chain, all measured on a locally loaded Ume image:
+
+    firstSegmentBytes < imageBytes     segments exist
+    walk mis-parses at a bridge        [IMGLOAD-WALK-MISALIGN] +0x584fcc0,
+                                       0xff00000000000066 / 0xfffc30 /
+                                       0xff000000000078cf — two 0xFF words
+                                       16 bytes apart at a delta-0 boundary
+    walk stops (was a bare `break`)    [IMGLOAD-WALK-TRUNC] 38.14% never
+                                       relocated
+    those objects keep saved pointers  [WEAK-BAD-REF] WeakValueAssociation
+                                       slot 1 = 0x10000000000
+    the GC dereferences one            SIGSEGV in markPhase (lldb:
+                                       `ldrb w8,[x24,#6]`, x24 = old base)
+
+Fixed on the way, both independent of segment support: `processWeaklings`
+now bounds-checks weak referents and ephemeron keys through the same
+predicate `markAndTrace` uses (one bad slot used to kill the VM), and
+`loadHeapData` refuses a multi-segment image with a named error instead of
+relocating half a heap.  Our own `saveAs:` images are single-segment and
+round-trip unaffected — verified.
+
+Also settled: the `[IMGLOAD-DECLINE]` lines the previous session built the
+theory on are FALSE POSITIVES.  Per-format attribution says all 49,831 are
+format 9 (64-bit word arrays that `hasPointers` includes for hiddenRoots),
+ZERO in pointer formats.  Lead 2 confirmed by measurement.
+
 ### Open
 
-Ten defects remain: `#2` (partially), `#3`, `#4`, `#6`-`#12`, `#14`.
+`#4` is root-caused with the remaining work specified (bridge walk +
+per-segment relocation delta).  Nine others remain: `#2` (partially), `#3`,
+`#6`-`#12`, `#14`.
 A full 2055-class macOS-arm64 suite is the outstanding validation for `#1`;
 the pre-fix baselines to compare against are in the 2026-08-11 section below
 (27701 P / 22 F / 12 T / 50 E, of which ~25 Cly errors were this defect).
