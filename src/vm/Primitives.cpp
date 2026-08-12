@@ -5106,8 +5106,19 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
                 "queued command-line handler run.\n",
                 evalStartupScript_.c_str());
             fflush(stderr);
+            // terminateCurrentProcess() only unlinks the process and nils its
+            // suspendedContext — it does NOT switch.  Every other caller pairs
+            // it with tryReschedule(), and so must this one: returning Success
+            // without switching would keep executing the frame of a process the
+            // scheduler no longer owns.  If nothing else is runnable there is
+            // no queued handler to wait for, so take the real quit.
             terminateCurrentProcess();
-            return PrimitiveResult::Success;
+            if (tryReschedule()) {
+                return PrimitiveResult::Success;
+            }
+            fprintf(stderr, "[EVAL] no runnable process after deferring — "
+                            "quitting after all\n");
+            fflush(stderr);
         }
     }
 
