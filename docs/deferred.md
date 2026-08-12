@@ -19,13 +19,23 @@ the box, same image, same VM, one env var apart:
     libSDL2-2.0.so.0   found in the image dir                   same
 
 FreeType is the ONLY graphics library whose availability changed, and font
-rendering is exactly the failing family: glyph Forms and BitBlt, in tree
-presenters and browser tools that draw labels.  Previously the image failed to
-load FreeType and fell back to another font path; now it loads the real one and
-something downstream produces a `Form` whose `bits` is an Array or a
-SmallInteger.  Note `src/vm/FFI.cpp` deliberately does NOT register FreeType
-stubs at init (unlike SDL2, which is stubbed and wins over any real library) —
-so nothing shields the image from the real thing.
+rendering is the right neighbourhood for the failing family (glyph Forms and
+BitBlt, in tree presenters and browser tools that draw labels).  Note
+`src/vm/FFI.cpp` deliberately does NOT register FreeType stubs at init (unlike
+SDL2, which is stubbed and wins over any real library), so nothing shields the
+image from the real thing.
+
+**But FreeType is a CANDIDATE, not a demonstrated mechanism.**  Probed
+directly in a fresh image, with and without the env var: `StandardFonts
+defaultFont` is a `LogicalFont` either way, and a glyph `Form`'s bits is a
+`Bitmap` either way — the simple font path does not diverge.  Whatever goes
+wrong needs the full-suite context, as the failures themselves do.
+
+WHY THE ENV CHANGE IS NONETHELESS THE CAUSE (the argument that does hold):
+macOS shows NO delta between the pre-fix build and HEAD — 25 Cly errors on
+both.  Linux shows 1 -> 102.  The GC commits (`da9159e9`, `d209543d`,
+`89942e89`) are platform-neutral and would move both platforms; only the
+Linux-only FFI commits can produce a Linux-only delta.
 
 CONFIRMED SO FAR, on Linux-aarch64 full suites, same image and prep:
     morning (pre-fix VM)     1 ERROR

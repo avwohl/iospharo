@@ -18852,7 +18852,13 @@ Oop Interpreter::materializeFrameStack() {
                     }
                 }
             }
-            memory_.storePointer(2, activeContext_, Oop::fromSmallInteger(savedCount));
+            // Third context-reuse path (frame[0] == activeContext_).  d209543d
+            // claimed to have routed this one through storeContextStackp and
+            // did not — the hunk landed on the thisContext re-sync above, and
+            // this raw store kept lowering stackp while leaving the tail dirty.
+            // That matters now that pointerSlotsOf stops at stackp: residue
+            // here is neither traced NOR relocated by a compaction.
+            storeContextStackp(activeContext_, savedCount);
 
             // Use activeContext_ as the context for frame[0], skip creating a new one
             sender = activeContext_;
@@ -21525,18 +21531,22 @@ void Interpreter::storeContextStackp(Oop context, int stackp) {
     }
     ObjectHeader* ctx = context.asObjectPtr();
     const size_t cap = ctx->slotCount();
-    // Clear only the range this store VACATES, not the whole tail.  A fresh
-    // context is allocated nil, and every VM path that lowers stackp comes
-    // through here, so above the previous stackp is already clear — walking to
-    // capacity instead would cost ~32 slots per frame per materialize, on a
-    // path that runs at every process switch.
-    Oop prev = memory_.fetchPointer(2, context);
-    size_t clearEnd = prev.isSmallInteger() && prev.asSmallInteger() >= 0
-        ? std::min(cap, (size_t)(6 + prev.asSmallInteger()))
-        : cap;   // unknown provenance (image-written stackp): be thorough
+    // Clear the WHOLE tail, not just the range this store vacates.
+    //
+    // 89942e89 narrowed this to [new stackp, previous stackp) on the premise
+    // that everything above the previous stackp was already nil.  That premise
+    // is false — three writers dirty a slot without leaving it nil:
+    //   * primitiveSetStackPointer nils only when GROWING the stack
+    //     (Primitives.cpp), so a LOWERING store leaves residue behind;
+    //   * primitiveContextAtPut writes any slot bounded only by slotCount, so
+    //     image code can dirty a slot above stackp without moving it;
+    //   * this function's own third call site was missing until now.
+    // Since pointerSlotsOf stops at 6+stackp, residue up there is neither
+    // marked nor relocated, so a stale oop can survive a compaction.  Reading
+    // before writing keeps the common case (an already-nil tail) to loads.
     memory_.storePointer(2, context, Oop::fromSmallInteger(stackp));
     const Oop nilOop = memory_.nil();
-    for (size_t s = 6 + (size_t)stackp; s < clearEnd; ++s) {
+    for (size_t s = 6 + (size_t)stackp; s < cap; ++s) {
         if (!ctx->slotAt(s).isNil()) memory_.storePointer(s, context, nilOop);
     }
 }
