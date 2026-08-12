@@ -244,6 +244,8 @@ public:
     void pinLiveJITMethodsAcrossProcesses();
     bool maybeTerminateStuckProcess();  // guarded terminateStuck_; protects Delay scheduler
     void traceExtentBytecode(uint8_t bc);  // PHARO_TRACE_EXTENT_SEL per-bytecode trace
+    /// Verify the two inline-array overrun canaries; reports once each.
+    void checkArrayCanaries(const char* where);
     void armDepthOracle(Oop method);       // PHARO_DEPTH_ORACLE: (re)point at a method
     void depthOracleCheck();               // PHARO_DEPTH_ORACLE: per-bytecode depth check
     void dumpCurrentMethod();
@@ -901,6 +903,13 @@ private:
     static constexpr int PrimErrNoModification_ = 8;  // Attempt to modify immutable object
     static constexpr int PrimErrOSError         = 21; // Index in PrimErrTable for OS errors
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
+    // Overrun canary.  ~Interpreter aborts with
+    // POINTER_BEING_FREED_WAS_NOT_ALLOCATED on some packages
+    // (docs/vm-compat-bugs.md #3), which means a container member's data
+    // pointer was overwritten — i.e. one of these two big inline arrays ran
+    // past its end into the members after it.  A word after each says WHICH,
+    // and the periodic check says WHEN (within 1024 bytecodes).
+    uint64_t framesCanary_ = 0xF00DFACE5A7EDF00ULL;
     size_t frameDepth_;
     // jit-may24 Step 2: counter of SavedFrames currently on the stack
     // with materializedRetSlot != nullptr.  Used by canJITActivate's
@@ -945,6 +954,7 @@ private:
     // Stack (single stack for all frames)
     static constexpr size_t StackSafetyZone = 256;
     std::array<Oop, MaxStackDepth + StackSafetyZone> stack_;
+    uint64_t stackCanary_ = 0x5747ACC0FFEE5747ULL;  // see framesCanary_
     Oop* stackPointer_;
     Oop* stackBase_;
 

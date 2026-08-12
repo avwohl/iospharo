@@ -2693,6 +2693,32 @@ void Interpreter::depthOracleCheck() {
     fflush(stderr);
 }
 
+void Interpreter::checkArrayCanaries(const char* where) {
+    static bool framesReported = false, stackReported = false;
+    if (!framesReported && framesCanary_ != 0xF00DFACE5A7EDF00ULL) {
+        framesReported = true;
+        fprintf(stderr,
+            "[ARRAY-OVERRUN] savedFrames_ canary clobbered at %s: 0x%llx "
+            "(fd=%zu, MaxFrameDepth=%zu) — something wrote past the end of the "
+            "saved-frame array\n", where,
+            (unsigned long long)framesCanary_, frameDepth_, MaxFrameDepth);
+        fflush(stderr);
+    }
+    if (!stackReported && stackCanary_ != 0x5747ACC0FFEE5747ULL) {
+        stackReported = true;
+        fprintf(stderr,
+            "[ARRAY-OVERRUN] stack_ canary clobbered at %s: 0x%llx "
+            "(sp offset=%lld of %zu, fd=%zu, method=#%s) — something wrote past "
+            "the end of the operand-stack array\n", where,
+            (unsigned long long)stackCanary_,
+            framePointer_ ? (long long)(stackPointer_ - stack_.data()) : -1LL,
+            MaxStackDepth + StackSafetyZone, frameDepth_,
+            method_.isObject() && method_.rawBits() > 0x10000
+                ? memory_.selectorOf(method_).c_str() : "?");
+        fflush(stderr);
+    }
+}
+
 // PHARO_TRACE_EXTENT_SEL: log one line per bytecode executed within the dynamic
 // extent of the matched method (relative depth, current method selector, opcode,
 // top-of-stack class). Disarms when frameDepth_ falls below the entry depth.
@@ -3905,6 +3931,9 @@ void Interpreter::interpret() {
                 goto cg_exit;
             }
         }
+
+        // -- Inline-array overrun canaries (2 compares per 1024 bytecodes) --
+        checkArrayCanaries("checkpoint");
 
         // -- Terminate stuck process (set by watchdog, rare) --
         if (__builtin_expect(terminateStuck_.load(std::memory_order_acquire), 0)) {
