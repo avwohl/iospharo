@@ -308,12 +308,46 @@ The earlier SIGSEGV was on a differently-loaded image and is worth keeping in
 mind as a second symptom of the same startup problem, but the reproducible
 handle is #2a.
 
-### 5. `Smalltalk saveAs:` inside an eval freezes the pending eval result — MEDIUM-HIGH
+### 5. `Smalltalk saveAs:` freezes the eval result — CONFIRMED, 2-minute repro — MEDIUM-HIGH
 
-Cross-platform. A reloaded image returns the frozen result for *every*
-subsequent eval, and a class saved mid-build is permanently unmodifiable. Was
-recorded twice in `deferred.md` as a clause inside other entries and never
-tracked on its own.
+Reproduced 2026-08-12 with a stock-Cog control, macOS-arm64:
+
+    step 1   eval "Smalltalk saveAs: 'clone'. 'FIRST'"
+    step 2   run clone.image with eval "'SECOND-', 3 factorial printString"
+
+    Cog:   'SECOND-6'    <- the new command line runs
+    ours:  'FIRST'       <- the frozen result comes back; the new eval never runs
+
+So an image saved from inside an eval is permanently stuck answering that
+eval's result. A class saved mid-build is likewise unmodifiable.
+
+**Probably also the cause of #2a** (seven packages where our VM never reaches
+the runner). Every one of those images is produced by `pharo ... eval --save`,
+and "eval never ran — startup.st was still on disk at exit" is exactly what a
+frozen eval looks like from outside. Testing that link is the cheapest way to
+close eight defects at once.
+
+WHERE IT IS, with the trace:
+
+    [RESUME] ctx[0]: SnapshotOperation>>doSnapshot
+    ...      ctx[6]: SessionManager>>launchSnapshot:andQuit:
+    [RESUME] inSnapshotCode=1 chainDepth=9
+    [RESUME] Initial context: method=#doSnapshot pc=55
+    [RESUME] Patching: stackp=1 stackTopSlot=6 oldVal=true(0x300000020) -> true
+
+Detection works (`inSnapshotCode=1`) and the resume patch at
+`Interpreter.cpp:~1067` is reached — but **the patch is a no-op**: it writes
+`true` over a slot that already holds `true`. So the resumed image cannot
+distinguish itself from the image that saved it, and the old eval's
+continuation just runs to completion instead of the session startup
+re-dispatching the new command line.
+
+NEXT: establish what Pharo's snapshot primitive must answer in each case (stock
+Spur answers false in the saving image and true in the resumed one) and confirm
+which slot carries it — `stackTopSlot=6` with `stackp=1` is the value the
+resumed `doSnapshot` will read. If the saving image also recorded `true`, the
+distinction is being lost at SAVE time rather than at resume, and the fix
+belongs in the snapshot primitive rather than here.
 
 ### 6. Activation wall — reflective scans TIMEOUT at 80 s — MEDIUM
 
@@ -365,10 +399,12 @@ Which vector is not recorded. A failing published test vector on a hash
 function should not be invisible; it was a single line inside a checked-off
 Crypto entry.
 
-### 13. `StDebuggerActionModelTest>>testEventAfterProceed:` FAIL on arm, PASS on x86 — LOW
+### 13. ~~`StDebuggerActionModelTest>>testEventAfterProceed:`~~ — CLOSED 2026-08-12
 
-Unverified since July, and filed as a "heap-state Heisenbug" — a classification
-now suspect, since both its siblings turned out to be real VM bugs.
+Stale. Two corrections: the selector is `testEventAfterProceed` (no colon — the
+original entry's name does not exist), and it **PASSES** on arm at HEAD when run
+in isolation. Corroborated by both recent full suites (macOS-arm64 and
+Linux-aarch64), where it appears in neither FAIL list. Nothing to fix.
 
 ### 14. `MicFileResourceReferenceTest` BitBlt "Fraction" bug on Windows — LOW
 
