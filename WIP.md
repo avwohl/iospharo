@@ -187,6 +187,32 @@ Still untested and still plausible: the "hangs to 1800 s" packages in
 It surfaced because a probe written to test whether a JIT stack bound
 livelocked hung in BOTH arms — the arm that was supposed to be the control.
 
+### Validation status of the day's LATER changes — NOT established
+
+The full suite that validated `#1` (27729 P / 24 F / 20 E, complete) predates
+`#5b`, prim 145, the survivor-scan removal, the weak-ref guard, the JIT
+headroom check and the canaries.  The re-run with all of them WEDGED at
+`TraitTestCase` (1962 of 2052 classes, 27010 P / 22 F / 21 E — tracking the
+first run almost exactly up to that point).
+
+What the wedge is, measured rather than assumed:
+
+  * lldb on the live process: thread 1 parked in
+    `primitiveRelinquishProcessor` — the idle path, i.e. the image has NO
+    runnable process.  1.9% CPU, not a spin.
+  * NONE of the day's new diagnostics fired: zero `JIT-NO-HEADROOM`, zero
+    `OVERFLOW`, zero `WEAK-BAD-REF`, zero `ARRAY-OVERRUN`, zero
+    `[EVAL] deferring`.
+  * The Trait classes run CLEAN in isolation on the same binary —
+    TraitTestCase 19/19, TraitTest 54/54, and three siblings, 93 tests,
+    0 F / 0 E.
+
+So it is suite-context, and it matches the documented wedge family (memory
+`stdebugger-ticker-death-wedge`, `idle-band-scheduler-starvation`) rather than
+anything this session added.  **But one run cannot separate "known flaky
+wedge" from "new regression"**, so the later changes are NOT validated at
+full-suite scale.  A re-run is in flight; treat that as the outstanding item.
+
 ### Open
 
 `#4` is root-caused with the remaining work specified (bridge walk +
