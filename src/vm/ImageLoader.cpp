@@ -129,6 +129,44 @@ bool ImageLoader::loadHeapData(std::ifstream& file, ObjectMemory& memory,
                                LoadResult& result) {
     loadedSize_ = header_.imageBytes;
 
+    // MULTI-SEGMENT IMAGES ARE NOT SUPPORTED — say so at load, not by
+    // crashing in the GC 90 MB later (docs/vm-compat-bugs.md #4).
+    //
+    // Spur writes the heap as one or more SEGMENTS inside the image data,
+    // each (but the last) terminated by a bridge — a double-word free chunk
+    // whose slot count spans the gap to the next segment.  The header's
+    // firstSegmentBytes gives the first one's extent; when it is smaller
+    // than imageBytes there are more.  This loader walks the whole data
+    // block as one contiguous object sequence and relocates every pointer by
+    // a single (newBase - oldBase) delta, so on a multi-segment image it
+    // mis-parses at a bridge, stops (see [IMGLOAD-WALK-TRUNC]) and leaves
+    // everything past that point holding SAVED-IMAGE addresses.  The GC then
+    // dereferences one.  A fresh `Metacello ... baseline: 'Ume'` image is
+    // 142 MB with a 75.8 MB first segment and does exactly that.
+    //
+    // NOTE for whoever implements it: the earlier "multi-segment" root cause
+    // was retracted on the evidence that the file is exactly
+    // headerSize + imageBytes with nothing past it.  That test does not
+    // disprove segments — segments live INSIDE imageBytes.  firstSegmentBytes
+    // is the field that answers it.  Real support needs the bridge walk AND a
+    // PER-SEGMENT relocation delta, since each segment carries its own saved
+    // start address.
+    if (header_.firstSegmentBytes > 0
+            && header_.firstSegmentBytes < header_.imageBytes) {
+        fprintf(stderr,
+            "[IMGLOAD-MULTISEG] image has MULTIPLE SEGMENTS: firstSegmentBytes="
+            "%llu of imageBytes=%llu (%.1f%% in the first).  This loader only "
+            "handles single-segment images; loading would relocate the first "
+            "segment and leave the rest holding saved-image pointers.\n",
+            (unsigned long long)header_.firstSegmentBytes,
+            (unsigned long long)header_.imageBytes,
+            100.0 * (double)header_.firstSegmentBytes
+                  / (double)header_.imageBytes);
+        result.error = "Multi-segment Spur image — not supported by this "
+                       "ImageLoader (see [IMGLOAD-MULTISEG])";
+        return false;
+    }
+
     // Get the destination in old space
     loadedData_ = memory.oldSpaceStart();
     uint8_t* loadEnd = loadedData_ + loadedSize_;

@@ -244,6 +244,11 @@ void ImageLoader::forEachObject(Func callback) {
     // main header and the overflow word was at the previous position.
     uint8_t* scan = loadedData_;
     uint8_t* end = loadedData_ + loadedSize_;
+    // Remember the last object accepted, so a misalignment can name the
+    // object whose size computation walked us off the boundary.
+    uint8_t* prevObjStart = nullptr;
+    size_t prevObjBytes = 0;
+    uint64_t prevObjHeader = 0;
 
     while (scan < end) {
         uint64_t* wordPtr = reinterpret_cast<uint64_t*>(scan);
@@ -280,9 +285,58 @@ void ImageLoader::forEachObject(Func callback) {
                     totalHeaderSize = 16;  // overflow word + header
                 } else {
                     // numSlots=255 but next word doesn't match — treat current as the header
-                    // with the PREVIOUS word as overflow count (if available)
+                    // with the PREVIOUS word as overflow count (if available).
+                    //
+                    // A well-formed sequential walk NEVER lands here: an
+                    // overflow object is entered at its overflow word, and the
+                    // word after that is its header (numSlots=255), which is
+                    // the branch above.  Reaching this branch means the scan is
+                    // already misaligned — and inventing a slot count out of
+                    // whatever word precedes us is how that turns into a
+                    // 103 GB object and a silently abandoned heap
+                    // (docs/vm-compat-bugs.md #4).  A genuine overflow count
+                    // carries 0xFF in its top byte; check it and say so.
                     if (scan > loadedData_) {
                         uint64_t prevWord = *(wordPtr - 1);
+                        if ((prevWord >> 56) != 0xFF) {
+                            static int misalignN = 0;
+                            if (++misalignN <= 5) {
+                                fprintf(stderr,
+                                    "[IMGLOAD-WALK-MISALIGN] at +0x%llx: header "
+                                    "numSlots=255 but the preceding word "
+                                    "0x%llx is not an overflow count (top byte "
+                                    "0x%02x != 0xFF).  The scan is off an "
+                                    "object boundary here.\n",
+                                    (unsigned long long)(scan - loadedData_),
+                                    (unsigned long long)prevWord,
+                                    (unsigned)(prevWord >> 56));
+                                fprintf(stderr,
+                                    "[IMGLOAD-WALK-MISALIGN]   words here: "
+                                    "[0]=0x%llx [1]=0x%llx [2]=0x%llx\n",
+                                    (unsigned long long)word,
+                                    (unsigned long long)*(wordPtr + 1),
+                                    (unsigned long long)(scan + 16 < end
+                                        ? *(wordPtr + 2) : 0));
+                                if (prevObjStart) {
+                                    fprintf(stderr,
+                                        "[IMGLOAD-WALK-MISALIGN]   last accepted "
+                                        "object: +0x%llx header=0x%llx fmt=%u "
+                                        "cls=%u slots=%u size=%zu -> next would "
+                                        "be +0x%llx, we are at +0x%llx (delta "
+                                        "%+lld)\n",
+                                        (unsigned long long)(prevObjStart - loadedData_),
+                                        (unsigned long long)prevObjHeader,
+                                        (unsigned)spurFormat(prevObjHeader),
+                                        (unsigned)spurClassIndex(prevObjHeader),
+                                        (unsigned)spurNumSlots(prevObjHeader),
+                                        prevObjBytes,
+                                        (unsigned long long)(prevObjStart + prevObjBytes - loadedData_),
+                                        (unsigned long long)(scan - loadedData_),
+                                        (long long)((scan - loadedData_)
+                                            - (prevObjStart + prevObjBytes - loadedData_)));
+                                }
+                            }
+                        }
                         slotCount = static_cast<size_t>((prevWord << 8) >> 8);
                     } else {
                         slotCount = 0;
@@ -336,6 +390,9 @@ void ImageLoader::forEachObject(Func callback) {
             continue;
         }
 
+        prevObjStart = scan;
+        prevObjBytes = objectBytes;
+        prevObjHeader = header;
         callback(headerPtr, objectBytes);
         scan += objectBytes;
     }
