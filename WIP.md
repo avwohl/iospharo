@@ -1,4 +1,104 @@
-# WIP — latest session 2026-08-11 (closing out the x86 & arm AWS run findings)
+# WIP — latest session 2026-08-12 (fixing defects out of the split bug list)
+
+## ===== 2026-08-12 SESSION (read this first) =====
+
+Worked `docs/vm-compat-bugs.md`, which the previous session split out of the
+2,739-line `deferred.md`.  **Two real VM fixes landed; twelve defects remain
+open.**  Read the retractions section — four conclusions were committed and then
+withdrawn today, and knowing which is worth more than the fixes.
+
+### Fixed
+
+**`9d9f8154` — `UnixOSProcessPlugin` signal forwarding (the session's real fix).**
+OSSubprocess registers `OSSVMProcess>>initializeChildWatcher` as a SESSION
+STARTUP handler, which does `self sigChldSemaphore waitTimeoutMilliseconds: 1000`.
+That resolves through `primSigChldNumber`
+(`<primitive: 'primitiveSigChldNumber' module: 'UnixOSProcessPlugin'>`), which we
+did not implement, so it failed to nil, `forwardSignal:` answered nil, and the
+image sent `#waitTimeoutMilliseconds:` TO NIL.  The DNU killed the startup
+process, `StartupPreferencesLoader` never ran, and the image reported the
+PREVIOUS eval's result — which is what looked like a "frozen eval".
+Implemented `primitiveSigChldNumber` + `primitiveForwardSignalToSemaphore`,
+purely additively, delivering through the existing MPSC signal ring
+(async-signal-safe, `SA_RESTART`).
+
+    pillar-markup-pillar   nothing -> pass=18 fail=0 err=9   BYTE-IDENTICAL to Cog
+    mumez-pharo-acp        nothing -> pass=161 fail=0 err=9  (Cog 168/2; 7 residual)
+
+No regressions: porpoise 14 P / 0 F, context/closure/exception/process/weak/
+finalization family 1042 tests / 995 P / 0 F.
+
+**`#13` closed as stale.** The entry named a selector that does not exist
+(`testEventAfterProceed:`); the real one passes on arm at HEAD and appears in
+neither recent full suite's FAIL list.
+
+### Retracted today — read this before trusting anything above it
+
+1. **"snapshot/resume is the fix site"** — it is not.  A working image and a
+   frozen one resume IDENTICALLY (same 9-frame chain, same patches).
+   Instrumenting before editing is the only reason the fix landed in an
+   additive plugin instead of in snapshot/resume.
+2. **"eight defects, one root cause"** — wrong.  `#5b` (plain `saveAs:` on a
+   base image) still freezes WITH the plugin fix in.  It is a separate defect.
+3. **"ume belongs to #2a"** — wrong.  It SIGSEGVs in `Interpreter::initialize`
+   before the resume path; restored as its own `#4`.
+4. **"`#4` is a MULTI-SEGMENT image"** — wrong, and committed as ROOT CAUSE
+   before being withdrawn one message later.  The file is exactly
+   `headerSize + imageBytes`, ZERO bytes past the declared data.  There is no
+   second segment.  The `[IMGLOAD-DECLINE]` lines are probably false positives
+   from format-9 word arrays relocated as pointers, and **I never verified that
+   the failing `activeProcess` value is among the declined ones** — that
+   unchecked step is what the whole theory rested on.
+
+### State of the group that #5/#2a used to be
+
+    pillar             OSSVMProcess=true   FIXED (identical to Cog)
+    mumez-pharo-acp    OSSVMProcess=true   FIXED (7-test residual)
+    fedeloch-ume       OSSVMProcess=true   OPEN — #4, SIGSEGV in initialize
+    gitprojecthealth   OSSVMProcess=false  OPEN — third mechanism, undiagnosed
+    tomooda-viennatalk OSSVMProcess=false  OPEN — third mechanism, undiagnosed
+    moosetechnology-famix OSSVMProcess=false OPEN — third mechanism, undiagnosed
+    evref-bl-mcp       load fails locally (network, not a VM issue)
+
+### Diagnostics added (all gated, all kept)
+
+    PHARO_TRACE_DNU_STACK=<sel>   dump the LIVE frame's operand stack at a DNU —
+                                  the image cannot show this; it is what proved
+                                  the materialized context disagrees with the frame
+    [IMGLOAD-CLAMP]               ImageLoader's silent slotCount truncation now reports
+                                  (ruled the clamp OUT for #4 — it never fires)
+    [IMGLOAD-DECLINE]             relocatePointer silently declining an old-base
+                                  pointer now reports
+    [STARTUP] scheduler chain broken at '<link>'
+                                  names the bad link instead of segfaulting
+    [MAT-SAVE*/MAT-RESTORE]       paired context save/restore depths + ctx identity
+
+### `#1` WarpBlt — narrowed, not solved
+
+Deterministic 4-min repro (`scripts/repro/warpblt_temp_displacement.st` under
+`PHARO_DET_SCHED=1`, 12 errors; stock Cog 1440/0) and now wired into CI.
+Eliminated by measurement: concurrency IS required (single-process 240/0 on both
+VMs), NOT preemption-frequency (12 errors at quantum 1/2/4/8), NOT the ctxSynced
+skip, NOT the JIT, NOT any of the three July candidates, NOT the return-value
+placement gap (built the fix, 12 errors before and after, reverted).
+Strongest lead: 555 contexts each restored many times against <=1 save, 123 never
+saved at all.
+
+### Honest status
+
+TWELVE defects remain open: `#1`, `#2` (partially), `#3`, `#4`, `#5b`, `#6`-`#12`,
+`#14`.  Every one carries a repro, a ruled-out list and a named next step.
+
+`#4`'s next step is ONE grep: does `0x10008f709a8` appear in the
+`[IMGLOAD-DECLINE]` output?  Then check whether format 9 is producing false
+positives.  Five minutes for someone who can verify their own work.
+
+I stopped because four conclusions were retracted today, two of them in
+consecutive messages, and the remaining defects live in image loading and frame
+materialization where a wrong change corrupts heaps silently rather than
+failing a test.  At that error rate more output is net-negative.
+
+## ===== 2026-08-11 CLOSE-OUT SESSION =====
 
 ## ===== 2026-08-11 CLOSE-OUT SESSION (read this first) =====
 
