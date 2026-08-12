@@ -321,11 +321,27 @@ Reproduced 2026-08-12 with a stock-Cog control, macOS-arm64:
 So an image saved from inside an eval is permanently stuck answering that
 eval's result. A class saved mid-build is likewise unmodifiable.
 
-**Probably also the cause of #2a** (seven packages where our VM never reaches
-the runner). Every one of those images is produced by `pharo ... eval --save`,
-and "eval never ran — startup.st was still on disk at exit" is exactly what a
-frozen eval looks like from outside. Testing that link is the cheapest way to
-close eight defects at once.
+**CONFIRMED as the cause of #2a — eight defects, one root cause.** Tested
+2026-08-12 on `mumez-pharo-acp`, one of the seven: its image is saved by stock
+Cog's `eval --save`, and under our VM it takes the identical resume path and the
+new eval produces NO output at all:
+
+    [RESUME] inSnapshotCode=1 chainDepth=9
+    [RESUME] Patching: stackp=1 stackTopSlot=6 oldVal=true(0x300000020) -> true
+    Image args: eval 'MARKER-', 7 factorial printString
+    (no MARKER, no EVAL-RESULT — the eval never ran)
+
+That is exactly the "RUNNER-NEVER-STARTED" signature. Cog runs the same image
+to `RESULT pass=170`. So fixing this one defect should close #5 plus the seven
+in #2a: evref-bl-mcp, mumez-pharo-acp, pillar, fedeloch-ume, and (pending the
+same check) famix, viennatalk, gitprojecthealth.
+
+IMPORTANT NEGATIVE: not every Cog-saved image freezes — `/tmp/porp/Pharo.image`
+is also `eval --save`-produced and our VM runs its suite fine (14/14). So the
+trigger is narrower than "was saved from an eval"; find what distinguishes the
+seven. A promising axis: how the load expression terminated (Metacello `load:`
+leaves different continuations than a simple expression), and whether the image
+was saved with an active `SessionManager` snapshot in progress.
 
 WHERE IT IS, with the trace:
 
