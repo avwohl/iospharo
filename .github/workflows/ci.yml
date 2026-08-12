@@ -65,6 +65,80 @@ jobs:
           find build -maxdepth 2 -name 'test_load_image' -o -maxdepth 2 -name '*.a' \
             | head -5 | grep -q . || { echo "::error::build produced nothing"; exit 1; }
 
+  warpblt-regression:
+    name: WarpBlt expression-stack regression
+    runs-on: ubuntu-latest
+    # docs/vm-compat-bugs.md #1.  A frame's operand stack is displaced while its
+    # temps stay intact, so an expression evaluates against the wrong value.
+    # Stock Cog runs this probe 1440 calls / 0 errors; ours reports ~12 errors.
+    # PHARO_DET_SCHED=1 drives preemption from the bytecode checkpoint instead
+    # of the wall clock, which is what makes it deterministic rather than a
+    # load-dependent Heisenbug -- without it the probe passes on an idle runner
+    # and this job would be worthless.
+    #
+    # The job asserts the CURRENT state (still broken) so that FIXING it fails
+    # CI loudly and forces this file and docs/vm-compat-bugs.md to be updated
+    # together.  Flip EXPECT_ERRORS to 0 in the same commit as the fix.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libffi-dev libsdl2-dev libssl-dev
+
+      - name: Build
+        run: PHARO_DISABLE_LTO=1 ./scripts/build-linux.sh
+
+      - name: Fetch a Pharo 13 image
+        run: |
+          mkdir -p /tmp/harness && cd /tmp/harness
+          curl -sL https://get.pharo.org/64/130 | bash
+          test -f /tmp/harness/Pharo.image
+
+      - name: Run the probe under deterministic scheduling
+        id: probe
+        run: |
+          VM=$(find build -maxdepth 2 -name test_load_image -type f | head -1)
+          test -n "$VM" || { echo "::error::no VM binary"; exit 1; }
+          cd /tmp/harness && rm -f startup.st
+          PHARO_DET_SCHED=1 PHARO_MAX_STEPS=2000000000000 timeout 900 \
+            "$GITHUB_WORKSPACE/$VM" /tmp/harness/Pharo.image eval \
+            "$(cat "$GITHUB_WORKSPACE/scripts/repro/warpblt_temp_displacement.st")" \
+            > /tmp/warp.log 2>&1 || true
+          grep -aoE 'WARP2 calls=[0-9]+ errors=[0-9]+' /tmp/warp.log | tail -1 \
+            > /tmp/warp.line || true
+          cat /tmp/warp.line
+          test -s /tmp/warp.line || { echo "::error::probe produced no WARP2 line"; tail -30 /tmp/warp.log; exit 1; }
+          echo "errors=$(sed -E 's/.*errors=([0-9]+).*/\1/' /tmp/warp.line)" >> "$GITHUB_OUTPUT"
+
+      - name: Compare against the recorded state
+        env:
+          # Upper bound, not an equality.  12 is the count measured on
+          # macOS-arm64; the exact number under DET_SCHED has NOT been measured
+          # on x86_64 Linux, and asserting equality against an unmeasured
+          # platform would just produce false CI failures.  Tighten this to the
+          # observed value once a few runs have gone green.
+          EXPECT_MAX: "20"
+        run: |
+          GOT=${{ steps.probe.outputs.errors }}
+          echo "errors=$GOT (recorded upper bound $EXPECT_MAX; macOS-arm64 sees 12)"
+          if [ "$GOT" -eq 0 ]; then
+            echo "::error::0 errors - docs/vm-compat-bugs.md #1 appears FIXED."
+            echo "::error::That is good news, but this job asserts the bug is"
+            echo "::error::still present.  Update docs/vm-compat-bugs.md and turn"
+            echo "::error::this into a pass-asserting test in the same commit."
+            exit 1
+          fi
+          if [ "$GOT" -gt "$EXPECT_MAX" ]; then
+            echo "::error::$GOT errors exceeds the recorded ceiling $EXPECT_MAX - regression."
+            exit 1
+          fi
+          echo "bug still present as expected; no regression."
+
   hygiene:
     name: Repo hygiene
     runs-on: ubuntu-latest

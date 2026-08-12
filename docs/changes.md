@@ -1,5 +1,16 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+> **2026-08-12 — where the older record lives.** `docs/deferred.md` had
+> accumulated ~2,350 lines of completed-work changelog and debugging
+> narrative. It was split: the per-platform records are now
+> `docs/history/windows-port-2026-06-27.md`,
+> `docs/history/arm-macos-verification-2026-07-04.md`,
+> `docs/history/catalog-state-2026-07.md`,
+> `docs/history/arm-context-storm-2026-07.md` and
+> `docs/history/heisenbug-dossiers-2026-07.md`. Open defects went to
+> `docs/vm-compat-bugs.md`. Nothing was deleted.
+
+
 2026-07-07 (late — catalog-validation wave)
 
 ## GC-root + memory-safety fixes surfaced validating the candidate-queue wave

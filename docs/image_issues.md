@@ -3,7 +3,8 @@
 This is the consolidated list of bugs in the standard Pharo 13 image
 (`/tmp/harness/Pharo.image`, fetched via `https://get.pharo.org/64/130`)
 that we need to patch locally for our VM to work the same way as
-stock Cog.  See also `docs/deferred.md` for VM-side issues.
+stock Cog.  See also `docs/vm-compat-bugs.md` for open VM-side defects, and
+`docs/deferred.md` for intentional platform gaps.
 
 ## `Context >> copyTo:` is recursive — overflows on deep stacks (timer-scheduler-wedge)
 

@@ -1,5 +1,14 @@
 # Pharo SUnit Suite — VM Compatibility Status
 
+> **2026-08-12.** Headline metrics that used to sit in `docs/deferred.md`
+> ("27,760 P / 99.92%", "FINAL 2026-07-07") are the July picture and are
+> archived under `docs/history/catalog-state-2026-07.md`. Current numbers
+> live here and in `docs/results/`, next to their artifacts. Latest full
+> suites (2026-08-11/12, 2055 classes): macOS-arm64 27701 P / 22 F / 12 T /
+> 50 E; Linux-aarch64 27647 P / 24 F / 13 T / 102 E — 93 of those ERRORs
+> are one open defect (`docs/vm-compat-bugs.md` #1).
+
+
 ## 2026-06-04 full-suite run: custom VM vs stock Cog
 
 **Setup:** full discovery run (every non-abstract `TestCase` subclass — the

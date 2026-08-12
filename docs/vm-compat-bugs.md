@@ -1,4 +1,204 @@
-# VM-compatibility bugs (our VM fails, Cog passes) — 2026-06-01
+# VM-compatibility bugs (our VM fails, Cog passes)
+
+Two parts:
+
+  * **[OPEN DEFECTS](#open-defects-as-of-2026-08-12)** — the current work list.
+    Audited against HEAD on 2026-08-12; every entry carries a repro, the commit
+    it was last verified at, and an arch.
+  * **The 2026-06-01 investigation** that this file started as, below the open
+    list. That part is a record — the WideString, scavenge-root and Sista
+    `^self` bugs in it are all fixed.
+
+Nothing here is a "deferred feature" or an intentional stub. Those live in
+`docs/deferred.md`, which is now only that. Fixed work is recorded in
+`docs/changes.md` and `docs/history/`.
+
+## OPEN DEFECTS (as of 2026-08-12)
+
+Provenance: these were extracted from `docs/deferred.md`, which had grown to
+2739 lines of which 86% was changelog and lab notebook. Five of them had been
+invisible because they sat *inside* entries whose parent was checked `- [x]`.
+
+### 1. WarpBlt expression-stack displacement — HIGH, the top open VM bug
+
+A frame's operand stack is displaced while its temps stay intact, so an
+expression evaluates against the wrong value. Impossible receivers result:
+`BitBlt >> #+`, `BitBlt >> #//`, `SmallInteger >> #pixelAt:` at stable pcs
+599/606/610 inside `WarpBlt>>warpBitsSmoothing:sourceMap:`.
+
+    repro   PHARO_DET_SCHED=1 build/test_load_image <image> eval \
+              "$(cat scripts/repro/warpblt_temp_displacement.st)"
+            -> ~796 calls / 12 errors, every run.  Stock Cog: 1440 / 0.
+    localize scripts/repro/warpblt_localize.st prints every temp with its class
+            at the failure — they are all CORRECT, which is what points at the
+            expression stack rather than the temps.
+    arch    macOS-arm64 and Linux-aarch64.  Interpreter-side: PHARO_NO_JIT=1
+            reproduces identically.
+    verified 2026-08-12 at HEAD, and by an independent audit agent the same day.
+    impact  93 of the 102 ERRORs in the latest full ARM suite.  Amplified by
+            UITheme>>formSetsForScale: being at:ifAbsentPut: — a failure caches
+            nothing and retries forever, so the suite-level count is bimodal
+            (1 or ~100) for a FIXED defect.  Do not read that count as a trend.
+
+**This is the same defect as the 2026-07-07 "PREEMPTION/MATERIALIZATION"
+entry** (now `docs/history/heisenbug-dossiers-2026-07.md`), which was left open
+with a next step nobody ran — and cost a full day of re-derivation on
+2026-08-11. That entry narrowed it to ONE of:
+
+    a) materializeFrameStack expr-stack extent for a mid-send frame
+    b) executeFromContext stackp restore
+    c) returnValue fd==0 sender-restore value placement
+
+and the 2026-08-11 localization **eliminates the temp-capture branch**: temps
+are intact, so this is (a) or (b). Sites: `Interpreter.cpp` materializeFrameStack
+/ executeFromContext / returnValue `fd==0`.
+
+Do NOT "fix" it by raising the `n > 4` cap in `primitiveWarpBits`
+(`Primitives.cpp:21892`). That stops the image entering the fallback that
+exposes the bug and makes ~99 errors vanish while proving nothing.
+
+### 2. 16 packages where stock Cog produces a RESULT and our VM produces nothing — HIGH
+
+    famix  evref-bl-mcp  smacc  fast  viennatalk  anthropic-sdk-pharo  mutalk
+    fast-java  soil  ume  myprecious  pharo-acp  gitprojecthealth  pillar
+    jrpc  aoc-in-pharo
+
+Source: `docs/results/arm-closeout-2026-08-11-summary.tsv`. Only `mutalk` has
+been chased (#3). Largest unexplored failure surface in the project. Two of
+them (`soil`, `myprecious`) are recorded as FIXED elsewhere, which is worth
+resolving. Triage with `scripts/pkg-jit-test/classify-missing-jit.py`, which
+separates crash / oom-killed / eval-lost / timeout / no-classes.
+
+### 3. `pharo-contributions-mutalk` — SIGSEGV in `~Interpreter()`, JIT-required — HIGH
+
+    [SIGSEGV] Signal 11  Fault addr=0xfffffffffffaa871
+    libc __libc_free  <-  std::unique_ptr<pharo::Interpreter>::~unique_ptr  <-  main
+
+Deterministic; identical across three sweeps and both arches. `PHARO_NO_JIT=1`
+exits 0, so the JIT is required. Happens after `CLASSES 89` with no `RESULT` —
+the VM leaves the suite early, then frees a corrupt pointer. Cog: pass=336 err=1.
+
+### 4. `fedeloch-ume` — SIGSEGV before the runner starts, every configuration — HIGH
+
+Same fault address under default, `PHARO_CTX_TRACE_ALL_SLOTS=1` and
+`PHARO_NO_JIT=1`; faults before `PREFIXES` is printed, i.e. during image load or
+VM startup. Should be the cheapest of the crashes to localize.
+Correction to the original filing: this is NOT "new, created by the FFI fix" —
+the same nothing-result row appears in the x86 2026-08-10 and July sweeps.
+
+### 5. `Smalltalk saveAs:` inside an eval freezes the pending eval result — MEDIUM-HIGH
+
+Cross-platform. A reloaded image returns the frozen result for *every*
+subsequent eval, and a class saved mid-build is permanently unmodifiable. Was
+recorded twice in `deferred.md` as a clause inside other entries and never
+tracked on its own.
+
+### 6. Activation wall — reflective scans TIMEOUT at 80 s — MEDIUM
+
+Base suite: `testNoUnusedInstanceVariablesLeft`, `testNoUnusedTemporaryVariablesLeft`,
+`testNoShadowedVariablesInMethods`, `testUsingMethods`. Packages: famixreplication
+(43->39, 4 new timeouts), p3, polymath, lexicon, deeptraverser — all pass->timeout
+deltas against Cog. The `refersToLiteral:`/`scanFor:` primitives (`aad03bc0`)
+did not close it; `scripts/perf-activation/README.md` lists four untried
+ablations. The SUnit runner carries an image-side memoize workaround for the
+same wall.
+
+### 7. `rko281-restoreforpharo` ~50x slower than Cog on live SQLite — MEDIUM
+
+    cog   2354 tests  145 s
+    ours  unfinished in a 7200 s budget
+
+Invisible until `4a46413f` made SQLite3 resolve — before that all 4712 tests
+errored instantly. Three JIT-only failures in `SSWReStoreDependent*DictionaryTest`
+appeared in the part that ran. Needs an aarch64 Linux box with libsqlite3.
+
+### 8. Stepping family hangs on native x86_64 Linux — MEDIUM
+
+`StepOverTest`/`StepIntoTest` hit the runner's consecutive-timeout bail-out
+(`docs/x86-test-run-2026-08-10.md:194-207`) while ARM runs 28/28 clean. The
+per-arch-backend-drift shape that has already produced three bugs.
+
+### 9. Windows RUN #7 residual: 50 F / 377 E / 25 T, never itemized — MEDIUM
+
+97.8% against a 99.1% Linux baseline, and the Cairo bucket that would have
+absorbed ~150 of them was fixed the same day. Exists only as a number in a
+paragraph. See `docs/history/windows-port-2026-06-27.md`.
+
+### 10. Windows old-space commits the whole ~4 GB reservation up front — MEDIUM
+
+`src/platform/win_mman.h:68` uses `MEM_RESERVE|MEM_COMMIT` on the full mapping,
+so startup fails outright on a machine with under ~4 GB of commit headroom. The
+2026-07-04 design note (commit-ahead in the allocation slow path) is sound and
+unimplemented — no `committedEnd_` symbol exists.
+
+### 11. Upstream Pharo Delay/watchdog nil-timeout trio, patched only in our harness — MEDIUM
+
+`docs/image_issues.md:153-174`. The fix lives in `run_sunit_tests.st`, so a
+stock unpatched image under our VM can still poison the DelayMicrosecondTicker.
+Interpreter-only does not wedge, i.e. our scheduler timing is what surfaces it.
+
+### 12. SHA256 11/12 — one FIPS vector fails on Windows — LOW
+
+Which vector is not recorded. A failing published test vector on a hash
+function should not be invisible; it was a single line inside a checked-off
+Crypto entry.
+
+### 13. `StDebuggerActionModelTest>>testEventAfterProceed:` FAIL on arm, PASS on x86 — LOW
+
+Unverified since July, and filed as a "heap-state Heisenbug" — a classification
+now suspect, since both its siblings turned out to be real VM bugs.
+
+### 14. `MicFileResourceReferenceTest` BitBlt "Fraction" bug on Windows — LOW
+
+Passes on ARM. Needs a Windows run to close.
+
+## LEADS (real work, not yet a filed defect)
+
+15. Code-path localization for #1 — see #1; the best 18 lines in the old file,
+    previously filed under a *fixed* bug's heading.
+16. `become` scan-and-replace still misses live refs (JIT operands under
+    materialization). `ObjectMemory.cpp:1625-1634` says so in the shipped
+    comment; the forwarder that shipped is a safety net, not the fix.
+17. Prim 145 pointer-fill branch writes fixed ivars (`Primitives.cpp:9172`).
+    Latent only because Pharo 13 binds it to byte/word classes.
+18. `updatePointersAfterCompact` walks survivor space to `newSpaceEnd_` rather
+    than a live watermark (`ObjectMemory.cpp:4530`), parsing garbage headers.
+19. ARM "context storm" prevention was proven on a constructed analogue, never
+    on the storm. Catalog #10 is cited twice as proof and has no artifact in
+    the repo — find the log or stop citing it.
+20. Six Win64 debug-gated helper call sites fixed by reasoning, never executed.
+21. Windows 7-8.4 s core-loop numbers never re-measured after `3940b62c`.
+22. SoundPlugin waveOut backend implemented, never runtime-verified.
+23. Inline NLR path still uses native ensure-hopping instead of
+    `aboutToReturn:through:`; the context path uses the stock protocol.
+
+## Corrections to earlier verdicts in this repo
+
+Recording these because each cost time:
+
+  * **"porpoise = upstream test-design GC race"** — it was our bug, fixed by
+    `da9159e9`. Filed as somebody else's problem for a month.
+  * **"Zero genuine unfixed VM bugs remain in the base harness"** — the same
+    harness produces 93 errors from defect #1.
+  * **"Exhaustive triage of the 25 catalog non-passes came up EMPTY"** and
+    **"counter-probes CONFIRMED our VM matches stock on weak-clearing"** —
+    both falsified repeatedly since. The probes passed because none drove the
+    failing path. The bucket taxonomy is still useful; the verdicts are not.
+  * **"restoreforpharo: FIXED"** — only true while the package could not reach
+    SQLite. Now #7.
+  * **"our VM can't do HTTPS"** — false since 2026-06-26 (`f26d45a2`,
+    `3af37640`). This false premise is why the catalog-build path still depends
+    on a stock Cog that segfaults.
+  * **`MEM_RESET` recommended for madvise** — implementing it reintroduces the
+    heap corruption `da5c4128` fixed. Deleted rather than carried forward.
+
+---
+
+## The 2026-06-01 investigation (historical record)
+
+Kept for the method — the WideString, scavenge-root and Sista `^self`
+bugs it chases are all fixed. Verdicts inside it that were later
+overturned are listed under "Corrections" above.
 
 These are NOT JIT bugs and NOT image/environment gaps. Verified against stock
 Cog (Pharo 10.3.9) on the SAME image our VM uses. Earlier docs wrongly called
@@ -575,3 +775,4 @@ Residual TraitTest delta vs Cog (32 vs 40 P) and RGMethodDefinitionTest at
 23 P are PRE-EXISTING, NOT caused by the inliner fix (RGMethodDefinitionTest's
 JIT IC-probe bug is documented in docs/jit-sunit-fullrun.md and fixed by
 PHARO_T1_NO_IC_PROBE=1).
+
