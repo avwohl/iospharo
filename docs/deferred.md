@@ -4,7 +4,54 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
-## OPEN: ~100 GUI tests went PASS -> ERROR during 2026-08-11 (Form/BitBlt state)
+## OPEN: the LD_LIBRARY_PATH fix exposed libfreetype and broke ~100 GUI tests (2026-08-11)
+
+**Cause found; the trade-off is not yet decided.**  `4a46413f`/`919904cd` set
+`LD_LIBRARY_PATH` so the image can find `libsqlite3.so.0` (that was the point —
+it fixed `pharo-rdbms-pharo-sqlite3` from err=111 to err=0).  It also makes
+**libfreetype** findable, and that is what breaks the GUI tests.  Measured on
+the box, same image, same VM, one env var apart:
+
+    library            with the fix                             without (PHARO_NO_PLATFORM_LIB_PATH=1)
+    libfreetype.so.6   /lib/aarch64-linux-gnu/libfreetype.so.6  NOT FOUND
+    libsqlite3.so.0    /lib/aarch64-linux-gnu/libsqlite3.so.0   NOT FOUND
+    libcairo.so.2      found in the image dir                   same
+    libSDL2-2.0.so.0   found in the image dir                   same
+
+FreeType is the ONLY graphics library whose availability changed, and font
+rendering is exactly the failing family: glyph Forms and BitBlt, in tree
+presenters and browser tools that draw labels.  Previously the image failed to
+load FreeType and fell back to another font path; now it loads the real one and
+something downstream produces a `Form` whose `bits` is an Array or a
+SmallInteger.  Note `src/vm/FFI.cpp` deliberately does NOT register FreeType
+stubs at init (unlike SDL2, which is stubbed and wins over any real library) —
+so nothing shields the image from the real thing.
+
+CONFIRMED SO FAR, on Linux-aarch64 full suites, same image and prep:
+    morning (pre-fix VM)     1 ERROR
+    evening HEAD           102 ERROR
+    evening 361bf92b build   1 ERROR   <- ClyBrowserToolValidityTest 24 P / 1 E,
+                                          ClyNotebookPageRecyclerTest 8 P / 0 E
+A full suite with `PHARO_NO_PLATFORM_LIB_PATH=1` is queued to close the loop
+end-to-end.
+
+macOS is a SEPARATE and pre-existing problem: a 361bf92b build there shows the
+same 25 `ClyBrowserToolValidityTest` errors, and the Linux-only FFI commits
+cannot explain that.  macOS has never had a baseline for these classes.
+
+OPTIONS, none taken yet:
+  1. Register FreeType stubs the way SDL2 is stubbed, so the image cannot bind
+     the real library — keeps sqlite3 working, restores the GUI tests, but
+     hides a library the image legitimately wants.
+  2. Find out WHY real FreeType yields a bad `Form` under our VM and fix that —
+     the honest fix, and it is a capability we would want anyway.
+  3. Narrow the env change so only the directories a requested module needs get
+     added — hard to do without knowing the module in advance.
+Do not simply revert `4a46413f`: that re-breaks sqlite3 (111 errors) to fix
+~100 GUI errors, which is a lateral move, and it would also lose the parity
+argument that stock Cog's launcher sets this variable too.
+
+## Original framing, kept for the evidence trail: ~100 GUI tests PASS -> ERROR (Form/BitBlt state)
 
 The Linux-aarch64 full run went from **1 ERROR** in the morning
 (`docs/results/arm-2026-08-11/`) to **102** in the evening, same box, same
