@@ -580,8 +580,11 @@ The cliff is exactly `StackOverflowLimit = 56000`.  What happens there:
     [OVERFLOW] driving Process>>terminate to unwind (fd=56024) instead of
                hard-kill — releases held critical: mutexes
 
-and then no further progress: `Process>>terminate` unwinding 56,024 frames
-never completes, so the run makes no progress and produces nothing.  Two
+and then the VM **idles**: the traces show it transferring between P80 and P10
+forever (`[XFER-n] pri=80 -> pri=10`), i.e. the eval's process is gone and
+nothing is left to do, but the VM does not exit.  So the observable behaviour
+is "runs until the harness kills it", which is exactly what a hung package
+looks like from outside — and why four of these were filed as hangs.  Two
 distinct problems:
 
   1. **The limit.**  Cog has no trouble at 100,000 frames — its stack grows.
