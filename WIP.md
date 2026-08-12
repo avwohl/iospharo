@@ -160,6 +160,31 @@ machine).  Re-measured on tinyBenchmarks, 3 runs each: 468/466/473 vs
 "no demonstrated case the entry guard does not already cover", not for the
 fictional one.
 
+### NEW defect `#15`, found by accident: recursion past ~56,000 frames HANGS
+
+    deepRec: 56000    ours 56000 in 2 s      Cog 56000
+    deepRec: 60000    ours HANGS             Cog 60000
+    deepRec: 100000   ours HANGS             Cog 100000 in 0.10 s
+
+Three lines, same image, no Morphic (so the eval-preamble caveat does not
+apply).  The cliff is exactly `StackOverflowLimit = 56000`:
+
+    [OVERFLOW] fd=56024 pushing #deepRec:
+    [OVERFLOW] driving Process>>terminate to unwind (fd=56024)
+
+and then no further progress.  Two problems: the cap itself (Cog's stack
+grows — 100,000 frames is nothing to it), and the overflow handling failing to
+make progress.  Since the recovery is `Process>>terminate` rather than an
+Error, image-side `on: Error do:` cannot catch it either.
+
+LIKELY EXPLAINS four separately-filed mysteries — `#3`'s missing RESULT
+(MuTalk's culprit method is literally `#recursiveFactorial:`) and the
+"hangs to 1800 s" packages in `#2a`/`#2b`: famix, viennatalk,
+gitprojecthealth, and `j-brant-smacc` (a recursive-descent parser).
+
+It surfaced because a probe written to test whether a JIT stack bound
+livelocked hung in BOTH arms — the arm that was supposed to be the control.
+
 ### Open
 
 `#4` is root-caused with the remaining work specified (bridge walk +
