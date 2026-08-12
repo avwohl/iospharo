@@ -13000,7 +13000,20 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             ipAtBytecodeStart
             && (!hasUnsafeOp || GET_DEBUG_BOOL(PHARO_SISTA_ALLOW_SENDS))
             && !blacklisted;
-        if (fn && g_debug.sistaDispatch && dispatchGateOpen) {
+        // OPERAND-STACK HEADROOM — same bound as tryJITActivation and for the
+        // same reason: past this point compiled code grows the Smalltalk stack
+        // with raw stores through `sstate.sp`, and `push()`'s check
+        // (`stackPointer_ >= stack_.data() + MaxStackDepth`) is not on that
+        // path.  Only the FRAME count is bounded here, and MaxStackDepth
+        // (131072 Oops) against StackOverflowLimit (56000 frames) is barely 2
+        // slots per frame, so the operand stack is exhausted first and the
+        // write lands past the end of `stack_`, in the members after it
+        // (docs/vm-compat-bugs.md #3).  Declining just runs the method
+        // interpreted, which has the check.
+        if (fn && g_debug.sistaDispatch && dispatchGateOpen
+                && __builtin_expect(
+                       stackPointer_ < stack_.data() + MaxStackDepth
+                                        - StackSafetyZone, 1)) {
             // Tier-up dispatch.  Full JITState init — trimming was
             // attempted but breaks execution (some downstream path
             // reads an uninitialized field when Sista returns).
