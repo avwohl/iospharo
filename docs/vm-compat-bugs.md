@@ -242,7 +242,22 @@ each produces a normal RESULT.
     punt-labs-anthropic-sdk-pharo  cog 901 P    ours exits 0 after CLASSES
     j-brant-smacc                  cog 557 P in 30 s   ours hangs to 1800 s
 
-`jrpc` shows the mechanism, and it is a VM-level one:
+`jrpc` reproduces on macOS too (`CLASSES 11` then no RESULT, exit 0, ~7 s) but
+via a DIFFERENT proximate cause — an unhandled error out of JRPC's
+`ZnMultiThreadedServer` listen loop:
+
+    Socket>>listenOn:backlogSize: <- ZnNetworkingUtils>>serverSocketOn:
+      <- ZnSingleThreadedServer>>initializeServerSocket <- listenLoop
+      <- [[self listenLoop] repeat] in ...>>start <- BlockClosure>>newProcess
+
+so the macOS run cannot be used to chase the Linux cyclic-chain bug — the
+Linux investigation needs a Linux box. What the two DO share is the outcome:
+an error raised in a FORKED process ends the whole eval with no RESULT, where
+stock Cog completes 81 tests. That shared shape (background-process error kills
+the run) may be the more general defect, and it is cheap to test in isolation:
+fork a process that raises, and check whether the main runner survives.
+
+On Linux, `jrpc` shows a VM-level mechanism:
 
     [VM] primitiveFindHandlerContext: cyclic sender chain at 0x...
     Error: This Delay has already been scheduled.
