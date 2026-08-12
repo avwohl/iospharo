@@ -3555,7 +3555,15 @@ void ObjectMemory::markAndTrace(Oop oop) {
         if (total > 0) {
             Oop key = obj->slotAt(keyIndex);
             keyForLog = key;
-            if (key.isObject() && !isPermObject(key.asObjectPtr())) {
+            // Same bound as the three sites hardened in 248ceff8 — this fourth
+            // sibling was missed there, and it is the one that runs FIRST:
+            // markAndTrace decides which list the ephemeron lands on, so it
+            // faults before markInactiveEphemerons/fireAllEphemerons get the
+            // chance to guard.  `obj` is bounds-checked above; `key` is raw
+            // image data out of slot 0 and is not.
+            if (key.isObject() && !isReadableHeapObject(key)) {
+                keyAlive = false;  // outside every heap region — never deref
+            } else if (key.isObject() && !isPermObject(key.asObjectPtr())) {
                 keyAlive = key.asObjectPtr()->isMarked();
             }
             // Immediates and perm objects are always "alive"
