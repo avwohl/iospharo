@@ -67,27 +67,50 @@ the displacement. Do not "fix" it that way.
     touches. SDL2 short-circuits to the built-in stub before candidates are
     built.
 
-### Not yet done
+### Deterministic repro, and what it says
 
-  - ~~The stock-Cog control~~ **DONE, and it is a VM bug.** Same probe, same
-    image, stock Cog: **1440 calls, 0 errors.** Ours: ~795 calls, 12 errors, on
-    HEAD and on `361bf92b` and under `PHARO_NO_JIT=1`. The image code is fine;
-    our VM corrupts the frame.
-    Caveat worth keeping: our `primitiveWarpBits` also bails for any non-32-bit
-    depth, and the probe sweeps depths 8/16/32/1, so for three of the four Cog
-    stays in its primitive while we take the Smalltalk fallback. Cog's zero
-    therefore shows the image code is correct when executed correctly — it does
-    not exercise the identical path. That does not weaken the conclusion: the
-    observed receivers are impossible values for those temps
-    (`picker` is assigned from `bitPeekerFromForm:` and can only be a BitBlt),
-    so something is displacing frame state on our side.
-  - Localize the slot: in the probe's `on: Error do:` handler, walk
-    `ex signalerContext` senders to the frame whose receiver `isKindOf: WarpBlt`
-    and print `tempNames` paired with `(ctx tempAt: i) class name`. That names
-    which temp holds which wrong value, and is the real next debugging step.
-  - `PHARO_NO_CTX_STACKP_RAISE=1` against a HEAD build on the same probe —
-    expected to change nothing; a change would mean an independent second
-    mechanism.
+`PHARO_DET_SCHED=1` turns this from a load-dependent Heisenbug into a fixed
+point — **12 errors every run**, ~4 minutes, no AWS box needed
+(`scripts/repro/warpblt_temp_displacement.st`).  Without it the probe passes
+1440/1440 on a quiet machine and only fails under load, which is why the first
+attempts at it disagreed with each other.
+
+    stock Cog                       1440 calls   0 errors
+    ours, 361bf92b, DET_SCHED       ~797 calls  12 errors
+    ours, HEAD,     DET_SCHED       ~795 calls  12 errors
+
+Identical on both builds, so this session's commits neither caused nor cured
+it.  Pre-existing, and not JIT-dependent (`PHARO_NO_JIT=1` also reproduces).
+
+### It is the EXPRESSION stack, not the temps
+
+`scripts/repro/warpblt_localize.st` walks to the `WarpBlt` frame on each error
+and prints every temp with its class.  The temps are **all correct**:
+
+    n=SmallInteger sourceMap=Bitmap deltaP12=Point deltaP43=Point pA=Point
+    pB=Point deltaPAB=Point sp=Point fixedPtOne=SmallInteger picker=BitBlt
+    poker=BitBlt pix=Array nSteps=SmallInteger y/x/dx/dy=SmallInteger
+
+yet the failing sends are `BitBlt >> #+` and `BitBlt >> #//` at stable pcs
+(599 / 606 / 610), with `stackp` 50 or 51.  So the receiver on the operand
+stack is `picker`/`poker` where a number belongs: the frame's **expression
+stack is displaced while its temps are intact**.  (2 of 7 errors additionally
+show `sourceMap=UndefinedObject`.)
+
+That narrows it to the materialize/restore path — a frame whose operand stack
+is rebuilt at a different depth than it was saved at — and it is exactly the
+area `executeFromContext` and `materializeFrameStack` cover.
+
+### Next
+
+    1. Under DET_SCHED the failure is at a FIXED point, so attach lldb (this
+       machine has it wired up — see CLAUDE.md) and break at the materialize of
+       warpBitsSmoothing:sourceMap:, comparing the operand-stack depth at save
+       against the depth at restore.
+    2. PHARO_TRACE_FRAME_TEMPS=warpBitsSmoothing already dumps the frame slots
+       at materialize and push; run it under DET_SCHED.
+    3. `PHARO_NO_CTX_STACKP_RAISE=1` on the same probe — expected to change
+       nothing (the defect predates that code), but it is one command.
 
 ## OPEN: `rko281-restoreforpharo` is ~50x slower than Cog on live SQLite (2026-08-11)
 
