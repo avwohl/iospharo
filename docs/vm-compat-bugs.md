@@ -253,9 +253,17 @@ via a DIFFERENT proximate cause — an unhandled error out of JRPC's
 so the macOS run cannot be used to chase the Linux cyclic-chain bug — the
 Linux investigation needs a Linux box. What the two DO share is the outcome:
 an error raised in a FORKED process ends the whole eval with no RESULT, where
-stock Cog completes 81 tests. That shared shape (background-process error kills
-the run) may be the more general defect, and it is cheap to test in isolation:
-fork a process that raises, and check whether the main runner survives.
+stock Cog completes 81 tests. That shared shape looked like a general defect and is NOT:
+tested directly (fork a process that raises, check the main eval survives) and
+**stock Cog dies exactly the same way** — both VMs print only the first marker.
+So an unhandled forked-process error ending an eval is standard Pharo eval
+behaviour, not our bug. Hypothesis disproven; do not re-test it.
+
+What that leaves for macOS jrpc is sharper: Cog reaches `RESULT pass=81` on the
+same image, so under Cog the server socket LISTEN succeeds and under ours it
+does not. That is a socket-layer divergence (`Socket>>listenOn:backlogSize:`),
+and prior art exists — see the `zn-socket-hunt-lost-wakeups` memory for this
+VM's socket failure modes and the diagnostic pattern that cracked them.
 
 On Linux, `jrpc` shows a VM-level mechanism:
 
