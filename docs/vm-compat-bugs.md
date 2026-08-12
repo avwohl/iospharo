@@ -249,9 +249,36 @@ answers correctly.  So this is NOT the #4 loader family.
 
 `PHARO_NO_JIT=1` exits 0 (per the original triage), so the JIT is required.
 
-NEXT: the teardown abort under lldb gives the exact free — that is the cheap
-half.  The lost RESULT is the more valuable half and needs the process death
-localized first (a `[TERM-P*]` trace, or the runner's own error path).
+The teardown abort, under lldb:
+
+    ___BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED_WAS_NOT_ALLOCATED
+      <- pharo::Interpreter::~Interpreter() + 620
+      <- unique_ptr<Interpreter>::~unique_ptr
+
+There is no hand-written `~Interpreter`, so this is the implicit destructor
+freeing a CONTAINER MEMBER whose data pointer has been overwritten — a buffer
+overrun, not a double free.  Both big inline members are `std::array`
+(`stack_` = MaxStackDepth + 256 Oops, `savedFrames_` = MaxFrameDepth), so an
+overrun of either walks straight into the members declared after it and past
+the end of the heap-allocated Interpreter object.
+
+`push()` IS bounds-checked (`stackPointer_ >= stack_.data() + MaxStackDepth`)
+and did NOT fire in this run, so the overrunning write is one that bypasses
+it — the JIT stencils write the operand stack directly through `state.sp`,
+which fits `PHARO_NO_JIT=1` making the crash go away.
+
+Note the sizing invariant is thin in principle: `MaxStackDepth = 131072` with
+the comment "must be large enough for MaxFrameDepth frames", and
+`MaxFrameDepth = 65536` — that is exactly 2 Oops per frame, which only holds
+for a zero-temp method with an empty operand stack.  The soft limit
+(`StackOverflowLimit = 56000` + 8192 headroom) is what actually keeps it
+honest.  Worth checking whether the JIT path respects it.
+
+NEXT: AddressSanitizer (or `DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib`,
+slower) names the overrunning write directly — the run is ~7 minutes clean.
+That is the cheap half.  The lost RESULT is the more valuable half and needs
+the process death localized first (a `[TERM-P*]` trace, or the runner's own
+error path).
 
 ### 4. `fedeloch-ume` — ROOT-CAUSED 2026-08-12: the image is MULTI-SEGMENT — HIGH
 
