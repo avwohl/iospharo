@@ -347,6 +347,22 @@ Two things fixed on the way, both independent of segment support:
     than relocating half a heap and handing the GC a live mine (`73565806`).
     Single-segment images are unaffected — control verified.
 
+BLAST RADIUS of that refusal, measured rather than asserted — every image on
+this box (34 of them, via the new `scripts/image-segments.py`, which reads the
+header without booting a VM):
+
+    Ume            142.8 MB   imageBytes 149,692,728  firstSegment 75,825,152   MULTI
+    everything else                                                             single
+
+That "everything else" includes a 70.8 MB mutalk package image, the stock
+Pharo 13 base image, images our own `saveAs:` produced, and images stock Cog's
+`eval --save` produced.  So the refusal fires only on images whose heap grew
+past roughly 76 MB in one session — i.e. heavy package loads, which are
+exactly the ones that were being silently half-relocated before.  Check any
+image with:
+
+    scripts/image-segments.py <image>   # exit 1 if multi-segment
+
 Also settled by measurement, which the previous session flagged as unchecked:
 **the `[IMGLOAD-DECLINE]` lines are false positives.**  New per-format
 attribution (`[IMGLOAD-DECLINE-BY-FORMAT]`): of 49,831 declined old-base
