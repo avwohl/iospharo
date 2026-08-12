@@ -86,12 +86,13 @@ write-through (`PHARO_NO_CTX_STACKP_RAISE=1` — 12 errors), the Context GC
 trace bound (`PHARO_CTX_TRACE_ALL_SLOTS=1` — 12 errors), the return-value
 placement gap, the ctxSynced skip, preemption frequency.
 
-SUITE-LEVEL CONFIRMATION (macOS-arm64, COMPLETE — 2046 classes):
+SUITE-LEVEL CONFIRMATION (macOS-arm64, COMPLETE — 2046 classes), and again
+at the end of the session with every later fix in:
 
-                        this run          2026-08-11 baseline (HEAD, same box)
-    pass                27729             27701
-    fail                   24                22
-    error                  20                50
+                        #1 only    all fixes    2026-08-11 baseline (same box)
+    pass                27729      27732        27701
+    fail                   24         22           22
+    error                  20         21           50
     ClyBrowserToolValidityTest   25 P / 0 F / 0 E    (baseline: 25 ERRORs)
     ClyNotebookPageRecyclerTest   8 P / 0 F / 0 E    (baseline:  8 ERRORs)
     Cly* classes with any F or E:  NONE (140 Cly result lines)

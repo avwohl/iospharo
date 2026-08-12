@@ -213,8 +213,29 @@ anything this session added.  **But one run cannot separate "known flaky
 wedge" from "new regression"**, so the later changes are NOT validated at
 full-suite scale.
 
-A THIRD attempt then failed differently and is worth recording, because it is
-a harness property nobody had written down: the run reached 1693 classes,
+**RESOLVED — a complete run with every fix in now exists (suite 5):**
+
+                    suite 5        run 1          2026-08-11
+                    (all fixes)    (#1 only)      baseline
+    classes         2046           2046           2052
+    pass            27732          27729          27701
+    fail               22             24             22
+    error              21             20             50
+
+`=== BATCH COMPLETE ===`.  Pass/fail/error are all within the harness's own
+few-tests-per-run noise of run 1, and ERROR stays down 29 from the baseline.
+Every non-clean class is in a documented residual family — OCClassBuilderTest
+(upstream image bug), ReleaseTest run-order pollution, the Spec/GUI adapters,
+StDebugger/StSpotter/StTranscript, TKT, ZnClient/MCSmalltalkhub (network), and
+FTTableMorphTest (suite-context GUI, passes in isolation).  **No `Cly*` class
+appears at all**, so the `#1` fix holds.
+
+So the day's later changes ARE validated at full-suite scale.  What follows is
+the record of the two attempts that failed first, kept because the second
+failure mode is a harness property nobody had written down.
+
+A THIRD attempt failed differently and is worth recording: the run reached
+1693 classes,
 then the results file RESTARTED from class 1 — same VM process, one
 "Image loaded successfully" in the log, so not a crash and not a relaunch.
 `SUnitRunner class>>startUp:` fires on every SESSION start, and some test in
