@@ -610,6 +610,23 @@ Found while measuring something else: the deep-recursion probe was written to
 test whether a JIT stack bound livelocked, and BOTH arms hung — which is what
 exposed that the hang is pre-existing and not about the JIT at all.
 
+DON'T just raise the constants — costed 2026-08-12, it is not the cheap fix
+it looks like.  Both bounding arrays are INLINE members of the single
+Interpreter object, so their size is always resident:
+
+    sizeof(SavedFrame) ~ 120 bytes
+    savedFrames_   65,536 frames = 7.5 MB   ->  200,000 = 22.9 MB
+    stack_        131,072 Oops   = 1.0 MB   ->  600,000 =  4.6 MB
+
+i.e. reaching Cog-like depths costs roughly +19 MB of permanently resident
+memory, on a VM whose primary target is iOS.  Cog does not pay that: its stack
+is PAGES that spill to the heap as contexts, so depth is bounded by available
+memory rather than by a fixed array.  That — not a bigger constant — is the
+real fix, and it is a project.  A cheaper intermediate worth considering: keep
+the cap but make hitting it a CATCHABLE image-level error instead of an
+uncatchable `Process>>terminate`, so a test suite reports a failure rather
+than losing the whole run.
+
 ## LEADS (real work, not yet a filed defect)
 
 15. Code-path localization for #1 — see #1; the best 18 lines in the old file,
