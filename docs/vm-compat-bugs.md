@@ -345,33 +345,26 @@ Two concrete leads in `ImageLoader::relocatePointers`, both visible on reading:
      hearing about in general) and it does **not fire at all** for this image.
      Nothing is being truncated, so that is not the source.
 
-  **ROOT CAUSE FOUND: the image has MORE THAN ONE SEGMENT and we load one.**
+  **RETRACTED: it is NOT multi-segment.** I committed that root cause and it is
+     wrong. The image file is exactly `headerSize + imageBytes` with **zero
+     bytes past the declared data** (measured: file=0x8f3ee58,
+     header+data=0x8f3ee58). There is no second segment to load.
 
-     `relocatePointer` relocates only `[oldBase_, oldBase_ + loadedSize_)` and
-     silently returns anything else unchanged. `loadedSize_ = header_.imageBytes`
-     (ImageLoader.cpp:130), and `ImageLoader` has NO segment handling — two
-     incidental mentions of the word, no bridge logic anywhere. A new
-     `[IMGLOAD-DECLINE]` diagnostic shows the consequence directly:
+     What the `[IMGLOAD-DECLINE]` diagnostic actually shows is values ~226 KB
+     past the END of the image data being declined by `relocatePointer`. Those
+     cannot be real object pointers — nothing lives there. The likely
+     explanation is lead 2 below: `hasPointers` includes **format 9**, a 64-bit
+     WORD array relocated as if it held pointers, so ordinary numeric data that
+     happens to look like a tag-0 address in the old-base window gets fed to
+     `relocatePointer` and declined. Those decline lines are probably false
+     positives.
 
-         oop=0x10008f76328 is +0x8f76328 past oldBase=0x10000000000
-           but loadedSize=0x8f3edd8 — NOT relocated (dangling saved-image pointer)
+     ALSO NOT CONFIRMED: I never checked that the failing `activeProcess` value
+     (`0x10008f709a8`) is among the declined ones — the addresses printed
+     (`0x10008f76328`, …) are different. Establish that link first; the whole
+     ImageLoader theory rests on it and it is one grep of the decline output for
+     that specific oop.
 
-     i.e. live slots point ~220 KB BEYOND the end of what we loaded. Spur images
-     may be written as multiple segments with bridge objects between them; we
-     read the first segment's byte count and stop, so every pointer into a later
-     segment is (a) never loaded and (b) silently left as a saved-image address.
-     `activeProcess` is one of them, which is why the scheduler walk found
-     garbage.
-
-     THE FIX IS MULTI-SEGMENT IMAGE LOADING — read the segments and bridge them,
-     then `loadedSize_` covers the whole heap and these pointers relocate
-     normally. Note it is NOT enough to widen `loadedSize_`: the target objects
-     are not in memory at all, so relocating without loading them would just
-     produce addresses into unmapped memory. Load first, then relocate.
-
-     This is a substantial, self-contained piece of work with a one-second
-     reproduction (`fedeloch-ume`), and it likely explains other images that
-     behave oddly under our VM while running fine on Cog.
   2. `hasPointers = (format <= 5) || (format == 9)`. Format 9 is a 64-bit
      WORD array that is relocated as pointers because `hiddenRoots` needs it —
      a documented hack. That is fine for hiddenRoots and wrong for any genuine
