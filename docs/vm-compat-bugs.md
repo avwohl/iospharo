@@ -219,14 +219,39 @@ knob that dumps the walked chain — run it on jrpc first; it is a 7-second repr
 an uncaught C++ exception, distinct from mutalk's segfault. Both reproduce with
 `PHARO_NO_JIT=1` (mutalk stops segfaulting but still produces no RESULT).
 
-### 3. `pharo-contributions-mutalk` — SIGSEGV in `~Interpreter()`, JIT-required — HIGH
+### 3. `pharo-contributions-mutalk` — crash in VM teardown, JIT-required — HIGH
 
-    [SIGSEGV] Signal 11  Fault addr=0xfffffffffffaa871
-    libc __libc_free  <-  std::unique_ptr<pharo::Interpreter>::~unique_ptr  <-  main
+**Reproduced on macOS-arm64 2026-08-12** by loading the package locally
+(`Metacello ... baseline: 'MuTalk'`) and running its suite:
 
-Deterministic; identical across three sweeps and both arches. `PHARO_NO_JIT=1`
-exits 0, so the JIT is required. Happens after `CLASSES 89` with no `RESULT` —
-the VM leaves the suite early, then frees a corrupt pointer. Cog: pass=336 err=1.
+    cd <pkgdir> && PKG_PREFIXES=MuTalk build/test_load_image ./M.image eval \
+      "$(cat scripts/pkg-jit-test/run_pkg_tests.st)"
+
+    CLASSES 100
+    (no RESULT)
+    ... 434,908,984 bytecode steps ...
+    === Test Complete ===
+    exit 134   (SIGABRT)
+
+Two distinct failures, and the entry previously conflated them:
+
+  1. **The suite never produces a RESULT.**  The eval's own startup.st WAS
+     consumed (the "eval never ran" guard does not fire), so the script ran
+     and the process died partway through the tests.  Cog: pass=336 err=1.
+  2. **The VM then aborts during teardown**, after `main` has printed
+     "Test Complete" — i.e. in static destruction / `~Interpreter()`, which
+     matches the Linux `__libc_free` backtrace this entry was filed with.
+     `rc=134` here vs `rc=139` on Linux is just allocator-dependent.
+
+The image itself is fine: single-segment (74,189,896 bytes, first segment the
+same), loads clean, and a plain `eval "'MUTALK-', 3 factorial printString"`
+answers correctly.  So this is NOT the #4 loader family.
+
+`PHARO_NO_JIT=1` exits 0 (per the original triage), so the JIT is required.
+
+NEXT: the teardown abort under lldb gives the exact free — that is the cheap
+half.  The lost RESULT is the more valuable half and needs the process death
+localized first (a `[TERM-P*]` trace, or the runner's own error path).
 
 ### 4. `fedeloch-ume` — ROOT-CAUSED 2026-08-12: the image is MULTI-SEGMENT — HIGH
 
