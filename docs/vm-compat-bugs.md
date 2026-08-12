@@ -286,8 +286,17 @@ for a zero-temp method with an empty operand stack.  The soft limit
 (`StackOverflowLimit = 56000` + 8192 headroom) is what actually keeps it
 honest.  Worth checking whether the JIT path respects it.
 
+RULED OUT 2026-08-12: overrun canaries placed immediately after BOTH inline
+arrays (`stackCanary_`, `framesCanary_`, checked every 1024 bytecodes and
+reported once each) stay intact across a full failing run — exit 134, zero
+`[ARRAY-OVERRUN]` lines.  So neither `stack_` nor `savedFrames_` ran into the
+member after it, and the corrupted data pointer belongs to some OTHER
+heap-owning member (a vector/map/string), clobbered by a wild write rather
+than by a sequential overrun of the big arrays.  The canaries are kept —
+they cost two compares per checkpoint and they now carry that negative.
+
 NEXT: AddressSanitizer (or `DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib`,
-slower) names the overrunning write directly — the run is ~7 minutes clean.
+slower) names the write directly — the run is ~7 minutes clean.
 That is the cheap half.  The lost RESULT is the more valuable half and needs
 the process death localized first (a `[TERM-P*]` trace, or the runner's own
 error path).
