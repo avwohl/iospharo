@@ -321,8 +321,26 @@ repro on a BASE image still returns the frozen `'FIRST'`**. So my earlier
   * the plain `saveAs:` freeze (#5b, base image, no OSSubprocess) is a
     SEPARATE defect and is still open.
 
-Which of the other six #2a packages are in which bucket is not yet measured;
-`OSSVMProcess inStartupList` distinguishes them (true for acp, false for porp).
+MEASURED across the group (2026-08-12, macOS-arm64, after `9d9f8154`):
+
+    package                      OSSVMProcess  cog                        ours
+    pillar-markup-pillar         true          pass=18 err=9              pass=18 err=9   FIXED, exact
+    mumez-pharo-acp              true          pass=168 err=2             pass=161 err=9  FIXED, 7-test residual
+    fedeloch-ume                 true          pass=11                    -               STILL FAILS
+    moosetechnology-gitprojecthealth false     pass=6                     -               STILL FAILS
+    tomooda-viennatalk           false         pass=1430                  -               STILL FAILS
+    evref-bl-mcp                 -             (load failed locally: network, not a VM issue)
+
+So the fix closes TWO of the group outright and leaves three. The
+`OSSVMProcess inStartupList` flag predicts the no-OSSubprocess ones correctly
+(gitprojecthealth, viennatalk have a different cause), but **`ume` has
+OSSubprocess and still fails**, so there is at least a second startup-killing
+mechanism beyond the missing plugin. Do not assume one cause for the rest.
+
+#5b (plain `saveAs:` on a BASE image) is characterised and distinct from both:
+the clone still answers the frozen `'FIRST'`, and unlike acp there is **no
+error or DNU at all** — the startup sequence simply is never invoked. Planting
+a `startup.st` by hand confirms it: never runs, left on disk, silently.
 
 **Corrected 2026-08-12 (this supersedes the snapshot/resume framing below).**
 The image resumes from its snapshot CORRECTLY. What kills it is downstream:
