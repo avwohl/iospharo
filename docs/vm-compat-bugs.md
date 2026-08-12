@@ -308,7 +308,52 @@ The earlier SIGSEGV was on a differently-loaded image and is worth keeping in
 mind as a second symptom of the same startup problem, but the reproducible
 handle is #2a.
 
-### 5. `Smalltalk saveAs:` freezes the eval result — CONFIRMED, 2-minute repro — MEDIUM-HIGH
+### 5. Startup dies on a nil Delay semaphore; the "frozen eval" is a SYMPTOM — CONFIRMED — HIGH
+
+**Corrected 2026-08-12 (this supersedes the snapshot/resume framing below).**
+The image resumes from its snapshot CORRECTLY. What kills it is downstream:
+
+    [DNU-STACK] #waitTimeoutMilliseconds: in #ifTrue:ifFalse: ip=127 rcv=nil
+      fp+0  FullBlockClosure
+      fp+1  Delay
+      fp+2  nil  <== receiver
+      fp+3  SmallInteger
+
+A `Delay`'s semaphore is nil, the send DNUs, that kills the process (P70), and
+the startup sequence dies with it — so `StartupPreferencesLoader` never runs
+(its script is left on disk, which is the VM's "eval never ran" guard firing)
+and the only thing left to report is the previous eval's result. The "frozen
+eval" is the visible symptom of a dead startup process, not a snapshot bug.
+
+Proof the startup loader is what dies, not the resume: plant a `startup.st` by
+hand and run each image with NO eval argument —
+
+    porp (works)   startup.st RUNS and is consumed
+    acp  (frozen)  startup.st NEVER runs, still on disk at exit
+
+and the resume traces of the two images are byte-identical (same 9-frame
+snapshot chain, same patches). Stock Cog runs the acp image to
+`RESULT pass=170`.
+
+This is the **defect #11 family** (upstream Pharo Delay/watchdog nil-timeout,
+`docs/image_issues.md:153-174`), which #11 already notes our harness patches in
+`run_sunit_tests.st` and which "interp-only does not wedge, i.e. our scheduler
+timing is what surfaces it". Not JIT-dependent — `PHARO_NO_JIT=1` also fails.
+
+SO THE FIX TARGET IS THE DELAY/SCHEDULER PATH, NOT SNAPSHOT/RESUME. That is
+much safer ground: a wrong change there fails loudly rather than corrupting
+saved images. Find why the semaphore is nil at that moment under our scheduler
+when it is not under Cog's — a process terminated mid-`schedule` leaving the
+Delay half-initialised is the leading candidate (the same run shows a
+`terminateRealActive` trace).
+
+Fixing this should close #5 AND the seven packages in #2a AND likely #11.
+
+---
+
+#### Superseded framing, kept for the evidence trail
+
+### 5b. `Smalltalk saveAs:` freezes the eval result — CONFIRMED, 2-minute repro — MEDIUM-HIGH
 
 Reproduced 2026-08-12 with a stock-Cog control, macOS-arm64:
 
