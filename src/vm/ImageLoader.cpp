@@ -213,7 +213,23 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
         if (hasPointers) {
             // All slots are pointers or SmallIntegers - relocate all
             for (size_t i = 0; i < slotCount; ++i) {
-                firstSlot[i] = relocatePointer(firstSlot[i]);
+                uint64_t before = firstSlot[i];
+                firstSlot[i] = relocatePointer(before);
+                // Attribute every DECLINED old-base pointer to its owner's
+                // format.  Format 9 is a 64-bit WORD array relocated as if it
+                // held pointers (a documented hack for hiddenRoots), so a
+                // numeric datum that happens to look like a tag-0 old-base
+                // address lands here as a FALSE POSITIVE — and one that lands
+                // inside the loaded range gets silently MANGLED instead.
+                // A decline attributed to a genuine pointer format (0-5) is a
+                // different animal: a live slot left holding a saved-image
+                // address, which the GC mark phase then dereferences
+                // (docs/vm-compat-bugs.md #4).  Counting by format is what
+                // tells the two apart; the previous session guessed.
+                if (before == firstSlot[i] && (before & 7) == 0
+                        && before >= oldBase_ + loadedSize_) {
+                    declinedByFormat_[format]++;
+                }
             }
         } else if (isCompiledMethod) {
             // Compiled methods have header + literals followed by bytecodes
@@ -236,6 +252,22 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
         }
         // Byte/word objects don't have pointers to relocate
     });
+
+    {
+        size_t total = 0;
+        for (size_t f = 0; f < 32; ++f) total += declinedByFormat_[f];
+        if (total > 0) {
+            fprintf(stderr, "[IMGLOAD-DECLINE-BY-FORMAT] %zu declined old-base "
+                            "pointers past the loaded data:", total);
+            for (size_t f = 0; f < 32; ++f) {
+                if (declinedByFormat_[f])
+                    fprintf(stderr, " fmt%zu=%zu", f, declinedByFormat_[f]);
+            }
+            fprintf(stderr, "  (fmt9 = 64-bit word arrays relocated as pointers"
+                            " — those are numeric data, not refs; fmt0-5 are"
+                            " genuine pointer slots left dangling)\n");
+        }
+    }
 
     return true;
 }

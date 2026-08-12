@@ -3817,6 +3817,32 @@ void ObjectMemory::processWeaklings() {
         bool anyNilled = false;
         for (size_t i = startSlot; i < slots; ++i) {
             Oop ref = slotPtr[i];
+            // A weak slot holding something that is not in any heap region
+            // cannot be alive, and must never be dereferenced: reading
+            // ->isMarked() on it is how an unrelocated saved-image address
+            // (0x10000000000, the old image base) killed the VM inside
+            // markPhase on a freshly loaded Ume image
+            // (docs/vm-compat-bugs.md #4).  Report it — the value is a
+            // symptom of an ImageLoader/relocation defect, not something to
+            // swallow — then nil the slot, which is what a weak reference to
+            // a non-object means.
+            if (ref.isObject() && !isReadableHeapObject(ref)) {
+                static int badWeakN = 0;
+                if (++badWeakN <= 20) {
+                    fprintf(stderr,
+                        "[WEAK-BAD-REF] %s(0x%llx) slot %zu holds 0x%llx — not "
+                        "in old space, eden or perm space.  Nilled instead of "
+                        "dereferenced; the value itself is an unrelocated or "
+                        "corrupt pointer and wants root-causing.\n",
+                        classNameOf(Oop::fromObject(obj)).c_str(),
+                        (unsigned long long)Oop::fromObject(obj).rawBits(), i,
+                        (unsigned long long)ref.rawBits());
+                }
+                slotPtr[i] = nilObject_;
+                anyNilled = true;
+                nilledCount++;
+                continue;
+            }
             if (ref.isObject() && !isPermObject(ref.asObjectPtr())) {
                 // Nil if dead, OR if only alive because a fired ephemeron
                 // rescued it for the mourn queue (not strongly reachable —
@@ -3877,7 +3903,9 @@ bool ObjectMemory::markInactiveEphemerons() {
         bool keyAlive = true;
         if (total > 0) {
             Oop key = obj->slotAt(keyIndex);
-            if (key.isObject() && !isPermObject(key.asObjectPtr())) {
+            if (key.isObject() && !isReadableHeapObject(key)) {
+                keyAlive = false;  // see [WEAK-BAD-REF] above — never deref
+            } else if (key.isObject() && !isPermObject(key.asObjectPtr())) {
                 keyAlive = key.asObjectPtr()->isMarked();
             }
         }
@@ -3923,7 +3951,8 @@ void ObjectMemory::fireAllEphemerons() {
         // processWeaklings (which runs after the ephemeron fixed point).
         if (obj->slotCount() > 0) {
             Oop key = obj->slotAt(0);
-            if (key.isObject() && !isPermObject(key.asObjectPtr())
+            if (key.isObject() && isReadableHeapObject(key)
+                    && !isPermObject(key.asObjectPtr())
                     && !key.asObjectPtr()->isMarked()) {
                 ephemeronRescuedKeys_.insert(key.asObjectPtr());
             }

@@ -483,6 +483,21 @@ public:
         return p >= permSpaceStart_ && p < permSpaceEnd_;
     }
 
+    /// Does this oop point at a header the collector may READ?
+    ///
+    /// markAndTrace already applies exactly this bound before touching an
+    /// object; the weak/ephemeron passes did not, so a slot holding a value
+    /// that is not in any heap region (an unrelocated saved-image address,
+    /// say) reached `->isMarked()` and segfaulted the whole VM inside
+    /// markPhase.  Same bound, one name, so the two cannot drift.
+    inline bool isReadableHeapObject(Oop o) const {
+        if (!o.isObject()) return false;
+        auto p = reinterpret_cast<const uint8_t*>(o.asObjectPtr());
+        return (p >= oldSpaceStart_ && p < oldSpaceFree_)
+            || (p >= edenAllocBase_ && p < edenFree_)
+            || (p >= permSpaceStart_ && p < permSpaceEnd_);
+    }
+
     /// Is this object in young (new) space?
     bool isYoung(Oop obj) const;
 

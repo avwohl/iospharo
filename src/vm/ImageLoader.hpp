@@ -136,6 +136,11 @@ private:
     uint8_t* loadedData_ = nullptr;
     size_t loadedSize_ = 0;
     uint64_t oldBase_ = 0;
+    /// Per-format tally of old-base pointers relocatePointer DECLINED because
+    /// they point past the loaded data.  Format 9 entries are false positives
+    /// (word-array data relocated as pointers); formats 0-5 are live pointer
+    /// slots left holding a saved-image address.  See relocatePointers().
+    size_t declinedByFormat_[32] = {0};
     uint64_t newBase_ = 0;
 
     // ===== LOADING STEPS =====
