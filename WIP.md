@@ -89,7 +89,52 @@ appeared in the part that did run.
 
 All four are in `docs/deferred.md` with repros.
 
-### 8. One regression that is NOT ours, proven rather than argued
+### 8. The GUI errors: a real VM bug, now with a 4-minute deterministic repro
+
+This took four wrong readings before it came out right; the wrong ones are in
+`docs/deferred.md` so nobody repeats them.  Final state:
+
+`pixelAt:` is a **BitBlt** message, not a Form/Bitmap one, so "a Form's bits is
+an Array" was never the right reading.  Every failing receiver is a sibling
+temp of ONE activation, `WarpBlt>>warpBitsSmoothing:sourceMap:`.  Our
+`primitiveWarpBits` bails for non-32-bit depths, so the image drops into a
+Smalltalk fallback stock Cog never executes — and `UITheme>>formSetsForScale:`
+is `at:ifAbsentPut:`, which caches nothing on failure, so one early failure
+retries forever and one early success warms the cache forever.  **That is why
+the count is 1 or 102 for a fixed defect**, and why the morning-vs-evening
+comparison I built a conclusion on was noise.  That conclusion is withdrawn.
+
+    stock Cog                   1440 calls   0 errors
+    ours 361bf92b, DET_SCHED    ~797 calls  12 errors
+    ours HEAD,     DET_SCHED    ~795 calls  12 errors
+
+`PHARO_DET_SCHED=1` is what makes it deterministic — without it the probe
+passes 1440/1440 on a quiet machine and fails only under load, which is why the
+early attempts contradicted each other.  Identical on both builds: pre-existing,
+not this session's, not JIT-dependent.
+
+The localizer settles the mechanism: every temp is CORRECT (`picker=BitBlt`,
+`poker=BitBlt`, `pix=Array`) while the failing sends are `BitBlt >> #+` / `#//`
+at stable pcs — so the **expression stack** is displaced and the temps are not.
+That is the materialize/restore path.  Probes: `scripts/repro/warpblt_*.st`.
+
+### 9. Two real defects in this session's own commits, found by review
+
+Neither was caught by any test; an adversarial re-read of the diffs found them.
+
+  - `d209543d`'s message claims it routed the third context-reuse path
+    (`frame[0] == activeContext_`) through `storeContextStackp`.  It did not —
+    the hunk landed on the `thisContext` re-sync and that site kept a raw
+    `storePointer` that lowered stackp with a dirty tail.
+  - `89942e89` narrowed the tail clear on the premise that everything above the
+    previous stackp was already nil.  False: `primitiveSetStackPointer` nils
+    only when GROWING, `primitiveContextAtPut` writes any slot bounded only by
+    `slotCount`, and the site above.  Reverted to clearing the whole tail.
+
+Both matter *because* `pointerSlotsOf` now stops at stackp — residue above it is
+neither marked nor relocated.  Fixed in `de666ee7`.
+
+### 10. One regression that is NOT ours, proven rather than argued
 
 `ClyBrowserToolValidityTest` (25) and `ClyNotebookPageRecyclerTest` (8) passed
 in the morning's arm full run and ERROR in both evening full runs, one
