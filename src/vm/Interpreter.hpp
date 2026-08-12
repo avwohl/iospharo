@@ -1884,8 +1884,21 @@ public:
         stackPointer_ = state->sp;
         instructionPointer_ = state->ip;
 
-        // Overflow check
-        if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
+        // Overflow check — BOTH limits.
+        //
+        // The frame count alone is not enough: `MaxStackDepth` (131072 Oops)
+        // against `StackOverflowLimit` (56000 frames) is barely 2 slots per
+        // frame, so any method with more than a temp or two exhausts the
+        // OPERAND stack first.  Compiled code writes that stack directly
+        // through `state->sp`, so nothing else on this path would notice, and
+        // it runs off the end of `stack_` into the members after it — the
+        // mutalk `~Interpreter` abort (docs/vm-compat-bugs.md #3).
+        // `tryJITActivation` guards the ENTRY to compiled code; this guards
+        // J2J, which is the overwhelmingly common call path (millions per run)
+        // and never goes through tryJITActivation.
+        if (__builtin_expect(frameDepth_ >= StackOverflowLimit
+                || stackPointer_ >= stack_.data()
+                                     + MaxStackDepth - StackSafetyZone, 0)) {
             state->exitReason = jit::ExitStackOverflow;
             return;
         }
