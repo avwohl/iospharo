@@ -310,6 +310,20 @@ handle is #2a.
 
 ### 5. Startup dies on a nil Delay semaphore; the "frozen eval" is a SYMPTOM — CONFIRMED — HIGH
 
+**FIXED for OSSubprocess images (`9d9f8154`) — but NOT the whole group.**
+Measured after the fix: `mumez-pharo-acp` goes from producing nothing to
+`pass=161 fail=0 err=9` (Cog: `pass=168 err=2`), while **the plain `saveAs:`
+repro on a BASE image still returns the frozen `'FIRST'`**. So my earlier
+"eight defects, one root cause" consolidation was WRONG and is withdrawn:
+
+  * packages that load **OSSubprocess** died in its startup handler — fixed by
+    implementing `UnixOSProcessPlugin` (see below);
+  * the plain `saveAs:` freeze (#5b, base image, no OSSubprocess) is a
+    SEPARATE defect and is still open.
+
+Which of the other six #2a packages are in which bucket is not yet measured;
+`OSSVMProcess inStartupList` distinguishes them (true for acp, false for porp).
+
 **Corrected 2026-08-12 (this supersedes the snapshot/resume framing below).**
 The image resumes from its snapshot CORRECTLY. What kills it is downstream:
 
