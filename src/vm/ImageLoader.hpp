@@ -303,7 +303,29 @@ void ImageLoader::forEachObject(Func callback) {
 
         // Sanity check: object must fit within the heap
         if (objectBytes > static_cast<size_t>(end - scan)) {
-            // Possible corruption or end-of-heap alignment — stop scanning
+            // STOPPING HERE ABANDONS THE REST OF THE HEAP.  Every caller of
+            // forEachObject — including relocatePointers — then leaves the
+            // objects beyond this point holding SAVED-IMAGE addresses, which
+            // is exactly how a live slot ends up with an unrelocated
+            // 0x10000000000 that the GC later dereferences
+            // (docs/vm-compat-bugs.md #4).  This used to be a bare `break`.
+            // Trailing alignment slack (< one minimum object) is normal; a
+            // real remainder is not, and must never be silent.
+            size_t remaining = static_cast<size_t>(end - scan);
+            if (remaining >= 16) {
+                static int truncN = 0;
+                if (++truncN <= 5) {
+                    fprintf(stderr,
+                        "[IMGLOAD-WALK-TRUNC] object scan stopped %zu bytes "
+                        "(%.2f%%) before the end of the image data: header at "
+                        "+0x%llx claims %zu bytes but only %zu remain.  "
+                        "EVERY object past this point keeps its saved-image "
+                        "pointers.\n",
+                        remaining, 100.0 * (double)remaining / (double)loadedSize_,
+                        (unsigned long long)(scan - loadedData_), objectBytes,
+                        remaining);
+                }
+            }
             break;
         }
 
