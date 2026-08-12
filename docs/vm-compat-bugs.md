@@ -266,15 +266,25 @@ FIX, at BOTH places compiled code can grow the operand stack:
     signal.  One compare per JIT activation; a base-image eval declines zero.
   * `pushFrameForJIT` — the J2J path — is a KNOWN REMAINING GAP, not fixed.
     It checks only `frameDepth_ >= StackOverflowLimit`, which cannot help
-    (131072 Oops against 56000 frames is barely 2 slots per frame).  Adding
-    the same bound there and returning `ExitStackOverflow` (`86260b47`) is
-    correct but unusable as it stands: mutalk went from 5,439,488 sends to
-    **>2.8 billion and still climbing**, i.e. the bail is retried without
-    forward progress instead of converting into a Smalltalk stack-overflow
-    signal.  Reverted in `959da174`, with the gap and the requirement written
-    at the site — closing it means making `ExitStackOverflow` raise the
-    image-side signal (or unwind) rather than bounce back into the same J2J
-    call.  Until then a deep enough JIT-to-JIT chain can still overrun.
+    (131072 Oops against 56000 frames is barely 2 slots per frame), so a deep
+    enough JIT-to-JIT chain can still overrun.
+
+    **CORRECTION.**  `86260b47` added the bound there and `959da174` reverted
+    it claiming a 500x blowup on mutalk (5,439,488 sends -> >2.8 billion).
+    **That claim was wrong** — the comparison was confounded twice over: a
+    full SUnit suite was running concurrently for the second measurement, and
+    mutalk's own send count is not stable run to run (the reverted binary
+    reproduces the same "blowup" on a quiet machine).  Re-measured properly on
+    a stable benchmark, 3 runs each:
+
+        tinyBenchmarks   without bound   468 / 466 / 473  Mbytecodes/sec
+                         with bound      432 / 447 / 457  Mbytecodes/sec
+
+    i.e. about 2-3%, not 500x.  It is left OUT for a different and honest
+    reason: it costs a few percent in the hottest call path and there is no
+    demonstrated case it fixes that the entry guard does not — mutalk is fixed
+    by the entry guard alone.  Restore it if a J2J-only overrun is ever
+    observed.
 
 Explains `PHARO_NO_JIT=1` exiting 0 in the original triage.
 

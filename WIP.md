@@ -150,11 +150,15 @@ aborted freeing it.  Found with ASan (which named the member and showed the
 tryJITActivation now declines within StackSafetyZone of the limit and falls
 back to the interpreter.  exit 134 -> exit 0.
 
-The J2J path (`pushFrameForJIT`) has the same hole and is NOT fixed: adding
-the bound there is correct but its `ExitStackOverflow` bail is retried without
-forward progress — 5,439,488 sends became >2.8 BILLION.  Reverted (`959da174`)
-with the requirement recorded at the site.  Shipping it on "the crash is gone"
-would have been a 500x regression; the crash was already gone without it.
+The J2J path (`pushFrameForJIT`) has the same hole and is NOT fixed.  I first
+claimed adding the bound there caused a 500x blowup (5.4M sends -> 2.8B);
+**that claim was wrong and is withdrawn** — the comparison had a full SUnit
+suite running concurrently for one arm, and mutalk's send count is not stable
+run to run (the reverted binary reproduces the same "blowup" on a quiet
+machine).  Re-measured on tinyBenchmarks, 3 runs each: 468/466/473 vs
+432/447/457 Mbytecodes/sec — about 2-3%.  Left out for that honest reason plus
+"no demonstrated case the entry guard does not already cover", not for the
+fictional one.
 
 ### Open
 
