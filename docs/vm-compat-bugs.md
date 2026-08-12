@@ -622,10 +622,29 @@ i.e. reaching Cog-like depths costs roughly +19 MB of permanently resident
 memory, on a VM whose primary target is iOS.  Cog does not pay that: its stack
 is PAGES that spill to the heap as contexts, so depth is bounded by available
 memory rather than by a fixed array.  That — not a bigger constant — is the
-real fix, and it is a project.  A cheaper intermediate worth considering: keep
-the cap but make hitting it a CATCHABLE image-level error instead of an
-uncatchable `Process>>terminate`, so a test suite reports a failure rather
-than losing the whole run.
+real fix, and it is a project.
+
+TWO cheaper intermediates, in order of confidence:
+
+  * **Make the VM exit instead of idling.**  This is the half that turns a
+    diagnosable failure into a "hang", and it is separable from the cap.
+    After `handleStackOverflow` terminates the process, the image still has an
+    idle process and the timer process, so `tryReschedule()` succeeds and the
+    existing "No runnable processes" `stopVM` never fires.  A precise
+    condition exists: in eval mode, the generated `startup.st` always ends in
+    `Smalltalk exitSuccess`, so **script consumed + no quit ever arrives + the
+    VM is in `primitiveRelinquishProcessor` with no armed timer and no pending
+    external signals** means the command died and nothing can wake anything.
+    NOT implemented here deliberately — a wall-clock idle heuristic would kill
+    a legitimate `(Delay forSeconds: 300) wait`, so the no-armed-timer part of
+    the condition is load-bearing and wants writing carefully.
+  * **Make the cap catchable.**  Note the previous session already tried and
+    rejected the naive form: the comment in `handleStackOverflow` records that
+    signalling `#error:` "doesn't suffice: it goes unhandled in a forked test
+    and our unhandled-error path skips unwinds too", which is why it drives
+    `Process>>terminate` (that release of held `critical:` mutexes is itself a
+    root-cause fix — do not undo it).  Any catchable-error attempt has to keep
+    the unwind.
 
 ## LEADS (real work, not yet a filed defect)
 
