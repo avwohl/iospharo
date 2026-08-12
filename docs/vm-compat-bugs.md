@@ -338,6 +338,19 @@ process's oop unrelocated for this image, and relocate it. Start from the
 existing suspendedContext check, which is the same bug already handled one slot
 over.
 
+Two concrete leads in `ImageLoader::relocatePointers`, both visible on reading:
+
+  1. `slotCount` is silently CLAMPED to `maxSlots = (size - headerSize) / 8`.
+     If an object's computed size is short, its trailing slots are never
+     relocated and keep saved-image addresses — exactly this symptom. The clamp
+     is silent; make it report, then check whether the ProcessorScheduler (or
+     whatever holds the active process) is being clamped for this image.
+  2. `hasPointers = (format <= 5) || (format == 9)`. Format 9 is a 64-bit
+     WORD array that is relocated as pointers because `hiddenRoots` needs it —
+     a documented hack. That is fine for hiddenRoots and wrong for any genuine
+     64-bit word array, which would get its contents mangled rather than left
+     alone. Worth confirming it is not implicated here before assuming (1).
+
 Repro: load `Metacello ... baseline: 'Ume'` per `packages-200.tsv`, then start
 our VM on the image.
 
