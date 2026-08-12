@@ -374,6 +374,12 @@ public:
 
     /// Set/get image arguments (passed to image via primitiveGetAttribute index 2+)
     void setImageArguments(const std::vector<std::string>& args) { imageArguments_ = args; }
+    /// Path of the startup.st this run generated for `eval` mode, if any.
+    /// primitiveQuit consults it: an image resumed from a snapshot taken
+    /// mid-eval finishes the PREVIOUS command's script first, and that
+    /// script's own `Smalltalk exitSuccess` would kill the VM before the
+    /// command-line handler this run queued ever gets the CPU.
+    void setEvalStartupScript(const std::string& path) { evalStartupScript_ = path; }
     const std::vector<std::string>& imageArguments() const { return imageArguments_; }
 
     /// Set/get VM parameters (returned by primitiveGetAttribute at negative indices)
@@ -1151,6 +1157,8 @@ public:
 #endif
 private:
     std::vector<std::string> imageArguments_;  // Command-line args for the image (index 2+)
+    std::string evalStartupScript_;   // see setEvalStartupScript
+    bool evalQuitDeferred_ = false;   // one-shot: the deferral already happened
     std::vector<std::string> vmParameters_;    // VM flags like --headless (negative indices)
 
     // Screen dimensions (configurable, defaults for headless)

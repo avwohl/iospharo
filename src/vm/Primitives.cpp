@@ -5065,6 +5065,52 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) {
         fprintf(stderr, "[EXIT-TRACE] primitiveQuit called argCount=%d\n", argCount);
     }
+
+    // An image saved from inside an `eval` resumes INSIDE the previous
+    // command's script (the snapshot chain is
+    // SnapshotOperation>>doSnapshot ... SessionManager>>launchSnapshot:andQuit:,
+    // with our generated startup.st's continuation above it).  That script
+    // ends with `Smalltalk exitSuccess`, so the resumed image quits while
+    // finishing the OLD command — before the command-line handler THIS run
+    // queued has had the CPU.
+    //
+    // The queue is set up correctly: the resume patch gives the resumed
+    // SnapshotOperation isImageStarting=true, so the session startup list runs,
+    // BasicCommandLineHandler class>>startUp: adds its deferred action, and
+    // executeDeferredStartupActions: runs it — but
+    // BasicCommandLineHandler>>activate FORKS the dispatch at
+    // userSchedulingPriority (40) and returns, and the old continuation (P80
+    // after the headless startup boost) reaches this quit first.  Measured:
+    // putting an 8 s Delay in the old continuation makes the new eval run and
+    // answer correctly, so nothing is missing but CPU.
+    //
+    // So: a quit raised while THIS run's startup.st is still on disk cannot be
+    // ours — our script deletes itself as its first statement.  Honour "this
+    // command is over" by terminating the process that asked, and let the
+    // scheduler reach the pending handler.  One-shot: the next quit (the one
+    // from our own script, or a repeat if nothing consumed it) goes through, so
+    // a genuinely stuck image still exits and the "eval never ran" guard at
+    // exit still reports.
+    if (!evalStartupScript_.empty() && !evalQuitDeferred_) {
+        bool scriptStillOnDisk = false;
+        if (FILE* f = std::fopen(evalStartupScript_.c_str(), "r")) {
+            std::fclose(f);
+            scriptStillOnDisk = true;
+        }
+        if (scriptStillOnDisk) {
+            evalQuitDeferred_ = true;
+            fprintf(stderr,
+                "[EVAL] deferring quit — this run's %s has not executed yet, so "
+                "this exitSuccess belongs to the command the resumed image was "
+                "still finishing.  Terminating that process and letting the "
+                "queued command-line handler run.\n",
+                evalStartupScript_.c_str());
+            fflush(stderr);
+            terminateCurrentProcess();
+            return PrimitiveResult::Success;
+        }
+    }
+
     // Flush pending IMAGE output buffer before shutting down
     ::flushImageOutputBuffer();
 

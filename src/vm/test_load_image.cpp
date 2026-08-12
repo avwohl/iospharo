@@ -1146,6 +1146,9 @@ int main(int argc, char* argv[]) {
         if (resolved) free(resolved);
     }
     interpreter.setOriginalImageHeader(loader.header());
+    // Let primitiveQuit tell a resumed image's leftover `exitSuccess` (from the
+    // command the snapshot was taken inside) apart from this run's own.
+    interpreter.setEvalStartupScript(startupStPath);
     // Resolve the *actual* executable path so Smalltalk vm fullPath is absolute
     // and exists on disk — the image's SystemResolverTest asserts both.
     // argv[0] is unreliable (can be "./build/test_load_image", different CWD,
