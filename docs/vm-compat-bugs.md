@@ -489,10 +489,28 @@ Passes on ARM. Needs a Windows run to close.
 16. `become` scan-and-replace still misses live refs (JIT operands under
     materialization). `ObjectMemory.cpp:1625-1634` says so in the shipped
     comment; the forwarder that shipped is a safety net, not the fix.
-17. Prim 145 pointer-fill branch writes fixed ivars (`Primitives.cpp:9172`).
-    Latent only because Pharo 13 binds it to byte/word classes.
-18. `updatePointersAfterCompact` walks survivor space to `newSpaceEnd_` rather
-    than a live watermark (`ObjectMemory.cpp:4530`), parsing garbage headers.
+17. ~~Prim 145 pointer-fill branch writes fixed ivars~~ — FIXED 2026-08-12
+    (`3c772997`).  Confirmed against `InterpreterPrimitives>>
+    primitiveConstantFill` (cointerp-cpp.c:28585): stock fails unless
+    `format >= sixtyFourBitIndexableFormat` and below the first
+    CompiledMethod format, i.e. raw-data indexables only.  Our extra
+    pointer-object branch filled `slotCount` slots from index 0, which for
+    format 3 starts at the NAMED ivars.  Branch removed, Cog's format gate
+    added up front.  Verified identical to Cog on `Bitmap>>primFill:`,
+    `ByteArray>>atAllPut:`, `Array>>atAllPut:` (which now takes the
+    Smalltalk fallback, as on Cog) and `Form>>fillColor:`.
+18. ~~`updatePointersAfterCompact` walks survivor space to `newSpaceEnd_`~~ —
+    FIXED 2026-08-12 (`3c772997`).  There are no allocations in
+    `[survivorStart_, newSpaceEnd_)` at all — scavenge tenures every
+    reachable young object straight to old space and resets eden, and
+    nothing writes there (`survivorStart_` is only ever read as the eden
+    limit).  The walk parsed never-initialised pages as object headers and
+    relied on the implausible-totalSize guard to stop, printing
+    "[NS-SCAN-TERM] survivor" — a warning about young objects losing
+    old-space updates in a region with no young objects.  Removed; the
+    condition for restoring it (a copying survivor's live watermark, never
+    `newSpaceEnd_`) is written at the site.  The eden scan already ends at
+    `edenFree_`, a real watermark.
 19. ARM "context storm" prevention was proven on a constructed analogue, never
     on the storm. Catalog #10 is cited twice as proof and has no artifact in
     the repo — find the log or stop citing it.

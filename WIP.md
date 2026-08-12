@@ -67,6 +67,27 @@ return-value placement gap, the ctxSynced skip, preemption frequency.
 `PHARO_NO_FRAME0_REUSE=1` is broken on its own (no output) — not a usable
 bisect axis.
 
+### Also fixed: LEADS 17 and 18 (`3c772997`), both by reading
+
+`primitiveConstantFill` (145) carried a pointer-object branch that filled
+`slotCount` slots from index 0 — for format 3 that starts at the NAMED
+instance variables.  Stock Cog fails the primitive for anything that is not
+a raw-data indexable, so this was a silent whole-object clobber our VM could
+produce and Cog could not.  And `updatePointersAfterCompact` walked
+`[survivorStart_, newSpaceEnd_)`, a region with NO allocations in this VM
+(scavenge tenures straight to old space), parsing uninitialised pages as
+object headers.
+
+### Both backends VERIFIED, not just written
+
+The `#1` fix was applied to `SistaLowering_arm64.cpp` and
+`SistaLowering_x86_64.cpp`.  Both were then run: arm64 native and x86_64
+through `build-x86` under Rosetta each give **1440 calls / 0 errors** on the
+repro, and `test_sista_ir` (which has a multi-entry dispatch round-trip
+case) PASSes in both trees.  The per-bc tier is still fully active after the
+fix — 78,848 dispatches on the repro — so this corrected its bails rather
+than disabling it.
+
 ### Open
 
 Ten defects remain: `#2` (partially), `#3`, `#4`, `#6`-`#12`, `#14`.
