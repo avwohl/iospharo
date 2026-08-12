@@ -33,35 +33,40 @@ RULED OUT so far:
   - Not reachable in suite batch 1-400 (10923 P / 1 E / 1 T), so whatever
     pollutes Display runs later than that.
 
-  - The GC **trace bound** specifically is not it: a full macOS-arm64 suite
-    with `PHARO_CTX_TRACE_ALL_SLOTS=1` reproduces it exactly
-    (`ClyBrowserToolValidityTest ERROR 25`, `ClyNotebookPageRecyclerTest
-    ERROR 3`, 26773 P / 21 F / 55 E overall).
-
-    **CAUTION — that knob does NOT clear `da9159e9`/`d209543d` as a whole.**
-    It reverts `pointerSlotsOf` only.  `storeContextStackp` (which NILS a
-    reused context's tail) and `raiseContextStackpTo` (which RAISES stackp on
-    a single-slot write) stay active under it, and both are plausible causes
-    of this exact signature: `executeFromContext` pushes `stackp` items as
-    temps, so a stackp raised past the real content shifts the operand stack —
-    which is how a variable comes to hold a `BitBlt` where a number belongs.
-    Only a build of `361bf92b` is a real control.
+  - **This session's commits are NOT the cause — settled with a real control.**
+    A full macOS-arm64 suite on a build of **`361bf92b`** (the commit before
+    all of `da9159e9` / `d209543d` / `4a46413f` / `919904cd` / `89942e89` /
+    `31aa67b3`) reproduces it: `ClyBrowserToolValidityTest` 25 ERROR, same
+    signature.  The earlier `PHARO_CTX_TRACE_ALL_SLOTS=1` run pointed the same
+    way but did not prove it — that knob reverts `pointerSlotsOf` only and
+    leaves `storeContextStackp` and `raiseContextStackpTo` active, and raising
+    stackp is NOT GC-only (`executeFromContext` restores exactly `stackp`
+    slots as the activation's temps, so an over-raised stackp shifts the
+    operand stack).  `PHARO_NO_CTX_STACKP_RAISE=1` now exists to take that
+    piece out independently; it was not needed here.
   - Not a FAIL-level regression: the same runs are 27647 P / 24 F on Linux and
     27701 P / 22 F on macOS, with every FAIL in the documented residual
     families (ReleaseTest, StDebugger/StSpotter, TKT, ZnClient) — the same
     shape as the morning run's 19.  Only the ERROR column moved.
 
-NEXT: the remaining in-window commit that is ACTIVE ON macOS is `c1d6eef7`
-(`ffi::moduleCandidates`, shared by `primitiveLoadModule` and
-`tryLoadFromSearchPaths`) — it changed which library file names get tried, so a
-module that used to fail to load may now load and take a GUI test down a
-different path. `4a46413f`/`919904cd` are `#if defined(__linux__)` and cannot
-explain a macOS repro. Bisect by building `361bf92b` (or reverting just
-`c1d6eef7`) and running the full suite. Note the failure is display state
-(`SmallInteger >> #pixelAt:`) and both classes open real browser tools, so an
-earlier GUI test leaving `Display` in a bad state is still at least as likely
-as a VM cause; `ReleaseTest`-style run-order pollution is a known property of
-this harness.
+NEXT — two candidates remain, and `361bf92b` still contains the first:
+
+  1. **`c1d6eef7`** (`ffi::moduleCandidates`, shared by `primitiveLoadModule`
+     and `tryLoadFromSearchPaths`) is INSIDE the control build, so it is not
+     excluded.  It changed which library file names get tried, on every
+     platform.  Bisect step: build `83c8ee22` (its parent) and run the full
+     suite.
+  2. **The image itself.**  `x86-fullsuite.sh` re-downloads Pharo 13 on every
+     run, so the morning run and the evening runs may not be the same build.
+     That would explain a change with no VM involvement at all, and it is the
+     cheaper thing to check first: compare the `.sources` build hash
+     (`Pharo13.1-64bit-<hash>.sources`) between a fresh download and the one
+     the morning run used.
+
+The failure is display state (`Form>>bits` holding an Array/SmallInteger) and
+the affected classes open real browser tools, so an earlier GUI test leaving
+`Display` in a bad state remains at least as likely as a VM cause;
+`ReleaseTest`-style run-order pollution is a known property of this harness.
 
 ## OPEN: `rko281-restoreforpharo` is ~50x slower than Cog on live SQLite (2026-08-11)
 
