@@ -195,6 +195,18 @@ does not. That is a socket-layer divergence (`Socket>>listenOn:backlogSize:`),
 and prior art exists — see the `zn-socket-hunt-lost-wakeups` memory for this
 VM's socket failure modes and the diagnostic pattern that cracked them.
 
+**BUT the simple form of that inference is refuted.**  Measured 2026-08-12 on
+the SAME base image, both VMs:
+
+    Socket newTCP; listenOn: 42731 backlogSize: 10   ours = Cog: succeeds,
+                                                     isValid=true, localPort ok
+    ZnServer on: 42732; start                        ours = Cog: isRunning=true
+
+So plain `listenOn:backlogSize:` and a `ZnServer` start are NOT divergent.
+Whatever fails in jrpc is narrower than "our listen fails" — it needs the
+package's own forked listen loop to reproduce, and the claim above should not
+be carried forward as established.
+
 On Linux, `jrpc` shows a VM-level mechanism:
 
     [VM] primitiveFindHandlerContext: cyclic sender chain at 0x...
@@ -514,6 +526,12 @@ Interpreter-only does not wedge, i.e. our scheduler timing is what surfaces it.
 Which vector is not recorded. A failing published test vector on a hash
 function should not be invisible; it was a single line inside a checked-off
 Crypto entry.
+
+MEASURED 2026-08-12, macOS-arm64: `SHA256Test suite run` -> **12 ran, 12
+passed, 0 failures, 0 errors**, and `SHA1Test` is present alongside it.  So
+the class is SHA256Test, the count is 12, and the failure is Windows-specific
+(or stale) — it does not reproduce on arm.  Closing it needs a Windows run;
+there is nothing to chase here.
 
 ### 13. ~~`StDebuggerActionModelTest>>testEventAfterProceed:`~~ — CLOSED 2026-08-12
 
