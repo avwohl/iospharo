@@ -983,6 +983,24 @@ bool Interpreter::initialize() {
     //   slot 0 = nextLink (for LinkedList)
     //   slot 1 = suspendedContext
     //   slot 2 = priority
+    // Validate the scheduler chain BEFORE dereferencing further.  On an image
+    // whose active process is unusual (fedeloch-ume, docs/vm-compat-bugs.md #4)
+    // this walk used to SIGSEGV inside initialize() with a raw register dump and
+    // no indication of which link was bad.  A crash here tells the operator
+    // nothing; naming the broken link tells them everything.
+    for (auto& link : { std::make_pair("scheduler", scheduler),
+                        std::make_pair("processScheduler", processScheduler),
+                        std::make_pair("activeProcess", activeProcess) }) {
+        if (!link.second.isObject() || link.second.isNil()
+                || !memory_.isValidPointer(link.second)) {
+            fprintf(stderr,
+                "[STARTUP] scheduler chain broken at '%s' (oop=0x%llx) — this image's\n"
+                "[STARTUP] active process cannot be resumed.  Continuing without a\n"
+                "[STARTUP] resumed context rather than dereferencing it.\n",
+                link.first, (unsigned long long)link.second.rawBits());
+            return false;
+        }
+    }
     Oop context = memory_.fetchPointer(1, activeProcess);  // suspendedContext is slot 1 in modern Pharo
 
     // If the ImageLoader failed to relocate the suspendedContext it would be

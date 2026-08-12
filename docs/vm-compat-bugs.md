@@ -315,9 +315,28 @@ not the snapshot resume (no `[RESUME]` line is ever printed), and not the JIT
 (reproduced with `PHARO_NO_JIT=1` on 2026-08-11). A hard crash in VM
 initialisation on an image stock Cog runs to `RESULT pass=11`.
 
-This is the cheapest crash in the file to chase: it dies in under a second, in
-one function, with a backtrace. `Interpreter::initialize + 1592` under lldb
-with the ume image is the whole investigation.
+**ROOT CAUSE FOUND 2026-08-12.** A guard added to the scheduler walk names the
+broken link instead of segfaulting on it:
+
+    [STARTUP] scheduler chain broken at 'activeProcess' (oop=0x10008f709a8)
+
+`0x10008f709a8` lies in `[0x10000000000, 0x20000000000)` — the UNRELOCATED
+POINTER window that `Interpreter::initialize` already documents and checks for
+*one link later*, on `suspendedContext` ("If the ImageLoader failed to relocate
+the suspendedContext it would be left at the SAVED image base"). The same
+ImageLoader miss hits `activeProcess`, where nothing was checking, so it
+dereferenced a saved-image address and died.
+
+So #4 is an **ImageLoader relocation bug**, same family as the documented
+suspendedContext case — not a startup-handler, snapshot or JIT problem.
+
+The crash is now a loud, named diagnostic rather than a SIGSEGV, and the VM
+declines to resume instead of dereferencing garbage. The package still does not
+RUN (initialize answers false), so #4 stays OPEN — but it is no longer a crash
+and the remaining work is narrow: find why the ImageLoader leaves the active
+process's oop unrelocated for this image, and relocate it. Start from the
+existing suspendedContext check, which is the same bug already handled one slot
+over.
 
 Repro: load `Metacello ... baseline: 'Ume'` per `packages-200.tsv`, then start
 our VM on the image.
