@@ -19280,8 +19280,8 @@ Oop Interpreter::materializeFrameStack() {
                         && method_.isObject()) {
                     std::string cs = memory_.selectorOf(method_);
                     if (cs.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)) != std::string::npos)
-                        fprintf(stderr, "[MAT-SAVE-CUR] #%s numTemps=%d saved=%d (expr=%d)\n",
-                                cs.c_str(), numTemps, savedCount, savedCount - numTemps);
+                        fprintf(stderr, "[MAT-SAVE-CUR] ctx=0x%llx #%s numTemps=%d saved=%d (expr=%d)\n",
+                                (unsigned long long)context.rawBits(), cs.c_str(), numTemps, savedCount, savedCount - numTemps);
                 }
 
                 // REVERSE-EXEC TAPE: record asTuple save (fp1 = operand-0 captured).
@@ -20840,8 +20840,8 @@ bool Interpreter::executeFromContext(Oop context) {
                 && method_.isObject()) {
             std::string rs = memory_.selectorOf(method_);
             if (rs.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)) != std::string::npos)
-                fprintf(stderr, "[MAT-RESTORE] #%s stackp=%lld numTemps=%d push=%d (expr=%d)\n",
-                        rs.c_str(), (long long)stackp, numTemps, numSaved,
+                fprintf(stderr, "[MAT-RESTORE] ctx=0x%llx #%s stackp=%lld numTemps=%d push=%d (expr=%d)\n",
+                        (unsigned long long)context.rawBits(), rs.c_str(), (long long)stackp, numTemps, numSaved,
                         numSaved - numTemps);
         }
         for (int i = 0; i < numSaved; i++) {

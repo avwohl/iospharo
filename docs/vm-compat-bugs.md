@@ -93,6 +93,14 @@ remain and are cheap to separate:
      dump the context oop at both save and restore and check identity.  If they
      differ, the frame is being resumed from a foreign/stale context object,
      which is a different and larger bug than a bad stackp.
+     **Half-done: `[MAT-SAVE-CUR]` already prints `ctx=0x...`; `[MAT-RESTORE]`
+     still needs the same field added** (one line, in executeFromContext's
+     trace).  Then:
+         grep -ao 'MAT-SAVE-CUR ctx=0x[0-9a-f]*' log | sed 's/.*ctx=//' | sort -u > saved
+         grep -ao 'MAT-RESTORE ctx=0x[0-9a-f]*'  log | sed 's/.*ctx=//' | sort -u > restored
+         comm -13 saved restored     # non-empty => restored from never-saved contexts
+     554 distinct contexts take an expr>1 restore in one probe run, so the
+     sample is large enough to be conclusive either way.
 
 Also ruled out on the way, each with a measurement:
 
