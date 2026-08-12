@@ -3921,10 +3921,21 @@ void Interpreter::interpret() {
                 std::fclose(f);
                 stillThere = true;
             }
+            if (!stillThere) {
+                // The script RAN and still no quit arrived — the process
+                // running it was killed (stack overflow; see handleStackOverflow).
+                fprintf(stderr,
+                    "[EVAL] the command's process is gone — %s ran but never "
+                    "reached its exitSuccess.  Exiting instead of idling.\n",
+                    evalStartupScript_.c_str());
+                fflush(stderr);
+                running_ = false;
+                goto cg_exit;
+            }
             if (stillThere) {
                 fprintf(stderr,
-                    "[EVAL] deferred quit timed out — %s was never executed, so "
-                    "no command-line handler picked it up.  Exiting.\n",
+                    "[EVAL] timed out with %s still on disk — never executed, "
+                    "so no command-line handler picked it up.  Exiting.\n",
                     evalStartupScript_.c_str());
                 fflush(stderr);
                 running_ = false;
@@ -11807,6 +11818,25 @@ void Interpreter::handleStackOverflow(int argCount) {
         // #terminate or the active process unavailable — fall back to hard-kill.
         terminateAndSwitchProcess();
         return;
+    }
+    // EVAL MODE: this run is now almost certainly unreportable.  Our generated
+    // startup.st ends in `Smalltalk exitSuccess`, so a normal eval finishes
+    // with a quit; if the overflow kills the process running it, no quit ever
+    // comes and the VM idles to the step budget — indistinguishable from a
+    // hang, and what several "hangs to 1800 s" packages look like
+    // (docs/vm-compat-bugs.md #15).
+    //
+    // Arm the bounded deadline here rather than in the idle loop: a live image
+    // always has a Delay timer armed, so "nothing can wake anything" is never
+    // true in practice (measured — the idle-loop form never fired).  Arming it
+    // on the OVERFLOW is precise: it cannot touch a run that never overflowed,
+    // so a legitimate `(Delay forSeconds: 300) wait` is untouched.  If the
+    // process the overflow killed was NOT the eval's, the eval still reaches
+    // its own exitSuccess first and the deadline never matters.
+    if (!evalStartupScript_.empty()
+            && evalDeferDeadline_.time_since_epoch().count() == 0) {
+        evalDeferDeadline_ = std::chrono::steady_clock::now()
+                           + std::chrono::seconds(60);
     }
     inStackOverflowSignal_ = true;
     static int overflowSignalLog = 0;

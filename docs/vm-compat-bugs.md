@@ -670,8 +670,19 @@ real fix, and it is a project.
 
 TWO cheaper intermediates, in order of confidence:
 
-  * **Make the VM exit instead of idling.**  This is the half that turns a
-    diagnosable failure into a "hang", and it is separable from the cap.
+  * ~~**Make the VM exit instead of idling.**~~  DONE 2026-08-12.  The repro
+    now exits in ~62 s with `[OVERFLOW] driving Process>>terminate` followed by
+    "the command's process is gone", instead of running until the harness
+    kills it.  Counter-tests: a legitimate `(Delay forSeconds: 45) wait` still
+    returns normally (46.6 s), and an ordinary eval is untouched.
+
+    NOTE the condition that does NOT work, so it is not retried: "no armed
+    timer and no pending signals" evaluated in the idle loop NEVER FIRES — a
+    live image always has a Delay timer armed, measured.  The deadline is
+    armed in `handleStackOverflow` instead, i.e. on the actual event, which is
+    also why it cannot touch a run that never overflowed.
+
+  * The original framing of this half, kept for the reasoning:
     After `handleStackOverflow` terminates the process, the image still has an
     idle process and the timer process, so `tryReschedule()` succeeds and the
     existing "No runnable processes" `stopVM` never fires.  A precise
