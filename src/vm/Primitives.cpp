@@ -9149,6 +9149,22 @@ PrimitiveResult Interpreter::primitiveConstantFill(int argCount) {
     ObjectFormat format = header->format();
     size_t size = memory_.byteSizeOf(rcvr);
 
+    // Stock parity (InterpreterPrimitives>>primitiveConstantFill, generated at
+    // cointerp-cpp.c:28585): the receiver must be a RAW-DATA indexable object —
+    // `format >= sixtyFourBitIndexableFormat` and below the first CompiledMethod
+    // format.  Anything else fails and the image runs its Smalltalk fallback.
+    //
+    // We used to carry an extra pointer-object branch here that bulk-filled
+    // `slotCount` slots from index 0.  For format 3 (IndexableWithFixed) that
+    // starts at the NAMED instance variables, so a constant fill of a
+    // pointer object with fixed fields would overwrite them — a silent
+    // whole-object clobber that stock Cog cannot produce because it fails the
+    // primitive outright.  Latent today only because Pharo 13 binds prim 145
+    // to byte/word classes; removed rather than left as a trap.
+    if (format < ObjectFormat::Indexable64 || format >= ObjectFormat::CompiledMethod) {
+        return PrimitiveResult::Failure;
+    }
+
     // Handle different formats
     if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
         // Byte array - value must be SmallInteger 0-255
@@ -9216,24 +9232,6 @@ PrimitiveResult Interpreter::primitiveConstantFill(int argCount) {
         size_t quadCount = size / 8;
         for (size_t i = 0; i < quadCount; i++) {
             quads[i] = word;
-        }
-    } else if (format <= ObjectFormat::IndexableWithFixed) {
-        // Pointer array - bulk fill.  Per-slot storePointer was 700ns
-        // per slot on 100K Array (per-call func overhead dominated).
-        // Direct write loop + one-shot remembered-set entry if needed.
-        size_t slotCount = header->slotCount();
-        Oop* slots = header->slots();
-        // Write barrier: only ONE remember-set entry needed (per-object,
-        // not per-slot).  Skip the scan since value is a single Oop —
-        // either it's young or it isn't.
-        if (memory_.isOld(rcvr) && value.isObject() && memory_.isYoung(value)
-            && slotCount > 0) {
-            // Trigger barrier via one storePointer (slot 0), then bulk
-            // write the rest.
-            memory_.storePointer(0, rcvr, value);
-            for (size_t i = 1; i < slotCount; i++) slots[i] = value;
-        } else {
-            for (size_t i = 0; i < slotCount; i++) slots[i] = value;
         }
     } else {
         return PrimitiveResult::Failure;

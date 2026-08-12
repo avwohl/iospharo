@@ -4524,10 +4524,22 @@ void ObjectMemory::updatePointersAfterCompact() {
             (void)label;  // suppress unused warning
             newSpaceUpdated += updatedCount;
         };
-        // Scan eden (edenStart_ to edenFree_)
+        // Scan eden (edenStart_ to edenFree_) — edenFree_ is the live
+        // watermark, so this walks only objects that were actually allocated.
         scanNewSpaceRegion(edenAllocBase_, edenFree_, "eden");
-        // Scan survivor space (survivorStart_ to newSpaceEnd_)
-        scanNewSpaceRegion(survivorStart_, newSpaceEnd_, "survivor");
+        // NO survivor scan.  `[survivorStart_, newSpaceEnd_)` has no
+        // allocations at all: this VM's scavenge TENURES every reachable
+        // young object straight to old space (see ObjectMemory::scavenge)
+        // and resets eden — nothing is ever copied into survivor space, and
+        // no code writes there (grep survivorStart_: it is only ever read as
+        // the eden limit).  Walking it to `newSpaceEnd_` therefore parsed
+        // never-initialised pages as object headers, relying on the
+        // implausible-totalSize guard to stop, and printed
+        // "[NS-SCAN-TERM] survivor ... region walk stopped" — a warning about
+        // young objects losing old-space updates when there are no young
+        // objects there to lose them.  If a copying survivor is ever
+        // implemented, restore the scan with that collector's live
+        // watermark as the end bound, never newSpaceEnd_.
         (void)newSpaceUpdated;  // suppress unused warning
     }
 
