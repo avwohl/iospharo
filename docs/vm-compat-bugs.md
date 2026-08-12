@@ -86,10 +86,28 @@ write-through (`PHARO_NO_CTX_STACKP_RAISE=1` — 12 errors), the Context GC
 trace bound (`PHARO_CTX_TRACE_ALL_SLOTS=1` — 12 errors), the return-value
 placement gap, the ctxSynced skip, preemption frequency.
 
-REMAINING: the suite-level payoff (93 of 102 ERRORs in the last full ARM
-suite were this defect) still needs a full-suite A/B to confirm.  Do NOT
-read the raw error count as a trend — `UITheme>>formSetsForScale:` is
-`at:ifAbsentPut:`, so the count is bimodal (1 or ~100) for a fixed defect.
+SUITE-LEVEL CONFIRMATION (macOS-arm64, in flight at 1508/2052 classes,
+22297 P / 0 F / 2 E):
+
+    ClyBrowserToolValidityTest    25 P / 0 F / 0 E   (baseline: 25 ERRORs)
+    ClyNotebookPageRecyclerTest    8 P / 0 F / 0 E   (baseline:  8 ERRORs)
+
+Those 33 are the exact errors section 10 of the 2026-08-11 write-up
+attributed to this defect (`MessageNotUnderstood: SmallInteger >>
+#pixelAt:`), and they are gone.  The two remaining errors are both
+accounted for: `OCClassBuilderTest` is the stock-Cog-identical upstream
+image bug (`docs/image_issues.md:184`), and `FTTableMorphTest>>
+testCanAlternateRowColors` PASSES on our VM when run through the same
+startup.st path the suite uses — it is suite-context GUI state, not a VM
+defect (and NOT the `eval`-mode result, which is contaminated: our
+generated startup.st suspends every Morphic process, so any test that
+needs a redraw fails under `eval` on our VM and passes on Cog for reasons
+that have nothing to do with the VM.  Compare the SAME isolation on both
+VMs — the lesson already recorded further down this file).
+
+Do NOT read the raw error count as a trend — `UITheme>>formSetsForScale:`
+is `at:ifAbsentPut:`, so the count is bimodal (1 or ~100) for a fixed
+defect.
 
 ### 2. 13 packages our VM cannot run at all, where Cog can — HIGH
 
