@@ -340,11 +340,19 @@ over.
 
 Two concrete leads in `ImageLoader::relocatePointers`, both visible on reading:
 
-  1. `slotCount` is silently CLAMPED to `maxSlots = (size - headerSize) / 8`.
-     If an object's computed size is short, its trailing slots are never
-     relocated and keep saved-image addresses — exactly this symptom. The clamp
-     is silent; make it report, then check whether the ProcessorScheduler (or
-     whatever holds the active process) is being clamped for this image.
+  1. ~~`slotCount` silently CLAMPED~~ **RULED OUT 2026-08-12.** The clamp now
+     reports (`[IMGLOAD-CLAMP]`, kept — silent truncation of relocation is worth
+     hearing about in general) and it does **not fire at all** for this image.
+     Nothing is being truncated, so that is not the source.
+
+     What that leaves is sharper: `activeProcess` sits in slot 1 of a
+     `processScheduler` object that the guard confirms is VALID and relocated,
+     and its raw value `0x10008f709a8` has tag 0 and lies squarely inside the
+     `[0x10000000000, 0x20000000000)` window `relocatePointer` exists to fix.
+     So either `relocatePointer` declined a value it should have taken, or the
+     slot was written AFTER relocation with a stale address. Check
+     `relocatePointer`'s range/tag test against this exact value first — it is
+     a two-line question.
   2. `hasPointers = (format <= 5) || (format == 9)`. Format 9 is a 64-bit
      WORD array that is relocated as pointers because `hiddenRoots` needs it —
      a documented hack. That is fine for hiddenRoots and wrong for any genuine

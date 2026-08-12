@@ -189,6 +189,18 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
         }
         size_t maxSlots = (size - headerSize) / 8;
         if (slotCount > maxSlots) {
+            // SILENT TRUNCATION: the trailing slots are then never relocated and
+            // keep SAVED-IMAGE addresses.  That is exactly how an image ends up
+            // with an unrelocated activeProcess (docs/vm-compat-bugs.md #4), and
+            // the clamp said nothing about it.  Report it.
+            static int clampN = 0;
+            if (++clampN <= 20) {
+                fprintf(stderr,
+                    "[IMGLOAD-CLAMP] obj=0x%llx format=%u slotCount=%zu > maxSlots=%zu"
+                    " (size=%zu) — %zu trailing slots NOT relocated\n",
+                    (unsigned long long)(uintptr_t)headerPtr, (unsigned)format,
+                    slotCount, maxSlots, size, slotCount - maxSlots);
+            }
             slotCount = maxSlots;
         }
 
