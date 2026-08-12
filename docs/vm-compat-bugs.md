@@ -356,6 +356,12 @@ specific; the no-op is real but is not the discriminator. Look at the startup
 sequence after resume: whether `StartupPreferencesLoader` runs, and whether the
 command-line handler is re-dispatched.
 
+RULED OUT (2026-08-12): the two images do not differ in startup registration.
+Inspected under stock Cog, `SessionManager default startupList` is the same set
+of `ClassSessionHandler`s in both, `StartupPreferencesLoader` is present in
+both, and both resolve the same preferences folder. So the frozen image is not
+missing a startup handler — do not look there.
+
 IMPORTANT NEGATIVE: not every Cog-saved image freezes — `/tmp/porp/Pharo.image`
 is also `eval --save`-produced and our VM runs its suite fine (14/14). So the
 trigger is narrower than "was saved from an eval"; find what distinguishes the
