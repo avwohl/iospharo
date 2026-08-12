@@ -141,6 +141,18 @@ NEXT:
      it. If it is not, that is the defect, and the fix is to re-materialize the
      sender (or to place the return value into the LIVE frame instead of
      rebuilding from a stale context).
+  RULED OUT 2026-08-12 (measured, then reverted): the return-value PLACEMENT
+  gap.  `returnValue`'s fd==0 branch writes at `framePointer_[1 + origSp]`
+  where origSp is the sender CONTEXT's stackp read before the restore, then
+  raises stackPointer_ past it — so when 1+origSp exceeds the restored frame's
+  top it leaves a stale slot INSIDE the live operand stack.  That really
+  happens: `PHARO_SP_DEPTH_TRAP=1` shows 24,927 of 935,862 returns with
+  delta=+1 for this method.  Clamping the placement to the top (never leave a
+  gap) changed the error count not at all — 12 before and after, three runs —
+  so the gap is real but benign, and the patch was reverted rather than left in
+  as an unvalidated change to return-value placement.  Note `PHARO_SP_DEPTH_TRAP`
+  is the right tool here and already ships.
+
   3. A deterministic 4-minute repro (`scripts/repro/warpblt_temp_displacement.st`
      under `PHARO_DET_SCHED=1`, 12 errors) and a full-suite A/B are both already
      in place to validate a fix.
