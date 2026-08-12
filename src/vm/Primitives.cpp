@@ -13,6 +13,7 @@
  * See THIRD_PARTY_LICENSES for upstream license details.
  */
 
+#include <csignal>
 #include "Interpreter.hpp"
 #include "jit/SistaV1.hpp"   // bytecodeLength for primitiveScanForByte
 #include "DebugVars.hpp"
@@ -18485,6 +18486,76 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
 // semaphoreIndex primitiveInputSemaphore2 -> receiver
 // Sets the semaphore to signal when input is available
 // NOTE: In some images, this is a unary message where the receiver is the semaphore index
+// ===== UnixOSProcessPlugin: signal forwarding =====
+//
+// OSSubprocess registers `OSSVMProcess>>initializeChildWatcher` as a SESSION
+// STARTUP handler, and that handler does:
+//
+//     self sigChldSemaphore waitTimeoutMilliseconds: 1000
+//
+// where `sigChldSemaphore` is `self systemAccessor forwardSigChld`, which is
+// documented to answer "a new Semaphore, or nil if unable to set the handler".
+// Without this plugin `primSigChldNumber` fails to nil, `forwardSignal:` then
+// answers nil, and the image sends #waitTimeoutMilliseconds: TO NIL.  The
+// resulting DNU kills the startup process, so StartupPreferencesLoader never
+// runs — which is why every image with OSSubprocess loaded looked like it
+// "froze" and returned a stale eval result (docs/vm-compat-bugs.md #5/#2a:
+// eight packages, ~6000 tests that stock Cog runs and we reported nothing for).
+//
+// Delivery uses the existing MPSC ring: the handler is async-signal-safe (it
+// only touches sig_atomic_t and signalExternalSemaphore's atomics) and the VM
+// thread drains it in processPendingSignals().
+namespace {
+constexpr int kMaxForwardedSignal = 64;
+Interpreter* gSigForwardInterp = nullptr;
+volatile sig_atomic_t gSigSemaIndex[kMaxForwardedSignal] = {0};
+
+void pharoForwardedSignalHandler(int sig) {
+    if (sig < 0 || sig >= kMaxForwardedSignal) return;
+    int idx = (int)gSigSemaIndex[sig];
+    if (idx > 0 && gSigForwardInterp) gSigForwardInterp->signalExternalSemaphore(idx);
+}
+}  // namespace
+
+// primitiveSigChldNumber — answer the platform's SIGCHLD number.
+PrimitiveResult Interpreter::primitiveSigChldNumber(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    popN(1);
+    push(Oop::fromSmallInteger(SIGCHLD));
+    return PrimitiveResult::Success;
+}
+
+// primitiveForwardSignalToSemaphore — install a handler for `signalNumber`
+// that signals the external semaphore registered at `semaIndex`.
+// Answers the index (non-nil) so `forwardSignal:` returns its Semaphore.
+PrimitiveResult Interpreter::primitiveForwardSignalToSemaphore(int argCount) {
+    if (argCount != 2) return PrimitiveResult::Failure;
+    Oop semaIndexOop = stackTop();
+    Oop signalOop = stackValue(1);
+    if (!semaIndexOop.isSmallInteger() || !signalOop.isSmallInteger())
+        return PrimitiveResult::Failure;
+    int64_t sig = signalOop.asSmallInteger();
+    int64_t idx = semaIndexOop.asSmallInteger();
+    if (sig <= 0 || sig >= kMaxForwardedSignal || idx <= 0)
+        return PrimitiveResult::Failure;
+
+    gSigForwardInterp = this;
+    gSigSemaIndex[sig] = (sig_atomic_t)idx;
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = pharoForwardedSignalHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;   // never interrupt our own syscalls
+    if (sigaction((int)sig, &sa, nullptr) != 0) {
+        gSigSemaIndex[sig] = 0;
+        return PrimitiveResult::Failure;   // image maps this to nil, as documented
+    }
+    popN(static_cast<size_t>(argCount + 1));
+    push(semaIndexOop);
+    return PrimitiveResult::Success;
+}
+
 PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
     Oop semIndexOop;
     if (argCount == 0) {

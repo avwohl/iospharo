@@ -2718,7 +2718,9 @@ private:
 
     // Event/input primitives (264-269)
     PrimitiveResult primitiveGetNextEvent(int argCount);           // 264
-    PrimitiveResult primitiveInputSemaphore2(int argCount);        // 265
+    PrimitiveResult primitiveInputSemaphore2(int argCount);
+    PrimitiveResult primitiveSigChldNumber(int argCount);
+    PrimitiveResult primitiveForwardSignalToSemaphore(int argCount);        // 265
     PrimitiveResult primitiveEventProcessingControl(int argCount); // 266
     PrimitiveResult primitiveSampledSound(int argCount);           // 267
     PrimitiveResult primitiveMixedSound(int argCount);             // 268

@@ -21111,6 +21111,11 @@ void Interpreter::initializeNamedPrimitives() {
     // These can be called via <primitive: 'name' module: 'iOSPlugin'>
 
     // Event primitives - register under all module names the image might use
+    // UnixOSProcessPlugin — OSSubprocess's startup handler needs these, and
+    // without them it sends #waitTimeoutMilliseconds: to nil and kills the
+    // image's startup sequence (docs/vm-compat-bugs.md #5/#2a).
+    registerNamedPrimitive("UnixOSProcessPlugin", "primitiveSigChldNumber", &Interpreter::primitiveSigChldNumber);
+    registerNamedPrimitive("UnixOSProcessPlugin", "primitiveForwardSignalToSemaphore", &Interpreter::primitiveForwardSignalToSemaphore);
     registerNamedPrimitive("iOSPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
     registerNamedPrimitive("iOSPlugin", "primitiveInputSemaphore", &Interpreter::primitiveInputSemaphore2);
     registerNamedPrimitive("SecurityPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
