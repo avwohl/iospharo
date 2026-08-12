@@ -298,15 +298,29 @@ Deterministic; identical across three sweeps and both arches. `PHARO_NO_JIT=1`
 exits 0, so the JIT is required. Happens after `CLASSES 89` with no `RESULT` —
 the VM leaves the suite early, then frees a corrupt pointer. Cog: pass=336 err=1.
 
-### 4. `fedeloch-ume` — superseded by #2a
+### 4. `fedeloch-ume` — SIGSEGV inside `Interpreter::initialize` — HIGH
 
-Originally filed as "SIGSEGV before the runner starts, in every configuration".
-Re-measured 2026-08-12 on a freshly loaded image: it does not segfault there, it
-fails to BOOT — `[RESUME] Initial context: method=#? pc=nil` then
-`Interpreter initialization failed`. Same family as the other six in #2a.
-The earlier SIGSEGV was on a differently-loaded image and is worth keeping in
-mind as a second symptom of the same startup problem, but the reproducible
-handle is #2a.
+**Un-superseded 2026-08-12.** I folded this into #2a; that was wrong. Measured
+on a freshly loaded image with the UnixOSProcessPlugin fix in place, it crashes
+before the VM reaches the resume path at all:
+
+    [CRASH] Instructions at PC: ... >>>0xf94001ae ...
+    0  sigsegvAction
+    1  libsystem_platform.dylib _sigtramp
+    2  pharo::Interpreter::initialize + 1592
+    3  main
+
+So: not the OSSubprocess startup handler (the fix is in and it still crashes),
+not the snapshot resume (no `[RESUME]` line is ever printed), and not the JIT
+(reproduced with `PHARO_NO_JIT=1` on 2026-08-11). A hard crash in VM
+initialisation on an image stock Cog runs to `RESULT pass=11`.
+
+This is the cheapest crash in the file to chase: it dies in under a second, in
+one function, with a backtrace. `Interpreter::initialize + 1592` under lldb
+with the ume image is the whole investigation.
+
+Repro: load `Metacello ... baseline: 'Ume'` per `packages-200.tsv`, then start
+our VM on the image.
 
 ### 5. Startup dies on a nil Delay semaphore; the "frozen eval" is a SYMPTOM — CONFIRMED — HIGH
 
