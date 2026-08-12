@@ -216,81 +216,61 @@ Deterministic; identical across three sweeps and both arches. `PHARO_NO_JIT=1`
 exits 0, so the JIT is required. Happens after `CLASSES 89` with no `RESULT` —
 the VM leaves the suite early, then frees a corrupt pointer. Cog: pass=336 err=1.
 
-### 4. `fedeloch-ume` — SIGSEGV inside `Interpreter::initialize` — HIGH
+### 4. `fedeloch-ume` — ROOT-CAUSED 2026-08-12: the image is MULTI-SEGMENT — HIGH
 
-**Un-superseded 2026-08-12.** I folded this into #2a; that was wrong. Measured
-on a freshly loaded image with the UnixOSProcessPlugin fix in place, it crashes
-before the VM reaches the resume path at all:
+    firstSegmentBytes = 75,825,152   of   imageBytes = 149,692,728
 
-    [CRASH] Instructions at PC: ... >>>0xf94001ae ...
-    0  sigsegvAction
-    1  libsystem_platform.dylib _sigtramp
-    2  pharo::Interpreter::initialize + 1592
-    3  main
+**`37eeb743` was right and `38e3c050` retracted it wrongly.**  The retraction
+argued the file is exactly `headerSize + imageBytes` with zero bytes past the
+declared data, so there is no second segment.  That test does not disprove
+segments: Spur writes the heap as one or more segments INSIDE `imageBytes`,
+each but the last terminated by a bridge (a double-word free chunk whose slot
+count spans the gap to the next segment).  The field that answers it is
+`firstSegmentBytes`, and on a freshly loaded Ume image half the heap is in a
+second segment.
 
-So: not the OSSubprocess startup handler (the fix is in and it still crashes),
-not the snapshot resume (no `[RESUME]` line is ever printed), and not the JIT
-(reproduced with `PHARO_NO_JIT=1` on 2026-08-11). A hard crash in VM
-initialisation on an image stock Cog runs to `RESULT pass=11`.
+Full chain, every step measured (`Metacello ... baseline: 'Ume'`, loaded
+locally, 142 MB image):
 
-**ROOT CAUSE FOUND 2026-08-12.** A guard added to the scheduler walk names the
-broken link instead of segfaulting on it:
+    firstSegmentBytes < imageBytes        segments exist
+    forEachObject mis-parses at a bridge  [IMGLOAD-WALK-MISALIGN] at +0x584fcc0;
+                                          words 0xff00000000000066 / 0xfffc30 /
+                                          0xff000000000078cf — two 0xFF-marked
+                                          words 16 bytes apart at a delta-0
+                                          object boundary, i.e. a bridge
+    the walk stops there                  [IMGLOAD-WALK-TRUNC] 38.14% of the
+                                          image never relocated (was a bare
+                                          `break`)
+    those objects keep saved addresses    [WEAK-BAD-REF] WeakValueAssociation
+                                          slot 1 = 0x10000000000
+    the GC dereferences one               SIGSEGV in markPhase — lldb:
+                                          `ldrb w8, [x24, #6]`, x24 = the old
+                                          image base, MarkedBit is bit 55
 
-    [STARTUP] scheduler chain broken at 'activeProcess' (oop=0x10008f709a8)
+Two things fixed on the way, both independent of segment support:
 
-`0x10008f709a8` lies in `[0x10000000000, 0x20000000000)` — the UNRELOCATED
-POINTER window that `Interpreter::initialize` already documents and checks for
-*one link later*, on `suspendedContext` ("If the ImageLoader failed to relocate
-the suspendedContext it would be left at the SAVED image base"). The same
-ImageLoader miss hits `activeProcess`, where nothing was checking, so it
-dereferenced a saved-image address and died.
+  * `processWeaklings` dereferenced weak referents and ephemeron keys without
+    the bounds check `markAndTrace` already applies, so ONE bad slot killed
+    the VM.  Now goes through `ObjectMemory::isReadableHeapObject` (same bound,
+    one name) and nils + reports instead (`3c772997`, `248ceff8`).
+  * `loadHeapData` REFUSES a multi-segment image with a named error rather
+    than relocating half a heap and handing the GC a live mine (`73565806`).
+    Single-segment images are unaffected — control verified.
 
-So #4 is an **ImageLoader relocation bug**, same family as the documented
-suspendedContext case — not a startup-handler, snapshot or JIT problem.
+Also settled by measurement, which the previous session flagged as unchecked:
+**the `[IMGLOAD-DECLINE]` lines are false positives.**  New per-format
+attribution (`[IMGLOAD-DECLINE-BY-FORMAT]`): of 49,831 declined old-base
+pointers on this image, all 49,831 are in **format 9** and ZERO in pointer
+formats 0-5.  Format 9 is a 64-bit WORD array that `hasPointers` includes for
+hiddenRoots' sake, so those are numeric data misread as pointers — lead 2,
+confirmed.  `[IMGLOAD-CLAMP]` does not fire on this image either.
 
-The crash is now a loud, named diagnostic rather than a SIGSEGV, and the VM
-declines to resume instead of dereferencing garbage. The package still does not
-RUN (initialize answers false), so #4 stays OPEN — but it is no longer a crash
-and the remaining work is narrow: find why the ImageLoader leaves the active
-process's oop unrelocated for this image, and relocate it. Start from the
-existing suspendedContext check, which is the same bug already handled one slot
-over.
-
-Two concrete leads in `ImageLoader::relocatePointers`, both visible on reading:
-
-  1. ~~`slotCount` silently CLAMPED~~ **RULED OUT 2026-08-12.** The clamp now
-     reports (`[IMGLOAD-CLAMP]`, kept — silent truncation of relocation is worth
-     hearing about in general) and it does **not fire at all** for this image.
-     Nothing is being truncated, so that is not the source.
-
-  **RETRACTED: it is NOT multi-segment.** I committed that root cause and it is
-     wrong. The image file is exactly `headerSize + imageBytes` with **zero
-     bytes past the declared data** (measured: file=0x8f3ee58,
-     header+data=0x8f3ee58). There is no second segment to load.
-
-     What the `[IMGLOAD-DECLINE]` diagnostic actually shows is values ~226 KB
-     past the END of the image data being declined by `relocatePointer`. Those
-     cannot be real object pointers — nothing lives there. The likely
-     explanation is lead 2 below: `hasPointers` includes **format 9**, a 64-bit
-     WORD array relocated as if it held pointers, so ordinary numeric data that
-     happens to look like a tag-0 address in the old-base window gets fed to
-     `relocatePointer` and declined. Those decline lines are probably false
-     positives.
-
-     ALSO NOT CONFIRMED: I never checked that the failing `activeProcess` value
-     (`0x10008f709a8`) is among the declined ones — the addresses printed
-     (`0x10008f76328`, …) are different. Establish that link first; the whole
-     ImageLoader theory rests on it and it is one grep of the decline output for
-     that specific oop.
-
-  2. `hasPointers = (format <= 5) || (format == 9)`. Format 9 is a 64-bit
-     WORD array that is relocated as pointers because `hiddenRoots` needs it —
-     a documented hack. That is fine for hiddenRoots and wrong for any genuine
-     64-bit word array, which would get its contents mangled rather than left
-     alone. Worth confirming it is not implicated here before assuming (1).
-
-Repro: load `Metacello ... baseline: 'Ume'` per `packages-200.tsv`, then start
-our VM on the image.
+STILL OPEN — real multi-segment support.  Two parts, written down so they are
+not re-derived: walk the bridges, and relocate **per segment**, because each
+segment carries its own saved start address and the single
+`newBase - oldBase` delta this loader applies is only correct for the first.
+The lead-2 hazard is also still open in its own right: format-9 data that
+lands INSIDE the old-base window is silently RELOCATED, i.e. mangled.
 
 ### 5. Startup dies on a nil Delay semaphore; the "frozen eval" is a SYMPTOM — CONFIRMED — HIGH
 
