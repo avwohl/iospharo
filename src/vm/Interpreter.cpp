@@ -15054,6 +15054,53 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
     }
 
+    // DIAG (PHARO_TRACE_DNU_STACK=<selector substring>): dump the LIVE frame's
+    // operand stack at a DNU.  The image cannot answer this question — walking
+    // ex signalerContext and reading `ctx at:` gives the MATERIALIZED context,
+    // and for the WarpBlt displacement that snapshot disagrees with the frame
+    // (the context shows 34 SmallIntegers where the send actually received a
+    // BitBlt).  Only the VM can see what the send really popped.
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_DNU_STACK) != nullptr, 0)) {
+        std::string sel;
+        if (selector.isObject() && selector.rawBits() > 0x10000
+                && memory_.isValidPointer(selector)) {
+            size_t sn = memory_.byteSizeOf(selector);
+            for (size_t i = 0; i < sn && i < 40; i++)
+                sel += (char)memory_.fetchByte(i, selector);
+        }
+        if (!sel.empty()
+                && sel.find(GET_DEBUG_STR(PHARO_TRACE_DNU_STACK)) != std::string::npos) {
+            static int dn = 0;
+            if (dn++ < 12) {
+                Oop rcv = stackValue(argCount);
+                const std::string mSel = method_.isObject()
+                    ? memory_.selectorOf(method_) : std::string("?");
+                ptrdiff_t ipOff = -1;
+                if (method_.isObject() && instructionPointer_) {
+                    uint8_t* mb = method_.asObjectPtr()->bytes();
+                    ipOff = instructionPointer_ - mb;
+                }
+                fprintf(stderr,
+                    "[DNU-STACK] #%s in #%s ip=%td argCount=%d fd=%zu rcv=%s\n",
+                    sel.c_str(), mSel.c_str(), ipOff, argCount, frameDepth_,
+                    memory_.classNameOf(rcv).c_str());
+                // framePointer_[0] is the receiver slot; [1..] temps then operands.
+                Oop* lo = framePointer_;
+                Oop* rcvSlot = stackPointer_ - 1 - argCount;
+                for (Oop* p = lo; p < stackPointer_; ++p) {
+                    ptrdiff_t i = p - lo;
+                    const char* mark = (p == rcvSlot) ? " <== receiver" : "";
+                    fprintf(stderr, "[DNU-STACK]   fp+%-3td %s%s\n", i,
+                            p->isNil() ? "nil"
+                              : p->isSmallInteger() ? "SmallInteger"
+                              : (p->isObject() && p->rawBits() > 0x10000)
+                                  ? memory_.classNameOf(*p).c_str() : "imm",
+                            mark);
+                }
+            }
+        }
+    }
+
     // DIAG (PHARO_TRACE_WEDGE_NIL): the full-suite wedge is a T1 miscompute that
     // produces a NIL where an object should be, surfacing as a DNU on nil. When a
     // DNU's receiver is nil, dump the REAL Smalltalk context chain (activeContext_
@@ -19107,6 +19154,14 @@ Oop Interpreter::materializeFrameStack() {
         // Set stackp to actual number of items saved, clearing anything a
         // deeper earlier sync of this same (reused) context left above it.
         storeContextStackp(context, savedCount);
+        // DIAG: pair with [MAT-RESTORE] to see save/restore depth diverge.
+        if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
+                && frame.savedMethod.isObject()) {
+            std::string ms = memory_.selectorOf(frame.savedMethod);
+            if (ms.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)) != std::string::npos)
+                fprintf(stderr, "[MAT-SAVE] #%s numTemps=%d saved=%d (expr=%d)\n",
+                        ms.c_str(), numTemps, savedCount, savedCount - numTemps);
+        }
         frame.ctxSynced = true;  // snapshot now exact for this suspension
 
         // This context becomes the sender for the next frame
@@ -19214,6 +19269,13 @@ Oop Interpreter::materializeFrameStack() {
                 // Set stackp to actual number of items saved, clearing anything
                 // a deeper earlier sync of this reused context left above it.
                 storeContextStackp(context, savedCount);
+                if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
+                        && method_.isObject()) {
+                    std::string cs = memory_.selectorOf(method_);
+                    if (cs.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)) != std::string::npos)
+                        fprintf(stderr, "[MAT-SAVE-CUR] #%s numTemps=%d saved=%d (expr=%d)\n",
+                                cs.c_str(), numTemps, savedCount, savedCount - numTemps);
+                }
 
                 // REVERSE-EXEC TAPE: record asTuple save (fp1 = operand-0 captured).
                 if (__builtin_expect(g_atRecOn, 0) && g_atOop != 0
@@ -20767,6 +20829,14 @@ bool Interpreter::executeFromContext(Oop context) {
     {
         // First, push the saved items from the context
         int numSaved = (stackp > 0 && stackp < 1000) ? stackp : 0;
+        if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
+                && method_.isObject()) {
+            std::string rs = memory_.selectorOf(method_);
+            if (rs.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)) != std::string::npos)
+                fprintf(stderr, "[MAT-RESTORE] #%s stackp=%lld numTemps=%d push=%d (expr=%d)\n",
+                        rs.c_str(), (long long)stackp, numTemps, numSaved,
+                        numSaved - numTemps);
+        }
         for (int i = 0; i < numSaved; i++) {
             Oop item = memory_.fetchPointer(ContextFixedFields + i, context);
             push(item);

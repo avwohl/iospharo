@@ -40,6 +40,52 @@ expression evaluates against the wrong value. Impossible receivers result:
             nothing and retries forever, so the suite-level count is bimodal
             (1 or ~100) for a FIXED defect.  Do not read that count as a trend.
 
+#### Root-cause progress 2026-08-12: restores trust a stackp no save ever wrote
+
+Measured with paired instrumentation on the two materialize sites and on
+`executeFromContext` (`PHARO_TRACE_FRAME_TEMPS=warpBitsSmoothing`, one probe run):
+
+    [MAT-SAVE-CUR]        432 times   always expr=1     (current-frame save)
+    [MAT-SAVE]              4 times   always expr=0     (saved-frame loop)
+    [MAT-RESTORE]   1,528,392 times   expr = 2,4,8,9,10,11 ...
+
+Two facts, both new:
+
+  1. **Restores outnumber saves ~3500:1.** Every process resume rebuilds this
+     frame from its context; the frame is almost never written back.
+  2. **No save ever records an expression depth above 1, yet restores push
+     depths up to 11+.**  `executeFromContext` pushes exactly `stackp` slots
+     (`Interpreter.cpp`, `int numSaved = (stackp > 0 && stackp < 1000) ? stackp : 0`),
+     so it is trusting a stackp that the save path never produced — pushing
+     slots that were never stored and reading whatever those context slots
+     happen to hold as operands.  That is the displacement, mechanically: temps
+     (written and re-synced separately) stay correct while the expression stack
+     is fabricated.
+
+NEXT: find who raises stackp between save and restore.  Known writers, none of
+which pairs with a save: `raiseContextStackpTo` (added 2026-08-11, and NOT the
+cause — the bug predates it and `PHARO_NO_CTX_STACKP_RAISE=1` is byte-identical),
+`prepareForGC`'s temp sync (raises to numTemps only), `primitiveSetStackPointer`,
+`primitiveContextAtPut`, and the `frame[0]==activeContext_` re-sync.  Instrument
+every write to context slot 2 for this selector and the culprit falls out.
+
+Also ruled out on the way, each with a measurement:
+
+    single process, no yields      240 calls / 0 errors on BOTH VMs
+                                   -> concurrency is REQUIRED
+    PHARO_DET_SCHED_QUANTUM 1/2/4/8  12 errors at every quantum
+                                   -> NOT preemption-frequency driven (the
+                                      probe's explicit Processor yield dominates)
+    PHARO_MAT_FULL_RESYNC=1        12 errors -> the ctxSynced incremental skip
+                                      is NOT the cause
+    PHARO_NO_JIT=1                 reproduces -> interpreter-side
+
+The image cannot see any of this: reading `ex signalerContext` and `ctx at:`
+after the fact shows the MATERIALIZED context, which reports all 34 expression
+slots as SmallInteger while the live frame's failing send actually received a
+BitBlt.  `PHARO_TRACE_DNU_STACK=<selector>` (new) dumps the live frame at a DNU
+and is what exposed the disagreement.
+
 **This is the same defect as the 2026-07-07 "PREEMPTION/MATERIALIZATION"
 entry** (now `docs/history/heisenbug-dossiers-2026-07.md`), which was left open
 with a next step nobody ran — and cost a full day of re-derivation on
