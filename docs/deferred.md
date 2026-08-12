@@ -4,144 +4,83 @@ Consolidated list of things that are NOT at full parity with the other
 platforms (macOS / Linux), including deferred features, workarounds, honest
 platform stubs, and known gaps. Updated as the Windows port progresses.
 
-## OPEN: the LD_LIBRARY_PATH fix exposed libfreetype and broke ~100 GUI tests (2026-08-11)
+## OPEN: WarpBlt temp displacement — the ~100 GUI ERRORs (2026-08-11)
 
-**Cause found; the trade-off is not yet decided.**  `4a46413f`/`919904cd` set
-`LD_LIBRARY_PATH` so the image can find `libsqlite3.so.0` (that was the point —
-it fixed `pharo-rdbms-pharo-sqlite3` from err=111 to err=0).  It also makes
-**libfreetype** findable, and that is what breaks the GUI tests.  Measured on
-the box, same image, same VM, one env var apart:
+**My first three readings of this were wrong. The corrected one:**
 
-    library            with the fix                             without (PHARO_NO_PLATFORM_LIB_PATH=1)
-    libfreetype.so.6   /lib/aarch64-linux-gnu/libfreetype.so.6  NOT FOUND
-    libsqlite3.so.0    /lib/aarch64-linux-gnu/libsqlite3.so.0   NOT FOUND
-    libcairo.so.2      found in the image dir                   same
-    libSDL2-2.0.so.0   found in the image dir                   same
+`pixelAt:` is **not** a Form/Bitmap message — in Pharo 13 it is `BitBlt>>pixelAt:`.
+So `Array >> #pixelAt:` does not mean "a Form's bits is an Array"; it means a
+variable that should hold a BitBlt holds an Array. Every reported receiver
+across the whole family — `Array`/`SmallInteger` `pixelAt:`, `BitBlt`
+`adaptToNumber:andSend:`, `Point` `quo:` — is a **sibling temp of one
+activation**, `WarpBlt>>warpBitsSmoothing:sourceMap:`, whose temps are in order:
 
-FreeType is the ONLY graphics library whose availability changed, and font
-rendering is the right neighbourhood for the failing family (glyph Forms and
-BitBlt, in tree presenters and browser tools that draw labels).  Note
-`src/vm/FFI.cpp` deliberately does NOT register FreeType stubs at init (unlike
-SDL2, which is stubbed and wins over any real library), so nothing shields the
-image from the real thing.
+    n(SmallInt) sourceMap deltaP12 deltaP43 pA pB deltaPAB sp(Points)
+    fixedPtOne(SmallInt) picker poker(BitBlt) pix(Array) nSteps(SmallInt)
 
-**But FreeType is a CANDIDATE, not a demonstrated mechanism.**  Probed
-directly in a fresh image, with and without the env var: `StandardFonts
-defaultFont` is a `LogicalFont` either way, and a glyph `Form`'s bits is a
-`Bitmap` either way — the simple font path does not diverge.  Whatever goes
-wrong needs the full-suite context, as the failures themselves do.
+`picker` comes from `BitBlt class>>bitPeekerFromForm:` and can only ever answer
+a BitBlt, so no image state can produce these receivers. This is **temp/operand
+slot displacement in a single frame**, not display state.
 
-WHY THE ENV CHANGE IS NONETHELESS THE CAUSE (the argument that does hold):
-macOS shows NO delta between the pre-fix build and HEAD — 25 Cly errors on
-both.  Linux shows 1 -> 102.  The GC commits (`da9159e9`, `d209543d`,
-`89942e89`) are platform-neutral and would move both platforms; only the
-Linux-only FFI commits can produce a Linux-only delta.
+### Why the 1 -> 102 count is not evidence of a regression
 
-CONFIRMED SO FAR, on Linux-aarch64 full suites, same image and prep:
-    morning (pre-fix VM)     1 ERROR
-    evening HEAD           102 ERROR
-    evening 361bf92b build   1 ERROR   <- ClyBrowserToolValidityTest 24 P / 1 E,
-                                          ClyNotebookPageRecyclerTest 8 P / 0 E
-A full suite with `PHARO_NO_PLATFORM_LIB_PATH=1` is queued to close the loop
-end-to-end.
+`primitiveWarpBits` bails for `n < 1 || n > 4` (`src/vm/Primitives.cpp:21892`)
+and for any non-32-bit source or dest. `UITheme>>newTreeForm:size:color:` does
+`magnifyBy: 1/13 smoothing: 13`, so on our VM the image drops into the ~60-line
+Smalltalk `WarpBlt` fallback that stock Cog never executes (Cog's
+BitBltSimulation has no such cap). And `UITheme>>formSetsForScale:` is
+`at: scale ifAbsentPut: [...]` — a failed computation caches NOTHING, so every
+later tree-cell test retries and fails again, while a single success warms the
+cache forever.
 
-macOS is a SEPARATE and pre-existing problem: a 361bf92b build there shows the
-same 25 `ClyBrowserToolValidityTest` errors, and the Linux-only FFI commits
-cannot explain that.  macOS has never had a baseline for these classes.
+That is a **bimodal 1-vs-102 outcome from a fixed defect**. So the
+morning(1) / evening(102) / Linux-prefix(1) / macOS-prefix(25) numbers I was
+comparing do not support the conclusion I drew from them, and
+**"the regression is in this session's commits" is WITHDRAWN.**
 
-OPTIONS, none taken yet:
-  1. Register FreeType stubs the way SDL2 is stubbed, so the image cannot bind
-     the real library — keeps sqlite3 working, restores the GUI tests, but
-     hides a library the image legitimately wants.
-  2. Find out WHY real FreeType yields a bad `Form` under our VM and fix that —
-     the honest fix, and it is a capability we would want anyway.
-  3. Narrow the env change so only the directories a requested module needs get
-     added — hard to do without knowing the module in advance.
-Do not simply revert `4a46413f`: that re-breaks sqlite3 (111 errors) to fix
-~100 GUI errors, which is a lateral move, and it would also lose the parity
-argument that stock Cog's launcher sets this variable too.
+Positively: the family reproduces on a **361bf92b** build under a forcing probe
+(795 calls, 12 errors, including `SmallInteger >> #pixelAt:` and `BitBlt >> #+`),
+and `git grep raiseContextStackpTo\|storeContextStackp 361bf92b` returns
+nothing — neither GC helper exists in the build that reproduces it. It also
+reproduces under `PHARO_NO_JIT=1` and under `PHARO_CTX_TRACE_ALL_SLOTS=1`. So
+the defect is pre-existing and is neither JIT- nor trace-bound-dependent.
 
-## Original framing, kept for the evidence trail: ~100 GUI tests PASS -> ERROR (Form/BitBlt state)
+TRAP: raising the `n` cap in `primitiveWarpBits` makes all ~99 errors vanish
+and proves nothing — it just stops the image entering the fallback that exposes
+the displacement. Do not "fix" it that way.
 
-The Linux-aarch64 full run went from **1 ERROR** in the morning
-(`docs/results/arm-2026-08-11/`) to **102** in the evening, same box, same
-`x86-fullsuite.sh` prep, and the macOS-arm64 run shows the same family. It is
-one coherent family — Form/BitBlt objects holding the wrong kind of bits:
+### Ruled out
 
-    25  ClyBrowserToolValidityTest        13  Array       >> #pixelAt:
-    18  SpTreeTableAdapterMultiColumnMultiSelectionTest
-    11  SpTreePresenterExpandTest         10  BitBlt      >> #adaptToNumber:andSend:
-    10  SpTreeTableAdapterMultiColumnTest
-     8  ClyNotebookPageRecyclerTest        8  SmallInteger >> #pixelAt:
-     6  SpTreePresenterTest, SpEasyTree*   1  Point       >> #quo:
-     5  MorphTreeMorphTest
+  - Form `bits` corruption — wrong reading of the signature (above). The VM
+    never writes `bits` into an existing image Form, and `bits` = SmallInteger
+    is a *supported* SurfacePlugin handle convention.
+  - Display / `setup_fake_gui.st` — the failing path builds its own FormCanvas
+    and never touches Display; macOS fails without the fake-GUI prep and Linux
+    fails with it.
+  - Run-order pollution — morning and evening detail files list the same
+    classes in the same order with identical SKIP counts.
+  - `c1d6eef7` — both the pre- and post-commit candidate builders were
+    extracted into a standalone harness and diffed over 24 module names: **0
+    differences on the `__APPLE__` branch**, and every `FFILibrary` subclass in
+    the harness image already resolves via a name carrying `.so`/`.dylib` or an
+    absolute path, so the Linux list is unchanged for everything the suite
+    touches. SDL2 short-circuits to the built-in stub before candidates are
+    built.
 
-i.e. a `Form`'s `bits` is an Array or a SmallInteger where a `Bitmap` is
-expected. Display-object construction, not GC state.
+### Not yet done
 
-RULED OUT so far:
-  - **The GC trace bound is not it in isolation**: both classes run 33 P / 0 E
-    standalone under default AND under `PHARO_CTX_TRACE_ALL_SLOTS=1`.
-  - **The FFI/LD_LIBRARY_PATH change is not it**: that code is `#if
-    defined(__linux__)`, and the errors appear on macOS where it does not exist.
-  - **Not the fake-GUI prep**: the morning run injected `setup_fake_gui.st` and
-    passed; the macOS run did not inject it and fails; the Linux run injects it
-    and fails.
-  - Not reachable in suite batch 1-400 (10923 P / 1 E / 1 T), so whatever
-    pollutes Display runs later than that.
-
-  - **On macOS, this session's commits are not the cause.** A full macOS-arm64
-    suite on a build of **`361bf92b`** (the commit before `da9159e9` /
-    `d209543d` / `4a46413f` / `919904cd` / `89942e89` / `31aa67b3`) reproduces
-    it: `ClyBrowserToolValidityTest` 25 ERROR, same signature.
-
-    **That does NOT settle the Linux regression**, and it is important not to
-    read it as if it did: macOS has NO baseline from before today — these
-    classes have never been measured on macOS — so "macOS fails at 361bf92b"
-    is consistent with macOS having always failed. The morning-vs-evening
-    regression is a Linux fact and needs a Linux control, which is the run
-    still in flight.
-
-    The earlier `PHARO_CTX_TRACE_ALL_SLOTS=1` run pointed the same way but
-    proves less than it appears to: that knob reverts `pointerSlotsOf` only
-    and leaves `storeContextStackp` and `raiseContextStackpTo` active, and
-    raising stackp is NOT GC-only (`executeFromContext` restores exactly
-    `stackp` slots as the activation's temps, so an over-raised stackp shifts
-    the operand stack). `PHARO_NO_CTX_STACKP_RAISE=1` exists to take that
-    piece out independently.
-  - Not a FAIL-level regression: the same runs are 27647 P / 24 F on Linux and
-    27701 P / 22 F on macOS, with every FAIL in the documented residual
-    families (ReleaseTest, StDebugger/StSpotter, TKT, ZnClient) — the same
-    shape as the morning run's 19.  Only the ERROR column moved.
-
-NEXT — two candidates remain, and `361bf92b` still contains the first:
-
-  1. **`c1d6eef7`** (`ffi::moduleCandidates`, shared by `primitiveLoadModule`
-     and `tryLoadFromSearchPaths`) is INSIDE the control build, so it is not
-     excluded.  It changed which library file names get tried, on every
-     platform.  Bisect step: build `83c8ee22` (its parent) and run the full
-     suite.
-  2. **The image itself.**  `x86-fullsuite.sh` re-downloads Pharo 13 on every
-     run, so the morning and evening runs need not be the same build, and that
-     would explain a change with no VM involvement at all.  Partially checked:
-     the morning run reports `Classes: 2052` and the evening ones 2055, but
-     the actual class SETS are identical (2053 unique names each, empty diff
-     both ways), so that count is a runner artifact and NOT evidence of a
-     different image.  A real check needs the `.sources` build hash from the
-     morning box, which is gone — so the way to settle it is the stock-Cog
-     control below, not archaeology.
-
-  3. **Not a VM bug at all.**  The decisive and cheapest test: run the SAME
-     full class set on STOCK COG on tonight's image.  If Cog fails the same
-     tests, no VM is involved.  `box-cog-control.sh` (in the session
-     scratchpad) does this; `run_sunit_cog.st` takes its class list from
-     `/tmp/sunit_test_classes.txt`, so generate the full list first and give
-     the same one to both arms.
-
-The failure is display state (`Form>>bits` holding an Array/SmallInteger) and
-the affected classes open real browser tools, so an earlier GUI test leaving
-`Display` in a bad state remains at least as likely as a VM cause;
-`ReleaseTest`-style run-order pollution is a known property of this harness.
+  - **The stock-Cog control was never actually captured** — the artifacts from
+    that attempt are empty (`EXIT=1`). Run the forcing probe on stock Cog with
+    tonight's image, with the cell size forced past the `n > 4` cap so Cog also
+    takes the Smalltalk fallback. If Cog errors too, no VM is involved. THIS IS
+    THE FIRST THING TO DO.
+  - Localize the slot: in the probe's `on: Error do:` handler, walk
+    `ex signalerContext` senders to the frame whose receiver `isKindOf: WarpBlt`
+    and print `tempNames` paired with `(ctx tempAt: i) class name`. That names
+    which temp holds which wrong value, and is the real next debugging step.
+  - `PHARO_NO_CTX_STACKP_RAISE=1` against a HEAD build on the same probe —
+    expected to change nothing; a change would mean an independent second
+    mechanism.
 
 ## OPEN: `rko281-restoreforpharo` is ~50x slower than Cog on live SQLite (2026-08-11)
 
