@@ -171,7 +171,26 @@ each produces a normal RESULT.
 
     juliendelplanque-jrpc          cog  81 P    ours exits 0 after CLASSES
     punt-labs-anthropic-sdk-pharo  cog 901 P    ours exits 0 after CLASSES
-    j-brant-smacc                  cog 557 P in 30 s   ours hangs to 1800 s
+    j-brant-smacc                  cog 557 P in 30 s   FIXED — see below
+
+**`j-brant-smacc` is FIXED 2026-08-12, and it was never JIT-dependent.**  Its
+image is MULTI-SEGMENT (97.8 MB, firstSegmentBytes 74.7 MB, 4 segments), so it
+was hitting defect #4 — the loader mis-parsed at a bridge and corrupted the
+heap.  With segment support (`6edf6b33`):
+
+    RESULT pass=557 fail=0 err=8 timeout=0 classes=9
+
+i.e. **the pass count matches Cog's 557 exactly**, and the "hangs to 1800 s"
+was never a hang.  The 8 residual errors are all `SmaCCEndToEndTest` sending
+`#subclass:instanceVariableNames:classVariableNames:category:` and
+`ByteSymbol>>#asClass` — a Pharo 13 API removal, not a VM defect (Cog baseline
+re-run pending to confirm the same 8).
+
+LESSON for the rest of this list: "hangs to 1800 s" and "exits 0 after CLASSES"
+were treated as a JIT/scheduler family for months.  At least one of them was an
+IMAGE LOADER bug, and the tell was in the image header all along —
+`scripts/image-segments.py <image>` answers it in milliseconds.  **Check the
+other packages in #2a/#2b for multi-segment before assuming anything else.**
 
 `jrpc` reproduces on macOS too (`CLASSES 11` then no RESULT, exit 0, ~7 s) but
 via a DIFFERENT proximate cause — an unhandled error out of JRPC's
