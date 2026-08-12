@@ -307,7 +307,7 @@ script runs and the process dies partway through the tests.  Cog:
 pass=336 err=1.  Localize that process death next (a `[TERM-P*]` trace, or
 the runner's own error path).
 
-### 4. `fedeloch-ume` — ROOT-CAUSED 2026-08-12: the image is MULTI-SEGMENT — HIGH
+### 4. `fedeloch-ume` — LOADER FIXED 2026-08-12 (`6edf6b33`); package needs a clean retest
 
     firstSegmentBytes = 75,825,152   of   imageBytes = 149,692,728
 
@@ -344,9 +344,9 @@ Two things fixed on the way, both independent of segment support:
     the bounds check `markAndTrace` already applies, so ONE bad slot killed
     the VM.  Now goes through `ObjectMemory::isReadableHeapObject` (same bound,
     one name) and nils + reports instead (`3c772997`, `248ceff8`).
-  * `loadHeapData` REFUSES a multi-segment image with a named error rather
-    than relocating half a heap and handing the GC a live mine (`73565806`).
-    Single-segment images are unaffected — control verified.
+  * `loadHeapData` refused a multi-segment image outright (`73565806`) rather
+    than relocating half a heap.  SUPERSEDED — segments are now supported, see
+    below.
 
 BLAST RADIUS of that refusal, measured rather than asserted — every image on
 this box (34 of them, via the new `scripts/image-segments.py`, which reads the
@@ -372,12 +372,31 @@ formats 0-5.  Format 9 is a 64-bit WORD array that `hasPointers` includes for
 hiddenRoots' sake, so those are numeric data misread as pointers — lead 2,
 confirmed.  `[IMGLOAD-CLAMP]` does not fire on this image either.
 
-STILL OPEN — real multi-segment support.  Two parts, written down so they are
-not re-derived: walk the bridges, and relocate **per segment**, because each
-segment carries its own saved start address and the single
-`newBase - oldBase` delta this loader applies is only correct for the first.
-The lead-2 hazard is also still open in its own right: format-9 data that
-lands INSIDE the old-base window is silently RELOCATED, i.e. mangled.
+SEGMENT SUPPORT IS IMPLEMENTED 2026-08-12 (`6edf6b33`), from the reference VM
+(`SIR_readSegmentsFromImageFile`, cointerp-cpp.c:14984).  `readSegments()`
+walks the bridge chain, PACKS the segments — dropping each 16-byte bridge, as
+the reference does by letting the next segment overwrite it — and records a
+per-segment swizzle; `relocatePointer` finds the owning segment and applies
+its delta.  A one-segment image takes the identical old path.
+
+    before   mis-parse at a bridge, 38% of the heap unrelocated, SIGSEGV in markPhase
+    after    [IMGLOAD-MULTISEG] 6 segments; packed 149692632 from 149692728
+             zero WALK-TRUNC / WALK-MISALIGN / WEAK-BAD-REF, no SIGSEGV,
+             proper [RESUME] SnapshotOperation chain,
+             test_class_table ALL TESTS PASSED on the multi-segment image
+
+ONE ARITHMETIC BUG on the way, caught by `test_class_table` rather than by
+re-reading the diff: the SAVED base must advance by the FULL segment size
+INCLUDING the bridge, which occupies saved address space even though no object
+lives there.  Advancing by the payload put each later segment 16, then 32,
+then 48 bytes low — surfacing as exactly "8 invalid pointers in hiddenRoots"
+while the 7185-entry class table still matched perfectly.  Keep that test in
+the loop for any future change here.
+
+STILL OPEN for the ume PACKAGE itself: the test image was built on a harness
+copy that already carried SUnitRunner, so its resume hits a `nil suspend` DNU
+from the runner instead of running the package.  A retest from a pristine
+Pharo image is what remains; the loader half is done.
 
 ### 5. Startup dies on a nil Delay semaphore; the "frozen eval" is a SYMPTOM — CONFIRMED — HIGH
 
