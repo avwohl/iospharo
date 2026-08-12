@@ -345,14 +345,33 @@ Two concrete leads in `ImageLoader::relocatePointers`, both visible on reading:
      hearing about in general) and it does **not fire at all** for this image.
      Nothing is being truncated, so that is not the source.
 
-     What that leaves is sharper: `activeProcess` sits in slot 1 of a
-     `processScheduler` object that the guard confirms is VALID and relocated,
-     and its raw value `0x10008f709a8` has tag 0 and lies squarely inside the
-     `[0x10000000000, 0x20000000000)` window `relocatePointer` exists to fix.
-     So either `relocatePointer` declined a value it should have taken, or the
-     slot was written AFTER relocation with a stale address. Check
-     `relocatePointer`'s range/tag test against this exact value first — it is
-     a two-line question.
+  **ROOT CAUSE FOUND: the image has MORE THAN ONE SEGMENT and we load one.**
+
+     `relocatePointer` relocates only `[oldBase_, oldBase_ + loadedSize_)` and
+     silently returns anything else unchanged. `loadedSize_ = header_.imageBytes`
+     (ImageLoader.cpp:130), and `ImageLoader` has NO segment handling — two
+     incidental mentions of the word, no bridge logic anywhere. A new
+     `[IMGLOAD-DECLINE]` diagnostic shows the consequence directly:
+
+         oop=0x10008f76328 is +0x8f76328 past oldBase=0x10000000000
+           but loadedSize=0x8f3edd8 — NOT relocated (dangling saved-image pointer)
+
+     i.e. live slots point ~220 KB BEYOND the end of what we loaded. Spur images
+     may be written as multiple segments with bridge objects between them; we
+     read the first segment's byte count and stop, so every pointer into a later
+     segment is (a) never loaded and (b) silently left as a saved-image address.
+     `activeProcess` is one of them, which is why the scheduler walk found
+     garbage.
+
+     THE FIX IS MULTI-SEGMENT IMAGE LOADING — read the segments and bridge them,
+     then `loadedSize_` covers the whole heap and these pointers relocate
+     normally. Note it is NOT enough to widen `loadedSize_`: the target objects
+     are not in memory at all, so relocating without loading them would just
+     produce addresses into unmapped memory. Load first, then relocate.
+
+     This is a substantial, self-contained piece of work with a one-second
+     reproduction (`fedeloch-ume`), and it likely explains other images that
+     behave oddly under our VM while running fine on Cog.
   2. `hasPointers = (format <= 5) || (format == 9)`. Format 9 is a 64-bit
      WORD array that is relocated as pointers because `hiddenRoots` needs it —
      a documented hack. That is fine for hiddenRoots and wrong for any genuine

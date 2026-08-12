@@ -470,6 +470,21 @@ uint64_t ImageLoader::relocatePointer(uint64_t oldOop) const {
     if (oldOop < oldBase_ || oldOop >= oldBase_ + loadedSize_) {
         // Pointer outside old heap - could be special value, already relocated,
         // or from another segment. Don't relocate.
+        //
+        // A pointer that is ABOVE oldBase_ but beyond loadedSize_ is the
+        // dangerous case: it looks exactly like a saved-image address we failed
+        // to load (multi-segment image?), and declining it leaves a dangling
+        // saved-image pointer in a live slot — docs/vm-compat-bugs.md #4.
+        if (oldOop >= oldBase_) {
+            static int declineN = 0;
+            if (++declineN <= 10) {
+                fprintf(stderr,
+                    "[IMGLOAD-DECLINE] oop=0x%llx is +0x%llx past oldBase=0x%llx but"
+                    " loadedSize=0x%llx — NOT relocated (dangling saved-image pointer)\n",
+                    (unsigned long long)oldOop, (unsigned long long)(oldOop - oldBase_),
+                    (unsigned long long)oldBase_, (unsigned long long)loadedSize_);
+            }
+        }
         return oldOop;
     }
 
