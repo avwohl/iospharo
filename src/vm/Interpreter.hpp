@@ -1884,21 +1884,23 @@ public:
         stackPointer_ = state->sp;
         instructionPointer_ = state->ip;
 
-        // Overflow check — BOTH limits.
+        // Overflow check.
         //
-        // The frame count alone is not enough: `MaxStackDepth` (131072 Oops)
+        // KNOWN GAP, deliberately NOT closed here (measured 2026-08-12):
+        // this checks only the FRAME count, and `MaxStackDepth` (131072 Oops)
         // against `StackOverflowLimit` (56000 frames) is barely 2 slots per
-        // frame, so any method with more than a temp or two exhausts the
-        // OPERAND stack first.  Compiled code writes that stack directly
-        // through `state->sp`, so nothing else on this path would notice, and
-        // it runs off the end of `stack_` into the members after it — the
-        // mutalk `~Interpreter` abort (docs/vm-compat-bugs.md #3).
-        // `tryJITActivation` guards the ENTRY to compiled code; this guards
-        // J2J, which is the overwhelmingly common call path (millions per run)
-        // and never goes through tryJITActivation.
-        if (__builtin_expect(frameDepth_ >= StackOverflowLimit
-                || stackPointer_ >= stack_.data()
-                                     + MaxStackDepth - StackSafetyZone, 0)) {
+        // frame, so a method with more than a temp or two exhausts the OPERAND
+        // stack first — which compiled code writes straight through
+        // `state->sp`, unnoticed (docs/vm-compat-bugs.md #3).  Adding
+        // `stackPointer_ >= stack_.data() + MaxStackDepth - StackSafetyZone`
+        // here and returning ExitStackOverflow is CORRECT but catastrophically
+        // slow: mutalk went from 5,439,488 sends to >2.8 BILLION and still
+        // climbing, i.e. the bail is retried without forward progress rather
+        // than converting into a Smalltalk stack-overflow signal.  Reverted;
+        // the ENTRY guard in tryJITActivation is what ships.  Closing this one
+        // properly means making ExitStackOverflow raise the image-side signal
+        // (or unwind) instead of bouncing back into the same J2J call.
+        if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
             state->exitReason = jit::ExitStackOverflow;
             return;
         }
