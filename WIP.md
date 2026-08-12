@@ -211,7 +211,21 @@ So it is suite-context, and it matches the documented wedge family (memory
 `stdebugger-ticker-death-wedge`, `idle-band-scheduler-starvation`) rather than
 anything this session added.  **But one run cannot separate "known flaky
 wedge" from "new regression"**, so the later changes are NOT validated at
-full-suite scale.  A re-run is in flight; treat that as the outstanding item.
+full-suite scale.
+
+A THIRD attempt then failed differently and is worth recording, because it is
+a harness property nobody had written down: the run reached 1693 classes,
+then the results file RESTARTED from class 1 — same VM process, one
+"Image loaded successfully" in the log, so not a crash and not a relaunch.
+`SUnitRunner class>>startUp:` fires on every SESSION start, and some test in
+the suite starts a new session; the `/tmp/sunit_run_completed.txt` guard did
+NOT stop it (the file existed).  The VM then exited cleanly ("Test Complete",
+zero crash markers).  Net effect: a full-suite run can silently restart and
+then end early, and the only way to notice is that the class COUNT went
+DOWN.  Watch the count, not just the tail.
+
+Outstanding: one clean complete run with every fix in.  Run against the
+current binary is in flight.
 
 ### Open
 
