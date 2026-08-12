@@ -138,6 +138,18 @@ ERROR 50 -> 20; the 33 `SmallInteger >> #pixelAt:` errors this defect owned
 FAIL moved by one, inside the documented noise floor.  Every remaining
 non-clean class is in a known residual family.
 
+### `#3` mutalk — crash FIXED `57022d3a`; the lost RESULT is a separate, still-open failure
+
+`push()` bounds-checks the operand stack; the JIT writes it through
+`state.sp` and does not.  Deep recursion (`#recursiveFactorial:` at 130,881
+of 131,072 slots) therefore wrote past the end of `stack_` into
+`std::vector<void*> stackPushReturnAddr_`, 48 bytes later, and ~Interpreter
+aborted freeing it.  Found with ASan (which named the member and showed the
+"pointers" were consecutive SmallInteger Oops) plus a hardware watchpoint
+(whose frame #0 had no symbol — JIT code — under tryJITActivation).
+tryJITActivation now declines within StackSafetyZone of the limit and falls
+back to the interpreter.  exit 134 -> exit 0.
+
 ### Open
 
 `#4` is root-caused with the remaining work specified (bridge walk +

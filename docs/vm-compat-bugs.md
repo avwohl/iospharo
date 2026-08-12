@@ -231,75 +231,56 @@ knob that dumps the walked chain — run it on jrpc first; it is a 7-second repr
 an uncaught C++ exception, distinct from mutalk's segfault. Both reproduce with
 `PHARO_NO_JIT=1` (mutalk stops segfaulting but still produces no RESULT).
 
-### 3. `pharo-contributions-mutalk` — crash in VM teardown, JIT-required — HIGH
+### 3. `pharo-contributions-mutalk` — the crash is FIXED 2026-08-12 (`57022d3a`); the lost RESULT is not
 
-**Reproduced on macOS-arm64 2026-08-12** by loading the package locally
-(`Metacello ... baseline: 'MuTalk'`) and running its suite:
+    before  exit 134 (SIGABRT) after CLASSES 100
+    after   exit 0
 
-    cd <pkgdir> && PKG_PREFIXES=MuTalk build/test_load_image ./M.image eval \
-      "$(cat scripts/pkg-jit-test/run_pkg_tests.st)"
+ROOT CAUSE: `push()` bounds-checks the operand stack
+(`stackPointer_ >= stack_.data() + MaxStackDepth`), but once control reaches
+compiled code the JIT writes that stack directly through `state.sp` and never
+consults it.  A deep enough Smalltalk recursion writes PAST the end of the
+`stack_` array and into the members declared after it.
 
-    CLASSES 100
-    (no RESULT)
-    ... 434,908,984 bytecode steps ...
-    === Test Complete ===
-    exit 134   (SIGABRT)
+Measured end to end (reproduced locally by loading the package):
 
-Two distinct failures, and the entry previously conflated them:
+    ASan        bad __sanitizer_annotate_contiguous_container in
+                std::vector<void*>::__destroy_vector <- ~Interpreter(),
+                beg=0xfffffffffffaa879 end=0xfffffffffffaa871 — the SAME
+                address this entry recorded from Linux.  They are not
+                pointers: they decode as consecutive SmallInteger Oops
+                (-43762, -43761), i.e. operand-stack slots.
+    the member  `std::vector<void*> stackPushReturnAddr_` at offset 9482648,
+                48 bytes past the end of `stack_`.  Its writer is guarded and
+                its knob is off, so nothing legitimately touches it.
+    watchpoint  fires writing 0x9 (SmallInteger 1) there, frame #0 with NO
+                SYMBOL (raw `mov x2, x25` = JIT code), entered from
+                tryJITActivation <- activateMethod <- sendSelector.
+    culprit     `#recursiveFactorial:` at sp = 130,881 of 131,072 slots.
 
-  1. **The suite never produces a RESULT.**  The eval's own startup.st WAS
-     consumed (the "eval never ran" guard does not fire), so the script ran
-     and the process died partway through the tests.  Cog: pass=336 err=1.
-  2. **The VM then aborts during teardown**, after `main` has printed
-     "Test Complete" — i.e. in static destruction / `~Interpreter()`, which
-     matches the Linux `__libc_free` backtrace this entry was filed with.
-     `rc=134` here vs `rc=139` on Linux is just allocator-dependent.
+FIX: `tryJITActivation` declines when the operand stack is within
+`StackSafetyZone` (256 Oops) of `MaxStackDepth` and falls back to the
+interpreter, which has the check and raises the proper stack-overflow signal.
+One compare per JIT activation; a base-image eval declines zero.  Explains
+`PHARO_NO_JIT=1` exiting 0 in the original triage.
 
-The image itself is fine: single-segment (74,189,896 bytes, first segment the
-same), loads clean, and a plain `eval "'MUTALK-', 3 factorial printString"`
-answers correctly.  So this is NOT the #4 loader family.
+Note the sizing invariant this exposed: `MaxStackDepth = 131072` carries the
+comment "must be large enough for MaxFrameDepth frames" and
+`MaxFrameDepth = 65536` — exactly 2 Oops per frame, which only holds for a
+zero-temp method with an empty operand stack.  The soft frame limit
+(`StackOverflowLimit = 56000`) is what actually keeps it honest, and the JIT
+was not honouring the operand-stack side of it at all.
 
-`PHARO_NO_JIT=1` exits 0 (per the original triage), so the JIT is required.
+Canaries placed immediately after `stack_` and `savedFrames_` did NOT catch
+this (they are kept, and that negative is why): the JIT writes individual
+slots at computed offsets rather than sweeping, so it stepped over the canary
+word.  That is what pointed at a wild write and then at ASan.
 
-The teardown abort, under lldb:
-
-    ___BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED_WAS_NOT_ALLOCATED
-      <- pharo::Interpreter::~Interpreter() + 620
-      <- unique_ptr<Interpreter>::~unique_ptr
-
-There is no hand-written `~Interpreter`, so this is the implicit destructor
-freeing a CONTAINER MEMBER whose data pointer has been overwritten — a buffer
-overrun, not a double free.  Both big inline members are `std::array`
-(`stack_` = MaxStackDepth + 256 Oops, `savedFrames_` = MaxFrameDepth), so an
-overrun of either walks straight into the members declared after it and past
-the end of the heap-allocated Interpreter object.
-
-`push()` IS bounds-checked (`stackPointer_ >= stack_.data() + MaxStackDepth`)
-and did NOT fire in this run, so the overrunning write is one that bypasses
-it — the JIT stencils write the operand stack directly through `state.sp`,
-which fits `PHARO_NO_JIT=1` making the crash go away.
-
-Note the sizing invariant is thin in principle: `MaxStackDepth = 131072` with
-the comment "must be large enough for MaxFrameDepth frames", and
-`MaxFrameDepth = 65536` — that is exactly 2 Oops per frame, which only holds
-for a zero-temp method with an empty operand stack.  The soft limit
-(`StackOverflowLimit = 56000` + 8192 headroom) is what actually keeps it
-honest.  Worth checking whether the JIT path respects it.
-
-RULED OUT 2026-08-12: overrun canaries placed immediately after BOTH inline
-arrays (`stackCanary_`, `framesCanary_`, checked every 1024 bytecodes and
-reported once each) stay intact across a full failing run — exit 134, zero
-`[ARRAY-OVERRUN]` lines.  So neither `stack_` nor `savedFrames_` ran into the
-member after it, and the corrupted data pointer belongs to some OTHER
-heap-owning member (a vector/map/string), clobbered by a wild write rather
-than by a sequential overrun of the big arrays.  The canaries are kept —
-they cost two compares per checkpoint and they now carry that negative.
-
-NEXT: AddressSanitizer (or `DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib`,
-slower) names the write directly — the run is ~7 minutes clean.
-That is the cheap half.  The lost RESULT is the more valuable half and needs
-the process death localized first (a `[TERM-P*]` trace, or the runner's own
-error path).
+STILL OPEN: the same package produces no `RESULT` line — the eval's own
+startup.st IS consumed (the "eval never ran" guard does not fire), so the
+script runs and the process dies partway through the tests.  Cog:
+pass=336 err=1.  Localize that process death next (a `[TERM-P*]` trace, or
+the runner's own error path).
 
 ### 4. `fedeloch-ume` — ROOT-CAUSED 2026-08-12: the image is MULTI-SEGMENT — HIGH
 
