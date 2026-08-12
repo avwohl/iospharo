@@ -558,6 +558,50 @@ Linux-aarch64), where it appears in neither FAIL list. Nothing to fix.
 
 Passes on ARM. Needs a Windows run to close.
 
+### 15. Recursion deeper than ~56,000 frames HANGS the VM; Cog does it instantly — HIGH (found 2026-08-12)
+
+Three lines, same image, apples-to-apples (no Morphic, so the `eval`-preamble
+caveat does not apply):
+
+    Object compile: 'deepRec: n
+      ^ n = 0 ifTrue: [0] ifFalse: [ (self deepRec: n - 1) + 1 ]'.
+    [ (Object new deepRec: N) printString ] on: Error do: [:e | 'CAUGHT ', e class name ]
+
+    N        ours                         Cog
+    10000    10000  (2 s)                 10000
+    40000    40000  (1 s)                 40000
+    56000    56000  (2 s)                 56000
+    60000    HANGS — killed at 60 s       60000
+    100000   HANGS — killed at 180 s      100000 in 0.10 s
+
+The cliff is exactly `StackOverflowLimit = 56000`.  What happens there:
+
+    [OVERFLOW] fd=56024 pushing #deepRec: (argCount=1)
+    [OVERFLOW] driving Process>>terminate to unwind (fd=56024) instead of
+               hard-kill — releases held critical: mutexes
+
+and then no further progress: `Process>>terminate` unwinding 56,024 frames
+never completes, so the run makes no progress and produces nothing.  Two
+distinct problems:
+
+  1. **The limit.**  Cog has no trouble at 100,000 frames — its stack grows.
+     Ours caps at 56,000 and treats exceeding it as fatal.
+  2. **The handling hangs.**  Even granting the cap, the overflow path is
+     supposed to unwind and end the process; instead the VM stops making
+     progress.  And because the recovery is `Process>>terminate` rather than
+     an Error, the image's own `on: Error do:` CANNOT catch it — the handler
+     above never fires, where on Cog there is nothing to catch.
+
+LIKELY EXPLAINS, and worth re-testing once fixed: `#3`'s missing `RESULT`
+(MuTalk's culprit method is literally `#recursiveFactorial:`), and the "hangs
+to 1800 s" packages in `#2a`/`#2b` — `moosetechnology-famix`,
+`tomooda-viennatalk`, `moosetechnology-gitprojecthealth`, and `j-brant-smacc`
+(a recursive-descent parser).  Those were filed as four separate mysteries.
+
+Found while measuring something else: the deep-recursion probe was written to
+test whether a JIT stack bound livelocked, and BOTH arms hung — which is what
+exposed that the hang is pre-existing and not about the JIT at all.
+
 ## LEADS (real work, not yet a filed defect)
 
 15. Code-path localization for #1 — see #1; the best 18 lines in the old file,
