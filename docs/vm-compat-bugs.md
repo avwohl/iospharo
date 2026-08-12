@@ -336,6 +336,26 @@ to `RESULT pass=170`. So fixing this one defect should close #5 plus the seven
 in #2a: evref-bl-mcp, mumez-pharo-acp, pillar, fedeloch-ume, and (pending the
 same check) famix, viennatalk, gitprojecthealth.
 
+REFINEMENT 2026-08-12 (narrows the fix site, and corrects where I had placed
+it): the resume TRACES of a working image and a frozen one are IDENTICAL —
+
+    both: inSnapshotCode=1, chainDepth=9, same 9-frame chain
+          (SnapshotOperation>>doSnapshot ... SessionManager>>launchSnapshot:andQuit:)
+    both: Patching stackp=1 stackTopSlot=6 oldVal=true -> true
+    both: Found SnapshotOperation ... isImageStarting=true
+
+yet a clean A/B on the same trivial eval gives
+
+    porp (works)   EVAL-RESULT=1
+    acp  (frozen)  EVAL-RESULT=0
+
+So the defect is NOT in the snapshot-resume detection or in either patch — both
+run and agree. It is downstream, in what the image does once resumed. The
+earlier note above locating it at the no-op stack patch is therefore too
+specific; the no-op is real but is not the discriminator. Look at the startup
+sequence after resume: whether `StartupPreferencesLoader` runs, and whether the
+command-line handler is re-dispatched.
+
 IMPORTANT NEGATIVE: not every Cog-saved image freezes — `/tmp/porp/Pharo.image`
 is also `eval --save`-produced and our VM runs its suite fine (14/14). So the
 trigger is narrower than "was saved from an eval"; find what distinguishes the
