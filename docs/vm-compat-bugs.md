@@ -690,14 +690,88 @@ TWO cheaper intermediates, in order of confidence:
     root-cause fix — do not undo it).  Any catchable-error attempt has to keep
     the unwind.
 
-## LEADS (real work, not yet a filed defect)
+### 16. ~~Loading a Cog-written image CORRUPTS 64-bit word arrays~~ — FIXED 2026-08-12 (`3c494b65`)
 
-15. Code-path localization for #1 — see #1; the best 18 lines in the old file,
+Filed late: the fix commit and three source comments referenced "#16" before
+this entry existed.  That is the exact failure mode this file was created to
+stop, so it is recorded here rather than quietly renumbered.
+
+    DoubleWordArray written by stock Cog, read back:
+
+    element  written          Cog reads        ours (before)
+    1        16r10000000000   16r10000000000   16r300000000   <- MANGLED
+    2        16r10008F709A8   16r10008F709A8   16r10008F709A8
+    3        16r300000010     16r300000010     16r300000010
+
+`ImageLoader::relocatePointers` used `hasPointers = (format <= 5) ||
+(format == 9)`.  Format 9 is a 64-bit WORD ARRAY and is pointer-bearing for
+exactly ONE object — `hiddenRootsObj`, which holds the class-table pages.  The
+`|| format == 9` was a documented hack for it.  Every OTHER format-9 object is
+user DATA, and each element landing in `[oldBase, oldBase + imageBytes)` was
+relocated, i.e. silently rewritten.  On a 59 MB image that window is
+`16r10000000000..16r10384xxxx` — ordinary values for microsecond timestamps,
+packed bitfields, hashes or large ids.
+
+WHY IT HID: `ImageWriter::writeHeapData` had the SAME rule, so our writer
+tag-converted the data on the way out and our loader converted it back.  Our
+own images round-tripped perfectly and the pair was invisible; it only shows
+against a VM that does not share the bug.  Both sides now special-case the
+OBJECT instead of the format — the loader locates hiddenRootsObj by position
+(`findHiddenRootsHeader`), the writer compares against
+`memory.hiddenRootsObj()`.
+
+Verified: Cog-written array exact; our round-trip unchanged; `test_class_table`
+passes on the base image and on a freshly saved one; `allClasses` (10632),
+`SHA256Test` 12/12 and `garbageCollect` all identical to stock Cog.  The 74,998
+`[IMGLOAD-DECLINE]` lines a healthy image used to print are gone, because
+format-9 data is no longer offered to `relocatePointer` at all.
+
+Related and STILL OPEN: `freeListsObj` is also format 9.  Its slots are read
+only by a gated diagnostic, nothing functional, so leaving them as data is
+correct — but a future change that starts reading them must relocate it too.
+
+### 17. ~~`char32AtOffset:` truncated fields >= 2^30~~ — FIXED 2026-08-12 (`b999d9d9`)
+
+Also filed late, same reason as #16.
+
+`Oop::asCharacter` masked with `0x3FFFFFFF` and `Oop::fromCharacter`'s range
+assert is compiled out under NDEBUG, so primitive 612 read a 32-bit field back
+TRUNCATED — `16r40000000` answered 0 — with no failure anywhere.  That ceiling
+was OURS alone: the tagged encoding is `(codepoint << 3) | tag` in a 64-bit
+word, 61 payload bits.
+
+    char32AtOffset:   ours (before)   Cog           ours (now)
+    16r40000000       0               1073741824    1073741824
+    16rFFFFFFFF       0               4294967295    4294967295
+
+TWO WRONG FIXES FIRST, both caught by measurement:
+
+  1. Failing the primitive for `>= 2^30`.  Cog SUCCEEDS there, so that traded
+     truncation for a divergence.
+  2. Widening primitive 170 (`Character value:`) to match.  The IMAGE PINS that
+     one — `Character class>>maxVal` is `(2 ** 30) - 1` and
+     `CharacterTest>>testMaxVal` asserts `maxVal + 1` raises PrimitiveFailed.
+     Widening it turned CharacterTest 19/19 into 18/19.
+
+Cog is deliberately inconsistent — prim 170 refuses `>= 2^30` while prim 612
+hands back a full 32-bit Character — so matching it means doing both.  A note
+at prim 170 says not to "fix" it again.  Verified against Cog on
+CharacterTest 19/19, StringTest 438/438, SymbolTest 268/268,
+WideStringTest 19/19, ByteArrayTest 12/12.
+
+## LEADS — a SEPARATE number space (real work, not yet a filed defect)
+
+These are `LEAD n`, NOT `#n`.  The two spaces overlap (there is a defect #15
+AND a lead 15) because leads were numbered as a continuation of the defect
+list back when the list ended at 14.  Existing cross-references say "lead 22",
+so the numbers are kept; always write the prefix.
+
+LEAD 15. Code-path localization for #1 — see #1; the best 18 lines in the old file,
     previously filed under a *fixed* bug's heading.
-16. `become` scan-and-replace still misses live refs (JIT operands under
+LEAD 16. `become` scan-and-replace still misses live refs (JIT operands under
     materialization). `ObjectMemory.cpp:1625-1634` says so in the shipped
     comment; the forwarder that shipped is a safety net, not the fix.
-17. ~~Prim 145 pointer-fill branch writes fixed ivars~~ — FIXED 2026-08-12
+LEAD 17. ~~Prim 145 pointer-fill branch writes fixed ivars~~ — FIXED 2026-08-12
     (`3c772997`).  Confirmed against `InterpreterPrimitives>>
     primitiveConstantFill` (cointerp-cpp.c:28585): stock fails unless
     `format >= sixtyFourBitIndexableFormat` and below the first
@@ -707,7 +781,7 @@ TWO cheaper intermediates, in order of confidence:
     added up front.  Verified identical to Cog on `Bitmap>>primFill:`,
     `ByteArray>>atAllPut:`, `Array>>atAllPut:` (which now takes the
     Smalltalk fallback, as on Cog) and `Form>>fillColor:`.
-18. ~~`updatePointersAfterCompact` walks survivor space to `newSpaceEnd_`~~ —
+LEAD 18. ~~`updatePointersAfterCompact` walks survivor space to `newSpaceEnd_`~~ —
     FIXED 2026-08-12 (`3c772997`).  There are no allocations in
     `[survivorStart_, newSpaceEnd_)` at all — scavenge tenures every
     reachable young object straight to old space and resets eden, and
@@ -719,13 +793,13 @@ TWO cheaper intermediates, in order of confidence:
     condition for restoring it (a copying survivor's live watermark, never
     `newSpaceEnd_`) is written at the site.  The eden scan already ends at
     `edenFree_`, a real watermark.
-19. ARM "context storm" prevention was proven on a constructed analogue, never
+LEAD 19. ARM "context storm" prevention was proven on a constructed analogue, never
     on the storm. Catalog #10 is cited twice as proof and has no artifact in
     the repo — find the log or stop citing it.
-20. Six Win64 debug-gated helper call sites fixed by reasoning, never executed.
-21. Windows 7-8.4 s core-loop numbers never re-measured after `3940b62c`.
-22. SoundPlugin waveOut backend implemented, never runtime-verified.
-23. Inline NLR path still uses native ensure-hopping instead of
+LEAD 20. Six Win64 debug-gated helper call sites fixed by reasoning, never executed.
+LEAD 21. Windows 7-8.4 s core-loop numbers never re-measured after `3940b62c`.
+LEAD 22. SoundPlugin waveOut backend implemented, never runtime-verified.
+LEAD 23. Inline NLR path still uses native ensure-hopping instead of
     `aboutToReturn:through:`; the context path uses the stock protocol.
 
 ## Corrections to earlier verdicts in this repo
