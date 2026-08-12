@@ -258,11 +258,19 @@ Measured end to end (reproduced locally by loading the package):
                 tryJITActivation <- activateMethod <- sendSelector.
     culprit     `#recursiveFactorial:` at sp = 130,881 of 131,072 slots.
 
-FIX: `tryJITActivation` declines when the operand stack is within
-`StackSafetyZone` (256 Oops) of `MaxStackDepth` and falls back to the
-interpreter, which has the check and raises the proper stack-overflow signal.
-One compare per JIT activation; a base-image eval declines zero.  Explains
-`PHARO_NO_JIT=1` exiting 0 in the original triage.
+FIX, at BOTH places compiled code can grow the operand stack:
+
+  * `tryJITActivation` (`57022d3a`) declines when the stack is within
+    `StackSafetyZone` (256 Oops) of `MaxStackDepth` and falls back to the
+    interpreter, which has the check and raises the proper stack-overflow
+    signal.  One compare per JIT activation; a base-image eval declines zero.
+  * `pushFrameForJIT` (`86260b47`) — the J2J path, which is the common one
+    (millions of calls per run) and never goes through `tryJITActivation`.  It
+    checked only `frameDepth_ >= StackOverflowLimit`, which cannot help: 131072
+    Oops against 56000 frames is barely 2 slots per frame.  Same bound, reusing
+    the `ExitStackOverflow` exit already there.
+
+Explains `PHARO_NO_JIT=1` exiting 0 in the original triage.
 
 Note the sizing invariant this exposed: `MaxStackDepth = 131072` carries the
 comment "must be large enough for MaxFrameDepth frames" and
