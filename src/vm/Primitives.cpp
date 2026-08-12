@@ -12405,6 +12405,15 @@ PrimitiveResult Interpreter::primitiveSetStackPointer(int argCount) {
         }
     }
 
+    // DIAG (PHARO_TRACE_FRAME_TEMPS): is the IMAGE the one raising stackp?
+    if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)) {
+        Oop sm = memory_.fetchPointer(3, context);
+        std::string sn = sm.isObject() ? memory_.selectorOf(sm) : std::string();
+        if (!sn.empty() && sn.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)) != std::string::npos)
+            fprintf(stderr, "[IMG-STACKP] ctx=0x%llx #%s %lld -> %lld\n",
+                    (unsigned long long)context.rawBits(), sn.c_str(),
+                    (long long)oldStackp, (long long)newStackp);
+    }
     // Store new stackp at slot 2
     memory_.storePointer(ContextStackPIndex, context, newStackpOop);
 

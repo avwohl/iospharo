@@ -70,37 +70,43 @@ wrong site — a mistake worth not repeating):
     [MAT-SAVE-CUR]  431 times   always expr=1             (current frame)
     [MAT-SAVE]        4 times   always expr=0             (saved-frame loop)
 
-Restores push stackp 23-32 (expr 2-11) where no save ever wrote more than 22.
+Context identity between save and restore (`ctx=0x...` on both traces):
 
-The July trilemma is now fully eliminated, each by measurement:
+    saved contexts              432
+    restored contexts           555
+    restored but NEVER saved    123   <- and all 123 take an expr>1 restore
+
+The July trilemma is eliminated, each by measurement:
 
     (a) materialize expr-stack extent   all three save paths write expr<=1
-    (b) executeFromContext stackp restore  it faithfully pushes what stackp says;
-                                        the lie is in stackp, not the push
-    (c) returnValue fd==0 value placement  instrumented all five `stackp++`
-                                        context-push sites (returnValue,
-                                        returnFromMethod x2, returnFromBlock,
-                                        handleContextNLRUnwind) — ZERO fire for
-                                        this method
+    (b) executeFromContext stackp restore  it faithfully pushes what stackp says
+    (c) returnValue fd==0 value placement  all five `stackp++` context-push sites
+                                        (returnValue, returnFromMethod x2,
+                                        returnFromBlock, handleContextNLRUnwind)
+                                        instrumented — ZERO fire for this method
 
-NEXT: the writer of stackp 23-32 is none of the above and none of
-`raiseContextStackpTo` (bug predates it; `PHARO_NO_CTX_STACKP_RAISE=1` is
-byte-identical), `prepareForGC`'s temp sync (raises to numTemps, i.e. expr=0) or
-context creation (`ObjectMemory.cpp` sets stackp=numTemps).  Two candidates
-remain and are cheap to separate:
-  1. `primitiveSetStackPointer` — image-side `Context>>stackp:`; trace it.
-  2. The restored contexts may simply not BE the contexts that were saved —
-     dump the context oop at both save and restore and check identity.  If they
-     differ, the frame is being resumed from a foreign/stale context object,
-     which is a different and larger bug than a bad stackp.
-     **Half-done: `[MAT-SAVE-CUR]` already prints `ctx=0x...`; `[MAT-RESTORE]`
-     still needs the same field added** (one line, in executeFromContext's
-     trace).  Then:
-         grep -ao 'MAT-SAVE-CUR ctx=0x[0-9a-f]*' log | sed 's/.*ctx=//' | sort -u > saved
-         grep -ao 'MAT-RESTORE ctx=0x[0-9a-f]*'  log | sed 's/.*ctx=//' | sort -u > restored
-         comm -13 saved restored     # non-empty => restored from never-saved contexts
-     554 distinct contexts take an expr>1 restore in one probe run, so the
-     sample is large enough to be conclusive either way.
+And so is the image: `primitiveSetStackPointer` (`Context>>stackp:`) is
+instrumented and fires ZERO times for these contexts, so the image is not
+raising stackp either.
+
+**HONEST CAVEAT on the framing.** "Restores trust a stackp no save ever wrote"
+is the natural reading of the numbers above, but it is NOT yet proven anomalous.
+The 123 never-saved contexts have to come from somewhere, and legitimate
+sources exist: this method RECURSES (`^ self warpBitsSmoothing: n sourceMap:`
+on each unhibernate), the probe forks six processes, and image-side machinery
+(`valueWithin:onTimeout:`, `newProcess`) allocates contexts with their own
+stackp. If those contexts are legitimate and correctly populated, restoring
+them at expr>1 is correct behaviour and the defect is elsewhere. Do not build
+a fix on this framing until the next step settles it.
+
+NEXT, in order:
+  1. For ONE failing restore, dump the context's slots 6..6+stackp-1 at restore
+     time and compare against what the frame then executes. If the slots are
+     garbage, the context was mis-populated (find its creator); if they are
+     sane, the restore is fine and the corruption happens later.
+  2. Find the creator of the 123: instrument every context allocation site
+     (`ObjectMemory.cpp` ~1057/1104, ensureFrameIsContext, primitiveThisContext)
+     with the same selector filter.
 
 Also ruled out on the way, each with a measurement:
 
