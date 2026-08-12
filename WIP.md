@@ -28,11 +28,20 @@ carry a non-zero flag; reading the counters, every one is a test that passes on
 Cog and TIMES OUT on ours, a row with byte-identical counters
 (`mumez-redistick`), or a row where neither arm produced a result.
 
-**Full suites, both platforms, 2055 classes each:**
+**Full suites, 2055 classes each — including a same-machine A/B against the
+commit before everything in this session:**
 
-    macOS-arm64      27701 P / 22 F / 12 T / 50 E
-    Linux-aarch64    27647 P / 24 F / 13 T / 102 E
-    (pre-fix arm)    27752 P / 19 F / 14 T /  1 E
+    macOS-arm64  HEAD                27701 P / 22 F / 12 T /  50 E
+    macOS-arm64  361bf92b (pre-fix)  27700 P / 22 F / 12 T /  51 E
+    Linux-aarch64 HEAD               27647 P / 24 F / 13 T / 102 E
+    (morning arm, pre-session)       27752 P / 19 F / 14 T /   1 E
+
+The macOS pair is the regression result that matters: one pass and one error
+apart, identical FAIL and TIMEOUT counts, so the six commits are regression-free
+at full-suite scale.  Both members of that pair carry the same 25
+`ClyBrowserToolValidityTest` errors, which is the pre-existing WarpBlt defect in
+section 8 — and the reason the Linux ERROR column reads 102 against the
+morning's 1 is the bimodal cache described there, not a code change.
 
 Every FAIL on both is in a documented residual family — `ReleaseTest`
 run-order pollution, `StDebugger`/`StSpotter`, TKT, ZnClient — the same shape

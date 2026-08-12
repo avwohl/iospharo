@@ -125,6 +125,13 @@ x86_64 build under Rosetta, and on the aarch64 Linux box:
                  the harness's known timeout noise (the pre-fix arm run had 14
                  timeouts of its own, in other classes).
     full suite   macOS-arm64 and Linux-aarch64, plus the 200-package A/B sweep.
+    A/B suite    the decisive one — the SAME machine, the same image, HEAD vs a
+                 build of 361bf92b (the commit before every change here):
+                     HEAD      2055 classes  27701 P / 22 F / 12 T / 50 E
+                     361bf92b  2055 classes  27700 P / 22 F / 12 T / 51 E
+                 One pass and one error apart, identical FAIL and TIMEOUT
+                 counts.  Both carry the same 25 ClyBrowserToolValidityTest
+                 errors — the pre-existing WarpBlt defect, not these commits.
 
 The only FAILs in the local full suite are `ReleaseTest`
 (`testNoLiteralIsPinnedInMemory`, `testNoOrphanPackage`) — the documented
