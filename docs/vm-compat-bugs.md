@@ -89,41 +89,44 @@ And so is the image: `primitiveSetStackPointer` (`Context>>stackp:`) is
 instrumented and fires ZERO times for these contexts, so the image is not
 raising stackp either.
 
-#### ROOT CAUSE (2026-08-12): resume replays a stale context; the frame is never written back
+#### STRONGEST LEAD (2026-08-12): the frame is restored ~3500x for every save
 
-Per-context restore/save counts settle it. Every one of the 555 contexts is
-restored many times against AT MOST ONE save, and the busiest have none at all:
+Per-context restore/save counts, one probe run:
 
     ctx=0x30399c9d0   restores=24098   saves=0
     ctx=0x30399cd58   restores=24093   saves=0
-    ctx=0x3039bb330   restores=23408   saves=0
     ...
-    555 contexts restored | 123 never saved | 555 restored>1 with <=1 save
+    555 contexts restored | 123 NEVER saved | 555 restored>1 with <=1 save
 
-So the cycle is: restore the frame from its context -> the frame runs and
-advances -> the process is switched out WITHOUT the frame being materialized
-back -> the next resume replays the SAME stale context. Up to 24,000 times.
+Every context is rebuilt into a live frame many times against at most one
+write-back, and the busiest have no write-back at all. Whatever the frame does
+between two restores is therefore not preserved, which is exactly the shape of
+a stale expression stack — while the TEMPS stay correct because
+`prepareForGC`'s temp sync rewrites those separately (and raises stackp to
+cover them). That asymmetry is the strongest lead in this bug.
 
-That explains every observation at once:
-  * the expression stack is stale because nothing ever re-saves it;
-  * the TEMPS look correct because `prepareForGC`'s temp sync rewrites them
-    separately (and raises stackp to cover them), so they alone stay fresh —
-    which is exactly why the frame looks half-right;
-  * concurrency is required (process switches drive the resumes);
-  * it is not the JIT, not the trace bound, not the ctxSynced skip, and not
-    any stackp writer — all measured above. The stackp is not "a lie"; the
-    context is simply OLD.
+**Do not read it as "resume replays a stale context" — I did, and the next
+measurement did not support it.** `transferTo` DOES call
+`materializeFrameStack()` on every process switch, and disabling the
+`ctxSynced` incremental skip (`PHARO_MAT_FULL_RESYNC=1`) moves the save count
+only 4 -> 6 while leaving the errors at 12. So the rarity of saves is not a
+skipped write-back on suspend. 1.5M restores cannot be 1.5M process switches
+either: `executeFromContext` is evidently the ordinary path for
+materialized-context execution (frameDepth_=0), not just for resume.
 
-This is the "materialized-context execution mode" the 2026-07-07 entry
-suspected, now with the mechanism named rather than guessed.
+So the open question is now precise: **in materialized-context execution mode,
+where does the frame's advancing expression stack get written back — and does
+it?** If execution runs on the C++ frame while the context is only refreshed on
+the rare materialize, every restore in between rebuilds from stale operands.
 
-NEXT: the suspend side. On `Processor yield` / preemption, find what writes the
-active process's `suspendedContext` — if it stores a cached `activeContext_`
-(or the frame's `materializedContext`) instead of materializing the LIVE frame
-first, that is the bug, and the fix is to materialize on suspend. Check
-`primitiveYield` / `transferTo` / the preemption checkpoint. A frame that has
-run since its last materialize MUST be re-materialized before its context is
-handed to the scheduler.
+NEXT:
+  1. Find every caller of `executeFromContext` and classify them (resume vs
+     return-into-sender vs interpret-loop). 1.5M calls for 431 saves says most
+     are not resumes; identify which caller dominates.
+  2. For the dominant caller, determine whether the context it restores from is
+     refreshed first. If not, that is the defect.
+  3. Only then attempt a fix; a deterministic 4-minute repro and a full-suite
+     A/B are both already in place to validate it.
 
 Also ruled out on the way, each with a measurement:
 
