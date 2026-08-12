@@ -57,17 +57,80 @@ Do NOT "fix" it by raising the `n > 4` cap in `primitiveWarpBits`
 (`Primitives.cpp:21892`). That stops the image entering the fallback that
 exposes the bug and makes ~99 errors vanish while proving nothing.
 
-### 2. 16 packages where stock Cog produces a RESULT and our VM produces nothing — HIGH
+### 2. 13 packages our VM cannot run at all, where Cog can — HIGH
 
-    famix  evref-bl-mcp  smacc  fast  viennatalk  anthropic-sdk-pharo  mutalk
-    fast-java  soil  ume  myprecious  pharo-acp  gitprojecthealth  pillar
-    jrpc  aoc-in-pharo
+Triaged 2026-08-12 on a fresh aarch64 box, each package standalone with a
+1800 s budget per arm and exit codes recorded (4 workers, not 8, so an OOM
+cannot masquerade as a crash again). Raw:
+`docs/results/pkg16-triage-2026-08-12.txt`.
 
-Source: `docs/results/arm-closeout-2026-08-11-summary.tsv`. Only `mutalk` has
-been chased (#3). Largest unexplored failure surface in the project. Two of
-them (`soil`, `myprecious`) are recorded as FIXED elsewhere, which is worth
-resolving. Triage with `scripts/pkg-jit-test/classify-missing-jit.py`, which
-separates crash / oom-killed / eval-lost / timeout / no-classes.
+Of the 16 originally flagged, **3 were OOM collateral and now run clean**
+(`moosetechnology-fast`, `-fast-java`, `shnarazk-aoc-in-pharo`). The other 13
+are real, and they are worth **~6,000 tests that stock Cog executes and we
+report nothing for**. They fall into three families:
+
+#### 2a. Startup/resume: 7 packages never reach the runner — NOT JIT-dependent
+
+Our VM never prints the runner's first landmark. `PHARO_NO_JIT=1` behaves
+identically, so this is not the JIT. Cog runs every one of them.
+
+    package                            cog                     ours
+    evref-bl-mcp                       696 P in 62 s           rc=0 in 4 s, no output
+    mumez-pharo-acp                    170 P in  1 s           rc=0 in 4 s, no output
+    pillar-markup-pillar                18 P in  1 s           rc=0 in 3 s, no output
+    fedeloch-ume                        11 P in 49 s           rc=0 in 0 s, no output
+    moosetechnology-famix             1293 P in 21 s           hangs, killed at 1800 s
+    tomooda-viennatalk                1430 P in 86 s           hangs, killed at 1800 s
+    moosetechnology-gitprojecthealth     6 P in  0 s           hangs, killed at 1800 s
+
+Two sub-modes. The first four exit 0 within seconds having done nothing; the
+VM's own guard fires — *"eval never ran — startup.st was still on disk at exit,
+so StartupPreferencesLoader did not execute it"*. The last three hang instead,
+before printing anything. `gitprojecthealth` is the sharpest: Cog finishes 6
+tests in under a second, we hang for 1800.
+
+`fedeloch-ume` shows what this looks like from inside:
+
+    [RESUME] Initial context: method=#? pc=nil
+    [RESUME] Not in snapshot code — resuming as-is
+    Interpreter initialization failed (may need process setup)
+
+i.e. an image that stock Cog resumes normally, our VM cannot boot. NOTE this
+supersedes the earlier "ume SIGSEGVs in every configuration" filing — that was
+measured on a differently-loaded image; on this one it fails to start instead.
+
+#### 2b. Three JIT-dependent losses — `PHARO_NO_JIT=1` fixes all three
+
+The runner starts, enumerates classes, then the run is lost. With the JIT off,
+each produces a normal RESULT.
+
+    juliendelplanque-jrpc          cog  81 P    ours exits 0 after CLASSES
+    punt-labs-anthropic-sdk-pharo  cog 901 P    ours exits 0 after CLASSES
+    j-brant-smacc                  cog 557 P in 30 s   ours hangs to 1800 s
+
+`jrpc` shows the mechanism, and it is a VM-level one:
+
+    [VM] primitiveFindHandlerContext: cyclic sender chain at 0x...
+    Error: This Delay has already been scheduled.
+      DelaySemaphoreScheduler>>schedule: <- DelayWaitTimeout(Delay)>>schedule <- ...
+
+A context's sender chain contains a CYCLE, which the VM detects with Floyd
+tortoise-and-hare (`Primitives.cpp` ~11520) and responds to by returning nil —
+i.e. telling the image **"no handler exists"**. The runner's `on: Error do:`
+therefore never fires, the exception escapes, and the whole package's results
+are lost to one corrupted chain. `Primitives.cpp` already carries a comment
+calling this "the x86-JIT sender-chain corruption" and a `PHARO_T1_TRACE_HANDLER`
+knob that dumps the walked chain — run it on jrpc first; it is a 7-second repro.
+
+#### 2c. Three crashes / silent losses, not JIT-dependent
+
+    apptivegrid-soil            cog 464 P    ours SIGABRT (rc=134) after CLASSES
+    pharo-contributions-mutalk  cog 336 P    ours SIGSEGV (rc=139) after CLASSES  (= #3)
+    smalltalkweb-myprecious     cog 107 P    ours exits 0 after CLASSES
+
+`soil` aborting is new information — `rc=134` is `abort()`, so an assertion or
+an uncaught C++ exception, distinct from mutalk's segfault. Both reproduce with
+`PHARO_NO_JIT=1` (mutalk stops segfaulting but still produces no RESULT).
 
 ### 3. `pharo-contributions-mutalk` — SIGSEGV in `~Interpreter()`, JIT-required — HIGH
 
@@ -78,13 +141,15 @@ Deterministic; identical across three sweeps and both arches. `PHARO_NO_JIT=1`
 exits 0, so the JIT is required. Happens after `CLASSES 89` with no `RESULT` —
 the VM leaves the suite early, then frees a corrupt pointer. Cog: pass=336 err=1.
 
-### 4. `fedeloch-ume` — SIGSEGV before the runner starts, every configuration — HIGH
+### 4. `fedeloch-ume` — superseded by #2a
 
-Same fault address under default, `PHARO_CTX_TRACE_ALL_SLOTS=1` and
-`PHARO_NO_JIT=1`; faults before `PREFIXES` is printed, i.e. during image load or
-VM startup. Should be the cheapest of the crashes to localize.
-Correction to the original filing: this is NOT "new, created by the FFI fix" —
-the same nothing-result row appears in the x86 2026-08-10 and July sweeps.
+Originally filed as "SIGSEGV before the runner starts, in every configuration".
+Re-measured 2026-08-12 on a freshly loaded image: it does not segfault there, it
+fails to BOOT — `[RESUME] Initial context: method=#? pc=nil` then
+`Interpreter initialization failed`. Same family as the other six in #2a.
+The earlier SIGSEGV was on a differently-loaded image and is worth keeping in
+mind as a second symptom of the same startup problem, but the reproducible
+handle is #2a.
 
 ### 5. `Smalltalk saveAs:` inside an eval freezes the pending eval result — MEDIUM-HIGH
 
