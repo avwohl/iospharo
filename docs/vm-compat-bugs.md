@@ -86,11 +86,24 @@ write-through (`PHARO_NO_CTX_STACKP_RAISE=1` — 12 errors), the Context GC
 trace bound (`PHARO_CTX_TRACE_ALL_SLOTS=1` — 12 errors), the return-value
 placement gap, the ctxSynced skip, preemption frequency.
 
-SUITE-LEVEL CONFIRMATION (macOS-arm64, in flight at 1508/2052 classes,
-22297 P / 0 F / 2 E):
+SUITE-LEVEL CONFIRMATION (macOS-arm64, 2006 of 2052 classes — the tail is the
+Zn* network family):
 
-    ClyBrowserToolValidityTest    25 P / 0 F / 0 E   (baseline: 25 ERRORs)
-    ClyNotebookPageRecyclerTest    8 P / 0 F / 0 E   (baseline:  8 ERRORs)
+                        this run          2026-08-11 baseline (HEAD, same box)
+    pass                27368             27701
+    fail                   23                22
+    error                  20                50
+    ClyBrowserToolValidityTest   25 P / 0 F / 0 E    (baseline: 25 ERRORs)
+    ClyNotebookPageRecyclerTest   8 P / 0 F / 0 E    (baseline:  8 ERRORs)
+    Cly* classes with any F or E:  NONE (140 Cly result lines)
+
+The ERROR column is the one that moved: 50 -> 20, and the 33 errors this
+defect owned are gone.  FAIL moved by one, inside the harness's documented
+few-tests-per-run noise floor.  Every remaining non-clean class is in an
+already-documented residual family — `OCClassBuilderTest` (upstream image
+bug, `docs/image_issues.md:184`), `ReleaseTest` run-order pollution, the
+Spec/GUI adapters, `StDebugger`/`StSpotter`/`StTranscript`, TKT — plus
+`FTTableMorphTest`, which passes on our VM in isolation (see below).
 
 Those 33 are the exact errors section 10 of the 2026-08-11 write-up
 attributed to this defect (`MessageNotUnderstood: SmallInteger >>

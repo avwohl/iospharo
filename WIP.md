@@ -124,6 +124,20 @@ theory on are FALSE POSITIVES.  Per-format attribution says all 49,831 are
 format 9 (64-bit word arrays that `hasPointers` includes for hiddenRoots),
 ZERO in pointer formats.  Lead 2 confirmed by measurement.
 
+### Full-suite validation of `#1` (macOS-arm64, 2006/2052 classes)
+
+                    this run     2026-08-11 baseline (HEAD, same box)
+    pass            27368        27701
+    fail               23           22
+    error              20           50
+
+    Cly* classes with any F or E:  NONE
+
+ERROR 50 -> 20; the 33 `SmallInteger >> #pixelAt:` errors this defect owned
+(`ClyBrowserToolValidityTest` 25, `ClyNotebookPageRecyclerTest` 8) are gone.
+FAIL moved by one, inside the documented noise floor.  Every remaining
+non-clean class is in a known residual family.
+
 ### Open
 
 `#4` is root-caused with the remaining work specified (bridge walk +
