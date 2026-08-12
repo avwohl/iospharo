@@ -292,18 +292,26 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
     });
 
     {
-        size_t total = 0;
-        for (size_t f = 0; f < 32; ++f) total += declinedByFormat_[f];
-        if (total > 0) {
+        // Report ONLY when a genuine pointer format is implicated.  Format 9
+        // declines are word-array data misread as pointers and are expected in
+        // the tens of thousands on a healthy image; a decline in formats 0-5 is
+        // a live slot left holding a saved-image address, which the GC will
+        // dereference (docs/vm-compat-bugs.md #4).
+        size_t pointerFormatDeclines = 0;
+        for (size_t f = 0; f <= 5; ++f) pointerFormatDeclines += declinedByFormat_[f];
+        if (pointerFormatDeclines > 0) {
+            size_t total = 0;
+            for (size_t f = 0; f < 32; ++f) total += declinedByFormat_[f];
             fprintf(stderr, "[IMGLOAD-DECLINE-BY-FORMAT] %zu declined old-base "
-                            "pointers past the loaded data:", total);
+                            "pointers in POINTER formats (of %zu total):",
+                    pointerFormatDeclines, total);
             for (size_t f = 0; f < 32; ++f) {
                 if (declinedByFormat_[f])
                     fprintf(stderr, " fmt%zu=%zu", f, declinedByFormat_[f]);
             }
-            fprintf(stderr, "  (fmt9 = 64-bit word arrays relocated as pointers"
-                            " — those are numeric data, not refs; fmt0-5 are"
-                            " genuine pointer slots left dangling)\n");
+            fprintf(stderr, "  — a pointer-format decline is a live slot left "
+                            "holding a saved-image address; fmt9 entries are "
+                            "word-array data and expected\n");
         }
     }
 
@@ -545,16 +553,16 @@ uint64_t ImageLoader::relocatePointer(uint64_t oldOop) const {
         // dangerous case: it looks exactly like a saved-image address we failed
         // to load (multi-segment image?), and declining it leaves a dangling
         // saved-image pointer in a live slot — docs/vm-compat-bugs.md #4.
-        if (oldOop >= oldBase_) {
-            static int declineN = 0;
-            if (++declineN <= 10) {
-                fprintf(stderr,
-                    "[IMGLOAD-DECLINE] oop=0x%llx is +0x%llx past oldBase=0x%llx but"
-                    " loadedSize=0x%llx — NOT relocated (dangling saved-image pointer)\n",
-                    (unsigned long long)oldOop, (unsigned long long)(oldOop - oldBase_),
-                    (unsigned long long)oldBase_, (unsigned long long)loadedSize_);
-            }
-        }
+        // NOT reported here.  This function has no idea WHO owns the slot, and
+        // the answer turns out to be everything: on a healthy base image
+        // 74,998 values land here and every one of them is inside a FORMAT 9
+        // object — a 64-bit word array that `hasPointers` includes for
+        // hiddenRoots' sake, so ordinary numeric data gets offered to this
+        // function and correctly declined.  Printing them unconditionally
+        // trained the eye to skip a line that is almost always benign, and one
+        // session built a root-cause theory on them.  The caller knows the
+        // owner's format and reports only the dangerous case — see
+        // [IMGLOAD-DECLINE-BY-FORMAT] in relocatePointers().
         return oldOop;
     }
 
