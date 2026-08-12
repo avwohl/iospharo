@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Report whether a Spur image is multi-segment, without booting a VM.
 
-Our ImageLoader walks the image data as ONE contiguous object sequence and
-relocates every pointer by a single (newBase - oldBase) delta, so a
-multi-segment image mis-parses at the first bridge and leaves everything past
-it holding saved-image addresses (docs/vm-compat-bugs.md #4).  loadHeapData
-refuses such images; this tells you up front which ones those are.
+Multi-segment images are SUPPORTED since 2026-08-12 (`6edf6b33`): readSegments()
+walks the bridge chain, packs the segments and relocates per segment.  Before
+that the loader mis-parsed at the first bridge and left everything past it
+holding saved-image addresses (docs/vm-compat-bugs.md #4).  This is still worth
+running when triaging a load problem — it tells you which code path an image
+takes without booting a VM.
 
 The test is `firstSegmentBytes < imageBytes`.  It is NOT "are there bytes past
 the declared data" — segments live INSIDE imageBytes, separated by bridge
@@ -40,7 +41,7 @@ def check(path):
     print('%-40s %8.1f MB  imageBytes=%-12d firstSegment=%-12d %s'
           % (os.path.basename(path), os.path.getsize(path) / 1048576.0,
              image_bytes, first_segment,
-             'MULTI-SEGMENT (this VM refuses it)' if multi else 'single'))
+             'MULTI-SEGMENT' if multi else 'single'))
     return multi
 
 
