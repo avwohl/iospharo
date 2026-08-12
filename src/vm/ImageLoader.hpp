@@ -173,6 +173,21 @@ private:
     /// The ONLY format-9 object whose slots are Oops rather than data.
     uint64_t* findHiddenRootsHeader() const;
 
+    /// One loaded Spur segment.  A multi-segment image is written as
+    /// seg1|bridge|seg2|bridge|... inside imageBytes; each segment has its
+    /// OWN saved start address, so relocation needs a per-segment delta.
+    struct Segment {
+        uint64_t oldStart;   ///< saved base address of this segment
+        uint64_t oldEnd;     ///< oldStart + payload size (bridge excluded)
+        int64_t  swizzle;    ///< add this to a saved oop to get ours
+    };
+    std::vector<Segment> segments_;
+
+    /// Walk the bridge chain, pack the segments (dropping each 16-byte
+    /// bridge, as the reference VM does) and fill segments_.
+    /// Returns false and sets result.error on a malformed chain.
+    bool readSegments(LoadResult& result);
+
     /// Convert a raw pointer to an Oop with correct space encoding
     Oop rawToOop(uint64_t raw, ObjectMemory& memory) const;
 

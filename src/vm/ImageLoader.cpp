@@ -151,21 +151,6 @@ bool ImageLoader::loadHeapData(std::ifstream& file, ObjectMemory& memory,
     // is the field that answers it.  Real support needs the bridge walk AND a
     // PER-SEGMENT relocation delta, since each segment carries its own saved
     // start address.
-    if (header_.firstSegmentBytes > 0
-            && header_.firstSegmentBytes < header_.imageBytes) {
-        fprintf(stderr,
-            "[IMGLOAD-MULTISEG] image has MULTIPLE SEGMENTS: firstSegmentBytes="
-            "%llu of imageBytes=%llu (%.1f%% in the first).  This loader only "
-            "handles single-segment images; loading would relocate the first "
-            "segment and leave the rest holding saved-image pointers.\n",
-            (unsigned long long)header_.firstSegmentBytes,
-            (unsigned long long)header_.imageBytes,
-            100.0 * (double)header_.firstSegmentBytes
-                  / (double)header_.imageBytes);
-        result.error = "Multi-segment Spur image — not supported by this "
-                       "ImageLoader (see [IMGLOAD-MULTISEG])";
-        return false;
-    }
 
     // Get the destination in old space
     loadedData_ = memory.oldSpaceStart();
@@ -189,9 +174,101 @@ bool ImageLoader::loadHeapData(std::ifstream& file, ObjectMemory& memory,
     oldBase_ = header_.startOfMemory;
     newBase_ = reinterpret_cast<uint64_t>(loadedData_);
 
-    // Update the free pointer
-    memory.setOldSpaceFreePointer(loadEnd);
+    // Multi-segment images: walk the bridge chain, pack, record per-segment
+    // swizzles.  Single-segment images get one entry and behave as before.
+    if (!readSegments(result)) return false;
+    (void)loadEnd;
 
+    // Update the free pointer
+    memory.setOldSpaceFreePointer(loadedData_ + loadedSize_);
+
+    return true;
+}
+
+// Spur writes the heap as one or more SEGMENTS inside imageBytes, each but the
+// last ending in a 16-byte BRIDGE.  Reference: cointerp-cpp.c:14984
+// (SIR_readSegmentsFromImageFile).  Two things matter, and both were missing:
+//
+//   1. the bridges are DROPPED — the reference advances its write pointer by
+//      `segSize - 2*BaseHeaderSize`, so the next segment overwrites the bridge
+//      and the heap ends up a clean contiguous object sequence.  We read the
+//      file in one shot, so we pack afterwards with memmove.
+//   2. each segment carries its OWN saved base, so relocation needs a
+//      PER-SEGMENT delta.  One `newBase - oldBase` is correct only for the
+//      first segment.
+//
+// Missing (1) is what made forEachObject mis-parse at a bridge and silently
+// abandon 38% of the heap; missing (2) would relocate later segments' pointers
+// by the wrong amount (docs/vm-compat-bugs.md #4).
+bool ImageLoader::readSegments(LoadResult& result) {
+    segments_.clear();
+    constexpr uint64_t kBaseHeaderSize = 8;
+    constexpr uint64_t kBridgeSize = 2 * kBaseHeaderSize;
+
+    const uint64_t firstSegSize = header_.firstSegmentBytes;
+    if (firstSegSize == 0 || firstSegSize >= loadedSize_) {
+        segments_.push_back({oldBase_, oldBase_ + loadedSize_,
+                             static_cast<int64_t>(newBase_ - oldBase_)});
+        return true;
+    }
+
+    uint64_t oldBase = oldBase_;
+    uint8_t* readCursor = loadedData_;
+    uint8_t* writeCursor = loadedData_;
+    uint64_t segSize = firstSegSize;
+    size_t guard = 0;
+
+    while (true) {
+        if (segSize < kBridgeSize
+                || readCursor + segSize > loadedData_ + loadedSize_) {
+            result.error = "Multi-segment image: malformed segment size";
+            return false;
+        }
+        const uint64_t payload = segSize - kBridgeSize;
+
+        // Read the bridge BEFORE packing can overwrite it.
+        uint8_t* bridgehead = readCursor + payload;
+        const uint64_t headWord = *reinterpret_cast<uint64_t*>(bridgehead);
+        const uint64_t nextSize =
+            *reinterpret_cast<uint64_t*>(bridgehead + kBaseHeaderSize);
+        // Byte 7 of the head word zero => no address gap; else the low 56 bits
+        // are a SLOT count of skipped address space.
+        const uint64_t bridgeSpan =
+            ((headWord >> 56) == 0) ? 0 : (8ull * ((headWord << 8) >> 8));
+
+        if (writeCursor != readCursor) {
+            std::memmove(writeCursor, readCursor, payload);
+        }
+        segments_.push_back({oldBase, oldBase + payload,
+                             static_cast<int64_t>(
+                                 reinterpret_cast<uint64_t>(writeCursor) - oldBase)});
+
+        writeCursor += payload;
+        readCursor  += segSize;
+        // The reference advances the SAVED base by the FULL segment size —
+        // `oldBase := oldBase + nextSegmentSize + bridgeSpan`
+        // (cointerp-cpp.c:15008) — i.e. including the 16-byte bridge, which
+        // occupies saved address space even though it holds no object.  Using
+        // the payload here instead put every segment after the first 16 bytes
+        // (then 32, 48, ...) low, which showed up as 8 invalid pointers in
+        // hiddenRoots on the Ume image while the class table itself still
+        // matched.
+        oldBase      = oldBase + segSize + bridgeSpan;
+
+        if (nextSize == 0) break;
+        segSize = nextSize;
+        if (++guard > 4096) {
+            result.error = "Multi-segment image: bridge chain did not terminate";
+            return false;
+        }
+    }
+
+    const size_t packed = static_cast<size_t>(writeCursor - loadedData_);
+    fprintf(stderr,
+        "[IMGLOAD-MULTISEG] %zu segments; packed %zu bytes from %zu "
+        "(%zu bridge bytes dropped)\n",
+        segments_.size(), packed, loadedSize_, loadedSize_ - packed);
+    loadedSize_ = packed;
     return true;
 }
 
@@ -585,6 +662,17 @@ uint64_t ImageLoader::relocatePointer(uint64_t oldOop) const {
     }
 
     // It's an object pointer (tag = 000, 8-byte aligned address)
+    // Multi-segment: each segment has its own saved base, so find the owning
+    // segment and use ITS delta.  One segment => identical to the old path.
+    if (segments_.size() > 1) {
+        for (const Segment& seg : segments_) {
+            if (oldOop >= seg.oldStart && oldOop < seg.oldEnd) {
+                return static_cast<uint64_t>(
+                    static_cast<int64_t>(oldOop) + seg.swizzle);
+            }
+        }
+        return oldOop;  // in no segment — decline, as below
+    }
     // Only relocate if it's within the old heap bounds
     if (oldOop < oldBase_ || oldOop >= oldBase_ + loadedSize_) {
         // Pointer outside old heap - could be special value, already relocated,
