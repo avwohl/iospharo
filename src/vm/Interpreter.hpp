@@ -1159,6 +1159,11 @@ private:
     std::vector<std::string> imageArguments_;  // Command-line args for the image (index 2+)
     std::string evalStartupScript_;   // see setEvalStartupScript
     bool evalQuitDeferred_ = false;   // one-shot: the deferral already happened
+    // Wall-clock bound on that deferral.  An idle image executes very few
+    // bytecodes, so a step-count deadline would never arrive; and if nothing
+    // ever consumes the script (no command-line handler was queued) the VM
+    // must not sit until the step budget.  Zero = not armed.
+    std::chrono::steady_clock::time_point evalDeferDeadline_{};
     std::vector<std::string> vmParameters_;    // VM flags like --headless (negative indices)
 
     // Screen dimensions (configurable, defaults for headless)

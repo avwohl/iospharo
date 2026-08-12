@@ -3883,6 +3883,29 @@ void Interpreter::interpret() {
             }
         }
 
+        // -- Deferred-quit deadline (eval mode; see primitiveQuit) --
+        // The deferral gambles that a command-line handler this run queued is
+        // about to run our startup.st.  If it never does, exit instead of
+        // idling to the step budget — and say which way it went.
+        if (__builtin_expect(evalDeferDeadline_.time_since_epoch().count() != 0, 0)
+                && std::chrono::steady_clock::now() >= evalDeferDeadline_) {
+            evalDeferDeadline_ = {};
+            bool stillThere = false;
+            if (FILE* f = std::fopen(evalStartupScript_.c_str(), "r")) {
+                std::fclose(f);
+                stillThere = true;
+            }
+            if (stillThere) {
+                fprintf(stderr,
+                    "[EVAL] deferred quit timed out — %s was never executed, so "
+                    "no command-line handler picked it up.  Exiting.\n",
+                    evalStartupScript_.c_str());
+                fflush(stderr);
+                running_ = false;
+                goto cg_exit;
+            }
+        }
+
         // -- Terminate stuck process (set by watchdog, rare) --
         if (__builtin_expect(terminateStuck_.load(std::memory_order_acquire), 0)) {
             terminateStuck_.store(false, std::memory_order_relaxed);

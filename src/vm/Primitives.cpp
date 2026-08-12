@@ -5114,6 +5114,8 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
             // no queued handler to wait for, so take the real quit.
             terminateCurrentProcess();
             if (tryReschedule()) {
+                evalDeferDeadline_ = std::chrono::steady_clock::now()
+                                   + std::chrono::seconds(120);
                 return PrimitiveResult::Success;
             }
             fprintf(stderr, "[EVAL] no runnable process after deferring — "
