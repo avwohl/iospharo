@@ -33,17 +33,25 @@ RULED OUT so far:
   - Not reachable in suite batch 1-400 (10923 P / 1 E / 1 T), so whatever
     pollutes Display runs later than that.
 
-  - **This session's commits are NOT the cause — settled with a real control.**
-    A full macOS-arm64 suite on a build of **`361bf92b`** (the commit before
-    all of `da9159e9` / `d209543d` / `4a46413f` / `919904cd` / `89942e89` /
-    `31aa67b3`) reproduces it: `ClyBrowserToolValidityTest` 25 ERROR, same
-    signature.  The earlier `PHARO_CTX_TRACE_ALL_SLOTS=1` run pointed the same
-    way but did not prove it — that knob reverts `pointerSlotsOf` only and
-    leaves `storeContextStackp` and `raiseContextStackpTo` active, and raising
-    stackp is NOT GC-only (`executeFromContext` restores exactly `stackp`
-    slots as the activation's temps, so an over-raised stackp shifts the
-    operand stack).  `PHARO_NO_CTX_STACKP_RAISE=1` now exists to take that
-    piece out independently; it was not needed here.
+  - **On macOS, this session's commits are not the cause.** A full macOS-arm64
+    suite on a build of **`361bf92b`** (the commit before `da9159e9` /
+    `d209543d` / `4a46413f` / `919904cd` / `89942e89` / `31aa67b3`) reproduces
+    it: `ClyBrowserToolValidityTest` 25 ERROR, same signature.
+
+    **That does NOT settle the Linux regression**, and it is important not to
+    read it as if it did: macOS has NO baseline from before today — these
+    classes have never been measured on macOS — so "macOS fails at 361bf92b"
+    is consistent with macOS having always failed. The morning-vs-evening
+    regression is a Linux fact and needs a Linux control, which is the run
+    still in flight.
+
+    The earlier `PHARO_CTX_TRACE_ALL_SLOTS=1` run pointed the same way but
+    proves less than it appears to: that knob reverts `pointerSlotsOf` only
+    and leaves `storeContextStackp` and `raiseContextStackpTo` active, and
+    raising stackp is NOT GC-only (`executeFromContext` restores exactly
+    `stackp` slots as the activation's temps, so an over-raised stackp shifts
+    the operand stack). `PHARO_NO_CTX_STACKP_RAISE=1` exists to take that
+    piece out independently.
   - Not a FAIL-level regression: the same runs are 27647 P / 24 F on Linux and
     27701 P / 22 F on macOS, with every FAIL in the documented residual
     families (ReleaseTest, StDebugger/StSpotter, TKT, ZnClient) — the same
@@ -57,11 +65,21 @@ NEXT — two candidates remain, and `361bf92b` still contains the first:
      platform.  Bisect step: build `83c8ee22` (its parent) and run the full
      suite.
   2. **The image itself.**  `x86-fullsuite.sh` re-downloads Pharo 13 on every
-     run, so the morning run and the evening runs may not be the same build.
-     That would explain a change with no VM involvement at all, and it is the
-     cheaper thing to check first: compare the `.sources` build hash
-     (`Pharo13.1-64bit-<hash>.sources`) between a fresh download and the one
-     the morning run used.
+     run, so the morning and evening runs need not be the same build, and that
+     would explain a change with no VM involvement at all.  Partially checked:
+     the morning run reports `Classes: 2052` and the evening ones 2055, but
+     the actual class SETS are identical (2053 unique names each, empty diff
+     both ways), so that count is a runner artifact and NOT evidence of a
+     different image.  A real check needs the `.sources` build hash from the
+     morning box, which is gone — so the way to settle it is the stock-Cog
+     control below, not archaeology.
+
+  3. **Not a VM bug at all.**  The decisive and cheapest test: run the SAME
+     full class set on STOCK COG on tonight's image.  If Cog fails the same
+     tests, no VM is involved.  `box-cog-control.sh` (in the session
+     scratchpad) does this; `run_sunit_cog.st` takes its class list from
+     `/tmp/sunit_test_classes.txt`, so generate the full list first and give
+     the same one to both arms.
 
 The failure is display state (`Form>>bits` holding an Array/SmallInteger) and
 the affected classes open real browser tools, so an earlier GUI test leaving
