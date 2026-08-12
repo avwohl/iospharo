@@ -69,11 +69,18 @@ the displacement. Do not "fix" it that way.
 
 ### Not yet done
 
-  - **The stock-Cog control was never actually captured** — the artifacts from
-    that attempt are empty (`EXIT=1`). Run the forcing probe on stock Cog with
-    tonight's image, with the cell size forced past the `n > 4` cap so Cog also
-    takes the Smalltalk fallback. If Cog errors too, no VM is involved. THIS IS
-    THE FIRST THING TO DO.
+  - ~~The stock-Cog control~~ **DONE, and it is a VM bug.** Same probe, same
+    image, stock Cog: **1440 calls, 0 errors.** Ours: ~795 calls, 12 errors, on
+    HEAD and on `361bf92b` and under `PHARO_NO_JIT=1`. The image code is fine;
+    our VM corrupts the frame.
+    Caveat worth keeping: our `primitiveWarpBits` also bails for any non-32-bit
+    depth, and the probe sweeps depths 8/16/32/1, so for three of the four Cog
+    stays in its primitive while we take the Smalltalk fallback. Cog's zero
+    therefore shows the image code is correct when executed correctly — it does
+    not exercise the identical path. That does not weaken the conclusion: the
+    observed receivers are impossible values for those temps
+    (`picker` is assigned from `bitPeekerFromForm:` and can only be a BitBlt),
+    so something is displacing frame state on our side.
   - Localize the slot: in the probe's `on: Error do:` handler, walk
     `ex signalerContext` senders to the frame whose receiver `isKindOf: WarpBlt`
     and print `tempNames` paired with `(ctx tempAt: i) class name`. That names
