@@ -244,6 +244,8 @@ public:
     void pinLiveJITMethodsAcrossProcesses();
     bool maybeTerminateStuckProcess();  // guarded terminateStuck_; protects Delay scheduler
     void traceExtentBytecode(uint8_t bc);  // PHARO_TRACE_EXTENT_SEL per-bytecode trace
+    void armDepthOracle(Oop method);       // PHARO_DEPTH_ORACLE: (re)point at a method
+    void depthOracleCheck();               // PHARO_DEPTH_ORACLE: per-bytecode depth check
     void dumpCurrentMethod();
     void dumpJITStats();
 

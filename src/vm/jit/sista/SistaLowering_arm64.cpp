@@ -14,6 +14,7 @@
 #include <asmjit/a64.h>
 #include <asmjit/core/jitruntime.h>
 
+#include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -498,8 +499,39 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         // value may differ on different paths into the block.
         std::unordered_map<uint64_t, Gp> tempCache;
 
+        // Multi-entry loader blocks CONSUME operands (see below).
+        uint32_t loaderLoads = 0;
+        if (std::find(dispatchLoaderIds.begin(), dispatchLoaderIds.end(), b.id)
+                != dispatchLoaderIds.end()) {
+            for (uint32_t vid : b.values) {
+                if (method.valueAt(vid).op != Op::kLoadStackSlot) break;
+                loaderLoads++;
+            }
+        }
+        bool loaderSpAdjusted = (loaderLoads == 0);
+
         for (uint32_t vid : b.values) {
             const Value& v = method.valueAt(vid);
+            // A dispatch loader's kLoadStackSlot ops MOVE the target
+            // block's entry operands off the interpreter's stack and
+            // into the region's registers, so state.sp must drop past
+            // them exactly as an interpreted pop would.  Leaving sp
+            // where it was makes those operands live TWICE: once in
+            // the modelled stack the next bail writes at state.sp, and
+            // once in the copies still sitting below it — the resumed
+            // frame gains one phantom operand per phi, its expression
+            // stack is displaced, and an inner expression evaluates
+            // against the wrong value (defect #1, WarpBlt).  Emit the
+            // adjustment after the loads and before the terminator, so
+            // the loads still read from the pre-entry sp.
+            if (!loaderSpAdjusted && v.op != Op::kLoadStackSlot) {
+                Gp loaderSp = cc.new_gp64("loaderSp");
+                cc.ldr(loaderSp, ptr(state, OFF_SP));
+                cc.sub(loaderSp, loaderSp,
+                       Imm(static_cast<int>(loaderLoads) * 8));
+                cc.str(loaderSp, ptr(state, OFF_SP));
+                loaderSpAdjusted = true;
+            }
             // Bisect: PHARO_SISTA_ARM_BAIL_OP=<opNum> fails lowering of that op
             // so any method containing it bails to the interpreter — localizes
             // a downstream miscompiled op (blocker #4).

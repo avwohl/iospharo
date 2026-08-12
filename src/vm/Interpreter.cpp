@@ -173,6 +173,38 @@ const char* g_traceExtentSel = nullptr;  // target selector (knob), cached at in
 bool        g_traceExtentActive = false; // currently inside the matched method's extent
 size_t      g_traceExtentDepth = 0;      // frameDepth_ at extent entry (for relative depth)
 size_t      g_traceExtentLines = 0;      // per-extent line counter (reset on entry, capped)
+
+// PHARO_DEPTH_ORACLE=<exact selector>: self-calibrating operand-stack-depth
+// oracle for ONE method.  The first execution of each bytecode offset records
+// the frame's operand depth; every later visit that disagrees is expression-
+// stack displacement, reported with the frame, the owning context, and the
+// preceding save/restore/return events.  Straight-line and loop code has a
+// fixed depth per pc, so no static analysis is needed to know the expectation.
+const char* g_doSel = nullptr;      // knob value, cached at interpret() entry
+bool        g_doOn = false;         // knob present at all (the DISPATCH_NEXT gate)
+uint64_t    g_doMethod = 0;         // CompiledMethod oop currently armed
+uint8_t*    g_doBase = nullptr;     //   its bytes() at arm time
+size_t      g_doSize = 0;           //   its byteSize() at arm time
+int16_t*    g_doTable = nullptr;    // first-seen depth per byte offset (-1 = unseen)
+int         g_doHits = 0;           // divergences reported (capped)
+// Event ring: what happened to this activation just before the divergence.
+struct DoEv { const char* tag; uint64_t ctx; int a; int b; int c; uint64_t step; };
+constexpr int kDoRing = 48;
+DoEv     g_doRing[kDoRing];
+uint32_t g_doRingIdx = 0;
+inline void doRec(const char* tag, uint64_t ctx, int a, int b, int c, uint64_t step) {
+    DoEv& e = g_doRing[g_doRingIdx++ % kDoRing];
+    e.tag = tag; e.ctx = ctx; e.a = a; e.b = b; e.c = c; e.step = step;
+}
+// Per-bytecode (offset, depth, seq) ring — the bytecode-level companion to the
+// event ring, so the exact bytecode at which the depth jumped is visible even
+// when the jump happens with no frame push/save in between.
+struct DoBc { int32_t off; int16_t depth; uint8_t bc; uint8_t fd; uint32_t ctx;
+              uint32_t fp; uint32_t ev; };
+constexpr int kDoBcRing = 160;
+DoBc     g_doBcRing[kDoBcRing];
+uint32_t g_doBcIdx = 0;
+
 struct AtEv { uint8_t kind; uint8_t op; int ipOff; uint64_t fp1; uint64_t ctx; };
 // kind: 0=bytecode 1=resume(EFC) 2=save(materialize) 3=build(E7)
 constexpr int kAtMax = 400000;
@@ -2559,6 +2591,108 @@ void Interpreter::dumpTimerWedgeState() {
     fprintf(stderr, "[WEDGE] ==== end one-shot dump ====\n\n");
 }
 
+// PHARO_DEPTH_ORACLE: (re)point the oracle at `method` when its selector is the
+// watched one.  Called from every path that installs method_ without going
+// through activateMethod (executeFromContext) as well as from activateMethod,
+// because the method oop moves under GC compaction and the table is keyed to
+// the bytes it was calibrated against.
+void Interpreter::armDepthOracle(Oop method) {
+    if (!g_doOn || !method.isObject() || method.rawBits() <= 0x10000) return;
+    if (method.rawBits() == g_doMethod) return;
+    if (memory_.selectorOf(method) != g_doSel) return;
+    ObjectHeader* mh = method.asObjectPtr();
+    size_t sz = mh->byteSize();
+    if (g_doTable == nullptr || sz > g_doSize) {
+        free(g_doTable);
+        g_doTable = (int16_t*)malloc(sz * sizeof(int16_t));
+        if (!g_doTable) return;
+    }
+    // A moved method keeps its bytecodes, so the calibration stays valid; only
+    // re-seed when this is a genuinely different CompiledMethod.
+    if (g_doBase == nullptr || g_doSize != sz) {
+        for (size_t i = 0; i < sz; i++) g_doTable[i] = -1;
+    }
+    g_doMethod = method.rawBits();
+    g_doBase = mh->bytes();
+    g_doSize = sz;
+}
+
+// The per-bytecode check.  One predictable branch in DISPATCH_NEXT when off.
+void Interpreter::depthOracleCheck() {
+    if (method_.rawBits() != g_doMethod || framePointer_ == nullptr) return;
+    ptrdiff_t off = (instructionPointer_ - 1) - g_doBase;
+    if (off < 0 || (size_t)off >= g_doSize) return;
+    ptrdiff_t depth = (stackPointer_ - framePointer_) - 1;
+    if (depth < 0 || depth > 32000) return;
+    {
+        DoBc& b = g_doBcRing[g_doBcIdx++ % kDoBcRing];
+        b.off = (int32_t)off; b.depth = (int16_t)depth;
+        b.bc = *(instructionPointer_ - 1); b.ev = g_doRingIdx;
+        b.fd = (uint8_t)(frameDepth_ > 255 ? 255 : frameDepth_);
+        b.ctx = (uint32_t)activeContext_.rawBits();
+        b.fp = (uint32_t)(uintptr_t)framePointer_;
+    }
+    int16_t& seen = g_doTable[off];
+    if (seen < 0) { seen = (int16_t)depth; return; }
+    if (seen == (int16_t)depth) return;
+    if (g_doHits++ >= 1) return;
+
+    auto cls = [&](Oop o) -> std::string {
+        if (o.isNil()) return "nil";
+        if (o.isSmallInteger()) return "SmI";
+        if (o.isCharacter()) return "Char";
+        if (o.isObject() && o.rawBits() > 0x10000 && memory_.isValidPointer(o))
+            return memory_.classNameOf(o);
+        return "imm";
+    };
+    fprintf(stderr,
+        "\n[DEPTH-ORACLE #%d] #%s bcOff=%td bc=0x%02x depth=%td EXPECTED=%d "
+        "(delta=%td) fd=%zu step=%llu\n",
+        g_doHits, g_doSel, off, (unsigned)*(instructionPointer_ - 1),
+        depth, (int)seen, depth - seen, frameDepth_,
+        (unsigned long long)g_stepNum);
+    // The live frame: temps then operands.
+    Oop hdr = memory_.fetchPointer(0, method_);
+    int numTemps = hdr.isSmallInteger() ? (int)((hdr.asSmallInteger() >> 18) & 0x3F) : 0;
+    fprintf(stderr, "  frame numTemps=%d:", numTemps);
+    for (ptrdiff_t i = 0; i < depth; i++) {
+        if (i == numTemps) fprintf(stderr, "  |expr|");
+        fprintf(stderr, " %s", cls(framePointer_[1 + i]).c_str());
+    }
+    fprintf(stderr, "\n");
+    // The context this frame claims to be, and what IT thinks the depth is.
+    Oop ctx = activeContext_;
+    if (ctx.isObject() && ctx.rawBits() > 0x10000 && memory_.isValidPointer(ctx)) {
+        Oop sp = memory_.fetchPointer(2, ctx);
+        Oop pc = memory_.fetchPointer(1, ctx);
+        fprintf(stderr, "  activeContext_=0x%llx stackp=%lld pc=%lld owned=%d\n",
+                (unsigned long long)ctx.rawBits(),
+                sp.isSmallInteger() ? (long long)sp.asSmallInteger() : -1,
+                pc.isSmallInteger() ? (long long)pc.asSmallInteger() : -1,
+                currentFrameMaterializedCtx_.rawBits() == ctx.rawBits() ? 1 : 0);
+    }
+    fprintf(stderr, "  recent events (oldest first, ev# = events seen so far):\n");
+    for (uint32_t k = 0; k < kDoRing; k++) {
+        const DoEv& e = g_doRing[(g_doRingIdx + k) % kDoRing];
+        if (!e.tag) continue;
+        uint32_t abs = (g_doRingIdx >= kDoRing)
+            ? (g_doRingIdx - kDoRing + k + 1) : (k + 1);
+        fprintf(stderr, "    ev%-7u %-10s ctx=0x%llx a=%d b=%d c=%d step=%llu\n",
+                abs, e.tag, (unsigned long long)e.ctx, e.a, e.b, e.c,
+                (unsigned long long)e.step);
+    }
+    fprintf(stderr, "  last %d bytecodes of this method (off depth bc | ev#):\n",
+            kDoBcRing);
+    for (uint32_t k = 0; k < kDoBcRing; k++) {
+        const DoBc& b = g_doBcRing[(g_doBcIdx + k) % kDoBcRing];
+        if (b.off == 0 && b.depth == 0) continue;
+        fprintf(stderr, "    %4d d=%-4d bc=0x%02x fd=%-3u ctx=..%08x fp=..%08x ev=%u\n",
+                b.off, (int)b.depth, (unsigned)b.bc, (unsigned)b.fd, b.ctx,
+                b.fp, b.ev);
+    }
+    fflush(stderr);
+}
+
 // PHARO_TRACE_EXTENT_SEL: log one line per bytecode executed within the dynamic
 // extent of the matched method (relative depth, current method selector, opcode,
 // top-of-stack class). Disarms when frameDepth_ falls below the entry depth.
@@ -2597,6 +2731,8 @@ void Interpreter::interpret() {
 #endif
     g_atRecOn = GET_DEBUG_BOOL(PHARO_FINDNODE_WATCH);
     g_traceExtentSel = GET_DEBUG_STR(PHARO_TRACE_EXTENT_SEL);
+    g_doSel = GET_DEBUG_STR(PHARO_DEPTH_ORACLE);
+    g_doOn = (g_doSel != nullptr);
 
     // Generational-GC young-gen enabler.  PHARO_YOUNG_GEN=1 opts
     // in to eden allocation + scavenge; default off until the
@@ -2781,6 +2917,7 @@ void Interpreter::interpret() {
                   framePointer_ ? framePointer_[1].rawBits() : 0, \
                   framePointer_ ? framePointer_[2].rawBits() : 0); \
         if (__builtin_expect(g_traceExtentActive, 0)) traceExtentBytecode(bytecode); \
+        if (__builtin_expect(g_doOn, 0)) depthOracleCheck(); \
         if constexpr (ENABLE_DEBUG_LOGGING) { \
             recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
             recentBytecodeIdx_++; \
@@ -3648,6 +3785,7 @@ void Interpreter::interpret() {
             // Resume without process switching — don't clear inExtension_
             // (the consumer's DISPATCH_NEXT will clear it)
             bytecode = *instructionPointer_++;
+            if (__builtin_expect(g_doOn, 0)) depthOracleCheck();
             if constexpr (ENABLE_DEBUG_LOGGING) {
                 recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
                 recentBytecodeIdx_++;
@@ -3956,6 +4094,7 @@ void Interpreter::interpret() {
         // Resume dispatch after checks
         if (__builtin_expect(!running_, 0)) goto cg_exit;
         bytecode = *instructionPointer_++;
+        if (__builtin_expect(g_doOn, 0)) depthOracleCheck();
         if constexpr (ENABLE_DEBUG_LOGGING) {
             recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
             recentBytecodeIdx_++;
@@ -7528,6 +7667,10 @@ void Interpreter::returnValue(Oop value) {
                         if (pastValue > stackPointer_) {
                             stackPointer_ = pastValue;
                         }
+                        if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+                            doRec("RET-INTO", sender.rawBits(), origSp,
+                                  (int)(stackPointer_ - framePointer_ - 1),
+                                  (int)(instructionPointer_ - g_doBase), g_stepNum);
                         return;
                     }
                 }
@@ -12077,6 +12220,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // method whose selector matches the knob. The extent (this method + every
     // method it calls) is then traced per-bytecode in DISPATCH_NEXT until
     // frameDepth_ falls back below the entry depth.
+    if (__builtin_expect(g_doOn, 0)) armDepthOracle(method);
     if (__builtin_expect(g_traceExtentSel != nullptr && !g_traceExtentActive, 0)
             && method.isObject() && method.rawBits() > 0x10000
             && memory_.selectorOf(method) == g_traceExtentSel) {
@@ -14286,6 +14430,11 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     frame.ctxSynced = false;  // frame ran since that ctx was synced
     currentFrameMaterializedCtx_ = memory_.nil();  // New frame has no cached context
 
+    if (__builtin_expect(g_doOn, 0) && frame.savedMethod.rawBits() == g_doMethod)
+        doRec("PUSH", frame.savedActiveContext.rawBits(),
+              (int)(frame.savedFP ? (stackPointer_ - frame.savedFP - 1) : -1),
+              argCount, (int)(frame.savedIP - g_doBase), g_stepNum);
+
     // PHARO_TRACE_FRAME_TEMPS: at PUSH time, record where this activation's
     // temps actually live according to the JIT (state.tempBase) next to where
     // the materializer will look for them (savedFP + 1).  A mismatch is the
@@ -14763,6 +14912,11 @@ bool Interpreter::popFrame() {
     currentFrameMaterializedCtx_ = frame.materializedContext;  // Restore cached context for this frame
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
+
+    if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+        doRec("POP", activeContext_.rawBits(),
+              (int)(stackPointer_ - framePointer_ - 1), (int)frameDepth_,
+              (int)(instructionPointer_ - g_doBase), g_stepNum);
 
     driftCheck("popFrame@10221", method_.rawBits(), instructionPointer_, savedFrames_.size(), -1);
     return true;
@@ -18590,6 +18744,10 @@ void Interpreter::putToSleep(Oop process) {
 // Materialize the inline frame stack into context objects
 // Returns the topmost context (current execution point)
 Oop Interpreter::materializeFrameStack() {
+    if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+        doRec("MATFS-IN", activeContext_.rawBits(), (int)frameDepth_,
+              framePointer_ ? (int)(stackPointer_ - framePointer_ - 1) : -1,
+              (int)(instructionPointer_ - g_doBase), g_stepNum);
     if (__builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_MATFS), 0)) {
         static int mtN = 0;
         if (++mtN <= 2000000) {
@@ -18739,6 +18897,9 @@ Oop Interpreter::materializeFrameStack() {
             // the new top, so no stale pointer survives where the GC no longer
             // traces (and therefore no longer updates after a compaction).
             storeContextStackp(activeContext_, numItems);
+            if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+                doRec("SAVE-FD0", activeContext_.rawBits(), numItems, -1,
+                      (int)(pc - 1), g_stepNum);
 
             // Sync ALL items (temps + expression stack): C++ → context.
             // The C++ stack is the canonical source: bytecodes modify temps
@@ -18924,6 +19085,9 @@ Oop Interpreter::materializeFrameStack() {
             // That matters now that pointerSlotsOf stops at stackp: residue
             // here is neither traced NOR relocated by a compaction.
             storeContextStackp(activeContext_, savedCount);
+            if (__builtin_expect(g_doOn, 0) && frame0.savedMethod.rawBits() == g_doMethod)
+                doRec("SAVE-F0", activeContext_.rawBits(), savedCount, numTemps,
+                      (int)(frame0.savedIP - g_doBase), g_stepNum);
             if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
                     && method_.isObject()) {
                 std::string f0s = memory_.selectorOf(method_);
@@ -19179,6 +19343,9 @@ Oop Interpreter::materializeFrameStack() {
         // Set stackp to actual number of items saved, clearing anything a
         // deeper earlier sync of this same (reused) context left above it.
         storeContextStackp(context, savedCount);
+        if (__builtin_expect(g_doOn, 0) && frame.savedMethod.rawBits() == g_doMethod)
+            doRec("SAVE-FRM", context.rawBits(), savedCount, numTemps, ipOffset,
+                  g_stepNum);
         // DIAG: pair with [MAT-RESTORE] to see save/restore depth diverge.
         if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
                 && frame.savedMethod.isObject()) {
@@ -19294,6 +19461,9 @@ Oop Interpreter::materializeFrameStack() {
                 // Set stackp to actual number of items saved, clearing anything
                 // a deeper earlier sync of this reused context left above it.
                 storeContextStackp(context, savedCount);
+                if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+                    doRec("SAVE-CUR", context.rawBits(), savedCount, numTemps,
+                          ipOffset, g_stepNum);
                 if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
                         && method_.isObject()) {
                     std::string cs = memory_.selectorOf(method_);
@@ -19346,6 +19516,10 @@ Oop Interpreter::materializeFrameStack() {
 }
 
 void Interpreter::transferTo(Oop newProcess) {
+    if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+        doRec("XFER", activeContext_.rawBits(), (int)frameDepth_,
+              framePointer_ ? (int)(stackPointer_ - framePointer_ - 1) : -1,
+              (int)(instructionPointer_ - g_doBase), g_stepNum);
     Oop oldProcess = getActiveProcess();
 
     if (oldProcess.rawBits() == newProcess.rawBits()) {
@@ -20861,6 +21035,12 @@ bool Interpreter::executeFromContext(Oop context) {
                 fprintf(stderr, "[MAT-RESTORE] ctx=0x%llx #%s stackp=%lld numTemps=%d push=%d (expr=%d)\n",
                         (unsigned long long)context.rawBits(), rs.c_str(), (long long)stackp, numTemps, numSaved,
                         numSaved - numTemps);
+        }
+        if (__builtin_expect(g_doOn, 0)) {
+            armDepthOracle(method_);
+            if (method_.rawBits() == g_doMethod)
+                doRec("RESTORE", context.rawBits(), stackp, numTemps,
+                      (int)pcOffset, g_stepNum);
         }
         for (int i = 0; i < numSaved; i++) {
             Oop item = memory_.fetchPointer(ContextFixedFields + i, context);
@@ -22859,6 +23039,10 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         // by the bail (matches kSendUnspeculated lowering).  Anomalous
         // deltas point to a buggy bail path.
         Oop* spBefore = stackPointer_;  // = sstate.sp at entry (set above)
+        if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+            doRec("SISTA-IN", activeContext_.rawBits(), (int)bcOff,
+                  (int)(stackPointer_ - framePointer_ - 1), (int)frameDepth_,
+                  g_stepNum);
 
         if (GET_DEBUG_BOOL(PHARO_TRACE_SISTA_PERBC)) {
             static uint64_t n = 0;
@@ -23023,6 +23207,12 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         // have advanced sp/ip and changed temps in-place.
         stackPointer_ = sstate.sp;
         instructionPointer_ = sstate.ip;
+
+        if (__builtin_expect(g_doOn, 0) && method_.rawBits() == g_doMethod)
+            doRec("SISTA-OUT", activeContext_.rawBits(),
+                  (int)(instructionPointer_ - g_doBase),
+                  (int)(stackPointer_ - framePointer_ - 1),
+                  (int)sstate.exitReason, g_stepNum);
 
         jit::spDepthCheck(sstate, "perBcSista-backjump");
         switch (sstate.exitReason) {

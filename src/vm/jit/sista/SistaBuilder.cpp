@@ -3506,6 +3506,14 @@ private:
                 uint32_t vid = out_.newValue(currentBlock_, Op::kSendUnspeculated,
                                Type::kOop, std::move(ops), lit);
                 recordFramepoint(vid, static_cast<uint32_t>(bailOffset));
+                if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SISTA_BJ_TRACE), 0)) {
+                    fprintf(stderr,
+                        "[SISTA-LIFT-BAIL] region=+%u localBcOff=%llu op=0x%02x "
+                        "simDepth=%u blk=%u\n",
+                        out_.entryBcOffset, (unsigned long long)bailOffset,
+                        (unsigned)bc_[currentInstrStart_], stackSize,
+                        currentBlock_);
+                }
                 pendingExtA_ = 0;
                 pendingExtB_ = 0;
                 (void)instrLen;  // bail consumes the whole instruction
@@ -5472,6 +5480,11 @@ private:
             // lifted natively and there's no leak.
             if (op == 0xD8) {
                 if (!stack_.empty()) {
+                    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SISTA_BJ_TRACE), 0))
+                        fprintf(stderr,
+                            "[SISTA-LIFT-POP] region=+%u localBcOff=%u "
+                            "simDepth=%zu -> modelled pop\n",
+                            out_.entryBcOffset, bcOffset, stack_.size());
                     stack_.pop_back();
                     ip++;
                     continue;
