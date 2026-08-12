@@ -18,7 +18,7 @@
  *
  *   Bits 2-1 = 01: Character (tag 011)
  *     - Bits 32-3: 30-bit Unicode codepoint
- *     - Supports full Unicode range (0 to 0x3FFFFFFF)
+ *     - Supports the full 32-bit Character range (0 to 0xFFFFFFFF), as Cog does
  *
  *   Bits 2-1 = 10: SmallFloat (tag 101)
  *     - Bits 63-3: 61-bit rotated double representation
@@ -88,8 +88,6 @@ private:
     // Before that, remains 0 which is correct for pre-relocation nil.
     static inline uint64_t s_nilBits = 0;
 
-    // Character max (30-bit codepoint, matches Pharo's (2**30)-1)
-    static constexpr uint32_t CharacterMax = 0x3FFFFFFF;
 
     // Private constructor from raw bits
     explicit constexpr Oop(uint64_t bits) : bits_(bits) {}
@@ -139,7 +137,7 @@ public:
     /// Extract Character codepoint. Caller must verify isCharacter() first.
     uint32_t asCharacter() const {
         assert(isCharacter());
-        return static_cast<uint32_t>((bits_ >> 3) & 0x3FFFFFFF);
+        return static_cast<uint32_t>((bits_ >> 3) & 0xFFFFFFFFu);
     }
 
     /// Extract SmallFloat value. Caller must verify isSmallFloat() first.
@@ -207,6 +205,18 @@ public:
     }
 
     /// Create a Character Oop from a Unicode codepoint.
+    // Character max.  32 bits, matching stock Cog — measured, not assumed:
+    // `(ByteArray new: 4) char32AtOffset: 0` holding 16rFFFFFFFF answers
+    // `Character value=4294967295` on Cog, and Pharo's own fallback is
+    // `(self integerAt: ... size: 4 signed: false) asCharacter`.
+    //
+    // This was 0x3FFFFFFF, which is OUR limitation and not Spur's: the tagged
+    // encoding is (codepoint << 3) | tag in a 64-bit word, i.e. 61 payload
+    // bits available.  With the narrow mask, any char32 field >= 2^30 came
+    // back SILENTLY TRUNCATED (0x40000000 read as 0) because fromCharacter's
+    // range assert is compiled out under NDEBUG.
+    static constexpr uint32_t CharacterMax = 0xFFFFFFFFu;
+
     static Oop fromCharacter(uint32_t codepoint) {
         assert(codepoint <= CharacterMax);
         return Oop((static_cast<uint64_t>(codepoint) << 3) | CharacterTag);

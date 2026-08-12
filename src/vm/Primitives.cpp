@@ -3353,8 +3353,16 @@ PrimitiveResult Interpreter::primitiveAsCharacter(int argCount) {
 
     int64_t value = rcvr.asSmallInteger();
 
-    // Official VM allows character codes 0 to (2^30 - 1)
-    // This is larger than Unicode (0x10FFFF) to support extended uses
+    // Primitive 170 (`Character value:` / `Integer>>asCharacter`) caps at
+    // 2^30-1 and the IMAGE PINS IT: `Character class>>maxVal` is `(2 ** 30) - 1`
+    // and `CharacterTest>>testMaxVal` asserts `Character value: maxVal + 1`
+    // raises PrimitiveFailed.  Do NOT widen this to match Oop::CharacterMax —
+    // measured 2026-08-12, doing so turns CharacterTest 19/19 into 18/19.
+    //
+    // Cog is deliberately inconsistent here and we match it: this primitive
+    // refuses >= 2^30, while primitive 612 (`char32AtOffset:`) hands back a
+    // full 32-bit Character.  Both behaviours verified against stock Cog on
+    // the same image.
     constexpr int64_t MaxCharacterCode = (1LL << 30) - 1;  // 0x3FFFFFFF
     if (value < 0 || value > MaxCharacterCode) {
         return PrimitiveResult::Failure;

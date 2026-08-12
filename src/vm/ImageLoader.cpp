@@ -627,7 +627,9 @@ Oop ImageLoader::rawToOop(uint64_t raw, ObjectMemory& memory) const {
             return Oop::fromSmallInteger(value);
         } else if (tag3 == 3) {
             // Our Character encoding (011)
-            uint32_t codepoint = static_cast<uint32_t>((raw >> 3) & 0x3FFFFFFF);
+            // 32 bits, matching Oop::CharacterMax — the old 30-bit mask
+            // truncated high codepoints on LOAD as well.
+            uint32_t codepoint = static_cast<uint32_t>((raw >> 3) & 0xFFFFFFFFu);
             return Oop::fromCharacter(codepoint);
         } else if (tag3 == 5) {
             // Our SmallFloat encoding (101) - already correct after relocation
