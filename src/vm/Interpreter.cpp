@@ -27447,6 +27447,38 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         return false;
     }
 
+    // OPERAND-STACK HEADROOM.  Once we hand control to compiled code it writes
+    // the operand stack directly through `state.sp` — `push()`'s bound check
+    // (`stackPointer_ >= stack_.data() + MaxStackDepth`) is not on that path.
+    // With a deep enough Smalltalk recursion the JIT therefore writes PAST the
+    // end of `stack_` and into the members declared after it: measured on
+    // pharo-contributions-mutalk, a JIT frame entered from here wrote a
+    // SmallInteger 48 bytes past the array, landing on
+    // `std::vector<void*> stackPushReturnAddr_`'s control block, and
+    // ~Interpreter then aborted with
+    // POINTER_BEING_FREED_WAS_NOT_ALLOCATED (docs/vm-compat-bugs.md #3;
+    // watchpoint backtrace: JIT code <- tryJITActivation <- activateMethod).
+    //
+    // StackSafetyZone (256 Oops) is the slack the array carries past
+    // MaxStackDepth; require it to be entirely free before entering compiled
+    // code, so a JIT frame that overruns still lands inside the array rather
+    // than in the next member.  Declining just falls back to the interpreter,
+    // which has the check and raises the proper stack-overflow signal.
+    if (__builtin_expect(
+            stackPointer_ >= stack_.data() + MaxStackDepth - StackSafetyZone, 0)) {
+        static int jitHeadroomLog = 0;
+        if (jitHeadroomLog++ < 10) {
+            fprintf(stderr,
+                "[JIT-NO-HEADROOM] declining JIT activation of #%s: sp is %lld "
+                "of %zu operand slots, under the %zu-slot reserve — falling back "
+                "to the interpreter so the stack-overflow check can fire\n",
+                memory_.selectorOf(method).c_str(),
+                (long long)(stackPointer_ - stack_.data()),
+                MaxStackDepth, StackSafetyZone);
+        }
+        return false;
+    }
+
     // Method is compiled — set up JITState
     jit::JITState state;
     state.sp = stackPointer_;
