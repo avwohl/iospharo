@@ -150,6 +150,12 @@ aborted freeing it.  Found with ASan (which named the member and showed the
 tryJITActivation now declines within StackSafetyZone of the limit and falls
 back to the interpreter.  exit 134 -> exit 0.
 
+The J2J path (`pushFrameForJIT`) has the same hole and is NOT fixed: adding
+the bound there is correct but its `ExitStackOverflow` bail is retried without
+forward progress — 5,439,488 sends became >2.8 BILLION.  Reverted (`959da174`)
+with the requirement recorded at the site.  Shipping it on "the crash is gone"
+would have been a 500x regression; the crash was already gone without it.
+
 ### Open
 
 `#4` is root-caused with the remaining work specified (bridge walk +

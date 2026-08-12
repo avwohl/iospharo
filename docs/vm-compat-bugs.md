@@ -264,11 +264,17 @@ FIX, at BOTH places compiled code can grow the operand stack:
     `StackSafetyZone` (256 Oops) of `MaxStackDepth` and falls back to the
     interpreter, which has the check and raises the proper stack-overflow
     signal.  One compare per JIT activation; a base-image eval declines zero.
-  * `pushFrameForJIT` (`86260b47`) — the J2J path, which is the common one
-    (millions of calls per run) and never goes through `tryJITActivation`.  It
-    checked only `frameDepth_ >= StackOverflowLimit`, which cannot help: 131072
-    Oops against 56000 frames is barely 2 slots per frame.  Same bound, reusing
-    the `ExitStackOverflow` exit already there.
+  * `pushFrameForJIT` — the J2J path — is a KNOWN REMAINING GAP, not fixed.
+    It checks only `frameDepth_ >= StackOverflowLimit`, which cannot help
+    (131072 Oops against 56000 frames is barely 2 slots per frame).  Adding
+    the same bound there and returning `ExitStackOverflow` (`86260b47`) is
+    correct but unusable as it stands: mutalk went from 5,439,488 sends to
+    **>2.8 billion and still climbing**, i.e. the bail is retried without
+    forward progress instead of converting into a Smalltalk stack-overflow
+    signal.  Reverted in `959da174`, with the gap and the requirement written
+    at the site — closing it means making `ExitStackOverflow` raise the
+    image-side signal (or unwind) rather than bounce back into the same J2J
+    call.  Until then a deep enough JIT-to-JIT chain can still overrun.
 
 Explains `PHARO_NO_JIT=1` exiting 0 in the original triage.
 
