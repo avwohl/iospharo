@@ -177,10 +177,12 @@ grows — 100,000 frames is nothing to it), and the overflow handling failing to
 make progress.  Since the recovery is `Process>>terminate` rather than an
 Error, image-side `on: Error do:` cannot catch it either.
 
-LIKELY EXPLAINS four separately-filed mysteries — `#3`'s missing RESULT
-(MuTalk's culprit method is literally `#recursiveFactorial:`) and the
-"hangs to 1800 s" packages in `#2a`/`#2b`: famix, viennatalk,
-gitprojecthealth, and `j-brant-smacc` (a recursive-descent parser).
+I claimed this explains `#3`'s missing RESULT.  **Checked, and it does not** —
+zero `[OVERFLOW]` lines in the mutalk runs; that one fills the OPERAND stack
+(131072 slots) while frames stay under 56000, a different limit.  Withdrawn.
+Still untested and still plausible: the "hangs to 1800 s" packages in
+`#2a`/`#2b` — famix, viennatalk, gitprojecthealth, and `j-brant-smacc`
+(a recursive-descent parser, the best candidate).
 
 It surfaced because a probe written to test whether a JIT stack bound
 livelocked hung in BOTH arms — the arm that was supposed to be the control.

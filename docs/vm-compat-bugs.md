@@ -595,11 +595,16 @@ distinct problems:
      an Error, the image's own `on: Error do:` CANNOT catch it — the handler
      above never fires, where on Cog there is nothing to catch.
 
-LIKELY EXPLAINS, and worth re-testing once fixed: `#3`'s missing `RESULT`
-(MuTalk's culprit method is literally `#recursiveFactorial:`), and the "hangs
-to 1800 s" packages in `#2a`/`#2b` — `moosetechnology-famix`,
+**NOT `#3`** — checked rather than assumed: the mutalk runs contain ZERO
+`[OVERFLOW]` lines, so its missing `RESULT` is not this path, despite its
+culprit method being `#recursiveFactorial:`.  What mutalk hits is the OPERAND
+stack (131072 slots) filling while the frame count stays well under 56000 —
+a different limit.  That inference is withdrawn.
+
+STILL WORTH TESTING once this is fixed (untested — needs package loads): the
+"hangs to 1800 s" entries in `#2a`/`#2b` — `moosetechnology-famix`,
 `tomooda-viennatalk`, `moosetechnology-gitprojecthealth`, and `j-brant-smacc`
-(a recursive-descent parser).  Those were filed as four separate mysteries.
+(a recursive-descent parser, so the best candidate of the four).
 
 Found while measuring something else: the deep-recursion probe was written to
 test whether a JIT stack bound livelocked, and BOTH arms hung — which is what
