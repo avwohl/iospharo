@@ -18906,6 +18906,13 @@ Oop Interpreter::materializeFrameStack() {
             // That matters now that pointerSlotsOf stops at stackp: residue
             // here is neither traced NOR relocated by a compaction.
             storeContextStackp(activeContext_, savedCount);
+            if (__builtin_expect(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS) != nullptr, 0)
+                    && method_.isObject()) {
+                std::string f0s = memory_.selectorOf(method_);
+                if (f0s.find(GET_DEBUG_STR(PHARO_TRACE_FRAME_TEMPS)) != std::string::npos)
+                    fprintf(stderr, "[MAT-SAVE-F0] #%s numTemps=%d saved=%d (expr=%d)\n",
+                            f0s.c_str(), numTemps, savedCount, savedCount - numTemps);
+            }
 
             // Use activeContext_ as the context for frame[0], skip creating a new one
             sender = activeContext_;

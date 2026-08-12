@@ -62,12 +62,37 @@ Two facts, both new:
      (written and re-synced separately) stay correct while the expression stack
      is fabricated.
 
-NEXT: find who raises stackp between save and restore.  Known writers, none of
-which pairs with a save: `raiseContextStackpTo` (added 2026-08-11, and NOT the
-cause — the bug predates it and `PHARO_NO_CTX_STACKP_RAISE=1` is byte-identical),
-`prepareForGC`'s temp sync (raises to numTemps only), `primitiveSetStackPointer`,
-`primitiveContextAtPut`, and the `frame[0]==activeContext_` re-sync.  Instrument
-every write to context slot 2 for this selector and the culprit falls out.
+Verified against ALL THREE save paths, not one (the first pass instrumented
+only the saved-frame loop and this frame is `fd=0`, so it was measuring the
+wrong site — a mistake worth not repeating):
+
+    [MAT-SAVE-F0]   431 times   372x expr=1, 59x expr=0   (frame[0]==activeContext_)
+    [MAT-SAVE-CUR]  431 times   always expr=1             (current frame)
+    [MAT-SAVE]        4 times   always expr=0             (saved-frame loop)
+
+Restores push stackp 23-32 (expr 2-11) where no save ever wrote more than 22.
+
+The July trilemma is now fully eliminated, each by measurement:
+
+    (a) materialize expr-stack extent   all three save paths write expr<=1
+    (b) executeFromContext stackp restore  it faithfully pushes what stackp says;
+                                        the lie is in stackp, not the push
+    (c) returnValue fd==0 value placement  instrumented all five `stackp++`
+                                        context-push sites (returnValue,
+                                        returnFromMethod x2, returnFromBlock,
+                                        handleContextNLRUnwind) — ZERO fire for
+                                        this method
+
+NEXT: the writer of stackp 23-32 is none of the above and none of
+`raiseContextStackpTo` (bug predates it; `PHARO_NO_CTX_STACKP_RAISE=1` is
+byte-identical), `prepareForGC`'s temp sync (raises to numTemps, i.e. expr=0) or
+context creation (`ObjectMemory.cpp` sets stackp=numTemps).  Two candidates
+remain and are cheap to separate:
+  1. `primitiveSetStackPointer` — image-side `Context>>stackp:`; trace it.
+  2. The restored contexts may simply not BE the contexts that were saved —
+     dump the context oop at both save and restore and check identity.  If they
+     differ, the frame is being resumed from a foreign/stale context object,
+     which is a different and larger bug than a bad stackp.
 
 Also ruled out on the way, each with a measurement:
 
