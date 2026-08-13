@@ -977,6 +977,60 @@ frame), which is the same root as the 32x `value:`/`do:` gap in memory
 `block-invocation-perf.md`.  Not a one-line change; filed so it stops
 hiding in a timeout column.
 
+### 20. A process spinning on a ZERO-ms Delay starves an equal-priority peer — HIGH (found 2026-08-13)
+
+Seven lines, no packages, no network, no JIT (`PHARO_NO_JIT=1` identical):
+
+    | done count |
+    done := false. count := 0.
+    [ [done] whileFalse: [ count := count + 1. (Delay forMilliseconds: 0) wait ] ]
+        forkAt: Processor userSchedulingPriority.
+    (Delay forMilliseconds: 500) wait.
+    done := true.
+    Transcript show: 'ZS-WOKE count=', count printString; cr.
+
+    stock Cog   ZS-WOKE count=1109651     every run
+    ours        NEVER WOKE                3 runs in 6; the other 3 print a
+                                          comparable count.  Same-image,
+                                          same-binary, load-dependent.
+
+The main process's 500 ms Delay never fires while a same-priority process
+loops on a zero-duration Delay.  Matrix on our VM (spinner delay / spinner
+priority, main always P40):
+
+    0 ms  P40   NEVER WOKE          <- the bug
+    0 ms  P50   NEVER WOKE
+    0 ms  P30   woke, 53361 spins
+    1 ms  P40   woke, 41 spins      (and 41 spins per 500 ms means our 1 ms
+    2 ms  P40   woke, 39 spins       Delay actually costs ~12 ms — separate)
+
+So it is specific to a ZERO-duration Delay at >= the waiter's priority.  A
+zero-Delay in a SINGLE process is fine on both VMs (5 in a row, interleaved
+with 100-200 ms delays, identical output), so it needs the second process.
+
+**Where it bites:** `TKTService` — Pharo's TaskIt service loop — is
+`self stepService. currentDelay := stepDelay asDelay. currentDelay wait`, so
+ANY service configured `stepDelay: 0` is exactly this spinner, at P40 by
+default.  That is `smalltalkweb-myprecious`'s whole failing set:
+
+    MpUnconnectedTransportMiddlewareTest suite run
+      stock Cog   32 ran, 32 passed
+      ours        32 ran, 18 passed, 1 failure, 13 errors
+                  (MpRemoteMessageResultTimeout, JIT and NO_JIT alike)
+
+and those tests use an in-image `SharedQueue`, no sockets at all — the
+transporter's reception service is `TKTParameterizableService ... stepDelay:
+0 milliSecond`.  A bare probe of that service on our VM does not even return
+from `svc stop`; with `stepDelay: 10 milliSecond` it steps 38 times in 500 ms
+and stops cleanly.  Cog steps it 578761 times in 1 s.
+
+Ruled out: `Processor yield` fairness is fine (a P40 loop calling
+`Processor yield` lets the P40 waiter wake, 3.2M yields vs Cog's 49.8M).
+`PHARO_RR_SCHED=1` does NOT fix it.  Note our scheduler has NO same-priority
+rotation by default (deliberate — Cog does not time-slice within a priority)
+and headless aging starts at P41, so priority 40 has no route at all once a
+peer refuses to suspend.
+
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
 These are `LEAD n`, NOT `#n`.  The two spaces overlap (there is a defect #15
