@@ -132,3 +132,55 @@ The commits are unreachable from any branch but are not necessarily gone:
 
 Given the audit above, the only content worth recovering was the four-line
 change already carried forward, so this should never be necessary.
+
+
+## Build verification of the salvaged change
+
+Both platforms were built from `jit` at `fa04dcd4` and the resulting VM was run
+against a freshly downloaded Pharo 13 image.
+
+    macOS arm64 (local)
+      configure       headless SDL2 + system libffi; no third-party build needed
+      build           168/168 targets, exit 0
+      Interpreter.cpp compiled with zero warnings of any kind
+      -Wformat        0
+      binary          build/test_load_image, signed with JIT entitlements
+      run             loaded the image, ran to completion, exit 0
+
+    x86_64 Linux (AWS m6a.4xlarge, Ubuntu 24.04, 16 cpus)
+      __INT64_TYPE__  long int   <- the condition that makes %lld warn
+      build           clone-and-build.sh completed
+      binary          ELF 64-bit LSB pie executable, x86-64, not stripped
+      run             loaded the image, exit 0; JIT active --
+                      3,198,708 activations (100% hits), 3173 OSR, J2J chains
+
+The Linux box independently confirms the platform claim in the section above:
+`__INT64_TYPE__` really is `long int` there, versus `long long` on Apple.
+
+The 323 warnings in the macOS build are all pre-existing and elsewhere -- 312
+`-Wunused-function` (mostly generated plugins) plus a few unused-variable and
+sign-compare. None are in `Interpreter.cpp`.
+
+### What was not captured
+
+The Linux compiler's own warning output for `Interpreter.cpp` was not
+retrieved. The box was reaped by the `aws_watch` lease reaper before
+`clone-and-build.log` was copied off, because `provision.sh` warned that
+`~/.ssh/aws-lease` was missing -- so the box could not self-heartbeat -- and
+that warning was not acted on. The build itself had already completed
+successfully; only the log was lost. Its smoke result survived in S3 at
+`s3://iospharo-build-670060058357/x86_64-builder/smoke/result-20260813T185910Z.txt`,
+which is the source of the Linux numbers above.
+
+So the Linux side is verified to *build and run*, not verified to be
+warning-free by direct observation. The narrower claim was checked in isolation
+with clang: at a `%lld` conversion, a `long` argument produces
+
+    warning: format specifies type 'long long' but the argument has type 'long'
+
+and the same argument cast to `long long` produces nothing.
+
+To capture the warning log on a future run, either generate `~/.ssh/aws-lease`
+and register it on awohl.com per `scripts/aws/README.md`, or export
+`AWS_LEASE_IID` / `AWS_LEASE_PROJECT` / `AWS_LEASE_REGION` when driving the box
+from a local Claude.
