@@ -18407,7 +18407,7 @@ void Interpreter::terminateCurrentProcess() {
                     fprintf(stderr, "[TERM-P%lld]   ctx [0]sdr=0x%llx "
                             "[1]ip=0x%llx [2]sp=0x%llx [3]mth=0x%llx [4]clo=0x%llx "
                             "[5]rcv=0x%llx (rcv-class=%s)\n",
-                            pri.asSmallInteger(),
+                            (long long)pri.asSmallInteger(),
                             (unsigned long long)sdr.rawBits(),
                             (unsigned long long)ip.rawBits(),
                             (unsigned long long)sp.rawBits(),
@@ -18431,7 +18431,7 @@ void Interpreter::terminateCurrentProcess() {
                     Oop sdr = memory_.fetchPointer(0, ctx);
                     const char* sdrTag = sdr.isNil() ? " (nil)" : "";
                     fprintf(stderr, "[TERM-P%lld]   ctx[%d]: %s>>%s (ctx=0x%llx sender=0x%llx%s)\n",
-                            pri.asSmallInteger(), i, rcvrClass.c_str(), sel.c_str(),
+                            (long long)pri.asSmallInteger(), i, rcvrClass.c_str(), sel.c_str(),
                             (unsigned long long)ctx.rawBits(),
                             (unsigned long long)sdr.rawBits(), sdrTag);
                     ctx = sdr;
@@ -18447,7 +18447,7 @@ void Interpreter::terminateCurrentProcess() {
                     if (slow.rawBits() == fast.rawBits()) {
                         hasCycle = true;
                         fprintf(stderr, "[TERM-P%lld] SENDER CHAIN CYCLE DETECTED at ctx=0x%llx!\n",
-                                pri.asSmallInteger(), (unsigned long long)slow.rawBits());
+                                (long long)pri.asSmallInteger(), (unsigned long long)slow.rawBits());
                         // Walk to find cycle length
                         Oop c = slow;
                         int len = 0;
@@ -18473,7 +18473,7 @@ void Interpreter::terminateCurrentProcess() {
         }
         fprintf(stderr, "[TERM] terminateCurrentProcess: proc=0x%llx pri=%lld fd=%zu method=#%s\n",
                 (unsigned long long)proc.rawBits(),
-                pri.isSmallInteger() ? pri.asSmallInteger() : -1,
+                pri.isSmallInteger() ? (long long)pri.asSmallInteger() : -1LL,
                 frameDepth_, memory_.selectorOf(method_).c_str());
         // Print call stack with receiver classes
         for (size_t i = frameDepth_; i > 0 && i > (frameDepth_ > 30 ? frameDepth_ - 30 : 0); i--) {

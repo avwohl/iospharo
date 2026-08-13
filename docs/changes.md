@@ -11,6 +11,28 @@
 > `docs/vm-compat-bugs.md`. Nothing was deleted.
 
 
+2026-08-13 (branch consolidation)
+
+## `jit-arm-ci` and `jit-arm-linux` deleted; the repo is now `main` + `jit`
+
+- **Audit before deletion**: `jit-arm-ci` was a strict ancestor of `jit` (zero
+  unique commits). `jit-arm-linux` had exactly one unique commit, an AWS
+  spot-interruption autosave by `iospharo-x64-builder` whose 320 files were
+  319 `build-opt/` build artifacts plus one real source file. Full archaeology
+  in `docs/history/branch-consolidation-2026-08-13.md`.
+- **`%lld` format casts in the TERM diagnostics**: `Oop::asSmallInteger()`
+  returns `int64_t`, which is `long long` on Apple targets but `long` on Linux
+  LP64 — so `%lld` warns under `-Wformat` on the x86-64 Linux build only, and
+  is invisible on macOS. That is why the fix originated on the Linux builder.
+  Salvaged the bot's two unapplied hunks and fixed three further sites on `jit`
+  with the same defect that postdated the autosave (`Interpreter.cpp` 18410,
+  18434, 18450, 18476). Behaviour is unchanged on every target — both types are
+  64 bits wide; no logged value was ever wrong.
+- **Not applied**: the bot also cast the `[CHAIN-BAIL]` initialiser at
+  `Interpreter.cpp:24164`, where `pVal` is declared `long` and printed with
+  `%ld`. The cast is a no-op there and obscures correct code, so it was dropped.
+
+
 2026-07-07 (late — catalog-validation wave)
 
 ## GC-root + memory-safety fixes surfaced validating the candidate-queue wave
