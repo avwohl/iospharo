@@ -40,6 +40,38 @@ A sixth fix came out of chasing what was left, and it is the biggest one:
     preemptions with a peer queued.  Full suite: 27726 P / 27 F / 25 E / 7 T
     against a same-build baseline of 27720 / 29 / 25 / 11.
 
+### Where the package sweep stands (2026-08-13, all freshly loaded)
+
+    package                    segments   cog                 ours
+    moosetechnology-famix      MULTI (4)  1293 P/5 F/2 E      1292 P/5 F/2 E/1 T
+    mumez-pharo-acp            MULTI       168 P/0 F/2 E       168 P/0 F/2 E  EXACT
+    juliendelplanque-jrpc      single       81 P/0 F/0 E      CLASSES 11 then EADDRINUSE
+    punt-labs-anthropic-sdk    single      916 P/0 F/0 E      CLASSES 113 then SocketError
+    smalltalkweb-myprecious    single      107 P/0 F/2 E       90 P/2 F/16 E -> 13 were #20
+    apptivegrid-soil           single      464 P/6 F/1 E      runs; bounded by #6 scans
+    moosetechnology-famixtagging single      0 P/115 E           0 P/115 E  (broken pkg, parity)
+    fedeloch-ume               MULTI (6)  times out on COG    loads + runs (was "rc=0, no output")
+    moosetechnology-gitprojecthealth MULTI  6 P               (run not finished)
+
+`fedeloch-ume` is the sharpest confirmation of the loader work: its image is
+SIX segments, and our VM now prints
+`[IMGLOAD-MULTISEG] 6 segments; packed 149684168 bytes from 149684264` and
+boots it, where before it answered "Interpreter initialization failed".  Note
+stock COG times out on ume's `UmeRegexHillClimbingTest` at 1200 s, so a
+head-to-head there needs a much larger budget.
+
+STILL OPEN and worth picking up next:
+
+  * `jrpc` — EADDRINUSE on the ~12th server start; four simpler reductions are
+    at parity (recorded in #2b so nobody re-derives them).
+  * `anthropic-sdk` — `primSocketReceiveDataAvailable:` fails inside its
+    multi-threaded Zn mock, then a nil-receiver DNU while REPORTING that.
+  * `#6` activation wall — soil is now the cheapest repro (three
+    `SoilCleanCodeTest` scans time out, a fourth ran past 3600 s).
+  * `#19` glyph drawing 12-25x — needs frame/context marriage, same root as
+    the block-invocation gap.
+  * `myprecious`'s `MpTcp*`/`MpWeb*` residual, separate from #20.
+
 Two more fixes landed alongside:
 
   * **`544740ac` super sends now honour objectAsMethod.**  A method dict can
