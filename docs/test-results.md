@@ -7,6 +7,17 @@
 > suites (2026-08-11/12, 2055 classes): macOS-arm64 27701 P / 22 F / 12 T /
 > 50 E; Linux-aarch64 27647 P / 24 F / 13 T / 102 E — 93 of those ERRORs
 > are one open defect (`docs/vm-compat-bugs.md` #1).
+>
+> **Every column here must carry a defect number, TIMEOUT included**
+> (2026-08-13). The T column had been a bare count for months, and two of
+> the entries in it were an unfiled Cog divergence:
+> `FreeTypeCacheTest>>testGlyphAccessIsThreadSafe` and
+> `>>testGlyphAccessIsThreadSafeWhenAskingWidth` are killed at the 80 s
+> watchdog on BOTH arches while stock Cog passes them in under 2 s. That is
+> now `docs/vm-compat-bugs.md` #19, with the gap measured (BitBlt is at
+> parity; `drawString:` is 12x, a full text render 25x). The remaining
+> TIMEOUTs are the reflective-scan activation wall, #6. If a run produces a
+> timeout that matches neither, FILE IT before publishing the numbers.
 
 
 ## 2026-06-04 full-suite run: custom VM vs stock Cog
