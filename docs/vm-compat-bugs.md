@@ -247,6 +247,29 @@ tested directly (fork a process that raises, check the main eval survives) and
 So an unhandled forked-process error ending an eval is standard Pharo eval
 behaviour, not our bug. Hypothesis disproven; do not re-test it.
 
+**2026-08-13 re-measurement on a freshly loaded jrpc image: the macOS
+proximate cause is now pinned, and it is NOT what the paragraph below says.**
+Our VM reaches `CLASSES 11` and RUNS the tests; the run dies part-way with
+
+    SocketError: Address already in use
+    Socket>>primSocket:bindTo:port: <- Socket>>bindTo:port: <- bindToPort:
+      <- listenOn:backlogSize: <- ZnNetworkingUtils>>serverSocketOn:
+      <- ZnManagingMultiThreadedServer(ZnSingleThreadedServer)>>initializeServerSocket
+
+i.e. by the ~12th test a previous test's LISTEN socket has not been released.
+Cog reaches `RESULT pass=81` on the same image.  This reproduces with the Cog
+arm not running at all, so it is not the harness reusing a port.
+
+THREE simpler forms of it are at PARITY — do not re-derive these:
+
+    Socket newTCP listenOn:backlogSize: + closeAndDestroy, 8x    8/8 both VMs
+    Socket bindTo:port: + listenWithBacklog: + close, 8x         8/8 both VMs
+    ZnServer on: start/stop, 10x same port                     10/10 both VMs
+    ZnManagingMultiThreadedServer start + GET + stop, 14x      14/14 both VMs
+
+So it needs JRPC's own server lifecycle to reproduce; a bare Zn multi-threaded
+server on a reused port is not enough.
+
 What that leaves for macOS jrpc is sharper: Cog reaches `RESULT pass=81` on the
 same image, so under Cog the server socket LISTEN succeeds and under ours it
 does not. That is a socket-layer divergence (`Socket>>listenOn:backlogSize:`),
