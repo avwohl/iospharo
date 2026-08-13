@@ -333,9 +333,13 @@ produces is one Cog produces too —
     FAIL SoilIndexedDictionaryTest>>testConcurrentIsEmpty
     FAIL SoilIndexedDictionaryTest>>testRemoveKeyWithTwoTransactions
 
-plus two of our own TIMEOUTs, both reflective scans and both defect #6:
-`SoilCleanCodeTest>>testCodeCoverage` and `>>testNoUnsentMessages`.  So what
-is left of "soil" is the activation wall, not a crash.
+plus our own TIMEOUTs, all of them in `SoilCleanCodeTest` and all of them
+reflective scans, i.e. defect #6.  Given a 3600 s budget the run still does
+not reach a RESULT line: `testCodeCoverage`, `testNoUnsentMessages` and
+`testNoUnusedClasses` time out at the 80 s watchdog and
+`testNoImplementedCalls`/`testNoUnimplementedCalls` was still running when
+the budget expired.  So what is left of "soil" is entirely the activation
+wall, not a crash — and soil is now the cheapest available repro for #6.
 
 ### 3. `pharo-contributions-mutalk` — the crash is FIXED 2026-08-12 (`57022d3a`); the lost RESULT is not
 
