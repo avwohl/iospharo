@@ -24,6 +24,22 @@ See memory `nonbug-labels-hid-real-divergences` for the tells.
                                                     primitive, primCreatePipe
                                                     -> FIXED ca58c987, exact parity
 
+A sixth fix came out of chasing what was left, and it is the biggest one:
+
+  * **`63074ead` preemption starvation guard (#20).**  `putToSleepPreempted`
+    front-appends, so a process preempted CONSTANTLY keeps permanent residency
+    at the head of its run queue and an equal-priority peer woken behind it
+    NEVER runs.  Seven-line repro, no JIT, no sockets: a P40 loop on
+    `(Delay forMilliseconds: 0) wait` starves a P40 peer's 500 ms Delay
+    forever, where Cog completes every time.  That is TaskIt's `TKTService`
+    with its default `stepDelay: 0`, hence `smalltalkweb-myprecious`
+    (`MpUnconnectedTransportMiddlewareTest` 18/32 -> 31/32, Cog 32/32).
+    The OBVIOUS fix — always back-append, which is literally what
+    `Smalltalk vm parameterAt: 48` bit 2 says both VMs do — costs four
+    scheduler/weak tests; the guard yields only after 50 consecutive
+    preemptions with a peer queued.  Full suite: 27726 P / 27 F / 25 E / 7 T
+    against a same-build baseline of 27720 / 29 / 25 / 11.
+
 Two more fixes landed alongside:
 
   * **`544740ac` super sends now honour objectAsMethod.**  A method dict can
