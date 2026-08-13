@@ -312,7 +312,7 @@ neither recent full suite's FAIL list.
 ### State of the group that #5/#2a used to be
 
     pillar             OSSVMProcess=true   FIXED (identical to Cog)
-    mumez-pharo-acp    OSSVMProcess=true   FIXED (7-test residual)
+    mumez-pharo-acp    OSSVMProcess=true   FIXED, EXACT PARITY (ca58c987, 2026-08-13)
     fedeloch-ume       OSSVMProcess=true   OPEN — #4, SIGSEGV in initialize
     gitprojecthealth   OSSVMProcess=false  OPEN — third mechanism, undiagnosed
     tomooda-viennatalk OSSVMProcess=false  OPEN — third mechanism, undiagnosed

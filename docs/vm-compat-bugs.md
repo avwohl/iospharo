@@ -192,6 +192,33 @@ IMAGE LOADER bug, and the tell was in the image header all along —
 `scripts/image-segments.py <image>` answers it in milliseconds.  **Check the
 other packages in #2a/#2b for multi-segment before assuming anything else.**
 
+**2026-08-13: acted on that lesson — two more closed, and the family is
+smaller than it looked.**  Each package reloaded from scratch with stock Cog,
+segment-checked, then run on both VMs:
+
+    package                 segments  cog                    ours (2026-08-13)
+    moosetechnology-famix   MULTI (4) 1293 P/5 F/2 E/0 T     1292 P/5 F/2 E/1 T
+    mumez-pharo-acp         MULTI      168 P/0 F/2 E/0 T      168 P/0 F/2 E/0 T
+    apptivegrid-soil        single     464 P/5 F/1 E/1 T     SIGABRT (rc=134)
+    moosetechnology-famixtagging single   0 P/115 E             0 P/115 E (parity)
+    punt-labs-anthropic-sdk single     901 P                 (pending)
+
+`moosetechnology-famix` — the second-largest entry in #2a at 1293 tests — was
+NOT a hang either.  Same root as smacc: multi-segment image, defect #4.  It
+now runs to completion with the same fail/error sets as Cog; the single delta
+is one JIT-only TIMEOUT (`MooseScriptsTest>>testCreateLightModels`).
+
+`mumez-pharo-acp` is at EXACT parity — see #5, its 7-test residual was one
+missing plugin primitive, not a startup problem.
+
+`moosetechnology-famixtagging` fails identically on both VMs (115 errors, 0
+passes): a broken package, not a VM defect.  It should never have been counted.
+
+So of the "13 packages our VM cannot run at all", the multi-segment loader
+alone accounted for smacc + famix (~1850 tests), and the OSProcess pipe gap
+for acp.  What is left is `soil`'s SIGABRT, `mutalk` (#3), and the packages
+that still need a retest on a freshly loaded image.
+
 `jrpc` reproduces on macOS too (`CLASSES 11` then no RESULT, exit 0, ~7 s) but
 via a DIFFERENT proximate cause — an unhandled error out of JRPC's
 `ZnMultiThreadedServer` listen loop:
@@ -438,11 +465,24 @@ MEASURED across the group (2026-08-12, macOS-arm64, after `9d9f8154`):
 
     package                      OSSVMProcess  cog                        ours
     pillar-markup-pillar         true          pass=18 err=9              pass=18 err=9   FIXED, exact
-    mumez-pharo-acp              true          pass=168 err=2             pass=161 err=9  FIXED, 7-test residual
+    mumez-pharo-acp              true          pass=168 err=2             pass=168 err=2  FIXED, EXACT (2026-08-13)
     fedeloch-ume                 true          pass=11                    -               STILL FAILS
     moosetechnology-gitprojecthealth false     pass=6                     -               STILL FAILS
     tomooda-viennatalk           false         pass=1430                  -               STILL FAILS
     evref-bl-mcp                 -             (load failed locally: network, not a VM issue)
+
+**2026-08-13: the 7-test residual is CLOSED (`ca58c987`), and it was not a
+startup problem at all.**  All seven were subprocess-spawning tests, and all
+seven died at the same place: `OSSUnixSystemAccessor` declares SIX
+`UnixOSProcessPlugin` primitives and we had registered TWO, so `primCreatePipe`
+answered nil and `OSSPipe>>initializeWith:readBlocking:` sent `#first` to it.
+Implementing `primitiveCreatePipe` (answering the Array of two SQFile
+ByteArray handles the image expects), plus `primitiveUnixFileNumber`,
+`primitiveSQFileSetNonBlocking` and `primitiveSemaIndexFor`, takes acp to
+`pass=168 fail=0 err=2` — Cog's numbers exactly, no JIT-only failures.
+
+Never assume a per-package residual is "the long tail"; itemize it.  Seven
+tests, one primitive.
 
 So the fix closes TWO of the group outright and leaves three. The
 `OSSVMProcess inStartupList` flag predicts the no-OSSubprocess ones correctly
@@ -807,6 +847,76 @@ hands back a full 32-bit Character — so matching it means doing both.  A note
 at prim 170 says not to "fix" it again.  Verified against Cog on
 CharacterTest 19/19, StringTest 438/438, SymbolTest 268/268,
 WideStringTest 19/19, ByteArrayTest 12/12.
+
+### 18. ~~Auto-triggered GC never fired ephemerons or nilled weak refs~~ — FIXED 2026-08-13 (`4d6bf314`)
+
+Filed late, and for the reason this file exists: it was recorded in
+`docs/changes.md` as "**## Improvement:** Auto-compact GC skips ephemeron
+firing", i.e. as a deliberate emulation of scavenge semantics.  It was a
+measured divergence from stock Cog.
+
+All four auto-GC call sites passed `skipEphemerons=true`, and `markPhase`
+gates BOTH `fireAllEphemerons()` and `processWeaklings()` on
+`!skipEphemerons` — and both `pendingFinalizationSignals_++` sites are
+inside that skipped branch.  So an image that never calls `Smalltalk
+garbageCollect` explicitly never nilled a weak reference and never ran a
+single finalizer, however much old-space garbage it churned: file
+descriptors, sockets and FFI handles leak for the life of the session.
+
+Repro — one weak slot, then allocation pressure only, no explicit GC:
+
+    | wa n | wa := WeakArray new: 1. [wa at: 1 put: Object new] value.
+    n := 0. [(wa at: 1) isNil or: [n > 200]] whileFalse: [n := n + 1.
+      Array new: 1000000].
+
+    stock Cog      n=2    slot=NIL
+    ours (before)  n=201  slot=STILL   (NIL only after an explicit GC)
+    ours (after)   n=83   slot=NIL
+
+The recorded rationale — "a real generational GC scavenge wouldn't fire
+old-space ephemerons" — misread `needsCompactGC_`: that flag is a MAJOR
+old-space compaction, not a minor scavenge, and Cog's major GC does full
+weak/ephemeron processing.  The motivating test
+(`WeakKeyDictionaryTest>>testClearing`) is unaffected either way — 6 weak
+classes 718 P / 0 F / 0 E identical with `PHARO_GC_AUTO_SKIP_EPH=1`.
+
+### 19. Glyph drawing is 12-25x slower than Cog; two FreeTypeCacheTests are watchdog-killed — MEDIUM
+
+`FreeTypeCacheTest>>testGlyphAccessIsThreadSafe` is killed at the 80 s
+watchdog on **both** current full suites (macOS-arm64 and Linux-aarch64)
+while stock Cog passes it in under 2 s on the same image.  It has only
+ever appeared as a bare number in the TIMEOUT column of
+`docs/test-results.md`, never as a filed defect.
+
+Isolated on this box, same image, same build:
+
+    workload                                     ours     Cog     ratio
+    Form blit, 2000x 200x200 -> 1000x1000          27 ms    24 ms   1.1x
+    drawString:, 200x 22 glyphs                   129 ms    11 ms    12x
+    full RubScrolledTextMorph render of 25 KB    1586 ms    63 ms    25x
+    Semaphore>>criticalReleasingOnError:, 200k    355 ms     7 ms    50x
+      of which  ensure:                            54 ms     ~0
+                on:do:                             26 ms     ~0
+                signal+wait                        14 ms      1 ms
+
+So BitBlt itself is at parity — the gap is entirely in the per-send and
+per-block overhead that the glyph path multiplies by thousands of glyphs.
+The test renders 25 KB of text into three 1000x1000 canvases ten times;
+at 25x that is ~48 s of render plus fork contention, hence the 80 s kill.
+
+Structural cause, from `sample`: `Interpreter::materializeFrameStack()` is
+called from `createFullBlockWithLiteral` **whenever `frameDepth_ > 0`**, so
+creating any closure converts the entire native frame stack into heap
+Contexts and resets `frameDepth_` to 0.  `criticalReleasingOnError:` builds
+three closures over shared outer temps per call, so each call materializes
+the chain and allocates a temp vector; the sample is dominated by
+`scavenge`, `storePointer` and `materializeFrameStack`.  Cog does not pay
+this because its frames are *married* to lazily-created contexts.
+
+The fix is frame/context marriage (or at least materializing only the home
+frame), which is the same root as the 32x `value:`/`do:` gap in memory
+`block-invocation-perf.md`.  Not a one-line change; filed so it stops
+hiding in a timeout column.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
