@@ -186,16 +186,35 @@ rebuilding the same translation unit on the same machine and compiler:
 The set of warned lines differs by exactly the cast sites and nothing else.
 That is the whole claim, demonstrated rather than argued.
 
-### Still open: the same defect at 15 other sites
+### The same defect at 15 other sites — since fixed (169b7345)
 
-The same run shows the identical defect elsewhere, none of it visible from
-macOS. These were NOT touched, because they are outside the scope of the
-branch consolidation:
+The same run showed the identical defect elsewhere, none of it visible from
+macOS. It was outside the scope of the branch consolidation and was left alone
+at first, then fixed in `169b7345`:
 
-    src/vm/Interpreter.cpp   2312 2340 2432 2446 2527 3878 7954
-                             9361 9364 12410 15890 16212
-    src/vm/Primitives.cpp    5495 5538 5582   (chrono duration::rep, aka long int)
+    src/vm/Interpreter.cpp   2313 2342 2434 2448 2529  priority/excess ternaries
+                             3878                      g_stepNum (uint64_t) at %llu
+                             7957 7959                 retVal + receiver
+                             9361 9364 12410           arith/dispatch trace
+                             15890 16212               DNU selector + receiver
+    src/vm/Primitives.cpp    5496 5540 5583            chrono milliseconds::rep
 
-`Interpreter.cpp:3878` is a `%llu` against `uint64_t`; the rest are `%lld`
-against `long int` / `int64_t`. All are the Linux-only mismatch described
-above, so an Apple-only build will never surface them.
+(The line numbers above are the *argument* lines that were edited; the earlier
+diagnostics named the format-string line, which is one or two lines higher.)
+
+Verified by a third x86_64 build, of `169b7345`. Comparing warning categories
+against the previous Linux build, the diff is exactly one line:
+
+    before:  313 -Wunused-function | 70 -Wint-in-bool-context | 16 -Wformat=
+             | 11 -Wsign-compare | 9 -Wunused-variable | 6 -Wcast-function-type
+    after:   313 -Wunused-function | 70 -Wint-in-bool-context
+             | 11 -Wsign-compare | 9 -Wunused-variable | 6 -Wcast-function-type
+
+Every other category is identical; total warnings fell 540 -> 524, exactly the
+16 format diagnostics and nothing else. 97 compile units, 0 errors.
+
+Two sites were deliberately left as they are, and both are correct:
+
+    Interpreter.cpp:16225   `... : 0LL` already promotes the ternary to
+                            long long, and GCC does not warn
+    Interpreter.cpp:24164   a `long` printed with %ld
