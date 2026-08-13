@@ -1,6 +1,47 @@
-# WIP — latest session 2026-08-12b (two HIGH defects root-caused and fixed)
+# WIP — latest session 2026-08-13 (five fixes; four came out of a doc audit)
 
-## ===== 2026-08-12b SESSION (read this first) =====
+## ===== 2026-08-13 SESSION (read this first) =====
+
+The premise of this session was the question "do bugs get relabelled instead
+of fixed?"  A 44-agent audit of the docs against HEAD says yes, four times,
+and every one of the four was a real Cog divergence.  All are now resolved.
+See memory `nonbug-labels-hid-real-divergences` for the tells.
+
+    label it was hiding under                       what it actually was
+    "## Improvement: auto-compact GC skips          weak refs NEVER cleared and
+      ephemeron firing"                             finalizers NEVER ran unless
+                                                    the image called GC by hand
+                                                    -> FIXED 4d6bf314 (#18)
+    "## Fix: auto-exclude exception infra           a hardcoded blacklist that
+      from JIT compilation"                         permanently refused to JIT
+                                                    the exception/NLR core; the
+                                                    overflow it dodged is gone
+                                                    -> REMOVED 4d6bf314
+    a bare number in the TIMEOUT column of          two FreeTypeCacheTests killed
+      docs/test-results.md                          at 80 s that Cog passes in 2 s
+                                                    -> FILED as #19, measured
+    "FIXED (7-test residual)" on acp                ALL SEVEN were one missing
+                                                    primitive, primCreatePipe
+                                                    -> FIXED ca58c987, exact parity
+
+Two more fixes landed alongside:
+
+  * **`544740ac` super sends now honour objectAsMethod.**  A method dict can
+    hold a `ReflectiveMethod`; the VM must send `#run:with:in:`.  Both
+    non-super paths did; all THREE super paths activated it and aborted in
+    `pushFrame`.  **That was `apptivegrid-soil`'s SIGABRT** (#2c), open since
+    the package sweep.  Soil now runs, with Cog's exact failure set plus two
+    reflective-scan timeouts (#6).
+  * **`6be922c9` removed the two hardcoded nil-receiver DNU intercepts**
+    (`nil findNextHandlerContext`, `nil asSymbol`).  Neither fires any more.
+
+And acting on the multi-segment lesson from 2026-08-12 closed one more
+package outright: **`moosetechnology-famix` was never a hang** — 1292 P
+against Cog's 1293, one JIT-only timeout.  `moosetechnology-famixtagging`
+fails identically on BOTH VMs (0 P / 115 E) and should never have been
+counted as ours.
+
+## ===== 2026-08-12b SESSION =====
 
 Two of the twelve open defects in `docs/vm-compat-bugs.md` are FIXED, and
 both root causes were somewhere nobody had looked.
