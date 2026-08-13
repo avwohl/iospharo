@@ -6724,6 +6724,16 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             Oop method = lookupMethod(selector, lookupClass);
             if (method.isNil()) {
                 sendDoesNotUnderstand(selector, numArgs);
+            } else if (isObjectAsMethod(method)) {
+                // Reflectivity installs ReflectiveMethod objects in method
+                // dictionaries; a super send that resolves to one must send
+                // #run:with:in:, not activate it.  Both non-super send paths
+                // already do this — omitting it here aborted the VM in
+                // pushFrame ("method header not SmallInteger") on any
+                // instrumented method reached through super.  Guarding
+                // before patchJITICAfterSend also keeps the non-method out
+                // of the JIT inline caches.
+                invokeObjectAsMethod(method, selector, numArgs);
             } else {
                 int primIdx = primitiveIndexOf(method);
                 if (primIdx > 0) {
@@ -6754,6 +6764,16 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             Oop method = lookupMethod(selector, lookupClass);
             if (method.isNil()) {
                 sendDoesNotUnderstand(selector, numArgs);
+            } else if (isObjectAsMethod(method)) {
+                // Reflectivity installs ReflectiveMethod objects in method
+                // dictionaries; a super send that resolves to one must send
+                // #run:with:in:, not activate it.  Both non-super send paths
+                // already do this — omitting it here aborted the VM in
+                // pushFrame ("method header not SmallInteger") on any
+                // instrumented method reached through super.  Guarding
+                // before patchJITICAfterSend also keeps the non-method out
+                // of the JIT inline caches.
+                invokeObjectAsMethod(method, selector, numArgs);
             } else {
                 int primIdx = primitiveIndexOf(method);
                 if (primIdx > 0) {
@@ -9210,6 +9230,8 @@ void Interpreter::extendedSuperSend() {
     Oop method = lookupMethod(selector, superclass);
     if (method.isNil()) {
         sendDoesNotUnderstand(selector, argCount);
+    } else if (isObjectAsMethod(method)) {
+        invokeObjectAsMethod(method, selector, argCount);   // see the V1 super sends
     } else {
         activateMethod(method, argCount);
     }

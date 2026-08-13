@@ -2339,6 +2339,15 @@ private:
     /// Invoke a non-CompiledMethod object as a method (sends #run:with:in:)
     void invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount);
 
+    /// True when a method-dictionary lookup answered something that is not a
+    /// CompiledMethod (Reflectivity's ReflectiveMethod, metalink wrappers,
+    /// any objectAsMethod proxy).  Such a result must be sent #run:with:in:
+    /// via invokeObjectAsMethod, never activated.
+    bool isObjectAsMethod(Oop method) const {
+        return !method.isObject() || method.rawBits() < 0x10000
+               || !method.asObjectPtr()->isCompiledMethod();
+    }
+
     /// Send mustBeBoolean
     void sendMustBeBoolean(Oop value);
 
