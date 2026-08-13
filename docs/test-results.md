@@ -1,5 +1,21 @@
 # Pharo SUnit Suite — VM Compatibility Status
 
+> **2026-08-13 full suite, macOS-arm64, 2052 classes** (all of this session's
+> fixes: auto-GC ephemerons #18, exception-blacklist removal, DNU-intercept
+> removal, objectAsMethod super sends, UnixOSProcessPlugin pipes, preemption
+> starvation guard #20):
+>
+>     27726 P / 27 F / 25 E / 7 T / 182 S
+>
+> measured against a same-session baseline of the identical build minus the
+> #20 guard (27720 P / 29 F / 25 E / 11 T).  Per-test diff of the two runs:
+> 8 newly passing (2 of them `ReleaseTest` timeouts, `ZnHTTPSTest>>testTransfers`,
+> `RBBrowserEnvironmentTest>>testVariableEnvironmentInstVars`,
+> `WeakValueDictionaryTest>>testAssociationsWithGarbageCollectedValue`), 2 newly
+> failing and both timing-sensitive (`SUnitTest>>testGreenTestThenLongRunningTest`,
+> `DTTestProfilingTest>>testDTTestCoverageResulLeafsContentHaveATestCase`).
+> Treat single-run deltas of this size as the harness noise floor, not signal.
+>
 > **2026-08-12.** Headline metrics that used to sit in `docs/deferred.md`
 > ("27,760 P / 99.92%", "FINAL 2026-07-07") are the July picture and are
 > archived under `docs/history/catalog-state-2026-07.md`. Current numbers
