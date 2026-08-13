@@ -161,26 +161,41 @@ The 323 warnings in the macOS build are all pre-existing and elsewhere -- 312
 `-Wunused-function` (mostly generated plugins) plus a few unused-variable and
 sign-compare. None are in `Interpreter.cpp`.
 
-### What was not captured
+### Direct confirmation on the Linux compiler
 
-The Linux compiler's own warning output for `Interpreter.cpp` was not
-retrieved. The box was reaped by the `aws_watch` lease reaper before
-`clone-and-build.log` was copied off, because `provision.sh` warned that
-`~/.ssh/aws-lease` was missing -- so the box could not self-heartbeat -- and
-that warning was not acted on. The build itself had already completed
-successfully; only the log was lost. Its smoke result survived in S3 at
-`s3://iospharo-build-670060058357/x86_64-builder/smoke/result-20260813T185910Z.txt`,
-which is the source of the Linux numbers above.
+A second x86_64 run captured the compiler output and settled it by experiment.
+GCC reports a format diagnostic at the *format-string* line, not the argument
+line, so the four sites appear as 18407 / 18433 / 18449 / 18474.
 
-So the Linux side is verified to *build and run*, not verified to be
-warning-free by direct observation. The narrower claim was checked in isolation
-with clang: at a `%lld` conversion, a `long` argument produces
+Building `jit` as committed, then reverting only the casts in place and
+rebuilding the same translation unit on the same machine and compiler:
 
-    warning: format specifies type 'long long' but the argument has type 'long'
+    with the casts (as committed)
+        no -Wformat diagnostic anywhere in the TERM region
 
-and the same argument cast to `long long` produces nothing.
+    with the casts reverted
+        Interpreter.cpp:18380  %lld expects 'long long int', argument has 'long int'
+        Interpreter.cpp:18390  ...
+        Interpreter.cpp:18407  ... argument has 'int64_t' {aka 'long int'}
+        Interpreter.cpp:18433  ...
+        Interpreter.cpp:18449  ...
+        Interpreter.cpp:18459  ...
+        Interpreter.cpp:18469  ...
+        Interpreter.cpp:18474  ...
 
-To capture the warning log on a future run, either generate `~/.ssh/aws-lease`
-and register it on awohl.com per `scripts/aws/README.md`, or export
-`AWS_LEASE_IID` / `AWS_LEASE_PROJECT` / `AWS_LEASE_REGION` when driving the box
-from a local Claude.
+The set of warned lines differs by exactly the cast sites and nothing else.
+That is the whole claim, demonstrated rather than argued.
+
+### Still open: the same defect at 15 other sites
+
+The same run shows the identical defect elsewhere, none of it visible from
+macOS. These were NOT touched, because they are outside the scope of the
+branch consolidation:
+
+    src/vm/Interpreter.cpp   2312 2340 2432 2446 2527 3878 7954
+                             9361 9364 12410 15890 16212
+    src/vm/Primitives.cpp    5495 5538 5582   (chrono duration::rep, aka long int)
+
+`Interpreter.cpp:3878` is a `%llu` against `uint64_t`; the rest are `%lld`
+against `long int` / `int64_t`. All are the Linux-only mismatch described
+above, so an Apple-only build will never surface them.
