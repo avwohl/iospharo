@@ -4006,30 +4006,32 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         }
                     }
                 }
-                // Built-in exclusion: exception infrastructure selectors.
-                // When these methods are JIT-compiled, exception handling causes
-                // recursive native stack growth that overflows at ~400 methods.
-                // The cycle: signal → receiver → signalerContext → ... → signal
+                // Historical exclusion: exception infrastructure selectors.
                 //
-                // Two tiers:
-                //   1. Unambiguous selectors (only used in exception/context handling)
-                //   2. Ambiguous selectors (also used by Semaphore, etc.) —
-                //      only excluded when the method's class is Exception-related
+                // 2026-04-16 (9974c323) this was unconditional: JIT-compiling
+                // #signal / #signalerContext / #handleSignal: / ... grew the
+                // NATIVE stack recursively through the signal → receiver →
+                // signalerContext → signal cycle and overflowed at ~400
+                // compiled methods.  That cause is gone — J2J native nesting
+                // is depth-capped with save-cursor materialization
+                // (JITCompiler.cpp, kMaxJ2JDepth) and T2 sends run through the
+                // chain loop instead of C-stack recursion.  Measured
+                // 2026-08-13 with the list off: Exception>>signal (14252 B),
+                // #signalerContext, Context>>handleSignal: and
+                // #aboutToReturn:through: all compile; 200 000 signal/handle
+                // cycles complete, exit 0, no overflow; 7 exception/context
+                // classes 152 P/0 F/0 E and a 30-class batch 3306 P/0 F/0 E,
+                // both identical to baseline.  Keeping it cost ~20-25% of
+                // exception throughput and was exactly the "hardcoded
+                // class/selector checks to skip methods that cause problems"
+                // pattern CLAUDE.md bans.
+                //
+                // PHARO_JIT_EXCLUDE_EXC_INFRA=1 restores it for bisecting.
+                //
+                // chainOnlyExcluded is NOT part of that: it is gated on the
+                // non-default PHARO_RESUME_J2J mode, where the underlying
+                // codegen bugs are still live.
                 {
-                    // Always-excluded: original exception infrastructure.
-                    // These were already broken before chain-loop work and
-                    // stay excluded regardless of chain mode.
-                    static const char* alwaysExcluded[] = {
-                        "signalerContext",
-                        "signalForException:",
-                        "raiseUnhandledError",
-                        "handleSignal:",
-                        "findContextSuchThat:",
-                        "cannotReturn:",
-                        "aboutToReturn:through:",
-                        "noHandler:",
-                        nullptr
-                    };
                     // Chain-loop-only exclusions: only excluded when
                     // PHARO_RESUME_J2J=1 (chain on).  These methods JIT
                     // fine in chain-off mode (default) and should be
@@ -4065,6 +4067,29 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         "ffiCall:",
                         nullptr
                     };
+                    if (interp_ && GET_DEBUG_BOOL(PHARO_RESUME_J2J)) {
+                        std::string sel = interp_->memory().selectorOf(compiledMethod);
+                        for (const char** p = chainOnlyExcluded; *p; p++) {
+                            if (sel == *p) {
+                                fprintf(stderr, "[JIT] AUTO-EXCLUDED chain-only #%s\n",
+                                        sel.c_str());
+                                return;
+                            }
+                        }
+                    }
+                }
+                if (interp_ && GET_DEBUG_BOOL(PHARO_JIT_EXCLUDE_EXC_INFRA)) {
+                    static const char* alwaysExcluded[] = {
+                        "signalerContext",
+                        "signalForException:",
+                        "raiseUnhandledError",
+                        "handleSignal:",
+                        "findContextSuchThat:",
+                        "cannotReturn:",
+                        "aboutToReturn:through:",
+                        "noHandler:",
+                        nullptr
+                    };
                     static const char* ambiguousSelectors[] = {
                         "signal",
                         "signal:",
@@ -4078,22 +4103,13 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         "return:",
                         nullptr
                     };
-                    if (interp_) {
+                    {
                         std::string sel = interp_->memory().selectorOf(compiledMethod);
                         for (const char** p = alwaysExcluded; *p; p++) {
                             if (sel == *p) {
                                 fprintf(stderr, "[JIT] AUTO-EXCLUDED exception infra #%s\n",
                                         sel.c_str());
                                 return;
-                            }
-                        }
-                        if (GET_DEBUG_BOOL(PHARO_RESUME_J2J)) {
-                            for (const char** p = chainOnlyExcluded; *p; p++) {
-                                if (sel == *p) {
-                                    fprintf(stderr, "[JIT] AUTO-EXCLUDED chain-only #%s\n",
-                                            sel.c_str());
-                                    return;
-                                }
                             }
                         }
                         for (const char** p = ambiguousSelectors; *p; p++) {

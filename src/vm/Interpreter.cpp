@@ -3798,7 +3798,7 @@ void Interpreter::interpret() {
         if (inExtension_) {
             if (__builtin_expect(memory_.needsCompactGC(), 0)) {
                 memory_.clearCompactGCFlag();
-                memory_.fullGC(/* skipEphemerons */ true);
+                memory_.fullGC(/* skipEphemerons */ GET_DEBUG_BOOL(PHARO_GC_AUTO_SKIP_EPH));
                 flushMethodCache();
             }
             // Force re-check immediately after the consumer runs. Without this,
@@ -3843,7 +3843,7 @@ void Interpreter::interpret() {
                 prepareForGC();
                 afterGC();
             } else if (scavRequestNum == GET_DEBUG_INT(PHARO_SCAV_FULLGC_AT)) {
-                memory_.fullGC(/* skipEphemerons */ true);
+                memory_.fullGC(/* skipEphemerons */ GET_DEBUG_BOOL(PHARO_GC_AUTO_SKIP_EPH));
                 flushMethodCache();
             } else if (!GET_DEBUG_BOOL(PHARO_YG_NO_SCAVENGE) && !skipForBisect) {
                 prepareForGC();
@@ -3855,7 +3855,7 @@ void Interpreter::interpret() {
         // -- GC safe point --
         if (__builtin_expect(memory_.needsCompactGC(), 0)) {
             memory_.clearCompactGCFlag();
-            memory_.fullGC(/* skipEphemerons */ true);
+            memory_.fullGC(/* skipEphemerons */ GET_DEBUG_BOOL(PHARO_GC_AUTO_SKIP_EPH));
             flushMethodCache();
         }
 
@@ -5781,7 +5781,7 @@ bool Interpreter::step() {
         // fire old-space ephemerons during a minor collection. Without this,
         // auto-GC mourns weak key dictionary entries before tests can check
         // the dictionary size (WeakKeyDictionaryTest>>testClearing).
-        memory_.fullGC(/* skipEphemerons */ true);
+        memory_.fullGC(/* skipEphemerons */ GET_DEBUG_BOOL(PHARO_GC_AUTO_SKIP_EPH));
         flushMethodCache();
     }
 

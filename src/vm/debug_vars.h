@@ -364,6 +364,8 @@ DEBUG_BOOL(PHARO_DETECT_ERRORS)
 DEBUG_BOOL(PHARO_DRIFT_CHECK)
 DEBUG_BOOL(PHARO_DUMP_INTERP_OFFSETS)
 DEBUG_BOOL(PHARO_GC_LOG)
+DEBUG_BOOL(PHARO_JIT_EXCLUDE_EXC_INFRA)  // bisect: restore the 2026-04-16 hardcoded blacklist that refused to JIT the exception/NLR core (#signal, #signalerContext, #handleSignal:, #aboutToReturn:through:, #doesNotUnderstand:, ...).  The ~400-method native-stack overflow it worked around is gone (J2J is depth-capped, T2 sends run the chain loop), and keeping it cost ~20-25% on exception-heavy code.
+DEBUG_BOOL(PHARO_GC_AUTO_SKIP_EPH)     // opt-out: restore the pre-2026-08-13 behaviour where an auto-triggered (allocation-pressure) fullGC skips ephemeron firing + weak nilling.  That divergence meant weak refs never cleared and finalization never ran unless the image called `Smalltalk garbageCollect` explicitly; stock Cog's major GC does both.  Bisect knob only.
 DEBUG_BOOL(PHARO_IC_HISTOGRAM)
 DEBUG_BOOL(PHARO_IC_HIT_DBG)
 DEBUG_BOOL(PHARO_IC_PATCH_DEBUG)
