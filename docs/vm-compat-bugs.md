@@ -202,6 +202,8 @@ segment-checked, then run on both VMs:
     apptivegrid-soil        single     464 P/5 F/1 E/1 T     SIGABRT (rc=134)
     moosetechnology-famixtagging single   0 P/115 E             0 P/115 E (parity)
     punt-labs-anthropic-sdk single     916 P/0 F/0 E         CLASSES 113 then lost
+    smalltalkweb-myprecious single     107 P/0 F/2 E          90 P/2 F/16 E -> see #20
+    juliendelplanque-jrpc   single      81 P/0 F/0 E         CLASSES 11 then EADDRINUSE
 
 `moosetechnology-famix` — the second-largest entry in #2a at 1293 tests — was
 NOT a hang either.  Same root as smacc: multi-segment image, defect #4.  It
@@ -306,7 +308,7 @@ knob that dumps the walked chain — run it on jrpc first; it is a 7-second repr
 
     apptivegrid-soil            cog 464 P    ours SIGABRT (rc=134) after CLASSES
     pharo-contributions-mutalk  cog 336 P    ours SIGSEGV (rc=139) after CLASSES  (= #3)
-    smalltalkweb-myprecious     cog 107 P    ours exits 0 after CLASSES
+    smalltalkweb-myprecious     cog 107 P    ours RUNS (2026-08-13); see #20
 
 `soil` aborting is new information — `rc=134` is `abort()`, so an assertion or
 an uncaught C++ exception, distinct from mutalk's segfault. Both reproduce with
@@ -340,6 +342,20 @@ not reach a RESULT line: `testCodeCoverage`, `testNoUnsentMessages` and
 `testNoImplementedCalls`/`testNoUnimplementedCalls` was still running when
 the budget expired.  So what is left of "soil" is entirely the activation
 wall, not a crash — and soil is now the cheapest available repro for #6.
+
+**2026-08-13: `smalltalkweb-myprecious` is no longer "exits 0 after CLASSES"
+— it runs, and its failures are defect #20.**  Freshly loaded, single-segment:
+ours `pass=90 fail=2 err=16 timeout=1` vs Cog `pass=107 fail=0 err=2`, and 13
+of the 16 errors are one class.  That class needs no network at all:
+
+    MpUnconnectedTransportMiddlewareTest suite run   (in-image SharedQueue)
+      stock Cog                        32 ran, 32 passed
+      ours before the #20 fix          32 ran, 18 passed, 1 F, 13 E
+      ours after                       32 ran, 31 passed, 0 F,  1 E
+
+Its transporter's reception service is a `TKTParameterizableService` with
+`stepDelay: 0 milliSecond`, i.e. exactly #20's spinner.  The remaining
+`MpTcp*`/`MpWeb*` failures are separate and still open.
 
 ### 3. `pharo-contributions-mutalk` — the crash is FIXED 2026-08-12 (`57022d3a`); the lost RESULT is not
 
