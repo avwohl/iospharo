@@ -15515,55 +15515,15 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
     }
 
-    // Fast path: nil findNextHandlerContext → return nil
-    // UndefinedObject doesn't implement this method in Pharo 13,
-    // but the expected behavior is to return nil (terminate handler chain).
-    // Without this, each DNU triggers a cascade of exception handling DNUs,
-    // creating ~400-frame deep stacks and wasting huge amounts of CPU.
-    {
-        Oop dnuReceiver = stackValue(argCount);  // actual DNU receiver (on stack)
-        if (argCount == 0 && dnuReceiver.isNil()) {
-            if (selector.isObject() && selector.rawBits() > 0x10000) {
-                ObjectHeader* selHdr = selector.asObjectPtr();
-                if (selHdr->isBytesObject()) {
-                    size_t selLen = selHdr->byteSize();
-                    const char* bytes = (const char*)selHdr->bytes();
-                    // Note: "findNextHandlerContext" is 22 chars (not 25 — prior typo).
-                    if (selLen == 22 && memcmp(bytes, "findNextHandlerContext", 22) == 0) {
-                        static int log = 0;
-                        if (++log <= 3)
-                            fprintf(stderr, "[DNU-FIX] nil findNextHandlerContext → nil\n");
-                        popN(argCount + 1);
-                        push(memory_.nil());
-                        return;
-                    }
-                    // nil asSymbol → return the symbol 'nil'
-                    // UndefinedObject doesn't implement #asSymbol in Pharo 13.
-                    // This is consistent with nil asString → 'nil'. Without this,
-                    // FFI struct field compilation (ExternalStructure>>recompileStructures)
-                    // triggers a fatal DNU during startup: Class>>bindingOf: sends
-                    // varName asSymbol where varName is nil due to FFI class variable
-                    // resolution failing for test struct types (Char5, Byte10).
-                    // CommandLineUIManager catches this and calls exitFailure.
-                    if (selLen == 8 && memcmp(bytes, "asSymbol", 8) == 0) {
-                        static int asSymbolLogCount = 0;
-                        if (++asSymbolLogCount <= 3) {
-                            fprintf(stderr, "[DNU] nil>>asSymbol → #nil (in %s fd=%zu)\n",
-                                    memory_.selectorOf(method_).c_str(), frameDepth_);
-                        }
-                        // Look up the symbol 'nil' in the symbol table
-                        Oop nilSymbol = memory_.lookupSymbol("nil");
-                        if (!nilSymbol.isNil()) {
-                            popN(argCount + 1);
-                            push(nilSymbol);
-                            return;
-                        }
-                        // If symbol creation failed, fall through to normal DNU
-                    }
-                }
-            }
-        }
-    }
+    // NOTE (2026-08-13): two hardcoded selector intercepts used to live here
+    // — `nil findNextHandlerContext -> nil` and `nil asSymbol -> #nil`.  Both
+    // were workarounds of the kind CLAUDE.md bans (hardcoded selector checks
+    // that skip/short-circuit methods that "cause problems"), and both silently
+    // substituted a value the image never asked for.  Removed after measuring
+    // that neither fires: 0 hits across startup and the FFI/exception test
+    // classes.  If a nil-receiver DNU cascade reappears, root-cause the sender
+    // that produced the nil (for asSymbol it was FFI class-variable resolution
+    // answering nil for struct types) rather than reinstating a substitution.
 
         dnuDepth_++;
 
