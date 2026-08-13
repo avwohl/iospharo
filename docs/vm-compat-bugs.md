@@ -201,7 +201,7 @@ segment-checked, then run on both VMs:
     mumez-pharo-acp         MULTI      168 P/0 F/2 E/0 T      168 P/0 F/2 E/0 T
     apptivegrid-soil        single     464 P/5 F/1 E/1 T     SIGABRT (rc=134)
     moosetechnology-famixtagging single   0 P/115 E             0 P/115 E (parity)
-    punt-labs-anthropic-sdk single     901 P                 (pending)
+    punt-labs-anthropic-sdk single     916 P/0 F/0 E         CLASSES 113 then lost
 
 `moosetechnology-famix` — the second-largest entry in #2a at 1293 tests — was
 NOT a hang either.  Same root as smacc: multi-segment image, defect #4.  It
@@ -210,6 +210,17 @@ is one JIT-only TIMEOUT (`MooseScriptsTest>>testCreateLightModels`).
 
 `mumez-pharo-acp` is at EXACT parity — see #5, its 7-test residual was one
 missing plugin primitive, not a startup problem.
+
+`punt-labs-anthropic-sdk-pharo` is single-segment, so the loader fix does not
+touch it — but it is no longer opaque.  It reaches `CLASSES 113` and runs;
+what kills the run is inside its `ZnManagingMultiThreadedServer` mock, where
+`Socket>>primSocketReceiveDataAvailable:` fails and the image signals
+`SocketError: Undefined error: 0` (errno 0), after which a DNU of
+`#printMethodAndUriOn:` on a NIL receiver comes out of `Context>>errorReportOn:`
+while reporting that error.  A plain `ZnServer` + `ZnClient` round trip is
+identical on both VMs (both answer `'pong'`), so the divergence needs the
+package's multi-threaded server to reproduce.  See memory
+`zn-socket-hunt-lost-wakeups` before chasing it.
 
 `moosetechnology-famixtagging` fails identically on both VMs (115 errors, 0
 passes): a broken package, not a VM defect.  It should never have been counted.
@@ -277,6 +288,31 @@ knob that dumps the walked chain — run it on jrpc first; it is a 7-second repr
 `soil` aborting is new information — `rc=134` is `abort()`, so an assertion or
 an uncaught C++ exception, distinct from mutalk's segfault. Both reproduce with
 `PHARO_NO_JIT=1` (mutalk stops segfaulting but still produces no RESULT).
+
+**2026-08-13: `soil`'s SIGABRT is FIXED (`544740ac`) — it was a SUPER SEND to
+a Reflectivity-instrumented method.**  The crash log names it outright:
+
+    [FATAL] pushFrame: method header not SmallInteger!
+      cls=11781 fmt=3 slots=2 isCompiledMethod=0
+      className=ReflectiveMethod
+
+A method-dictionary lookup may answer a non-CompiledMethod, and the VM
+contract is to send it `#run:with:in:`.  Both non-super send paths did that;
+all THREE super-send paths activated it directly.  Soil's suite drives
+OCASTCache/Reflectivity, so any instrumented method reached through `super`
+killed the VM.  Repro with anonymous classes only, in the commit message.
+
+With that fixed, soil RUNS: it reaches `CLASSES 37`, and every failure it
+produces is one Cog produces too —
+
+    FAIL SoilCleanCodeTest>>testNoUnusedClasses
+    FAIL SoilIndexedDictionaryTest>>testAddRandom
+    FAIL SoilIndexedDictionaryTest>>testConcurrentIsEmpty
+    FAIL SoilIndexedDictionaryTest>>testRemoveKeyWithTwoTransactions
+
+plus two of our own TIMEOUTs, both reflective scans and both defect #6:
+`SoilCleanCodeTest>>testCodeCoverage` and `>>testNoUnsentMessages`.  So what
+is left of "soil" is the activation wall, not a crash.
 
 ### 3. `pharo-contributions-mutalk` — the crash is FIXED 2026-08-12 (`57022d3a`); the lost RESULT is not
 
