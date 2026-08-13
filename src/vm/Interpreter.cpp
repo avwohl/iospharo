@@ -18637,13 +18637,32 @@ void Interpreter::addFirstLinkToList(Oop process, Oop list) {
     }
 }
 
-// Cog parity (processPreemptionYields = false, the Pharo default): a
-// process PREEMPTED by a higher-priority wake goes to the FRONT of its
-// priority list so it resumes first — back-appending it (the old
-// behavior, opt-back PHARO_PREEMPT_YIELDS=1) silently round-robins the
-// priority level on every Delay/timer tick, which breaks image code
-// written against Cog's no-time-slice-within-priority guarantee
-// (ProcessTerminateBugTest / SemaphoreTest fork-window flakes).
+// A process PREEMPTED by a higher-priority wake goes to the FRONT of its
+// priority list so it resumes first — back-appending it unconditionally
+// round-robins the priority level on every Delay/timer tick, which breaks
+// image code written against Cog's no-time-slice-within-priority guarantee.
+// Measured 2026-08-13 on 12 scheduler/weak classes: an unconditional
+// back-append costs ProcessTerminateBugTest>>testTerminationDuringNested-
+// UnwindS2, SemaphoreTest>>testSimpleCommunication, WeakKeyDictionaryTest>>
+// testClearing and TKTWorkerTest>>testWorkerProcessDies... (618 P/3 F/1 E vs
+// 621 P/1 F/0 E) — so the June choice was right about the common case, even
+// though its stated reason was wrong (stock Cog answers `Smalltalk vm
+// parameterAt: 48` = 0, i.e. bit 2 clear, i.e. it advertises YIELDS).
+//
+// STARVATION GUARD (docs/vm-compat-bugs.md #20).  Pure front-append gives a
+// process that is preempted CONSTANTLY permanent residency at the head of
+// its run queue, so an equal-priority peer woken behind it never runs at
+// all.  A P40 loop on `(Delay forMilliseconds: 0) wait` starves a P40 peer's
+// 500 ms Delay forever — the whole failing set of `smalltalkweb-myprecious`,
+// whose TaskIt services default to `stepDelay: 0` at P40.
+//
+// So: front-append, but if the SAME process is preempted kPreemptStarvation-
+// Limit times in a row while a peer is queued behind it, yield once.  That
+// leaves Cog's guarantee intact for any process that is not being preempted
+// in a tight loop, and bounds a peer's wait instead of making it infinite.
+//
+// PHARO_PREEMPT_YIELDS=1 back-appends always; PHARO_PREEMPT_NO_YIELD=1
+// front-appends always (guard off).  Both are bisect knobs.
 void Interpreter::putToSleepPreempted(Oop process) {
     if (GET_DEBUG_BOOL(PHARO_PREEMPT_YIELDS)) {
         putToSleep(process);
@@ -18655,6 +18674,30 @@ void Interpreter::putToSleepPreempted(Oop process) {
     int priority = safeProcessPriority(process);
     if (priority < 0) return;
     Oop processList = memory_.fetchPointer(priority - 1, schedLists);
+
+    // Identity key is the raw oop; a GC move just resets the counter, which
+    // costs nothing but a longer run before the next forced yield.
+    static constexpr int kPreemptStarvationLimit = 50;
+    static uint64_t lastPreemptedBits = 0;
+    static int consecutiveFrontAppends = 0;
+    Oop firstWaiter = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+    const bool peerQueued = firstWaiter.isObject()
+                            && firstWaiter.rawBits() != memory_.nil().rawBits();
+    if (peerQueued && !GET_DEBUG_BOOL(PHARO_PREEMPT_NO_YIELD)) {
+        if (process.rawBits() == lastPreemptedBits) {
+            if (++consecutiveFrontAppends >= kPreemptStarvationLimit) {
+                consecutiveFrontAppends = 0;
+                addLastLinkToList(process, processList);
+                return;
+            }
+        } else {
+            lastPreemptedBits = process.rawBits();
+            consecutiveFrontAppends = 1;
+        }
+    } else {
+        lastPreemptedBits = 0;
+        consecutiveFrontAppends = 0;
+    }
     addFirstLinkToList(process, processList);
 }
 

@@ -981,7 +981,7 @@ frame), which is the same root as the 32x `value:`/`do:` gap in memory
 `block-invocation-perf.md`.  Not a one-line change; filed so it stops
 hiding in a timeout column.
 
-### 20. A process spinning on a ZERO-ms Delay starves an equal-priority peer — HIGH (found 2026-08-13)
+### 20. ~~A process spinning on a ZERO-ms Delay starves an equal-priority peer~~ — FIXED 2026-08-13 (`preempt starvation guard`)
 
 Seven lines, no packages, no network, no JIT (`PHARO_NO_JIT=1` identical):
 
@@ -1034,6 +1034,43 @@ Ruled out: `Processor yield` fairness is fine (a P40 loop calling
 rotation by default (deliberate — Cog does not time-slice within a priority)
 and headless aging starts at P41, so priority 40 has no route at all once a
 peer refuses to suspend.
+
+**ROOT CAUSE: `putToSleepPreempted` front-appends.**  A process preempted by
+a higher-priority wake goes to the FRONT of its run queue, so it resumes
+first.  A process preempted CONSTANTLY — the zero-Delay spinner is preempted
+by the P80 Delay scheduler on every single iteration — therefore keeps
+PERMANENT residency at the head, and a peer woken behind it never runs.
+`Processor yield` fairness is irrelevant because the spinner never yields:
+its `delaySemaphore wait` finds the semaphore already signalled.
+
+The obvious fix — always back-append, which is what `Smalltalk vm parameterAt:
+48` bit 2 says BOTH VMs do — is wrong for us, and the June comment was right
+about that even though its stated reason was not.  Measured on 12
+scheduler/weak classes:
+
+    always front-append (old)   621 P / 1 F / 0 E
+    always back-append          618 P / 3 F / 1 E   ProcessTerminateBugTest>>
+                                                    testTerminationDuringNestedUnwindS2
+                                                    SemaphoreTest>>testSimpleCommunication
+                                                    WeakKeyDictionaryTest>>testClearing
+    STARVATION GUARD (new)      619 P / 1 F / 1 E   only TKTWorkerTest, which is
+                                                    equally flaky with the guard
+                                                    OFF (3 runs each: 1E/1T/1T vs
+                                                    1T/1E/1E+1T) — pre-existing
+
+We preempt far more often than Cog does (aging, heartbeat force-yield, timer
+granularity), so unconditional back-appending round-robins a priority level in
+a way Cog never would.  The guard keeps front-append, but if the SAME process
+is preempted 50 times in a row while a peer is queued behind it, it yields
+once.  That bounds a peer's wait instead of leaving it infinite, and leaves
+Cog's no-time-slice guarantee intact for anything not being preempted in a
+tight loop.
+
+    repro, 5 runs   guard on: woke every time (~81 000 spins)
+                    guard off (PHARO_PREEMPT_NO_YIELD=1): 2 of 3 wedge
+
+End to end, `MpUnconnectedTransportMiddlewareTest` goes 18/32 -> 31/32
+(Cog 32/32).
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 

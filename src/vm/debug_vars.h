@@ -152,7 +152,8 @@ DEBUG_BOOL(PHARO_T1_SIEVE_GATE)             // restore the legacy stub-on-condju
 DEBUG_BOOL(PHARO_JIT_MATGUARD_DEEP)         // restore the 4-deep matRetSlot scan in canJITActivate (default 1-deep; the startup-DNU flake is guard-independent)
 DEBUG_BOOL(PHARO_IGNOC_WIDEN)               // OPT-IN (unsound): VM-side ignoreOuterContext widening — skips materialize for body-clean blocks but breaks home identity + terminate-unwind of ensure: blocks (BlockClosureTest/SemaphoreTest, 2026-06-12)
 DEBUG_BOOL(PHARO_NO_GEN_CLONE)              // opt out of generational clones (shallowCopy small non-overflow objects in eden); restores the old always-old-space behavior
-DEBUG_BOOL(PHARO_PREEMPT_YIELDS)            // opt back to pre-2026-06-12 preemption: preempted process appended to the BACK of its priority list (Cog default is FRONT — processPreemptionYields=false)
+DEBUG_BOOL(PHARO_PREEMPT_YIELDS)            // bisect: ALWAYS back-append a preempted process (pure processPreemptionYields).  Costs 4 scheduler/weak tests — see putToSleepPreempted.
+DEBUG_BOOL(PHARO_PREEMPT_NO_YIELD)          // bisect: ALWAYS front-append, i.e. disable the starvation guard added 2026-08-13.  Reproduces docs/vm-compat-bugs.md #20 (a zero-ms-Delay spinner starves an equal-priority peer forever).
 DEBUG_BOOL(PHARO_RR_SCHED)                  // opt back IN to same-priority round-robin time-slicing (pre-2026-06-12 default; Cog never time-slices within a priority — rotation broke fork-window scheduling assumptions). Implied by PHARO_DET_SCHED.
 DEBUG_BOOL(PHARO_T1_INLINE_BLOCK_CREATE)    // OPT-IN: in-JIT block creation via jit_rt_block_create — UNSOUND for J2J-hidden callers (caller frames invisible to materialize), see AsmjitT1 PushFullBlock comment
 DEBUG_INT(PHARO_T1_INLINE_BLOCK_CREATE_MAX, -1) // bisect: inline-create only the first N emitted PushFullBlock sites (-1 = all)  // opt out of in-JIT block creation (restore the ExitBlockCreate exit/resume round trip)
