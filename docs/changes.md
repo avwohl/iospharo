@@ -32,6 +32,25 @@
   `Interpreter.cpp:24164`, where `pVal` is declared `long` and printed with
   `%ld`. The cast is a no-op there and obscures correct code, so it was dropped.
 
+## Cleared the remaining 16 `-Wformat` diagnostics on the Linux build
+
+The x86_64 run that verified the above also exposed the same mismatch at 15
+further sites. All are Linux-only for the reason described there — `int64_t`
+is `long` under LP64 and `long long` on Apple — so no macOS or iOS build can
+surface them. All are diagnostic/logging paths; no logged value was ever wrong,
+since both types are 64 bits wide.
+
+    Interpreter.cpp   2313 2342 2434 2448 2529   priority/excess ternaries at %lld
+                      3878                       g_stepNum (uint64_t) at %llu
+                      7957 7959                  retVal + receiver at %lld
+                      9361 9364 12410            arith/dispatch trace at %lld
+                      15890 16212                DNU selector + receiver at %lld
+    Primitives.cpp    5496 5540 5583             chrono milliseconds::rep at %lld
+
+Left alone deliberately: `Interpreter.cpp:16225` (`... : 0LL` already promotes
+the ternary to `long long`, and GCC does not warn) and `Interpreter.cpp:24164`
+(a `long` printed with `%ld`, already correct).
+
 
 2026-07-07 (late — catalog-validation wave)
 

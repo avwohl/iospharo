@@ -5493,7 +5493,7 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
     {
         char buf[256];
         snprintf(buf, sizeof(buf), "[SNAPSHOT] Phase 4: GC done (%lldms, heap=%zuMB)",
-                 std::chrono::duration_cast<std::chrono::milliseconds>(gcEnd - gcStart).count(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(gcEnd - gcStart).count(),
                  (memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
         log(buf);
     }
@@ -5537,7 +5537,7 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
         char buf[512];
         snprintf(buf, sizeof(buf), "[SNAPSHOT] Phase 6: Write %s (%lldms)",
                  result.success ? "OK" : "FAILED",
-                 std::chrono::duration_cast<std::chrono::milliseconds>(writeEnd - writeStart).count());
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(writeEnd - writeStart).count());
         log(buf);
 
         // Post-write diagnostics
@@ -5580,7 +5580,7 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
     {
         char buf[256];
         snprintf(buf, sizeof(buf), "[SNAPSHOT] Total time: %lldms",
-                 std::chrono::duration_cast<std::chrono::milliseconds>(
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
                      std::chrono::steady_clock::now() - snapshotStart).count());
         log(buf);
     }

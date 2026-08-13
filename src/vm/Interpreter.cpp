@@ -2310,7 +2310,7 @@ void Interpreter::dumpProcessQueues() {
         Oop prio = memory_.fetchPointer(2, activeProc);
         Oop ctx = memory_.fetchPointer(1, activeProc);
         fprintf(stderr, "  priority=%lld suspCtx=0x%llx\n",
-                prio.isSmallInteger() ? prio.asSmallInteger() : -1,
+                prio.isSmallInteger() ? (long long)prio.asSmallInteger() : -1LL,
                 (unsigned long long)ctx.rawBits());
     }
     Oop queues = memory_.fetchPointer(0, scheduler);
@@ -2339,7 +2339,7 @@ void Interpreter::dumpProcessQueues() {
             }
             fprintf(stderr, "  proc=0x%llx pri=%lld ctx=#%s\n",
                     (unsigned long long)proc.rawBits(),
-                    prio.isSmallInteger() ? prio.asSmallInteger() : -1,
+                    prio.isSmallInteger() ? (long long)prio.asSmallInteger() : -1LL,
                     mname.c_str());
             // Follow nextLink (slot 0)
             Oop next = memory_.fetchPointer(0, proc);
@@ -2431,7 +2431,7 @@ void Interpreter::dumpTimerWedgeState() {
         Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, sem);
         fprintf(stderr, "[WEDGE] timingSem 0x%llx excessSignals=%lld firstWaiter=0x%llx\n",
                 (unsigned long long)sem.rawBits(),
-                excess.isSmallInteger() ? excess.asSmallInteger() : -1,
+                excess.isSmallInteger() ? (long long)excess.asSmallInteger() : -1LL,
                 (unsigned long long)first.rawBits());
         int w = 0;
         Oop p = first;
@@ -2445,7 +2445,7 @@ void Interpreter::dumpTimerWedgeState() {
             }
             fprintf(stderr, "[WEDGE]   waiter[%d] proc=0x%llx P%lld top=#%s\n",
                     w, (unsigned long long)p.rawBits(),
-                    prioOop.isSmallInteger() ? prioOop.asSmallInteger() : -1, topSel.c_str());
+                    prioOop.isSmallInteger() ? (long long)prioOop.asSmallInteger() : -1LL, topSel.c_str());
             p = memory_.fetchPointer(ProcessNextLinkIndex, p);
             w++;
         }
@@ -2526,7 +2526,7 @@ void Interpreter::dumpTimerWedgeState() {
                             fprintf(stderr, "[WEDGE] *** TIMER-RUNNER ALIVE: proc=0x%llx "
                                     "P%lld top=#%s (runner at chain depth %d) ***\n",
                                     (unsigned long long)o2.rawBits(),
-                                    prioOop.isSmallInteger() ? prioOop.asSmallInteger() : -1,
+                                    prioOop.isSmallInteger() ? (long long)prioOop.asSmallInteger() : -1LL,
                                     topSel.c_str(), depth);
                             // Dump the full chain from top to the runner frame.
                             Oop c2 = (o2.rawBits() == active.rawBits())
@@ -3875,7 +3875,7 @@ void Interpreter::interpret() {
         if (__builtin_expect(timerSignalDeferred_ && g_stepNum > 25000000, 0)) {
             timerSignalDeferred_ = false;
             if (!lastKnownTimerSemaphore_.isNil()) {
-                fprintf(stderr, "[STARTUP] Firing deferred timer semaphore signal (step %llu)\n", g_stepNum);
+                fprintf(stderr, "[STARTUP] Firing deferred timer semaphore signal (step %llu)\n", (unsigned long long)g_stepNum);
                 synchronousSignal(lastKnownTimerSemaphore_);
                 lastTimerSignalTime_ = std::chrono::steady_clock::now();
             }
@@ -7954,9 +7954,9 @@ terminate_process:
                     fprintf(stderr, "[MAT-RET #%d] fd=%zu retVal=0x%llx (%lld) method=#%s recv=%lld bcOff=%d nextBC=0x%02x sp-fp=%lld\n",
                             matCount, frameDepth_,
                             (unsigned long long)value.rawBits(),
-                            value.isSmallInteger() ? value.asSmallInteger() : -1,
+                            value.isSmallInteger() ? (long long)value.asSmallInteger() : -1LL,
                             memory_.selectorOf(method_).c_str(),
-                            receiver_.isSmallInteger() ? receiver_.asSmallInteger() : -1,
+                            receiver_.isSmallInteger() ? (long long)receiver_.asSmallInteger() : -1LL,
                             ipOff, op,
                             (long long)(stackPointer_ - framePointer_));
                 }
@@ -9358,10 +9358,10 @@ void Interpreter::arithmeticSend(int which) {
                             (unsigned long long)rcvr.rawBits(),
                             (unsigned long long)arg.rawBits());
                     if (rcvr.isSmallInteger()) {
-                        fprintf(arithLog2, " (rcvr_val=%lld)", rcvr.asSmallInteger());
+                        fprintf(arithLog2, " (rcvr_val=%lld)", (long long)rcvr.asSmallInteger());
                     }
                     if (arg.isSmallInteger()) {
-                        fprintf(arithLog2, " (arg_val=%lld)", arg.asSmallInteger());
+                        fprintf(arithLog2, " (arg_val=%lld)", (long long)arg.asSmallInteger());
                     }
                 }
                 fprintf(arithLog2, "\n");
@@ -12407,7 +12407,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         fprintf(stderr, " [%zu]=0x%llx", si,
                                 (unsigned long long)s.rawBits());
                         if (s.isSmallInteger()) {
-                            fprintf(stderr, "(SmI %lld)", s.asSmallInteger());
+                            fprintf(stderr, "(SmI %lld)", (long long)s.asSmallInteger());
                         }
                     }
                     fprintf(stderr, "\n");
@@ -15887,7 +15887,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     }
                 } else if (selector.isSmallInteger()) {
                     char buf[64];
-                    snprintf(buf, sizeof(buf), "(sel=SmallInt %lld)", selector.asSmallInteger());
+                    snprintf(buf, sizeof(buf), "(sel=SmallInt %lld)", (long long)selector.asSmallInteger());
                     selName = buf;
                 } else {
                     char buf[64];
@@ -16209,7 +16209,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                     }
                 }
             } else if (rcvr.isSmallInteger()) {
-                fprintf(stderr, "[DNU]   rcvr is SmallInteger %lld\n", rcvr.asSmallInteger());
+                fprintf(stderr, "[DNU]   rcvr is SmallInteger %lld\n", (long long)rcvr.asSmallInteger());
                 suspiciousRcvr = true;
             }
             // Dump JIT provenance for suspicious receivers (SmallInt or classIdx=0)
