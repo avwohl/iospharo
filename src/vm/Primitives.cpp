@@ -18621,6 +18621,115 @@ PrimitiveResult Interpreter::primitiveForwardSignalToSemaphore(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// primitiveSemaIndexFor — answer the external-semaphore index currently
+// associated with `sigNum`'s handler, or fail (image maps that to nil) when
+// no handler has been installed.  OSSubprocess reads it back to decide
+// whether its child watcher is already armed.
+PrimitiveResult Interpreter::primitiveSemaIndexFor(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop sigOop = stackTop();
+    if (!sigOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t sig = sigOop.asSmallInteger();
+    if (sig <= 0 || sig >= kMaxForwardedSignal) return PrimitiveResult::Failure;
+    int idx = (int)gSigSemaIndex[sig];
+    if (idx <= 0) return PrimitiveResult::Failure;
+    popN(static_cast<size_t>(argCount + 1));
+    push(Oop::fromSmallInteger(idx));
+    return PrimitiveResult::Success;
+}
+
+// primitiveCreatePipe — pipe(2), answering `Array with: readerHandle with:
+// writerHandle`, each a full SQFile ByteArray of the same shape the
+// FilePlugin hands out (see makeFileHandle).  OSSubprocess relies on that
+// exact shape: OSSUnixSystemAccessor>>makePipeWithReadBlocking: feeds the
+// two elements straight into OSSPipe>>openReadStreamFor:/openWriteStreamFor:
+// as file handles, and OSSUnixSubprocess later pulls the fd back out with
+// primUnixFileNumber: to hand to the forked child.
+//
+// Without this primitive primCreatePipe answered nil and every
+// subprocess-spawning package died on `nil first` inside
+// OSSPipe>>initializeWith:readBlocking: — the whole 7-test residual on
+// mumez-pharo-acp (docs/vm-compat-bugs.md #5).
+PrimitiveResult Interpreter::primitiveCreatePipe(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    int fds[2];
+    if (::pipe(fds) != 0) return PrimitiveResult::Failure;
+
+    FILE* rf = ::fdopen(fds[0], "rb");
+    FILE* wf = rf ? ::fdopen(fds[1], "wb") : nullptr;
+    if (!rf || !wf) {
+        if (rf) ::fclose(rf); else ::close(fds[0]);
+        if (wf) ::fclose(wf); else ::close(fds[1]);
+        return PrimitiveResult::Failure;
+    }
+
+    int readerId = nextFileId_++;
+    int writerId = nextFileId_++;
+    openFiles_[readerId] = rf;
+    openFiles_[writerId] = wf;
+
+    // Allocate the result Array FIRST: makeFileHandle allocates too, and a GC
+    // between the two handle allocations would move the first one.  With the
+    // Array live and each handle stored as soon as it exists, every allocation
+    // after the first has its predecessor reachable from a heap object.
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    Oop result = memory_.allocateSlots(memory_.indexOfClass(arrayClass), 2,
+                                       ObjectFormat::Indexable);
+    if (result.isNil()) {
+        ::fclose(rf); ::fclose(wf);
+        openFiles_.erase(readerId); openFiles_.erase(writerId);
+        return PrimitiveResult::Failure;
+    }
+    Oop readerHandle = makeFileHandle(readerId, rf, /* writable */ false);
+    if (readerHandle.isNil()) {
+        ::fclose(rf); ::fclose(wf);
+        openFiles_.erase(readerId); openFiles_.erase(writerId);
+        return PrimitiveResult::Failure;
+    }
+    memory_.storePointer(0, result, readerHandle);
+    Oop writerHandle = makeFileHandle(writerId, wf, /* writable */ true);
+    if (writerHandle.isNil()) {
+        ::fclose(rf); ::fclose(wf);
+        openFiles_.erase(readerId); openFiles_.erase(writerId);
+        return PrimitiveResult::Failure;
+    }
+    memory_.storePointer(1, result, writerHandle);
+
+    popN(static_cast<size_t>(argCount + 1));
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// primitiveUnixFileNumber — answer the int fd behind an SQFile handle.
+PrimitiveResult Interpreter::primitiveUnixFileNumber(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    FILE* f = fileFromHandle(stackTop(), nullptr);
+    if (!f) return PrimitiveResult::Failure;
+    int fd = ::fileno(f);
+    if (fd < 0) return PrimitiveResult::Failure;
+    popN(static_cast<size_t>(argCount + 1));
+    push(Oop::fromSmallInteger(fd));
+    return PrimitiveResult::Success;
+}
+
+// primitiveSQFileSetNonBlocking — fcntl(fd, F_SETFL, ... | O_NONBLOCK) on the
+// fd behind an SQFile handle.  OSSubprocess uses it for the non-blocking
+// half of a pipe pair.
+PrimitiveResult Interpreter::primitiveSQFileSetNonBlocking(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    FILE* f = fileFromHandle(stackTop(), nullptr);
+    if (!f) return PrimitiveResult::Failure;
+    int fd = ::fileno(f);
+    if (fd < 0) return PrimitiveResult::Failure;
+    int flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return PrimitiveResult::Failure;
+    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+        return PrimitiveResult::Failure;
+    popN(static_cast<size_t>(argCount + 1));
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
 PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
     Oop semIndexOop;
     if (argCount == 0) {

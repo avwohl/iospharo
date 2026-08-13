@@ -2761,6 +2761,10 @@ private:
     PrimitiveResult primitiveInputSemaphore2(int argCount);
     PrimitiveResult primitiveSigChldNumber(int argCount);
     PrimitiveResult primitiveForwardSignalToSemaphore(int argCount);        // 265
+    PrimitiveResult primitiveSemaIndexFor(int argCount);
+    PrimitiveResult primitiveCreatePipe(int argCount);
+    PrimitiveResult primitiveUnixFileNumber(int argCount);
+    PrimitiveResult primitiveSQFileSetNonBlocking(int argCount);
     PrimitiveResult primitiveEventProcessingControl(int argCount); // 266
     PrimitiveResult primitiveSampledSound(int argCount);           // 267
     PrimitiveResult primitiveMixedSound(int argCount);             // 268

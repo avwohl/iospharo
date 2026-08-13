@@ -21369,6 +21369,10 @@ void Interpreter::initializeNamedPrimitives() {
     // image's startup sequence (docs/vm-compat-bugs.md #5/#2a).
     registerNamedPrimitive("UnixOSProcessPlugin", "primitiveSigChldNumber", &Interpreter::primitiveSigChldNumber);
     registerNamedPrimitive("UnixOSProcessPlugin", "primitiveForwardSignalToSemaphore", &Interpreter::primitiveForwardSignalToSemaphore);
+    registerNamedPrimitive("UnixOSProcessPlugin", "primitiveSemaIndexFor", &Interpreter::primitiveSemaIndexFor);
+    registerNamedPrimitive("UnixOSProcessPlugin", "primitiveCreatePipe", &Interpreter::primitiveCreatePipe);
+    registerNamedPrimitive("UnixOSProcessPlugin", "primitiveUnixFileNumber", &Interpreter::primitiveUnixFileNumber);
+    registerNamedPrimitive("UnixOSProcessPlugin", "primitiveSQFileSetNonBlocking", &Interpreter::primitiveSQFileSetNonBlocking);
     registerNamedPrimitive("iOSPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
     registerNamedPrimitive("iOSPlugin", "primitiveInputSemaphore", &Interpreter::primitiveInputSemaphore2);
     registerNamedPrimitive("SecurityPlugin", "primitiveGetNextEvent", &Interpreter::primitiveGetNextEvent);
