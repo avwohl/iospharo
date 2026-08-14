@@ -6133,7 +6133,7 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
         // called into the VM to say "no timer needed" — the Delay machinery is
         // demonstrably alive and responding.  Reset the death-detector clock
         // (Interpreter.cpp:4815), which otherwise keeps counting from the last
-        // VM fire and reports [DELAY-DEATH] after 5s for an image that simply
+        // VM fire and reports [TIMER-NOT-REARMED] after 5s for an image that simply
         // has nothing left to schedule.  timerWasArmed_ was previously left
         // true here, so the disarm bookkeeping was also stale.
         // See docs/delay-scheduler-misdiagnosis-2026-08-13.md.
@@ -31597,7 +31597,7 @@ PrimitiveResult Interpreter::primitiveReleaseWorker(int argCount) {
 
 // primitiveRegisterDelayRecoverySemaphore (0 args)
 // Receiver is a Semaphore that an image-side recovery process waits on. Stored so the VM's
-// checkTimerSemaphore [DELAY-DEATH] detector can signal it on a futile Delay-scheduler wedge,
+// checkTimerSemaphore [TIMER-NOT-REARMED] detector can signal it on a futile Delay-scheduler wedge,
 // driving `Delay scheduler restartTimerEventLoop` (a fresh scheduler) from a stack-safe context.
 // Zero overhead when healthy: the process only wakes when the VM signals a genuine wedge.
 PrimitiveResult Interpreter::primitiveRegisterDelayRecoverySemaphore(int argCount) {

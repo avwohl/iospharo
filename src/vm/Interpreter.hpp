@@ -237,12 +237,12 @@ public:
     void interpret();
     void stopVM(const char* reason);
     void dumpProcessQueues();
-    void dumpTimerWedgeState();  // one-shot at first [DELAY-DEATH]; see timer-scheduler-wedge
+    void dumpTimerWedgeState();  // one-shot at first [TIMER-NOT-REARMED]; see timer-scheduler-wedge
     // Pin every JIT method live in ANY process's Smalltalk stack (incl. SUSPENDED
     // processes like the Delay timer runner), so CodeZone LRU eviction can't free
     // a method a suspended process will resume into. Called during evictLRU.
     void pinLiveJITMethodsAcrossProcesses();
-    bool maybeTerminateStuckProcess();  // guarded terminateStuck_; protects Delay scheduler
+    bool reportStalledProcess();  // detection only; always returns false
     void traceExtentBytecode(uint8_t bc);  // PHARO_TRACE_EXTENT_SEL per-bytecode trace
     /// Verify the two inline-array overrun canaries; reports once each.
     void checkArrayCanaries(const char* where);
@@ -1292,7 +1292,7 @@ private:
 
     // Watchdog: terminate process stuck for too long (VM safety feature)
     std::atomic<int> stuckTicks_{0};       // Consecutive stuck ticks from watchdog thread
-    std::atomic<bool> terminateStuck_{false}; // Flag: main thread should terminate current process
+    std::atomic<bool> stallDetected_{false}; // Flag: main thread should terminate current process
 
     // Test runner trigger (set from monitor thread, checked by main loop)
     std::atomic<bool> pendingTestRun_{false};
@@ -1314,7 +1314,7 @@ private:
     // VM-core self-heal: an image-side recovery process registers a Semaphore here
     // (primitiveRegisterDelayRecoverySemaphore); on a futile wedge the VM signals it
     // so the image drives `Delay scheduler restartTimerEventLoop` (a fresh scheduler
-    // process). Zero overhead — the process only wakes on a genuine [DELAY-DEATH].
+    // process). Zero overhead — the process only wakes on a genuine [TIMER-NOT-REARMED].
     Oop delayRecoverySemaphore_ = Oop::nil();
 
     // GC-safe temporary storage for Oops that need to survive allocation.

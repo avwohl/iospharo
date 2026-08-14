@@ -2300,7 +2300,7 @@ void Interpreter::dumpProcessQueues() {
     fprintf(stderr, "=== End Process Dump ===\n\n");
 }
 
-// One-shot diagnostic fired at the FIRST [DELAY-DEATH] detection. Dumps enough
+// One-shot diagnostic fired at the FIRST [TIMER-NOT-REARMED] detection. Dumps enough
 // to decide whether the Delay/timer scheduler is DEAD (terminated/gone) or just
 // STUCK (still queued on the timing semaphore), plus what every other process is
 // blocked on — so the timer-scheduler-wedge (blocker #2) can be root-caused in a
@@ -2399,7 +2399,7 @@ void Interpreter::dumpTimerWedgeState() {
             p = memory_.fetchPointer(ProcessNextLinkIndex, p);
             w++;
         }
-        if (w == 0) fprintf(stderr, "[WEDGE]   (timing semaphore wait list EMPTY -> scheduler not waiting here = likely DEAD)\n");
+        if (w == 0) fprintf(stderr, "[WEDGE]   (timing semaphore wait list EMPTY -> scheduler is not BLOCKED on it; it may be ready-but-starved, suspended, or gone -- see the process table below)\n");
     }
 
     // Full process-table enumeration (same logic as PHARO_PROC_DUMP): priority,
@@ -3897,9 +3897,9 @@ void Interpreter::interpret() {
         checkArrayCanaries("checkpoint");
 
         // -- Terminate stuck process (set by watchdog, rare) --
-        if (__builtin_expect(terminateStuck_.load(std::memory_order_acquire), 0)) {
-            terminateStuck_.store(false, std::memory_order_relaxed);
-            maybeTerminateStuckProcess();  // protects the Delay scheduler etc.
+        if (__builtin_expect(stallDetected_.load(std::memory_order_acquire), 0)) {
+            stallDetected_.store(false, std::memory_order_relaxed);
+            reportStalledProcess();  // protects the Delay scheduler etc.
         }
 
         // -- cannotReturn: deadline --
@@ -4733,7 +4733,7 @@ void Interpreter::checkTimerSemaphore() {
 
             if (secs >= 5 && !schedulerDeathLogged_) {
                 schedulerDeathLogged_ = true;
-                std::cout << "[DELAY-DEATH] Timer semaphore signaled " << secs
+                std::cout << "[TIMER-NOT-REARMED] Timer semaphore signaled " << secs
                           << "s ago but scheduler never re-armed."
                           << " Recovery attempt #" << (schedulerRecoveryAttempts_ + 1)
                           << std::endl;
@@ -5091,7 +5091,7 @@ void Interpreter::startHeartbeat() {
                 if (stuck) {
                     int ticks = stuckTicks_.fetch_add(1, std::memory_order_relaxed) + 1;
                     if (ticks >= 3) {
-                        terminateStuck_.store(true, std::memory_order_release);
+                        stallDetected_.store(true, std::memory_order_release);
                         stuckTicks_.store(0, std::memory_order_relaxed);
                     }
                 } else {
@@ -6014,9 +6014,9 @@ bool Interpreter::step() {
 skip_yield:
 
     // VM safety: terminate a process that the watchdog flagged as stuck
-    if (terminateStuck_.load(std::memory_order_acquire)) {
-        terminateStuck_.store(false, std::memory_order_relaxed);
-        if (maybeTerminateStuckProcess()) return running_;  // protects Delay scheduler etc.
+    if (stallDetected_.load(std::memory_order_acquire)) {
+        stallDetected_.store(false, std::memory_order_relaxed);
+        if (reportStalledProcess()) return running_;  // protects Delay scheduler etc.
     }
 
     uint8_t bytecode = fetchByte();
@@ -11661,7 +11661,7 @@ void Interpreter::terminateAndSwitchProcess() {
     executeFromContext(newContext);
 }
 
-// The heartbeat "VM seems stuck" watchdog (sets terminateStuck_ when bytecode
+// The heartbeat "VM seems stuck" watchdog (sets stallDetected_ when bytecode
 // steps stop advancing for ~15s).  KILL REMOVED (2026-07-03 silent-cap audit):
 // the flag can only be CONSUMED on the bytecode loop, which by construction
 // only runs once the "stuck" process has RESUMED making progress — so every
@@ -11675,7 +11675,7 @@ void Interpreter::terminateAndSwitchProcess() {
 // here (diagnosis), and the harness-level [STALL] monitor (test_load_image,
 // 300s of zero steps → interpreter.stop()) remains the real backstop for a
 // truly hung VM.  Returns false always (no process switched).
-bool Interpreter::maybeTerminateStuckProcess() {
+bool Interpreter::reportStalledProcess() {
     Oop ap = getActiveProcess();
     int pri = safeProcessPriority(ap);
     static int stuckGuardLog = 0;
