@@ -440,3 +440,59 @@ Two methodology notes, both errors made while chasing this:
     full run with no Total line — indistinguishable from the hang being hunted.
     Single-class experiments must invoke the VM directly against an
     already-prepped image.
+
+
+## Suite-failure investigation, 2026-08-14 — what was and was not established
+
+### The Spec/Morphic cluster is state-dependent, and NOT cycle-loop death
+
+The largest block of suite failures is ~20 errors sharing one signature,
+`SubscriptOutOfBounds: 1 in #()`, across `SpListCommonPropertiestTest`,
+`SpTableCommonPropertiestTest`, `SpTreeTableAdapter*`,
+`SpComponentListAdapterTest` and `FTTableMorphTest`. All are an empty widget
+list read back after `backendForTest waitUntilUIRedrawed`.
+
+`setup_fake_gui.st` already documents this exact failure and ships a fix for
+it — `FakeGUI startCycleLoop`, a P40 loop running `MorphicRenderLoop doOneCycle`
+every 25ms, because forked tests defer UI work to the World and block for a
+cycle that otherwise never comes.
+
+The obvious hypothesis was that the loop dies partway through a long run. It
+does not. Measured:
+
+    isolation (2 classes)        SpComponentListAdapterTest 8/8, FTTableMorphTest 1/1
+    GUI cluster (306 classes)    3376 results, SubscriptOutOfBounds = 0, loop restarts = 0
+    full suite (2052 classes)    ~20 SubscriptOutOfBounds, loop restarts = 0
+
+A per-class liveness check was written, gated on prep-and-run, and then
+DISCARDED: with the loop alive in every observed run it never fires, so it
+would have been a fix for a mechanism that does not occur. The cause is
+something else that accumulates across the ~1750 non-GUI classes; running the
+GUI classes together is not sufficient to reproduce it.
+
+### A second, different hanger
+
+A full-suite run with the current VM hung 1h20m at 14,403 results on
+
+    ObjectWithPrintingRaisingHaltTest >> testInspectingObjectWithPrintOnWithHaltOpenInspector
+
+with no `[WEDGE]`, no `[TIMER-NOT-REARMED]`, and no in-image `TIMEOUT` row.
+The earlier baseline hang was `TraitTestCase`, so the "26 hangers" are not a
+fixed set. This one names its own mechanism: a test that halts and opens an
+inspector, blocking on a UI interaction the fake GUI can never satisfy. That
+is a more tractable target than the timer wedge ever was, and it is image/
+harness-side, not VM correctness.
+
+### Harness traps that cost several runs here
+
+  - `/tmp/sunit_run_completed.txt` must be removed before every run. A stale
+    marker silently suppresses the runner: the VM boots, runs its display
+    self-test to `=== Test Complete ===`, and writes no results. This is in
+    the project checklist; dropping it produced three "no results" runs that
+    looked like code failures.
+  - Do not re-prep an already-prepped image. Filing the runner and fake GUI in
+    twice yields `TIMEOUT(prim-stuck)` on every test, including trivial ones.
+    An earlier conclusion here — that the standard harness "does not work
+    under stock Cog" — was wrong for exactly this reason and is withdrawn.
+  - `x86-fullsuite.sh` ignores `/tmp/sunit_class_names.txt` and runs the whole
+    suite; single-class experiments must invoke the VM directly.
