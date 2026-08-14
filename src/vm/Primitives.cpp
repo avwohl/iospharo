@@ -758,15 +758,20 @@ PrimitiveResult Interpreter::primitiveExitCriticalSection(int argCount) {
         // Return self (don't change stack, just success)
         return PrimitiveResult::Success;
     } else {
-        // There are waiting processes - transfer ownership to first waiter
-        Oop newOwner = removeFirstLinkOfList(criticalSection);
-
-        // Set new owner
-        memory_.storePointer(OwnerIndex, criticalSection, newOwner);
-
-        // Resume the new owner process
-        // This is similar to primitiveResume
+        // There are waiting processes - transfer ownership to first waiter.
+        //
+        // VALIDATE BEFORE MUTATING.  Both priority checks below used to run
+        // AFTER removeFirstLinkOfList + storePointer(OwnerIndex), so a
+        // non-SmallInteger priority returned Failure with the mutex already
+        // half-transferred: the new owner was off the wait list, recorded as
+        // the owner, and on no ready queue — i.e. holding a mutex it can never
+        // be scheduled to release.  That is a permanent deadlock for every
+        // process that subsequently waits on this critical section, and it is
+        // the failure shape handleStackOverflow's comment fears
+        // (Interpreter.cpp:7798).  Nothing is mutated until both operands are
+        // known good.
         Oop activeProcess = getActiveProcess();
+        Oop newOwner = firstLink;
 
         // Get priority of new owner
         Oop newPriorityOop = memory_.fetchPointer(ProcessPriorityIndex, newOwner);
@@ -781,6 +786,10 @@ PrimitiveResult Interpreter::primitiveExitCriticalSection(int argCount) {
             return PrimitiveResult::Failure;
         }
         int64_t activePriority = activePriorityOop.asSmallInteger();
+
+        // Both operands validated — now it is safe to transfer ownership.
+        removeFirstLinkOfList(criticalSection);
+        memory_.storePointer(OwnerIndex, criticalSection, newOwner);
 
         // Cog parity (resume:preemptedYieldingIf: with preemptionYields
         // false): only a STRICTLY higher-priority new owner preempts, and
@@ -5055,7 +5064,14 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         // No runnable process — this means even the idle process is blocked.
         // Remove ourselves from the semaphore wait list before failing,
         // otherwise the process would be on the wait list AND active.
-        removeFirstLinkOfList(semaphore);
+        //
+        // Remove OURSELVES by identity, not the head of the list.  We were
+        // appended to the TAIL by addLastLinkToList above; removeFirstLinkOfList
+        // would evict whichever process is at the HEAD — a different, innocent
+        // waiter whenever the semaphore already had any — while leaving this
+        // process on the wait list AND active, exactly the corruption this
+        // rollback exists to prevent.
+        removeProcessFromList(activeProcess, semaphore);
         return PrimitiveResult::Failure;
     }
 
@@ -9442,8 +9458,14 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
     Oop nextProcess = wakeHighestPriority();
 
     if (nextProcess.isNil() || nextProcess.rawBits() == activeProcess.rawBits()) {
-        // No other process to run — remove ourselves from the queue and continue
-        removeFirstLinkOfList(priorityList);
+        // No other process to run — remove ourselves from the queue and continue.
+        //
+        // By identity, not the head: addLastLinkToList above appended us to the
+        // TAIL, so removeFirstLinkOfList would evict a different, innocent
+        // process from this priority's ready queue and leave us on it while we
+        // continue running.  With wakeHighestPriority having already taken the
+        // head, that silently loses a runnable process from the scheduler.
+        removeProcessFromList(activeProcess, priorityList);
         return PrimitiveResult::Success;
     }
 
