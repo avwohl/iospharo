@@ -10,7 +10,24 @@ LIST=/c/tmp/tc_names.txt
 OUT=/c/tmp/win_sunit_batches.txt
 BATCH=${BATCH:-100}
 PERTIMEOUT=${PERTIMEOUT:-200}
-SKIP="ProcessTest WeakArrayTest"   # known hangers (documented in deferred.md)
+# Skip list, now empty.  Both former entries were stale, and the deferred.md
+# entry they cited no longer exists:
+#
+#   ProcessTest    added by d58be9b3 as "kills Delay scheduler".  It does not.
+#                  ArrayTest alone -- which manipulates no processes --
+#                  reproduces the identical wedge, so ProcessTest was never the
+#                  trigger; and it measures 46/46 at HEAD
+#                  (docs/handoff-arm-linux-2026-07-04.md:115).  The real
+#                  mechanisms are in
+#                  docs/delay-scheduler-misdiagnosis-2026-08-13.md.
+#   WeakArrayTest  resolved as a misnomer 2026-07-03: the class does not exist
+#                  in Pharo 13 and the "hang" was an OCUndeclaredVariable
+#                  compile error surfacing as silent eval death.  The real
+#                  weak-reclaim bug behind it was fixed
+#                  (docs/history/windows-port-2026-06-27.md:71).
+#
+# Re-add here only with a dated, reproducible justification.
+SKIP=""
 
 : > "$OUT"
 mapfile -t ALL < "$LIST"
