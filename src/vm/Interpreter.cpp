@@ -19679,8 +19679,25 @@ void Interpreter::transferTo(Oop newProcess) {
     // not per process switch. This prevents the error handler from resetting the
     // counter via intermediate process switches.
 
-    // Resume execution from the new context
-    executeFromContext(newContext);
+    // Resume execution from the new context.
+    //
+    // The return value used to be discarded.  That is unsafe here specifically:
+    // newProcess's suspendedContext was nil'd a few lines above (matching Cog),
+    // so if the resume fails the process has BOTH no saved context and no live
+    // execution — it is unrecoverable, and the VM would carry on as though the
+    // switch had succeeded.  executeFromContext returns false for corrupt
+    // methods/contexts and for the SIGSEGV-recovery longjmp, i.e. exactly the
+    // states where continuing silently turns a detectable fault into a later
+    // mystery hang.
+    if (!executeFromContext(newContext)) {
+        fprintf(stderr, "[FATAL] transferTo: resume failed for process=0x%llx "
+                        "(context=0x%llx); its suspendedContext was already "
+                        "cleared, so the process cannot be recovered\n",
+                (unsigned long long)newProcess.rawBits(),
+                (unsigned long long)newContext.rawBits());
+        stopVM("executeFromContext failed inside transferTo()");
+        return;
+    }
 
     // Restore NLR state for the incoming process (if any was saved)
     bool restored = false;
