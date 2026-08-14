@@ -1201,24 +1201,11 @@ bool Interpreter::initialize() {
     // waiters use putToSleep (same priority = no preemption), so the startup
     // process completes ALL handlers before yielding.
     // NOTE: Cannot use >80 — the scheduler list array has exactly 80 entries.
-    // EXPERIMENT 2026-08-13: the boost is disabled behind an env var so its
-    // effect can be measured.  It is the direct cause of the Delay-ticker
-    // starvation misdiagnosed for months as "the Delay scheduler dies": with
-    // startup at P80, every startup activity (notably SDL2 structure
-    // field-offset resolution) runs at timing priority, and Pharo is
-    // cooperative WITHIN a priority — so DelayMicrosecondTicker, which sits
-    // behind it in the same P80 list, never runs and never re-arms the timer.
-    // See docs/delay-scheduler-misdiagnosis-2026-08-13.md.
-    if (pharo::g_debug.startupP80Boost
-        && isHeadless() && activeProcess.isObject() && !activeProcess.isNil()) {
-        Oop currentPri = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-        if (currentPri.isSmallInteger()) {
-            int pri = static_cast<int>(currentPri.asSmallInteger());
-            fprintf(stderr, "[STARTUP] Boosting startup process 0x%llx from P%d to P80\n",
-                    (unsigned long long)activeProcess.rawBits(), pri);
-            memory_.storePointer(ProcessPriorityIndex, activeProcess, Oop::fromSmallInteger(80));
-        }
-    }
+    // The headless startup process is NOT boosted to timingPriority.  That
+    // boost (removed 2026-08-14) put all startup work at P80, starving
+    // DelayMicrosecondTicker behind it in the same cooperative priority band
+    // and stopping every Delay in the image.  See
+    // docs/delay-scheduler-misdiagnosis-2026-08-13.md.
     //
     // Demote existing P40 processes to P10 to prevent the saved Morphic loop from
     // competing with newly created session processes.
@@ -4075,43 +4062,17 @@ void Interpreter::interpret() {
             jitRuntime_.drainInitialCompileQueue();
 #endif
 
-            // Stuck process termination (wall-clock based)
+            // The wall-clock "stuck process" tracker that used to live here fed
+            // VM-TIMEOUT, which was removed 2026-08-14 (it nil'd a context that
+            // transferTo restored one line later, never called putToSleep, and
+            // did not fire across an observed 71-minute hang).  The tracker had
+            // no other consumer, so it went with it.  startupGracePeriod_ is
+            // still cleared once a P80 process is seen.
             {
                 Oop currentActive = getActiveProcess();
                 Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentActive);
                 int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : 0;
-
-                if (prio >= 80) {
-                    startupGracePeriod_ = false;
-                    if (trackedProcess_.rawBits() == currentActive.rawBits())
-                        trackedProcess_ = Oop::nil();
-                } else if (!startupGracePeriod_ && prio < 79 && prio > 10) {
-                    // Skip the IDLE process (prio 10).  Idle legitimately sits in
-                    // primitiveRelinquishProcessor when nothing else is runnable —
-                    // tracking + "terminating" it generates noise (wakeHighestPriority
-                    // returns nil because that's why idle was running in the first
-                    // place) and re-fires every 10 min in a loop.  Real stuck non-
-                    // idle processes still fire; this only excludes idle.
-                    if (currentActive.rawBits() != trackedProcess_.rawBits()) {
-                        trackedProcess_ = currentActive;
-                        cumulativeMs_ = 0;
-                        lastResumeTime_ = std::chrono::steady_clock::now();
-                        trackStartTime_ = lastResumeTime_;
-                    } else {
-                        auto now = std::chrono::steady_clock::now();
-                        auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            now - trackStartTime_).count();
-                        if (wallMs >= 600000 && pharo::g_debug.vmTimeoutKill) {
-                            fprintf(stderr, "[VM-TIMEOUT] Process 0x%llx at P%d stuck for %lldms — terminating\n",
-                                    (unsigned long long)currentActive.rawBits(), prio, (long long)wallMs);
-                            trackedProcess_ = Oop::nil();
-                            memory_.storePointer(ProcessSuspendedContextIndex, currentActive, Oop::nil());
-                            Oop nextProc = wakeHighestPriority();
-                            if (!nextProc.isNil() && nextProc.isObject())
-                                transferTo(nextProc);
-                        }
-                    }
-                }
+                if (prio >= 80) startupGracePeriod_ = false;
             }
 
             // Watchdog process priority update
@@ -5836,54 +5797,15 @@ bool Interpreter::step() {
             processPendingSignals();
         }
 
-        // VM-level stuck process termination: track cumulative time a
-        // low-priority process runs. If any process below P79 accumulates
-        // > 90 seconds, terminate it. Uses cumulative time (not continuous)
-        // to handle cases where context switches to the Delay scheduler
-        // briefly interrupt the stuck process.
+        // The twin of the site-A tracker; it fed the same VM-TIMEOUT kill,
+        // removed 2026-08-14.  Its stated threshold (90s in this comment, 600s
+        // in the code) had drifted apart, which is itself a sign nothing was
+        // consuming it.  Only the startupGracePeriod_ clear is kept.
         {
             Oop currentActive = getActiveProcess();
             Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentActive);
             int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : 0;
-
-            if (prio >= 80) {
-                startupGracePeriod_ = false;
-                // High-priority process running — if we were tracking a low-pri
-                // process, pause cumulative timer (don't reset)
-                if (trackedProcess_.rawBits() == currentActive.rawBits()) {
-                    trackedProcess_ = Oop::nil();  // stop tracking
-                }
-            } else if (!startupGracePeriod_ && prio < 79 && prio > 10) {
-                // Skip IDLE (prio 10) — see twin site above; idle sitting in
-                // primitiveRelinquishProcessor is normal, and "terminating" it
-                // has no effect (wakeHighestPriority returns nil) so it loops
-                // every 10 min until killed externally.
-                if (currentActive.rawBits() != trackedProcess_.rawBits()) {
-                    // New low-priority process — start fresh tracking
-                    trackedProcess_ = currentActive;
-                    cumulativeMs_ = 0;
-                    lastResumeTime_ = std::chrono::steady_clock::now();
-                    trackStartTime_ = lastResumeTime_;
-                } else {
-                    // Same process still running
-                    auto now = std::chrono::steady_clock::now();
-                    auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now - trackStartTime_).count();
-                    // Use wall time (simpler, accounts for all elapsed time)
-                    if (wallMs >= 600000 && pharo::g_debug.vmTimeoutKill) {
-                        fprintf(stderr, "[VM-TIMEOUT] Process 0x%llx at P%d stuck for %lldms — terminating\n",
-                                (unsigned long long)currentActive.rawBits(), prio, (long long)wallMs);
-                        trackedProcess_ = Oop::nil();
-                        // Mark process as terminated (clear suspendedContext)
-                        memory_.storePointer(ProcessSuspendedContextIndex, currentActive, Oop::nil());
-                        // Try to find another process to run
-                        Oop nextProc = wakeHighestPriority();
-                        if (!nextProc.isNil() && nextProc.isObject()) {
-                            transferTo(nextProc);
-                        }
-                    }
-                }
-            }
+            if (prio >= 80) startupGracePeriod_ = false;
         }
 
         g_watchdogSubphase = 12;

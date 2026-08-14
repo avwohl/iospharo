@@ -28,38 +28,7 @@ struct DebugSettings {
     bool gcEphDebug = false;          // PHARO_GC_EPH_DEBUG
     bool timerDebug = false;          // PHARO_TIMER_DEBUG
 
-    // PHARO_STARTUP_P80_BOOST — re-enable the headless startup-process boost to
-    // timingPriority (80).  Default OFF since 2026-08-13: the boost puts ALL
-    // startup work (notably SDL2 structure field-offset resolution) at timing
-    // priority, and Pharo is cooperative WITHIN a priority, so
-    // DelayMicrosecondTicker — sitting behind it in the same P80 list — never
-    // runs and never re-arms the timer.  That starvation was misdiagnosed for
-    // months as "the Delay scheduler dies".  See
-    // docs/delay-scheduler-misdiagnosis-2026-08-13.md.
-    bool startupP80Boost = false;     // PHARO_STARTUP_P80_BOOST
 
-    // PHARO_VM_TIMEOUT_KILL — re-enable the VM-TIMEOUT "stuck process"
-    // terminator.  Default OFF since 2026-08-13.  Three independent reasons:
-    //
-    //  1. Its stated premise is gone.  It was added 2026-02-14 (9688241c)
-    //     because "the Delay scheduler dies (root cause still unknown)"; the
-    //     scheduler was in fact being killed by a stuck-process watchdog added
-    //     113 minutes earlier (98c77c7b).  That killer is now defanged --
-    //     maybeTerminateStuckProcess() returns false unconditionally, conceding
-    //     "every kill this path ever performed was a false positive".
-    //  2. It does not do what it says.  Both sites nil the victim's
-    //     suspendedContext and then call transferTo(), which immediately
-    //     re-saves the materialized stack into that same slot.  The nil is
-    //     undone on the next line.
-    //  3. Neither site ever calls putToSleep() on the victim, so it is left on
-    //     no ready queue and is no longer active: a silent, permanent removal
-    //     from scheduling with its context intact -- the very unrunnable state
-    //     the mechanism exists to escape.
-    //
-    // See docs/delay-scheduler-misdiagnosis-2026-08-13.md.  This is gated
-    // rather than deleted only so the change is reversible while it is being
-    // validated on Linux; it should be deleted outright once that is done.
-    bool vmTimeoutKill = false;       // PHARO_VM_TIMEOUT_KILL
 
     // --- JIT on/off switches ---
     bool noJit = false;               // PHARO_NO_JIT or PHARO_NOJIT

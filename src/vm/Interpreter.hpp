@@ -1353,10 +1353,6 @@ private:
     // (executeFromContext) and lazily once frameDepth_ falls back below the soft
     // limit. See timer-scheduler-wedge memory / blocker #2.
     bool inStackOverflowSignal_ = false;
-    Oop trackedProcess_ = Oop::nil();
-    std::chrono::steady_clock::time_point trackStartTime_{};
-    int64_t cumulativeMs_ = 0;
-    std::chrono::steady_clock::time_point lastResumeTime_{};
     bool startupGracePeriod_ = true;
     uint64_t stepCountForDriver_ = 0;
     uint64_t bytecodeCount_ = 0;
@@ -3799,11 +3795,6 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     visitor(profileSemaphore_);
     visitor(profileSample_);
     visitor(profilePrimitive_);
-
-    // Stuck-process detector caches the current active Process by Oop.
-    // Without this visit, after scavenge the raw-bits compare in
-    // periodic_checks walks a stale young address.
-    visitor(trackedProcess_);
 
     // Callback handler stack — Oops of waiters/handlers during FFI
     // callbacks back into the VM.
