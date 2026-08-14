@@ -1226,22 +1226,17 @@ bool Interpreter::initialize() {
     // will never fire. Signal the semaphore once to wake the scheduler,
     // which will then re-arm the timer and maintain itself.
     //
-    // In headless mode, defer this signal until startup handlers have had a
-    // chance to run. The saved MorphicRenderLoop (pri-80) has a short Delay
-    // that could preempt CommandLineHandler (pri-40) during startup. We defer
-    // for ~5M bytecodes (~2-3 seconds of startup) then signal, giving the
-    // startup handlers time to install CommandLineUIManager and disable
-    // MorphicRenderLoop before the timer wakes it.
+    // Headless mode used to DEFER this signal until g_stepNum > 25,000,000
+    // (the comment claimed ~5M -- another drift) so a saved MorphicRenderLoop
+    // at P80 could not preempt CommandLineHandler at P40 during startup.  That
+    // was the third of three VM-side attempts to force a startup ordering; the
+    // P80 boost (b354b577) and the P40->P10 queue rewrite (f65cc74a) were the
+    // other two, and both are gone.  Removed 2026-08-14.
     {
         Oop timerSema = memory_.specialObject(SpecialObjectIndex::TheTimerSemaphore);
         if (timerSema.isObject() && !timerSema.isNil() && timerSema.rawBits() > 0x10000) {
             lastKnownTimerSemaphore_ = timerSema;
-            if (!isHeadless()) {
-                synchronousSignal(timerSema);
-            } else {
-                timerSignalDeferred_ = true;
-                fprintf(stderr, "[STARTUP] Headless mode: deferring timer semaphore signal\n");
-            }
+            synchronousSignal(timerSema);
         }
     }
 
@@ -3818,18 +3813,6 @@ void Interpreter::interpret() {
         // -- Timer semaphore (Delay scheduler) --
         checkTimerSemaphore();
 
-        // -- Deferred timer signal (headless startup) --
-        // After ~5M bytecodes, signal the timer semaphore that was deferred
-        // during headless startup. By now CommandLineUIManager should be
-        // installed and MorphicRenderLoop disabled.
-        if (__builtin_expect(timerSignalDeferred_ && g_stepNum > 25000000, 0)) {
-            timerSignalDeferred_ = false;
-            if (!lastKnownTimerSemaphore_.isNil()) {
-                fprintf(stderr, "[STARTUP] Firing deferred timer semaphore signal (step %llu)\n", (unsigned long long)g_stepNum);
-                synchronousSignal(lastKnownTimerSemaphore_);
-                lastTimerSignalTime_ = std::chrono::steady_clock::now();
-            }
-        }
 
         // -- External semaphore signals (from heartbeat/events) --
         if (hasPendingSignals()) {

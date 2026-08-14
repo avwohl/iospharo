@@ -1303,7 +1303,6 @@ private:
     int64_t nextWakeupUsec_ = INT64_MAX;  // UTC microsecond wakeup (for primitive 242)
 
     // Deferred timer signal for headless mode
-    bool timerSignalDeferred_ = false;  // true when headless mode defers the initial timer signal
 
     // Delay scheduler death detector and recovery
     Oop lastKnownTimerSemaphore_ = Oop::nil();  // saved for recovery when scheduler dies
