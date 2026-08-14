@@ -1,8 +1,67 @@
-# The "Delay scheduler dies" bug is P80 starvation, not death
+# "Delay scheduler dies" is one SYMPTOM with three distinct causes
 
 **Date:** 2026-08-13
-**Status:** diagnosis corrected; no VM change made yet, and the reason why is
-recorded at the bottom. Read that before acting on this.
+**Status:** diagnosis corrected. One cause fixed (`b808d1b5`), one already dead,
+one still open.
+
+> **Correction, same day.** An earlier revision of this file said the P80
+> startup boost was "the direct cause of the starvation misdiagnosed for
+> months". That is wrong and the dates refute it: the boost was added
+> 2026-04-08 (`29a7bbb6`), while the misdiagnosis was written 2026-02-14
+> (`9688241c`). The boost is a *second, later* cause of the same symptom, not
+> the original one. The original is mechanism 1 below. The A/B measurement in
+> this file stands; the causal claim attached to it did not.
+
+The symptom every diagnostic keys on is a single VM state: `timerSemaphore_`
+nil and `nextWakeupUsec_ == INT64_MAX` with nobody re-arming
+(`Interpreter.cpp:4785-4790`, one-shot fire-and-clear). `[DELAY-DEATH]`, the
+futile re-signal, `[DELAY-RESTART]` and VM-TIMEOUT all trigger on that state
+alone and **cannot tell the causes apart**. At least three unrelated mechanisms
+produce it, each dominant in a different era. That is why no single fix ever
+closed it.
+
+    rank  mechanism                          status              discriminator
+    1     poisoned Delay -> SUnit suspends    image half fixed    isSuspended=true,
+          the P80 ticker                      2026-07-06; the     myList=nil, ticker
+                                              T1-JIT nil source   NOT on schedLists[80]
+                                              is NOT fixed
+    2     VM boosts startup to P80 ->         fixed b808d1b5      ticker READY and FIRST
+          priority contagion -> starvation    (this file)         in schedLists[80]; a
+                                                                  DIFFERENT P80 ACTIVE
+    3     VM stuck-process watchdog kills     already dead        [TERM-P80] /
+          the ticker (the ORIGINAL cause)     (see below)         [STUCK-GUARD]
+
+`dumpTimerWedgeState()` (`Interpreter.cpp:2424-2600`) already prints all three
+shapes distinctly. The instrumentation was never missing. What was missing was
+noticing that `[DELAY-DEATH]` names a *conclusion* rather than an observation,
+so every dump was read as confirming the name.
+
+
+## Mechanism 3 — the original cause, and it was self-inflicted
+
+The timeline settles what "root cause still unknown" actually was:
+
+    98c77c7b  2026-02-14 07:01  add watchdog: 30s without global step progress
+                                => terminate WHATEVER process is active
+    caa1864c  2026-02-14 07:26  fix that watchdog
+    9688241c  2026-02-14 08:54  "When the Delay scheduler dies (root cause
+                                 still unknown)..." => adds VM-TIMEOUT
+
+The "unknown root cause" was written **113 minutes after** the VM was given a
+mechanism that kills whatever process is active when bytecodes stop advancing.
+A Delay ticker parked in `waitForUserSignalled:orExpired:` executes no
+bytecodes, so it looks exactly like a stuck process. Confirmed four months
+later in `0634b733` (2026-06-05):
+
+> Observed in the full SUnit run at ~class 508: **[TERM-P80] of
+> `DelaySemaphoreScheduler>>runBackendLoopAtTimingPriority` via
+> terminateAndSwitchProcess** (fd=0, not an overflow), then [DELAY-DEATH].
+
+That killer is now defanged: `maybeTerminateStuckProcess()`
+(`Interpreter.cpp:11793-11822`) returns false unconditionally, its own comment
+conceding "every kill this path ever performed was a false positive".
+
+**The killer is gone. The workaround it spawned is still here.**
 
 Since ~2026-06 the tree has carried a recurring VM watchdog whose stated reason
 is, verbatim from commit `9688241c`:
@@ -152,6 +211,40 @@ Be careful with this result; it is narrower than it looks.
   - **The local runner still produces zero test results** on macOS in this
     setup, with or without the boost. That is a separate unexplained problem
     and is not addressed here.
+
+
+## Also fixed here
+
+### VM-TIMEOUT is now OFF by default (`PHARO_VM_TIMEOUT_KILL`)
+
+Both sites (`Interpreter.cpp:4104`, `:5873`) are gated off. Beyond its premise
+being gone (mechanism 3 above), the mechanism is broken on its own terms:
+
+    4108   memory_.storePointer(ProcessSuspendedContextIndex, currentActive, nil)
+    4111   transferTo(nextProc)
+    19745    -> storePointer(ProcessSuspendedContextIndex, oldProcess, contextToSave)
+
+`transferTo` re-saves the materialized stack into the very slot that was just
+nil'd, one line later. So it does not "clear suspendedContext" as its comment
+claims. And neither site calls `putToSleep()` on the victim, so the process ends
+up on no ready queue and not active — a silent, permanent removal from
+scheduling with its context intact. It manufactures precisely the unrunnable
+state it exists to escape.
+
+The 600000ms threshold has also drifted (30s -> 90s -> 600s) while the comment
+at `:5834` still says 90s.
+
+### `checkForPreemption` scanned the wrong direction
+
+`Interpreter.cpp:19939` ran **upward** from the active priority and took the
+first hit, which selects the LOWEST ready priority above the active one. With a
+P80 ticker ready and a P41 process also ready while P40 runs, it preempted to
+P41 and left the timer runner waiting. Repeated, that starves the process every
+Delay in the image depends on.
+
+Both sibling scans already walk downward (`Interpreter.cpp:4545`, `:6044`:
+`for (int pri = maxPri; pri > activePriority; pri--)`), as does Cog. Now fixed
+to scan downward.
 
 
 ## What should happen next

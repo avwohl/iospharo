@@ -4101,7 +4101,7 @@ void Interpreter::interpret() {
                         auto now = std::chrono::steady_clock::now();
                         auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                             now - trackStartTime_).count();
-                        if (wallMs >= 600000) {
+                        if (wallMs >= 600000 && pharo::g_debug.vmTimeoutKill) {
                             fprintf(stderr, "[VM-TIMEOUT] Process 0x%llx at P%d stuck for %lldms — terminating\n",
                                     (unsigned long long)currentActive.rawBits(), prio, (long long)wallMs);
                             trackedProcess_ = Oop::nil();
@@ -5870,7 +5870,7 @@ bool Interpreter::step() {
                     auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                         now - trackStartTime_).count();
                     // Use wall time (simpler, accounts for all elapsed time)
-                    if (wallMs >= 600000) {
+                    if (wallMs >= 600000 && pharo::g_debug.vmTimeoutKill) {
                         fprintf(stderr, "[VM-TIMEOUT] Process 0x%llx at P%d stuck for %lldms — terminating\n",
                                 (unsigned long long)currentActive.rawBits(), prio, (long long)wallMs);
                         trackedProcess_ = Oop::nil();
@@ -19935,8 +19935,17 @@ void Interpreter::checkForPreemption() {
     // Check for runnable processes at STRICTLY higher priority only.
     // Same-priority round-robin is handled by relinquishProcessor/yield.
     // Priorities are 1-based, queue indices are 0-based: queue[p-1] = priority p.
+    //
+    // Scan DOWNWARD from the highest priority.  This loop used to run upward
+    // from startIdx and take the first hit, which selects the LOWEST ready
+    // priority above the active one — priority inversion.  With a P80
+    // DelayMicrosecondTicker ready and, say, a P41 process also ready while a
+    // P40 runs, the old order preempted to P41 and left the timer runner
+    // waiting; repeated, that starves the very process every Delay in the image
+    // depends on.  Both sibling scans already walk downward
+    // (`for (int pri = maxPri; pri > activePriority; pri--)`), as does Cog.
     size_t startIdx = (activePriority > 0) ? static_cast<size_t>(activePriority) : 0;
-    for (size_t i = startIdx; i < numQueues; i++) {
+    for (size_t i = numQueues; i-- > startIdx; ) {
         Oop queue = queuesHeader->slotAt(i);
         if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;
 

@@ -78,6 +78,7 @@ DebugSettings::DebugSettings() {
     gcEphDebug       = envTruthy("PHARO_GC_EPH_DEBUG");
     timerDebug       = envTruthy("PHARO_TIMER_DEBUG");
     startupP80Boost  = envTruthy("PHARO_STARTUP_P80_BOOST");
+    vmTimeoutKill    = envTruthy("PHARO_VM_TIMEOUT_KILL");
     // --- JIT on/off switches ---
     noJit            = envPresent("PHARO_NO_JIT") || envPresent("PHARO_NOJIT");
     {
