@@ -393,3 +393,50 @@ Semaphore; Cog fails these with `PrimErrBadArgument`
 (`cointerp-cpp.c:88547`, `88670`). Adding the check is easy; deciding what a
 non-Semaphore argument should do to an already-armed timer is not, and it
 wants Cog parity testing rather than a guess.
+
+
+## Negative result: the TraitTestCase hang is NOT explained by these fixes
+
+The 2026-08-14 A/B diverged inside one class, which looked like a demonstrated
+fix for one of the "26 hangers":
+
+    baseline 7ce18503  hung at RUN #6 of 19 in TraitTestCase; no Total line;
+                       that RUN is the last line in the whole results file
+    fix      f808e9f3  all 19 RUNs, Total: 19 P:18 F:0 E:0 S:0 T:1
+                       (the in-image timeout FIRED and the class completed)
+
+The hypothesis was that `primitiveYield`'s rollback — appending itself to the
+tail, then removing the list HEAD — silently dropped a runnable process, and
+that when the dropped process was the runner's relinquish-based watchdog, the
+in-image 300s timeout could never fire. That matches the baseline's zero
+`TIMEOUT` rows exactly, and `ee2208de` fixed precisely that rollback.
+
+**It does not hold.** Re-tested on ONE box, ONE prepped image, both binaries
+built there, three trials each:
+
+    baseline 7ce18503   Total: 19 P:19 F:0 E:0 S:0   (3/3, no hang)
+    fix      f808e9f3   Total: 19 P:19 F:0 E:0 S:0   (3/3)
+
+The pre-fix build does not hang on TraitTestCase in isolation, and neither
+build records a timeout there. Note the isolated runs give P:19 while the
+fix arm in-suite gave P:18 T:1 — the class behaves differently in-suite than
+alone, so the hang is dependent on accumulated state ~1961 classes deep, not
+on anything intrinsic to TraitTestCase.
+
+So the full-suite divergence is unexplained. It is consistent with the two
+arms being different physical instances and with the documented
+order-dependence of this failure mode; it is NOT evidence that any fix in this
+sweep addressed a hanger. The 26 hangers remain open and un-attributed.
+
+Two methodology notes, both errors made while chasing this:
+
+  - `clone-and-build.sh` does NOT prep the harness image; `x86-fullsuite.sh`
+    does. An unprepped image runs the VM's display self-test to
+    `=== Test Complete ===` and writes no results file at all. Several earlier
+    "smoke tests" in this sweep were therefore weaker than described: they
+    confirmed the VM boots and does not wedge, not that any test executed.
+  - `x86-fullsuite.sh` ignores `/tmp/sunit_class_names.txt` and runs the whole
+    suite. Driving a single-class experiment through it produces a truncated
+    full run with no Total line — indistinguishable from the hang being hunted.
+    Single-class experiments must invoke the VM directly against an
+    already-prepped image.
