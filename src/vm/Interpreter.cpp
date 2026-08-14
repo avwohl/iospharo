@@ -4793,37 +4793,32 @@ void Interpreter::checkTimerSemaphore() {
                     dumpTimerWedgeState();
                 }
 
-                // Recovery: re-signal the last known timer semaphore.
-                // If the scheduler process is still alive but stuck waiting,
-                // this will wake it up so it can re-arm the timer.
-                // No attempt limit — keep trying indefinitely. A dead Delay
-                // scheduler deadlocks the entire system (watchdogs use Delay).
-                if (!lastKnownTimerSemaphore_.isNil()
-                        && !GET_DEBUG_BOOL(PHARO_NO_DELAY_RECOVERY)) {
+                // The blind re-signal of lastKnownTimerSemaphore_ that used to
+                // run here was removed 2026-08-14.  Its own comment conceded it
+                // is "FUTILE when the scheduler is suspended/dead rather than
+                // waiting on it (empirically it fires 18+ times and never
+                // re-arms)" — and a suspended process is on no semaphore, so
+                // that is every case it was reached in.
+                //
+                // It was not merely useless.  synchronousSignal() on a semaphore
+                // with an empty wait list increments excessSignals, so each
+                // futile attempt left a spurious signal banked; a later,
+                // legitimate wait on that semaphore then returns immediately
+                // instead of blocking.  Retrying "indefinitely" banked one per
+                // 5s, corrupting the very handshake it was trying to restore.
+                //
+                // The escalation below is kept: it asks the IMAGE to rebuild its
+                // own timer-event-loop, which is the layer that owns that
+                // decision, and it un-wedges the suspended case the re-signal
+                // could not touch.
+                if (delayRecoverySemaphore_.isObject() && !delayRecoverySemaphore_.isNil()
+                        && !GET_DEBUG_BOOL(PHARO_NO_DELAY_HARD_RESTART)) {
                     schedulerRecoveryAttempts_++;
-                    if (schedulerRecoveryAttempts_ <= 3) {
-                        std::cout << "[DELAY-RECOVERY] Re-signaling timer semaphore 0x"
-                                  << std::hex << lastKnownTimerSemaphore_.rawBits()
-                                  << std::dec
-                                  << " (attempt " << schedulerRecoveryAttempts_ << ")"
-                                  << std::endl;
-                    }
-                    synchronousSignal(lastKnownTimerSemaphore_);
-                    // VM-core self-heal (synthesis #2): re-signaling the timing semaphore is
-                    // FUTILE when the scheduler is suspended/dead rather than waiting on it
-                    // (empirically it fires 18+ times and never re-arms). Wake the registered
-                    // image-side recovery process to drive a real `Delay scheduler
-                    // restartTimerEventLoop` (a fresh timer-event-loop process), which un-wedges
-                    // both the suspended and the dead case. Only reached on a genuine wedge, and
-                    // a no-op unless an image registered a recovery semaphore — zero overhead
-                    // otherwise (unlike a busy-poll keepalive). Opt out: PHARO_NO_DELAY_HARD_RESTART.
-                    if (delayRecoverySemaphore_.isObject() && !delayRecoverySemaphore_.isNil()
-                            && !GET_DEBUG_BOOL(PHARO_NO_DELAY_HARD_RESTART)) {
-                        std::cout << "[DELAY-RESTART] waking image recovery process to restart"
-                                     " the timer-event-loop" << std::endl;
-                        synchronousSignal(delayRecoverySemaphore_);
-                    }
-                    // Give it 5 more seconds to re-arm
+                    std::cout << "[DELAY-RESTART] waking image recovery process to restart"
+                                 " the timer-event-loop (attempt "
+                              << schedulerRecoveryAttempts_ << ")" << std::endl;
+                    synchronousSignal(delayRecoverySemaphore_);
+                    // Give the image 5 more seconds to re-arm before re-reporting.
                     lastTimerSignalTime_ = std::chrono::steady_clock::now();
                     schedulerDeathLogged_ = false;
                 }
