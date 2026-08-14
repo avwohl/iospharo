@@ -28,6 +28,16 @@ struct DebugSettings {
     bool gcEphDebug = false;          // PHARO_GC_EPH_DEBUG
     bool timerDebug = false;          // PHARO_TIMER_DEBUG
 
+    // PHARO_STARTUP_P80_BOOST — re-enable the headless startup-process boost to
+    // timingPriority (80).  Default OFF since 2026-08-13: the boost puts ALL
+    // startup work (notably SDL2 structure field-offset resolution) at timing
+    // priority, and Pharo is cooperative WITHIN a priority, so
+    // DelayMicrosecondTicker — sitting behind it in the same P80 list — never
+    // runs and never re-arms the timer.  That starvation was misdiagnosed for
+    // months as "the Delay scheduler dies".  See
+    // docs/delay-scheduler-misdiagnosis-2026-08-13.md.
+    bool startupP80Boost = false;     // PHARO_STARTUP_P80_BOOST
+
     // --- JIT on/off switches ---
     bool noJit = false;               // PHARO_NO_JIT or PHARO_NOJIT
     bool noJitStrict = false;         // PHARO_NO_JIT set to non-"0" value (true disable)

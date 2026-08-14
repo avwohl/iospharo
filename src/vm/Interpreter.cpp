@@ -1201,7 +1201,16 @@ bool Interpreter::initialize() {
     // waiters use putToSleep (same priority = no preemption), so the startup
     // process completes ALL handlers before yielding.
     // NOTE: Cannot use >80 — the scheduler list array has exactly 80 entries.
-    if (isHeadless() && activeProcess.isObject() && !activeProcess.isNil()) {
+    // EXPERIMENT 2026-08-13: the boost is disabled behind an env var so its
+    // effect can be measured.  It is the direct cause of the Delay-ticker
+    // starvation misdiagnosed for months as "the Delay scheduler dies": with
+    // startup at P80, every startup activity (notably SDL2 structure
+    // field-offset resolution) runs at timing priority, and Pharo is
+    // cooperative WITHIN a priority — so DelayMicrosecondTicker, which sits
+    // behind it in the same P80 list, never runs and never re-arms the timer.
+    // See docs/delay-scheduler-misdiagnosis-2026-08-13.md.
+    if (pharo::g_debug.startupP80Boost
+        && isHeadless() && activeProcess.isObject() && !activeProcess.isNil()) {
         Oop currentPri = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
         if (currentPri.isSmallInteger()) {
             int pri = static_cast<int>(currentPri.asSmallInteger());
