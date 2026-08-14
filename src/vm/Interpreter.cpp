@@ -1193,72 +1193,26 @@ bool Interpreter::initialize() {
     // exitSuccess → snapshot:andQuit:).
     unblockStuckSnapshotCallers();
 
-    // In headless mode, boost the startup process to timingPriority (80).
-    // Session handlers may fork processes at timingPriority (80) — e.g.,
-    // DelaySemaphoreScheduler. If the startup process runs at its default
-    // priority (79), the forked P80 process preempts it and the remaining
-    // session handlers never execute. At P80, semaphore signals to P80
-    // waiters use putToSleep (same priority = no preemption), so the startup
-    // process completes ALL handlers before yielding.
-    // NOTE: Cannot use >80 — the scheduler list array has exactly 80 entries.
-    // The headless startup process is NOT boosted to timingPriority.  That
-    // boost (removed 2026-08-14) put all startup work at P80, starving
-    // DelayMicrosecondTicker behind it in the same cooperative priority band
-    // and stopping every Delay in the image.  See
-    // docs/delay-scheduler-misdiagnosis-2026-08-13.md.
+    // NOTE (2026-08-14): two VM-side scheduling hacks used to live here and
+    // both are gone.
     //
-    // Demote existing P40 processes to P10 to prevent the saved Morphic loop from
-    // competing with newly created session processes.
-    if (isHeadless() && activeProcess.isObject() && !activeProcess.isNil()) {
-        Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
-        if (schedLists.isObject() && !schedLists.isNil()) {
-            // P40 is at index 39 (0-based)
-            Oop p40List = memory_.fetchPointer(39, schedLists);
-            if (p40List.isObject() && !p40List.isNil()) {
-                Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, p40List);
-                if (first.isObject() && !first.isNil() && first.rawBits() != memory_.nil().rawBits()) {
-                    // There are processes in the P40 queue. Move them all to P10.
-                    int demoted = 0;
-                    Oop proc = first;
-                    while (proc.isObject() && !proc.isNil() && proc.rawBits() != memory_.nil().rawBits()) {
-                        Oop next = memory_.fetchPointer(ProcessNextLinkIndex, proc);
-                        // Demote: change priority to 10
-                        memory_.storePointer(ProcessPriorityIndex, proc, Oop::fromSmallInteger(10));
-                        demoted++;
-                        proc = next;
-                    }
-                    // Move the whole linked list from P40 queue to P10 queue
-                    Oop p10List = memory_.fetchPointer(9, schedLists);  // P10 at index 9
-                    if (p10List.isObject() && !p10List.isNil()) {
-                        // Append P40 list to P10 list
-                        Oop p10Last = memory_.fetchPointer(LinkedListLastLinkIndex, p10List);
-                        if (p10Last.isObject() && !p10Last.isNil() && p10Last.rawBits() != memory_.nil().rawBits()) {
-                            // P10 list has existing entries; append
-                            memory_.storePointer(ProcessNextLinkIndex, p10Last, first);
-                            Oop p40Last = memory_.fetchPointer(LinkedListLastLinkIndex, p40List);
-                            memory_.storePointer(LinkedListLastLinkIndex, p10List, p40Last);
-                        } else {
-                            // P10 list is empty; copy P40 list
-                            Oop p40Last = memory_.fetchPointer(LinkedListLastLinkIndex, p40List);
-                            memory_.storePointer(LinkedListFirstLinkIndex, p10List, first);
-                            memory_.storePointer(LinkedListLastLinkIndex, p10List, p40Last);
-                        }
-                        // Update myList pointers for each moved process
-                        proc = first;
-                        while (proc.isObject() && !proc.isNil() && proc.rawBits() != memory_.nil().rawBits()) {
-                            Oop next = memory_.fetchPointer(ProcessNextLinkIndex, proc);
-                            memory_.storePointer(ProcessMyListIndex, proc, p10List);
-                            proc = next;
-                        }
-                        // Clear P40 list
-                        memory_.storePointer(LinkedListFirstLinkIndex, p40List, memory_.nil());
-                        memory_.storePointer(LinkedListLastLinkIndex, p40List, memory_.nil());
-                        fprintf(stderr, "[STARTUP] Headless mode: demoted %d P40 processes to P10\n", demoted);
-                    }
-                }
-            }
-        }
-    }
+    //   1. The headless startup process was boosted to timingPriority (80).
+    //      That put ALL startup work at P80, starving DelayMicrosecondTicker
+    //      behind it in the same cooperative band and stopping every Delay in
+    //      the image.
+    //   2. Every process on the P40 ready list was demoted to P10 and the
+    //      whole linked list was spliced from the P40 queue onto the P10
+    //      queue, in C++, to stop a saved Morphic loop competing with session
+    //      processes.
+    //
+    // The second is the clearer violation: the VM rewrote the image's
+    // ProcessorScheduler ready lists behind its back, silently changing the
+    // priority of processes the image created and believes it still owns.  A
+    // saved Morphic loop competing at P40 is an image-state problem and
+    // belongs to the image's own startup (startup.st / SessionManager), not to
+    // C++ mutating scheduler queues at resume.
+    //
+    // See docs/delay-scheduler-misdiagnosis-2026-08-13.md.
 
     // Initialize JIT before execution starts so noteMethodEntry works from first send
 #if PHARO_JIT_ENABLED
