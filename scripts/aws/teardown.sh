@@ -3,8 +3,9 @@
 # resources.  The S3 bucket is preserved by default since it holds saved state;
 # pass --bucket to delete it too.
 #
-#   ./scripts/aws/teardown.sh            # terminate instance + SG + role/profile
-#   ./scripts/aws/teardown.sh --bucket   # also empty & delete the S3 bucket
+#   ./scripts/aws/teardown.sh              # terminate instance + SG + role/profile
+#   ./scripts/aws/teardown.sh --bucket     # also empty & delete the S3 bucket
+#   ./scripts/aws/teardown.sh --deploy-key # also remove the GitHub deploy key
 #   ./scripts/aws/teardown.sh --instance-only
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -12,10 +13,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 source "${CONFIG_FILE:-$HERE/config.env}"
 source "$HERE/load-creds.sh"
 
-DEL_BUCKET=0; INSTANCE_ONLY=0
+DEL_BUCKET=0; INSTANCE_ONLY=0; DEL_DEPLOY_KEY=0
 for a in "$@"; do
     case "$a" in
         --bucket) DEL_BUCKET=1;;
+        --deploy-key) DEL_DEPLOY_KEY=1;;
         --instance-only) INSTANCE_ONLY=1;;
     esac
 done
@@ -52,9 +54,26 @@ aws iam delete-role --role-name "$ROLE_NAME" 2>/dev/null || true
 echo "removed IAM role/profile (if present)"
 
 # --- GitHub deploy key ------------------------------------------------------
-KID=$(gh repo deploy-key list --repo avwohl/iospharo --json id,title \
-    -q ".[] | select(.title==\"$DEPLOY_KEY_TITLE\") | .id" 2>/dev/null || true)
-[ -n "$KID" ] && gh repo deploy-key delete "$KID" --repo avwohl/iospharo && echo "deleted GitHub deploy key" || true
+# KEPT BY DEFAULT, same as the S3 bucket and the EC2 key pair above/below.
+#
+# provision.sh deliberately caches this key: it reuses ~/.ssh/<KEY_NAME>-deploy
+# and skips the GitHub re-add when an identical key is already registered,
+# because "delete+re-add just spammed the repo admin with a 'deploy key added'
+# email" (its words).  Deleting the key here on every teardown defeated that
+# entirely -- the next provision found it missing, re-added it, and GitHub
+# mailed the admin again.  One notification per provision/teardown cycle.
+#
+# So: keep it, and let provision.sh's cache work as designed.  Pass
+# --deploy-key to remove it (e.g. retiring the project, or rotating the key).
+# The matching private half stays local in ~/.ssh/<KEY_NAME>-deploy and is
+# never left on a terminated box.
+if [ "$DEL_DEPLOY_KEY" -eq 1 ]; then
+    KID=$(gh repo deploy-key list --repo avwohl/iospharo --json id,title \
+        -q ".[] | select(.title==\"$DEPLOY_KEY_TITLE\") | .id" 2>/dev/null || true)
+    [ -n "$KID" ] && gh repo deploy-key delete "$KID" --repo avwohl/iospharo && echo "deleted GitHub deploy key" || true
+else
+    echo "kept GitHub deploy key (cached for reuse; --deploy-key to remove)"
+fi
 
 # Key pair is kept by default (cheap, lets you relaunch).  Uncomment to remove:
 # aws ec2 delete-key-pair --key-name "$KEY_NAME"

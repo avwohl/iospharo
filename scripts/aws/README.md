@@ -104,9 +104,18 @@ poke leases by hand with `./scripts/aws/lease.sh list` (or `fresh`, `register`,
 
 ## Tear down
 
-    ./scripts/aws/teardown.sh            # instance + SG + IAM + deploy key
-    ./scripts/aws/teardown.sh --bucket   # also delete the S3 bucket
+    ./scripts/aws/teardown.sh              # instance + SG + IAM
+    ./scripts/aws/teardown.sh --bucket     # also delete the S3 bucket
+    ./scripts/aws/teardown.sh --deploy-key # also remove the GitHub deploy key
     ./scripts/aws/teardown.sh --instance-only
+
+The GitHub deploy key is **kept by default**, like the S3 bucket and the EC2 key
+pair. `provision.sh` caches it — it reuses `~/.ssh/<KEY_NAME>-deploy` and skips
+the GitHub re-add when an identical key is already registered. Teardown used to
+delete it every time, which defeated that cache: the next provision re-added it
+and GitHub mailed the repo admin a "deploy key added" notification, once per
+cycle. Pass `--deploy-key` when you actually want it gone (retiring the project,
+or rotating the key). The private half never leaves `~/.ssh` on this machine.
 
 ## Branch flow
 
