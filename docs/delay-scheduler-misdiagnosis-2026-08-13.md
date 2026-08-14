@@ -247,6 +247,55 @@ Both sibling scans already walk downward (`Interpreter.cpp:4545`, `:6044`:
 to scan downward.
 
 
+## Full-suite A/B on x86_64 Linux (2026-08-14)
+
+Two separate m6a.4xlarge boxes, same suite, commits verified ON the box each
+poll (`7ce18503` vs `ee2208de`).
+
+On the 1961 classes BOTH arms completed:
+
+    arm       total    pass    fail   error    skip
+    baseline  27336   26997      18      32     172
+    fix       27336   26996      18      33     172
+    delta        +0      -1      +0      +1      +0
+
+Exactly ONE per-class difference in 1961: `TKTCommonQueueWorkerPoolTest`,
+where `testWorkerPoolDoesNotExceedPoolSizeWhenSchedulingTasksInParallel` hit
+`TKTTimeoutException` on the fix arm. That is a TaskIt worker-pool *parallel
+scheduling* test — exactly where the primitiveWait / primitiveYield /
+exitCriticalSection changes could plausibly regress — so it was re-run six
+times on each build rather than assumed flaky:
+
+    baseline 7ce18503   1 of 6 runs hit TKTTimeoutException
+    fix      ee2208de   0 of 6 runs
+
+The failure reproduces on the PRE-FIX build, so it is a flaky concurrency
+test, not a regression. (Six runs is too small to claim the fix improved it.)
+
+Conclusion: the five changes are non-regressive across the full suite.
+
+### The baseline hung; the fix arm completed
+
+    fix       run exit=0, 2045 classes, 49122 result lines
+    baseline  hung at 46057 lines, VM spinning at 72% CPU for 71 minutes on
+              testExplicitRequirementDoesNotTakePrecedenceEvenWhenAddingTraits,
+              never reached 84 classes the fix arm completed
+
+This is NOT claimed as evidence for the fixes. The baseline showed WEDGE 0,
+DELAY-DEATH 0, VM-TIMEOUT 0 — it is not the timer wedge, and a single hang on
+a single box is not causal evidence.
+
+It did produce one independent confirmation, though: **VM-TIMEOUT was ENABLED
+on the baseline and never fired during a 71-minute hang**, despite a 600s
+threshold. That matches the static reading (it nils a context that transferTo
+restores one line later, and never calls putToSleep). Gating it off removed
+nothing that worked.
+
+The in-image 300s per-test timeout also never fired — zero `TIMEOUT` rows in
+the baseline results. That is the documented "26 hangers" failure mode, still
+open and untouched by any of this.
+
+
 ## What should happen next
 
   - Run the Linux full suite with the fix and compare against the
