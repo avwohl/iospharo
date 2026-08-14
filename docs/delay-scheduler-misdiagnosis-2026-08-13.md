@@ -315,3 +315,81 @@ open and untouched by any of this.
     process's `suspendedContext` (`Interpreter.cpp` ~1186) and bulk-demoting
     every P40 process to P10 while rewriting scheduler queues (~1216). Both are
     C++ doing Smalltalk's job, in the same function, for similar reasons.
+
+
+## Workaround inventory: status after the 2026-08-14 sweep
+
+### Removed
+
+    b354b577  VM-TIMEOUT, both kill sites, plus the wall-clock tracker that fed
+              them (trackedProcess_, trackStartTime_, cumulativeMs_,
+              lastResumeTime_) and its GC root.  Also the headless P80 startup
+              boost.  Both knobs deleted with the code.
+    75268ce9  The blind re-signal of lastKnownTimerSemaphore_ and the
+              PHARO_NO_DELAY_RECOVERY knob.  Kept: detection, the [WEDGE] dump,
+              and the image-side escalation.
+    f65cc74a  The P40->P10 demotion that rewrote ProcessorScheduler's ready
+              lists from C++.
+    8f6b7070  The deferred headless timer signal (withheld for 25M bytecodes).
+    6ed72e55  The stale ProcessTest / WeakArrayTest skip list.
+
+### Fixed rather than removed (the damage the workarounds were surviving)
+
+    6037faaa  A deliberate timer disarm now resets the death detector, instead
+              of leaving it counting from the last fire.  This was the keystone:
+              every false [TIMER-NOT-REARMED] fed everything above.
+    ee2208de  primitiveWait / primitiveYield rolled back by removing the HEAD of
+              the list instead of themselves; primitiveExitCriticalSection could
+              fail after half-transferring the mutex.
+    f21528c3  putToSleep silently dropped a corrupt-priority process from every
+              queue.  Now stopVM().
+    685d5cba  transferTo discarded executeFromContext's failure after nilling
+              the incoming process's context.  Now stopVM().
+    bbd10f57  checkForPreemption scanned upward and selected the LOWEST ready
+              priority above the active one.
+
+### Renamed, because the names asserted the wrong conclusion
+
+    8876cfd1  [DELAY-DEATH] -> [TIMER-NOT-REARMED];
+              maybeTerminateStuckProcess -> reportStalledProcess;
+              terminateStuck_ -> stallDetected_; and the wedge-dump line that
+              inferred death from an empty wait list.
+
+### Still present, deliberately
+
+  - **`[WEDGE]` dump, `[TIMER-NOT-REARMED]` detection, `delayRecoverySemaphore_`
+    escalation.** These are diagnosis and a real recovery that delegates to the
+    image. Diagnostics are not workarounds; the dump is what made this
+    diagnosis possible in the first place.
+  - **`relinquishProcessor` special-casing** (`Primitives.cpp`): a 10ms sleep
+    cap and an idle-band-gated up-transfer. Both are justified in-comment by
+    observed starvation, both touch the hot path, and neither can be validated
+    without a full-suite A/B. Not touched.
+  - **`checkForPreemption` 64K throttle**: exists because the runner's spin-wait
+    watchdog sat on the ready queue. It is a performance tradeoff now that the
+    preemption direction is fixed, not a correctness workaround; changing it
+    needs a benchmark, not an argument.
+  - **`unblockStuckSnapshotCallers()`**: masks a *different* deadlock
+    (headless-eval snapshot), has a silent 10,000-object scan cap, and cites
+    `docs/fixed_priority_workarounds.md`, which does not exist. It deserves the
+    same treatment this file gave the timer wedge, but it is a separate bug and
+    guessing at it is how this cycle restarted five times.
+  - **Runner-side machinery** (`run_sunit_tests.st`): relinquish-based
+    watchdogs, per-class Delay-liveness probes, the scheduler-killer exception
+    logger, and three layers of hang containment. All exist because Delay could
+    not be trusted. Whether they can go depends on whether the fixes above hold
+    across a full suite; retiring them blind would remove the only thing
+    currently catching a hang.
+  - **The "26 hangers"**: the in-image 300s per-test timeout fires, but
+    post-timeout cleanup blocks. Confirmed still live on 2026-08-14 — the
+    baseline arm hung for 71 minutes with **zero** `TIMEOUT` rows recorded.
+    This is the largest remaining item and it is image-side.
+
+### Two arm-primitive gaps noted but not closed
+
+Neither `primitiveSignalAtMilliseconds` (136) nor
+`primitiveSignalAtUTCMicroseconds` (242) validates that its argument is a
+Semaphore; Cog fails these with `PrimErrBadArgument`
+(`cointerp-cpp.c:88547`, `88670`). Adding the check is easy; deciding what a
+non-Semaphore argument should do to an already-armed timer is not, and it
+wants Cog parity testing rather than a guess.
