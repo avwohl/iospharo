@@ -6113,6 +6113,17 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
     if (targetMs == 0 || semaphore.isNil()) {
         timerSemaphore_ = Oop::nil();
         nextWakeupTime_ = 0;
+        // A DELIBERATE DISARM IS PROOF OF LIFE, NOT DEATH.  The image just
+        // called into the VM to say "no timer needed" — the Delay machinery is
+        // demonstrably alive and responding.  Reset the death-detector clock
+        // (Interpreter.cpp:4815), which otherwise keeps counting from the last
+        // VM fire and reports [DELAY-DEATH] after 5s for an image that simply
+        // has nothing left to schedule.  timerWasArmed_ was previously left
+        // true here, so the disarm bookkeeping was also stale.
+        // See docs/delay-scheduler-misdiagnosis-2026-08-13.md.
+        timerWasArmed_ = false;
+        lastTimerSignalTime_ = std::chrono::steady_clock::time_point{};
+        schedulerDeathLogged_ = false;
         primitiveSuccess(semaphore);  // Return receiver
         return PrimitiveResult::Success;
     }
@@ -17393,6 +17404,12 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
         }
         timerSemaphore_ = Oop::nil();
         nextWakeupUsec_ = INT64_MAX;
+        // See the matching note in primitive 136 above: a deliberate disarm is
+        // proof the Delay machinery is alive, so it must reset the death
+        // detector rather than leave it counting from the last VM fire.
+        timerWasArmed_ = false;
+        lastTimerSignalTime_ = std::chrono::steady_clock::time_point{};
+        schedulerDeathLogged_ = false;
     } else {
         // Schedule the timer
         timerSemaphore_ = sema;
