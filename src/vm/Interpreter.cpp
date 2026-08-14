@@ -18730,9 +18730,30 @@ void Interpreter::putToSleep(Oop process) {
     Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
     Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
 
-    // Get and validate process priority
+    // Get and validate process priority.
+    //
+    // This used to `return` silently on a corrupt priority (98f70757, "Guard
+    // putToSleep against corrupted process priority fields").  That guard
+    // converted a crash into something worse: the process is added to NO ready
+    // list and is not the active process either, so it is permanently lost
+    // from the scheduler with its context intact.  Anything waiting on it then
+    // hangs forever, with no diagnostic at the point of loss — which is
+    // precisely the class of mystery hang the timing workarounds were built to
+    // survive.  The guard never fixed the corruption it was written for; it
+    // just made it silent.  ([CORRUPT-PRI] appears nowhere in docs/ or
+    // results/, so it may never have fired at all.)
+    //
+    // Surface it instead, per CLAUDE.md: a corrupt priority is an invariant
+    // violation the VM cannot legitimately recover from.
     int priority = safeProcessPriority(process);
-    if (priority < 0) return;  // Corrupted process - cannot schedule
+    if (priority < 0) {
+        fprintf(stderr, "[FATAL] putToSleep: corrupt priority on process=0x%llx "
+                        "— cannot schedule it, and dropping it would lose the "
+                        "process silently\n",
+                (unsigned long long)process.rawBits());
+        stopVM("Corrupt process priority in putToSleep()");
+        return;
+    }
 
     // Get the appropriate priority list (0-indexed in array)
     Oop processList = memory_.fetchPointer(priority - 1, schedLists);
