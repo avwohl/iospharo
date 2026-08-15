@@ -52,6 +52,7 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
 #include <deque>
 #include <memory>
 #include <set>
@@ -31255,6 +31256,11 @@ struct Worker {
     std::condition_variable cv;
     std::deque<Task*> queue;
     bool stop = false;
+    // Set by run() just before it returns.  Shutdown waits on THIS rather than
+    // joining blind: a worker parked inside ffi_call never reaches the cv and
+    // so never observes `stop`, and an unbounded join on it hangs the process
+    // after all work is done.  See pharo_tffiWorkerShutdownAll.
+    std::atomic<bool> finished{false};
     std::thread thread;
     pharo::Interpreter* interp = nullptr;
 
@@ -31294,7 +31300,7 @@ struct Worker {
             {
                 std::unique_lock<std::mutex> lk(mx);
                 cv.wait(lk, [&] { return stop || !queue.empty(); });
-                if (stop && queue.empty()) return;
+                if (stop && queue.empty()) { finished.store(true, std::memory_order_release); return; }
                 task = queue.front();
                 queue.pop_front();
             }
@@ -31330,7 +31336,38 @@ extern "C" void pharo_tffiWorkerShutdownAll(void) {
             worker->stop = true;
         }
         worker->cv.notify_all();
-        if (worker->thread.joinable()) worker->thread.join();
+        // BOUNDED join.  `stop` + notify_all only reaches a worker that is
+        // waiting on the cv; one parked inside ffi_call (a foreign call that
+        // never returns -- routine after a full FFI suite) never observes it,
+        // and join() then blocks forever.  Measured 2026-08-15: a full-suite
+        // run wrote BATCH COMPLETE and "=== Test Complete ===", then sat at
+        // ~0% CPU indefinitely, blocked exactly here, until killed.
+        //
+        // The process is exiting and every result is already flushed, so a
+        // still-stuck worker has nothing left to contribute: wait briefly for
+        // a clean exit, otherwise detach and let it die with the process.
+        // Report it rather than detaching silently -- a worker that cannot be
+        // stopped is a real defect in whatever call it is parked in, and this
+        // is the only place that observes it.
+        if (worker->thread.joinable()) {
+            const auto deadline = std::chrono::steady_clock::now()
+                                + std::chrono::seconds(5);
+            while (!worker->finished.load(std::memory_order_acquire)
+                   && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            if (worker->finished.load(std::memory_order_acquire)) {
+                worker->thread.join();
+            } else {
+                fprintf(stderr,
+                        "[TFFI-SHUTDOWN] worker did not stop within 5s (parked in a "
+                        "foreign call); detaching so the process can exit\n");
+                fflush(stderr);
+                worker->thread.detach();
+                continue;   // leak this Worker deliberately: the detached
+                            // thread still references it.
+            }
+        }
         for (tffiworker::Task* t : worker->queue) delete t;
         delete worker;
     }

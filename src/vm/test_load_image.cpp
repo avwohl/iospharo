@@ -1556,12 +1556,26 @@ int main(int argc, char* argv[]) {
     // them (bounded) too.  Parked TestLibrary callback threads can't be
     // joined; the xtcb statics they touch are immortal instead (see
     // Primitives.cpp xtcb namespace).
+    // Each shutdown step is traced separately.  A full-suite run was observed
+    // 2026-08-15 writing BATCH COMPLETE and "=== Test Complete ===", printing
+    // every EXIT-TRACE line, then sitting at ~0% CPU indefinitely -- but the
+    // single "main returning 0" trace fires BEFORE this sequence, so it could
+    // not say WHICH of these five calls was blocking.  Name them individually.
+#define PHARO_EXIT_STEP(name) \
+    do { if (GET_DEBUG_BOOL(PHARO_TRACE_EXIT)) { \
+             fprintf(stderr, "[EXIT-TRACE] -> %s\n", name); fflush(stderr); } } while (0)
+
+    PHARO_EXIT_STEP("pharo_dnsLookupDrain");
     pharo_dnsLookupDrain(2000);
     // Unpark workers blocked on forwarded callbacks BEFORE joining them —
     // otherwise the join below serializes exit behind their 120s
     // last-resort timeouts (abandoned invocations after test errors).
+    PHARO_EXIT_STEP("pharo_xtcbShutdown");
     pharo_xtcbShutdown();
+    PHARO_EXIT_STEP("pharo_tffiWorkerShutdownAll");
     pharo_tffiWorkerShutdownAll();
+    PHARO_EXIT_STEP("socketPluginShutdown");
     socketPluginShutdown();
+    PHARO_EXIT_STEP("all shutdown steps complete");
     return 0;
 }
