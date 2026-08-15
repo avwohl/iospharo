@@ -4154,11 +4154,76 @@ void ObjectMemory::syncClassTableToHeap() {
     }
 
     // Step 2: Write class entries from C++ vector into heap pages
+    //
+    // The `break` that used to guard this loop SILENTLY DROPPED every class
+    // whose index fell beyond the pages the image happened to ship with.
+    // classTable_ is sized 1<<22 at startup and registerClass() writes to it
+    // freely, but nothing ever grew classTablePages_ -- there is no push_back
+    // or resize on it anywhere except setClassTablePage(), which only the image
+    // loader calls for pages that already exist.  So a session that created
+    // enough classes to spill past the last loaded page saved an image whose
+    // objects referenced class indices with no class table entry.
+    //
+    // Measured 2026-08-15 with avwohl/validate_smalltalk_image: a clean image
+    // validates PASS; after an 896-class suite run the saved image had 150
+    // objects across 10 indices (25778-25836, i.e. page 25) reporting
+    // "references class index N which is not in the class table".  Repeat runs
+    // of the same input reproduce identically (11 errors) whenever the run
+    // completes.
+    //
+    // Grow the heap side to match rather than truncating.  A save that cannot
+    // represent the live class table must say so, not quietly emit a corrupt
+    // image -- silently dropping state is exactly what CLAUDE.md prohibits.
+    size_t highestUsed = 0;
+    for (size_t i = 1; i < classTable_.size(); ++i)
+        if (classTable_[i].isObject() && classTable_[i] != nilObject_) highestUsed = i;
+    const size_t pagesNeeded = (highestUsed / PageSize) + 1;
+    if (pagesNeeded > classTablePages_.size()) {
+        const uint32_t arrayClassIdx = classTablePages_.empty()
+            ? 0u : classTablePages_[0].asObjectPtr()->classIndex();
+        for (size_t pg = classTablePages_.size(); pg < pagesNeeded; ++pg) {
+            Oop newPage = arrayClassIdx
+                ? allocateSlots(arrayClassIdx, PageSize, ObjectFormat::Indexable)
+                : Oop::nil();
+            if (!newPage.isObject() || newPage == nilObject_) {
+                fprintf(stderr,
+                        "[CLASSTABLE] FATAL: cannot allocate class-table page %zu "
+                        "(need %zu pages for highest class index %zu); saving now "
+                        "would drop those classes and corrupt the image\n",
+                        pg, pagesNeeded, highestUsed);
+                fflush(stderr);
+                break;
+            }
+            for (size_t sl = 0; sl < PageSize; ++sl)
+                newPage.asObjectPtr()->slotAtPut(sl, nilObject_);
+            setClassTablePage(pg, newPage);
+            if (pg < hr->slotCount()) {
+                hr->slotAtPut(pg, newPage);
+            } else {
+                fprintf(stderr,
+                        "[CLASSTABLE] hiddenRoots has only %zu slots but page %zu "
+                        "is needed; the page is live but will not be reachable "
+                        "from the saved image\n", hr->slotCount(), pg);
+                fflush(stderr);
+            }
+        }
+    }
+
     for (size_t i = 1; i < classTable_.size(); ++i) {
         size_t pageNum = i / PageSize;
         size_t slotNum = i % PageSize;
 
-        if (pageNum >= classTablePages_.size()) break;
+        if (pageNum >= classTablePages_.size()) {
+            if (classTable_[i].isObject() && classTable_[i] != nilObject_) {
+                static int dropLog = 0;
+                if (dropLog++ < 5)
+                    fprintf(stderr,
+                            "[CLASSTABLE] dropping class at index %zu: page %zu "
+                            "does not exist (have %zu)\n",
+                            i, pageNum, classTablePages_.size());
+            }
+            break;
+        }
         Oop pageOop = classTablePages_[pageNum];
         if (!pageOop.isObject() || pageOop.rawBits() == 0 || pageOop == nilObject_) continue;
 
