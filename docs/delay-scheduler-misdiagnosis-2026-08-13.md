@@ -496,3 +496,68 @@ harness-side, not VM correctness.
     under stock Cog" — was wrong for exactly this reason and is withdrawn.
   - `x86-fullsuite.sh` ignores `/tmp/sunit_class_names.txt` and runs the whole
     suite; single-class experiments must invoke the VM directly.
+
+
+## 2026-08-15: what the image validator settled, and what it ruled out
+
+Using avwohl/validate_smalltalk_image (per-object SHA-256 manifests, heap and
+class-table validation) turned two long-running questions into measurements.
+
+### FOUND AND FIXED: class-table truncation on save (46f2ec29)
+
+`syncClassTableToHeap` began its write loop with
+
+    if (pageNum >= classTablePages_.size()) break;
+
+and nothing in the VM ever grew `classTablePages_` -- no push_back, resize or
+emplace anywhere; `setClassTablePage()` is called only by the image loader for
+pages that already exist. `classTable_` is sized 1<<22 and `registerClass()`
+writes into it freely, so any session creating enough classes to spill past the
+last loaded page saved an image whose objects referenced class indices with no
+entry.
+
+    clean image        PASS
+    9-class run        PASS
+    209-class run      PASS
+    896-class run      FAIL: 11 errors, 150 objects, indices 25778-25836 (page 25)
+    896-class, fixed   PASS
+
+Completed runs reproduce identically (11 errors, twice). An outlier reporting 1
+error had rc=1 and had crashed early -- the measure is confounded by run
+failure, which is worth remembering when reading any single result.
+
+### RULED OUT: the Spec/Morphic cluster is not a heap or class-table defect
+
+The same fixed run still reported 15 `SubscriptOutOfBounds` errors, so the two
+are separate defects. A direct comparison of a passing image (victims alone,
+0 errors) against a failing one (896 classes, 15 errors), filtered to the
+classes on the failure stack:
+
+    FTTableContainerMorph   pass: 2 instances   fail: 1
+    SpFTTableMorph          pass: 2 instances   fail: 1
+    SpMorphicTreeTableAdapter pass: 1           fail: 1
+
+Same class indices (2889, 7123), same format, same slot counts in both. The
+widget objects are structurally sound; the failing image merely has fewer of
+them, which is a CONSEQUENCE of tests erroring before building their widgets.
+
+So the failing state is not present in the heap at snapshot time. That
+eliminates heap corruption, class-table damage, and object-level damage as
+explanations, and points at transient runtime state.
+
+### The open lead, and a gap in the earlier reasoning
+
+An earlier round concluded the fake-GUI World-cycle loop was not the mechanism
+because `FakeGUICycleLoop` was never nil or terminated (restarts = 0 across
+both a 2052-class and a 306-class run). That check is insufficient: it tests
+whether the loop process EXISTS, not whether it is CYCLING. A loop that is
+alive but never completes a `MorphicRenderLoop doOneCycle` produces exactly the
+observed symptom -- `waitUntilUIRedrawed` never delivers, and the adapter reads
+back empty submorphs.
+
+The next experiment is therefore to count completed cycles, not liveness: have
+`startCycleLoop` increment a counter per cycle and report it per test class,
+then check whether the counter advances while the Sp*/FT* adapter tests run. If
+it stalls, the question becomes what blocks the loop at P40; if it advances
+normally, the UI cycle is delivering and the fault is in the adapter's own
+wait/notify handshake.
