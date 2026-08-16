@@ -1137,6 +1137,49 @@ tight loop.
 End to end, `MpUnconnectedTransportMiddlewareTest` goes 18/32 -> 31/32
 (Cog 32/32).
 
+### 21. An unhandled exception in a FORKED process wedges the whole eval — HIGH (found 2026-08-15)
+
+One line reproduces it on HEAD, no VM change, no packages, no Morphic:
+
+    [ Error signal: 'boom' ] fork. (Delay forSeconds: 3) wait. 'ALIVE'
+
+The eval never prints an `EVAL-RESULT`.  The three-second `wait` never returns.
+
+Isolated by bisecting the repro rather than by reading code — each variant
+differs from the one above it by a single element:
+
+    (Delay forSeconds: 3) wait. 'ALIVE-A'                    EVAL-RESULT='ALIVE-A'
+    [ 1 + 1 ] fork. (Delay ...) wait. 'ALIVE-B'              EVAL-RESULT='ALIVE-B'
+    [ Object new zorkNotUnderstood ] fork. (Delay ...) wait  no EVAL-RESULT
+    [ Object new asUppercase ] fork. (Delay ...) wait        no EVAL-RESULT
+    [ Error signal: 'boom' ] fork. (Delay ...) wait          no EVAL-RESULT
+
+So it needs BOTH the fork and the unhandled exception; neither alone does it.
+It is not specific to `doesNotUnderstand:` (a plain `Error signal:` is enough),
+and not specific to a newly created selector — the first DNU probe logged
+`[DNU-RCVR] ... canon=0x7000000000 DUPLICATE!`, which looks alarming and is a
+red herring for THIS defect, since an existing selector wedges identically.
+
+What the VM is doing meanwhile, from `PHARO_XFER_TRACE=1`: it is NOT spinning.
+57 process switches total, settling into a P80 <-> P40 ping-pong, while the JIT
+keeps retiring sends.  The eval's process is simply never woken from its Delay.
+That is the same signature as the mutex counter-test in #15, where the leak took
+the Delay scheduler down with it and `valueWithin:` could not fire its own
+timeout — consistent with the timer machinery being the casualty rather than the
+cause.
+
+Why this matters beyond the repro: this is the blocker sitting under #15's
+"make the stack-overflow cap catchable".  The cap cannot become an ordinary
+catchable Error until an unhandled one ends its process cleanly, because today
+an unhandled Error does not run the process's unwind blocks — which is exactly
+why `handleStackOverflow` has to drive `Process>>terminate` instead.  Fix this
+first and #15's remaining half becomes small.
+
+Not yet root-caused.  The next probe is which process holds what at the moment
+the eval's Delay fails to fire: whether the unhandled-error default action
+leaves a mutex held (Transcript/log writing both take one), or whether the
+process is left in a state the scheduler will not wake.
+
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
 These are `LEAD n`, NOT `#n`.  The two spaces overlap (there is a defect #15
