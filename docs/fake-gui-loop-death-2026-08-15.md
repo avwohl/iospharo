@@ -180,3 +180,37 @@ the fact.
 
 Net effect so far: 15 subscript errors before any of this work, 1 now, with the
 revival still carrying the last case.
+
+## Validation of the fork-outside fix — the hypothesis was WRONG
+
+Full run with `forkedOutsideTestEnvironmentAt:` in (submodule `4fda356`,
+presence verified on the box, `forkFix=2`):
+
+    terminate hits    1  — and it is the revival path, i.e. ZERO real terminations
+    loop restarts     1  — UNCHANGED from the un-adopt-only run
+    restart point     before CoFetcherWithNoResultsTest — the SAME place as ever
+
+So forking with `DefaultExecutionEnvironment` active did NOT remove the last
+death.  The `on: UnhandledException` -> `suspendBackgroundFailure:` -> `suspend`
+theory predicted it would, so that theory is REFUTED, not merely unconfirmed.
+Recorded here rather than quietly dropped, because it was written into the
+commit message for `4fda356` as the reason for the change.
+
+Where that leaves the loop, precisely:
+
+    ProcessMonitorTestService terminate sweep    REAL cause, FIXED (3 -> 0 hits)
+    the last death at CoFetcherWithNoResultsTest CAUSE UNKNOWN — survives both
+                                                 un-adoption and forking outside
+                                                 the environment, and does not
+                                                 go through Process>>terminate
+
+Both fixes are worth keeping — the terminate sweep was genuinely killing the
+loop three times per run and no longer does — but the headline "root cause
+found" applies to that sweep only, and one death per run remains unexplained.
+
+What the next probe should NOT be: another guess at which image code does it.
+Two guesses have now failed the same way.  Make the loop report its own state
+instead — have the revival check record `isTerminated` / `isSuspended` / whether
+`suspendedContext` is nil at the moment it decides the loop is dead.  That
+distinguishes terminated from suspended from finished-normally, which is the
+distinction every theory so far has assumed rather than measured.
