@@ -11674,8 +11674,12 @@ bool Interpreter::reportStalledProcess() {
 }
 
 void Interpreter::handleStackOverflow(int argCount) {
-    // Stack overflow (frameDepth_ hit StackOverflowLimit). Pop the args+receiver
-    // the failed send already pushed, restoring the caller's operand stack.
+    // Stack overflow (frameDepth_ hit StackOverflowLimit). Grab the receiver of
+    // the send that could not be activated BEFORE popping: it becomes the
+    // receiver of the #error: signalled below.
+    Oop failedReceiver = stackValue(argCount);
+    // Pop the args+receiver the failed send already pushed, restoring the
+    // caller's operand stack.
     popN(argCount + 1);
 
     // If we OVERFLOW AGAIN while already signaling the overflow error, the error
@@ -11724,6 +11728,37 @@ void Interpreter::handleStackOverflow(int argCount) {
                            + std::chrono::seconds(60);
     }
     inStackOverflowSignal_ = true;
+    // Signal a CATCHABLE Error rather than driving an uncatchable terminate
+    // (docs/vm-compat-bugs.md #15).  Cog grows its stack and never errors at
+    // all; with a hard cap, the honest equivalent is an ordinary Smalltalk
+    // Error, so `on: Error do:` handles it like any other failure.  Driving
+    // Process>>terminate instead makes the cap invisible to the image: the
+    // handler never runs and the process just vanishes mid-run.
+    //
+    // The unwind worry that motivated terminate was MEASURED, not assumed, and
+    // does not hold: with no handler the image logs the error and exits (what
+    // stock Pharo does with any unhandled error), so no `critical:` mutex is
+    // stranded in a still-running image.  The counter-test and both traces are
+    // recorded under #15 — note it needs a file-based discriminator, because a
+    // quit and a hang look identical in eval output.
+    Oop errSel = memory_.lookupSymbol("error:");
+    if (errSel.isObject() && !errSel.isNil()) {
+        static int overflowSignalLog = 0;
+        if (overflowSignalLog++ < 5) {
+            fprintf(stderr, "[OVERFLOW] signalling a catchable Error (fd=%zu) — "
+                    "handlers recover; unhandled logs and exits\n", frameDepth_);
+        }
+        // Push the receiver BEFORE allocating the message: createString can GC,
+        // and the Smalltalk stack is a root, so a moved receiver is updated.
+        push(failedReceiver);
+        push(memory_.createString(
+            "stack overflow: recursion deeper than "
+            + std::to_string(StackOverflowLimit) + " frames"));
+        sendSelector(errSel, 1);
+        return;
+    }
+    // #error: unavailable (broken/partial image) — fall back to driving
+    // Process>>terminate, which still unwinds.
     static int overflowSignalLog = 0;
     if (overflowSignalLog++ < 5) {
         fprintf(stderr, "[OVERFLOW] driving Process>>terminate to unwind (fd=%zu) "
@@ -14264,8 +14299,20 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // is cleared on the ensuing process switch (executeFromContext) — terminate
     // always switches, so no process keeps running with it set.
     size_t overflowLimit = StackOverflowLimit;
-    if (__builtin_expect(inStackOverflowSignal_, 0))
-        overflowLimit += StackOverflowSignalHeadroom;
+    if (__builtin_expect(inStackOverflowSignal_, 0)) {
+        // The overflow now raises a CATCHABLE Error, so a handler can recover
+        // and the process keeps running — the flag is no longer guaranteed to
+        // be cleared by an ensuing process switch (terminate always switched;
+        // `on: Error do:` does not).  Drop the emergency headroom once the
+        // stack has unwound clear of the cap, or this process would keep the
+        // raised limit forever and a LATER, unrelated overflow would take the
+        // "overflow while already signalling" branch and be hard-killed
+        // uncatchably — the exact behaviour this change removes.
+        if (frameDepth_ + StackOverflowSignalHeadroom < StackOverflowLimit)
+            inStackOverflowSignal_ = false;
+        else
+            overflowLimit += StackOverflowSignalHeadroom;
+    }
     if (__builtin_expect(frameDepth_ >= overflowLimit, 0)) {
         static int overflowLog = 0;
         if (overflowLog++ < 3) {
