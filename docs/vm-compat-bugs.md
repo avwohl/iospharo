@@ -907,6 +907,47 @@ TWO cheaper intermediates, in order of confidence:
     involved.  That is the actual root cause behind "our unhandled-error path
     skips unwinds", and it is worth fixing on its own terms.
 
+    CORRECTION, same day: the paragraph above and the revert it justifies both
+    rest on a discriminator that turned out to be wrong — see #21, retracted.
+    "No EVAL-RESULT" does not mean the eval stopped; it is also what a correct
+    quit looks like, and an unhandled error is SUPPOSED to make this image log
+    and exit.  So the `#error:` arm's "no result" in the mutex counter-test is
+    not evidence of a leaked mutex.  What it most likely shows is the image
+    logging the unhandled stack-overflow Error and quitting — which is what
+    stock Pharo does with any unhandled error, and is arguably MORE faithful
+    than the terminate path, where the process dies silently and the eval
+    carries on.
+
+    RERUN with that discriminator — markers written to a file as they happen,
+    plus elapsed time and exit status:
+
+        terminate (HEAD)  48 s, rc=0
+                          1-before-fork  2-delay-returned  3-verdict=MUTEX-FREE
+        #error:           25 s, rc=0
+                          1-before-fork          <- and nothing after
+
+    Neither run timed out.  The `#error:` arm does not leak the mutex and does
+    not wedge: the eval simply never reaches the second marker, because the
+    image logged the unhandled Error and QUIT at that moment.  **The stated
+    reason for the revert is refuted.**
+
+    What the change actually does, stated correctly:
+
+        handled     `on: Error do:` now catches the cap
+                    ('CAUGHT Error: stack overflow ...'), where terminate is
+                    uncatchable and the handler never runs
+        unhandled   image logs and exits — what stock Pharo does with ANY
+                    unhandled error, rather than a process silently vanishing
+                    while the run carries on
+
+    That is defensible on both arms, and the mutex property is not lost.  The
+    open question is no longer correctness but BLAST RADIUS under the test
+    harness: an overflow inside SUnit should be caught by the framework and
+    recorded as an error (an improvement — today it vanishes), but one raised
+    outside any handler would now end the image mid-batch where before it cost
+    a single process.  That is exactly what a full-suite run answers, and it is
+    the gate the change has to pass before it goes back in.
+
 ### 16. ~~Loading a Cog-written image CORRUPTS 64-bit word arrays~~ — FIXED 2026-08-12 (`3c494b65`)
 
 Filed late: the fix commit and three source comments referenced "#16" before
@@ -1137,165 +1178,49 @@ tight loop.
 End to end, `MpUnconnectedTransportMiddlewareTest` goes 18/32 -> 31/32
 (Cog 32/32).
 
-### 21. An unhandled exception in a FORKED process wedges the whole eval — HIGH (found 2026-08-15)
+### 21. ~~An unhandled exception in a FORKED process wedges the whole eval~~ — RETRACTED 2026-08-15, SAME DAY
 
-One line reproduces it on HEAD, no VM change, no packages, no Morphic:
+**There is no wedge.  This entry was wrong, and the error is instructive enough
+to keep rather than delete.**
+
+The repro filed here —
 
     [ Error signal: 'boom' ] fork. (Delay forSeconds: 3) wait. 'ALIVE'
 
-The eval never prints an `EVAL-RESULT`.  The three-second `wait` never returns.
+does not hang.  The image logs the unhandled error and exits, which is exactly
+what `CommandLineUIManager>>unhandledErrorDefaultAction:` is written to do, and
+what stock Pharo does with the same script.  Confirmed three ways:
 
-Isolated by bisecting the repro rather than by reading code — each variant
-differs from the one above it by a single element:
+    elapsed        21 s across 3 runs — the same ~20 s every other eval in this
+                   image takes to start.  Not a timeout.
+    exit status    0, never 124.  `timeout` never fired in ANY of these runs.
+    PharoDebug.log 108 matching lines, including entries for the exact probes
+                   called "wedged" here: #zorkNotUnderstood and #asUppercase.
 
-    (Delay forSeconds: 3) wait. 'ALIVE-A'                    EVAL-RESULT='ALIVE-A'
-    [ 1 + 1 ] fork. (Delay ...) wait. 'ALIVE-B'              EVAL-RESULT='ALIVE-B'
-    [ Object new zorkNotUnderstood ] fork. (Delay ...) wait  no EVAL-RESULT
-    [ Object new asUppercase ] fork. (Delay ...) wait        no EVAL-RESULT
-    [ Error signal: 'boom' ] fork. (Delay ...) wait          no EVAL-RESULT
+The whole entry rested on one bad discriminator: reading "no EVAL-RESULT
+printed" as "hung".  It is also, and much more often, what a correct quit looks
+like — the eval never reaches its final expression because the image exited
+first, on purpose.  Every "wedge" above is that.  The bisection built on top of
+it (fork+error needed, neither alone) is real but means something ordinary:
+those are the variants that trigger a quit.
 
-So it needs BOTH the fork and the unhandled exception; neither alone does it.
-It is not specific to `doesNotUnderstand:` (a plain `Error signal:` is enough),
-and not specific to a newly created selector — the first DNU probe logged
-`[DNU-RCVR] ... canon=0x7000000000 DUPLICATE!`, which looks alarming and is a
-red herring for THIS defect, since an existing selector wedges identically.
+Two things this cost, both now corrected:
 
-What the VM is doing meanwhile, from `PHARO_XFER_TRACE=1`: it is NOT spinning.
-57 process switches total, settling into a P80 <-> P40 ping-pong, while the JIT
-keeps retiring sends.  The eval's process is simply never woken from its Delay.
-That is the same signature as the mutex counter-test in #15, where the leak took
-the Delay scheduler down with it and `valueWithin:` could not fire its own
-timeout — consistent with the timer machinery being the casualty rather than the
-cause.
+  * The **forwarding-pointer** theory built on it is REFUTED, not merely
+    unproven.  A probe in `Interpreter::literal()` that logs any literal handed
+    back forwarded fired ZERO times across the repro.  The "touching the
+    literals cures it" observation was measuring quit-vs-quit, not fix-vs-wedge.
+    The candidate read paths noted earlier (`literal()`,
+    `pushLiteralVariable()`) do lack `followForwarded`, which may still be worth
+    a look on its own merits — but nothing here is evidence for it.
 
-Why this matters beyond the repro: this is the blocker sitting under #15's
-"make the stack-overflow cap catchable".  The cap cannot become an ordinary
-catchable Error until an unhandled one ends its process cleanly, because today
-an unhandled Error does not run the process's unwind blocks — which is exactly
-why `handleStackOverflow` has to drive `Process>>terminate` instead.  Fix this
-first and #15's remaining half becomes small.
+  * The **#15 revert** used this same discriminator and is therefore also
+    suspect; see the correction under #15.
 
-### Narrowed 2026-08-15 — it is the SHIPPED CompiledMethod, not the code
-
-Traced with a file side-channel, because a wedged eval prints nothing.  Marker
-order in the repro:
-
-    A: before fork
-    E: after fork call
-    B: forked started
-    C: about to signal
-    (no D, and no F — the eval process never resumes)
-
-The path is fully identified.  `UIManager default` is a
-`NonInteractiveUIManager`, which inherits
-
-    CommandLineUIManager>>unhandledErrorDefaultAction: anException
-        self quitFrom: anException signalerContext
-             withMessage: anException description
-
-so an unhandled exception is SUPPOSED to log and quit.  `quitFrom:withMessage:`
-logs the error, walks `Process allInstances` printing each stack, and quits from
-an `ensure:`.  That method IS reached — verified by replacing its body with a
-marker write, which reaches the marker and exits cleanly in 24 s.
-
-Then every component was cleared individually, each in a forked process:
-
-    Smalltalk exitFailure          quits correctly from a fork
-    Smalltalk logError:inContext:  completes, EVAL-RESULT='L1-DONE'
-    Smalltalk logDuring:           completes, EVAL-RESULT='L2-DONE'
-    the Process allInstances walk  550 ms over 11 processes
-
-That last number kills the obvious theory, which was #6: the reflective walk is
-NOT hitting the activation wall, it is fast.  Nor is it a nested-logging
-deadlock — `logError:` followed by `logDuring:` in one forked process completes
-(`EVAL-RESULT='NESTED-LOG-OK'`).
-
-What remains is the finding, and it is a strange one:
-
-    original method, untouched          WEDGES
-    body replaced by marker + quit      exits in 24 s
-    body replaced by the same code
-      retyped without the literals      exits in 25 s
-    RECOMPILED FROM ITS OWN sourceCode  exits in 25 s
-
-`CommandLineUIManager compile: (thatMethod sourceCode)` — compiling the method's
-own unmodified source back over itself — makes the wedge disappear.  And the two
-methods are byte-identical: both `size=64 numLiterals=5`, and a diff of their
-full symbolic bytecode is EMPTY.
-
-So the defect is not in the bytecode and not in the Smalltalk semantics.  Same
-instructions, different behaviour, depending only on whether the CompiledMethod
-came out of the shipped image or out of the compiler just now.  What differs
-between them is object identity and everything keyed on it: JIT state, inline
-caches, and the identity of the LITERALS — the shipped method's literal Strings
-and Symbols are image-resident objects, the recompiled one's are fresh.
-
-Literal identity is the suspicious half, because it rhymes with two other
-sightings in this repo: the `SubscriptOutOfBounds: 996 in #(#printAs...
-#systemIcon ...)` cluster is an out-of-range index into an array of SELECTORS,
-and the first DNU probe here logged `canon=0x7000000000 DUPLICATE!` for a
-freshly created selector.  All three touch symbol/literal identity.  They may be
-one bug.
-
-### It is LITERAL state — probe run, 2026-08-15
-
-The discriminating probe was run rather than left as a suggestion.  Keeping the
-original method entirely intact and only READING its literals first:
-
-    m := CommandLineUIManager lookupSelector: #quitFrom:withMessage:.
-    (1 to: m numLiterals) do: [:i | (m literalAt: i) printString ].
-    [ Error signal: 'boom' ] fork.  ...
-
-    -> 21 s, clean quit, NO wedge
-
-No recompilation, no new CompiledMethod, no changed bytecode, nothing installed.
-Touching five literals with `printString` is the entire difference between a
-wedge and a correct exit.  That rules out JIT and inline-cache state, which the
-recompile experiment could not separate on its own, and puts the defect in the
-literals of an image-resident method.
-
-The shape to chase next is FORWARDING POINTERS.  `printString` is an ordinary
-send, and an ordinary send follows a forwarder; a path that reads a literal
-without following one would see a forwarded husk instead of the real object.
-That is consistent with the wedge being cured by one prior read, with this VM
-already carrying explicit `followForwarded` calls in the process primitives, and
-with the two neighbouring sightings above (the out-of-range index into an array
-of selectors, and `canon=... DUPLICATE!` on a fresh symbol) — all three are
-identity/indirection bugs on literals and symbols.
-
-Concretely, the next step is to find which of the five literals is forwarded at
-the moment of the wedge: dump `(m literalAt: i)` class, identityHash and raw oop
-bits for each, from a run that has NOT touched them, and compare against a run
-that has.  Then find the read path that skips `followForwarded`.
-
-The candidate read paths are already located, and none of them follows a
-forwarder:
-
-    Interpreter::literal()            Interpreter.cpp:14992
-        reads the method header and the literal slot with
-        fetchPointerUnchecked — no followForwarded anywhere in the function
-
-    Interpreter::pushLiteralVariable() Interpreter.cpp:7035
-        fetches the Association, then reads slot 1 (its value) with
-        fetchPointerUnchecked — neither the association nor the value is
-        forwarder-followed
-
-Compare `primitiveResume` / `primitiveSuspend`, which DO call
-`memory_.followForwarded(...)` on their arguments — the process primitives were
-taught to follow forwarders and the literal path was not.
-
-Suggestive but NOT yet evidence: `pushLiteralVariable` already carries a
-`PHARO_LITVAR_PROBE` debug hook, added for a different literal-variable
-corruption (`OSPlatform>>#current` returning "layout-sensitive garbage
-0x20/0xc").  A second, independently-found corruption on the same read path
-raises the prior that the path itself is wrong.
-
-Deliberately NOT changed yet.  Adding `followForwarded` to the literal read is a
-hot-path edit on every literal push in the system, so it needs a full-suite
-regression run and a look at the cost before it goes in — not a same-session
-guess.  The measurement above (touching literals cures the wedge) is the
-evidence that justifies doing that work; it is not by itself proof that a
-missing followForwarded is the mechanism.
+Method note, since this is the second time in this repo a "hang" turned out not
+to be one: for anything that ends without output, elapsed time and exit status
+have to be recorded, because "produced no result" and "did not terminate" are
+different findings that look identical in a log.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
