@@ -1175,10 +1175,98 @@ an unhandled Error does not run the process's unwind blocks — which is exactly
 why `handleStackOverflow` has to drive `Process>>terminate` instead.  Fix this
 first and #15's remaining half becomes small.
 
-Not yet root-caused.  The next probe is which process holds what at the moment
-the eval's Delay fails to fire: whether the unhandled-error default action
-leaves a mutex held (Transcript/log writing both take one), or whether the
-process is left in a state the scheduler will not wake.
+### Narrowed 2026-08-15 — it is the SHIPPED CompiledMethod, not the code
+
+Traced with a file side-channel, because a wedged eval prints nothing.  Marker
+order in the repro:
+
+    A: before fork
+    E: after fork call
+    B: forked started
+    C: about to signal
+    (no D, and no F — the eval process never resumes)
+
+The path is fully identified.  `UIManager default` is a
+`NonInteractiveUIManager`, which inherits
+
+    CommandLineUIManager>>unhandledErrorDefaultAction: anException
+        self quitFrom: anException signalerContext
+             withMessage: anException description
+
+so an unhandled exception is SUPPOSED to log and quit.  `quitFrom:withMessage:`
+logs the error, walks `Process allInstances` printing each stack, and quits from
+an `ensure:`.  That method IS reached — verified by replacing its body with a
+marker write, which reaches the marker and exits cleanly in 24 s.
+
+Then every component was cleared individually, each in a forked process:
+
+    Smalltalk exitFailure          quits correctly from a fork
+    Smalltalk logError:inContext:  completes, EVAL-RESULT='L1-DONE'
+    Smalltalk logDuring:           completes, EVAL-RESULT='L2-DONE'
+    the Process allInstances walk  550 ms over 11 processes
+
+That last number kills the obvious theory, which was #6: the reflective walk is
+NOT hitting the activation wall, it is fast.  Nor is it a nested-logging
+deadlock — `logError:` followed by `logDuring:` in one forked process completes
+(`EVAL-RESULT='NESTED-LOG-OK'`).
+
+What remains is the finding, and it is a strange one:
+
+    original method, untouched          WEDGES
+    body replaced by marker + quit      exits in 24 s
+    body replaced by the same code
+      retyped without the literals      exits in 25 s
+    RECOMPILED FROM ITS OWN sourceCode  exits in 25 s
+
+`CommandLineUIManager compile: (thatMethod sourceCode)` — compiling the method's
+own unmodified source back over itself — makes the wedge disappear.  And the two
+methods are byte-identical: both `size=64 numLiterals=5`, and a diff of their
+full symbolic bytecode is EMPTY.
+
+So the defect is not in the bytecode and not in the Smalltalk semantics.  Same
+instructions, different behaviour, depending only on whether the CompiledMethod
+came out of the shipped image or out of the compiler just now.  What differs
+between them is object identity and everything keyed on it: JIT state, inline
+caches, and the identity of the LITERALS — the shipped method's literal Strings
+and Symbols are image-resident objects, the recompiled one's are fresh.
+
+Literal identity is the suspicious half, because it rhymes with two other
+sightings in this repo: the `SubscriptOutOfBounds: 996 in #(#printAs...
+#systemIcon ...)` cluster is an out-of-range index into an array of SELECTORS,
+and the first DNU probe here logged `canon=0x7000000000 DUPLICATE!` for a
+freshly created selector.  All three touch symbol/literal identity.  They may be
+one bug.
+
+### It is LITERAL state — probe run, 2026-08-15
+
+The discriminating probe was run rather than left as a suggestion.  Keeping the
+original method entirely intact and only READING its literals first:
+
+    m := CommandLineUIManager lookupSelector: #quitFrom:withMessage:.
+    (1 to: m numLiterals) do: [:i | (m literalAt: i) printString ].
+    [ Error signal: 'boom' ] fork.  ...
+
+    -> 21 s, clean quit, NO wedge
+
+No recompilation, no new CompiledMethod, no changed bytecode, nothing installed.
+Touching five literals with `printString` is the entire difference between a
+wedge and a correct exit.  That rules out JIT and inline-cache state, which the
+recompile experiment could not separate on its own, and puts the defect in the
+literals of an image-resident method.
+
+The shape to chase next is FORWARDING POINTERS.  `printString` is an ordinary
+send, and an ordinary send follows a forwarder; a path that reads a literal
+without following one would see a forwarded husk instead of the real object.
+That is consistent with the wedge being cured by one prior read, with this VM
+already carrying explicit `followForwarded` calls in the process primitives, and
+with the two neighbouring sightings above (the out-of-range index into an array
+of selectors, and `canon=... DUPLICATE!` on a fresh symbol) — all three are
+identity/indirection bugs on literals and symbols.
+
+Concretely, the next step is to find which of the five literals is forwarded at
+the moment of the wedge: dump `(m literalAt: i)` class, identityHash and raw oop
+bits for each, from a run that has NOT touched them, and compare against a run
+that has.  Then find the read path that skips `followForwarded`.
 
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
