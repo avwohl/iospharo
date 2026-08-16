@@ -88,3 +88,54 @@ deaths show the instrumentation never fired its exception arm — so the most
 likely explanation is that the residual 2 are timing-sensitive and simply did
 not reproduce.  Extra `ensure:` frames perturb scheduling.  Two runs is not
 enough to call a race fixed; it needs repetition before anyone claims it.
+
+## ANSWERED — the terminator is Pharo's own test isolation
+
+Hooked the caller side (`Process>>terminate` wrapped, original preserved under a
+private selector; wrapper validated locally first — `terminated=true` — since
+Pharo's terminate does stack surgery and must not be paraphrased).  Full
+896-class run, 7 hits.  Four are self-inflicted: `startCycleLoop`'s own "always
+replace" line terminating the previous loop during a revival.  The other three
+are the answer:
+
+    Process>>terminate
+    WeakSet>>do:
+    ProcessMonitorTestService>>terminateRunningProcesses
+    ProcessMonitorTestService>>cleanUpAfterTest
+    OrderedCollection>>do:
+    TestExecutionEnvironment>>cleanUpAfterTest
+    [ ... self cleanUpAfterTest ] in TestExecutionEnvironment>>runTestCase:
+    TestExecutionEnvironment>>runTestCase:
+    DTCoverageMockTest(TestCase)>>runCaseManaged
+
+It is not a VM bug and it is not a rogue test.  `TestExecutionEnvironment`
+tracks processes in a `WeakSet` and `ProcessMonitorTestService` terminates
+everything still running when a test case ends — standard SUnit isolation,
+doing exactly its job.  Our fake-GUI loop is a process forked outside any test
+but alive during one, which is indistinguishable from a process the test
+leaked.
+
+That also explains the class pattern honestly, where the earlier "Calypso
+completion tests" and then "test-runner and debugger UI tests" framings were
+both wrong-ish.  The terminating class is incidental: ANY test running under
+`TestExecutionEnvironment` can sweep the loop.  The DrTests/DebugPoint classes
+show up because they run whole nested suites, giving many more `runTestCase:`
+cleanups per class and so many more chances to catch the loop alive.
+
+CORRECTION to this file's own earlier conclusion: `UNWIND 4, ESCAPED 0` was read
+as proving external termination.  An `ensure:` also fires on a NORMAL block
+exit, so on its own it does not distinguish "terminated" from "finished".  The
+conclusion happened to be right — the caller hook proves termination directly —
+but the evidence offered for it did not establish it.
+
+### The fix belongs in the harness, and it is not a workaround
+
+The right fix is to stop the loop looking test-owned, not to defeat the sweep:
+fork it so `TestExecutionEnvironment` does not adopt it, or register it as a
+system process the monitor should ignore.  Defeating the sweep would break the
+isolation that keeps genuinely leaked test processes from accumulating.
+
+The revival in `3bd7e29` remains correct as a safety net and measurably works
+(15 subscript errors -> 0), but it is a recovery: the loop still dies and up to
+one class runs without UI cycles before the next revival.  Removing the cause
+removes that window.
