@@ -1268,6 +1268,35 @@ the moment of the wedge: dump `(m literalAt: i)` class, identityHash and raw oop
 bits for each, from a run that has NOT touched them, and compare against a run
 that has.  Then find the read path that skips `followForwarded`.
 
+The candidate read paths are already located, and none of them follows a
+forwarder:
+
+    Interpreter::literal()            Interpreter.cpp:14992
+        reads the method header and the literal slot with
+        fetchPointerUnchecked — no followForwarded anywhere in the function
+
+    Interpreter::pushLiteralVariable() Interpreter.cpp:7035
+        fetches the Association, then reads slot 1 (its value) with
+        fetchPointerUnchecked — neither the association nor the value is
+        forwarder-followed
+
+Compare `primitiveResume` / `primitiveSuspend`, which DO call
+`memory_.followForwarded(...)` on their arguments — the process primitives were
+taught to follow forwarders and the literal path was not.
+
+Suggestive but NOT yet evidence: `pushLiteralVariable` already carries a
+`PHARO_LITVAR_PROBE` debug hook, added for a different literal-variable
+corruption (`OSPlatform>>#current` returning "layout-sensitive garbage
+0x20/0xc").  A second, independently-found corruption on the same read path
+raises the prior that the path itself is wrong.
+
+Deliberately NOT changed yet.  Adding `followForwarded` to the literal read is a
+hot-path edit on every literal push in the system, so it needs a full-suite
+regression run and a look at the cost before it goes in — not a same-session
+guess.  The measurement above (touching literals cures the wedge) is the
+evidence that justifies doing that work; it is not by itself proof that a
+missing followForwarded is the mechanism.
+
 ## LEADS — a SEPARATE number space (real work, not yet a filed defect)
 
 These are `LEAD n`, NOT `#n`.  The two spaces overlap (there is a defect #15
