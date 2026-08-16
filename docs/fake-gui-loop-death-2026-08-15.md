@@ -214,3 +214,26 @@ instead — have the revival check record `isTerminated` / `isSuspended` / wheth
 `suspendedContext` is nil at the moment it decides the loop is dead.  That
 distinguishes terminated from suspended from finished-normally, which is the
 distinction every theory so far has assumed rather than measured.
+
+## Two more candidates tested, both refuted — read this before guessing again
+
+    fork outside the test environment   Error 2 -> 18, restarts unchanged at 1
+    guard every iteration vs Exception  Error 2 -> 4,  restarts unchanged at 1
+
+Both reverted.  The second is the more informative failure: it raised the death
+from cycles 15453 to 27061, so it DID swallow exceptions the old shape let
+through — and the loop still ended, at the same class, with the same
+`term=true susp=false ctxNil=false`.  So whatever ends the loop is **not** an
+exception propagating out of the repeat, and is not the process being suspended,
+and does not go through `Process>>terminate`.  Three mechanisms excluded by
+measurement rather than argument.
+
+Standing tally on this loop: the ProcessMonitorTestService terminate sweep was
+real and is fixed (3 -> 0).  One death per run remains, at
+`CoFetcherWithNoResultsTest`, cause unknown, with the revival covering it.
+
+Anyone picking this up: FIVE guesses have now been tested and refuted, at ~55
+minutes a run.  Stop proposing mechanisms.  The next move is to catch the death
+as it happens — e.g. have the loop write a marker file at the TOP of every
+iteration, so the last marker before death names the exact statement it did not
+return from.
