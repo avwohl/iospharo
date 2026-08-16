@@ -237,3 +237,41 @@ minutes a run.  Stop proposing mechanisms.  The next move is to catch the death
 as it happens — e.g. have the loop write a marker file at the TOP of every
 iteration, so the last marker before death names the exact statement it did not
 return from.
+
+## NAMED — the loop dies parked in `Delay>>wait`
+
+The phase marker answers it in one run:
+
+    CYCLE-LOOP-RESTART before CoFetcherWithNoResultsTest
+      [state term=true susp=false ctxNil=false cycles=15508 phase=#delay]
+
+`phase=#delay` means the last statement the loop entered was
+`(Delay forMilliseconds: 25) wait`, and it never reached `#looped`.  So the
+process ends while parked on a Delay''s semaphore.
+
+Put together with what is already excluded by measurement, the constraints are
+now tight and, importantly, they point back at the VM rather than the harness:
+
+    dies inside Delay>>wait          phase=#delay
+    ends TERMINATED                  term=true (the revival check requires it)
+    not suspended                    susp=false
+    no #terminate sent to it         caller hook, zero real hits
+    not an escaping exception        guarding the wait moved the death
+                                     (cycles 15453 -> 27061) without stopping it
+
+A process waiting on a semaphore that ends without anyone terminating it and
+without an exception is not ordinary image behaviour.  The suspicious neighbour
+is our own semaphore/scheduler code: `primitiveWait`'s rollback path and
+`removeProcessFromList` were changed earlier in this same session
+(`primitiveWait`/`primitiveYield` were rolling back with
+`removeFirstLinkOfList` instead of removing the specific process).  A waiter
+being dropped from the wrong list is exactly the shape that would make a parked
+process disappear.
+
+NEXT, and it is now a VM question, not a harness one: instrument
+`removeProcessFromList` / the Delay-semaphore path to log whenever the process
+removed is not the one intended, and re-run.  Note the runner also registers a
+Delay recovery (`DELAY-RECOVERY-REGISTERED`, `restartTimerEventLoop`) — check
+whether that recovery fires anywhere near the death, since restarting the timer
+event loop while a process is parked on a delay semaphore is a plausible way to
+strand or drop that waiter.
