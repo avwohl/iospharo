@@ -270,8 +270,16 @@ process disappear.
 
 NEXT, and it is now a VM question, not a harness one: instrument
 `removeProcessFromList` / the Delay-semaphore path to log whenever the process
-removed is not the one intended, and re-run.  Note the runner also registers a
-Delay recovery (`DELAY-RECOVERY-REGISTERED`, `restartTimerEventLoop`) — check
-whether that recovery fires anywhere near the death, since restarting the timer
-event loop while a process is parked on a delay semaphore is a plausible way to
-strand or drop that waiter.
+removed is not the one intended, and re-run.  The Delay-recovery half of this lead is
+already REFUTED, checked against the run log rather than left for a future
+session: `DELAY-RECOVERY-REGISTERED` appears once, at line 13, as registration
+at startup, and never fires again — no `restartTimerEventLoop`, no
+`TIMER-NOT-REARMED` — while the death is at line 19063.  So the runner's Delay
+recovery is not stranding the waiter.  Do not spend a run on it.
+
+That leaves the semaphore/scheduler path as the single remaining candidate, and
+it is the one with priors: `primitiveWait`/`primitiveYield` were found rolling
+back with `removeFirstLinkOfList` instead of removing the specific process
+earlier in this same session, which is precisely the bug shape that makes a
+parked waiter vanish.  The fix landed there; whether every such path was
+corrected was never audited.
