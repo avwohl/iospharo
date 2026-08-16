@@ -967,6 +967,22 @@ TWO cheaper intermediates, in order of confidence:
     needs a test that deliberately overflows OUTSIDE any handler while a batch
     is running; that is the follow-up, and it is cheap to write.
 
+    FOLLOW-UP RUN — the blast-radius question is now ANSWERED, and the answer is
+    good.  A TestCase with two methods, one recursing 100 000 deep with no
+    handler anywhere and one trivial assertion, run under SUnit:
+
+        runs=2   passed=1   errors=1        [OVERFLOW] signalled: 1
+
+    The overflow fires, SUnit catches it as an ordinary Error and records a test
+    ERROR, the image SURVIVES, and the following test still runs and passes.
+    The eval completes normally.  So the feared failure mode — an unhandled
+    overflow ending the image mid-batch — does not occur under the harness,
+    because SUnit is itself a handler.  What used to happen instead was the
+    process vanishing silently while the batch carried on with no record of it.
+
+    That closes #15's remaining half.  The cap is catchable, it is reported
+    where a test causes it, and it regresses nothing.
+
 ### 16. ~~Loading a Cog-written image CORRUPTS 64-bit word arrays~~ — FIXED 2026-08-12 (`3c494b65`)
 
 Filed late: the fix commit and three source comments referenced "#16" before
