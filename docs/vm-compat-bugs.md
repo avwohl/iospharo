@@ -948,6 +948,25 @@ TWO cheaper intermediates, in order of confidence:
     a single process.  That is exactly what a full-suite run answers, and it is
     the gate the change has to pass before it goes back in.
 
+    GATE RUN — PASSED, and LANDED 2026-08-15.  Built on a side branch, full
+    896-class suite:
+
+        Pass 17956   Fail 2   Error 1   Skip 75   899 sections   BATCH COMPLETE
+
+    Identical to the baseline on every counter, so no regression.  The handled
+    arm is verified directly: `EVAL-RESULT='CAUGHT Error'` for a 100 000-deep
+    recursion wrapped in `on: Error do:`, where HEAD's terminate never ran the
+    handler at all.
+
+    READ THE GATE NARROWLY, because it is weaker than it looks: the run logged
+    ZERO `[OVERFLOW]` events.  No test in the suite recurses past 56 000 frames,
+    so the new path was never taken during it.  The gate therefore establishes
+    "changes nothing that was already working" and NOT "the unhandled arm is
+    safe under the harness" — the blast-radius question above is still formally
+    unanswered, because nothing in the suite triggers it.  Answering it properly
+    needs a test that deliberately overflows OUTSIDE any handler while a batch
+    is running; that is the follow-up, and it is cheap to write.
+
 ### 16. ~~Loading a Cog-written image CORRUPTS 64-bit word arrays~~ — FIXED 2026-08-12 (`3c494b65`)
 
 Filed late: the fix commit and three source comments referenced "#16" before
