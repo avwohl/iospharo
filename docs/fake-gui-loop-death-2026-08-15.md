@@ -139,3 +139,44 @@ The revival in `3bd7e29` remains correct as a safety net and measurably works
 (15 subscript errors -> 0), but it is a recovery: the loop still dies and up to
 one class runs without UI cycles before the next revival.  Removing the cause
 removes that window.
+
+## Validation of the un-adopt fix — PARTIAL, measured
+
+Full 896-class run with the fix in (submodule `66ea6ee`, presence of the fix
+verified on the box) and the `Process>>terminate` hook still installed:
+
+                        before fix      after fix
+    terminate hits      7 (3 real +     1 (revival path only —
+                        4 revival)         ZERO real terminations)
+    loop restarts       4               1
+    subscript errors    0 (that run)    1
+    totals              P17956 F2 E1    P17955 F2 E2
+
+The targeted half WORKED: no test terminates the loop through
+`Process>>terminate` any more.  The one remaining hit is `startCycleLoop`'s own
+"always replace" line, i.e. self-inflicted by the revival.
+
+But the loop STILL DIES ONCE, at the original spot (restart before
+`CoFetcherWithNoResultsTest`), through a path that is NOT `Process>>terminate`
+— the hook would have caught it.  So `ProcessMonitorTestService`'s terminate
+sweep was a real cause but not the only one.
+
+Best remaining candidate, from the same class read earlier and NOT yet tested:
+`handleNewProcess:` does two things, and un-adopting only undid one of them.
+
+    handleNewProcess: aProcess
+        super handleNewProcess: aProcess.
+        forkedProcesses add: aProcess.                      <- fixed
+        aProcess on: UnhandledException do: [ :err |        <- STILL ATTACHED
+            self handleBackgroundException: err]
+
+That handler is installed ON the process at fork time and survives removal from
+`forkedProcesses`.  Its path ends in `suspendBackgroundFailure:`, which does
+`activeProcess suspend` — a death with no `#terminate` anywhere, which fits the
+evidence exactly.  Next step is to confirm by recording whether the loop is
+suspended rather than terminated at the moment the revival fires, and if so to
+fork the loop outside the environment entirely rather than un-adopting it after
+the fact.
+
+Net effect so far: 15 subscript errors before any of this work, 1 now, with the
+revival still carrying the last case.
