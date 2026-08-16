@@ -283,3 +283,29 @@ back with `removeFirstLinkOfList` instead of removing the specific process
 earlier in this same session, which is precisely the bug shape that makes a
 parked waiter vanish.  The fix landed there; whether every such path was
 corrected was never audited.
+
+### The removeFirstLinkOfList audit is DONE, and it is clean
+
+Flagged above as never audited, so it was audited — it is a local grep, not a
+run.  21 call sites (16 in Interpreter.cpp, 5 in Primitives.cpp).  None is the
+wrong-waiter shape:
+
+  * the semaphore signal paths (4925, 5009, 5343) take the FIRST waiter, which
+    is correct signalling semantics, not a bug;
+  * the scheduler sites (19811, 19907) remove the same `firstProcess` they then
+    `transferTo:`, so the process removed is the process used;
+  * `primitiveWait` / `primitiveYield` / `primitiveExitCriticalSection` already
+    use `removeProcessFromList(process, list)` after the fixes earlier in this
+    session, and Primitives.cpp:5070 and :9465 carry comments explaining
+    exactly why `removeFirstLinkOfList` would be wrong there.
+
+So "another site drops the wrong waiter" is weakened as a theory — not
+impossible (a wrong-waiter bug could live inside `removeProcessFromList` or the
+Delay-semaphore bookkeeping rather than at a call site), but the cheap version
+of it is ruled out and should not be re-audited.
+
+Which leaves, for whoever picks this up: the loop ends while parked in
+`Delay>>wait`, terminated, un-suspended, with no `#terminate` and no exception,
+and with no obvious wrong-waiter call site.  The next probe has to catch the
+transition itself — log every `removeProcessFromList` / `addLastLinkToList`
+touching the loop process oop, and re-run.
