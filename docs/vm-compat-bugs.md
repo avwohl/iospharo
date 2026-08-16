@@ -858,6 +858,55 @@ TWO cheaper intermediates, in order of confidence:
     root-cause fix — do not undo it).  Any catchable-error attempt has to keep
     the unwind.
 
+    RETRIED AND REVERTED 2026-08-15, with numbers this time, so the third
+    attempt does not have to rediscover them.  The change was: capture the
+    failed send's receiver before `popN`, then `push(rcvr); push(msg);
+    sendSelector(#error:, 1)` instead of driving `#terminate`, plus clearing
+    `inStackOverflowSignal_` once the stack unwinds clear of the cap (needed
+    because a *caught* overflow no longer forces the process switch that used
+    to clear the flag).
+
+    The catchable half WORKS — this is not why it was reverted:
+
+        [ (Object new deepRec: 100000) printString ] on: Error do: [:e | ... ]
+        ->  EVAL-RESULT='CAUGHT Error: stack overflow: recursion deeper
+                          than 56000 frames'
+
+    It was reverted because the unwind property is genuinely lost.  The
+    counter-test — an overflow with NO handler, inside a held mutex:
+
+        | m r |
+        Object compile: 'deepRec: n
+            ^ n = 0 ifTrue: [0] ifFalse: [ (self deepRec: n - 1) + 1 ]'.
+        m := Mutex new.
+        [ m critical: [ Object new deepRec: 60000 ] ] fork.
+        (Delay forSeconds: 25) wait.
+        r := [ m critical: [ 'MUTEX-FREE' ] ]
+                valueWithin: (Duration seconds: 20) onTimeout: [ 'MUTEX-LEAKED' ].
+        r
+
+        terminate path (HEAD)   EVAL-RESULT='MUTEX-FREE'
+        #error: path            no EVAL-RESULT at all — the eval never
+                                finishes.  Not even 'MUTEX-LEAKED': the leak
+                                takes the Delay scheduler down with it, so
+                                `valueWithin:` cannot fire its own timeout.
+
+    So the ordering is: the unhandled-error path must learn to unwind FIRST,
+    and only then can the cap be made catchable.  A related measurement while
+    isolating this, which is the smaller bug to attack next and reproduces on
+    HEAD with no VM change at all:
+
+        | flag |
+        flag := false.
+        [[ Object new zorkNotUnderstood ] ensure: [ flag := true ]] fork.
+        (Delay forSeconds: 8) wait.
+        'ensure-ran=', flag printString
+
+    never prints an EVAL-RESULT either — an unhandled DNU in a forked process
+    is already enough to stop the eval from completing, with no stack overflow
+    involved.  That is the actual root cause behind "our unhandled-error path
+    skips unwinds", and it is worth fixing on its own terms.
+
 ### 16. ~~Loading a Cog-written image CORRUPTS 64-bit word arrays~~ — FIXED 2026-08-12 (`3c494b65`)
 
 Filed late: the fix commit and three source comments referenced "#16" before
