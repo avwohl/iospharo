@@ -19746,6 +19746,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     Oop colorMap = memory_.fetchPointer(BBColorMap, bitBlt);
     uint32_t* cmTable = nullptr;
     size_t cmSize = 0;
+    // True when the map is a new-style ColorMap object rather than a plain
+    // Bitmap. Only the generic transfer near the end of this primitive reads
+    // it, to decide whether it has to derive an implicit shift/mask map.
+    bool colorMapIsNewStyle = false;
     // ColorMap shift/mask support (used by BMP reader for channel reordering)
     bool hasShiftMask = false;
     int32_t cmShifts[4] = {0, 0, 0, 0};
@@ -19754,6 +19758,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         ObjectHeader* cmHdr = colorMap.asObjectPtr();
         if (cmHdr->isPointersObject() && cmHdr->slotCount() >= 2) {
             // ColorMap object with inst vars: shifts, masks, colors
+            colorMapIsNewStyle = true;
             Oop shiftsOop = memory_.fetchPointer(0, colorMap);
             Oop masksOop = memory_.fetchPointer(1, colorMap);
             if (shiftsOop.isObject() && !shiftsOop.isNil() &&
@@ -20796,6 +20801,196 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
         BITBLT_SUCCESS;
+    }
+
+    // Generic sub-32bpp to sub-32bpp transfer.
+    //
+    // The hand-written handlers above cover 15 depth pairs. The other 15 that
+    // Form supports had no handler at all and fell straight through to the
+    // failure tail below — and a failed primitive 96 is not recoverable here.
+    // Pharo 13 carries no BitBlt simulation: BitBlt>>copyBits ends
+    //
+    //     self clipRange ifTrue: [ self roundVariables. ^self copyBitsAgain ].
+    //     self error: 'Bad BitBlt arg (Fraction?); proceed to convert.'
+    //
+    // so `(Form extent: 33@5 depth: 1) asFormOfDepth: 4` raised that error
+    // rather than converting. Fifteen of the thirty-six depth pairs did:
+    // 1->2, 1->4, 1->16, 2->1, 2->4, 2->16, 4->1, 4->2, 4->16, 8->2, 8->4,
+    // 8->16, 16->2, 16->4 and 16->8.
+    //
+    // All of them are raw pixel-value moves between palette depths rather than
+    // colour conversions, so one loop does the lot: read the source pixel, put
+    // it through the colour map if there is one, write it at the destination
+    // depth.
+    //
+    // Pixels are MSB-first within each 32-bit word — pixel p of a row lives at
+    // bit ((ppw - 1 - p % ppw) * depth) of word (p / ppw), where ppw is 32/depth.
+    // That is the convention Form bits use and the one the 8->8 handler above
+    // documents; getting it wrong reverses each word's worth of pixels.
+    //
+    // Placement matters. This sits AFTER every hand-written handler and is
+    // gated on destDepth != 32, so it can only ever run for a combination that
+    // reached the failure tail. It therefore cannot pre-empt the paths above
+    // that do more than a raw move — the 8->8 byte-swap, the negative
+    // same-depth case, or the 16bpp rules — which is exactly what would happen
+    // if it were placed before them.
+    {
+        // A negative depth is Squeak's marker for raw byte order: pixels sit in
+        // the word in ascending order rather than MSB-first.
+        auto isPixelDepth = [](intptr_t d) {
+            intptr_t a = d < 0 ? -d : d;
+            return a == 1 || a == 2 || a == 4 || a == 8 || a == 16 || a == 32;
+        };
+        const bool anyRawOrder = destDepth < 0 || srcNeedsByteSwap;
+        const bool bothSub32 = destDepth > 0 && !srcNeedsByteSwap &&
+                               destDepth <= 16 && srcDepth <= 16;
+        if (destDepth != 32 && isPixelDepth(destDepth) && isPixelDepth(srcDepth) &&
+            (anyRawOrder || bothSub32)) {
+            // BitBltSimulation>>loadBitBltFrom: builds an IMPLICIT shift/mask
+            // map when the supplied map is not a new-style ColorMap object.
+            // Its own comment says why: "Need the implicit setup here in case
+            // of 16<->32 bit conversions". Narrowing 16bpp to a palette depth
+            // needs each 5-bit component reduced to the width the lookup table
+            // is indexed by, or cmTable is indexed by a raw 16-bit pixel and
+            // every value falls outside a 512-entry map.
+            //
+            // Scoped to this block deliberately: the handlers above already do
+            // their own conversion inline and test hasShiftMask only for a
+            // caller-supplied map, so hoisting this to function scope would
+            // make them convert twice.
+            bool hasImplicitMap = false;
+            int32_t imShifts[4] = {0, 0, 0, 0};
+            uint32_t imMasks[4] = {0, 0, 0, 0};
+            if (!colorMapIsNewStyle) {
+                const intptr_t absSrc = srcDepth < 0 ? -srcDepth : srcDepth;
+                const intptr_t absDst = destDepth < 0 ? -destDepth : destDepth;
+                // A source of 8bpp or less has no RGB components to remap.
+                const int srcBitsPerColor = (absSrc == 16) ? 5 : (absSrc == 32) ? 8 : 0;
+                int cmBitsPerColor = 0;
+                if (cmSize == 512) cmBitsPerColor = 3;
+                else if (cmSize == 4096) cmBitsPerColor = 4;
+                else if (cmSize == 32768) cmBitsPerColor = 5;
+                const int targetBits = cmBitsPerColor != 0
+                    ? cmBitsPerColor
+                    : ((absDst == 16) ? 5 : (absDst == 32) ? 8 : 0);
+                const int deltaBits = targetBits - srcBitsPerColor;
+                if (srcBitsPerColor != 0 && targetBits != 0 && deltaBits != 0) {
+                    if (deltaBits < 0) {
+                        const uint32_t mask = (1u << targetBits) - 1u;
+                        imMasks[0] = mask << (srcBitsPerColor * 2 - deltaBits);
+                        imMasks[1] = mask << (srcBitsPerColor - deltaBits);
+                        imMasks[2] = mask << (-deltaBits);
+                    } else {
+                        const uint32_t mask = (1u << srcBitsPerColor) - 1u;
+                        imMasks[0] = mask << (srcBitsPerColor * 2);
+                        imMasks[1] = mask << srcBitsPerColor;
+                        imMasks[2] = mask;
+                    }
+                    imMasks[3] = 0;
+                    imShifts[0] = deltaBits * 3;
+                    imShifts[1] = deltaBits * 2;
+                    imShifts[2] = deltaBits;
+                    imShifts[3] = 0;
+                    hasImplicitMap = true;
+                }
+            }
+
+            const bool srcRawOrder = srcNeedsByteSwap;
+            const bool dstRawOrder = destDepth < 0;
+            const intptr_t srcD = srcDepth;   // already made positive above
+            const intptr_t dstD = dstRawOrder ? -destDepth : destDepth;
+            const intptr_t srcPPW = 32 / srcD;
+            const intptr_t dstPPW = 32 / dstD;
+            const uint32_t srcMask = (srcD >= 32) ? 0xFFFFFFFFu : ((1u << srcD) - 1u);
+            const uint32_t dstMask = (dstD >= 32) ? 0xFFFFFFFFu : ((1u << dstD) - 1u);
+            const intptr_t srcWordsPerRow = (srcWidth * srcD + 31) / 32;
+            const intptr_t destWordsPerRow = (destWidth * dstD + 31) / 32;
+
+            size_t neededSrc = static_cast<size_t>(
+                (sourceY + height - 1) * srcWordsPerRow + srcWordsPerRow) * 4;
+            size_t neededDst = static_cast<size_t>(
+                (destY + height - 1) * destWordsPerRow + destWordsPerRow) * 4;
+            if (neededSrc > srcBitsSize || neededDst > destBitsSize) {
+                return PrimitiveResult::Failure;
+            }
+
+            uint32_t* srcWords = reinterpret_cast<uint32_t*>(srcBytes);
+            uint32_t* dstWords = destPixels;
+
+            for (intptr_t y = 0; y < height; y++) {
+                uint32_t* srcRow = srcWords + (sourceY + y) * srcWordsPerRow;
+                uint32_t* dstRow = dstWords + (destY + y) * destWordsPerRow;
+                for (intptr_t x = 0; x < width; x++) {
+                    const intptr_t sx = sourceX + x;
+                    const intptr_t dx = destX + x;
+
+                    // BitBltSimulation computes the shift from a destMSB flag
+                    // that is simply `depth > 0`:
+                    //   MSB  -> 32 - ((i \\ pixPerWord) + 1) * depth
+                    //   !MSB -> (i \\ pixPerWord) * depth
+                    // so a negative depth means the pixel index ascends within
+                    // the word. That is not the same as byte-swapping the word,
+                    // though the two coincide at depth 8 where a pixel is a
+                    // byte — which is why depth 8 alone cannot tell them apart.
+                    const uint32_t sShift = static_cast<uint32_t>(
+                        (srcRawOrder ? (sx % srcPPW) : (srcPPW - 1 - (sx % srcPPW))) * srcD);
+                    uint32_t value = (srcRow[sx / srcPPW] >> sShift) & srcMask;
+
+                    // BitBltSimulation>>mapPixel:flags: applies BOTH halves of
+                    // a ColorMap, fixed part first: the shift/mask transform,
+                    // then the indexed lookup.
+                    if (hasShiftMask || hasImplicitMap) {
+                        const int32_t* shifts = hasShiftMask ? cmShifts : imShifts;
+                        const uint32_t* masks = hasShiftMask ? cmMasks : imMasks;
+                        const uint32_t src = value;
+                        uint32_t mapped = 0;
+                        for (int i = 0; i < 4; i++) {
+                            const uint32_t component = src & masks[i];
+                            const int32_t shift = shifts[i];
+                            if (shift > 0) mapped |= component << shift;
+                            else if (shift < 0) mapped |= component >> (-shift);
+                            else mapped |= component;
+                        }
+                        // "avoid introducing transparency by color reduction"
+                        if (mapped == 0 && src != 0) mapped = 1;
+                        value = mapped;
+                    }
+                    if (cmTable && value < cmSize) value = cmTable[value];
+                    value &= dstMask;
+
+                    const uint32_t dShift = static_cast<uint32_t>(
+                        (dstRawOrder ? (dx % dstPPW) : (dstPPW - 1 - (dx % dstPPW))) * dstD);
+                    const uint32_t clear = ~(dstMask << dShift);
+                    uint32_t& slot = dstRow[dx / dstPPW];
+                    uint32_t word = slot;
+                    const uint32_t placed = value << dShift;
+
+                    switch (combinationRule) {
+                        case 3: case 34:            // store
+                            word = (word & clear) | placed;
+                            break;
+                        case 0:                     // AND
+                            word &= clear | placed;
+                            break;
+                        case 7:                     // OR
+                            word |= placed;
+                            break;
+                        case 25:                    // paint: skip transparent
+                            if (value != 0) word = (word & clear) | placed;
+                            break;
+                        case 6:                     // XOR
+                            word ^= placed;
+                            break;
+                        default:
+                            word = (word & clear) | placed;
+                            break;
+                    }
+                    slot = word;
+                }
+            }
+            showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+            BITBLT_SUCCESS;
+        }
     }
 
     // Unsupported depth combinations
