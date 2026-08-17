@@ -213,6 +213,9 @@ struct GCResult {
     size_t bytesReclaimed;
     size_t objectsMoved;
     size_t milliseconds;
+    /// Compaction passes a full GC needed.  More than one means the
+    /// saved-first-fields scratch space could not hold the whole plan.
+    size_t compactPasses = 0;
 };
 
 class ObjectMemory {
@@ -1112,18 +1115,42 @@ private:
     };
     SavedFirstFieldsSpace savedFirstFieldsSpace_;
 
-    /// Plan: compute forwarding addresses, save first fields.
-    /// Returns false if scratch space overflowed (need another pass).
-    bool planCompactSavingForwarders();
+    /// One plan/update/copy pass of the compactor.  The saved-first-fields
+    /// scratch space is finite (one Oop per moving object, carved out of new
+    /// space), so a heap with more movers than the scratch holds is compacted
+    /// in several passes: each pass relocates the prefix it could plan and
+    /// leaves the rest for the next one.
+    struct CompactPass {
+        uint8_t* srcStart = nullptr;  ///< in:  first source object of this pass
+        uint8_t* srcEnd = nullptr;    ///< out: first object NOT planned (exclusive)
+        uint8_t* dstStart = nullptr;  ///< in:  destination for srcStart
+        uint8_t* dstEnd = nullptr;    ///< out: destination after the planned prefix
+        bool complete = false;        ///< out: true when srcEnd reached oldSpaceFree_
+    };
+
+    /// Plan: compute forwarding addresses and save first fields for as many
+    /// objects from pass.srcStart on as the scratch space holds.  Sets
+    /// pass.complete when the whole remaining heap was planned; otherwise
+    /// pass.srcEnd / pass.dstEnd say where the next pass must resume.
+    void planCompactSavingForwarders(CompactPass& pass);
 
     /// Update all pointer fields in all live objects + all roots.
+    /// Runs once per compaction pass, between that pass's plan and its copy,
+    /// while that pass's forwarders are installed.  Under PHARO_JIT_ENABLED it
+    /// also rekeys the Sista method->fn cache through those same forwarders,
+    /// which is why it CANNOT be hoisted out of the pass loop: after the final
+    /// copy every grey bit is clear and follow() would be the identity, leaving
+    /// every cache key pointed at where its method used to be.  Running it once
+    /// per pass composes correctly — see the comment at the loop in fullGC.
     void updatePointersAfterCompact();
 
-    /// Slide objects to forwarding addresses, restore first fields, clear marks.
-    /// Slide marked objects down over the dead gaps.
+    /// Slide the objects planned by @a pass to their forwarding addresses and
+    /// restore their first fields.  Clears mark bits only when @a clearMarks:
+    /// a partial pass must leave them set so the objects it relocated are still
+    /// scanned by the next pass's updatePointersAfterCompact().
     /// Returns the number of objects actually relocated (pinned objects and
     /// objects that were already at the destination are not counted).
-    size_t copyAndUnmark();
+    size_t copyAndUnmark(const CompactPass& pass, bool clearMarks);
 
     /// Rebuild the free list from the gap at the end of old space.
     void rebuildFreeListAfterCompact();

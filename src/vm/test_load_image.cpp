@@ -1311,12 +1311,50 @@ int main(int argc, char* argv[]) {
             size_t usedBefore = (memory.oldSpaceFree() - memory.oldSpaceStart());
             size_t freeBefore = memory.freeOldSpaceBytes();
             std::cout << "Before GC: used=" << (usedBefore / (1024*1024)) << "MB free=" << (freeBefore / (1024*1024)) << "MB" << std::endl;
-            auto gcResult = memory.fullGC();
+
+            // PHARO_GC_REPEAT=N runs the forced collection N times, walking the
+            // heap after each.  Compaction is not idempotent — run 2 starts from
+            // a differently laid out heap — so repeating is what catches damage
+            // that only appears once objects have already moved.  Pair it with
+            // PHARO_NEWSPACE_MB=1 to force the multi-pass path: the compactor's
+            // scratch is carved out of new space, so shrinking new space is what
+            // makes one pass insufficient on a real image.
+            //
+            // The integrity walk runs only when repeating, so a normal run pays
+            // nothing for it and its [HEAPCHECK] lines stay out of the way of
+            // the batch runners that parse this output.
+            int gcRepeat = GET_DEBUG_INT(PHARO_GC_REPEAT);
+            if (gcRepeat < 1) gcRepeat = 1;
+
+            GCResult gcResult{};
+            for (int gcRun = 1; gcRun <= gcRepeat; ++gcRun) {
+                gcResult = memory.fullGC();
+                if (gcRepeat > 1) {
+                    std::cout << "GC run " << gcRun << "/" << gcRepeat
+                              << ": moved=" << gcResult.objectsMoved
+                              << " passes=" << gcResult.compactPasses
+                              << " " << gcResult.milliseconds << "ms" << std::endl;
+                    std::cout.flush();
+                    if (!memory.checkHeapIntegrity("after forced GC")) {
+                        std::cerr << "ERROR: full GC run " << gcRun
+                                  << " left the heap invalid" << std::endl;
+                        // Unlike this file's other `return 1`s, this one is
+                        // past initialization, so it skips the xtcbShutdown /
+                        // tffiWorkerShutdownAll / socketPluginShutdown tail.
+                        // Safe here: the heartbeat thread has not started yet,
+                        // no TFFI worker exists and the socket plugin is
+                        // unused at this point, so nothing is left to hang.
+                        return 1;
+                    }
+                }
+            }
+
             size_t usedAfter = (memory.oldSpaceFree() - memory.oldSpaceStart());
             size_t freeAfter = memory.freeOldSpaceBytes();
             std::cout << "After GC: used=" << (usedAfter / (1024*1024)) << "MB free=" << (freeAfter / (1024*1024)) << "MB" << std::endl;
             std::cout << "Freed: " << ((freeAfter > freeBefore) ? (freeAfter - freeBefore) / 1024 : 0) << "KB" << std::endl;
             std::cout << "GC reclaimed: " << gcResult.bytesReclaimed << " bytes, moved: " << gcResult.objectsMoved << " objects, took: " << gcResult.milliseconds << "ms" << std::endl;
+            std::cout << "Compaction passes: " << gcResult.compactPasses << std::endl;
         }
 
 

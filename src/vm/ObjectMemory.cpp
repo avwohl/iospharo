@@ -2674,7 +2674,8 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
             fprintf(stderr, "[GC-LOG] fullGC #%d (used=%zu MB, threshold=%zu MB, skipEph=%d)\n",
                     count,
                     (oldSpaceFree_ - oldSpaceStart_) / (1024 * 1024),
-                    (lastCompactedSize_ + gcHeadroom_) / (1024 * 1024),
+                    (lastCompactedSize_ + std::max(gcHeadroom_, lastCompactedSize_))
+                        / (1024 * 1024),
                     (int)skipEphemerons);
         }
     }
@@ -2757,23 +2758,106 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     // see the comment there.)
 
     // 4. Plan + update + copy (compact).
-    // If planning overflowed its scratch (more mobile objects than new-space
-    // Oop slots), the plan was rolled back — SKIP compaction this cycle
-    // rather than corrupt the heap (see planCompactSavingForwarders).  Marks
-    // linger harmlessly: step 2 of the next fullGC clears all marks first.
-    bool planned = planCompactSavingForwarders();
-    if (planned) {
-        updatePointersAfterCompact();
-        result.objectsMoved = copyAndUnmark();
-    } else {
-        fprintf(stderr,
-            "[GC-PLAN-OVERFLOW] compaction plan exceeded scratch capacity "
-            "(%zu Oop slots); compaction SKIPPED this cycle (mark-only GC). "
-            "Old space stays fragmented until a smaller live set allows a "
-            "full plan.\n",
-            (size_t)(reinterpret_cast<Oop*>(newSpaceEnd_)
-                     - reinterpret_cast<Oop*>(newSpaceStart_)));
-        fflush(stderr);
+    //    The saved-first-fields scratch space is finite (one Oop per moving
+    //    object, carved out of new space), so a heap with more movers than it
+    //    holds is compacted in several passes.  Each pass relocates the prefix
+    //    it managed to plan; the objects it moved keep their MARK bits so the
+    //    next pass still walks them and updates their pointers to objects that
+    //    have not moved yet.  A single pass covering the whole heap takes
+    //    exactly the old path.
+    //
+    //    This replaces the roll-back-and-skip workaround: planning used to undo
+    //    its partial plan and fullGC degraded to mark-only, which is safe but
+    //    permanent — a live set that overflows the scratch once overflows it
+    //    every cycle, so old space never de-fragmented again.
+    {
+        CompactPass pass;
+        pass.srcStart = oldSpaceStart_;
+        pass.dstStart = oldSpaceStart_;
+        bool firstPass = true;
+        bool marksClearedInline = false;
+
+        for (;;) {
+            planCompactSavingForwarders(pass);
+
+            // updatePointersAfterCompact runs INSIDE the loop, once per pass,
+            // while this pass's forwarders are installed.  Under
+            // PHARO_JIT_ENABLED it also rekeys the Sista method->fn cache
+            // through those forwarders (PHARO_SISTA_REKEY_AFTER_GC), so it
+            // cannot be hoisted after the loop: by then every grey bit is clear
+            // and follow() would be the identity, leaving every cache key
+            // pointed at where its method used to be.
+            //
+            // Running it once per pass is correct because the per-pass
+            // translations COMPOSE.  An object an earlier pass relocated is
+            // marked but no longer grey (copyAndUnmark clears grey on every
+            // object it touches), so resolveForward is the identity on it; and
+            // an earlier pass's destinations lie strictly below the current
+            // pass's source range (the destination finger never overtakes the
+            // source finger), so a key already rewritten can never alias an
+            // object still to be planned.
+            updatePointersAfterCompact();
+
+            // Only a single pass covering the whole heap may clear marks as it
+            // copies — the common case, and the one that avoids the extra heap
+            // walk below.
+            marksClearedInline = firstPass && pass.complete;
+            firstPass = false;
+            result.compactPasses++;
+            result.objectsMoved += copyAndUnmark(pass, marksClearedInline);
+
+            if (pass.complete) {
+                oldSpaceFree_ = pass.dstEnd;
+                break;
+            }
+
+            // Forward-progress guard: a pass that plans nothing and consumes no
+            // source would loop forever.  Only reachable with a zero-capacity
+            // scratch space, but a hung GC is worse than a partly compacted
+            // heap.  Leave oldSpaceFree_ alone — everything from pass.srcEnd on
+            // is still live and still at its original address.
+            if (pass.srcEnd == pass.srcStart) {
+                fprintf(stderr,
+                    "[GC-COMPACT-STALL] compaction pass %zu planned nothing "
+                    "(scratch = %zu Oop slots); stopping with old space partly "
+                    "compacted.\n",
+                    result.compactPasses,
+                    (size_t)(reinterpret_cast<Oop*>(newSpaceEnd_)
+                             - reinterpret_cast<Oop*>(newSpaceStart_)));
+                fflush(stderr);
+                break;
+            }
+
+            pass.srcStart = pass.srcEnd;
+            pass.dstStart = pass.dstEnd;
+        }
+
+        // Multi-pass runs deliberately left mark bits set so later passes would
+        // still scan the already-relocated objects.  Clear them now.
+        if (!marksClearedInline) {
+            ObjectScanner markClearScanner(oldSpaceStart_, oldSpaceFree_);
+            while (ObjectHeader* obj = markClearScanner.next()) {
+                obj->setMarked(false);
+            }
+        }
+
+        // Multi-pass is no longer an error, but every extra pass costs a full
+        // updatePointersAfterCompact walk of old space + perm + eden + every
+        // root, so it is worth seeing when it starts happening.  First five.
+        if (result.compactPasses > 1) {
+            static int multipassLogged = 0;
+            if (multipassLogged++ < 5) {
+                fprintf(stderr,
+                    "[GC-MULTIPASS] compaction needed %zu passes (scratch = %zu "
+                    "Oop slots, %zu objects moved) — raise new space to cut the "
+                    "repeated pointer-update walks.\n",
+                    result.compactPasses,
+                    (size_t)(reinterpret_cast<Oop*>(newSpaceEnd_)
+                             - reinterpret_cast<Oop*>(newSpaceStart_)),
+                    result.objectsMoved);
+                fflush(stderr);
+            }
+        }
     }
     if (timeGCPhases) {
         uint64_t tDone = readTSC();
@@ -2785,10 +2869,12 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
             (unsigned long long)(tDone - tCompactStart));
     }
 
-    // 5. Rebuild free list from gap (only meaningful when compaction ran)
-    if (planned) {
-        rebuildFreeListAfterCompact();
-    }
+    // 5. Rebuild free list from the gap at the end of old space.  Once, after
+    //    the last pass: it reads oldSpaceFree_ and madvise(MADV_DONTNEED)s
+    //    everything above it, which would hand live pages back to the kernel if
+    //    it ran between passes, while oldSpaceFree_ still held its
+    //    pre-compaction value.
+    rebuildFreeListAfterCompact();
 
     // Post-compaction stale pointer check (disabled — verified clean, too expensive for production)
     if (GET_DEBUG_BOOL(PHARO_HEAP_CHECK)) {
@@ -3180,8 +3266,21 @@ ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
                 // Threshold-based GC trigger: request compacting GC at next safe point
                 // when heap usage exceeds last compacted size + headroom.
                 // This avoids running GC from allocation where C++ locals hold Oops.
+                // Headroom scales with the live set.  A fixed headroom means a
+                // full GC every gcHeadroom_ bytes allocated however large the
+                // heap is, and there is no generational collector here — every
+                // full GC marks and compacts the whole heap.  Letting the heap
+                // grow by its own size before collecting bounds the share of
+                // runtime spent collecting instead of letting it rise with heap
+                // size, and costs only memory the collection would have
+                // reclaimed anyway.
+                //
+                // Below gcHeadroom_ live (512 MB by default, PHARO_GC_HEADROOM_MB)
+                // nothing changes: max() picks the fixed value, so the tuning
+                // table in ObjectMemory.hpp still describes this VM.
                 size_t used = oldSpaceFree_ - oldSpaceStart_;
-                size_t gcThreshold = lastCompactedSize_ + gcHeadroom_;
+                size_t headroom = std::max(gcHeadroom_, lastCompactedSize_);
+                size_t gcThreshold = lastCompactedSize_ + headroom;
                 if (used > gcThreshold && !needsCompactGC_) {
                     needsCompactGC_ = true;
                     // GC threshold crossed — compaction will run at next safe point
@@ -4481,20 +4580,28 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
 
 // ===== COMPACT PHASE =====
 
-bool ObjectMemory::planCompactSavingForwarders() {
+void ObjectMemory::planCompactSavingForwarders(CompactPass& pass) {
     // Use the whole new space as scratch space for saved first
     // fields during compacting GC.  Any live young-space objects
     // have already been tenured by a pre-compact scavenge (or
     // start empty in pure mark-sweep-compact mode), so eden is
     // safe to reuse here.  Compacting GC and scavenge are never
     // concurrent.
+    //
+    // Reset per pass: each pass plans from scratch into the same area, and
+    // copyAndUnmark consumes exactly what this pass saved.
     savedFirstFieldsSpace_.start = reinterpret_cast<Oop*>(newSpaceStart_);
     savedFirstFieldsSpace_.limit = reinterpret_cast<Oop*>(newSpaceEnd_);
     savedFirstFieldsSpace_.top = savedFirstFieldsSpace_.start;
 
-    uint8_t* toFinger = oldSpaceStart_;  // Destination for next live object
+    uint8_t* toFinger = pass.dstStart;  // Destination for next live object
 
-    ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
+    // Assume the rest of the heap fits; the scratch-overflow branch below
+    // overwrites these when it does not.
+    pass.srcEnd = oldSpaceFree_;
+    pass.complete = true;
+
+    ObjectScanner scanner(pass.srcStart, oldSpaceFree_);
     while (ObjectHeader* obj = scanner.next()) {
         if (!obj->isMarked()) {
             continue;  // Dead — skip
@@ -4531,31 +4638,26 @@ bool ObjectMemory::planCompactSavingForwarders() {
         // Every Spur object has at least 16 bytes (8-byte header + 8 bytes padding/data),
         // so we can always use the first word after the header for forwarding.
         {
-            // Check if we have scratch space
+            // Check if we have scratch space.  If not, this object and
+            // everything after it belong to the NEXT pass: stop here, so the
+            // update and copy phases see exactly the prefix that was planned.
+            //
+            // History (this is the third shape of this code).  Originally the
+            // overflow returned false and the CALLER IGNORED IT — updatePointers
+            // and copyAndUnmark then ran against a half-planned heap and every
+            // inbound reference to an unplanned mobile object dangled after the
+            // memmove (silent-cap audit 2026-07-03, wholesale corruption at
+            // >~2-4M movers).  The interim fix rolled the partial plan back and
+            // let fullGC skip compaction for the cycle: correct, but a live set
+            // that overflows the scratch once overflows it every cycle, so old
+            // space stayed fragmented for the life of the process.  Cog does a
+            // multi-pass compact; fullGC now does too, so neither the corruption
+            // nor the give-up is needed.
             if (savedFirstFieldsSpace_.top >= savedFirstFieldsSpace_.limit) {
-                // Overflow: more mobile objects than scratch slots (one Oop
-                // per mover; scratch = the whole new space).  Cog handles
-                // this with a multi-pass compact; our port previously
-                // returned false and the CALLER IGNORED IT — updatePointers/
-                // copyAndUnmark then ran against a half-planned heap and
-                // every inbound reference to an unplanned mobile object
-                // dangled after the memmove (silent-cap audit 2026-07-03,
-                // wholesale corruption at >~2-4M movers).  Until a true
-                // multi-pass lands, ROLL BACK the partial plan (restore the
-                // saved first fields, clear grey bits) so the caller can
-                // safely skip compaction for this cycle: no motion, no
-                // corruption — the GC degrades to mark-only, loudly.
-                Oop* replay = savedFirstFieldsSpace_.start;
-                ObjectScanner undoScanner(oldSpaceStart_, oldSpaceFree_);
-                while (ObjectHeader* uo = undoScanner.next()) {
-                    if (replay >= savedFirstFieldsSpace_.top) break;
-                    if (!uo->isMarked() || uo->isPinned() || !uo->isGrey()) continue;
-                    Oop* firstField = reinterpret_cast<Oop*>(uo + 1);
-                    *firstField = *replay++;
-                    uo->setGrey(false);
-                }
-                savedFirstFieldsSpace_.top = savedFirstFieldsSpace_.start;
-                return false;  // Caller must skip compaction this cycle
+                pass.srcEnd = objStart;
+                pass.dstEnd = toFinger;
+                pass.complete = false;
+                return;
             }
             // Save first field (word right after header, always exists in Spur)
             Oop* firstField = reinterpret_cast<Oop*>(obj + 1);
@@ -4577,7 +4679,9 @@ bool ObjectMemory::planCompactSavingForwarders() {
 
     // Plan summary logged by fullGC caller
 
-    return true;  // All objects planned in one pass
+    // Everything from pass.srcStart on was planned.  pass.srcEnd and
+    // pass.complete were set to say so before the walk started.
+    pass.dstEnd = toFinger;
 }
 
 void ObjectMemory::updatePointersAfterCompact() {
@@ -4781,12 +4885,15 @@ void ObjectMemory::updatePointersAfterCompact() {
     // syncClassTableToHeap writes them back to hiddenRoots before save.
 }
 
-size_t ObjectMemory::copyAndUnmark() {
+size_t ObjectMemory::copyAndUnmark(const CompactPass& pass, bool clearMarks) {
     Oop* savedFieldPtr = savedFirstFieldsSpace_.start;
-    uint8_t* toFinger = oldSpaceStart_;
+    uint8_t* toFinger = pass.dstStart;
     size_t movedCount = 0;
 
-    ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);
+    // Exactly the prefix planCompactSavingForwarders planned — no further, or
+    // objects with no forwarding address would be slid anyway.  That was the
+    // original defect.
+    ObjectScanner scanner(pass.srcStart, pass.srcEnd);
     while (ObjectHeader* obj = scanner.next()) {
         if (!obj->isMarked()) continue;
 
@@ -4805,7 +4912,7 @@ size_t ObjectMemory::copyAndUnmark() {
                 std::memset(toFinger, 0, objStart - toFinger);
                 toFinger = objStart;
             }
-            obj->setMarked(false);
+            if (clearMarks) obj->setMarked(false);
             obj->setGrey(false);
             toFinger += objSize;
             continue;
@@ -4829,7 +4936,7 @@ size_t ObjectMemory::copyAndUnmark() {
 
         // Clear mark and grey on the (possibly moved) copy
         ObjectHeader* movedObj = reinterpret_cast<ObjectHeader*>(destHeaderPos);
-        movedObj->setMarked(false);
+        if (clearMarks) movedObj->setMarked(false);
         movedObj->setGrey(false);
 
         toFinger += objSize;
@@ -4849,8 +4956,40 @@ size_t ObjectMemory::copyAndUnmark() {
             (ptrdiff_t)(savedFirstFieldsSpace_.top - savedFirstFieldsSpace_.start));
     }
 
-    // Update oldSpaceFree_ to after the last live object
-    oldSpaceFree_ = toFinger;
+    // Plan/copy agreement.  planCompactSavingForwarders and copyAndUnmark must
+    // walk the same objects in the same order and finish on the same finger.
+    // If they disagree, the saved first fields are misaligned and the heap is
+    // already destroyed — there is nothing to recover to.  This covers a
+    // DIFFERENT failure class from the [GC-COMPACT-DESYNC] check above: that
+    // one catches the wrong NUMBER of saved fields being consumed, this one
+    // catches the same number consumed over a different set of objects.
+    //
+    // main writes this as assert().  This VM is measured in Release builds
+    // (CLAUDE.md), where assert() compiles to nothing, so report and die
+    // instead — same shape as the old-space-exhaustion FATAL above.
+    if (toFinger != pass.dstEnd) {
+        fprintf(stderr,
+            "[GC-COMPACT-MISMATCH] copyAndUnmark finished at %p, plan said %p "
+            "(srcStart=%p srcEnd=%p dstStart=%p complete=%d) — plan and copy "
+            "disagree; the heap is unrecoverable.\n",
+            (void*)toFinger, (void*)pass.dstEnd, (void*)pass.srcStart,
+            (void*)pass.srcEnd, (void*)pass.dstStart, (int)pass.complete);
+        fflush(stderr);
+        std::abort();
+    }
+
+    // A partial pass opens a gap between the compacted prefix and the first
+    // object of the next pass.  memmove leaves stale (still marked) copies
+    // behind there; ObjectScanner skips zero words, so zeroing the gap is what
+    // keeps the heap walkable between passes.
+    if (!pass.complete && toFinger < pass.srcEnd) {
+        std::memset(toFinger, 0, pass.srcEnd - toFinger);
+    }
+
+    // oldSpaceFree_ is deliberately NOT updated here.  It bounds the plan's
+    // scan and resolveForward's "beyond the used heap" test, so it must keep
+    // its pre-compaction value for the whole multi-pass loop.  fullGC lowers it
+    // once, after the final pass.
     return movedCount;
 }
 

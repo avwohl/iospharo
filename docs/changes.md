@@ -161,6 +161,61 @@ value-initialised and the whole array is zeroed at construction — resident goe
 allocations, plus a one-time ~16 MB memset per start. Nothing iterates the array;
 every stack walk is bounded by `stackPointer_`.
 
+## The compacting GC moved objects it had not planned
+
+`planCompactSavingForwarders` plans into a scratch area of one Oop per moving
+object, carved out of new space. When that fills it can only plan a prefix of the
+heap. Its caller ignored the failure return and `copyAndUnmark` slid every marked
+object anyway, so everything past the planning cutoff moved with no forwarding
+address and every pointer to it dangled. This branch caught that in the 2026-07-03
+silent-cap audit and fixed it by rolling the partial plan back and skipping
+compaction for the cycle. That is safe, but it is permanent: a live set that
+overflows the scratch once overflows it every cycle, so old space never
+de-fragments again. The code said so — "until a true multi-pass lands".
+
+The compactor now runs plan, update-pointers and copy in as many passes as the
+scratch needs. Each pass relocates the prefix it could plan; the objects it moved
+keep their mark bits, so the next pass still walks them and updates their pointers
+to objects that have not moved yet; the gap a partial pass opens is zeroed, so the
+heap stays walkable between passes (`ObjectScanner` skips zero words). A single
+pass covering the whole heap takes exactly the old path.
+
+`updatePointersAfterCompact` stays inside the loop, once per pass. On this branch
+it also rekeys Sista's method-to-function cache through the same forwarders under
+`PHARO_SISTA_REKEY_AFTER_GC`, and after the final copy every grey bit is clear, so
+hoisting it would leave every cache key pointing at where a method used to be.
+Running it per pass composes correctly: an object an earlier pass relocated is
+marked but no longer grey, so following it is the identity, and an earlier pass's
+destinations lie strictly below the current pass's source range, so no rekeyed key
+can alias an object still to be planned.
+
+`rebuildFreeListAfterCompact` runs once, after the loop. It `madvise`s everything
+above `oldSpaceFree_` away, so running it between passes, while `oldSpaceFree_`
+still holds its pre-compaction value, would hand live pages back to the kernel.
+
+Two integrity checks now cover the compactor and they catch different things. The
+existing `[GC-COMPACT-DESYNC]` check catches the wrong number of saved first
+fields being consumed. The new `[GC-COMPACT-MISMATCH]` check catches the plan and
+the copy finishing on different destination fingers, which is the same number
+consumed over a different set of objects. `main` writes the second as an `assert`;
+this VM is measured in Release builds, where `assert` compiles to nothing, so it
+reports to stderr and aborts.
+
+`PHARO_GC_REPEAT=N` runs the harness's forced collection N times and walks the heap
+after each. Compaction is not idempotent, so the second run starts from a
+differently laid out heap, and repeating is what catches damage that only appears
+once objects have already moved. `PHARO_NEWSPACE_MB=1` shrinks the scratch and
+forces the multi-pass path on any real image.
+
+## GC headroom scales with the live set
+
+A full GC fired every `gcHeadroom_` bytes allocated however large the heap was,
+and there is no generational collector here — every full GC marks and compacts
+everything. Headroom is now `max(gcHeadroom_, live set)`, so a heap larger than the
+512 MB default grows by its own size before collecting and the share of runtime
+spent collecting stays bounded instead of rising with heap size. Below 512 MB live
+nothing changes. `PHARO_GC_HEADROOM_MB` still sets the floor.
+
 ## BitBlt converted only 15 of the 36 depth pairs
 
 The hand-written handlers in `primitiveCopyBits` cover 15 ordered depth pairs.
