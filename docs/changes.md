@@ -11,6 +11,56 @@
 > `docs/vm-compat-bugs.md`. Nothing was deleted.
 
 
+2026-08-17 (audit of the integration tests, and what it found)
+
+An audit of the four `self skip:` guards in `scripts/vm_integration_tests.st`
+turned into four VM fixes. The guards themselves were mostly the least of it.
+
+## The integration runner counted skipped tests as passes
+
+`TestSkipped` is a subclass of `Exception` -- not `TestFailure`, not `Error` --
+and its default action is empty, so signalling it RESUMES. The runner guarded
+only `TestFailure` and `Error`, so `self skip:` returned from the test method,
+`tearDown` ran, and the line logged was `PASS`. Four tests took that path. That
+is worse than the class-level skip list this branch removed the same day: a skip
+list at least excludes a class visibly, where this reported four verifications
+that never happened. Skips are now caught, counted separately, and the summary
+says "a skip is not a pass".
+
+## `VMSoundTest` and `VMMIDITest` deleted
+
+Both routed through image classes that do not exist -- Pharo 13.1 has no global
+whose name contains 'Sound' or 'Midi' -- so both skipped on every run. Their
+assertions were powerless anyway: `respondsTo: #stopPlaying` executes no
+primitive, and `count >= 0` accepts the hardcoded 0 the test was written to
+detect.
+
+Recorded rather than hidden: `SoundPlugin.cpp` and `MIDIPlugin.cpp` are ~800
+lines of real Audio Queue and CoreMIDI code, and their 49
+`Interpreter::primitiveSound*` / `primitiveMIDI*` wrappers are registered under
+no name and occupy no primitive table slot. Nothing is broken for anyone today
+-- the reference VM ships neither plugin among its 51, and the stock image has
+zero callers -- but the code is unreachable and should either be wired up or
+removed.
+
+## A global exception-system patch installed by a test file
+
+The file compiled `UndefinedObject>>findNextHandlerContext ^ nil` into the image
+at fileIn, as a "DNU guard". It taught the exception system to answer "there is
+no handler" whenever nil reached handler lookup -- silent recovery from what
+would be a real defect -- and it was permanent and global, affecting every later
+test and any image saved afterwards. Deleted.
+
+## Eight of thirteen LocalePlugin lookups missed on a name mismatch
+
+See the entry below; the audit found it by noticing that every "is not empty"
+locale assertion was satisfied by the image's hardcoded fallback.
+
+## The VM never implemented Cog's `preemptionYields`
+
+See the entry below. Found by root-causing the one test in the file that was
+genuinely failing, and whose stated cause -- timer starvation -- was wrong.
+
 2026-08-17 (Swift/app fixes ported from `main`)
 
 ## Mac Catalyst aborted on every image quit
