@@ -6,6 +6,56 @@ that we need to patch locally for our VM to work the same way as
 stock Cog.  See also `docs/vm-compat-bugs.md` for open VM-side defects, and
 `docs/deferred.md` for intentional platform gaps.
 
+## `SDLOSXPlatform` over-releases autoreleased NSStrings
+
+`ObjCLibrary>>nsStringOf:` answers `+[NSString stringWithUTF8String:]`, which is
+**autoreleased** — the caller does not own it and must not release it.  Two
+callers release it anyway:
+
+    SDLOSXPlatform>>allowTouchpadInertia
+        key := ObjCLibrary uniqueInstance nsStringOf: 'AppleMomentumScrollSupported'.
+        ...
+        ObjCLibrary uniqueInstance release: key.          "<-- over-release"
+
+    SDLOSXPlatform>>afterSetWindowTitle:onWindow:
+        aParam := ObjCLibrary uniqueInstance nsStringOf: aString.
+        ...
+        ObjCLibrary uniqueInstance release: aParam        "<-- over-release"
+
+The string is then released a second time when the thread's autorelease pool
+drains, which segfaults:
+
+    *** -[CFString release]: message sent to deallocated instance
+
+Upstream never notices.  The reference VM has no autorelease-pool handling
+anywhere in its sources and runs the interpreter on the main thread of a
+command-line process, so the pool is never drained and the second release never
+happens.  Our VM runs the interpreter on a secondary thread of a GUI app, where
+a thread's implicit pool *is* drained by pthread TSD cleanup at thread exit — so
+the latent bug becomes a crash.
+
+Found on `main` by tracing every FFI call the image makes for release-like
+selectors (`PHARO_TRACE_RELEASE=1`, a temporary hook in `doFFICall` that logged
+the object, its class, and the Smalltalk method responsible).  In a whole
+session there were exactly two release calls and both were these, both on
+`__NSCFString`.  The hook is not carried on this branch: it has served its
+purpose and would sit on the FFI hot path for no further benefit.  Recover it
+from `git show 159241d1 -- src/vm/Primitives.cpp` if it is ever needed again.
+
+Patched in the generated startup scripts (see `PharoBridge.writeStartupScript`,
+which puts it in `commonPatches`, so both `startup-13.st` and `startup-14.st`
+carry it): both methods are recompiled without the release, which leaks the
+string exactly as upstream does.
+
+**The patch cannot cover the first call of each.**  Both run during SDL platform
+init, before `StartupPreferencesLoader` loads `startup.st` — visible in the
+trace, where both releases precede the `[startup] Pharo 13` line.  The patch
+prevents later occurrences, such as subsequent window-title changes.  Fixing the
+startup ones needs the fix upstream, or a hook earlier than `startup.st`.
+
+Worth reporting upstream: the fix is to delete both `release:` sends, or to have
+`nsStringOf:` answer a retained string and document it as owned.
+
 ## `Context >> copyTo:` is recursive — overflows on deep stacks (timer-scheduler-wedge)
 
 **Symptom:** the full SUnit suite deadlocked at ~class 511 (after a run of

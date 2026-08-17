@@ -133,6 +133,24 @@ struct ImageLibraryView: View {
             }
             .navigationTitle("Pharo Images")
             .toolbar {
+                // One toolbar item on Mac Catalyst, deliberately.
+                //
+                // Two or more items are bridged to an NSToolbarItemGroup in the
+                // window title bar, and returning from the Pharo canvas to this
+                // view made AppKit abort while revalidating that group:
+                //     NSInternalInconsistencyException 'Index out of bounds'
+                //     -[NSToolbarItemGroupPickerView _configureCollapsedSubitemAtIndex:]
+                // with -[NSToolbarItemGroup _updateViewRepresentation] re-entering
+                // itself via _forceSetView:. It fired on every image quit.
+                //
+                // Established by bisection, not guesswork: with the second item
+                // removed the abort stops outright, and it returns with that item
+                // in either placement — leading or trailing — so it is the group,
+                // not the position. A single item forms no group.
+                //
+                // The cost on Catalyst is that Settings moves into this menu
+                // instead of having its own button. Elsewhere the toolbar is
+                // unchanged.
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         Button {
@@ -146,11 +164,22 @@ struct ImageLibraryView: View {
                         } label: {
                             Label("Import from Files", systemImage: "folder")
                         }
+
+                        #if targetEnvironment(macCatalyst)
+                        Divider()
+
+                        Button {
+                            showingSettings = true
+                        } label: {
+                            Label("Settings", systemImage: "gear")
+                        }
+                        #endif
                     } label: {
                         Image(systemName: "plus")
                     }
                 }
 
+                #if !targetEnvironment(macCatalyst)
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
                         showingSettings = true
@@ -158,6 +187,7 @@ struct ImageLibraryView: View {
                         Image(systemName: "gear")
                     }
                 }
+                #endif
             }
             .sheet(isPresented: $showingNewImage) {
                 NewImageView()

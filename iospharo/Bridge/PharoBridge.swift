@@ -345,6 +345,37 @@ class PharoBridge: ObservableObject {
         (Smalltalk hasClassNamed: #FreeTypeSettings) ifTrue: [
           FreeTypeSettings current instVarNamed: 'bitBltSubPixelAvailable' put: false].
 
+        "Fix: SDLOSXPlatform over-releases autoreleased NSStrings."
+        "ObjCLibrary>>nsStringOf: answers +[NSString stringWithUTF8String:], which is"
+        "autoreleased and NOT owned by the caller. Sending it #release is an"
+        "over-release: the autorelease pool releases it a second time when it drains,"
+        "and that segfaults. Upstream Pharo never notices, because its VM runs on the"
+        "main thread of a command-line process and never drains the pool at all."
+        "Removing the release leaks the string, which is exactly what upstream does."
+        "See docs/image_issues.md."
+        (Smalltalk hasClassNamed: #SDLOSXPlatform) ifTrue: [
+          SDLOSXPlatform compile: 'allowTouchpadInertia
+            | nsUserDefaultsClass standardUserDefaultsSel standardUserDefaults key setBoolForKeySel |
+            nsUserDefaultsClass := ObjCLibrary uniqueInstance lookupClass: ''NSUserDefaults''.
+            standardUserDefaultsSel := ObjCLibrary uniqueInstance lookupSelector: ''standardUserDefaults''.
+            standardUserDefaults := ObjCLibrary uniqueInstance
+                                      sendMessage: standardUserDefaultsSel
+                                      to: nsUserDefaultsClass.
+            key := ObjCLibrary uniqueInstance nsStringOf: ''AppleMomentumScrollSupported''.
+            setBoolForKeySel := ObjCLibrary uniqueInstance lookupSelector: ''setBool:forKey:''.
+            ObjCLibrary uniqueInstance
+              sendMessage: setBoolForKeySel
+              to: standardUserDefaults
+              with: (ExternalAddress fromAddress: 1)
+              with: key'.
+          SDLOSXPlatform compile: 'afterSetWindowTitle: aString onWindow: aOSSDLWindow
+            | aParam cocoaWindow wmInfo selector |
+            aParam := ObjCLibrary uniqueInstance nsStringOf: aString.
+            wmInfo := aOSSDLWindow backendWindow getWMInfo.
+            cocoaWindow := wmInfo info cocoa window.
+            selector := ObjCLibrary uniqueInstance lookupSelector: ''setTitleWithRepresentedFilename:''.
+            ObjCLibrary uniqueInstance sendMessage: selector to: cocoaWindow getHandle with: aParam'].
+
         "Fix: doc browser uses anonymous GitHub API to avoid IceTokenCredentials crash."
         "IceTokenCredentials has a placeholder 'YOUR TOKEN' that causes 401 errors."
         (Smalltalk hasClassNamed: #MicGitHubRessourceReference) ifTrue: [

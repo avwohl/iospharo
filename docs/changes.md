@@ -11,6 +11,46 @@
 > `docs/vm-compat-bugs.md`. Nothing was deleted.
 
 
+2026-08-17 (Swift/app fixes ported from `main`)
+
+## Mac Catalyst aborted on every image quit
+
+Quitting an image swaps the Pharo canvas back for the image library, which
+rebuilds the Catalyst toolbar bridge.  With two `ToolbarItem`s SwiftUI bridges
+them to an `NSToolbarItemGroup`, and AppKit aborted while revalidating it:
+
+    NSInternalInconsistencyException 'Index out of bounds'
+    -[NSToolbarItemGroupPickerView _configureCollapsedSubitemAtIndex:]
+
+with `-[NSToolbarItemGroup _updateViewRepresentation]` re-entering itself via
+`_forceSetView:` — an AppKit defect, not malformed input from us.
+
+Established on `main` by bisection after four plausible-sounding fixes failed:
+removing the second toolbar item stops the abort outright, and restoring it in
+either placement — leading or trailing — brings it straight back.  The trigger
+is the group, which only forms with two or more items, not the position of any
+one item.
+
+The library toolbar therefore has a single item on Mac Catalyst, with Settings
+moved into the same menu as download and import.  Other platforms keep the
+separate gear button.  `iospharo/Views/ImageLibraryView.swift`.
+
+## `SDLOSXPlatform` over-released autoreleased NSStrings
+
+`ObjCLibrary>>nsStringOf:` answers an autoreleased `NSString`, and
+`SDLOSXPlatform>>allowTouchpadInertia` and `>>afterSetWindowTitle:onWindow:`
+both release it anyway.  On the reference VM nothing drains the pool, so the
+second release never happens; our VM runs on a secondary thread of a GUI app
+whose implicit pool is drained at thread exit, which turns the latent bug into a
+segfault.  Both methods are now recompiled without the release, in
+`commonPatches` inside `PharoBridge.writeStartupScript`, so `startup-13.st` and
+`startup-14.st` both carry it.  Verified against this branch's VM: before the
+patch both method sources contain `release`; after it neither does, and both
+compile clean.  The first call of each still escapes — they run during SDL
+platform init, before `StartupPreferencesLoader` loads `startup.st`.  Recorded
+in `docs/image_issues.md`.
+
+
 2026-08-17 (VM fixes ported from `main`)
 
 Seven defects found while running a BitBlt/become/callback test battery against
