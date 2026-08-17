@@ -414,12 +414,31 @@ FIX, at BOTH places compiled code can grow the operand stack:
 
 Explains `PHARO_NO_JIT=1` exiting 0 in the original triage.
 
-Note the sizing invariant this exposed: `MaxStackDepth = 131072` carries the
-comment "must be large enough for MaxFrameDepth frames" and
+SIZING INVARIANT — FIXED 2026-08-17.  `MaxStackDepth = 131072` carried the
+comment "must be large enough for MaxFrameDepth frames" against
 `MaxFrameDepth = 65536` — exactly 2 Oops per frame, which only holds for a
-zero-temp method with an empty operand stack.  The soft frame limit
-(`StackOverflowLimit = 56000`) is what actually keeps it honest, and the JIT
-was not honouring the operand-stack side of it at all.
+zero-temp method with an empty operand stack.  Measured against the limit the
+VM actually enforces (`StackOverflowLimit` 56000 + `StackOverflowSignalHeadroom`
+8192 = 64192 frames, the ceiling that applies only while a stack-overflow
+signal is being raised; 56000 otherwise) it was 2.0 slots per frame, so the
+VALUE stack was the
+binding constraint for every method with more than a temp or two.  That is the
+wrong way round: running out of value stack calls `stopVM()` and kills the whole
+VM, running out of frames raises the image's stack-overflow signal and at worst
+ends one process, so the frame limit has to trip first.
+
+`MaxStackDepth` is now 2097152 — 32.7 slots per frame at the effective limit,
+the same ratio `main` uses.  Cost: `stack_` is value-initialised (Oop has a
+user-provided default constructor), so resident goes 1.0 MiB -> 16.0 MiB and
+`sizeof(Interpreter)` ~9.5 MB -> ~25 MB, both heap.  Under
+`PHARO_TRACE_STACK_ORIGIN` the two parallel vectors sized from `stack_.size()`
+go ~2 MiB -> ~32 MiB; that knob is off by default and prints its own MB figure.
+
+This also narrows the J2J gap above without paying for it: at ~32 slots per
+frame `frameDepth_ >= effectiveStackOverflowLimit()` in `pushFrameForJIT` is a
+sound proxy for operand-stack safety for any frame that is not pathologically
+wide, which is why the reference shape needs only the frame check.  The explicit
+bound is still the honest fix if a J2J-only overrun is ever observed.
 
 Canaries placed immediately after `stack_` and `savedFrames_` did NOT catch
 this (they are kept, and that negative is why): the JIT writes individual

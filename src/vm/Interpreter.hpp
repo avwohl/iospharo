@@ -125,8 +125,46 @@ struct CallbackComplete {
     bool timedOut = false;
 };
 
-/// Maximum stack depth
-constexpr size_t MaxStackDepth = 131072;  // Must be large enough for MaxFrameDepth frames
+/// Maximum stack depth.
+///
+/// Sized against the frame limit the VM actually enforces, not against
+/// MaxFrameDepth: effectiveStackOverflowLimit() is StackOverflowLimit (56000),
+/// rising to 56000 + StackOverflowSignalHeadroom = 64192 only while a
+/// stack-overflow signal is being raised. Size against the larger number:
+/// 2097152 / 64192 = 32.7 value-stack slots per frame (37.4 against the 56000
+/// soft limit).
+///
+/// The ratio is the whole point. Exhausting the VALUE stack calls stopVM() and
+/// kills the entire VM (see push(), below); exhausting FRAMES raises a proper
+/// Smalltalk stack-overflow signal and at worst ends one process. So the frame
+/// limit must be the one that trips first. This was 131072 — 2.0 slots per
+/// frame against the effective limit — under a comment claiming it was "large
+/// enough for MaxFrameDepth frames", which was false by a factor of ~16. At
+/// that size the value stack was the binding constraint for every method with
+/// more than a temp or two, and it is how the JIT came to write past the end of
+/// stack_ into the members after it (docs/vm-compat-bugs.md #3).
+///
+/// Cost is not free and is worth knowing: Oop has a user-provided default
+/// constructor, so stack_ is value-initialised and the whole array is zeroed at
+/// construction. Resident 1.0 MiB -> 16.0 MiB, sizeof(Interpreter) ~9.5 MB ->
+/// ~25 MB, plus a one-time ~16 MB memset per VM start. Both construction sites
+/// are heap allocations (test_load_image.cpp, PlatformBridge.cpp), so there is
+/// no thread-stack exposure. No loop is O(MaxStackDepth) -- every stack walk is
+/// bounded by stackPointer_ -- but stack_ is a MEMBER, so every member declared
+/// after it shifts by +15.7 MB, and one of those offsets is baked into JIT
+/// codegen: closureFieldOffset() (Interpreter.cpp) feeds an LDR displacement in
+/// AsmjitT1.cpp. That offset is already ~1.05 MB, already far outside AArch64
+/// LDR imm12 (32760), and asmjit rejects rather than materialises an
+/// out-of-range displacement -- so that path is already broken and is gated off
+/// (PHARO_T1_RESUME_INTERNAL_J2J, "EXPERIMENT (v2, still corrupts)"). This
+/// change moves it 16x further out. Anyone re-enabling that knob must first
+/// give emitClosurePush an offset-materialising sequence. Measured baseline:
+/// maximum resident for `eval "42"` is 282 MB, so +15.7 MB is +5.6%.
+/// The one knob that scales with it is
+/// PHARO_TRACE_STACK_ORIGIN, whose two parallel vectors resize to stack_.size()
+/// at 16 bytes/slot (~32 MiB); it prints its own MB figure and is off by
+/// default.
+constexpr size_t MaxStackDepth = 2097152;
 
 /// Method cache size (must be power of 2)
 constexpr size_t MethodCacheSize = 16384;
@@ -195,10 +233,6 @@ struct WellKnownSelectors {
     Oop cannotReturn;
     Oop aboutToReturn;
     Oop returnThrough;   // return:through: — image-protocol NLR unwind, sent to the C++-resolved home ctx
-    Oop run;
-    Oop value;
-    Oop value_;        // value:
-    Oop valueValue;    // value:value:
     Oop add;           // +
     Oop subtract;      // -
     Oop lessThan;      // <
@@ -209,16 +243,6 @@ struct WellKnownSelectors {
     Oop notEqual;      // ~=
     Oop multiply;      // *
     Oop divide;        // /
-    Oop at;            // at:
-    Oop atPut;         // at:put:
-    Oop size;          // size
-    Oop next;          // next
-    Oop nextPut;       // nextPut:
-    Oop atEnd;         // atEnd
-    Oop eq;            // ==
-    Oop class_;        // class
-    Oop new_;          // new
-    Oop newSize;       // new:
 };
 
 class Interpreter {
@@ -1893,12 +1917,18 @@ public:
 
         // Overflow check.
         //
-        // KNOWN GAP, deliberately NOT closed here (measured 2026-08-12):
-        // this checks only the FRAME count, and `MaxStackDepth` (131072 Oops)
-        // against `StackOverflowLimit` (56000 frames) is barely 2 slots per
-        // frame, so a method with more than a temp or two exhausts the OPERAND
-        // stack first — which compiled code writes straight through
-        // `state->sp`, unnoticed (docs/vm-compat-bugs.md #3).  Adding
+        // KNOWN GAP, narrowed but not formally closed (measured 2026-08-12,
+        // re-sized 2026-08-17): this checks only the FRAME count.  That used to
+        // be no bound on the operand stack at all — `MaxStackDepth` was 131072
+        // Oops against an enforced limit of 56000 frames (64192 only while a
+        // stack-overflow signal is being raised), 2.0 slots per frame,
+        // so a method with more than a temp or two exhausted the OPERAND stack
+        // first, which compiled code writes straight through `state->sp`,
+        // unnoticed (docs/vm-compat-bugs.md #3).  `MaxStackDepth` is now
+        // 2097152, ~32 slots per frame, so the frame count below is a sound
+        // proxy for operand-stack safety for anything but a pathologically wide
+        // frame — which is exactly why the reference shape gets away with only
+        // the frame check.  Adding
         // `stackPointer_ >= stack_.data() + MaxStackDepth - StackSafetyZone`
         // here and returning ExitStackOverflow is CORRECT but catastrophically
         // slow: mutalk went from 5,439,488 sends to >2.8 BILLION and still
@@ -4134,10 +4164,6 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     visitor(selectors_.cannotReturn);
     visitor(selectors_.aboutToReturn);
     visitor(selectors_.returnThrough);
-    visitor(selectors_.run);
-    visitor(selectors_.value);
-    visitor(selectors_.value_);
-    visitor(selectors_.valueValue);
     visitor(selectors_.add);
     visitor(selectors_.subtract);
     visitor(selectors_.lessThan);
@@ -4148,16 +4174,6 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
     visitor(selectors_.notEqual);
     visitor(selectors_.multiply);
     visitor(selectors_.divide);
-    visitor(selectors_.at);
-    visitor(selectors_.atPut);
-    visitor(selectors_.size);
-    visitor(selectors_.next);
-    visitor(selectors_.nextPut);
-    visitor(selectors_.atEnd);
-    visitor(selectors_.eq);
-    visitor(selectors_.class_);
-    visitor(selectors_.new_);
-    visitor(selectors_.newSize);
 
 #if PHARO_JIT_ENABLED
     // Restore MAP_JIT to executable for this thread.  Apple Silicon

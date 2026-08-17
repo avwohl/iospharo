@@ -105,6 +105,62 @@ grows its own array quietly. Registering 300 external objects on a fresh image
 succeeds and leaves a 320-slot array. Taking `main`'s version would have added
 an allocation inside the parameter getter for no observable gain.
 
+## The deferred extension-byte check also delivered the round-robin yield
+
+When the 1024-bytecode countdown lands on an extension byte (0xE0/0xE1) the
+dispatch loop cannot run its periodic checks there — a process switch would
+reset the extA_/extB_ the next bytecode is about to read — so it sets
+`checkCountdown_ = 1` and comes straight back once the consumer has run. Without
+that, a loop whose length divides 1024 locks the countdown onto the same
+extension byte forever and starves timers, signals and preemption; `[] repeat`
+is `E1 FF ED FC` and 1024 is even.
+
+Coming straight back also brought the same-priority round-robin yield forward by
+1023 bytecodes. That perturbs code which yields to an equal-priority process and
+expects it to run until it blocks. The deferred pass now skips the yield and
+takes only what it came for — timers, signals, priority preemption. Round-robin
+fairness does not need sub-1024-bytecode latency and is unaffected on the normal
+cadence.
+
+The deferral also now clears `inExtension_` itself instead of leaving it to the
+consumer's `DISPATCH_NEXT`. That macro tests the countdown before it clears the
+flag, so with `checkCountdown_ = 1` the consumer re-entered the checks with the
+flag still set — the comment there asserted the opposite. It terminated anyway,
+because every bytecode that reads extA_/extB_ (0x52, 0x5D, 0x5E, 0xE0-0xFF) is
+outside the fast dispatch table and `op_slow` clears the flag before dispatching.
+Nothing enforced that. Moving any of those into the fast table would have turned
+the deferred pass into a per-bytecode early-out with no bound: no timer, no
+signals, no preemption, no scavenge safe point, and +1024 charged to `g_stepNum`
+per bytecode executed.
+
+## The value stack ran out before the frame limit did
+
+`MaxStackDepth` was 131072 Oops against an enforced frame limit of 56000,
+rising to 64192 only while a stack-overflow signal is being raised —
+(`StackOverflowLimit` 56000 plus `StackOverflowSignalHeadroom` 8192) — 2.0
+value-stack slots per frame, under a comment claiming it was large enough for
+`MaxFrameDepth` frames.
+
+The two limits are not interchangeable. Exhausting the value stack calls
+`stopVM()` and takes the whole VM down; exhausting frames raises the image's
+stack-overflow signal and at worst ends one process. The frame limit has to be
+the one that trips first, and at 2 slots per frame it never was: any method with
+more than a temp or two exhausted the operand stack first. It is how the JIT came
+to write past the end of `stack_` into the members after it
+(`docs/vm-compat-bugs.md` #3).
+
+`MaxStackDepth` is now 2097152 — 32.7 slots per frame, the ratio `main` uses,
+arrived at from this branch's own `StackOverflowLimit` rather than by copying
+`main`'s constant (`main` pairs 524288 with a limit of 16384; against 56000 that
+would still be 8 slots per frame). Deep recursion now dies as a recoverable
+Smalltalk stack overflow naming 56000 frames instead of killing the VM.
+
+It is not free: `Oop` has a user-provided default constructor, so `stack_` is
+value-initialised and the whole array is zeroed at construction — resident goes
+1.0 MiB to 16.0 MiB and `sizeof(Interpreter)` from ~9.5 MB to ~25 MB, both heap
+allocations, plus a one-time ~16 MB memset per start. Nothing iterates the array;
+every stack walk is bounded by `stackPointer_`.
+
 ## BitBlt converted only 15 of the 36 depth pairs
 
 The hand-written handlers in `primitiveCopyBits` cover 15 ordered depth pairs.

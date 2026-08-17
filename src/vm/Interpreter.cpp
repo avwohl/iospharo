@@ -3746,15 +3746,34 @@ void Interpreter::interpret() {
                 memory_.fullGC(/* skipEphemerons */ GET_DEBUG_BOOL(PHARO_GC_AUTO_SKIP_EPH));
                 flushMethodCache();
             }
-            // Force re-check immediately after the consumer runs. Without this,
-            // tight loops like `[] repeat` (bytecodes `E1 FF ED FC`) whose length
-            // evenly divides 1024 lock alignment to E1 forever, starving timer
-            // checks. Setting checkCountdown_=1 means the next DISPATCH_NEXT
-            // after the consumer decrements to 0 and re-enters periodic_checks
-            // with inExtension_=false.
+            // Come straight back once the consumer has run, instead of waiting
+            // another full 1024 bytecodes. A loop whose length divides 1024
+            // lands the countdown on the same bytecode every time, so if that
+            // bytecode is an extension byte the checks below are skipped
+            // forever — no timer, no signals, no preemption. `[] repeat`
+            // compiles to exactly that (`E1 FF ED FC`), and 1024 is even.
+            // step() already defers for this reason (deferredPeriodicCheck_).
+            //
+            // Clear inExtension_ HERE rather than relying on the consumer's
+            // DISPATCH_NEXT. That macro tests the countdown BEFORE it clears
+            // the flag, so with checkCountdown_ = 1 the consumer's own
+            // DISPATCH_NEXT re-enters periodic_checks with the flag still set.
+            // Today that terminates anyway: every bytecode that reads
+            // extA_/extB_ (0x52, 0x5D, 0x5E, 0xE0-0xFF) is outside the fast
+            // dispatch table, and op_slow clears the flag before
+            // dispatchBytecode. But nothing enforces that. Put any extension
+            // consumer in the fast table and the deferred pass would take this
+            // early-out once per bytecode with no bound — no timer, no signals,
+            // no preemption, no scavenge safe point, and +1024 charged to
+            // g_stepNum per bytecode — which is exactly the starvation this
+            // block exists to prevent.
+            //
+            // Clearing it here is safe: it only ever gates these checks (and
+            // forceYield). The consumer reads extA_/extB_, which are untouched.
+            // If the consumer is itself an extension byte it sets the flag
+            // again, and each pass consumes one, so this terminates.
+            inExtension_ = false;
             checkCountdown_ = 1;
-            // Resume without process switching — don't clear inExtension_
-            // (the consumer's DISPATCH_NEXT will clear it)
             bytecode = *instructionPointer_++;
             if (__builtin_expect(g_doOn, 0)) depthOracleCheck();
             if constexpr (ENABLE_DEBUG_LOGGING) {
@@ -12988,12 +13007,15 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         // same reason: past this point compiled code grows the Smalltalk stack
         // with raw stores through `sstate.sp`, and `push()`'s check
         // (`stackPointer_ >= stack_.data() + MaxStackDepth`) is not on that
-        // path.  Only the FRAME count is bounded here, and MaxStackDepth
-        // (131072 Oops) against StackOverflowLimit (56000 frames) is barely 2
-        // slots per frame, so the operand stack is exhausted first and the
-        // write lands past the end of `stack_`, in the members after it
-        // (docs/vm-compat-bugs.md #3).  Declining just runs the method
-        // interpreted, which has the check.
+        // path.  Only the FRAME count is bounded here.  That was worthless
+        // while MaxStackDepth was 131072 Oops against an enforced 56000 frames
+        // (64192 only during a stack-overflow signal)
+        // — 2.0 slots per frame, so the operand stack was exhausted first and
+        // the write landed past the end of `stack_`, in the members after it
+        // (docs/vm-compat-bugs.md #3).  MaxStackDepth is now 2097152, ~32 slots
+        // per frame, so the frame bound carries real weight; this explicit
+        // headroom check is kept as the belt to its braces.  Declining just
+        // runs the method interpreted, which has the check.
         if (fn && g_debug.sistaDispatch && dispatchGateOpen
                 && __builtin_expect(
                        stackPointer_ < stack_.data() + MaxStackDepth
@@ -18294,15 +18316,6 @@ void Interpreter::initializeSelectors() {
         }
     }
 
-    // Skip these for now to avoid potential hangs
-    selectors_.at = Oop::nil();
-    selectors_.atPut = Oop::nil();
-    selectors_.size = Oop::nil();
-    selectors_.eq = Oop::nil();
-    selectors_.class_ = Oop::nil();
-    selectors_.value = Oop::nil();
-    selectors_.value_ = Oop::nil();
-    selectors_.valueValue = Oop::nil();
 
 }
 
