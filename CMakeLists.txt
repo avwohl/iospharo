@@ -65,6 +65,27 @@ message(STATUS "Building for platform: ${CMAKE_SYSTEM_NAME}")
 message(STATUS "XCFramework slice: ${XCFRAMEWORK_PLATFORM}")
 message(STATUS "Crypto support: ${PHARO_WITH_CRYPTO}")
 
+# Frameworks/ is gitignored and holds the third-party xcframeworks. Without it
+# the build gets all the way to compiling Primitives.cpp before dying on a
+# missing <ffi.h>, which says nothing about the actual cause -- it looks like a
+# source problem rather than a missing prerequisite. Check the two xcframeworks
+# whose headers are on the include path and say what to run. Note these two come
+# from their own scripts, not from build-third-party.sh.
+foreach(REQUIRED_XCF SDL2:build-sdl2.sh libffi:build-libffi.sh)
+    string(REPLACE ":" ";" XCF_PARTS ${REQUIRED_XCF})
+    list(GET XCF_PARTS 0 XCF_NAME)
+    list(GET XCF_PARTS 1 XCF_SCRIPT)
+    if(NOT EXISTS ${CMAKE_SOURCE_DIR}/Frameworks/${XCF_NAME}.xcframework/${XCFRAMEWORK_PLATFORM})
+        message(FATAL_ERROR
+            "Missing Frameworks/${XCF_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}.\n"
+            "The third-party xcframeworks are not checked in. Build them once with:\n"
+            "    ./scripts/build-libffi.sh\n"
+            "    ./scripts/build-sdl2.sh\n"
+            "    ./scripts/build-third-party.sh   # add --no-crypto to skip OpenSSL/libssh2/libgit2\n"
+            "This one comes from scripts/${XCF_SCRIPT}.")
+    endif()
+endforeach()
+
 # VM Core Library
 set(VM_SOURCES
     src/vm/DebugSettings.cpp

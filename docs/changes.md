@@ -53,9 +53,10 @@ in `docs/image_issues.md`.
 
 2026-08-17 (VM fixes ported from `main`)
 
-Seven defects found while running a BitBlt/become/callback test battery against
-this branch. Each was diagnosed first on `main`, whose VM has diverged
-considerably, so none is a cherry-pick — every one was re-applied against this
+Defects found while running a BitBlt/become/callback test battery against this
+branch, and then by auditing what the `main` branch still had that this one
+lacked before `main` was reset. Each was diagnosed first on `main`, whose VM has
+diverged considerably, so none is a cherry-pick — every one was re-applied against this
 branch's own code and re-verified here. Where `main`'s version would have
 dropped behaviour this branch has and `main` does not, it was not taken; the
 notes below say so.
@@ -105,7 +106,7 @@ grows its own array quietly. Registering 300 external objects on a fresh image
 succeeds and leaves a 320-slot array. Taking `main`'s version would have added
 an allocation inside the parameter getter for no observable gain.
 
-## The deferred extension-byte check also delivered the round-robin yield
+## The deferred extension-byte check re-entered with `inExtension_` still set
 
 When the 1024-bytecode countdown lands on an extension byte (0xE0/0xE1) the
 dispatch loop cannot run its periodic checks there — a process switch would
@@ -115,12 +116,16 @@ that, a loop whose length divides 1024 locks the countdown onto the same
 extension byte forever and starves timers, signals and preemption; `[] repeat`
 is `E1 FF ED FC` and 1024 is even.
 
-Coming straight back also brought the same-priority round-robin yield forward by
-1023 bytecodes. That perturbs code which yields to an equal-priority process and
-expects it to run until it blocks. The deferred pass now skips the yield and
-takes only what it came for — timers, signals, priority preemption. Round-robin
-fairness does not need sub-1024-bytecode latency and is unaffected on the normal
-cadence.
+`main` also guards that deferred pass against delivering the same-priority
+round-robin yield 1023 bytecodes early. **That guard was examined and declined
+here**, because its premise does not hold on this branch. Gating this branch's
+`if (forceYield_...)` would suppress higher-priority preemption and aging
+preemption, which live inside that same block; and the same-priority rotation it
+means to suppress is already opt-in and off by default — this branch fixed that
+class of problem more broadly on 2026-06-12 by making rotation require
+`PHARO_RR_SCHED` or `PHARO_DET_SCHED`, citing the same image-compatibility
+failures `main` cites. Under `PHARO_DET_SCHED` the guard would perturb the one
+configuration built specifically not to be perturbed.
 
 The deferral also now clears `inExtension_` itself instead of leaving it to the
 consumer's `DISPATCH_NEXT`. That macro tests the countdown before it clears the
