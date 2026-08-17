@@ -35,6 +35,24 @@
 # A correctly prepped Pharo 13 image grows from ~52 MB to ~74 MB and answers
 # non-nil for `Smalltalk at: #SUnitRunner`.
 # ---------------------------------------------------------------------------
+# BATCH SIZE CHANGES THE ANSWER, and small batches make the VM look worse than
+# it is. Measured on this suite:
+#
+#   ClyBrowserToolValidityTest     alone 25/25 PASS   in a batch of 50: 25 ERRORs
+#   ClyConcreteGroupCritiquesTest  alone 36/36 PASS   in a batch of 50: 36 ERRORs
+#   ClyNotebookPageRecyclerTest    alone  8/8  PASS   in a batch of 50:  8 ERRORs
+#
+# and the 2026-08-11 reference run, which used ONE batch of all 2052 classes,
+# had all three at 100%. So the failures are not pollution from an earlier class
+# -- more isolation made them worse, not better. Those classes depend on system
+# state that a fuller run establishes and a 50-class window starting at index
+# 151 never does; the errors are "a Set() is empty" and "receiver of ifEmpty:
+# is nil" out of Calypso's environment machinery.
+#
+# Use STEP large enough to match how the result will be read. To compare against
+# the recorded baselines, use one batch (STEP=2047) and a long timeout. Small
+# batches are for bisecting a hang, not for measuring a pass rate.
+#
 # RUN THIS ON AN OTHERWISE IDLE MACHINE. The suite is full of timing-sensitive
 # tests and the runner's watchdogs are wall-clock based, so competing load does
 # not slow the run down evenly -- it converts passes into ERRORs. Measured:
