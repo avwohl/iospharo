@@ -20352,7 +20352,15 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* srcRow = srcWords + (sourceY + y) * srcWordsPerRow;
-            uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow + destX;
+            // Depth-8 Form bits are MSB-first within each 32-bit word: column c
+            // lives at byte (c & ~3) + (3 - (c & 3)), not at byte c. Writing the
+            // destination as plain little-endian bytes reverses every group of
+            // four pixels — pixel 0 lands where pixel 3 belongs. The 8->8 handler
+            // already follows this convention; these sub-byte sources did not.
+            uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow;
+            auto dstByteAt = [&](intptr_t col) -> uint8_t* {
+                return dstRow + (col & ~static_cast<intptr_t>(3)) + (3 - (col & 3));
+            };
             for (intptr_t x = 0; x < width; x++) {
                 intptr_t sx = sourceX + x;
                 // Extract 4-bit pixel (MSB first: pixel 0 in bits 28-31)
@@ -20364,12 +20372,12 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     pixel = static_cast<uint8_t>(cmTable[pixel] & 0xFF);
                 }
                 switch (combinationRule) {
-                    case 3: case 34: dstRow[x] = pixel; break;
-                    case 0: dstRow[x] &= pixel; break;
-                    case 7: dstRow[x] |= pixel; break;
-                    case 25: if (pixel != 0) dstRow[x] = pixel; break;
-                    case 6: dstRow[x] ^= pixel; break;
-                    default: dstRow[x] = pixel; break;
+                    case 3: case 34: (*dstByteAt(destX + x)) = pixel; break;
+                    case 0: (*dstByteAt(destX + x)) &= pixel; break;
+                    case 7: (*dstByteAt(destX + x)) |= pixel; break;
+                    case 25: if (pixel != 0) (*dstByteAt(destX + x)) = pixel; break;
+                    case 6: (*dstByteAt(destX + x)) ^= pixel; break;
+                    default: (*dstByteAt(destX + x)) = pixel; break;
                 }
             }
         }
@@ -20392,7 +20400,15 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* srcRow = srcWords + (sourceY + y) * srcWordsPerRow;
-            uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow + destX;
+            // Depth-8 Form bits are MSB-first within each 32-bit word: column c
+            // lives at byte (c & ~3) + (3 - (c & 3)), not at byte c. Writing the
+            // destination as plain little-endian bytes reverses every group of
+            // four pixels — pixel 0 lands where pixel 3 belongs. The 8->8 handler
+            // already follows this convention; these sub-byte sources did not.
+            uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow;
+            auto dstByteAt = [&](intptr_t col) -> uint8_t* {
+                return dstRow + (col & ~static_cast<intptr_t>(3)) + (3 - (col & 3));
+            };
             for (intptr_t x = 0; x < width; x++) {
                 intptr_t sx = sourceX + x;
                 // Extract 2-bit pixel (MSB first)
@@ -20403,12 +20419,12 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     pixel = static_cast<uint8_t>(cmTable[pixel] & 0xFF);
                 }
                 switch (combinationRule) {
-                    case 3: case 34: dstRow[x] = pixel; break;
-                    case 0: dstRow[x] &= pixel; break;
-                    case 7: dstRow[x] |= pixel; break;
-                    case 25: if (pixel != 0) dstRow[x] = pixel; break;
-                    case 6: dstRow[x] ^= pixel; break;
-                    default: dstRow[x] = pixel; break;
+                    case 3: case 34: (*dstByteAt(destX + x)) = pixel; break;
+                    case 0: (*dstByteAt(destX + x)) &= pixel; break;
+                    case 7: (*dstByteAt(destX + x)) |= pixel; break;
+                    case 25: if (pixel != 0) (*dstByteAt(destX + x)) = pixel; break;
+                    case 6: (*dstByteAt(destX + x)) ^= pixel; break;
+                    default: (*dstByteAt(destX + x)) = pixel; break;
                 }
             }
         }
@@ -20441,19 +20457,27 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         uint32_t* srcWords = reinterpret_cast<uint32_t*>(srcBytes);
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* srcRow = srcWords + (sourceY + y) * srcWordsPerRow;
-            uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow + destX;
+            // Depth-8 Form bits are MSB-first within each 32-bit word: column c
+            // lives at byte (c & ~3) + (3 - (c & 3)), not at byte c. Writing the
+            // destination as plain little-endian bytes reverses every group of
+            // four pixels — pixel 0 lands where pixel 3 belongs. The 8->8 handler
+            // already follows this convention; these sub-byte sources did not.
+            uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow;
+            auto dstByteAt = [&](intptr_t col) -> uint8_t* {
+                return dstRow + (col & ~static_cast<intptr_t>(3)) + (3 - (col & 3));
+            };
             for (intptr_t x = 0; x < width; x++) {
                 intptr_t sx = sourceX + x;
                 uint32_t srcBit = (srcRow[sx / 32] >> (31 - sx % 32)) & 1;
                 uint8_t srcVal = srcBit ? color1 : color0;
                 switch (combinationRule) {
-                    case 3: case 34: dstRow[x] = srcVal; break;
-                    case 0: dstRow[x] &= srcVal; break;
-                    case 7: dstRow[x] |= srcVal; break;
-                    case 25: if (srcVal != 0) dstRow[x] = srcVal; break;
-                    case 6: dstRow[x] ^= srcVal; break;
-                    case 1: if (srcBit) dstRow[x] &= ~srcVal; break;
-                    default: dstRow[x] = srcVal; break;
+                    case 3: case 34: (*dstByteAt(destX + x)) = srcVal; break;
+                    case 0: (*dstByteAt(destX + x)) &= srcVal; break;
+                    case 7: (*dstByteAt(destX + x)) |= srcVal; break;
+                    case 25: if (srcVal != 0) (*dstByteAt(destX + x)) = srcVal; break;
+                    case 6: (*dstByteAt(destX + x)) ^= srcVal; break;
+                    case 1: if (srcBit) (*dstByteAt(destX + x)) &= ~srcVal; break;
+                    default: (*dstByteAt(destX + x)) = srcVal; break;
                 }
             }
         }
@@ -22178,6 +22202,14 @@ PrimitiveResult Interpreter::primitivePixelValueAtPut(int argCount) {
 PrimitiveResult Interpreter::primitiveWarpBits(int argCount) {
     if (argCount != 2) return PrimitiveResult::Failure;
 
+    // arg 2: sourceMap converts source pixels to 32-bit ARGB before averaging.
+    // WarpBlt>>warpBits passes (sourceForm colormapIfNeededForDepth: 32), which
+    // is nil whenever the source is already 32bpp — the only source depth this
+    // implementation accepts. A non-nil map therefore means a depth we do not
+    // handle anyway. Fail rather than silently produce unmapped output;
+    // WarpBlt>>warpBitsSmoothing:sourceMap: then warps in Smalltalk.
+    if (!stackTop().isNil()) return PrimitiveResult::Failure;
+
     Oop nOop = stackValue(1);            // arg 1: smoothing level n
     Oop warpBlt = stackValue(2);         // receiver (WarpBlt)
 
@@ -22210,6 +22242,13 @@ PrimitiveResult Interpreter::primitiveWarpBits(int argCount) {
     intptr_t clipH = bitBltField(memory_, warpBlt, BBClipHeight);
 
     if (!destForm.isObject() || !sourceForm.isObject()) return PrimitiveResult::Failure;
+
+    // The receiver's own colorMap was ignored outright, so a WarpBlt carrying one
+    // produced unmapped output. Fail so Smalltalk applies the map rather than
+    // writing wrong colours — same reasoning as the sourceMap check above.
+    if (!memory_.fetchPointer(BBColorMap, warpBlt).isNil())
+        return PrimitiveResult::Failure;
+
     if (width < 1 || height < 1) {
         popN(2); // pop args, leave receiver
         return PrimitiveResult::Success;
