@@ -75,6 +75,17 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #include <unordered_set>
 #include <vector>
 
+// A Form row is padded to a whole number of 32-bit words, so a 16bpp row owns
+// an even number of pixel slots. An odd-width form therefore has one slot per
+// row that holds no pixel, and striding row to row by the pixel width instead
+// of the padded width loses one slot per row -- the image walks sideways, a
+// little further on each row down. Row 0 always lands correctly however wrong
+// the stride is, which is why a single-row form cannot show the fault and an
+// even width hides it completely.
+static inline intptr_t pixelsPerRow16(intptr_t widthInPixels) {
+    return ((widthInPixels + 1) / 2) * 2;
+}
+
 // Pharo packs 16-bit pixels MSB-first in 32-bit words (Bitmap):
 // pixel 0 (even) in HIGH 16 bits, pixel 1 (odd) in LOW 16 bits.
 // Direct uint16_t* casting gives wrong order on little-endian machines.
@@ -5714,7 +5725,7 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
             } else if (srcDepth == 16) {
                 for (int y = 0; y < copyHeight; y++) {
                     for (int x = 0; x < copyWidth; x++) {
-                        uint16_t pixel = read16(srcPixels, y * srcWidth + x);
+                        uint16_t pixel = read16(srcPixels, y * pixelsPerRow16(srcWidth) + x);
                         uint8_t r = ((pixel >> 10) & 0x1F) << 3;  // 5-5-5 format
                         uint8_t g = ((pixel >> 5) & 0x1F) << 3;
                         uint8_t b = (pixel & 0x1F) << 3;
@@ -19377,7 +19388,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 intptr_t dy = destY + y;
                 if (dy < 0 || static_cast<size_t>((dy + 1) * wordsPerRow * 4) > dBitsSize) continue;
                 for (intptr_t x = 0; x < width; x++) {
-                    intptr_t pixIdx = dy * destWidth + destX + x;
+                    intptr_t pixIdx = dy * pixelsPerRow16(destWidth) + destX + x;
                     uint32_t px = read16(words16, pixIdx);
                     if (cmBitsPerColor > 0 && cmBitsPerColor < 5) {
                         // 16-bit pixel: 0rrrrrgggggbbbbb -> compress to cmBitsPerColor
@@ -19912,8 +19923,15 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         BITBLT_SUCCESS;
     }
 
-    // 8-bit source to 1-bit dest (shadow mask/stencil operations)
-    if (destDepth == 1 && srcDepth == 8) {
+    // 8-bit source to 1-bit dest (shadow mask/stencil operations).
+    //
+    // Taken only when the caller supplies no colour map. A map means a genuine
+    // depth conversion -- Form>>asFormOfDepth: 1 passes the 256-entry map from
+    // colormapIfNeededFor: -- and this handler cannot perform one: it
+    // thresholds the source byte, so every non-zero palette index became 1
+    // whatever colour it names. Those go to the generic transfer near the end
+    // of this primitive, which applies the map.
+    if (destDepth == 1 && srcDepth == 8 && !cmTable && !hasShiftMask) {
         intptr_t destWordsPerRow = (destWidth + 31) / 32;
         intptr_t srcBytesPerRow = ((srcWidth + 3) / 4) * 4; // word-aligned
         uint32_t* destWords = destPixels;
@@ -19925,13 +19943,23 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
 
         for (intptr_t y = 0; y < height; y++) {
-            uint8_t* srcRow = srcBytes + (sourceY + y) * srcBytesPerRow + sourceX;
+            // Indexed from the row base rather than from sourceX, because the
+            // swizzle below is relative to the 32-bit word and folding sourceX
+            // into the pointer would misalign it.
+            uint8_t* srcRow = srcBytes + (sourceY + y) * srcBytesPerRow;
             uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
             for (intptr_t x = 0; x < width; x++) {
                 intptr_t dx = destX + x;
                 uint32_t bitMask = 0x80000000u >> (dx % 32);
+                // Depth-8 Form bits are MSB-first within each 32-bit word:
+                // column c lives at byte (c & ~3) + (3 - (c & 3)), not at byte
+                // c. Reading it as a plain little-endian byte array reverses
+                // every group of four source pixels.
+                const intptr_t sx = sourceX + x;
+                const uint8_t srcPixel =
+                    srcRow[(sx & ~static_cast<intptr_t>(3)) + (3 - (sx & 3))];
                 // Non-zero 8-bit pixel → 1, zero → 0
-                uint32_t srcBit = (srcRow[x] != 0) ? bitMask : 0;
+                uint32_t srcBit = (srcPixel != 0) ? bitMask : 0;
                 switch (combinationRule) {
                     case 3: case 34: // store
                         destRow[dx / 32] = (destRow[dx / 32] & ~bitMask) | srcBit;
@@ -19974,7 +20002,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
             for (intptr_t x = 0; x < width; x++) {
                 intptr_t dx = destX + x;
-                intptr_t srcPixIdx = (sourceY + y) * srcWidth + sourceX + x;
+                intptr_t srcPixIdx = (sourceY + y) * pixelsPerRow16(srcWidth) + sourceX + x;
                 uint32_t bitMask = 0x80000000u >> (dx % 32);
                 uint32_t srcBit = (read16(srcWords16, srcPixIdx) != 0) ? bitMask : 0;
                 switch (combinationRule) {
@@ -20262,7 +20290,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         intptr_t srcPitch = srcWidth;
         uint32_t* srcPixels32 = reinterpret_cast<uint32_t*>(srcBytes);
 
-        size_t requiredDestBytes16 = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 2;
+        size_t requiredDestBytes16 = static_cast<size_t>((destY + height - 1) * pixelsPerRow16(destWidth) + destX + width) * 2;
         if (requiredDestBytes16 > destBitsSize) return PrimitiveResult::Failure;
 
         intptr_t srcMaxPixels = static_cast<intptr_t>(srcBitsSize / 4);
@@ -20326,7 +20354,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     // (PNGReadWriterTest test16BitDisplay).
                     if (pixel == 0 && s != 0) pixel = 1;
                 }
-                intptr_t destPixIdx = (destY + y) * destWidth + destX + x;
+                intptr_t destPixIdx = (destY + y) * pixelsPerRow16(destWidth) + destX + x;
                 uint16_t prev = read16(destWords16, destPixIdx);
                 switch (combinationRule) {
                     case 3: case 34: write16(destWords16, destPixIdx, pixel); break;
@@ -20757,9 +20785,9 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         uint32_t* srcWords16 = reinterpret_cast<uint32_t*>(srcBytes);
 
         // Bounds check
-        size_t requiredDestBytes16 = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 2;
+        size_t requiredDestBytes16 = static_cast<size_t>((destY + height - 1) * pixelsPerRow16(destWidth) + destX + width) * 2;
         if (requiredDestBytes16 > destBitsSize) return PrimitiveResult::Failure;
-        size_t requiredSrcBytes16 = static_cast<size_t>((sourceY + height - 1) * srcWidth + sourceX + width) * 2;
+        size_t requiredSrcBytes16 = static_cast<size_t>((sourceY + height - 1) * pixelsPerRow16(srcWidth) + sourceX + width) * 2;
         if (requiredSrcBytes16 > srcBitsSize) return PrimitiveResult::Failure;
 
         // Apply ColorMap shift/mask transform for 16-bit pixels
@@ -20779,8 +20807,8 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
         for (intptr_t row = 0; row < height; row++) {
             for (intptr_t col = 0; col < width; col++) {
-                intptr_t srcPixIdx = (sourceY + row) * srcWidth + sourceX + col;
-                intptr_t dstPixIdx = (destY + row) * destWidth + destX + col;
+                intptr_t srcPixIdx = (sourceY + row) * pixelsPerRow16(srcWidth) + sourceX + col;
+                intptr_t dstPixIdx = (destY + row) * pixelsPerRow16(destWidth) + destX + col;
                 uint16_t srcPx = applyShiftMask16(read16(srcWords16, srcPixIdx));
                 uint16_t dstPx = read16(destWords16, dstPixIdx);
                 uint16_t result;
@@ -21508,7 +21536,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
             for (intptr_t x = 0; x < width; x++) {
-                intptr_t srcPixIdx = (sourceY + y) * srcWidth + sourceX + x;
+                intptr_t srcPixIdx = (sourceY + y) * pixelsPerRow16(srcWidth) + sourceX + x;
                 // Negative source depth = pixel order reversed within the
                 // word; for 16bpp that is exactly a halfword-parity flip.
                 // (PNG encode of a reversed Form blits -16 -> 32 here;
