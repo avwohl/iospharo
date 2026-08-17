@@ -2,9 +2,20 @@
 
 **Date:** 2026-08-17
 **Source:** `docs/known-issues.md` on the `main` branch, at commit 22451a75,
-immediately before `main` was reset to `origin/main`. The 86 commits that built
-it are preserved on the ref `backup-main-2026-08-17` and in
-`~/iospharo-backups/main-86-commits-2026-08-17.bundle`.
+immediately before `main` was reset to `origin/main`.
+
+**Status of those 86 commits: fully accounted for.** Every item a pre-reset
+audit flagged as worth preserving was checked against this branch afterwards,
+each verdict then attacked by a second reviewer. Of 56 items, 53 were already
+here (mostly as re-implementations, since the two VMs diverged on 2026-04-01)
+or were declined for reasons recorded on this branch; the remaining three --
+four unreachable primitive stubs and a stale comment -- were landed in
+"Delete four unreachable primitive stubs, one of which lied about succeeding".
+Nothing from `main` is outstanding.
+
+The commits themselves are archived at
+`~/iospharo-backups/main-86-commits-2026-08-17.bundle` (verified as a complete
+history). They are not on any remote, and are kept only as a paper trail.
 
 This file exists so that work does not vanish with the branch. Read it as a
 record of the `main` VM, not of this one. The two diverged on 2026-04-01 and
