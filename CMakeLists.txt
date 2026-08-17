@@ -71,20 +71,27 @@ message(STATUS "Crypto support: ${PHARO_WITH_CRYPTO}")
 # source problem rather than a missing prerequisite. Check the two xcframeworks
 # whose headers are on the include path and say what to run. Note these two come
 # from their own scripts, not from build-third-party.sh.
-foreach(REQUIRED_XCF SDL2:build-sdl2.sh libffi:build-libffi.sh)
-    string(REPLACE ":" ";" XCF_PARTS ${REQUIRED_XCF})
-    list(GET XCF_PARTS 0 XCF_NAME)
-    list(GET XCF_PARTS 1 XCF_SCRIPT)
-    if(NOT EXISTS ${CMAKE_SOURCE_DIR}/Frameworks/${XCF_NAME}.xcframework/${XCFRAMEWORK_PLATFORM})
-        message(FATAL_ERROR
-            "Missing Frameworks/${XCF_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}.\n"
-            "The third-party xcframeworks are not checked in. Build them once with:\n"
-            "    ./scripts/build-libffi.sh\n"
-            "    ./scripts/build-sdl2.sh\n"
-            "    ./scripts/build-third-party.sh   # add --no-crypto to skip OpenSSL/libssh2/libgit2\n"
-            "This one comes from scripts/${XCF_SCRIPT}.")
-    endif()
-endforeach()
+# APPLE ONLY. An xcframework is an Apple packaging format and
+# XCFRAMEWORK_PLATFORM is only set inside the if(APPLE) block above, so on Linux
+# this checked for "Frameworks/SDL2.xcframework/" with an empty slice and failed
+# every build -- including CI, which is Linux. Linux gets libffi and SDL2 from
+# the system.
+if(APPLE)
+    foreach(REQUIRED_XCF SDL2:build-sdl2.sh libffi:build-libffi.sh)
+        string(REPLACE ":" ";" XCF_PARTS ${REQUIRED_XCF})
+        list(GET XCF_PARTS 0 XCF_NAME)
+        list(GET XCF_PARTS 1 XCF_SCRIPT)
+        if(NOT EXISTS ${CMAKE_SOURCE_DIR}/Frameworks/${XCF_NAME}.xcframework/${XCFRAMEWORK_PLATFORM})
+            message(FATAL_ERROR
+                "Missing Frameworks/${XCF_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}.\n"
+                "The third-party xcframeworks are not checked in. Build them once with:\n"
+                "    ./scripts/build-libffi.sh\n"
+                "    ./scripts/build-sdl2.sh\n"
+                "    ./scripts/build-third-party.sh   # add --no-crypto to skip OpenSSL/libssh2/libgit2\n"
+                "This one comes from scripts/${XCF_SCRIPT}.")
+        endif()
+    endforeach()
+endif()
 
 # VM Core Library
 set(VM_SOURCES
