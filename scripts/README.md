@@ -12,6 +12,21 @@
   callback, the callback never answers, and the VM spins — which reads as a hang.
   With it, that class runs in about 0.4s. Needs a pharo-vm checkout; set
   `PHARO_VM_SRC` if yours is not at `~/esrc/pharo-vm`.
+- `sunit-sweep.sh` — offline full-coverage SUnit sweep, one architecture per
+  invocation: `sunit-sweep.sh <vm-binary> <prepped-image> [outdir]`. Unlike
+  `run_all_tests.sh` it never touches the network and takes the VM binary as an
+  argument, which is what makes an arm-vs-x86 comparison on one machine
+  possible. Batches and relaunches from a pristine image, because one class can
+  hard-hang the VM in a way the in-image watchdog cannot interrupt.
+
+  Prepare the image with an explicit snapshot, NOT `eval --save`:
+
+      <vm> fresh.image eval "'scripts/pharo-headless-test/run_sunit_tests.st'
+          asFileReference fileIn. Smalltalk snapshot: true andQuit: true"
+
+  `--save` is the stock Cog VM's flag; under `test_load_image` it is forwarded
+  to the image's command-line handler and nothing is saved. Verified by setting
+  a global and finding it gone on the next launch.
 - `pharo-headless-test/` — Submodule: headless test runner + fake GUI (https://github.com/avwohl/pharo-headless-test)
 
   The runner has no class-level skip list: it runs every non-abstract TestCase
