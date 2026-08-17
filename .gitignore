@@ -38,6 +38,12 @@ pharo-ui
 # Xcode derived data
 DerivedData/
 Frameworks/
+# ...and as a bare name, because a git worktree typically carries a SYMLINK
+# named Frameworks pointing at the main checkout's copy, and `Frameworks/`
+# with a trailing slash matches a directory only. Without this line a plain
+# `git add -A` in a worktree commits a machine-specific absolute-path symlink;
+# it has happened twice.
+Frameworks
 
 # Xcode
 *.xcuserstate
