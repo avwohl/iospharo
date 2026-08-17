@@ -24263,6 +24263,65 @@ static std::string cfDateFormat(CFDateFormatterStyle dateStyle, CFDateFormatterS
     CFRelease(fmt);
     return result;
 }
+
+// Translate a CFDateFormatter (CLDR/ICU) pattern into the format letters the
+// image expects. These are NOT the same language, and handing the image a raw
+// CLDR pattern is worse than failing the primitive: Locale>>primShortDateFormat
+// documents "d day, m month, y year, double symbol is null padded, single not
+// padded (m=6, mm=06), dddd weekday, mmmm month name", so CLDR's uppercase M
+// for month is not a month to the image at all.
+//
+// Quoted literals are passed through untouched -- CLDR quotes literal text with
+// single quotes, and a letter inside quotes is text, not a field.
+static std::string squeakDateFormat(const std::string& cldr) {
+    std::string out;
+    size_t i = 0;
+    while (i < cldr.size()) {
+        char c = cldr[i];
+        if (c == '\'') {
+            out += c; ++i;
+            while (i < cldr.size() && cldr[i] != '\'') out += cldr[i++];
+            if (i < cldr.size()) out += cldr[i++];
+            continue;
+        }
+        // CLDR patterns from macOS separate the time from the am/pm marker with
+        // U+202F NARROW NO-BREAK SPACE, and some locales use U+00A0. The image
+        // stores this in a ByteString, so the multi-byte sequence arrives as
+        // individual bytes and renders as mojibake in a pattern that is supposed
+        // to be plain letters. Normalise both to an ASCII space; every other
+        // byte is passed through unchanged, so a locale with genuinely
+        // non-Latin literal text keeps them.
+        if (static_cast<unsigned char>(c) == 0xE2 && i + 2 < cldr.size() &&
+            static_cast<unsigned char>(cldr[i + 1]) == 0x80 &&
+            static_cast<unsigned char>(cldr[i + 2]) == 0xAF) {
+            out += ' '; i += 3; continue;
+        }
+        if (static_cast<unsigned char>(c) == 0xC2 && i + 1 < cldr.size() &&
+            static_cast<unsigned char>(cldr[i + 1]) == 0xA0) {
+            out += ' '; i += 2; continue;
+        }
+        if (std::isalpha(static_cast<unsigned char>(c))) {
+            size_t n = 0;
+            while (i + n < cldr.size() && cldr[i + n] == c) ++n;
+            switch (c) {
+                case 'y': case 'Y': out.append(n, 'y'); break;   // year
+                case 'M': case 'L': out.append(n, 'm'); break;   // month (CLDR M -> image m)
+                case 'd': out.append(n, 'd'); break;             // day of month
+                case 'E': case 'c': out.append(4, 'd'); break;   // weekday name -> dddd
+                case 'h': case 'H': case 'k': case 'K':
+                    out.append(n, 'h'); break;                   // hour
+                case 'm': out.append(n, 'm'); break;             // minute (time context)
+                case 's': out.append(n, 's'); break;             // second
+                case 'a': out += 'x'; break;                     // am/pm marker
+                default: break;                                   // drop fields with no counterpart
+            }
+            i += n;
+            continue;
+        }
+        out += c; ++i;
+    }
+    return out;
+}
 #endif
 
 // Primitive 390: Get system language
@@ -24365,9 +24424,12 @@ PrimitiveResult Interpreter::primitiveLocaleThousandsSeparator(int argCount) {
 PrimitiveResult Interpreter::primitiveLocaleDateFormat(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    std::string fmt = "MM/dd/yyyy";
+    // Short style, and registered under primitiveShortDateFormat to match.
+    // The image's own fallback is 'm/d/yy', so the shape is the short one.
+    std::string fmt = "m/d/yy";
 #if __APPLE__
-    std::string val = cfDateFormat(kCFDateFormatterShortStyle, kCFDateFormatterNoStyle);
+    std::string val = squeakDateFormat(
+        cfDateFormat(kCFDateFormatterShortStyle, kCFDateFormatterNoStyle));
     if (!val.empty()) fmt = val;
 #endif
 
@@ -24384,9 +24446,10 @@ PrimitiveResult Interpreter::primitiveLocaleDateFormat(int argCount) {
 PrimitiveResult Interpreter::primitiveLocaleTimeFormat(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    std::string fmt = "HH:mm:ss";
+    std::string fmt = "h:mmx";
 #if __APPLE__
-    std::string val = cfDateFormat(kCFDateFormatterNoStyle, kCFDateFormatterMediumStyle);
+    std::string val = squeakDateFormat(
+        cfDateFormat(kCFDateFormatterNoStyle, kCFDateFormatterMediumStyle));
     if (!val.empty()) fmt = val;
 #endif
 
@@ -24445,6 +24508,114 @@ PrimitiveResult Interpreter::primitiveLocaleDaylightSaving(int argCount) {
 
     pop();
     push(isDST ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// primitiveLongDateFormat -> string
+// The image asks for both a long and a short date format and they are different
+// primitives; only the short one existed here, under a name the image never
+// looks up, so Locale>>primLongDateFormat always fell back to its hardcoded
+// 'dddd, mmmm d, yyyy' whatever the host locale said.
+PrimitiveResult Interpreter::primitiveLocaleLongDateFormat(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    std::string fmt = "dddd, mmmm d, yyyy";
+#if __APPLE__
+    std::string val = squeakDateFormat(
+        cfDateFormat(kCFDateFormatterLongStyle, kCFDateFormatterNoStyle));
+    if (!val.empty()) fmt = val;
+#endif
+
+    Oop result = createStringObject(memory_, fmt);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// primitiveVMOffsetToUTC -> minutes between the VM's clock and UTC
+// Locale>>primVMOffsetToUTC: "Returns the offset in minutes between the VM and
+// UTC. If the VM does not support UTC times, this is 0." This VM reports local
+// time, so the offset is the local zone's, the same quantity
+// primitiveTimezoneOffset answers. Answering 0 -- the image's fallback -- claims
+// the VM runs on UTC, which is wrong everywhere except Britain in winter.
+PrimitiveResult Interpreter::primitiveLocaleVMOffsetToUTC(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    time_t now = time(nullptr);
+    struct tm local;
+    localtime_r(&now, &local);
+    int64_t offsetMinutes = pharo_tm_gmtoff(&local) / 60;
+
+    pop();
+    push(Oop::fromSmallInteger(offsetMinutes));
+    return PrimitiveResult::Success;
+}
+
+// primitiveMeasurementMetric -> boolean, true = metric
+PrimitiveResult Interpreter::primitiveLocaleMeasurementMetric(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    bool metric = true;
+#if __APPLE__
+    CFLocaleRef locale = CFLocaleCopyCurrent();
+    if (locale) {
+        CFBooleanRef v = static_cast<CFBooleanRef>(
+            CFLocaleGetValue(locale, kCFLocaleUsesMetricSystem));
+        // Get-rule: CFLocaleGetValue does not transfer ownership, so v is not
+        // released here. Only the locale, which came from a Copy, is.
+        if (v) metric = CFBooleanGetValue(v);
+        CFRelease(locale);
+    }
+#endif
+
+    pop();
+    push(metric ? memory_.trueObject() : memory_.falseObject());
+    return PrimitiveResult::Success;
+}
+
+// primitiveCurrencyNotation -> boolean, true = symbol is a prefix
+// There is no CFLocale key for this, so ask the number formatter to format a
+// known amount and see which side the symbol lands on.
+PrimitiveResult Interpreter::primitiveLocaleCurrencyNotation(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    bool prefix = true;
+#if __APPLE__
+    CFLocaleRef locale = CFLocaleCopyCurrent();
+    if (locale) {
+        CFNumberFormatterRef nf = CFNumberFormatterCreate(
+            kCFAllocatorDefault, locale, kCFNumberFormatterCurrencyStyle);
+        if (nf) {
+            double amount = 1.0;
+            CFNumberRef num = CFNumberCreate(kCFAllocatorDefault,
+                                             kCFNumberDoubleType, &amount);
+            if (num) {
+                CFStringRef formatted =
+                    CFNumberFormatterCreateStringWithNumber(kCFAllocatorDefault, nf, num);
+                if (formatted) {
+                    char buf[128];
+                    if (CFStringGetCString(formatted, buf, sizeof(buf),
+                                           kCFStringEncodingUTF8)) {
+                        // Prefix unless the first non-space character is part of
+                        // the number itself.
+                        const unsigned char* q = reinterpret_cast<unsigned char*>(buf);
+                        while (*q == ' ') ++q;
+                        prefix = !(std::isdigit(*q) || *q == '-' || *q == '+');
+                    }
+                    CFRelease(formatted);
+                }
+                CFRelease(num);
+            }
+            CFRelease(nf);
+        }
+        CFRelease(locale);
+    }
+#endif
+
+    pop();
+    push(prefix ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 

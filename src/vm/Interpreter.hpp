@@ -2972,6 +2972,10 @@ private:
     PrimitiveResult primitiveLocaleTimezone(int argCount);          // 397
     PrimitiveResult primitiveLocaleTimezoneOffset(int argCount);    // 398
     PrimitiveResult primitiveLocaleDaylightSaving(int argCount);    // 399
+    PrimitiveResult primitiveLocaleLongDateFormat(int argCount);
+    PrimitiveResult primitiveLocaleVMOffsetToUTC(int argCount);
+    PrimitiveResult primitiveLocaleMeasurementMetric(int argCount);
+    PrimitiveResult primitiveLocaleCurrencyNotation(int argCount);
 
     // CoreMotionPlugin named primitives
     PrimitiveResult primitiveMotionData(int argCount);
