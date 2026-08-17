@@ -60,6 +60,51 @@ branch's own code and re-verified here. Where `main`'s version would have
 dropped behaviour this branch has and `main` does not, it was not taken; the
 notes below say so.
 
+## A short pointers colour map was treated as no colour map
+
+`primitiveCopyBits` raised its new-style flag only for a pointers colour map
+with at least two slots. A pointers map with fewer slots fell through to the
+old-style branch, and the generic transfer then derived an implicit shift and
+mask map for it, exactly as it does for a nil map. The image supplied a map on
+purpose and the VM converted its pixels anyway.
+
+`BitBltSimulation>>loadColorMap` raises `ColorMapNewStyle` for any pointers map,
+whatever that map holds, and then uses the map verbatim. The flag is now raised
+the same way, before the slot-count test rather than inside it. The slot-count
+test still guards the shifts and masks read, which does need two slots.
+
+A 32bpp source blitted to a depth -16 destination shows the difference. With a
+one-slot map the destination word was 143016196; with a three-slot map, from the
+same source pixels, it was 540033056. The one-slot case now matches the
+three-slot case. A nil map is unaffected and still gets the implicit map.
+
+## Three directory primitives failed without saying why
+
+`primitiveReaddir` and `primitiveRewinddir` rejected an argument that is not a
+handle this VM issued, but set no primitive error code. The image saw a
+`PrimitiveFailed` whose selector was `#signalError:for:`, which reports that
+something failed and nothing more; an invalid handle and a real I/O failure read
+alike. Both now report `#'bad argument'`, which is what `primitiveClosedir`
+already reported and what the reference plugin answers.
+
+`primitiveClosedir` is unchanged in behaviour. Its three sites now name the
+constant instead of writing the literal 3.
+
+The error code is now a class-scoped constant, `PrimErrBadArgument_`, beside the
+other three in `Interpreter.hpp`. The trailing underscore keeps it clear of the
+`PrimErrBadArgument` macro that the VMMaker plugin headers define.
+
+### Not ported: the external objects table size
+
+`main` grows the image's external objects array to 256 slots, the reference
+VM's initial size, because a fresh Pharo 13 image ships 20 and the image treats
+the reported size as a hard ceiling. That defect does not exist on this branch.
+This branch already answers `vmMaxExternalSemaphores_`, 65536 by default, when
+the array is smaller, so `ExternalSemaphoreTable` never reaches the ceiling and
+grows its own array quietly. Registering 300 external objects on a fresh image
+succeeds and leaves a 320-slot array. Taking `main`'s version would have added
+an allocation inside the parameter getter for no observable gain.
+
 ## BitBlt converted only 15 of the 36 depth pairs
 
 The hand-written handlers in `primitiveCopyBits` cover 15 ordered depth pairs.

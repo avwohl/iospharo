@@ -19796,9 +19796,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     Oop colorMap = memory_.fetchPointer(BBColorMap, bitBlt);
     uint32_t* cmTable = nullptr;
     size_t cmSize = 0;
-    // True when the map is a new-style ColorMap object rather than a plain
-    // Bitmap. Only the generic transfer near the end of this primitive reads
-    // it, to decide whether it has to derive an implicit shift/mask map.
+    // True for a "new style" ColorMap object — that is, ANY pointers object,
+    // whatever it holds. BitBltSimulation>>loadColorMap raises ColorMapNewStyle
+    // for any pointers map and then uses that map verbatim; only a nil map or an
+    // old-style (words) map gets an implicit shift/mask map derived for it.
+    // Only the generic transfer near the end of this primitive reads the flag.
     bool colorMapIsNewStyle = false;
     // ColorMap shift/mask support (used by BMP reader for channel reordering)
     bool hasShiftMask = false;
@@ -19806,9 +19808,16 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     uint32_t cmMasks[4] = {0, 0, 0, 0};
     if (!colorMap.isNil() && colorMap.isObject()) {
         ObjectHeader* cmHdr = colorMap.asObjectPtr();
+        // Set BEFORE the slot-count test, not inside it. A pointers map with
+        // fewer than two slots is still a map the image supplied on purpose;
+        // gating the flag on the slot count sent it down the nil-map path and
+        // fabricated a 16<->32 conversion map that rewrote its pixels. A 32bpp
+        // source blitted to a depth -16 destination came out as 143016196 with
+        // a one-slot map and 540033056 with a three-slot one, for the same
+        // source pixels.
+        if (cmHdr->isPointersObject()) colorMapIsNewStyle = true;
         if (cmHdr->isPointersObject() && cmHdr->slotCount() >= 2) {
             // ColorMap object with inst vars: shifts, masks, colors
-            colorMapIsNewStyle = true;
             Oop shiftsOop = memory_.fetchPointer(0, colorMap);
             Oop masksOop = memory_.fetchPointer(1, colorMap);
             if (shiftsOop.isObject() && !shiftsOop.isNil() &&
@@ -29935,11 +29944,19 @@ PrimitiveResult Interpreter::primitiveOpendir(int argCount) {
 PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
+    // Every argument-shape reject reports #'bad argument', the same code
+    // primitiveClosedir already answers. Without it the image raises a
+    // PrimitiveFailed whose selector is #signalError:for:, which says only
+    // "something failed" and cannot be told apart from an I/O failure.
     Oop dirOop = stackTop();
-    if (!dirOop.isObject()) return PrimitiveResult::Failure;
+    if (!dirOop.isObject()) {
+        primFailCode_ = PrimErrBadArgument_;
+        return PrimitiveResult::Failure;
+    }
 
     ObjectHeader* dirHdr = dirOop.asObjectPtr();
     if (!dirHdr->isBytesObject() || memory_.byteSizeOf(dirOop) < sizeof(void*)) {
+        primFailCode_ = PrimErrBadArgument_;
         return PrimitiveResult::Failure;
     }
 
@@ -29947,7 +29964,10 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
     DIR* dir = nullptr;
     memcpy(&dir, dirHdr->bytes(), sizeof(void*));
     // Only operate on a handle we actually opened — never deref arbitrary bytes.
-    if (!dir || g_openDirHandles.count(dir) == 0) return PrimitiveResult::Failure;
+    if (!dir || g_openDirHandles.count(dir) == 0) {
+        primFailCode_ = PrimErrBadArgument_;
+        return PrimitiveResult::Failure;
+    }
 
     errno = 0;
     const char* dName = nullptr;
@@ -30146,11 +30166,14 @@ PrimitiveResult Interpreter::primitiveClosedir(int argCount) {
     // FileAttributesPluginPrimsTest>>testPrimCloseDir{Nil,String,WrongLength}
     // asserts the PrimitiveFailed selector).
     Oop dirOop = stackTop();
-    if (!dirOop.isObject()) { primFailCode_ = 3; return PrimitiveResult::Failure; }
+    if (!dirOop.isObject()) {
+        primFailCode_ = PrimErrBadArgument_;
+        return PrimitiveResult::Failure;
+    }
 
     ObjectHeader* dirHdr = dirOop.asObjectPtr();
     if (!dirHdr->isBytesObject() || memory_.byteSizeOf(dirOop) != sizeof(void*)) {
-        primFailCode_ = 3;
+        primFailCode_ = PrimErrBadArgument_;
         return PrimitiveResult::Failure;
     }
 
@@ -30160,7 +30183,7 @@ PrimitiveResult Interpreter::primitiveClosedir(int argCount) {
     // Only close a handle we actually opened (guards bogus/stale/double-close —
     // closedir on arbitrary bytes SIGSEGVs inside libc).
     if (!dir || g_openDirHandles.count(dir) == 0) {
-        primFailCode_ = 3;
+        primFailCode_ = PrimErrBadArgument_;
         return PrimitiveResult::Failure;
     }
     closeDirHandle(dir);
@@ -30181,18 +30204,28 @@ PrimitiveResult Interpreter::primitiveClosedir(int argCount) {
 PrimitiveResult Interpreter::primitiveRewinddir(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
+    // Same reporting as primitiveReaddir and primitiveClosedir: an argument
+    // that is not a handle this VM issued is #'bad argument', not a bare
+    // primitive failure.
     Oop dirOop = stackTop();
-    if (!dirOop.isObject()) return PrimitiveResult::Failure;
+    if (!dirOop.isObject()) {
+        primFailCode_ = PrimErrBadArgument_;
+        return PrimitiveResult::Failure;
+    }
 
     ObjectHeader* dirHdr = dirOop.asObjectPtr();
     if (!dirHdr->isBytesObject() || memory_.byteSizeOf(dirOop) < sizeof(void*)) {
+        primFailCode_ = PrimErrBadArgument_;
         return PrimitiveResult::Failure;
     }
 
     DIR* dir = nullptr;
     memcpy(&dir, dirHdr->bytes(), sizeof(void*));
     // Only operate on a handle we actually opened.
-    if (!dir || g_openDirHandles.count(dir) == 0) return PrimitiveResult::Failure;
+    if (!dir || g_openDirHandles.count(dir) == 0) {
+        primFailCode_ = PrimErrBadArgument_;
+        return PrimitiveResult::Failure;
+    }
 
 #ifdef _WIN32
     reinterpret_cast<WinDirIter*>(dir)->cursor = 0;

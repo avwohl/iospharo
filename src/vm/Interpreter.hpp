@@ -899,8 +899,15 @@ private:
     //   9: #'insufficient object memory'  <-- OutOfMemory trigger
     //  10: #'insufficient C memory'
     //  ... (see Pharo SmalltalkImage>>initializePrimitiveErrors)
-    static constexpr int PrimErrNoMemory_       = 9;  // Insufficient object memory
+    // Trailing underscore is not a style choice: the VMMaker plugin headers
+    // (src/include/interp.h, src/ios/vm/include/interp.h, src/ios/cointerp-cpp.c)
+    // define object-like macros PrimErrBadArgument, PrimErrNoModification and
+    // friends. Those headers are not on this target's include path today, but a
+    // member named after one would break every translation unit that ever does
+    // see both, so the whole family carries the underscore.
+    static constexpr int PrimErrBadArgument_    = 3;  // Argument is not what the primitive needs
     static constexpr int PrimErrNoModification_ = 8;  // Attempt to modify immutable object
+    static constexpr int PrimErrNoMemory_       = 9;  // Insufficient object memory
     static constexpr int PrimErrOSError         = 21; // Index in PrimErrTable for OS errors
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     // Overrun canary.  ~Interpreter aborts with
