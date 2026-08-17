@@ -11,6 +11,146 @@
 > `docs/vm-compat-bugs.md`. Nothing was deleted.
 
 
+2026-08-17 (VM fixes ported from `main`)
+
+Six defects found while running a BitBlt/become/callback test battery against
+this branch. Each was diagnosed first on `main`, whose VM has diverged
+considerably, so none is a cherry-pick — every one was re-applied against this
+branch's own code and re-verified here. Where `main`'s version would have
+dropped behaviour this branch has and `main` does not, it was not taken; the
+notes below say so.
+
+## BitBlt converted only 15 of the 36 depth pairs
+
+The hand-written handlers in `primitiveCopyBits` cover 15 ordered depth pairs.
+The other 15 fell through to the "unsupported depth combinations" tail, which
+fails the primitive:
+
+    1->2   1->4   1->16   2->1   2->4   2->16   4->1   4->2   4->16
+    8->2   8->4   8->16   16->2  16->4  16->8
+
+A failed primitive 96 is not recoverable. Pharo 13 ships no BitBlt simulation,
+so `BitBlt>>copyBits` ends with `self error: 'Bad BitBlt arg (Fraction?);
+proceed to convert.'` — and that error, not a wrong colour, is what
+`(Form extent: 33@5 depth: 1) asFormOfDepth: 4` raised.
+
+All 15 are raw pixel-value moves between palette depths, so one generic loop
+covers them. It is placed after every hand-written handler and gated on
+`destDepth != 32`, so it can only run where the primitive would otherwise have
+failed — it cannot pre-empt the paths above it that do more than a raw move
+(the 8->8 byte swap, the negative same-depth case, the 16bpp rules).
+
+## 1/2/4-to-8 blits reversed every group of four pixels
+
+Depth-8 Form bits are MSB-first within each 32-bit word: column c lives at byte
+`(c & ~3) + (3 - (c & 3))`, not at byte c. The 8-to-8 handler already followed
+that convention; the 1-to-8, 2-to-8 and 4-to-8 handlers wrote plain
+little-endian bytes. It went unnoticed because the primitive still answered
+success, and because a depth change also applies a palette map, so the wrong
+bytes did not look like a permutation of the input.
+
+`BitBltLowDepthTest` 5 of 9 -> 9 of 9.
+
+## 16bpp rows strided by the pixel width, not the padded width
+
+A Form row pads to a whole number of 32-bit words, so a 16bpp row owns an even
+number of pixel slots. Ten sites strided by the pixel width instead, losing one
+slot per row on any odd-width form: the image walks sideways, a little further
+on each row down. Row 0 always lands correctly however wrong the stride is, and
+an even width makes the padded width and the pixel count identical — so the
+fault needs both an odd width and several rows to appear, which is why the
+existing 16bpp tests missed it. Now expressed once as `pixelsPerRow16()`.
+
+## 8-to-1 blits ignored the colour map
+
+The 8-to-1 handler thresholds — non-zero byte becomes 1 — so every non-zero
+palette index converted to 1 whatever colour it names, while
+`Form>>asFormOfDepth: 1` passes the 256-entry map from `colormapIfNeededFor:`
+and expects it applied. It is now taken only when no map is supplied, which is
+the stencil case it was written for; mapped conversions go to the generic
+transfer. Its 8bpp source indexing had the same MSB-first fault described
+above, fixed here too since the stencil path still uses it.
+
+With these four, all 36 depth pairs convert each pixel identically whether it
+is converted in a row or on its own (`BitBltDepthMatrixTest` 9/9, was 4/9).
+
+## WarpBlt silently ignored two colour maps
+
+`primitiveWarpBits` ignored its `sourceMap` argument — which
+`WarpBlt>>warpBits` fills from `sourceForm colormapIfNeededForDepth: 32`, and
+which is nil only when the source is already 32bpp, the sole depth this
+implementation accepts — and never read the receiver's own `colorMap` field at
+all. Both now fail the primitive so `warpBitsSmoothing:sourceMap:` does the
+work in Smalltalk, rather than silently writing unmapped colours.
+`WarpBltTest` 7 of 8 -> 8 of 8.
+
+## One-way become did a full heap scan per pair
+
+`elementsForwardIdentityTo:` and the other one-way become primitives (197, 248,
+249) called `becomeForward` once per element pair, and `becomeForward` walks the
+entire heap. Measured on a fresh image, before and after:
+
+    pairs     before      after
+      100      670 ms      31 ms
+      200     1363 ms      42 ms
+      400     2732 ms      63 ms
+      800     5528 ms     104 ms
+
+The three call sites now collect their pairs into a map and make one scan
+through a new `ObjectMemory::becomeForwardAll`.
+
+That is not a copy of `main`'s version. `becomeForward` on this branch does
+three things besides the scan, and the batch keeps all three: the `classTable_`
+redirect (without which a class becomeForward'd into another keeps dispatching
+through the old table slot — what the GHost/Mocketry real-object stubs depend
+on), the forwarder safety net, and the shadow-slot table clear, now done once
+for the batch. The forwarders go in after the scan rather than interleaved per
+pair, so every pair sees the pre-become heap — closer to Spur, which defines
+become as simultaneous, and necessary here because interleaving would let one
+pair's forwarder overwrite slot 0 of an object a later pair still had to scan.
+
+`scanStackReplace` stays per pair: it is bounded by frame depth, not heap size.
+
+## The crash dump's GC fields were hardcoded zeros
+
+The fatal `pushFrame` dump printed `gcCount=0 lastGCStep=0` from two literals,
+so the one place that reports how far the VM was from its last GC when it died
+always said "no GCs, at step zero". It now prints the real `gcCount` plus the
+step counter, the step counter as of the last GC, and the distance between
+them. The counter is `g_stepNum`, not `bytecodeCount_` — only `step()`
+increments the latter, and `step()` is not what runs the VM.
+
+## A quit during an FFI callback stranded the callback
+
+`primitiveQuit` honoured a quit taken while a callback was outstanding. It
+cannot be: the C function that invoked the callback still has frames expecting
+it to return, and stopping the interpreter makes
+`enterInterpreterFromCallback` return rather than unwind, handing C a zeroed
+result. Nothing need be wrong with the callback — the nested interpreter runs
+the highest-priority ready process, and that process signalling `Exit` is
+enough. The quit is now deferred to `interpret()`, which honours it once
+`callbackDepth_` reaches zero, and is checked ahead of the eval-deferral path
+(which terminates the current process and reschedules — equally fatal to a
+live callback).
+
+The abandoned-callback path then freed its `VMCallbackContext` while it was
+still on the active-callback stack, so `primitiveReadNextCallback` could hand
+out freed memory and `callbackDepth_` would climb on every later callback until
+it pinned at `MaxCallbackDepth`. A new `abandonCallback()` removes the entry
+first, shifting all three lockstep arrays (`callbackContextStack_`,
+`callbackHandedOut_`, `callbackHandlerStack_`) and clearing the vacated top slot
+in each.
+
+## Already fixed here, not ported
+
+Nine further areas diagnosed on `main` were checked against this branch and
+found already fixed, several of them months earlier — among them the directory
+enumeration `.`/`..` handling (fixed here 2026-04-14), the non-local-return
+home-activation match, the 10,000-context walk limit, the 5-bit zero-fill
+widening and the 16bpp alpha bit. Their regression tests were run here and pass:
+`NonLocalReturnActivationTest` 5/5, `DirectoryEnumerationTest` 4/4,
+`DeepStackUnwindTest` 4/4.
+
 2026-08-13 (branch consolidation)
 
 ## `jit-arm-ci` and `jit-arm-linux` deleted; the repo is now `main` + `jit`
