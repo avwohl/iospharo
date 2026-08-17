@@ -2650,8 +2650,6 @@ private:
     PrimitiveResult primitiveImmediateAsInteger(int argCount);     // 530
 
     // String/encoding primitives (531-534)
-    PrimitiveResult primitiveStringEncode(int argCount);           // 531
-    PrimitiveResult primitiveStringDecode(int argCount);           // 532
     PrimitiveResult primitiveCharacterAsciiValue(int argCount);    // 533
     PrimitiveResult primitiveAllObjectsInMemory(int argCount);     // 534
 
@@ -2787,8 +2785,6 @@ private:
 
     // Misc primitives (232-239) - 231 uses existing primitiveForceDisplayUpdate
     PrimitiveResult primitiveFormPrint(int argCount);              // 232
-    PrimitiveResult primitiveSetDisplayMode(int argCount);         // 233
-    PrimitiveResult primitiveTestDisplayDepth(int argCount);       // 91 (also 91)
     PrimitiveResult primitiveBitmapDecompress(int argCount);       // 234
     // primitiveStringCompareWith is declared above (158)
     PrimitiveResult primitiveSampledSoundConvert(int argCount);    // 236

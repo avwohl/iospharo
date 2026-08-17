@@ -1935,7 +1935,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Official VM behavior: fail if index is not SmallInteger (PrimErrBadArgument)
+    // Official VM behavior: fail if index is not SmallInteger (PrimErrBadArgument_)
     // or if receiver is not an object (PrimErrInappropriate)
     if (!index.isSmallInteger() || !rcvr.isObject()) {
         static int badIdxLog = 0;
@@ -16465,33 +16465,12 @@ PrimitiveResult Interpreter::primitiveImmediateAsInteger(int argCount) {
 
 // ===== STRING/ENCODING PRIMITIVES (531-534) =====
 
-// Primitive 531: String encode
-// aString encoding primitiveStringEncode -> encodedBytes
-// Converts a string to bytes in specified encoding
-PrimitiveResult Interpreter::primitiveStringEncode(int argCount) {
-    if (argCount != 1) return PrimitiveResult::Failure;
-
-    Oop stringOop = stackValue(1);
-
-    if (stringOop.isImmediate()) {
-        return PrimitiveResult::Failure;
-    }
-
-    // For simplicity, only support UTF-8 (encoding 0) and Latin-1 (encoding 1)
-    // In reality, Smalltalk has a rich encoding system
-    // Fail to let Smalltalk handle complex encodings
-    return PrimitiveResult::Failure;
-}
-
-// Primitive 532: String decode
-// aByteArray encoding primitiveStringDecode -> string
-// Converts bytes in specified encoding to a string
-PrimitiveResult Interpreter::primitiveStringDecode(int argCount) {
-    if (argCount != 1) return PrimitiveResult::Failure;
-
-    // Similar to encode, fail to Smalltalk for complex handling
-    return PrimitiveResult::Failure;
-}
+// primitiveStringEncode (531) and primitiveStringDecode (532) were deleted.
+// Both were unreachable: VMMaker reserves 520-540, so generated_primitives.inc
+// has primitiveTable_[531] and [532] as nullptr and nothing registers them by
+// name. Both bodies did nothing but return Failure anyway, and Pharo encodes
+// and decodes in Smalltalk. Deleting them costs nothing and stops the stale
+// "Primitive 531" comments implying a number the VM does not answer to.
 
 // Primitive 533: Character ASCII value
 // aCharacter primitiveCharacterAsciiValue -> integer
@@ -18345,37 +18324,16 @@ PrimitiveResult Interpreter::primitiveFormPrint(int argCount) {
     return PrimitiveResult::Failure;
 }
 
-// Primitive 233: Set display mode
-// depth fullscreen primitiveSetDisplayMode -> success
-// Changes display depth and/or fullscreen mode
-PrimitiveResult Interpreter::primitiveSetDisplayMode(int argCount) {
-    if (argCount != 2) return PrimitiveResult::Failure;
-
-    // Display mode changes are platform-specific
-    // On iOS, the display is managed by the system
-    // Just acknowledge the request
-    popN(2);  // pop arguments, leave receiver
-    return PrimitiveResult::Success;
-}
-
-// Primitive 91: Test display depth
-// depth primitiveTestDisplayDepth -> boolean
-// Tests if a given display depth is supported
-PrimitiveResult Interpreter::primitiveTestDisplayDepth(int argCount) {
-    if (argCount != 1) return PrimitiveResult::Failure;
-
-    Oop depthOop = stackTop();
-    if (!depthOop.isSmallInteger()) return PrimitiveResult::Failure;
-
-    int depth = static_cast<int>(depthOop.asSmallInteger());
-
-    // iOS supports 32-bit color
-    bool supported = (depth == 32 || depth == 16 || depth == 8 || depth == 1);
-
-    popN(argCount + 1);  // pop arg and receiver
-    push(supported ? memory_.trueObject() : memory_.falseObject());
-    return PrimitiveResult::Success;
-}
+// primitiveSetDisplayMode (233) and primitiveTestDisplayDepth (91) were
+// deleted. Neither was reachable: modern Pharo reassigned 90-93 to PermSpace,
+// so generated_primitives.inc gives slot 91 to primitiveMoveToPermSpaceInBulk,
+// and it leaves 232-234 null; neither was registered by name either.
+//
+// primitiveSetDisplayMode was worth removing on its own merits rather than
+// just for tidiness: it popped its arguments and answered Success without
+// changing anything, so if anyone ever wired slot 233 up, the image would be
+// told a display mode change had happened when it had not. A primitive that
+// lies about succeeding is worse than one that is absent.
 
 // Primitive 234: Bitmap decompress from byte array
 // byteArray bitmap primitiveDecompress -> success
