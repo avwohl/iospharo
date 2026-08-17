@@ -1355,6 +1355,11 @@ private:
     bool startupGracePeriod_ = true;
     uint64_t stepCountForDriver_ = 0;
     uint64_t bytecodeCount_ = 0;
+    /// g_stepNum as of the most recent GC. Reported in the fatal crash dump so
+    /// the distance from the last GC is visible. Deliberately not
+    /// bytecodeCount_, which only step() increments — the computed-goto loop in
+    /// interpret() is what actually runs the VM, and it counts g_stepNum.
+    uint64_t stepCountAtLastGC_ = 0;
     int sendCount_ = 0;
     int dnuDepth_ = 0;
 
@@ -3650,6 +3655,13 @@ public:
     /// Enter interpreter from a C callback (called from callbackClosureHandler)
     void enterInterpreterFromCallback(VMCallbackContext* vmcc);
 
+    /// Drop @a vmcc from the active-callback stack without returning a value.
+    /// Only for the path where enterInterpreterFromCallback returns instead of
+    /// unwinding — the caller is about to free the context, and leaving it on
+    /// the stack would leave a dangling pointer for primitiveReadNextCallback
+    /// to hand out. Answers whether it was found.
+    bool abandonCallback(VMCallbackContext* vmcc);
+
     /// TFFI v2: a WORKER thread queued a callback for VM-thread adoption.
     /// Sets the adoption flag and forces the next JIT back edge / periodic
     /// check to run promptly (same wake pattern as the finalization one-shot).
@@ -3696,6 +3708,12 @@ private:
     // sem-wait), don't touch the new active.
     Oop callbackHandlerStack_[MaxCallbackDepth] = {};
     int callbackDepth_ = 0;
+
+    /// Set when primitiveQuit fires while a callback is outstanding. The quit
+    /// cannot be honoured there: C frames (the caller of the callback, e.g.
+    /// qsort) are still live on the stack and must be allowed to unwind first.
+    /// interpret() honours it once callbackDepth_ reaches zero.
+    bool pendingQuit_ = false;
 
     /// Deferred callback return: set by primitiveCallbackReturn, consumed by
     /// the nested interpret loop in enterInterpreterFromCallback.

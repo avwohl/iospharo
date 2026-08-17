@@ -3879,6 +3879,19 @@ void Interpreter::interpret() {
         // -- Inline-array overrun canaries (2 compares per 1024 bytecodes) --
         checkArrayCanaries("checkpoint");
 
+        // -- Deferred quit: primitiveQuit fired while a callback was
+        //    outstanding and could not be honoured there, because the C caller
+        //    of the callback still had frames expecting a return. Honour it now
+        //    that the callback stack has unwound.
+        if (__builtin_expect(pendingQuit_ && callbackDepth_ == 0, 0)) {
+            pendingQuit_ = false;
+            fprintf(stderr, "[primitiveQuit] Honouring deferred quit "
+                            "(callbacks unwound)\n");
+            fflush(stderr);
+            running_ = false;
+            goto cg_exit;
+        }
+
         // -- Terminate stuck process (set by watchdog, rare) --
         if (__builtin_expect(stallDetected_.load(std::memory_order_acquire), 0)) {
             stallDetected_.store(false, std::memory_order_relaxed);
@@ -5257,6 +5270,27 @@ void Interpreter::signalSemaphoreDirectly(int externalIndex) {
 // ===== FFI CALLBACK SUPPORT =====
 
 extern int g_callbackSemaphoreIndex;
+
+bool Interpreter::abandonCallback(VMCallbackContext* vmcc) {
+    for (int i = callbackDepth_ - 1; i >= 0; --i) {
+        if (callbackContextStack_[i] != vmcc) continue;
+        // Three arrays are indexed in lockstep by callback depth, so all three
+        // have to be shifted down and the vacated top slot cleared. Missing one
+        // would leave a stale handler process visible to the GC root walk, or a
+        // handed-out flag that suppresses the next callback at that depth.
+        for (int j = i; j < callbackDepth_ - 1; ++j) {
+            callbackContextStack_[j] = callbackContextStack_[j + 1];
+            callbackHandedOut_[j]    = callbackHandedOut_[j + 1];
+            callbackHandlerStack_[j] = callbackHandlerStack_[j + 1];
+        }
+        --callbackDepth_;
+        callbackContextStack_[callbackDepth_] = nullptr;
+        callbackHandedOut_[callbackDepth_]    = false;
+        callbackHandlerStack_[callbackDepth_] = Oop();
+        return true;
+    }
+    return false;
+}
 
 void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     // 1. Materialize frame stack (saves current execution to Smalltalk contexts).
@@ -14557,8 +14591,11 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                 (unsigned long long)method_.rawBits(),
                 (unsigned long long)receiver_.rawBits());
         // GC info
-        fprintf(crashLog, "  gcCount=%zu lastGCStep=%llu\n",
-                (size_t)0/*gcCount*/, (unsigned long long)0/*lastGCStep*/);
+        fprintf(crashLog, "  gcCount=%zu step=%llu lastGCAtStep=%llu stepsSinceGC=%llu\n",
+                memory_.statistics().gcCount,
+                (unsigned long long)g_stepNum,
+                (unsigned long long)stepCountAtLastGC_,
+                (unsigned long long)(g_stepNum - stepCountAtLastGC_));
         // Check if method address is in valid heap range
         fprintf(crashLog, "  methodAddr in heap: old=%d perm=%d\n",
                 memory_.isOldObject(mObj), memory_.isPermObject(mObj));
@@ -22229,6 +22266,8 @@ void Interpreter::prepareForGC() {
 }
 
 void Interpreter::afterGC(bool fullGC) {
+    stepCountAtLastGC_ = g_stepNum;
+
     // Cascade hunt (2026-07-05): immediately after a scavenge eden holds NO
     // live objects, so ANY eden-window pointer still visible from a VM root
     // is a reference the scavenge failed to retarget — the exact birth

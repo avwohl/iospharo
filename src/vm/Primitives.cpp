@@ -5102,6 +5102,29 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         fprintf(stderr, "[EXIT-TRACE] primitiveQuit called argCount=%d\n", argCount);
     }
 
+    // A quit taken while a callback is outstanding cannot be honoured here.
+    // The C function that invoked the callback — qsort, say — still has frames
+    // on the stack expecting the callback to return, and stopping the
+    // interpreter makes enterInterpreterFromCallback return rather than unwind,
+    // which hands C a zeroed result and leaves the callback stranded.
+    //
+    // This is reachable without anything being wrong with the callback itself.
+    // The nested interpreter runs the highest-priority ready process, which may
+    // be an unrelated one — PharoCommandLineHandler finishing its `eval` and
+    // signalling Exit, whose defaultAction quits, is enough. Defer to
+    // interpret(), which honours it once the callback stack has unwound.
+    //
+    // Checked before the eval-deferral below, which terminates the current
+    // process and reschedules: doing that from inside a nested interpreter
+    // would strand the callback just as surely.
+    if (callbackDepth_ > 0) {
+        fprintf(stderr, "[primitiveQuit] Deferred: %d callback(s) outstanding, "
+                        "C frames must unwind first\n", (int)callbackDepth_);
+        fflush(stderr);
+        pendingQuit_ = true;
+        return PrimitiveResult::Success;
+    }
+
     // An image saved from inside an `eval` resumes INSIDE the previous
     // command's script (the snapshot chain is
     // SnapshotOperation>>doSnapshot ... SessionManager>>launchSnapshot:andQuit:,
@@ -32644,6 +32667,15 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         // invocation was still un-returned — the nested loop falls out.
         // Use the entry-captured retSize: cbInfo (and thus the cif) may
         // have been unregistered/buried during the nested interpretation.
+        //
+        // The callback produced no value, so C gets zero; that is bad but at
+        // least defined. What is not optional is taking vmcc off the
+        // active-callback stack before freeing it, or primitiveReadNextCallback
+        // hands out a pointer to freed memory and callbackDepth_ climbs on
+        // every subsequent callback until it pins at MaxCallbackDepth.
+        fprintf(stderr, "[FFI] callback abandoned without a return value "
+                        "(interpreter stopped mid-callback); returning zero to C\n");
+        if (g_interpreter) g_interpreter->abandonCallback(vmcc);
         if (ret && retSize > 0) memset(ret, 0, retSize);
         free(vmcc);
         return;
