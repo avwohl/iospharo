@@ -22,11 +22,15 @@
    Sound/MIDI tests require hardware (tagged with #requiresHardware)."!
 
 "----------------------------------------------------------------------
- DNU guard — prevents infinite recursion if something goes wrong
+ Deliberately no DNU guard here.
+
+ This file used to compile `UndefinedObject>>findNextHandlerContext ^ nil` into
+ the image at fileIn, described as a 'DNU guard'. It taught the exception system
+ to answer 'there is no handler' whenever nil reached handler lookup - exactly
+ the silent recovery this project forbids, since a nil in that position is a
+ real VM or image defect. It was also global and permanent: installed for every
+ later test and for any image saved afterwards, not only for this suite.
 ----------------------------------------------------------------------"
-(UndefinedObject canUnderstand: #findNextHandlerContext)
-    ifFalse: [
-        UndefinedObject compile: 'findNextHandlerContext ^ nil' classified: 'error handling' ]!
 
 "======================================================================
  VMSocketTCPTest — Real TCP connection to external host
@@ -389,8 +393,14 @@ testSecureAndUntrustedAreDifferent
     | secure untrusted |
     secure := self primGetSecureUserDirectory.
     untrusted := self primGetUntrustedUserDirectory.
-    (secure isNil or: [untrusted isNil]) ifTrue: [
-        ^ self skip: 'SecurityPlugin primitives not available'].
+    "No guard on purpose: nil here means the SecurityPlugin registration
+     regressed, which is the defect this class exists to catch. The siblings
+     testSecureDirectoryExists and testUntrustedDirectoryExists already assert
+     exactly this."
+    self deny: secure isNil
+        description: 'primitiveGetSecureUserDirectory returned nil (not registered?)'.
+    self deny: untrusted isNil
+        description: 'primitiveGetUntrustedUserDirectory returned nil (not registered?)'.
     self deny: secure = untrusted
         description: 'Secure and untrusted directories should differ'! !
 
@@ -428,61 +438,24 @@ testClipboardHasTextAfterSet
 
 
 "======================================================================
- VMSoundTest — Sound plugin API (non-audio verification)
- Catches: stubs that returned fake values (8192 bytes available,
-          volume=100, playback claimed success without producing audio)
+ No VMSoundTest / VMMIDITest.
+
+ They were deleted rather than left skipping. Both routed through image classes
+ that do not exist - Pharo 13.1 has no global whose name contains 'Sound' or
+ 'Midi' - so each test returned early through `self skip:` on every run and was
+ counted as a PASS by the runner below. Their assertions were powerless anyway:
+ `respondsTo: #stopPlaying` executes no primitive, and `count >= 0` accepts the
+ hardcoded 0 the test was written to detect.
+
+ The subsystem underneath them is genuinely unreachable, which is recorded in
+ docs/test-skips-were-bugs.md rather than hidden here: src/vm/plugins/
+ SoundPlugin.cpp and MIDIPlugin.cpp are ~800 lines of real Audio Queue and
+ CoreMIDI code, and their 49 Interpreter::primitiveSound*/primitiveMIDI*
+ wrappers are registered under no name and occupy no primitive table slot. The
+ reference VM ships neither plugin among its 51, and the stock image contains
+ zero callers, so nothing is broken for anyone today - but a test that cannot
+ fail is worse than no test, and these could not fail.
 ======================================================================"
-TestCase subclass: #VMSoundTest
-    instanceVariableNames: ''
-    classVariableNames: ''
-    package: 'VMIntegrationTests'!
-
-!VMSoundTest methodsFor: 'testing'!
-testSoundPrimitivesExist
-    "Sound primitives (300-310) were all stubs returning fake values.
-     Commit bb7b57f. Test that the primitives exist and respond without crash.
-     SampledSound/SoundPlayer may not be present in minimal images."
-    | playerClass |
-    playerClass := Smalltalk globals at: #SoundPlayer ifAbsent: [nil].
-    playerClass ifNil: [^ self skip: 'SoundPlayer not available in this image'].
-    "Just verify the class exists and responds — actual audio requires hardware"
-    self assert: (playerClass respondsTo: #stopPlaying)
-        description: 'SoundPlayer should respond to stopPlaying'! !
-
-
-"======================================================================
- VMMIDITest — MIDI plugin API
- Catches: stubs that returned 0 ports, hardcoded clock
-======================================================================"
-TestCase subclass: #VMMIDITest
-    instanceVariableNames: ''
-    classVariableNames: ''
-    package: 'VMIntegrationTests'!
-
-!VMMIDITest methodsFor: 'testing'!
-testMIDIPortCountIsInteger
-    "primitiveMIDIGetPortCount (330) was hardcoded to 0.
-     Now returns real CoreMIDI source+destination count. Commit 7deb5f0."
-    | midiClass count |
-    midiClass := Smalltalk globals at: #SimpleMIDIPort ifAbsent: [nil].
-    midiClass ifNil: [^ self skip: 'SimpleMIDIPort not available in this image'].
-    count := [midiClass portCount] on: Error do: [:e | -1].
-    self assert: (count isKindOf: Integer) description: 'Port count must be Integer'.
-    self assert: count >= 0 description: 'Port count must be non-negative'! !
-
-!VMMIDITest methodsFor: 'testing'!
-testMIDIClockIsMonotonic
-    "primitiveMIDIGetClock (336) was std::chrono, now mach_absolute_time.
-     Commit 7deb5f0."
-    | midiClass t1 t2 |
-    midiClass := Smalltalk globals at: #SimpleMIDIPort ifAbsent: [nil].
-    midiClass ifNil: [^ self skip: 'SimpleMIDIPort not available in this image'].
-    t1 := [midiClass clock] on: Error do: [:e | 0].
-    (Delay forMilliseconds: 10) wait.
-    t2 := [midiClass clock] on: Error do: [:e | 0].
-    self assert: t2 > t1
-        description: 'MIDI clock should be monotonically increasing'! !
-
 
 "======================================================================
  VMInterpreterProxyTest — Object creation by plugins
@@ -696,7 +669,7 @@ Object subclass: #VMIntegrationTestRunner
 testClasses
     ^ {VMSocketTCPTest. VMSocketUDPTest. VMDNSTest.
        VMLocaleTest. VMSecurityTest. VMClipboardTest.
-       VMSoundTest. VMMIDITest. VMInterpreterProxyTest.
+       VMInterpreterProxyTest.
        VMFileAttributesTest. VMPrimitiveErrorTest. VMTimerTest.
        VMSurfacePluginTest}! !
 
@@ -714,8 +687,8 @@ log: aString
 !VMIntegrationTestRunner class methodsFor: 'running'!
 runAll
     "Run all VM integration tests and write results."
-    | totalPass totalFail totalError totalTests |
-    totalPass := 0. totalFail := 0. totalError := 0. totalTests := 0.
+    | totalPass totalFail totalError totalSkip totalTests |
+    totalPass := 0. totalFail := 0. totalError := 0. totalSkip := 0. totalTests := 0.
     self resultsFile ensureDelete.
     self log: '=== VM Integration Tests ==='.
     self log: DateAndTime now printString.
@@ -725,7 +698,7 @@ runAll
         self log: '--- ' , testClass name , ' ---'.
         testClass buildSuite tests do: [:test |
             totalTests := totalTests + 1.
-            [
+            [[
                 [test setUp.
                  test perform: test selector.
                  test tearDown.
@@ -734,6 +707,17 @@ runAll
                     on: TestFailure do: [:e |
                         totalFail := totalFail + 1.
                         self log: 'FAIL: ' , test selector , ' — ' , e messageText]
+              ] on: TestSkipped do: [:e |
+                    "TestSkipped is a subclass of Exception - not TestFailure and
+                     not Error - and its default action is empty, so signalling
+                     it RESUMES. Without this handler a `self skip:` simply
+                     returned, tearDown ran, and the test was counted and logged
+                     as PASS: a test that ran nothing looked exactly like one
+                     that verified everything. Skips are counted separately and
+                     are NOT passes."
+                    totalSkip := totalSkip + 1.
+                    self log: 'SKIP: ' , test selector , ' — ' ,
+                        ([e messageText] on: Error do: [:x | '(no reason given)'])]
             ] on: Error do: [:e |
                 totalError := totalError + 1.
                 self log: 'ERROR: ' , test selector , ' — ' , e class name , ': ' ,
@@ -745,10 +729,12 @@ runAll
     self log: 'Pass:  ' , totalPass printString.
     self log: 'Fail:  ' , totalFail printString.
     self log: 'Error: ' , totalError printString.
+    self log: 'Skip:  ' , totalSkip printString.
     self log: ''.
-    totalFail + totalError = 0
+    totalFail + totalError + totalSkip = 0
         ifTrue: [self log: 'ALL TESTS PASSED']
-        ifFalse: [self log: (totalFail + totalError) printString , ' FAILURES'].
+        ifFalse: [self log: (totalFail + totalError) printString , ' FAILURES, ' ,
+                            totalSkip printString , ' SKIPPED (a skip is not a pass)'].
     self log: '=== Done ==='! !
 
 !VMIntegrationTestRunner class methodsFor: 'system startup'!
