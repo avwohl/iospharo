@@ -168,3 +168,43 @@ All preinstalled-package class lists are pre-extracted to
 
 Results land in `docs/results-<package>.md` (one per package, same
 shape as `docs/test-results.md` for kernel SUnit).
+
+## Colour fidelity: what counts as a defect, and what does not
+
+Carried over from the `main` branch on 2026-08-17. This is the methodology that
+turned "seven colour-fidelity gaps" into zero defects, and it is the reason
+`scripts/test_bitblt_depth_matrix.st` asserts what it does.
+
+The trap: comparing `Form>>colorAt:` against BitBlt's own conversion. `colorAt:`
+scales a 5-bit component by /31; a depth change zero-fills it to `n<<3`. Both are
+right in their own terms and they disagree by construction, so any test that
+mixes them reports failures on a perfectly correct VM. Compare pixel VALUES, and
+put both sides through the same machinery.
+
+Three properties of the reference algorithm that look like bugs and are not:
+
+  - **Widening 5 bits to 8 zero-fills.** 31 becomes 248, not 255, so a 16->32
+    conversion returns 0.9717 rather than 1.0. That is `rgbMap16To32:`, and it is
+    what `rgbMap:from:to:` means by "Expand to more bits by zero-fill". The golden
+    PNGs in the image agree: they carry an `sBIT` chunk of `5 5 5 1` declaring the
+    low three bits padding, and their red channel is 248.
+  - **Black at 16bpp is pixel value 1, not 0.** Zero means transparent, so
+    `mapPixel:flags:` refuses to let a visible colour reduce to it. Widening that
+    1 gives blue = 8, so black round-trips as (0, 0, 0.031). Also correct.
+  - **Five bits cannot hold 0.5.** `Color gray` quantises to 16/31 = 0.516, not
+    15/31 = 0.484. That is image-side rounding in `Color>>pixelValueForDepth:`,
+    not VM behaviour at all.
+
+Two layout facts, each established by writing known values through
+`pixelValueAt:put:` and reading the raw `bits` rather than by reading code:
+
+  - Depth 8 is MSB-first within each 32-bit word: 1..8 gives `16r01020304
+    16r05060708`.
+  - Depth 16 is too: 1..4 gives `16r00010002 16r00030004`.
+
+The pre-existing `16->16` handler treats its bits as a little-endian `uint16`
+array, which disagrees with both. It survives only because it reads and writes
+with the same wrong convention, so the error cancels. Nothing cross-depth can
+rely on that — and the same cancellation is exactly why the negated-depth tests
+missed the raw-order bug fixed on 2026-08-17. When a test writes and reads
+through the same path, it cannot see an error that path makes symmetrically.

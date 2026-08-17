@@ -212,3 +212,43 @@ pristine: `MorphicNativeWindow canUnderstand: #hasProperty:` -> false.
 Surfaced by `MorphicWindowManagerTest>>testDeleteAWindowAndTaskBarActualized`
 during the `--interactive` default investigation (see docs/changes.md
 2026-07-06: bare launches no longer default to interactive).
+
+## `ProtoObject >> pointersToExcept:among:` sends `removeAllSuchThat:` to an Array
+
+Carried over from the `main` branch on 2026-08-17.
+
+Surfaces as `ProtoObjectTest >> testFastPointersTo` erroring with
+`ShouldNotImplement: #remove:ifAbsent: should not have been implemented in Array`.
+
+Stock source (Pharo 13.1), abbreviated:
+
+    pointersToExcept: objectsToExclude among: aCollectionOfObjects
+        | pointers objectsToAlwaysExclude |
+        pointers := OrderedCollection new.
+        pointers := aCollectionOfObjects select: [ :e | e pointsTo: self ].
+        ...
+        ^ (pointers removeAllSuchThat: [ :ea | ... ]) asArray
+
+The first assignment is dead — the next line overwrites it. Callers pass
+`SystemNavigation default allObjects`, which is an Array, and `select:` on an
+Array answers an Array. `Collection>>removeAllSuchThat:` then sends `remove:`
+for each match, and `Array` answers `shouldNotImplement`.
+
+It only raises when the block actually matches, i.e. when one of the excluded
+contexts is itself among the pointers. On Cog that rarely happens, because live
+activations are stack frames rather than heap objects, so `allObjects` does not
+see them — which is why upstream does not notice.
+
+Verified independent of the VM: built with and without the
+`primitiveObjectPointsTo` raw-format guard, `testFastPointersTo` raises the
+identical error both times. Outside SUnit the same code is fine — an eval that
+reproduces the test body verbatim finds exactly one pointer and never enters the
+failing branch.
+
+Fix upstream is to make the collection removable before removing from it:
+
+    pointers := (aCollectionOfObjects select: [ :e | e pointsTo: self ])
+        asOrderedCollection.
+
+and drop the dead line above it. **Not patched here** — it affects one reflection
+method and its test, not runtime behaviour.

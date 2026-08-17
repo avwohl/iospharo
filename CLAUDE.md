@@ -134,23 +134,30 @@ Never claim display, menus, or interaction work without screenshotting and
 reading the screenshot. Logs and test pass rates aren't enough — two weeks of
 "verified working" claims were wrong because nobody looked at the screen.
 
-`screencapture -x` can't capture Metal content from Mac Catalyst apps. Use
-window-specific capture:
+`screencapture -x` can't capture Metal content from Mac Catalyst apps — the
+window area comes out solid black. **Window-specific capture does not rescue it
+either**: `screencapture -x -l <windowID>` answers "could not create image from
+window". This file recommended that for months; it was measured as not working
+on 2026-08-16, so do not spend time on it.
 
-```bash
-PID=$(pgrep -f "iospharo" | head -1)
-swift -e "
-import CoreGraphics
-let windowList = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
-for w in windowList {
-    guard let ownerPID = w[kCGWindowOwnerPID as String] as? Int, ownerPID == $PID else { continue }
-    let windowID = w[kCGWindowNumber as String] as? Int ?? -1
-    print(\"id=\(windowID)\")
-}"
-screencapture -x -l <WINDOW_ID> /tmp/pharo-screenshot.png
+What works is asking Pharo for its own pixels. Inject a forked process with
+`eval --save`, launch the app on that image with `--image`, and have the fork
+write `World imageForm` out:
+
+```smalltalk
+[ (Delay forSeconds: 40) wait.
+  | w form |
+  w := Smalltalk at: #World ifAbsent: [ nil ].
+  form := w imageForm.
+  "write form width/height/depth and form bits to files" ] forkAt: 30.
 ```
 
-Then read the screenshot with Read and verify each specific claim.
+Two gotchas. The whole `eval` argument is compiled before any of it runs, so
+reach globals through `Smalltalk at:` rather than naming them — naming `World`
+directly is a compile error. And `Display` is nil in the app (unlike under
+`test_load_image`), so go through `World`.
+
+Then read the image with Read and verify each specific claim.
 
 GUI verified working 2026-02-24: SDL2 stubs in `FFI.cpp` bridge the image's
 `OSSDL2Driver` to the Metal pipeline.
@@ -173,7 +180,10 @@ Pattern:
 timeout 90 open /path/to/app &
 APP_PID=$!
 sleep 15
-timeout 5 screencapture -x -l <WIN_ID> /tmp/pharo-screenshot.png
+timeout 5 cp /tmp/pharo-world-form.bin /tmp/shot.bin   # written by the forked
+                                                      # process; see above --
+                                                      # screencapture cannot
+                                                      # see the Metal layer
 timeout 10 osascript -e 'tell application "System Events" to ...'
 kill $APP_PID 2>/dev/null
 killall iospharo 2>/dev/null
