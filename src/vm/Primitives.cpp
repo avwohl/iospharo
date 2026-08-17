@@ -14602,7 +14602,12 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Perform one-way become for each pair, copying hash (per official VM)
+    // Collect every pair first, then do ONE heap scan. becomeForward walks the
+    // whole heap, so calling it per pair is O(pairs * heap) — a few hundred
+    // pairs against a 740k-object heap is hundreds of millions of object
+    // visits for a single primitive call.
+    std::unordered_map<uint64_t, Oop> forwarding;
+    forwarding.reserve(fromSize);
     for (size_t i = 0; i < fromSize; i++) {
         Oop fromObj = memory_.fetchPointer(i, fromArrayOop);
         Oop toObj = memory_.fetchPointer(i, toArrayOop);
@@ -14622,13 +14627,15 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
             toObjHdr->setIdentityHash(fromObjHdr->identityHash());
         }
 
-        // Perform one-way become: all references to fromObj become toObj
-        memory_.becomeForward(fromObj, toObj);
+        forwarding[fromObj.rawBits()] = toObj;
 
-        // Also scan C++ execution stack - critical for stack-based VM
-        // Without this, local variables (temps) on the stack still point to old objects
+        // Also scan C++ execution stack - critical for stack-based VM.
+        // Without this, local variables (temps) on the stack still point to old
+        // objects. Bounded by frame depth, so it is not worth batching.
         scanStackReplace(fromObj, toObj);
     }
+
+    memory_.becomeForwardAll(forwarding);
 
     // Flush method cache (critical after become)
     flushMethodCache();
@@ -14676,7 +14683,10 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Perform one-way become for each pair
+    // One heap scan for all pairs — see primitiveArrayBecomeOneWay above for
+    // why per-pair becomeForward is quadratic.
+    std::unordered_map<uint64_t, Oop> forwarding;
+    forwarding.reserve(fromSize);
     for (size_t i = 0; i < fromSize; i++) {
         Oop fromObj = memory_.fetchPointer(i, fromArrayOop);
         Oop toObj = memory_.fetchPointer(i, toArrayOop);
@@ -14696,12 +14706,13 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
             toObj.asObjectPtr()->setIdentityHash(hash);
         }
 
-        // Perform one-way become: all references to fromObj become toObj
-        memory_.becomeForward(fromObj, toObj);
+        forwarding[fromObj.rawBits()] = toObj;
 
         // Also scan C++ execution stack - critical for stack-based VM
         scanStackReplace(fromObj, toObj);
     }
+
+    memory_.becomeForwardAll(forwarding);
 
     // Flush method cache (critical after become)
     flushMethodCache();
@@ -14735,7 +14746,11 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayNoCopyHash(int argCount) 
         return PrimitiveResult::Failure;
     }
 
-    // Perform one-way become for each pair (without copying hash)
+    // One heap scan for all pairs, without copying hash (that is the difference
+    // from primitive 249). See primitiveArrayBecomeOneWay for why per-pair
+    // becomeForward is quadratic.
+    std::unordered_map<uint64_t, Oop> forwarding;
+    forwarding.reserve(fromSize);
     for (size_t i = 0; i < fromSize; i++) {
         Oop fromObj = memory_.fetchPointer(i, fromArrayOop);
         Oop toObj = memory_.fetchPointer(i, toArrayOop);
@@ -14750,12 +14765,13 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayNoCopyHash(int argCount) 
 
         // Do NOT copy identity hash (that's the difference from primitive 249)
 
-        // Perform one-way become: all references to fromObj become toObj
-        memory_.becomeForward(fromObj, toObj);
+        forwarding[fromObj.rawBits()] = toObj;
 
         // Also scan C++ execution stack - critical for stack-based VM
         scanStackReplace(fromObj, toObj);
     }
+
+    memory_.becomeForwardAll(forwarding);
 
     // Flush method cache (critical after become)
     flushMethodCache();

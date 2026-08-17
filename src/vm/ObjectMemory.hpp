@@ -44,6 +44,7 @@
 #include <string>
 #include <memory>
 #include <functional>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace pharo {
@@ -542,6 +543,19 @@ public:
 
     /// One-way become: all references to obj1 become references to obj2
     bool becomeForward(Oop obj1, Oop obj2);
+
+    /// Batch one-way become. Semantically N calls to becomeForward, but with a
+    /// single heap scan instead of one per pair — becomeForward walks every
+    /// object, so doing it per pair costs O(pairs * heap).
+    /// elementsForwardIdentityTo: with a few hundred pairs against a 740k-object
+    /// heap is hundreds of millions of visits.
+    ///
+    /// Performs the same classTable_ redirect and installs the same forwarder
+    /// safety net as becomeForward, and clears the shadow table once for the
+    /// batch. The forwarders go in after the scan, so every pair sees the
+    /// pre-become heap — Spur defines become as simultaneous, not sequential.
+    /// @param map old oop raw bits -> replacement oop
+    bool becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map);
 
     // ===== IDENTITY HASH =====
 

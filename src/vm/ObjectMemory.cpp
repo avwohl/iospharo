@@ -1654,6 +1654,99 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
     return true;
 }
 
+bool ObjectMemory::becomeForwardAll(const std::unordered_map<uint64_t, Oop>& map) {
+    if (map.empty()) return true;
+
+    // Shadow-slot detector: identities are about to change arbitrarily — the
+    // (object, slot) keys cannot be remapped, so drop the table. Once for the
+    // whole batch rather than once per pair.
+    if (__builtin_expect(GET_DEBUG_BOOL(PHARO_SHADOW_SLOTS), 0)) {
+        shadowClear();
+    }
+
+    extern uint64_t g_scavengeCount;
+    size_t becomeReplacedCount = 0;
+    const bool becomeTrace =
+        GET_DEBUG_INT(PHARO_WATCH_OLDOFF) >= 0 && g_scavengeCount >= 10;
+
+    // ONE heap scan covering every pair. Same traversal and the same format
+    // guards as becomeForward above; only the test changes, from a comparison
+    // against a single oop to a lookup in the map.
+    allObjectsDo([&](Oop obj) {
+        if (!obj.isObject()) return;
+        ObjectHeader* header = obj.asObjectPtr();
+        ObjectFormat format = header->format();
+
+        // Skip non-pointer objects (byte/word/short arrays) - their slots are raw data, not Oops
+        if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) return;
+        if (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable32Odd) return; // 9, 10, 11
+        if (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) return;
+        // Skip reserved formats
+        if (format >= ObjectFormat::Reserved6 && format <= ObjectFormat::Reserved8) return;
+
+        size_t slots = header->slotCount();
+
+        // For CompiledMethods (format 24-31), only scan the literal frame.
+        if (header->isCompiledMethod() && slots > 0) {
+            Oop methodHeader = header->slotAt(0);
+            if (methodHeader.isSmallInteger()) {
+                size_t numLits = methodHeader.asSmallInteger() & 0x7FFF;
+                slots = std::min(slots, numLits + 1);
+            }
+        }
+
+        for (size_t i = 0; i < slots; ++i) {
+            Oop slot = header->slotAt(i);
+            if (!slot.isObject()) continue;
+            auto it = map.find(slot.rawBits());
+            if (it == map.end()) continue;
+            header->slotAtPut(i, it->second);
+            becomeReplacedCount++;
+        }
+    });
+
+    // CLASSES: the same classTable_ redirect becomeForward performs, and for
+    // the same reason — instance dispatch resolves header classIndex through
+    // classTable_, a C++ vector the heap scan cannot see. One pass over the
+    // table serves the whole batch.
+    size_t classTableHits = 0;
+    for (size_t i = 0; i < classTable_.size(); ++i) {
+        if (!classTable_[i].isObject()) continue;
+        auto it = map.find(classTable_[i].rawBits());
+        if (it != map.end()) { classTable_[i] = it->second; classTableHits++; }
+    }
+
+    // SAFETY NET (PHARO_BECOME_FORWARDER): the same forwarder becomeForward
+    // installs, so a reference the scan missed still resolves via
+    // followForwarded and allInstances stops re-finding the husk.
+    //
+    // Installed only after the scan and the class-table pass, so every pair
+    // sees the pre-become heap. Doing it as becomeForward does, interleaved
+    // per pair, would let pair k's forwarder overwrite slot 0 of an object
+    // that pair k+1 still has to scan.
+    if (!GET_DEBUG_BOOL(PHARO_NO_BECOME_FORWARDER)) {
+        for (const auto& entry : map) {
+            Oop obj1 = Oop::fromRawBits(entry.first);
+            Oop obj2 = entry.second;
+            if (!obj1.isObject() || obj1.rawBits() == obj2.rawBits()) continue;
+            ObjectHeader* h1 = obj1.asObjectPtr();
+            if (h1->slotCount() < 1 || h1->isForwarded()) continue;
+            h1->slotAtPut(0, obj2);
+            h1->setClassIndex(ObjectHeader::ForwardedClassIndex);
+        }
+    }
+
+    if (becomeTrace || __builtin_expect(GET_DEBUG_BOOL(PHARO_TRACE_BECOME), 0)) {
+        extern uint64_t g_stepNum;
+        fprintf(stderr,
+                "[BECOME-FWD-ALL] step=%llu pairs=%zu heapRefs=%zu ctHits=%zu\n",
+                (unsigned long long)g_stepNum, map.size(),
+                becomeReplacedCount, classTableHits);
+    }
+
+    return true;
+}
+
 // ===== IDENTITY HASH =====
 
 uint32_t ObjectMemory::identityHashOf(Oop obj) {
