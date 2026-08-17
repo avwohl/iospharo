@@ -35,6 +35,18 @@
 # A correctly prepped Pharo 13 image grows from ~52 MB to ~74 MB and answers
 # non-nil for `Smalltalk at: #SUnitRunner`.
 # ---------------------------------------------------------------------------
+# SET THE BASELINE ENVIRONMENT, or the numbers are not comparable to the
+# recorded runs and the VM looks worse than it is:
+#
+#     PHARO_CODE_ZONE_MB=192  PHARO_MAX_STEPS=4000000000000
+#
+# scripts/aws/sunit-fullsuite-ab.sh and scripts/aws/x86-fullsuite.sh both set
+# these, so every recorded full-suite result was measured with them. At the
+# 64 MB default the zone fills mid-suite -- observed 8005 methods compiled
+# against 16810 compilations FAILED with the zone at 65535/65536 KB -- and
+# every late-hot method after that runs interpreted. debug_vars.h says the same
+# thing at the knob and names SHA256Test as a casualty.
+#
 # BATCH SIZE CHANGES THE ANSWER, and small batches make the VM look worse than
 # it is. Measured on this suite:
 #
