@@ -13,6 +13,19 @@
   With it, that class runs in about 0.4s. Needs a pharo-vm checkout; set
   `PHARO_VM_SRC` if yours is not at `~/esrc/pharo-vm`.
 - `pharo-headless-test/` — Submodule: headless test runner + fake GUI (https://github.com/avwohl/pharo-headless-test)
+
+  The runner has no class-level skip list: it runs every non-abstract TestCase
+  subclass and bounds hangs with a timeout, which reports *what* timed out
+  rather than hiding it. See `docs/test-skips-were-bugs.md` for why — every
+  entry that was ever investigated turned out to be a VM defect, not a bad test.
+
+  Two classes will stop a batch run and neither is guarded, so know about them
+  before you start one:
+    - `TFUFFICallbackTest` never finishes, with or without libTestLibrary.dylib.
+    - `TFCallbacksTest` spins unless `build-ffi-test-library.sh` has been run;
+      the missing symbol raises inside a callback that then never answers.
+  A batch killed by its timeout loses every class it had not yet reached, so an
+  unlisted hang costs far more than the one class.
 - `run_batch_tests.sh` — Shell wrapper that runs tests in batches of 50 classes
 - `run_regression_tests.st` — Regression test runner
 - `run_callback_suite.st` — FFI callback test suite
