@@ -4965,7 +4965,7 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         }
 
         if (processPriority > activePriority) {
-            putToSleepPreempted(activeProcess);
+            putToSleepPreemptedYieldingIf(activeProcess);
             transferTo(process);
         } else {
             // Same or lower priority: just add woken process to its priority queue.
@@ -18623,6 +18623,27 @@ void Interpreter::addFirstLinkToList(Oop process, Oop list) {
 //
 // PHARO_PREEMPT_YIELDS=1 back-appends always; PHARO_PREEMPT_NO_YIELD=1
 // front-appends always (guard off).  Both are bisect knobs.
+// Cog's resume:preemptedYieldingIf:from: (cointerp-cpp.c:78462) passes
+// GIV(preemptionYields) as yieldImplicitly, and putToSleep:yieldingIf:
+// (77808) BACK-appends when it is set. That back-append is what rotates a
+// priority level, and it is the only rotation Cog has -- checkForEvents does
+// none, which is why looking there and finding nothing is misleading.
+//
+// Called from EXACTLY the three sites Cog calls it from: CSSignal, CSResume,
+// CSExitCriticalSection. Our other preemption sources (heartbeat scan, JIT
+// step yield, callback-return requeue) have no Cog counterpart and MUST keep
+// the order-preserving front-append: back-appending the callback-return
+// requeue puts the yanked process behind its own resumer in
+// interpriorityYield:'s [p resume] fork / p suspend window, which stalls the
+// FFI callback suite outright (measured: 120 tests wedge at ~750 steps/s).
+void Interpreter::putToSleepPreemptedYieldingIf(Oop process) {
+    if (preemptionYields()) {
+        putToSleep(process);
+        return;
+    }
+    putToSleepPreempted(process);
+}
+
 void Interpreter::putToSleepPreempted(Oop process) {
     if (GET_DEBUG_BOOL(PHARO_PREEMPT_YIELDS)) {
         putToSleep(process);

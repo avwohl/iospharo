@@ -1229,6 +1229,37 @@ tight loop.
     repro, 5 runs   guard on: woke every time (~81 000 spins)
                     guard off (PHARO_PREEMPT_NO_YIELD=1): 2 of 3 wedge
 
+**CORRECTION 2026-08-17 — the guard was treating a symptom.**  The premise
+above ("the obvious fix, always back-append, is wrong for us") set up a false
+choice between always-front and always-back, and missed that Cog does neither
+unconditionally: it back-appends at exactly three sites, and only when the
+image asks.  Cog reads `preemptionYields` from the image header
+(`src/ios/cointerp-cpp.c:14317`, `(headerFlags bitAnd: 16) = 0`) and passes it
+to `putToSleep:yieldingIf:` from `resume:preemptedYieldingIf:from:`, whose only
+callers are CSSignal, CSResume and CSExitCriticalSection.  Every stock Pharo
+image ships flags `0x2`, so bit 16 is clear and Cog runs it with
+`preemptionYields` TRUE.  We never parsed the bit at all, so priority 40 had no
+rotation route whatsoever — which is what this entry is really describing.
+Worse, `vmParameterAt: 48` advertised the policy we did not implement.
+
+That is now fixed: `putToSleepPreemptedYieldingIf` honours the flag at those
+three sites and nowhere else.  The four remaining `putToSleepPreempted` callers
+(heartbeat scan, JIT step yield, callback-return requeue) have no Cog
+counterpart and keep the order-preserving front-append — back-appending the
+callback-return requeue puts the yanked process behind its own resumer in
+`interpriorityYield:`'s `[p resume] fork` / `p suspend` window and stalls the
+FFI callback suite outright.  That is the real reason blanket back-appending
+failed, and it is not what the table above measured.
+
+The table above is also stale.  Re-measured 2026-08-17 across 355 scheduler and
+weak tests, plus `ProcessTerminateBugTest` three times in each mode: identical
+with the flag honoured and with it forced off (12/12 every run).  The three
+named regressions do not reproduce.
+
+Whether the 50-preemption starvation guard can now be deleted is untested —
+this entry's own repro is preempted via CSSignal, which the fix already
+back-appends, so it is probably redundant.
+
 End to end, `MpUnconnectedTransportMiddlewareTest` goes 18/32 -> 31/32
 (Cog 32/32).
 

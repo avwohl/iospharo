@@ -803,15 +803,18 @@ PrimitiveResult Interpreter::primitiveExitCriticalSection(int argCount) {
         removeFirstLinkOfList(criticalSection);
         memory_.storePointer(OwnerIndex, criticalSection, newOwner);
 
-        // Cog parity (resume:preemptedYieldingIf: with preemptionYields
-        // false): only a STRICTLY higher-priority new owner preempts, and
-        // the preempted active process goes to the FRONT of its run queue
-        // (order-preserving).  The old `>=` yielded on EQUAL priority and
-        // back-appended the active process — the same involuntary
-        // same-priority reordering that wedged interpriorityYield:'s
-        // fork/suspend dance (see handleForceYield, 2026-07-03).
+        // Cog parity (CSExitCriticalSection -> resume:preemptedYieldingIf:):
+        // only a STRICTLY higher-priority new owner preempts.  Where the
+        // preempted process lands is the image's choice, not ours: Cog passes
+        // preemptionYields, and every stock Pharo image sets it, so the
+        // preempted process goes to the BACK.  This comment used to assert
+        // "with preemptionYields false", which was never true of any image we
+        // run.  The old `>=` was a different bug -- it yielded on EQUAL
+        // priority, the involuntary same-priority reordering that wedged
+        // interpriorityYield:'s fork/suspend dance (see handleForceYield,
+        // 2026-07-03) -- and the `>` here still guards against it.
         if (newPriority > activePriority) {
-            putToSleepPreempted(activeProcess);
+            putToSleepPreemptedYieldingIf(activeProcess);
             transferTo(newOwner);
         } else {
             // Same or lower priority: new owner just becomes ready;
@@ -4959,9 +4962,10 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
 
     if (processPriority > activePriority) {
         // Resumed process has higher priority - preempt current process.
-        // Cog parity: the preempted process goes to the FRONT of its
-        // priority list (putToSleepPreempted), not the back.
-        putToSleepPreempted(activeProcess);
+        // Cog parity (CSResume -> resume:preemptedYieldingIf:): the preempted
+        // process goes to the BACK of its priority list when the image sets
+        // preemptionYields, which every stock Pharo image does.
+        putToSleepPreemptedYieldingIf(activeProcess);
         // Switch to resumed process (don't put it to sleep, just run it)
         transferTo(process);
     } else {

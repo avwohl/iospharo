@@ -3664,6 +3664,18 @@ private:
     void addLastLinkToList(Oop process, Oop list);
     void addFirstLinkToList(Oop process, Oop list);
     void putToSleepPreempted(Oop process);
+    /// Cog's resume:preemptedYieldingIf:from: -- the ONLY three sites where Cog
+    /// displaces the active process (CSSignal / CSResume /
+    /// CSExitCriticalSection). Honours the image's preemptionYields flag.
+    void putToSleepPreemptedYieldingIf(Oop process);
+    bool preemptionYields() const {
+        // Cog, setImageHeaderFlagsFrom: (src/ios/cointerp-cpp.c:14317):
+        //   preemptionYields := (headerFlags bitAnd: 16) = 0
+        // Every stock Pharo image ships flags 0x2, so bit 16 is clear and Cog
+        // runs it with preemptionYields TRUE. We hardcoded FALSE.
+        if (GET_DEBUG_BOOL(PHARO_PREEMPT_NO_YIELD)) return false;
+        return (originalImageHeader_.imageHeaderFlags & 16) == 0;
+    }
 
     /// Remove and return first process from a LinkedList
     Oop removeFirstLinkOfList(Oop list);
