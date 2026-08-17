@@ -778,7 +778,57 @@ Linux-aarch64), where it appears in neither FAIL list. Nothing to fix.
 
 Passes on ARM. Needs a Windows run to close.
 
-### 15. Recursion deeper than ~56,000 frames HANGS the VM; Cog does it instantly — HIGH (found 2026-08-12)
+### 15. ~~Recursion deeper than ~56,000 frames HANGS the VM~~ — the hang and the uncatchability are FIXED; only the depth gap remains — LOW (was HIGH; re-measured 2026-08-17)
+
+**Both dangerous halves are closed.** Re-measured on HEAD, same repro as below:
+
+    N        2026-08-12                  2026-08-17
+    10000    10000  (2 s)                10000  (2 ms)
+    40000    40000  (1 s)                40000  (2 ms)
+    56000    56000  (2 s)                56000  (3 ms)
+    60000    HANGS - killed at 60 s      CAUGHT Error  (27 ms)
+    100000   HANGS - killed at 180 s     CAUGHT Error  (11 ms)
+    200000   (not reached)               CAUGHT Error  (28 ms)
+
+The whole six-point sweep now runs in 4 s and exits 0. The error the image
+catches is the VM's own: `'stack overflow: recursion deeper than 56000 frames'`,
+so `on: Error do:` works where the entry below says it could not.
+
+**And the unwind property the 2026-08-15 revert was protecting is intact.**
+That revert rested on a mutex counter-test; re-run on HEAD it passes:
+
+    fork caught overflow: yes   mutex: MUTEX-FREE
+
+Note the counter-test as originally written cannot answer the question, and this
+is worth keeping because it is the same trap #21 retracted: with no handler
+inside the fork, the unhandled overflow makes the image quit, the eval never
+reaches its last expression, and "no EVAL-RESULT" gets read as "leaked". The run
+exits 0 after 4 s with a 25 s Delay still in the script -- an early quit, not a
+hang. Handling the error inside the fork restores the discriminator.
+
+So `handleStackOverflow` on HEAD signals a catchable `#error:` AND unwinds. The
+"RETRIED AND REVERTED 2026-08-15" note below is stale: a third attempt landed
+and holds. Its reasoning is kept because the counter-test it introduced is the
+right test, and because it records why the naive form failed.
+
+**What is left is the depth gap, and it is a capability difference rather than a
+defect:** Cog returns 100000 because its stack is pages that spill to the heap as
+contexts; ours raises a clean, catchable, unwinding error at 56000. Nothing is
+lost or corrupted at the cap. Do NOT close this by raising the constants -- the
+costing below still stands, and today's value-stack change already spent
++15.7 MB of permanently resident memory on an iOS-targeted VM. The real fix is
+still heap-spilled contexts, still a project.
+
+Re-priced 2026-08-17 for whoever takes it on. MaxStackDepth is now 2097152 and
+StackOverflowLimit 56000, i.e. 37.4 value-stack slots per frame. Matching Cog at
+100000 frames needs MaxFrameDepth ~108000 (savedFrames_ 7.5 -> 13 MB) and
+MaxStackDepth ~3.2 M to hold the ratio (16.8 -> 25.6 MB): about +14 MB against a
+measured 293 MB baseline for `eval "42"`.
+
+Still worth testing, unchanged from below and now unblocked by the hang fix: the
+four "hangs to 1800 s" packages in #2a/#2b.
+
+### 15-original. Recursion deeper than ~56,000 frames HANGS the VM; Cog does it instantly (found 2026-08-12, superseded above)
 
 Three lines, same image, apples-to-apples (no Morphic, so the `eval`-preamble
 caveat does not apply):

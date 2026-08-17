@@ -11748,11 +11748,18 @@ void Interpreter::handleStackOverflow(int argCount) {
     // (terminateAndSwitchProcess) abandons the process WITHOUT running its
     // ensure:/ifCurtailed: unwind blocks, so any held `critical:` mutex is LEAKED
     // (a later process, e.g. the Delay/timer scheduler, then blocks on it forever).
-    // Instead, drive the image's own `Process>>terminate`, which walks the context
-    // chain running the unwind blocks (releasing the mutex) before ending the
-    // process. (Signalling #error: doesn't suffice: it goes unhandled in a forked
-    // test and our unhandled-error path skips unwinds too.) An explicit terminate
-    // unwinds correctly. StackOverflowSignalHeadroom gives terminate room to run.
+    // Whatever this handler does, it must unwind.
+    //
+    // Two ways to do that, and the PRIMARY one is the catchable #error: below --
+    // `Process>>terminate` is only the fallback for an image too broken to have
+    // #error:. This comment used to argue the opposite ("signalling #error:
+    // doesn't suffice: it goes unhandled in a forked test"); that reading was the
+    // discriminator retracted in docs/vm-compat-bugs.md #21, where an unhandled
+    // error makes the image QUIT and the missing result gets misread as a wedge.
+    // Re-measured 2026-08-17, the catchable path both catches and unwinds:
+    // "fork caught overflow: yes   mutex: MUTEX-FREE".
+    //
+    // StackOverflowSignalHeadroom gives whichever path runs room to run.
     Oop termSel = memory_.lookupSymbol("terminate");
     Oop activeProc = getActiveProcess();
     if (!termSel.isObject() || termSel.isNil() ||
