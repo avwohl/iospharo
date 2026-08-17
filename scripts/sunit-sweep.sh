@@ -35,6 +35,14 @@
 # A correctly prepped Pharo 13 image grows from ~52 MB to ~74 MB and answers
 # non-nil for `Smalltalk at: #SUnitRunner`.
 # ---------------------------------------------------------------------------
+# RUN THIS ON AN OTHERWISE IDLE MACHINE. The suite is full of timing-sensitive
+# tests and the runner's watchdogs are wall-clock based, so competing load does
+# not slow the run down evenly -- it converts passes into ERRORs. Measured:
+# batch 1-50 scored 772/774 PASS with 0 FAIL and 0 ERROR on three consecutive
+# idle runs, and the same batch during a concurrent `cmake --build -j4` produced
+# a scatter of MessageNotUnderstood and "Improper store" errors in classes that
+# pass 100% in isolation. If a result looks like a regression, re-run it idle
+# before believing it.
 set -u
 
 VM=${1:?usage: sunit-sweep.sh <vm-binary> <prepped-image> [outdir]}
