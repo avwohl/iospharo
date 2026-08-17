@@ -148,6 +148,40 @@ testFiveBitComponentsWidenByZeroFill
                  ', expected 248 (31 << 3)'! !
 
 !BitBltDepthMatrixTest methodsFor: 'tests - regression'!
+testNegatedDepthConvertsTheSameAsPositiveDepth
+  "A negative depth changes only how pixels are PACKED into each 32-bit word,
+   not what they are. So a depth d form and a depth -d form holding the same
+   pixel values must convert to the same 32bpp form.
+
+   This is the invariant the self-consistency tests in test_bitblt_lowdepth.st
+   cannot check. They write a negated-depth form and read it back, which passes
+   whenever the read and the write share an error — and they did: the primitive
+   latches srcNeedsByteSwap for a negative source and then normalises srcDepth
+   positive, so a negated-depth source arriving at the 32bpp handlers was
+   packed MSB-first by code that never consults the flag. Every group of pixels
+   in a word came out reversed, identically on the way in and on the way out.
+   Depth -16 alone escaped, because that one handler compensates alone.
+
+   Comparing the two forms against each other has no such blind spot: the
+   positive path is independently exercised by every other test here."
+  #( 1 2 4 8 16 32 ) do: [ :d |
+    | positive negated limit |
+    limit := 1 bitShift: (d min: 16).
+    positive := Form extent: 32 @ 1 depth: d.
+    negated := Form extent: 32 @ 1 depth: d negated.
+    0 to: 31 do: [ :x |
+      | v |
+      v := (x * 7 + 3) \\ limit.
+      positive pixelValueAt: x @ 0 put: v.
+      negated pixelValueAt: x @ 0 put: v ].
+    0 to: 31 do: [ :x |
+      self
+        assert: ((negated asFormOfDepth: 32) pixelValueAt: x @ 0)
+             = ((positive asFormOfDepth: 32) pixelValueAt: x @ 0)
+        description: 'depth ', d negated printString, ' converts differently ',
+                     'from depth ', d printString, ' at x=', x printString ] ]! !
+
+!BitBltDepthMatrixTest methodsFor: 'tests - regression'!
 testOddWidthRowsDoNotDriftSideways
   "Form rows pad to whole 32-bit words, so at 16bpp a row of odd width owns one
    more pixel slot than it has pixels. Striding row to row by the width instead

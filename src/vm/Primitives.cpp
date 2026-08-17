@@ -20895,12 +20895,25 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // That is the convention Form bits use and the one the 8->8 handler above
     // documents; getting it wrong reverses each word's worth of pixels.
     //
-    // Placement matters. This sits AFTER every hand-written handler and is
-    // gated on destDepth != 32, so it can only ever run for a combination that
-    // reached the failure tail. It therefore cannot pre-empt the paths above
-    // that do more than a raw move — the 8->8 byte-swap, the negative
-    // same-depth case, or the 16bpp rules — which is exactly what would happen
-    // if it were placed before them.
+    // Placement matters. This sits AFTER every hand-written sub-32bpp handler,
+    // so it cannot pre-empt the paths above that do more than a raw move — the
+    // 8->8 byte-swap, the negative same-depth case, or the 16bpp rules — which
+    // is exactly what would happen if it were placed before them.
+    //
+    // It sits BEFORE the 32bpp-destination code below, and deliberately so.
+    // srcNeedsByteSwap is latched for a negative source depth and srcDepth is
+    // then normalised positive, so a negated-depth source reaching the 32bpp
+    // handlers is handled by code that hardcodes MSB-first order and never
+    // consults the flag. Only the 16bpp one compensates (a single
+    // srcPixIdx ^= 1), so depths -1, -2, -4 and -8 converted to 32bpp came out
+    // with each word's pixels reversed: the same values written to a depth d
+    // form and to a depth -d form converted to DIFFERENT 32bpp forms. The
+    // negative-depth tests missed it because they check that a form reads back
+    // what it wrote, and an order error in both the read and the write cancels.
+    //
+    // The gate still keeps ordinary 32bpp work out of here: bothSub32 requires
+    // destDepth <= 16, and anyRawOrder requires a negative depth somewhere, so
+    // a positive 32->32 blit cannot enter and that fast path is untouched.
     {
         // A negative depth is Squeak's marker for raw byte order: pixels sit in
         // the word in ascending order rather than MSB-first.
@@ -20911,7 +20924,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         const bool anyRawOrder = destDepth < 0 || srcNeedsByteSwap;
         const bool bothSub32 = destDepth > 0 && !srcNeedsByteSwap &&
                                destDepth <= 16 && srcDepth <= 16;
-        if (destDepth != 32 && isPixelDepth(destDepth) && isPixelDepth(srcDepth) &&
+        if (isPixelDepth(destDepth) && isPixelDepth(srcDepth) &&
             (anyRawOrder || bothSub32)) {
             // BitBltSimulation>>loadBitBltFrom: builds an IMPLICIT shift/mask
             // map when the supplied map is not a new-style ColorMap object.
