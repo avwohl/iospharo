@@ -866,6 +866,13 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
         add_executable(test_ios_bridge src/platform/test_ios_bridge.cpp)
         target_link_libraries(test_ios_bridge PharoVMCore)
+
+        # Headless relaunch regression test: launch/quit/relaunch in one
+        # process.  Apple-only because it drives vm_run/vm_stop/vm_destroy
+        # from src/platform/PlatformBridge.cpp, which only enters VM_SOURCES
+        # in the APPLE branch above.
+        add_executable(test_relaunch src/platform/test_relaunch.cpp)
+        target_link_libraries(test_relaunch PharoVMCore)
     endif()
 
     # Sista IR self-test (Phase 2 of docs/sista-inlining-plan.md).

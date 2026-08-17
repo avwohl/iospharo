@@ -18,6 +18,7 @@
 #include <chrono>
 #include <vector>
 #include <mutex>
+#include <condition_variable>
 
 #ifdef __APPLE__
 #include <TargetConditionals.h>
@@ -230,7 +231,27 @@ private:
 static pharo::ObjectMemory* gMemory = nullptr;
 static pharo::Interpreter* gInterpreter = nullptr;
 static SimpleDisplaySurface* gDisplay = nullptr;
+// The VM runs on one long-lived worker thread that is created once and then
+// parked between images, rather than a fresh thread per launch.
+//
+// The thread must never exit. Objects autoreleased by the image's FFI calls land
+// in this thread's implicit autorelease pool, and a secondary thread's pool is
+// drained by pthread TSD cleanup when the thread ends — which crashes, because
+// the image over-releases a CFString somewhere in its own bindings and the pool
+// is holding a dead one. The reference VM never drains either (it has no pool
+// handling at all and runs on a command-line process's main thread), so never
+// draining is the reference behaviour and not a workaround for a VM defect.
+//
+// What WAS a defect is how that was achieved: each vm_run() started a thread
+// which slept for 24 hours once interpret() returned, so every image relaunch
+// leaked a thread and its pool. Parking one worker on a condition variable keeps
+// the never-drain property exactly and makes the cost constant instead of
+// per-launch. See docs/changes.md, "A thread was leaked per image relaunch".
 static std::thread gVMThread;
+static std::mutex gVMJobMutex;
+static std::condition_variable gVMJobCV;
+static bool gVMJobPending = false;
+static bool gVMWorkerStarted = false;
 static std::atomic<bool> gRunning{false};
 
 // Pending display callback (registered before display exists)
@@ -457,32 +478,61 @@ void vm_run(void) {
     });
 
     gRunning = true;
-    gVMThread = std::thread([]() {
-        // No autorelease pool on this thread. ObjC objects created by FFI
-        // calls (NSString, NSArray, etc.) are leaked without a pool, which
-        // keeps them alive for Pharo to reference via ExternalAddress — the
-        // same lifetime as the standard Pharo VM where the pool wraps the
-        // entire interpreter loop and is never drained. Without a pool,
-        // thread exit doesn't try to release potentially-freed objects.
 
-        // Don't post window events here. The SDL poll countdown delivers
-        // SIZE_CHANGED + EXPOSED after SessionManager has had time to
-        // initialize UITheme (~1.5s). Posting early causes redundant redraws.
+    // Start the worker once; afterwards vm_run just hands it another job.
+    if (!gVMWorkerStarted) {
+        gVMWorkerStarted = true;
+        gVMThread = std::thread([]() {
+            // No autorelease pool is pushed on this thread. ObjC objects created
+            // by FFI calls (NSString, NSArray, ...) stay alive for Pharo to
+            // reference through an ExternalAddress for the whole run — the same
+            // lifetime as the reference VM, which has no pool handling at all.
+            //
+            // This loop is also why the pool is never drained: the thread parks
+            // rather than returning, so pthread TSD cleanup never runs on it.
+            // That matters because the pool holds an over-released CFString from
+            // the image's own FFI bindings, and draining it segfaults. Confirmed
+            // 2026-08-16 under NSZombieEnabled:
+            //
+            //     *** -[CFString release]: message sent to deallocated instance
+            //
+            // Draining at a nicer moment does not help — pushing an explicit pool
+            // and popping it here, with the runtime healthy, crashes identically
+            // in objc_release.
+            //
+            // Don't post window events here. The SDL poll countdown delivers
+            // SIZE_CHANGED + EXPOSED after SessionManager has had time to
+            // initialize UITheme (~1.5s). Posting early causes redundant redraws.
+            for (;;) {
+                {
+                    std::unique_lock<std::mutex> lock(gVMJobMutex);
+                    gVMJobCV.wait(lock, [] { return gVMJobPending; });
+                    gVMJobPending = false;
+                }
 
-        // Call interpret() which includes periodic event processing and semaphore handling
-        gInterpreter->interpret();
+                // Read the interpreter once per job: vm_destroy replaces it
+                // between launches, and it is only ever swapped while we are
+                // parked here with gRunning false.
+                pharo::Interpreter* interp = gInterpreter;
+                if (interp) {
+                    interp->interpret();
+                    // Interpreter exited (primitiveQuit or stopVM called).
+                    interp->stopHeartbeat();
+                }
+                gRunning = false;
+            }
+        });
+        // Detached deliberately: a std::thread that is still joinable when its
+        // static destructor runs calls std::terminate at process exit, and this
+        // one never finishes by design.
+        gVMThread.detach();
+    }
 
-        // Interpreter exited (primitiveQuit or stopVM called).
-        gInterpreter->stopHeartbeat();
-        gRunning = false;
-
-        // Do NOT return — returning triggers pthread TSD cleanup which
-        // crashes releasing ObjC objects in autorelease pool pages created
-        // internally by FFI calls. Block forever; process exit kills us.
-        while (true) {
-            std::this_thread::sleep_for(std::chrono::hours(24));
-        }
-    });
+    {
+        std::lock_guard<std::mutex> lock(gVMJobMutex);
+        gVMJobPending = true;
+    }
+    gVMJobCV.notify_one();
 }
 
 void vm_runOnMainThread(void) {
@@ -549,17 +599,18 @@ void vm_stop(void) {
         gInterpreter->stop();
     }
 
-    // Wait for the interpreter to finish, then detach the thread.
-    // We never join — the VM thread blocks forever after interpret() returns
-    // to avoid pthread TSD cleanup crashing on ObjC autorelease pool pages.
-    if (gVMThread.joinable()) {
+    // Wait for the interpreter to finish. We never join: the worker parks
+    // between images and never returns, so that pthread TSD cleanup never drains
+    // its autorelease pool. Waiting on gRunning is what tells us interpret() has
+    // returned and the worker is back at its condition variable, which is the
+    // point at which vm_destroy may safely replace the interpreter.
+    {
         auto start = std::chrono::steady_clock::now();
         while (gRunning) {
             auto elapsed = std::chrono::steady_clock::now() - start;
             if (elapsed > std::chrono::seconds(2)) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        gVMThread.detach();
     }
 
     // Stop the heartbeat thread (may already be stopped by VM thread)
@@ -570,8 +621,11 @@ void vm_stop(void) {
 
 void vm_destroy(void) {
     // Delete all VM objects and reset state so vm_initialize()/vm_loadImage()/vm_run()
-    // can be called again for a fresh launch. The old VM thread (if any) is detached
-    // and sleeping — it uses negligible resources and dies with the process.
+    // can be called again for a fresh launch. The VM worker thread is parked on
+    // its condition variable at this point — vm_stop waited for gRunning to clear,
+    // which is exactly the moment interpret() returned — so replacing the
+    // interpreter underneath it is safe, and the next vm_run reuses that same
+    // thread rather than starting another.
 
     delete gInterpreter;
     gInterpreter = nullptr;

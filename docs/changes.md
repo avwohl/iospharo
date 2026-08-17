@@ -257,6 +257,35 @@ first, shifting all three lockstep arrays (`callbackContextStack_`,
 `callbackHandedOut_`, `callbackHandlerStack_`) and clearing the vacated top slot
 in each.
 
+## A thread was leaked per image relaunch
+
+`vm_run` started a fresh `std::thread` for every image, and the thread slept for
+24 hours once `interpret()` returned, so each relaunch left one behind. Measured
+on `main` over six launch/quit cycles, live threads went 4, 6, 7, 8, 9.
+
+There is one worker now, created once and parked on a condition variable between
+images. `vm_run` hands it a job and notifies; `vm_stop` waits for `gRunning` to
+clear, which is exactly the moment `interpret()` returned and the worker is back
+at its condition variable, so `vm_destroy` can replace the interpreter underneath
+it safely.
+
+The reason the thread must never return is unchanged and is not a dodge: its
+implicit autorelease pool holds an over-released `CFString` from the image's own
+FFI bindings, and a secondary thread's pool is drained by pthread TSD cleanup at
+exit, which segfaults. The reference VM never drains either — it has no
+autorelease pool handling anywhere in its sources and runs on a command-line
+process's main thread. Parking keeps that property exactly while making the cost
+constant instead of per-launch.
+
+`src/platform/test_relaunch.cpp` came with it: launch, quit and relaunch in one
+process, judged on three things per cycle — the VM is running at both ends, the
+bytecode counter advances, and posted input events get consumed. Those are the
+three relaunch bugs the repo has actually had. Both were already fixed on this
+branch (`vm_destroy` resets `gRunning`; `resetAllFFIState` clears
+`sSDL2PollEventFlagSet`), so the test passes on arrival and exists to keep them
+fixed. On this branch each cycle also builds and destroys a JIT code zone, which
+no other headless test does.
+
 ## Already fixed here, not ported
 
 Nine further areas diagnosed on `main` were checked against this branch and
