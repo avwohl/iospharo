@@ -13,7 +13,7 @@
 
 2026-08-17 (VM fixes ported from `main`)
 
-Six defects found while running a BitBlt/become/callback test battery against
+Seven defects found while running a BitBlt/become/callback test battery against
 this branch. Each was diagnosed first on `main`, whose VM has diverged
 considerably, so none is a cherry-pick — every one was re-applied against this
 branch's own code and re-verified here. Where `main`'s version would have
@@ -73,6 +73,37 @@ above, fixed here too since the stencil path still uses it.
 
 With these four, all 36 depth pairs convert each pixel identically whether it
 is converted in a row or on its own (`BitBltDepthMatrixTest` 9/9, was 4/9).
+
+## Negated-depth sources converted to 32bpp with each word reversed
+
+A negative Form depth changes only how pixels are packed into a 32-bit word,
+not what they are, so a depth d form and a depth -d form holding the same pixel
+values must convert to the same 32bpp form. They did not:
+
+    depth  1 vs  -1 -> 32bpp agree: false
+    depth  2 vs  -2 -> 32bpp agree: false
+    depth  4 vs  -4 -> 32bpp agree: false
+    depth  8 vs  -8 -> 32bpp agree: false
+    depth 16 vs -16 -> 32bpp agree: true
+
+`primitiveCopyBits` latches `srcNeedsByteSwap` for a negative source depth and
+then normalises `srcDepth` positive, so a negated-depth source arriving at the
+32bpp-destination handlers was packed by code that hardcodes MSB-first order
+and never consults the flag. Depth -16 escaped because that one handler
+compensates on its own.
+
+The generic transfer above already handles raw byte order; it was gated on
+`destDepth != 32`, which is exactly the case that needed it. Removing that
+clause is the whole fix, and it does not open the fast path: `bothSub32`
+requires `destDepth <= 16` and `anyRawOrder` requires a negative depth
+somewhere, so a positive 32->32 blit still cannot enter. A 32 -> -32 copy stays
+bit-identical, which PNGReadWriterTest asserts directly.
+
+The existing negative-depth tests could not catch this. They write a
+negated-depth form and read it back, which passes whenever the read and the
+write share an error — and they did, symmetrically. The new
+`testNegatedDepthConvertsTheSameAsPositiveDepth` compares the two depths
+against each other, which has no such blind spot.
 
 ## WarpBlt silently ignored two colour maps
 
