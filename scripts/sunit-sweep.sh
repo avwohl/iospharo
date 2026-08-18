@@ -35,6 +35,33 @@
 # A correctly prepped Pharo 13 image grows from ~52 MB to ~74 MB and answers
 # non-nil for `Smalltalk at: #SUnitRunner`.
 # ---------------------------------------------------------------------------
+# THE .sources FILE MUST SIT BESIDE THE IMAGE. It is not optional decoration:
+# Pharo reads class comments out of it at RUNTIME, so without it
+#
+#     Object comment   ->   nil        (with it: a 2925-character String)
+#
+# and every test that touches a class comment fails in a way that looks like a
+# VM bug and is not. Measured on 2026-08-18, batch 1-300 on arm64:
+#
+#     ClyConcreteGroupCritiquesTest   36 tests   36 ERROR
+#     ClyBrowserToolValidityTest      25 tests   25 ERROR
+#     ClyNotebookPageRecyclerTest      8 tests    8 ERROR
+#     BCBeautifulCommentsSettingsTest  5 tests    4 ERROR
+#
+# 69 of that batch's 94 errors, all reducible to one nil. Two different
+# signatures come out of it and neither names the cause:
+#
+#     MessageNotUnderstood: receiver of "ifEmpty:" is nil
+#       ...ClyClassTableDecorator class>>decorateTableCell:of:      (comment ifEmpty:)
+#     Error: Improper store into indexable object
+#       ...WriteStream>><< ... TestCase class>>buildMicroDownUsing:withComment:
+#
+# The second one is why this matters beyond the four classes above: an earlier
+# note in this repo attributed exactly that "Improper store" scatter to running
+# the sweep on a busy machine. Some of it was the missing .sources file.
+# This script now refuses to run without it rather than quietly costing ~5
+# points of pass rate.
+# ---------------------------------------------------------------------------
 # SET THE BASELINE ENVIRONMENT, or the numbers are not comparable to the
 # recorded runs and the VM looks worse than it is:
 #
@@ -88,6 +115,14 @@ PER_BATCH_TIMEOUT=${PER_BATCH_TIMEOUT:-600}
 CHANGES="${IMAGE%.image}.changes"
 [ -f "$CHANGES" ] || { echo "no changes file beside the image: $CHANGES" >&2; exit 1; }
 
+# See the .sources note in the header. Take it from beside the image, and fall
+# back to anywhere under the image's directory tree, which is where a
+# `curl get.pharo.org | bash` download leaves it.
+IMAGE_DIR=$(cd "$(dirname "$IMAGE")" && pwd)
+SOURCES=$(ls "$IMAGE_DIR"/*.sources 2>/dev/null | head -1)
+[ -n "$SOURCES" ] || SOURCES=$(find "$IMAGE_DIR" -maxdepth 3 -name '*.sources' 2>/dev/null | head -1)
+[ -n "$SOURCES" ] || { echo "no .sources file for $IMAGE -- class comments would all read nil; see the header" >&2; exit 1; }
+
 mkdir -p "$OUT"
 : > "$OUT/all_results.txt"
 : > "$OUT/sweep.log"
@@ -101,6 +136,7 @@ rm -f /tmp/sunit_class_names.txt /tmp/sunit_method_names.txt
   echo "sweep start $(date '+%F %H:%M:%S')"
   echo "  vm      $VM  ($(lipo -archs "$VM" 2>/dev/null || uname -m))"
   echo "  image   $IMAGE"
+  echo "  sources $SOURCES"
   echo "  total=$TOTAL step=$STEP timeout=${PER_BATCH_TIMEOUT}s"
 } >> "$OUT/sweep.log"
 
@@ -113,6 +149,7 @@ while [ "$start" -le "$TOTAL" ]; do
     # running, corrupted globals, or died mid-test.
     cp "$IMAGE"   "$OUT/run.image"
     cp "$CHANGES" "$OUT/run.changes"
+    [ -f "$OUT/$(basename "$SOURCES")" ] || cp "$SOURCES" "$OUT/"
     printf '%s %s' "$start" "$end" > /tmp/sunit_batch.txt
     rm -f /tmp/sunit_test_results.txt /tmp/sunit_run_completed.txt
 

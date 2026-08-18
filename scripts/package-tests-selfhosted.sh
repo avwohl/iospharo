@@ -47,6 +47,16 @@ PACKAGES=(
 [ -f "$BASE" ] || { echo "no such image: $BASE" >&2; exit 1; }
 BASE_CHANGES="${BASE%.image}.changes"
 
+# The .sources file has to travel with the image. Pharo reads class comments
+# out of it at RUNTIME, so without it `Object comment` answers nil and every
+# test that touches a comment fails for a reason that has nothing to do with
+# the package under test -- measured 2026-08-18, see scripts/sunit-sweep.sh's
+# header for the four classes and 69 errors it cost there.
+BASE_DIR=$(cd "$(dirname "$BASE")" && pwd)
+BASE_SOURCES=$(ls "$BASE_DIR"/*.sources 2>/dev/null | head -1)
+[ -n "$BASE_SOURCES" ] || BASE_SOURCES=$(find "$BASE_DIR" -maxdepth 3 -name '*.sources' 2>/dev/null | head -1)
+[ -n "$BASE_SOURCES" ] || { echo "no .sources file for $BASE -- class comments would all read nil" >&2; exit 1; }
+
 mkdir -p "$WORK"
 SUMMARY="$WORK/summary.txt"
 : > "$SUMMARY"
@@ -68,6 +78,7 @@ for entry in "${PACKAGES[@]}"; do
     rm -rf "$D"; mkdir -p "$D"
     cp "$BASE" "$D/pkg.image"
     cp "$BASE_CHANGES" "$D/pkg.changes"
+    cp "$BASE_SOURCES" "$D/"
 
     # --- load, and persist with a snapshot rather than --save ---
     t0=$(date +%s)
