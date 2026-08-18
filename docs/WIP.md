@@ -1,3 +1,66 @@
+# WIP (2026-08-18) — RETRACTION: the corpse is a BLOCK TEMP, and `#cos` is Float's
+
+An earlier entry in this file states the corpse is "`self`, the receiver of
+`PMVector>>cos`, which mutates in place".  **That is wrong.**  It was inferred
+from `method_=#cos` plus finding a `PMVector>>cos` in the image, without reading
+the test.  The test says:
+
+    testVectorSystem
+        | solver stepper system dt |
+        dt := 0.01.
+        system := PMExplicitSystem block: [ :x :t |
+                  | v |
+                  v := PMVector new: 2.
+                  v at: 1 put: t sin.
+                  v at: 2 put: t cos.
+                  v ].
+        ...
+
+So the `#cos` in the DNU is **`Float>>cos`** (`t cos`), and the object taking
+`at:put:` on a dead header is **`v`** — a TEMP OF THE BLOCK, holding a
+`PMVector new: 2` allocated three lines earlier.  `PMVector>>cos` exists but
+never runs here.
+
+That changes the shape of the defect: it is not "a receiver mutated in place
+dies under its own method", it is **a freshly allocated object held only in a
+block temp does not survive a GC triggered by an allocating send between its
+creation and its use** (`t sin` and `t cos` each box a Float).
+
+Consistent with everything measured:
+
+  * only 2 scavenges and 4 fullGCs occur in the whole run, so the window is
+    narrow and the failure is rare rather than immediate — the solver completes
+    thousands of steps successfully
+  * `PHARO_WATCH_ROOT_CLASS=PMVector` emitted ZERO `[ROOT-WATCH]` lines.  The
+    matcher is an exact class-name compare and `PMVector allSubclasses` is
+    `#()`, so it WOULD have matched; no root visited a PMVector at any of those
+    six GC events
+  * the object-aware dangle check is clean, and it walks the same root set
+
+## A minimal repro does NOT yet exist
+
+The obvious synthesis — a block temp holding a fresh Array across two allocating
+sends — does not reproduce:
+
+    200,000 iterations of
+        [ :t | | v | v := Array new: 2.
+               v at: 1 put: t sin. v at: 2 put: t cos. v ]
+    on a clean base image:  bad=0, corpse=0, dnu=0
+
+So the shape alone is not sufficient; the real case runs the block through
+PMExplicitSystem/PMAB2Solver at frame depth 20.  Do not spend more on
+synthesising one before instrumenting the real repro, which is deterministic and
+costs ~90 s.
+
+## Method note
+
+This is the second time on this defect that reading a diagnostic field without
+reading the corresponding SOURCE produced a confident wrong answer (the first
+was comparing corpse COUNTS across arms).  `method_=#cos` names the method the
+VM is in; it does not tell you which `cos`, and there were eleven implementors.
+
+---
+
 # WIP (2026-08-18) — the missed root is NOT an operand-stack slot above sp
 
 The one shape that fitted every earlier measurement was: the receiver is live
