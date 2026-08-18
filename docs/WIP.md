@@ -23,6 +23,40 @@ Kept from the work: vm_stop now prints how long interpret() took to return, and
 prints `[VM-STOP-TIMEOUT]` when it gives up, so the next occurrence arrives with
 its evidence instead of needing to be reconstructed from a crash dump.
 
+## UPDATE, same session: the x86_64 FFI defect is FIXED
+
+The "single highest-value x86 item" below is done.  Root cause: libffi's x86
+ffitarget.h gates its 64-bit ABI enum on `defined(X86_64) || (defined
+(__x86_64__) && defined (X86_DARWIN))`, macros libffi's own configure defines
+when building the library but which we never defined when INCLUDING the header.
+The x86_64 build therefore compiled `FFI_DEFAULT_ABI = FFI_SYSV = 1` while the
+linked libffi expects `FFI_UNIX64 = 2`, so ffi_prep_cif answered FFI_BAD_ABI on
+every callback registration.
+
+    clang -arch arm64                FFI_DEFAULT_ABI=1  FIRST=0  LAST=3
+    clang -arch x86_64               FFI_DEFAULT_ABI=1  FIRST=0  LAST=9   wrong
+    clang -arch x86_64 -DX86_DARWIN  FFI_DEFAULT_ABI=2  FIRST=1  LAST=5   right
+
+    x86_64                       before        after
+    FFICallbackTest              0 P /  2 E    2 P / 0 E
+    FFICallbackParametersTest    0 P / 11 E   11 P / 0 E
+    TFCallbacksTest              0 P /  4 E    4 P / 0 E
+
+arm64 byte-identical before and after.  Found by giving
+`primitiveRegisterCallback`'s five silent `return Failure` sites distinct
+messages -- `[TFCB-FAIL] ffi_prep_cif status=2` named it in one run, after the
+bare "primitive #registerCallback: failed" had said nothing for a whole sweep.
+
+Also fixed the way this became possible: `build-libffi.sh`'s `make_universal`
+lipo'd two architectures' libraries together and then copied only slice_a's
+HEADERS, so a fat slice shipped one arch's `ffitarget.h`.  It now stages both
+and generates an arch-dispatching header.
+
+CHECKED, and it does NOT also explain the x86 package failures: with the ABI
+fixed, an x86_64 NeoJSON load still fails with `IceGenericError: no error
+message set by libgit2` and zero TFCB-FAIL lines.  The libgit2 attribution
+below stands on its own.
+
 ## SUnit: both architectures, complete runs
 
 STEP=300 with a pristine image per batch, `.sources` staged, idle machine.
