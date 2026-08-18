@@ -82,8 +82,16 @@ for entry in "${PACKAGES[@]}"; do
 
     # --- load, and persist with a snapshot rather than --save ---
     t0=$(date +%s)
+    # Write the pre-load TestCase subclasses first: the test pass below selects
+    # the classes THIS LOAD ADDED, which is exact, rather than the classes whose
+    # name contains $PATTERN, which is a guess. Measured 2026-08-18: 'PolyMath'
+    # and 'Grease' each matched ZERO test classes after a load that had plainly
+    # worked, because their tests are named PM*Test and GR*Test. Both reported
+    # as "classes=0 pass=0", indistinguishable from a failed load.
     timeout "$LOAD_TIMEOUT" "$VM" "$D/pkg.image" eval \
-        "$LOAD_EXPR Smalltalk snapshot: true andQuit: true" \
+        "'$D/pre.txt' asFileReference writeStreamDo: [ :f |
+             TestCase allSubclasses do: [ :c | f nextPutAll: c name; lf ] ].
+         $LOAD_EXPR Smalltalk snapshot: true andQuit: true" \
         > "$D/load.log" 2>&1
     load_rc=$?
     t1=$(date +%s)
@@ -91,20 +99,39 @@ for entry in "${PACKAGES[@]}"; do
     # Did the load actually take? A grown image is the cheap check; the real one
     # is whether the test classes exist, which the run below answers.
     size=$(stat -f%z "$D/pkg.image" 2>/dev/null || stat -c%s "$D/pkg.image" 2>/dev/null || echo 0)
-    printf '%-12s load rc=%-3s %4ds  image=%sMB\n' \
-        "$PKG" "$load_rc" "$((t1-t0))" "$((size/1024/1024))" >> "$SUMMARY"
+    base_size=$(stat -f%z "$BASE" 2>/dev/null || stat -c%s "$BASE" 2>/dev/null || echo 0)
+    grew=grew
+    [ "$size" -le "$base_size" ] && grew=DID-NOT-PERSIST
+    printf '%-12s load rc=%-3s %4ds  image=%sMB %s\n' \
+        "$PKG" "$load_rc" "$((t1-t0))" "$((size/1024/1024))" "$grew" >> "$SUMMARY"
 
     # --- run every TestCase subclass whose name matches the pattern ---
     rm -f "$D/result.txt"
+    # Select the TestCase subclasses this load ADDED (pre.txt vs now). The name
+    # pattern is only a fallback for when pre.txt is missing, i.e. the load step
+    # never ran, OR the package already ships in the base image and so adds no
+    # classes at all -- Fuel is the case that proves this is needed: it is
+    # already present, the diff is empty, and only the pattern finds its 19
+    # tests. NOTE: the eval below is one double-quoted shell string, so it
+    # must contain no bare double quote -- a Smalltalk "comment" inside it ends
+    # the string and the rest is executed as shell words.
     t2=$(date +%s)
     timeout "$TEST_TIMEOUT" "$VM" "$D/pkg.image" eval "
-| pat classes s tp tf te |
+| pat pre added classes s tp tf te |
 pat := '$PATTERN'.
 s := WriteStream on: String new.
 tp := 0. tf := 0. te := 0.
 classes := (TestCase allSubclasses
-    reject: [ :c | [ c isAbstract ] on: Error do: [ :e | true ] ])
-    select: [ :c | c name includesSubstring: pat ].
+    reject: [ :c | [ c isAbstract ] on: Error do: [ :e | true ] ]).
+pre := ('$D/pre.txt' asFileReference exists)
+    ifTrue: [ '$D/pre.txt' asFileReference contents lines asSet ]
+    ifFalse: [ Set new ].
+added := pre isEmpty
+    ifTrue: [ #() ]
+    ifFalse: [ classes reject: [ :c | pre includes: c name ] ].
+classes := added isEmpty
+    ifTrue: [ classes select: [ :c | c name includesSubstring: pat ] ]
+    ifFalse: [ added ].
 classes := classes asSortedCollection: [ :a :b | a name <= b name ].
 classes do: [ :c |
     | r |
