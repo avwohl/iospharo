@@ -1,3 +1,63 @@
+# WIP (2026-08-18) — the holder is OUTSIDE the operand stack: measured, not argued
+
+The corpse-push trap now reports whether the value is also resident in
+`[stackBase_, stackPointer_)`, and where.  On the deterministic repro:
+
+    [CORPSE-PUSH] val=0x7a49f1b3b0 in=#cos fd=20 jitState=0 inStack=0 firstSlot=-1 sp=68 fp=64
+    [CORPSE-PUSH] val=0x7a49f1b3b0 in=#cos fd=20 jitState=0 inStack=1 firstSlot=67 sp=68 fp=64
+    [CORPSE-PUSH] val=0x7a49f1b3b0 in=#cos fd=20 jitState=0 inStack=1 firstSlot=67 sp=68 fp=64
+
+**On the FIRST push, `inStack=0`** — the value is nowhere in the live operand
+stack.  The later `inStack=1 firstSlot=67` is just the first push's own result
+sitting at sp-1.  So the value is produced from somewhere OUTSIDE the operand
+stack and pushed into it.
+
+That settles where the fix belongs.  It is not a root-scan range bug: had the
+value been inside `[stackBase_, stackPointer_)`, the scan walked it and dropped
+it anyway.  It is a holder the collector never looks at.
+
+## SavedFrame is NOT the gap
+
+Every Oop field of `SavedFrame` is visited by `forEachOopRoot`:
+
+    savedMethod  savedHomeMethod  savedReceiver
+    savedClosure savedActiveContext  materializedContext
+
+The only other pointer members are `savedFP` and `materializedRetSlot`, both
+`Oop*` INTO the stack rather than Oops.  So the saved-frame array is fully
+rooted and cannot be the missing holder.
+
+## Ruled out so far, every one by measurement
+
+    the JIT                        4 configurations
+    the Sista per-bytecode tier    PHARO_NO_SISTA_PER_BC=1
+    f96cb69b's temp-sync residual  PHARO_NO_GC_TEMPSYNC=1
+    mark / compaction              [HEAPCHECK post-fullGC] => CLEAN
+    a stack slot above sp          PHARO_SCAV_SCAN_ABOVE_SP=64 and =1024
+    a stack slot below sp          inStack=0 on the first push
+    SavedFrame's Oop fields        all six are visited (code)
+
+## The candidate that fits, and how to test it cheaply
+
+A value pushed in `#cos` that was never in the stack is read from somewhere:
+a VM register, a literal, an instance variable, or a REMOTE TEMP vector.  The
+first three are traced (`receiver_` and friends are visited registers; literals
+and ivars live in traced heap objects).  Remote temps are the one that is worth
+checking first, and this workload leans on them hard — the JIT summary for this
+very run reports `remoteTemp=2661087`.
+
+If `v` lives in an indirection vector and that vector's slots are not traced or
+not updated by the scavenge, `pushRemoteTemp` would read a stale slot and push a
+value that is in no root — exactly what is measured.
+
+Test: dump the block's bytecode for
+`PMExplicitSystem block:`'s argument in `PMAB2SolverTest>>testVectorSystem` and
+see whether `v` is a plain frame temp or a remote temp; if remote, watch the
+vector across the corrupting scavenge.  Do NOT assume — this defect has already
+killed six hypotheses, three of them mine and stated confidently.
+
+---
+
 # WIP (2026-08-18) — RETRACTION: the corpse is a BLOCK TEMP, and `#cos` is Float's
 
 An earlier entry in this file states the corpse is "`self`, the receiver of

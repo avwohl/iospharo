@@ -466,11 +466,30 @@ public:
                     && value.asObjectPtr()->classIndex() == 0) {
                 static int corpsePushLog = 0;
                 if (corpsePushLog++ < 5) {
+                    // Is this value ALSO sitting in the live operand stack, and
+                    // where relative to the current frame?  That is the whole
+                    // question for a use-after-collect: if it is inside
+                    // [stackBase_, stackPointer_) then the GC's own root scan
+                    // walked over it and dropped it anyway, which is a scan
+                    // bug; if it is nowhere in the stack, the holder is
+                    // somewhere the collector never looks (a C++ local, a
+                    // register, JIT state) and the fix belongs there instead.
+                    int copies = 0; long long firstOff = -1;
+                    for (Oop* q = stackBase_; q < stackPointer_; ++q) {
+                        if (q->rawBits() == value.rawBits()) {
+                            ++copies;
+                            if (firstOff < 0) firstOff = (long long)(q - stackBase_);
+                        }
+                    }
                     fprintf(stderr,
-                        "[CORPSE-PUSH] val=0x%llx in=#%s fd=%zu jitState=%d\n",
+                        "[CORPSE-PUSH] val=0x%llx in=#%s fd=%zu jitState=%d "
+                        "inStack=%d firstSlot=%lld sp=%lld fp=%lld\n",
                         (unsigned long long)value.rawBits(),
                         memory_.selectorOf(method_).c_str(), frameDepth_,
-                        currentJITState_ ? 1 : 0);
+                        currentJITState_ ? 1 : 0,
+                        copies, firstOff,
+                        (long long)(stackPointer_ - stackBase_),
+                        framePointer_ ? (long long)(framePointer_ - stackBase_) : -1LL);
                 }
             }
         }
