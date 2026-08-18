@@ -3874,17 +3874,57 @@ void Interpreter::interpret() {
                 stillThere = true;
             }
             if (!stillThere) {
-                // The script RAN and still no quit arrived — the process
-                // running it was killed (stack overflow; see handleStackOverflow).
-                fprintf(stderr,
-                    "[EVAL] the command's process is gone — %s ran but never "
-                    "reached its exitSuccess.  Exiting instead of idling.\n",
-                    evalStartupScript_.c_str());
-                fflush(stderr);
-                running_ = false;
-                goto cg_exit;
-            }
-            if (stillThere) {
+                // The script RAN and no quit has arrived.  That has TWO causes
+                // and the file check cannot tell them apart: the process running
+                // it was killed (stack overflow; see handleStackOverflow), or
+                // the eval is simply STILL WORKING.  Treating the second as the
+                // first killed every eval whose work outlived the deadline, at
+                // exit code 0 and with no output — measured 2026-08-18 as
+                // `XMLParser test rc=0 122s NO RESULT` and
+                // `PolyMath test rc=0 123s NO RESULT` against a 120 s deadline,
+                // the docs' "produces no RESULT" open item.  PolyMath had 4 of
+                // its 117 test classes done and 240 tests passing when it died.
+                //
+                // Bytecodes executed since the deadline was armed separate the
+                // two -- but NOT by "any at all", because an idle VM still runs
+                // some: primitiveRelinquishProcessor executes ~10-20 bytecodes
+                // per 10 ms quantum, so the idle loop alone ticks over ~200k in
+                // a 120 s window.  Measured on PMAB2SolverTest, same run, three
+                // consecutive windows:
+                //
+                //     working   26,095,351 bytecodes
+                //     idle         220,402
+                //     idle         237,531
+                //
+                // Two orders of magnitude apart, so 1M is comfortably clear of
+                // the idle band and far below anything real work does. Above it
+                // the eval is working and must not be killed; below it nothing
+                // is happening and exiting beats idling to the step budget.
+                static constexpr uint64_t kEvalProgressFloor = 1000000;
+                if (g_stepNum - evalDeferSteps_ > kEvalProgressFloor) {
+                    fprintf(stderr,
+                        "[EVAL] deadline reached but the VM has run %llu "
+                        "bytecodes since it was armed (idle floor %llu) — the "
+                        "eval is still working, not dead.  Re-arming.\n",
+                        (unsigned long long)(g_stepNum - evalDeferSteps_),
+                        (unsigned long long)kEvalProgressFloor);
+                    fflush(stderr);
+                    evalDeferDeadline_ = std::chrono::steady_clock::now()
+                                       + std::chrono::seconds(120);
+                    evalDeferSteps_ = g_stepNum;
+                } else {
+                    fprintf(stderr,
+                        "[EVAL] the command's process is gone — %s ran but never "
+                        "reached its exitSuccess, and the VM has run only "
+                        "%llu bytecodes since the deadline was armed — idle, "
+                        "not working.  Exiting instead of idling.\n",
+                        evalStartupScript_.c_str(),
+                        (unsigned long long)(g_stepNum - evalDeferSteps_));
+                    fflush(stderr);
+                    running_ = false;
+                    goto cg_exit;
+                }
+            } else {
                 fprintf(stderr,
                     "[EVAL] timed out with %s still on disk — never executed, "
                     "so no command-line handler picked it up.  Exiting.\n",

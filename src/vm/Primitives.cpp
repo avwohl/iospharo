@@ -5179,6 +5179,7 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
             if (tryReschedule()) {
                 evalDeferDeadline_ = std::chrono::steady_clock::now()
                                    + std::chrono::seconds(120);
+                { extern uint64_t g_stepNum; evalDeferSteps_ = g_stepNum; }
                 return PrimitiveResult::Success;
             }
             fprintf(stderr, "[EVAL] no runnable process after deferring — "

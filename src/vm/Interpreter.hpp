@@ -1205,6 +1205,11 @@ private:
     // ever consumes the script (no command-line handler was queued) the VM
     // must not sit until the step budget.  Zero = not armed.
     std::chrono::steady_clock::time_point evalDeferDeadline_{};
+    /// g_stepNum when evalDeferDeadline_ was last armed. The deadline exists to
+    /// stop the VM idling forever when no command-line handler picks up our
+    /// startup.st; it must not kill an eval that is simply still working, so at
+    /// the deadline we compare against this and re-arm if the VM has run.
+    uint64_t evalDeferSteps_ = 0;
     std::vector<std::string> vmParameters_;    // VM flags like --headless (negative indices)
 
     // Screen dimensions (configurable, defaults for headless)
