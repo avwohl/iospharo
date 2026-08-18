@@ -1,3 +1,51 @@
+# WIP (2026-08-18) — pin CONFIRMED with young-gen still on
+
+`PHARO_YG_NO_SCAVENGE` now gates fullGC's pre-compact scavenge as well as the
+interpreter-side one, so it finally means what it says.  With young-gen
+ALLOCATION still enabled and only the scavenge skipped:
+
+    baseline               corpse origSel=#at:put: method_=#cos      scavenges=2 fullGCs=4
+    no-scavenge (gated)    #cos corpse GONE                          scavenges=0 fullGCs=2
+
+That confirms the attribution WITHOUT `PHARO_NO_YG`, which disabled eden
+allocation wholesale and so proved less than it appeared to.  The corrupting
+scavenge is `ObjectMemory.cpp`'s pre-compact call inside `fullGC`.
+
+## The corpse that appears INSTEAD at scavenges=0 is a different, expected one
+
+    PHARO_NO_YG=1            origSel=#class  method_=#nextPutAll:
+    no-scavenge (gated)      origSel=#executeDeferredStartupActions:
+                             method_=#snapshot:andQuit:
+
+Different from each other and from `#cos`.  This is the 2026-07-02 defect the
+pre-compact scavenge exists to prevent, reappearing exactly as predicted when
+the scavenge is skipped: a young object that is scavenge-reachable but NOT
+mark-reachable arrives in old space unmarked, and planCompact reclaims it under
+live weak slots.  It is flagged at the call site as a bisect axis only.
+
+**So the fix is NOT to remove or reorder this scavenge.**  Removing it trades
+one corruption for another.  The fix is the root it misses.
+
+## Where that leaves the defect
+
+    the corpse is `self`, receiver of PMVector>>cos, which mutates in place
+    produced by fullGC's pre-compact scavenge; zero scavenges, no #cos corpse
+    mark/compact clean; object-aware dangle scan clean; raw-scan hits all
+        ExternalAddress false positives
+    not the JIT (4 configurations), not the f96cb69b temp-sync residual
+
+The one shape consistent with all of it: at the moment fullGC runs, the receiver
+is live only somewhere `forEachRoot` does not walk — a C++ local across an
+allocation, or an operand-stack slot outside `[stackBase_, stackPointer_)`.  The
+scavenger and the dangle diagnostic share that blind spot, which is why the
+diagnostic reports clean while the object dies.
+
+Next, and now cheap because the repro is one deterministic ~90 s test: find
+which allocation triggers that fullGC inside `PMVector>>cos`'s loop, and dump
+the root set at that instant against the receiver's address.
+
+---
+
 # WIP (2026-08-18) — the corrupting scavenge is fullGC's, not the interpreter's
 
 ## Pinned by elimination, and the off-by-one checked

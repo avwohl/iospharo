@@ -2723,8 +2723,15 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     // a bisect that assumes 0 draws the wrong conclusion (measured 2026-08-18:
     // both knobs took a repro from scavenges=2 to scavenges=1, which reads as
     // "still reproduces with scavenging off" and is not what happened).
-    // The knob that gates BOTH sites is PHARO_NO_YG, via enableYoungGen_.
-    if (enableYoungGen_ && edenFree_ > edenAllocBase_) {
+    // PHARO_YG_NO_SCAVENGE now gates this site too, so "disable scavenging"
+    // means it. Skipping this scavenge is NOT safe as a production setting --
+    // it reinstates the 2026-07-02 defect described above, where a young object
+    // that is scavenge-reachable but not mark-reachable lands in old space
+    // unmarked and planCompact reclaims it under live weak slots. It is a
+    // BISECT AXIS ONLY, and it is what pinned the 2026-08-18 PMVector>>cos
+    // corpse to this call rather than the interpreter-side one.
+    if (enableYoungGen_ && edenFree_ > edenAllocBase_
+            && !GET_DEBUG_BOOL(PHARO_YG_NO_SCAVENGE)) {
         scavenge();
     }
 #ifdef _WIN32
