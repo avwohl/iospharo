@@ -109,6 +109,12 @@ for entry in "${PACKAGES[@]}"; do
     rm -f "$D/result.txt"
     # Select the TestCase subclasses this load ADDED (pre.txt vs now). The name
     # pattern is only a fallback for when pre.txt is missing, i.e. the load step
+    # The result file is rewritten after EVERY class, ending in a PARTIAL line
+    # that names the last class to finish. Writing it only at the end -- as this
+    # did until 2026-08-18 -- means anything that kills the eval between the last
+    # class and the final write discards every result and names nothing. That is
+    # precisely what "XMLParser ... produces no RESULT" was: 110M activations of
+    # tests that plainly ran, reported as silence. PolyMath does the same.
     # never ran, OR the package already ships in the base image and so adds no
     # classes at all -- Fuel is the case that proves this is needed: it is
     # already present, the diff is empty, and only the pattern finds its 19
@@ -133,7 +139,7 @@ classes := added isEmpty
     ifTrue: [ classes select: [ :c | c name includesSubstring: pat ] ]
     ifFalse: [ added ].
 classes := classes asSortedCollection: [ :a :b | a name <= b name ].
-classes do: [ :c |
+classes withIndexDo: [ :c :i |
     | r |
     r := [ c suite run ] on: Error do: [ :e | nil ].
     r ifNil: [ s nextPutAll: c name , ': DIED'; lf ]
@@ -141,7 +147,11 @@ classes do: [ :c |
         tp := tp + r expectedPassCount.
         tf := tf + r failureCount.
         te := te + r errorCount.
-        s nextPutAll: c name , ': ' , r printString; lf ] ].
+        s nextPutAll: c name , ': ' , r printString; lf ].
+    '$D/result.txt' asFileReference writeStreamDo: [ :f |
+        f nextPutAll: s contents;
+          nextPutAll: 'PARTIAL after ' , i printString , '/' , classes size printString ,
+                      ' last=' , c name; lf ] ].
 s nextPutAll: 'RESULT classes=' , classes size printString ,
     ' pass=' , tp printString , ' fail=' , tf printString ,
     ' err=' , te printString; lf.
