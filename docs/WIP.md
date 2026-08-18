@@ -1,3 +1,94 @@
+# WIP (2026-08-18) — arm64 + x86_64 on one machine; no regression found
+
+State saved mid-session at user request. Everything below is on `jit`, pushed
+to origin (`ce1c05a8` and later). Work tree: a scratch worktree on branch
+`jit-work`; the main checkout is on `main` at origin/main and clean.
+
+## The headline
+
+**No regression exists.** Full-suite runs report 95.34% (arm) / 93.77% (x86)
+and look alarming against the 98.87% recorded on 2026-08-11, but their failures
+do not reproduce. Every suspect class passes at exactly the baseline number in
+isolation, including the last one checked:
+
+    class                        baseline   full run       isolated
+    ReflectivityReificationTest  112/112    P:61 E:48      112/112
+    ReSmalllintTest               58/58     P:19 F:38       58/58
+    ReflectivityControlTest       71/71     P:41 E:25       71/71
+    OCASTClosureAnalyzerTest      33/33     P:5  E:26       33/33
+    MethodMapTest                 30/30     P:10 E:17       30/30
+    SindarinDebuggerTest          85/85     P:60 F:7 E:18   85/85 x3
+
+The honest figure for this VM on this machine is **99.98% over the first 300
+classes** (5227/5228, one error). Full-suite percentages should not be read as
+VM quality numbers without re-running their failures in isolation.
+
+Four causes ruled out by measurement, not argument:
+
+  - many classes in one image — 300 direct = 99.98%
+  - the SUnitRunner harness — same 300 through it = 0 F / 0 E
+  - snapshot-prepped images — round-trip verified with a marker global
+  - code zone exhaustion — the CLEAN run also filled it (196607/196608 KB,
+    9944 failed compilations) and still scored 0 F / 0 E. The zone costs
+    throughput, not correctness.
+
+Left standing: cumulative in-image state over many hundreds of classes. The
+worst-hit classes install metalinks and rewrite ASTs, which is the population
+that would leave residue. That is a test-isolation property of the image.
+
+## Done this session
+
+  - **defect #15 HIGH -> LOW.** Hang gone, overflow catchable, unwind verified
+    with the mutex counter-test that caused the 2026-08-15 revert
+    ("fork caught overflow: yes  mutex: MUTEX-FREE"). Re-priced; stale code
+    comment corrected.
+  - **x86_64 builds and runs** under Rosetta, verified executing real Smalltalk.
+    Both architectures now measurable on one machine.
+  - **C++/VM tier passes on both**: test_sista_ir, test_asmjit_t1_stub,
+    test_class_table, test_relaunch 3/3.
+  - **Packages load without stock Cog** (`scripts/package-tests-selfhosted.sh`):
+    NeoJSON 116/116, Mustache 47/47, DataFrame 431/437, Fuel 19/19.
+  - **CI green** for the first time in 60+ runs. Two causes: a Linux build I
+    broke with an unconditional Frameworks check (now `if(APPLE)`), and the
+    WarpBlt tripwire, which had been correctly reporting that defect #1 was
+    FIXED since 2026-08-12 and nobody read it.
+  - New tooling: `scripts/sunit-sweep.sh`, `scripts/package-tests-selfhosted.sh`.
+
+## Open, in priority order
+
+  1. **XMLParser, Grease, PolyMath** package loads. XMLParser loads in 1055 s
+     but its test pass produces no RESULT; Grease matches 0 classes (pattern
+     wrong); PolyMath load times out at 1200 s.
+  2. **Image bloat on snapshot after a Metacello load.** A 52 MB base becomes
+     234 MB (NeoJSON), 401 MB (Grease), 559 MB (DataFrame), 1056 MB (XMLParser).
+     Unexplained and probably worth its own look.
+  3. **Long-run degradation.** Full suite never finished inside 4 h on either
+     arch. Cause is in-image state accumulation, not the VM, but it makes the
+     full suite unmeasurable as currently run. Consider periodic image restart.
+  4. **defect #2** — 13 packages, ~6000 tests. Now partly unblocked: package
+     loading no longer needs Cog.
+  5. **Code zone never recovers.** Fills at ~22K methods even at 192 MB
+     (`MaxCodeZoneSize` caps at 256). Costs throughput only. Real fix is the
+     ~6 KB/method emit or genuine eviction.
+  6. Re-enable the WarpBlt CI job with EXPECT set to 0 — one line, strictly
+     better than leaving it disabled.
+
+## Reproduction notes that cost time
+
+  - Prep a suite image with `Smalltalk snapshot: true andQuit: true`, NOT
+    `eval --save` (that is the stock VM's flag; ours writes nothing).
+  - Run suites on an IDLE machine. Compiling during a run turns passes into
+    ERRORs — 99.7% -> 96.8%.
+  - Use one batch, not many. Small batches invent failures: three Calypso
+    classes score 100% alone and error wholesale in a batch of 50.
+  - Set `PHARO_CODE_ZONE_MB=192 PHARO_MAX_STEPS=4000000000000`, as the AWS
+    scripts do; every recorded baseline used them.
+  - No stock Cog on macOS: it aborts allocating its code zone at 0x320000000,
+    the ASLR problem this project exists to solve. All comparisons here are
+    ours-vs-ours.
+
+---
+
 # WIP (2026-08-09) — audit follow-through: the 2026-05-27 warning-hygiene fixes were incomplete
 
 Triggered by a report relayed from another machine claiming to have "fixed"
