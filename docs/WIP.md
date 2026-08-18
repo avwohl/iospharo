@@ -1,3 +1,68 @@
+# WIP (2026-08-18) — PMAB2SolverTest uses a COLLECTED object, and that is what hangs PolyMath
+
+## The finding
+
+`PMAB2SolverTest>>testVectorSystem` sends `at:put:` to an object that is a
+CORPSE — collected, class index 0, forwarding pointer resolving to nil:
+
+    [DNU] CASCADE: receiver can't handle doesNotUnderstand:
+    [DNU]   caller=#state:time: fd=20
+    [DNU]   CASCADE rcvr=0x7717d01610 kind=obj classIdx=0 origSel=#at:put: method_=#cos
+    [DNU]   CASCADE corpse hdr=0x200000002000000 w1=0x7000000000
+              targetClass=UndefinedObject class followed=nil
+    [DNU]   frame[14] m=#testVectorSystem rcvr=PMAB2SolverTest
+    [DNU]   ctx[2]  m=#runCaseManaged rcvrCls=PMAB2SolverTest
+
+`classIdx=0` is not a live class.  The object was freed and is still reachable
+from the running frame, inside PolyMath's ODE integration (`#cos`,
+`#state:time:`) — float- and Array-heavy code, i.e. heavy allocation and
+therefore heavy GC.  This is a memory-management defect, not a PolyMath bug:
+no image-level mistake can hand the VM a receiver with class index 0.
+
+## Why it looked like a hang, and why the per-class timeout did not help
+
+The cascade is unrecoverable — the receiver cannot even handle
+`doesNotUnderstand:` — and what it leaves behind is a dead Delay scheduler:
+
+    [DIAG-TIMER] usecArmed=0 msArmed=0 timerWasArmed=0 timerSem=nil   (x25)
+    [STATE-DUMP] pri=80 method=DelayMicrosecondTicker>>waitForUserSignalled:orExpired:
+
+With `timerSem=nil` and never re-armed, every Delay in the image is dead.  That
+is why bounding each class with `valueWithin:onTimeout:` changed nothing: the
+watchdog is itself a Delay.  The mechanism is fine in isolation — measured on a
+clean image, `[ (Delay forSeconds: 30) wait ] valueWithin: 3 seconds` returns
+TIMED-OUT in 3010 ms, and it interrupts a pure busy loop too — so the failure is
+specific to an image whose timer has already been wedged by the corpse.
+
+Sequence, end to end:
+
+    at:put: on a collected object
+      -> DNU on a corpse, which cannot handle doesNotUnderstand: either
+      -> the test process dies mid-flight, Delay scheduler left with timerSem=nil
+      -> every Delay in the image is dead, so no watchdog can fire
+      -> VM goes idle; the eval deadline correctly reports
+         `only 256,156 bytecodes ... idle, not working` and exits
+      -> PolyMath reports 4 of 117 classes
+
+Note the eval-deadline fix from earlier today is what makes this legible: before
+it, the VM exited at the first 120 s window with no distinction between
+"working" and "dead", so none of the above was visible.
+
+## Status
+
+Reduced to ONE test — `(PMAB2SolverTest selector: #testVectorSystem) run` on the
+loaded PolyMath image — and being run across JIT-on / PHARO_NO_JIT=1 /
+PHARO_NO_SISTA_PER_BC=1 to establish whether the JIT is implicated.  Do not
+assume either way until that lands: three JIT hypotheses have already died this
+session, and one non-JIT one.
+
+This supersedes "PMAB2SolverTest goes idle after ~2 minutes and never finishes"
+as the description of the defect.  It does not go idle because it is slow; it
+goes idle because it has already crashed into a corpse and taken the timer with
+it.
+
+---
+
 # WIP (2026-08-18, end of session) — both arches measured end to end
 
 ## RETRACTION FIRST: the test_relaunch mechanism I published was wrong
