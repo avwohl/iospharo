@@ -2705,9 +2705,14 @@ void Interpreter::interpret() {
     g_doSel = GET_DEBUG_STR(PHARO_DEPTH_ORACLE);
     g_doOn = (g_doSel != nullptr);
 
-    // Generational-GC young-gen enabler.  PHARO_YOUNG_GEN=1 opts
-    // in to eden allocation + scavenge; default off until the
-    // scavenge path is verified against the full test matrix.
+    // Generational-GC young-gen enabler.  Young gen is ON BY DEFAULT: see
+    // DebugSettings.cpp, `youngGenEnabled = explicitOn || !noYG` -- it is
+    // opt-OUT via PHARO_NO_YG / PHARO_NO_YOUNGGEN, and PHARO_YOUNG_GEN=1 only
+    // forces it on for backward compatibility.  This comment used to say
+    // "default off until the scavenge path is verified", which was true once
+    // and is not now; believing it sends anyone debugging a young-space
+    // corruption straight to the mark/compact path, which is the wrong half of
+    // the collector.
     if (g_debug.youngGenEnabled) {
         memory_.enableYoungGen_ = true;
     }
