@@ -3888,6 +3888,25 @@ void Interpreter::forEachRoot(Visitor&& rawVisitor, RootScope scope) {
         for (Oop* p = stackBase_; p < stackPointer_; ++p) {
             visitor(*p);
         }
+        // DIAGNOSTIC (PHARO_SCAV_SCAN_ABOVE_SP=N): also root N slots ABOVE
+        // stackPointer_.  A value that is logically live but sits above sp --
+        // e.g. args popped by a primitive that then allocates -- is invisible
+        // to this scan AND to the post-scavenge dangle check, which walks the
+        // same set.  If a use-after-collect vanishes with this set, the missed
+        // holder is exactly that.  Only slots that pass isValidPointer are
+        // visited, so garbage above sp is never handed to the collector.
+        // NOT A FIX: it conservatively pins dead slots and can retain garbage.
+        if (int aboveN = GET_DEBUG_INT(PHARO_SCAV_SCAN_ABOVE_SP)) {
+            Oop* hi = stackPointer_ + aboveN;
+            Oop* end = stack_.data() + stack_.size();
+            if (hi > end) hi = end;
+            for (Oop* p = stackPointer_; p < hi; ++p) {
+                if (p->isObject() && p->rawBits() > 0x10000
+                        && memory_.isValidPointer(*p)) {
+                    visitor(*p);
+                }
+            }
+        }
     } else {
         char slotDetail[192];
         for (Oop* p = stackBase_; p < stackPointer_; ++p) {

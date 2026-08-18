@@ -560,6 +560,7 @@ DEBUG_BOOL(PHARO_TRAP_BAD_DNU)
 DEBUG_BOOL(PHARO_USE_ASMJIT_T1_TRACE)
 DEBUG_BOOL(PHARO_XFER_TRACE)
 DEBUG_BOOL(PHARO_YG_NO_SCAVENGE)
+DEBUG_INT(PHARO_SCAV_SCAN_ABOVE_SP, 0)  // DIAGNOSTIC: also treat N operand-stack slots ABOVE stackPointer_ as GC roots (only those that pass isValidPointer). If a use-after-collect disappears with this set, the missed holder is a stack slot outside [stackBase_, stackPointer_) -- the defect #1 family. NOT a fix: it conservatively pins dead slots.
 
 #undef DEBUG_BOOL
 #undef DEBUG_INT

@@ -1,3 +1,47 @@
+# WIP (2026-08-18) — the missed root is NOT an operand-stack slot above sp
+
+The one shape that fitted every earlier measurement was: the receiver is live
+only in a stack slot outside `[stackBase_, stackPointer_)` — args popped by a
+primitive that then allocates — invisible to the scavenger AND to the dangle
+check, which walk the same set.  That is this repo's defect `#1` family, so it
+was the obvious candidate.
+
+**It is wrong.**  `PHARO_SCAV_SCAN_ABOVE_SP=N` (new) additionally roots N
+operand-stack slots above `stackPointer_`, visiting only values that pass
+`isValidPointer`:
+
+    baseline              origSel=#at:put: method_=#cos   scavenges=2 fullGCs=4
+    above-sp N=64         origSel=#at:put: method_=#cos   scavenges=2 fullGCs=4
+    above-sp N=1024       origSel=#at:put: method_=#cos   scavenges=2 fullGCs=4
+
+Unchanged at either window.  So the holder is not in the operand stack at all.
+
+The knob is kept: it is a cheap, guarded way to test this shape on the next
+use-after-collect, and it says at its own definition that it is a diagnostic and
+not a fix (it conservatively pins dead slots).
+
+## Hypotheses now dead, all by measurement
+
+    the JIT                         4 configurations, identical
+    the Sista per-bytecode tier     PHARO_NO_SISTA_PER_BC=1, identical
+    f96cb69b's temp-sync residual   PHARO_NO_GC_TEMPSYNC=1, identical
+    mark / compaction               [HEAPCHECK post-fullGC] ... => CLEAN
+    a stack slot above sp           above, N=64 and N=1024
+
+Still standing, and now the only one: something reachable from NO root the
+collector walks holds the receiver — i.e. a C++ local in a primitive or runtime
+helper that survives across an allocation.  `PHARO_WATCH_ROOT_CLASS=PMVector`
+answers this directly: `forEachRoot` reports which root CATEGORY visits each
+instance, so either it names the holder or it shows the receiver is visited by
+nothing at the moment it dies.  That run is in flight.
+
+Method note, because it has now cost real time twice: compare the corpse's
+`origSel=/method_=` IDENTITY between arms, never `corpse=N`.  Two arms with
+equal counts have had different corpses, and reading counts once inverted this
+attribution.
+
+---
+
 # WIP (2026-08-18) — pin CONFIRMED with young-gen still on
 
 `PHARO_YG_NO_SCAVENGE` now gates fullGC's pre-compact scavenge as well as the
