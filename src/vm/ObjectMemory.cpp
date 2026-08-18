@@ -2714,6 +2714,16 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     // large-method fileIn failure, root-caused 2026-07-02).  Scavenging
     // FIRST lets markPhase see the tenured copies and apply true weak
     // semantics to them.
+    //
+    // NOTE for anyone bisecting a young-space corruption: this call is NOT
+    // gated by PHARO_YG_NO_SCAVENGE, PHARO_YG_SKIP_SCAV_FROM or
+    // PHARO_GC_ROUNDTRIP_ONLY -- those all gate only the interpreter-side
+    // scavenge in Interpreter.cpp. Every fullGC therefore still drives one
+    // scavenge, so those knobs floor the scavenge count at 1 rather than 0 and
+    // a bisect that assumes 0 draws the wrong conclusion (measured 2026-08-18:
+    // both knobs took a repro from scavenges=2 to scavenges=1, which reads as
+    // "still reproduces with scavenging off" and is not what happened).
+    // The knob that gates BOTH sites is PHARO_NO_YG, via enableYoungGen_.
     if (enableYoungGen_ && edenFree_ > edenAllocBase_) {
         scavenge();
     }
