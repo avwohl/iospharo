@@ -23,6 +23,40 @@ Kept from the work: vm_stop now prints how long interpret() took to return, and
 prints `[VM-STOP-TIMEOUT]` when it gives up, so the next occurrence arrives with
 its evidence instead of needing to be reconstructed from a crash dump.
 
+## CONFIRMED BY A FULL RE-SWEEP: x86_64 now matches arm64
+
+A complete x86_64 sweep with the FFI fix in (2046 classes, same image, same
+machine, idle):
+
+                                           classes  tests   F    E     rate
+    x86_64 raw                 before        2046   28071  25   365   97.58%
+    x86_64 raw                 after         2046   28071  25   288   97.86%
+    x86_64 minus cairo/ft      before        1997   27638  25   103   98.49%
+    x86_64 minus cairo/ft      after         1997   27638  25    26   98.77%
+    arm64  same exclusion                    1996   27637  29    25   98.77%
+
+**98.77% on both architectures**, 26 errors against 25.  The two columns now
+agree to two decimal places, which is what this comparison existed to find out.
+
+Per class, the FFI family before -> after:
+
+    FFICallbackParametersTest                    P0/E11  ->  P11/E0
+    FFICallbackTest                              P0/E2   ->   P2/E0
+    TFBasicTypeMarshallingInCallbacksTest        P0/E18  ->  P18/E0
+    TFUFFIBasicTypeMarshallingInCallbacksTest    P0/E18  ->  P18/E0
+    TFUFFICallbackTest                           P0/E6   ->   P6/E0
+    TFUFFIDerivedTypeMarshallingInCallbackTest   P0/E6   ->   P6/E0
+    TFUFFIStructuresTest                         P5/E6   ->  P11/E0
+    TFCallbacksTest                              P0/E4   ->   P4/E0
+    TFStructTest                                 P0/E3   ->   P3/E0
+    TFFunctionCallTest                           P4/E4   ->   P7/E1
+                                        errors    79     ->     2
+
+Every other FFI* class is byte-identical, so the change is confined to what was
+broken.  The 2 survivors: one residual in TFFunctionCallTest, and
+TFUFFIDifferentCallingConventionFunctionCallTest, which probes the Windows
+`w64Convention` and fails on any non-Windows host.
+
 ## UPDATE, same session: the x86_64 FFI defect is FIXED
 
 The "single highest-value x86 item" below is done.  Root cause: libffi's x86
