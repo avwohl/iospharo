@@ -1,3 +1,68 @@
+# WIP (2026-08-18) — the corrupting scavenge is fullGC's, not the interpreter's
+
+## Pinned by elimination, and the off-by-one checked
+
+`scavRequestNum` is incremented BEFORE the bisect test
+(`static int scavRequestNum = 0; ++scavRequestNum;` then
+`skipForBisect = ... scavRequestNum >= PHARO_YG_SKIP_SCAV_FROM`), so the first
+interpreter-side request is 1 and `PHARO_YG_SKIP_SCAV_FROM=1` skips ALL of them.
+That makes the two arms decisive:
+
+    PHARO_YG_SKIP_SCAV_FROM=1   interpreter-side scavenges 0, observed 1
+                                -> the survivor is fullGC's pre-compact scavenge
+                                -> #cos corpse PRESENT
+    PHARO_NO_YG=1               that one is gated too (enableYoungGen_)
+                                -> observed 0
+                                -> #cos corpse GONE
+
+So ONE scavenge is sufficient, and the sufficient one is the scavenge INSIDE
+fullGC — `ObjectMemory.cpp:2718`, the call moved to before `markPhase` on
+2026-07-02 so that mark could see tenured copies and apply weak semantics.
+
+    if (enableYoungGen_ && edenFree_ > edenAllocBase_) {
+        scavenge();
+    }
+
+## Why that one and not the interpreter's
+
+The interpreter-side site brackets its scavenge itself:
+
+    prepareForGC();  memory_.scavenge();  afterGC();
+
+and runs at a bytecode-boundary safe point, where the live set is on the operand
+stack and in the frame registers — exactly what `forEachRoot` walks.
+
+fullGC's internal scavenge runs wherever fullGC was triggered from, which
+includes an allocation deep inside a primitive.  At that moment an Oop can be
+live only in a C++ local, not yet stored anywhere the root walk can see.  That
+is consistent with every measurement taken:
+
+  * the object-aware dangle scan finds 0 dangling refs — it walks the same
+    `forEachRoot` set the scavenge updates, so a C++-local holder is invisible
+    to BOTH
+  * the raw scan's only hits are ExternalAddress false positives
+  * mark/compact is clean, because by then the damage is a stale value held
+    outside the heap
+
+NOT yet proven: which allocation triggers that fullGC, and which local holds the
+receiver across it.  That is the next step, and it is cheap — the repro is one
+deterministic test, ~90 s a run:
+
+    (PMAB2SolverTest selector: #testVectorSystem) run
+
+on `pkg-arm3/PolyMath/pkg.image`.  Read the `origSel=/method_=` identity in the
+`[DNU] CASCADE` line, NOT the corpse count: counts are equal across arms that
+have different corpses, which already inverted this attribution once.
+
+## Suggested first move for whoever continues
+
+Gate fullGC's internal scavenge on the same bisect knobs as the interpreter-side
+one.  It is a two-line change, it makes `PHARO_YG_NO_SCAVENGE` mean what it says,
+and it turns "disable scavenging" into a usable bisect axis instead of one that
+floors at 1 and reads as a non-fix.
+
+---
+
 # WIP (2026-08-18) — the `#cos` corpse IS the scavenger, and counting nearly hid it
 
 ## Correction to this file's own attribution table
