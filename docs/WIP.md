@@ -1,3 +1,121 @@
+# WIP (2026-08-18, later) — the full arm64 suite now finishes, and it is 98.78%
+
+## The full suite is measurable again
+
+The 2026-08-18 morning entry lists as open item 3: "Full suite never finished
+inside 4 h on either arch... it makes the full suite unmeasurable as currently
+run. Consider periodic image restart."  That is done, and it works:
+`scripts/sunit-sweep.sh` at **STEP=300**, relaunching from the pristine prepped
+image per batch.  arm64, one machine, otherwise idle:
+
+    batch     1-300   rc=0    151s   301 classes
+    batch   301-600   rc=0    327s   301
+    batch   601-900   rc=0    338s   299
+    batch   901-1200  rc=0    525s   301
+    batch  1201-1500  rc=0    503s   301
+    batch  1501-1800  rc=0   2205s   301
+    batch  1801-2047  rc=124 2400s   248     <- hit the cap AFTER reporting
+                                                every class; nothing lost
+    total 1 h 47 m
+
+    classes 2045   tests 28070   PASS 27728   FAIL 29   ERROR 26   SKIP 182
+    rate 98.78%
+
+against the recorded baselines on the same VM lineage:
+
+    2026-08-11 baseline   27701 P   22 F   50 E   (2052 classes)
+    "suite 5"             27732 P   22 F   21 E   (2046 classes)
+    this run              27728 P   29 F   26 E   (2045 classes)
+
+so it lands on top of the best recorded numbers, and it does so in under two
+hours instead of not at all.  Note batch 7's `rc=124`: the batch timed out, but
+all 248 of its classes had already written results, so the totals are complete.
+Give the last batch a larger `PER_BATCH_TIMEOUT` to get a clean rc.
+
+STEP=300 only became usable once the `.sources` file was staged — see the
+commit that added it.  Batch 1 alone, same 300 classes, same binary:
+
+    without .sources    4902 tests   4753 P   14 F   94 E
+    with .sources       4902 tests   4861 P    0 F    0 E
+
+The whole "batch size changes the answer" theory in this script's header rested
+on runs made without it.  With the file present the first 1198 classes score
+**0 FAIL and 2 ERROR** in 300-class batches, which is the opposite of what a
+batching artefact would do.
+
+## The 27 non-clean classes, triaged
+
+    family                        classes   F    E    status
+    Spec/GUI adapters (Sp*, FT*)     10      4   17   documented residual
+    Tools (St*)                       5     10    0   documented residual
+    harness self-pollution            3      5    3   the runner is IN the image
+    weak / GC timing                  2      2    0   documented residual
+    network (ZnClientTest)            1      1    0   testQueryGoogle
+    upstream image bug                1      0    1   OCClassBuilderTest
+    UNTRIAGED                         5      7    5   below
+
+"harness self-pollution" is literal, not a euphemism: `ReleaseTest` fails
+`testNoOrphanPackage` on `Package(Tests-Runner)`,
+`testThatThereAreNoSelectorsRemainingThatAreSentButNotImplemented` on
+`SUnitRunner class>>#runAllTests`, and `testUnknownProcesses` on
+`'CommandLine handler process'`.  All three name the runner this harness
+injected.  `TraitFileOutTest` wants a directory from the previous session's
+scratchpad, i.e. the image's saved working directory.  These are not VM
+results and should be excluded from any headline number, or the runner should
+be filed out before ReleaseTest runs.
+
+## The one lead worth pulling: `at:` on a String answering a SmallInteger
+
+TWO independent classes, both `Symbol(String)>>...`, both a `String at:` that
+answered a SmallInteger where a Character belongs:
+
+    ReleaseTest>>testAllGlobalBindingAreGlobalVariables
+      SmallInteger(Object)>>doesNotUnderstand: #asciiValue
+      Symbol(String)>>isLiteralSymbol            -- `ascii := (self at: 1) asciiValue`
+
+    SystemNavigationTest>>testAllGlobalNamesStartingWithDoCaseSensitive
+      SmallInteger(Object)>>doesNotUnderstand: #asLowercase
+      [ :each :index | (self at: index) asLowercase = each asLowercase ... ]
+        in Symbol(String)>>beginsWith:caseSensitive:
+      ByteString(SequenceableCollection)>>withIndexDo:
+
+Both are Character-only selectors sent to a SmallInteger, so the wrong
+PRIMITIVE ran, not merely the wrong value.  The relevant facts:
+
+    ByteString>>at: / ByteSymbol>>at:   <primitive: 63>  -> Character
+    Object>>at:                         <primitive: 60>  -> SmallInteger
+                                                            for byte formats
+
+    Interpreter.cpp inlinePrimKind():   case 60 -> pk 14 ;  no case 63
+
+and the T1 inline for pk 14 (AsmjitT1.cpp, `tryPrimAt`) has a byte path whose
+own comment reads "fmt 16-23 (ByteArray, String, Symbol) ... Returns SmI of
+byte value".  It checks only the FORMAT, never the class — by design, because
+"receiver class is whatever IC matched".  So the guard that keeps a String off
+this path is entirely the IC's class key plus pk being 0 for primitive 63.
+
+That makes the hypothesis concrete: at a megamorphic `at:` site --
+`SequenceableCollection>>withIndexDo:` is exactly one, since it sends `at:` to
+Arrays, ByteArrays, ByteStrings and Intervals -- a receiver whose entry should
+be pk 0 takes the pk 14 arm.  It is a hypothesis, NOT established: nobody has
+yet run either test with `PHARO_NO_JIT=1`, which is the one-command
+discriminator and the first thing to do next.  `PHARO_T1_VERIFY_AT=1` exists
+but only cross-checks the fmt==2 Array arm, not the byte arm.
+
+The other untriaged four, for completeness:
+
+    VariableBreakpointTest   testNoRemoveAfterSubclassRemoved [Denial failed]
+                             testNotifyArgumentBreakpointHit  (nil breakpoint)
+    LinkInstallerTest        testPropagateNewClassScopedLinks [Leaked metalinks]
+    RSLinesTest              testMarkerOffset (BlockCannotReturn) -- a `^ true`
+                             out of a block whose home,
+                             RSAbstractLine>>markersIncludesPoint:, is still
+                             four frames below on the stack.  Also worth a
+                             PHARO_NO_JIT=1 check.
+    TraitTest                testTraitsUsersSanity [Assertion failed]
+
+---
+
 # WIP (2026-08-18, later) — VM tier: test_relaunch has a real use-after-free
 
 Continuation of the 2026-08-18 session below.  Work tree: the scratch worktree
