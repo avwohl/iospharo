@@ -31,6 +31,7 @@ shift 2
 WORK=${WORK:-/tmp/pkg-selfhosted}
 LOAD_TIMEOUT=${LOAD_TIMEOUT:-900}
 TEST_TIMEOUT=${TEST_TIMEOUT:-900}
+PER_CLASS_TIMEOUT=${PER_CLASS_TIMEOUT:-120}   # seconds, per TestCase subclass
 
 # name | metacello expression | test-class name pattern
 PACKAGES=(
@@ -108,25 +109,33 @@ for entry in "${PACKAGES[@]}"; do
     # --- run every TestCase subclass whose name matches the pattern ---
     rm -f "$D/result.txt"
     # Select the TestCase subclasses this load ADDED (pre.txt vs now). The name
-    # pattern is only a fallback for when pre.txt is missing, i.e. the load step
+    # pattern is only a fallback for when pre.txt is missing -- i.e. the load
+    # step never ran -- OR the package already ships in the base image and so
+    # adds no classes at all. Fuel is the case that proves the fallback is
+    # needed: it is already present, the diff is empty, and only the pattern
+    # finds its 19 tests.
+    #
     # The result file is rewritten after EVERY class, ending in a PARTIAL line
     # that names the last class to finish. Writing it only at the end -- as this
     # did until 2026-08-18 -- means anything that kills the eval between the last
     # class and the final write discards every result and names nothing. That is
     # precisely what "XMLParser ... produces no RESULT" was: 110M activations of
     # tests that plainly ran, reported as silence. PolyMath does the same.
-    # never ran, OR the package already ships in the base image and so adds no
-    # classes at all -- Fuel is the case that proves this is needed: it is
-    # already present, the diff is empty, and only the pattern finds its 19
-    # tests. NOTE: the eval below is one double-quoted shell string, so it
-    # must contain no bare double quote -- a Smalltalk "comment" inside it ends
-    # the string and the rest is executed as shell words.
+    #
+    # Each class also gets its own timeout, because one class that never returns
+    # otherwise swallows every class after it: PMAB2SolverTest goes idle after
+    # ~2 minutes and never finishes, which is why PolyMath reported 4 of its 117
+    # classes and nothing about the other 113.
+    #
+    # NOTE: the eval below is one double-quoted shell string, so it must contain
+    # no bare double quote -- a Smalltalk "comment" inside it ends the string and
+    # the rest is executed as shell words.
     t2=$(date +%s)
     timeout "$TEST_TIMEOUT" "$VM" "$D/pkg.image" eval "
-| pat pre added classes s tp tf te |
+| pat pre added classes s tp tf te tt |
 pat := '$PATTERN'.
 s := WriteStream on: String new.
-tp := 0. tf := 0. te := 0.
+tp := 0. tf := 0. te := 0. tt := 0.
 classes := (TestCase allSubclasses
     reject: [ :c | [ c isAbstract ] on: Error do: [ :e | true ] ]).
 pre := ('$D/pre.txt' asFileReference exists)
@@ -140,21 +149,29 @@ classes := added isEmpty
     ifFalse: [ added ].
 classes := classes asSortedCollection: [ :a :b | a name <= b name ].
 classes withIndexDo: [ :c :i |
-    | r |
-    r := [ c suite run ] on: Error do: [ :e | nil ].
-    r ifNil: [ s nextPutAll: c name , ': DIED'; lf ]
-      ifNotNil: [
-        tp := tp + r expectedPassCount.
-        tf := tf + r failureCount.
-        te := te + r errorCount.
-        s nextPutAll: c name , ': ' , r printString; lf ].
+    | r timedOut |
+    timedOut := false.
+    r := [ [ c suite run ]
+             valueWithin: (Duration seconds: $PER_CLASS_TIMEOUT)
+             onTimeout: [ timedOut := true. nil ] ]
+           on: Error do: [ :e | nil ].
+    timedOut
+      ifTrue: [ tt := tt + 1.
+                s nextPutAll: c name , ': TIMEOUT after $PER_CLASS_TIMEOUT s'; lf ]
+      ifFalse: [
+        r ifNil: [ s nextPutAll: c name , ': DIED'; lf ]
+          ifNotNil: [
+            tp := tp + r expectedPassCount.
+            tf := tf + r failureCount.
+            te := te + r errorCount.
+            s nextPutAll: c name , ': ' , r printString; lf ] ].
     '$D/result.txt' asFileReference writeStreamDo: [ :f |
         f nextPutAll: s contents;
           nextPutAll: 'PARTIAL after ' , i printString , '/' , classes size printString ,
                       ' last=' , c name; lf ] ].
 s nextPutAll: 'RESULT classes=' , classes size printString ,
     ' pass=' , tp printString , ' fail=' , tf printString ,
-    ' err=' , te printString; lf.
+    ' err=' , te printString , ' timeout=' , tt printString; lf.
 '$D/result.txt' asFileReference writeStreamDo: [ :f | f nextPutAll: s contents ]" \
         > "$D/test.log" 2>&1
     test_rc=$?
