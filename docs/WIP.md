@@ -1,3 +1,75 @@
+# WIP (2026-08-18, later still) — the `SmallInteger` DNU is NOT a JIT defect
+
+## What it is
+
+Two tests, on BOTH architectures, send a Character-only selector to a
+SmallInteger:
+
+    ReleaseTest>>testAllGlobalBindingAreGlobalVariables
+        SmallInteger(Object)>>doesNotUnderstand: #asciiValue
+        via Symbol(String)>>isLiteralSymbol,        `(self at: 1) asciiValue`
+    SystemNavigationTest>>testAllGlobalNamesStartingWithDoCaseSensitive
+        SmallInteger(Object)>>doesNotUnderstand: #asLowercase
+        via Symbol(String)>>beginsWith:caseSensitive:, `(self at: index) asLowercase`
+
+## RETRACTION
+
+The previous entry named the T1 inline `at:` (primKind 14, primitive 60) as the
+suspect, reasoning that its byte arm returns `(byte << 3) | 1` — a SmallInteger
+— and checks only the object FORMAT, never the class, so a String reaching it
+would produce exactly this.  **That is wrong, and it is now measured wrong, not
+merely doubted.**  Reduced to one test method, one class, a fresh copy of the
+prepped image:
+
+    default (JIT on)                              Total: 1 P:0 F:0 E:1
+    PHARO_NO_JIT=1                                Total: 1 P:0 F:0 E:1
+    PHARO_NO_SISTA_PER_BC=1                       Total: 1 P:0 F:0 E:1
+    PHARO_NO_JIT=1 PHARO_NO_SISTA_PER_BC=1        Total: 1 P:0 F:0 E:1
+
+Both knobs, together, and the failure does not move.  `PHARO_NO_JIT=1` really
+did take the JIT out — the log carries `[JIT] Disabled via PHARO_NO_JIT` and no
+`[JIT] Initialized` — and `jit_rt_array_prim` is only reachable from emitted
+code.  So the inline `at:` cannot be running, and this is plain-interpreter
+behaviour.  Including `PHARO_NO_SISTA_PER_BC=1` matters because this repo has
+already been caught treating `PHARO_NO_JIT=1` as a full JIT-off switch when it
+is not (defect #1, five sessions).
+
+Also ruled out by measurement, each one cheap and each one wrong:
+
+    primitiveStringAt (63)      correct in both arms; the wide branch really
+                                does answer Oop::fromCharacter(codePoint)
+    operand-stack displacement  PHARO_DEPTH_ORACLE='beginsWith:caseSensitive:'
+                                reports NO depth disagreement
+    a bad global at rest        scanned every global name's every character in
+                                the base image AND the prepped suite image:
+                                all Characters, 10842 globals
+    runtime-created class names ClassFactoryForTestCase newClass -> the name is
+                                a normal ByteSymbol, all Characters
+    runtime method compilation  `Object compile: ...` then rescan: still none
+    forking                     running the test in a forkAt: 40 process: passes
+
+## What is actually established
+
+The failure needs the SUnitRunner harness.  The SAME test, in the SAME image,
+called directly as `tc setUp. tc performTest` — and again inside a forked
+process — PASSES.  Driven through the runner it fails every time, down to a
+single selector.  So the trigger is something the runner's startup does
+(it compiles a patched `DateAndTime class>>now`, installs a scheduler logger,
+a delay-recovery handler and timeout overrides) and not the test.
+
+That makes this, on current evidence, a harness-interaction defect rather than
+a JIT one, and it should not be counted against the JIT tier.  It stays open,
+but it is off the critical path for "the JIT passes the suites".
+
+Next step for whoever picks it up: get the RECEIVER.  Every probe so far has
+asked the image a question from OUTSIDE the failing run; the answer is inside
+it.  Add a handler to the runner's own `runSingleTest:selector:timeout:...:on:`
+that prints `e receiver`, `e receiver class`, and the `self` of the signalling
+context, then read what it says instead of guessing again — three hypotheses
+have now died in a row, all of them plausible on paper.
+
+---
+
 # WIP (2026-08-18, later) — the full arm64 suite now finishes, and it is 98.78%
 
 ## The full suite is measurable again
