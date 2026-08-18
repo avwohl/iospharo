@@ -428,6 +428,18 @@ if(APPLE)
         ${CMAKE_SOURCE_DIR}/Frameworks/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
         ${CMAKE_SOURCE_DIR}/Frameworks/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
     )
+    # libffi's x86 ffitarget.h picks its ABI enum with
+    #   #elif defined(X86_64) || (defined (__x86_64__) && defined (X86_DARWIN))
+    # and libffi's own configure defines these when it builds the library. We
+    # include the header without them, so an x86_64 build fell through to the
+    # 32-bit branch and compiled FFI_DEFAULT_ABI = FFI_SYSV = 1, while the
+    # linked libffi expects FFI_UNIX64 = 2. Every ffi_prep_cif then answered
+    # FFI_BAD_ABI. Measured 2026-08-18: 77 of the x86_64 SUnit sweep's errors,
+    # the entire TFCallback/FFICallback family, from
+    # `[TFCB-FAIL] ffi_prep_cif status=2`; arm64 was never affected.
+    # The aarch64 header does not reference X86_DARWIN, so defining it for all
+    # Apple builds is correct for arm64, x86_64 and universal alike.
+    target_compile_definitions(PharoVMCore PUBLIC X86_DARWIN)
 endif()
 
 target_compile_options(PharoVMCore PRIVATE

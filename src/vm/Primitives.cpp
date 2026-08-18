@@ -33028,10 +33028,15 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
 
     Oop receiver = stackValue(argCount); // TFCallback instance
 
-    if (!receiver.isObject()) return PrimitiveResult::Failure;
+    if (!receiver.isObject()) {
+        fprintf(stderr, "[TFCB-FAIL] receiver is not an object\n");
+        return PrimitiveResult::Failure;
+    }
 
     // Read TFCallback slots
     if (memory_.slotCountOf(receiver) < 5) {
+        fprintf(stderr, "[TFCB-FAIL] TFCallback has %zu slots, need >= 5\n",
+                memory_.slotCountOf(receiver));
         return PrimitiveResult::Failure;
     }
 
@@ -33041,11 +33046,15 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
     // Get the return ffi_type*
     ffi_type* returnType = static_cast<ffi_type*>(tffi_getHandler(returnTypeOop));
     if (!returnType) {
+        fprintf(stderr, "[TFCB-FAIL] return type handler is null\n");
         return PrimitiveResult::Failure;
     }
 
     // Get parameter types from the array
-    if (!paramArrayOop.isObject()) return PrimitiveResult::Failure;
+    if (!paramArrayOop.isObject()) {
+        fprintf(stderr, "[TFCB-FAIL] parameterHandlers is not an Array\n");
+        return PrimitiveResult::Failure;
+    }
     size_t paramCount = memory_.slotCountOf(paramArrayOop);
 
     ffi_type** paramTypes = static_cast<ffi_type**>(malloc(paramCount * sizeof(ffi_type*)));
@@ -33055,6 +33064,8 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
         Oop paramOop = memory_.fetchPointer(i, paramArrayOop);
         ffi_type* pt = static_cast<ffi_type*>(tffi_getHandler(paramOop));
         if (!pt) {
+            fprintf(stderr, "[TFCB-FAIL] param %zu of %zu has a null ffi_type\n",
+                    i, paramCount);
             free(paramTypes);
             return PrimitiveResult::Failure;
         }
@@ -33086,6 +33097,7 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
         ffi_closure_alloc(sizeof(ffi_closure), &cbInfo->functionAddress));
 
     if (!cbInfo->closure) {
+        fprintf(stderr, "[TFCB-FAIL] ffi_closure_alloc returned null\n");
         free(paramTypes);
         if (cbInfo->userData) free(cbInfo->userData);
         delete cbInfo;
@@ -33097,6 +33109,8 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
                                      static_cast<unsigned int>(paramCount),
                                      returnType, paramTypes);
     if (status != FFI_OK) {
+        fprintf(stderr, "[TFCB-FAIL] ffi_prep_cif status=%d nargs=%zu\n",
+                (int)status, paramCount);
         ffi_closure_free(cbInfo->closure);
         free(paramTypes);
         if (cbInfo->userData) free(cbInfo->userData);
@@ -33109,6 +33123,8 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
                                   callbackClosureHandler, cbInfo,
                                   cbInfo->functionAddress);
     if (status != FFI_OK) {
+        fprintf(stderr, "[TFCB-FAIL] ffi_prep_closure_loc status=%d\n",
+                (int)status);
         ffi_closure_free(cbInfo->closure);
         free(paramTypes);
         if (cbInfo->userData) free(cbInfo->userData);
