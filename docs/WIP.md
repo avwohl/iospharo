@@ -48,6 +48,48 @@ Note the eval-deadline fix from earlier today is what makes this legible: before
 it, the VM exited at the first 120 s window with no distinction between
 "working" and "dead", so none of the above was visible.
 
+## SHARPENED: the corpse is `self`, the receiver of the running method
+
+`#cos` here is not `Collection>>cos`.  Asked of the loaded image, the vector one
+is:
+
+    PMVector>>cos
+        "Apply cos function to every element of a vector"
+        1 to: self size do: [ :n | self at: n put: (self at: n) cos ].
+
+It mutates the receiver IN PLACE.  So the object receiving `at:put:` on a dead
+header is `self` -- the receiver of the method currently executing.  Each
+element's `Float>>cos` is `^(self + Halfpi) sin`, which allocates a boxed Float
+through primitiveSine, so the loop allocates once per element and one of those
+GCs takes the receiver out from under its own active frame.
+
+    [CORPSE-PUSH] val=0x7375b1b238 in=#cos fd=20 jitState=0   (x3, same value)
+
+(An earlier note in this entry guessed the corpse was a collection allocated by
+`collect:`.  Wrong -- there is no allocation in PMVector>>cos at all.)
+
+## Attribution so far, all measured
+
+    jit-default                corpse=4  dnu=42
+    PHARO_NO_JIT=1             corpse=4  dnu=42
+    PHARO_NO_SISTA_PER_BC=1    corpse=4  dnu=42
+    PHARO_CODE_ZONE_MB=192     corpse=4  dnu=42
+    PHARO_NO_GC_TEMPSYNC=1     corpse=4  dnu=42
+
+Identical to the count in every arm: deterministic, JIT-independent, and NOT the
+temp-sync residual that `f96cb69b` predicted for this family (that commit's
+description is JIT-specific -- "after the frame re-enters JIT" -- and this
+reproduces with the JIT off, so it was never a good fit).
+
+Reading the root scan does not obviously explain it either: `forEachOopRoot`
+visits `savedFrames_[i].savedReceiver` for every `i < frameDepth_`, and the
+running frame's receiver is a visited register.  So either a frame's receiver is
+not where the scan expects at the moment the GC runs, or the object is moved by
+compaction and this reference is not updated.  Do not guess between those --
+PHARO_HEAP_CHECK (post-fullGC walk for slots aimed at free/garbage targets) and
+PHARO_GC_LOG are the next instruments, and the repro is deterministic enough to
+answer it.
+
 ## Status
 
 Reduced to ONE test — `(PMAB2SolverTest selector: #testVectorSystem) run` on the
