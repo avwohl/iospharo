@@ -1,3 +1,66 @@
+# WIP (2026-08-18) — the `#cos` corpse IS the scavenger, and counting nearly hid it
+
+## Correction to this file's own attribution table
+
+An earlier entry listed five configurations as giving an "identical corpse
+count" and concluded the corpse was insensitive to every knob.  That compared
+`corpse=4 dnu=42` — COUNTS — and counts are not identity.  Compared on what the
+corpse actually is, across all 16 arms run today:
+
+    arms with scavenges >= 1   (15)   origSel=#at:put:  method_=#cos
+    arms with scavenges == 0    (1)   origSel=#class    method_=#nextPutAll:
+
+The `#cos` corpse appears in every arm that ran at least one scavenge and in no
+arm that ran none.  **The scavenger is causal.**  The single scavenges=0 arm
+(`PHARO_NO_YG=1`) shows a DIFFERENT corpse in a different method, with a
+different header (`hdr=0x7000000000` against the `#cos` corpse's
+`0x200000002000000`) — a separate question, not the same defect, and it must not
+be folded in.
+
+This is also why the three scavenge bisect knobs read as non-fixes:
+
+    PHARO_YG_NO_SCAVENGE=1       scavenges 2 -> 1   #cos corpse still present
+    PHARO_YG_SKIP_SCAV_FROM=1    scavenges 2 -> 1   #cos corpse still present
+    PHARO_GC_ROUNDTRIP_ONLY=1    scavenges 2 -> 1   #cos corpse still present
+    PHARO_NO_YG=1                scavenges 2 -> 0   #cos corpse GONE
+
+None of the first three reaches zero, because fullGC's own pre-compact scavenge
+is ungated (now commented at the call site).  ONE scavenge is enough to produce
+the corpse.
+
+## What is established
+
+    the corpse is `self`, the receiver of PMVector>>cos, which mutates in place
+    it requires a scavenge; zero scavenges, no corpse
+    full GC + compaction are clean:
+        [HEAPCHECK post-fullGC] scanned=826469 corruptSlots=0 badHeaderObjs=0 => CLEAN
+    the object-aware post-scavenge dangle scan finds NOTHING:
+        [SCAV-DANGLE] 0 hits, and it covers old space, perm space AND
+        interpreter_->forEachRoot (the VM register/stack/frame roots)
+    the format-agnostic raw scan's 54 hits are false positives:
+        all inside ExternalAddress (fmt 16, ptrSlots=0), which legitimately
+        stores native addresses; the corpse value appears in NONE of them
+    not the JIT: identical under PHARO_NO_JIT=1, PHARO_NO_SISTA_PER_BC=1,
+        both together, and PHARO_CODE_ZONE_MB=192
+    not f96cb69b's temp-sync residual: PHARO_NO_GC_TEMPSYNC=1 unchanged
+
+Put together: a scavenge collects (or fails to forward) an object that IS still
+live, and the holder is somewhere the dangle scan does not look — which is the
+same set `forEachRoot` walks, so scavenger and diagnostic share the blind spot.
+A holder outside that set — a C++ local holding an Oop across an allocation, or
+an operand-stack slot outside `[stackBase_, stackPointer_)` — fits every
+observation.  That last shape is this repo's defect `#1` family.
+
+## Next
+
+Bisect WHICH scavenge with `PHARO_YG_SKIP_SCAV_FROM=N` for N=1,2 — but read the
+`origSel/method_` identity, not the count, or the answer inverts.  Then
+instrument the surviving holder directly: the repro is one deterministic test,
+`(PMAB2SolverTest selector: #testVectorSystem) run` on the loaded PolyMath
+image, and it costs about 90 seconds a run.
+
+---
+
 # WIP (2026-08-18) — PMAB2SolverTest uses a COLLECTED object, and that is what hangs PolyMath
 
 ## The finding
