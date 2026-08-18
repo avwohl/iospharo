@@ -604,12 +604,28 @@ void vm_stop(void) {
     // its autorelease pool. Waiting on gRunning is what tells us interpret() has
     // returned and the worker is back at its condition variable, which is the
     // point at which vm_destroy may safely replace the interpreter.
+    //
+    // A timeout here is NOT benign and must not be silent: vm_destroy runs
+    // next and frees the interpreter and the heap on the assumption that the
+    // worker is parked.  If it is still inside interpret(), that free lands
+    // under a running thread -- observed as an EXC_BAD_ACCESS in
+    // synchronousSignal with the main thread inside free().  Say so.
     {
         auto start = std::chrono::steady_clock::now();
         while (gRunning) {
             auto elapsed = std::chrono::steady_clock::now() - start;
-            if (elapsed > std::chrono::seconds(2)) break;
+            if (elapsed > std::chrono::seconds(2)) {
+                fprintf(stderr, "[VM-STOP-TIMEOUT] interpret() has not returned"
+                                " 2s after stop(); the worker is still running\n");
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!gRunning) {
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - start).count();
+            fprintf(stderr, "[VM-STOP] interpret() returned after %lldms\n",
+                    (long long)ms);
         }
     }
 
