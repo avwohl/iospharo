@@ -1,3 +1,132 @@
+# WIP (2026-08-18, end of session) — both arches measured end to end
+
+## RETRACTION FIRST: the test_relaunch mechanism I published was wrong
+
+The earlier entry in this file said vm_stop "times out on EVERY cycle here" and
+that the timing "confirms it exactly".  That was inference fitted to one
+arithmetic coincidence, not measurement.  vm_stop now REPORTS its wait, and:
+
+    9 consecutive runs, 3 cycles each, arm64
+    worst wait observed          15 ms      (not 2000)
+    [VM-STOP-TIMEOUT] fired      0 times
+    failures                     0 of 9
+
+So the timeout mechanism is measured FALSE.  What remains true is the crash
+itself, from two crash reports: EXC_BAD_ACCESS with the MAIN thread inside
+`_free` / `_xzm_free_tc` while the VM worker faulted in
+`Interpreter::synchronousSignal` under `interpret()`.  That is a
+use-after-free, and `vm_destroy()` freeing unconditionally after a BOUNDED wait
+is a real hazard in the code whatever the trigger was.  But it does not
+reproduce on the current build, and I could not establish why it happened.
+
+Kept from the work: vm_stop now prints how long interpret() took to return, and
+prints `[VM-STOP-TIMEOUT]` when it gives up, so the next occurrence arrives with
+its evidence instead of needing to be reconstructed from a crash dump.
+
+## SUnit: both architectures, complete runs
+
+STEP=300 with a pristine image per batch, `.sources` staged, idle machine.
+
+    arm64 raw                             2045 cls  28070 tests  29 F   26 E  98.78%
+    x86_64 raw                            2046 cls  28071 tests  25 F  365 E  97.58%
+    x86_64 minus cairo/freetype classes   1997 cls  27638 tests  25 F  103 E  98.49%
+    arm64 same exclusion                  1996 cls  27637 tests  29 F   25 E  98.77%
+
+arm64 took 1 h 47 m, against "never finished inside 4 h on either arch".
+
+The x86 column needs the exclusion because this host has arm64-ONLY copies of
+the libraries the image dlopens, and Rosetta cannot load them:
+
+    /opt/homebrew/lib/libcairo.2.dylib    arm64      (no x86_64 anywhere)
+    /opt/homebrew/lib/libgit2.dylib       arm64
+    freetype                              same story
+    neither VM binary links any of them statically (0 symbols in both)
+
+That accounts for 175 of the x86 sweep's first 190 errors and for the whole
+Roassal RS* family (121 x `StrikeFont>>asFreetypeFont: not supported yet. and
+ever`, reached because FreeType did not initialise).
+
+**The entire remaining arm-vs-x86 gap is FFI callbacks**: 79 errors over 11
+TF*/FFICallback* classes, of which 77 are one root --
+`TFCallback>>register` -> `registerCallback:` (62) or the
+`primitiveInitializeStructType` inside its `validateTypes` (15).  arm64 passes
+every one.  It is NOT a libffi packaging problem: both binaries export
+`ffi_closure_alloc` and the macos libffi slice is fat.  That is the single
+highest-value x86 item and it is well localised
+(`Primitives.cpp primitiveRegisterCallback`, five silent `return Failure`
+sites -- give them distinct messages first, then the cause will name itself).
+
+## Packages: arm64 measured, x86_64 blocked by libgit2
+
+    NeoJSON     116 P /  0 F   11 classes
+    Mustache     47 P /  0 F    1 class
+    DataFrame   839 P / 14 F   27 classes
+    Fuel         19 P /  0 F    2 classes
+    Grease      loads (423 MB) and adds ZERO TestCase subclasses -- the default
+                `load.` group has no tests; needs the Tests group, not a VM fix
+    XMLParser   loads (699 s, 1019 MB)
+    PolyMath    loads (888 s, 1287 MB), was "times out at 1200 s"
+
+x86_64: all seven loads fail on `IceGenericError: no error message set by
+libgit2` -- Metacello's github:// goes through Iceberg -> libgit2, which is
+arm64-only here.  Fuel is the control that proves the VM is fine: it needs no
+fetch and passes 19/19 on x86_64 too.
+
+## The eval deadline: open item 1 root-caused and FIXED
+
+"XMLParser produces no RESULT" was the VM killing it.  `primitiveQuit`'s
+deferral arms a 120 s deadline; at expiry the only question asked was "is
+startup.st still on disk?", and finding it gone the VM concluded the process had
+been killed and exited.  A working eval is indistinguishable under that test.
+The tell was in the summary the whole time -- 122 s, 123 s, 123 s against
+`std::chrono::seconds(120)`.
+
+Fixed by comparing bytecodes run since the deadline was armed, with the floor
+set from measurement rather than taste: 26,095,351 working vs 220,402 and
+237,531 idle, in three consecutive windows of one run.  Floor 1M.  Verified:
+window 1 re-arms, window 2 exits saying "idle, not working".
+
+It also revealed a real defect the blanket exit had been hiding:
+**PMAB2SolverTest goes idle after ~2 minutes and never finishes.**  That is what
+stops PolyMath at 4 of its 117 classes (240 tests, all passing).
+
+## Harness defects fixed, all of which had been reading as VM failures
+
+  * **No `.sources` file beside the image** -> every class comment answers nil
+    -> 69 of one 300-class batch's 94 errors.  Both self-hosted runners now
+    stage it and refuse to run without it.  This also gives a second, entirely
+    deterministic cause for the "Improper store into indexable object" scatter
+    that `docs/local-arm-x86-2026-08-17.md` attributed to a busy machine.
+  * **Package tests selected by name substring** -> 'Grease' and 'PolyMath'
+    matched none of their own GR*Test / PM*Test classes and reported
+    "classes=0", identical to a failed load.  Now selected by what the load
+    ADDED, with the pattern as a fallback for packages already in the base
+    image (Fuel).
+  * **A load that did not persist looked like a successful one.**  Now
+    DID-NOT-PERSIST.
+  * **Package results written once at the end** -> any death discarded
+    everything and named nothing.  Now written per class, ending in
+    `PARTIAL after n/N last=<class>`, which is what identified PMAB2SolverTest.
+
+## Open, in priority order
+
+  1. **x86_64 FFI callback registration** — 77 errors, one root, arm64 clean.
+  2. **PMAB2SolverTest goes idle and never completes** — blocks PolyMath.
+     Give the package runner a per-class timeout so one hung class cannot
+     swallow the other 113.
+  3. **test_relaunch's use-after-free** — not reproducing; `vm_destroy` freeing
+     after a bounded wait is still wrong on its own terms.
+  4. **`SmallInteger` DNU in ReleaseTest / SystemNavigationTest** — measured NOT
+     a JIT defect (identical under PHARO_NO_JIT=1 and PHARO_NO_SISTA_PER_BC=1),
+     needs the SUnitRunner harness to reproduce.  Get the receiver from INSIDE
+     the failing run; three outside-in hypotheses have died.
+  5. **x86_64 cairo/freetype/libgit2** — install under a Rosetta prefix, or link
+     the already-fat maccatalyst slices statically, or the x86 column stays
+     unmeasurable for anything that draws or fetches.
+  6. **Image bloat** — 52 MB base becomes 1287 MB after a Metacello load.
+
+---
+
 # WIP (2026-08-18, later still) — the `SmallInteger` DNU is NOT a JIT defect
 
 ## What it is
