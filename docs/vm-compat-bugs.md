@@ -25,6 +25,14 @@ invisible because they sat *inside* entries whose parent was checked `- [x]`.
 
 ### 1. ~~WarpBlt expression-stack displacement~~ — FIXED 2026-08-12 (`bf3f6c58`)
 
+**CI corroborates the fix, and was ignored while doing so.** The
+`warpblt-regression` job asserts the bug is still present, so that fixing it
+fails loudly; it duly failed with `0 errors - docs/vm-compat-bugs.md #1 appears
+FIXED` on every push after `bf3f6c58` — five days of red mail nobody read,
+because the fixing commit updated this file but not the job's EXPECT_ERRORS.
+The job is disabled as of 2026-08-17; re-enabling it with EXPECT set to 0 turns
+it into a genuine regression guard and is a one-line change.
+
 Root cause: the **per-bytecode Sista backward-jump tier**, not the
 materialize/restore path six sessions had it filed under.
 
