@@ -1,3 +1,99 @@
+# WIP (2026-08-18, later) — VM tier: test_relaunch has a real use-after-free
+
+Continuation of the 2026-08-18 session below.  Work tree: the scratch worktree
+on `jit-work` (same commit as `jit`, `98b72d59`); builds reused from that tree
+(`build-rel` = arm64, `build-x86` = x86_64 under Rosetta).
+
+## `test_relaunch` SIGSEGVs about half the time, and it is not flaky-by-nature
+
+    run 1   rc=139 (SIGSEGV), never printed the cycle-1 summary
+    run 2   rc=0,   3/3 cycles PASS
+    (same binary, same fresh Pharo 13.1 image, back to back)
+
+Both crash reports name the same two frames, and the SECOND thread is what
+makes the diagnosis unambiguous:
+
+    thread 2 (VM worker)  pharo::Interpreter::synchronousSignal(Oop)
+                          pharo::Interpreter::primitiveRelinquishProcessor(int)
+                          pharo::Interpreter::sendSelector(Oop, int)
+                          pharo::Interpreter::interpret()
+    thread 0 (main)       _xzm_free_tc     <- inside free()
+
+EXC_BAD_ACCESS / KERN_INVALID_ADDRESS.  The main thread is in `free()` at the
+instant the VM thread faults reading an object header: this is a
+use-after-free, not a stale Oop.
+
+The mechanism is in `src/platform/PlatformBridge.cpp`:
+
+    vm_stop()     asks the interpreter to stop, then waits for gRunning to
+                  clear -- but gives up after 2 SECONDS and returns anyway.
+    vm_destroy()  then runs `delete gInterpreter; delete gMemory;`
+                  unconditionally, on the documented assumption that
+                  "the VM worker thread is parked on its condition variable
+                  at this point".  When vm_stop timed out, it is not.
+
+The timing confirms it exactly.  Crash 1: process launched 05:39:13.90, faulted
+05:39:21.15 = 7.25 s in.  The cycle is a 5 s pump, then `probeEventDelivery`
+returns at once with an empty queue, then `vm_stop` -- so vm_stop was entered at
+~5.1 s, burned its full 2 s wait, and `vm_destroy` began freeing at ~7.1 s.
+
+So `vm_stop` times out on EVERY cycle here; whether the process dies is only a
+race on how fast the freed pages become unreadable.  `runOneCycle` already
+computes `stoppedCleanly` and would have reported "vm_stop timed out; worker
+stuck" -- the crash beats it to the summary print.
+
+Still to establish (needs one instrumented build of PlatformBridge.cpp alone,
+so it is cheap): WHY interpret() does not return inside 2 s.  The leading
+candidate is that `running_` is a plain `bool` written by `stop()` from the
+main thread and read by the VM thread (`Interpreter.hpp:1099`, `:285`)  -- a
+data race, and the computed-goto dispatch loop only tests it "after sends and
+returns" by its own comment.  A `std::atomic<bool>` with RELAXED load/store
+compiles to the same ldrb/movb and forbids the caching; that is the fix if the
+measurement supports it.  Do not guess -- measure first, the same way `#1` was
+finally found.
+
+Independently of the cause, `vm_destroy()` freeing into a thread that is
+demonstrably still executing is wrong on its own terms.
+
+## SUnit sweep: STEP=300 with a pristine image per batch
+
+`scripts/sunit-sweep.sh` at STEP=50 is documented to invent failures, and one
+batch of 2047 never finishes.  300 classes per batch, relaunching from the
+prepped image each time, is the middle ground the 2026-08-18 session's own
+"300 direct = 99.98%" number points at.  Batch 1 (classes 1-300) ran in 182 s
+and completed:
+
+    classes 300   tests 4902   P 4753   F 14   E 94   S 26   rate 96.96%
+
+Three Calypso classes own 69 of the 94 errors:
+
+    ClyConcreteGroupCritiquesTest    36 tests   36 E
+    ClyBrowserToolValidityTest       25 tests   25 E
+    ClyNotebookPageRecyclerTest       8 tests    8 E
+
+all with one signature:
+
+    MessageNotUnderstood: receiver of "ifEmpty:" is nil
+      UndefinedObject(Object)>>doesNotUnderstand: #ifEmpty:
+      ClyClassIconTableDecorator class(ClyClassTableDecorator class)>>decorateTableCell:of:
+
+and the method is
+
+    decorateTableCell: anItemCellMorph of: aDataSourceItem
+        | labelMorphExtension |
+        labelMorphExtension := anItemCellMorph label assureExtension.
+        labelMorphExtension balloonText:
+            (aDataSourceItem actualObject comment ifEmpty: [ ... ])
+
+so `aDataSourceItem actualObject comment` answers nil.  These same three score
+100% alone AND scored 100% in the 2026-08-11 single-batch run of all 2052
+classes, which is why the sweep script's header attributes them to system state
+a fuller run establishes.  That attribution is still unverified -- nobody has
+checked what `actualObject` is at the failure, or whether `comment` answering
+nil is itself a VM divergence.  Worth one targeted look before another sweep.
+
+---
+
 # WIP (2026-08-18) — arm64 + x86_64 on one machine; no regression found
 
 State saved mid-session at user request. Everything below is on `jit`, pushed
