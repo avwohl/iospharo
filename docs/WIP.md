@@ -1,3 +1,56 @@
+# WIP (2026-08-19) — JIT stops compiling ~1-3% into a run; the eviction fix is already written but unreachable
+
+Independently re-verified in source by me, not taken on the workflow's word:
+
+    src/vm/DebugSettings.hpp:44   bool useAsmjitT1 = true;   (opt-out only)
+    src/vm/DebugSettings.cpp:96   useAsmjitT1 = explicitOn || !noT1;
+    src/vm/jit/JITCompiler.cpp:1589   if (g_debug.useAsmjitT1) {
+                                        JITMethod* jm = compileViaAsmjit(...);
+                                        ... return jm;          <- unconditional
+                                      }
+    src/vm/jit/JITCompiler.cpp:1683   // Stencil compile path follows.
+    src/vm/jit/JITCompiler.cpp:2456   zone_.evictLRU(evictTarget, evictCallback, ...)
+    src/vm/jit/CodeZone.hpp:233       freeMethod()   -- full implementation
+    src/vm/jit/CodeZone.hpp:288       evictLRU()     -- full implementation
+
+`compile` returns at ~1678 on the DEFAULT path, so the `evictLRU` call at 2456
+is reachable only through the legacy stencil path nobody runs.  The allocation
+failure site simply gives up:
+
+    src/vm/jit/asmjit/AsmjitT1.cpp:12026
+        JITMethod* jm = zone.allocate(payloadSize, numSendSites);
+        if (!jm) { g_failed++; g_failedBcOther++; return nullptr; }
+
+No retry, no eviction attempt.  Confirmed empirically: `Incremental evict`
+appears ZERO times in both recorded sweep artifacts.
+
+## Consequence, from the recorded sweeps
+
+    arm64 : zone first full at 160,825,344 method-entries (22,057 compiled)
+            last compile ever at 163,905,536 (22,060)
+            run continued to 12,445,810,688 entries, compiled frozen at 22,060
+    x86_64: zone first full at 352,845,824 (59,401 compiled)
+            last compile ever at 379,125,760 (59,403)
+            run continued to 12,515,540,992
+
+So for the last **98.7%** (arm) and **97.0%** (x86) of a suite run, every newly
+hot method executes interpreted.  The JIT is effectively off for almost the
+entire run.
+
+This is a re-route of existing, complete code -- not a new subsystem.
+
+**Magnitude is NOT measured.** Nobody has measured how much of that tail would
+actually benefit from being compiled. Do not quote a speedup until it is.
+
+## Why arm hits the wall first
+
+arm64 emits 2.7-2.9x more bytes per method than x86_64 (7.89 vs 2.76 KB/method
+measured; 8.91 vs 3.31 KB/method across the sweeps). 35% of arm's entire code
+footprint is inline-J2J (45,176 KB -> 29,260 KB with PHARO_T1_NO_INLINE_J2J).
+So "widen x86's inline-J2J gate to match arm" and "stop the compile freeze" are
+in TENSION: the first pushes x86 toward the wall the second is about. Net them
+before doing either.
+
 # WIP (2026-08-19) — residual failures classified: NO VM DEFECTS FOUND
 
 > **Time-limit experiment, CONFIRMED (2026-08-19).** With `TestCase
